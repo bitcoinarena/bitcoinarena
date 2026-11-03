@@ -8,7 +8,8 @@
 //             FINAL       once entries are due (the re-run's own final_after + 60 s, the last moment any entry of the round can be), for the entries with a result at the threshold
 //                         and short of their FINAL signatures: the seats that did not sign FINAL for that run. A seat that did not sign it itself lists nobody. Read once
 //             SETTLEMENT  2 h after final_after with the settlement not landed: the seats silent at this seat's last settlement pass: no signed word where it stopped (plan, ack, commit
-//                         or share), or a refusal after signing FINAL (settlement.js #stoppedAt). By then every seat has had its turn to ask (a turn every 2 blocks, 7 seats)
+//                         or share), or a refusal after signing FINAL (settlement.js #stoppedAt). By then every seat has had its turn to ask (a turn every 2 blocks, 7 seats). Off below
+//                         STALL_SETTLEMENT_HEIGHT (RULED 2026-11-03, #1069): no such note is signed, taken or counted there
 //             A seat that was silent itself signs nothing: its own list would have no standing. A seat that never asked has nothing to list. Nothing is noted in a round that worked.
 //   posting   the duty node reads the notes it holds and gathers, and carries each stalled node in the census claim with its 3 rounds' notes (stall.js stalledFrom)
 //   checking  a seat checks a claim's stalled list on its own draw (stall.js checkStallProof). A signed result held here clears nobody: a claim stands on what it carries (#1052)
@@ -16,11 +17,11 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { provenSeating } from '../../arena-protocol/src/presence.js';
 import { windowsOf } from '../../arena-protocol/src/window.js';
-import { NO_QUORUM_FINAL_GRACE_MS } from '../../arena-protocol/src/constants.js';
+import { NO_QUORUM_FINAL_GRACE_MS, stallSettlementPoint } from '../../arena-protocol/src/constants.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { PROVISIONALLY_FINAL } from '../../arena-protocol/src/objection.js';
 import { resultFinality } from './finality.js';
-import { STALL_STAGE, STALL_WINDOW_MS, STALL_SETTLEMENT_WAIT_MS, signStallNote, verifyStallNote, stallsOut, stallCloseMs, stallWindow, stalledFrom, checkStallProof } from '../../arena-protocol/src/stall.js';
+import { STALL_STAGE, STALL_WINDOW_MS, STALL_SETTLEMENT_WAIT_MS, signStallNote, verifyStallNote, stallsOut, settlementNotesCount, stallNoteCounts, stallCloseMs, stallWindow, stalledFrom, checkStallProof } from '../../arena-protocol/src/stall.js';
 
 /** Notes are kept this long past their round's close: a census reads 72 h, and a posting is made a day ahead. */
 const STALL_KEEP_MS = 7n * 86400000n;
@@ -39,7 +40,7 @@ const weightsOfStall = (entries) => {
 };
 const sumOfStall = (entries) => (entries || []).reduce((s, e) => s + BigInt(e.bondSats || 0), 0n);
 
-export function stallBook({ round, presence, verify, sign, log = () => {}, seatRoundOf = (rid) => rid, hand = async () => {}, stateOf = (rid, entry) => resultFinality(round, rid, entry).state }) {
+export function stallBook({ round, presence, verify, sign, log = () => {}, seatRoundOf = (rid) => rid, hand = async () => {}, stateOf = (rid, entry) => resultFinality(round, rid, entry).state, settlementPointOf = stallSettlementPoint }) {
   const db = round.db;
   db.exec(`
     CREATE TABLE IF NOT EXISTS stall_notes (round_id BLOB NOT NULL, stage INTEGER NOT NULL, signer TEXT NOT NULL, close_ms INTEGER NOT NULL, bytes BLOB NOT NULL,
@@ -58,6 +59,7 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
     const rid = fromHex(v.note.roundId), c = contractOfStall(rid);
     if (!c) return { ok: false, why: 'this seat holds no such round' };
     if (!stallsOut(c)) return { ok: false, why: 'that round is not under the stall rule' };
+    if (!stallNoteCounts(v.note, c, settlementPointOf)) return { ok: false, why: 'a settlement note does not count at that round: STALL_SETTLEMENT_HEIGHT' };
     const d = presence.drawOf(toHex(seatRoundOf(rid)), 'settlement');
     if (!d) return { ok: false, why: 'this seat cannot draw that round' };
     if (!d.drawn.includes(v.note.signer)) return { ok: false, why: `${v.note.signer.slice(0, 16)} was not drawn for that round` };
@@ -122,7 +124,7 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
     const entriesDueMs = win.ownFinalAfterMs + NO_QUORUM_FINAL_GRACE_MS;
     const due = [[STALL_STAGE.RESULT, BigInt(nowMs) >= win.ownFinalAfterMs && upAt(win.ownFinalAfterMs), () => resultSilent(rid, seats, win.rerunDeadlineMs)],
       [STALL_STAGE.FINAL, BigInt(nowMs) >= entriesDueMs && upAt(entriesDueMs), () => finalSilent(rid, c, seats), true],
-      [STALL_STAGE.SETTLEMENT, BigInt(nowMs) >= win.finalAfterMs + STALL_SETTLEMENT_WAIT_MS, () => settlementSilent(rid)]];
+      [STALL_STAGE.SETTLEMENT, settlementNotesCount(c, settlementPointOf) && BigInt(nowMs) >= win.finalAfterMs + STALL_SETTLEMENT_WAIT_MS, () => settlementSilent(rid)]];
     for (const [stage, now, listOf, once = false] of due) {
       if (!now || db.prepare('SELECT 1 FROM stall_noted WHERE round_id = ? AND stage = ?').get(rid, stage)) continue;
       const silent = listOf();
@@ -175,9 +177,9 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
     const byRound = new Map();
     for (const r of db.prepare('SELECT round_id, close_ms, bytes FROM stall_notes WHERE close_ms > ? AND close_ms <= ?').all(Number(w.fromMs), Number(w.toMs))) {
       const h = toHex(new Uint8Array(r.round_id));
-      if (!byRound.has(h)) byRound.set(h, { rid: new Uint8Array(r.round_id), closeMs: BigInt(r.close_ms), notes: [] });
-      const bytes = new Uint8Array(r.bytes), v = verifyStallNote(bytes, { verify });
-      if (v.ok) byRound.get(h).notes.push({ ...v.note, bytes: toHex(bytes) });
+      if (!byRound.has(h)) byRound.set(h, { rid: new Uint8Array(r.round_id), closeMs: BigInt(r.close_ms), notes: [], contract: contractOfStall(new Uint8Array(r.round_id)) });
+      const x = byRound.get(h), bytes = new Uint8Array(r.bytes), v = verifyStallNote(bytes, { verify });
+      if (v.ok && stallNoteCounts(v.note, x.contract, settlementPointOf)) x.notes.push({ ...v.note, bytes: toHex(bytes) });
     }
     const seated = new Map(), out = [];
     for (const [roundId, x] of byRound) {
@@ -220,7 +222,7 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
   function check(claim, { census, w, entries, keptEntries }) {
     if (!Array.isArray(claim.stalled) || !claim.stalled.length) return { ok: true };
     const weights = weightsOfStall(entries);
-    return checkStallProof(claim.stalled, { census, window: stallWindow(w.toMs), verify, drawOf: presence.drawOf, dutyOf: presence.dutyOf, weightOf: (n) => weights.get(n) || 0n, keptWeight: sumOfStall(keptEntries),
+    return checkStallProof(claim.stalled, { census, window: stallWindow(w.toMs), verify, settlementPointOf, drawOf: presence.drawOf, dutyOf: presence.dutyOf, weightOf: (n) => weights.get(n) || 0n, keptWeight: sumOfStall(keptEntries),
       roundOf: (ridHex) => { try { return contractOfStall(fromHex(ridHex)); } catch { return null; } },
       certOf: (ridHex, role) => { const h = claim.certs && claim.certs[`${ridHex}:${role}`]; return h ? fromHex(h) : presence.heldCert(fromHex(ridHex), role); } });
   }

@@ -856,6 +856,17 @@ const chainCensusSumPoint = (network) => {
   const n = network === 'testnet' ? 'testnet4' : String(network || '');
   return Object.prototype.hasOwnProperty.call(CHAIN_CENSUS_SUM_HEIGHT, n) ? CHAIN_CENSUS_SUM_HEIGHT[n] : null;
 };
+/**
+ * THE FIRST CENSUS HEIGHT A SETTLEMENT StallNote COUNTS AT (§5A.3 "Stalled in its rounds", RULED 2026-11-03, kanban #1069). RESULT and FINAL go on with the stall rule at STALL_HEIGHT (stall.js); at a
+ * settlement the replay still benches one honest seat for a bug, #1068, so that stage stays off: the code stays, no seat signs such a note and no check counts one. ONE CONSTANT PER NETWORK, as
+ * above; a network not named here, or null: never. Mainnet and testnet4: null, named only once #1068 is live and a replay of at least 8 days of new logs benches nobody at the ruled values.
+ */
+const STALL_SETTLEMENT_HEIGHT = Object.freeze({ mainnet: null, testnet4: null, regtest: 0, devnet: 0 });
+/** The point of `network` (networkOf's name; 'testnet' is testnet4, as networkAnchor reads it), null on a network that names none. */
+const stallSettlementPoint = (network) => {
+  const n = network === 'testnet' ? 'testnet4' : String(network || '');
+  return Object.prototype.hasOwnProperty.call(STALL_SETTLEMENT_HEIGHT, n) ? STALL_SETTLEMENT_HEIGHT[n] : null;
+};
 /** The owner's emergency key (§23A.5a): the advert names it, a request it signs takes an offline node out without losing its bond. */
 const EMERGENCY_VERSION = 17;
 const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
@@ -30492,7 +30503,8 @@ function nextRoundLine({ grids, game, nowMs = Date.now(), blockMs = 600000 }) {
 //                RESULT      an entry of the round went VOID by no quorum; silent: the seats that gave this seat no signed result for it
 //                FINAL       an entry was short of its FINAL signatures at the moment entries are due (RULED 2026-11-03, #1066); silent: the seats that did not sign FINAL for it
 //                SETTLEMENT  the round's settlement has not landed 2 h after final_after; silent: the seats that gave no signed word at the step the seat's last pass stopped at
-//                            (plan, ack, commit or share), or refused there after signing FINAL. A seat that refused and never signed FINAL is not listed: the FINAL stage answers for it
+//                            (plan, ack, commit or share), or refused there after signing FINAL. A seat that refused and never signed FINAL is not listed: the FINAL stage answers for it.
+//                            OFF behind STALL_SETTLEMENT_HEIGHT (RULED 2026-11-03, #1069): below it no seat signs such a note and no check counts one
 //   named        a round names a node when STALL_NOTE_QUORUM = 4 of its seats signed notes listing it, none of them itself. The lists need
 //                not be equal, so nobody has to converge on one set of bytes
 //   stalled      named by STALL_PROOF_ROUNDS = 3 rounds whose final_afters lie at least 1 h apart in the 72 h before the census block's median
@@ -30534,6 +30546,14 @@ function stallsOut(contract) {
 
 const STALL_STAGE = Object.freeze({ RESULT: 1, SETTLEMENT: 2, FINAL: 3 });
 const STALL_STAGE_NAMES = Object.freeze({ 1: 'RESULT', 2: 'SETTLEMENT', 3: 'FINAL' });
+/** Does a SETTLEMENT note count at this round? Under the stall rule, at or above the network's STALL_SETTLEMENT_HEIGHT. The round's census height decides, as for stallsOut. `pointOf` a harness's own. */
+function settlementNotesCount(contract, pointOf = stallSettlementPoint) {
+  if (!stallsOut(contract)) return false;
+  const point = pointOf(networkOf(contract.networkId));
+  return Number.isInteger(point) && Number(contract.censusHeight) >= point;
+}
+/** Does this verified note count at this round? RESULT and FINAL wherever the rule runs; SETTLEMENT as settlementNotesCount says. */
+const stallNoteCounts = (note, contract, pointOf = stallSettlementPoint) => note.stage !== STALL_STAGE.SETTLEMENT || settlementNotesCount(contract, pointOf);
 /** What a census says of an output it leaves out as stalled. */
 const STALLED_WHY = `named by ${STALL_NOTE_QUORUM} seats of each of ${STALL_PROOF_ROUNDS} failed duty rounds at least 1 h apart in the 72 h before the census: left out of the census, its bond untouched`;
 
@@ -30655,10 +30675,11 @@ function stalledFrom({ rounds, census, window, weightOf, baseWeight, dutyOf = nu
  * THE CHECK OF A STALL CLAIM - the same at every seat and at the client (#1052: "a claim without valid notes makes the census invalid, as for absence"). `claims` as stalledFrom
  * answers; `census` the node keys a claimed node must be in (a seat: its chain census; the client: none); `roundOf(ridHex)` the checker's contract of a named round or null;
  * `drawOf(ridHex, role)` its own draw of a seating, as presence.js, or null; `certOf(ridHex, role)` the certificate the claim carries or the checker holds; `dutyOf(ridHex)` as
- * presence.js; `weightOf(node)` a claimed node's weight; `keptWeight` the weight of the census the root commits (null: the cap is not read here). Answers { ok: true } or { ok: false, node, why, proof } - proof
+ * presence.js; `weightOf(node)` a claimed node's weight; `keptWeight` the weight of the census the root commits (null: the cap is not read here); `settlementPointOf` a harness's own. A SETTLEMENT note below its
+ * height is not counted, so a claim that rests on one falls short of its 4 seats. Answers { ok: true } or { ok: false, node, why, proof } - proof
  * 'census', 'version', 'seat-round', 'not-duty', 'certificate', 'outside', 'not-seated', 'note', 'too-few', 'cap' - or { ok: false, notYet: true, node, why }.
  */
-function checkStallProof(claims, { census = null, window, roundOf, drawOf, certOf, dutyOf = null, verify, weightOf, keptWeight = null }) {
+function checkStallProof(claims, { census = null, window, roundOf, drawOf, certOf, dutyOf = null, verify, weightOf, keptWeight = null, settlementPointOf = stallSettlementPoint }) {
   const inCensus = census ? new Set([...census].map(hexOfStall)) : null;
   const seatings = new Map();      // seat round -> who it seated
   const list = [];
@@ -30710,7 +30731,7 @@ function checkStallProof(claims, { census = null, window, roundOf, drawOf, certO
         const v = verifyStallNote(bytesOfStall(h), { verify });
         if (!v.ok) return wrong('note', `a note that names ${short} does not stand: ${v.why}`);
         if (v.note.roundId !== rid) return wrong('note', `a note that names ${short} at ${rid.slice(0, 16)} is about another round`);
-        notes.push(v.note);
+        if (stallNoteCounts(v.note, contract, settlementPointOf)) notes.push(v.note);
       }
       const by = namedBy(node, notes, seated);
       if (by.length < STALL_NOTE_QUORUM) return wrong('note', `${by.length} seats of round ${rid.slice(0, 16)} named ${short}; it takes ${STALL_NOTE_QUORUM}`);

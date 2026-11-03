@@ -2107,7 +2107,10 @@ it (§5A.3B, #1043). A set of nodes could enter only the rounds where it holds 3
 seats, lose, stay silent and get the stake back, all day. This rule does not
 stop the one free bet, and it does not stop a round with 4 or more colluders. It
 stops doing it all day, on the path absence already walks: signed proofs in the
-census claim, checked by every seat and by the client.
+census claim, checked by every seat and by the client. It runs at the RESULT and
+FINAL stages. The SETTLEMENT stage is built and off, behind its own height
+(RULED 2026-11-03, #1069, below), so until that height is named a stall at the
+settlement stays a repeatable free bet.
 
 ```text
 StallNote   { round_id, stage, silent[] }, signed by a seat's node key, after a
@@ -2115,11 +2118,16 @@ StallNote   { round_id, stage, silent[] }, signed by a seat's node key, after a
 stage       RESULT      an entry of the round went VOID by no quorum (§13C),
                         read once the round's re-run windows are over
             FINAL       an entry stands at a result's threshold and is short of
-                        its 5 FINAL signatures when entries are due: the re-run's
-                        own final_after + 60 s, round_end + 1865 s, the last
-                        moment any entry of the round is due
+                        its 5 FINAL signatures when entries are due: own
+                        final_after + 60 s, round_end + 1865 s, the last moment
+                        any entry of the round is due. A round waiting on a
+                        no-quorum entry has its FINAL due at the end of its wait
+                        + 60 s, the bound of §13A (#1060): the same moment
+                        (RULED 2026-11-03, #1069)
             SETTLEMENT  the round's settlement has not landed 2 h after
-                        final_after
+                        final_after. Counted only from STALL_SETTLEMENT_HEIGHT:
+                        below it no seat signs such a note, no seat takes one,
+                        and no check counts one (#1069)
 silent[]    RESULT      the round's seats that gave this seat no signed result for
                         that entry
             FINAL       the round's seats that did not sign FINAL for that run
@@ -2167,7 +2175,9 @@ cap         nodes out by this rule hold at most 10 % of the census's weight past
   at the settlement. That seat is not off the hook, because the FINAL stage lists
   it: a colluder is named at the first step it skipped, result, FINAL, ack, commit
   or share. A 5xx is nobody's word, a tunnel's as likely as the seat's, and reads
-  as no answer. The asker holds a refuser's FINAL at the moment the pass stops.
+  as no answer (RULED 2026-11-03, #1069): this is written for failed rounds only,
+  and a seat behind a broken tunnel did not answer. The asker holds a refuser's
+  FINAL at the moment the pass stops.
 - **The share is a step (#1066).** A seat that committed and sent no share is
   silent there, and so is one whose share does not verify against its public share
   of the round's key. Shares go to the asker only, so the asker lists what it
@@ -2175,6 +2185,14 @@ cap         nodes out by this rule hold at most 10 % of the census's weight past
   so the list names all of them and not the first. Each seat asks in its turn, so
   all have seen it. A seat that did not commit was not asked for a share: it is
   listed as at the commit.
+- **One silent seat does not stop a settlement (#1070).** The signature needs 5 of
+  the 7, and it needs every seat on its list. So a seat that commits and gives no
+  share, or a share that does not verify against its public share, goes off the
+  list, and the asker asks again at once while 5 remain. A nonce pair signs one
+  list once and a seat that signed a list that did not complete draws a new pair at
+  the next commit, so a failed list binds nobody to it. Measured before this: one
+  withheld share left every seat that had signed that list refusing any other until
+  it restarted.
 - **4 silent seats leave 3 honest, so no note stands. Accepted.** A round with 4
   or more colluders goes unrecorded: 3.3 % of rounds at 20 % of capital, 12.6 %
   at 30 %.
@@ -2207,13 +2225,26 @@ cap         nodes out by this rule hold at most 10 % of the census's weight past
   sentence to serve: a node is back by itself once fewer than 3 proofs lie in the
   last 72 h, and nobody decides anything, so nobody can be asked. It is drawn for
   nothing while it is out, so nothing new names it.
-- **The rule ships only on the replay (#1066).** Every refusal counted as silence
-  benched 6 honest seats over 14 days of real data, so the rule stays off (no
-  height named) until a replay at the values above benches none. At this ruling's
-  reading the same data benches 1 honest seat, by the settlement stage alone, with
-  or without the refusals #1067 showed are no evidence, so it stays off. Honest failures
-  read as noise to any stall rule: each refusal an honest seat gives is a bug to
-  fix first, and each one fixed makes this rule safer.
+- **RESULT and FINAL ship; SETTLEMENT stays off until a replay of new logs
+  (RULED 2026-11-03, #1069).** The replay at the values above, 2026-10-20 to
+  11-03, all 15 seats: RESULT and FINAL bench nobody. The SETTLEMENT stage benches
+  one honest seat, by the seat holding different entries, a bug (#1068). The values
+  do not move for that: tuned around one seat's bug they would let every real
+  colluder run 5 free bets instead of 3, and stop being right the moment the bug
+  is fixed. So the stage has its own height, `STALL_SETTLEMENT_HEIGHT`, not named on
+  mainnet or testnet4. It is named once #1068 is fixed and live and a replay of at
+  least 8 days of logs from seats running the fix benches nobody at these values.
+  The old logs cannot show that: they contain the bug. A benching with a cause is
+  fixed at the cause. Only one with no bug behind it is a question about values.
+  Honest failures read as noise to any stall rule: each refusal an honest seat gives
+  is a bug to fix first, and each one fixed makes this rule safer.
+- **What that leaves open, plainly.** Until that height is named, a stall at the
+  settlement is a repeatable free bet (§22, P6). RESULT and FINAL make an attacker
+  move later in the round. They do not stop it.
+- **FINAL is unstressed, not proven.** No failed round in the replay had a seat
+  that signed FINAL holding an entry short at that moment, so the stage read zero
+  rounds. That is acceptable because a false note there needs a failed round to
+  exist at all.
 - **Slow honest seats.** Nothing is noted unless the round failed, so 1-2 slow
   seats never count. A restart shorter than the spacing is one proof at most. A
   load spike is the real risk: 3 seats on one overloaded host failing rounds again
@@ -2226,13 +2257,17 @@ cap         nodes out by this rule hold at most 10 % of the census's weight past
 **Version.** Protocol 26, `STALL_VERSION`, on one height per network
 (`STALL_HEIGHT`, named after every seat of the network runs it; mainnet from
 genesis, testnet4 not named yet). 2.0 only. A census below it never leaves a
-stalled node out, and its claim and its commit are the bytes they were.
+stalled node out, and its claim and its commit are the bytes they were. The
+SETTLEMENT stage has its own height on top of that, `STALL_SETTLEMENT_HEIGHT`, read
+at the round's census height: not named on mainnet or testnet4, 0 on a regtest and
+a devnet, so the code stays run. A claim that needs a note below it falls short of
+its 4 seats and makes the census invalid, at every seat and at the client.
 StallNote is type 0x41, `SettlementCommit` 0x40.
-(arena-protocol `stall.js` stallsOut, stalledFrom, checkStallProof, stallCapKept,
+(arena-protocol `stall.js` stallsOut, settlementNotesCount, stallNoteCounts, stalledFrom, checkStallProof, stallCapKept,
 `STALL_NOTE_QUORUM`, `STALL_PROOF_ROUNDS`, `STALL_WINDOW_MS`, `STALL_CAP_BPS`,
-`STALL_SETTLEMENT_WAIT_MS`; `settlement-ack.js` signSettlementCommit;
+`STALL_SETTLEMENT_WAIT_MS`, `STALL_SETTLEMENT_HEIGHT`; `settlement-ack.js` signSettlementCommit;
 `client-committee.js` absenceFromChain; arena-node `stall-book.js`, `settlement.js`
-`#stoppedAt` and `#gatherShares`, `roster.js` absentCensus; `tools/stall-replay.mjs`, the replay.)
+`#stoppedAt`, `#gatherShares`, `#listed` and `#leaveOut`, `roster.js` absentCensus; `tools/stall-replay.mjs`, the replay.)
 
 `bond_min(role)` is **named in the Round Contract**, not global. A round
 declares the bracket it plays at and the floor that goes with it, and a
@@ -5897,14 +5932,17 @@ player wallet balance (§24A.1)
        Silence leaves no artifact and is not slashable. Chance of holding
        3 of 7: 14.8 % at 20 % of capital, 35.3 % at 30 %. Committees are
        known hours ahead, so a player can choose those rounds. From protocol
-       26 a set of nodes that does it again and again leaves the draw
-       (§5A.3, "Stalled in its rounds").
+       26 a set of nodes that does it again and again at the result or FINAL
+       leaves the draw (§5A.3, "Stalled in its rounds"). At the settlement it
+       does not yet: that stage is off until its height is named (#1069).
 
 **P6 is a live exploit shape, not a corner case (RULED 2026-11-02, kanban
 #1045).** Enter only rounds where you hold 3 seats. If you lose, stay silent and
 get the stake back. If you win, let it settle. That is a risk-free bet,
 repeatable up to the stake ceiling until the stall rule takes those nodes out of
-the draw (§5A.3, the owner's choice on #1044). There is one set of 7 since protocol 2 (§5A.9), so the re-run
+the draw (§5A.3, the owner's choice on #1044). The rule reads the result and FINAL
+stages now; at the settlement it stays repeatable until `STALL_SETTLEMENT_HEIGHT` is
+named (#1069). There is one set of 7 since protocol 2 (§5A.9), so the re-run
 window of §13C does nothing against it: it helps honestly overloaded seats, not
 collusion.
 
@@ -9904,7 +9942,7 @@ committee nor outcome).
 | **Lying client sets the refund or payout key** | Compromised web host | Refund went to the paying wallet by construction | Key from the player's seed with a visible fingerprint; known-good client hash for paying rounds; NWC budget (§24) |
 | **A seat serves its own key as `claim_pk`** | One settlement seat | Not considered | `claim_pk` valid only with ≥5 seats' signatures (§23.1 step 0) |
 | **Player builds a lock with a short expiry or wrong fields** | Any player | Not considered | STAKE_COMMITTED only after ≥5 seats verified every field via the contract id (§23.1 step 5) |
-| **Three seats stall settlement** so losers are refunded | 3 settlement seats | Listed as delay only | Not slashable: silence is not signed bytes (§5A.3). Open, kanban #1044 |
+| **Three seats stall settlement** so losers are refunded | 3 settlement seats | Listed as delay only | Not slashable: silence is not signed bytes (§5A.3). Open: the stall rule's settlement stage is off until its height is named (#1044, #1069) |
 | Compromised web host sets a huge donation | Serve a lying client | Uncapped | Capped at 100%, second confirmation above 5% (§22A) |
 | Round with a backdoored simulation core | Publish a round | Player trusts the hash blindly | Client refuses unknown `sim_wasm_hash` for real money (§5) |
 | **Census divergence** — participants disagree on who is eligible | Selective gossip, withheld advertisements | Committee disputes, ungrounded rounds | Census is chain state at `census_height`; subjective criteria removed; outpoint ordering is unmineable (§5A.2–5A.4) |
