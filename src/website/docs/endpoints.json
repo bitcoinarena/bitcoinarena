@@ -13908,8 +13908,8 @@
   "path": "/slash-release",
   "params": "query start (the start's txid, 64 hex)",
   "auth": "none",
-  "returns": "200 JSON { node, start, release?: { tableId, table, txid, feeSats, sent, own: { node, signature }, signatures[] }, fallback?: {...}, carried[] }; 400",
-  "purpose": "What this seat built for one started template-3 bond (spec 5A.3B): the payout table and spend of its release and of its fallback, its own signature on the release and the other panel members' signatures it holds over the same bytes, and what it carried as a carrier. Panel members read each other's signatures here.",
+  "returns": "200 JSON { node, start, release?: { tableId, table, txid, feeSats, sent, own: { node, signature }, signatures[] }, fallback?: {...}, carried[], escrow?: { tableId, spends[{ escrow, path, txid, outputs }], proposals[{ escrow, path, outputsId, loadHeight, outputs, txid, sent, own, signatures[] }] } }; 400",
+  "purpose": "What this seat built for one started template-3 bond (spec 5A.3B): the payout table and spend of its release and of its fallback, its own signature on the release and the other panel members' signatures it holds over the same bytes, and what it carried as a carrier. Panel members read each other's signatures here. For a table that left money in escrow (RULED 2026-11-03, kanban #1085), `escrow` lists the escrow spends this seat found on the chain and its own proposals for the escrow now, each outputs[] with the height it names and the signatures it holds over the same bytes; panel members read each other's here, and anyone the spends.",
   "audience": "node-to-node",
   "line": 0,
   "summary": "A started bond's release and fallback",
@@ -14039,6 +14039,60 @@
   ],
   "headers": [],
   "changesState": false,
+  "needsAuth": "none"
+ },
+ {
+  "method": "GET",
+  "path": "/slash/{tableId 64 hex}/carriers",
+  "params": "path: the payout table's id",
+  "auth": "none",
+  "returns": "200 JSON { tableId, carriers: [{ node, tableId, escrow, federation, script, signature }] }",
+  "purpose": "The CarrierPegIn records this seat holds for a slash table's escrow (spec 5A.3B, RULED 2026-11-03, kanban #1085): each a carrier's peg-in into one federation for one escrow outpoint, signed by its node key over tagged_hash(\"ARENA/v1/CarrierEscrowPegIn\", payout_table_id || escrow txid || escrow vout || federation_id || script). An escrow spend pays only scripts named here.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "An escrow's carriers",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The carriers' signed peg-ins."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none"
+ },
+ {
+  "method": "POST",
+  "path": "/slash/{tableId 64 hex}/carriers",
+  "params": "path: the payout table's id; body JSON CarrierPegIn",
+  "auth": "none",
+  "returns": "200 JSON { ok, kept }; 400 not a CarrierPegIn; 409 refused by the carrier rule; 503 this seat has not read that table confirmed",
+  "purpose": "Takes a carrier's CarrierPegIn { node, tableId, escrow \"txid:vout\", federation, script, signature } for a slash table's escrow (RULED 2026-11-03, kanban #1085), checked before it is kept: the node key's signature, a table this seat reads confirmed, an escrow outpoint of that table, and a node the carrier rule lets carry it (panel A's members, or the census key's holders less the accused and the round's seats). A new one is handed on to the escrow's signers.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "Take a carrier's escrow peg-in",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "description": "A CarrierPegIn as GET answers it."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "Taken; kept false when it was held already."
+   },
+   {
+    "status": "409",
+    "contentType": "text/plain",
+    "description": "Refused, with the reason."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
   "needsAuth": "none"
  }
 ]

@@ -226,7 +226,7 @@ import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { gameLive } from './game-live.js';
 import { readReserve } from './federation-reserve.js';
-import { thresholdOf as thresholdOfFederation } from '../../arena-protocol/src/federation-record.js';
+import { thresholdOf as thresholdOfFederation, recordStatusName } from '../../arena-protocol/src/federation-record.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY, findSeriesPublication as findSeriesPublicationIndexed } from './roster.js';
 import { createSeriesPull, PULL_EVERY_MS } from './series-pull.js';
 import { createEntryRelay, RELAY_HEADER, lookAtMembers, seatView } from './entry-relay.js';
@@ -4273,7 +4273,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const slashStarter = holdWatch && censusKey.feeCoin ? createSlashStarter({ key: round.pubkey, network: censusKey.network, db: round.db, store: new CensusKeyStore(round.db), thresholdOf: censusKey.scan.thresholdOf, tipHeight: censusKey.tipHeight, entriesAtTip: entriesAtTipForStart,
     heldProofs: async () => [...round.allSlashProofs(), ...round.allRerunSlashProofs(), ...round.auditSlashProofs(), ...round.doubleSlashProofs(), ...round.tableSlashProofs(), ...(await abandonedHeld())].flatMap((p) => { const bytes = round.relayGet(Buffer.from(p.proofId)); return bytes ? [{ proofId: p.proofId, bytes, seenMs: p.seenMs }] : []; }), bytesOf: (id) => round.relayGet(Buffer.from(id)), judge: judgeProofBytes, holdsFor: holdsForStart, feeCoin: censusKey.feeCoin, send: (hex) => chainSend(hex), urlsOf: () => censusUrls || [],
     stepMs: Number(process.env.ARENA_SLASH_FILE_STEP_MS || 600000), log: (l) => console.log(l),
-    checkOther: (request) => (slashRelease ? slashRelease.checkFallback(request) : { ok: false, why: 'this seat runs no release or fallback' }),
+    checkOther: (request) => (slashRelease ? slashRelease.checkOther(request) : { ok: false, why: 'this seat runs no release or fallback' }),
     feeSecret: (proofId) => taggedHash('ARENA/v1/SlashFeeKey', Uint8Array.from([...round.identity.secret, ...proofId])),
     // THE REPAID FEE GOES HOME: once the release or the fallback that repaid it is confirmed, to the wallet a hold's return goes to
     txOut: typeof chainTxOut === 'function' ? chainTxOut : null, returnScript: () => ownReturnScript(), ownServed: (start) => (slashRelease ? slashRelease.served(start) : null) }) : null;
@@ -4335,6 +4335,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return out;
   };
+  /** THE RESERVES' VIEW AT A HEIGHT (an escrow spend's named height, RULED 2026-11-03 #1085): each federation's record in force there, the newest this seat verified at or below it */
+  const slashFederationsAt = async (height) => {
+    const out = [];
+    for (const f of (fedRecords && typeof fedRecords.list === 'function' ? fedRecords.list() : [])) {
+      const rec = typeof fedRecords.recordAt === 'function' ? fedRecords.recordAt(f.federation, height) : null;
+      if (!rec) continue;
+      let k = null; try { k = await reserveKeyFor(f.federation); } catch { k = null; }
+      out.push({ federation: f.federation, status: String(rec.__status || recordStatusName(rec)), reserveKey: k ? toHex(k) : null, reserveSats: String(rec.reserveSats || 0), exposureCapSats: String(rec.exposureCapSats || 0) });
+    }
+    return out;
+  };
   /** A transaction off this seat's chain: the node's index or mempool first, else the blocks from `near` down, a few at most (no txindex needed) */
   const slashRawTx = async (txid, near) => {
     try { if (typeof chainRawTx === 'function') return await chainRawTx(txid); } catch { /* no index: the blocks */ }
@@ -4348,7 +4359,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     portFor: (fid) => portOfFederation(fromHex(fid)), scriptOf: (address) => addressScript(address, HRP_OF[censusKey.network] || 'tb'),
     reserveKeyOf: (fid) => reserveKeyFor(fid), keepReserveRow: (row) => round.putDonationOutputs([row]), urlOf: (k) => urlOfKey.get(k) || null,
     heldKey: (k) => new CensusKeyStore(round.db).held(k), thresholdOf: censusKey.scan.thresholdOf, holdersOf: (k, h) => censusKey.scan.holdersAt(k, h), signer: () => (slashStarter ? slashStarter.signer : null),
-    send: (hex) => chainSend(hex), stepMs: Number(process.env.ARENA_SLASH_FILE_STEP_MS || 600000), log: (l) => console.log(l) }) : null;
+    send: (hex) => chainSend(hex), stepMs: Number(process.env.ARENA_SLASH_FILE_STEP_MS || 600000), log: (l) => console.log(l), federationsAt: slashFederationsAt,
+    txOut: async (txid, vout) => { if (typeof chainTxOut !== 'function') return null; const o = await chainTxOut(txid, vout).catch(() => null); return o ? { sats: o.sats, script: String(o.script).toLowerCase(), confirmations: o.confirmations } : null; } }) : null;
   // THE CARRIERS ON THEIR OWN LOOP: a claim waits for the federation's own depth, minutes, and the pass above must not wait on it
   let carrying = false;
   const carryTimer = slashRelease ? setInterval(() => { if (shuttingDown || carrying) return; carrying = true; slashRelease.carry().catch((e) => console.error(`[slash] the carriers did not run: ${e.message}`)).finally(() => { carrying = false; }); }, 15000) : null;
@@ -11256,6 +11268,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
       // A RELAY KEEPS A SLASH PROOF TOO (5A.3B, kanban #1065), under H(fraud_proof) and nothing else: the bytes that hash to an id are the proof, so a seat that does not hold the round relays them freely,
       // and bytes that do not are not a copy of anything. A round's proof must read as one, so that this door is no store of anything else.
+      // AN ESCROW'S CARRIERS (RULED 2026-11-03, kanban #1085): CarrierPegIn { payout_table_id, escrow outpoint, federation_id, peg-in script } signed by the carrier's node key,
+      // checked against the carrier rule before it is kept, and handed on to the escrow's signers
+      const carriersAt = /^\/slash\/([0-9a-f]{64})\/carriers$/.exec(url.pathname);
+      if (carriersAt && slashRelease && req.method === 'GET') return json(res, 200, slashRelease.servedCarriers(carriersAt[1]));
+      if (carriersAt && slashRelease && req.method === 'POST') {
+        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'that is not JSON'); }
+        const took = await slashRelease.takeCarrierPegIn(carriersAt[1], body);
+        return took.ok ? json(res, 200, took) : text(res, took.status || 409, took.why);
+      }
       const slashed = /^\/slash\/([0-9a-f]{64})$/.exec(url.pathname);
       if (slashed && req.method === 'PUT') {
         const bytes = await read(req), u8 = new Uint8Array(bytes);

@@ -662,6 +662,15 @@ export function releaseLeaf({ panelA, panelB, holdBlocks }) {
   return cat(relativeLock(holdBlocks), panelCount(panelA, OP_NUMEQUALVERIFY), panelCount(panelB, OP_NUMEQUAL));
 }
 
+/**
+ * AN ESCROW'S RELEASE (RULED 2026-11-03, kanban #1085): `<t-of-n panel A> <t-of-n panel B>`, the hold's release with no wait. Money a slash left in escrow is
+ * already owed to players and the reserves, so the panels that made it spend it as soon as there is somewhere to pay.
+ */
+export function escrowReleaseLeaf({ panelA, panelB }) {
+  checkPanels(panelA, panelB);
+  return cat(panelCount(panelA, OP_NUMEQUALVERIFY), panelCount(panelB, OP_NUMEQUAL));
+}
+
 /** RETURN: `<slash_return_blocks> CHECKSEQUENCEVERIFY DROP <bond_maturity> CHECKLOCKTIMEVERIFY DROP <node_key> CHECKSIG`. */
 export function returnLeaf({ nodeKey, bondMaturity, returnBlocks }) {
   return cat(relativeLock(returnBlocks), recoveryLeaf(nodeKey, blockHeight(bondMaturity)));
