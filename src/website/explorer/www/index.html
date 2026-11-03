@@ -49,8 +49,14 @@
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
   .stat { display: flex; flex-direction: column; gap: 4px; margin: 0; } .stat span { color: var(--dim); font-size: 13px; }
   .stat b { font-size: 26px; color: var(--btc); } .stat small { color: var(--dim); }
+  /* the played-rounds table (kanban #1097): a real table at every width - named columns, numbers right-aligned; scrolls sideways rather than fold into one line */
+  .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-top: 8px; }
+  table.played { width: 100%; min-width: 340px; } table.played th, table.played td { white-space: nowrap; text-align: right; padding: 7px 8px; font-variant-numeric: tabular-nums; }
+  table.played th:first-child, table.played td:first-child { text-align: left; } table.played td:nth-child(2) { font-weight: 700; }
+  @media (max-width: 600px) { table.played { min-width: 0; } table.played th, table.played td { padding: 6px 4px; font-size: 13px; } table.played th { white-space: normal; font-size: 10px; letter-spacing: 0; vertical-align: bottom; } }
   /* the charts (kanban #1095): recessive grid and ticks, a tooltip, the legend */
-  .chart { position: relative; } .chart svg { display: block; overflow: visible; }
+  .chart { position: relative; } .chart svg { display: block; overflow: visible; touch-action: pan-y; -webkit-user-select: none; user-select: none; }
+  .chart .hl { fill: #ffffff; opacity: .05; }
   .chart .grid { stroke: var(--line); stroke-width: 1; } .chart .base { stroke: #5a4552; stroke-width: 1; } .chart .cross { stroke: var(--dim); stroke-width: 1; stroke-dasharray: 3 3; }
   .chart .tick { fill: var(--dim); font: 11px system-ui, sans-serif; }
   .ctip { position: absolute; transform: translate(-50%, calc(-100% - 10px)); background: #140d12; border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 12px; line-height: 1.45; white-space: nowrap; pointer-events: none; z-index: 2; }
