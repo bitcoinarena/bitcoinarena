@@ -9995,8 +9995,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(got.bytes));
         }
+        // ONLY A SEAT OF THE ROUND ASKS FOR A COMMIT OR A SHARE (§5A.3, kanban #1075): from SETTLEMENT_ASK_HEIGHT the ask is signed by its node key (settlement.js)
+        let ask = null;
+        try { const h = req.headers['x-settlement-ask']; if (h) ask = new Uint8Array(Buffer.from(String(h), 'hex')); } catch { ask = null; }
         if (url.pathname === '/settle-commit') {
-          const got = await settlements.commit(r8, { txid: url.searchParams.get('txid'), entry, federation, acks: new Uint8Array(await read(req)) });
+          const got = await settlements.commit(r8, { txid: url.searchParams.get('txid'), entry, federation, acks: new Uint8Array(await read(req)), door: true, ask });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(encodeCommitments([got.commitment])));
@@ -10004,7 +10007,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (url.pathname === '/settle-share') {
           let list;
           try { list = decodeCommitments(new Uint8Array(await read(req))); } catch (e) { return text(res, 400, e.message); }
-          const got = await settlements.share(r8, list, { entry, federation });
+          const got = await settlements.share(r8, list, { entry, federation, door: true, ask });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(encodeShare(got.share)));

@@ -2193,6 +2193,36 @@ cap         nodes out by this rule hold at most 10 % of the census's weight past
   the next commit, so a failed list binds nobody to it. Measured before this: one
   withheld share left every seat that had signed that list refusing any other until
   it restarted.
+- **Only the round's seats ask for a commit or a share (RULED 2026-11-03, #1075).**
+  A share request spends the asked seat's nonce pair for that pass. With the doors
+  open to anyone, a stranger who saw the list on its way could reach a seat first
+  with a made-up list (the seat's own commitment and four invented ones), the seat
+  signed it, and the real list was refused: every pass, as often as it liked, a
+  stall cheaper than the 3 seats this section is about. From
+  `SETTLEMENT_ASK_HEIGHT` a commit or share request carries a `SettlementAsk`
+  signed by the asking seat's node key:
+
+  ```text
+  SettlementAsk { step, round_id, scope, settlement_txid, payload_hash },
+              signed by the asking seat's node key; travels as x-settlement-ask
+  step        1 commit, 2 share
+  scope       the round's own settlement, a late entry's or one federation's,
+              by a kind byte and that id (zeros for the round's own)
+  payload     the body sent: the acks for a commit, the commitment list for a share
+  answered    only if signed by a seat of the round's seating, over the settlement
+              the asked seat rebuilt and the very body it was sent; else 403
+  ```
+
+  The ack door stays open: acks are public evidence (§5A.3 table row) and are
+  published with the settlement, and holding them gets a stranger no commitment
+  once a commit needs a seat's signature. A seat of the round can still spoil its
+  own round's passes; that is a seat at fault, not a stranger. Measured on seven
+  real seats with a real 5-of-7 key and real acks: below the height a stranger
+  racing the asker spoiled 3 passes of 3 (18 made-up lists signed, the real list
+  refused "keeps no second pair" 18 times); at the height its 6 lists were refused
+  with 403 and the pass went through the first time. An honest round below the
+  height sends the same requests as before and no ask; at the height it sends the
+  same requests with an ask on each commit and share, and signs the same bytes.
 - **4 silent seats leave 3 honest, so no note stands. Accepted.** A round with 4
   or more colluders goes unrecorded: 3.3 % of rounds at 20 % of capital, 12.6 %
   at 30 %.
@@ -2263,11 +2293,19 @@ at the round's census height: not named on mainnet or testnet4, 0 on a regtest a
 a devnet, so the code stays run. A claim that needs a note below it falls short of
 its 4 seats and makes the census invalid, at every seat and at the client.
 StallNote is type 0x41, `SettlementCommit` 0x40.
+The signed ask has its own height too, `SETTLEMENT_ASK_HEIGHT` (#1075), read at the
+round's census height for a round with acks (protocol 22 on): mainnet from
+genesis, testnet4 not named yet, 0 on a regtest and a devnet. It is named after
+every seat of the network runs it, since a seat of an older release would refuse
+signed asks or send unsigned ones. Below it the commit and share doors answer as
+before. 2.0 only: the 1.9 line keeps the open doors, where a made-up list costs a
+seat only the pass it lands in (#1070). `SettlementAsk` is type 0x45.
 (arena-protocol `stall.js` stallsOut, settlementNotesCount, stallNoteCounts, stalledFrom, checkStallProof, stallCapKept,
 `STALL_NOTE_QUORUM`, `STALL_PROOF_ROUNDS`, `STALL_WINDOW_MS`, `STALL_CAP_BPS`,
-`STALL_SETTLEMENT_WAIT_MS`, `STALL_SETTLEMENT_HEIGHT`; `settlement-ack.js` signSettlementCommit;
+`STALL_SETTLEMENT_WAIT_MS`, `STALL_SETTLEMENT_HEIGHT`; `settlement-ack.js` signSettlementCommit,
+signSettlementAsk, checkSettlementAsk, asksBySeat; `constants.js` `SETTLEMENT_ASK_HEIGHT`;
 `client-committee.js` absenceFromChain; arena-node `stall-book.js`, `settlement.js`
-`#stoppedAt`, `#gatherShares`, `#listed` and `#leaveOut`, `roster.js` absentCensus; `tools/stall-replay.mjs`, the replay.)
+`#stoppedAt`, `#gatherShares`, `#listed`, `#leaveOut`, `#askHeaders` and `#askRefusal`, `roster.js` absentCensus; `tools/stall-replay.mjs`, the replay.)
 
 `bond_min(role)` is **named in the Round Contract**, not global. A round
 declares the bracket it plays at and the floor that goes with it, and a
