@@ -40,3 +40,16 @@ test('a copy for a federation that is not HALTED here, by a stranger, or forged 
   assert.match(l.offer({ spentSet: 'zz' }).why, /./);
   assert.equal(l.list()[0].spentSet, null);
 });
+
+test('a mark of theft halts the federation for liquidation from the alarm\'s height; a record\'s halt still counts first (kanban #1093 part 2)', async () => {
+  const { createReserveAlarms } = await import('../src/reserve-alarms.js');
+  const alarms = createReserveAlarms();
+  const open = createLiquidations({ records: recordsAt('OPEN', null), clocks: TESTNET_CLOCKS, verify, alarms });
+  assert.deepEqual(open.list(), [], 'no alarm: nothing liquidated');
+  alarms.raise({ federation: FID, kind: 'unbacked-spend', height: 158900, txid: 'ee'.repeat(32) });
+  const [x] = open.list();
+  assert.deepEqual([x.federation, x.haltHeight, x.liquidatesAt, x.claimWindowCloses, x.alarm.kind, x.alarm.txid], [FID, 158900, 158912, 158900 + 648, 'unbacked-spend', 'ee'.repeat(32)]);
+  assert.equal(open.offer(said(guardians[0], 41, [1])).ok, true, 'its guardians\' spent-set copies are taken for it');
+  const both = createLiquidations({ records: recordsAt('HALTED', 880), clocks: TESTNET_CLOCKS, verify, alarms });
+  assert.equal(both.list()[0].haltHeight, 880, 'a signed HALTED record\'s height counts first');
+});
