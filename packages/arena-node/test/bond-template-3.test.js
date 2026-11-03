@@ -29,13 +29,15 @@ import { tweakPoint, combine } from '../src/curve.js';
 const hexOf = toHex;
 const person = (n) => schnorr.getPublicKey(taggedHash('ARENA/test/Bond3', Uint8Array.from([n])));
 const nodeKey = schnorr.getPublicKey(new Uint8Array(32).fill(0x11));
+// THE OWNER KEY (kanban #1093 part 1, ruling #1103): path A and the hold's return are its, never the node key's
+const ownerKey = schnorr.getPublicKey(new Uint8Array(32).fill(0x22));
 const censusKey = person(1);
 const panelA = Array.from({ length: 7 }, (_, i) => person(10 + i));
 const panelB = Array.from({ length: 7 }, (_, i) => person(30 + i));
 const { arbitrationKeys } = genesisFor('regtest');
 const internalKey = bondInternalKey({ nodeKey, arbitrationKeys }, { combine }).internalKey;
 const clocks = { holdBlocks: 6, returnBlocks: 144, fallbackBlocks: 288 };
-const hold = { nodeKey, censusKey, panelA, panelB, bondMaturity: 160000, ...clocks };
+const hold = { ownerKey, censusKey, panelA, panelB, bondMaturity: 160000, ...clocks };
 
 test('templates 1 and 2 are the bytes they were: output keys pinned off the tree before template 3 was written (aefaff835)', () => {
   const pins = [['regtest', 100, 'fb0a797f025871162be6a1324da67c64234c10aacb309af30b7e7ab5450da51e', 1],
@@ -54,7 +56,7 @@ test('path B and the three hold leaves are the spec\'s scripts, opcode for opcod
   const n = hexOf(nodeKey), c = hexOf(censusKey);
   assert.equal(hexOf(slashStartLeaf(nodeKey, censusKey)), `20${n}ad20${c}ac`);
   assert.equal(hexOf(fallbackLeaf({ censusKey, fallbackBlocks: 288 })), `022001b27520${c}ac`);
-  assert.equal(hexOf(returnLeaf({ nodeKey, bondMaturity: 160000, returnBlocks: 144 })), `029000b275${'03007102'}b17520${n}ac`);
+  assert.equal(hexOf(returnLeaf({ ownerKey, bondMaturity: 160000, returnBlocks: 144 })), `029000b275${'03007102'}b17520${hexOf(ownerKey)}ac`, 'the return is the owner key\'s');
   const sorted = (list) => [...list].map(hexOf).sort();
   const count = (list, close) => { const [f, ...r] = sorted(list); return `20${f}ac${r.map((k) => `20${k}ba`).join('')}55${close}`; };
   const leaf = releaseLeaf({ panelA, panelB, holdBlocks: 6 });
@@ -75,18 +77,17 @@ test('a leaf over 252 bytes hashes with BIP-341\'s longer compact size; every sh
   assert.equal(hexOf(tapLeafHash(of(0x10000))), hexOf(tagged([0xfe, 0, 0, 1, 0], of(0x10000))), 'and an anchor\'s leaf over 65,535 bytes');
 });
 
-test('the bond: key path and path A as before, path B the census key\'s, and the output key depends on all of them', () => {
-  const inputs = { nodeKey, censusKey, arbitrationKeys, bondMaturity: 160000, internalKey };
-  const built = bond3OutputKey(inputs, { tweakPoint, combine });
+test('the bond: path A the owner key\'s, path B the census key\'s, no key path (NUMS), and the output key depends on all of them (kanban #1093 part 1)', () => {
+  const inputs = { nodeKey, ownerKey, censusKey, bondMaturity: 160000 };
+  const built = bond3OutputKey(inputs, { tweakPoint });
   assert.equal(built.ok, true, built.why);
-  assert.equal(hexOf(built.recovery), hexOf(tapLeafHash(recoveryLeaf(nodeKey, 160000))), 'path A is the same leaf');
+  assert.equal(hexOf(built.internalKey), '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0', 'unspendable: no cooperative door');
+  assert.equal(hexOf(built.recovery), hexOf(tapLeafHash(recoveryLeaf(ownerKey, 160000))), 'path A is the owner key\'s');
   assert.equal(hexOf(built.slash), hexOf(tapLeafHash(slashStartLeaf(nodeKey, censusKey))));
   assert.equal(hexOf(built.merkleRoot), hexOf(tapBranchHash(built.recovery, built.slash)));
-  assert.equal(bond3OutputKeyMatches(built.outputKey, inputs, { tweakPoint, combine }).ok, true);
-  for (const change of [{ censusKey: person(2) }, { bondMaturity: 160001 }])
-    assert.equal(bond3OutputKeyMatches(built.outputKey, { ...inputs, ...change }, { tweakPoint, combine }).ok, false, Object.keys(change)[0]);
-  const chosen = bond3OutputKey({ ...inputs, internalKey: person(3) }, { tweakPoint, combine });
-  assert.match(chosen.why, /not the MuSig2 aggregate/);
+  assert.equal(bond3OutputKeyMatches(built.outputKey, inputs, { tweakPoint }).ok, true);
+  for (const change of [{ censusKey: person(2) }, { bondMaturity: 160001 }, { ownerKey: person(4) }, { nodeKey: person(5) }])
+    assert.equal(bond3OutputKeyMatches(built.outputKey, { ...inputs, ...change }, { tweakPoint }).ok, false, Object.keys(change)[0]);
   for (const path of ['recovery', 'slash']) {
     const c = controlBlockFor(path, built);
     assert.equal(hexOf(rootFromControlBlock(path === 'recovery' ? built.recovery : built.slash, c.controlBlock).merkleRoot), hexOf(built.merkleRoot), path);
@@ -96,15 +97,16 @@ test('the bond: key path and path A as before, path B the census key\'s, and the
 });
 
 test('a template-3 advertisement carries its maturity and its census key; a reader rebuilds the bond from the body alone (kanban #1021)', () => {
-  const advert = { nodePubkey: nodeKey, censusKey, bondScriptTemplateVersion: BOND_TEMPLATE_V3, bondMaturityHeight: 160000 };
+  const advert = { nodePubkey: nodeKey, censusKey, ownerPubkey: ownerKey, bondScriptTemplateVersion: BOND_TEMPLATE_V3, bondMaturityHeight: 160000 };
   assert.deepEqual(bondMaturityOf(advert, { network: 'testnet4' }), { ok: true, maturity: 160000 });
   assert.equal(maturityStands(advert, 159000, 'testnet4').ok, true);
   assert.match(maturityStands({ ...advert, bondMaturityHeight: 159100 }, 159000, 'testnet4').why, /short of/);
-  const built = bond3OutputKey({ nodeKey, censusKey, arbitrationKeys, bondMaturity: 160000, internalKey }, { tweakPoint, combine });
+  const built = bond3OutputKey({ nodeKey, ownerKey, censusKey, bondMaturity: 160000 }, { tweakPoint });
   const script = fromHex(`5120${hexOf(built.outputKey)}`);
   const bond = { arbitrationKeys, arbitrationK: 5, bondMaturity: 100, tweakPoint, combine, network: 'regtest' };
   assert.equal(bondKeyMatches(script, advert, bond).ok, true);
   assert.equal(bondKeyMatches(script, { ...advert, censusKey: person(2) }, bond).ok, false, 'another key rebuilds another bond');
+  assert.equal(bondKeyMatches(script, { ...advert, ownerPubkey: person(4) }, bond).ok, false, 'another owner key rebuilds another bond');
   assert.equal(bondMaturityOf({ bondScriptTemplateVersion: 4 }, {}).ok, false);
 });
 
@@ -214,11 +216,10 @@ test('the census reads a template-3 bond naming the newest standing key, and ref
   const old = person(60), newest = person(61), later = person(62);
   const body = (k, key, over = {}) => ({ nodePubkey: k, operatorId: 'operator', protocolVersions: [1], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], endpoint: 'ws://node', region: 'eu-west',
     capacityClass: 1, softwareHash: new Uint8Array(32).fill(2), settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32), bondVout: 0,
-    bondScriptTemplateVersion: 3, bondMaturityHeight: CONFIRMED + 100, censusKey: key, payoutPubkey: new Uint8Array(32).fill(3), guardianOf: [], timestamp: 1788700000000n, ...over });
+    bondScriptTemplateVersion: 3, bondMaturityHeight: CONFIRMED + 100, censusKey: key, ownerPubkey: ownerKey, payoutPubkey: new Uint8Array(32).fill(3), guardianOf: [], timestamp: 1788700000000n, ...over });
   const bondOf = (k, key, over) => {
     const a = body(k, key, over);
-    const inner = bondInternalKey({ nodeKey: k, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey;
-    const { outputKey } = bond3OutputKey({ nodeKey: k, censusKey: key, arbitrationKeys: g.arbitrationKeys, bondMaturity: a.bondMaturityHeight, internalKey: inner }, { tweakPoint, combine });
+    const { outputKey } = bond3OutputKey({ nodeKey: k, ownerKey, censusKey: key, bondMaturity: a.bondMaturityHeight }, { tweakPoint });
     const transaction = bondTransaction(a, { outputKey, previousTxid: new Uint8Array(32).fill(k[0]) });
     return { tx: transaction, entry: { txid: parseTransaction(transaction).txid, vout: 0, pubkey: k, bondSats: 60000n, height: CONFIRMED, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false } };
   };

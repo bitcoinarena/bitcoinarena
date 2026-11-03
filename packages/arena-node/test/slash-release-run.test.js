@@ -28,7 +28,7 @@ const A = [1, 2, 3, 4].map(person), B = [5, 6, 7, 8].map(person);
 const panels = { panelA: A.map((p) => p.key), panelB: B.map((p) => p.key) };
 const accused = person(40), census = person(41);
 const BOND = 1_000_000n, MATURITY = 600, START_HEIGHT = 400, SLASH_HEIGHT = 399;
-const hold = holdOutputKey({ nodeKey: accused.key, censusKey: census.key, ...panels, bondMaturity: MATURITY, ...clocks }, { tweakPoint });
+const hold = holdOutputKey({ ownerKey: accused.key, censusKey: census.key, ...panels, bondMaturity: MATURITY, ...clocks }, { tweakPoint });
 const proofBytes = Uint8Array.from([9, 9, 9]);
 const proofId = taggedHash('ARENA/v1/SlashProof', proofBytes);
 const roundId = b32(0x51);
@@ -141,8 +141,8 @@ function world({ lossesOk = true } = {}) {
     return answer({}, 404);
   };
   const entries = [{ pubkey: accused.key, txid: bond.txid, vout: bond.vout, bondSats: String(BOND), script: fromHex(`5120${'74'.repeat(32)}`), hold: { txid: toHex(startTxid), vout: 0, height: START_HEIGHT },
-    advert: { bondScriptTemplateVersion: 3, censusKey: census.key, bondMaturityHeight: MATURITY } },
-  ...members.map((p) => ({ pubkey: p.key, txid: b32(1), vout: 0, bondSats: String(BOND), advert: { bondScriptTemplateVersion: 3, censusKey: census.key, bondMaturityHeight: MATURITY } }))];
+    advert: { bondScriptTemplateVersion: 3, censusKey: census.key, ownerPubkey: accused.key, bondMaturityHeight: MATURITY } },
+  ...members.map((p) => ({ pubkey: p.key, txid: b32(1), vout: 0, bondSats: String(BOND), advert: { bondScriptTemplateVersion: 3, censusKey: census.key, ownerPubkey: accused.key, bondMaturityHeight: MATURITY } }))];
   const feeFunding = serializeSpend({ version: 2, locktime: 0, inputs: [{ txid: b32(9), vout: 0, sequence: 0 }], outputs: [{ value: 700n, script: feeCoin.script }], witnesses: [[new Uint8Array(64)]] });
   const rawTx = async (txid) => (txid === startHex ? startRaw : txid === toHex([...feeCoin.txid].reverse()) ? feeFunding : null);
   for (const p of members) {

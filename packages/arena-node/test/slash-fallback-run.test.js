@@ -45,7 +45,7 @@ const accused = person(40), seat = person(41);
 const others = [person(50), person(51), person(52), person(53)];
 const LAYOUT = [[accused, [1, 2]], [seat, [3, 4]], [others[0], [5]], [others[1], [6]], [others[2], [7]], [others[3], [8]]];
 const BOND = 1_000_000n, MATURITY = 600, START_HEIGHT = 400, SLASH_HEIGHT = 399;
-const hold = holdOutputKey({ nodeKey: accused.key, censusKey: census.key, ...panels, bondMaturity: MATURITY, ...clocks }, { tweakPoint });
+const hold = holdOutputKey({ ownerKey: accused.key, censusKey: census.key, ...panels, bondMaturity: MATURITY, ...clocks }, { tweakPoint });
 const proofBytes = Uint8Array.from([7, 7, 7]);
 const proofId = taggedHash('ARENA/v1/SlashProof', proofBytes);
 const roundId = b32(0x52);
@@ -65,7 +65,7 @@ const federations = [{ federation: fedA, status: 'OPEN', reserveKey: toHex(reser
   { federation: fedB, status: 'OPEN', reserveKey: toHex(reserveKey(fedB)), reserveSats: '500000', exposureCapSats: '1000000' }];
 const contract = { federationId: fromHex(fedA), slashRemainder: 'SPLIT', minScore: 1, censusHeight: 300 };
 const LOSS = 300_000_000n;
-const advert = { bondScriptTemplateVersion: 3, censusKey: census.key, bondMaturityHeight: MATURITY };
+const advert = { bondScriptTemplateVersion: 3, censusKey: census.key, ownerPubkey: accused.key, bondMaturityHeight: MATURITY };
 const entries = [{ pubkey: accused.key, txid: bond.txid, vout: bond.vout, bondSats: String(BOND), script: fromHex(`5120${'84'.repeat(32)}`), hold: { txid: toHex(startTxid), vout: 0, height: START_HEIGHT }, advert },
   ...[seat, ...others, ...A, ...B].map((p, i) => ({ pubkey: p.key, txid: b32(10 + i), vout: 0, bondSats: String(BOND), advert }))];
 

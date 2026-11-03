@@ -296,7 +296,7 @@ test('an explorer outside the network: the census block must be its block; a tip
 test('a census holding a template-3 bond reads the standing keys, and one without asks nothing', async () => {
   const { view, ev, contract, rid } = setup();
   const headerBytes = Buffer.concat(headersOf(view).map((h) => Buffer.from(h)));
-  const third = bondTransaction({ ...advertFor(9, ['game']), bondScriptTemplateVersion: 3, bondMaturityHeight: HEIGHT + 100, censusKey: b32(0x51) }, { previousTxid: b32(0xc1), previousVout: 0, outputKey: bondFor(keyFor(9)) });
+  const third = bondTransaction({ ...advertFor(9, ['game']), bondScriptTemplateVersion: 3, bondMaturityHeight: HEIGHT + 100, censusKey: b32(0x51), ownerPubkey: b32(0x52) }, { previousTxid: b32(0xc1), previousVout: 0, outputKey: bondFor(keyFor(9)) });
   const asked = [];
   const answers = (entries) => async (url) => {
     asked.push(url.replace(/^https?:\/\/[^/]+/, ''));
