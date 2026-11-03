@@ -58,6 +58,24 @@ export function marketRates(manifest, fees = null) {
     ...(fees ? { websitePct: fees.websitePct } : {}) };
 }
 
+/** How long an order whose replay was refused waits before it is asked again, of any peer (kanban #1087). */
+export const REPLAY_RETRY_MS = 10 * 60 * 1000;
+/** A refusal no later block can lift: the stake lock is already older than the freshness window at the height it is verified at. */
+const REPLAY_NEVER = /blocks below the height \d+ it is verified at/;
+/** Which orders may be asked again (kanban #1087): `allow(o)` false while a refusal holds, `refused(o, why)` answers whether it is for good. */
+export class ReplayGate {
+  constructor({ now = () => Date.now(), retryMs = REPLAY_RETRY_MS, max = 4096 } = {}) { this.now = now; this.retryMs = retryMs; this.max = max; this.held = new Map(); }
+  allow(o) { const h = this.held.get(o); return !h || h.until <= this.now(); }
+  refused(o, why) {
+    const forever = REPLAY_NEVER.test(String(why));
+    this.held.delete(o);
+    this.held.set(o, { until: forever ? Infinity : this.now() + this.retryMs, why });
+    if (this.held.size > this.max) this.held.delete(this.held.keys().next().value);
+    return forever;
+  }
+  taken(o) { this.held.delete(o); }
+}
+
 export class OrderBook {
   constructor(round, { plugins, peersFor = () => [], fetcher = (u, o) => fetch(u, o), now = () => Date.now(), intervalMs = Number(BATCH_MS), feesFor = null,
     syncTimeoutMs = 4000 } = {}) {
@@ -514,6 +532,11 @@ export class OrderBook {
     return p;
   }
   #synced = new Map();    // round id hex -> { heard, needed } once a read was complete
+  // A REPLAY THAT FAILED IS NOT ASKED AGAIN AT ONCE (kanban #1087, measured 2026-11-03 on a live seat: 108 refusals a minute, the same 6
+  // orders of old rounds asked of 18 peers each settle pass, each refused because the stake lock is older than the freshness window - a
+  // refusal no later block can lift). An order refused for that reason is not replayed again; any other refusal waits REPLAY_RETRY_MS,
+  // across every peer, before the order is asked again. The batch stays incomplete as before.
+  #replayGate = null;
   #syncing = new Map();   // round id hex -> the read in flight
   // THE CURSOR PER ROUND AND SEAT (kanban #740 ruling, 2026-10-28: the seats ran out of memory): round id hex -> Map(seat base -> k),
   // the last batch of that seat's list this seat holds with every earlier one it listed - the next read asks only for later batches
@@ -614,11 +637,19 @@ export class OrderBook {
   }
 
   async #replay(rid, k, o, base) {
+    if (!this.#replayGate) this.#replayGate = new ReplayGate({ now: () => this.now() });
+    if (!this.#replayGate.allow(o)) return false;
+    const refused = (why) => {
+      const forever = this.#replayGate.refused(o, why);
+      console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: order ${o.slice(0, 16)} not replayed from ${base}: ${why}${forever ? ' (not asked again)' : ''}`);
+      return false;
+    };
     try {
       const r = await this.replayOrder(o, base);
-      if (!r.ok) console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: order ${o.slice(0, 16)} not replayed from ${base}: ${r.why}`);
-      return !!r.ok;
-    } catch (e) { console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: order ${o.slice(0, 16)} not replayed from ${base}: ${e.message}`); return false; }
+      if (!r.ok) return refused(r.why);
+      this.#replayGate.taken(o);
+      return true;
+    } catch (e) { return refused(e.message); }
   }
 
   /** The batches of the round this seat signed and nobody certified or voided yet. */
