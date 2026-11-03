@@ -42,7 +42,7 @@ test('roles: a switch flipped, the custody picture told, Save posts the roles th
   assert.deepEqual(custody, [false, true]);
   await c.save();
   // custody switched on is checked at once (kanban #641), then Save posts the roles
-  assert.deepEqual(posts, [['/api/roles/check', { roles: ['verify', 'settlement', 'custody'] }], ['/api/roles', { roles: ['verify', 'settlement', 'custody'] }]]); assert.equal(reloaded, 1);
+  assert.deepEqual(posts, [['/api/roles/check', { roles: ['verify', 'settlement', 'custody'] }], ['/api/roles', { roles: ['verify', 'settlement', 'custody'], hostGroup: '' }]]); assert.equal(reloaded, 1);
   const d = driven(RolesStep, { st: { roleInfo, roles: ['verify'] }, post: async () => ({ ok: false, why: 'custody needs your own Bitcoin Core' }), reload() {} });
   await d.save();
   assert.match(renderToStaticMarkup(d.render()), /class="msg bad"[^>]*>custody needs your own Bitcoin Core/);
@@ -182,4 +182,16 @@ test('promise: the 2.0 points for the roles chosen; custody needs the yes to poi
   assert.match(renderToStaticMarkup(guard.render()), /<button type="button">Continue<\/button>/);
   await guard.save();
   assert.deepEqual(posts, [['/api/promise', { text: 'I UNDERSTAND' }]]);
+});
+
+test('roles: with custody on, the node is asked where it runs (kanban #1093 part 4); the name goes with the roles, never without custody', async () => {
+  const off = renderToStaticMarkup(React.createElement(RolesStep, { st: { roleInfo, roles: [] }, post: async () => ({}), reload() {} }));
+  assert.doesNotMatch(off, /id="host-group"/);
+  const on = renderToStaticMarkup(React.createElement(RolesStep, { st: { roleInfo, roles: ['custody'], hostGroup: 'Hetzner' }, post: async () => ({}), reload() {} }));
+  assert.match(on, /<label class="field" id="host-group"><span>Where does this node run\? <small>\(optional\)<\/small><\/span><input type="text" maxLength="80"[^>]*value="Hetzner"/);
+  assert.match(on, /Only a hash of the name goes into your node&#x27;s advertisement/);
+  const posts = [];
+  const c = driven(RolesStep, { st: { roleInfo, roles: ['custody'] }, post: async (p, b) => { posts.push([p, b]); return { ok: true }; }, reload() {} });
+  c.setState({ hostGroup: 'my-vps-1' }); await c.save();
+  assert.deepEqual(posts.at(-1), ['/api/roles', { roles: ['custody'], hostGroup: 'my-vps-1' }]);
 });

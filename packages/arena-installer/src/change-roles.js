@@ -86,7 +86,7 @@ async function advertUpdateOf({ st, s, release, roles, hostedGames = s.hostedGam
         if (g) seats = [{ federationId: fromHex(g.federationId), guardianKey: fromHex(g.guardianKey) }]; } catch { /* none to repeat */ }
     }
   }
-  const advert = advertFor({ hostedGames, nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles, endpoint: s.reach.url,
+  const advert = advertFor({ hostedGames, hostGroup: s.hostGroup, nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles, endpoint: s.reach.url,
     payoutPubkey: payoutKeyOf(seed), maturity: s.bond.maturity, softwareHash, guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null, nowMs,
     ...(s.bond.censusKey ? { censusKey: fromHex(s.bond.censusKey) } : {}),
     emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null, guardianOf: seats });

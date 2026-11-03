@@ -14,7 +14,7 @@ import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { genesisFor, NO_CENSUS_KEY_READ, readsTemplate3Only } from '../../arena-protocol/src/genesis.js';
 import { bondOutputKey, bond3OutputKey, bondInternalKey, tapLeafHash, TAPLEAF_VERSION, maturityHeightFor, BOND_TEMPLATE_V2, BOND_TEMPLATE_V3, BOND_MATURITY_OFFSET, recoveryLeaf, controlBlockFor } from '../../arena-protocol/src/bond-script.js';
 import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-protocol/src/bond-spend.js';
-import { encodeAdvert, advertId, joinSignedAdvert } from '../../arena-protocol/src/advert.js';
+import { encodeAdvert, advertId, joinSignedAdvert, hostGroupOf } from '../../arena-protocol/src/advert.js';
 import { advertUpdatePayload } from '../../arena-protocol/src/advert-update.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { bondMarker, SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.js';
@@ -115,7 +115,7 @@ export const hostedGamesOf = (hex) => {
 /** WHY A NODE WITH NO OWNER KEY POSTS NO 2.0 BOND (kanban #1093 part 1): its path A and its hold's return are signed with that key. */
 export const NO_OWNER_KEY = 'a 2.0 bond is taken back with the owner key from this node\'s 24 words, and this node has none: show and write down its 24 words first (Settings, Your 24 words), then bond';
 
-export function advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, guardianEndpoint = null, nowMs = Date.now(), emergencyPubkey = null, guardianOf = [], hostedGames = null, censusKey = null, ownerPubkey = null }) {
+export function advertFor({ hostGroup = null, nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, guardianEndpoint = null, nowMs = Date.now(), emergencyPubkey = null, guardianOf = [], hostedGames = null, censusKey = null, ownerPubkey = null }) {
   const owner = ownerPubkey || emergencyPubkey;
   if (censusKey && !owner) throw new Error(NO_OWNER_KEY);
   return {
@@ -126,6 +126,8 @@ export function advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, 
     // a custody node's guardian can be drawn when nodes found a federation (§23A, ruling 3): capable, at its endpoint
     payoutPubkey, guardianOf, guardianCapable: Boolean(guardianEndpoint), guardianEndpoint: guardianEndpoint || '', timestamp: BigInt(nowMs),
     ...(emergencyPubkey ? { emergencyPubkey } : {}),
+    // THE MACHINE OR PROVIDER IT RUNS ON (kanban #1093 part 4): only the hash of the name the owner gave, so the founding draw spreads guardians
+    ...(String(hostGroup || '').trim() ? { hostGroup: hostGroupOf(hostGroup) } : {}),
   };
 }
 
@@ -164,7 +166,7 @@ const txidOf = (hex) => toHex(Uint8Array.from(parseTransaction(fromHex(hex)).txi
  * sent after the bond. Such a bond counts only with that slash_presig (5A.3B, kanban #1053), and the signature names the bond's txid, so the update comes after it. The funding pays
  * both carriers: only the body's length fixes a carrier, so its key is chosen before the bond exists. `oldBond.censusKey` (hex) says an old bond is template 3.
  */
-export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_SATS, operatorId, roles, endpoint, payoutPubkey,
+export function buildBond({ hostGroup = null, wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_SATS, operatorId, roles, endpoint, payoutPubkey,
   softwareHash = new Uint8Array(32), feeRate = 2, nowMs = Date.now(), oldBond = null, guardianEndpoint = null, emergencyPubkey = null, guardianOf = [], hostedGames = null, censusKey = null, network = NETWORK,
   ownerPubkey = null, ownerSecret = null }) {
   // A NETWORK THAT READS TEMPLATE 3 ONLY NEVER FALLS BACK (5A.3B, kanban #1065): every bond a node posts is built here, so nothing below can lock money in a bond that does not count
@@ -177,7 +179,7 @@ export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_
   if (!coins.length && !oldBond) throw new Error('the wallet holds no coins yet');
   const nodeKey = schnorr.getPublicKey(nodeSecret);
   const maturity = maturityAfter(tip, network);
-  const advert = advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, guardianEndpoint, nowMs, emergencyPubkey, guardianOf, hostedGames, censusKey, ownerPubkey });
+  const advert = advertFor({ hostGroup, nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, guardianEndpoint, nowMs, emergencyPubkey, guardianOf, hostedGames, censusKey, ownerPubkey });
   const ownerKey = advert.ownerPubkey || null;
   const id = advertId(advert);
   const body = joinSignedAdvert(encodeAdvert(advert), schnorr.sign(id, nodeSecret));

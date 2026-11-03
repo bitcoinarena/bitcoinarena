@@ -44,7 +44,7 @@ export async function switchToSeedKey({ home, release, post = false, chainKit = 
     const censusKey = await censusKeyOfNode(s);
     let built;
     try {
-      built = buildBond({ network: bondNetworkOf(s), hostedGames: s.hostedGames, wallet: w, nodeSecret: next, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`,
+      built = buildBond({ network: bondNetworkOf(s), hostedGames: s.hostedGames, hostGroup: s.hostGroup, wallet: w, nodeSecret: next, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`,
         roles: s.roles, endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, nowMs, censusKey,
         emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
     } catch (e) { return { ok: false, why: `${e.message} - the new bond needs ${bondSats} sat plus fees in the node's wallet (${w.address})` }; }

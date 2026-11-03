@@ -123,3 +123,15 @@ test('with no census key a bond stays template 2, and the seat that says so answ
   const k = new Uint8Array(32).fill(5);
   assert.equal(toHex(await censusKeyOfNode({ reach: { port: 1 } }, async () => ({ ok: true, json: async () => ({ keys: [{ publicKey: '11'.repeat(32) }, { publicKey: toHex(k) }] }) }))), toHex(k), 'the newest');
 });
+
+test('the advertisement names the hash of the machine or provider the owner gave, nothing when none (kanban #1093 part 4)', async () => {
+  const { advertFor } = await import('../src/bond.js');
+  const { hostGroupOf, encodeAdvert, decodeAdvert } = await import('../../arena-protocol/src/advert.js');
+  const base = { nodeKey: new Uint8Array(32).fill(1), operatorId: 'op-x', roles: ['custody'], endpoint: 'wss://n.example/x', payoutPubkey: new Uint8Array(32).fill(3),
+    maturity: 160000, softwareHash: new Uint8Array(32).fill(2), nowMs: 1_800_000_000_000 };
+  const a = advertFor({ ...base, hostGroup: '  Hetzner ' });
+  assert.deepEqual(a.hostGroup, hostGroupOf('hetzner'), 'trimmed and case-folded: two nodes named "Hetzner" and "hetzner" share a group');
+  assert.deepEqual(decodeAdvert(encodeAdvert(a)).hostGroup, a.hostGroup, 'through the bytes');
+  assert.equal('hostGroup' in advertFor({ ...base, hostGroup: '   ' }), false);
+  assert.equal('hostGroup' in advertFor(base), false);
+});
