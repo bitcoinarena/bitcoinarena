@@ -50,6 +50,7 @@ import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from '
 import { sendPlanToJson, planKey } from './winnings-send.js';
 import { askerOrder, eligibleAsker } from './payout.js';
 import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate } from './plan-taken.js';
+import { askPeers, PEER_ASK_MS, PEER_READ_MS, PEER_GRACE_MS } from './peer-ask.js';
 // the payouts of an accepted settlement kept as rows (GET /donations, GET /reserves): a walk-away's donation keys and a market's reserve
 // AND THE WEBSITE THAT BROUGHT AN ENTRY (kanban #676: "total referrer fees accumulated" on the explorer's metrics): its 'frontend' payout is a row
 // under the website's payout key, listed as 'website', so the seats can say what each website earned (GET /referral-fees)
@@ -150,8 +151,12 @@ export class LockSettlement {
   constructor(round, { dkg, port, curve, random, stakeSecrets, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
     signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null,
     turnClock = null, donationSetFor = null, donationTargetFor = null, orderBook = null, now = () => Date.now(), conflictsFor = null,
-    reserveKeyFor = null, feesFor = null, finalityOf = resultFinality } = {}) {
+    reserveKeyFor = null, feesFor = null, peerAskMs = PEER_ASK_MS, peerReadMs = PEER_READ_MS, peerGraceMs = PEER_GRACE_MS, finalityOf = resultFinality } = {}) {
     this.round = round;
+    // HOW LONG A SEAT IS WAITED FOR (peer-ask.js, kanban #1061)
+    this.peerAskMs = peerAskMs;
+    this.peerReadMs = peerReadMs;
+    this.peerGraceMs = peerGraceMs;
     // THE FEES IN FORCE AT A ROUND (funding-book.js feesAt): `feesFor(contract)` -> the fee set at its census height. A
     // version-11 round's node fee and every round's website share are settled from it; unset, today's
     this.feesFor = feesFor;
@@ -488,13 +493,12 @@ export class LockSettlement {
   // the same entries: each kept only if its player's session key signed it - a seat cannot forge one for anybody
   async #carryCancels(roundIdBytes) {
     if (!cancelCarryDue(this.#cancelsCarried, toHex(roundIdBytes), this.now(), this.round.entriesOf(roundIdBytes).length)) return;
-    for (const peer of this.peersFor(roundIdBytes)) {
-      let body;
-      try {
-        const answer = await this.fetcher(`${peer}/cancels?round=${toHex(roundIdBytes)}`);
-        if (!answer.ok) continue;
-        body = await answer.json();
-      } catch { continue; }
+    // EVERY SEAT IS READ, there is no threshold to a cancel; a seat that does not answer in time is as one that is down
+    const asked = await askPeers(this.peersFor(roundIdBytes), async (peer, signal) => {
+      const answer = await this.fetcher(`${peer}/cancels?round=${toHex(roundIdBytes)}`, { signal });
+      return answer.ok ? answer.json() : null;
+    }, { boundMs: this.peerReadMs });
+    for (const { value: body } of asked) {
       for (const c of (body && Array.isArray(body.cancels) ? body.cancels : [])) {
         if (!/^[0-9a-f]{64}$/.test(String(c.entry)) || !/^[0-9a-f]{128}$/.test(String(c.signature))) continue;
         const entryId = fromHex(c.entry);
@@ -747,25 +751,14 @@ export class LockSettlement {
       const q = `round=${toHex(roundIdBytes)}&entry=${toHex(entryIdBytes)}`;
       const own = await this.commit(roundIdBytes, { entry: entryIdBytes });
       if (!own.ok) return own;
-      const signers = [{ base: null, commitment: own.commitment }];
-      const refused = [];
-      for (const base of this.peersFor(roundIdBytes)) {
-        try {
-          const r = await this.fetcher(`${base}/settle-commit?${q}&txid=${m.txid}`, { method: 'POST' });
-          if (!r.ok) { refused.push(`${base}: ${(await r.text()).trim()}`); continue; }
-          signers.push({ base, commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] });
-        } catch (e) { refused.push(`${base}: ${e.message}`); }
-      }
+      const { signers, refused } = await this.#peerCommitments(roundIdBytes, own, q, m);
       if (signers.length < m.needed)
         return refuse(`${signers.length} of the ${m.needed} signer nodes the late settlement needs committed to it: ${refused.join('; ')}`);
       const listed = this.#listed(q, signers, m.needed);
       const combined = await this.#gatherShares(roundIdBytes, m, q, listed, { entry: entryIdBytes });
       if (!combined.ok) return this.#leaveOut(q, combined, listed, m.needed) ? this.settleLate(roundIdBytes, entryIdBytes) : combined;
       ({ signature } = combined);
-      for (const x of signers) {
-        if (x.base === null) continue;
-        try { await this.fetcher(`${x.base}/settle-signature?${q}`, { method: 'POST', body: signature }); } catch { /* it asks again */ }
-      }
+      await this.#handSignature(roundIdBytes, q, signature, m);
     }
     this.round.putLateLockSettlement({ roundId: roundIdBytes, entryId: entryIdBytes, txid: m.txid, message: m.message, signature, state: SUBMITTING,
       why: 'about to submit; if this signer node dies here, ask the federation for the claimed lock' });
@@ -1043,6 +1036,25 @@ export class LockSettlement {
   #resyncedAt = new Map();   // round id hex -> when its book was last read again on a mismatch (bookResync)
 
   /**
+   * THE PEERS' COMMITMENTS, each asked at the same time and within a bound (kanban #1061): the list needs a threshold, not every seat, so a hung seat costs the grace and
+   * not the settlement. Answers `signers`, this seat first and the peers in their order, and `refused`, each seat that is not among them, named.
+   */
+  async #peerCommitments(roundIdBytes, own, query, m) {
+    const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
+      const r = await this.fetcher(`${base}/settle-commit?${query}&txid=${m.txid}`, { method: 'POST', signal });
+      if (!r.ok) return { why: (await r.text()).trim() };
+      return { commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] };
+    }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: m.needed - 1, counts: (x) => !!x.commitment });
+    const signers = [{ base: null, commitment: own.commitment }];
+    const refused = [];
+    for (const { peer: base, value, error } of asked) {
+      if (value && value.commitment) signers.push({ base, commitment: value.commitment });
+      else refused.push(`${base}: ${value ? value.why : error.message}`);
+    }
+    return { signers, refused };
+  }
+
+  /**
    * THE SEATS THAT SIGN THIS LIST (kanban #1070): those that committed, less any that gave this asker no share for this settlement while enough others remain. Every seat that
    * commits goes on the list and every seat on a list must give its share, so a seat that commits and withholds would be listed again on every pass. `key` the settlement's query.
    */
@@ -1074,26 +1086,34 @@ export class LockSettlement {
    */
   async #gatherShares(roundIdBytes, m, q, signers, own) {
     const commitments = signers.map((s) => s.commitment).sort((a, b) => a.id - b.id);
-    const shares = [];
-    for (const s of signers) {
-      if (s.base === null) {
-        const mine = await this.share(roundIdBytes, commitments, own);
-        if (!mine.ok) return mine;
-        shares.push(mine.share);
-        continue;
-      }
-      try {
-        const r = await this.fetcher(`${s.base}/settle-share?${q}`, { method: 'POST', body: encodeCommitments(commitments) });
-        if (!r.ok) return { ...refuse(`${s.base} gave no share: ${(await r.text()).trim()}`), withheld: [s.base] };
-        shares.push(decodeShare(new Uint8Array(await r.arrayBuffer())));
-      } catch (e) { return { ...refuse(`${s.base} gave no share: ${e.message}`), withheld: [s.base] }; }
-    }
+    const mine = await this.share(roundIdBytes, commitments, own);
+    if (!mine.ok) return mine;
+    // EVERY PEER ON THE LIST AT ONCE, WITHIN THE BOUND (kanban #1061): there is no threshold here, the binding factors are over the whole list. Each share is over the one list,
+    // whichever answers first, and one that hung after its commitment is left off the next list like one that refused. `shares` keeps the list's order, this seat first.
+    const body = encodeCommitments(commitments);
+    const asked = await askPeers(signers.filter((s) => s.base !== null).map((s) => s.base), async (base, signal) => {
+      const r = await this.fetcher(`${base}/settle-share?${q}`, { method: 'POST', body, signal });
+      if (!r.ok) return { why: (await r.text()).trim() };
+      return { share: decodeShare(new Uint8Array(await r.arrayBuffer())) };
+    }, { boundMs: this.peerAskMs });
+    const none = asked.filter((x) => !x.value || !('share' in x.value));
+    if (none.length) return { ...refuse(`${none[0].peer} gave no share: ${none[0].value ? none[0].value.why : none[0].error.message}`), withheld: none.map((x) => x.peer) };
+    const shares = [mine.share, ...asked.map((x) => x.value.share)];
     const { signature } = aggregate340({ commitments, message: m.message, groupPublicKey: m.claimPk, shares, curve: this.curve });
     if (schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return { ok: true, signature };
     const held = this.dkg && this.dkg.publicSharesFor ? this.dkg.publicSharesFor(m.contract.nodes) : null;
     const spoilt = held && held.ok ? signers.filter((s, i) => s.base !== null && !verifyShare340({ id: s.commitment.id, share: shares[i],
       publicShare: held.shares.get(String(s.commitment.id)), groupPublicKey: m.claimPk, message: m.message, commitments, curve: this.curve })) : [];
     return { ...refuse('the combined settlement signature does not verify under the round\'s claim key', 500), withheld: spoilt.map((s) => s.base) };
+  }
+
+  /**
+   * THE COMBINED SIGNATURE, HANDED ON BEFORE THE SUBMIT: to every peer, not only those on the list, since a slow seat left off it committed all the same and keeps the
+   * signature if it rebuilt these bytes; one that did not refuses it. A seat that misses it asks again, so the submit waits for no more than the threshold's answers.
+   */
+  async #handSignature(roundIdBytes, query, signature, m) {
+    await askPeers(this.peersFor(roundIdBytes), (base, signal) => this.fetcher(`${base}/settle-signature?${query}`, { method: 'POST', body: signature, signal }),
+      { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: m.needed - 1 });
   }
 
   /** ROUND ONE: this signer node's nonce commitment for the settlement it would sign. */
@@ -1365,15 +1385,7 @@ export class LockSettlement {
       const q = `round=${toHex(roundIdBytes)}`;
       const own = await this.commit(roundIdBytes);
       if (!own.ok) return own;
-      const signers = [{ base: null, commitment: own.commitment }];
-      const refused = [];
-      for (const base of this.peersFor(roundIdBytes)) {
-        try {
-          const r = await this.fetcher(`${base}/settle-commit?${q}&txid=${m.txid}`, { method: 'POST' });
-          if (!r.ok) { refused.push(`${base}: ${(await r.text()).trim()}`); continue; }
-          signers.push({ base, commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] });
-        } catch (e) { refused.push(`${base}: ${e.message}`); }
-      }
+      const { signers, refused } = await this.#peerCommitments(roundIdBytes, own, q, m);
       if (signers.length < m.needed) {
         // THE ASKER ITSELF HELD THE BOOK SHORT (kanban #740): peers that rebuilt another settlement have it read the batches again,
         // and the next pass builds anew
@@ -1384,10 +1396,7 @@ export class LockSettlement {
       const combined = await this.#gatherShares(roundIdBytes, m, q, listed, {});
       if (!combined.ok) return this.#leaveOut(q, combined, listed, m.needed) ? this.#settleOnce(roundIdBytes) : combined;
       ({ signature } = combined);
-      for (const s of signers) {
-        if (s.base === null) continue;
-        try { await this.fetcher(`${s.base}/settle-signature?${q}`, { method: 'POST', body: signature }); } catch { /* it asks again */ }
-      }
+      await this.#handSignature(roundIdBytes, q, signature, m);
     }
     // THE INTENT IS ON DISK BEFORE THE SUBMIT, as a hold's settle is: a signer node that
     // dies here comes back knowing it signed, and asks the federation.
@@ -1451,15 +1460,7 @@ export class LockSettlement {
         const q = `round=${toHex(roundIdBytes)}&federation=${fid}`;
         const own = await this.commit(roundIdBytes, { federation: fid });
         if (!own.ok) { results.push({ federation: fid, ok: false, why: own.why }); continue; }
-        const signers = [{ base: null, commitment: own.commitment }];
-        const refused = [];
-        for (const base of this.peersFor(roundIdBytes)) {
-          try {
-            const r = await this.fetcher(`${base}/settle-commit?${q}&txid=${m.txid}`, { method: 'POST' });
-            if (!r.ok) { refused.push(`${base}: ${(await r.text()).trim()}`); continue; }
-            signers.push({ base, commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] });
-          } catch (e) { refused.push(`${base}: ${e.message}`); }
-        }
+        const { signers, refused } = await this.#peerCommitments(roundIdBytes, own, q, m);
         if (signers.length < m.needed) { results.push({ federation: fid, ok: false, why: `${signers.length} of the ${m.needed} signer nodes committed: ${refused.join('; ')}` }); continue; }
         const listed = this.#listed(q, signers, m.needed);
         const combined = await this.#gatherShares(roundIdBytes, m, q, listed, { federation: fid });
@@ -1469,7 +1470,7 @@ export class LockSettlement {
           continue;
         }
         ({ signature } = combined);
-        for (const x of signers) { if (x.base === null) continue; try { await this.fetcher(`${x.base}/settle-signature?${q}`, { method: 'POST', body: signature }); } catch { /* it asks again */ } }
+        await this.#handSignature(roundIdBytes, q, signature, m);
       }
       this.round.putFedLockSettlement({ roundId: roundIdBytes, federation: fid, txid: m.txid, message: m.message, signature, state: SUBMITTING,
         why: 'about to submit; if this signer node dies here, ask the federation for the claimed locks' });
@@ -1686,25 +1687,23 @@ export class LockSettlement {
   async planAgreed(roundIdBytes, lateEntryId, body, contract, peers, query) {
     const planId = planTakenId({ roundId: roundIdBytes, lateEntryId, rows: JSON.parse(body) });
     const own = this.planTakenBy(planId);
-    const answers = [];
-    for (const base of peers) {
-      try {
-        const r = await this.fetcher(`${base}/settle-sends?round=${query}`, { method: 'POST', body });
-        if (!r.ok) { answers.push({ base, why: (await r.text()).trim() }); continue; }
-        answers.push({ base, bytes: new Uint8Array(await r.arrayBuffer()) });
-      } catch (e) { answers.push({ base, why: e.message }); }
-    }
+    // EVERY PEER AT ONCE, AND THE THRESHOLD GOES ON (kanban #1061): `receiptsNeeded` as `countPlanTaken` reads it, this seat's own acceptance among them. A seat left past the
+    // grace is still sent the plan; only its acceptance is not in this certificate.
+    const asked = await askPeers(peers, async (base, signal) => {
+      const r = await this.fetcher(`${base}/settle-sends?round=${query}`, { method: 'POST', body, signal });
+      if (!r.ok) return { why: (await r.text()).trim() };
+      return { bytes: new Uint8Array(await r.arrayBuffer()) };
+    }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: receiptsNeeded(contract.settlementSlots) - 1, counts: (x) => !!x.bytes });
+    const answers = asked.map(({ peer: base, value, error }) => ({ base, ...(value || { why: error.message }) }));
     const counted = countPlanTaken({ own, answers, seats: contract.nodes, planId, slots: contract.settlementSlots });
     if (counted.final) {
       const certificate = joinCertificate(counted.certificate);
       this.planCertificates.set(lateEntryId ? `${toHex(roundIdBytes)}:${toHex(lateEntryId)}` : toHex(roundIdBytes), { planId, certificate });
       // EVERY SEAT HOLDS IT, not the asker alone: handed to each peer, which keeps it only if it stands against the plan
       // that peer kept itself (`takeCertificate`). A peer that misses it still signed its own acceptance.
-      const body = new Uint8Array(32 + certificate.length); body.set(planId, 0); body.set(certificate, 32);
-      for (const a of answers) {
-        if (!a.bytes) continue;
-        try { await this.fetcher(`${a.base}/settle-taken?round=${query}`, { method: 'POST', body }); } catch { /* it holds its own acceptance */ }
-      }
+      const handed = new Uint8Array(32 + certificate.length); handed.set(planId, 0); handed.set(certificate, 32);
+      await askPeers(answers.filter((a) => a.bytes).map((a) => a.base), (base, signal) => this.fetcher(`${base}/settle-taken?round=${query}`, { method: 'POST', body: handed, signal }),
+        { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: 0 });
     }
     return { ...counted, planId };
   }
@@ -1815,14 +1814,13 @@ export class LockSettlement {
   /** The plans this asker's peers keep, lowest-keyed first; the first that stands here is kept (see `check`). */
   async adoptPeerPlan(roundIdBytes, base) {
     const plans = [];
-    for (const peer of this.peersFor(roundIdBytes)) {
-      try {
-        const r = await this.fetcher(`${peer}/settle-sends?round=${toHex(roundIdBytes)}`);
-        if (!r.ok) continue;
-        const rows = await r.json();
-        if (Array.isArray(rows) && rows.length && !plans.some((p) => planKey(p) === planKey(rows))) plans.push(rows);
-      } catch { /* a peer down: the others decide */ }
-    }
+    // EVERY SEAT'S PLAN IS WEIGHED, lowest-keyed first below, so all are read at once and none is cut off by a threshold; a peer down or hung: the others decide
+    const asked = await askPeers(this.peersFor(roundIdBytes), async (peer, signal) => {
+      const r = await this.fetcher(`${peer}/settle-sends?round=${toHex(roundIdBytes)}`, { signal });
+      return r.ok ? r.json() : null;
+    }, { boundMs: this.peerReadMs });
+    for (const { value: rows } of asked)
+      if (Array.isArray(rows) && rows.length && !plans.some((p) => planKey(p) === planKey(rows))) plans.push(rows);
     plans.sort((a, b) => (planKey(a) < planKey(b) ? -1 : 1));
     const mine = this.round.sendAttemptsOf(roundIdBytes).filter((x) => x.attempt === 0);
     for (const rows of plans) {

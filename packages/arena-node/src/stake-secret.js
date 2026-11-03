@@ -44,8 +44,11 @@ import { outcomeFinality } from '../../arena-protocol/src/attested.js';
 import { heldOutcomes, attestedTable } from './game-market.js';
 import { isScalar } from '../../arena-protocol/src/manifest.js';
 import { pluginForRound } from './plugins.js';
+import { askPeers } from './peer-ask.js';
 
 /** signer node u16, the answering node's one-time key, and the share sealed to the asker. */
+// HOW LONG ONE SEAT IS WAITED FOR ITS SHARE (kanban #1061). The peers are asked in turn, so two hung seats cost twice this, inside the POST bound of whoever is waiting for this seat.
+const SHARE_ASK_MS = 15000;
 export const SEALED_ANSWER_BYTES = 2 + 32 + 48;
 
 export const encodeShareAnswer = ({ signerNode, ephemeralPubkey, sealed }) => {
@@ -68,7 +71,8 @@ export function decodeShareAnswer(bytes) {
 }
 
 export class StakeSecrets {
-  constructor(round, { curve, peers = [], fetcher = fetch, random, peersFor = null, bookStanding = null } = {}) {
+  constructor(round, { curve, peers = [], fetcher = fetch, random, peersFor = null, bookStanding = null, shareAskMs = SHARE_ASK_MS } = {}) {
+    this.shareAskMs = shareAskMs;
     // AN ORDER OF AN ORDER BOOK (comment 1127): the book's word on it - filled or not
     this.bookStanding = bookStanding;
     // WHAT AN ENTRY'S SHARES OPEN TO, KEPT (kanban #587, measured 2026-10-23 on an idle seat: ECDH in openShare/openMyShare 4.5 % of
@@ -266,7 +270,8 @@ export class StakeSecrets {
    *
    * Own share first, then the peers, and it STOPS at the threshold: asking a
    * sixth signer node for a secret five already reconstructed is spreading it for
-   * nothing.
+   * nothing. SO THE PEERS ARE ASKED ONE AT A TIME, each within a bound (kanban #1061):
+   * a share released is not taken back, and a seat that does not answer is passed over.
    */
   async open({ roundId, entryId, needed = SHARES_NEEDED }) {
     const opened = this.openedKept.get(`${toHex(entryId)}:${needed}`);
@@ -305,9 +310,13 @@ export class StakeSecrets {
         const proven = typeof this.round.provenEquivocation === 'function' && this.round.provenEquivocation(roundId, entryId);
         const url = `${peer}/share?round=${toHex(roundId)}&entry=${toHex(entryId)}`
           + `&signer node=${toHex(this.round.pubkey)}${proven ? '&proof=1' : ''}`;
-        const got = await this.fetch(url);
-        if (!got.ok) { refused++; why.push(`${peer}: ${await got.text()}`); continue; }
-        const raw = new Uint8Array(await got.arrayBuffer());
+        const [asked] = await askPeers([peer], async (_, signal) => {
+          const got = await this.fetch(url, { signal });
+          return got.ok ? { raw: new Uint8Array(await got.arrayBuffer()) } : { refusal: await got.text() };
+        }, { boundMs: this.shareAskMs });
+        if (asked.error) throw asked.error;
+        if (!asked.value.raw) { refused++; why.push(`${peer}: ${asked.value.refusal}`); continue; }
+        const { raw } = asked.value;
         const back = decodeShareAnswer(raw);
         const opened = await openShare({
           sealed: back.sealed, signerNode: back.signerNode, secret: this.round.identity.secret,
