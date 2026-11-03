@@ -20,7 +20,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { nodeBonds } from '../../arena-protocol/src/census.js';
 import { abandonmentProof, bondSpentProof } from '../../arena-protocol/src/absence.js';
 import { guardianSlashStands } from '../../arena-protocol/src/federation-slash.js';
-import { abandonedRows, outputsLeft, encodeAbandonedProof, joinAbandonedEvidence, splitAbandonedEvidence, abandonedProofId } from '../../arena-protocol/src/abandoned-slash.js';
+import { abandonedRows, outputsLeft, encodeAbandonedProof, decodeAbandonedProof, abandonedProofId } from '../../arena-protocol/src/abandoned-slash.js';
 import { abandonedSlashPoint, networkOf } from '../../arena-protocol/src/constants.js';
 import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDeparture, emergencyHex, readEmergencyHex } from './absences.js';
 import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
@@ -356,8 +356,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   /**
    * THE SLASHES THE RECORDS FILED (§23A.5, RULED 2026-11-02, kanban #1058, #1059): one row per output an ABANDONED row of a kept record left, read off the chain's census at the shared basis
    * height, for the arbitration set's intake (GET /slashes). No row, no read: a seat whose records name nobody ABANDONED pays nothing here. The output's spent state is the census's, and the
-   * set reads its own chain before it acts. `proof` is the hash of that output's AbandonedProof (§23A.5, kanban #1062, #1064), and the proof and this seat's copy of the record are kept under it:
-   * abandonedProof and abandonedEvidence serve them, at the door that lists them. Answers [{ federation, node, peer, proof, proofRef, since, recordHeight, txid, vout, sats, template }].
+   * set reads its own chain before it acts. `proof` is the hash of that output's AbandonedProof (§23A.5, kanban #1062, #1065), with this seat's copy of the record in it, and it is kept under that hash:
+   * abandonedProof serves it, at the door that lists it. One output is listed under the first proof built for it: a later record holding the row would only be another proof of one offence. Answers [{ federation, node, peer, proof, proofRef, since, recordHeight, txid, vout, sats, template }].
    */
   async function abandonedSlashes() {
     const rows = [...kept.entries()].flatMap(([federation, k]) => abandonedRows(k.record, abandonedFrom).map((r) => ({ federation, height: k.height, bytes: k.bytes, r })));
@@ -370,28 +370,29 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       while (bondsRead.size > 2) bondsRead.delete(bondsRead.keys().next().value);
     }
     return rows.flatMap(({ federation, height, bytes, r }) => outputsLeft(bondsRead.get(h), r.nodePubkey, r.sinceHeight).map((o) => {
-      const proof = encodeAbandonedProof({ federationId: fromHex(federation), nodePubkey: r.nodePubkey, proofRef: r.proofRef, txid: fromHex(o.txid), vout: o.vout }), id = toHex(abandonedProofId(proof));
-      keptProof(id, joinAbandonedEvidence(proof, bytes));
+      const name = `${toHex(r.nodePubkey)}:${toHex(r.proofRef)}:${o.txid}:${o.vout}`;
+      if (!proofListed.has(name)) { const proof = encodeAbandonedProof({ federationId: fromHex(federation), nodePubkey: r.nodePubkey, proofRef: r.proofRef, txid: fromHex(o.txid), vout: o.vout, record: bytes }), made = toHex(abandonedProofId(proof)); proofListed.set(name, made); keptProof(made, proof); }
+      const id = proofListed.get(name);
       return { federation, node: toHex(r.nodePubkey), peer: toHex(r.peerKey), proof: id, proofRef: toHex(r.proofRef), since: r.sinceHeight, recordHeight: height, txid: o.txid, vout: o.vout, sats: String(o.sats), template: o.template };
     }));
   }
+  const proofListed = new Map();             // the output and the row -> the hash this seat lists it under
   const proofsHeld = new Map();              // id hex -> bytes, what no store keeps; with a store only so each is written once
   const keptProof = (id, bytes) => { if (proofsHeld.has(id)) return; proofsHeld.set(id, keepProof ? true : bytes); if (keepProof) { try { keepProof(id, bytes); } catch { proofsHeld.delete(id); } } };
-  /** What is kept under a proof's hash, cut: { proof, proofBytes, record }, or null. The relay store keeps other things under other ids, and those are no proof of an abandonment. */
-  const heldUnder = (id) => { const held = proofsHeld.get(id), bytes = held instanceof Uint8Array ? held : proofOf ? proofOf(id) : null; try { return splitAbandonedEvidence(bytes); } catch { return null; } };
-  /** The bytes of an AbandonedProof by its hash, or null. */
-  const abandonedProof = (id) => { const got = heldUnder(id); return got ? got.proofBytes : null; };
-  /** The signed record this seat keeps beside that proof, or null. */
-  const abandonedEvidence = (id) => { const got = heldUnder(id); return got ? got.record : null; };
+  /** The bytes of an AbandonedProof by its hash, or null. The relay store keeps other things under other ids, and those are no proof of an abandonment. */
+  const abandonedProof = (id) => {
+    const held = proofsHeld.get(id), bytes = held instanceof Uint8Array ? held : proofOf ? proofOf(id) : null;
+    try { decodeAbandonedProof(bytes); return bytes; } catch { return null; }
+  };
 
   /**
-   * A PROOF AND ITS EVIDENCE HANDED TO THIS SEAT (PUT /slash/<id>, the proof then the signed record): the set hands them to every seat, so that a proof a slash commits to can be fetched from any of
-   * them. The first copy that stands is the one kept: any other names the same hash. Kept when the proof is that hash and the record stands on the census at its height, as a mirrored record is
-   * checked, is the proof's federation's, and its row names the proof's node and proof_ref. Answers { ok, status, why }.
+   * A PROOF HANDED TO THIS SEAT (PUT /slash/<id>): the set hands it to every seat, so that the proof a slash commits to can be fetched from any of them. The bytes are what they hash to. Kept when
+   * they hash to that id and the record in them stands on the census at its height, as a mirrored record is checked, is the proof's federation's, and its row names the proof's node and proof_ref.
+   * Answers { ok, status, why }.
    */
   async function takeAbandonedProof(id, bytes, inviteFederationId) {
     let p, record, height;
-    try { const cut = splitAbandonedEvidence(bytes); if (toHex(abandonedProofId(cut.proofBytes)) !== id) return { ok: false, status: 409, why: 'that is not the proof that id names' }; p = cut.proof; record = cut.record; height = splitSignedRecord(record).record.height; } catch (e) { return { ok: false, status: 400, why: e.message }; }
+    try { if (toHex(abandonedProofId(bytes)) !== id) return { ok: false, status: 409, why: 'those bytes are not the proof that hash names' }; p = decodeAbandonedProof(bytes); record = p.record; height = splitSignedRecord(record).record.height; } catch (e) { return { ok: false, status: 400, why: e.message }; }
     const entries = typeof censusAt === 'function' ? await Promise.resolve().then(() => censusAt(height)).catch(() => null) : null;
     if (!entries) return { ok: false, status: 503, why: `the census at ${height} is not read here` };
     const v = verifyFederationRecord(record, { census: entries, verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, inviteFederationId, networkId });
@@ -723,7 +724,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     censusKeys: () => { const b = basis(); return b.ok ? (b.census.entries || []).map((e) => e.pubkey).filter(Boolean) : []; },
     /** THE CENSUS THIS SEAT READS, its entries and height (GET /roles), or why none. */
     censusNow: () => { const b = basis(); return b.ok ? { ok: true, height: b.height, entries: b.census.entries || [] } : { ok: false, why: b.why }; },
-    abandonedSlashes, abandonedProof, abandonedEvidence, takeAbandonedProof,
+    abandonedSlashes, abandonedProof, takeAbandonedProof,
     recordOf: (fidHex) => { const k = kept.get(String(fidHex).toLowerCase()); return k ? { record: k.record, status: k.status, height: k.height, bytes: k.bytes } : null; },
     /**
      * HOW MANY OF A FEDERATION'S GUARDIAN SEATS HOLD ITS RECORD CLOSED (kanban #577, measured 2026-10-22 on 89ce310e: the first guardian to

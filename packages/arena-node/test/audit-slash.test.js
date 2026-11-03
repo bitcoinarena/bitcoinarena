@@ -22,7 +22,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { beaconFromChain } from '../../arena-protocol/src/beacon.js';
 import { makeVrf, SUITE_SECP256K1_TAI } from '../../arena-protocol/src/vrf.js';
 import { vrfSecretFor, auditAlpha, encodeAudit, auditId } from '../../arena-protocol/src/auditor.js';
-import { splitAuditSlashEvidence, cutAuditSlashEvidence, auditSlashProofId, slashHoldsOnAudit, AUDIT_CONTRADICTED } from '../../arena-protocol/src/slash.js';
+import { splitAuditSlashEvidence, cutAuditSlashEvidence, slashHoldsOnAudit, decodeFraudProof, AUDIT_CONTRADICTED } from '../../arena-protocol/src/slash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { bondOutputKey, bondInternalKey } from '../../arena-protocol/src/bond-script.js';
 import { resultFinality } from '../src/finality.js';
@@ -90,7 +90,7 @@ test('a contradicted AUDIT is filed by the seat as AUDIT_CONTRADICTED, listed, s
     const owed = await (await fetch(`${base}/slash-owing?round=${toHex(w.rid)}&entry=${toHex(eid)}&height=${w.contract.censusHeight}`)).json().catch(() => ({ owing: [] }));
     // this harness's census holds no bond for the auditor, so the door reaches the auditor's proof and stops at its bond, as it says
     assert.match(String(owed.owing.find((o) => o.node === box.key)?.why), /no bond output/, 'the auditor\'s proof is answered at the door');
-    const id = got ? toHex(auditSlashProofId(got.proof)) : '';
+    const id = got ? toHex(filed[0].proofId) : '';
     const relayed = got ? await fetch(`${base}/slash/${id}`) : null;
     const relayedBytes = relayed && relayed.status === 200 ? new Uint8Array(await relayed.arrayBuffer()) : new Uint8Array(0);
     const audits = (await (await fetch(`${base}/audits?round=${toHex(w.rid)}`)).json()).audits;
@@ -112,7 +112,7 @@ test('a contradicted AUDIT is filed by the seat as AUDIT_CONTRADICTED, listed, s
       listed: (list.auditSlashes || []).map((s) => [s.node, s.entry, s.proof, s.objection]),
       oldListUnchanged: list.slashes.length === 5,
       served: cutAuditSlashEvidence(served).length === 1 && toHex(served) === toHex(filed[0] ? filed[0].bytes : []),
-      relayKeeps: relayedBytes.length > 0 && toHex(relayedBytes) === toHex(filed[0].bytes),
+      relayKeeps: relayedBytes.length > 0 && toHex(decodeFraudProof(relayedBytes).evidence) === toHex(filed[0].bytes),
     };
     console.log('  FACTS (contradicted AUDIT filed):', JSON.stringify({ ...facts, listed: facts.listed.length }));
     assert.deepEqual(facts, {
@@ -136,7 +136,6 @@ test('a contradicted AUDIT is filed by the seat as AUDIT_CONTRADICTED, listed, s
     const verdict = await judged();
     assert.equal(verdict.slashed, true, verdict.why);
     assert.equal(verdict.offence, AUDIT_CONTRADICTED);
-    assert.equal(toHex(verdict.proofId), id);
     // AND REFUSED: the objection of another entry (the honest one has none: an empty bundle), a node outside the eligible set
     assert.match((await judged({ bundle: new Uint8Array(0) })).why, /no objection bundle/);
     assert.match((await judged({ eligible: new Map() })).why, /may not audit this round/);
@@ -147,7 +146,7 @@ test('a contradicted AUDIT is filed by the seat as AUDIT_CONTRADICTED, listed, s
     const k = bondOutputKey({ nodeKey: advert.nodePubkey, arbitrationKeys: set.keys, arbitrationK: set.k, bondMaturity: 100, internalKey }, { tweakPoint, combine });
     const bond = { txid: advert.bondTxid, vout: advert.bondVout, value: 2_000_000n, script: Uint8Array.from([0x51, 0x20, ...k.outputKey]) };
     assert.ok(verdict.contradictedRunId, 'the verdict names the run it contradicts');
-    const slash = buildSlash({ verdict: { ...verdict, replayed: { outcome: 'DELIVERED', score: 5 } }, bond, advert: { ...advert, bondScriptTemplateVersion: 1 }, contract, roundId: w.rid,
+    const slash = buildSlash({ verdict: { ...verdict, proofId: fromHex(id), replayed: { outcome: 'DELIVERED', score: 5 } }, bond, advert: { ...advert, bondScriptTemplateVersion: 1 }, contract, roundId: w.rid,
       slashHeight: contract.censusHeight + 10, tipHeight: contract.censusHeight + 12, set,
       entries: entriesForSlash(w.holder.round, w.rid).map((e) => ({ ...e, stakeMsat: 1_000_000n, activated: true, outcome: 'FORFEIT', score: 0, runId: verdict.contradictedRunId, finalProven: true })),
       signed: { outcome: 'FORFEIT', score: 0 } });

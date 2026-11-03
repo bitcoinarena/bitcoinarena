@@ -742,7 +742,7 @@ test('the committee and the seed are kept per view, and a new header builds them
 // executed. This is that body, over the census this file mines: real bonds, real `bondSats` off the
 // funding outputs, a height above the round's own `census_height`.
 test('the slash-owing door answers off the chain at a height above the round\'s own, and the census it reads there is not checked against the round\'s root', async () => {
-  const { encodeSlashProof, joinSlashEvidence, slashProofId } = await import('../../arena-protocol/src/slash.js');
+  const { encodeSlashProof, joinSlashEvidence, fraudProofHash } = await import('../../arena-protocol/src/slash.js');
   // A SIGNED RESULT AND THE OBJECTION BESIDE IT, as bytes that read: the door compares them to see who the false result harmed (kanban #975)
   const standIn = (r) => joinSignedResult(encodePlayerResult({ roundId: r.roundId, playerPubkey: r.playerPubkey, outcome: 'DELIVERED', score: 1, transcriptHash: r.transcriptHash, simCoreHash: b32(0x73), nodePubkey: r.nodePubkey }), new Uint8Array(64));
   const { encodePlayerResult, joinSignedResult } = await import('../../arena-protocol/src/result.js');
@@ -794,7 +794,7 @@ test('the slash-owing door answers off the chain at a height above the round\'s 
     const evidence = joinSlashEvidence(encodeSlashProof(proof), standIn(proof));
     node.round.objectionBundle = () => encodeObjectionBundle({ signature: new Uint8Array(64), transcript: new Uint8Array(0), receipts: new Uint8Array(0),
       objection: { roundId: rid, playerPubkey: entry.playerPubkey, transcriptHash: b32(0x71), signedResultId: b32(0x72), claimedOutcome: 'DELIVERED', claimedScore: 2, objectorPubkey: b32(0x74), atMs: 1n } });
-    node.round.putSlashProof(rid, eid, accused, slashProofId(proof), evidence);
+    node.round.putSlashProof(rid, eid, accused, fraudProofHash(evidence), evidence);
 
     // AND A SECOND PROOF, AGAINST A SECOND NODE, IN THE SAME RUN (ruling 3, 2026-09-22: "nothing
     // pooled - each bond pays the players its own proof names"). The door loops over what it holds and
@@ -804,7 +804,7 @@ test('the slash-owing door answers off the chain at a height above the round\'s 
     const second = keyFor(0x12);
     const alsoProof = { ...proof, nodePubkey: second, bondTxid: parseTransaction(bonds[1]).txid };
     node.round.putSlashProof(rid, eid, second,
-      slashProofId(alsoProof), joinSlashEvidence(encodeSlashProof(alsoProof), standIn(alsoProof)));
+      fraudProofHash(joinSlashEvidence(encodeSlashProof(alsoProof), standIn(alsoProof))), joinSlashEvidence(encodeSlashProof(alsoProof), standIn(alsoProof)));
 
     // THE ROUND'S OWN CENSUS STILL CHECKS AGAINST ITS ROOT; the one at another height must not, which
     // is the bug this door found. Both read here, off the same node.

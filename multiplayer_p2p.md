@@ -2506,7 +2506,7 @@ serve hands its accusers the evidence itself.
 1. Anyone publishes a fraud proof: the two contradicting signatures, or the
    transcript + receipts + replay, or the SettlementAck + the threshold of acks
    + the table + what it rebuilds from, and the FINAL signatures of the entries
-   it is false on.
+   it is false on. A seat that does not hold the round relays it freely.
 2. The proof is mechanically checkable — every offence in the table above is
    either a signature comparison or a deterministic replay. No judgement.
 3. k-of-m arbitration keys sign a slashing transaction spending path B,
@@ -2523,6 +2523,30 @@ Because the slashing transaction commits to the proof, **every slash is
 permanently auditable**: anyone can fetch the proof later and re-verify it.
 A slash whose committed proof does not retrieve, or does not check, is
 itself public evidence against the arbitration set.
+
+**`H(fraud_proof)` is the hash of the complete proof (RULED 2026-11-03, kanban #1065).**
+Everything a checker needs is in it, signatures included. The bytes under that hash
+**are** the proof, and bytes that do not hash to it are not a copy of anything.
+
+```text
+FraudProof {
+  evidence    the published record: the proof body and every signature
+  contract    the round's contract
+  entry       the entry's contract, for a replay or an AUDIT
+  bundle      the objection that held, transcript, receipts and inputs, for a replay or an AUDIT
+}
+H(fraud_proof) = tagged_hash("ARENA/v1/SlashProof", its bytes)
+```
+
+A checker fetches by hash from anyone. If it holds bytes that hash, there is one thing
+to judge, and if they do not check, the start really was false and the return is right.
+Its own chain, census, core and federation client are the rest of what it reads. Two
+seats may build two valid proofs of one offence, under two sets of signatures or two
+objections, so one output can have two hashes. A bond has one start, the filer's turn
+picks one, and the holders who signed it hold its bytes. A seat that does not hold the
+round relays bytes freely under the hash they have (`PUT /slash/<hash>`), and refuses
+them under any other. An abandonment's proof needs no round and carries its record
+(§23A.5).
 
 ### A false slash does not pay: template 3 *(RULED 2026-11-02, kanban #971, #974; for new bonds and mainnet)*
 
@@ -7021,25 +7045,24 @@ exception. A bare `proof_ref` names evidence, and an absence's is not retrievabl
 bytes. An abandonment's proof is:
 
 ```text
-AbandonedProof { federation_id, node key, proof_ref, output }     hashed, in the OP_RETURN
-evidence         the signed FederationRecord holding the row      beside it, any standing copy
+AbandonedProof { federation_id, node key, proof_ref, output,
+                 the signed FederationRecord holding the row }    hashed, in the OP_RETURN
 OP_RETURN = H(AbandonedProof) ‖ slash_height ‖ federation_id
 ```
 
-It is tagged as every slash proof is. **One output has one hash (RULED 2026-11-02,
-kanban #1064).** Signatures are evidence, not identity: `H(AbandonedProof)` is the same
-at every seat, whichever signatures it holds and whichever later record holds the row.
-A checker fetches the proof and any evidence, checks the hash on the proof, then the
-record at threshold on its own census, that it is the proof's federation's, and that
-the row names this node and `proof_ref`. For a spend, whoever checks also reads
-`proof_ref` on the chain; for an absence, the record's signatures are the check
-(§5A.3B's residual). The notice was read when the row was written, so
-`guardianSlashStands` is asked of the proof without one. Seats serve both by that hash,
-at the door that lists them, `GET /slashes?proof=<hash>` and
-`GET /slashes?evidence=<hash>`, also after the slash has landed. Whoever posts a slash
-hands them to the seats first, at `PUT /slash/<hash>` (the proof, then the record),
-because seats serving the evidence is what makes a proof retrievable. A seat keeps a
-copy when the hash, the threshold and the row stand. Rehearsal 14's slash, which put `proof_ref` itself there, stays what it was: history,
+It is tagged as every slash proof is. **The hash covers the record, signatures included
+(RULED 2026-11-03, kanban #1065, reversing #1064).** The bytes under the hash are the
+proof (§5A.3B). A checker fetches them, checks the hash, then the record at threshold on
+its own census, that it is the proof's federation's, and that the row names this node
+and `proof_ref`. For a spend, whoever checks also reads `proof_ref` on the chain; for an
+absence, the record's signatures are the check (§5A.3B's residual). The notice was read
+when the row was written, so `guardianSlashStands` is asked of the proof without one.
+Two seats holding one record under different signatures hold two proofs of one offence,
+each under its own hash, and a seat lists one output under the first proof it built for
+it. Seats serve it by that hash, at `GET /slashes?proof=<hash>` and `GET /slash/<hash>`,
+also after the slash has landed. Whoever posts a slash hands it to the seats first, at
+`PUT /slash/<hash>`, because seats serving the bytes is what makes a proof retrievable.
+A seat keeps a copy when the hash, the threshold and the row stand. Rehearsal 14's slash, which put `proof_ref` itself there, stays what it was: history,
 on a test chain.
 
 **Old rows (RULED 2026-11-02, kanban #1062).** A rule does not reach back. Only a row

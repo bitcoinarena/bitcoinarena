@@ -46,8 +46,8 @@ import {
   encodeRerunResult, rerunResultId, joinSignedRerun, splitSignedRerun, decodeRerunResult, rerunIsAgreed,
   SIGNED_RERUN_BYTES, runOf, cutSignedReruns,
 } from '../../arena-protocol/src/rerun.js';
-import { encodeSlashProof, slashProofId, slashHolds, joinSlashEvidence, slashHoldsOnRerun, joinRerunSlashEvidence,
-  encodeAuditSlashProof, auditSlashProofId, joinAuditSlashEvidence, slashHoldsOnAudit, slashHoldsOnDoubleSign, orderedResultIds,
+import { encodeSlashProof, slashHolds, joinSlashEvidence, slashHoldsOnRerun, joinRerunSlashEvidence,
+  encodeAuditSlashProof, joinAuditSlashEvidence, slashHoldsOnAudit, slashHoldsOnDoubleSign, orderedResultIds,
   joinDoubleSlashEvidence } from '../../arena-protocol/src/slash.js';
 import { decodeAudit, auditId } from '../../arena-protocol/src/auditor.js';
 import { agreedRunsOf } from './audit-seat.js';
@@ -1698,13 +1698,13 @@ export class Verifier {
       const check = slashHoldsOnAudit({ proof, audit: held.bytes, signature: held.signature, rows, entry, advert, eligible, total, vrf, verify,
         windowCloseMs: closeMs, canonicalTranscriptHash: canonical.hash, objectedRunId, replayDiffers });
       if (!check.slashed) { report.refused.push(`${who.slice(0, 16)}: ${check.why}`); continue; }
-      const id = auditSlashProofId(proof);
       const record = joinAuditSlashEvidence(encodeAuditSlashProof(proof), held.bytes, held.signature, rows);
+      const { id, bytes: complete } = this.round.fraudProof(roundIdBytes, entryIdBytes, record);
       if (!this.round.putAuditSlashProof(roundIdBytes, entryIdBytes, a.nodePubkey, id, record)) continue;
       report.filed.push(who);
       for (const relay of contract.publicationRelays || []) {
         try {
-          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: record });
+          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: complete });
           if (put.ok) report.published += 1;
           else report.refused.push(`${relay}: kept no proof (${put.status})`);
         } catch (e) { report.refused.push(`${relay}: ${e.message}`); }
@@ -1752,13 +1752,13 @@ export class Verifier {
         canonicalTranscriptHash: canonical.hash, replayDiffers,
       });
       if (!check.slashed) { report.refused.push(`${who.slice(0, 16)}: ${check.why}`); continue; }
-      const id = slashProofId(proof);
       const record = joinSlashEvidence(encodeSlashProof(proof), r.bytes);
+      const { id, bytes: complete } = this.round.fraudProof(roundIdBytes, entryIdBytes, record);
       this.round.putSlashProof(roundIdBytes, entryIdBytes, body.nodePubkey, id, record);
       report.filed.push(who);
       for (const relay of relayTargets(contract.publicationRelays, this.peersOf(roundIdBytes))) {
         try {
-          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: record });
+          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: complete });
           if (put.ok) report.published += 1;
           else report.refused.push(`${relay}: kept no proof (${put.status})`);
         } catch (e) { report.refused.push(`${relay}: ${e.message}`); }
@@ -1817,13 +1817,13 @@ export class Verifier {
         agreedRunId, replayDiffers, verify: (sig, m, k) => schnorr.verify(sig, m, k),
       });
       if (!check.slashed) { report.refused.push(`${who.slice(0, 16)}: ${check.why}`); continue; }
-      const id = slashProofId(proof);
       const record = joinRerunSlashEvidence(encodeSlashProof(proof), r.bytes);
+      const { id, bytes: complete } = this.round.fraudProof(roundIdBytes, entryIdBytes, record, this.round.rerunObjectionBundle(roundIdBytes, entryIdBytes));
       if (!this.round.putRerunSlashProof(roundIdBytes, entryIdBytes, x.result.nodePubkey, id, record)) continue;
       report.filed.push(who);
       for (const relay of relayTargets(contract.publicationRelays, this.peersOf(roundIdBytes))) {
         try {
-          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: record });
+          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: complete });
           if (put.ok) report.published += 1;
           else report.refused.push(`${relay}: kept no proof (${put.status})`);
         } catch (e) { report.refused.push(`${relay}: ${e.message}`); }
@@ -1976,15 +1976,15 @@ export class Verifier {
         bondTxid: advert.bondTxid, bondVout: advert.bondVout };
       const check = slashHoldsOnDoubleSign({ proof, signedResults: [held.first, held.second], advert, committee, verify });
       if (!check.slashed) { report.refused.push(`${who.slice(0, 16)}: ${check.why}`); continue; }
-      const id = slashProofId(proof);
       const pair = hex(resultId(a)) === hex(named) ? [held.first, held.second] : [held.second, held.first];
       const record = joinDoubleSlashEvidence(encodeSlashProof(proof), ...pair);
+      const { id, bytes: complete } = this.round.fraudProof(roundIdBytes, null, record);
       if (!this.round.fileDoubleResult(roundIdBytes, entryIdBytes, held.nodePubkey, id, record)) continue;
       report.filed.push(who);
       console.log(`[slash] ${hex(entryIdBytes).slice(0, 16)} filed TWO_RESULTS against ${who.slice(0, 16)}`);
       for (const relay of relayTargets(contract.publicationRelays, this.peersOf(roundIdBytes))) {
         try {
-          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: record, signal: AbortSignal.timeout(PEER_WAIT_MS) });
+          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: complete, signal: AbortSignal.timeout(PEER_WAIT_MS) });
           if (put.ok) report.published += 1;
           else report.refused.push(`${relay}: kept no proof (${put.status})`);
         } catch (e) { report.refused.push(`${relay}: ${e.message}`); }

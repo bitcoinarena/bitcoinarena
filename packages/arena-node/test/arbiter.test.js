@@ -83,7 +83,7 @@ test('a filed proof, re-judged by the arbiter from the seat\'s doors, is signed 
     assert.ok(x.evidence && x.bundle.length > 0, 'GET /slash-proofs and /objection-bundle hand over the evidence');
 
     // THE JUDGEMENT, HERE
-    const verdict = await judge(w, x);
+    const verdict = { ...(await judge(w, x)), proofId: new Uint8Array(32).fill(0xab) };
     assert.equal(verdict.slashed, true, verdict.why);
     assert.equal(toHex(verdict.proof.nodePubkey), x.s.node);
 

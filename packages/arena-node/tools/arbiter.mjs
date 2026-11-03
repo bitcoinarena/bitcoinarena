@@ -44,8 +44,8 @@ import { windowsOf } from '../../arena-protocol/src/window.js';
 
 import { bondSetFor } from '../src/curve.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
-import { splitSlashEvidence, cutSlashEvidence, splitAuditSlashEvidence, cutAuditSlashEvidence, auditSlashProofId, splitDoubleSlashEvidence, cutDoubleSlashEvidence, splitTableSlashEvidence, cutTableSlashEvidence, slashProofId } from '../../arena-protocol/src/slash.js';
+import { decodeRoundContract, decodeEntryContract, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
+import { splitTableSlashEvidence, fraudProofHash, decodeFraudProof, readEvidence } from '../../arena-protocol/src/slash.js';
 import { decodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
 import { takesAnyFederation } from '../../arena-protocol/src/constants.js';
 import { stakeLockPort } from '../src/stake-lock-port.js';
@@ -55,7 +55,7 @@ import { makeVrf, SUITE_SECP256K1_TAI } from '../../arena-protocol/src/vrf.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { runId } from '../src/verdict.js';
 import { deriveCensus, censusFirstBlock, chainCensusContract } from '../../arena-protocol/src/census.js';
-import { bondsOf, startsByCensusKey, abandonedProofId, joinAbandonedEvidence } from '../../arena-protocol/src/abandoned-slash.js';
+import { bondsOf, startsByCensusKey, abandonedProofId, decodeAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
 import { splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
 import { readInvite } from '../src/invite.js';
 import { abandonedSlashPoint } from '../../arena-protocol/src/constants.js';
@@ -105,13 +105,12 @@ const abandonedFrom = network === 'regtest' && env.ARENA_ABANDONED_SLASH_HEIGHT 
 async function handleAbandoned(seat, s) {
   const proofBytes = await get(`${seat}/slashes?proof=${s.proof}`, 'bytes');
   if (toHex(abandonedProofId(proofBytes)) !== s.proof) return { done: false, why: 'the seat lists that proof and hands other bytes' };
-  const evidence = await get(`${seat}/slashes?evidence=${s.proof}`, 'bytes');
-  const recordHeight = splitSignedRecord(evidence).record.height;
+  const recordHeight = splitSignedRecord(decodeAbandonedProof(proofBytes).record).record.height;
   const atRecord = await censusRead(recordHeight);
   if (!atRecord.ok) return { done: false, why: `no census at the record: ${atRecord.why}` };
   const now = await censusRead(atRecord.tip);
   if (!now.ok) return { done: false, why: `no census at the tip: ${now.why}` };
-  const verdict = judgeAbandoned({ proofBytes, evidence, census: atRecord.entries, bonds: bondsOf(now), networkId: chainNetworkId, from: abandonedFrom,
+  const verdict = judgeAbandoned({ proofBytes, census: atRecord.entries, bonds: bondsOf(now), networkId: chainNetworkId, from: abandonedFrom,
     inviteFederationId: (inv) => fromHex(readInvite(inv).federationId) });
   if (!verdict.slashed) return { done: false, why: `not slashed: ${verdict.why}` };
   if (startsByCensusKey(verdict.output.template)) return { done: false, why: 'a template-3 output: the census key\'s holders start it on its presig' };
@@ -123,8 +122,7 @@ async function handleAbandoned(seat, s) {
   if (!slash.ok) return { done: false, why: slash.why };
   const tx = assemble({ slash, signatures: set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, slash.sighash) })), set });
   if (!tx.ok) return { done: false, why: tx.why };
-  const body = joinAbandonedEvidence(proofBytes, evidence);
-  const handed = await Promise.all(seats.map((u) => fetch(`${u}/slash/${s.proof}`, { method: 'PUT', body, signal: AbortSignal.timeout(20000) }).then((r) => r.ok, () => false)));
+  const handed = await Promise.all(seats.map((u) => fetch(`${u}/slash/${s.proof}`, { method: 'PUT', body: proofBytes, signal: AbortSignal.timeout(20000) }).then((r) => r.ok, () => false)));
   if (!handed.some(Boolean)) return { done: false, why: 'no seat took the proof, so nothing commits to it' };
   const sent = await post(rpc, tx.hex);
   return sent.ok ? { done: true, offence: verdict.offence, posted: sent.txid, slashHeight: now.tip, signers: tx.signers, node: verdict.node, heldFor: verdict.federation, proofRef: verdict.proofRef,
@@ -139,21 +137,14 @@ async function handle(seat, s) {
   const double = s.kind === 'double';
   // A PROOF OF A FALSE TABLE (kanban #1040): its own record (GET /table-slash-proofs), judged by judgeTableProof
   const falseTable = s.kind === 'table';
-  const recs = await get(falseTable ? `${seat}/table-slash-proofs?round=${s.round}` : double ? `${seat}/double-slash-proofs?round=${s.round}` : audit ? `${seat}/audit-slash-proofs?round=${s.round}` : `${seat}/slash-proofs?round=${s.round}&entry=${s.entry}`, 'bytes');
-  let evidence = null;
-  if (falseTable) {
-    for (const r of cutTableSlashEvidence(recs)) { let sp; try { sp = splitTableSlashEvidence(r); } catch { continue; } if (toHex(sp.proof.nodePubkey) === s.node && toHex(slashProofId(sp.proof)) === s.proof) evidence = r; }
-  } else if (double) {
-    for (const r of cutDoubleSlashEvidence(recs)) { let sp; try { sp = splitDoubleSlashEvidence(r); } catch { continue; } if (toHex(sp.proof.nodePubkey) === s.node && toHex(slashProofId(sp.proof)) === s.proof) evidence = r; }
-  } else if (audit) {
-    for (const r of cutAuditSlashEvidence(recs)) { let sp; try { sp = splitAuditSlashEvidence(r); } catch { continue; } if (toHex(sp.proof.nodePubkey) === s.node && toHex(auditSlashProofId(sp.proof)) === s.proof) evidence = r; }
-  } else {
-    for (const r of cutSlashEvidence(recs)) { let sp; try { sp = splitSlashEvidence(r); } catch { continue; } if (toHex(sp.proof.nodePubkey) === s.node) evidence = r; }
-  }
-  if (!evidence) return { done: false, why: 'the seat lists that proof and does not hand it over' };
-  const bundle = double || falseTable ? null : await get(`${seat}/objection-bundle?round=${s.round}&entry=${s.entry}`, 'bytes');
-  const contract = decodeRoundContract(await get(`${seat}/round?id=${s.round}`, 'bytes'));
-  const entry = falseTable ? null : decodeEntryContract(await get(`${seat}/entry?id=${s.entry}`, 'bytes'));
+  // THE COMPLETE PROOF BY ITS HASH (kanban #1065): the bytes that hash to the name the seat listed are the proof, whoever hands them. Everything the seat could say about the round is in them
+  const proofBytes = await get(`${seat}/slash/${s.proof}`, 'bytes');
+  if (toHex(fraudProofHash(proofBytes)) !== s.proof) return { done: false, why: 'the seat lists that proof and hands other bytes' };
+  const { evidence, contract: contractBytes, entry: entryBytes, bundle } = decodeFraudProof(proofBytes);
+  if (toHex(readEvidence(evidence).proof.nodePubkey) !== s.node) return { done: false, why: 'that proof names another node than the seat listed' };
+  const contract = decodeRoundContract(contractBytes);
+  if (toHex(roundIdOf(contract)) !== s.round) return { done: false, why: 'the contract in that proof is not the round the seat listed' };
+  const entry = falseTable || double || !entryBytes.length ? null : decodeEntryContract(entryBytes);
   // THE ROUND'S CENSUS AND COMMITTEE, FROM THIS ARBITER'S OWN CHAIN
   const census = await censusAt(contract, contract.censusHeight);
   if (!census.ok) return { done: false, why: `no census: ${census.why}` };
@@ -206,6 +197,7 @@ async function handle(seat, s) {
       bondOutpoint: { txid: accused.txid, vout: accused.vout }, core, roundRandomness: beacon.hash });
   }
   if (!verdict.slashed) return { done: true, why: `not slashed: ${verdict.why}` };
+  verdict.proofId = fraudProofHash(proofBytes);
   // THE BOND AS THE CHAIN HOLDS IT NOW
   const out = await rpc('gettxout', [toHex([...accused.txid].reverse()), accused.vout, false]);
   if (!out) return { done: true, why: 'the bond is spent already' };

@@ -33,7 +33,7 @@ import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-proto
 import { buildSlashStart, slashStartDigest } from '../../arena-protocol/src/slash-start.js';
 import { DELIVERED } from '../../arena-protocol/src/payout.js';
 import { encodePlayerResult, joinSignedResult, resultId } from '../../arena-protocol/src/result.js';
-import { encodeSlashProof, joinDoubleSlashEvidence, orderedResultIds, slashProofId } from '../../arena-protocol/src/slash.js';
+import { encodeFraudProof, encodeSlashProof, fraudProofHash, joinDoubleSlashEvidence, orderedResultIds } from '../../arena-protocol/src/slash.js';
 import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { arbitrationCommitmentIn } from '../../arena-protocol/src/arbitration-tx.js';
@@ -163,35 +163,43 @@ try {
     const { named, other } = orderedResultIds(resultId(a.r), resultId(b.r));
     const proof = { roundId: rid, playerPubkey: a.r.playerPubkey, nodePubkey: pub[accused], transcriptHash: other, signedResultId: named, bondTxid: entry.txid, bondVout: entry.vout };
     const [x, y] = toHex(resultId(a.r)) === toHex(named) ? [a.signed, b.signed] : [b.signed, a.signed];
-    return { proof, evidence: joinDoubleSlashEvidence(encodeSlashProof(proof), x, y), id: slashProofId(proof) };
+    const bytes = encodeFraudProof({ evidence: joinDoubleSlashEvidence(encodeSlashProof(proof), x, y), contract: body });
+    return { proof, bytes, id: fraudProofHash(bytes) };
   };
-  const put = (i, p) => fetch(`${url(i)}/slash/${toHex(p.id)}`, { method: 'PUT', body: p.evidence, signal: AbortSignal.timeout(8000) });
+  const put = (i, p, as = p.id) => fetch(`${url(i)}/slash/${toHex(as)}`, { method: 'PUT', body: p.bytes, signal: AbortSignal.timeout(8000) });
   const seen = (i) => fetch(`${url(i)}/slashes`, { signal: AbortSignal.timeout(8000) }).then((r) => r.json()).then((s) => s.doubleSlashes.map((d) => d.proof));
 
   // WHO SIGNS WHAT: a holder's own refusals, asked directly
+  // THE FALSE COPY (kanban #1065): both results read as the true pair's, one signature is another node's. A result's id leaves out its signature, so this pair names the very ids of the true proof, and before
+  // H(fraud_proof) covered the signatures it sat under the true hash: the accused read it from the first seat it asked, and took its return from a true slash in 2 runs of 5
   const forged = pairOf(result(10), result(20, ids[accused === 4 ? 5 : 4].secret));
-  const forgedAt = await put(seats.find((i) => i !== accused), forged);
-  ask('a pair one of whose signatures is not the accused\'s is refused, not relayed, filed by nobody', forgedAt.status === 409 && !(await seen(seats.find((i) => i !== accused))).includes(toHex(forged.id)), (await forgedAt.text()).slice(0, 70));
   const pair = pairOf(result(10), result(20));
+  const anySeat = seats.find((i) => i !== accused);
+  ask('a pair with a bad signature does not sit under the true proof\'s hash', toHex(forged.id) !== toHex(pair.id) && toHex(forged.proof.signedResultId) === toHex(pair.proof.signedResultId) && toHex(forged.proof.transcriptHash) === toHex(pair.proof.transcriptHash), `true ${toHex(pair.id).slice(0, 16)}, false ${toHex(forged.id).slice(0, 16)}, the same result ids`);
+  const underTrue = await Promise.all(seats.map((i) => put(i, forged, pair.id)));
+  ask('every seat refuses it under the true hash: those bytes are a copy of nothing', underTrue.every((r) => r.status === 409), `${underTrue.filter((r) => r.status === 409).length} of ${seats.length} seats, ${(await underTrue[0].text()).slice(0, 50)}`);
+  const underOwn = await Promise.all(seats.map((i) => put(i, forged)));
+  const forgedServed = await fetch(`${url(anySeat)}/slash/${toHex(forged.id)}`);
+  ask('under its own hash it is relayed as what it is, and filed by nobody', underOwn.every((r) => r.status === 201) && forgedServed.ok && !(await Promise.all(seats.map(seen))).flat().includes(toHex(forged.id)), `${underOwn.filter((r) => r.status === 201).length} seats keep it, 0 filed`);
   const e3 = { txid: entry.txid, vout: entry.vout, value: BigInt(entry.bondSats), script: entry.script };
   const own = bondPresigDigest({ bond: e3, advert: { ...entry.advert, nodePubkey: entry.pubkey, censusKey: key0 }, networkId: NETWORK_ID_REGTEST, tweakPoint });
   const presigAt = rt.blocksFrom(entry.presigBy.height, entry.presigBy.height).blocks[0].transactions.find((t) => toHex(parseTransaction(t).txid) === toHex(entry.presigBy.txid));
   const ownPresig = readAdvertUpdate(presigAt, { network: 'regtest' }).advert.slashPresig;
   const fakeFee = { txid: new Uint8Array(32).fill(0x41), vout: 0, value: 1000n, script: fromHex(`5120${'42'.repeat(32)}`) };
   const askHolder = (i, built, evidence, presig = ownPresig) => fetch(`${url(i)}/census-sign/commit`, { method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(20000),
-    body: JSON.stringify({ evidence: toHex(evidence), contract: toHex(body), presig: toHex(presig), tx: { version: built.tx.version, locktime: built.tx.locktime, inputs: built.tx.inputs.map((x) => ({ txid: toHex(x.txid), vout: x.vout, sequence: x.sequence })), outputs: built.tx.outputs.map((o) => ({ value: String(o.value), script: toHex(o.script) })) },
+    body: JSON.stringify({ proof: toHex(evidence), presig: toHex(presig), tx: { version: built.tx.version, locktime: built.tx.locktime, inputs: built.tx.inputs.map((x) => ({ txid: toHex(x.txid), vout: x.vout, sequence: x.sequence })), outputs: built.tx.outputs.map((o) => ({ value: String(o.value), script: toHex(o.script) })) },
       prevouts: built.prevouts.map((o) => ({ value: String(o.value), script: toHex(o.script) })) }) }).then((r) => r.json());
   const starting = (over = {}) => buildSlashStart({ bond: e3, holdScript: own.hold.script, proofId: pair.id, slashHeight: rt.height(), fee: fakeFee, ...over });
-  const f1 = await askHolder(0, starting({ proofId: forged.id }), forged.evidence);
+  const f1 = await askHolder(0, starting({ proofId: forged.id }), forged.bytes);
   ask('a holder refuses a proof that fails on its own replay', f1.ok === false && /not the accused/.test(f1.why), f1.why);
-  const f2 = await askHolder(0, starting({ holdScript: fromHex(`5120${'43'.repeat(32)}`) }), pair.evidence);
+  const f2 = await askHolder(0, starting({ holdScript: fromHex(`5120${'43'.repeat(32)}`) }), pair.bytes);
   ask('a holder refuses a start that pays anything but the hold its node signed', f2.ok === false && /no hold output/.test(f2.why), f2.why);
   const bentPresig = ownPresig.slice(); bentPresig[3] ^= 1;
-  const f3 = await askHolder(0, starting(), pair.evidence, bentPresig);
+  const f3 = await askHolder(0, starting(), pair.bytes, bentPresig);
   ask('a holder refuses a bent presig', f3.ok === false && /does not verify/.test(f3.why), f3.why);
-  const f4 = await askHolder(0, starting({ proofId: taggedHash('ARENA/test/Flow', Uint8Array.of(1)) }), pair.evidence);
+  const f4 = await askHolder(0, starting({ proofId: taggedHash('ARENA/test/Flow', Uint8Array.of(1)) }), pair.bytes);
   ask('a holder refuses an OP_RETURN that names another proof', f4.ok === false && /does not name that proof/.test(f4.why), f4.why);
-  const f5 = await askHolder(5 < NODES && seats.includes(accused) ? accused : 0, starting(), pair.evidence);
+  const f5 = await askHolder(5 < NODES && seats.includes(accused) ? accused : 0, starting(), pair.bytes);
   ask('a seat that holds no share says so, after everything else held', f5.ok === false && /holds no shares/.test(f5.why), f5.why);
 
   // ANYONE HANDS THE PROOF TO ONE SEAT. From here no signature is made outside the seats

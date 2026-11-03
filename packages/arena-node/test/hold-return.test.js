@@ -10,7 +10,7 @@ import { serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { tweakPoint } from '../src/curve.js';
-import { createHoldWatch, decideReturn, evidenceThatHolds, holdsOfOwnBond, readSlashStart, returnOpensAt, signedReturn, takeReturnIfOwed } from '../src/hold-return.js';
+import { createHoldWatch, decideReturn, holdsOfOwnBond, readSlashStart, returnOpensAt, signedReturn, takeReturnIfOwed } from '../src/hold-return.js';
 
 const secret = taggedHash('ARENA/test/Return', Uint8Array.of(1));
 const nodeKey = schnorr.getPublicKey(secret);
@@ -122,14 +122,12 @@ test('a pass: nothing before the clock; then a false proof returned to the walle
   assert.deepEqual([done.length, done[0].sent, sent.length], [1, 'tx', 1], 'an output with no hold is not read');
 });
 
-test('one seat\'s copy of a proof settles nothing: a good id can carry bad bytes', async () => {
-  const bad = Uint8Array.of(1), unread = Uint8Array.of(2), good = Uint8Array.of(3);
-  const judge = async (e) => ({ verdict: e === good ? true : e === bad ? false : undefined });
-  const of = (...list) => list.map((e) => async () => { if (e === 'throws') throw new Error('down'); return e; });
-  assert.deepEqual(await evidenceThatHolds(of(bad, null, 'throws', good), judge), { evidence: good, verdict: true }, 'the first that holds, past a bad copy and a seat that is down');
-  assert.deepEqual(await evidenceThatHolds(of(bad, unread), judge), { evidence: unread, verdict: undefined }, 'a copy that cannot be judged yet waits');
-  assert.deepEqual(await evidenceThatHolds(of(bad), judge), { evidence: bad, verdict: false }, 'false only if every copy is');
-  assert.equal(await evidenceThatHolds(of(null), judge), null);
+test('the bytes under the hash are the proof: other bytes are no copy of anything, and there is nothing to try next (ruling #1065)', async () => {
+  const proof = Uint8Array.of(7, 7, 7), id = taggedHash('ARENA/v1/SlashProof', proof);
+  const decide = (bytes, proofChecks) => decideReturn({ start: { proofId: id }, startHeight: 400, bondMaturity: 100, returnBlocks: 6, tip: 410, fetchProof: async () => bytes, proofChecks });
+  assert.equal((await decide(proof, async () => true)).action, 'keep');
+  assert.equal((await decide(proof, async () => false)).action, 'return', 'bytes that hash and do not check: the start really was false');
+  assert.equal((await decide(Uint8Array.of(7, 7, 8), async () => true)).action, 'return', 'bytes that do not hash are never judged');
 });
 
 test('a return that is out is not sent again, and one the mempool refuses is tried again next pass', async () => {

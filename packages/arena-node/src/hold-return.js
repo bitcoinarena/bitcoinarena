@@ -9,7 +9,7 @@ import { holdReturnSpend, arbitrationCommitmentIn } from '../../arena-protocol/s
 import { holdControlBlock, holdOutputKey } from '../../arena-protocol/src/bond-script.js';
 import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
-import { decodeAbandonedProof, isAbandonedProof, abandonedProofId } from '../../arena-protocol/src/abandoned-slash.js';
+import { decodeAbandonedProof, isAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
 import { splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
 import { judgeAbandoned } from './arbiter.js';
 import { TAG } from '../../arena-protocol/src/constants.js';
@@ -55,19 +55,16 @@ export async function decideReturn({ start, startHeight, bondMaturity, returnBlo
 /**
  * THE proofChecks OF A START ON AN ABANDONMENT (§23A.5, RULED 2026-11-02, kanban #1062). `decideReturn`'s hash check takes these bytes as any slash proof's: only this check is their own. True when
  * the proof names this node and the very bond the start spent, and judgeAbandoned stands on it: its record at threshold on this node's own census, its row naming this node and proof_ref, a
- * spend's proof_ref read on the chain. For an absence the record's signatures are the check. `fetchEvidence(proofId)` brings any standing copy of the signed record beside the proof (kanban #1064):
- * none is a proof that does not retrieve. `bond` { txid, vout } what the start spent; `bonds` this node's census read at the block before the start, since the start's hold output is no output
- * left; `censusAt(height)` the entries there, nothing yet: this waits, as a replay that has not answered does.
+ * spend's proof_ref read on the chain. For an absence the record's signatures are the check. The proof carries that record (kanban #1065). `bond` { txid, vout } what the start spent; `bonds` this
+ * node's census read at the block before the start, since the start's hold output is no output left; `censusAt(height)` the entries there, nothing yet: this waits, as a replay that has not answered does.
  */
-export async function abandonedProofChecks({ bytes, fetchEvidence, nodePubkey, bond, bonds, censusAt, networkId, inviteFederationId, from }) {
+export async function abandonedProofChecks({ bytes, nodePubkey, bond, bonds, censusAt, networkId, inviteFederationId, from }) {
   let p; try { p = decodeAbandonedProof(bytes); } catch { return false; }
   if (!same(p.nodePubkey, nodePubkey) || !same(p.txid, bond.txid) || p.vout !== bond.vout) return false;
-  const evidence = await fetchEvidence(abandonedProofId(bytes));
-  if (!(evidence instanceof Uint8Array)) return false;
-  let height; try { height = splitSignedRecord(evidence).record.height; } catch { return false; }
+  let height; try { height = splitSignedRecord(p.record).record.height; } catch { return false; }
   const census = await censusAt(height);
   if (!census) return undefined;
-  return judgeAbandoned({ proofBytes: bytes, evidence, census, bonds, networkId, inviteFederationId, ...(from === undefined ? {} : { from }) }).slashed;
+  return judgeAbandoned({ proofBytes: bytes, census, bonds, networkId, inviteFederationId, ...(from === undefined ? {} : { from }) }).slashed;
 }
 
 /** One check for a start of any kind: an abandonment's proof by `abandoned(bytes)`, every other by `replay(bytes)`. */
@@ -89,22 +86,6 @@ export async function takeReturnIfOwed({ start, startHeight, bondMaturity, retur
   if (decided.action !== 'return') return decided;
   const hex = signedReturn({ start, bondMaturity, returnBlocks, toScript, feeSats, nodeSecret });
   return { ...decided, hex, sent: await broadcast(hex) };
-}
-
-/**
- * THE BEST EVIDENCE ANY SOURCE HOLDS FOR ONE PROOF. A proof's id commits to the ids of what it names, and a result's id leaves out its signature, so bad bytes can sit under a good id. One seat's copy
- * settles nothing: the first that holds on `judge` answers, then one that cannot be judged yet, and false only if every copy is. `sources` async functions answering bytes or null. Answers { evidence, verdict } or null.
- */
-export async function evidenceThatHolds(sources, judge) {
-  let best = null;
-  for (const source of sources) {
-    let evidence = null; try { evidence = await source(); } catch { evidence = null; }
-    if (!evidence) continue;
-    const { verdict } = await judge(evidence);
-    if (verdict === true) return { evidence, verdict };
-    if (!best || (best.verdict === false && verdict === undefined)) best = { evidence, verdict };
-  }
-  return best;
 }
 
 /**
