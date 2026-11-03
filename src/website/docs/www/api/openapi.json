@@ -10989,6 +10989,24 @@
     "x-changes-state": true
    }
   },
+  "/release": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "The release this node runs",
+    "description": "The release this node runs, since when, and whether its guardian answers: what a fellow guardian's seat reads before its updater takes a new release (staged updates).\n\nAccess: none\n\nReturns: 200 JSON {node, version, commit, startedAtMs, guardian, healthy}\n\nSource: `packages/arena-node/src/server.js` line 6686.",
+    "operationId": "get_release",
+    "responses": {
+     "200": {
+      "description": "{node, version, commit, startedAtMs, guardian, healthy}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
   "/replay": {
    "get": {
     "tags": [
@@ -14590,6 +14608,41 @@
       "description": "{seat, txs[]}.",
       "content": {
        "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/update-stage": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "May this guardian update now",
+    "description": "Whether this guardian may take a release now: at most f guardians of one federation run a new release without a healthy hour; the updater asks before it fetches.\n\nAccess: none\n\nReturns: 200 JSON {go, why, onTrial, f, waitingBefore, federation, members, answered}\n\nSource: `packages/arena-node/src/server.js` line 6697.",
+    "operationId": "get_update_stage",
+    "parameters": [
+     {
+      "name": "version",
+      "in": "query",
+      "required": true,
+      "description": "The release to take.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{go, why, onTrial, f, waitingBefore, federation, members, answered}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "No version asked for.",
+      "content": {
+       "text/plain": {}
       }
      }
     }

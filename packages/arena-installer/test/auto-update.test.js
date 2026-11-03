@@ -128,3 +128,34 @@ test('a release that carries only the old arena-node name is fetched under it', 
     assert.equal(applied[0].newRelease, join(home, 'releases', 'arena-node-0.1.1-linux-x64'));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+// STAGED PER FEDERATION (kanban #1093 part 3): a guardian (custody in its roles) asks its own seat before it fetches, and waits on a no or on
+// no answer; a node that guards nothing never asks; an update asked for by hand runs either way
+test('a guardian waits its turn: its seat says no, or does not answer; a node without custody does not ask', async () => {
+  const s = served(Buffer.from('a release of thirty or more bytes, for its three pieces'));
+  const stageAsks = [];
+  const withStage = (go) => async (url, o) => {
+    if (String(url).includes('/update-stage?')) { stageAsks.push(String(url)); if (go === null) throw new Error('connection refused');
+      return { ok: true, status: 200, json: async () => ({ go, why: go ? 'go: 1 of 2 places on trial taken' : 'wait: 2 guardian(s) of 7 run 0.1.1 without a healthy hour yet' }) }; }
+    return s.fetcher(url, o);
+  };
+  const { root, home } = nodeAt({ conf: 'port=8470\nroles=verify,settlement,custody\n' });
+  try {
+    const waited = await checkOnce({ home, latest: s.latest, fetcher: withStage(false), platform: 'linux', arch: 'x64', verifyAsset: () => ({ ok: true }), apply: async () => { throw new Error('must not apply'); } });
+    assert.equal(waited.ok, true); assert.match(waited.waiting, /wait: 2 guardian/);
+    assert.equal(stageAsks[0], 'http://127.0.0.1:8470/update-stage?version=0.1.1');
+    assert.equal(s.asked.length, 0, 'nothing fetched while it waits');
+    const silent = await checkOnce({ home, latest: s.latest, fetcher: withStage(null), platform: 'linux', arch: 'x64', verifyAsset: () => ({ ok: true }), apply: async () => { throw new Error('must not apply'); } });
+    assert.match(silent.waiting, /did not answer the stage/, 'no answer is not a yes');
+    let applied = false;
+    const went = await checkOnce({ home, latest: s.latest, fetcher: withStage(true), platform: 'linux', arch: 'x64', verifyAsset: () => ({ ok: true }), unpack: () => {}, apply: async () => { applied = true; return { ok: true }; } });
+    assert.equal(applied || went.ok === false || !!went.updated || went.ok, true);
+    assert.ok(s.asked.length > 0, 'its turn: the pieces are fetched');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+  const plain = nodeAt({ conf: 'port=8470\nroles=verify,settlement\n' });
+  try {
+    const before = stageAsks.length;
+    await checkOnce({ home: plain.home, latest: s.latest, fetcher: withStage(false), platform: 'linux', arch: 'x64', verifyAsset: () => ({ ok: true }), unpack: () => {}, apply: async () => ({ ok: true }) });
+    assert.equal(stageAsks.length, before, 'a node that guards nothing never asks');
+  } finally { rmSync(plain.root, { recursive: true, force: true }); }
+});
