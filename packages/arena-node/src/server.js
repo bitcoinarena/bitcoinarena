@@ -8894,9 +8894,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(JSON.stringify(r.body));
       }
       if (req.method === 'GET' && url.pathname === '/served') {
-        const to = Number(url.searchParams.get('to'));
+        const to = url.searchParams.has('to') ? Number(url.searchParams.get('to')) : NaN;
         const from = url.searchParams.has('from') ? Number(url.searchParams.get('from')) : to - SERVED_WINDOW_MS;
-        if (!Number.isSafeInteger(to) || !Number.isSafeInteger(from) || to <= from || to - from > 7 * SERVED_WINDOW_MS)
+        // a missing `to` read as 0 put `from` before 1970 and answered 500 "u64 out of range" (found 2026-11-03)
+        if (!Number.isSafeInteger(to) || !Number.isSafeInteger(from) || from < 0 || to <= from || to - from > 7 * SERVED_WINDOW_MS)
           return text(res, 400, 'GET /served?to=<ms>[&from=<ms>] - a window of at most 7 days');
         const rounds = round.finalSigsBetween(from, to).map((r) => ({ ...r, committee: round.signerNodes(r.roundId) }));
         const got = servedNodes({ rounds, fromMs: from, toMs: to, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
