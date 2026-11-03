@@ -2,7 +2,7 @@
  "openapi": "3.0.3",
  "info": {
   "title": "Bitcoin Arena node API",
-  "version": "2026-11-02",
+  "version": "2026-11-03",
   "description": "Every request a Bitcoin Arena node (`arena-node`) answers, generated from `packages/arena-node/src/server.js` by `src/website/docs/gen-docs.py`. Concepts and guides: https://docs.bitcoinarena.io/"
  },
  "servers": [
@@ -7802,6 +7802,19 @@
    }
   },
   "/payout-address": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "The Lightning address an entry named, as signed, for a seat ",
+    "description": "The Lightning address an entry named, as signed, for a seat that took the entry from a peer (kanban #1071).\n\nAccess: none; the reader checks the signature under the entry's session key\n\nReturns: 200 JSON {signed, signature}; 404 when no signed address is held\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_payout_address",
+    "responses": {
+     "200": {
+      "description": "200 JSON {signed, signature}; 404 when no signed address is held"
+     }
+    }
+   },
    "post": {
     "tags": [
      "Players"
