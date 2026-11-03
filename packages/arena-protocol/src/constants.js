@@ -514,6 +514,8 @@ export const TYPE_AUDIT = 0x36;
 export const TYPE_AUDIT_SLASH_PROOF = 0x37;
 /** A complete fraud proof (5A.3B, kanban #1065): the evidence and what a checker needs beside it. H(fraud_proof) is of these bytes. */
 export const TYPE_FRAUD_PROOF = 0x43;
+/** The byte after the proof body in a record against a release (5A.3B, kanban #1065). */
+export const TYPE_RELEASE_EVIDENCE = 0x44;
 /** A seated node's word on who was present at a 22 seating (§5A.7, protocol 22, kanban #727): carried in the seating certificate. */
 export const TYPE_SEATING_SEEN = 0x38;
 /** A node's HEARTBEAT for one heartbeat slot of a 22 round (§5A.3, protocol 22, kanban #727): its word that it is up, to that slot's committee. */

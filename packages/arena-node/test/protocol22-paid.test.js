@@ -184,12 +184,12 @@ test('a paid protocol-22 round on seven seats with an auditor: the reserve key k
     const accusedAdvert = adverts.get(toHex(filedTable.nodePubkey));
     const census = [{ pubkey: filedTable.nodePubkey, txid: accusedAdvert.bondTxid, vout: accusedAdvert.bondVout, advert: accusedAdvert }];
     const client = { fees: async () => null, txid: async (b) => fromHex((await w.port.settle(b)).txid) };
-    const seat = (over = {}) => createProofJudge({ committeeOf: () => ({ ok: true, committee: ackSeats }), censusOf: () => ({ ok: true, entries: census }), manifestOf: () => plugin.plugin.manifest, clientOf: async () => client, coreOf: () => null, beaconOf: () => ({ ok: false }), replayRunOf: () => undefined, ...over });
-    const said = await seat()(complete);
+    const reader = (over = {}) => createProofJudge({ committeeOf: () => ({ ok: true, committee: ackSeats }), censusOf: () => ({ ok: true, entries: census }), manifestOf: () => plugin.plugin.manifest, clientOf: async () => client, coreOf: () => null, beaconOf: () => ({ ok: false }), replayRunOf: () => undefined, ...over });
+    const said = await reader()(complete);
     assert.equal(said.verdict, true, said.why);
-    assert.equal(seat().read(complete).kind, 'table');
-    assert.equal((await seat({ clientOf: async () => null })(complete)).verdict, undefined, 'no client of that federation: this seat cannot say');
-    assert.equal((await seat({ manifestOf: () => null })(complete)).verdict, undefined, 'nor one that does not host the game');
+    assert.equal(reader().read(complete).kind, 'table');
+    assert.equal((await reader({ clientOf: async () => null })(complete)).verdict, undefined, 'no client of that federation: this seat cannot say');
+    assert.equal((await reader({ manifestOf: () => null })(complete)).verdict, undefined, 'nor one that does not host the game');
     // AN HONEST PAIR, THE SAME FILING: nothing is filed, and a false ack by one seat is not a table anything stood on
     const honestRound = await w.nodes[5].settlements.fileTableProofs(w.rid, { advertOf: (k) => adverts.get(k) });
     assert.equal(honestRound.filed.length, 0, 'the honest pair files nothing');

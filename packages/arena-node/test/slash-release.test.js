@@ -7,8 +7,15 @@ import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import {
   slashHoldsOnRelease, slashHoldsOnReleaseTable, slashHoldsOnEscrowSpend, escrowTableSpend, encodeSlashEscrowOutputs, decodeSlashEscrowOutputs, slashEscrowOutputsId, encodeSlashPayoutTable, decodeSlashPayoutTable, slashPayoutTableId, buildSlashPayoutTable, slashDistribution,
-  encodeSlashProof, decodeSlashProof, affectedEntries, RELEASE_WITHOUT_PROOF, RELEASE_OFF_TABLE,
+  encodeSlashProof, decodeSlashProof, affectedEntries, RELEASE_WITHOUT_PROOF, RELEASE_OFF_TABLE, joinReleaseSlashEvidence, splitReleaseSlashEvidence, encodeFraudProof,
 } from '../../arena-protocol/src/slash.js';
+import { createProofJudge } from '../src/proof-judge.js';
+import { encodeRoundContract, decodeRoundContract, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
+import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
+import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donation-sets.js';
+import { donationSetId } from '../../arena-protocol/src/donation.js';
+
 import { releaseLeaf, tapLeafHash, slashLeaf } from '../../arena-protocol/src/bond-script.js';
 import { tapSighash, serializeSpend, scriptPathWitness } from '../../arena-protocol/src/bond-spend.js';
 import { arbitrationCommitment, holdSlashSpend } from '../../arena-protocol/src/arbitration-tx.js';
@@ -325,4 +332,43 @@ test('panel members take nothing from a slash: there is no census share, only ea
   assert.equal(split.playersMsat + split.reservesMsat, 100000000000n);
   assert.equal(split.burned, 0n);
   assert.deepEqual(Object.keys(split).sort(), ['burned', 'players', 'playersMsat', 'reservesMsat', 'shortMsat']);
+});
+
+// A SEAT'S OWN WORD ON A RELEASE (kanban #1065): the record is anyone's to write, the release is on the chain, and the panels are redrawn by the reader. Bytes that hash to the release's OP_RETURN and read as no proof do not check.
+const contractOf = () => decodeRoundContract(encodeRoundContract({
+  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
+  custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: donationSetId(TEST_DONATION_SET_REGTEST.recipients),
+  censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
+  bondMinSats: 50000n, blockTicks: 600, exposureReference: 1000, corridorHalfWidth: 40,
+  spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 100,
+  rankNumerator: 3, rankDenominator: 4, nodes: [],
+}));
+const seatOn = (over = {}) => createProofJudge({ committeeOf: () => ({ ok: true, committee: [] }), censusOf: () => ({ ok: true, entries: [{ pubkey: accused.key, txid: advert.bondTxid, vout: advert.bondVout, advert }] }), coreOf: () => null, beaconOf: () => ({ ok: false }),
+  replayRunOf: () => undefined, panelsOf: () => ({ ok: true, ...panels }), holdBlocksOf: () => holdBlocks, ...over });
+
+test('a release on bytes that do not check, and a release off its table, are judged by a seat from the complete proof alone', async () => {
+  const contract = contractOf(), rid = roundIdOf(contract), encoded = encodeRoundContract(contract);
+  const release = signedRelease({ outputs: [commits(), ...pays] });
+  const proof = proofOf(release, proofId, { roundId: rid });
+  const record = joinReleaseSlashEvidence(encodeSlashProof(proof), { release, prevouts, fraudProof });
+  const back = splitReleaseSlashEvidence(record);
+  assert.deepEqual([toHex(back.release), back.prevouts.length, back.prevouts[0].value, toHex(back.prevouts[0].script), toHex(back.fraudProof), back.table.length], [toHex(release), 1, prevouts[0].value, toHex(holdScript), toHex(fraudProof), 0]);
+  assert.throws(() => splitReleaseSlashEvidence(Uint8Array.of(...record, 0)), /trailing|left over|bytes/);
+  const complete = encodeFraudProof({ evidence: record, contract: encoded });
+  const said = await seatOn()(complete);
+  assert.equal(said.verdict, true, said.why);
+  assert.equal(seatOn().read(complete).kind, 'release');
+  assert.deepEqual([toHex(seatOn().read(complete).bond.txid), seatOn().read(complete).bond.vout], [toHex(advert.bondTxid), advert.bondVout]);
+  const stranger = person(99), wrongPanels = { panelA: [stranger.key], panelB: [stranger.key] };
+  assert.equal((await seatOn({ panelsOf: () => ({ ok: true, ...wrongPanels }) })(complete)).verdict, false, 'panels the reader drew are the ones that count');
+  assert.equal((await seatOn({ panelsOf: () => ({ ok: false, why: 'not read' }) })(complete)).verdict, undefined, 'no panels read: this seat cannot say');
+
+  const off = [{ value: pays[0].value - 1n, script: reserves, pays: 'reserves' }];
+  const t2 = { ...table, roundId: rid }, spend = signedRelease({ outputs: [commits(proofId, t2), ...off] });
+  const tableRecord = joinReleaseSlashEvidence(encodeSlashProof(proofOf(spend, slashPayoutTableId(t2), { roundId: rid })), { release: spend, prevouts, table: encodeSlashPayoutTable(t2) });
+  const offTableSaid = await seatOn()(encodeFraudProof({ evidence: tableRecord, contract: encoded }));
+  assert.equal(offTableSaid.verdict, true, offTableSaid.why);
+  const paysItsTable = signedRelease({ outputs: [commits(proofId, t2), ...pays] });
+  const fine = joinReleaseSlashEvidence(encodeSlashProof(proofOf(paysItsTable, slashPayoutTableId(t2), { roundId: rid })), { release: paysItsTable, prevouts, table: encodeSlashPayoutTable(t2) });
+  assert.match((await seatOn()(encodeFraudProof({ evidence: fine, contract: encoded }))).why, /pays exactly its table/);
 });

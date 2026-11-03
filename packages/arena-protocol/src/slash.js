@@ -35,7 +35,7 @@ import { arbitrationCommitmentIn, P2TR_DUST_SATS } from './arbitration-tx.js';
 import { carrierEscrowPegInId } from './census-key.js';
 import { reserveParts } from './slash-reserves.js';
 import {
-  PROTOCOL_VERSION, speaksVersion, TYPE_SLASH_PROOF, TYPE_AUDIT_SLASH_PROOF, TYPE_SETTLEMENT_ACK, TYPE_FRAUD_PROOF, TYPE_RERUN_RESULT,
+  PROTOCOL_VERSION, speaksVersion, TYPE_SLASH_PROOF, TYPE_AUDIT_SLASH_PROOF, TYPE_SETTLEMENT_ACK, TYPE_FRAUD_PROOF, TYPE_RERUN_RESULT, TYPE_RELEASE_EVIDENCE,
   SLASH_REMAINDERS, TAG,
 } from './constants.js';
 import { entryId, roundId as roundIdOf, encodeEntryContract, decodeEntryContract } from './contracts.js';
@@ -300,11 +300,12 @@ export const fraudProofHash = (bytes) => taggedHash(TAG.slashProof, bytes);
 /** Whether `bytes` is a complete proof of a round's offence: a reader of proofs of every kind asks this first. */
 export const isFraudProof = (bytes) => bytes instanceof Uint8Array && bytes[0] === TYPE_FRAUD_PROOF;
 
-/** WHICH OFFENCE'S RECORD THIS IS, cut: { kind: 'audit' | 'rerun' | 'table' | 'double' | 'result', proof, ...its parts }. Throws on anything else. */
+/** WHICH OFFENCE'S RECORD THIS IS, cut: { kind: 'audit' | 'rerun' | 'table' | 'release' | 'double' | 'result', proof, ...its parts }. Throws on anything else. */
 export function readEvidence(evidence) {
   if (evidence[0] === TYPE_AUDIT_SLASH_PROOF) return { kind: 'audit', ...splitAuditSlashEvidence(evidence) };
   if (evidence[SLASH_PROOF_BYTES] === TYPE_RERUN_RESULT) return { kind: 'rerun', ...splitRerunSlashEvidence(evidence) };
   if (evidence[SLASH_PROOF_BYTES] === TYPE_SETTLEMENT_ACK) return { kind: 'table', ...splitTableSlashEvidence(evidence) };
+  if (evidence[SLASH_PROOF_BYTES] === TYPE_RELEASE_EVIDENCE) return { kind: 'release', ...splitReleaseSlashEvidence(evidence) };
   let doubled = -1; try { doubled = doubleSlashEvidenceBytesOf(evidence); } catch { doubled = -1; }
   if (doubled === evidence.length) return { kind: 'double', ...splitDoubleSlashEvidence(evidence) };
   return { kind: 'result', ...splitSlashEvidence(evidence) };
@@ -1249,6 +1250,33 @@ const ownBond = (proof, advert) => {
     return `the proof names bond ${hex(proof.bondTxid)}:${proof.bondVout} and the node advertised ${hex(advert.bondTxid)}:${advert.bondVout}`;
   return null;
 };
+
+/**
+ * A PROOF AGAINST A RELEASE, AS IT IS PUBLISHED (5A.3 rows "a release with no valid proof" and "a release ... other than its payout_table"): the proof body, the raw release, the outputs it spent, and the
+ * bytes that hash to its OP_RETURN (`fraudProof`) or the table it committed to (`table`), whichever row this is. Anyone can file one: the release is on the chain.
+ */
+export function joinReleaseSlashEvidence(proofBytes, { release, prevouts, fraudProof = NO_PART, table = NO_PART }) {
+  if (proofBytes.length !== SLASH_PROOF_BYTES) throw new Error(`a slash proof is ${SLASH_PROOF_BYTES} bytes, got ${proofBytes.length}`);
+  const w = new Writer();
+  w.bytes(proofBytes, SLASH_PROOF_BYTES);
+  w.u8(TYPE_RELEASE_EVIDENCE);
+  w.u32(release.length); w.bytes(release, release.length);
+  w.u32(prevouts.length);
+  for (const p of prevouts) { w.u64(p.value); w.u32(p.script.length); w.bytes(p.script, p.script.length); }
+  for (const part of [fraudProof, table]) { w.u32(part.length); w.bytes(part, part.length); }
+  return w.finish();
+}
+
+export function splitReleaseSlashEvidence(bytes) {
+  const proof = decodeSlashProof(bytes.subarray(0, SLASH_PROOF_BYTES));
+  const r = new Reader(bytes.subarray(SLASH_PROOF_BYTES));
+  if (r.u8() !== TYPE_RELEASE_EVIDENCE) throw new Error('not a proof against a release');
+  const release = r.bytes(r.u32()), prevouts = [];
+  for (let n = r.u32(); n > 0; n--) { const value = r.u64(); prevouts.push({ value, script: r.bytes(r.u32()) }); }
+  const fraudProof = r.bytes(r.u32()), table = r.bytes(r.u32());
+  r.end();
+  return { proof, release, prevouts, fraudProof, table };
+}
 
 /**
  * DID THIS PANEL MEMBER SIGN A RELEASE WITH NO VALID PROOF? (§5A.3B: "Signing a release with no valid proof slashes the signer: the release's

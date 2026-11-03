@@ -4106,6 +4106,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       return { ok: true, committee: [...keys.values()] };
     },
+    panelsOf: (contract, rid) => roster.slashPanelsFor(rid, { posted: contract }), holdBlocksOf: (contract) => holdClocksOf(contract.networkId).holdBlocks,
     manifestOf: (contract) => { const found = pluginForRound(contract, hosted); return found.ok ? found.plugin.manifest : null; },
     clientOf: async (fid) => { try { const port = await settlements.portForFederation(fid); return port ? { fees: () => port.fees(), txid: async (build) => fromHex((await port.settle(build)).txid) } : null; } catch { return null; } },
     coreOf: (contract, rid) => coreForRound(contract, rid, hosted), beaconOf: (contract, rid, entry, eid) => verifier.proofBeacon(contract, rid, entry, eid), replayRunOf: (rid, eid, core) => verifier.proofReplay(rid, eid, core), vrf: auditVrf,
