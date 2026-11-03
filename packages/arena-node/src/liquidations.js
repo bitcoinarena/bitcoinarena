@@ -14,9 +14,14 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 // A HALT FROM EITHER SOURCE (spec §23A.5 "How a halt is proven", RULED 2026-10-14): a signed HALTED record, as before, or the seats'
 // halt proof (halts.js) - the one a federation that lost 2f + 1 actually has. The record's halt counts first when both exist.
-export function createLiquidations({ records, clocks, verify, claimsUrl = null, halts = null }) {
-  const haltOf = (fid) => records.haltOf(fid) || (halts ? halts.haltOf(fid) : null);
-  const haltedFederations = () => [...new Set([...records.haltedFederations(), ...(halts ? halts.haltedFederations() : [])])];
+// AND A MARK OF THEFT (kanban #1093 part 2, ruling #1106): "the federation is treated as HALTED from that height. Liquidation runs as in §23A.5 ...
+// The proof is the alarm plus the chain spend." `alarms` (reserve-alarms.js): a federation with a standing alarm is halted from the alarm's
+// height; a record's or the seats' halt, when one exists, counts first.
+export function createLiquidations({ records, clocks, verify, claimsUrl = null, halts = null, alarms = null }) {
+  const alarmHalt = (fid) => { const a = alarms ? alarms.of(fid) : null; return a ? { height: a.height, alarm: a } : null; };
+  const haltOf = (fid) => records.haltOf(fid) || (halts ? halts.haltOf(fid) : null) || alarmHalt(fid);
+  const haltedFederations = () => [...new Set([...records.haltedFederations(), ...(halts ? halts.haltedFederations() : []),
+    ...(alarms ? alarms.list().map((a) => a.federation) : [])])];
   const copies = new Map();                  // federation id hex -> Map(signer hex -> copy)
 
   /** Takes one guardian's signed copy, `{ spentSet: hex, signature: hex }`; answers { ok, kept } or why not. */
@@ -48,6 +53,8 @@ export function createLiquidations({ records, clocks, verify, claimsUrl = null, 
         // THE RECORD HELD, signed (kanban #326 rehearsal 17): a halt PROVEN by the seats has no HALTED record (a federation that lost
         // 2f + 1 signs none), and the remainder's payees leave out the federation's guardians - read from this
         record: held && held.bytes ? toHex(held.bytes) : null,
+        // the mark of theft a halt stands on, when it is one (kanban #1093 part 2): inflation with its session, or the unbacked spend's txid
+        alarm: halt.alarm || null,
         haltProof: halt.proof ? { session: halt.proof.session, observers: halt.proof.observers, abandoned: halt.proof.abandoned.map(toHex), id: toHex(halt.proof.id) } : null,
         // WHERE CLAIMS GO (§23A.5 step 2: "advertises where claims go ... every seat mirrors them"): the arbitration set's door
         claims: claimsUrl,

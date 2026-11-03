@@ -5524,7 +5524,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const ht = setInterval(() => { halts.observe().catch((e) => console.log(`[halt] observe: ${e.message}`)); }, Number(process.env.ARENA_HALT_OBSERVE_MS || 600000));
     if (ht.unref) ht.unref();
   }
-  liquidations = createLiquidations({ records: fedRecords, clocks: fedClocks, verify: schnorrVerify, claimsUrl: process.env.ARENA_LIQUIDATION_CLAIMS || null, halts });
+  liquidations = createLiquidations({ records: fedRecords, clocks: fedClocks, verify: schnorrVerify, claimsUrl: process.env.ARENA_LIQUIDATION_CLAIMS || null, halts, alarms: reserveAlarms });
   // THE ARBITRATION SET'S EVENTS (kanban #723): its liquidations and slashes with every payout and transaction, signed by k of its members -
   // checked against this chain's genesis, kept beside the database across restarts, listed at GET /liquidations (`events`)
   const eventsFile = db && db.arenaPath ? `${db.arenaPath}.arbitration-events.json` : null;
