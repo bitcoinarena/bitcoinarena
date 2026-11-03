@@ -320,6 +320,45 @@ async function mark(env, request) {
   return json({ ok: true, marked: keys.length, kind: b.kind });
 }
 const weekOf = (ms) => { const d = new Date(Math.floor(ms / DAY_MS) * DAY_MS); const back = (d.getUTCDay() + 6) % 7; return new Date(d.getTime() - back * DAY_MS).toISOString().slice(0, 10); };
+// THE PLAYED ROUNDS, TOLD TO UMAMI (kanban #1110, the owner 2026-11-03: "die events in umami muessen mit unseren gespielten runden im explorer
+// übereinstimmen, admin und bot runden ausgenommen"): the page's own events miss what an ad blocker stops or what is not played on the page, and
+// they came from admin play too. So the explorer sends them itself, from the same rows /api/played counts, with the same rule: an order is
+// real when neither its entry id nor its player key is marked. Each real entry once ('played-entry'), each round with a real entry once
+// ('played-round'), at the time it was played (a round at its first order's time, as /api/played dates it), from 2026-11-01. An order is
+// told only an hour after it was stored, so the bots' marking (every 10 min) and the owner's have come first. UMAMI_SEND=off stops it.
+const UMAMI_SEND_URL = 'https://stats.bitcoinarena.io/api/send', UMAMI_SITE = '024ff09e-c3a6-4dfd-bede-3163eb8be36a', UMAMI_HOST = 'testnet.bitcoinarena.io';
+const UMAMI_DELAY_MS = 3600000, UMAMI_PER_RUN = 60;
+async function sendPlayed(env, now = Date.now(), post = fetch) {
+  if (env.UMAMI_SEND === 'off') return { sent: 0, off: true };
+  const rows = ((await env.DB.prepare(`SELECT t.id, t.round, t.app, t.stored_ms AS ms,
+      (SELECT MIN(o.stored_ms) FROM txs o WHERE o.round = t.round AND COALESCE(o.kind, 'order') = 'order') AS round_ms,
+      EXISTS (SELECT 1 FROM umami_sent u WHERE u.key = 'r:' || t.round) AS round_sent
+    FROM txs t WHERE COALESCE(t.kind, 'order') = 'order' AND t.round IS NOT NULL AND t.stored_ms >= ? AND t.stored_ms < ?
+      AND NOT EXISTS (SELECT 1 FROM marked m WHERE m.key = t.id OR m.key = lower(json_extract(t.json, '$.entry.player')))
+      AND NOT EXISTS (SELECT 1 FROM umami_sent u WHERE u.key = 'e:' || t.id)
+    ORDER BY t.stored_ms LIMIT ?`).bind(PLAYED_FROM_MS, now - UMAMI_DELAY_MS, UMAMI_PER_RUN).all()).results) || [];
+  let sent = 0; const roundsNow = new Set();
+  const tell = async (name, game, ms) => {
+    const r = await post(env.UMAMI_SEND_URL || UMAMI_SEND_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': 'Mozilla/5.0 (compatible; arena-explorer)' },
+      body: JSON.stringify({ type: 'event', payload: { website: env.UMAMI_SITE || UMAMI_SITE, hostname: UMAMI_HOST, url: '/played/' + game, name, data: { game }, timestamp: Math.floor(Number(ms) / 1000) } }) });
+    if (!r.ok) throw new Error(`umami ${r.status}`);
+    sent++;
+  };
+  for (const x of rows) {
+    const game = x.app || 'unknown';
+    try {
+      if (!Number(x.round_sent) && !roundsNow.has(x.round)) {
+        await tell('played-round', game, x.round_ms ?? x.ms);
+        await env.DB.prepare('INSERT INTO umami_sent (key, at_ms) VALUES (?, ?) ON CONFLICT(key) DO NOTHING').bind('r:' + x.round, now).run();
+        roundsNow.add(x.round);
+      }
+      await tell('played-entry', game, x.ms);
+      await env.DB.prepare('INSERT INTO umami_sent (key, at_ms) VALUES (?, ?) ON CONFLICT(key) DO NOTHING').bind('e:' + x.id, now).run();
+    } catch (e) { return { sent, why: e.message }; }
+  }
+  return { sent, rows: rows.length };
+}
+
 async function played(env) {
   const [rows, marks] = await Promise.all([
     env.DB.prepare(`SELECT id, round, app, stored_ms AS ms, settled, json_extract(json, '$.entry.player') AS p FROM txs WHERE kind = 'order' AND stored_ms >= ? AND round IS NOT NULL`).bind(PLAYED_FROM_MS).all(),
@@ -503,10 +542,12 @@ async function inline(env, request, data) {
 // THE OLD DOMAIN (kanban #937): every (sub)domain of it sends to the same place on the new one, path and query kept
 const OLD_DOMAIN = /(^|\.)bitcoin-arena\.io$/;
 const moved = (url) => { if (!OLD_DOMAIN.test(url.hostname)) return null; const to = new URL(url); to.hostname = url.hostname.replace(/bitcoin-arena\.io$/, 'bitcoinarena.io'); return Response.redirect(to.toString(), 308); };
+export { sendPlayed };
 export default {
   // the health copy on its own trigger (kanban #686): its own run, so its fetches do not count against the transactions' read
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(event.cron === HEALTH_CRON ? readHealth(env).catch((e) => console.log(JSON.stringify({ healthError: String(e && e.message ? e.message : e) }))) : poll(env));
+    ctx.waitUntil(event.cron === HEALTH_CRON ? readHealth(env).catch((e) => console.log(JSON.stringify({ healthError: String(e && e.message ? e.message : e) })))
+      : Promise.all([poll(env), sendPlayed(env).then((r) => { if (r.sent || r.why) console.log(JSON.stringify({ umami: r })); }).catch((e) => console.log(JSON.stringify({ umamiError: String(e && e.message ? e.message : e) })))]));
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
