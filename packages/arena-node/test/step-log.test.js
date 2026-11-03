@@ -15,3 +15,11 @@ test('one line: arrival in UTC, each step\'s offset, steps timed elsewhere, the 
   t += 3; res.emit('finish'); res.emit('finish');
   assert.deepEqual(lines, ['[steps] lock 3dd014ad8c1e2f40 at 2026-10-24T14:59:01.123Z: entry +1, statusMs 400ms, status +412 -> 201 in 415 ms']);
 });
+
+test('a refusal says why: the door\'s text on the line, not only its status (kanban #1068)', () => {
+  const lines = [];
+  const s = stepLog('entry', 'round 59dc6d68', { log: (l) => lines.push(l), now: () => 0 });
+  const res = new EventEmitter(); res.statusCode = 400; res.arenaWhy = 'that entry names shares this node has not accepted\n'; s.on(res);
+  res.emit('finish');
+  assert.match(lines[0], / -> 400 in 0 ms \(that entry names shares this node has not accepted\)$/);
+});
