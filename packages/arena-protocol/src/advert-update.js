@@ -19,6 +19,7 @@
 import { parseTransaction, commitmentsOf, witnessRunsOf } from './tx.js';
 import { advertId, decodeAdvert, splitSignedAdvert } from './advert.js';
 import { paysBondMarker, provesTransaction } from './chain.js';
+import { positionIn } from './partial-view.js';
 
 export const ADVERT_UPDATE_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e, 0x41]);     // "ARN" 'A'
 export const ADVERT_UPDATE_BYTES = 4 + 32 + 4 + 32;
@@ -109,7 +110,8 @@ export function newestUpdates(view, entries, { atHeight, network = 'regtest', ve
   view.blocks.forEach((block, i) => {
     const height = view.firstHeight + i;
     if (height > atHeight) return;
-    (block.transactions || []).forEach((raw, position) => {
+    (block.transactions || []).forEach((raw, i) => {
+      const position = positionIn(block, i);   // a partial block's kept position (partial-view.js)
       let tx;
       try { tx = parseTransaction(raw); } catch { return; }
       if (!commitmentsOf(tx).some((c) => readAdvertUpdatePayload(c))) return;

@@ -43,6 +43,7 @@ import { openStore } from './store.js';
 import { tipHeaderView } from './tip-view.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../arena-protocol/src/old-series.js';
 import { bitcoindRpc, blocksOver, blockCache, censusWithFreshHashes, viewWithFreshHashes } from './chain-rpc.js';
+import { openArenaIndex, syncArenaIndex, indexServesCensus, displayHash } from './arena-index.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { chainBeacon } from './beacon-source.js';
 import { lightningFromEnv } from './node-start.js';
@@ -328,6 +329,47 @@ if (url) {
   // synchronously, and the signer nodes' addresses are in it.
   const views = new Map();                     // view key -> the view
   const blocksKept = blockCache();             // block hash -> its one parsed copy, shared by every view
+  // THE ARENA INDEX (kanban #925 part 2, spec ruling #1101 A: "Every network reads every unspent bond since its first block ... the index
+  // is a seat's cache: reorg-safe, rebuildable and persisted"). With ARENA_ARENA_INDEX=1 the seat keeps, in its own store, every header
+  // from its network's first census block and every Bitcoin Arena transaction with its merkle branch (arena-index.js), reads each new
+  // block once into it (sharing blocksKept), and a census from the height its network's whole rule starts at (indexServesCensus:
+  // testnet4 158,226, regtest 0) reads the index's proven partial view instead of every whole block since the first one. Off, or below
+  // that height, or while the index has not reached the view's top, or with the index's block at that top not bitcoind's: whole blocks,
+  // as before - the census is the same either way (arena-index-census.test.js, tools/arena-index-regtest.mjs).
+  const indexNet = process.env.ARENA_DONATION_NETWORK;
+  const arenaIndex = process.env.ARENA_ARENA_INDEX === '1' && (indexNet === 'regtest' || indexNet === 'testnet4') ? openArenaIndex({ db, network: indexNet }) : null;
+  if (arenaIndex) {
+    let syncing = false;
+    const syncIndex = async () => {
+      if (syncing) return;
+      syncing = true;
+      try {
+        const got = await syncArenaIndex(arenaIndex, call, { cache: blocksKept, maxBlocks: 288 });
+        if (got.added > 1 || got.rolledBackFrom !== null || got.rebuilt)
+          console.log(`[index] ${got.rebuilt ? 'rebuilt, ' : ''}${got.rolledBackFrom !== null ? `rolled back from ${got.rolledBackFrom}, ` : ''}${got.added} block(s) read, to ${got.top} of ${got.tip}`);
+      } catch (e) { console.error(`[index] not synced: ${e.message}`); } finally { syncing = false; }
+    };
+    syncIndex();
+    const t = setInterval(syncIndex, Number(process.env.ARENA_ARENA_INDEX_EVERY_MS || 5000)); if (t.unref) t.unref();
+  }
+  let indexServed = false;           // said once, the first time a census reads the index
+  /** The blocks a census at `censusHeight` reads, up to `to`: the index's proven partial view where it serves (above), else whole blocks. */
+  const censusBlocks = async (networkId, censusHeight, to) => {
+    const net = networkOf(networkId);
+    const from = censusFirstBlock(censusHeight, net);
+    if (arenaIndex && net === arenaIndex.network && indexServesCensus(net, censusHeight) && from >= arenaIndex.firstHeight) {
+      const top = arenaIndex.top();
+      const held = top && top.height >= to ? arenaIndex.headerAt(to) : null;
+      if (held && String(await call('getblockhash', [to])) === displayHash(held.hash)) {
+        try {
+          const view = arenaIndex.viewOf(from, to);
+          if (!indexServed) { indexServed = true; console.log(`[index] the census at ${censusHeight} read from the index: ${from}-${to}, ${view.blocks.reduce((n, b) => n + b.transactions.length, 0)} transaction(s) kept`); }
+          return view;
+        } catch (e) { console.error(`[index] census ${censusHeight} reads whole blocks: ${e.message}`); }
+      }
+    }
+    return blocksOver(call, from, to, { cache: blocksKept });
+  };
   // THE CHAIN'S CENSUS AT A HEIGHT, KEPT ACROSS A RESTART (2026-10-20: "the bonds take a long time to show up, if they show up at all";
   // measured all day: a restarted seat read 2,017 blocks again for every census height it was asked - minutes under load, while its
   // federation records, gateway operators and bonds waited): the census a height gives, kept in this node's store (census_kept, as the
@@ -354,7 +396,7 @@ if (url) {
     if (hold && Date.now() - blocksFailedAtMs < 60000) return { ok: false, why: 'a block read failed less than a minute ago: read again after it' };
     const p = (async () => {
       // a kept hash from a branch the chain left is dropped and the view read once more (censusWithFreshHashes, kanban #495)
-      const read = async () => { try { return await blocksOver(call, censusFirstBlock(height, networkOf(contract.networkId)), height, { cache: blocksKept }); } catch (e) { blocksFailedAtMs = Date.now(); throw e; } };
+      const read = async () => { try { return await censusBlocks(contract.networkId, height, height); } catch (e) { blocksFailedAtMs = Date.now(); throw e; } };
       const census = await censusWithFreshHashes({ read, derive: (view) => censusOfView(view, contract, { standingKeys }), cache: blocksKept });
       if (census.ok) {
         try {
@@ -390,7 +432,7 @@ if (url) {
     const deep = seen.ok ? seen.height + contract.censusConfirmations - 1 : 0;
     const to = Math.min(tip, Math.max(contract.censusHeight, deep));
     // a view that does not link - a kept hash from a branch the chain left - is read once more with fresh hashes (kanban #576)
-    const view = await viewWithFreshHashes({ read: () => blocksOver(call, censusFirstBlock(contract.censusHeight, networkOf(contract.networkId)), to, { cache: blocksKept }), cache: blocksKept });
+    const view = await viewWithFreshHashes({ read: () => censusBlocks(contract.networkId, contract.censusHeight, to), cache: blocksKept });
     // SHORT OF THE BEACON'S DEPTH, a view is read again later (ORDER-2116, measured on the free pair 2026-10-01: a round
     // posted 15 min ahead was read before its beacon existed, kept for good, and never drew a committee - "no block in
     // this view is after this round's committee time"; no free round posted ahead was joinable).
@@ -645,7 +687,7 @@ if (url) {
         if (evidenceKept.has(name)) return evidenceKept.get(name);
         const census = await chainCensusKept('censuskey', toHexMain(networkId), height, censusKeyContract({ networkId, network: net, height, censusConfirmations }), { hold: false });
         if (!census.ok) return census;
-        const got = censusEvidenceOf(census, await blocksOver(call, censusFirstBlock(height, networkOf(networkId)), height, { cache: blocksKept }));
+        const got = censusEvidenceOf(census, await censusBlocks(networkId, height, height));
         if (got.ok) { evidenceKept.set(name, got); if (evidenceKept.size > 8) evidenceKept.delete(evidenceKept.keys().next().value); }
         return got;
       };

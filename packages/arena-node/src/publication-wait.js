@@ -18,6 +18,7 @@ import { findSeriesPublication } from '../../arena-protocol/src/series.js';
 import { beaconFromChain, medianTimePast } from '../../arena-protocol/src/beacon.js';
 import { roundId } from '../../arena-protocol/src/contracts.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { txCountOf } from '../../arena-protocol/src/partial-view.js';
 
 /** The beacon BLOCK the rule picks in `view` - the first whose median time passes committee_time - at any depth, or null. */
 export function beaconBlockIn(contract, view) {
@@ -60,7 +61,7 @@ export async function awaitPublishedBeacon({ contract, txid, view, rpc, feeRate 
       // ONLY A BLOCK THAT TOOK OTHERS' TRANSACTIONS SAYS THE FEE WAS TOO LOW (measured 2026-10-12 07:42-07:43Z:
       // testnet4 blocks 156204-156209 were coinbase-only, minimum-difficulty, 20 min apart in their timestamps - the grid's
       // 0.15 sat/vB was raised to 1.2 for nothing; 156203 before them took a 0.15 sat/vB transaction among 220)
-      const tookOthers = v.blocks.slice(Math.max(0, bumpedAt + 1 - v.firstHeight)).some((b) => (b.transactions || []).length > 1);
+      const tookOthers = v.blocks.slice(Math.max(0, bumpedAt + 1 - v.firstHeight)).some((b) => txCountOf(b) > 1);   // a partial block says its own count (kanban #925)
       if (tip > bumpedAt && !tookOthers) {
         if (look % 10 === 0) log(`[publish] round ${tag}: block ${tip} came empty (coinbase only): no fee raise for it`);
         bumpedAt = tip;
