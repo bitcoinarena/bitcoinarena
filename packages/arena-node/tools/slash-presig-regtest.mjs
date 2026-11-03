@@ -202,7 +202,7 @@ try {
   ask('the panels leave out every drawn node', ![...drawn.game, ...drawn.settlement].some((k) => onPanels.has(k)), `${onPanels.size} on the panels`);
   ask('the panels are full for what is left', door.panels.n >= 3 && door.panels.a.length === door.panels.n && door.panels.b.length === door.panels.n);
   const clocks = holdClocksOf(NETWORK_ID_REGTEST), value = BigInt(e.bondSats);
-  const hold = holdOutputKey({ nodeKey: e.pubkey, censusKey: key0, panelA: door.panels.a.map(fromHex), panelB: door.panels.b.map(fromHex), bondMaturity: e.advert.bondMaturityHeight, ...clocks }, { tweakPoint });
+  const hold = holdOutputKey({ ownerKey: e.advert.ownerPubkey, censusKey: key0, panelA: door.panels.a.map(fromHex), panelB: door.panels.b.map(fromHex), bondMaturity: e.advert.bondMaturityHeight, ...clocks }, { tweakPoint });
   const presig = fromHex(door.signature);
   ask('the door\'s presig verifies over the hold those panels rebuild', slashPresigVerifies(presig, slashPresigDigest({ bond: { txid: e.txid, vout: e.vout, value, script: e.script }, nodeKey: e.pubkey, censusKey: key0, holdScript: hold.script }), e.pubkey, verify));
 

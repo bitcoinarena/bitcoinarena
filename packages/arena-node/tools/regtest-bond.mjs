@@ -35,6 +35,11 @@ import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 import { tweakPoint, combine } from '../src/curve.js';
 
 /** Everything a caller needs against one running regtest. */
+/** A regtest owner secret for a node secret (kanban #1093): the owner key of a tool's template-3 bond, held by the tool, never the node key. */
+export function regtestOwnerSecret(nodeSecret) {
+  return taggedHash('ARENA/regtest/OwnerSecret', Uint8Array.from(nodeSecret));
+}
+
 export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = null } = {}) {
   const g = genesisFor(network);
 
@@ -257,8 +262,9 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
   /** The same off a body: template 3's path B holds the census key that body names (5A.3B). */
   function keyOfAdvert(advert, bondMaturity) {
     const nodeKey = advert.nodePubkey;
-    return advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3 ? bond3OutputKey({ nodeKey, censusKey: advert.censusKey, arbitrationKeys: g.arbitrationKeys, bondMaturity,
-      internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey }, { tweakPoint, combine }) : keyAt(nodeKey, bondMaturity);
+    // template 3 (ruling #1103): path A is the owner key the body names, the internal key is NUMS - no arbitration keys
+    return advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3
+      ? bond3OutputKey({ nodeKey, ownerKey: advert.ownerPubkey, censusKey: advert.censusKey, bondMaturity }, { tweakPoint }) : keyAt(nodeKey, bondMaturity);
   }
 
   /** This node key's unspent template-2 and template-3 bond outputs, as scantxoutset answers them, found by the marker (read fresh). */
@@ -461,8 +467,12 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
   // Measured: with none named every bond this posted was refused by the advertisement's own encoder.
   function postBond(nodeSecret, { endpoint, roles = ['game', 'verify', 'settlement'],
     bondSats = 50000000n, guardianOf = [], guardianCapable = false, guardianEndpoint = '', fundBtc, hostedGames = [NEXTBLOCK_GAME_ID],
-    template = BOND_TEMPLATE_V2, operatorId = '2of2', protocolVersions = [1], advert: givenAdvert = null, utxo: givenUtxo = null, slackBlocks = 6, censusKey = null } = {}) {
+    template = BOND_TEMPLATE_V2, operatorId = '2of2', protocolVersions = [1], advert: givenAdvert = null, utxo: givenUtxo = null, slackBlocks = 6, censusKey = null, ownerSecret: givenOwnerSecret = null } = {}) {
     const nodeKey = schnorr.getPublicKey(nodeSecret);
+    // A TEMPLATE-3 BOND HAS AN OWNER KEY (kanban #1093 part 1, ruling #1103): path A and the hold's return are the owner's, never the
+    // node key's. A regtest tool holds the owner secret itself: `ownerSecret`, or one derived from the node secret (returned as `ownerSecret`).
+    const ownerSecret = template === BOND_TEMPLATE_V3 ? (givenOwnerSecret || regtestOwnerSecret(nodeSecret)) : null;
+    const ownerKey = ownerSecret ? schnorr.getPublicKey(ownerSecret) : null;
     // A NEW BOND IS TEMPLATE 2: its maturity is the next block, a few of slack and this network's offset
     // - the census counts it once it confirms no later than that slack allows. `template: 1` posts genesis' fixed height.
     // `slackBlocks` (kanban #495, 2026-10-20: the n495 bonds and their first re-bonds confirmed past their slack - 23 and 3 blocks
@@ -470,14 +480,14 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
     // `template: 3` names `censusKey`, the census key the bond's path B needs beside the node key (5A.3B).
     const dated = template === BOND_TEMPLATE_V2 || template === BOND_TEMPLATE_V3;
     const maturity = dated ? maturityHeightFor(height(), network, { slackBlocks }) : g.bondMaturity;
-    const built = template === BOND_TEMPLATE_V3 ? keyOfAdvert({ nodePubkey: nodeKey, bondScriptTemplateVersion: template, censusKey }, maturity) : keyAt(nodeKey, maturity);
+    const built = template === BOND_TEMPLATE_V3 ? keyOfAdvert({ nodePubkey: nodeKey, bondScriptTemplateVersion: template, censusKey, ownerPubkey: ownerKey }, maturity) : keyAt(nodeKey, maturity);
 
     // ADD TO BOND (kanban #544): `advert` - a node's own newest advertisement (bondsOf) - posted as this bond's body, with the
     // new bond's template, height and timestamp: a second output beside the node's first, saying what the node says now.
     // `utxo` - a carrier output funded already (not broadcast yet, for a testmempoolaccept dry run) - in place of `fund`.
     if (givenAdvert && toHex(givenAdvert.nodePubkey) !== toHex(nodeKey)) throw new Error('an added bond names the node key that signs it');
     const advert = givenAdvert ? { ...givenAdvert, slashPresig: undefined, bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: template,
-      ...(dated ? { bondMaturityHeight: maturity } : {}), ...(censusKey ? { censusKey } : {}), timestamp: BigInt(Date.now()) } : {
+      ...(dated ? { bondMaturityHeight: maturity } : {}), ...(censusKey ? { censusKey } : {}), ...(ownerKey ? { ownerPubkey: ownerKey } : { ownerPubkey: undefined }), timestamp: BigInt(Date.now()) } : {
       // the operator and the protocol versions it speaks: '2of2' and [1] unless the caller names them (a node of
       // its own operator, drawable beside the 14 '2of2' nodes; it speaks what its build speaks)
       nodePubkey: nodeKey, operatorId, protocolVersions, roles, hostedGames,
@@ -485,7 +495,7 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
       softwareHash: new Uint8Array(32).fill(2),
       settlementCapabilities: 0, lightningCapabilities: 0,
       bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: template,
-      ...(dated ? { bondMaturityHeight: maturity } : {}), ...(censusKey ? { censusKey } : {}),
+      ...(dated ? { bondMaturityHeight: maturity } : {}), ...(censusKey ? { censusKey } : {}), ...(ownerKey ? { ownerPubkey: ownerKey } : {}),
       payoutPubkey: new Uint8Array(32).fill(3), guardianOf,
       // NOT A GUARDIAN unless the caller passes what the node answered (§5A.1 v4.6.4)
       guardianCapable, guardianEndpoint, timestamp: 1788700000000n,
@@ -518,7 +528,7 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
         script: carrier.script, controlBlock: carrier.control,
       })],
     }));
-    return { nodeKey, advert, hex, bondSats, maturity, built, carrierSecret, utxo,
+    return { nodeKey, advert, hex, bondSats, maturity, built, carrierSecret, utxo, ...(ownerSecret ? { ownerSecret, ownerKey } : {}),
       txid: JSON.parse(cli('decoderawtransaction', hex)).txid };
   }
 
@@ -533,6 +543,6 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
     return { blocks, firstHeight: from };
   }
 
-  return { height, mine, bury, minable, waitForHeight, include, postBond, findBond, bondsOf, keyAt, keyOfAdvert, carrierFor, chunksOf, fund, payTo, prepareAdvertUpdate, postAdvertUpdate, presigCarrier, postBondPresig,
+  return { regtestOwnerSecret, height, mine, bury, minable, waitForHeight, include, postBond, findBond, bondsOf, keyAt, keyOfAdvert, carrierFor, chunksOf, fund, payTo, prepareAdvertUpdate, postAdvertUpdate, presigCarrier, postBondPresig,
     prepareReaffirmation, postReaffirmation, prepareRebond, postRebond, newestUpdateOf, blocksFrom, genesis: g };
 }

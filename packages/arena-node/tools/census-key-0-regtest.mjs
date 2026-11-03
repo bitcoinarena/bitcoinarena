@@ -182,7 +182,7 @@ try {
   const value = 100000n, nodeKey = pubOf(keys[3]), firstKey = fromHex(first);
   const bondScript = fromHex(`5120${toHex(started.built.outputKey)}`), bondIn = { txid: fromHex(started.txid).reverse(), vout: 0, sequence: 0xfffffffd };
   const C = SLASH_CLOCKS.regtest, clocks = { holdBlocks: C.slashHoldBlocks, returnBlocks: C.slashReturnBlocks, fallbackBlocks: C.slashFallbackBlocks };
-  const hold = holdOutputKey({ nodeKey, censusKey: firstKey, panelA: [], panelB: [], bondMaturity: started.maturity, ...clocks }, { tweakPoint });
+  const hold = holdOutputKey({ ownerKey: started.advert.ownerPubkey, censusKey: firstKey, panelA: [], panelB: [], bondMaturity: started.maturity, ...clocks }, { tweakPoint });
   const leafScript = slashStartLeaf(nodeKey, firstKey), leafHash = tapLeafHash(leafScript);
   const presig = Uint8Array.from([...schnorr.sign(tapSighash({ version: 2, locktime: 0, inputs: [bondIn], outputs: [{ value, script: hold.script }], prevouts: [{ value, script: bondScript }], inputIndex: 0, leafHash, hashType: 0x83 }), keys[3].secret), 0x83]);
   // whoever files the slash brings a fee coin and the proof's OP_RETURN
