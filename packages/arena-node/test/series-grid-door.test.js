@@ -5,7 +5,7 @@
 // store and holds it again after a restart. Not a day series, not a grid short of its 45 min lead.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openStore } from '../src/store.js';
@@ -119,5 +119,44 @@ test('a grid series line is taken once per table, funded by its id, written, kep
     assert.equal(toHex(seriesId(parseSeriesLine(got))), toHex(seriesId(t)));
     assert.equal((await fetch(`http://127.0.0.1:${again.port}/series-template?id=${'ab'.repeat(32)}`)).status, 404);
     assert.equal((await fetch(`http://127.0.0.1:${again.port}/series-template?id=zz`)).status, 400);
+  } finally { await again.close(); }
+});
+
+// #1067: every seat that restarted a day after a grid's last entry refused its rounds at the settlement doors, with their locks standing
+test('a grid past its day is not held after a restart, and its rounds still reach the settlement doors', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'grid-past-'));
+  const db = join(dir, 'node.db'), gridFile = join(dir, 'node.db.grid-series');
+  const probe = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true });
+  const nodes = [probe.round.pubkey, b32(8)]; await probe.close();
+  const t = gridOf(nodes), off = gridOf(nodes, { committeeTimeMs: START - GRID_SERIES_LEAD_MIN_MS - 11n });
+  const held = toHex(roundId(seriesRound(t, 0))), dropped = toHex(roundId(seriesRound(off, 0)));
+  const s = await serve(openStore(db), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => NOW, gridSeriesFile: gridFile });
+  try {
+    const url = `http://127.0.0.1:${s.port}`;
+    for (const x of [t, off]) assert.equal((await fetch(`${url}/series`, { method: 'POST', body: seriesLineOf(x, encodeRoundContract) })).status, 200);
+    let ids = new Set();
+    for (let i = 0; i < 40 && !(ids.has(held) && ids.has(dropped)); i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      ids = new Set((await (await fetch(`${url}/rounds?ahead=${2 * 3600000}`)).json()).rounds.map((r) => r.id));
+    }
+    assert.ok(ids.has(held) && ids.has(dropped), 'round 0 of both written');
+  } finally { await s.close(); }
+  // A SERIES DROPPED AS OFF THE CHAIN IS NOT BROUGHT BACK BY THIS
+  writeFileSync(`${gridFile}.off-chain`, `${toHex(seriesId(off))} dup\n`);
+  const late = Number(START + 80000n + 224n * 8000n) + 2 * 86400000;
+  const again = await serve(openStore(db), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => late, gridSeriesFile: gridFile });
+  try {
+    const url = `http://127.0.0.1:${again.port}`;
+    assert.deepEqual((await (await fetch(`${url}/series`)).json()).series, [], 'not held');
+    for (const door of [`settle-commit?round=${held}`, `settle-sends?round=${held}`]) {
+      const r = await fetch(`${url}/${door}`, { method: 'POST', body: '[]' });
+      assert.doesNotMatch(await r.text(), /no such series/, door);
+    }
+    assert.doesNotMatch(await (await fetch(`${url}/settle-sends?round=${held}`)).text(), /no such series/);
+    assert.match(await (await fetch(`${url}/settle-commit?round=${dropped}`, { method: 'POST' })).text(), /settlement refused: that round names series .* no such series/);
+    // NO OTHER DOOR: a round of it takes nothing
+    const posted = await fetch(`${url}/round`, { method: 'POST', body: encodeRoundContract(seriesRound(t, 3)) });
+    assert.equal(posted.status, 409);
+    assert.match(await posted.text(), /no such series/);
   } finally { await again.close(); }
 });
