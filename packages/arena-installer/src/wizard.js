@@ -192,7 +192,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   const view = () => {
     const s = state.read();
     return { network: 'testnet4', step: nextStep(s), done: doneOf(s), origin: s.origin || null, control: s.control || null, chainSwitchedFrom: s.chainSwitchedFrom || null, chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
-      chainTest: s.chainTest || null, roles: s.roles || [], roleInfo: ROLES, appInfo: appsView(releaseApps), apps: chosenApps(s, releaseApps), electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
+      chainTest: s.chainTest || null, roles: s.roles || [], hostGroup: s.hostGroup || "", roleInfo: ROLES, appInfo: appsView(releaseApps), apps: chosenApps(s, releaseApps), electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
       build: buildOf(), seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
       lightning: s.lightning || null, coreSync: s.core ? { dir: s.core.dir || state.home, interim: !!s.core.interim, prune: !!s.core.prune } : null, gatewaySeat: GATEWAY_SEAT, launchers: s.launchers || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, custodyLater: laterCustody(s), wallet: (s.done || {}).seed ? (() => { const parts = withOtherNodes(s, depositParts(s, (s.roles || []).includes('custody') ? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS : 0), { further: !!fundFrom });
         return { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(Object.values(parts).reduce((a, x) => a + x, 0)), parts }; })() : null,
@@ -532,6 +532,8 @@ const serviceRun = async (b) => {
     'POST /api/roles/check': async (b) => { const why = rolesRefusal([...new Set((b.roles || []).map(String))]); return why ? { ok: false, why } : { ok: true }; },
     'POST /api/roles': async (b) => {
       const roles = [...new Set((b.roles || []).map(String))];
+      // WHERE A GUARDIAN RUNS (kanban #1093 part 4): the machine or provider, optional, at most 80 characters; only its hash leaves the node
+      if (b.hostGroup !== undefined) { const hg = String(b.hostGroup || '').trim().slice(0, 80); state.save({ hostGroup: hg || null }); }
       const refused = rolesRefusal(roles);
       if (refused) return { ok: false, why: refused };
       const was = state.read();
@@ -971,7 +973,7 @@ const serviceRun = async (b) => {
       try { nodeSecret = new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
       // custody added to a node with a bond: the bond's advertisement is updated to name custody and the guardian's endpoint (§5A.2)
       if (laterCustody(s)) {
-        const advert = advertFor({ hostedGames: s.hostedGames, nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles, endpoint: s.reach.url,
+        const advert = advertFor({ hostedGames: s.hostedGames, hostGroup: s.hostGroup, nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles, endpoint: s.reach.url,
           payoutPubkey: payoutKeyOf(seed), maturity: s.bond.maturity, softwareHash: commitOf(), guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
           ...(s.bond.censusKey ? { censusKey: fromHex(s.bond.censusKey) } : {}),
           emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });   // the census reads the newest advertisement: the key kept
@@ -991,7 +993,7 @@ const serviceRun = async (b) => {
       const censusKey = await censusKeyOfNode(s);
       let built;
       try {
-        built = buildBond({ network: bondNetworkOf(s), hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
+        built = buildBond({ network: bondNetworkOf(s), hostedGames: s.hostedGames, hostGroup: s.hostGroup, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
           endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash: commitOf(), feeRate: 2, censusKey,
           guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
           emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });

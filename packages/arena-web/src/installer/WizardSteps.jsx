@@ -66,7 +66,7 @@ export class RolesStep extends React.Component {
   constructor(props) {
     super(props);
     const info = props.st.roleInfo || {};
-    this.state = { on: Object.fromEntries(Object.keys(info).map((k) => [k, onAtStart(k, props.st.roles)])), saving: false, msg: null };
+    this.state = { on: Object.fromEntries(Object.keys(info).map((k) => [k, onAtStart(k, props.st.roles)])), saving: false, msg: null, hostGroup: props.st.hostGroup || '' };
     this.save = this.save.bind(this);
   }
   componentDidMount() { this.tell(); }
@@ -83,7 +83,7 @@ export class RolesStep extends React.Component {
   chosen() { return Object.keys(this.state.on).filter((k) => this.state.on[k]); }
   async save() {
     this.setState({ saving: true, msg: null });
-    const r = await this.props.post('/api/roles', { roles: this.chosen() });
+    const r = await this.props.post('/api/roles', { roles: this.chosen(), ...(this.state.on.custody ? { hostGroup: this.state.hostGroup } : {}) });
     if (r.ok) { this.setState({ saving: false }); return this.props.reload(); }
     this.setState({ saving: false, msg: said(r) });
   }
@@ -104,6 +104,14 @@ export class RolesStep extends React.Component {
                 <Switch id={`rl-${k}`} label={r.title} checked={!!on[k]} disabled={r.slice > 1} onChange={(v) => this.toggle(k, v)} />
               </>} />))}
         </div>
+        {on.custody ? (
+          // WHERE A GUARDIAN RUNS (kanban #1093 part 4): a federation seats at most f guardians of one machine or provider
+          <label className="field" id="host-group">
+            <span>Where does this node run? <small>(optional)</small></span>
+            <input type="text" maxLength={80} placeholder="e.g. home server, Hetzner, my-vps-1" value={this.state.hostGroup}
+              onChange={(e) => this.setState({ hostGroup: e.target.value })} />
+            <small>The machine or the hosting provider. Give your other nodes on the same machine or provider the same name: a federation then never seats too many guardians in one place. Only a hash of the name goes into your node's advertisement.</small>
+          </label>) : null}
         <p className="sub">{this.chosen().length ? `${this.chosen().length} role${this.chosen().length === 1 ? '' : 's'} on · each earns its own 1 %` : 'No role on: your node would only watch.'}</p>
         <button type="button" disabled={saving} onClick={this.save}>{saving ? 'Saving…' : 'Save and continue'}</button>
         <Msg r={msg} />

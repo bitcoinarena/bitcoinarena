@@ -38,7 +38,7 @@ export async function addBond({ state, addSats, post = false, chainKit = { coins
   const named = censusKey === undefined ? await censusKeyOfNode(s) : censusKey;
   let built;
   try {
-    built = buildBond({ network: bondNetworkOf(s), hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats: add, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
+    built = buildBond({ network: bondNetworkOf(s), hostedGames: s.hostedGames, hostGroup: s.hostGroup, wallet: w, nodeSecret, coins, tip, bondSats: add, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
       endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint, nowMs, guardianOf, censusKey: named,
       emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
   } catch (e) { return { ok: false, why: e.message }; }
@@ -125,7 +125,7 @@ export async function firstBond({ state, post = false, chainKit = { coinsOf, bro
   try { nodeSecret = new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
   let built;
   try {
-    built = buildBond({ network: bondNetworkOf(s), hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
+    built = buildBond({ network: bondNetworkOf(s), hostedGames: s.hostedGames, hostGroup: s.hostGroup, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
       endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint, nowMs, censusKey: censusKey === undefined ? await censusKeyOfNode(s) : censusKey,
       emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
   } catch (e) { return { ok: false, why: e.message, plan }; }

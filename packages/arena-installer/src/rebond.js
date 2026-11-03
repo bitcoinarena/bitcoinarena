@@ -32,7 +32,7 @@ export async function rebond({ state, bondSats, post = false, chainKit = { coins
   const censusKey = await censusKeyOfNode(s);
   let built;
   try {
-    built = buildBond({ network: bondNetworkOf(s), hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats: want, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
+    built = buildBond({ network: bondNetworkOf(s), hostedGames: s.hostedGames, hostGroup: s.hostGroup, wallet: w, nodeSecret, coins, tip, bondSats: want, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
       endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint, censusKey,
       // the owner key from the 24 words (kanban #1093 part 1): it names the new 2.0 bond's path A and signs an old 2.0 bond's
       ownerPubkey: ownerKeysOf(seed).pubkey, ownerSecret: ownerKeysOf(seed).secret,
