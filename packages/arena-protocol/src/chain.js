@@ -355,16 +355,16 @@ export function bondKeyMatches(script, advert, { arbitrationKeys, arbitrationK, 
   const maturity = bondMaturityOf(advert, { genesisMaturity: bondMaturity, network });
   if (!maturity.ok) return maturity;
 
+  // TEMPLATE 3: path A the owner key the advertisement names, path B the census key it names, an unspendable internal key (kanban #1093
+  // part 1, ruling #1103). Whether that census key may be named is the census' question.
+  if (advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3)
+    return bond3OutputKeyMatches(script.subarray(2, 34), {
+      nodeKey: advert.nodePubkey, ownerKey: advert.ownerPubkey, censusKey: advert.censusKey, bondMaturity: maturity.maturity,
+    }, { tweakPoint });
+
   const derived = bondInternalKey(
     { nodeKey: advert.nodePubkey, arbitrationKeys }, { combine });
   if (!derived.ok) return derived;
-
-  // TEMPLATE 3: path B holds the census key the advertisement names. Whether that key may be named is the census' question.
-  if (advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3)
-    return bond3OutputKeyMatches(script.subarray(2, 34), {
-      nodeKey: advert.nodePubkey, censusKey: advert.censusKey, arbitrationKeys, bondMaturity: maturity.maturity,
-      internalKey: derived.internalKey,
-    }, { tweakPoint, combine });
 
   return bondOutputKeyMatches(script.subarray(2, 34), {
     nodeKey: advert.nodePubkey, arbitrationKeys, arbitrationK, bondMaturity: maturity.maturity,
