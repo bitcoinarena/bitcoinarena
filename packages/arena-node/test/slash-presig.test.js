@@ -24,7 +24,7 @@ const bondScript = (i) => Uint8Array.from([0x51, 0x20, ...new Uint8Array(32).fil
 const contract = { ...contractFor([]), networkId: NETWORK_ID_REGTEST, protocolVersion: 25, startTimeMs: 60500n, gameVerifySlots: 7, settlementSlots: 7, bondMinSats: 1000n, censusMinNodes: 10, nodes: [] };
 
 const entry = (n, i, template3) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(i + 1), vout: 0, height: 100, bondSats: 100000n, roles: ['game', 'settlement'], hostedGames: [contract.gameId],
-  advert: { nodePubkey: n.pubkey, roles: ['game', 'settlement'], ...(template3 ? { bondScriptTemplateVersion: BOND_TEMPLATE_V3, censusKey, bondMaturityHeight: 5000 } : { bondScriptTemplateVersion: 1 }) },
+  advert: { nodePubkey: n.pubkey, roles: ['game', 'settlement'], ...(template3 ? { bondScriptTemplateVersion: BOND_TEMPLATE_V3, censusKey, ownerPubkey: n.pubkey, bondMaturityHeight: 5000 } : { bondScriptTemplateVersion: 1 }) },
   ...(template3 ? { script: bondScript(i) } : {}) });
 const seed = new Uint8Array(32).fill(0x33);
 const plan4 = ({ entries, contract: c, committeeSeed, tweakPoint: t }) => roundPresigPlan({ entries, contract: c, panels: drawPanels({ entries, contract: c, committeeSeed }), tweakPoint: t });

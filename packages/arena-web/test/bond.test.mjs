@@ -84,6 +84,32 @@ test('what it does: unlocked, an address, confirmed - the withdrawal signed and 
   await no.withdraw(); assert.equal(sent.length, 1, 'not confirmed: nothing sent');
 });
 
+// A 2.0 BOND IS SIGNED BY THE OWNER KEY (kanban #1093 part 1): the node answers what to sign; the page signs it with the owner key and sends only the
+// signature; no signer, or a refused one, sends nothing
+test('a 2.0 bond: the node asks for the owner key\'s signature, the page signs and sends it back', async () => {
+  const sent = [], digest = 'ab'.repeat(32);
+  const api = { get: async () => ({ ...locked, lock: { withdrawable: true } }), signed: async (a, args) => ({ a, args }),
+    post: async (p, b) => { sent.push(b.args); return b.args.signature ? { ok: true, txid: 'cc'.repeat(32), value: 99700 } : { ok: true, sign: { digest, ownerKey: '22'.repeat(32) } }; } };
+  const asked = [];
+  const c = new BondPanel({ api, confirm: () => true, ownerSign: async (d, k) => { asked.push([d, k]); return 'ee'.repeat(64); } });
+  c.setState = (u) => { Object.assign(c.state, typeof u === 'function' ? u(c.state) : u); };
+  await c.componentDidMount();
+  c.setState({ address: 'tb1qexample' });
+  await c.withdraw();
+  assert.deepEqual(asked, [[digest, '22'.repeat(32)]]);
+  assert.deepEqual(sent, [{ address: 'tb1qexample', feeRate: 2 }, { address: 'tb1qexample', feeRate: 2, digest, signature: 'ee'.repeat(64) }]);
+  assert.match(c.state.message, /^Sent: c{64} \(99,700 sat\)$/);
+  const none = new BondPanel({ api, confirm: () => true }); none.setState = (u) => { Object.assign(none.state, typeof u === 'function' ? u(none.state) : u); };
+  await none.componentDidMount(); none.setState({ address: 'tb1q' }); sent.length = 0;
+  await none.withdraw();
+  assert.equal(sent.length, 1); assert.match(none.state.message, /owner key/);
+  const refused = new BondPanel({ api, confirm: () => true, ownerSign: async () => { throw new Error('Not signed: no emergency code typed.'); } });
+  refused.setState = (u) => { Object.assign(refused.state, typeof u === 'function' ? u(refused.state) : u); };
+  await refused.componentDidMount(); refused.setState({ address: 'tb1q' }); sent.length = 0;
+  await refused.withdraw();
+  assert.equal(sent.length, 1); assert.match(refused.state.message, /no emergency code/);
+});
+
 test('old bonds after a key switch (kanban #650): listed with their lock; an unlocked one taken back to an address, signed', async () => {
   const olds = [{ txid: 'dd'.repeat(32), vout: 1, sats: '50000', maturity: 157700, held: true, lock: { withdrawable: true, blocksLeft: 0 } },
     { txid: 'ee'.repeat(32), vout: 0, sats: '20000', maturity: 157900, held: true, lock: { withdrawable: false, blocksLeft: 200 } }];

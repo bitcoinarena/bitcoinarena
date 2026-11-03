@@ -123,9 +123,18 @@ export class BondPanel extends React.Component {
     if (!ask(`Withdraw the whole bond to ${address}? This node leaves the network.`)) return;
     this.setState({ busy: true, message: null });
     try {
-      const r = await this.props.api.post('/owner/bond-withdraw', await this.props.api.signed('bond-withdraw', { address, feeRate: 2 }));
+      let r = await this.props.api.post('/owner/bond-withdraw', await this.props.api.signed('bond-withdraw', { address, feeRate: 2 }));
+      // A 2.0 BOND IS SIGNED BY YOUR OWNER KEY, NOT BY THE NODE (kanban #1093 part 1): the node prepared the transaction; this page signs its digest
+      // with the key from your 24 words (or your emergency code) and hands back only the signature
+      if (r && r.ok && r.sign) {
+        if (!this.props.ownerSign) return this.setState({ busy: false, message: 'This bond is signed with your owner key, and this page cannot reach it here.' });
+        let signature;
+        try { signature = await this.props.ownerSign(r.sign.digest, r.sign.ownerKey); }
+        catch (e) { return this.setState({ busy: false, message: e.message }); }
+        r = await this.props.api.post('/owner/bond-withdraw', await this.props.api.signed('bond-withdraw', { address, feeRate: 2, digest: r.sign.digest, signature }));
+      }
       if (!r || r.ok === false) return this.setState({ busy: false, message: (r && r.why) || 'not sent' });
-      this.setState({ message: `Sent: ${r.txid} (${n(r.value)} sat)` });
+      this.setState({ message: `Sent: ${r.txid}${r.value ? ` (${n(r.value)} sat)` : ''}` });
     } catch (e) { this.setState({ busy: false, message: e.message }); }
   }
   render() {
