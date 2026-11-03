@@ -583,17 +583,16 @@ export function slashStartLeaf(nodeKey, censusKey) {
 }
 
 /**
- * THE TEMPLATE-3 TREE: path A as ever, path B the slash start, the key path the MuSig2 of the node and the arbitration set that
- * "stays" (5A.3B). Answers the same names `bondTapTree` does, so `controlBlockFor` serves both.
+ * THE TEMPLATE-3 TREE (kanban #1093 part 1, ruling #1103, 2026-11-03: "no hot key reaches a bond"): path A the owner key's recovery after
+ * maturity - the §23A.5a key from the 24 words, kept off the node - and path B the slash start (node key's advance signature AND the census
+ * key). The internal key is unspendable (NUMS, the hold's): template 3 has no arbitration set, and a MuSig2 of the node with a derivable test
+ * set was a door for the node key. A node leaves by path A after maturity, signed by its owner. Answers the names `bondTapTree` does.
  */
-export function bond3TapTree({ nodeKey, censusKey, arbitrationKeys, bondMaturity, internalKey }, { combine } = {}) {
-  if (typeof combine !== 'function') throw new Error('no curve was given to aggregate the key path with');
-  const want = bondInternalKey({ nodeKey, arbitrationKeys }, { combine });
-  if (!want.ok) throw new Error(want.why);
-  if (!isKey32(internalKey)) throw new TypeError('the internal key is 32 bytes');
-  if (!sameKey(want.internalKey, internalKey))
-    throw new Error('that internal key is not the MuSig2 aggregate of the node and arbitration keys');
-  const a = tapLeafHash(recoveryLeaf(nodeKey, blockHeight(bondMaturity)));
+export function bond3TapTree({ nodeKey, ownerKey, censusKey, bondMaturity }) {
+  if (!isKey32(ownerKey)) throw new TypeError('a template-3 bond names its owner key (32 bytes): path A is signed with it');
+  if (!isKey32(nodeKey)) throw new TypeError('the node key is 32 bytes');
+  const internalKey = HOLD_INTERNAL_KEY;
+  const a = tapLeafHash(recoveryLeaf(ownerKey, blockHeight(bondMaturity)));
   const b = tapLeafHash(slashStartLeaf(nodeKey, censusKey));
   const merkleRoot = tapBranchHash(a, b);
   return { internalKey, recovery: a, slash: b, merkleRoot, tweak: tapTweak(internalKey, merkleRoot) };
@@ -611,11 +610,10 @@ function outputOfTree(tree, tweakPoint) {
   return { ok: true, outputKey, parity, ...tree };
 }
 
-export function bond3OutputKey(inputs, { tweakPoint, combine } = {}) {
+export function bond3OutputKey(inputs, { tweakPoint } = {}) {
   if (typeof tweakPoint !== 'function') return { ok: false, why: 'no curve was given to add the tweak with' };
-  if (typeof combine !== 'function') return { ok: false, why: 'no curve was given to aggregate the key path with' };
   let tree;
-  try { tree = bond3TapTree(inputs, { combine }); } catch (e) { return { ok: false, why: e.message }; }
+  try { tree = bond3TapTree(inputs); } catch (e) { return { ok: false, why: e.message }; }
   return outputOfTree(tree, tweakPoint);
 }
 
@@ -623,7 +621,7 @@ export function bond3OutputKeyMatches(onChain, inputs, curve = {}) {
   if (!isKey32(onChain)) return { ok: false, why: 'that is not a 32-byte taproot output key' };
   const built = bond3OutputKey(inputs, curve);
   if (!built.ok) return built;
-  if (!sameKey(built.outputKey, onChain)) return { ok: false, why: 'that output key is not the template-3 tweak of the keys, census key and maturity it declares' };
+  if (!sameKey(built.outputKey, onChain)) return { ok: false, why: 'that output key is not the template-3 tweak of the owner key, node key, census key and maturity it declares' };
   return { ok: true, ...built };
 }
 
@@ -671,9 +669,14 @@ export function escrowReleaseLeaf({ panelA, panelB }) {
   return cat(panelCount(panelA, OP_NUMEQUALVERIFY), panelCount(panelB, OP_NUMEQUAL));
 }
 
-/** RETURN: `<slash_return_blocks> CHECKSEQUENCEVERIFY DROP <bond_maturity> CHECKLOCKTIMEVERIFY DROP <node_key> CHECKSIG`. */
-export function returnLeaf({ nodeKey, bondMaturity, returnBlocks }) {
-  return cat(relativeLock(returnBlocks), recoveryLeaf(nodeKey, blockHeight(bondMaturity)));
+/**
+ * RETURN: `<slash_return_blocks> CHECKSEQUENCEVERIFY DROP <bond_maturity> CHECKLOCKTIMEVERIFY DROP <owner_key> CHECKSIG` (kanban #1093 part 1,
+ * ruling #1103: "owner key only. The owner signs it; there is no automatic return"): a false start nobody releases is taken back by the owner
+ * with the 24 words; the node prepares the transaction and shows it. A node-key leaf would put the hot key back on the bond in exactly that case.
+ */
+export function returnLeaf({ ownerKey, bondMaturity, returnBlocks }) {
+  if (!isKey32(ownerKey)) throw new TypeError('the hold\'s return is signed by the owner key (32 bytes)');
+  return cat(relativeLock(returnBlocks), recoveryLeaf(ownerKey, blockHeight(bondMaturity)));
 }
 
 /** FALLBACK: `<slash_fallback_blocks> CHECKSEQUENCEVERIFY DROP <census_key(e)> CHECKSIG`. */
@@ -682,20 +685,20 @@ export function fallbackLeaf({ censusKey, fallbackBlocks }) {
 }
 
 /**
- * THE HOLD OUTPUT, AS HASHES, rebuilt by anyone from the bond and the round: `{ nodeKey, censusKey, panelA, panelB, bondMaturity,
+ * THE HOLD OUTPUT, AS HASHES, rebuilt by anyone from the bond and the round: `{ ownerKey, censusKey, panelA, panelB, bondMaturity,
  * holdBlocks, returnBlocks, fallbackBlocks }`. The spec names the three leaves and not their shape: the release sits one level
  * down, because it is the spend the design expects, and the two leaves that should never run share the deeper branch. A round
  * with no panels (both empty) has no release leaf, and the tree is those two alone.
  *
  * 5A.3B: "a mature node leaves at slash_return_blocks, before the fallback opens". That is only true with hold < return < fallback.
  */
-export function holdTapTree({ nodeKey, censusKey, panelA, panelB, bondMaturity, holdBlocks, returnBlocks, fallbackBlocks }) {
+export function holdTapTree({ ownerKey, censusKey, panelA, panelB, bondMaturity, holdBlocks, returnBlocks, fallbackBlocks }) {
   if (!(holdBlocks < returnBlocks && returnBlocks < fallbackBlocks))
     throw new RangeError(`the clocks ${holdBlocks} / ${returnBlocks} / ${fallbackBlocks} do not run hold, then return, then fallback`);
   const noPanels = (panelA || []).length === 0 && (panelB || []).length === 0;
   const scripts = {
     ...(noPanels ? {} : { release: releaseLeaf({ panelA, panelB, holdBlocks }) }),
-    return: returnLeaf({ nodeKey, bondMaturity, returnBlocks }),
+    return: returnLeaf({ ownerKey, bondMaturity, returnBlocks }),
     fallback: fallbackLeaf({ censusKey, fallbackBlocks }),
   };
   const leaves = { return: tapLeafHash(scripts.return), fallback: tapLeafHash(scripts.fallback) };
