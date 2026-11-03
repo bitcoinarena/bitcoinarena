@@ -37,8 +37,11 @@ export function faucetDecide(ask, book, { nowMs = Date.now(), maxSats = FAUCET_M
 // THE PLAYERS' FAUCET (kanban #926, 2026-11-01: "jeder neue Account ... bekommt 500 satoshis", "Use faucet to get 250 Sats"): test sats into a
 // player's wallet over Lightning, on testnet only. The app makes an invoice for its own wallet and this pays it (measured 2026-11-01: 501,000 msat
 // through gateway B credited 501,000 msat, 251,000 through gateway A 251,000: the invoice is the amount the player is told).
-export const PLAYER_GRANTS = Object.freeze({ welcome: Object.freeze({ sats: 500, invoiceSats: 500 }), topup: Object.freeze({ sats: 250, invoiceSats: 250 }) });
-export const PLAYER_TOPUPS_PER_DAY = 3;          // one account
+// A TOP-UP IS 300 SATS, UP TO 5 A DAY (kanban #1088, the owner 2026-11-03: "Get 300 sats, aus dem faucet ... Bis zu 5x faucet am Tag"); a page
+// still open from before asks for 250, which is paid as asked and counts toward the same 5 (PLAYER_TOPUP_OLD_INVOICE_SATS)
+export const PLAYER_GRANTS = Object.freeze({ welcome: Object.freeze({ sats: 500, invoiceSats: 500 }), topup: Object.freeze({ sats: 300, invoiceSats: 300 }) });
+export const PLAYER_TOPUP_OLD_INVOICE_SATS = 250;
+export const PLAYER_TOPUPS_PER_DAY = 5;          // one account (kanban #1088: was 3)
 export const PLAYER_PER_IP_PER_DAY = 10;         // one address, a household or a meetup behind it
 export const PLAYER_DAY_CAP_SATS = 200000;       // all players of one UTC day
 
@@ -47,15 +50,18 @@ export function playerGrantDecide({ kind, account, ip = null, invoiceSats, nowMs
   const grant = Object.hasOwn(PLAYER_GRANTS, String(kind)) ? PLAYER_GRANTS[kind] : null;
   if (!grant) return { ok: false, why: 'a grant is welcome or topup' };
   if (!/^[0-9a-f]{64}$/.test(String(account || ''))) return { ok: false, why: 'an account is 32 bytes of hex' };
-  if (Number(invoiceSats) !== grant.invoiceSats) return { ok: false, why: `this grant pays an invoice of ${grant.invoiceSats} sat` };
+  const asked = Number(invoiceSats);
+  const paysOld = kind === 'topup' && asked === PLAYER_TOPUP_OLD_INVOICE_SATS;
+  if (asked !== grant.invoiceSats && !paysOld) return { ok: false, why: `this grant pays an invoice of ${grant.invoiceSats} sat` };
+  const granted = paysOld ? Object.freeze({ sats: asked, invoiceSats: asked }) : grant;
   const paid = (book && book.players) || [];
   const day = Math.floor(nowMs / DAY_MS);
   const today = paid.filter((p) => Math.floor(p.atMs / DAY_MS) === day);
-  if (today.reduce((n, p) => n + p.sats, 0) + grant.invoiceSats > PLAYER_DAY_CAP_SATS) return { ok: false, why: 'the faucet gave all it gives today: try again tomorrow' };
+  if (today.reduce((n, p) => n + p.sats, 0) + granted.invoiceSats > PLAYER_DAY_CAP_SATS) return { ok: false, why: 'the faucet gave all it gives today: try again tomorrow' };
   if (ip && today.filter((p) => p.ip === ip).length >= PLAYER_PER_IP_PER_DAY) return { ok: false, why: 'this address took all it can today: try again tomorrow' };
   if (kind === 'welcome' && paid.some((p) => p.account === account && p.kind === 'welcome')) return { ok: false, why: 'this account already has its welcome sats' };
   if (kind === 'topup' && today.filter((p) => p.account === account && p.kind === 'topup').length >= PLAYER_TOPUPS_PER_DAY) return { ok: false, why: `the faucet gives an account ${PLAYER_TOPUPS_PER_DAY} top-ups a day: try again tomorrow` };
-  return { ok: true, grant };
+  return { ok: true, grant: granted };
 }
 
 /** WHAT THE PLAYERS' FAUCET GAVE (kanban #926, the owner: tracked, new and returning apart, in the nodes' dashboard): counts and sats, in all and today. No account, no address. */
