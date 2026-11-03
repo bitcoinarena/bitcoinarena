@@ -53,6 +53,13 @@ export function emergencyOf(seed) {
   return { code: emergencyCodeText(bytes), pubkey: toHex(schnorr.getPublicKey(emergencySecret(bytes))) };
 }
 
+/** THE OWNER KEY (kanban #1093 part 1, ruling #1103: "the same key as §23A.5a's emergency key, from the same derivation"): what signs a 2.0 bond's
+ *  path A and its hold's return. { pubkey (32 bytes), secret (32 bytes) }; the secret never leaves the machine that holds the 24 words. */
+export function ownerKeysOf(seed) {
+  const secret = emergencySecret(emergencyCodeBytes(seed));
+  return { pubkey: schnorr.getPublicKey(secret), secret };
+}
+
 /**
  * THE NODE IDENTITY FROM THE SEED (kanban #650/#653, 2026-10-25: "the node identity (without nostr) needs to be tied to the seed"):
  * the key the node signs with - its proposals, its bond - from the seed on its own path, adopted before the node's first start

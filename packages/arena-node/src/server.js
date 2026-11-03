@@ -35,7 +35,7 @@ import { guardianThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
 import { nostrResults, publishRelays } from './nostr-results.js';
 import { createReachCheck } from './reach-check.js';
-import { ownBondOf, ownBondsOf, lockAt, withdrawSpend } from './bond-withdraw.js';
+import { ownBondOf, ownBondsOf, lockAt, withdrawSpend, withdrawToSign, withdrawWithOwnerSignature } from './bond-withdraw.js';
 import { BOND_TEMPLATE_V2, BOND_TEMPLATE_V3 } from '../../arena-protocol/src/bond-script.js';
 import { latestReleaseReader } from './release-latest.js';
 import { createGatewayWatch } from './gateway-watch.js';
@@ -4180,10 +4180,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     } });
   // THE KEY A NEW BOND NAMES (5A.3B: "A bond names the newest standing key when it is made"): on a network with a census key a new bond is template 3, on any other it stays template 2
   const newestCensusKey = () => { const keys = censusKey ? censusKey.scan.standing() : []; return keys.length ? keys[keys.length - 1].publicKey : null; };
+  // WHAT THE OWNER IS ASKED TO SIGN (kanban #1093 part 1): a template-3 withdrawal or a hold's return, prepared here, kept 30 min by its digest
+  const ownerSigns = new Map();
+  const keepOwnerSign = (x) => { const now = Date.now(); for (const [k, v] of ownerSigns) if (now - v.at > 1800000) ownerSigns.delete(k); ownerSigns.set(x.prepared.digest, { ...x, at: now }); };
   // A STARTED BOND OF THIS NODE (5A.3B): what it reads of its hold output, and its way out
   let slashRelease = null;                       // slash-release-run.js, made below: a fallback a holder is asked to sign goes to it
-  const holdWatch = censusKey && censusKey.rawTxAt ? createHoldWatch({ clocks: holdClocksOf(censusKey.networkId), nodeSecret: round.identity.secret, tipHeight: censusKey.tipHeight, rawTxAt: censusKey.rawTxAt,
-    broadcast: (hex) => chainSend(hex), log: (l) => console.log(l), fetchProof: (id) => proofBytesFetched(id), proofChecks: async (bytes, at) => (await judgeProofBytes(bytes, at)).verdict, returnScript: () => ownReturnScript(), holdsFor: (b) => holdsOfOwnBond({ nodeKey: round.pubkey, censusKey: fromHex(b.censusKey), bondMaturity: b.maturity, clocks: holdClocksOf(censusKey.networkId), tweakPoint,
+  const holdWatch = censusKey && censusKey.rawTxAt ? createHoldWatch({ clocks: holdClocksOf(censusKey.networkId), tipHeight: censusKey.tipHeight, rawTxAt: censusKey.rawTxAt,
+    broadcast: (hex) => chainSend(hex), log: (l) => console.log(l), fetchProof: (id) => proofBytesFetched(id), proofChecks: async (bytes, at) => (await judgeProofBytes(bytes, at)).verdict, returnScript: () => ownReturnScript(), notify: ({ bond, why }) => console.log(`[hold] the owner of ${bond.txid.slice(0, 16)} is owed a return to sign on the owner page: ${why}`),
+    holdsFor: (b) => holdsOfOwnBond({ ownerKey: b.ownerKey ? fromHex(b.ownerKey) : null, censusKey: fromHex(b.censusKey), bondMaturity: b.maturity, clocks: holdClocksOf(censusKey.networkId), tweakPoint,
       panels: seating ? seating.ownHoldPanels({ txid: toHex(fromHex(b.txid).reverse()), vout: b.vout }) : [] }) }) : null;
   // THIS NODE'S OWN OUTPUTS, NEAR THE TIP (5A.3B): a census six or twelve blocks old, or none on a seat with no round, is no way to learn that a bond was started, when the clocks are hours. On a
   // network with a census key: read every 6 blocks, and at once when one of its outputs is spent, which costs one gettxout per output per block.
@@ -7870,15 +7874,43 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (!holdWatch) return answer(409, { ok: false, why: 'a slash was started on this bond, and this seat reads no census key to find its hold output with' });
             const script = addressScript((body.args || {}).address, HRP_OF[found.network] || 'tb');
             if (!script) return answer(400, { ok: false, why: `that is not a ${found.network} address` });
+            // THE OWNER SIGNS IT (kanban #1093 part 1, ruling #1103: the return leaf is the owner key's): a first call prepares the return and answers
+            // what to sign; a second, with the owner's signature over that digest, sends it - checked against the bond's owner key first
+            const signed = (body.args || {}).signature;
+            if (signed) {
+              const held = ownerSigns.get(String((body.args || {}).digest || ''));
+              if (!held || held.kind !== 'return') return answer(409, { ok: false, why: 'that return was not prepared here, or it is too old: ask for it again' });
+              const sent = await holdWatch.submit(found.bond, held.prepared, signed);
+              if (!sent.ok) return answer(400, sent);
+              ownerSigns.delete(held.prepared.digest);
+              console.log(`[bond] the hold output of ${found.bond.txid.slice(0, 16)} returned to ${held.address} by its owner: ${sent.sent}`);
+              return answer(200, { ok: true, txid: sent.sent, returned: true });
+            }
             const back = await holdWatch.returnTo(found.bond, script, BigInt(160 * Math.max(1, Math.ceil(Number((body.args || {}).feeRate) || 2)) + 10));
             if (!back.ok) return answer(409, back);
-            try { const txid = await chainSend(back.hex); console.log(`[bond] the hold output of ${found.bond.txid.slice(0, 16)} returned to ${(body.args || {}).address}: ${txid}`); return answer(200, { ok: true, txid, returned: true }); }
-            catch (e) { return answer(400, { ok: false, why: e.message }); }
+            keepOwnerSign({ kind: 'return', prepared: back.prepared, address: (body.args || {}).address });
+            return answer(200, { ok: true, sign: { digest: back.prepared.digest, ownerKey: found.bond.ownerKey || null, fee: back.prepared.feeSats, what: 'the return of the hold output' } });
           }
           const lock = lockAt(found.bond, tip);
           if (!lock || !lock.withdrawable) return answer(409, { ok: false, why: `the bond is locked until block ${found.bond.maturity}: ${lock ? lock.blocksLeft : '?'} blocks from now, about ${lock ? new Date(lock.estimatedMs).toISOString() : '?'}`, lock });
           const script = addressScript((body.args || {}).address, HRP_OF[found.network] || 'tb');
           if (!script) return answer(400, { ok: false, why: `that is not a ${found.network} address` });
+          // A TEMPLATE-3 BOND IS TAKEN BACK WITH THE OWNER KEY (kanban #1093 part 1, ruling #1103: "Path A: owner key alone"): prepared here, signed
+          // on the owner page with the 24 words, sent once the signature checks against the bond's owner key
+          if (found.bond.template === BOND_TEMPLATE_V3) {
+            const signed = (body.args || {}).signature;
+            if (signed) {
+              const held = ownerSigns.get(String((body.args || {}).digest || ''));
+              if (!held || held.kind !== 'withdraw') return answer(409, { ok: false, why: 'that withdrawal was not prepared here, or it is too old: ask for it again' });
+              let out; try { out = withdrawWithOwnerSignature(held.prepared, signed); } catch (e) { return answer(400, { ok: false, why: e.message }); }
+              try { const txid = await chainSend(out.hex); ownerSigns.delete(held.prepared.digest); console.log(`[bond] withdrawn by its owner to ${held.address}: ${txid} (${held.prepared.value} sat, fee ${held.prepared.fee})`); return answer(200, { ok: true, txid, value: held.prepared.value, fee: held.prepared.fee }); }
+              catch (e) { return answer(400, { ok: false, why: e.message }); }
+            }
+            let prepared; try { prepared = withdrawToSign({ bond: found.bond, nodeKey: round.pubkey, network: found.network, script, feeRate: Number((body.args || {}).feeRate) || 2 }); }
+            catch (e) { return answer(400, { ok: false, why: e.message }); }
+            keepOwnerSign({ kind: 'withdraw', prepared, address: (body.args || {}).address });
+            return answer(200, { ok: true, sign: { digest: prepared.digest, ownerKey: prepared.ownerKey, fee: prepared.fee, value: prepared.value, what: 'the bond, to your address' } });
+          }
           let spend;
           try { spend = withdrawSpend({ bond: found.bond, nodeSecret: round.identity.secret, network: found.network, script, feeRate: Number((body.args || {}).feeRate) || 2 }); }
           catch (e) { return answer(400, { ok: false, why: e.message }); }

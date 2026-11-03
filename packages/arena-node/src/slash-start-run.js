@@ -104,7 +104,7 @@ export function createSlashStarter({ key, network, db, store, thresholdOf, tipHe
     const got = await gatherCensusSignature({ request, digest, publicKey: censusKey, threshold, urls: urlsOf(entries), own: store.held(censusKey) ? signer : null, fetchFn });
     if (!got.ok) return got;
     const feeWitness = scriptPathWitness({ stack: [schnorr.sign(tapSighash({ ...tx, prevouts, inputIndex: 1, leafHash: fee.leafHash }), fee.secret)], script: fee.leaf, controlBlock: fee.control });
-    const control = controlBlockFor('slash', bondKeyOf(nodeKey, entry.advert.bondMaturityHeight, network, censusKey)).controlBlock;
+    const control = controlBlockFor('slash', bondKeyOf(nodeKey, entry.advert.bondMaturityHeight, network, censusKey, entry.advert.ownerPubkey)).controlBlock;
     const raw = signedSlashStart({ tx, nodeKey, censusKey, censusSignature: got.signature, presig, control, feeWitness });
     const txid = await send(toHex(raw));
     db.prepare('INSERT OR IGNORE INTO slash_starts (proof_id, bond, txid, kept_ms) VALUES (?, ?, ?, ?)').run(proofId, `${toHex(entry.txid)}:${entry.vout}`, String(txid), now());
