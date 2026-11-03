@@ -8,14 +8,16 @@
 import { decodeFraudProof, fraudProofHash, readEvidence } from '../../arena-protocol/src/slash.js';
 import { decodeEntryContract, decodeRoundContract, entryId as entryIdOf, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { judgeAuditProof, judgeDoubleProof, judgeProof, judgeRerunProof } from './arbiter.js';
+import { judgeAuditProof, judgeDoubleProof, judgeProof, judgeRerunProof, judgeTableProof } from './arbiter.js';
+import { decodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
+import { takesAnyFederation } from '../../arena-protocol/src/constants.js';
 
 /**
  * `committeeOf(contract, rid)` -> { ok, committee[] of keys } or { ok: false, why }, its signer nodes; `censusOf(contract, rid)` -> { ok, entries } or { ok: false, why }; `coreOf(contract, rid)` the round's core, or
- * null where this seat does not host it; `beaconOf(contract, rid, entry, eid)` -> { ok, hash } or { ok: false, why }; `replayRunOf(rid, eid, core)` this seat's replay in its worker pool; `auditSetOf(contract, rid)` { eligible, total } who could audit the round, or null; `vrf` the secp256k1 ECVRF.
+ * null where this seat does not host it; `beaconOf(contract, rid, entry, eid)` -> { ok, hash } or { ok: false, why }; `replayRunOf(rid, eid, core)` this seat's replay in its worker pool; `auditSetOf(contract, rid)` { eligible, total } who could audit the round, or null; `vrf` the secp256k1 ECVRF; `manifestOf(contract)` the round's game's manifest, or null; `clientOf(fid hex)` -> { fees(), txid(build) } this seat's own client of a federation, or null.
  * Answers `judge(bytes)` -> { verdict, why }, and `judge.read(bytes)`, the cheap part, with no replay: { ok, kind, bond: { txid, vout }, roundId, contract, floorHeight, nodePubkey } or { ok: false, why }.
  */
-export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, replayRunOf, auditSetOf = () => null, vrf = null, waiting = 32, kept = 256 }) {
+export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, replayRunOf, auditSetOf = () => null, vrf = null, manifestOf = () => null, clientOf = async () => null, waiting = 32, kept = 256 }) {
   /** Everything that needs no chain: the bytes read as a proof, and the contract in them is the round the proof names. */
   function read(bytes) {
     let complete, got, contract;
@@ -60,6 +62,21 @@ export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, repl
       const set = auditSetOf(r.contract, r.roundId);
       if (!set) return { verdict: undefined, why: 'this seat cannot read who could audit that round yet' };
       held = await judgeAuditProof({ evidence, bundle, entry: inputs.entry, contract: r.contract, core: inputs.core, roundRandomness: inputs.roundRandomness, replayRun: inputs.replayRun, eligible: set.eligible, total: set.total, vrf, ...on });
+    } else if (r.kind === 'table') {
+      // ITS OWN CLIENT, ITS OWN FEE RULE AND ITS OWN HASH: no seat's word enters, and a seat with no client of a federation the table names cannot say
+      const manifest = manifestOf(r.contract);
+      if (!manifest) return { verdict: undefined, why: 'this seat does not host that round\'s game' };
+      let table; try { table = decodeSettlementTable(r.got.table); } catch (e) { return { verdict: false, why: `not a proof of a false table: ${e.message}` }; }
+      const any = takesAnyFederation(r.contract);
+      const named = any ? [...r.got.entries, ...r.got.finals.map((f) => f.entry)].map((x) => toHex(x.federationId || new Uint8Array(32))) : [toHex(r.contract.federationId)];
+      const home = any ? toHex(table.federationId) : toHex(r.contract.federationId), fees = new Map();
+      for (const fid of new Set([...named, home])) {
+        const client = await clientOf(fid);
+        if (!client) return { verdict: undefined, why: `this seat holds no client of federation ${fid.slice(0, 16)}` };
+        fees.set(fid, await client.fees());
+      }
+      const hashing = await clientOf(home);
+      held = await judgeTableProof({ evidence, roundIdBytes: r.roundId, contract: r.contract, manifest, feesOf: (fid) => fees.get(fid) || null, txidOf: (_t, build) => hashing.txid(build), ...on });
     } else return { verdict: undefined, why: 'this seat cannot judge that kind of proof yet' };
     return { verdict: !!held.slashed, why: held.why };
   }

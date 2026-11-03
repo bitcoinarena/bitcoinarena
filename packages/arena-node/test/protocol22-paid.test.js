@@ -23,6 +23,7 @@ import { slashHoldsOnTable, splitTableSlashEvidence, cutTableSlashEvidence, TABL
 import { signSettlementAck, joinAcks, settlementTableId, encodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
 import { tableBuild } from '../../arena-protocol/src/settlement-rebuild.js';
 import { judgeTableProof } from '../src/arbiter.js';
+import { createProofJudge } from '../src/proof-judge.js';
 import { pointFromScalar } from '../src/curve.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
@@ -177,6 +178,18 @@ test('a paid protocol-22 round on seven seats with an auditor: the reserve key k
       assert.equal(verdict.offence, TABLE_IS_NOT_F);
       assert.match(verdict.why, /does not rebuild from the table/);
     }
+    // A SEAT'S OWN WORD (kanban #1065), off the complete proof at the relay: this reader's client rebuilds the table
+    const filedTable = honestSeat.round.tableSlashProofs(w.rid)[0];
+    const complete = new Uint8Array(await (await fetch(`${relay}/slash/${toHex(filedTable.proofId)}`)).arrayBuffer());
+    const accusedAdvert = adverts.get(toHex(filedTable.nodePubkey));
+    const census = [{ pubkey: filedTable.nodePubkey, txid: accusedAdvert.bondTxid, vout: accusedAdvert.bondVout, advert: accusedAdvert }];
+    const client = { fees: async () => null, txid: async (b) => fromHex((await w.port.settle(b)).txid) };
+    const seat = (over = {}) => createProofJudge({ committeeOf: () => ({ ok: true, committee: ackSeats }), censusOf: () => ({ ok: true, entries: census }), manifestOf: () => plugin.plugin.manifest, clientOf: async () => client, coreOf: () => null, beaconOf: () => ({ ok: false }), replayRunOf: () => undefined, ...over });
+    const said = await seat()(complete);
+    assert.equal(said.verdict, true, said.why);
+    assert.equal(seat().read(complete).kind, 'table');
+    assert.equal((await seat({ clientOf: async () => null })(complete)).verdict, undefined, 'no client of that federation: this seat cannot say');
+    assert.equal((await seat({ manifestOf: () => null })(complete)).verdict, undefined, 'nor one that does not host the game');
     // AN HONEST PAIR, THE SAME FILING: nothing is filed, and a false ack by one seat is not a table anything stood on
     const honestRound = await w.nodes[5].settlements.fileTableProofs(w.rid, { advertOf: (k) => adverts.get(k) });
     assert.equal(honestRound.filed.length, 0, 'the honest pair files nothing');
