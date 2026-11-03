@@ -46,6 +46,11 @@ const CHANNEL_LINKS = {
   '/reddit': 'utm_source=reddit&utm_medium=community&utm_content=post',
   '/community': 'utm_source=community&utm_medium=community&utm_content=post',
 };
+// TESTNET NIGHT ON OR OFF (kanban #926, the owner 2026-11-03: "optional so it can be enabled or disabled"): KV key `night` in CHAIN,
+// "off" switches it off, anything else or nothing leaves it on. No deploy needed:
+//   npx wrangler kv key put --binding CHAIN night off --remote     (off)
+//   npx wrangler kv key delete --binding CHAIN night --remote      (on again)
+async function nightOn(env) { try { return (await env.CHAIN.get('night', { cacheTtl: 60 })) !== 'off'; } catch { return true; } }
 // TESTNET NIGHT'S LIVE COUNT (kanban #926 item 7): players joined in the rounds still open or playing, and the rounds playing, kept 30 s at the edge
 async function nightCount() {
   const headers = { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=30' };
@@ -93,8 +98,10 @@ async fetch(request, env, ctx) {
   if (url.pathname === '/api/season') return seasonSnapshot(url, env, ctx);
   if (url.pathname === '/api/testers') return testers(env);
   // TESTNET NIGHT'S LIVE COUNT (kanban #926 item 7, ruling #1081): how many have joined the rounds open or playing now, from the first seat that answers
-  if (url.pathname === '/api/night') return nightCount();
+  if (url.pathname === '/api/night') return (await nightOn(env)) ? nightCount() : new Response('{"ok":true,"on":false}', { headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' } });
   // A SHORT LINK PER CHANNEL (kanban #943): a profile shows bitcoinarena.io/x, the visit still arrives with its campaign, and the referrer stays
+  // TESTNET NIGHT SWITCHED OFF (kanban #926): its page and short link land on the home page
+  if ((url.pathname === '/night' || url.pathname === '/night/') && !(await nightOn(env))) return Response.redirect(`${url.origin}/`, 302);
   // /night lands on the Testnet Night page (kanban #926 item 7), the others on the home page; a visit already carrying its campaign is served, not sent round again
   { const path = url.pathname.replace(/\/$/, ''); const utm = CHANNEL_LINKS[path];
     if (utm && !url.searchParams.has('utm_source')) return Response.redirect(`${url.origin}${path === '/night' ? '/night/' : '/'}?${utm}`, 302); }
@@ -129,6 +136,10 @@ async fetch(request, env, ctx) {
   // THE OLD LOGIN LINKS (the gate's form posted to /__login; ?password=... logged in from a link): to the page they named
   if (url.pathname === '/__login') return Response.redirect(url.origin + '/', 303);
   if (url.searchParams.has('password')) { url.searchParams.delete('password'); return Response.redirect(url.toString(), 301); }
-  return url.pathname === '/api/chain-nodes' ? chainNodes(env, ctx) : env.ASSETS.fetch(request);
+  if (url.pathname === '/api/chain-nodes') return chainNodes(env, ctx);
+  const page = await env.ASSETS.fetch(request);
+  // TESTNET NIGHT SWITCHED OFF: no page links to it
+  if ((page.headers.get('content-type') || '').includes('text/html') && !(await nightOn(env))) return new HTMLRewriter().on('a[href="/night/"]', { element: (e) => e.remove() }).transform(page);
+  return page;
 }
 };
