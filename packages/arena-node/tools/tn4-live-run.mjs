@@ -36,6 +36,7 @@ import { lockFieldsToJson } from '../src/stake-lock-signer-node.js';
 import { attestedClaimKey } from '../../arena-client/src/join.js';
 import { lockFromClient } from '../../arena-client/src/lock-result.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
+import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { seatingCloseMs } from '../../arena-protocol/src/seating.js';
 import { clientSettlementSignerNodes } from '../../arena-client/src/committee.js';
@@ -66,6 +67,13 @@ const NEXTBLOCK_CORES = new Map([...NEXTBLOCK_CORES_V3, ...NEXTBLOCK_CORES_V5]);
 import { MANIFEST_V3, GAME_ID_V3 } from '../../nextblock/plugin/nextblock-v3.js';
 import { itemsKeyFor, ownedItems, entryItemsFor, entryUnlocks } from '../../arena-client/src/item-buy.js';
 const env = process.env;
+// CENSUS KEY 0 OF A PRIVATE CHAIN (kanban #972): mainnet's genesis names it, regtest's does not, so a harness hands the client the one its seats were started with
+// (ARENA_CENSUS_KEY_0 on the seats), and the client counts template-3 bonds naming it as a page on mainnet would. Regtest only.
+const regtestKey0 = (() => {
+  if (!env.ARENA_REGTEST_CENSUS_KEY_0 || (env.ARENA_TN4_NETWORK || 'testnet4') !== 'regtest') return null;
+  const k = JSON.parse(readFileSync(env.ARENA_REGTEST_CENSUS_KEY_0, 'utf8'));
+  return { ...genesisFor('regtest'), censusKey0: { publicKey: fromHex(k.publicKey), holders: k.holders.map(fromHex), threshold: k.threshold } };
+})();
 for (const k of [env.NODES ? 'NODES' : 'PORTS', 'INVITE_FILE', 'WASM_PKG', 'LNCLI', 'PAYER_DIR', 'PAYER_RPC'])
   if (!env[k]) { console.error(`${k} is needed`); process.exit(2); }
 const log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
@@ -172,7 +180,7 @@ try {
     let lastWhy = null;
     for (const until = Date.now() + 60000; ;) {
       try {
-        const got = await clientSettlementSignerNodes(env.ROUND, c0, nodes, { curve: pageCurve, ...(anchorAt ? { anchorAt } : {}) });
+        const got = await clientSettlementSignerNodes(env.ROUND, c0, nodes, { curve: pageCurve, ...(anchorAt ? { anchorAt } : {}), ...(regtestKey0 ? { genesis: regtestKey0 } : {}) });
         const st = got.derived.seating || {};
         seatedKeys = [...(st.game && st.game.seated) || [], ...(st.settlement && st.settlement.seated) || []];
         log({ step: 'seated', signerNodes: got.signerNodes.length, agreed: got.agreed,
