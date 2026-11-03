@@ -49,6 +49,13 @@
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
   .stat { display: flex; flex-direction: column; gap: 4px; margin: 0; } .stat span { color: var(--dim); font-size: 13px; }
   .stat b { font-size: 26px; color: var(--btc); } .stat small { color: var(--dim); }
+  /* the charts (kanban #1095): recessive grid and ticks, a tooltip, the legend */
+  .chart { position: relative; } .chart svg { display: block; overflow: visible; }
+  .chart .grid { stroke: var(--line); stroke-width: 1; } .chart .base { stroke: #5a4552; stroke-width: 1; } .chart .cross { stroke: var(--dim); stroke-width: 1; stroke-dasharray: 3 3; }
+  .chart .tick { fill: var(--dim); font: 11px system-ui, sans-serif; }
+  .ctip { position: absolute; transform: translate(-50%, calc(-100% - 10px)); background: #140d12; border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 12px; line-height: 1.45; white-space: nowrap; pointer-events: none; z-index: 2; }
+  .ctip .h { color: var(--dim); }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 0 0 6px; font-size: 13px; } .legend span { display: inline-flex; align-items: center; gap: 6px; } .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
   td.barcell { width: 40%; } .vbar { display: block; height: 10px; border-radius: 5px; background: linear-gradient(90deg, var(--btc), #ffd166); }
   /* A PHONE, NO SIDEWAYS SCROLL (kanban #628, 2026-10-24: "make the Explorer mobile friendly, I should not scroll horizontally"):
      every table's rows stacked, long ids and keys wrapped, the bar wrapped */
