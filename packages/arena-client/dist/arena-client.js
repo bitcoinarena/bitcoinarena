@@ -30488,7 +30488,9 @@ function nextRoundLine({ grids, game, nowMs = Date.now(), blockMs = 600000 }) {
 //
 //   StallNote    { round_id, stage, silent[] }, signed by a seat's node key, after a failed round only:
 //                RESULT      an entry of the round went VOID by no quorum; silent: the seats that gave this seat no signed result for it
-//                SETTLEMENT  the round's settlement has not landed 2 h after final_after; silent: the seats that gave no settlement commit
+//                FINAL       an entry was short of its FINAL signatures at the moment entries are due (RULED 2026-11-03, #1066); silent: the seats that did not sign FINAL for it
+//                SETTLEMENT  the round's settlement has not landed 2 h after final_after; silent: the seats that gave no signed word at the step the seat's last pass stopped at
+//                            (plan, ack, commit or share), or refused there after signing FINAL. A seat that refused and never signed FINAL is not listed: the FINAL stage answers for it
 //   named        a round names a node when STALL_NOTE_QUORUM = 4 of its seats signed notes listing it, none of them itself. The lists need
 //                not be equal, so nobody has to converge on one set of bytes
 //   stalled      named by STALL_PROOF_ROUNDS = 3 rounds whose final_afters lie at least 1 h apart in the 72 h before the census block's median
@@ -30528,8 +30530,8 @@ function stallsOut(contract) {
   return Number.isInteger(point) && Number(contract.censusHeight) >= point;
 }
 
-const STALL_STAGE = Object.freeze({ RESULT: 1, SETTLEMENT: 2 });
-const STALL_STAGE_NAMES = Object.freeze({ 1: 'RESULT', 2: 'SETTLEMENT' });
+const STALL_STAGE = Object.freeze({ RESULT: 1, SETTLEMENT: 2, FINAL: 3 });
+const STALL_STAGE_NAMES = Object.freeze({ 1: 'RESULT', 2: 'SETTLEMENT', 3: 'FINAL' });
 /** What a census says of an output it leaves out as stalled. */
 const STALLED_WHY = `named by ${STALL_NOTE_QUORUM} seats of each of ${STALL_PROOF_ROUNDS} failed duty rounds at least 1 h apart in the 72 h before the census: left out of the census, its bond untouched`;
 

@@ -370,6 +370,42 @@ test('a seat notes who gave its last settlement pass nothing, 2 h after final_af
   assert.deepEqual(W2.stall.noteRound(f.rid, f.contract, windowsOf(f.contract).finalAfterMs + 7200000n), []);
 });
 
+test('a seat notes who did not sign FINAL once entries are due, once; a round at its threshold, an entry not at PROVISIONALLY_FINAL, or a seat that did not sign itself notes nothing', () => {
+  const W = world();
+  const me = toHex(W.round.pubkey);
+  const others = W.seatings[0].seated.slice(0, 6);
+  const { rid, contract } = failedRound(W, { seats: [me, ...others], results: [] });
+  W.round.db.prepare('DELETE FROM no_quorum').run();
+  let state = 'PROVISIONALLY_FINAL';
+  const book = stallBook({ round: W.round, presence: null, verify, sign: (m) => schnorr.sign(m, W.round.identity.secret), stateOf: () => state });
+  const sig = (entry, who, run = 2) => W.round.db.prepare('INSERT INTO final_sigs (round_id, entry_id, run_id, signer_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)').run(rid, Buffer.alloc(32, entry), Buffer.alloc(32, run), fromHex(who), Buffer.alloc(1), 1);
+  const due = windowsOf(contract).ownFinalAfterMs + 60000n;
+  for (const k of [me, others[0], others[1], others[2]]) sig(1, k);
+  assert.deepEqual(book.noteRound(rid, contract, due - 1n), [], 'not before entries are due');
+  state = 'SUSPENDED';
+  assert.deepEqual(book.noteRound(rid, contract, due), [], 'a held objection is no failed round');
+  W.round.db.prepare('DELETE FROM stall_noted').run();
+  state = 'PROVISIONALLY_FINAL';
+  const made = book.noteRound(rid, contract, due);
+  assert.equal(made.length, 1);
+  const v = verifyStallNote(made[0], { verify });
+  assert.equal(v.note.stage, STALL_STAGE.FINAL);
+  assert.deepEqual(v.note.silent, [others[3], others[4], others[5]].sort());
+  assert.deepEqual(book.noteRound(rid, contract, due + 1n), [], 'read once');
+  W.round.db.prepare('DELETE FROM stall_noted').run();
+  assert.deepEqual(book.noteRound(rid, contract, due, { upSinceMs: Number(due) + 1 }), [], 'a seat not up at the moment signs nothing');
+  for (const k of [others[3]]) sig(1, k);
+  W.round.db.prepare('DELETE FROM stall_noted').run();
+  assert.deepEqual(book.noteRound(rid, contract, due), [], '5 of 7 signed: no failed round');
+  const W2 = world();
+  const me2 = toHex(W2.round.pubkey), o2 = W2.seatings[0].seated.slice(0, 6);
+  const f = failedRound(W2, { seats: [me2, ...o2], results: [] });
+  W2.round.db.prepare('DELETE FROM no_quorum').run();
+  const book2 = stallBook({ round: W2.round, presence: null, verify, sign: (m) => schnorr.sign(m, W2.round.identity.secret), stateOf: () => 'PROVISIONALLY_FINAL' });
+  for (const k of [o2[0], o2[1], o2[2]]) W2.round.db.prepare('INSERT INTO final_sigs (round_id, entry_id, run_id, signer_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)').run(f.rid, Buffer.alloc(32, 1), Buffer.alloc(32, 2), fromHex(k), Buffer.alloc(1), 1);
+  assert.deepEqual(book2.noteRound(f.rid, f.contract, windowsOf(f.contract).ownFinalAfterMs + 60000n), [], 'a seat that did not sign FINAL itself lists nobody');
+});
+
 test('the duty node: notes gathered from the seats, a seat holding them answers GET /stall-notes, and forPosting makes the claim a seat accepts', async () => {
   const W = world();
   const [node] = W.targets;

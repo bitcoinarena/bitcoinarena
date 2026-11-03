@@ -2114,10 +2114,19 @@ StallNote   { round_id, stage, silent[] }, signed by a seat's node key, after a
             failed round only. Nothing is noted in a round that worked.
 stage       RESULT      an entry of the round went VOID by no quorum (§13C),
                         read once the round's re-run windows are over
+            FINAL       an entry stands at a result's threshold and is short of
+                        its 5 FINAL signatures when entries are due: the re-run's
+                        own final_after + 60 s, round_end + 1865 s, the last
+                        moment any entry of the round is due
             SETTLEMENT  the round's settlement has not landed 2 h after
                         final_after
-silent[]    the round's seats that gave this seat no signed result for that
-            entry, or no settlement commit, by that moment; never the seat itself
+silent[]    RESULT      the round's seats that gave this seat no signed result for
+                        that entry
+            FINAL       the round's seats that did not sign FINAL for that run
+            SETTLEMENT  the round's seats silent at the step where this seat's
+                        last settlement pass stopped: no signed word there, or a
+                        refusal after signing FINAL (RULED 2026-11-03, #1066)
+            never the seat itself
 named       at least STALL_NOTE_QUORUM = 4 of the round's seats signed notes
             listing the node, none of them itself. The lists need not be equal
 stalled     named by STALL_PROOF_ROUNDS = 3 rounds whose final_afters lie at least
@@ -2136,14 +2145,36 @@ cap         nodes out by this rule hold at most 10 % of the census's weight past
   it. A seat that was not running at that moment signs nothing: seats stopped
   through a round came back holding nobody's result and listed everyone (measured,
   7 real seats, 3 stopped). A round's several VOID entries make one note, the union
-  of their lists. For SETTLEMENT, the seats that gave no signed word
-  at the step where this seat's own last settlement pass stopped. That is the
-  commit (`SettlementCommit`, §5A.3 table row), and it is the ack or the signed
-  plan when the pass stopped there: a pass short of acks asks nobody to commit,
-  so a list of commits alone would name the honest seats beside the silent ones.
-  Only a seat that asked knows, and each seat asks in its turn, one every 2 blocks,
-  so all 7 have had theirs inside the 2 h. A seat that gave no result itself
-  signs no note for that entry, and a seat that never asked has nothing to list.
+  of their lists. For FINAL, the seats whose FINAL signature on the run most
+  seats signed it did not hold at that moment, read once. A seat that did not sign
+  that FINAL itself lists nobody. An entry a held objection suspends has failed
+  nothing: it is not at the threshold's state, and the stage does not read it.
+  For SETTLEMENT, the seats silent at the step where this seat's own last
+  settlement pass stopped. The step is the signed plan, the ack, the commit
+  (`SettlementCommit`, §5A.3 table row) or the share: a pass short of acks asks
+  nobody to commit, so a list of commits alone would name the honest seats beside
+  the silent ones. Only a seat that asked knows, and each seat asks in its turn,
+  one every 2 blocks, so all 7 have had theirs inside the 2 h. A seat that gave no
+  result itself signs no note for that entry, and a seat that never asked has
+  nothing to list.
+- **What is silent at a settlement (RULED 2026-11-03, #1066).** A seat is silent
+  if it gave no signed word at the step where the pass stopped, or refused after
+  signing FINAL for that round. A reason cannot clear a seat, because reasons are
+  free. What a seat signed before it refused can: a seat that signed FINAL held the
+  round's data and agreed on the outcome, so it has no honest reason to refuse, and
+  "no such series" after a signed FINAL is a contradiction by its own signature. A
+  seat that refused by name and whose FINAL the asker does not hold is not listed
+  at the settlement. That seat is not off the hook, because the FINAL stage lists
+  it: a colluder is named at the first step it skipped, result, FINAL, ack, commit
+  or share. A 5xx is nobody's word, a tunnel's as likely as the seat's, and reads
+  as no answer. The asker holds a refuser's FINAL at the moment the pass stops.
+- **The share is a step (#1066).** A seat that committed and sent no share is
+  silent there, and so is one whose share does not verify against its public share
+  of the round's key. Shares go to the asker only, so the asker lists what it
+  received, as for commits, and from protocol 26 it asks every seat that committed,
+  so the list names all of them and not the first. Each seat asks in its turn, so
+  all have seen it. A seat that did not commit was not asked for a share: it is
+  listed as at the commit.
 - **4 silent seats leave 3 honest, so no note stands. Accepted.** A round with 4
   or more colluders goes unrecorded: 3.3 % of rounds at 20 % of capital, 12.6 %
   at 30 %.
@@ -2152,8 +2183,8 @@ cap         nodes out by this rule hold at most 10 % of the census's weight past
   from seat to seat was refused (§5A.3 above): a claim stands on what it
   carries. Slashing a false note is refused too: an honest seat cut off from a
   peer would sign one in good faith and lose its bond. What bounds it: a note
-  needs a real VOID or a stalled settlement, so a frame costs its authors that
-  round's fee, in the open. It takes 3 rounds an hour apart, each a fresh draw and
+  needs a real VOID, a failed FINAL or a stalled settlement, so a frame costs its
+  authors that round's fee, in the open. It takes 3 rounds an hour apart, each a fresh draw and
   a duty posting's, so they cannot make their own rounds. The cap holds. The
   victim loses fees for the window and nothing else. At 30 % of capital with 10 %
   of honest weight out the attacker's share is 33.3 %: 3 of 7 goes from 35.3 % to
@@ -2176,6 +2207,13 @@ cap         nodes out by this rule hold at most 10 % of the census's weight past
   sentence to serve: a node is back by itself once fewer than 3 proofs lie in the
   last 72 h, and nobody decides anything, so nobody can be asked. It is drawn for
   nothing while it is out, so nothing new names it.
+- **The rule ships only on the replay (#1066).** Every refusal counted as silence
+  benched 6 honest seats over 14 days of real data, so the rule stays off (no
+  height named) until a replay at the values above benches none. At this ruling's
+  reading the same data benches 1 honest seat, by the settlement stage alone, with
+  or without the refusals #1067 showed are no evidence, so it stays off. Honest failures
+  read as noise to any stall rule: each refusal an honest seat gives is a bug to
+  fix first, and each one fixed makes this rule safer.
 - **Slow honest seats.** Nothing is noted unless the round failed, so 1-2 slow
   seats never count. A restart shorter than the spacing is one proof at most. A
   load spike is the real risk: 3 seats on one overloaded host failing rounds again
@@ -2194,7 +2232,7 @@ StallNote is type 0x41, `SettlementCommit` 0x40.
 `STALL_NOTE_QUORUM`, `STALL_PROOF_ROUNDS`, `STALL_WINDOW_MS`, `STALL_CAP_BPS`,
 `STALL_SETTLEMENT_WAIT_MS`; `settlement-ack.js` signSettlementCommit;
 `client-committee.js` absenceFromChain; arena-node `stall-book.js`, `settlement.js`
-`#stoppedAt`, `roster.js` absentCensus; `tools/stall-replay.mjs`, the replay.)
+`#stoppedAt` and `#gatherShares`, `roster.js` absentCensus; `tools/stall-replay.mjs`, the replay.)
 
 `bond_min(role)` is **named in the Round Contract**, not global. A round
 declares the bracket it plays at and the floor that goes with it, and a
