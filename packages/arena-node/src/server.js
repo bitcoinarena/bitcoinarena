@@ -2325,6 +2325,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor, orderBook, reserveKeyFor, feesFor,
     // the census's addresses, else the ones kept at seating (kanban #735), else the DKG's
     peersFor: (rid) => committeePeers(rid, 'settlement', { orElse: dkg.peers || [] }).peers,
+    peerKeyOf: (rid, base) => committeeKeyAt(rid, 'settlement', base),
     // WHOSE TURN IT IS TO COMBINE (M3.3-19): the round's beacon height and this node's chain tip, as the payout reads them.
     turnClock: {
       beaconHeight: async (rid, contract) => {
@@ -2460,6 +2461,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const kept = keptPeersFor(rid, role);
     if (kept.length) return { peers: kept, kept: true, why: got.why };
     return { peers: orElse, kept: false, why: got.why };
+  }
+  // WHOSE DOOR A PEER ADDRESS IS (§5A.3 "Stalled in its rounds", kanban #1066): the node key, hex, of the committee seat at that base, by the same two lookups, or null
+  function committeeKeyAt(rid, role, base) {
+    const same = (e) => String(e).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '') === base;
+    const got = roster.committeeFor(rid, role);
+    if (got.ok) for (const e of got.committee) { const k = toHex(e.pubkey); if (peerEndpointsOf([e], null).some(same)) return k; }
+    let held = [];
+    try { held = round.roundPeers(rid, role); } catch { held = []; }
+    const kept = held.find((p) => same(p.endpoint));
+    return kept ? kept.node : null;
   }
   // THE PRESENCE BOOK (§5A.3, protocol 22, kanban #727): the seating certificates and PRESENTs of a census's 24 h, and the absent claims
   // of the censuses this seat holds. The roster checks every proof of a 22 root that leaves nodes out against it (the owner 2026-10-27:

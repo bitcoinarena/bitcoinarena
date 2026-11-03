@@ -76,13 +76,14 @@ test('a StallNote is its three fields, signed by the seat; it cannot list itself
   assert.equal(v.note.signer, hex(1));
   assert.deepEqual(v.note.silent, [hex(5), hex(7)].sort());
   assert.equal(v.note.stage, STALL_STAGE.RESULT);
+  assert.equal(decodeStallNote(signStallNote({ roundId: ROUND(1), stage: STALL_STAGE.FINAL, silent: [key(5)] }, key(1), signBy(1))).stage, STALL_STAGE.FINAL);
   const other = signStallNote({ roundId: ROUND(1), stage: STALL_STAGE.RESULT, silent: [key(5), key(7)] }, key(1), signBy(1));
   assert.equal(toHex(other.slice(0, -64)), toHex(signed.slice(0, -64)), 'one list, one body, whatever the order it was given in');
   assert.notEqual(toHex(stallNoteId({ roundId: ROUND(1), stage: 1, silent: [key(5)] })), toHex(stallNoteId({ roundId: ROUND(1), stage: 2, silent: [key(5)] })), 'the stage is signed');
   assert.match(verifyStallNote(signStallNote({ roundId: ROUND(1), stage: 1, silent: [key(1), key(5)] }, key(1), signBy(1)), { verify }).why, /lists itself/);
   assert.match(verifyStallNote(signStallNote({ roundId: ROUND(1), stage: 1, silent: [key(5)] }, key(1), signBy(2)), { verify }).why, /not signed by/);
   assert.throws(() => signStallNote({ roundId: ROUND(1), stage: 1, silent: [] }, key(1), signBy(1)), /lists the seats/);
-  assert.throws(() => signStallNote({ roundId: ROUND(1), stage: 3, silent: [key(5)] }, key(1), signBy(1)), /a round and a stage/);
+  assert.throws(() => signStallNote({ roundId: ROUND(1), stage: 4, silent: [key(5)] }, key(1), signBy(1)), /a round and a stage/);
   assert.throws(() => decodeStallNote(Uint8Array.from([...signed, 0])), /trailing/);
   assert.deepEqual(silentSeats({ seats: [key(1), key(2), key(3)], answered: [hex(2)], me: key(1) }), [hex(3)]);
 });

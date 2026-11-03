@@ -5,8 +5,10 @@
 //   signing   after a failed round this seat lists the seats that gave it nothing, once per round and stage, and hands the note to the round's seats and the network's:
 //             RESULT      once the round's windows are over (final_after, its re-run window, the re-run's own window), for the entries §13C decided VOID: the seats whose
 //                         signed result this seat did not hold at the end of the re-run window. A seat that was not running at that moment signs nothing
-//             SETTLEMENT  2 h after final_after with the settlement not landed: the seats that gave this seat's last settlement pass no signed word where it stopped.
-//                         By then every seat has had its turn to ask (a turn every 2 blocks, 7 seats)
+//             FINAL       once entries are due (the re-run's own final_after + 60 s, the last moment any entry of the round can be), for the entries with a result at the threshold
+//                         and short of their FINAL signatures: the seats that did not sign FINAL for that run. A seat that did not sign it itself lists nobody. Read once
+//             SETTLEMENT  2 h after final_after with the settlement not landed: the seats silent at this seat's last settlement pass: no signed word where it stopped (plan, ack, commit
+//                         or share), or a refusal after signing FINAL (settlement.js #stoppedAt). By then every seat has had its turn to ask (a turn every 2 blocks, 7 seats)
 //             A seat that was silent itself signs nothing: its own list would have no standing. A seat that never asked has nothing to list. Nothing is noted in a round that worked.
 //   posting   the duty node reads the notes it holds and gathers, and carries each stalled node in the census claim with its 3 rounds' notes (stall.js stalledFrom)
 //   checking  a seat checks a claim's stalled list on its own draw (stall.js checkStallProof). A signed result held here clears nobody: a claim stands on what it carries (#1052)
@@ -14,6 +16,10 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { provenSeating } from '../../arena-protocol/src/presence.js';
 import { windowsOf } from '../../arena-protocol/src/window.js';
+import { NO_QUORUM_FINAL_GRACE_MS } from '../../arena-protocol/src/constants.js';
+import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
+import { PROVISIONALLY_FINAL } from '../../arena-protocol/src/objection.js';
+import { resultFinality } from './finality.js';
 import { STALL_STAGE, STALL_WINDOW_MS, STALL_SETTLEMENT_WAIT_MS, signStallNote, verifyStallNote, stallsOut, stallCloseMs, stallWindow, stalledFrom, checkStallProof } from '../../arena-protocol/src/stall.js';
 
 /** Notes are kept this long past their round's close: a census reads 72 h, and a posting is made a day ahead. */
@@ -23,6 +29,8 @@ export const STALL_NOTES_PER_ANSWER = 4096;
 const ACCEPTED_STATE = 'ACCEPTED';
 /** Two passes further apart than this mean this seat was not running between them. */
 const STALL_TICK_GAP_MS = 300000n;
+/** The FINAL stage looks at rounds with a FINAL signature this recent: a round's signatures come inside the 21 minutes up to its moment, and rounds that worked are not walked for 7 days. */
+const STALL_FINAL_LOOK_MS = 3600000n;
 
 const weightsOfStall = (entries) => {
   const out = new Map();
@@ -31,7 +39,7 @@ const weightsOfStall = (entries) => {
 };
 const sumOfStall = (entries) => (entries || []).reduce((s, e) => s + BigInt(e.bondSats || 0), 0n);
 
-export function stallBook({ round, presence, verify, sign, log = () => {}, seatRoundOf = (rid) => rid, hand = async () => {} }) {
+export function stallBook({ round, presence, verify, sign, log = () => {}, seatRoundOf = (rid) => rid, hand = async () => {}, stateOf = (rid, entry) => resultFinality(round, rid, entry).state }) {
   const db = round.db;
   db.exec(`
     CREATE TABLE IF NOT EXISTS stall_notes (round_id BLOB NOT NULL, stage INTEGER NOT NULL, signer TEXT NOT NULL, close_ms INTEGER NOT NULL, bytes BLOB NOT NULL,
@@ -71,6 +79,28 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
     }
     return out.size ? [...out] : null;
   }
+  /**
+   * The seats this seat lists for a round's FINAL stage, or null. An entry counts when it stands at a result's threshold with no decision against it (PROVISIONALLY_FINAL: a VOID is the
+   * RESULT stage's, a held objection is no failure) and this seat signed FINAL for the run most seats signed. A round that is FINAL everywhere costs one read of the table.
+   */
+  function finalSilent(rid, c, seats) {
+    const needed = receiptsNeeded(c.settlementSlots), byEntry = new Map();
+    for (const r of db.prepare('SELECT entry_id, run_id, signer_pubkey FROM final_sigs WHERE round_id = ?').all(rid)) {
+      const e = toHex(new Uint8Array(r.entry_id)), run = toHex(new Uint8Array(r.run_id));
+      if (!byEntry.has(e)) byEntry.set(e, new Map());
+      const runs = byEntry.get(e);
+      if (!runs.has(run)) runs.set(run, new Set());
+      runs.get(run).add(toHex(new Uint8Array(r.signer_pubkey)));
+    }
+    const out = new Set();
+    for (const [e, runs] of byEntry) {
+      const best = [...runs.values()].sort((a, b) => b.size - a.size)[0];
+      if (best.size >= needed || !best.has(me())) continue;
+      if (stateOf(rid, fromHex(e)) !== PROVISIONALLY_FINAL) continue;
+      for (const k of seats) if (!best.has(k)) out.add(k);
+    }
+    return out.size ? [...out] : null;
+  }
   /** The seats this seat lists for a round's SETTLEMENT stage, or null: landed, or this seat never asked, or nobody silent. */
   function settlementSilent(rid) {
     const landed = (p) => { const kept = p.scope ? round.fedLockSettlement(rid, p.scope) : round.lockSettlement(rid); return !!kept && kept.state === ACCEPTED_STATE; };
@@ -82,24 +112,27 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
   /**
    * One round at this moment: signs what is due, once. Answers the notes signed. `upSinceMs`: since when this seat has been running. MEASURED on seven real seats (kanban #1052): seats
    * stopped through a round came back holding no result of the others, and each listed all of them. So a seat that was not up when the RESULT moment passed signs nothing for it. Its
-   * SETTLEMENT list needs no such care: it reads answers to a pass this seat itself ran.
+   * SETTLEMENT list needs no such care: it reads answers to a pass this seat itself ran. The FINAL stage is read once: an entry short at its moment does not fail a second time.
    */
   function noteRound(rid, c, nowMs, { upSinceMs = null } = {}) {
     const seats = round.signerNodes(rid).map((k) => toHex(k));
     if (!seats.includes(me())) return [];
     const win = windowsOf(c), out = [];
-    const up = upSinceMs === null || win.ownFinalAfterMs >= BigInt(upSinceMs);
-    const due = [[STALL_STAGE.RESULT, BigInt(nowMs) >= win.ownFinalAfterMs && up, () => resultSilent(rid, seats, win.rerunDeadlineMs)],
+    const upAt = (ms) => upSinceMs === null || ms >= BigInt(upSinceMs);
+    const entriesDueMs = win.ownFinalAfterMs + NO_QUORUM_FINAL_GRACE_MS;
+    const due = [[STALL_STAGE.RESULT, BigInt(nowMs) >= win.ownFinalAfterMs && upAt(win.ownFinalAfterMs), () => resultSilent(rid, seats, win.rerunDeadlineMs)],
+      [STALL_STAGE.FINAL, BigInt(nowMs) >= entriesDueMs && upAt(entriesDueMs), () => finalSilent(rid, c, seats), true],
       [STALL_STAGE.SETTLEMENT, BigInt(nowMs) >= win.finalAfterMs + STALL_SETTLEMENT_WAIT_MS, () => settlementSilent(rid)]];
-    for (const [stage, now, listOf] of due) {
+    for (const [stage, now, listOf, once = false] of due) {
       if (!now || db.prepare('SELECT 1 FROM stall_noted WHERE round_id = ? AND stage = ?').get(rid, stage)) continue;
       const silent = listOf();
-      if (!silent) continue;                                                 // asked again next pass: a seat's turn to ask may still come
+      if (!silent && !once) continue;                                        // asked again next pass: a seat's turn to ask may still come
       db.prepare('INSERT OR IGNORE INTO stall_noted (round_id, stage) VALUES (?, ?)').run(rid, stage);
+      if (!silent) continue;
       const bytes = signStallNote({ roundId: rid, stage, silent }, round.pubkey, sign);
       keep(rid, stage, me(), c, bytes);
       out.push(bytes);
-      log(`[stall] ${toHex(rid).slice(0, 16)} ${stage === STALL_STAGE.RESULT ? 'RESULT' : 'SETTLEMENT'}: noted ${silent.length} silent seat(s)`);
+      log(`[stall] ${toHex(rid).slice(0, 16)} ${Object.keys(STALL_STAGE).find((k) => STALL_STAGE[k] === stage)}: noted ${silent.length} silent seat(s)`);
     }
     return out;
   }
@@ -113,7 +146,8 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
     const since = Number(now - STALL_KEEP_MS);
     const made = [];
     const rows = db.prepare(`SELECT DISTINCT round_id FROM no_quorum WHERE outcome = 'VOID' AND decided_ms > ?
-      UNION SELECT DISTINCT round_id FROM settle_passes WHERE made_ms > ?`).all(since, since);
+      UNION SELECT DISTINCT round_id FROM settle_passes WHERE made_ms > ?
+      UNION SELECT DISTINCT round_id FROM final_sigs WHERE seen_ms > ?`).all(since, since, Number(now - STALL_FINAL_LOOK_MS));
     for (const r of rows) {
       const rid = new Uint8Array(r.round_id), c = contractOfStall(rid);
       if (!c || !stallsOut(c)) continue;

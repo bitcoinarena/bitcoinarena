@@ -73,8 +73,9 @@ function world({ protocolVersion, rows = () => null, door = null }) {
   const stores = [1, 2].map(() => new Round(openStore(':memory:')));
   const contract = { stakeMsat: STAKE, protocolVersion, networkId: NETWORK_ID_REGTEST, censusHeight: 900000, federationId: new Uint8Array(32), nodes: stores.map((r) => r.pubkey), settlementSlots: 2, minScore: 1 };
   const nodes = stores.map((round, i) => {
-    const ls = new LockSettlement(round, { dkg: {}, port: router, curve, random: (n) => crypto.getRandomValues(new Uint8Array(n)),
-      stakeSecrets: { open: async () => ({ ok: true, preimage: b32(0x99) }) }, peersFor: () => (i === 0 ? ['http://peer2'] : []) });
+    const dkg = { publicSharesFor: () => ({ ok: true, shares: new Map(deal.shares.map((x) => [String(x.id), curve.pointFromScalar(x.share)])) }) };
+    const ls = new LockSettlement(round, { dkg, port: router, curve, random: (n) => crypto.getRandomValues(new Uint8Array(n)),
+      stakeSecrets: { open: async () => ({ ok: true, preimage: b32(0x99) }) }, peersFor: () => (i === 0 ? ['http://peer2'] : []), peerKeyOf: (rid, base) => (base === 'http://peer2' ? toHex(stores[1].pubkey) : null) });
     ls.planOf = async () => ({ ok: true, anyFed: true, plan: PLAN.plan, split: PLAN.split, contract, claimPk: deal.groupPublicKey,
       held: { signerNode: deal.shares[i] }, lockEntry: new Map([W1, L1, L2].map((e) => [toHex(e.pubkey), e.entryId])), ackRows: rows(i) || F_ROWS });
     round.get = (rid) => (toHex(rid) === toHex(RID) ? { contract: V3 } : null);
@@ -216,33 +217,45 @@ test('the table of a plan with no entries of its own encodes a payout key of 33 
   assert.deepEqual(t.rows.map((r) => [toHex(r.pubkey), r.amountMsat]).sort(), [[toHex(refund(7).subarray(1)), 90000n], [toHex(pk(8)), 4000n]].sort());
 });
 
-// WHO WAS SILENT, AS THE SEAT THAT ASKED HOLDS IT (§5A.3 "Stalled in its rounds", protocol 26, kanban #1052): where the pass stopped, the seats that gave no signed word at that step.
-test('from protocol 26 a commit comes with the seat\'s signed word, and a pass that stops keeps who gave nothing at the step it stopped at', async () => {
+// WHO WAS SILENT, AS THE SEAT THAT ASKED HOLDS IT (§5A.3 "Stalled in its rounds", protocol 26, RULED 2026-11-03, kanban #1066): where the pass stopped, the seats that gave no signed
+// word at that step, the share included, and a refusal counts only after signing FINAL.
+const down = { ok: false, status: 503, text: async () => 'bad gateway' };
+const refusal = { ok: false, status: 409, text: async () => 'this node holds no such series' };
+const signedFinal = (w) => w.stores[0].db.prepare('INSERT INTO final_sigs (round_id, entry_id, run_id, signer_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)').run(RID, Buffer.alloc(32, 1), Buffer.alloc(32, 2), w.stores[1].pubkey, Buffer.alloc(1), 1);
+const stopped = async (door, { final = false } = {}) => {
+  const w = world({ protocolVersion: 26, door });
+  if (final) signedFinal(w);
+  const got = await w.nodes[0].settle(RID);
+  assert.equal(got.ok, false);
+  const passes = w.stores[0].settlePassesOf(RID), peer = toHex(w.stores[1].pubkey);
+  close(w);
+  assert.deepEqual([...new Set(passes.map((p) => p.scope))].sort(), [A, B]);
+  assert.equal(new Set(passes.map((p) => p.step)).size, 1);
+  return { step: passes[0].step, named: passes.every((p) => p.silent.length === 1 && p.silent[0] === peer), clear: passes.every((p) => p.silent.length === 0) };
+};
+test('from protocol 26 a commit comes with the seat\'s signed word, and a pass that stops keeps who was silent at the step it stopped at', async () => {
   const fine = world({ protocolVersion: 26 });
-  const peer = toHex(fine.stores[1].pubkey);
   assert.equal((await fine.nodes[0].settle(RID)).ok, true);
   assert.deepEqual(fine.stores[0].settlePassesOf(RID), [], 'a pass that worked keeps nothing');
   close(fine);
-
-  const noAck = world({ protocolVersion: 26, door: (u) => (u.pathname === '/settle-ack' ? { ok: false, text: async () => 'down' } : null) });
-  assert.equal((await noAck.nodes[0].settle(RID)).ok, false);
-  assert.deepEqual(noAck.stores[0].settlePassesOf(RID).map((p) => [p.scope, p.step, p.silent]).sort(), [[A, 'ack', [toHex(noAck.stores[1].pubkey)]], [B, 'ack', [toHex(noAck.stores[1].pubkey)]]]);
-  close(noAck);
-
-  const noCommit = world({ protocolVersion: 26, door: (u) => (u.pathname === '/settle-commit' ? { ok: false, text: async () => 'down' } : null) });
-  assert.equal((await noCommit.nodes[0].settle(RID)).ok, false);
-  assert.deepEqual([...new Set(noCommit.stores[0].settlePassesOf(RID).map((p) => p.step))], ['commit']);
-  assert.deepEqual(noCommit.stores[0].settlePassesOf(RID)[0].silent, [toHex(noCommit.stores[1].pubkey)]);
-  close(noCommit);
-
-  const shortShare = world({ protocolVersion: 26, door: (u) => (u.pathname === '/settle-share' ? { ok: false, text: async () => 'down' } : null) });
-  await shortShare.nodes[0].settle(RID);
-  assert.deepEqual(shortShare.stores[0].settlePassesOf(RID), [], 'a stop at the shares is not noted: the ruling reads the commit');
-  close(shortShare);
+  for (const [step, path] of [['ack', '/settle-ack'], ['commit', '/settle-commit'], ['share', '/settle-share']]) {
+    const door = (answer) => (u) => (u.pathname === path ? answer : null);
+    const out = await stopped(door(down));
+    assert.deepEqual([out.step, out.named], [step, true], `no answer at the ${step}: silent, FINAL or not`);
+    const refused = await stopped(door(refusal));
+    assert.deepEqual([refused.step, refused.clear], [step, true], `a refusal at the ${step} by a seat that never signed FINAL: not named`);
+    const after = await stopped(door(refusal), { final: true });
+    assert.deepEqual([after.step, after.named], [step, true], `a refusal at the ${step} after signing FINAL: silent, whatever its reason`);
+  }
+  const lost = await stopped((u) => { if (u.pathname === '/settle-share') throw new Error('fetch failed'); return null; });
+  assert.deepEqual([lost.step, lost.named], ['share', true], 'a share that never came');
+  // A SHARE THAT DOES NOT COMBINE IS NO SIGNED WORD: the seat's public share says whose it was
+  const bad = encodeShare(12345n);
+  const spoilt = await stopped((u) => (u.pathname === '/settle-share' ? { ok: true, arrayBuffer: async () => bad.buffer.slice(bad.byteOffset, bad.byteOffset + bad.length) } : null));
+  assert.deepEqual([spoilt.step, spoilt.named], ['share', true]);
 
   const old = world({ protocolVersion: 22, door: (u) => (u.pathname === '/settle-ack' ? { ok: false, text: async () => 'down' } : null) });
   await old.nodes[0].settle(RID);
   assert.deepEqual(old.stores[0].settlePassesOf(RID), [], 'below 26 nothing is kept');
-  assert.equal(peer.length, 64);
   close(old);
 });

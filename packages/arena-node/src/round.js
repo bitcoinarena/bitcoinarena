@@ -2154,6 +2154,11 @@ export class Round {
       .map((r) => ({ signerPubkey: new Uint8Array(r.signer_pubkey), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 
+  /** The seats whose FINAL signature on any entry of a round this seat holds, node keys hex (§5A.3 "Stalled in its rounds", kanban #1066). */
+  finalSigners(roundIdBytes) {
+    return this.db.prepare('SELECT DISTINCT signer_pubkey FROM final_sigs WHERE round_id = ?').all(Buffer.from(roundIdBytes)).map((r) => Buffer.from(r.signer_pubkey).toString('hex'));
+  }
+
   /** Every FINAL signature this seat holds for one entry, on any run: GET /audit-run hands them on, the arbitration set reads what settled off them. */
   entryFinalSigs(roundIdBytes, entryIdBytes) {
     return this.db.prepare('SELECT bytes FROM final_sigs WHERE round_id = ? AND entry_id = ? ORDER BY run_id, signer_pubkey').all(roundIdBytes, entryIdBytes).map((r) => new Uint8Array(r.bytes));
