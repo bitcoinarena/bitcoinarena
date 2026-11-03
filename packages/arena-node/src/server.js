@@ -146,7 +146,7 @@ import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
 import { createHalts, wsSessionCount } from './halts.js';
 import { reserveMembersOf } from './reserve-members.js';
-import { createSettleBackoff } from './settle-backoff.js';
+import { createSettleBackoff, REFUSED_FOR_GOOD } from './settle-backoff.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
 import { DrawnAttestor } from './drawn-attestor.js';
@@ -774,8 +774,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // WHY A FINAL ROUND IS NOT SETTLED, said once per reason (a paid market round final for minutes, its
         // settlement silent - the sweep logged only answers with a state, and a plan's refusal carries none)
         if (got && !got.ok && !got.state && got.why) {
-          // a closed, attested round with no counted entry has nothing to claim and will not get an entry: its long wait
-          attestedWait.refused(k, /^an attested round with no counted entry/.test(got.why) ? { maxMs: NO_COUNTED_ENTRY_WAIT_MS } : undefined);
+          // a round refused for good (a closed, attested round with no counted entry, or nothing to claim, or a seat that signs nothing for it): its long wait
+          attestedWait.refused(k, REFUSED_FOR_GOOD.test(got.why) ? { maxMs: NO_COUNTED_ENTRY_WAIT_MS } : undefined);
           const takeover = /^not this signer node's turn to combine: .* may take over at height (\d+)/.exec(got.why);
           if (takeover && st !== 'SUBMITTING') attestedTurnAt.set(k, Number(takeover[1]));
           const was = attestedWhy.get(k);
@@ -3911,6 +3911,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A SERIES TAKEN OUT OF THE SERIES FILE (2026-10-06): its rounds are offered at no door - not listed,
   // not re-posted, no entry, no lock - while a stake already in one still settles (the settlement keeps seriesRefusal).
   const droppedSeries = new Set();
+  // A GRID PAST ITS DAY STILL ANSWERS FOR ITS STAKES (kanban #1067, measured 2026-11-03): a restart reads back no grid whose last entry closed
+  // a day ago, so every seat that restarted refused a round of it at the settlement doors: "holds no such series", for rounds whose locks
+  // still stood. Read for those doors only: not held, written, listed or entered. A series dropped as off the chain stays dropped.
+  const pastSeries = new Map();        // series id hex -> its template
   const droppedRefusal = (contract) => (contract && contract.seriesId instanceof Uint8Array && droppedSeries.has(toHex(contract.seriesId))
     ? `series ${toHex(contract.seriesId).slice(0, 16)} was taken out of this node's series file: its rounds are not offered or entered` : null);
   const refuseFile = { seen: undefined, ids: new Set() };
@@ -3956,6 +3960,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!row) return null;
     let c;
     try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
+    const past = c.seriesId instanceof Uint8Array ? pastSeries.get(toHex(c.seriesId)) : null;
+    if (past) { const k = seriesRoundCheck(c, [past]); return k.ok ? null : k.why; }
     return seriesRefusal(c);
   };
   const offerRefusalOfRound = (rid) => {
@@ -4354,13 +4360,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const dupTimer = setInterval(dupPass, Number(process.env.ARENA_DUP_EVERY_MS || 2000));
   if (dupTimer.unref) dupTimer.unref();
-  // THE GRIDS POSTED BEFORE A RESTART, read back - not one whose last entry closed a day ago
+  // THE GRIDS POSTED BEFORE A RESTART, read back - one whose last entry closed a day ago only for its settlements
   if (gridSeriesFile && existsSync(gridSeriesFile)) {
     let lines = [];
     try { lines = readSeriesLines(readFileSync(gridSeriesFile, 'utf8')); } catch (e) { console.error(`[series] the grid file did not read: ${e.message}`); }
     for (const t of lines) {
       const lastClose = t.entryCloseMs + BigInt(t.seriesCount - 1) * t.seriesPeriodMs;
-      if (BigInt(round.now()) > lastClose + 86400000n) continue;
+      if (BigInt(round.now()) > lastClose + 86400000n) {
+        const id = toHex(seriesId(t));
+        if (!offChainSeries.has(id)) pastSeries.set(id, t);
+        continue;
+      }
       const got = takeGridSeries(t, { persist: false });
       if (!got.ok) console.error(`[series] a grid from the grid file refused: ${got.why}`);
     }
