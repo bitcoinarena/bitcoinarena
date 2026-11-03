@@ -42,7 +42,7 @@ import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-do
 import { openStore } from './store.js';
 import { tipHeaderView } from './tip-view.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../arena-protocol/src/old-series.js';
-import { bitcoindRpc, blocksOver, blockCache, censusWithFreshHashes, viewWithFreshHashes } from './chain-rpc.js';
+import { bitcoindRpc, blocksOver, blockCache, censusWithFreshHashes, viewWithFreshHashes, blockOfHash, blockBytesOf } from './chain-rpc.js';
 import { openArenaIndex, syncArenaIndex, indexServesCensus, displayHash } from './arena-index.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { chainBeacon } from './beacon-source.js';
@@ -329,6 +329,7 @@ if (url) {
   // synchronously, and the signer nodes' addresses are in it.
   const views = new Map();                     // view key -> the view
   const blocksKept = blockCache();             // block hash -> its one parsed copy, shared by every view
+  let blocksFailedAtMs = 0;                    // when a block read last failed: every block reader rests a minute after it (below)
   // THE ARENA INDEX (kanban #925 part 2, spec ruling #1101 A: "Every network reads every unspent bond since its first block ... the index
   // is a seat's cache: reorg-safe, rebuildable and persisted"). With ARENA_ARENA_INDEX=1 the seat keeps, in its own store, every header
   // from its network's first census block and every Bitcoin Arena transaction with its merkle branch (arena-index.js), reads each new
@@ -341,10 +342,11 @@ if (url) {
   if (arenaIndex) {
     let syncing = false;
     const syncIndex = async () => {
-      if (syncing) return;
+      // and the index rests the minute after a failed block read, as every other block reader does
+      if (syncing || Date.now() - blocksFailedAtMs < 60000) return;
       syncing = true;
       try {
-        const got = await syncArenaIndex(arenaIndex, call, { cache: blocksKept, maxBlocks: 288 });
+        const got = await syncArenaIndex(arenaIndex, call, { cache: blocksKept, maxBlocks: 288 }).catch((e) => { blocksFailedAtMs = Date.now(); throw e; });
         if (got.added > 1 || got.rolledBackFrom !== null || got.rebuilt)
           console.log(`[index] ${got.rebuilt ? 'rebuilt, ' : ''}${got.rolledBackFrom !== null ? `rolled back from ${got.rolledBackFrom}, ` : ''}${got.added} block(s) read, to ${got.top} of ${got.tip}`);
       } catch (e) { console.error(`[index] not synced: ${e.message}`); } finally { syncing = false; }
@@ -378,8 +380,8 @@ if (url) {
   const chainCensusInFlight = new Map();
   let censusKeyScan = null;                    // this node's forward scan of "ARN" 'K', set below on a network that names a first height
   // A BLOCK READ THAT FAILED HOLDS EVERY CENSUS READ FOR A MINUTE, as it holds the round's view (below): the records' first gathering
-  // 45 s after start read the whole census window from a bitcoind whose block reads had just failed (main-process (c), since f554a896)
-  let blocksFailedAtMs = 0;
+  // 45 s after start read the whole census window from a bitcoind whose block reads had just failed (main-process (c), since f554a896).
+  // (blocksFailedAtMs is declared beside blocksKept, above: the index's first pass runs before this line)
   // `hold` false (the duty poster, #702): read even within a minute of another failed block read - measured on seat 4 2026-10-26 11:43Z, old
   // rounds' views timing out every few seconds held every census read, so the day's anchor census was never read and the node had no duty
   // order. One census a day, read once and kept; a read that fails is said and asked again at the next pass
@@ -529,7 +531,14 @@ if (url) {
     // HOW DEEP A TRANSACTION IS ON THIS NODE'S CHAIN (kanban #1093 part 2: an unbacked spend is a mark 6 deep): confirmations, 0 in the mempool, null unknown (needs -txindex for a spent one)
     chainTxConfirmations: async (txid) => { try { const t = await call('getrawtransaction', [txid, true]); return t ? Number(t.confirmations || 0) : null; } catch { return null; } },
     chainMempoolAncestors: async (txid) => { try { return (await call('getmempoolancestors', [txid])).map(String); } catch { return []; } },
-    chainRecentBlocks: async (from, to) => { const v = await blocksOver(call, from, to, { cache: blocksKept }); return v.blocks.map((b, i) => ({ height: from + i, transactions: b.transactions })); },
+    // AND THE MINUTE AFTER A FAILED BLOCK READ (f554a896): the waiting list reads no block in it - its pass says the list is partial
+    // this time - and a failed read starts it (main-process.test.js (c): this list read 12 blocks inside the minute since b7c6a3263)
+    chainRecentBlocks: async (from, to) => {
+      if (Date.now() - blocksFailedAtMs < 60000) throw new Error('a block read failed less than a minute ago: read again after it');
+      let v;
+      try { v = await blocksOver(call, from, to, { cache: blocksKept }); } catch (e) { blocksFailedAtMs = Date.now(); throw e; }
+      return v.blocks.map((b, i) => ({ height: from + i, transactions: b.transactions }));
+    },
     // THE CHAIN'S TIPS NEAR THE TOP (2026-10-20, "Mining view mismatch, what is true": the seats followed our own block at 157,133
     // while the public explorer followed another miner's of the same work): the active tip, and every other tip within 12 blocks of it
     // with its work against the active one's and the height it forks from - a tie is decided by the next block, not by this node
@@ -657,7 +666,9 @@ if (url) {
   // and no template-3 bond counts there. ARENA_CENSUS_KEY_FIRST_HEIGHT is regtest's alone: a harness names its own, a live network's is the release's.
   {
     const net = process.env.ARENA_DONATION_NETWORK;
-    const here = net === 'regtest' && process.env.ARENA_CENSUS_KEY_FIRST_HEIGHT ? Number(process.env.ARENA_CENSUS_KEY_FIRST_HEIGHT) : net ? censusKeyFirstHeight(net) : null;
+    // `off`: no census key on this regtest seat - a harness testing something else, whose reads the key's own would mix with (main-process.test.js (c))
+    const keyFirst = process.env.ARENA_CENSUS_KEY_FIRST_HEIGHT;
+    const here = net === 'regtest' && keyFirst === 'off' ? null : net === 'regtest' && keyFirst ? Number(keyFirst) : net ? censusKeyFirstHeight(net) : null;
     if (Number.isInteger(here)) {
       const networkId = net === 'testnet4' ? NETWORK_ID_TESTNET4 : NETWORK_ID_REGTEST;
       const { censusConfirmations } = genesisFor(net);
@@ -677,7 +688,13 @@ if (url) {
       const censusEntriesAt = async (height) => { const census = await keyCensusAt(height); return census ? census.entries : null; };
       const censusNamedAt = async (height) => { const census = await keyCensusAt(height); return census ? census.namedKeys : null; };
       censusKeyScan = createCensusKeyScan({ store: new CensusKeyStore(db), network: net, networkId, firstHeight: here, foundingWindow, censusConfirmations, censusKey0, tipHeight, blockHashAt,
-        blockAt: async (hash) => fromHex(String(await call('getblock', [hash, 0]))), censusEntriesAt, censusNamedAt, verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } },
+        // THE VIEWS' BLOCKS, AND THEIR MINUTE AFTER A FAILED READ (kanban #925 part 2): the scan takes a block from blocksKept or reads it into it, and reads none
+        // within a minute of a failed block read, as every census read holds (blocksFailedAtMs); since regtest's scan starts at block 0 (645f4f62a) it read every
+        // block a second time beside the views, and through their minute of rest (main-process.test.js (a), (c), (d))
+        blockAt: async (hash) => {
+          if (!blocksKept.get(hash) && Date.now() - blocksFailedAtMs < 60000) throw new Error('a block read failed less than a minute ago: read again after it');
+          try { return blockBytesOf(await blockOfHash(call, hash, { cache: blocksKept })); } catch (e) { blocksFailedAtMs = Date.now(); throw e; }
+        }, censusEntriesAt, censusNamedAt, verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } },
         log: (l) => console.log(l) });
       const wallets = (name) => bitcoindRpc({ url: `${url.replace(/\/+$/, '')}/wallet/${encodeURIComponent(name)}`, cookiePath });
       // THE CENSUS OF A KEY, AS EVIDENCE A PAGE CHECKS (kanban #1048): each read a whole census' proofs, so the last few are kept, by height and that height's block
