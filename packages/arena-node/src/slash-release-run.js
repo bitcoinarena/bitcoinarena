@@ -114,7 +114,7 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
 
   /** The hold the start paid: the round's, with its panels, or the bond's own, with none. Null for a hold this seat cannot rebuild. */
   function holdOf(e, info) {
-    const base = { nodeKey: e.pubkey, censusKey: e.advert.censusKey, bondMaturity: e.advert.bondMaturityHeight, ...clocks };
+    const base = { ownerKey: e.advert.ownerPubkey, censusKey: e.advert.censusKey, bondMaturity: e.advert.bondMaturityHeight, ...clocks };
     const panels = panelsOf(info.read.contract, info.read.roundId);
     if (panels.ok && panels.panelA.length) {
       const h = holdOutputKey({ ...base, panelA: panels.panelA, panelB: panels.panelB }, { tweakPoint });

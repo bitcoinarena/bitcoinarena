@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
 import { buildBond, lockOf, censusKeyOfNode, bondNetworkOf, BOND_MIN_SATS } from './bond.js';
 import { bondsOf } from './state.js';
+import { ownerKeysOf } from './seed.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 
 /** Plan (and with `post`, broadcast) the larger bond. Answers { ok, plan } / { ok, bond } or { ok: false, why }. */
@@ -33,7 +34,9 @@ export async function rebond({ state, bondSats, post = false, chainKit = { coins
   try {
     built = buildBond({ network: bondNetworkOf(s), hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats: want, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
       endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint, censusKey,
-      oldBond: { txid: old.txid, vout: old.vout || 0, sats: old.sats, maturity: old.maturity, ...(old.censusKey ? { censusKey: old.censusKey } : {}) } });
+      // the owner key from the 24 words (kanban #1093 part 1): it names the new 2.0 bond's path A and signs an old 2.0 bond's
+      ownerPubkey: ownerKeysOf(seed).pubkey, ownerSecret: ownerKeysOf(seed).secret,
+      oldBond: { txid: old.txid, vout: old.vout || 0, sats: old.sats, maturity: old.maturity, ...(old.censusKey ? { censusKey: old.censusKey } : {}), ...(old.ownerKey ? { ownerKey: old.ownerKey } : {}) } });
   } catch (e) { return { ok: false, why: e.message }; }
   const plan = { from: { txid: old.txid, sats: String(old.sats), maturity: old.maturity }, coins: coins.map((c) => ({ txid: c.txid, vout: c.vout, sats: c.sats })),
     bondSats: String(built.bondSats), changeSats: String(built.changeSats), fees: { funding: String(built.fees.funding), bond: String(built.fees.bond) },

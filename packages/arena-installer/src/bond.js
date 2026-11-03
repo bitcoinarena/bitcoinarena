@@ -71,10 +71,10 @@ export function lockOf(tip, { nowMs = Date.now(), maturity = maturityAfter(tip) 
 export const advertRoles = (roles) => [...new Set([...roles.flatMap((r) => (r === 'verify' ? ['game', 'verify'] : [r])), 'relay'])].filter((r) => r !== 'custody' && r !== 'liquidity');
 
 /** The bond output key of a node key at a maturity height: template 2, or template 3 when `censusKey` names the key its path B holds (5A.3B). */
-export function bondKeyAt(nodeKey, maturity, { censusKey = null, network = NETWORK } = {}) {
+export function bondKeyAt(nodeKey, maturity, { censusKey = null, ownerKey = null, network = NETWORK } = {}) {
   const g = genesisFor(network);
-  if (censusKey) return bond3OutputKey({ nodeKey, censusKey, arbitrationKeys: g.arbitrationKeys, bondMaturity: maturity,
-    internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey }, { tweakPoint, combine });
+  // TEMPLATE 3: path A the owner key's, from the 24 words (kanban #1093 part 1): no hot key on the bond
+  if (censusKey) return bond3OutputKey({ nodeKey, ownerKey, censusKey, bondMaturity: maturity }, { tweakPoint });
   return bondOutputKey({ nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: maturity,
     internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey }, { tweakPoint, combine });
 }
@@ -112,12 +112,17 @@ export const hostedGamesOf = (hex) => {
   return ids.length ? ids.map((h) => fromHex(h)) : [NEXTBLOCK_GAME_ID];
 };
 
-export function advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, guardianEndpoint = null, nowMs = Date.now(), emergencyPubkey = null, guardianOf = [], hostedGames = null, censusKey = null }) {
+/** WHY A NODE WITH NO OWNER KEY POSTS NO 2.0 BOND (kanban #1093 part 1): its path A and its hold's return are signed with that key. */
+export const NO_OWNER_KEY = 'a 2.0 bond is taken back with the owner key from this node\'s 24 words, and this node has none: show and write down its 24 words first (Settings, Your 24 words), then bond';
+
+export function advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, guardianEndpoint = null, nowMs = Date.now(), emergencyPubkey = null, guardianOf = [], hostedGames = null, censusKey = null, ownerPubkey = null }) {
+  const owner = ownerPubkey || emergencyPubkey;
+  if (censusKey && !owner) throw new Error(NO_OWNER_KEY);
   return {
     nodePubkey: nodeKey, operatorId, protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS], roles: advertRoles(roles), hostedGames: hostedGamesOf(hostedGames),
     endpoint, region: 'unknown', capacityClass: 1, softwareHash,
     settlementCapabilities: 0, lightningCapabilities: 0,
-    bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: censusKey ? BOND_TEMPLATE_V3 : BOND_TEMPLATE_V2, bondMaturityHeight: maturity, ...(censusKey ? { censusKey } : {}),
+    bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: censusKey ? BOND_TEMPLATE_V3 : BOND_TEMPLATE_V2, bondMaturityHeight: maturity, ...(censusKey ? { censusKey, ownerPubkey: owner } : {}),
     // a custody node's guardian can be drawn when nodes found a federation (§23A, ruling 3): capable, at its endpoint
     payoutPubkey, guardianOf, guardianCapable: Boolean(guardianEndpoint), guardianEndpoint: guardianEndpoint || '', timestamp: BigInt(nowMs),
     ...(emergencyPubkey ? { emergencyPubkey } : {}),
@@ -160,7 +165,8 @@ const txidOf = (hex) => toHex(Uint8Array.from(parseTransaction(fromHex(hex)).txi
  * both carriers: only the body's length fixes a carrier, so its key is chosen before the bond exists. `oldBond.censusKey` (hex) says an old bond is template 3.
  */
 export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_SATS, operatorId, roles, endpoint, payoutPubkey,
-  softwareHash = new Uint8Array(32), feeRate = 2, nowMs = Date.now(), oldBond = null, guardianEndpoint = null, emergencyPubkey = null, guardianOf = [], hostedGames = null, censusKey = null, network = NETWORK }) {
+  softwareHash = new Uint8Array(32), feeRate = 2, nowMs = Date.now(), oldBond = null, guardianEndpoint = null, emergencyPubkey = null, guardianOf = [], hostedGames = null, censusKey = null, network = NETWORK,
+  ownerPubkey = null, ownerSecret = null }) {
   // A NETWORK THAT READS TEMPLATE 3 ONLY NEVER FALLS BACK (5A.3B, kanban #1065): every bond a node posts is built here, so nothing below can lock money in a bond that does not count
   if (!censusKey && readsTemplate3Only(network)) throw new Error(NO_CENSUS_KEY_READ);
   // A LARGER BOND, IN ONE STEP ("increasing the bond size"; a template-2 bond cannot be topped up in place):
@@ -171,7 +177,8 @@ export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_
   if (!coins.length && !oldBond) throw new Error('the wallet holds no coins yet');
   const nodeKey = schnorr.getPublicKey(nodeSecret);
   const maturity = maturityAfter(tip, network);
-  const advert = advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, guardianEndpoint, nowMs, emergencyPubkey, guardianOf, hostedGames, censusKey });
+  const advert = advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, guardianEndpoint, nowMs, emergencyPubkey, guardianOf, hostedGames, censusKey, ownerPubkey });
+  const ownerKey = advert.ownerPubkey || null;
   const id = advertId(advert);
   const body = joinSignedAdvert(encodeAdvert(advert), schnorr.sign(id, nodeSecret));
   const pieces = piecesOf(body);
@@ -181,8 +188,12 @@ export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_
   // THE UPDATE WITH THE PRESIG: its carrier by the length of a body that carries one, whatever the signature says
   const presigSecret = censusKey ? taggedHash(CARRIER_TAG, new Uint8Array([...wallet.secret, ...id, 1])) : null;
   const presigCarrier = censusKey ? carrierOf(presigSecret, piecesOf(joinSignedAdvert(encodeAdvert({ ...advert, slashPresig: new Uint8Array(65) }), new Uint8Array(64))).length) : null;
-  const old = oldBond ? (() => { const built = bondKeyAt(nodeKey, oldBond.maturity, { censusKey: oldBond.censusKey ? fromHex(oldBond.censusKey) : null, network }); return { built, spk: fromHex('5120' + toHex(built.outputKey)), leaf: recoveryLeaf(nodeKey, oldBond.maturity) }; })() : null;
-  const bondOut = bondKeyAt(nodeKey, maturity, { censusKey, network });
+  // AN OLD TEMPLATE-3 BOND LEAVES BY ITS OWNER KEY (kanban #1093 part 1): its path A is signed with the owner secret from the 24 words, never the node's
+  const oldOwner = oldBond && oldBond.censusKey ? (oldBond.ownerKey ? fromHex(oldBond.ownerKey) : null) : null;
+  if (oldBond && oldBond.censusKey && (!oldOwner || !ownerSecret)) throw new Error('the old bond is template 3: it is spent with the owner key from the 24 words, and none was given here');
+  const old = oldBond ? (() => { const built = bondKeyAt(nodeKey, oldBond.maturity, { censusKey: oldBond.censusKey ? fromHex(oldBond.censusKey) : null, ownerKey: oldOwner, network });
+    return { built, spk: fromHex('5120' + toHex(built.outputKey)), leaf: recoveryLeaf(oldOwner || nodeKey, oldBond.maturity), secret: oldOwner ? ownerSecret : nodeSecret }; })() : null;
+  const bondOut = bondKeyAt(nodeKey, maturity, { censusKey, ownerKey, network });
   const kp = keyPathSecret(wallet.secret, wallet.xonly);
 
   // the bond transaction first (its size sets what the carrier must hold), then the funding at its own fee
@@ -220,7 +231,7 @@ export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_
     const outputs = [{ value: carrierValue, script: carrier.spk }, ...(presigCarrier ? [{ value: presigValue, script: presigCarrier.spk }] : [])];
     const locktime = oldBond ? oldBond.maturity : 0;
     const witnesses = inputs.map((_, i) => (oldBond && i === 0
-      ? scriptPathWitness({ stack: [schnorr.sign(tapSighash({ version: 2, locktime, inputs, outputs, prevouts, inputIndex: 0, leafHash: tapLeafHash(old.leaf) }), nodeSecret)],
+      ? scriptPathWitness({ stack: [schnorr.sign(tapSighash({ version: 2, locktime, inputs, outputs, prevouts, inputIndex: 0, leafHash: tapLeafHash(old.leaf) }), old.secret)],
         script: old.leaf, controlBlock: controlBlockFor('recovery', old.built).controlBlock })
       : [schnorr.sign(tapSighash({ version: 2, locktime, inputs, outputs, prevouts, inputIndex: i }), kp)]));
     return toHex(serializeSpend({ version: 2, locktime, inputs, outputs, witnesses }));
