@@ -16,12 +16,14 @@ import { beaconFromChain } from '../../arena-protocol/src/beacon.js';
 import { testNow } from './test-clock.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
-import { splitSlashEvidence, SLASH_EVIDENCE_BYTES, joinSlashEvidence } from '../../arena-protocol/src/slash.js';
+import { splitSlashEvidence, SLASH_EVIDENCE_BYTES, joinSlashEvidence, decodeFraudProof, encodeFraudProof, fraudProofHash } from '../../arena-protocol/src/slash.js';
 import { splitSignedResult, decodePlayerResult, encodePlayerResult, joinSignedResult, resultId } from '../../arena-protocol/src/result.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { arbitrationCommitmentIn } from '../../arena-protocol/src/arbitration-tx.js';
 import { bondOutputKey, bondInternalKey } from '../../arena-protocol/src/bond-script.js';
 import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound } from '../src/arbiter.js';
+import { createProofJudge } from '../src/proof-judge.js';
+import { replay } from '../src/replay.js';
 import { tweakPoint, combine } from '../src/curve.js';
 import { HOSTED } from './plugins/hosted.js';
 
@@ -159,5 +161,34 @@ test('a filed proof, re-judged by the arbiter from the seat\'s doors, is signed 
     const honest = await judge(w, x, { evidence: joinSlashEvidence(x.evidence.subarray(0, x.evidence.length - signedResult.length), honestRecord.bytes) });
     assert.equal(honest.slashed, false, 'the holder\'s own honest result: the replay does not contradict it');
     void proof;
+
+    // A SEAT'S OWN WORD (kanban #1065): the complete proof off GET /slash/<hash>, and everything else from this reader: true on its replay, false on a stranger's bytes, and silent where it cannot say
+    const complete = new Uint8Array(await (await fetch(`http://127.0.0.1:${w.holder.port}/slash/${x.s.proof}`)).arrayBuffer());
+    assert.equal(toHex(fraudProofHash(complete)), x.s.proof, 'those bytes are the proof the listing names');
+    const parts = decodeFraudProof(complete);
+    assert.equal(toHex(parts.evidence), toHex(x.evidence));
+    assert.equal(toHex(parts.bundle), toHex(x.bundle), 'and the objection that held is in them');
+    const censusOf = () => ({ ok: true, entries: [...w.adverts.values()].map((a) => ({ pubkey: a.nodePubkey, txid: a.bondTxid, vout: a.bondVout, advert: a })) });
+    let replays = 0;
+    const judgeOf = (over = {}) => createProofJudge({ committeeOf: () => ({ ok: true, committee: x.committee }), censusOf, coreOf: (c, r) => coreForRound(c, r, HOSTED), beaconOf: () => ({ ok: true, hash: x.beacon }),
+      replayRunOf: () => async (form, e, options) => { replays += 1; return replay(form, e, options); }, ...over });
+    const seat = judgeOf(), said = await seat(complete);
+    assert.equal(said.verdict, true, said.why);
+    assert.ok(replays > 0, 'and it replayed');
+    const once = replays;
+    assert.equal((await seat(complete)).verdict, true);
+    assert.equal(replays, once, 'one hash, one verdict: the bytes do not change');
+    const read = seat.read(complete);
+    assert.deepEqual([read.ok, read.kind, toHex(read.bond.txid), toHex(read.nodePubkey)], [true, 'result', toHex(proof.bondTxid), x.s.node]);
+    const rebuilt = (over) => encodeFraudProof({ ...parts, ...over });
+    assert.match((await seat(rebuilt({ bundle: new Uint8Array(0) }))).why, /no objection bundle/);
+    assert.equal((await seat(rebuilt({ bundle: new Uint8Array(0) }))).verdict, false, 'a proof with no objection does not check');
+    assert.equal((await seat(rebuilt({ entry: new Uint8Array(0) }))).verdict, false, 'nor one with no entry');
+    assert.match((await seat(rebuilt({ contract: new Uint8Array(0) }))).why, /no contract/);
+    assert.match((await seat(rebuilt({ evidence: joinSlashEvidence(x.evidence.subarray(0, x.evidence.length - signedResult.length), forgedSig) }))).why, /not signed by the node it names/);
+    assert.match((await seat(rebuilt({ evidence: joinSlashEvidence(x.evidence.subarray(0, x.evidence.length - signedResult.length), honestRecord.bytes) }))).why, /does not contradict/);
+    assert.equal((await judgeOf({ coreOf: () => null })(complete)).verdict, undefined, 'a seat that does not host the game cannot say, and signs nothing');
+    assert.equal((await judgeOf({ beaconOf: () => ({ ok: false, why: 'no block' }) })(complete)).verdict, undefined);
+    assert.equal((await judgeOf({ censusOf: () => ({ ok: false, why: 'not read' }) })(complete)).verdict, undefined);
   } finally { await w.close(); }
 });

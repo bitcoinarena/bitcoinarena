@@ -26,32 +26,35 @@ const bondOf = (e) => ({ txid: e.txid, vout: e.vout, value: BigInt(e.bondSats), 
 export const filerRank = (proofId, keys, me) => [...keys].sort((a, b) => (toHex(taggedHash('ARENA/v1/SlashFiler', Uint8Array.from([...proofId, ...fromHex(a)]))) < toHex(taggedHash('ARENA/v1/SlashFiler', Uint8Array.from([...proofId, ...fromHex(b)]))) ? -1 : 1)).indexOf(me);
 
 /**
- * `key`; `db`; `store` CensusKeyStore; `thresholdOf(keyHex)`; `tipHeight()`; `entriesAtTip()` the census at the tip; `heldProofs()` [{ roundId, proofId, bytes, seenMs }] of the proofs this seat holds; `judge(bytes)` this seat's own
- * replay of a complete proof: { verdict: true | false | undefined, why, proof, contract }; `holdsFor(entry, roundId, contract)` -> { holds: [{ script }], presig?(bytes), holdScript? } by this seat's own reckoning, `presig`/`holdScript` naming the one a filer uses;
+ * `key`; `db`; `store` CensusKeyStore; `thresholdOf(keyHex)`; `tipHeight()`; `entriesAtTip()` the census at the tip; `heldProofs()` [{ proofId, bytes, seenMs }] of the proofs this seat filed; `bytesOf(id)` what its relay keeps under a hash; `judge(bytes)` this seat's own
+ * word on a complete proof (proof-judge.js): { verdict: true | false | undefined, why }, with `judge.read`; `holdsFor(entry, roundId, contract)` -> { holds: [{ script }], presig?(bytes), holdScript? } by this seat's own reckoning, `presig`/`holdScript` naming the one a filer uses;
  * `feeCoin(spk, value)`, `send(hex)`, `urlsOf(entries)`.
  */
-export function createSlashStarter({ key, network, db, store, thresholdOf, tipHeight, entriesAtTip, heldProofs, judge, holdsFor, feeCoin, send, urlsOf, stepMs = 600000, feeSats = 700n, fetchFn = fetch, now = Date.now, log = () => {} }) {
+export function createSlashStarter({ key, network, db, store, thresholdOf, tipHeight, entriesAtTip, heldProofs, bytesOf, judge, holdsFor, feeCoin, send, urlsOf, stepMs = 600000, feeSats = 700n, fetchFn = fetch, now = Date.now, log = () => {} }) {
   const me = toHex(key);
   db.exec(`CREATE TABLE IF NOT EXISTS slash_starts (proof_id BLOB PRIMARY KEY, bond TEXT NOT NULL, txid TEXT NOT NULL, kept_ms INTEGER NOT NULL)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS slash_handed (proof_id BLOB PRIMARY KEY, seen_ms INTEGER NOT NULL)`);
   const filed = (id) => !!db.prepare('SELECT 1 FROM slash_starts WHERE proof_id = ?').get(id);
-  const entryOf = (entries, proof) => entries.find((e) => toHex(e.txid) === toHex(proof.bondTxid) && e.vout === proof.bondVout) || null;
+  const entryOf = (entries, bond) => entries.find((e) => toHex(e.txid) === toHex(bond.txid) && e.vout === bond.vout) || null;
 
-  /** A HOLDER'S CHECK of a filer's request: the proof on this seat's own replay, then the bond, its hold and the transaction by this seat's own census. */
+  /** A HOLDER'S CHECK of a filer's request: the bond, its hold and the transaction by this seat's own census, and last, since it costs a replay, the proof on this seat's own judge. */
   async function check(request) {
     let tx, prevouts, bytes, presig;
     try { tx = txOfJson(request.tx); prevouts = coinsOfJson(request.prevouts); bytes = fromHex(request.proof); presig = fromHex(request.presig); }
     catch (e) { return { ok: false, why: `that is no request: ${e.message}` }; }
-    const j = await judge(bytes);
-    if (j.verdict !== true) return { ok: false, why: j.why };
-    const entry = entryOf((await entriesAtTip()) || [], j.proof);
+    const said = judge.read(bytes);
+    if (!said.ok) return said;
+    const entry = entryOf((await entriesAtTip()) || [], said.bond);
     if (!entry || entry.advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V3) return { ok: false, why: 'no unspent template-3 bond of this census is that proof\'s' };
     if (entry.hold) return { ok: false, why: 'that bond was started already' };
-    const { holds, why } = holdsFor(entry, j.proof.roundId, j.contract);
+    const { holds, why } = holdsFor(entry, said.roundId, said.contract);
     if (!holds.length) return { ok: false, why: why || 'that bond has no hold output here yet' };
     const c = checkSlashStart({ tx, prevouts, bond: bondOf(entry), nodeKey: entry.pubkey, censusKey: entry.advert.censusKey, holds, presig, proofId: fraudProofHash(bytes), verify: verifySig });
     if (!c.ok) return c;
-    const height = slashHeightIsValid({ slashHeight: c.slashHeight, censusHeight: j.contract.censusHeight, tipHeight: await tipHeight() });
+    const height = slashHeightIsValid({ slashHeight: c.slashHeight, censusHeight: said.floorHeight, tipHeight: await tipHeight() });
     if (!height.ok) return height;
+    const j = await judge(bytes);
+    if (j.verdict !== true) return { ok: false, why: j.why };
     return { ok: true, digest: c.digest, publicKey: entry.advert.censusKey };
   }
   const signer = createCensusSigner({ key, check, held: (publicKey) => store.held(publicKey) });
@@ -69,9 +72,9 @@ export function createSlashStarter({ key, network, db, store, thresholdOf, tipHe
   }
 
   /** One filing: { ok, txid, signers } or { ok: false, why, refused }. */
-  async function file({ bytes, judged, entry, entries }) {
-    const proof = judged.proof, proofId = fraudProofHash(bytes), idHex = toHex(proofId);
-    const { presig, holdScript, why } = holdsFor(entry, proof.roundId, judged.contract);
+  async function file({ bytes, said, entry, entries }) {
+    const proofId = fraudProofHash(bytes), idHex = toHex(proofId);
+    const { presig, holdScript, why } = holdsFor(entry, said.roundId, said.contract);
     if (!presig) return { ok: false, why: why || 'this seat holds no slash_presig of that bond' };
     const fee = await feeFor(idHex);
     if (!fee.ok) return fee;
@@ -93,25 +96,33 @@ export function createSlashStarter({ key, network, db, store, thresholdOf, tipHe
     return { ok: true, txid: String(txid), signers: got.signers, shares: got.shares, refused: got.refused, size: parseTransaction(raw).outputs.length };
   }
 
-  /** One pass over the proofs this seat holds. Only a proof this seat's own replay holds to is filed, and each seat waits for its turn. */
+  /** A PROOF HANDED TO THIS SEAT (PUT /slash/<id>): judged on the next pass, not at the door, since a replay costs seconds and the door is anyone's. */
+  const handed = (id) => db.prepare('INSERT OR IGNORE INTO slash_handed (proof_id, seen_ms) VALUES (?, ?)').run(id, now());
+  const handedProofs = () => db.prepare('SELECT proof_id, seen_ms FROM slash_handed ORDER BY seen_ms DESC LIMIT 256').all().flatMap((r) => {
+    const proofId = new Uint8Array(r.proof_id), bytes = bytesOf(proofId);
+    return bytes ? [{ proofId, bytes, seenMs: Number(r.seen_ms) }] : [];
+  });
+
+  /** One pass over the proofs this seat holds: nothing is replayed for a bond that is no template-3 unstarted bond of this census, or before this seat's turn. Only a proof this seat's own judge holds to is filed. */
   async function pass() {
     const done = [];
-    const proofs = heldProofs().filter((p) => !filed(p.proofId));
+    const proofs = [...new Map([...heldProofs(), ...handedProofs()].map((p) => [toHex(p.proofId), p])).values()].filter((p) => !filed(p.proofId));
     if (!proofs.length) return done;
     const entries = await entriesAtTip();
     if (!entries) return done;
     for (const p of proofs) {
-      const judged = await judge(p.bytes);
-      if (judged.verdict !== true) continue;
-      const entry = entryOf(entries, judged.proof);
+      const said = judge.read(p.bytes);
+      if (!said.ok) continue;
+      const entry = entryOf(entries, said.bond);
       if (!entry || entry.hold || entry.advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V3) continue;
       const keys = [...new Set(entries.map((e) => toHex(e.pubkey)))];
       if (now() - p.seenMs < filerRank(p.proofId, keys, me) * stepMs) continue;
-      let r; try { r = await file({ bytes: p.bytes, judged, entry, entries }); } catch (e) { r = { ok: false, why: e.message }; }
+      if ((await judge(p.bytes)).verdict !== true) continue;
+      let r; try { r = await file({ bytes: p.bytes, said, entry, entries }); } catch (e) { r = { ok: false, why: e.message }; }
       log(r.ok ? `[slash] start filed against ${toHex(entry.pubkey).slice(0, 16)}: ${r.txid}, ${r.signers.length} holders, ${r.shares} shares` : `[slash] no start against ${toHex(entry.pubkey).slice(0, 16)} yet: ${r.why}${r.refused && r.refused.length ? ` (${r.refused.map((x) => x.why).join('; ')})` : ''}`);
       done.push(r);
     }
     return done;
   }
-  return { pass, file, takeCommit: signer.takeCommit, takeShare: signer.takeShare, check };
+  return { pass, file, handed, takeCommit: signer.takeCommit, takeShare: signer.takeShare, check };
 }

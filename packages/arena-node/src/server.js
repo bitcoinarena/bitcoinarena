@@ -174,6 +174,8 @@ import { sourcePlan, payDeposit, depositBlock, signedProposal } from './source-b
 import { bondCliFrom } from './add-bond-wallet.js';
 import { createHoldWatch, holdsOfOwnBond } from './hold-return.js';
 import { createSlashStarter } from './slash-start-run.js';
+import { createProofJudge } from './proof-judge.js';
+import { coreForRound } from './arbiter.js';
 import { slashHoldsOnDoubleSign } from '../../arena-protocol/src/slash.js';
 import { bondPresigDigest, holdClocksOf } from '../../arena-protocol/src/slash-presig.js';
 import { SOURCE_ENTRIES } from '../../arena-protocol/src/market-sources.js';
@@ -4092,27 +4094,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return latestRelease.read(own);
   };
-  // THIS SEAT'S OWN WORD ON A PROOF (5A.3B): a holder signs a start, and a node leaves a hold or stays, on this and on nothing a filer says. `bytes` a complete proof (kanban #1065), so a seat that does not
-  // hold the round reads it from them. Two signed results are all a seat can judge alone so far: the replay and the table kinds answer undefined, so no start is signed on them and a node holding one waits.
-  const judgeProofBytes = (bytes) => {
-    if (isAbandonedProof(bytes)) return { verdict: undefined, why: 'this seat cannot judge that kind of proof yet' };
-    let complete, got; try { complete = decodeFraudProof(bytes); got = readEvidence(complete.evidence); } catch (e) { return { verdict: false, why: `those bytes are no proof: ${e.message}` }; }
-    if (got.kind !== 'double') return { verdict: undefined, why: 'this seat cannot judge that kind of proof yet' };
-    const rid = got.proof.roundId, row = round.get(rid);
-    let contract = null; try { contract = decodeRoundContract(complete.contract); } catch { contract = null; }
-    if (!contract || toHex(roundIdOf(contract)) !== toHex(rid)) return { verdict: false, why: 'the contract in that proof is not the round it names' };
-    const chosen = roster.committeeFor(rid, 'game', { posted: contract });
-    if (!chosen.ok) return { verdict: undefined, why: `that round's committee cannot be read yet: ${chosen.why}` };
-    const census = roster.censusFor(rid, null, row ? {} : { posted: contract });
-    const e = census.ok ? census.entries.find((x) => toHex(x.pubkey) === toHex(got.proof.nodePubkey) && toHex(x.txid) === toHex(got.proof.bondTxid) && x.vout === got.proof.bondVout) : null;
-    const held = slashHoldsOnDoubleSign({ proof: got.proof, signedResults: got.signedResults, committee: chosen.committee.map((c) => c.pubkey || c), advert: e ? { ...e.advert, nodePubkey: e.pubkey, bondTxid: e.txid, bondVout: e.vout } : null, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
-    return { verdict: held.slashed, why: held.why, proof: got.proof, contract };
-  };
+  // THIS SEAT'S OWN WORD ON A PROOF (5A.3B, kanban #1065, proof-judge.js): the complete proof holds the round's contract, so a seat that does not hold the round reads it from the bytes, and the rest from its own chain
+  const roundOf = (contract, rid) => (round.get(rid) ? {} : { posted: contract });
+  const judgeProofBytes = createProofJudge({ censusOf: (contract, rid) => roster.censusFor(rid, null, roundOf(contract, rid)),
+    committeeOf: (contract, rid) => {
+      const keys = new Map();
+      for (const role of ['game', 'settlement']) {
+        const chosen = roster.committeeFor(rid, role, { posted: contract });
+        if (!chosen.ok) return chosen;
+        for (const c of chosen.committee) { const k = c.pubkey || c; keys.set(toHex(k), k); }
+      }
+      return { ok: true, committee: [...keys.values()] };
+    },
+    coreOf: (contract, rid) => coreForRound(contract, rid, hosted), beaconOf: (contract, rid, entry, eid) => verifier.proofBeacon(contract, rid, entry, eid), replayRunOf: (rid, eid, core) => verifier.proofReplay(rid, eid, core) });
   // THE KEY A NEW BOND NAMES (5A.3B: "A bond names the newest standing key when it is made"): on a network with a census key a new bond is template 3, on any other it stays template 2
   const newestCensusKey = () => { const keys = censusKey ? censusKey.scan.standing() : []; return keys.length ? keys[keys.length - 1].publicKey : null; };
   // A STARTED BOND OF THIS NODE (5A.3B): what it reads of its hold output, and its way out
   const holdWatch = censusKey && censusKey.rawTxAt ? createHoldWatch({ clocks: holdClocksOf(censusKey.networkId), nodeSecret: round.identity.secret, tipHeight: censusKey.tipHeight, rawTxAt: censusKey.rawTxAt,
-    broadcast: (hex) => chainSend(hex), log: (l) => console.log(l), fetchProof: (id) => proofBytesFetched(id), proofChecks: async (bytes) => (await judgeProofBytes(bytes)).verdict, returnScript: () => ownReturnScript(), holdsFor: (b) => holdsOfOwnBond({ nodeKey: round.pubkey, censusKey: fromHex(b.censusKey), bondMaturity: b.maturity, clocks: holdClocksOf(censusKey.networkId), tweakPoint,
+    broadcast: (hex) => chainSend(hex), log: (l) => console.log(l), fetchProof: (id) => proofBytesFetched(id), proofChecks: async (bytes) => (isAbandonedProof(bytes) ? undefined : (await judgeProofBytes(bytes)).verdict), returnScript: () => ownReturnScript(), holdsFor: (b) => holdsOfOwnBond({ nodeKey: round.pubkey, censusKey: fromHex(b.censusKey), bondMaturity: b.maturity, clocks: holdClocksOf(censusKey.networkId), tweakPoint,
       panels: seating ? seating.ownHoldPanels({ txid: toHex(fromHex(b.txid).reverse()), vout: b.vout }) : [] }) }) : null;
   // THIS NODE'S OWN OUTPUTS, NEAR THE TIP (5A.3B): a census six or twelve blocks old, or none on a seat with no round, is no way to learn that a bond was started, when the clocks are hours. On a
   // network with a census key: read every 6 blocks, and at once when one of its outputs is spent, which costs one gettxout per output per block.
@@ -4193,7 +4192,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return entries;
   };
   const slashStarter = holdWatch && censusKey.feeCoin ? createSlashStarter({ key: round.pubkey, network: censusKey.network, db: round.db, store: new CensusKeyStore(round.db), thresholdOf: censusKey.scan.thresholdOf, tipHeight: censusKey.tipHeight, entriesAtTip: entriesAtTipForStart,
-    heldProofs: () => round.doubleSlashProofs().flatMap((p) => { const bytes = round.relayGet(Buffer.from(p.proofId)); return bytes ? [{ ...p, bytes }] : []; }), judge: judgeProofBytes, holdsFor: holdsForStart, feeCoin: censusKey.feeCoin, send: (hex) => chainSend(hex), urlsOf: () => censusUrls || [],
+    heldProofs: () => [...round.allSlashProofs(), ...round.allRerunSlashProofs(), ...round.doubleSlashProofs()].flatMap((p) => { const bytes = round.relayGet(Buffer.from(p.proofId)); return bytes ? [{ proofId: p.proofId, bytes, seenMs: p.seenMs }] : []; }), bytesOf: (id) => round.relayGet(Buffer.from(id)), judge: judgeProofBytes, holdsFor: holdsForStart, feeCoin: censusKey.feeCoin, send: (hex) => chainSend(hex), urlsOf: () => censusUrls || [],
     stepMs: Number(process.env.ARENA_SLASH_FILE_STEP_MS || 600000), log: (l) => console.log(l) }) : null;
   const ownTimer = holdWatch ? setInterval(() => { if (!shuttingDown) ownPass().catch((e) => console.error(`[hold] the pass did not run: ${e.message}`)); }, Number(censusKey.everyMs) > 0 ? Number(censusKey.everyMs) : 10000) : null;
   if (ownTimer && ownTimer.unref) ownTimer.unref();
@@ -10978,10 +10977,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let got; try { got = readEvidence(decodeFraudProof(u8).evidence); } catch (e) { return text(res, 400, e.message); }
         round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
         // ANYONE PUBLISHES A FRAUD PROOF (5A.3B step 1): a pair that holds here, on this seat's own check, is a proof this seat holds, kept as if it had seen both results itself
-        if (slashStarter && got.kind === 'double' && judgeProofBytes(u8).verdict === true) {
+        if (slashStarter && got.kind === 'double') {
           const none = new Uint8Array(32);
-          if (round.get(got.proof.roundId) && round.putDoubleResult(got.proof.roundId, none, got.proof.nodePubkey, got.signedResults[0], got.signedResults[1])) round.fileDoubleResult(got.proof.roundId, none, got.proof.nodePubkey, fromHex(slashed[1]), got.evidence);
-        }
+          if ((await judgeProofBytes(u8)).verdict === true && round.get(got.proof.roundId) && round.putDoubleResult(got.proof.roundId, none, got.proof.nodePubkey, got.signedResults[0], got.signedResults[1])) round.fileDoubleResult(got.proof.roundId, none, got.proof.nodePubkey, fromHex(slashed[1]), got.evidence);
+        } else if (slashStarter) slashStarter.handed(fromHex(slashed[1]));
         return text(res, 201, 'kept');
       }
       if (slashed && req.method === 'GET') {

@@ -1467,6 +1467,15 @@ export class Verifier {
     }
   }
 
+  /** The beacon a proof's replay runs under, of a contract in the proof: a seat that does not hold the round reads the chain the same way (kanban #1065). */
+  proofBeacon(contract, roundIdBytes, entry, entryIdBytes) { return beaconFor(this.randomnessFor, contract, roundIdBytes, entry, entryIdBytes, this.chainFor); }
+
+  /** A proof's replay in this seat's pool, in the ordinary class: it goes ahead of no close. */
+  proofReplay(roundIdBytes, entryIdBytes, core) {
+    return (form, entry, options) => this.pool.submit({ core, key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:proof:${++objectionJobs}`, objected: false, transcript: form, source: null, entry,
+      options: { roundRandomness: options.roundRandomness, marks: options.marks || [] } });
+  }
+
   /**
    * RE-RUN A SUSPENDED RESULT, AND COUNT THE COMMITTEE'S RE-RUNS (v4.6.2 §13A).
    *

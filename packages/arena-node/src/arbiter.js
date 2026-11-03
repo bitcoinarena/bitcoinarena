@@ -24,7 +24,7 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { affectedEntries, realLosses, slashHolds, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS, TWO_RESULTS,
+import { affectedEntries, realLosses, slashHolds, slashHoldsOnRerun, splitRerunSlashEvidence, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS, TWO_RESULTS,
   splitAuditSlashEvidence, slashHoldsOnAudit, AUDIT_CONTRADICTED, splitDoubleSlashEvidence, slashHoldsOnDoubleSign, splitTableSlashEvidence, slashHoldsOnTable } from '../../arena-protocol/src/slash.js';
 import { abandonedSlashStands, abandonedProofId, decodeAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
 import { verifyFederationRecord } from '../../arena-protocol/src/federation-record.js';
@@ -112,6 +112,30 @@ export async function judgeProof({ evidence, bundle, entry, entryId, contract, c
   if (!held.slashed) return no(held.why);
   return { slashed: true, offence: held.offence, bond: held.bond, proof, playerPubkey: proof.playerPubkey,
     signed: { outcome: body.outcome, score: body.score }, replayed: checked.replayed, contradictedRunId: toHex(objected), why: held.why };
+}
+
+/**
+ * THE JUDGEMENT OF A PROOF AGAINST A RE-RUN SIGNER (§13A, slice C2c), as judgeProof judges a first result's: the second objection, the one that held against the agreed re-run, is REPLAYED here, and the
+ * run it contradicts must be the one the accused signed. Then slashHoldsOnRerun's comparisons, on the accused's signed re-run. Answers what judgeProof answers.
+ */
+export async function judgeRerunProof({ evidence, bundle, entry, entryId, contract, committee, advert, bondOutpoint, core, roundRandomness, replayRun }) {
+  const no = (why) => ({ slashed: false, why });
+  let got;
+  try { got = splitRerunSlashEvidence(evidence); } catch (e) { return no(`not a slash proof record against a re-run: ${e.message}`); }
+  if (!(bundle instanceof Uint8Array) || !bundle.length) return no('no objection bundle to replay');
+  let objected, canonical;
+  try {
+    const b = decodeObjectionBundle(bundle);
+    objected = b.objection.signedResultId;
+    canonical = transcriptHash(decodeTranscript(b.transcript));
+  } catch (e) { return no(`that is not an objection bundle: ${e.message}`); }
+  const checked = await checkObjectionBundle({ bundle, roundId: got.proof.roundId, entryId, entry, contract, committee, signedResultId: objected, core, roundRandomness, verify: verifySchnorr,
+    ...(replayRun ? { replayRun } : {}) });
+  if (!checked.holds) return no(`the replay does not contradict that re-run: ${checked.why}`);
+  const held = slashHoldsOnRerun({ proof: got.proof, signedRerun: got.signedRerun, committee, canonicalTranscriptHash: canonical, agreedRunId: objected, replayDiffers: true, verify: verifySchnorr,
+    advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
+  if (!held.slashed) return no(held.why);
+  return { slashed: true, offence: held.offence, bond: held.bond, proof: got.proof, playerPubkey: got.proof.playerPubkey, replayed: checked.replayed, contradictedRunId: toHex(objected), why: held.why };
 }
 
 /**

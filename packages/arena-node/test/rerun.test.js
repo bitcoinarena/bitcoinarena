@@ -28,13 +28,17 @@ import { Forfeit } from '../src/forfeit.js';
 import { objectionIntake } from '../src/server.js';
 import * as serverModule from '../src/server.js';
 import { Verifier } from '../src/verify.js';
-import { slashHoldsOnRerun, splitRerunSlashEvidence, decodeFraudProof, REPLAY_CONTRADICTS, slashHolds, splitSlashEvidence } from '../../arena-protocol/src/slash.js';
+import { slashHoldsOnRerun, splitRerunSlashEvidence, decodeFraudProof, encodeFraudProof, REPLAY_CONTRADICTS, slashHolds, splitSlashEvidence } from '../../arena-protocol/src/slash.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { decodePlayerResult, splitSignedResult, resultId, joinSignedResult, encodePlayerResult } from '../../arena-protocol/src/result.js';
 import { runOf, decodeRerunResult, splitSignedRerun } from '../../arena-protocol/src/rerun.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { b32, rand, wait, sevenSignerNodes, object, objectionBundleFor, WINNER, WINDOW_MS } from './window-fixture.js';
 import { HOSTED } from './plugins/hosted.js';
+import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
+import { beaconFromChain } from '../../arena-protocol/src/beacon.js';
+import { createProofJudge } from '../src/proof-judge.js';
+import { coreForRound } from '../src/arbiter.js';
 
 /** Wait until the holder has signed its own re-run of `eid`, and return it. */
 async function holdersRerun(w, eid, ms = 8000) {
@@ -375,6 +379,18 @@ test('the second objection\'s 201 files one slash proof per agreeing re-run sign
       const r = await fetch(`http://127.0.0.1:${w.holder.port}/slash/${toHex(p.proofId)}`);
       relayed.push(r.status === 200 && toHex(decodeFraudProof(new Uint8Array(await r.arrayBuffer())).evidence) === toHex(p.bytes));
     }
+    // A SEAT'S OWN WORD ON A RE-RUN'S SIGNER (kanban #1065): the complete proof holds the second objection, and it is replayed here
+    const contract = decodeRoundContract(new Uint8Array(w.holder.round.get(w.rid).contract));
+    const view = w.holder.roster.chainFor({ contract, roundIdBytes: w.rid });
+    const beacon = beaconFromChain(contract, { headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight });
+    const entries = [...w.adverts.values()].map((a) => ({ pubkey: a.nodePubkey, txid: a.bondTxid, vout: a.bondVout, advert: a }));
+    const seat = createProofJudge({ committeeOf: () => ({ ok: true, committee }), censusOf: () => ({ ok: true, entries }), coreOf: (c, r) => coreForRound(c, r, HOSTED), beaconOf: () => ({ ok: true, hash: beacon.hash }), replayRunOf: () => undefined });
+    const complete = new Uint8Array(await (await fetch(`http://127.0.0.1:${w.holder.port}/slash/${toHex(filed[0].proofId)}`)).arrayBuffer());
+    const said = await seat(complete);
+    assert.equal(said.verdict, true, said.why);
+    assert.equal(seat.read(complete).kind, 'rerun');
+    const noObjection = decodeFraudProof(complete);
+    assert.equal((await seat(encodeFraudProof({ ...noObjection, bundle: w.holder.round.objectionBundle(w.rid, s.eid) }))).verdict, false, 'the first objection contradicts another run than the re-run its signer signed');
     const facts = {
       accusedAreTheAgreeing: filed.map((p) => toHex(p.nodePubkey)).sort().join() === agreeingRerunSigners(w, s.eid, agreedRun).join(),
       holderAccused: filed.some((p) => toHex(p.nodePubkey) === toHex(w.holder.round.pubkey)),
