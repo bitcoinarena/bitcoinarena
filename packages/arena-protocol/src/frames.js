@@ -29,7 +29,7 @@ import {
   TYPE_GAME_MANIFEST, TYPE_OUTCOME_ATTESTATION, TYPE_PRICE_SAMPLE, TYPE_PRICE_TAPE, TYPE_FEDERATION_RECORD, TYPE_PRESENT, TYPE_SEATING,
   TYPE_CONFIG_PROPOSAL, TYPE_ABSENCE_ATTESTATION, TYPE_DEPARTURE_NOTICE, TYPE_EMERGENCY_DEPARTURE, TYPE_SPENT_SET, TYPE_ROUND_RESULT, TYPE_RESULT_FRONT, TYPE_HALT_OBSERVATION,
   TYPE_VALUE_ATTESTATION, TYPE_DONATION_PROPOSAL, TYPE_DONATION_APPROVAL, TYPE_DONATION_SET_KEYS_VESTING,
-  TYPE_AUDIT, TYPE_AUDIT_SLASH_PROOF, TYPE_ABANDONED_PROOF, TYPE_SEATING_SEEN, TYPE_HEARTBEAT, TYPE_HEARTBEAT_HEARD,
+  TYPE_AUDIT, TYPE_AUDIT_SLASH_PROOF, TYPE_FRAUD_PROOF, TYPE_RELEASE_EVIDENCE, TYPE_ABANDONED_PROOF, TYPE_SEATING_SEEN, TYPE_HEARTBEAT, TYPE_HEARTBEAT_HEARD,
 } from './constants.js';
 
 /**
@@ -107,6 +107,11 @@ export const FRAMES = new Map([
   [TYPE_AUDIT, { name: 'Audit', authority: true }],
   // A slash proof against a contradicted AUDIT (§13A.1, kanban #724, #725): a slashing transaction commits to its id
   [TYPE_AUDIT_SLASH_PROOF, { name: 'AuditSlashProof', authority: true }],
+  // A complete fraud proof (§5A.3B, kanban #1065): H(fraud_proof) is what a slashing transaction commits to - an authority, as the slash proof it carries.
+  // Declared with 9a68d3382 and never entered here (frames.test: "TYPE_FRAUD_PROOF (0x43) has no entry", kanban #1077).
+  [TYPE_FRAUD_PROOF, { name: 'FraudProof', authority: true }],
+  // The evidence against a release, after a slash proof's body (§5A.3B, kanban #1065): it decides a slash of a release - an authority too, also missing since 0adcdc639.
+  [TYPE_RELEASE_EVIDENCE, { name: 'ReleaseEvidence', authority: true }],
   [TYPE_ABANDONED_PROOF, { name: 'AbandonedProof', authority: true }],
   // A halted federation's spent-note set (§23A.5): it decides which notes the liquidation pays.
   [TYPE_SPENT_SET, { name: 'SpentSet', authority: true }],

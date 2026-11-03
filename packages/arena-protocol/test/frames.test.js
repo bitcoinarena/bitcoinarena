@@ -76,7 +76,8 @@ test('one type carries no authority, and it is the ghost', () => {
   // node missed at a slot - both authorities.
   // 63 since the census key's deal and complaint (kanban #972): a share, and the proof a dealer lied about it
   // 64 since a seat's signed ask for a settlement's commit or share (kanban #1075): it decides whom a seat's nonce pair is spent for
-  assert.equal(FRAMES.size, 64, 'a type was added without saying what it decides');
+  // 66 since the complete fraud proof and the record against a release (§5A.3B, kanban #1065, #1077): what a slashing transaction commits to, and whether a release is judged
+  assert.equal(FRAMES.size, 66, 'a type was added without saying what it decides');
 });
 
 /**

@@ -10027,7 +10027,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (url.pathname === '/settle-commit') {
           const got = await settlements.commit(r8, { txid: url.searchParams.get('txid'), entry, federation, acks: new Uint8Array(await read(req)), door: true, ask });
           if (!got.ok) return text(res, got.status || 409, got.why);
-          res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+          // from protocol 26 the commit comes with the seat's signed word, which the asker's StallNote reads to clear it (§5A.3, kanban #1077); below 26 the same bytes and headers as before
+          res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS, ...(got.word ? { 'x-settlement-commit': toHex(got.word) } : {}) });
           return res.end(Buffer.from(encodeCommitments([got.commitment])));
         }
         if (url.pathname === '/settle-share') {
