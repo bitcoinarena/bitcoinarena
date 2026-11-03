@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import worker from '../../../src/website/explorer/worker.js';
+import worker, { sendPlayed } from '../../../src/website/explorer/worker.js';
 
 const MIG = new URL('../../../src/website/explorer/migrations/', import.meta.url);
 function store() {
@@ -130,4 +130,31 @@ test('a whole 64-hex id is found (instr, not a LIKE pattern D1 refuses over 50 b
   assert.deepEqual((await ask(env, '/api/recent?q=' + '4b'.repeat(32))).txs.map((t) => t.id), ['4b'.repeat(32)]);
   assert.equal((await ask(env, '/api/recent?q=4b4b4b')).total, 1);
   assert.equal((await ask(env, '/api/recent?q=' + hex(77))).total, 1, 'by its round');
+});
+
+// THE PLAYED ROUNDS TOLD TO UMAMI (kanban #1110): the same real orders /api/played counts, each entry once and each round with a real entry once,
+// at the time played, only an hour after storing; bots and the owner never
+test('Umami is told each real entry and each real round once, at its time, an hour late; bot and admin entries never', async () => {
+  const { db, env } = store();
+  const T = Date.UTC(2026, 10, 2, 12), put = db.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, kind, settled, hash, json, updated_ms) VALUES (?, ?, ?, 'fe', ?, 'order', NULL, 'h', ?, 0)`);
+  const P = (n) => '02' + String(n).repeat(64).slice(0, 64);
+  put.run(hex(1), hex(201), 'rock-paper-scissors', T, JSON.stringify({ entry: { player: P(1) } }));        // real
+  put.run(hex(2), hex(201), 'rock-paper-scissors', T + 1000, JSON.stringify({ entry: { player: P(2) } })); // the bot opponent
+  put.run(hex(3), hex(202), 'nextblock', T + 2000, JSON.stringify({ entry: { player: P(3) } }));           // the owner, by player key
+  put.run(hex(4), hex(203), 'nextblock', T + 3000, JSON.stringify({ entry: { player: P(4) } }));           // real
+  put.run(hex(5), hex(204), 'nextblock', T + 3600000 + 5000, JSON.stringify({ entry: { player: P(5) } })); // real, but stored less than an hour ago
+  db.prepare('INSERT INTO marked (key, kind, at_ms) VALUES (?, ?, 0)').run(hex(2), 'bot');
+  db.prepare('INSERT INTO marked (key, kind, at_ms) VALUES (?, ?, 0)').run(P(3), 'owner');
+  const told = []; const post = async (url, o) => { told.push(JSON.parse(o.body).payload); return { ok: true }; };
+  const r = await sendPlayed(env, T + 3600000 + 10000, post);
+  assert.deepEqual(told.map((x) => [x.name, x.data.game, x.timestamp]), [['played-round', 'rock-paper-scissors', Math.floor(T / 1000)], ['played-entry', 'rock-paper-scissors', Math.floor(T / 1000)],
+    ['played-round', 'nextblock', Math.floor((T + 3000) / 1000)], ['played-entry', 'nextblock', Math.floor((T + 3000) / 1000)]]);
+  assert.equal(r.sent, 4);
+  assert.equal(told[0].website, '024ff09e-c3a6-4dfd-bede-3163eb8be36a');
+  told.length = 0;
+  await sendPlayed(env, T + 3600000 + 20000, post);
+  assert.deepEqual(told, [], 'nothing twice');
+  await sendPlayed(env, T + 2 * 3600000 + 10000, post);
+  assert.deepEqual(told.map((x) => x.name), ['played-round', 'played-entry'], 'the late one, an hour after it was stored');
+  assert.deepEqual((await sendPlayed({ ...env, UMAMI_SEND: 'off' }, T + 9e9, post)).off, true);
 });
