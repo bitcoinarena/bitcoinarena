@@ -123,3 +123,11 @@ test('the list leaves out bot and admin transactions unless ?marked=1', async ()
   assert.equal(shown.total, 2, 'the count says what is shown');
   assert.equal((await ask(env, '/api/recent?marked=1')).txs.length, 7);
 });
+
+test('a whole 64-hex id is found (instr, not a LIKE pattern D1 refuses over 50 bytes), and a part of one too', async () => {
+  const { db, env } = store();
+  db.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, settled, hash, json, updated_ms) VALUES (?, ?, 'nextblock', ?, 1, NULL, 'h', '{}', 0)`).run('4b'.repeat(32), hex(77), 'fe'.repeat(32));
+  assert.deepEqual((await ask(env, '/api/recent?q=' + '4b'.repeat(32))).txs.map((t) => t.id), ['4b'.repeat(32)]);
+  assert.equal((await ask(env, '/api/recent?q=4b4b4b')).total, 1);
+  assert.equal((await ask(env, '/api/recent?q=' + hex(77))).total, 1, 'by its round');
+});
