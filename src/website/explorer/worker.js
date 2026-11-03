@@ -382,6 +382,16 @@ function filterSql(q, now = Date.now()) {
   if (Number.isFinite(since) && since > 0) { where.push('stored_ms >= ?'); binds.push(now - since * 1000); }
   const part = String(q.get('q') || '').toLowerCase();
   if (/^[0-9a-f]{1,64}$/.test(part)) { where.push('(id LIKE ? OR round LIKE ? OR fed_txid LIKE ?)'); binds.push(`%${part}%`, `%${part}%`, `%${part}%`); }
+  // OUR BOTS' AND THE OWNER'S TRANSACTIONS LEFT OUT (kanban #1107, the owner 2026-11-03: "bot Transaktionen und admin tx standardmäßig ausblenden, es
+  // gibt ein flag um es einzublenden"): an order whose entry id or player key is marked (POST /api/mark), and every other transaction of a round
+  // whose orders are all marked; ?marked=1 shows them
+  if (q.get('marked') !== '1') {
+    const markedOrder = (t) => `EXISTS (SELECT 1 FROM marked m WHERE m.key = ${t}.id OR m.key = lower(json_extract(${t}.json, '$.entry.player')))`;
+    where.push(`NOT ${markedOrder('txs')}`);
+    where.push(`NOT (txs.round IS NOT NULL AND COALESCE(txs.kind, 'order') != 'order'
+      AND EXISTS (SELECT 1 FROM txs o WHERE o.round = txs.round AND COALESCE(o.kind, 'order') = 'order')
+      AND NOT EXISTS (SELECT 1 FROM txs o WHERE o.round = txs.round AND COALESCE(o.kind, 'order') = 'order' AND NOT ${markedOrder('o')}))`);
+  }
   return { where, binds };
 }
 const ROW_SQL = `SELECT id, round, app, federation, stored_ms, kind, json_extract(json, '$.entry.stakeMsat') AS stake, json_extract(json, '$.amountMsat') AS amount,
