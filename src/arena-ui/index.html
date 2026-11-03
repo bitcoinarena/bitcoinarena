@@ -4522,7 +4522,12 @@
         try { const r = await fetch(String((n && n.url) || n).replace(/\/+$/, '') + '/liquidations', { cache: 'no-store' }); if (r.ok) { liq = (await r.json()).liquidations || []; break; } } catch { /* the next seat */ }
       }
       if (!liq || !liq.length) return;
-      const held = ARENACLIENT.ledgerFederations(vault());
+      // ANY DEVICE (kanban #1093 part 9, the owner 2026-11-03: "Notes are recovered from the 24 words on any device ... so 'any device, any
+      // time within' the window is the whole requirement"): a browser restored from the words has no ledger, so every federation being
+      // liquidated is opened from this seed once; one found empty is not opened again in this browser
+      const checkedKey = (fid) => 'arena-liquidation-checked-' + String(fid).toLowerCase();
+      const ledger = ARENACLIENT.ledgerFederations(vault());
+      const held = [...new Set([...ledger, ...liq.map((l) => String(l.federation).toLowerCase()).filter((f) => { try { return !vault().getItem(checkedKey(f)); } catch { return true; } })])];
       const statuses = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.size ? [...window.ARENA_FED_LOADS.values()] : [];
       const inviteOf = (fid) => { const st = statuses.find((f) => f && f.invite && String(f.federation).toLowerCase() === String(fid).toLowerCase()); return st ? st.invite : null; };
       const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
@@ -4534,7 +4539,9 @@
       for (const l of liq.filter((x) => held.includes(String(x.federation).toLowerCase()))) {
         const key = ARENACLIENT.liquidationKeyFor(seed, l.federation, window.ARENA_CURVE);
         const said = await ARENACLIENT.presentNotes({ liquidations: [l], held, walletFor, payoutPk: key.payoutPk, storage: vault() });
-        for (const x of said) console.log('[arena] liquidation of ' + x.federation.slice(0, 8) + ': ' + (x.ok ? x.accepted.length + ' note(s) presented' : x.why));
+        for (const x of said) console.log('[arena] liquidation of ' + x.federation.slice(0, 8) + ': ' + (x.ok ? (x.nothing ? 'no note held' : (x.accepted || []).length + ' note(s) presented') : x.why));
+        // a federation this seed held nothing in, and never kept a ledger row in, is not opened again
+        if (!ledger.includes(String(l.federation).toLowerCase()) && said.some((x) => x.nothing) && !said.some((x) => !x.ok || x.kept)) { try { vault().setItem(checkedKey(l.federation), String(Date.now())); } catch { /* read again next time */ } }
       }
       // each arbitration set once, however a seat wrote its door
       for (const a of [...new Set(liq.map((l) => l.claims).filter(Boolean).map((c) => String(c).replace(/\/+$/, '').replace(/\/liquidation-claims$/, '')))]) {
