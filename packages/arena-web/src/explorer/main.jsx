@@ -329,6 +329,7 @@ export function Metrics({ data = null }) {
       <div className="card stat"><span>Referral fees paid</span><b>{m.referral ? amount(m.referral.msat) : '–'}</b>
         <small>{m.referral ? m.referral.sites.length + (m.referral.sites.length === 1 ? ' program' : ' programs') : 'not read yet'}</small></div>
     </div>
+    <Played />
     <h2>Volume per day <span className="dim">stakes of every transaction, UTC days</span></h2>
     <div className="card">{(m.volume || []).length ? (<table className="rows"><thead><tr><th>Day</th><th>Transactions</th><th>Volume</th><th /></tr></thead><tbody>
       {m.volume.map((d) => <tr key={d.day}><td className="nw">{d.day}</td><td>{d.txs.toLocaleString('en-US')}</td><td className="nw"><b>{amount(d.msat)}</b></td>
@@ -336,6 +337,42 @@ export function Metrics({ data = null }) {
     {m.referral && m.referral.sites.length ? (<><h2>Referral programs</h2><div className="card"><table className="rows"><thead><tr><th>Program</th><th>Key</th><th>Payouts</th><th>Earned</th></tr></thead><tbody>
       {m.referral.sites.map((x) => <tr key={x.site}><td><b>{x.name || 'unnamed'}</b></td><td className="mono">{x.site.slice(0, 16)}…</td><td>{x.payouts}</td><td className="nw"><b>{amount(x.msat)}</b></td></tr>)}</tbody></table></div></>) : null}
     {m.readAt ? <p className="dim">Reserve and referral fees read from {m.seats ? m.seats.reserves + ' of ' + m.seats.of : 'the'} nodes {ago(Date.parse(m.readAt))}.</p> : null}
+  </>);
+}
+
+// PLAYED ROUNDS (kanban #1090, the owner 2026-11-03: "Played rounds mit Tages / Wochen / Monats Anzeige", "Auch rueckwirkend seit 1.11",
+// "Wieviel Runden insgesamt und pro Spiel, tu da meine Runden RAUS NEHMEN"): /api/played - real players' rounds by default; the owner's (the
+// page's admin flag) and our bots' entries are left out, and shown again with the switch
+const GAME_NAMES = { 'btc-updown-15m': 'Up/Down', 'rock-paper-scissors': 'Rock Paper Scissors', nextblock: 'Next Block' };
+export const gameName = (g) => GAME_NAMES[g] || g;
+export function Played({ data = null }) {
+  const [p, setP] = useState(data || given.played || null);
+  const [by, setBy] = useState('day');
+  const [all, setAll] = useState(false);
+  const [err, setErr] = useState(null);
+  useEffect(() => { if (data || given.played) return; fetch('/api/played').then((r) => r.json()).then(setP, (e) => setErr(e.message)); }, []);
+  if (!p) return <p className="dim">{err ? 'Could not read the played rounds: ' + err : 'Reading …'}</p>;
+  const rows = p[by] || [];
+  const games = [...new Set(rows.flatMap((r) => Object.keys(r.games)))].sort();
+  const n = (t) => (t ? (all ? t.rounds : t.real) : 0);
+  const total = rows.reduce((s, r) => s + n(r.all), 0);
+  const label = { day: 'Day', week: 'Week from', month: 'Month' }[by];
+  return (<>
+    <h2>Played rounds <span className="dim">paid rounds since {p.from}, UTC</span></h2>
+    <div className="card">
+      <p>
+        {['day', 'week', 'month'].map((k) => <button key={k} type="button" className={by === k ? 'on' : undefined} onClick={() => setBy(k)} style={{ marginRight: 6, opacity: by === k ? 1 : 0.45 }}>{{ day: 'Days', week: 'Weeks', month: 'Months' }[k]}</button>)}
+        <label style={{ marginLeft: 12 }}><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> include the owner's and our bots' rounds</label>
+      </p>
+      <p><b>{total.toLocaleString('en-US')}</b> {all ? 'rounds in all' : 'rounds with real players'} since {p.from}</p>
+      {rows.length ? (<table className="rows"><thead><tr><th>{label}</th><th>All games</th>{games.map((g) => <th key={g}>{gameName(g)}</th>)}<th>Players</th><th className="dim">Left out</th></tr></thead><tbody>
+        {rows.map((r) => <tr key={r.period}><td className="nw">{r.period}</td><td><b>{n(r.all).toLocaleString('en-US')}</b></td>
+          {games.map((g) => <td key={g}>{n(r.games[g]).toLocaleString('en-US')}</td>)}
+          <td>{(all ? r.all.entries : r.all.realPlayers).toLocaleString('en-US')}</td>
+          <td className="dim nw">{r.all.owner ? r.all.owner + ' owner' : ''}{r.all.owner && r.all.bot ? ', ' : ''}{r.all.bot ? r.all.bot + ' bot' : ''}{!r.all.owner && !r.all.bot ? '–' : ''}</td></tr>)}
+      </tbody></table>) : <p className="dim">No paid rounds yet.</p>}
+      <p className="dim">A round counts for real players when at least one of its entries is not the owner's (his page's admin flag) and not one of our bots'. Players: {all ? 'entries' : 'distinct real players'}. {p.marked ? `Marked: ${p.marked.owner || 0} owner, ${p.marked.bot || 0} bot entries.` : ''}</p>
+    </div>
   </>);
 }
 
