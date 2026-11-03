@@ -384,6 +384,15 @@ function axis(max, fmt, H, W) {
   const top = niceMax(max), ticks = [0, top / 2, top];
   return { top, el: ticks.map((t) => { const y = H - PB - ((H - PB - PT) * t) / top; return (<g key={t}><line x1={PL} x2={W - PR} y1={y} y2={y} className="grid" /><text x={PL - 6} y={y + 4} textAnchor="end" className="tick">{fmt(t)}</text></g>); }) };
 }
+/** THE DAY UNDER THE FINGER (kanban #1098, the owner 2026-11-03: "Auf einem Touchscreen muss man swipen koennen in den Charts, also es geht Tage
+ *  nach vorne"): a pointer - mouse, pen or finger - over the drawing, as an index into its `n` columns; a sideways swipe walks the days, an up
+ *  or down one still scrolls the page (touch-action: pan-y on the drawing). */
+const columnAt = (e, W, n, line = false) => {
+  const b = e.currentTarget.getBoundingClientRect(); if (!b.width || !n) return null;
+  const x = ((e.clientX - b.left) / b.width) * W, span = W - PL - PR;
+  const i = line ? Math.round(((x - PL) / span) * Math.max(1, n - 1)) : Math.floor(((x - PL) / span) * n);
+  return Math.max(0, Math.min(n - 1, i));
+};
 const xLabelsEvery = (n, W = 720) => Math.max(1, Math.ceil(n / Math.max(3, Math.floor(W / 90))));
 /** Stacked bars: `rows` oldest first, [{ label, values: { key: n } }]; `series` [{ key, label, color }]. */
 export function StackedBars({ rows, series, fmt = (n) => Math.round(n).toLocaleString('en-US'), tipFmt = null, name, H = 210 }) {
@@ -394,10 +403,15 @@ export function StackedBars({ rows, series, fmt = (n) => Math.round(n).toLocaleS
   const { top, el } = axis(Math.max(0, ...rows.map(total)), fmt, H, W);
   const col = (W - PL - PR) / Math.max(1, rows.length), bw = Math.max(3, Math.min(34, col * 0.68)), every = xLabelsEvery(rows.length, W);
   const yOf = (v) => H - PB - ((H - PB - PT) * v) / top;
+  const tipAt = (i) => { if (i === null) return; const r = rows[i], parts = series.filter((x) => r.values[x.key]);
+    setTip({ i, left: ((PL + i * col + col / 2) / W) * 100, top: (yOf(total(r)) / H) * 100,
+      lines: [r.label, ...parts.map((x) => `${x.label}: ${tf(r.values[x.key])}`), ...(parts.length > 1 ? [`All: ${tf(total(r))}`] : [])] }); };
+  const pick = (e) => tipAt(columnAt(e, W, rows.length));
   return (<div className="chart" ref={ref} onMouseLeave={() => setTip(null)}>
     <Legend series={series} />
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={name}>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={name} onPointerDown={pick} onPointerMove={pick}>
       {el}
+      {tip ? <rect x={PL + tip.i * col} y={PT} width={col} height={H - PT - PB} className="hl" /> : null}
       {rows.map((r, i) => {
         const x = PL + i * col + (col - bw) / 2; let base = 0;
         const shown = series.filter((s) => (r.values[s.key] || 0) > 0);
@@ -408,9 +422,6 @@ export function StackedBars({ rows, series, fmt = (n) => Math.round(n).toLocaleS
             return j === shown.length - 1 ? <path key={s.key} d={topRounded(x, y0 - (j ? 2 : 0) - h, bw, h, 4)} fill={s.color} /> : <rect key={s.key} x={x} y={y0 - (j ? 2 : 0) - h} width={bw} height={h} fill={s.color} />;
           })}
           {i % every === 0 ? <text x={x + bw / 2} y={H - 6} textAnchor="middle" className="tick">{r.short || r.label}</text> : null}
-          <rect x={PL + i * col} y={PT} width={col} height={H - PT - PB} fill="transparent"
-            onMouseMove={() => setTip({ left: ((PL + i * col + col / 2) / W) * 100, top: (yOf(total(r)) / H) * 100,
-              lines: [r.label, ...series.filter((s) => r.values[s.key]).map((s) => `${s.label}: ${tf(r.values[s.key])}`), ...(shown.length > 1 ? [`All: ${tf(total(r))}`] : [])] })} />
         </g>);
       })}
       <line x1={PL} x2={W - PR} y1={H - PB} y2={H - PB} className="base" />
@@ -427,15 +438,15 @@ export function LineChart({ points, color, fmt, name, H = 210 }) {
   const xOf = (i) => (points.length === 1 ? PL + (W - PL - PR) / 2 : PL + i * step), yOf = (v) => H - PB - ((H - PB - PT) * v) / top;
   const d = points.map((p, i) => `${i ? 'L' : 'M'}${xOf(i)},${yOf(p.value)}`).join('');
   const at = tip ? tip.i : null;
+  const pick = (e) => { const i = columnAt(e, W, points.length, true); if (i === null) return; const p = points[i];
+    setTip({ i, left: (xOf(i) / W) * 100, top: (yOf(p.value) / H) * 100, lines: [p.label, ...(p.lines || [fmt(p.value)])] }); };
   return (<div className="chart" ref={ref} onMouseLeave={() => setTip(null)}>
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={name}>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={name} onPointerDown={pick} onPointerMove={pick}>
       {el}
       {points.length ? <path d={`${d}L${xOf(points.length - 1)},${H - PB}L${xOf(0)},${H - PB}Z`} fill={color} opacity="0.14" /> : null}
       <path d={d} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" />
       {points.map((p, i) => (i % every === 0 ? <text key={p.label} x={xOf(i)} y={H - 6} textAnchor="middle" className="tick">{p.short || p.label}</text> : null))}
       {at !== null ? <><line x1={xOf(at)} x2={xOf(at)} y1={PT} y2={H - PB} className="cross" /><circle cx={xOf(at)} cy={yOf(points[at].value)} r="4.5" fill={color} stroke="#1a1218" strokeWidth="2" /></> : null}
-      {points.map((p, i) => <rect key={'h' + p.label} x={xOf(i) - step / 2} y={PT} width={Math.max(step, 6)} height={H - PT - PB} fill="transparent"
-        onMouseMove={() => setTip({ i, left: (xOf(i) / W) * 100, top: (yOf(p.value) / H) * 100, lines: [p.label, ...(p.lines || [fmt(p.value)])] })} />)}
       <line x1={PL} x2={W - PR} y1={H - PB} y2={H - PB} className="base" />
     </svg>
     <Tip tip={tip} />
@@ -450,6 +461,8 @@ const satFmt = (n) => (n >= 1e6 ? (n / 1e8).toFixed(3).replace(/0+$/, '').replac
 // page's admin flag) and our bots' entries are left out, and shown again with the switch
 const GAME_NAMES = { 'btc-updown-15m': 'Up/Down', 'rock-paper-scissors': 'Rock Paper Scissors', nextblock: 'Next Block' };
 export const gameName = (g) => GAME_NAMES[g] || g;
+const GAME_SHORT = { 'btc-updown-15m': 'Up/Down', 'rock-paper-scissors': 'RPS', nextblock: 'Next Block' };
+const gameShort = (g) => GAME_SHORT[g] || g;
 export function Played({ data = null }) {
   const [p, setP] = useState(data || given.played || null);
   const [by, setBy] = useState('day');
@@ -472,13 +485,13 @@ export function Played({ data = null }) {
       <p><b>{total.toLocaleString('en-US')}</b> {all ? 'rounds in all' : 'rounds with real players'} since {p.from}</p>
       {rows.length ? <StackedBars name={'Played rounds per ' + by} series={games.map((g, i) => ({ key: g, label: gameName(g), color: gameColor(g, i) }))}
         rows={rows.slice().reverse().map((r) => ({ label: (by === 'week' ? 'Week from ' : '') + r.period, short: by === 'month' ? r.period : shortDay(r.period), values: Object.fromEntries(games.map((g) => [g, n(r.games[g])])) }))} /> : null}
-      {rows.length ? (<table className="rows"><thead><tr><th>{label}</th><th>All games</th>{games.map((g) => <th key={g}>{gameName(g)}</th>)}<th>Players</th><th className="dim">Left out</th></tr></thead><tbody>
-        {rows.map((r) => <tr key={r.period}><td className="nw">{r.period}</td><td><b>{n(r.all).toLocaleString('en-US')}</b></td>
+      {rows.length ? (<div className="tablewrap"><table className="played"><thead><tr><th>{label}</th><th>All</th>{games.map((g) => <th key={g}>{gameShort(g)}</th>)}<th>Players</th><th>Left out</th></tr></thead><tbody>
+        {rows.map((r) => <tr key={r.period}><td className="nw">{by === 'month' ? r.period : shortDay(r.period)}</td><td><b>{n(r.all).toLocaleString('en-US')}</b></td>
           {games.map((g) => <td key={g}>{n(r.games[g]).toLocaleString('en-US')}</td>)}
           <td>{(all ? r.all.entries : r.all.realPlayers).toLocaleString('en-US')}</td>
-          <td className="dim nw">{r.all.owner ? r.all.owner + ' owner' : ''}{r.all.owner && r.all.bot ? ', ' : ''}{r.all.bot ? r.all.bot + ' bot' : ''}{!r.all.owner && !r.all.bot ? '–' : ''}</td></tr>)}
-      </tbody></table>) : <p className="dim">No paid rounds yet.</p>}
-      <p className="dim">A round counts for real players when at least one of its entries is not the owner's (his page's admin flag) and not one of our bots'. Players: {all ? 'entries' : 'distinct real players'}. {p.marked ? `Marked: ${p.marked.owner || 0} owner, ${p.marked.bot || 0} bot entries.` : ''}</p>
+          <td className="dim" title={`${r.all.owner} owner, ${r.all.bot} bot entries`}>{(r.all.owner + r.all.bot).toLocaleString('en-US')}</td></tr>)}
+      </tbody></table></div>) : <p className="dim">No paid rounds yet.</p>}
+      <p className="dim">A round counts for real players when at least one of its entries is not the owner's (his page's admin flag) and not one of our bots'. RPS = Rock Paper Scissors. Players: {all ? 'entries' : 'distinct real players'}. Left out: the owner's and our bots' entries. {p.marked ? `Marked: ${p.marked.owner || 0} owner, ${p.marked.bot || 0} bot entries.` : ''}</p>
     </div>
   </>);
 }
