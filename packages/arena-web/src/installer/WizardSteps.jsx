@@ -6,6 +6,7 @@
 // load(): the wizard moves on to the step the installer names). The doors and their answers are the installer's, unchanged.
 import React from 'react';
 import { Tile, Switch, Pill } from '../design/components.jsx';
+import { Changes20 } from '../design/Changes20.jsx';
 
 // the roles' icons and their share of the 4 % (fee.js, 2026.0.16: four pools of 1 %; custody's third to 2 random gateways per day)
 export const ROLE_IC = Object.freeze({ verify: '🎮', audit: '🔎', settlement: '✍️', custody: '🏦', liquidity: '💧' });
@@ -354,15 +355,18 @@ export class OwnerStep extends React.Component {
 
 export const PROMISE = 'I UNDERSTAND';
 export class PromiseStep extends React.Component {
-  constructor(props) { super(props); this.state = { text: '', msg: null, ...(props.initial || {}) }; this.save = this.save.bind(this); }
+  constructor(props) { super(props); this.state = { text: '', msg: null, yes: false, ...(props.initial || {}) }; this.save = this.save.bind(this); }
+  custody() { return ((this.props.st && this.props.st.roles) || []).includes('custody'); }
   async save() {
+    if (this.custody() && !this.state.yes) return this.setState({ msg: { ok: false, text: 'Answer the guardian question first (point 10).' } });
     const r = await this.props.post('/api/promise', { text: this.state.text });
     if (!r.ok) return this.setState({ msg: said(r) });
     this.props.reload();
   }
   render() {
-    const { text, msg } = this.state;
-    const typed = text.trim().toUpperCase() === PROMISE;
+    const { text, msg, yes } = this.state;
+    const custody = this.custody();
+    const typed = text.trim().toUpperCase() === PROMISE && (!custody || yes);
     return (
       <div className="aw">
         <h2>12. Your bond: the rules</h2>
@@ -371,6 +375,9 @@ export class PromiseStep extends React.Component {
           <div className="rule good"><div className="ic">✅</div><div><b>Stopping? Press LEAVE first.</b><p>Press it on your owner page. Your node finishes its rounds and gives notice to its federation. Then you are free, and your bond comes back when its lock ends.</p></div></div>
           <div className="rule bad"><div className="ic">⚠️</div><div><b>Switching off without LEAVE:</b><p><b className="red">Your bond is slashed: you lose it.</b> A guardian that disappears leaves its federation short and puts the bitcoin it guards at risk.</p></div></div>
         </div>
+        {/* WHAT IS NEW IN 2.0, BEFORE ANY MONEY MOVES (kanban #1096): the points for the roles chosen; a guardian answers point 10 */}
+        <h3>New in 2.0 for your node</h3>
+        <Changes20 where="installer" custody={custody} confirmed={yes} onConfirm={(v) => this.setState({ yes: v })} />
         <label htmlFor="promise-text">Type <b>{PROMISE}</b> to go on</label>
         <input id="promise-text" autoComplete="off" placeholder={PROMISE} value={text} onChange={(e) => this.setState({ text: e.target.value })} />
         <button type="button" disabled={!typed} onClick={this.save}>Continue</button> {typed ? <Pill tone="on">ready</Pill> : null}

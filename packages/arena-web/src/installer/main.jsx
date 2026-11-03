@@ -11,6 +11,7 @@ import { StartStep, RolesStep, AppsStep, SeedStep, EmergencyStep, OwnerStep, Pro
 import { ChainStep, ReachStep, ServiceStep, FederationStep } from './SetupSteps.jsx';
 import { LightningStep, BondStep, DoneStep } from './FinishSteps.jsx';
 import css from './wizard.css';
+import { CHANGES20_CSS } from '../design/Changes20.jsx';
 
 const STEPS = { start: StartStep, roles: RolesStep, chain: ChainStep, apps: AppsStep, seed: SeedStep, emergency: EmergencyStep, owner: OwnerStep, reach: ReachStep, service: ServiceStep,
   lightning: LightningStep, federation: FederationStep, promise: PromiseStep, bond: BondStep, done: DoneStep };
@@ -38,7 +39,7 @@ export function show(step, sectionOf, props) {
 }
 
 if (typeof document !== 'undefined') {
-  const style = document.createElement('style'); style.textContent = css; document.head.appendChild(style);
+  const style = document.createElement('style'); style.textContent = css + '\n' + CHANGES20_CSS; document.head.appendChild(style);
   // the bar of steps along the top, and the page's one line when the installer cannot set up here
   const draw = (element, node) => { if (!element._awRoot) { element.textContent = ''; element._awRoot = createRoot(element); } element._awRoot.render(node); };
   window.ArenaWizard = { mount, show, steps: Object.keys(STEPS), bar: (element, props) => draw(element, <StepBar {...props} />),
