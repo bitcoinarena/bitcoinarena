@@ -484,6 +484,8 @@ if (url) {
     // lists from them every transaction that pays the bond marker (bonds, advert updates) with the parents it waits on
     chainMempoolIds: async () => (await call('getrawmempool', [])).map(String),
     chainRawTx: async (txid) => fromHex(String(await call('getrawtransaction', [txid]))),
+    // HOW DEEP A TRANSACTION IS ON THIS NODE'S CHAIN (kanban #1093 part 2: an unbacked spend is a mark 6 deep): confirmations, 0 in the mempool, null unknown (needs -txindex for a spent one)
+    chainTxConfirmations: async (txid) => { try { const t = await call('getrawtransaction', [txid, true]); return t ? Number(t.confirmations || 0) : null; } catch { return null; } },
     chainMempoolAncestors: async (txid) => { try { return (await call('getmempoolancestors', [txid])).map(String); } catch { return []; } },
     chainRecentBlocks: async (from, to) => { const v = await blocksOver(call, from, to, { cache: blocksKept }); return v.blocks.map((b, i) => ({ height: from + i, transactions: b.transactions })); },
     // THE CHAIN'S TIPS NEAR THE TOP (2026-10-20, "Mining view mismatch, what is true": the seats followed our own block at 157,133

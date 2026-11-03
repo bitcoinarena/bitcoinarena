@@ -23,6 +23,7 @@ import { guardianSlashStands } from '../../arena-protocol/src/federation-slash.j
 import { judgeAbandoned } from './arbiter.js';
 import { abandonedRows, outputsLeft, encodeAbandonedProof, decodeAbandonedProof, abandonedProofId } from '../../arena-protocol/src/abandoned-slash.js';
 import { abandonedSlashPoint, networkOf } from '../../arena-protocol/src/constants.js';
+import { encodeTheftProof, decodeTheftProof, theftProofId, theftOutputs, theftSlashStands, theftTakes, sessionsShowMark, spendStands, theftVerifyInput } from '../../arena-protocol/src/theft-slash.js';
 import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDeparture, emergencyHex, readEmergencyHex } from './absences.js';
 import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -111,7 +112,13 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   bondLock = null,
   // A RESERVE ALARM (kanban #1093 part 5, ruling #1106): (fid hex) -> { kind: 'inflation' | 'unbacked-spend', session?, txid?, height, ... } | null,
   // a mark of theft this seat saw in the federation's signed history; listed with the record, so every client stops depositing at once
-  alarmOf = () => null }) {
+  alarmOf = () => null,
+  // A THEFT'S EVIDENCE, AS ITS PROOF CARRIES IT (kanban #1093 part 2, ruling #1109 X): async (fid hex, alarm) -> { mark, config, firstSession, sessions, reserve?, spendTx? } | null - the
+  // signed sessions as consensus bytes (from 0 up to an inflation's session; from the reserve outpoint's creation up to an unbacked spend), read by the stake-lock tool
+  theftEvidenceOf = async () => null,
+  // THE CHECKER'S OWN VERIFIER OF THOSE BYTES: async (theft-slash.js theftVerifyInput) -> the tool's `theft-verify` line, or undefined where this seat runs none;
+  // and its chain: async (txid display hex) -> confirmations | null
+  verifySessions = async () => undefined, txConfirmations = async () => null }) {
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
   // THE HALT A LIQUIDATION COUNTS FROM (§23A.5): the lowest-height signed HALTED record of the run of HALTED records
@@ -369,20 +376,114 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
    */
   async function abandonedSlashes() {
     const rows = [...kept.entries()].flatMap(([federation, k]) => abandonedRows(k.record, abandonedFrom).map((r) => ({ federation, height: k.height, bytes: k.bytes, r })));
-    if (!rows.length || typeof bondsAt !== 'function' || typeof chainTip !== 'function') return [];
-    const h = Math.floor((Number(await chainTip()) - CHAIN_BASIS_LAG) / CHAIN_BASIS_STEP) * CHAIN_BASIS_STEP;
-    if (!bondsRead.has(h)) {
-      const got = await bondsAt(h);
-      if (!Array.isArray(got)) return [];
-      bondsRead.set(h, got);
-      while (bondsRead.size > 2) bondsRead.delete(bondsRead.keys().next().value);
-    }
+    if (!rows.length) return [];
+    const h = await bondsAtBasis();
+    if (h === null) return [];
     return rows.flatMap(({ federation, height, bytes, r }) => outputsLeft(bondsRead.get(h), r.nodePubkey, r.sinceHeight).map((o) => {
       const name = `${toHex(r.nodePubkey)}:${toHex(r.proofRef)}:${o.txid}:${o.vout}`;
       if (!proofListed.has(name)) { const proof = encodeAbandonedProof({ federationId: fromHex(federation), nodePubkey: r.nodePubkey, proofRef: r.proofRef, txid: fromHex(o.txid), vout: o.vout, record: bytes }), made = toHex(abandonedProofId(proof)); proofListed.set(name, made); keptProof(made, proof); }
       const id = proofListed.get(name);
       return { federation, node: toHex(r.nodePubkey), peer: toHex(r.peerKey), proof: id, proofRef: toHex(r.proofRef), since: r.sinceHeight, recordHeight: height, txid: o.txid, vout: o.vout, sats: String(o.sats), template: o.template };
     }));
+  }
+  /** The census's bonds at the shared basis height (the tip less CHAIN_BASIS_LAG, down to a CHAIN_BASIS_STEP), read once and kept in `bondsRead`: that height, or null where none is read. */
+  async function bondsAtBasis() {
+    if (typeof bondsAt !== 'function' || typeof chainTip !== 'function') return null;
+    const h = Math.floor((Number(await chainTip()) - CHAIN_BASIS_LAG) / CHAIN_BASIS_STEP) * CHAIN_BASIS_STEP;
+    if (!bondsRead.has(h)) {
+      const got = await bondsAt(h);
+      if (!Array.isArray(got)) return null;
+      bondsRead.set(h, got);
+      while (bondsRead.size > 2) bondsRead.delete(bondsRead.keys().next().value);
+    }
+    return h;
+  }
+
+  /**
+   * THE SLASHES A MARK OF THEFT FILES (kanban #1093 part 2, rulings #1106, #1109): for every federation with a standing alarm in THIS seat's own book (`alarmOf`), every template-3 bond output
+   * of every guardian its newest kept record still seats (theftTakes: a DEPARTED one is not taken), read off the census at the shared basis height. Each output's TheftProof (theft-slash.js)
+   * carries that record and the whole evidence (`theftEvidenceOf`: the signed sessions, the config, the spend), and is kept under its hash for anyone to fetch, as an abandonment's is; one
+   * output is listed under the first proof built for it. No alarm, no read; no evidence, nothing listed. Answers [{ federation, node, proof, kind, markHeight, recordHeight, txid, vout, sats, template }].
+   */
+  const evidenceHeld = new Map();           // fid -> the evidence read once for its alarm
+  async function theftSlashes() {
+    const marked = [...kept.entries()].flatMap(([federation, k]) => { const alarm = alarmOf(federation); return alarm && k.record ? [{ federation, k, alarm }] : []; });
+    if (!marked.length) return [];
+    const h = await bondsAtBasis();
+    if (h === null) return [];
+    const out = [];
+    for (const { federation, k, alarm } of marked) {
+      const owed = theftTakes(k.record).flatMap((node) => theftOutputs(bondsRead.get(h), node, h).map((o) => ({ node, o })));
+      if (!owed.length) continue;
+      if (!evidenceHeld.has(federation)) { let ev = null; try { ev = await theftEvidenceOf(federation, alarm); } catch { ev = null; } if (!ev) continue; evidenceHeld.set(federation, ev); }
+      const ev = evidenceHeld.get(federation);
+      for (const { node, o } of owed) {
+        const name = `theft:${federation}:${toHex(node)}:${o.txid}:${o.vout}`;
+        if (!proofListed.has(name)) {
+          const proof = encodeTheftProof({ federationId: fromHex(federation), nodePubkey: node, txid: fromHex(o.txid), vout: o.vout, record: k.bytes, ...ev }), made = toHex(theftProofId(proof));
+          proofListed.set(name, made); keptProof(made, proof);
+        }
+        out.push({ federation, node: toHex(node), proof: proofListed.get(name), kind: ev.mark.kind, markHeight: ev.mark.height, recordHeight: k.height, txid: o.txid, vout: o.vout, sats: String(o.sats), template: o.template });
+      }
+    }
+    return out;
+  }
+  /** The bytes of a TheftProof by its hash, or null. */
+  const theftProof = (id) => {
+    const held = proofsHeld.get(id), bytes = held instanceof Uint8Array ? held : proofOf ? proofOf(id) : null;
+    try { decodeTheftProof(bytes); return bytes; } catch { return null; }
+  };
+  /** The signed record a proof carries, held to this seat's census at its own height: { ok, record } or { ok: false, status, wait, why }. */
+  async function recordStands(record, inviteFederationId) {
+    let height; try { height = splitSignedRecord(record).record.height; } catch (e) { return { ok: false, status: 400, why: e.message }; }
+    const entries = typeof censusAt === 'function' ? await Promise.resolve().then(() => censusAt(height)).catch(() => null) : null;
+    if (!entries) return { ok: false, status: 503, wait: true, why: `the census at ${height} is not read here` };
+    const v = verifyFederationRecord(record, { census: entries, verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, inviteFederationId, networkId });
+    return v.ok ? { ok: true, record: v.record } : { ok: false, status: 409, why: `that record does not stand: ${v.why}` };
+  }
+  /** A THEFT'S PROOF HANDED TO THIS SEAT (PUT /slash/<id>): kept when the bytes hash to that id, the record in them stands here, is the proof's federation's, and seats the node. */
+  async function takeTheftProof(id, bytes, inviteFederationId) {
+    let p;
+    try { if (toHex(theftProofId(bytes)) !== id) return { ok: false, status: 409, why: 'those bytes are not the proof that hash names' }; p = decodeTheftProof(bytes); } catch (e) { return { ok: false, status: 400, why: e.message }; }
+    const st = await recordStands(p.record, inviteFederationId);
+    if (!st.ok) return st;
+    if (toHex(st.record.federationId) !== toHex(p.federationId)) return { ok: false, status: 409, why: 'that record is another federation\'s' };
+    if (!theftTakes(st.record).some((k) => toHex(k) === toHex(p.nodePubkey))) return { ok: false, status: 409, why: 'that record does not seat that node as a guardian' };
+    keptProof(id, bytes);
+    return { ok: true, status: 201 };
+  }
+  /**
+   * THIS SEAT'S OWN WORD ON A THEFT'S PROOF (kanban #1093 part 2, ruling #1109 X: the bytes are judged, never a live read nor this seat's alarm book). The record in it on this seat's census, the
+   * node seated by it and by the newest record held here, the output that node's unspent template-3 bond output on this seat's chain, an unbacked spend 6 deep here and spending the reserve
+   * outpoint, and the signed sessions re-verified by this seat's own verifier (`verifySessions`). Undefined where this seat cannot say yet (no census, no verifier, the spend not deep enough),
+   * so a hold's return is never taken on a guess. `beforeHeight` where the bond was started already: the output is read at the block before the start. Answers { verdict, why }.
+   */
+  async function theftVerdict(bytes, inviteFederationId, beforeHeight = null) {
+    let p; try { p = decodeTheftProof(bytes); } catch (e) { return { verdict: false, why: `that is no proof of a theft: ${e.message}` }; }
+    const st = await recordStands(p.record, inviteFederationId);
+    if (!st.ok) return { verdict: st.wait ? undefined : false, why: st.why };
+    if (typeof bondsAt !== 'function' || typeof chainTip !== 'function') return { verdict: undefined, why: 'this seat reads no census from its chain' };
+    const at = beforeHeight === null ? Number(await chainTip()) : beforeHeight;
+    const bonds = await Promise.resolve().then(() => bondsAt(at)).catch(() => null);
+    if (!Array.isArray(bonds)) return { verdict: undefined, why: `the bonds at ${at} are not read here` };
+    const fid = toHex(p.federationId), held = kept.get(fid);
+    const base = { record: st.record, newest: held && held.record ? { ...held.record, height: held.height } : null, proof: p, bonds, atHeight: at };
+    // the cheap checks first: a record or an output that does not stand needs no verifier
+    const pre = theftSlashStands({ ...base, shown: { ok: true, why: '' }, spend: { ok: true } });
+    if (pre.verdict !== true) return { verdict: pre.verdict, why: pre.why };
+    let spend = null, spendHeight = null;
+    if (p.mark.kind === 'unbacked-spend') {
+      let conf = null; try { conf = await txConfirmations(toHex(p.mark.spendTxid)); } catch { conf = null; }
+      spend = spendStands(p, { confirmations: Number.isInteger(conf) ? conf : null });
+      if (Number.isInteger(conf)) spendHeight = Number(await chainTip()) - conf + 1;
+    }
+    let shown;
+    if (!spend || spend.ok) {
+      let v; try { v = await verifySessions(theftVerifyInput(p)); } catch { v = undefined; }
+      shown = v === undefined || v === null ? undefined : sessionsShowMark(p, v, { spendHeight });
+    }
+    const got = theftSlashStands({ ...base, shown, spend });
+    return { verdict: got.verdict, why: got.why };
   }
   const proofListed = new Map();             // the output and the row -> the hash this seat lists it under
   const proofsHeld = new Map();              // id hex -> bytes, what no store keeps; with a store only so each is written once
@@ -751,7 +852,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     censusKeys: () => { const b = basis(); return b.ok ? (b.census.entries || []).map((e) => e.pubkey).filter(Boolean) : []; },
     /** THE CENSUS THIS SEAT READS, its entries and height (GET /roles), or why none. */
     censusNow: () => { const b = basis(); return b.ok ? { ok: true, height: b.height, entries: b.census.entries || [] } : { ok: false, why: b.why }; },
-    abandonedSlashes, abandonedProof, takeAbandonedProof, abandonedVerdict,
+    abandonedSlashes, abandonedProof, takeAbandonedProof, abandonedVerdict, theftSlashes, theftProof, takeTheftProof, theftVerdict,
     recordOf: (fidHex) => { const k = kept.get(String(fidHex).toLowerCase()); return k ? { record: k.record, status: k.status, height: k.height, bytes: k.bytes } : null; },
     /**
      * HOW MANY OF A FEDERATION'S GUARDIAN SEATS HOLD ITS RECORD CLOSED (kanban #577, measured 2026-10-22 on 89ce310e: the first guardian to
