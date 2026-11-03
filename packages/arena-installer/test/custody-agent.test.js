@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { createCustodyAgent, guardianOfEntry } from '../src/custody-agent.js';
+import { pegInPastCap } from '../../arena-protocol/src/gateway-seats.js';
 import { emergencyOf } from '../src/seed.js';
 import { nodeState } from '../src/state.js';
 import { readAdvertUpdate, checkAgainstBond } from '../../arena-protocol/src/advert-update.js';
@@ -45,7 +46,9 @@ test('the custody agent: waits for the founding, then guardian_of, the gateway\'
   let lndOnchain = 0; const lndCalls = []; const connected = new Set();
   const ring = [{ node: '00'.repeat(32), lightningPubkey: '02' + '11'.repeat(32), lightningAddr: '198.51.100.1:9735' },
     { node: 'ff'.repeat(32), lightningPubkey: '03' + '22'.repeat(32), lightningAddr: '' }];
-  const agent = createCustodyAgent({ state, release: home, chainKit, gw, nowMs: () => clock, hubs: [`${hub}@hubhubhub.onion:9735`],
+  // the federation's load as the node's seat says it (kanban #1093 part 6): at its cap on mainnet first, then below
+  let fedLoad = { reserveSats: 1000n, exposureCapSats: 1000n, network: 'mainnet', load: 1 };
+  const agent = createCustodyAgent({ state, release: home, chainKit, gw, nowMs: () => clock, hubs: [`${hub}@hubhubhub.onion:9735`], federationLoad: async () => fedLoad,
     channels: async () => ({ ok: true, open, pending: [], publicCapacitySats: 250000, inboundSats: 0, outboundSats: 250000 }),
     lndInfo: async () => ({ ok: true, uris: ['02' + '99'.repeat(32) + '@203.0.113.9:9735'] }),
     ringMembers: async () => [...ring, { node: toHex(schnorr.getPublicKey(nodeSecret)), lightningPubkey: '02' + '99'.repeat(32), lightningAddr: '203.0.113.9:9735' }],
@@ -76,6 +79,12 @@ test('the custody agent: waits for the founding, then guardian_of, the gateway\'
   coins = [{ txid: '6b'.repeat(32), vout: 2, sats: 55000 }];   // the update's change, confirmed
   assert.equal((await agent.tick()).did, 'join');
   assert.deepEqual(calls[0], ['join', invite]);
+  const capped = await agent.tick();
+  assert.match(capped.why, /load 1, at or past its cap - a gateway that pegs in past it loses its seat/, 'no peg-in at load >= 1 (kanban #1093 part 6)');
+  assert.equal(calls.filter((c) => c[0] === 'address').length, 0, 'not even a deposit address asked');
+  fedLoad = { ...fedLoad, network: 'testnet4' };
+  assert.equal(pegInPastCap(fedLoad), false, 'a test network shows the load and warns, as the client does');
+  fedLoad = { reserveSats: 400n, exposureCapSats: 1000n, network: 'mainnet', load: 0.4 };
   const peg = await agent.tick();
   assert.equal(peg.did, 'peg-in');
   const pegTx = parseTransaction(fromHex(sent[2]));

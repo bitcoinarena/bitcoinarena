@@ -18,6 +18,9 @@ import { advertFor, buildAdvertUpdate, buildSend, EMERGENCY_IN_ADVERT } from './
 import { emergencyOf } from './seed.js';
 import { joinFederation, testGateway, depositAddress } from './gateway.js';
 import { lndChannels, testLnd, lndFunds, lndPeers, lndConnect, lndOpenTo, lndClose } from './lnd.js';
+import { pegInPastCap } from '../../arena-protocol/src/gateway-seats.js';
+import { splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
+import { networkOf } from '../../arena-protocol/src/constants.js';
 
 /** THE RING CHANNEL each custody node opens to the next node of its federation (sat), and what the deposit sets aside for it with fees. */
 export const RING_SATS = 150000;
@@ -56,7 +59,18 @@ export function guardianOfEntry(dir) {
 export function createCustodyAgent({ state, release, chainKit = { coinsOf, broadcast }, gw = { joinFederation, testGateway, depositAddress }, channels = lndChannels, lndInfo = testLnd, hubs = LIGHTNING_HUBS.testnet4,
   lnd = { funds: lndFunds, peers: lndPeers, connect: lndConnect, openTo: lndOpenTo, close: lndClose }, ringMembers = null, log = () => {}, nowMs = () => Date.now(),
   restartGateway = async () => (await import('./node-services.js')).control('restart', 'gateway', { home: state.home }),
-  followTunnel = async () => (await import('./node-services.js')).followTunnelNow({ home: state.home }) }) {
+  followTunnel = async () => (await import('./node-services.js')).followTunnelNow({ home: state.home }),
+  // THE FEDERATION'S LOAD, from this node's own seat (GET /federations): { reserveSats, exposureCapSats, network } of its newest record, or null
+  federationLoad = null }) {
+  const loadOf = federationLoad || (async (s, fid) => {
+    const port = (s.reach && s.reach.port) || (s.service && s.service.port);
+    try { const r = await fetch(`http://127.0.0.1:${port}/federations`, { signal: AbortSignal.timeout(10000) }); const v = await r.json();
+      const f = ((v && v.federations) || []).find((x) => String(x.federation).toLowerCase() === String(fid).toLowerCase());
+      if (!f || f.exposureCapSats === undefined) return null;
+      const split = f.record ? splitSignedRecord(Uint8Array.from(Buffer.from(f.record, 'hex'))) : null;
+      return { reserveSats: BigInt(f.reserveSats), exposureCapSats: BigInt(f.exposureCapSats), network: split && split.record ? networkOf(split.record.networkId) : null, load: f.load };
+    } catch { return null; }
+  });
   // the federation's custody nodes with their Lightning key and address, from this node's own seat (GET /gateway-seats: the claims it
   // gathered as a guardian, its own among them)
   const membersOf = ringMembers || (async (s) => {
@@ -172,6 +186,11 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
     // 3. the peg-in set aside for the gateway's e-cash
     // per federation (kanban #577): a node whose federation was retired founds the next, whose gateway needs its own peg-in
     if (s.gateway && c.pegInSats && (!c.pegIn || c.pegIn.federationId !== g.federationId)) {
+      // GATEWAYS KEEP THE CAP TOO (kanban #1093 part 6): no peg-in into a federation at load >= 1, as a client refuses a deposit; a seated
+      // gateway that pegs in past it is unseated. Unknown load: wait, never guess
+      const l = await loadOf(s, g.federationId);
+      if (!l) return { ok: false, why: 'the peg-in waits: this node\'s seat does not say the federation\'s load yet' };
+      if (pegInPastCap(l)) return { ok: false, why: `the peg-in waits: the federation is at load ${l.load ?? '>= 1'}, at or past its cap - a gateway that pegs in past it loses its seat` };
       const a = await gw.depositAddress({ ...s.gateway, federationId: g.federationId });
       if (!a.ok) return { ok: false, why: a.why };
       const { coins } = await chainKit.coinsOf(s.chain, w.spk);

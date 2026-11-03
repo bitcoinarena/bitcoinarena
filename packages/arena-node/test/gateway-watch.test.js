@@ -393,3 +393,26 @@ test('peg-in pressure reads the band the record names: 65 % kept in PRESSURE ran
   assert.notEqual((await view('PRESSURE')).pegInPressure, undefined, 'as the record says');
   assert.equal((await view('PRESSURE', 'DRAINING')).pegInPressure, undefined, 'only an OPEN federation\'s band has effect (ruling #1028)');
 });
+
+test('a peg-in past the cap unseats its gateway: the watch names the outpoint, the seat ranks it ineligible (kanban #1093 part 6)', async () => {
+  const o1 = 'aa'.repeat(32) + ':1', o2 = 'bb'.repeat(32) + ':0';
+  const claims = { 0: claimOf(0, { pegInOutpoints: [`${o1}@5000`] }), 1: claimOf(1, { pegInOutpoints: [`${o2}@5001`] }) };
+  const entries = keys.map((k, i) => ({ pubkey: Uint8Array.from(Buffer.from(k.hex, 'hex')), bondSats: 50000n, advert: { endpoint: `https://seat${i}.example`, operatorId: `op${i}` } }));
+  const fetcher = async (url) => {
+    const seat = /^https:\/\/seat(\d)\.example\/gateway-claim\?federation=[0-9a-f]{64}$/.exec(url);
+    if (seat) return claims[seat[1]] ? { status: 200, json: async () => claims[seat[1]] } : { status: 404, json: async () => ({}) };
+    return { status: 200, text: async () => '{"module_public_key":"02' + 'cd'.repeat(32) + '"}' };
+  };
+  const coins = new Map([[o1, 60_000n], [o2, 60_000n]]);
+  const asked = [];
+  const w = createGatewayWatch({ federationId: async () => fid, seated: async () => [keys[0].hex, keys[1].hex], entries: async () => entries, tip: async () => 144 * 40 + 5,
+    beaconAt: async () => new Uint8Array(32).fill(7), verify, fetcher, federationCoins: async () => coins, rulesEpoch: null,
+    pastCapAt: async (f, h) => { asked.push([f, h]); return h === 5000; } });
+  await w.probe();
+  const v = await w.view();
+  assert.ok(asked.some(([f, h]) => f === fid && h === 5000), 'asked at the height the claim names');
+  const off = (v.ineligible || []).find((x) => x.node === keys[0].hex);
+  assert.match(off && off.why, new RegExp(`pegged in past the cap: ${o1} went in at load >= 1`));
+  assert.ok(!v.seated.includes(keys[0].hex), 'not seated, not even as the last gateway');
+  assert.ok(!(v.ineligible || []).some((x) => x.node === keys[1].hex && /past the cap/.test(x.why)), 'the other gateway\'s peg-in went in below the cap');
+});
