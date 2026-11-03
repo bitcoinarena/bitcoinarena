@@ -949,6 +949,9 @@
       body.arena-topup-on #arena-donate-go::before { content: '\2665'; font-size: 12px; }
       html body.arena-topup-on #arena-build { padding-right: 140px !important; }
       html body.arena-topup-on.arena-night-on #arena-build { color: transparent !important; }
+      /* NIGHT WITHOUT THE TOP-UP (kanban #926: measured at 390 px with no wallet, Night 122-240 lay under the social links 176-290 and the UI number) */
+      body.arena-night-on:not(.arena-topup-on) #arena-social { display: none !important; }
+      html body.arena-night-on:not(.arena-topup-on) #arena-build { color: transparent !important; }
     }
     @media (max-width: 380px) {
       body.arena-topup-on #arena-foot-topup { right: 4px !important; width: 80px !important; font-size: 11px !important; }
