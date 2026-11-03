@@ -13,25 +13,64 @@
 // It runs the tool once per question, as the node's lndPort (node-start.js) runs lncli: the
 // federation is the tool's business, and a daemon that linked the client
 // crates in would be a daemon in Rust.
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { existsSync, cpSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 
 export const STAKE_LOCK_SETTINGS = ['ARENA_STAKE_LOCK_BIN', 'ARENA_FEDERATION_CLIENT_DIR'];
 
-const run = (bin, args, timeoutMs) => new Promise((done, fail) => {
-  execFile(bin, args, { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
-    const line = String(stdout || '').trim().split('\n').filter((l) => l.startsWith('{')).pop();
+// A TOOL PAST ITS TIME IS ENDED, AND STAYS ENDED (kanban #1078, measured 2026-11-03 on the second test host's seat 2: 234
+// `--mode status` runs left behind over 15 h, each waiting on its read directory's client.db.lock, 219 of them deaf to SIGTERM).
+// The timeout used to send SIGTERM once and nothing after. Now: SIGTERM, and SIGKILL `KILL_GRACE_MS` later if it is still
+// there; the caller is answered at the timeout, not when the tool finally goes. Every tool still running when the seat
+// exits (a signal ends main.js through process.exit) is killed with it, so none outlives the seat that started it.
+export const KILL_GRACE_MS = 2000;
+const liveTools = new Set();
+let exitHooked = false;
+const killOnExit = (c) => {
+  liveTools.add(c);
+  c.once?.('exit', () => liveTools.delete(c));
+  if (!exitHooked) {
+    exitHooked = true;
+    process.once('exit', () => { for (const t of liveTools) { try { t.kill('SIGKILL'); } catch { /* gone */ } } });
+  }
+};
+const gone = (c) => c.exitCode != null || c.signalCode != null;
+export const endTool = (c, graceMs = KILL_GRACE_MS) => {
+  if (!c || gone(c)) return;
+  try { c.kill('SIGTERM'); } catch { /* gone */ }
+  const t = setTimeout(() => { if (!gone(c)) { try { c.kill('SIGKILL'); } catch { /* gone */ } } }, graceMs);
+  t.unref?.();   // a seat that exits sooner kills it on its way out (killOnExit)
+};
+/** The tools this process started that have not exited yet (a test's view of what a timeout leaves behind). */
+export const liveToolCount = () => liveTools.size;
+
+const run = (bin, args, timeoutMs, { spawnFn = spawn, graceMs = KILL_GRACE_MS } = {}) => new Promise((done, fail) => {
+  let stdout = '', stderr = '', settled = false, timer = null;
+  const answer = (timedOut, err) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    const line = stdout.trim().split('\n').filter((l) => l.startsWith('{')).pop();
     // A TOOL KILLED AT ITS TIMEOUT SAYS SO (its stderr was empty and the line was only "Command failed: <the
     // whole command>", which hid why a round never settled)
-    if (err && !line && err.killed) {
-      const last = String(stderr || '').trim().split('\n').filter(Boolean).pop();
+    if (timedOut && !line) {
+      const last = stderr.trim().split('\n').filter(Boolean).pop();
       return fail(new Error(`arena-stake-lock ${args[1] || ''} timed out after ${timeoutMs} ms${last ? ` (its last word: ${last.slice(0, 300)})` : ''}`));
     }
     if (err && !line) return fail(new Error(`arena-stake-lock: ${String(stderr || err.message).trim().split('\n').pop()}`));
-    try { done(JSON.parse(line)); } catch { fail(new Error(`arena-stake-lock answered no JSON: ${String(stdout).slice(0, 200)}`)); }
-  });
+    try { done(JSON.parse(line)); } catch { fail(new Error(`arena-stake-lock answered no JSON: ${stdout.slice(0, 200)}`)); }
+  };
+  let c;
+  try { c = spawnFn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { answer(false, e); return; }
+  killOnExit(c);
+  timer = setTimeout(() => { endTool(c, graceMs); answer(true, null); }, timeoutMs);
+  c.stdout.setEncoding('utf8'); c.stderr.setEncoding('utf8');
+  c.stdout.on('data', (d) => { if (stdout.length < (1 << 20)) stdout += d; });
+  c.stderr.on('data', (d) => { if (stderr.length < (1 << 20)) stderr += d; });
+  c.on('error', (e) => answer(false, e));
+  c.on('close', (code, signal) => answer(false, code === 0 ? null : new Error(`Command failed (${signal || code}): ${bin} ${args.join(' ')}`)));
 });
 
 const outpointArg = (o) => `${toHex(o.txid)}:${o.outIdx}`;
@@ -69,6 +108,7 @@ export function stakeLockServer({ bin, dataDir, timeoutMs = 10000, spawnFn = spa
       let up = false;
       const c = spawnFn(bin, ['--mode', 'serve', '--data-dir', dataDir], { stdio: ['pipe', 'pipe', 'ignore'] });
       child = c;
+      killOnExit(c);
       c.on('error', (e) => { if (!up) reject(e); fail(e.message); });
       // A SERVER ENDED WHILE AN ASK WAS BEING WRITTEN (11-01 23:16Z, fed2 seat 1): the pipe's EPIPE had no listener and took the whole seat down.
       c.stdin.on('error', (e) => { if (child === c) fail(`the stake-lock server's pipe: ${e.message}`); });
@@ -87,7 +127,7 @@ export function stakeLockServer({ bin, dataDir, timeoutMs = 10000, spawnFn = spa
           if (j.ok) w.resolve(j.result); else w.reject(new Error(`arena-stake-lock: ${j.error}`));
         }
       });
-      setTimeout(() => { if (!up) { reject(new Error('the stake-lock server did not come up')); try { c.kill(); } catch { /* gone */ } } }, timeoutMs).unref?.();
+      setTimeout(() => { if (!up) { reject(new Error('the stake-lock server did not come up')); endTool(c); } }, timeoutMs).unref?.();
     });
     ready.catch(() => {});
     return ready;
@@ -98,13 +138,13 @@ export function stakeLockServer({ bin, dataDir, timeoutMs = 10000, spawnFn = spa
       const id = ++n;
       const t0 = now(), ahead = waiting.size;
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { waiting.delete(id); counted(mode, now() - t0, ahead); log(`[stake-lock] ${mode} unanswered after ${timeoutMs} ms: the server is ended`); try { c.kill(); } catch { /* gone */ } reject(new Error(`the stake-lock server did not answer ${mode} in ${timeoutMs} ms`)); }, timeoutMs);
+        const timer = setTimeout(() => { waiting.delete(id); counted(mode, now() - t0, ahead); log(`[stake-lock] ${mode} unanswered after ${timeoutMs} ms: the server is ended`); endTool(c); reject(new Error(`the stake-lock server did not answer ${mode} in ${timeoutMs} ms`)); }, timeoutMs);
         timer.unref?.();
         waiting.set(id, { resolve: (v) => { counted(mode, now() - t0, ahead); resolve(v); }, reject: (e) => { counted(mode, now() - t0, ahead); reject(e); }, timer });
         c.stdin.write(JSON.stringify({ id, mode, args }) + '\n');
       });
     },
-    close() { if (child) { try { child.kill(); } catch { /* gone */ } } fail('closed'); },
+    close() { if (child) endTool(child); fail('closed'); },
   };
 }
 // the flags of a one-run call as the server's args: ['--a', 'x', '--b', 'y'] -> { a: 'x', b: 'y' }
