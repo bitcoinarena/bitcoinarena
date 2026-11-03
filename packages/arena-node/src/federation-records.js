@@ -20,6 +20,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { nodeBonds } from '../../arena-protocol/src/census.js';
 import { abandonmentProof, bondSpentProof } from '../../arena-protocol/src/absence.js';
 import { guardianSlashStands } from '../../arena-protocol/src/federation-slash.js';
+import { judgeAbandoned } from './arbiter.js';
 import { abandonedRows, outputsLeft, encodeAbandonedProof, decodeAbandonedProof, abandonedProofId } from '../../arena-protocol/src/abandoned-slash.js';
 import { abandonedSlashPoint, networkOf } from '../../arena-protocol/src/constants.js';
 import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDeparture, emergencyHex, readEmergencyHex } from './absences.js';
@@ -403,6 +404,23 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     return { ok: true, status: 201 };
   }
 
+  /**
+   * THIS SEAT'S OWN WORD ON AN ABANDONMENT'S PROOF (§23A.5, 5A.3B, kanban #1065): the record in it on the census at its height, the row and the output on this seat's chain, as the arbitration set judges one.
+   * `beforeHeight` where the bond was started already: the output is read at the block before the start, since a started output is no output left. Answers { verdict: true | false | undefined, why }.
+   */
+  async function abandonedVerdict(bytes, inviteFederationId, beforeHeight = null) {
+    let p, height;
+    try { p = decodeAbandonedProof(bytes); height = splitSignedRecord(p.record).record.height; } catch (e) { return { verdict: false, why: `that is no proof of an abandonment: ${e.message}` }; }
+    if (typeof censusAt !== 'function' || typeof bondsAt !== 'function' || typeof chainTip !== 'function') return { verdict: undefined, why: 'this seat reads no census from its chain' };
+    const entries = await Promise.resolve().then(() => censusAt(height)).catch(() => null);
+    if (!entries) return { verdict: undefined, why: `the census at ${height} is not read here` };
+    const at = beforeHeight === null ? Number(await chainTip()) : beforeHeight;
+    const bonds = await Promise.resolve().then(() => bondsAt(at)).catch(() => null);
+    if (!Array.isArray(bonds)) return { verdict: undefined, why: `the bonds at ${at} are not read here` };
+    const v = judgeAbandoned({ proofBytes: bytes, census: entries, bonds, networkId, inviteFederationId, from: abandonedFrom });
+    return { verdict: v.slashed, why: v.why };
+  }
+
   /** The body for one federation from a basis, with `gone` - the guardians whose nodes said they are leaving. */
   function bodyFor(b, federationId, gone = [], reserveSats = 0n, eps = null, was = null) {
     const fid = toHex(federationId);
@@ -724,7 +742,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     censusKeys: () => { const b = basis(); return b.ok ? (b.census.entries || []).map((e) => e.pubkey).filter(Boolean) : []; },
     /** THE CENSUS THIS SEAT READS, its entries and height (GET /roles), or why none. */
     censusNow: () => { const b = basis(); return b.ok ? { ok: true, height: b.height, entries: b.census.entries || [] } : { ok: false, why: b.why }; },
-    abandonedSlashes, abandonedProof, takeAbandonedProof,
+    abandonedSlashes, abandonedProof, takeAbandonedProof, abandonedVerdict,
     recordOf: (fidHex) => { const k = kept.get(String(fidHex).toLowerCase()); return k ? { record: k.record, status: k.status, height: k.height, bytes: k.bytes } : null; },
     /**
      * HOW MANY OF A FEDERATION'S GUARDIAN SEATS HOLD ITS RECORD CLOSED (kanban #577, measured 2026-10-22 on 89ce310e: the first guardian to

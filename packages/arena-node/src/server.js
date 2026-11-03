@@ -4096,6 +4096,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // THIS SEAT'S OWN WORD ON A PROOF (5A.3B, kanban #1065, proof-judge.js): the complete proof holds the round's contract, so a seat that does not hold the round reads it from the bytes, and the rest from its own chain
   const roundOf = (contract, rid) => (round.get(rid) ? {} : { posted: contract });
+  const fedOfInvite = (invite) => { try { return invite ? readInvite(invite).federationId : null; } catch { return null; } };
   const judgeProofBytes = createProofJudge({ censusOf: (contract, rid) => roster.censusFor(rid, null, roundOf(contract, rid)),
     committeeOf: (contract, rid) => {
       const keys = new Map();
@@ -4109,6 +4110,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     panelsOf: (contract, rid) => roster.slashPanelsFor(rid, { posted: contract }), holdBlocksOf: (contract) => holdClocksOf(contract.networkId).holdBlocks,
     manifestOf: (contract) => { const found = pluginForRound(contract, hosted); return found.ok ? found.plugin.manifest : null; },
     clientOf: async (fid) => { try { const port = await settlements.portForFederation(fid); return port ? { fees: () => port.fees(), txid: async (build) => fromHex((await port.settle(build)).txid) } : null; } catch { return null; } },
+    abandoned: async (bytes, beforeHeight) => (fedRecords ? fedRecords.abandonedVerdict(bytes, (inv) => { const f = fedOfInvite(inv); return f ? fromHex(String(f)) : null; }, beforeHeight) : { verdict: undefined, why: 'this seat holds no federation records yet' }),
     coreOf: (contract, rid) => coreForRound(contract, rid, hosted), beaconOf: (contract, rid, entry, eid) => verifier.proofBeacon(contract, rid, entry, eid), replayRunOf: (rid, eid, core) => verifier.proofReplay(rid, eid, core), vrf: auditVrf,
     // WHO COULD AUDIT, AS THE DESK TOOK IT: the round's census less its drawn nodes. Its players come out where this seat holds the round: a seat that does not cannot name them, and an AUDIT a player signed was refused at every door that held it
     auditSetOf: (contract, rid) => {
@@ -4122,7 +4124,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const newestCensusKey = () => { const keys = censusKey ? censusKey.scan.standing() : []; return keys.length ? keys[keys.length - 1].publicKey : null; };
   // A STARTED BOND OF THIS NODE (5A.3B): what it reads of its hold output, and its way out
   const holdWatch = censusKey && censusKey.rawTxAt ? createHoldWatch({ clocks: holdClocksOf(censusKey.networkId), nodeSecret: round.identity.secret, tipHeight: censusKey.tipHeight, rawTxAt: censusKey.rawTxAt,
-    broadcast: (hex) => chainSend(hex), log: (l) => console.log(l), fetchProof: (id) => proofBytesFetched(id), proofChecks: async (bytes) => (isAbandonedProof(bytes) ? undefined : (await judgeProofBytes(bytes)).verdict), returnScript: () => ownReturnScript(), holdsFor: (b) => holdsOfOwnBond({ nodeKey: round.pubkey, censusKey: fromHex(b.censusKey), bondMaturity: b.maturity, clocks: holdClocksOf(censusKey.networkId), tweakPoint,
+    broadcast: (hex) => chainSend(hex), log: (l) => console.log(l), fetchProof: (id) => proofBytesFetched(id), proofChecks: async (bytes, at) => (await judgeProofBytes(bytes, at)).verdict, returnScript: () => ownReturnScript(), holdsFor: (b) => holdsOfOwnBond({ nodeKey: round.pubkey, censusKey: fromHex(b.censusKey), bondMaturity: b.maturity, clocks: holdClocksOf(censusKey.networkId), tweakPoint,
       panels: seating ? seating.ownHoldPanels({ txid: toHex(fromHex(b.txid).reverse()), vout: b.vout }) : [] }) }) : null;
   // THIS NODE'S OWN OUTPUTS, NEAR THE TIP (5A.3B): a census six or twelve blocks old, or none on a seat with no round, is no way to learn that a bond was started, when the clocks are hours. On a
   // network with a census key: read every 6 blocks, and at once when one of its outputs is spent, which costs one gettxout per output per block.
@@ -4179,7 +4181,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let presig = null, holdScript = null, why = null;
     const own = bondPresigDigest({ bond: { txid: e.txid, vout: e.vout, value: BigInt(e.bondSats), script: e.script }, advert: { ...e.advert, nodePubkey: e.pubkey }, networkId: censusKey.networkId, tweakPoint });
     if (own.ok) holds.push({ script: own.hold.script });
-    if (seating) {
+    if (seating && rid) {
       let plan; try { plan = holdsOfRound(rid, contract); } catch (x) { plan = { ok: false, why: x.message }; }
       if (plan.ok) {
         const b = (plan.plan.get(toHex(e.pubkey)) || []).find((x) => x.txid === toHex(e.txid) && x.vout === e.vout);
@@ -4202,8 +4204,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return entries;
   };
+  // AN OUTPUT AN ABANDONED ROW LEFT, ON TEMPLATE 3 (§23A.5): this seat lists it, so it holds its proof, and the holders judge it as any other
+  const abandonedSeen = new Map();
+  const abandonedHeld = async () => {
+    let rows = []; try { rows = fedRecords ? await fedRecords.abandonedSlashes() : []; } catch { rows = []; }
+    return rows.filter((r) => startsByCensusKey(r.template)).map((r) => { if (!abandonedSeen.has(r.proof)) abandonedSeen.set(r.proof, Date.now()); return { proofId: fromHex(r.proof), seenMs: abandonedSeen.get(r.proof) }; });
+  };
   const slashStarter = holdWatch && censusKey.feeCoin ? createSlashStarter({ key: round.pubkey, network: censusKey.network, db: round.db, store: new CensusKeyStore(round.db), thresholdOf: censusKey.scan.thresholdOf, tipHeight: censusKey.tipHeight, entriesAtTip: entriesAtTipForStart,
-    heldProofs: () => [...round.allSlashProofs(), ...round.allRerunSlashProofs(), ...round.auditSlashProofs(), ...round.doubleSlashProofs(), ...round.tableSlashProofs()].flatMap((p) => { const bytes = round.relayGet(Buffer.from(p.proofId)); return bytes ? [{ proofId: p.proofId, bytes, seenMs: p.seenMs }] : []; }), bytesOf: (id) => round.relayGet(Buffer.from(id)), judge: judgeProofBytes, holdsFor: holdsForStart, feeCoin: censusKey.feeCoin, send: (hex) => chainSend(hex), urlsOf: () => censusUrls || [],
+    heldProofs: async () => [...round.allSlashProofs(), ...round.allRerunSlashProofs(), ...round.auditSlashProofs(), ...round.doubleSlashProofs(), ...round.tableSlashProofs(), ...(await abandonedHeld())].flatMap((p) => { const bytes = round.relayGet(Buffer.from(p.proofId)); return bytes ? [{ proofId: p.proofId, bytes, seenMs: p.seenMs }] : []; }), bytesOf: (id) => round.relayGet(Buffer.from(id)), judge: judgeProofBytes, holdsFor: holdsForStart, feeCoin: censusKey.feeCoin, send: (hex) => chainSend(hex), urlsOf: () => censusUrls || [],
     stepMs: Number(process.env.ARENA_SLASH_FILE_STEP_MS || 600000), log: (l) => console.log(l) }) : null;
   const ownTimer = holdWatch ? setInterval(() => { if (!shuttingDown) ownPass().catch((e) => console.error(`[hold] the pass did not run: ${e.message}`)); }, Number(censusKey.everyMs) > 0 ? Number(censusKey.everyMs) : 10000) : null;
   if (ownTimer && ownTimer.unref) ownTimer.unref();
@@ -10982,6 +10990,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (bytes[0] === TYPE_ABANDONED_PROOF) {
           if (!fedRecords) return text(res, 503, 'this seat holds no federation records yet');
           const r = await fedRecords.takeAbandonedProof(slashed[1], u8, (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; });
+          if (r.ok && slashStarter) slashStarter.handed(fromHex(slashed[1]));
           return text(res, r.status, r.ok ? 'kept' : r.why);
         }
         if (toHex(fraudProofHash(u8)) !== slashed[1]) return text(res, 409, 'those bytes are not the proof that hash names');
