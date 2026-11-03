@@ -21,6 +21,7 @@ import { tapSighash, serializeSpend, scriptPathWitness } from '../../arena-proto
 import { arbitrationCommitment, holdSlashSpend } from '../../arena-protocol/src/arbitration-tx.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { carrierEscrowPegInId } from '../../arena-protocol/src/census-key.js';
+import { carrierSlices } from '../../arena-protocol/src/slash-release.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { SLASH_REMAINDERS } from '../../arena-protocol/src/constants.js';
 
@@ -158,11 +159,18 @@ test('the PayoutTable\'s bytes are the ruling\'s, field by field, and its id is 
   const want = `01${h(32, 0x10)}${h(32, 0x51)}${toHex(proofId)}${h(32, 0x66)}00000000`
     + `0001${h(32, 0xe1)}${h(32, 0xa1)}${(40000000000n).toString(16).padStart(16, '0')}`
     + `0001${h(32, 0xf1)}${(59990000000n).toString(16).padStart(16, '0')}`
+    + `${'0'.repeat(16)}00`   // carrier_margin_msat 0, margin_off reserves (kanban #1086)
     + `0002${(40000000n).toString(16).padStart(16, '0')}0022${toHex(payee)}01${(59990000n).toString(16).padStart(16, '0')}0022${toHex(reserves)}02`;
   assert.equal(toHex(encodeSlashPayoutTable(table)), want);
   assert.equal(toHex(slashPayoutTableId(table)), toHex(taggedHash('ARENA/v1/SlashPayoutTable', fromHex(want))));
   assert.equal(toHex(encodeSlashPayoutTable(decodeSlashPayoutTable(encodeSlashPayoutTable(table)))), want);
   assert.throws(() => decodeSlashPayoutTable(Uint8Array.of(2, 0, 0)), /version 1/);
+  // THE MARGIN IS IN THE BYTES (kanban #1086): its amount and where it came from, so no signer chooses it
+  const named = { ...table, marginMsat: 10000n, marginOff: 'players' };
+  assert.ok(toHex(encodeSlashPayoutTable(named)).includes(`${(10000n).toString(16).padStart(16, '0')}01`));
+  assert.deepEqual([decodeSlashPayoutTable(encodeSlashPayoutTable(named)).marginMsat, decodeSlashPayoutTable(encodeSlashPayoutTable(named)).marginOff], [10000n, 'players']);
+  assert.notEqual(toHex(slashPayoutTableId(named)), toHex(slashPayoutTableId({ ...named, marginMsat: 10001n })), 'another margin, another table');
+  assert.throws(() => encodeSlashPayoutTable({ ...table, marginOff: 'carrier' }), /margin comes off/);
   assert.throws(() => encodeSlashPayoutTable({ ...table, outputs: [...pays].reverse() }), /pays in order/);
   assert.throws(() => encodeSlashPayoutTable({ ...table, reserves: [{ federationId: b32(2), msat: 1n }, { federationId: b32(1), msat: 1n }] }), /not sorted/);
 });
@@ -271,6 +279,72 @@ test('a carrier under dust is raised out of the reserves, and merged into the on
   const tight = built({ ...small, bond: { txid: b32(0x77), vout: 1, value: 6300n }, feeSats: 200n });
   assert.equal(tight.ok, true, tight.why);
   assert.deepEqual(paysOf(tight.table), [['player_carrier', 6100n]], 'the merge pays the player whole');
+});
+
+test('every player_carrier output holds the loss plus the carrier margin the table names, out of the reserves\' share; with none the table says the players bear it (kanban #1086)', () => {
+  const M = 10000n;
+  const r = built({ marginMsat: M });
+  assert.equal(r.ok, true, r.why);
+  console.log('  FACTS (margin):', JSON.stringify(paysOf(r.table).map(([p, v]) => [p, String(v)])));
+  assert.deepEqual([r.table.marginMsat, r.table.marginOff], [M, 'reserves']);
+  assert.deepEqual(paysOf(r.table).slice(0, 3), [['filer', 5000n], ['player_carrier', 6000000n], ['player_carrier', 4000021n]], 'the first to its bond with its margin in it, the rest plus the margin to the next');
+  assert.equal(sum(r.table) + 1500n, 100000000n, 'outputs + fee = the bond');
+  const reserved = (t) => t.outputs.filter((o) => o.pays === 'reserves').reduce((a, o) => a + o.value, 0n);
+  assert.equal(reserved(built().table) - reserved(r.table), 20n, 'the two margins come off the reserves\' share');
+  // carrierSlices: each output carries up to its value less the margin, so the losses are covered exactly
+  const cut = carrierSlices(r.table);
+  assert.equal(cut.reduce((a, c) => a + c.slices.reduce((x, y) => x + y.msat, 0n), 0n), 10000000500n, 'every loss carried');
+  assert.ok(cut.every((c) => c.value * 1000n - c.slices.reduce((x, y) => x + y.msat, 0n) >= M), 'each output holds its margin past its slices');
+  assert.equal(toHex(encodeSlashPayoutTable(built({ marginMsat: M }).table)), toHex(encodeSlashPayoutTable(r.table)), 'byte-equal for every signer');
+  // NOTHING PAST THE PLAYERS: the bond's whole share is the losses, so the outputs hold the losses alone and the table names `players`
+  const tight = built({ marginMsat: M, bond: { txid: b32(0x77), vout: 1, value: 10006501n }, federations: [] });
+  assert.equal(tight.ok, true, tight.why);
+  assert.deepEqual([tight.table.marginMsat, tight.table.marginOff], [M, 'players'], 'the table says the players bear it');
+  assert.deepEqual(paysOf(tight.table), [['filer', 5000n], ['player_carrier', 6000000n], ['player_carrier', 4000001n]], 'the losses alone');
+  // AND AN ESCROW SPEND NAMES THE TABLE'S MARGIN
+  const t = { ...table, marginMsat: M };
+  const e = escrowTableSpend({ escrow: { txid: b32(3), vout: 2, value: 100000n, script: payee }, tableId: slashPayoutTableId(t), marginMsat: M, marginOff: 'reserves', payees: [{ value: 1010n, script: payee, pays: 'player_carrier' }], feeSats: 500n });
+  assert.deepEqual([decodeSlashEscrowOutputs(encodeSlashEscrowOutputs(e.outputs)).marginMsat, decodeSlashEscrowOutputs(encodeSlashEscrowOutputs(e.outputs)).marginOff], [M, 'reserves']);
+});
+
+test('the escrow checker takes a players\' output up to the unpaid loss plus the margin and no more, and a spend naming another margin than its table\'s (kanban #1086)', () => {
+  const M = 10000n;
+  const escrowScript = fromHex(`5120${'ee'.repeat(32)}`), pegIn = fromHex(`5120${'dd'.repeat(32)}`), fedIn = fromHex(`5120${'dc'.repeat(32)}`);
+  // THE TABLE CARRIED 40,000,000 sat (39,999,990 of loss and the margin); 300,000,000 msat of the loss is left in escrow with 59,990,000 sat
+  const t = { ...table, marginMsat: M, marginOff: 'reserves', outputs: [pays[0], { value: 59990000n, script: escrowScript, pays: 'escrow' }],
+    entries: [{ entryId: b32(0xe1), playerPubkey: b32(0xa1), lossMsat: 39999990000n + 300000000n }], reserves: [] };
+  const id = slashPayoutTableId(t);
+  const release = signedRelease({ outputs: [arbitrationCommitment(proofId, 900, id), ...t.outputs] });
+  const set = [...A].sort(compare);
+  const leaf = slashLeaf(set.map((p) => p.key), 5);
+  const input = { txid: parseTransaction(release).txid, vout: 2, sequence: 0xfffffffd };
+  const fed = b32(0xfe), at = { txid: input.txid, vout: input.vout };
+  const carrier = A[3];
+  const signedBy = (script) => ({ key: carrier.key, outpoint: at, federationId: fed, signature: schnorr.sign(carrierEscrowPegInId({ tableId: id, outpoint: at, federationId: fed, script }), carrier.secret) });
+  const pegs = new Map([[toHex(pegIn), signedBy(pegIn)], [toHex(fedIn), signedBy(fedIn)]]);
+  const sendOf = (outs, margin = { marginMsat: M, marginOff: 'reserves' }) => {
+    const named = { tableId: id, ...margin, outputs: outs };
+    const opening = { value: 0n, script: Uint8Array.from([0x6a, 64, ...id, ...slashEscrowOutputsId(named)]) };
+    return { outputs: encodeSlashEscrowOutputs(named), spend: signedRelease({ outputs: [opening, ...outs.map((o) => ({ value: o.value, script: o.script }))], signers: set.slice(0, 5), leaf, order: set, input }) };
+  };
+  const ask = ({ spend, outputs }) => slashHoldsOnEscrowSpend({ proof: proofOf(spend, id), spend, outputs, release, prevouts, table: encodeSlashPayoutTable(t), pegInOf: (x) => pegs.get(toHex(x)) || null,
+    isCarrier: (k) => k === toHex(carrier.key), advert, verify });
+  const player = (value) => ({ value, script: pegIn, pays: 'player_carrier' }), reserve = (value) => ({ value, script: fedIn, pays: 'reserves' });
+  // THE UNPAID LOSS IS 300,000 sat: the output may hold 300,010 sat (the loss plus 10,000 msat)
+  const ok = ask(sendOf([player(300010n), reserve(59689990n - 1000n)]));
+  assert.equal(ok.slashed, false); assert.match(ok.why, /answers to its table/, 'loss + margin');
+  const over = ask(sendOf([player(300011n), reserve(59680000n)]));
+  assert.equal(over.slashed, true, 'loss + margin + 1 sat');
+  assert.match(over.why, /300011 sat to players .* where the table left 300010/);
+  // ON `players` THE OUTPUT HOLDS NO MARGIN: the loss alone
+  assert.match(ask(sendOf([player(300000n)], { marginMsat: M, marginOff: 'players' })).why, /answers to its table/);
+  assert.equal(ask(sendOf([player(300001n)], { marginMsat: M, marginOff: 'players' })).slashed, true, 'no margin past the loss when the players bear it');
+  // THE RESERVES CANNOT TAKE THE MARGIN THE PLAYERS' OUTPUT HOLDS
+  assert.equal(ask(sendOf([player(300010n), reserve(59689991n)])).slashed, true, 'the reserves take the rest past the loss and the margin, no more');
+  // A MARGIN THE TABLE DOES NOT NAME
+  const other = ask(sendOf([player(300010n)], { marginMsat: 20000n, marginOff: 'reserves' }));
+  assert.equal(other.slashed, true);
+  assert.match(other.why, /names a carrier margin other than its table's 10000 msat/);
 });
 
 test('an escrow spend answers to the release\'s table: both ids, peg-ins a carrier signed for this table, amounts by pays (kanban #1031, #1034 answer 2)', () => {

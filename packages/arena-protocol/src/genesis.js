@@ -43,6 +43,14 @@ export const SLASH_CLOCKS = Object.freeze({
   regtest: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 12, slashFallbackBlocks: 24 }),
 });
 
+/**
+ * A CARRIER'S PAYOUT MARGIN, msat, by network (§5A.3B, RULED 2026-11-03, kanban #1086): what every player_carrier output holds past the loss it carries, so the carrier's own
+ * payout fee in the players' federation never comes out of a loss. A slash's table names it and the escrow spend's outputs[] repeat it, so no signer chooses it and every signer
+ * builds the same bytes. Not in genesis and not hashed, beside it as CENSUS_KEY_BOND_MIN is. Mainnet the same as the test networks: the spec names no other value, and one
+ * federation payout measured 352 msat.
+ */
+export const CARRIER_PAYOUT_MARGIN_MSAT = Object.freeze({ mainnet: 10_000n, testnet4: 10_000n, regtest: 10_000n });
+
 /** census_key_shares_max (§27A.6, §5A.3B, RULED 2026-11-02, kanban #1021): hashed as the slash clocks are, and for the same reason not on the test networks. */
 export const CENSUS_KEY_SHARES_MAX = 1024;
 

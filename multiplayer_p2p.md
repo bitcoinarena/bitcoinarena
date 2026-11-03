@@ -3101,6 +3101,7 @@ PayoutTable {
   version 1, network_id, round_id, proof_id, bond outpoint
   entries[]    ascending entry_id: entry_id, player_pubkey, loss_msat
   reserves[]   ascending federation_id: federation_id, msat
+  carrier_margin_msat (u64), margin_off (u8: 0 reserves, 1 players)   (kanban #1086)
   outputs[]    the release's outputs after its OP_RETURN, in order:
                value_sats, script, pays
 }
@@ -3161,19 +3162,45 @@ review; the owner did not rule them one by one.*
   builds the fallback and keeps it, so a holder the table names as a carrier knows to carry, and signs a share
   only when its own table's id is the one asked for. `excluded` is the accused and every node drawn for the round.
 - **A carrier pays** each slice of a loss it carries to `refund_key(player)`, in the table's entry order across the
-  carriers in their order, and the rest of what it claimed, less 10,000 msat for its own payout's fee, to that
-  federation's reserve key, kept as a reserve row of kind `slash` that every seat checks against its own port.
-  It pays on the table that confirmed, whichever that is (RULED 2026-11-03, kanban #1085, below).
-- **The carrier's 10,000 msat comes off the reserves' part of what it carries, never out of a loss** (decision
-  #1083: each real loss paid to the player's key; as #1085 rules for an escrow spend's fee). A players' output
-  keeps it back off what it claimed past its slices; for what that leaves short, off a reserves output the same
-  carrier carries in the same release, fallback or escrow spend (the players' federation's first, else any other),
-  which then keeps that much more back. The players are paid whole and the payout's fee comes out of the carrier's
-  client of the players' federation: a reserves' part of that federation is claimed first, so it is there; one of
-  another federation counts only when that client already holds the 10,000 msat past the slices. Only with no
-  reserves' part to take it is it taken pro rata out of what the output pays on. An escrow spend gives a carrier
-  one peg-in per federation, so its players' output never sits beside a reserves' part of the players' federation
-  there: only another federation's part, or the pro-rata rule.
+  carriers in their order, and the rest of what it claimed, less the carrier margin for its own payout's fee
+  (#1086 below), to that federation's reserve key, kept as a reserve row of kind `slash` that every seat checks
+  against its own port. It pays on the table that confirmed, whichever that is (RULED 2026-11-03, kanban #1085, below).
+
+**The carrier's payout margin (RULED 2026-11-03, kanban #1086).** A carrier keeps a margin back of each claim for
+its own payout's fee in the federation. It never comes out of a loss (decision #1083: each real loss paid to the
+player's key; "players are never short").
+
+- **The output.** A player-carrying output (`player_carrier`) is the unpaid loss it carries plus the carrier's
+  payout margin, taken from the reserves' share of that spend. This holds for every table with such outputs: the
+  release, the fallback and each escrow spend. `slashHoldsOnEscrowSpend` accepts a player output up to the unpaid
+  loss plus the margin, and no more.
+- **The margin is a constant the table names,** per network: 10,000 msat on mainnet, testnet4 and regtest (a
+  devnet runs regtest's). A signer can't choose it, so every signer builds the same bytes. The PayoutTable names it
+  as `carrier_margin_msat`, and each escrow spend's `outputs[]` repeats it; a spend naming another margin than its
+  table's answers to row 8.
+- **Unused margin is not the carrier's.** Whatever the payout fee didn't take goes on to the reserve key with the
+  carrier's reserves part, or with the next one if this carrier has none. A carrier keeps nothing.
+- **With no reserves' part in the spend** (no reserve key yet, #1085), the margin comes off the players' parts pro
+  rata to their loss, as the fee does there, and the table says so (`margin_off = players`). That is the one case
+  where a player gets slightly less, and it is written down.
+
+*Readings of #1086 as built (kanban #972), for review:*
+
+- **Every table.** The ruling's "a player-carrying output" names no table, and the carrier who pays is the same in
+  all three, so the release and the fallback name the margin as the escrow spend does. A carrier then pays the same
+  way whichever table confirmed: the player its slices exactly, out of loss + margin.
+- **"The reserves' share"** is what the spend holds past the players: its reserves parts and whatever goes back to
+  the escrow alike (the escrow's value past the players is placed by load when spent). So a spend with no room for
+  reserves still pays the margin out of that money. `margin_off = players` is named when that share cannot take
+  every players' output's margin whole: the escrow holds only players' money, or less than one margin past it.
+- **In sats** each players' output holds its part plus the margin rounded up to whole sats (10 sat), none above its
+  carrier's bond with it; a carrier's slices fill each output up to its value less the margin. The checker allows
+  the players' part rounded up once, plus one margin per players' output of a spend that names `reserves`, plus up
+  to dust for an output raised to dust; the reserves at most the escrow less the players' part and those margins.
+- **What the fee didn't take** is measured on the carrier's client: its balance before the payout, less after,
+  less what went out. The carrier owes that to the federation's reserve key and adds it to its next payout there
+  (the reserves' part of the same spend when it carries one, else its next slash). The margin of a reserves output
+  is that output's own fee and goes on the same way. Where the balance cannot be read the margin counts as spent.
 
 **The carriers of a fallback (RULED 2026-11-02, kanban #1031).** With no panels, and
 on every fallback, because a fallback means the panels did not sign and panel A
@@ -3193,8 +3220,8 @@ carrier, including the reserves' part.
 
 ```text
 escrow spend  OP_RETURN = payout_table_id ‖ id of its own outputs[] as first output
-outputs[]     version 1, payout_table_id, load_height (u32), then the table's format:
-              value_sats, script, pays
+outputs[]     version 1, payout_table_id, load_height (u32), carrier_margin_msat (u64),
+              margin_off (u8), then the table's format: value_sats, script, pays
               tagged_hash("ARENA/v1/SlashEscrowOutputs", those bytes)
 payable       a script a carrier's node key signed as its peg-in for this table and
               the escrow outpoint the spend spends (a CarrierPegIn, #1085):
@@ -3204,9 +3231,9 @@ payable       a script a carrier's node key signed as its peg-in for this table 
 
 What does not go out comes back to the same escrow as a `pays = escrow` output. The
 check is amounts by `pays` against what the table left unpaid, plus those signatures:
-`player_carrier` up to the players' part the release did not carry, `reserves` up to
-the rest of the escrow, counted with every earlier spend. Row 8 of the offences covers
-that too.
+`player_carrier` up to the players' part the release did not carry plus the carrier margin
+of each players' output (#1086), `reserves` up to the rest of the escrow, counted with every
+earlier spend. Row 8 of the offences covers that too.
 
 **The escrow spend (RULED 2026-11-03, kanban #1085).** A table can leave money in its
 escrow: players owed with no carrier yet, a reserves' part no federation had room for, or a

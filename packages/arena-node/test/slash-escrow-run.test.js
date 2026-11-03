@@ -15,11 +15,12 @@ import { carrierSlices, escrowSlices, slashEscrowOutput, slashEscrowSpend, vsize
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
+import { CARRIER_PAYOUT_MARGIN_MSAT } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { tweakPoint } from '../src/curve.js';
 import { createCensusSigner } from '../src/census-sign.js';
 import { censusKeyWork } from '../src/census-key-work.js';
-import { CARRIER_FEE_MARGIN_MSAT, createSlashRelease } from '../src/slash-release-run.js';
+import { createSlashRelease } from '../src/slash-release-run.js';
 
 const N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
 const tag = (n) => taggedHash('ARENA/test/EscrowRun', Uint8Array.of(n));
@@ -59,6 +60,8 @@ const LOSS = 300_000_000n;
 const advert = { bondScriptTemplateVersion: 3, censusKey: census.key, bondMaturityHeight: MATURITY };
 /** What one federation payout costs the paying client (one payout's measured 352 msat): under the carrier's margin. */
 const PAYOUT_FEE_MSAT = 352n;
+/** The carrier payout margin regtest's tables name (kanban #1086): every players' output holds it past the loss, out of the reserves' share. */
+const MARGIN = CARRIER_PAYOUT_MARGIN_MSAT.regtest;
 const scriptOfAddress = (address) => fromHex(`5120${toHex(taggedHash('ARENA/test/Address', new TextEncoder().encode(address)))}`);
 
 function startOf(hold) {
@@ -152,7 +155,7 @@ function world({ who, holders = [], hold, tip, ports = () => true, federationsNo
       }
       return clients.get(fid);
     };
-    const s = {};
+    const s = { clients: (fid) => portOf(fid) };
     s.run = createSlashRelease({ key: p.key, secret: p.secret, networkId: NETWORK_ID_REGTEST, clocks, db: new DatabaseSync(':memory:'), tweakPoint,
       tipHeight: async () => c.tip, entriesAtTip: async () => live.entries, rawTx, unspent: async (t, v) => !!(await c.txOut(t, v)), txOut: c.txOut,
       fetchProof: async () => proofBytes, judge: Object.assign(async () => ({ verdict: true, held: { offence: 'X' } }), { read: () => ({ ok: true, roundId, contract }) }),
@@ -167,7 +170,7 @@ function world({ who, holders = [], hold, tip, ports = () => true, federationsNo
   }
   c.claims = new Map();                           // address -> what its client claims there: what the output to it paid
   const passAll = async (list = who) => { const out = []; for (const { p } of list) out.push(...(await seats.get(p.hex).run.pass()).map((x) => ({ by: p.hex, ...x }))); return out; };
-  return { c, seats, paid, kept, start, live, passAll, run: (p) => seats.get(p.hex).run };
+  return { c, seats, paid, kept, start, live, passAll, run: (p) => seats.get(p.hex).run, clients: (p, fid) => seats.get(p.hex).clients(fid) };
 }
 
 const releaseHold = holdOutputKey({ nodeKey: accused.key, censusKey: census.key, ...panels, bondMaturity: MATURITY, ...clocks }, { tweakPoint });
@@ -209,7 +212,7 @@ function readSpend(w, m) {
 // ---- THE PURE PART: the spend every signer builds, and its fee ----
 const escrowPanels = slashEscrowOutput({ ...panels, censusKey: census.key, fallbackBlocks: clocks.fallbackBlocks }, { tweakPoint });
 const escrowBare = slashEscrowOutput({ censusKey: census.key, fallbackBlocks: clocks.fallbackBlocks }, { tweakPoint });
-const pureTable = (entries, escrowValue) => ({ networkId: NETWORK_ID_REGTEST, roundId, proofId, bondTxid: bond.txid, bondVout: 1, entries, reserves: [],
+const pureTable = (entries, escrowValue) => ({ networkId: NETWORK_ID_REGTEST, roundId, proofId, bondTxid: bond.txid, bondVout: 1, entries, reserves: [], marginMsat: MARGIN, marginOff: 'reserves',
   outputs: [{ value: 700n, script: feeCoin.script, pays: 'filer' }, { value: escrowValue, script: escrowPanels.script, pays: 'escrow' }] });
 const carrier = (p, fid, n = 0) => ({ key: p.hex, federation: fid, script: scriptOfAddress(`${p.hex}-${fid}-${n}`), bondSats: BOND });
 
@@ -241,7 +244,8 @@ test('an escrow spend is the same bytes for every signer at the height it names,
   const outs = x.outputs.outputs;
   assert.deepEqual(outs.map((o) => o.pays), ['player_carrier', 'reserves', 'reserves']);
   assert.equal(toHex(outs[0].script), toHex(carrier(A[0], fedA).script));
-  assert.equal(outs[0].value, 300_000n, 'the loss whole');
+  assert.equal(outs[0].value * 1000n, LOSS + MARGIN, 'the loss whole plus the carrier\'s margin, out of the reserves\' share');
+  assert.deepEqual([x.outputs.marginMsat, x.outputs.marginOff], [MARGIN, 'reserves'], 'outputs[] names the table\'s margin and where it came from');
   assert.deepEqual(new Set(outs.slice(1).map((o) => toHex(o.script))), new Set([toHex(carrier(A[1], fedA).script), toHex(carrier(A[0], fedB).script)]));
 });
 
@@ -252,7 +256,7 @@ test('the fee comes off the reserves\' part; with no reserves\' part, off each p
     carriers: [carrier(A[0], fedA), carrier(A[1], fedA)], playersFederation: fedA, federations: ROOMY, rate: 3n, panels, fallbackBlocks: clocks.fallbackBlocks });
   assert.ok(x.ok, x.why);
   assert.equal(x.short, false);
-  assert.equal(x.outputs.outputs.filter((o) => o.pays === 'player_carrier').reduce((a, o) => a + o.value, 0n), 300_000n, 'players whole');
+  assert.equal(x.outputs.outputs.filter((o) => o.pays === 'player_carrier').reduce((a, o) => a + o.value, 0n) * 1000n, LOSS + MARGIN, 'players whole, and the margin');
   assert.equal(x.feeSats, 3n * BigInt(x.vsize), 'the fee is the rate times its own size');
   assert.equal(x.outputs.outputs.reduce((a, o) => a + o.value, 0n) + x.feeSats, 997_000n, 'outputs + fee = the escrow');
   const [slices] = escrowSlices({ table, spends: [{ value: 997_000n, outputs: x.outputs.outputs }] }).spends;
@@ -263,6 +267,8 @@ test('the fee comes off the reserves\' part; with no reserves\' part, off each p
     carriers: [carrier(A[0], fedA)], playersFederation: fedA, federations: ROOMY, rate: 3n, panels, fallbackBlocks: clocks.fallbackBlocks });
   assert.ok(y.ok, y.why);
   assert.equal(y.short, true);
+  assert.deepEqual([y.outputs.marginMsat, y.outputs.marginOff], [MARGIN, 'players'], 'no reserves\' share: outputs[] says the players bear the margin');
+  assert.deepEqual(decodeSlashEscrowOutputs(y.bytes).marginOff, 'players', 'in its bytes');
   assert.deepEqual(y.outputs.outputs.map((o) => o.pays), ['player_carrier'], 'no reserves, nothing back');
   assert.equal(y.outputs.outputs[0].value, 300_000n - y.feeSats);
   const cut = escrowSlices({ table: two, spends: [{ value: 300_000n, outputs: y.outputs.outputs }] });
@@ -278,7 +284,7 @@ test('the fee comes off the reserves\' part; with no reserves\' part, off each p
 
 // ---- THE RUN ----
 test('the panels sign one escrow spend byte for byte at the height it names, once a carrier has published a peg-in, and the carrier pays the player', async () => {
-  const { w, escrowAt, on } = await releasedToEscrow({ federationsAt: (h) => (h >= 408 ? ROOMY : FULL), floats: new Map([[`${A[0].hex}:${fedA}`, 50_000n]]) });
+  const { w, escrowAt, on } = await releasedToEscrow({ federationsAt: (h) => (h >= 408 ? ROOMY : FULL) });
   // NO CARRIER YET: nothing is due, whatever the windows
   w.c.tip = 406;
   await w.passAll(); await w.passAll();
@@ -300,25 +306,32 @@ test('the panels sign one escrow spend byte for byte at the height it names, onc
   const sigs = sent.tx.witnesses[0].slice(0, 8).filter((x) => x.length === 64).length;
   assert.equal(sigs, 6, 'exactly t of each panel');
   assert.deepEqual(paysOf(sent).map(([p]) => p), ['player_carrier', 'reserves', 'reserves'], 'the players, then the reserves spread by room at 408: the escrow is spent to the end');
-  // THE CARRIER PAYS THE PLAYER ON: it carries the players' part in A and B's reserves' part, and its client of A already holds e-cash past the slices
+  // THE CARRIER PAYS THE PLAYER ON: it carries the players' part in A and B's reserves' part, and its client of A holds nothing but what it claims (the case #1086 rules on)
   const toCarrier = sent.tx.outputs[1];
   const carried = claimAll(w, A[0], sent.tx);
   assert.deepEqual(carried.map((i) => paysOf(sent)[i - 1][0]), ['player_carrier', 'reserves'], 'the players\' part, and one reserves\' part');
   const res = sent.tx.outputs[carried[1]];
+  assert.equal(await w.clients(A[0], fedA).ecashBalance(), 0n, 'no spare e-cash in A');
   const done = await w.run(A[0]).carry();
   const pay = w.paid.find((x) => x.carrier === A[0].hex && x.list.some((y) => y.key === toHex(refundKeyOf(player.key))));
   assert.ok(pay, `the carrier paid: ${JSON.stringify(done.map((d) => d.why || d.paidTxid))}`);
-  // THE CLAIM IS EXACTLY THE LOSS: THE PLAYER GETS IT WHOLE, AND THE PAYOUT'S MARGIN COMES OFF THE RESERVES' PART THE CARRIER CARRIES (kanban #972, decision #1083, ruling #1085)
-  assert.equal(toCarrier.value * 1000n, LOSS, 'the players\' output is exactly the loss');
-  assert.equal(pay.list.find((y) => y.key === toHex(refundKeyOf(player.key))).msat, LOSS, 'the whole loss, from the escrow');
+  // THE OUTPUT IS THE LOSS PLUS THE MARGIN (RULED 2026-11-03, kanban #1086): THE PLAYER GETS THE LOSS EXACTLY, AND THE CARRIER KEEPS NOTHING
+  assert.equal(toCarrier.value * 1000n, LOSS + MARGIN, 'the players\' output is the loss plus the margin');
+  const got = pay.list.find((y) => y.key === toHex(refundKeyOf(player.key))).msat;
+  console.log(`  ESCROW, B's RESERVES ON THE CARRIER, NO SPARE E-CASH IN A: output ${toCarrier.value * 1000n} msat, player got ${got} msat, fee ${PAYOUT_FEE_MSAT} msat`);
+  assert.equal(got, 300_000_000n, 'the whole loss, 300,000,000 msat, from the escrow');
   assert.equal(pay.list.length, 1, 'nothing else out of the players\' output');
   const toRes = w.paid.find((x) => x.carrier === A[0].hex && x.list.some((y) => y.key === toHex(reserveKey(fedB))));
   assert.ok(toRes, 'the reserves\' part paid on');
-  assert.equal(toRes.list[0].msat, res.value * 1000n - 2n * CARRIER_FEE_MARGIN_MSAT, 'B\'s reserves\' part less both payouts\' margins');
+  assert.equal(toRes.list[0].msat, res.value * 1000n - MARGIN, 'B\'s reserves\' part less its own payout\'s margin only');
+  // WHAT THE FEE LEFT OF THE PLAYERS' OUTPUT'S MARGIN IS OWED TO A'S RESERVE KEY, not kept: the client of A holds exactly that, and the carrier's next reserves' payout there takes it
+  assert.equal(await w.clients(A[0], fedA).ecashBalance(), MARGIN - PAYOUT_FEE_MSAT, 'the unused margin, in the client of A');
+  const st = done.find((d) => d.index === carried[0] - 1 && d.paidTxid);
+  assert.equal(st.marginUnusedMsat, String(MARGIN - PAYOUT_FEE_MSAT), 'measured: the margin less the payout\'s fee, owed on');
 });
 
-test('a carrier with no reserves\' part to take its margin pays the players pro rata less it; one whose client cannot front it in another federation too', async () => {
-  // ONLY THE PLAYERS' PART ON THE PEG-IN: two losses, 2 to 1, no room for reserves ever
+test('the reserves\' share takes the margin even when it goes back to the escrow; with no reserves\' share the players bear it pro rata, and outputs[] says so', async () => {
+  // NO ROOM EVER, BUT MONEY PAST THE PLAYERS IN ESCROW: that is the reserves' share, the margin comes off it, the players are paid whole
   const q = await releasedToEscrow({ federationsAt: () => FULL, losses: [[player, 200_000_000n], [player2, 100_000_000n]] });
   q.on();
   await q.w.passAll();
@@ -327,36 +340,36 @@ test('a carrier with no reserves\' part to take its margin pays the players pro 
   assert.equal(q.w.c.mempool.length, 1);
   q.w.c.mine();
   const s2 = readSpend(q.w, escrowSpendsOf(q.w)[0]);
-  assert.deepEqual(paysOf(s2).map(([p]) => p), ['player_carrier', 'escrow'], 'no reserves\' part');
+  assert.deepEqual(paysOf(s2), [['player_carrier', 300_010n], ['escrow', paysOf(s2)[1][1]]], 'the players\' part and the margin, the reserves\' share back to the escrow');
+  assert.equal(decodeSlashEscrowOutputs(s2.outputsBytes).marginOff, 'reserves');
   assert.deepEqual(claimAll(q.w, A[0], s2.tx), [1]);
   await q.w.run(A[0]).carry();
   const pay = q.w.paid.find((x) => x.carrier === A[0].hex);
-  assert.ok(pay, 'the carrier paid');
   const got = (k) => pay.list.find((y) => y.key === toHex(refundKeyOf(k))).msat;
-  const there = 300_000_000n - CARRIER_FEE_MARGIN_MSAT;
-  assert.equal(got(player.key), (200_000_000n * there) / 300_000_000n, 'the margin pro rata to the loss: 2/3');
-  assert.equal(got(player2.key), (100_000_000n * there) / 300_000_000n, '1/3');
-  const odd = pay.list.filter((y) => y.key === toHex(reserveKey(fedA))).reduce((a, y) => a + y.msat, 0n);
-  assert.equal(got(player.key) + got(player2.key) + odd, there, 'the rounding\'s odd msat to the reserves, nothing more');
-  assert.ok(odd < 2n);
-  // THE SAME SPEND AS ABOVE, B's RESERVES' PART ON THE SAME CARRIER, BUT ITS CLIENT OF A HOLDS ONLY THE CLAIM: it cannot pay the fee whole, so the margin comes pro rata, and B keeps only its own
-  const { w, on } = await releasedToEscrow({ federationsAt: (h) => (h >= 408 ? ROOMY : FULL) });
-  w.c.tip = 406;
-  await w.passAll(); await w.passAll();
-  on();
-  await w.passAll();
-  w.c.tip = 408;
-  await w.passAll(); await w.passAll();
-  assert.equal(w.c.mempool.length, 1);
-  w.c.mine();
-  const sent = readSpend(w, escrowSpendsOf(w)[0]);
-  const carried = claimAll(w, A[0], sent.tx);
-  assert.deepEqual(carried.map((i) => paysOf(sent)[i - 1][0]), ['player_carrier', 'reserves']);
-  await w.run(A[0]).carry();
-  const p1 = w.paid.find((x) => x.carrier === A[0].hex && x.list.some((y) => y.key === toHex(refundKeyOf(player.key))));
-  assert.equal(p1.list[0].msat, LOSS - CARRIER_FEE_MARGIN_MSAT, 'pro rata: one player, the whole margin');
-  const toRes = w.paid.find((x) => x.carrier === A[0].hex && x.list.some((y) => y.key === toHex(reserveKey(fedB))));
-  assert.equal(toRes.list[0].msat, sent.tx.outputs[carried[1]].value * 1000n - CARRIER_FEE_MARGIN_MSAT, 'B\'s reserves\' part less its own margin only');
+  assert.deepEqual([got(player.key), got(player2.key)], [200_000_000n, 100_000_000n], 'both losses whole');
+  // ONLY PLAYERS' MONEY IN ESCROW: the losses are larger than the bond, so the table's escrow holds exactly the players' share and the spend's fee leaves them short
+  const r = await releasedToEscrow({ federationsAt: () => ROOMY, losses: [[player, 2_000_000_000n], [player2, 1_000_000_000n]] });
+  r.on();
+  await r.w.passAll();
+  r.w.c.tip = 414;
+  await r.w.passAll(); await r.w.passAll();
+  assert.equal(r.w.c.mempool.length, 1);
+  r.w.c.mine();
+  const s3 = readSpend(r.w, escrowSpendsOf(r.w)[0]);
+  const named = decodeSlashEscrowOutputs(s3.outputsBytes);
+  assert.deepEqual(named.outputs.map((o) => o.pays), ['player_carrier'], 'no reserves\' part, nothing back');
+  assert.deepEqual([named.marginMsat, named.marginOff], [MARGIN, 'players'], 'outputs[] says the players bear the margin');
+  assert.deepEqual(claimAll(r.w, A[0], s3.tx), [1]);
+  await r.w.run(A[0]).carry();
+  const p3 = r.w.paid.find((x) => x.carrier === A[0].hex);
+  assert.ok(p3, 'the carrier paid');
+  const at = (k) => p3.list.find((y) => y.key === toHex(refundKeyOf(k))).msat;
+  const there = named.outputs[0].value * 1000n - MARGIN;
+  const [x1, x2] = escrowSlices({ table: decodeSlashPayoutTable(fromHex(r.w.run(B[0]).served(r.w.start.hex).release.table)), spends: [{ ...named, value: s3.tx.outputs.reduce((a, o) => a + o.value, 0n) }] }).spends[0][0].slices.map((y) => y.msat);
+  assert.equal(at(player.key), (x1 * there) / (x1 + x2), 'the margin pro rata to the loss: 2/3');
+  assert.equal(at(player2.key), (x2 * there) / (x1 + x2), '1/3');
+  assert.ok(x1 - at(player.key) - (MARGIN * 2n) / 3n <= 1n && x2 - at(player2.key) - MARGIN / 3n <= 1n, `each short by its part of the margin: ${x1 - at(player.key)} and ${x2 - at(player2.key)}`);
+  console.log(`  NO RESERVES' SHARE: slices ${x1} and ${x2} msat, paid ${at(player.key)} and ${at(player2.key)} msat (margin ${MARGIN} pro rata)`);
 });
 
 test('a spend is due on room at the height it names, not before, and the players\' part on a peg-in alone', async () => {
@@ -386,7 +399,7 @@ test('a spend is due on room at the height it names, not before, and the players
   q.w.c.mine();
   const s2 = readSpend(q.w, escrowSpendsOf(q.w)[0]);
   assert.deepEqual(paysOf(s2).map(([p]) => p), ['player_carrier', 'escrow']);
-  assert.equal(paysOf(s2)[0][1], 300_000n);
+  assert.equal(paysOf(s2)[0][1] * 1000n, LOSS + MARGIN);
 });
 
 test('with the panels silent, the census key spends the escrow after slash_fallback_blocks from its confirmation, and not a block before', async () => {
@@ -438,10 +451,11 @@ test('a carrier whose own table differed pays on for the table that confirmed, a
   const went = decodeSlashPayoutTable(fromHex(w.run(B[0]).served(w.start.hex).release.table));
   assert.notEqual(toHex(slashPayoutTableId(own)), toHex(slashPayoutTableId(went)), 'two readings, two tables');
   const players = carrierSlices(went)[0];
-  // A[0] CARRIES THE PLAYERS' PART AND BOTH RESERVES' PARTS: the players' output is exactly the loss, its margin comes off A's reserves' part
+  // A[0] CARRIES THE PLAYERS' PART AND BOTH RESERVES' PARTS: the players' output is the loss plus the margin the table names, out of the reserves' share
   const carried = claimAll(w, A[0], w.c.mined[0].tx);
   assert.deepEqual(carried.map((i) => went.outputs[i - 1].pays), ['player_carrier', 'reserves', 'reserves']);
-  assert.equal(players.value * 1000n, LOSS);
+  assert.deepEqual([went.marginMsat, went.marginOff], [MARGIN, 'reserves'], 'the table names the margin');
+  assert.equal(players.value * 1000n, LOSS + MARGIN);
   await w.run(A[0]).carry();
   const c = await w.run(A[0]).confirmedOf(w.start.hex);
   assert.equal(c.tableId, toHex(slashPayoutTableId(went)), 'it reads the confirmed table');
@@ -450,9 +464,11 @@ test('a carrier whose own table differed pays on for the table that confirmed, a
   assert.equal(pay.list.find((y) => y.key === toHex(refundKeyOf(player.key))).msat, LOSS, 'the confirmed table\'s slice, whole');
   assert.equal(pay.list.length, 1);
   const resOf = (fid) => w.paid.find((x) => x.carrier === A[0].hex && x.list.some((y) => y.key === toHex(reserveKey(fid)))).list[0].msat;
-  const values = went.outputs.filter((o) => o.pays === 'reserves').map((o) => o.value * 1000n);
-  const atA = values.findIndex((v) => v - 2n * CARRIER_FEE_MARGIN_MSAT === resOf(fedA)), atB = values.findIndex((v) => v - CARRIER_FEE_MARGIN_MSAT === resOf(fedB));
-  assert.ok(atA >= 0 && atB >= 0 && atA !== atB, `A's reserves' part less both payouts' margins, B's less its own: ${values} -> ${resOf(fedA)}, ${resOf(fedB)}`);
+  const values = went.outputs.filter((o) => o.pays === 'reserves').map((o) => o.value * 1000n).sort();
+  // THE UNUSED MARGIN OF THE PLAYERS' OUTPUT (the margin less the payout's fee) GOES ON TO A'S RESERVE KEY WITH THE CARRIER'S RESERVES' PART THERE; B's part pays its own margin only
+  const back = [resOf(fedA) - (MARGIN - PAYOUT_FEE_MSAT) + MARGIN, resOf(fedB) + MARGIN].sort();
+  assert.deepEqual(back, values, `A's reserves' part less its margin plus what the players' payout left of its margin, B's less its own margin: ${values} -> ${resOf(fedA)}, ${resOf(fedB)}`);
+  console.log(`  RELEASE: unused margin ${MARGIN - PAYOUT_FEE_MSAT} msat reached A's reserve key with A's reserves' part`);
   // ONCE: a second pass pays nothing again
   const before = w.paid.length;
   await w.run(A[0]).carry();
