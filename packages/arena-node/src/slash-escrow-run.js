@@ -236,7 +236,8 @@ export function createSlashEscrow({ secret, me, clocks, db, tweakPoint, tipHeigh
   const published = new Set();
   async function publish(ctx, cur) {
     const view = (await federationsAt(cur.confHeight)) || [];
-    const fids = [...new Set([ctx.playersFed, ...view.filter((f) => f && f.status === 'OPEN' && f.reserveKey).map((f) => String(f.federation).toLowerCase())])];
+    // a federation whose reserve key this seat has not read yet (reservePending, kanban #1129) gets its peg-in too: the spend waits for the key, not for a carrier after it
+    const fids = [...new Set([ctx.playersFed, ...view.filter((f) => f && f.status === 'OPEN' && (f.reserveKey || f.reservePending)).map((f) => String(f.federation).toLowerCase())])];
     for (const fid of fids) {
       const name = `${cur.name}:${fid}`;
       if (published.has(name)) continue;
@@ -258,9 +259,15 @@ export function createSlashEscrow({ secret, me, clocks, db, tweakPoint, tipHeigh
   // ---- BUILDING, AT A NAMED HEIGHT ----
   /** This seat's escrow spend by `path` at `loadHeight`, from its own records at that height and the peg-ins it holds. */
   async function buildAt(ctx, w, path, loadHeight) {
+    const federations = (await federationsAt(loadHeight)) || [];
+    // A RESERVE KEY THIS SEAT HAS NOT READ YET IS NOT "NO RESERVE KEY" (kanban #1129, as the release's table, slash-release-run.js build): a federation whose guardian
+    // seats stand has a key; built without it, this seat's outputs[] place no reserves' part there and no signer that read the key builds those bytes. It waits, by name
+    const gone = new Set((retired || []).map((x) => String(x).toLowerCase()));
+    const unread = federations.filter((f) => f && f.status === 'OPEN' && !f.reserveKey && f.reservePending && !gone.has(String(f.federation).toLowerCase()) && BigInt(f.exposureCapSats || 0) > 0n);
+    if (unread.length) return { ok: false, why: `the reserve key of federation ${unread.map((f) => String(f.federation).slice(0, 16)).join(', ')} is not read here yet: no escrow spend is built without its reserves' part`, wait: true };
     const carriers = await carriersFor(ctx, path, w.cur.name);
     return slashEscrowSpend({ path, escrow: { ...outpointOf(w.cur.name), value: w.cur.value }, output: ctx.output, table: ctx.table, tableId: fromHex(ctx.tableId), spends: spendsOf(w.rows),
-      loadHeight, carriers, playersFederation: ctx.playersFed, federations: (await federationsAt(loadHeight)) || [], retired, rate: ctx.rate, panels: ctx.panels, fallbackBlocks: clocks.fallbackBlocks });
+      loadHeight, carriers, playersFederation: ctx.playersFed, federations, retired, rate: ctx.rate, panels: ctx.panels, fallbackBlocks: clocks.fallbackBlocks });
   }
   const propOf = (inName, oid) => db.prepare('SELECT * FROM slash_escrow_props WHERE escrow = ? AND outputs_id = ?').get(inName, oid) || null;
   function keepProp(ctx, w, path, b, loadHeight, signature = null) {
@@ -414,6 +421,8 @@ export function createSlashEscrow({ secret, me, clocks, db, tweakPoint, tipHeigh
         done.push({ start: ctx.start, path: 'escrow-fallback', escrow: w.cur.name, ...r });
         if (r.ok) log(`[slash] escrow fallback of ${ctx.start.slice(0, 16)} sent: ${r.txid}`);
       }
+      // A BUILD THAT WAITED (a reserve key not read yet, kanban #1129) has not checked this window: the next pass builds its own again, at the same height
+      if (done.some((r) => r.escrow === w.cur.name && r.wait)) checked.delete(w.cur.name);
     }
     return done;
   }

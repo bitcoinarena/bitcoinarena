@@ -4380,7 +4380,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const rec = typeof fedRecords.recordAt === 'function' ? fedRecords.recordAt(f.federation, height) : null;
       if (!rec) continue;
       let k = null; try { k = await reserveKeyFor(f.federation); } catch { k = null; }
-      out.push({ federation: f.federation, status: String(rec.__status || recordStatusName(rec)), reserveKey: k ? toHex(k) : null, reserveSats: String(rec.reserveSats || 0), exposureCapSats: String(rec.exposureCapSats || 0) });
+      out.push({ federation: f.federation, status: String(rec.__status || recordStatusName(rec)), reserveKey: k ? toHex(k) : null, reserveSats: String(rec.reserveSats || 0), exposureCapSats: String(rec.exposureCapSats || 0),
+        reservePending: !k && reserveKeyStands(f.federation) });
     }
     return out;
   };
