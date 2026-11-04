@@ -16,12 +16,15 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, renameSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
 import { checkAsset } from './release-verify.js';
 import { updateNode } from './update.js';
 import { nodeOf } from './node-services.js';
 import { QUIET } from '../../arena-node/src/log-level.js';
 import { within, mbOf, progressBar } from './update-progress.js';
+import { moveAgentsInteractive } from './launchd-interactive.js';
+
+const run = (cmd, args) => new Promise((ok) => execFile(cmd, args, { timeout: 60000 }, (e, out, err) => ok({ ok: !e, code: e ? e.code : 0, out: String(out || ''), err: String(err || '') })));
 
 /** The release files' name (kanban #635, 2026-10-25: "Es muss bitcoin-arena-node heissen"); before 2026.1.8, arena-node. */
 export const ASSET_PREFIX = 'bitcoin-arena-node';
@@ -165,8 +168,13 @@ async function updateOnce({ home, latest, fetcher = fetch, platform = process.pl
  * starts it again from the new release. `sleep` and `exit` injectable for the tests.
  */
 export async function runAutoUpdate({ home, latest, everyMs = 30 * 60_000, firstMs = 10 * 60_000, log = (l) => console.log(`${new Date().toISOString()} ${l}`),
-  sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), exit = (code) => process.exit(code), once = checkOnce, rounds = Infinity, trace = QUIET }) {
+  sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), exit = (code) => process.exit(code), once = checkOnce, rounds = Infinity, trace = QUIET,
+  interactive = (o) => moveAgentsInteractive({ ...o, sh: run }) }) {
   log(`auto update: on for ${home}; first check in ${Math.round(firstMs / 60000)} min, then every ${Math.round(everyMs / 60000)} min`);
+  // THE AGENTS AN OLDER UPDATER WROTE (kanban #1128): this service starts from the new release after every update, so the new release moves
+  // this node's agents to Interactive itself, once (launchd-interactive.js; macOS only) - not at the update after
+  try { const m = await interactive({ home, log }); if (m && m.set) log(`#1128 agents set Interactive: ${m.set.join(', ') || 'none'}; reloaded: ${m.reloaded.join(', ') || 'none'}${m.failed.length ? `; failed: ${m.failed.map((f) => `${f.id} (${f.why})`).join(', ')}` : ''}`); }
+  catch (e) { log(`#1128 the agents were not moved to Interactive: ${e.message}`); }
   await sleep(firstMs);
   for (let i = 0; i < rounds; i++) {
     let r;
