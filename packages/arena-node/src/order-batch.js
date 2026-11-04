@@ -505,7 +505,9 @@ export class OrderBook {
   }
 
   /** Before a settlement: every certified batch another seat holds and this one does not, imported on its certificate - read again now. */
-  async carry(roundIdBytes) { return this.sync(roundIdBytes, { force: true }); }
+  // THE FULL PASS READS EVERY SEAT'S WHOLE LIST AGAIN (order-batch.test, 11-04): the per-seat cursor (#740) skips a batch once it was
+  // held whole here, so an order's handout lost after that was never looked for again; carry() is the explicit full pass, not the tick
+  async carry(roundIdBytes) { this.#after.delete(toHex(roundIdBytes)); return this.sync(roundIdBytes, { force: true }); }
 
   /**
    * THE ROUND'S CERTIFIED BATCHES FROM THE OTHER SEATS, ONCE PER ROUND (kanban #740, measured 2026-10-28 00:2xZ, Up/Down round 5d4cbd41,
