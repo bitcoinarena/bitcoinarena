@@ -1591,6 +1591,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const reservePeerPass = async ({ guardians = reserveGuardians(), keyFor = reserveKeyFor, portOf = (f) => portOfFederation(fromHex(f)), now = () => Date.now() } = {}) => {
     const g = guardians;
     const seats = [...new Set(Object.values(g).flatMap((x) => x.peers))];
+    // EACH SEAT'S LIST READ ONCE A PASS, NOT ONCE PER FEDERATION (kanban #1122, measured 2026-11-04 on an installer node: 67 GET
+    // /reserves?all=1 a minute to the 22 seats of one host, ~200 kB each - the same answer, every federation in it, read again for each
+    // federation the node holds a key of; with a new TLS handshake each, its doors went unanswered for 5-15 s)
+    const listsOf = new Map();   // seat -> its /reserves?all=1 answer (a promise; null when it did not answer)
+    const listOf = (u) => { if (!listsOf.has(u)) listsOf.set(u, fetch(`${u}/reserves?all=1`, { signal: AbortSignal.timeout(8000) }).then((r) => r.json()).catch(() => null)); return listsOf.get(u); };
     let checks = 0, kept = 0, later = 0;
     for (const fedHex of Object.keys(g)) {
       const key = await keyFor(fedHex);
@@ -1599,7 +1604,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const seen = new Set();
       for (const u of seats) {
         let listed = [];
-        try { const r = await (await fetch(`${u}/reserves?all=1`, { signal: AbortSignal.timeout(8000) })).json();
+        try { const r = await listOf(u); if (!r) continue;
           const f = (r.federations || []).find((x) => x.federationId === fedHex); listed = f && Array.isArray(f.paidIn) ? f.paidIn : []; }
         catch { continue; }
         for (const row of listed) {
