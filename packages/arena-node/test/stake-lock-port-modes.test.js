@@ -172,3 +172,22 @@ test('gateways: every field of a live and a not-live gateway parsed as the tool 
   const o = await stakeLockPort({ serve: false, bin: odd.bin, dataDir: '/d' }).gatewaysRead();
   assert.deepEqual([o.height, o.gateways[0].live, o.gateways[0].sendFeeDefault, o.gateways[0].expirationDeltaDefault], [null, false, null, null]);
 });
+
+test('#1093: pegin-claim names the deposit by --outpoint and --sats and reads claimed_msat; a walletv2 answer without it (an old tool) is refused; the legacy wallet reads the balance rise', async () => {
+  const OP = `${'ab'.repeat(32)}:1`;
+  const t = fakeTool({ answer: { 'pegin-claim': { mode: 'pegin-claim', kind: 'walletv2', outpoint: OP, value_sat: 299594, pegin_fee_sat: 416, claim_fees_msat: 16, claimed_msat: 299177984,
+    balance_before_msat: 0, balance_after_msat: 999761920 } } });
+  const c = await stakeLockPort({ serve: false, bin: t.bin, dataDir: '/shared' }).peginClaim('bcrt1qaddr', { outpoint: OP, sats: 299594n });
+  assert.equal(c.claimedMsat, 299177984n, 'what the federation credited THAT deposit, not the balance rise (999,761,920: the other escrow\'s deposit landed too)');
+  assert.deepEqual(t.argv(), [['--mode', 'pegin-claim', '--data-dir', '/shared', '--address', 'bcrt1qaddr', '--timeout-s', '840', '--outpoint', OP, '--sats', '299594']]);
+  const old = fakeTool({ answer: { 'pegin-claim': { mode: 'pegin-claim', kind: 'walletv2', balance_before_msat: 0, balance_after_msat: 700583936 } } });
+  await assert.rejects(stakeLockPort({ serve: false, bin: old.bin, dataDir: '/shared' }).peginClaim('bcrt1qaddr', { outpoint: OP, sats: 299594n }), /by the balance, not by its outpoint/);
+  const other = fakeTool({ answer: { 'pegin-claim': { mode: 'pegin-claim', kind: 'walletv2', outpoint: `${'cd'.repeat(32)}:1`, claimed_msat: 700583936 } } });
+  await assert.rejects(stakeLockPort({ serve: false, bin: other.bin, dataDir: '/shared' }).peginClaim('bcrt1qaddr', { outpoint: OP }), /claimed .* not /);
+  const legacy = fakeTool({ answer: { 'pegin-claim': { mode: 'pegin-claim', kind: 'wallet', balance_before_msat: 1000, balance_after_msat: 51000 } } });
+  assert.equal((await stakeLockPort({ serve: false, bin: legacy.bin, dataDir: '/shared' }).peginClaim('tb1qaddr', { outpoint: OP, sats: 50n })).claimedMsat, 50000n, 'one address per deposit there: its rise is its claim');
+  const plain = fakeTool({ answer: { 'pegin-claim': { mode: 'pegin-claim', kind: 'wallet', balance_before_msat: 0, balance_after_msat: 7000 } } });
+  const port = stakeLockPort({ serve: false, bin: plain.bin, dataDir: '/shared' });
+  assert.equal((await port.peginClaim('tb1qaddr', 30)).claimedMsat, 7000n, 'the old call, a wait in seconds, still works');
+  assert.deepEqual(plain.argv(), [['--mode', 'pegin-claim', '--data-dir', '/shared', '--address', 'tb1qaddr', '--timeout-s', '30']]);
+});
