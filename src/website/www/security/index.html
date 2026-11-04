@@ -73,7 +73,7 @@
   @media (max-width: 640px) { .diagram svg.wide { display: none; } .diagram svg.tall { display: block; } }
   .diagram text { fill: var(--text); font: 600 13px system-ui; } .diagram text.d { fill: var(--dim); font-weight: 400; font-size: 12px; }
   ol.steps { padding-left: 22px; } ol.steps li { margin-bottom: 10px; }
-  details.tech { margin: 14px 0 6px; color: var(--text); font-size: 15px; } details.tech > summary { font-weight: 600; color: var(--btc); padding: 6px 0; }
+  details.tech > summary { color: var(--btc); }
   .diagram svg.techsvg { max-width: 480px; margin: 0 auto; }
   .accs { margin: 12px 0 8px; }
   details.acc { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin: 8px 0; padding: 0 14px; color: var(--text); font-size: 15px; }
@@ -81,6 +81,8 @@
   details.acc > summary::-webkit-details-marker { display: none; }
   details.acc > summary::after { content: '+'; color: var(--btc); font-weight: 700; } details.acc[open] > summary::after { content: '\2212'; }
   details.acc > p { margin: 0 0 12px; color: var(--dim); }
+  details.acc.section { margin-top: 22px; } details.acc.section > summary { font-size: 17px; }
+  details.acc.section > .inner { padding-bottom: 6px; } details.acc.section > .inner > p { color: var(--text); }
 </style>
 </head>
 <body>
@@ -176,7 +178,8 @@
     <details class="acc"><summary>The panels do not decide in time</summary><p>For example, too many of their nodes are offline, so fewer than 5 of 7 sign. Then, after about two days, a <b>backup group</b> may act instead: the holders of the network's <i>census key</i> (explained below). Each of them checks the same proof of cheating itself and signs only if it holds. They pay out exactly as the panels would have: the players' loss first, the rest of the bond to the reserves.</p></details>
   </div>
   <p>So a slash with a real proof cannot get stuck, and a slash with a false proof cannot get through.</p>
-  <h3 style="margin-top:22px">How can other nodes reach a node's bond?</h3>
+  <details class="acc section"><summary>How can other nodes reach a node's bond?</summary>
+  <div class="inner">
   <p>A bond is bitcoin locked on the chain like in a box with several <b>doors</b>. Each door has its own lock and opens only with the keys written on it - Bitcoin checks this, nobody else. In Bitcoin's own words a door is called a <i>leaf</i>: one of the ways an output may be spent.</p>
   <div class="diagram" role="img" aria-label="The bond has two doors: the owner's door after the bond's maturity date, and the slash door that needs both the node's own advance signature and the census key and leads only into the hold. The hold has three doors: the two panels, the owner after a day, the backup group after two days.">
     <svg class="wide" viewBox="0 0 700 300" aria-hidden="true">
@@ -210,8 +213,10 @@
   <div class="accs">
     <details class="acc"><summary>Inside the hold</summary><p>The other nodes again need a door of their own: the two panels with a valid proof (door A), or the backup group after two days (door C). Door B always stays open for the owner, so a bond nobody can prove anything against always comes back.</p></details>
   </div>
+  </div></details>
 
-  <h3 style="margin-top:22px">What is the census key?</h3>
+  <details class="acc section"><summary>What is the census key?</summary>
+  <div class="inner">
   <div class="diagram" role="img" aria-label="Bonded nodes each hold pieces of one key, more pieces for a bigger bond; the key signs only when two thirds of the pieces sign together; no node holds the whole key">
     <svg class="wide" viewBox="0 0 640 210" aria-hidden="true" style="max-width:640px;margin:0 auto">
       <defs><marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8d99a8"/></marker></defs>
@@ -245,9 +250,10 @@
   <div class="accs">
     <details class="acc"><summary>What the census key is</summary><p>The <b>census key</b> is one key that belongs to all bonded nodes of the network together. It is cut into pieces, and every node gets pieces in proportion to its bond. The key can sign only when nodes holding two thirds of the pieces sign together, so no single node - and no small group - can use it alone. A new census key is made at regular intervals, so the pieces follow the bonds as they change. It is used for just two things: to move a bond into its hold once a proof of cheating is checked, and as the backup group above.</p></details>
   </div>
+  </div></details>
 
-
-  <details class="tech"><summary>Technical details: how a slash runs on the chain</summary>
+  <details class="acc section tech"><summary>Technical details: how a slash runs on the chain</summary>
+  <div class="inner">
   <div class="diagram" role="img" aria-label="The bond output, the start transaction, the hold output with its three ways out, and the release or fallback transaction that pays the table">
     <svg class="techsvg" viewBox="0 0 360 700" aria-hidden="true">
       <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8d99a8"/></marker></defs>
@@ -294,7 +300,7 @@
     <details class="acc"><summary>The payout</summary><p>A release or a fallback pays a table that every signer computes the same way from public data: each harmed player's real loss once - paid into a safe federation by a carrier and on to the player's key - the filer's fee back at the start's own fee rate, and the rest to the protocol reserves. Its OP_RETURN names the proof's hash, the slash height and the table's hash, so anyone can check it against the proof.</p></details>
     <details class="acc"><summary>Safety rules</summary><p>Every panel member and holder builds the transaction from the chain itself and signs only its own bytes. A panel member who signs a release with no valid proof gives a proof against itself. The times are mainnet's; testnet uses shorter ones.</p></details>
   </div>
-  </details>
+  </div></details>
 
   <h2>The worst cases</h2>
 
