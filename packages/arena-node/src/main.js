@@ -67,7 +67,7 @@ import { TEST_DONATION_SET_KEYS_REGTEST } from '../../arena-protocol/src/test-do
 import { installFetchRoutes } from './fetch-routes.js';
 import { serviceLog } from './log-level.js';
 // THE SEAT'S OWN FETCHES ROUTED AND CAPPED, before anything is asked of a peer (fetch-routes.js)
-{ const f = installFetchRoutes(process.env); console.log(`[fetch] ${f.routes} route(s), at most ${f.maxPerOrigin} request(s) in flight per origin, ${f.timeoutMs} ms timeout`); }
+{ const f = installFetchRoutes(process.env); console.log(`[fetch] ${f.routes} route(s), at most ${f.maxPerOrigin} request(s) in flight per origin, ${f.timeoutMs} ms timeout, idle connections kept ${f.keepAliveMs} ms`); }
 // HOW MUCH THE SEAT LOGS (kanban #693, 2026-10-26: "add a --debug and --verbose flag that shows more info on what its doing, what is going
 // wrong etc"): ARENA_LOG_LEVEL - arena.conf log_level becomes it (run.js) - read once, here. info: as always. verbose: its failed requests
 // and the settings that shaped its start; debug: every request it makes and answers, and every program it runs with its exit code
