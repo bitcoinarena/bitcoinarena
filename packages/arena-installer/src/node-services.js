@@ -419,11 +419,18 @@ const tailOf = (file, bytes = 262144) => {
 export async function reviveDeadTunnel({ home, platform = process.platform, env = process.env, sh = run, readTail = tailOf } = {}) {
   const node = nodeOf(home);
   if (!(node.state.reach && node.state.reach.mode === 'quick')) return { dead: false };
-  let text = '';
-  try { text = readTail(join(home, 'tunnel.log')); } catch { return { dead: false }; }
-  if (!quickTunnelDead(text)) return { dead: false };
   const svcs = installedServices({ home, platform, env });
   const tunnel = svcs.find((s) => s.id === 'tunnel');
+  // ON LINUX THE TUNNEL LOGS TO THE JOURNAL, NOT tunnel.log (measured 11-04 in the 2026.1.9.25 install test: no tunnel.log in either
+  // test home, so the revive never fired there) - read as reach.js quickTunnelUrl reads its name
+  let text = '';
+  if (platform === 'linux') {
+    const unit = tunnel && tunnel.name ? tunnel.name : `${unitName('tunnel')}`;
+    try { text = (await sh('journalctl', ['--user', '-u', unit, '-o', 'cat', '--no-pager', '-n', '300'])).out || ''; } catch { return { dead: false }; }
+  } else {
+    try { text = readTail(join(home, 'tunnel.log')); } catch { return { dead: false }; }
+  }
+  if (!quickTunnelDead(text)) return { dead: false };
   if (!tunnel) return { dead: true, restarted: false, why: 'this node has no tunnel service' };
   const r = await act('restart', tunnel, { platform, sh, home });
   return { dead: true, restarted: !!r.ok, why: r.ok ? null : r.why || 'the restart failed' };
