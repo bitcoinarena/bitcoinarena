@@ -29,7 +29,8 @@ test('federation B on testnet4 is known too: a deposit may go to the one with le
 test('B\'s successor 4dc88be7 is known (kanban #326 step 5): a CRITICAL B\'s funds move there by themselves', () => {
   const B2 = '4dc88be70830d3619fd8742eaf639ab297774850cc68a203aad5b10a21e1fe98';
   assert.equal(federationIsKnown(B2), true);
-  assert.deepEqual(knownFederation(B2), { name: 'Arena testnet4 B2', network: 'testnet4', nominal: 7, threshold: 5 });
+  // B takes no new deposits and opens no new rounds (kanban #807): its money and rounds stay where they are
+  assert.deepEqual(knownFederation(B2), { name: 'Arena testnet4 B2', network: 'testnet4', nominal: 7, threshold: 5, noNewDeposits: true, noNewRounds: true });
 });
 
 test('anything else is not known', () => {

@@ -27,7 +27,7 @@ test('assignment: the same for every provider, at most 2 per node, the top by ti
   const ps = [prov(1), prov(2), prov(3), prov(4, { freeSats: 99999 })];
   const a = assignLiquidity({ needs: [N], claims: ps });
   assert.equal(a[0].open.length, 2, 'two open to a new node');
-  const ranked = ps.filter((c) => BigInt(c.freeSats) >= 100000n).sort((x, y) => (liquidityTicket(N.node, x.node) < liquidityTicket(N.node, y.node) ? -1 : 1)).map((c) => c.node);
+  const ranked = ps.filter((c) => BigInt(c.freeSats) >= 100000n).sort((x, y) => (liquidityTicket(N.node, x.node, Date.now()) < liquidityTicket(N.node, y.node, Date.now()) ? -1 : 1)).map((c) => c.node);
   assert.deepEqual(a[0].open, ranked.slice(0, 2), 'the two lowest tickets; the provider short of L is no candidate');
   assert.deepEqual(assignLiquidity({ needs: [N], claims: [...ps].reverse() }), a, 'the order the claims arrive in does not matter');
   // one opened: only one more
