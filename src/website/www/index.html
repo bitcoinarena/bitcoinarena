@@ -46,7 +46,11 @@
   nav .play { display: inline-flex; align-items: center; gap: 8px; padding: 9px 15px; border-radius: 11px; background: linear-gradient(135deg, var(--btc), #ffb347); color: #1a0f00; font: 600 15px/1 Inter; text-decoration: none; white-space: nowrap; }
   /* PROPOSALS AND DOCS STAY IN THE MENU ON A PHONE, beside Play (2026-10-17: "Proposals must be visible from the
      top menu along with Play and Docs currently it's hidden far below") - the section links go, those two stay */
-  @media (max-width: 860px) { nav .links a:not(.keep) { display: none; } nav .links { gap: 16px; } nav .wrap { gap: 16px; } }
+  /* NEVER TWO LINES (kanban #1118, 2026-11-04: the bar wrapped at an iPad's ~1000 px in Safari, whose type is wider than Chrome's): a link keeps one line, and the
+     section links give way well before the bar is full; on a phone Proposals goes too, so App stays inside the screen */
+  nav .links a, nav .play, .brand { white-space: nowrap; }
+  @media (max-width: 1140px) { nav .links a:not(.keep) { display: none; } nav .links { gap: 18px; } nav .wrap { gap: 18px; } }
+  @media (max-width: 480px) { nav .links a[href*="proposals"] { display: none; } }
   @media (max-width: 480px) { nav .play .long { display: none; } nav .wrap { gap: 12px; } nav .links { gap: 12px; font-size: 14px; } .brand { font-size: 16px; } .brand i { width: 26px; height: 26px; } }
   @media (max-width: 370px) { .brand span.t { display: none; } }
 
@@ -392,7 +396,6 @@
     <a class="card reveal" href="https://docs.bitcoinarena.io/#market"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#4fd1ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></div><h3>Make a market</h3><p>Pick a question and its outcomes, and name who signs the result. Paying out the winners is built in.</p><span>Build a market →</span></a>
     <a class="card reveal" href="https://docs.bitcoinarena.io/#run"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#4fd1ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg></div><h3>Run a node</h3><p>Post a bond, take a seat, host games, sign results and earn a share of the fees. Manage it from the owner area.</p><span>Run a node →</span></a>
   </div>
-  <a class="more reveal" href="https://docs.bitcoinarena.io/#polymarket">Trading bots: a Polymarket-compatible API on every node. Change the base URL, keep the bot →</a>
 </div></section>
 
 <section id="download" style="padding-top:0"><div class="wrap">
