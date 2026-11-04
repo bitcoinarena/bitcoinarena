@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { checkAsset } from './release-verify.js';
-import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL, windowsLauncher, removeProgram, unitName, waitPortLine } from './service.js';
+import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL, interactivePlist, windowsLauncher, removeProgram, unitName, waitPortLine } from './service.js';
 import { adhocSign } from './tor.js';
 import { INSTANCE, PORT_OFFSET } from './instance.js';
 import { envToConfValues, formatConf, renameKeys, renameValues, setInConf } from '../../arena-node/src/arena-conf.js';
@@ -544,7 +544,9 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
       : svc.bridgeFor && f.endsWith(BRIDGE_UNIT) ? svc.bridgeFor(newRelease, state)
         : staleHomesIn(oldTexts.get(f)).reduce((t, h) => t.replace(new RegExp(`${h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\\\/]releases[\\\\/](?:bitcoin-)?arena-node-[^\\\\/"'\\s<>]+`, 'g'), newRelease).split(h).join(home),
           oldersIn(oldTexts.get(f)).reduce((t, o) => t.split(o).join(newRelease), oldTexts.get(f).split(from).join(newRelease)));
-    const text = f === lndFile ? lnd.swap(moved) : moved;
+    // an agent an older installer wrote runs throttled at priority 20 (kanban #1122): it moves as Interactive
+    const swapped = f === lndFile ? lnd.swap(moved) : moved;
+    const text = f.endsWith('.plist') ? interactivePlist(swapped) : swapped;
     // the gateway of an older install gets its own metrics port (gateway.js: by itself it took the liquidity provider's)
     writeFileSync(f, /gateway/.test(f.split(/[\\/]/).pop()) ? gatewayMetricsOwn(text) : text);
   }
