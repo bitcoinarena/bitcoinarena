@@ -339,6 +339,25 @@ test('the panels sign one escrow spend byte for byte at the height it names, onc
     `the carrier's door lists the escrow carry under its start: ${JSON.stringify(listed).slice(0, 300)}`);
 });
 
+test('#1129: a signer that has not read a standing federation\'s reserve key builds and signs no escrow spend without its reserves\' part, and the full one once it has', async () => {
+  let known = false;
+  const view = (h) => (h >= 408 ? ROOMY : FULL).map((f) => (f.federation === fedB && !known ? { ...f, reserveKey: null, reservePending: true } : f));
+  const { w, on } = await releasedToEscrow({ federationsAt: view });
+  on();
+  await w.passAll();
+  w.c.tip = 408;
+  const said = [...(await w.passAll()), ...(await w.passAll())];
+  assert.equal(w.c.mempool.length, 0, 'no escrow spend while fedB\'s key is unread');
+  assert.ok([...A, ...B].every((p) => !(w.run(p).served(w.start.hex).escrow || { proposals: [] }).proposals.length), 'no member keeps or signs outputs[]');
+  assert.ok(said.some((r) => new RegExp(`reserve key of federation ${fedB.slice(0, 16)} is not read here yet`).test(r.why || '')), `the wait names the federation: ${JSON.stringify(said.map((r) => r.why).filter(Boolean).slice(0, 4))}`);
+  known = true;
+  await w.passAll(); await w.passAll();
+  assert.equal(w.c.mempool.length, 1, 'once the key is read, one escrow spend goes out');
+  w.c.mine();
+  const sent = readSpend(w, escrowSpendsOf(w)[0]);
+  assert.deepEqual(paysOf(sent).map(([p]) => p), ['player_carrier', 'reserves', 'reserves'], 'with a reserves\' part in each federation');
+});
+
 test('#1093: the players\' federation takes its peg-in fee off the players\' output: the margin pays it, the player gets the loss at face, and what it left goes to the reserve key', async () => {
   const { w, on } = await releasedToEscrow({ federationsAt: (h) => (h >= 408 ? ROOMY : FULL) });
   w.c.tip = 406;
