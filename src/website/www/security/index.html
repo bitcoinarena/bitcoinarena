@@ -167,9 +167,42 @@
   <p>Two things can stop the normal path, and each has its own way out:</p>
   <ul>
     <li><b>There is no valid proof of cheating.</b> Then the panels do not sign, and nobody else will either. The bond simply stays in the hold until its owner takes it back with the owner key - the 24 words. That is possible a day later at the earliest, and never before the bond's maturity date. The owner loses nothing.</li>
-    <li><b>The panels do not decide in time.</b> For example, too many of their nodes are offline, so fewer than 5 of 7 sign. Then, after about two days, a <b>backup group</b> may act instead: the holders of the network's <i>census key</i>, a second group of bonded nodes that changes over time. Each of them checks the same proof of cheating itself and signs only if it holds. They pay out exactly as the panels would have: the players' loss first, the rest to the reserves.</li>
+    <li><b>The panels do not decide in time.</b> For example, too many of their nodes are offline, so fewer than 5 of 7 sign. Then, after about two days, a <b>backup group</b> may act instead: the holders of the network's <i>census key</i> (explained just below). Each of them checks the same proof of cheating itself and signs only if it holds. They pay out exactly as the panels would have: the players' loss first, the rest of the bond to the reserves.</li>
   </ul>
   <p>So a slash with a real proof cannot get stuck, and a slash with a false proof cannot get through.</p>
+  <h3 style="margin-top:22px">What is the census key?</h3>
+  <div class="diagram" role="img" aria-label="Bonded nodes each hold pieces of one key, more pieces for a bigger bond; the key signs only when two thirds of the pieces sign together; no node holds the whole key">
+    <svg class="wide" viewBox="0 0 640 210" aria-hidden="true" style="max-width:640px;margin:0 auto">
+      <defs><marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8d99a8"/></marker></defs>
+      <g><circle class="f" cx="50" cy="50" r="26"/><text x="50" y="55" text-anchor="middle">●●●</text><text class="d" x="50" y="96" text-anchor="middle">big bond</text></g>
+      <g><circle class="f" cx="140" cy="50" r="26"/><text x="140" y="55" text-anchor="middle">●●</text><text class="d" x="140" y="96" text-anchor="middle">medium</text></g>
+      <g><circle class="f" cx="230" cy="50" r="26"/><text x="230" y="55" text-anchor="middle">●</text><text class="d" x="230" y="96" text-anchor="middle">small</text></g>
+      <g><circle class="f" cx="50" cy="150" r="26"/><text x="50" y="155" text-anchor="middle">●●</text></g>
+      <g><circle class="f" cx="140" cy="150" r="26"/><text x="140" y="155" text-anchor="middle">●</text></g>
+      <g><circle class="f" cx="230" cy="150" r="26"/><text x="230" y="155" text-anchor="middle">●●</text></g>
+      <path d="M268 100h84" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar4)"/>
+      <text class="d" x="310" y="88" text-anchor="middle">2/3 of the</text><text class="d" x="310" y="122" text-anchor="middle">pieces sign</text>
+      <rect class="f" x="360" y="54" width="270" height="92" rx="14" stroke="#f7931a"/>
+      <circle class="b" cx="392" cy="100" r="9"/><path class="i" d="M401 100h34M425 100v10M433 100v8"/>
+      <text x="450" y="94">one signature</text><text class="d" x="450" y="116">no node holds the whole key</text>
+    </svg>
+    <svg class="tall" viewBox="0 0 340 330" aria-hidden="true">
+      <defs><marker id="ar5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8d99a8"/></marker></defs>
+      <g><circle class="f" cx="60" cy="44" r="28"/><text x="60" y="49" text-anchor="middle">●●●</text><text class="d" x="60" y="90" text-anchor="middle">big bond</text></g>
+      <g><circle class="f" cx="170" cy="44" r="28"/><text x="170" y="49" text-anchor="middle">●●</text><text class="d" x="170" y="90" text-anchor="middle">medium</text></g>
+      <g><circle class="f" cx="280" cy="44" r="28"/><text x="280" y="49" text-anchor="middle">●</text><text class="d" x="280" y="90" text-anchor="middle">small</text></g>
+      <g><circle class="f" cx="60" cy="134" r="28"/><text x="60" y="139" text-anchor="middle">●●</text></g>
+      <g><circle class="f" cx="170" cy="134" r="28"/><text x="170" y="139" text-anchor="middle">●</text></g>
+      <g><circle class="f" cx="280" cy="134" r="28"/><text x="280" y="139" text-anchor="middle">●●</text></g>
+      <path d="M170 170v52" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar5)"/>
+      <text class="d" x="182" y="200">2/3 of the pieces sign</text>
+      <rect class="f" x="20" y="230" width="300" height="86" rx="14" stroke="#f7931a"/>
+      <circle class="b" cx="56" cy="273" r="9"/><path class="i" d="M65 273h34M89 273v10M97 273v8"/>
+      <text x="114" y="266">one signature</text><text class="d" x="114" y="288">no node holds the whole key</text>
+    </svg>
+  </div>
+  <p>The <b>census key</b> is one key that belongs to all bonded nodes of the network together. It is cut into pieces, and every node gets pieces in proportion to its bond. The key can sign only when nodes holding two thirds of the pieces sign together, so no single node - and no small group - can use it alone. A new census key is made at regular intervals, so the pieces follow the bonds as they change. It is used for just two things: to move a bond into its hold once a proof of cheating is checked, and as the backup group above.</p>
+
 
   <details class="tech"><summary>Technical details: how a slash runs on the chain</summary>
   <div class="diagram" role="img" aria-label="The bond output, the start transaction, the hold output with its three ways out, and the release or fallback transaction that pays the table">
@@ -179,7 +212,7 @@
       <text x="22" y="34">Bond output · Taproot</text>
       <text class="d" x="22" y="58">recovery leaf: owner key, after maturity</text>
       <text class="d" x="22" y="78">slash leaf: node's signature, made in advance</text>
-      <text class="d" x="22" y="96">for this round's hold, + census key</text>
+      <text class="d" x="22" y="96">for this round's hold, + the census key</text>
       <path d="M180 114v44" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar3)"/>
       <text class="d" x="190" y="134">start transaction:</text>
       <text class="d" x="190" y="150">filer pays the fee</text>
@@ -188,7 +221,7 @@
       <text class="d" x="22" y="208">release: after 6 blocks,</text>
       <text class="d" x="22" y="224">5 of 7 of panel A and 5 of 7 of panel B</text>
       <text class="d" x="22" y="248">return: after 144 blocks and maturity, owner</text>
-      <text class="d" x="22" y="272">fallback: after 288 blocks, census key</text>
+      <text class="d" x="22" y="272">fallback: after 288 blocks, the backup group</text>
       <path d="M70 286v58" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar3)"/>
       <path d="M180 286v58" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar3)"/>
       <path d="M290 286v58" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar3)"/>
