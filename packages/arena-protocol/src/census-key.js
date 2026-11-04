@@ -398,8 +398,23 @@ export function bondNamesStandingKey(advert, confirmationHeight, standing, censu
   return { ok: true, epoch: named.epoch };
 }
 
-/** What a holder signs to name its peg-in address, for the carrying of a fallback: `carrier_peg_in(network, script)`. */
-export const carrierPegInId = (networkId, script) => taggedHash(TAG.carrierPegIn, Uint8Array.from([...networkId, ...script]));
+/** The uses a release's or fallback's peg-in is for: the players' part, or a reserves' part (one byte each in carrier_peg_in). */
+export const CARRIER_PEG_IN_USES = Object.freeze(['players', 'reserves']);
+/**
+ * WHAT A CARRIER SIGNS TO NAME ITS PEG-IN FOR A RELEASE OR A FALLBACK (RULED 2026-11-04, kanban #1130): its node key over
+ *
+ *   tagged_hash("ARENA/v1/CarrierPegIn", network_id ‖ start txid (internal order) ‖ start vout (u32 big-endian) ‖ federation_id ‖ use (u8: 0 players, 1 reserves) ‖ script)
+ *
+ * so a peg-in handed on by another seat names the start, the federation and the use it was made for, and cannot be passed off as another. `start` the hold
+ * output the start made { txid, vout }. (Before #1130 it covered network_id ‖ script alone; template 3 is in no release, so no height gates the change.)
+ */
+export function carrierPegInId({ networkId, start, federationId, use, script }) {
+  const u = CARRIER_PEG_IN_USES.indexOf(use);
+  if (u < 0) throw new Error(`a peg-in is for ${CARRIER_PEG_IN_USES.join(' or ')}, not ${use}`);
+  const w = new Writer();
+  w.bytes32(networkId); w.bytes32(start.txid); w.u32(start.vout); w.bytes32(federationId); w.u8(u); w.bytes(script, script.length);
+  return taggedHash(TAG.carrierPegIn, w.finish());
+}
 
 /**
  * WHAT A CARRIER SIGNS TO NAME ITS PEG-IN FOR AN ESCROW SPEND (kanban #1034 answer 2, RULED 2026-11-03 #1085: `CarrierPegIn { payout_table_id, escrow outpoint,
@@ -420,17 +435,18 @@ export function carrierEscrowPegInId({ tableId, outpoint, federationId, script }
  * nodes, the round's seats), each with a peg-in address signed by its node key. A holder with none is passed over. An empty answer is no refusal:
  * buildSlashPayoutTable then leaves it all in escrow and the players wait for a carrier (kanban #1034 answer 6).
  *
- *   holders   censusKeyShares' list; `bonds` Map hex -> sats; `pegIns` Map hex -> { script, signature }
+ *   holders   censusKeyShares' list; `bonds` Map hex -> sats; `pegIns` Map hex -> { script, signature }, each a players' peg-in of `federationId` for the
+ *             hold output `start` { txid, vout } (carrierPegInId, #1130)
  *
  * Answers [{ key, script, bondSats }], the `carriers` of buildSlashPayoutTable.
  */
-export function fallbackCarriers({ holders, bonds, excluded = [], pegIns, networkId, verify }) {
+export function fallbackCarriers({ holders, bonds, excluded = [], pegIns, networkId, start, federationId, verify }) {
   const out = new Set(excluded);
   return [...holders].sort((a, b) => b.shares - a.shares || (a.key < b.key ? -1 : 1)).flatMap((h) => {
     const peg = pegIns.get(h.key);
     if (out.has(h.key) || !peg) return [];
     let good = false;
-    try { good = verify(peg.signature, carrierPegInId(networkId, peg.script), fromHex(h.key)) === true; } catch { good = false; }
+    try { good = verify(peg.signature, carrierPegInId({ networkId, start, federationId, use: 'players', script: peg.script }), fromHex(h.key)) === true; } catch { good = false; }
     return good ? [{ key: h.key, script: peg.script, bondSats: bonds.get(h.key) || 0n }] : [];
   });
 }

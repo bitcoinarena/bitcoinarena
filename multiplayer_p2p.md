@@ -3127,10 +3127,11 @@ byte-equal. Any seat serves the table by its id. A fallback carries the same
 `OP_RETURN` fields and a table of this format, and census key holders sign one only
 after replaying the proof.
 
-**How a signer builds a release or a fallback (kanban #972, decision #1083, 2026-11-03).** Everything a signer
-reads it reads itself, so two signers that read the same build the same bytes, and two that do not sign
-different bytes and nothing adds up: the fallback is the way out. *These are readings of the text above, for
-review; the owner did not rule them one by one.*
+**How a signer builds a release or a fallback (kanban #972, decision #1083, 2026-11-03).** A signer reads
+everything itself except a release's carriers, which the proposal names (RULED 2026-11-04, kanban #1130, below);
+two signers that read the same build the same bytes, and two that do not sign different bytes and nothing adds
+up: the fallback is the way out. *These are readings of the text above, for review; the owner did not rule them
+one by one, except where a ruling is named.*
 
 - **The fee** is the start's own rate: what the start's inputs hold past its outputs (the fee input's value, read
   off the chain), over the start's vsize, rounded up, never under 1 sat/vB, times the release's or fallback's
@@ -3149,15 +3150,34 @@ review; the owner did not rule them one by one.*
 - **The players' federation** is the round's (`federation_id`).
 - **A carrier's peg-in** is per start, federation and use, made once by its own client and signed by its node key
   (`carrier_peg_in`), `GET /slash-pegin`: the players' part and a reserves' part are two outputs of one release, so
-  two addresses, each deposit claimed on its own.
+  two addresses, each deposit claimed on its own. The signature names all three (RULED 2026-11-04, kanban #1130):
+  `tagged_hash("ARENA/v1/CarrierPegIn", network_id ‖ start outpoint ‖ federation_id ‖ use ‖ script)`, the start
+  outpoint the hold output (txid, vout u32 big-endian), `use` one byte, 0 players and 1 reserves. A peg-in handed on
+  by another seat therefore cannot be passed off for another start, federation or use. Template 3 is in no release,
+  so no height gates the change.
 - **A reserves' part** of a federation goes to the first carrier, in carrying order, with a reserves peg-in of that
   federation. The text caps `player_carrier` outputs by the carrier's bond and says nothing of reserves; this
   build does not cap a reserves' part.
 - **The load** is each federation's newest signed record this seat holds and the reserve key its guardian seats
-  name, read when the table is built.
-- **The release goes out** from any panel member holding t signatures of each panel over its own bytes. Each serves
-  its own and those it has checked at `GET /slash-release?start=`, and the others read them there. A
-  (t + 1)th signature of one panel would fail the leaf, so exactly t of each go in.
+  name, read when the table is built. A federation whose guardian seats stand has a key: a seat that has not read
+  it yet waits and builds no table (kanban #1129), until the cap.
+- **The reserve key's cap (RULED 2026-11-04, kanban #1130).** From the start's confirmation + `slash_return_blocks / 2`
+  on (72 blocks mainnet, 18 testnet4, 6 regtest: well before a mature node's return leaf), every signer builds the
+  release or fallback with the **whole** reserves' part in the escrow, whatever keys it has read; the filer and the
+  players' outputs do not change. The escrow's next spend places it by load (#1085), and a federation whose key is
+  still unread is paid nothing by that spend. An escrow spend and a liquidation escrow spend still wait for an
+  unread standing key: the escrow has no return leaf, so the wait loses nothing.
+- **The carriers are what the proposal names (RULED 2026-11-04, kanban #1130).** Each panel member serves at
+  `GET /slash-release?start=` its proposal: its table and every checked peg-in it holds. A signer checks each peg-in a
+  proposal names (signed by a panel A member, for this start, that federation and that use), rebuilds everything
+  else itself with exactly those (losses, fee, load, order by score, the bond caps, the reserves to the first carrier
+  with a reserves peg-in of that federation, the rest to the escrow), and signs when the bytes are equal. A member
+  left out does not stop a signature: its share only moves to the next carrier or the escrow, which the panels and
+  the fallback hold. Each seat serves the peg-ins it has read and checked and takes the others', so the next
+  proposal names more. A signer may sign every proposal that checks; all spend the one hold, so one confirms.
+- **The release goes out** from any panel member holding t signatures of each panel over one proposal's bytes. Each
+  serves the proposals it signed, with the signatures it has checked over each, at `GET /slash-release?start=`, and the
+  others read them there. A (t + 1)th signature of one panel would fail the leaf, so exactly t of each go in.
 - **The fallback is filed** by one holder at a time, in a turn by a hash of the proof and its key. Every holder
   builds the fallback and keeps it, so a holder the table names as a carrier knows to carry, and signs a share
   only when its own table's id is the one asked for. `excluded` is the accused and every node drawn for the round.

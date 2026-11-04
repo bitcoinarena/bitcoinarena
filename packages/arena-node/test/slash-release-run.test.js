@@ -12,6 +12,7 @@ import { arbitrationCommitment, arbitrationCommitmentIn } from '../../arena-prot
 import { serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import { decodeSlashPayoutTable, slashPayoutTableId } from '../../arena-protocol/src/slash.js';
 import { carrierPegInId } from '../../arena-protocol/src/census-key.js';
+import { carrierMarginOf } from '../../arena-protocol/src/slash-presig.js';
 import { carrierSlices, holdSpendDigest, releaseWitness, signedHoldSpend, slashEscrowOutput, slashHoldSpend, startFeeRate, vsizeOfSpend } from '../../arena-protocol/src/slash-release.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -126,17 +127,19 @@ test('a fallback carries the same OP_RETURN fields and a table of the same forma
 });
 
 // ---- THE RUN: eight panel members, each with its own store, reading each other at their doors ----
-function world({ lossesOk = true, federationsOf = async () => federations } = {}) {
+function world({ lossesOk = true, federationsOf = async () => federations, tip = () => START_HEIGHT + 1, cut = () => false, serve = (k, body) => body } = {}) {
   const members = [...A, ...B];
   const runs = new Map();
   const sent = [], kept = [], paid = [];
   const urlOf = (k) => `http://seat-${k}`;
-  const fetchFn = async (url) => {
+  // `cut(from, to, path)`: that seat's door does not answer that asker (a timeout, as on the #972 run); `serve(k, body)` what seat k's /slash-release says
+  const fetchOf = (from) => async (url) => {
     const u = new URL(url); const k = u.host.slice(5);
+    if (cut(from, k, u.pathname)) throw new Error('The operation was aborted due to timeout');
     const run = runs.get(k);
     const answer = (body, status = 200) => ({ ok: status === 200, status, json: async () => body, text: async () => JSON.stringify(body) });
     if (!run) return answer({ why: 'no such seat' }, 404);
-    if (u.pathname === '/slash-release') return answer(run.served(u.searchParams.get('start')));
+    if (u.pathname === '/slash-release') return answer(serve(k, JSON.parse(JSON.stringify(run.served(u.searchParams.get('start'))))));
     if (u.pathname === '/slash-pegin') { try { return answer(await run.ownPegIn(u.searchParams.get('start'), u.searchParams.get('federation'), u.searchParams.get('use') || 'players')); } catch (e) { return answer({ why: e.message }, 409); } }
     return answer({}, 404);
   };
@@ -150,11 +153,11 @@ function world({ lossesOk = true, federationsOf = async () => federations } = {}
     const port = { peginAddress: async () => `addr-${p.hex}-${made++}`, peginClaim: async () => ({ claimedMsat: 400_000_000n }),
       payouts: async (list) => { paid.push({ carrier: p.hex, list }); return { txid: 'cc'.repeat(32), payouts: list.map((x, i) => ({ refundPk: x.key, outIdx: i, contractId: `c${i}` })) }; } };
     runs.set(p.hex, createSlashRelease({ key: p.key, secret: p.secret, networkId: NETWORK_ID_REGTEST, clocks, db: new DatabaseSync(':memory:'), tweakPoint,
-      tipHeight: async () => START_HEIGHT + 1, entriesAtTip: async () => entries, rawTx, unspent: async () => true,
+      tipHeight: async () => tip(), entriesAtTip: async () => entries, rawTx, unspent: async () => true,
       fetchProof: async () => proofBytes, judge: Object.assign(async () => ({ verdict: true, held: { offence: 'X' } }), { read: () => ({ ok: true, roundId, contract }) }),
       panelsOf: () => ({ ok: true, ...panels }), lossesFor: async () => (lossesOk ? { ok: true, losses: new Map([[player.hex, LOSS]]), entryIds: new Map([[player.hex, b32(0x31)]]) } : { ok: false, why: 'no seat answers' }),
       federations: federationsOf, portFor: async () => port, scriptOf: (address) => fromHex(`5120${toHex(taggedHash('ARENA/test/Address', new TextEncoder().encode(address)))}`),
-      reserveKeyOf: async (fid) => reserveKey(fid), keepReserveRow: (row) => kept.push({ carrier: p.hex, row }), urlOf, send: async (hex) => { sent.push({ by: p.hex, hex }); return toHex([...parseTransaction(fromHex(hex)).txid].reverse()); }, fetchFn }));
+      reserveKeyOf: async (fid) => reserveKey(fid), keepReserveRow: (row) => kept.push({ carrier: p.hex, row }), urlOf, send: async (hex) => { sent.push({ by: p.hex, hex }); return toHex([...parseTransaction(fromHex(hex)).txid].reverse()); }, fetchFn: fetchOf(p.hex) }));
   }
   return { runs, members, sent, kept, paid };
 }
@@ -229,6 +232,68 @@ test('a member that cannot read the losses signs nothing, and a peg-in not signe
   assert.equal(w.sent.length, 0);
   assert.ok(w.members.every((p) => !w.runs.get(p.hex).served(startHex).release));
   const peg = await w.runs.get(A[0].hex).ownPegIn(startHex, fedA);
-  assert.ok(verify(fromHex(peg.signature), carrierPegInId(NETWORK_ID_REGTEST, fromHex(peg.script)), A[0].key));
-  assert.ok(!verify(fromHex(peg.signature), carrierPegInId(NETWORK_ID_REGTEST, fromHex(peg.script)), A[1].key));
+  const id = carrierPegInId({ networkId: NETWORK_ID_REGTEST, start: { txid: startTxid, vout: 0 }, federationId: fromHex(fedA), use: 'players', script: fromHex(peg.script) });
+  assert.ok(verify(fromHex(peg.signature), id, A[0].key));
+  assert.ok(!verify(fromHex(peg.signature), id, A[1].key));
+});
+
+// ---- RULED 2026-11-04, kanban #1130: THE PROPOSAL NAMES ITS CARRIERS; A RESERVE KEY'S WAIT HAS A CAP ----
+const CARRIER_MARGIN = carrierMarginOf(NETWORK_ID_REGTEST);
+const sentTable = (w) => { const tx = parseTransaction(fromHex(w.sent[0].hex)); return toHex(arbitrationCommitmentIn([tx.outputs[0]]).hint); };
+
+test('#1130: signers that read different peg-ins sign the same proposal - the one that names its carriers - and it goes out', async () => {
+  // A[0]'s peg-in door answers no one but itself (the 20 s timeout of the #972 run): before #1130 every other signer built a table without A[0], A[0] one with it
+  const w = world({ cut: (from, to, path) => path === '/slash-pegin' && to === A[0].hex && from !== A[0].hex });
+  await w.runs.get(A[0].hex).pass();
+  const proposed = w.runs.get(A[0].hex).served(startHex).release;
+  assert.ok(proposed.pegins.some((p) => p.node === A[0].hex && p.use === 'players'), 'A[0]\'s proposal names its own players\' peg-in');
+  for (const p of w.members.slice(1)) await w.runs.get(p.hex).pass();
+  // B[0] could not read A[0]'s peg-in itself; it checked the one the proposal names and signed the proposal over its own rebuild
+  const b0 = w.runs.get(B[0].hex).served(startHex).release;
+  assert.ok(b0.proposals.some((p) => p.tableId === proposed.tableId && p.signatures.some((x) => x.node === B[0].hex)), 'B[0] signed A[0]\'s proposal');
+  for (const p of w.members) await w.runs.get(p.hex).pass();
+  assert.ok(w.sent.length >= 1, 'a release went out');
+  const t = decodeSlashPayoutTable(w.runs.get(A[0].hex).tableById(sentTable(w)));
+  assert.equal(toHex(t.outputs[1].script), (await w.runs.get(A[0].hex).ownPegIn(startHex, fedA, 'players')).script, 'the players\' part to A[0], panel A\'s first, by the peg-in its proposal named');
+  assert.equal(new Set(w.members.map((p) => w.runs.get(p.hex).served(startHex).release.tableId)).size, 1, 'and every member\'s own proposal is that table by now: the peg-ins were handed on');
+});
+
+test('#1130: a peg-in signed for another federation or use is refused, and no proposal naming it is signed', async () => {
+  // A[1] hands on A[0]'s fedB reserves' address relabelled as its fedA players' peg-in: a carrier's own signed script, for another federation and use
+  let forged = null;
+  const w = world({ serve: (k, body) => {
+    if (k !== A[1].hex || !forged || !body.release) return body;
+    const pegins = [...body.release.pegins.filter((p) => !(p.node === A[0].hex && p.use === 'players')), forged];
+    return { ...body, pegins, release: { ...body.release, tableId: '77'.repeat(32), pegins, proposals: [] } };
+  }, cut: (from, to, path) => path === '/slash-pegin' && to === A[0].hex && from !== A[0].hex });
+  const real = await w.runs.get(A[0].hex).ownPegIn(startHex, fedB, 'reserves');
+  forged = { node: A[0].hex, federation: fedA, use: 'players', script: real.script, signature: real.signature };
+  for (const p of w.members.slice(1)) await w.runs.get(p.hex).pass();
+  for (const p of w.members.slice(1)) {
+    const s = w.runs.get(p.hex).served(startHex);
+    assert.ok(s.pegins.some((x) => x.node === A[2].hex && x.use === 'players'), 'checked peg-ins are held and served');
+    assert.ok(!s.pegins.some((x) => x.node === A[0].hex && x.use === 'players'), `${p.hex.slice(0, 8)} took no players' peg-in of A[0]: the one handed on was signed for fedB's reserves`);
+    assert.ok(!s.release.proposals.some((x) => x.tableId === '77'.repeat(32)), 'and signed no proposal naming it');
+  }
+});
+
+test('#1130: a reserve key still unread at the start\'s confirmation + slash_return_blocks / 2 puts the whole reserves\' part in the escrow, from exactly that height', async () => {
+  let tip = START_HEIGHT + 1;
+  const cap = START_HEIGHT + clocks.returnBlocks / 2;
+  const w = world({ tip: () => tip, federationsOf: async () => federations.map((f) => (f.federation === fedB ? { ...f, reserveKey: null, reservePending: true } : f)) });
+  tip = cap - 1;
+  const said = [];
+  for (const p of w.members) said.push(...(await w.runs.get(p.hex).pass()));
+  assert.equal(w.sent.length, 0, 'one block before the cap it still waits');
+  assert.ok(said.some((r) => new RegExp(`not read here yet: no table is built without its reserves' row before height ${cap}`).test(r.why || '')), 'by name, with the cap');
+  tip = cap;
+  for (const p of w.members) await w.runs.get(p.hex).pass();
+  for (const p of w.members) await w.runs.get(p.hex).pass();
+  assert.ok(w.sent.length >= 1, 'at the cap the release goes out');
+  const tables = w.members.map((p) => w.runs.get(p.hex).served(startHex).release.table);
+  assert.equal(new Set(tables).size, 1, 'byte-equal at every member');
+  const t = decodeSlashPayoutTable(fromHex(tables[0]));
+  assert.deepEqual(t.outputs.map((o) => o.pays), ['filer', 'player_carrier', 'escrow'], 'the filer and the players unchanged, the whole reserves\' part in the escrow - fedA\'s too, whose key was read');
+  assert.equal(t.reserves.length, 0);
+  assert.equal(t.outputs[1].value * 1000n, LOSS + CARRIER_MARGIN, 'the players\' output is the loss plus the margin, as before the cap');
 });
