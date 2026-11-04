@@ -4,7 +4,8 @@
 // seat to its own host's Tailscale address, 4,589 to the test host through the fed2 forwarder)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseRoutes, routed, cappedFetch } from '../src/fetch-routes.js';
+import { createServer as netServer } from 'node:net';
+import { parseRoutes, routed, cappedFetch, keepAliveDispatcher } from '../src/fetch-routes.js';
 
 test('a public URL is fetched at its direct address, the longest prefix first, at a path boundary only', () => {
   const r = parseRoutes('https://b.ts.net/guardian-1=http://127.0.0.1:31221, https://b.ts.net/fed2-1=http://198.51.100.106:6221/,https://b.ts.net/guardian-1x=http://x');
@@ -78,4 +79,31 @@ test('a failure other than ENOTFOUND does not hold the host back', async () => {
   for (let i = 0; i < 3; i++) await assert.rejects(f('http://127.0.0.1:9/x'));
   assert.equal(n, 3);
   assert.deepEqual(f.unresolved(), {});
+});
+
+// kanban #1122: an installer node opened ~90 TLS connections a minute to the seats behind one Tailscale serve host (Node's fetch drops
+// an idle connection after 4 s when the server names no keep-alive time, as a proxy does not) and its doors went unanswered for 5-15 s
+test('an idle connection to a server that names no keep-alive time is kept past 4 s for the next request', async () => {
+  // an HTTP/1.1 server that, like a proxy, sends no Keep-Alive header and keeps the connection open
+  let connections = 0;
+  const srv = netServer((sock) => {
+    connections++;
+    let buf = '';
+    sock.on('data', (d) => { buf += d; let i; while ((i = buf.indexOf('\r\n\r\n')) >= 0) { buf = buf.slice(i + 4); sock.write('HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok'); } });
+    sock.on('error', () => {});
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${srv.address().port}/x`;
+  const native = globalThis.fetch.bind(globalThis);
+  const twice = async (f) => { const before = connections; await (await f(url)).text(); await new Promise((r) => setTimeout(r, 4600)); await (await f(url)).text(); return connections - before; };
+  try {
+    const dispatcher = keepAliveDispatcher(native, 30000);
+    const kept = cappedFetch(native, { dispatcher });
+    const plain = await twice(native);
+    const ours = await twice(kept);
+    assert.equal(plain, 2, 'Node\'s own fetch dialed again after 4.6 s idle');
+    assert.equal(ours, 1, 'the kept connection served both');
+    assert.equal(keepAliveDispatcher(native, 0), null, '0 leaves Node\'s own');
+    (await dispatcher()).destroy();
+  } finally { srv.close(); }
 });

@@ -11,6 +11,7 @@
 //   ARENA_FETCH_MAX_PER_ORIGIN   requests in flight per origin at once (default 8); more wait their turn instead of opening more
 //   ARENA_FETCH_TIMEOUT_MS       a request that brings no signal of its own is aborted after this (default 30 000); a host that
 //                                did not resolve (ENOTFOUND) is not dialed again for as long
+//   ARENA_FETCH_KEEPALIVE_MS     how long an idle connection to a peer is kept for its next request (default 30 000; 0 = Node's own 4 s)
 export function parseRoutes(text) {
   return String(text || '').split(',').map((x) => x.trim()).filter(Boolean).map((x) => {
     const i = x.indexOf('=');
@@ -28,7 +29,7 @@ export function routed(url, routes) {
 }
 
 /** A fetch that routes, caps the requests in flight per origin, and times out a request that brings no signal. */
-export function cappedFetch(inner, { routes = [], maxPerOrigin = 8, timeoutMs = 30000 } = {}) {
+export function cappedFetch(inner, { routes = [], maxPerOrigin = 8, timeoutMs = 30000, dispatcher = null } = {}) {
   const lanes = new Map();   // lane -> { busy, waiting: [{ go, abort }] }
   // ONE LANE PER SEAT, NOT PER HOST (measured 2026-10-13 ~20:45Z: the 7 test host seats answer behind one host,
   // tn4.bitcoin-arena.io/guardian-N, so a second-host seat had 8 requests in flight to all seven together; over the ship's link the queue
@@ -74,7 +75,8 @@ export function cappedFetch(inner, { routes = [], maxPerOrigin = 8, timeoutMs = 
     const opts = init && init.signal ? init : { ...init, signal: AbortSignal.timeout(timeoutMs) };
     const done = await take(lane, opts.signal);
     try {
-      return await inner(typeof input === 'string' || input instanceof URL ? url : new Request(url, input), opts);
+      const d = dispatcher && !opts.dispatcher ? await dispatcher() : null;
+      return await inner(typeof input === 'string' || input instanceof URL ? url : new Request(url, input), d ? { ...opts, dispatcher: d } : opts);
     } catch (e) {
       const code = host && notFound(e);
       if (code) unresolved.set(host, { untilMs: Date.now() + timeoutMs, code });
@@ -86,11 +88,32 @@ export function cappedFetch(inner, { routes = [], maxPerOrigin = 8, timeoutMs = 
   return f;
 }
 
+// A CONNECTION TO A PEER IS KEPT FOR ITS NEXT REQUEST (kanban #1122, measured 2026-11-04 on an installer node on the main test
+// host: GET /identity went unanswered for 5-15 s at a time, 29 connections in its listen queue; 33 of 39 s on the loop busy, half of it
+// in TLS - 9.4 s reading, 3.1 s getPeerCertificate, 2.3 s handshakes and teardowns - over ~90 new TLS connections a minute to the
+// seats behind one Tailscale serve host). Node's fetch closes an idle connection after 4 s when the server names no keep-alive time,
+// and the seating agent's batch reads come every few seconds to a dozen seats at once, so nearly every read paid a new handshake.
+// Kept `keepAliveMs` here instead; a server that names its own keep-alive time (Node's http server says 5 s) is still taken at its
+// word, up to 10 min. The Agent is the class of Node's own fetch dispatcher (no undici package is shipped), made on the first request.
+export function keepAliveDispatcher(native, keepAliveMs) {
+  if (!(keepAliveMs > 0)) return null;
+  let made = null;
+  return () => made || (made = (async () => {
+    const sym = Symbol.for('undici.globalDispatcher.1');
+    if (!globalThis[sym]) { try { await native('data:,'); } catch { /* no dispatcher: Node's own then */ } }
+    const g = globalThis[sym];
+    try { return g && typeof g.constructor === 'function' ? new g.constructor({ keepAliveTimeout: keepAliveMs, keepAliveMaxTimeout: Math.max(keepAliveMs, 600000) }) : null; }
+    catch { return null; }
+  })());
+}
+
 /** Installs the routed, capped fetch as the process's own (main.js), from the environment. */
 export function installFetchRoutes(env = process.env) {
   const routes = parseRoutes(env.ARENA_ROUTE_MAP);
   const maxPerOrigin = Number(env.ARENA_FETCH_MAX_PER_ORIGIN || 8);
   const timeoutMs = Number(env.ARENA_FETCH_TIMEOUT_MS || 30000);
-  globalThis.fetch = cappedFetch(globalThis.fetch.bind(globalThis), { routes, maxPerOrigin, timeoutMs });
-  return { routes: routes.length, maxPerOrigin, timeoutMs };
+  const keepAliveMs = Number(env.ARENA_FETCH_KEEPALIVE_MS ?? 30000);
+  const native = globalThis.fetch.bind(globalThis);
+  globalThis.fetch = cappedFetch(native, { routes, maxPerOrigin, timeoutMs, dispatcher: keepAliveDispatcher(native, keepAliveMs) });
+  return { routes: routes.length, maxPerOrigin, timeoutMs, keepAliveMs };
 }
