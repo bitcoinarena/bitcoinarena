@@ -22,7 +22,9 @@ import { toHex } from '../../arena-protocol/src/hash.js';
 test('a round id written into the refuse-rounds file is refused at once at every door, and offered again once the file is empty', { timeout: 120000 }, async () => {
   const file = join(mkdtempSync(join(tmpdir(), 'refuse-rounds-')), 'refuse-rounds.txt');
   writeFileSync(file, '');
-  const w = await lockRound({ serveOpts: { refuseRoundsFile: file } });
+  // The fixture's round closed its entries long ago on the test clock; without a wide grace the unentered-lock return
+  // (kanban #593) would keep the never-entered lock as refused even with the file empty, which is not what this test asks.
+  const w = await lockRound({ serveOpts: { refuseRoundsFile: file, unenteredGraceMs: 1e12 } });
   try {
     const base = (d) => `http://127.0.0.1:${d.port}`;
     const key = rand(32); const e = rand(32);
