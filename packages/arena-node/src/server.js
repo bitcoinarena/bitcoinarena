@@ -980,7 +980,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const gameByName = (n) => { const g = [...hosted.values()].find((x) => x.name === n || (x.manifest && x.manifest.gameName === n)); return g ? gameEntry(g) : null; };
     const seen = new Map();
     // AN ITEM'S DONATION OF AN OLDER ROW (no itemGame): the purchase this seat kept under its id names the game
-    const itemOf = (id) => {
+    const itemGameOf = (id) => {
       if (seen.has('item:' + id)) return seen.get('item:' + id);
       let out = null;
       try { const row = /^[0-9a-f]{64}$/.test(id) ? round.db.prepare('SELECT game_name FROM item_purchases WHERE id = ?').get(id) : null; out = row ? gameByName(row.game_name) : null; } catch { out = null; }
@@ -1011,8 +1011,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const g = gid ? hosted.get(gid) : null, period = g && g.manifest ? Number(g.manifest.roundPeriodMs || 0) : 0;
       return period > 0 && t.closeMs ? { fromMs: t.closeMs - period, toMs: t.closeMs } : { fromMs: t.startMs, toMs: t.endMs || t.closeMs }; };
     const playerOf = (r) => (r.playerKey ? String(r.playerKey) : entryPlayers.get(String(r.entryId || '')) || null);
-    if (perRow) return donationParts(rows, { protocolBps, gameOf, itemOf, gameByName, windowOf, playerOf });   // each row on its own, for the donations table (kanban #578, #580)
-    return { ...attributeDonations(rows, { protocolBps, gameOf, itemOf, gameByName }), shares: { protocolBps, games }, earnings: devEarnings(rows, { protocolBps, gameOf, itemOf, gameByName, nowMs: Date.now() }) };
+    if (perRow) return donationParts(rows, { protocolBps, gameOf, itemOf: itemGameOf, gameByName, windowOf, playerOf });   // each row on its own, for the donations table (kanban #578, #580)
+    return { ...attributeDonations(rows, { protocolBps, gameOf, itemOf: itemGameOf, gameByName }), shares: { protocolBps, games }, earnings: devEarnings(rows, { protocolBps, gameOf, itemOf, gameByName, nowMs: Date.now() }) };
   };
   const devSplitOfDir = (dir) => {
     try {
@@ -1688,6 +1688,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const reservePeerPass = async ({ guardians = reserveGuardians(), keyFor = reserveKeyFor, portOf = (f) => portOfFederation(fromHex(f)), now = () => Date.now() } = {}) => {
     const g = guardians;
     const seats = [...new Set(Object.values(g).flatMap((x) => x.peers))];
+    // EACH SEAT'S LIST READ ONCE A PASS, NOT ONCE PER FEDERATION (kanban #1122, measured 2026-11-04 on an installer node: 67 GET
+    // /reserves?all=1 a minute to the 22 seats of one host, ~200 kB each - the same answer, every federation in it, read again for each
+    // federation the node holds a key of; with a new TLS handshake each, its doors went unanswered for 5-15 s)
+    const listsOf = new Map();   // seat -> its /reserves?all=1 answer (a promise; null when it did not answer)
+    const listOf = (u) => { if (!listsOf.has(u)) listsOf.set(u, fetch(`${u}/reserves?all=1`, { signal: AbortSignal.timeout(8000) }).then((r) => r.json()).catch(() => null)); return listsOf.get(u); };
     let checks = 0, kept = 0, later = 0;
     for (const fedHex of Object.keys(g)) {
       const key = await keyFor(fedHex);
@@ -1706,7 +1711,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       for (const u of seats) {
         let listed = [];
-        try { const r = await (await fetch(`${u}/reserves?all=1`, { signal: AbortSignal.timeout(8000) })).json();
+        try { const r = await listOf(u); if (!r) continue;
           const f = (r.federations || []).find((x) => x.federationId === fedHex); listed = f && Array.isArray(f.paidIn) ? f.paidIn : []; }
         catch { continue; }
         for (const row of listed) {
@@ -9393,13 +9398,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!settled || settled.state !== 'ACCEPTED') return { state: 'pending', stakeMsat: String(stake), feeMsat: String(fee) };
           const moves = round.lockSettlementMoves ? round.lockSettlementMoves(en.roundId) : null;
           const claimed = moves && Array.isArray(moves.claims) ? new Set(moves.claims) : null;
-          const lockAt = op(en.stakeLockOutpoint);
+          const stakeLockAt = op(en.stakeLockOutpoint);
           const shares = round.lockSettlementShares ? round.lockSettlementShares(en.roundId) || [] : [];
           const player = toHex(en.playerPubkey);
           const paid = shares.filter((x) => toHex(x.pubkey) === player).reduce((a, x) => a + BigInt(x.msat), 0n);
           const sharedBy = round.db.prepare('SELECT contract FROM entries WHERE round_id = ?').all(Buffer.from(en.roundId))
             .filter((r) => { try { return toHex(decodeEntryContract(new Uint8Array(r.contract)).playerPubkey) === player; } catch { return false; } }).length;
-          const state = paid > 0n ? 'won' : claimed && lockAt && !claimed.has(lockAt) ? 'refunded' : 'lost';
+          const state = paid > 0n ? 'won' : claimed && stakeLockAt && !claimed.has(stakeLockAt) ? 'refunded' : 'lost';
           return { state, stakeMsat: String(stake), feeMsat: String(fee), payoutMsat: String(paid), netMsat: String(state === 'refunded' ? 0n : paid - stake - fee),
             sharedBy, settlementTxid: settled.txid };
         };

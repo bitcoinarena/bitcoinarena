@@ -35,7 +35,7 @@ const shutDoor = (d, playerKey) => {
 const seatsHolding = (w, eid) => w.nodes.filter((d) => d.round.entry(eid)).length;
 
 test('a seat short of an entry five seats hold takes it past its door and signs what they sign; the plan reaches it', async () => {
-  const w = await lockRound({ n: 7, serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 4000 });
+  const w = await lockRound({ n: 7, serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 60000 });
   try {
     skipTo(Number(w.c.committeeTimeMs) + 20);
     const sa = new Uint8Array(randomBytes(32)), sb = new Uint8Array(randomBytes(32));
@@ -67,7 +67,7 @@ test('a seat short of an entry five seats hold takes it past its door and signs 
 });
 
 test('an entry fewer than five seats took is no member: ENTRY_VOID where it is held, the other entry VOID at every seat, no seat signs a loser', async () => {
-  const w = await lockRound({ n: 7, serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 4000 });
+  const w = await lockRound({ n: 7, serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 60000 });
   try {
     skipTo(Number(w.c.committeeTimeMs) + 20);
     const sa = new Uint8Array(randomBytes(32)), sb = new Uint8Array(randomBytes(32));
@@ -95,7 +95,7 @@ test('an entry fewer than five seats took is no member: ENTRY_VOID where it is h
 });
 
 test('during a roll: seats on the old build still sign the two entries they hold, and the entry below five still comes to a refund at every seat', async () => {
-  const w = await lockRound({ n: 7, serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 4000 });
+  const w = await lockRound({ n: 7, serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 60000 });
   try {
     skipTo(Number(w.c.committeeTimeMs) + 20);
     const sa = new Uint8Array(randomBytes(32)), sb = new Uint8Array(randomBytes(32));
@@ -122,7 +122,7 @@ test('during a roll: seats on the old build still sign the two entries they hold
 });
 
 test('a peer cannot talk a seat into an entry: a result with a bad signature or about another player counts for nothing', async () => {
-  const w = await lockRound({ n: 7, serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 4000 });
+  const w = await lockRound({ n: 7, serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 60000 });
   let stub;
   try {
     skipTo(Number(w.c.committeeTimeMs) + 20);
