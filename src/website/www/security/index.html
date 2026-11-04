@@ -73,6 +73,8 @@
   @media (max-width: 640px) { .diagram svg.wide { display: none; } .diagram svg.tall { display: block; } }
   .diagram text { fill: var(--text); font: 600 13px system-ui; } .diagram text.d { fill: var(--dim); font-weight: 400; font-size: 12px; }
   ol.steps { padding-left: 22px; } ol.steps li { margin-bottom: 10px; }
+  details.tech { margin: 14px 0 6px; color: var(--text); font-size: 15px; } details.tech > summary { font-weight: 600; color: var(--btc); padding: 6px 0; }
+  .diagram svg.techsvg { max-width: 480px; margin: 0 auto; }
 </style>
 </head>
 <body>
@@ -124,33 +126,33 @@
   </div>
 
   <h2>How slashing works</h2>
-  <div class="diagram" role="img" aria-label="A proof starts a slash; the bond moves to a hold; two panels release it with the proof; the players get their loss back and the rest goes to the reserves. If the proof does not hold, the bond returns to its owner. If the panels do not act, the holders of the census key pay it out after a wait.">
+  <div class="diagram" role="img" aria-label="A proof starts a slash; the bond moves to a hold; two panels of up to seven release it with the proof; the players get their loss back and the rest goes to the reserves. If the proof does not hold, the bond returns to its owner. If the panels do not decide in time, the holders of the census key pay it out after about two days.">
     <svg class="wide" viewBox="0 0 720 290" aria-hidden="true">
       <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8d99a8"/></marker></defs>
       <rect class="f" x="8" y="36" width="156" height="74" rx="12"/><text x="86" y="66" text-anchor="middle">1. A proof</text><text class="d" x="86" y="88" text-anchor="middle">anyone can check it</text>
       <rect class="f" x="192" y="36" width="156" height="74" rx="12"/><text x="270" y="66" text-anchor="middle">2. The hold</text><text class="d" x="270" y="88" text-anchor="middle">moved, not spent</text>
-      <rect class="f" x="376" y="36" width="156" height="74" rx="12"/><text x="454" y="66" text-anchor="middle">3. Two panels</text><text class="d" x="454" y="88" text-anchor="middle">5 of 6 sign in each</text>
+      <rect class="f" x="376" y="36" width="156" height="74" rx="12"/><text x="454" y="66" text-anchor="middle">3. Two panels</text><text class="d" x="454" y="88" text-anchor="middle">5 of 7 sign in each</text>
       <rect class="f" x="560" y="36" width="152" height="74" rx="12" stroke="#3fb950"/><text x="636" y="66" text-anchor="middle">4. Paid out</text><text class="d" x="636" y="88" text-anchor="middle">players first</text>
       <path d="M164 73h26" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar)"/>
       <path d="M348 73h26" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar)"/>
       <path d="M532 73h26" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar)"/>
       <rect class="f" x="192" y="190" width="156" height="74" rx="12" stroke="#d29922"/><text x="270" y="220" text-anchor="middle">Proof fails</text><text class="d" x="270" y="242" text-anchor="middle">bond back to its owner</text>
-      <rect class="f" x="470" y="190" width="200" height="74" rx="12" stroke="#d29922"/><text x="570" y="220" text-anchor="middle">Panels do nothing</text><text class="d" x="570" y="242" text-anchor="middle">census key pays, later</text>
+      <rect class="f" x="452" y="190" width="236" height="74" rx="12" stroke="#d29922"/><text x="570" y="220" text-anchor="middle">No decision in time</text><text class="d" x="570" y="242" text-anchor="middle">after 2 days, the census key pays</text>
       <path d="M270 110v78" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar)"/>
       <path d="M454 110c0 46 50 44 92 78" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar)"/>
-      <path d="M670 226c34 0 34-66 -6 -114" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+      <path d="M688 226c26 0 26-66 -24 -114" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar)"/>
     </svg>
     <svg class="tall" viewBox="0 0 340 480" aria-hidden="true">
       <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8d99a8"/></marker></defs>
       <rect class="f" x="10" y="10" width="170" height="66" rx="12"/><text x="95" y="38" text-anchor="middle">1. A proof</text><text class="d" x="95" y="60" text-anchor="middle">anyone can check it</text>
       <rect class="f" x="10" y="140" width="170" height="66" rx="12"/><text x="95" y="168" text-anchor="middle">2. The hold</text><text class="d" x="95" y="190" text-anchor="middle">moved, not spent</text>
-      <rect class="f" x="10" y="270" width="170" height="66" rx="12"/><text x="95" y="298" text-anchor="middle">3. Two panels</text><text class="d" x="95" y="320" text-anchor="middle">5 of 6 sign in each</text>
+      <rect class="f" x="10" y="270" width="170" height="66" rx="12"/><text x="95" y="298" text-anchor="middle">3. Two panels</text><text class="d" x="95" y="320" text-anchor="middle">5 of 7 sign in each</text>
       <rect class="f" x="10" y="400" width="170" height="66" rx="12" stroke="#3fb950"/><text x="95" y="428" text-anchor="middle">4. Paid out</text><text class="d" x="95" y="450" text-anchor="middle">players first</text>
       <path d="M95 76v62" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar2)"/>
       <path d="M95 206v62" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar2)"/>
       <path d="M95 336v62" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar2)"/>
       <rect class="f" x="200" y="140" width="132" height="66" rx="12" stroke="#d29922"/><text x="266" y="168" text-anchor="middle">Proof fails</text><text class="d" x="266" y="190" text-anchor="middle">back to owner</text>
-      <rect class="f" x="200" y="270" width="132" height="66" rx="12" stroke="#d29922"/><text x="266" y="292" text-anchor="middle">Panels idle</text><text class="d" x="266" y="314" text-anchor="middle">census key</text><text class="d" x="266" y="328" text-anchor="middle">pays, later</text>
+      <rect class="f" x="200" y="270" width="132" height="66" rx="12" stroke="#d29922"/><text x="266" y="290" text-anchor="middle">No decision</text><text class="d" x="266" y="312" text-anchor="middle">after 2 days,</text><text class="d" x="266" y="328" text-anchor="middle">census key pays</text>
       <path d="M180 173h18" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar2)"/>
       <path d="M180 303h18" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar2)"/>
       <path d="M266 336c0 60 -40 80 -84 92" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar2)"/>
@@ -159,10 +161,59 @@
   <ol class="steps">
     <li><b>A proof.</b> Someone holds proof of one of the cases above: two signatures that contradict each other, or a signature that a replay of the round contradicts. Any node may file it.</li>
     <li><b>The hold.</b> The bond is moved to a hold on the chain. It is not spent yet and still counts as the node's. Nothing has been paid to anyone.</li>
-    <li><b>Two panels check.</b> Two separate groups of six bonded nodes each check the proof themselves. Only when five in each group sign is the bond released. A node that signs without a valid proof is slashed for it.</li>
+    <li><b>Two panels check.</b> Two separate groups of up to seven bonded nodes each check the proof themselves. Only when two thirds and one more in each group sign - 5 of 7 - is the bond released. A node that signs without a valid proof is slashed for it.</li>
     <li><b>Paid out.</b> Every player the offence harmed gets the real loss back first, once. The rest goes to the protocol reserves, which cover future losses.</li>
   </ol>
-  <p>Two ways out keep this honest: if the proof does not hold up, the node takes its bond back by itself after about a day, never before its bond matures. If the panels do nothing at all, the holders of the network's census key - the nodes with the most bonded capital, together - pay it out after a longer wait.</p>
+  <p>Two ways out keep this honest: if the proof does not hold up and nobody releases the bond, its owner takes it back with the owner key - the 24 words - after about a day, never before the bond matures. If the two panels do not decide in time - because too few of their nodes answer - the holders of the network's census key pay it out after about two days, by the same rules.</p>
+
+  <details class="tech"><summary>Technical details: how a slash runs on the chain</summary>
+  <div class="diagram" role="img" aria-label="The bond output, the start transaction, the hold output with its three ways out, and the release or fallback transaction that pays the table">
+    <svg class="techsvg" viewBox="0 0 360 700" aria-hidden="true">
+      <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8d99a8"/></marker></defs>
+      <rect class="f" x="10" y="10" width="340" height="104" rx="12"/>
+      <text x="22" y="34">Bond output · Taproot</text>
+      <text class="d" x="22" y="58">recovery leaf: owner key, after maturity</text>
+      <text class="d" x="22" y="78">slash leaf: node's signature, made in advance</text>
+      <text class="d" x="22" y="96">for this round's hold, + census key</text>
+      <path d="M180 114v44" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar3)"/>
+      <text class="d" x="190" y="134">start transaction:</text>
+      <text class="d" x="190" y="150">filer pays the fee</text>
+      <rect class="f" x="10" y="160" width="340" height="126" rx="12" stroke="#d29922"/>
+      <text x="22" y="184">Hold output · Taproot, no key path</text>
+      <text class="d" x="22" y="208">release: after 6 blocks,</text>
+      <text class="d" x="22" y="224">5 of 7 of panel A and 5 of 7 of panel B</text>
+      <text class="d" x="22" y="248">return: after 144 blocks and maturity, owner</text>
+      <text class="d" x="22" y="272">fallback: after 288 blocks, census key</text>
+      <path d="M70 286v58" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar3)"/>
+      <path d="M180 286v58" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar3)"/>
+      <path d="M290 286v58" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar3)"/>
+      <rect class="f" x="10" y="346" width="110" height="60" rx="10" stroke="#3fb950"/><text x="65" y="372" text-anchor="middle">Release</text><text class="d" x="65" y="392" text-anchor="middle">the panels</text>
+      <rect class="f" x="125" y="346" width="110" height="60" rx="10" stroke="#d29922"/><text x="180" y="372" text-anchor="middle">Return</text><text class="d" x="180" y="392" text-anchor="middle">proof failed</text>
+      <rect class="f" x="240" y="346" width="110" height="60" rx="10" stroke="#d29922"/><text x="295" y="372" text-anchor="middle">Fallback</text><text class="d" x="295" y="392" text-anchor="middle">no decision</text>
+      <path d="M65 406v66" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar3)"/>
+      <path d="M295 406c0 40 -90 40 -150 64" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar3)"/>
+      <path d="M180 406v20" stroke="#8d99a8" stroke-width="2" fill="none"/><text class="d" x="190" y="428">back to the owner's wallet</text>
+      <rect class="f" x="10" y="474" width="340" height="150" rx="12" stroke="#3fb950"/>
+      <text x="22" y="498">The payout transaction</text>
+      <text class="d" x="22" y="522">OP_RETURN: proof hash · slash height · table hash</text>
+      <text class="d" x="22" y="546">1. each harmed player's real loss,</text>
+      <text class="d" x="22" y="562">paid in through a carrier to the player's key</text>
+      <text class="d" x="22" y="586">2. the filer's fee back</text>
+      <text class="d" x="22" y="608">3. the rest: the protocol reserves</text>
+      <text class="d" x="10" y="660">Every signer builds these bytes itself from the chain</text>
+      <text class="d" x="10" y="678">and signs only if they match the ones it is asked for.</text>
+    </svg>
+  </div>
+  <ol class="steps">
+    <li><b>The bond.</b> A bond is a Taproot output with two ways out. The <i>recovery leaf</i> lets the owner key take it back after the bond's maturity height. The <i>slash leaf</i> needs two signatures together: one the node made in advance for each round it sits in, which can only pay into that round's hold output, and one from the <i>census key</i>. So no one can take a bond anywhere else, not even the census key.</li>
+    <li><b>The proof.</b> A proof is signed data anyone can check without trusting the filer: a signed result plus the replay of the round under its published game code; two signed results for one order; a signed confirmation of a result later proven false; a signed payout table that differs from the final result; a release signed with no valid proof behind it; or, for a federation, its own threshold-signed history showing more e-cash redeemed than issued, or a reserve output spent by no signed withdrawal.</li>
+    <li><b>The start.</b> Any node that holds a proof asks the census key's holders to sign the start. Each holder checks the proof itself before it signs. The start spends the bond through the slash leaf into the hold output; the filer adds a coin for the fee.</li>
+    <li><b>The census key.</b> It is one Schnorr key whose private part no one holds: it is split among a set of bonded nodes, drawn again every epoch, and a threshold of them must sign together. It can do only two things: sign a start, and pay out a hold after the long wait.</li>
+    <li><b>The hold.</b> The hold output has no key path and three leaves. <i>Release</i>: after 6 blocks, two-thirds plus one of each panel - two groups of up to 7 nodes drawn from the census - sign together. <i>Return</i>: after 144 blocks (about a day) and the bond's maturity, the owner key alone. <i>Fallback</i>: after 288 blocks (about two days), the census key alone. While the bond sits in its hold it still counts as the node's bond.</li>
+    <li><b>The payout.</b> A release or a fallback pays a table that every signer computes the same way from public data: each harmed player's real loss once - paid into a safe federation by a carrier and on to the player's key - the filer's fee back at the start's own fee rate, and the rest to the protocol reserves. Its OP_RETURN names the proof's hash, the slash height and the table's hash, so anyone can check it against the proof.</li>
+    <li><b>Safety rules.</b> Every panel member and holder builds the transaction from the chain itself and signs only its own bytes. A panel member who signs a release with no valid proof gives a proof against itself. The times are mainnet's; testnet uses shorter ones.</li>
+  </ol>
+  </details>
 
   <h2>The worst cases</h2>
 
