@@ -3163,7 +3163,7 @@ review; the owner did not rule them one by one.*
   only when its own table's id is the one asked for. `excluded` is the accused and every node drawn for the round.
 - **A carrier pays** each slice of a loss it carries to `refund_key(player)`, in the table's entry order across the
   carriers in their order, and the rest of what it claimed, less the carrier margin for its own payout's fee
-  (#1086 below), to that federation's reserve key, kept as a reserve row of kind `slash` that every seat checks
+  (#1086 and #1121 below), to that federation's reserve key, kept as a reserve row of kind `slash` that every seat checks
   against its own port. It pays on the table that confirmed, whichever that is (RULED 2026-11-03, kanban #1085, below).
 
 **The carrier's payout margin (RULED 2026-11-03, kanban #1086).** A carrier keeps a margin back of each claim for
@@ -3174,12 +3174,37 @@ player's key; "players are never short").
   payout margin, taken from the reserves' share of that spend. This holds for every table with such outputs: the
   release, the fallback and each escrow spend. `slashHoldsOnEscrowSpend` accepts a player output up to the unpaid
   loss plus the margin, and no more.
-- **The margin is a constant the table names,** per network: 10,000 msat on mainnet, testnet4 and regtest (a
-  devnet runs regtest's). A signer can't choose it, so every signer builds the same bytes. The PayoutTable names it
+- **The margin is a constant the table names,** per network, in two parts (#1121 below): 2,010 sat on testnet4
+  and regtest (a devnet runs regtest's), 20,010 sat on mainnet. A signer can't choose it, so every signer builds the same bytes. The PayoutTable names it
   as `carrier_margin_msat`, and each escrow spend's `outputs[]` repeats it; a spend naming another margin than its
   table's answers to row 8.
 - **Unused margin is not the carrier's.** Whatever the payout fee didn't take goes on to the reserve key with the
   carrier's reserves part, or with the next one if this carrier has none. A carrier keeps nothing.
+
+**The margin covers the peg-in fee too (RULED 2026-11-04, kanban #1093, recorded by #1121).** A federation takes a
+peg-in fee off each deposit before it credits it (walletv2: its consensus feerate, never under 1 sat/vB, times its
+receive weight). A real Fedimint run measured 416 sat. A 10 sat margin then left the carrier short, so a slash
+paid its players below face and a liquidation's claims waited for ever. The feerate moves with the chain and the
+federation's own queue, so no seat reads one value every signer agrees on, and the margin stays a constant:
+
+| part | constant (genesis) | testnet4, regtest | mainnet |
+| --- | --- | --- | --- |
+| the carrier's payout fee (#1086) | `CARRIER_PAYOUT_FEE_MSAT` | 10 sat | 10 sat |
+| the receiving federation's peg-in fee | `CARRIER_PEGIN_FEE_MSAT` | 2,000 sat | 20,000 sat |
+| the margin the table names | `CARRIER_PAYOUT_MARGIN_MSAT`, their sum | 2,010 sat | 20,010 sat |
+
+- **The carrier keeps back only the payout part.** What the peg-in fee leaves of the peg-in part goes to the
+  federation's reserve key in the same payout, as unused margin does. With no reserve key yet it is owed on like
+  unused margin. Players are paid at face whenever the peg-in fee is within the allowance. A dearer one pays pro
+  rata (slash) or waits for the next spend (liquidation), as before.
+- **Each carrier claims its own deposit by outpoint.** A federation may give a client one peg-in address for all
+  its deposits (walletv2 does), so two escrows carried by one carrier land on one address, and "the balance grew"
+  would let one escrow read the other's money. A carrier claims the outpoint of the output paid to it
+  (`txid:vout`, with its value), and reads what that one deposit credited: its value less the peg-in fee, less
+  the client's own fees on the claim. An answer that does not name that deposit is refused, never read off the
+  balance. A wallet that gives each deposit its own address (the legacy wallet) may still be read by its balance.
+- **This holds for every carrier**: the release, the fallback, each escrow spend of a slash, and the escrow
+  spends of a liquidation (#1111).
 - **With no reserves' part in the spend** (no reserve key yet, #1085), the margin comes off the players' parts pro
   rata to their loss, as the fee does there, and the table says so (`margin_off = players`). That is the one case
   where a player gets slightly less, and it is written down.
@@ -3193,7 +3218,8 @@ player's key; "players are never short").
   the escrow alike (the escrow's value past the players is placed by load when spent). So a spend with no room for
   reserves still pays the margin out of that money. `margin_off = players` is named when that share cannot take
   every players' output's margin whole: the escrow holds only players' money, or less than one margin past it.
-- **In sats** each players' output holds its part plus the margin rounded up to whole sats (10 sat), none above its
+- **In sats** each players' output holds its part plus the margin rounded up to whole sats (2,010 sat on testnet4
+  and regtest, 20,010 sat on mainnet, #1121), none above its
   carrier's bond with it; a carrier's slices fill each output up to its value less the margin. The checker allows
   the players' part rounded up once, plus one margin per players' output of a spend that names `reserves`, plus up
   to dust for an output raised to dust; the reserves at most the escrow less the players' part and those margins.
