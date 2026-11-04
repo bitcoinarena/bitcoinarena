@@ -316,8 +316,23 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
       if (!j.address) throw new Error(`no peg-in address: ${j.error || JSON.stringify(j).slice(0, 160)}`);
       return String(j.address);
     },
-    async peginClaim(address, waitS = 840) {
-      const j = await run(bin, ['--mode', 'pegin-claim', '--data-dir', dataDir, '--address', String(address), '--timeout-s', String(waitS)], (waitS + 60) * 1000);
+    /**
+     * THE CLAIM OF ONE DEPOSIT (kanban #1093): `outpoint` 'txid:vout' (display order) and `sats` its value name the deposit, so the tool answers what the federation credited
+     * THAT deposit (walletv2: one peg-in address per client, every deposit on it; its record per outpoint), never "the balance grew" - which read another escrow's deposit
+     * as this one's. The legacy wallet gives each deposit its own address, so there the address names it and the balance's rise is its claim. Without an outpoint: as before.
+     */
+    async peginClaim(address, opts = {}) {
+      const { outpoint = null, sats = null, waitS = 840 } = typeof opts === 'number' ? { waitS: opts } : (opts || {});
+      const args = ['--mode', 'pegin-claim', '--data-dir', dataDir, '--address', String(address), '--timeout-s', String(waitS)];
+      if (outpoint) args.push('--outpoint', String(outpoint), ...(sats !== null && sats !== undefined ? ['--sats', String(sats)] : []));
+      const j = await run(bin, args, (waitS + 60) * 1000);
+      if (j.claimed_msat !== undefined && j.claimed_msat !== null) {
+        if (outpoint && j.outpoint && String(j.outpoint).toLowerCase() !== String(outpoint).toLowerCase()) throw new Error(`the tool claimed ${j.outpoint}, not ${outpoint}`);
+        if (!(BigInt(j.claimed_msat) > 0n)) throw new Error(`the peg-in is not claimed yet: ${j.error || JSON.stringify(j).slice(0, 160)}`);
+        return { claimedMsat: BigInt(j.claimed_msat) };
+      }
+      // A WALLETV2 ANSWER WITHOUT A PER-OUTPOINT CLAIM is a tool from before #1093: its balance rise may be another deposit's
+      if (outpoint && j.kind === 'walletv2') throw new Error('this stake-lock tool claims a walletv2 peg-in by the balance, not by its outpoint: rebuild it (kanban #1093)');
       if (!(j.balance_after_msat > j.balance_before_msat)) throw new Error(`the peg-in is not claimed yet: ${j.error || JSON.stringify(j).slice(0, 160)}`);
       return { claimedMsat: BigInt(j.balance_after_msat) - BigInt(j.balance_before_msat) };
     },

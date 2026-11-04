@@ -44,12 +44,26 @@ export const SLASH_CLOCKS = Object.freeze({
 });
 
 /**
- * A CARRIER'S PAYOUT MARGIN, msat, by network (§5A.3B, RULED 2026-11-03, kanban #1086): what every player_carrier output holds past the loss it carries, so the carrier's own
- * payout fee in the players' federation never comes out of a loss. A slash's table names it and the escrow spend's outputs[] repeat it, so no signer chooses it and every signer
- * builds the same bytes. Not in genesis and not hashed, beside it as CENSUS_KEY_BOND_MIN is. Mainnet the same as the test networks: the spec names no other value, and one
- * federation payout measured 352 msat.
+ * A CARRIER'S PAYOUT FEE, msat, by network (§5A.3B, RULED 2026-11-03, kanban #1086): the part of the margin a carrier keeps back of a claim for its own payout's fee in the
+ * players' federation, so that fee never comes out of a loss. Mainnet the same as the test networks: the spec names no other value, and one federation payout measured 352 msat.
+ * Not in genesis and not hashed, beside it as CENSUS_KEY_BOND_MIN is; nor are the two below. A slash's table names their sum (carrier_margin_msat) and the escrow spend's
+ * outputs[] repeat it, so no signer chooses it and every signer builds the same bytes.
  */
-export const CARRIER_PAYOUT_MARGIN_MSAT = Object.freeze({ mainnet: 10_000n, testnet4: 10_000n, regtest: 10_000n });
+export const CARRIER_PAYOUT_FEE_MSAT = Object.freeze({ mainnet: 10_000n, testnet4: 10_000n, regtest: 10_000n });
+
+/**
+ * A CARRIER'S PEG-IN FEE ALLOWANCE, msat, by network (kanban #1093, "fix both"): the receiving federation takes its own fee off a deposit before it credits it. A walletv2
+ * federation charges its consensus feerate (never under 1 sat/vB) times its config's receive_tx_vbytes: the safe federation of the real-Fedimint liquidation run took
+ * 416 sat of a 299,594 sat output (1 sat/vB), so a margin of 10 sat left the carrier 406,016 msat short of the claims and they waited for ever. The feerate moves with
+ * the chain and with the federation's pending transactions, so no seat can read one value every signer agrees on: the allowance is a network constant, as the margin
+ * was, sized for the measured peg-in (416 vB) at about 4.8 sat/vB on the test networks and about 48 sat/vB on mainnet. Unused allowance is not the carrier's: what
+ * the claim leaves past the players and the payout fee goes to the reserve key in the same payout (#1086's rule). A peg-in dearer than the allowance pays the
+ * players pro rata (slash) or waits (liquidation), as before.
+ */
+export const CARRIER_PEGIN_FEE_MSAT = Object.freeze({ mainnet: 20_000_000n, testnet4: 2_000_000n, regtest: 2_000_000n });
+
+/** What every player_carrier and claims_carrier output holds past what it carries: the peg-in allowance plus the payout fee (kanban #1086, #1093). */
+export const CARRIER_PAYOUT_MARGIN_MSAT = Object.freeze(Object.fromEntries(Object.keys(CARRIER_PAYOUT_FEE_MSAT).map((n) => [n, CARRIER_PAYOUT_FEE_MSAT[n] + CARRIER_PEGIN_FEE_MSAT[n]])));
 
 /** census_key_shares_max (§27A.6, §5A.3B, RULED 2026-11-02, kanban #1021): hashed as the slash clocks are, and for the same reason not on the test networks. */
 export const CENSUS_KEY_SHARES_MAX = 1024;

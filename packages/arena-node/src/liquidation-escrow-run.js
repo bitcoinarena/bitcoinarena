@@ -36,10 +36,11 @@ const loadOf = (f) => { const cap = BigInt(f.exposureCapSats || 0); return cap >
  * Made by slash-release-run.js with its reads. `claimsOf(fid hex)` -> { accepted: [{ nonce, amountMsat, payoutPk, height }], coveredMsat: Map(nonce -> msat), afterWindow } or null:
  * the one claims ledger of a liquidating federation (the claims door's plan: what the arbitration set's escrow pays each, and whether the claim window has closed).
  * `federationsAt(height)` the reserves' view on the records in force there; `reserveKeyOf(fid)`; `portFor(fid)` a client { peginAddress, peginClaim, payouts, ecashBalance? } or null.
+ * `marginMsat` the network's carrier margin each claims_carrier output holds; `payoutFeeMsat` the part of it a carrier keeps back for its payout's fee (kanban #1093).
  */
 export function createLiquidationEscrow({ secret, me, networkId, clocks, db, tweakPoint, tipHeight, entriesAtTip, txOut, fetchProof, judge, holdersOf, heldKey, thresholdOf, signer, urlOf,
   fetchFn = fetch, send, portFor = async () => null, scriptOf, federationsAt = async () => [], reserveKeyOf = () => null, claimsOf = async () => null, now = Date.now, stepMs = 600000,
-  log = () => {}, confirmedOf, fallbackRank, getJson, marginMsat = 0n }) {
+  log = () => {}, confirmedOf, fallbackRank, getJson, marginMsat = 0n, payoutFeeMsat = marginMsat }) {
   db.exec(`CREATE TABLE IF NOT EXISTS liq_escrow_chain (table_id TEXT NOT NULL, seq INTEGER NOT NULL, start TEXT NOT NULL, federation TEXT NOT NULL, escrow_in TEXT NOT NULL, value INTEGER NOT NULL,
       outputs BLOB NOT NULL, claims BLOB NOT NULL, txid TEXT NOT NULL, PRIMARY KEY (table_id, seq));
     CREATE TABLE IF NOT EXISTS liq_escrow_props (escrow TEXT NOT NULL, outputs_id TEXT NOT NULL, table_id TEXT NOT NULL, start TEXT NOT NULL, load_height INTEGER NOT NULL, outputs BLOB NOT NULL,
@@ -346,14 +347,17 @@ export function createLiquidationEscrow({ secret, me, networkId, clocks, db, twe
           }
           const port = await portFor(peg.federation);
           if (!port) { done.push({ escrow: row.escrow_in, index: i, why: `no client of ${peg.federation.slice(0, 16)}` }); continue; }
-          if (!state.claimedMsat) { const c = await port.peginClaim(peg.address); state.claimedMsat = String(c.claimedMsat); keep(); }
+          // THIS OUTPUT'S OWN DEPOSIT (kanban #1093): a walletv2 client has one peg-in address, so two escrows carried by one carrier land on it; the claim is read by outpoint
+          if (!state.claimedMsat) { const c = await port.peginClaim(peg.address, { outpoint: `${row.txid}:${i + 1}`, sats: o.value }); state.claimedMsat = String(c.claimedMsat); keep(); }
           const claimed = BigInt(state.claimedMsat);
-          // EACH CLAIM AT FACE, to its key; the rest, less this carrier's margin for the payout's fee, to that federation's reserve key: a carrier keeps nothing past its fee
+          // EACH CLAIM AT FACE, to its key; the rest, less the payout part of the margin for this carrier's payout fee, to that federation's reserve key: the margin paid the
+          // peg-in fee first (kanban #1093), and what it left goes on to the reserves, so a carrier keeps nothing past its fee
           const pays = o.pays === 'claims_carrier' ? (slices.find((x) => x.index === i) || { claims: [] }).claims.map((c) => ({ key: c.payoutPk, msat: c.msat, nonce: c.nonce })) : [];
           const owedOut = pays.reduce((a, x) => a + x.msat, 0n);
           if (claimed < owedOut) { done.push({ escrow: row.escrow_in, index: i, why: `claimed ${claimed} msat, ${owedOut} owed: the claims wait` }); continue; }
           const reserveKey = await reserveKeyOf(peg.federation);
-          const rest = claimed - owedOut - (o.pays === 'claims_carrier' ? BigInt(d.marginMsat) : 0n);
+          const margin = o.pays === 'claims_carrier' ? BigInt(d.marginMsat) : 0n, feeHold = margin < payoutFeeMsat ? margin : payoutFeeMsat;
+          const rest = claimed - owedOut - feeHold;
           const list = [...pays.map(({ key, msat }) => ({ key, msat })), ...(reserveKey && rest > 0n ? [{ key: toHex(reserveKey), msat: rest }] : [])].filter((x) => x.msat > 0n);
           if (!list.length) { state.paidTxid = 'nothing'; keep(); continue; }
           const paid = await port.payouts(list);

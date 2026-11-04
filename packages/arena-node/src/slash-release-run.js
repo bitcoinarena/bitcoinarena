@@ -22,7 +22,7 @@ import { carrierPegInId, fallbackCarriers } from '../../arena-protocol/src/censu
 import { decodeSlashPayoutTable, fraudProofHash, slashDistribution, slashPayoutTableId } from '../../arena-protocol/src/slash.js';
 import { carrierSlices, fallbackWitness, releaseWitness, signedHoldSpend, slashEscrowOutput, slashHoldSpend, startFeeRate } from '../../arena-protocol/src/slash-release.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
-import { carrierMarginOf } from '../../arena-protocol/src/slash-presig.js';
+import { carrierMarginOf, carrierPayoutFeeOf } from '../../arena-protocol/src/slash-presig.js';
 import { serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { fromHex, taggedHash, toHex } from '../../arena-protocol/src/hash.js';
@@ -57,7 +57,8 @@ export const fallbackRank = (proofId, keys, me) => [...keys].sort((a, b) => (toH
 export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPoint, tipHeight, entriesAtTip, rawTx, unspent, fetchProof, judge, panelsOf, seatsOf = () => [], lossesFor,
   federations = async () => [], retired = [], portFor = async () => null, scriptOf, reserveKeyOf = () => null, keepReserveRow = () => {}, urlOf = () => null, heldKey = () => null,
   thresholdOf = () => null, holdersOf = async () => [], signer = () => null, send, claimsOf = async () => null, stepMs = 600000, fetchFn = fetch, now = Date.now, log = () => {},
-  txOut = async (txid, vout) => ((await unspent(txid, vout)) ? { confirmations: 1 } : null), federationsAt = async () => federations(), carrierMarginMsat = carrierMarginOf(networkId) }) {
+  txOut = async (txid, vout) => ((await unspent(txid, vout)) ? { confirmations: 1 } : null), federationsAt = async () => federations(), carrierMarginMsat = carrierMarginOf(networkId),
+  carrierPayoutFeeMsat = carrierPayoutFeeOf(networkId) }) {
   const me = toHex(key);
   db.exec(`CREATE TABLE IF NOT EXISTS slash_holds (start TEXT PRIMARY KEY, height INTEGER NOT NULL, round_id TEXT, proof_id TEXT, node TEXT NOT NULL, bond TEXT NOT NULL, seen_ms INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS slash_spends (start TEXT NOT NULL, path TEXT NOT NULL, table_id TEXT NOT NULL, tbl BLOB NOT NULL, txid TEXT NOT NULL, fee INTEGER NOT NULL, signature BLOB,
@@ -392,9 +393,11 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
   const balanceOf = async (port) => (typeof port.ecashBalance === 'function' ? BigInt(await port.ecashBalance()) : null);
   /**
    * ONE OUTPUT A CARRIER WAS PAID, PAID ON (§5A.3B, kanban #972, RULED 2026-11-03, kanban #1086): claim the peg-in, each player's slice to refund_key(player), the rest to that
-   * federation's reserve key, kept as a reserve row of kind `slash`. The carrier keeps `marginMsat` (the margin its table or escrow spend names) back of every claim for its payout's
-   * fee. A players' output holds that margin past its slices, so the players are paid exactly their slices; one whose spend names `marginOff: players` holds the slices alone, and
-   * the margin comes off them pro rata. A carrier keeps nothing: what its payout's fee left of the margin, measured on its client's balance, goes to the reserve key with its next
+   * federation's reserve key, kept as a reserve row of kind `slash`. A players' output holds `marginMsat` (the margin its table or escrow spend names) past its slices: the
+   * receiving federation's peg-in fee comes off it first (kanban #1093), and the carrier keeps back only the payout part of it (`carrierPayoutFeeMsat`, never more than the
+   * margin) for its payout's fee, so the players are paid exactly their slices and what the peg-in left of the margin goes to the reserve key in the same payout. One whose
+   * spend names `marginOff: players` holds the slices alone: the peg-in fee and the payout part come off them pro rata. The claim is this output's own deposit, read by its
+   * outpoint (a walletv2 client takes every deposit on one address). A carrier keeps nothing: what its payout's fee left of the margin, measured on its client's balance, goes to the reserve key with its next
    * payout there (this spend's reserves' part, or the next one). `name` { start (where its state is kept), path, index }; `startHex` the hold's start, for the reserve row.
    */
   async function payOn({ name, startHex, txid, vout, o, peg, slices, marginMsat }) {
@@ -411,22 +414,27 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
       const port = await portFor(peg.federation);
       if (!port) return { start: startHex, why: `no client of ${peg.federation.slice(0, 16)}` };
       if (!state.claimedMsat) {
-        const c = await port.peginClaim(peg.address);
+        // THIS OUTPUT'S OWN DEPOSIT (kanban #1093): a walletv2 client has one peg-in address, so two outputs to one carrier land on it; the claim is read by outpoint
+        const c = await port.peginClaim(peg.address, { outpoint: `${txid}:${vout}`, sats: o.value });
         state.claimedMsat = String(c.claimedMsat);
         keepState(name, state);
       }
+      // THE MARGIN PAID THE PEG-IN (kanban #1093): the output holds the slices plus the margin; the federation took its peg-in fee off it before crediting it. The carrier
+      // keeps back only the payout part of the margin (never more than the margin); what the claim holds past the slices and that hold is the reserves'
       const margin = BigInt(marginMsat ?? 0n);
+      const feeHold = margin < carrierPayoutFeeMsat ? margin : carrierPayoutFeeMsat;
       const players = o.pays === 'player_carrier' ? slices : [];
       const playersMsat = players.reduce((a, x) => a + x.msat, 0n);
       const claimedAll = BigInt(state.claimedMsat);
-      const claimed = claimedAll - margin;
+      const kept = claimedAll < feeHold ? claimedAll : feeHold;
+      const claimed = claimedAll - kept;
       const pays = players.map((x) => ({ key: toHex(refundKeyOf(x.playerPubkey)), msat: claimed >= playersMsat ? x.msat : (x.msat * (claimed > 0n ? claimed : 0n)) / playersMsat, entryId: toHex(x.entryId) }));
       const rest = claimed - pays.reduce((a, x) => a + x.msat, 0n);
       const reserveKey = await reserveKeyOf(peg.federation);
       const owed = reserveKey ? owedMarginOf(peg.federation) : 0n;
       const list = [...pays, ...(reserveKey && rest + owed > 0n ? [{ key: toHex(reserveKey), msat: rest + owed, reserves: true }] : [])].filter((x) => x.msat > 0n);
-      const kept = claimedAll < margin ? claimedAll : margin;
-      let unused = kept, carried = 0n;
+      // NO RESERVE KEY YET: what the peg-in allowance left stays on this client, owed on to the reserve key as unused margin is
+      let unused = kept + (!reserveKey && rest > 0n ? rest : 0n), carried = 0n;
       if (!list.length) { state.paidTxid = 'nothing'; } else {
         const before = await balanceOf(port).catch(() => null);
         const paid = await port.payouts(list.map((x) => ({ key: x.key, msat: x.msat })));
@@ -434,7 +442,7 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
         const out = list.reduce((a, x) => a + x.msat, 0n);
         // WHAT THE PAYOUT'S FEE TOOK: the client's balance before less after less what went out; unknown, the whole margin counts as taken
         const fee = before !== null && after !== null ? before - after - out : null;
-        unused = fee === null ? 0n : fee <= 0n ? kept : fee >= kept ? 0n : kept - fee;
+        unused = (fee === null ? 0n : fee <= 0n ? kept : fee >= kept ? 0n : kept - fee) + (!reserveKey && rest > 0n ? rest : 0n);
         if (fee === null) log(`[slash] carrying ${startHex.slice(0, 16)} output ${name.index}: the client's balance cannot be read, the margin's unused part is not known`);
         state.feeMsat = fee === null ? null : String(fee);
         const outIdxOf = (k) => (paid.payouts.find((y) => y.refundPk === k) || {}).outIdx ?? null;
@@ -495,7 +503,8 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
   // WHAT A SLASH LEFT IN ESCROW (RULED 2026-11-03, kanban #1085): slash-escrow-run.js, on this run's reads
   // WHAT A SLASH WITH NO ROUND LEFT IN ESCROW pays the liquidation's claims (kanban #1093 part 2, ruling #1111): liquidation-escrow-run.js, on this run's reads
   const liquidation = createLiquidationEscrow({ secret, me, networkId, clocks, db, tweakPoint, tipHeight, entriesAtTip, txOut, fetchProof, judge, holdersOf, heldKey, thresholdOf, signer, urlOf,
-    fetchFn, send, portFor, scriptOf, federationsAt, reserveKeyOf, claimsOf, now, stepMs, log, confirmedOf, fallbackRank, getJson, marginMsat: carrierMarginMsat });
+    fetchFn, send, portFor, scriptOf, federationsAt, reserveKeyOf, claimsOf, now, stepMs, log, confirmedOf, fallbackRank, getJson, marginMsat: carrierMarginMsat,
+    payoutFeeMsat: carrierPayoutFeeMsat });
   const escrow = createSlashEscrow({ secret, me, clocks, db, tweakPoint, tipHeight, entriesAtTip, txOut, fetchProof, judge, panelsOf, seatsOf, holdersOf, heldKey, thresholdOf, signer, urlOf,
     fetchFn, send, portFor, scriptOf, federationsAt, retired, now, stepMs, log, confirmedOf, peers: () => peers, fallbackRank, getJson, payOn });
   async function pass() {

@@ -17,7 +17,9 @@ import { claimsOwed, decodeLiquidationClaims, decodeLiquidationEscrowOutputs, en
   liquidationEscrowSpend, liquidationSlices, liquidationTxOf } from '../../arena-protocol/src/liquidation-escrow.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
-import { CARRIER_PAYOUT_MARGIN_MSAT } from '../../arena-protocol/src/genesis.js';
+import * as genesis from '../../arena-protocol/src/genesis.js';
+const { CARRIER_PAYOUT_MARGIN_MSAT } = genesis;
+const CARRIER_PAYOUT_FEE_MSAT = genesis.CARRIER_PAYOUT_FEE_MSAT ?? CARRIER_PAYOUT_MARGIN_MSAT;   // before #1093 the whole margin was the payout's
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { tweakPoint } from '../src/curve.js';
 import { createCensusSigner } from '../src/census-sign.js';
@@ -40,6 +42,8 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const display = (internal) => toHex([...internal].reverse());
 const clocks = { holdBlocks: 1, returnBlocks: 12, fallbackBlocks: 24 };
 const MARGIN = CARRIER_PAYOUT_MARGIN_MSAT.regtest;
+const FEE_HOLD = CARRIER_PAYOUT_FEE_MSAT.regtest;          // what a carrier keeps back for its payout's fee (kanban #1093)
+const PEGIN_FEE_MSAT = 416_000n;                         // the safe federation's walletv2 peg-in fee in the real-Fedimint liquidation run (kanban #1093)
 const PAYOUT_FEE_MSAT = 352n;
 const BOND = 1_000_000n, MATURITY = 600, START_HEIGHT = 400, SLASH_HEIGHT = 399;
 const accused = person(40);
@@ -69,7 +73,7 @@ const feeFunding = serializeSpend({ version: 2, locktime: 0, inputs: [{ txid: b3
 function chain(tip) {
   const utxo = new Map(), mempool = [], raws = new Map();
   const c = {
-    tip, mined: [], mempool, claims: new Map(),
+    tip, mined: [], mempool, claims: new Map(), deposits: new Map(),
     add(txidHex, vout, value, script, height) { utxo.set(`${txidHex}:${vout}`, { sats: value, script: toHex(script), height }); },
     txOut: async (txid, vout) => { const o = utxo.get(`${txid}:${vout}`); return o ? { sats: o.sats, script: o.script, confirmations: c.tip - o.height + 1 } : null; },
     rawTx: async (txid) => raws.get(txid) || null,
@@ -99,7 +103,8 @@ function chain(tip) {
 }
 
 /** The holders' seats, each with its own store and run, on one chain; `ledger()` the one claims ledger of federation L as the claims door answers it. */
-function world({ ledger, tip = START_HEIGHT + 1 }) {
+/** `walletv2`: each carrier's client has ONE peg-in address per federation, as walletv2's does (kanban #1093): deposits are kept per outpoint, and a claim asked without one reads "the balance grew". */
+function world({ ledger, tip = START_HEIGHT + 1, walletv2 = false }) {
   const start = startOf();
   const c = chain(tip);
   c.add(start.hex, 0, BOND, hold.script, START_HEIGHT);
@@ -129,7 +134,17 @@ function world({ ledger, tip = START_HEIGHT + 1 }) {
     const portOf = (fid) => {
       if (!clients.has(fid)) {
         let held = 0n;
-        clients.set(fid, { peginAddress: async () => `addr-${p.hex}-${fid}-${made++}`, peginClaim: async (address) => { const m = c.claims.get(address) ?? 0n; held += m; return { claimedMsat: m }; },
+        const claimOf = (address, opts) => {
+          if (opts && opts.outpoint && c.deposits.has(opts.outpoint)) { const d = c.deposits.get(opts.outpoint); d.counted = true; return d.msat; }
+          const on = [...c.deposits.values()].filter((d) => d.address === address);
+          if (!on.length) return c.claims.get(address) ?? 0n;
+          // THE BALANCE GREW: every deposit on that address not counted yet, whoever's it is
+          const m = on.filter((d) => !d.counted).reduce((a, d) => a + d.msat, 0n);
+          for (const d of on) d.counted = true;
+          if (m <= 0n) throw new Error('the peg-in is not claimed yet');
+          return m;
+        };
+        clients.set(fid, { peginAddress: async () => (walletv2 ? `addr-${p.hex}-${fid}` : `addr-${p.hex}-${fid}-${made++}`), peginClaim: async (address, opts) => { const m = claimOf(address, opts); held += m; return { claimedMsat: m }; },
           ecashBalance: async () => held,
           payouts: async (list) => {
             const out = list.reduce((a, x) => a + x.msat, 0n);
@@ -155,6 +170,13 @@ function world({ ledger, tip = START_HEIGHT + 1 }) {
   const carryAll = async () => { const out = []; for (const [p] of holders) out.push(...(await seats.get(p.hex).run.carry())); return out; };
   return { c, seats, paid, logs, start, live, passAll, carryAll, run: (p) => seats.get(p.hex).run };
 }
+/** Each output of mined `m` to a carrier's one walletv2 address lands there as its own deposit, credited its value less the federation's peg-in fee (kanban #1093). */
+const depositAll = (w, m, feeMsat) => {
+  for (const [p] of holders) for (const fid of [fedA, fedB]) {
+    const address = `addr-${p.hex}-${fid}`;
+    m.tx.outputs.forEach((o, i) => { if (toHex(o.script) === toHex(scriptOfAddress(address))) w.c.deposits.set(`${m.txid}:${i}`, { address, msat: o.value * 1000n - feeMsat, counted: false }); });
+  }
+};
 /** Each output of `tx` to a carrier's peg-in address claims exactly its value (its client's claim). */
 const claimAll = (w, tx) => {
   for (const [p] of holders) for (const fid of [fedA, fedB]) for (let n = 0; n < 8; n++) {
@@ -182,8 +204,8 @@ test('a liquidation escrow spend: claims whole and in order, each to the first c
   assert.ok(x.ok, x.why);
   assert.equal(toHex(x.bytes), toHex(y.bytes)); assert.equal(toHex(x.digest), toHex(y.digest));
   const d = decodeLiquidationEscrowOutputs(x.bytes);
-  assert.deepEqual(d.outputs.map((o) => [o.pays, o.value, o.claims]), [['claims_carrier', 300_010n, 1], ['claims_carrier', 450_010n, 2], ['escrow', 990_000n - 750_020n - x.feeSats, undefined]],
-    'each output its claims at face, rounded up to the sat, and the 10 sat margin; the rest back to the escrow');
+  assert.deepEqual(d.outputs.map((o) => [o.pays, o.value, o.claims]), [['claims_carrier', 300_000n + MARGIN / 1000n, 1], ['claims_carrier', 450_000n + MARGIN / 1000n, 2], ['escrow', 990_000n - 750_000n - 2n * (MARGIN / 1000n) - x.feeSats, undefined]],
+    'each output its claims at face, rounded up to the sat, and the margin; the rest back to the escrow');
   assert.equal(toHex(encodeLiquidationEscrowOutputs(d)), toHex(x.bytes));
   assert.equal(toHex(d.claimsId), toHex(liquidationClaimsId(x.claims)), 'claims_id names the claims it pays');
   assert.deepEqual(liquidationSlices(d, x.claims).map((s) => s.claims.map((c) => c.msat)), [[300_000_000n], [400_000_000n, 50_000_000n]], 'the second claim does not fit beside the first under its bond: the next carrier, and the third with it');
@@ -242,8 +264,9 @@ test('a theft\'s template-3 hold: the census key releases it to one census-key e
   // 3. THE CARRIER claims its peg-in in the safe federation and pays each claim at face, to the claim's key
   claimAll(w, m.tx);
   const carried = await w.carryAll();
-  assert.deepEqual(w.paid.map((x) => [x.federation, x.list.map((y) => [y.key, y.msat])]), [[fedB, [[claim(1, 0).payoutPk, 300_000_000n], [claim(2, 0).payoutPk, 100_000_000n]]]],
-    `the lowest-load safe federation (B), never the liquidating one: ${JSON.stringify(carried.filter((x) => x.why))}`);
+  const leftOver = d.outputs[0].value * 1000n - 400_000_000n - FEE_HOLD;
+  assert.deepEqual(w.paid.map((x) => [x.federation, x.list.map((y) => [y.key, y.msat])]), [[fedB, [[claim(1, 0).payoutPk, 300_000_000n], [claim(2, 0).payoutPk, 100_000_000n], [toHex(reserveKey(fedB)), leftOver]]]],
+    `the lowest-load safe federation (B), never the liquidating one; what the peg-in left of the margin to B's reserve key: ${JSON.stringify(carried.filter((x) => x.why))}`);
   assert.equal(w.paid[0].carrier, holders[0][0].hex, 'the holder with the most shares carries first');
   // 4. A LATER CLAIM: the escrow's change pays it, and nothing is paid twice
   ledger = { ...ledger, accepted: [...ledger.accepted, claim(4, 90_000_000, w.c.tip - 1)] };
@@ -255,7 +278,7 @@ test('a theft\'s template-3 hold: the census key releases it to one census-key e
   const m2 = w.c.mined[w.c.mined.length - 1];
   claimAll(w, m2.tx);
   await w.carryAll();
-  assert.deepEqual(w.paid.slice(1).flatMap((x) => x.list.map((y) => [y.key, y.msat])), [[claim(4, 0).payoutPk, 90_000_000n]], 'only the new claim: the first two are carried already');
+  assert.deepEqual(w.paid.slice(1).flatMap((x) => x.list.filter((y) => y.key !== toHex(reserveKey(fedB))).map((y) => [y.key, y.msat])), [[claim(4, 0).payoutPk, 90_000_000n]], 'only the new claim: the first two are carried already');
 });
 
 test('a holder signs only its own bytes: another outputs id or a height past its tip is refused', async () => {
@@ -271,4 +294,36 @@ test('a holder signs only its own bytes: another outputs id or a height past its
   assert.match((await ask({})).why, /own outputs at/);
   assert.match((await ask({ loadHeight: w.c.tip + 5 })).why, /names a height from/);
   assert.match((await ask({ escrow: `${'ab'.repeat(32)}:1` })).why, /this seat's escrow is/);
+});
+
+// ---- KANBAN #1093: THE REAL-FEDIMINT LIQUIDATION RUN'S TWO BUGS ----
+test('#1093: a walletv2 federation takes a 416 sat peg-in fee and gives the carrier one address for both escrows: each claim is read by its own outpoint and paid at face, the rest to the reserves', async () => {
+  let ledger = { accepted: [claim(1, 300_000_000)], coveredMsat: new Map(), afterWindow: false };
+  const w = world({ ledger: () => ledger, walletv2: true });
+  w.c.tip = START_HEIGHT + clocks.fallbackBlocks - 1;
+  await w.passAll(); w.c.mine(); w.live.entries = w.live.entries.filter((e) => !e.hold);
+  await w.passAll();
+  w.c.tip += clocks.fallbackBlocks;
+  await w.passAll();
+  assert.equal(w.c.mempool.length, 1, 'the first escrow spend went out');
+  w.c.mine();
+  const m1 = w.c.mined[w.c.mined.length - 1];
+  // A SECOND CLAIM, carried by the same carrier before it carried the first: both deposits are on its one address when it claims
+  ledger = { ...ledger, accepted: [...ledger.accepted, claim(4, 600_000_000, w.c.tip - 1)] };
+  await w.passAll();
+  w.c.tip += clocks.fallbackBlocks;
+  await w.passAll();
+  assert.equal(w.c.mempool.length, 1, 'the second escrow spend went out, on the first one\'s change');
+  w.c.mine();
+  const m2 = w.c.mined[w.c.mined.length - 1];
+  assert.equal(toHex(m1.tx.outputs[1].script), toHex(m2.tx.outputs[1].script), 'one carrier, one walletv2 address: both escrows pay the same script');
+  depositAll(w, m1, PEGIN_FEE_MSAT); depositAll(w, m2, PEGIN_FEE_MSAT);
+  const carried = await w.carryAll();
+  const toClaims = w.paid.flatMap((x) => x.list).filter((y) => y.key !== toHex(reserveKey(fedB)));
+  assert.deepEqual(toClaims.map((y) => [y.key, y.msat]), [[claim(1, 0).payoutPk, 300_000_000n], [claim(4, 0).payoutPk, 600_000_000n]],
+    `each claim at face, its own escrow's deposit carrying it: ${JSON.stringify(carried.map((x) => x.why || x.claimedMsat))} ${[...new Set(w.logs)].join(' | ')}`);
+  const toReserves = w.paid.flatMap((x) => x.list).filter((y) => y.key === toHex(reserveKey(fedB))).map((y) => y.msat);
+  assert.deepEqual(toReserves, [m1.tx.outputs[1].value * 1000n - PEGIN_FEE_MSAT - 300_000_000n - FEE_HOLD, m2.tx.outputs[1].value * 1000n - PEGIN_FEE_MSAT - 600_000_000n - FEE_HOLD],
+    'each output\'s margin paid its own peg-in fee; what that left past the payout fee went to the reserve key with it');
+  assert.ok(MARGIN - FEE_HOLD >= PEGIN_FEE_MSAT, 'the network\'s margin covers the measured walletv2 peg-in fee');
 });
