@@ -8745,6 +8745,13 @@
             window.ARENA_ROUND = undefined;
             window.ARENA_ENTRY = undefined;
             history.replaceState(null, '', location.pathname + back);
+            // A MARKET ORDER WHOSE TOP-UP WAS CLOSED IS NO ORDER AT ALL (kanban #1114, 2026-11-04: "If you place a bet with more then you have in your account and back out
+            // of the topup pop-up. It shows your bet as placed for a few seconds before removing it fully"): the market's client drew the refused join as its order in
+            // flight - side, amount, limit and a "not placed" chip - for 20 s. Nothing was paid and nothing was sent: the join goes, so no order is drawn at all
+            if (/the deposit was closed: nothing was paid/.test(join.why) && window.ARENA_PICK_CHOSEN && window.ARENA_PICK_CHOSEN.limitPrice && window.ARENA_JOIN === join) {
+              window.ARENA_JOIN = null;
+              console.log('[arena] order not placed: the top-up was closed, nothing was paid or sent');
+            }
           };
           // A JOIN THAT THE SIGNER NODES DO NOT ANSWER IS REFUSED BY TIME (2026-09-17). Measured before on the silent Daily:
           // after PLAY every /round and /identity failed only after 125-150 s and the lobby said "joining the round …" for
