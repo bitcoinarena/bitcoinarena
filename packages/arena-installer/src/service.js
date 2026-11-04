@@ -115,6 +115,19 @@ export async function installService({ node = process.execPath, release, home, p
 
 // MACOS: A LAUNCHD AGENT - ~/Library/LaunchAgents/io.bitcoin-arena.node.plist, the seat from the release with
 // its settings file (src/run.js <home>/arena.conf), kept alive, logged beside the node's home.
+// RUN AS AN APP RUNS, NOT THROTTLED (kanban #1122, measured 2026-11-04 on the main test host): an agent with no ProcessType gets
+// launchd's light resource limits - its threads run at priority 20 (spawn type daemon), a program started from a shell at 31. On a busy
+// machine the installer node's loop was held up to 16 s while its thread used under 1 s of processor ("[lag] ... waiting for the machine,
+// not for itself"), GET /identity went unanswered for 5-15 s, and seats on the same machine started from a shell answered in 2 ms.
+// ProcessType Interactive runs it at 31 (measured: three test agents, none / Standard 20, Interactive 31). Every agent the installer
+// writes says so - the seat, its tunnel and its programs (bitcoind, lnd, the guardian, the gateway) alike.
+export const LAUNCHD_PROCESS_TYPE = '<key>ProcessType</key><string>Interactive</string>';
+/** An agent written before (no ProcessType) says Interactive too; one that names its own keeps it. Not a plist: unchanged. */
+export function interactivePlist(text) {
+  const t = String(text);
+  if (/<key>ProcessType<\/key>/.test(t) || !/<\/dict>\s*<\/plist>\s*$/.test(t)) return t;
+  return t.replace(/\n?(\s*)<\/dict>(\s*<\/plist>\s*)$/, (m, sp, tail) => `\n  ${LAUNCHD_PROCESS_TYPE}\n</dict>${tail}`);
+}
 export const LAUNCHD_LABEL = named('io.bitcoin-arena.node');
 const xml = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 export function launchdPlist({ node, release, home, port, boot = true, env = {} }) {
@@ -132,6 +145,7 @@ export function launchdPlist({ node, release, home, port, boot = true, env = {} 
   <key>RunAtLoad</key><${boot ? 'true' : 'false'}/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>ThrottleInterval</key><integer>10</integer>
+  ${LAUNCHD_PROCESS_TYPE}
   <key>StandardOutPath</key><string>${xml(home)}/node.log</string>
   <key>StandardErrorPath</key><string>${xml(home)}/node.log</string>${envXml}
 </dict>
@@ -294,6 +308,7 @@ export async function installProgram({ id, description, args, home, boot = true,
   <key>RunAtLoad</key><${boot ? 'true' : 'false'}/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>ThrottleInterval</key><integer>30</integer>
+  ${LAUNCHD_PROCESS_TYPE}
   <key>StandardOutPath</key><string>${xml(home)}/${id}.log</string>
   <key>StandardErrorPath</key><string>${xml(home)}/${id}.log</string>
 </dict>
