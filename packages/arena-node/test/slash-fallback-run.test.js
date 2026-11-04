@@ -109,7 +109,7 @@ function world({ down = [], deviant = [], tip = START_HEIGHT + clocks.fallbackBl
       panelsOf: () => ({ ok: true, ...panels }), seatsOf: async () => [seat.hex],
       lossesFor: async () => ({ ok: true, losses: new Map([[player.hex, LOSS]]), entryIds: new Map([[player.hex, b32(0x31)]]) }),
       federations: async () => (deviant.includes(p.hex) ? federations.map((f) => ({ ...f, reserveSats: '0' })) : federations), portFor: async () => port,
-      scriptOf: (address) => fromHex(`5120${toHex(taggedHash('ARENA/test/Address', new TextEncoder().encode(address)))}`), reserveKeyOf: (fid) => reserveKey(fid), urlOf,
+      scriptOf: (address) => fromHex(`5120${toHex(taggedHash('ARENA/test/Address', new TextEncoder().encode(address)))}`), reserveKeyOf: async (fid) => reserveKey(fid), urlOf,
       heldKey: (k) => (toHex(k) === census.hex ? shares : null), thresholdOf: (k) => (k === census.hex ? THRESHOLD : null), holdersOf: async (k) => (k === census.hex ? holders : []),
       signer: () => s.signer, send: send(p.hex), stepMs: 0, fetchFn });
     s.signer = createCensusSigner({ key: p.key, work: censusKeyWork, held: (k) => (toHex(k) === census.hex ? shares : null),

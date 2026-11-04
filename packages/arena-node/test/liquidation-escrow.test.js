@@ -145,7 +145,7 @@ function world({ ledger, tip = START_HEIGHT + 1 }) {
     s.run = createSlashRelease({ key: p.key, secret: p.secret, networkId: NETWORK_ID_REGTEST, clocks, db: new DatabaseSync(':memory:'), tweakPoint,
       tipHeight: async () => c.tip, entriesAtTip: async () => live.entries, rawTx, unspent: async (t, v) => !!(await c.txOut(t, v)), txOut: c.txOut,
       fetchProof: async () => proofBytes, judge, panelsOf: () => ({ ok: false }), seatsOf: async () => [], lossesFor: async () => ({ ok: false, why: 'no round' }),
-      federations: async () => RECORDS, federationsAt: async () => RECORDS, portFor: async (fid) => portOf(fid), scriptOf: scriptOfAddress, reserveKeyOf: (fid) => reserveKey(fid), urlOf,
+      federations: async () => RECORDS, federationsAt: async () => RECORDS, portFor: async (fid) => portOf(fid), scriptOf: scriptOfAddress, reserveKeyOf: async (fid) => reserveKey(fid), urlOf,
       heldKey: (k) => (toHex(k) === census.hex ? shares : null), thresholdOf: (k) => (k === census.hex ? THRESHOLD : null), holdersOf: async (k) => (k === census.hex ? holderList : []),
       signer: () => s.signer, send: c.send, stepMs: 0, fetchFn, log: (l) => logs.push(l), claimsOf: async (fid) => (fid === fedL ? ledger() : null) });
     s.signer = createCensusSigner({ key: p.key, work: censusKeyWork, held: (k) => (toHex(k) === census.hex ? shares : null), check: (request) => s.run.checkOther(request) });

@@ -162,7 +162,7 @@ function world({ who, holders = [], hold, tip, ports = () => true, federationsNo
       panelsOf: () => ({ ok: true, ...panels }), seatsOf: async () => [seat.hex],
       lossesFor: async () => ({ ok: true, losses: new Map(losses.map(([q, l]) => [q.hex, l])), entryIds: new Map(losses.map(([q], i) => [q.hex, b32(0x31 + i)])) }),
       federations: async () => (deviant.includes(p.hex) ? federationsNow().map((f) => ({ ...f, reserveSats: '0' })) : federationsNow()), federationsAt: async (h) => federationsAt(h),
-      portFor: async (fid) => (ports(p) ? portOf(fid) : null), scriptOf: scriptOfAddress, reserveKeyOf: (fid) => reserveKey(fid), keepReserveRow: (row) => kept.push({ carrier: p.hex, row }), urlOf,
+      portFor: async (fid) => (ports(p) ? portOf(fid) : null), scriptOf: scriptOfAddress, reserveKeyOf: async (fid) => reserveKey(fid), keepReserveRow: (row) => kept.push({ carrier: p.hex, row }), urlOf,
       heldKey: (k) => (shares && toHex(k) === census.hex ? shares : null), thresholdOf: (k) => (k === census.hex ? THRESHOLD : null), holdersOf: async (k) => (k === census.hex ? holderList : []),
       signer: () => s.signer, send: c.send, stepMs, fetchFn });
     s.signer = createCensusSigner({ key: p.key, work: censusKeyWork, held: (k) => (shares && toHex(k) === census.hex ? shares : null), check: (request) => s.run.checkOther(request) });

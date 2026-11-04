@@ -352,7 +352,7 @@ export function createLiquidationEscrow({ secret, me, networkId, clocks, db, twe
           const pays = o.pays === 'claims_carrier' ? (slices.find((x) => x.index === i) || { claims: [] }).claims.map((c) => ({ key: c.payoutPk, msat: c.msat, nonce: c.nonce })) : [];
           const owedOut = pays.reduce((a, x) => a + x.msat, 0n);
           if (claimed < owedOut) { done.push({ escrow: row.escrow_in, index: i, why: `claimed ${claimed} msat, ${owedOut} owed: the claims wait` }); continue; }
-          const reserveKey = reserveKeyOf(peg.federation);
+          const reserveKey = await reserveKeyOf(peg.federation);
           const rest = claimed - owedOut - (o.pays === 'claims_carrier' ? BigInt(d.marginMsat) : 0n);
           const list = [...pays.map(({ key, msat }) => ({ key, msat })), ...(reserveKey && rest > 0n ? [{ key: toHex(reserveKey), msat: rest }] : [])].filter((x) => x.msat > 0n);
           if (!list.length) { state.paidTxid = 'nothing'; keep(); continue; }

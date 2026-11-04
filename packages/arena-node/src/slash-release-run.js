@@ -50,7 +50,7 @@ export const fallbackRank = (proofId, keys, me) => [...keys].sort((a, b) => (toH
  * `fetchProof(id)` the bytes under a proof's hash or null; `judge(bytes, { startHeight })` -> { verdict, why, held } with `judge.read`; `panelsOf(contract, rid)`; `seatsOf(contract, rid)`
  * the round's drawn keys (hex); `lossesFor({ contract, rid, held })` -> { ok, losses: Map key hex -> msat, entryIds: Map key hex -> bytes } or { ok: false, why }.
  * `federations()` the reserves' view, [{ federation, status, reserveKey, reserveSats, exposureCapSats }]; `retired` hex; `portFor(fid hex)` a stake-lock port or null; `scriptOf(address)`;
- * `reserveKeyOf(fid hex)` 33 bytes or null; `keepReserveRow(row)`.
+ * `reserveKeyOf(fid hex)` 33 bytes or null, or a promise of them (the seat's is async); `keepReserveRow(row)`.
  * `urlOf(key hex)`; `heldKey(publicKey)` CensusKeyStore's; `thresholdOf(key hex)`; `holdersOf(key hex, height)` -> [{ key, shares }]; `signer()` this node's census signer or null.
  * `send(hex)`. `claimsOf(fid hex)` the one claims ledger of a liquidating federation, for a slash with no round (liquidation-escrow-run.js).
  */
@@ -422,7 +422,7 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
       const claimed = claimedAll - margin;
       const pays = players.map((x) => ({ key: toHex(refundKeyOf(x.playerPubkey)), msat: claimed >= playersMsat ? x.msat : (x.msat * (claimed > 0n ? claimed : 0n)) / playersMsat, entryId: toHex(x.entryId) }));
       const rest = claimed - pays.reduce((a, x) => a + x.msat, 0n);
-      const reserveKey = reserveKeyOf(peg.federation);
+      const reserveKey = await reserveKeyOf(peg.federation);
       const owed = reserveKey ? owedMarginOf(peg.federation) : 0n;
       const list = [...pays, ...(reserveKey && rest + owed > 0n ? [{ key: toHex(reserveKey), msat: rest + owed, reserves: true }] : [])].filter((x) => x.msat > 0n);
       const kept = claimedAll < margin ? claimedAll : margin;
