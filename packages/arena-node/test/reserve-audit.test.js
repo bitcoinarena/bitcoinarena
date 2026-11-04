@@ -21,8 +21,11 @@ function fakeTool(history, { unverified = new Set() } = {}) {
       iss += BigInt(history[s][0]); red += BigInt(history[s][1]); if (history[s][2]) pegs.push(history[s][2]);
       if (first === null && red > iss) first = s;
     }
+    // as the tool answers: pegOutTxids are objects naming the e-cash transaction; signedPegOutTxids the bitcoin txids the guardians signed
     return { mode: 'session-audit', federation: FED, sessions: Math.max(0, to - from + 1), lastSession: Math.max(from - 1, to), unverified: bad,
-      cumulativeIssuedMsat: String(iss), cumulativeRedeemedMsat: String(red), firstInflationSession: first, pegOutTxids: pegs };
+      cumulativeIssuedMsat: String(iss), cumulativeRedeemedMsat: String(red), firstInflationSession: first,
+      pegOutTxids: pegs.map((t, i) => ({ session: from + i, txid: 'ee'.repeat(32), recipientScript: '0014' + '11'.repeat(20), sats: 5000 })),
+      signedPegOutTxids: pegs.map((t) => t.toUpperCase()) };
   };
   return { run, calls };
 }
@@ -62,4 +65,14 @@ test('a session that does not verify is never counted: the totals stop before it
   bad.clear();
   await audit.pass();
   assert.deepEqual([b.kept.get(FED).lastSession, b.kept.get(FED).issuedMsat], [49, '50000']);
+});
+
+test('the kept txids are the bitcoin txids the history signed, never the peg-out objects (kanban #1108)', async () => {
+  const history = Array.from({ length: 30 }, (_, i) => [1000, 0, i === 3 ? 'aa'.repeat(32) : i === 21 ? 'bb'.repeat(32) : null]);
+  const t = fakeTool(history), b = book(), alarms = createReserveAlarms();
+  // a row kept by the old build: its "[object object]" entries are dropped, its real txids stay
+  b.save(FED, { lastSession: 9, issuedMsat: '10000', redeemedMsat: '0', pegOutTxids: ['[object object]', 'dd'.repeat(32)] });
+  const audit = createReserveAudit({ federations: async () => [{ federation: FED, dataDir: '/c' }], run: t.run, load: b.load, save: b.save, alarms });
+  await audit.pass();
+  assert.deepEqual(b.kept.get(FED).pegOutTxids, ['dd'.repeat(32), 'bb'.repeat(32)], 'lower-case hex, old garbage gone; session 3 was before this range');
 });

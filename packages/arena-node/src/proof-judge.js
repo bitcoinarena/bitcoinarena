@@ -58,7 +58,8 @@ export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, repl
     const census = censusOf(r.contract, r.roundId);
     if (!census.ok) return { verdict: undefined, why: `that round's census cannot be read yet: ${census.why}` };
     const e = census.entries.find((x) => toHex(x.pubkey) === toHex(r.nodePubkey) && toHex(x.txid) === toHex(r.bond.txid) && x.vout === r.bond.vout) || null;
-    const on = { committee: seats.committee, advert: e ? { ...e.advert, nodePubkey: e.pubkey } : null, bondOutpoint: e ? { txid: e.txid, vout: e.vout } : null };
+    // the advert with its bond as the census holds it: a bond transaction's own advert names its txid as zeros ("this transaction"), kanban #972
+    const on = { committee: seats.committee, advert: e ? { ...e.advert, nodePubkey: e.pubkey, bondTxid: e.txid, bondVout: e.vout } : null, bondOutpoint: e ? { txid: e.txid, vout: e.vout } : null };
     const { evidence, bundle } = r.complete;
     let held;
     if (r.kind === 'double') held = judgeDoubleProof({ evidence, roundIdBytes: r.roundId, ...on });

@@ -47,8 +47,9 @@ import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } 
 import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
 import { capacityBandPoint, bondLockPoint } from '../../arena-protocol/src/federation-record.js';
-import { createReserveAlarms } from './reserve-alarms.js';
+import { createReserveAlarms, alarmRefusal } from './reserve-alarms.js';
 import { createReserveAudit } from './reserve-audit.js';
+import { createReserveSpendWatch, spendWatchReads } from './reserve-spend-watch.js';
 import { theftTools } from './theft-evidence.js';
 import { capacityView, capacityPlea, bondIncentive, pressureOf, guardianWeights as capacityGuardianWeights, gatewayWeights as capacityGatewayWeights } from '../../arena-protocol/src/capacity.js';
 import { GATEWAY_MINIMUMS, GATEWAY_EPOCH_BLOCKS, pegInPastCap } from '../../arena-protocol/src/gateway-seats.js';
@@ -593,6 +594,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   chainMempoolIds = null,
   chainRawTx = null,
   chainTxConfirmations = null,
+  // THE TRANSACTION THAT SPENT AN OUTPUT, from the blocks from..to: (txid, vout, from, to) -> { txid, height } | null (the reserve spend watch, kanban #1108)
+  chainSpenderOf = null,
+  // THE RESERVE ALARM BOOK, when the caller holds one (a test); else this seat's own, kept in its database (reserve-alarms.js)
+  reserveAlarmsBook = null,
   chainMempoolAncestors = null,
   chainRecentBlocks = null,
   expiry = {},
@@ -2817,9 +2822,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const verifier = new Verifier(round, {
     plugins: hosted,
     conflictsFor,
+    // EACH ADVERT WITH ITS BOND, AS THE CENSUS HOLDS IT (kanban #972, measured 11-04 on the slash-release regtest: 33 slash proofs filed, every start refused with "its bond
+    // is not in the census at the tip"): a bond transaction's own advert names its bond txid as all zeros - "this transaction" (chain.js carriesUs), since a transaction
+    // cannot hold its own id - so a proof that took advert.bondTxid named bond 00..00, which no census and no holder's judge finds. The census entry knows the outpoint.
     advertsFor: advertsFor || ((rid) => {
       const census = roster.censusFor(rid);
-      return census.ok ? new Map(census.entries.map((e) => [toHex(e.pubkey), e.advert])) : null;
+      return census.ok ? new Map(census.entries.map((e) => [toHex(e.pubkey), e.advert && e.txid instanceof Uint8Array ? { ...e.advert, bondTxid: e.txid, bondVout: e.vout } : e.advert])) : null;
     }),
     ...(randomnessFor ? { randomnessFor } : {}),
     // THE SAME CHAIN THE SIGNER NODE WAS CHECKED AGAINST. A node that closes a round
@@ -4270,7 +4278,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const entriesAtTipForStart = async () => {
     const entries = await censusKey.censusEntriesAt(await censusKey.tipHeight());
     if (entries) {
-      censusUrls = [...new Set(entries.filter((e) => e.advert && e.advert.endpoint && toHex(e.pubkey) !== toHex(round.pubkey)).map((e) => e.advert.endpoint.replace(/^ws/, 'http').replace(/\/+$/, '')))];
+      censusUrls = [...new Set(entries.filter((e) => e.advert && e.advert.endpoint && toHex(e.pubkey) !== toHex(round.pubkey)).map((e) => e.advert.endpoint.replace(/^ws/, 'http').replace(/\/+$/, '').replace(/\/guardian$/, '')))];
       for (const e of entries) {
         const name = `${toHex(e.txid)}:${e.vout}`;
         if (bondPresigCache.has(name) || !e.presigBy || e.hold) continue;
@@ -4304,7 +4312,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const urlOfKey = new Map();
   const slashEntriesAtTip = async () => {
     const entries = await entriesAtTipForStart();
-    if (entries) for (const e of entries) if (e.advert && e.advert.endpoint) urlOfKey.set(toHex(e.pubkey), e.advert.endpoint.replace(/^ws/, 'http').replace(/\/+$/, ''));
+    if (entries) for (const e of entries) if (e.advert && e.advert.endpoint) urlOfKey.set(toHex(e.pubkey), e.advert.endpoint.replace(/^ws/, 'http').replace(/\/+$/, '').replace(/\/guardian$/, ''));
     return entries;
   };
   const roundSeatKeys = (contract, rid) => {
@@ -4391,7 +4399,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     fetchProof: (id) => proofBytesFetched(id), judge: judgeProofBytes, panelsOf: (contract, rid) => roster.slashPanelsFor(rid, { posted: contract }), seatsOf: async (contract, rid) => roundSeatKeys(contract, rid),
     lossesFor: slashLossesFor, federations: slashFederations, retired: String(process.env.ARENA_ARBITER_RETIRED || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
     portFor: (fid) => portOfFederation(fromHex(fid)), scriptOf: (address) => addressScript(address, HRP_OF[censusKey.network] || 'tb'),
-    reserveKeyOf: (fid) => reserveKeyFor(fid), keepReserveRow: (row) => round.putDonationOutputs([row]), urlOf: (k) => urlOfKey.get(k) || null,
+    reserveKeyOf: (fid) => reserveKeyFor(fid), keepReserveRow: (row) => round.putDonationOutputs([row]), urlOf: (k) => {
+      // A PANEL MEMBER THE CENSUS AT THE TIP DOES NOT NAME IS ASKED AT ITS ANNOUNCED ADDRESS (kanban #972, measured 11-04 on the slash-release regtest: the
+      // panels are drawn from the round's census, the addresses were read from the census key's census at the tip, and the 7 guardian seats, whose bonds name
+      // no version the key's census reads, had none - their release signatures were never gathered and panel B stood at 3 of 5). Every seat announces where it is
+      const known = urlOfKey.get(k);
+      if (known) return known;
+      let at = null; try { at = addressBook.endpointOf({ pubkey: fromHex(k) }); } catch { at = null; }
+      return at ? String(at).replace(/^ws/, 'http').replace(/\/+$/, '') : null;
+    },
     heldKey: (k) => new CensusKeyStore(round.db).held(k), thresholdOf: censusKey.scan.thresholdOf, holdersOf: (k, h) => censusKey.scan.holdersAt(k, h), signer: () => (slashStarter ? slashStarter.signer : null),
     send: (hex) => chainSend(hex), stepMs: Number(process.env.ARENA_SLASH_FILE_STEP_MS || 600000), log: (l) => console.log(l), federationsAt: slashFederationsAt, claimsOf: liquidationLedger,
     txOut: async (txid, vout) => { if (typeof chainTxOut !== 'function') return null; const o = await chainTxOut(txid, vout).catch(() => null); return o ? { sats: o.sats, script: String(o.script).toLowerCase(), confirmations: o.confirmations } : null; } }) : null;
@@ -4773,6 +4789,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return reserveMissing.has(fed) ? `paused: this market pays the protocol reserve, and its federation ${fed.slice(0, 8)} has no reserve key yet - an order could not settle; orders open again once the key stands` : null;
   };
   const offerRefusal = (contract) => seriesRefusal(contract) || droppedRefusal(contract) || donationInForceRefusal(contract) || reserveRefusal(contract)
+    // A FEDERATION THIS SEAT HOLDS A RESERVE ALARM FOR (kanban #1108): no stake goes into it here, whatever the client picked
+    || alarmRefusal(reserveAlarms, contract)
     || drainingRefusal(contract) || fileRefusal(contract) || (typeof refusedFor === 'function' ? refusedFor(contract) : null)
     // AND A CONFIG THE BALLOT DID NOT MAKE LIVE FOR IT (27A.7.5): not listed, entered or locked here - "it serves nothing"
     || configRefusal(contract);
@@ -5441,7 +5459,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const retireBook = createRetireBook(db && db.arenaPath ? `${db.arenaPath}.retire.json` : null);
   // THE RESERVE ALARMS THIS SEAT SAW (kanban #1093 parts 2 and 5): kept in its database, listed with each record so clients stop depositing
   round.db.exec('CREATE TABLE IF NOT EXISTS reserve_alarms (federation TEXT PRIMARY KEY, alarm TEXT NOT NULL)');
-  reserveAlarms = createReserveAlarms({ load: () => round.db.prepare('SELECT alarm FROM reserve_alarms').all().map((r) => JSON.parse(r.alarm)),
+  reserveAlarms = reserveAlarmsBook || createReserveAlarms({ load: () => round.db.prepare('SELECT alarm FROM reserve_alarms').all().map((r) => JSON.parse(r.alarm)),
     save: (all) => { for (const a of all) round.db.prepare('INSERT INTO reserve_alarms (federation, alarm) VALUES (?, ?) ON CONFLICT(federation) DO NOTHING').run(a.federation, JSON.stringify(a)); } });
   // THE FEDERATIONS' SIGNED HISTORY, AUDITED (kanban #1093 part 2, ruling #1106): off until measured; ARENA_RESERVE_AUDIT=<fid hex>:<client dir>,...
   // names the federations whose clients this seat holds. Every ARENA_RESERVE_AUDIT_MS (10 min) the stake-lock tool reads the sessions since the
@@ -5459,6 +5477,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       say: (o) => console.log(`[reserve-audit] ${JSON.stringify(o)}`) });
     const tick = () => audit.pass().then((r) => { for (const x of r) if (x.why) console.log(`[reserve-audit] ${x.federation.slice(0, 16)}: ${x.why}`); }).catch((e) => console.log(`[reserve-audit] ${e.message}`));
     setTimeout(tick, 60_000).unref?.(); setInterval(tick, Number(process.env.ARENA_RESERVE_AUDIT_MS || 600_000)).unref?.();
+    // THE UNBACKED SPEND (kanban #1108, reserve-spend-watch.js): ARENA_RESERVE_SPEND_WATCH=1 watches the walletv2 output each audited federation's
+    // guardians name on this seat's own chain, every ARENA_RESERVE_SPEND_WATCH_MS (5 min); a spend 6 deep that the audited history does not name
+    // raises the alarm. Needs the audit above (its signed txids) and the seat's chain client.
+    if (process.env.ARENA_RESERVE_SPEND_WATCH === '1' && typeof chainTxOut === 'function' && typeof chainSpenderOf === 'function' && typeof chainTip === 'function') {
+      round.db.exec('CREATE TABLE IF NOT EXISTS reserve_spend_watch (federation TEXT PRIMARY KEY, row TEXT NOT NULL)');
+      const auditRow = (fid) => { const r = round.db.prepare('SELECT row FROM reserve_audit WHERE federation = ?').get(fid); return r ? JSON.parse(r.row) : null; };
+      const watch = createReserveSpendWatch({ ...spendWatchReads({ endpointsOf: fedEndpointsOf, readReserve, thresholdOf: thresholdOfFederation, chainTxOut, chainSpenderOf, auditRow }),
+        tip: async () => Number(await chainTip()),
+        load: (fid) => { const r = round.db.prepare('SELECT row FROM reserve_spend_watch WHERE federation = ?').get(fid); return r ? JSON.parse(r.row) : null; },
+        save: (fid, row) => round.db.prepare('INSERT INTO reserve_spend_watch (federation, row) VALUES (?, ?) ON CONFLICT(federation) DO UPDATE SET row = excluded.row').run(fid, JSON.stringify(row)),
+        alarms: reserveAlarms, say: (o) => console.log(`[reserve-spend-watch] ${JSON.stringify(o)}`) });
+      const watchTick = async () => { for (const { federation } of auditFeds) { try { await watch.watchOne(federation); } catch (e) { console.log(`[reserve-spend-watch] ${federation.slice(0, 16)}: ${e.message}`); } } };
+      setTimeout(watchTick, 30_000).unref?.(); setInterval(watchTick, Number(process.env.ARENA_RESERVE_SPEND_WATCH_MS || 300_000)).unref?.();
+    }
   }
   fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf,
     alarmOf: (fid) => reserveAlarms.of(fid),

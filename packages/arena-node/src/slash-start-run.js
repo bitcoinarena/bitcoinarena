@@ -121,6 +121,11 @@ export function createSlashStarter({ key, network, db, store, thresholdOf, tipHe
     return bytes ? [{ proofId, bytes, seenMs: Number(r.seen_ms) }] : [];
   });
 
+  // WHY A PROOF IS NOT FILED, ONCE PER PROOF AND REASON (kanban #972, measured on the slash-release regtest 11-04: proofs were held at 19 seats, no start was filed
+  // and nothing said why): a pass that skips one says it the first time
+  const skipSaid = new Map();
+  const skipped = (p, why) => { const k = toHex(p.proofId); if (skipSaid.get(k) === why) return; skipSaid.set(k, why); if (skipSaid.size > 1024) skipSaid.delete(skipSaid.keys().next().value); log(`[slash] ${k.slice(0, 16)} not filed: ${why}`); };
+
   /** One pass over the proofs this seat holds: nothing is replayed for a bond that is no template-3 unstarted bond of this census, or before this seat's turn. Only a proof this seat's own judge holds to is filed. */
   async function pass() {
     const done = [];
@@ -130,12 +135,15 @@ export function createSlashStarter({ key, network, db, store, thresholdOf, tipHe
     if (!entries) return done;
     for (const p of proofs) {
       const said = judge.read(p.bytes);
-      if (!said.ok) continue;
+      if (!said.ok) { skipped(p, `the proof does not read: ${said.why}`); continue; }
       const entry = entryOf(entries, said.bond);
-      if (!entry || entry.hold || entry.advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V3) continue;
+      if (!entry) { skipped(p, 'its bond is not in the census at the tip'); continue; }
+      if (entry.hold) { skipped(p, 'its bond is already held'); continue; }
+      if (entry.advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V3) { skipped(p, `its bond is template ${entry.advert.bondScriptTemplateVersion}, not 3`); continue; }
       const keys = [...new Set(entries.map((e) => toHex(e.pubkey)))];
       if (now() - p.seenMs < filerRank(p.proofId, keys, me) * stepMs) continue;
-      if ((await judge(p.bytes)).verdict !== true) continue;
+      const verdict = await judge(p.bytes);
+      if (verdict.verdict !== true) { skipped(p, `this seat's judge says ${verdict.verdict}: ${verdict.why}`); continue; }
       let r; try { r = await file({ bytes: p.bytes, said, entry, entries }); } catch (e) { r = { ok: false, why: e.message }; }
       log(r.ok ? `[slash] start filed against ${toHex(entry.pubkey).slice(0, 16)}: ${r.txid}, ${r.signers.length} holders, ${r.shares} shares` : `[slash] no start against ${toHex(entry.pubkey).slice(0, 16)} yet: ${r.why}${r.refused && r.refused.length ? ` (${r.refused.map((x) => x.why).join('; ')})` : ''}`);
       done.push(r);

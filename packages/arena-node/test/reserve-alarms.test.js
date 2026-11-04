@@ -4,7 +4,7 @@
 // with the record; a client that reads one from any seat refuses deposits into that federation, and never picks it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createReserveAlarms } from '../src/reserve-alarms.js';
+import { createReserveAlarms, alarmRefusal } from '../src/reserve-alarms.js';
 import { federationStatuses, pickFederation, depositFederation, alarmSays } from '../../arena-client/src/federations.js';
 
 const FED = 'ab'.repeat(32), OTHER = 'cd'.repeat(32);
@@ -37,4 +37,17 @@ test('the client: one seat naming an alarm stops deposits into that federation; 
   assert.match(alarmSays({ alarm: { kind: 'inflation' } }), /^Deposits into this federation are stopped: in its own signed history, more e-cash was redeemed than was ever issued/);
   assert.match(alarmSays({ alarm: { kind: 'unbacked-spend' } }), /spent on the chain with no peg-out its guardians signed/);
   assert.equal(alarmSays({}), '');
+});
+
+test('alarmRefusal: a staked round of an alarmed federation is refused by name; a free round, another federation or no alarm is not (kanban #1108)', () => {
+  const fid = new Uint8Array(32).fill(0xab), other = new Uint8Array(32).fill(0xcd);
+  const alarms = createReserveAlarms();
+  assert.equal(alarmRefusal(alarms, { stakeMsat: 1000n, federationId: fid }), null, 'no alarm yet');
+  alarms.raise({ federation: 'ab'.repeat(32), kind: 'inflation', height: 300, session: 41 });
+  assert.match(alarmRefusal(alarms, { stakeMsat: 1000n, federationId: fid }), /mark of theft in federation abababababababab \(inflation at signed session 41, height 300\): no deposit, entry or lock/);
+  assert.equal(alarmRefusal(alarms, { stakeMsat: 0n, federationId: fid }), null, 'a free round moves no money');
+  assert.equal(alarmRefusal(alarms, { stakeMsat: 1000n, federationId: other }), null);
+  assert.equal(alarmRefusal(null, { stakeMsat: 1000n, federationId: fid }), null);
+  alarms.raise({ federation: 'cd'.repeat(32), kind: 'unbacked-spend', height: 310, txid: 'ee'.repeat(32) });
+  assert.match(alarmRefusal(alarms, { stakeMsat: 1n, federationId: other }), /an unbacked spend of its reserve by eeee/);
 });

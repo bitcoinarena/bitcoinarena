@@ -53,7 +53,7 @@ async function askOne(endpoint, { timeoutMs, moduleId, WS }) {
       let j; try { j = JSON.parse(String(e.data)); } catch { return; }
       if (j.result && Array.isArray(j.result.spendable_utxos)) { clearTimeout(timer); finish({ ok: true, moduleId: j.id, reserveSats: reserveOfSummary(j.result) }); return; }
       if (j.id >= V2 && !j.error && 'result' in j && (j.result === null || (j.result && j.result.value !== undefined))) {
-        clearTimeout(timer); finish({ ok: true, moduleId: j.id - V2, walletV2: true, reserveSats: j.result === null ? 0n : BigInt(j.result.value) }); return;
+        clearTimeout(timer); finish({ ok: true, moduleId: j.id - V2, walletV2: true, reserveSats: j.result === null ? 0n : BigInt(j.result.value), outpoint: j.result && j.result.outpoint ? String(j.result.outpoint) : null }); return;
       }
       if (--left <= 0) { clearTimeout(timer); finish({ ok: false, why: 'no wallet module answered wallet_summary or federation_wallet' }); }
     });
@@ -68,6 +68,8 @@ async function askOne(endpoint, { timeoutMs, moduleId, WS }) {
 // AND IT ANSWERS AS SOON AS A THRESHOLD AGREES (kanban #549, measured 2026-10-20 ~07:22Z: federation 4dc88be7 has 7 guardians and one
 // unreachable, so every read waited out its 8 s timeout; a guardian seat asked to sign reads the reserve first, so it answered the
 // gatherer in 8.07 s - past the gatherer's own 8 s - and the successor's record never got more than 1 of the 5 signatures it needs)
+// guardians agree on the sum and, for walletv2, on the output that holds it
+const keyOf = (s) => `${s.reserveSats}|${s.outpoint || ''}`;
 export async function readReserve({ endpoints, threshold, timeoutMs = 8000, moduleId = null, WS = globalThis.WebSocket }) {
   const said = await new Promise((done) => {
     const got = new Array(endpoints.length).fill(null), counts = new Map();
@@ -75,14 +77,16 @@ export async function readReserve({ endpoints, threshold, timeoutMs = 8000, modu
     if (!left) { done(got); return; }
     endpoints.forEach((e, i) => askOne(e, { timeoutMs, moduleId, WS }).then((s) => {
       got[i] = s; left--;
-      if (s.ok) { const k = String(s.reserveSats); counts.set(k, (counts.get(k) || 0) + 1); if (counts.get(k) >= threshold) { done(got.filter(Boolean)); return; } }
+      if (s.ok) { const k = keyOf(s); counts.set(k, (counts.get(k) || 0) + 1); if (counts.get(k) >= threshold) { done(got.filter(Boolean)); return; } }
       if (!left) done(got);
     }));
   });
   const counts = new Map();
-  for (const s of said) if (s.ok) counts.set(String(s.reserveSats), (counts.get(String(s.reserveSats)) || 0) + 1);
+  for (const s of said) if (s.ok) counts.set(keyOf(s), (counts.get(keyOf(s)) || 0) + 1);
   const [best, n] = [...counts].sort((a, b) => b[1] - a[1])[0] || [null, 0];
   if (best === null || n < threshold)
     return { ok: false, why: `${n} of ${endpoints.length} guardians named one reserve, and ${threshold} must`, of: endpoints.length, agreeing: n };
-  return { ok: true, reserveSats: BigInt(best), agreeing: n, of: endpoints.length, moduleId: (said.find((s) => s.ok) || {}).moduleId ?? null };
+  const [sats, outpoint] = best.split('|');
+  // a walletv2 federation's one output, named by the same threshold (kanban #1108: what the spend watch follows); null for the stock wallet
+  return { ok: true, reserveSats: BigInt(sats), agreeing: n, of: endpoints.length, moduleId: (said.find((s) => s.ok) || {}).moduleId ?? null, outpoint: outpoint || null };
 }
