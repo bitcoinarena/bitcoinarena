@@ -29,7 +29,7 @@ import {
   TYPE_GAME_MANIFEST, TYPE_OUTCOME_ATTESTATION, TYPE_PRICE_SAMPLE, TYPE_PRICE_TAPE, TYPE_FEDERATION_RECORD, TYPE_PRESENT, TYPE_SEATING,
   TYPE_CONFIG_PROPOSAL, TYPE_ABSENCE_ATTESTATION, TYPE_DEPARTURE_NOTICE, TYPE_EMERGENCY_DEPARTURE, TYPE_SPENT_SET, TYPE_ROUND_RESULT, TYPE_RESULT_FRONT, TYPE_HALT_OBSERVATION,
   TYPE_VALUE_ATTESTATION, TYPE_DONATION_PROPOSAL, TYPE_DONATION_APPROVAL, TYPE_DONATION_SET_KEYS_VESTING,
-  TYPE_AUDIT, TYPE_AUDIT_SLASH_PROOF, TYPE_FRAUD_PROOF, TYPE_RELEASE_EVIDENCE, TYPE_ABANDONED_PROOF, TYPE_SEATING_SEEN, TYPE_HEARTBEAT, TYPE_HEARTBEAT_HEARD,
+  TYPE_AUDIT, TYPE_AUDIT_SLASH_PROOF, TYPE_FRAUD_PROOF, TYPE_RELEASE_EVIDENCE, TYPE_ABANDONED_PROOF, TYPE_THEFT_PROOF, TYPE_SEATING_SEEN, TYPE_HEARTBEAT, TYPE_HEARTBEAT_HEARD,
 } from './constants.js';
 
 /**
@@ -113,6 +113,8 @@ export const FRAMES = new Map([
   // The evidence against a release, after a slash proof's body (§5A.3B, kanban #1065): it decides a slash of a release - an authority too, also missing since 0adcdc639.
   [TYPE_RELEASE_EVIDENCE, { name: 'ReleaseEvidence', authority: true }],
   [TYPE_ABANDONED_PROOF, { name: 'AbandonedProof', authority: true }],
+  // A guardian's bond after a mark of theft in its federation's signed history (§23A, ruling #1106): the proof a census key starts every guardian's bond on
+  [TYPE_THEFT_PROOF, { name: 'TheftProof', authority: true }],
   // A halted federation's spent-note set (§23A.5): it decides which notes the liquidation pays.
   [TYPE_SPENT_SET, { name: 'SpentSet', authority: true }],
   // A price round's verdict (§13 RoundResult): who won the war, bulls or bears, by the attested tape. It moves no money.
