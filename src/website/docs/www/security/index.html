@@ -167,9 +167,42 @@
   <p>Two things can stop the normal path, and each has its own way out:</p>
   <ul>
     <li><b>There is no valid proof of cheating.</b> Then the panels do not sign, and nobody else will either. The bond simply stays in the hold until its owner takes it back with the owner key - the 24 words. That is possible a day later at the earliest, and never before the bond's maturity date. The owner loses nothing.</li>
-    <li><b>The panels do not decide in time.</b> For example, too many of their nodes are offline, so fewer than 5 of 7 sign. Then, after about two days, a <b>backup group</b> may act instead: the holders of the network's <i>census key</i> (explained just below). Each of them checks the same proof of cheating itself and signs only if it holds. They pay out exactly as the panels would have: the players' loss first, the rest of the bond to the reserves.</li>
+    <li><b>The panels do not decide in time.</b> For example, too many of their nodes are offline, so fewer than 5 of 7 sign. Then, after about two days, a <b>backup group</b> may act instead: the holders of the network's <i>census key</i> (explained below). Each of them checks the same proof of cheating itself and signs only if it holds. They pay out exactly as the panels would have: the players' loss first, the rest of the bond to the reserves.</li>
   </ul>
   <p>So a slash with a real proof cannot get stuck, and a slash with a false proof cannot get through.</p>
+  <h3 style="margin-top:22px">How can other nodes reach a node's bond?</h3>
+  <p>A bond is bitcoin locked on the chain like in a box with several <b>doors</b>. Each door has its own lock and opens only with the keys written on it - Bitcoin checks this, nobody else. In Bitcoin's own words a door is called a <i>leaf</i>: one of the ways an output may be spent.</p>
+  <div class="diagram" role="img" aria-label="The bond has two doors: the owner's door after the bond's maturity date, and the slash door that needs both the node's own advance signature and the census key and leads only into the hold. The hold has three doors: the two panels, the owner after a day, the backup group after two days.">
+    <svg class="wide" viewBox="0 0 700 300" aria-hidden="true">
+      <defs><marker id="ar6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8d99a8"/></marker></defs>
+      <rect class="f" x="10" y="20" width="240" height="250" rx="14"/><text x="130" y="46" text-anchor="middle">The bond</text>
+      <rect class="f" x="26" y="64" width="208" height="76" rx="10"/><text x="40" y="88">Door 1: the owner</text><text class="d" x="40" y="108">owner key (the 24 words),</text><text class="d" x="40" y="124">after the bond's maturity date</text>
+      <rect class="f" x="26" y="152" width="208" height="102" rx="10" stroke="#ff6b6b"/><text x="40" y="176">Door 2: slashing</text><text class="d" x="40" y="196">needs two keys at once:</text><text class="d" x="40" y="214">· the node's own advance</text><text class="d" x="40" y="230">  signature, and</text><text class="d" x="40" y="246">· the census key</text>
+      <path d="M234 203h66" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar6)"/><text class="d" x="267" y="194" text-anchor="middle">only into</text><text class="d" x="267" y="222" text-anchor="middle">its hold</text>
+      <rect class="f" x="304" y="20" width="386" height="250" rx="14" stroke="#d29922"/><text x="497" y="46" text-anchor="middle">The hold</text>
+      <rect class="f" x="320" y="64" width="354" height="56" rx="10" stroke="#3fb950"/><text x="334" y="86">Door A: the two panels</text><text class="d" x="334" y="106">5 of 7 of each panel, with a valid proof of cheating</text>
+      <rect class="f" x="320" y="130" width="354" height="56" rx="10"/><text x="334" y="152">Door B: the owner</text><text class="d" x="334" y="172">owner key, after a day and after the maturity date</text>
+      <rect class="f" x="320" y="196" width="354" height="56" rx="10"/><text x="334" y="218">Door C: the backup group</text><text class="d" x="334" y="238">census key, after two days, with a valid proof</text>
+    </svg>
+    <svg class="tall" viewBox="0 0 340 520" aria-hidden="true">
+      <defs><marker id="ar7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8d99a8"/></marker></defs>
+      <rect class="f" x="10" y="10" width="320" height="214" rx="14"/><text x="170" y="34" text-anchor="middle">The bond</text>
+      <rect class="f" x="24" y="48" width="292" height="60" rx="10"/><text x="36" y="70">Door 1: the owner</text><text class="d" x="36" y="92">owner key, after the maturity date</text>
+      <rect class="f" x="24" y="118" width="292" height="94" rx="10" stroke="#ff6b6b"/><text x="36" y="140">Door 2: slashing - two keys at once</text><text class="d" x="36" y="162">· the node's own advance signature</text><text class="d" x="36" y="180">· the census key</text><text class="d" x="36" y="200">and it leads only into its hold</text>
+      <path d="M170 224v38" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar7)"/>
+      <rect class="f" x="10" y="266" width="320" height="244" rx="14" stroke="#d29922"/><text x="170" y="290" text-anchor="middle">The hold</text>
+      <rect class="f" x="24" y="304" width="292" height="60" rx="10" stroke="#3fb950"/><text x="36" y="326">Door A: the two panels</text><text class="d" x="36" y="348">5 of 7 each, with a valid proof</text>
+      <rect class="f" x="24" y="372" width="292" height="60" rx="10"/><text x="36" y="394">Door B: the owner</text><text class="d" x="36" y="416">after a day and the maturity date</text>
+      <rect class="f" x="24" y="440" width="292" height="60" rx="10"/><text x="36" y="462">Door C: the backup group</text><text class="d" x="36" y="484">census key, after two days</text>
+    </svg>
+  </div>
+  <p>So other nodes can never simply take a bond. They reach it only through door 2, and door 2 needs two keys at once:</p>
+  <ul>
+    <li><b>The node's own advance signature.</b> Every time a node takes a seat in a round, it signs in advance: "if I cheat in this round, my bond may be moved into this round's hold". It signs one more when it puts up the bond, for the cases that are not about a round, such as a guardian walking away. Without it the bond cannot move, and it can only move into that hold - nowhere else.</li>
+    <li><b>The census key.</b> The network's shared key (explained below). Its holders sign only after each of them has checked the proof of cheating.</li>
+  </ul>
+  <p>Inside the hold, the other nodes again need a door of their own: the two panels with a valid proof (door A), or the backup group after two days (door C). Door B always stays open for the owner, so a bond nobody can prove anything against always comes back.</p>
+
   <h3 style="margin-top:22px">What is the census key?</h3>
   <div class="diagram" role="img" aria-label="Bonded nodes each hold pieces of one key, more pieces for a bigger bond; the key signs only when two thirds of the pieces sign together; no node holds the whole key">
     <svg class="wide" viewBox="0 0 640 210" aria-hidden="true" style="max-width:640px;margin:0 auto">
@@ -210,12 +243,12 @@
       <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8d99a8"/></marker></defs>
       <rect class="f" x="10" y="10" width="340" height="104" rx="12"/>
       <text x="22" y="34">Bond output · Taproot</text>
-      <text class="d" x="22" y="58">recovery leaf: owner key, after maturity</text>
-      <text class="d" x="22" y="78">slash leaf: node's signature, made in advance</text>
+      <text class="d" x="22" y="58">door 1, recovery leaf: owner key, after maturity</text>
+      <text class="d" x="22" y="78">door 2, slash leaf: node's advance signature</text>
       <text class="d" x="22" y="96">for this round's hold, + the census key</text>
       <path d="M180 114v44" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar3)"/>
-      <text class="d" x="190" y="134">start transaction:</text>
-      <text class="d" x="190" y="150">filer pays the fee</text>
+      <text class="d" x="190" y="134">slashable offence proven:</text>
+      <text class="d" x="190" y="150">the bond moves (start)</text>
       <rect class="f" x="10" y="160" width="340" height="126" rx="12" stroke="#d29922"/>
       <text x="22" y="184">Hold output · Taproot, no key path</text>
       <text class="d" x="22" y="208">release: after 6 blocks,</text>
@@ -243,9 +276,9 @@
     </svg>
   </div>
   <ol class="steps">
-    <li><b>The bond.</b> A bond is a Taproot output with two ways out. The <i>recovery leaf</i> lets the owner key take it back after the bond's maturity height. The <i>slash leaf</i> needs two signatures together: one the node made in advance for each round it sits in, which can only pay into that round's hold output, and one from the <i>census key</i>. So no one can take a bond anywhere else, not even the census key.</li>
+    <li><b>The bond.</b> A bond is a Taproot output. Taproot lets an output carry several alternative scripts - its <i>leaves</i>, the doors above - and a spend reveals only the one it uses. A bond has two: the <i>recovery leaf</i> (door 1) lets the owner key take it back after the bond's maturity height; the <i>slash leaf</i> (door 2) needs two signatures together: one the node made in advance for each round it sits in, which can only pay into that round's hold output, and one from the <i>census key</i>. So no one can take a bond anywhere else, not even the census key.</li>
     <li><b>The proof of cheating.</b> It is signed data anyone can check without trusting the filer: a signed result plus the replay of the round under its published game code; two signed results for one order; a signed confirmation of a result later proven false; a signed payout table that differs from the final result; a release signed with no valid proof behind it; or, for a federation, its own threshold-signed history showing more e-cash redeemed than issued, or a reserve output spent by no signed withdrawal.</li>
-    <li><b>The start.</b> Any node that holds a proof asks the census key's holders to sign the start. Each holder checks the proof itself before it signs. The start spends the bond through the slash leaf into the hold output; the filer adds a coin for the fee.</li>
+    <li><b>The slashable offence, and the start.</b> What sets everything off is the slashable offence itself, proven. Any node that holds the proof of cheating asks the census key's holders to sign; each holder checks the proof itself before it signs. Only then is the <i>start</i> made: the transaction that moves the bond through the slash leaf (door 2) into the hold output. The filer adds a coin for the fee.</li>
     <li><b>The census key.</b> It is one Schnorr key whose private part no one holds: it is split among a set of bonded nodes, drawn again every epoch, and a threshold of them must sign together. It can do only two things: sign a start, and pay out a hold after the long wait.</li>
     <li><b>The hold.</b> The hold output has no key path and three leaves. <i>Release</i>: after 6 blocks, two-thirds plus one of each panel - two groups of up to 7 nodes drawn from the census - sign together. <i>Return</i>: after 144 blocks (about a day) and the bond's maturity, the owner key alone. <i>Fallback</i>: after 288 blocks (about two days), the census key alone - the backup group, whose holders each check the proof before they sign. While the bond sits in its hold it still counts as the node's bond.</li>
     <li><b>The payout.</b> A release or a fallback pays a table that every signer computes the same way from public data: each harmed player's real loss once - paid into a safe federation by a carrier and on to the player's key - the filer's fee back at the start's own fee rate, and the rest to the protocol reserves. Its OP_RETURN names the proof's hash, the slash height and the table's hash, so anyone can check it against the proof.</li>
