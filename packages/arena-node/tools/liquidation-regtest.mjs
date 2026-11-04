@@ -9,12 +9,17 @@
 //   B  a theft's two template-3 bonds of one federation: both escrows, spent one at a time, the second paying what the first could not
 //   C  one template-2 bond in the mix: path B into the arbitration set's escrow (the rehearsal-17 code), the claims ledger (liquidation-claims.js) paying from it first, the
 //      census-key escrow of a template-3 bond paying only what is left
-// What is NOT here: a Fedimint federation. The carriers' "safe federation" clients are stand-ins - a peg-in address is a wallet address of this bitcoind and a claim is what
+// Without FEDS: no Fedimint federation. The carriers' "safe federation" clients are stand-ins - a peg-in address is a wallet address of this bitcoind and a claim is what
 // that address received, a payout is recorded, not collected; the claims are the ledger's, not real notes; the holders' own bonds are census entries, not outputs.
+// WITH FEDS=<dir>/feds.json (tools/liquidation-fedimint-e2e.mjs up, then halt): two real federations on this bitcoind. Case A's federation is R, halted, and its
+// claims are the player's real notes of R, presented to the claims ledger (liquidation-claims.js, note-validate.js against a client of R joined while it was OPEN);
+// the safe federation is S, every carrier a real client of it (stake-lock-port.js: pegin-address, pegin-claim, pay), and the player collects each payout to its key
+// in its own client of S (arena-stake-lock --mode redeem --witness refund). Cases B and C pay through the same real carriers. The holders' bonds stay census entries.
 //
 //   bitcoind -regtest -datadir=DIR -port=P -rpcport=R -listen=0 -fallbackfee=0.0001 -txindex=1 -daemon
 //   RT=DIR RPCPORT=R BITCOIN_CLI=.../bitcoin-cli node tools/liquidation-regtest.mjs          (from packages/arena-node)
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { SLASH_CLOCKS, genesisFor } from '../../arena-protocol/src/genesis.js';
@@ -40,8 +45,11 @@ import { createSlashRelease } from '../src/slash-release-run.js';
 import { createProofJudge } from '../src/proof-judge.js';
 import { createLiquidationClaims } from '../src/liquidation-claims.js';
 import { arbitrationMembers, buildAbandonedSlash, assemble, memberSign } from '../src/arbiter.js';
+import { stakeLockPort } from '../src/stake-lock-port.js';
+import { fedimintNoteValidator } from '../src/note-validate.js';
 
-const RT = process.env.RT, PORT = process.env.RPCPORT || '29932', B = process.env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
+const E2E = process.env.FEDS ? JSON.parse(readFileSync(process.env.FEDS, 'utf8')) : null;
+const RT = E2E ? E2E.btcDir : process.env.RT, PORT = E2E ? String(E2E.rpcPort) : (process.env.RPCPORT || '29932'), B = E2E ? E2E.bitcoinCli : (process.env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli');
 if (!RT) throw new Error('RT=<the private regtest datadir>');
 const cli = (...a) => execFileSync(B, ['-regtest', `-datadir=${RT}`, `-rpcport=${PORT}`, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 try { cli('loadwallet', 'liq'); } catch { try { cli('createwallet', 'liq'); } catch { /* loaded */ } }
@@ -69,8 +77,10 @@ const censusKey = dealt.publicKey, censusHex = toHex(censusKey);
 const person = (s) => { const secret = tag(s); return { secret, key: schnorr.getPublicKey(secret), hex: toHex(schnorr.getPublicKey(secret)) }; };
 const holders = [[person('h1'), [1, 2]], [person('h2'), [3]], [person('h3'), [4]], [person('h4'), [5]]];
 const holderList = holders.map(([p, xs]) => ({ key: p.hex, shares: xs.length }));
-const fedSafe = 'fa'.repeat(32), fedOther = 'fb'.repeat(32);
-const reserveKey = (fid) => Uint8Array.from([0x02, ...fromHex(fid)]);
+const fedSafe = E2E ? E2E.safe.id : 'fa'.repeat(32), fedOther = 'fb'.repeat(32);
+// a reserve key and a claim's payout key are real points: a real federation's payout contract takes nothing else
+const reserveKey = (fid) => secp256k1.getPublicKey(tag(`reserve-${fid}`), true);
+const knownFeds = () => (E2E ? [fed(fedSafe, 1000)] : [fed(fedSafe, 1000), fed(fedOther, 50_000_000)]);
 const fed = (id, reserve) => ({ federation: id, status: 'OPEN', reserveKey: toHex(reserveKey(id)), reserveSats: String(reserve), exposureCapSats: '100000000' });
 
 // ---- THE CHAIN, AS A SEAT READS IT ----
@@ -90,6 +100,10 @@ const fundScript = (script, btc) => {
 const ledgers = new Map();                          // liquidating federation -> () => ledger
 const census = { entries: [] };
 const paid = [];
+const lockEnv = E2E ? { ...process.env, HOME: E2E.home } : process.env;
+const lockRun = (...a) => JSON.parse(execFileSync(E2E.lockBin, a, { encoding: 'utf8', env: lockEnv, timeout: 600000, stdio: ['ignore', 'pipe', 'pipe'] }).trim().split('\n').filter((l) => l.startsWith('{')).pop());
+// A MINER WHILE THE CARRIERS CLAIM (FEDS only): a real federation credits a peg-in only once it is deep enough, and the claim waits on that
+const carryMined = async (fn) => { if (!E2E) return fn(); const t = setInterval(() => { try { mine(1); } catch { /* next */ } }, 3000); try { return await fn(); } finally { clearInterval(t); } };
 const urlOf = (k) => `http://seat-${k}`;
 const seats = new Map();
 const harnessStarts = new Map();                    // digest hex of a start the harness files -> true (the start is slash-start-run.js's job, measured in theft-regtest.mjs)
@@ -109,10 +123,19 @@ const proofs = new Map();                           // proof id hex -> bytes
 const judge = createProofJudge({ committeeOf: () => ({ ok: false }), censusOf: () => ({ ok: false }), coreOf: () => null, beaconOf: () => ({ ok: false }), replayRunOf: () => undefined,
   abandoned: async () => ({ verdict: true, why: 'stand-in: the abandonment judge is measured in guardian-bond-spent-regtest.mjs' }),
   theft: async () => ({ verdict: true, why: 'stand-in: the theft judge is measured in theft-regtest.mjs' }) });
-for (const [p, xs] of holders) {
+for (const [hi, [p, xs]] of holders.entries()) {
   const shares = { shares: new Map(xs.map((x) => [x, dealt.share(x)])) };
   const clients = new Map();
   const portOf = (fid) => {
+    if (E2E) {
+      if (fid !== fedSafe) return null;
+      if (!clients.has(fid)) {
+        const real = stakeLockPort({ bin: E2E.lockBin, dataDir: E2E.safe.carriers[hi], serve: false, timeoutMs: 120000 });
+        clients.set(fid, { peginAddress: () => real.peginAddress(), peginClaim: (a) => real.peginClaim(a, 600),
+          payouts: async (list) => { const r = await real.payouts(list); paid.push({ carrier: p.hex, federation: fid, list, txid: r.txid, payouts: r.payouts }); return r; } });
+      }
+      return clients.get(fid);
+    }
     if (!clients.has(fid)) clients.set(fid, {
       // STAND-INS FOR A SAFE FEDERATION'S CLIENT: a wallet address of this bitcoind, what it received, a recorded payout
       peginAddress: async () => cli('getnewaddress'),
@@ -124,7 +147,7 @@ for (const [p, xs] of holders) {
   s.run = createSlashRelease({ key: p.key, secret: p.secret, networkId: NETWORK_ID_REGTEST, clocks, db: new DatabaseSync(':memory:'), tweakPoint,
     tipHeight: async () => tip(), entriesAtTip: async () => census.entries, rawTx: chain.rawTx, unspent: async (t, v) => !!(await chain.txOut(t, v)), txOut: chain.txOut,
     fetchProof: async (id) => proofs.get(toHex(id)) || null, judge, panelsOf: () => ({ ok: false }), seatsOf: async () => [], lossesFor: async () => ({ ok: false, why: 'no round' }),
-    federations: async () => [fed(fedSafe, 1000), fed(fedOther, 50_000_000)], federationsAt: async () => [fed(fedSafe, 1000), fed(fedOther, 50_000_000)],
+    federations: async () => knownFeds(), federationsAt: async () => knownFeds(),
     portFor: async (fid) => portOf(fid), scriptOf: (address) => fromHex(JSON.parse(cli('getaddressinfo', address)).scriptPubKey), reserveKeyOf: (fid) => reserveKey(fid), urlOf,
     heldKey: (k) => (toHex(k) === censusHex ? shares : null), thresholdOf: (k) => (k === censusHex ? 4 : null), holdersOf: async (k) => (k === censusHex ? holderList : []),
     signer: () => s.signer, send: chain.send, stepMs: 0, fetchFn, log: (l) => { if (process.env.VERBOSE) console.log(`   ${p.hex.slice(0, 8)} ${l}`); },
@@ -136,7 +159,18 @@ for (const [p, xs] of holders) {
 const holderEntries = holders.map(([p], i) => ({ pubkey: p.key, txid: new Uint8Array(32).fill(0x10 + i), vout: 0, bondSats: '2000000', advert: { bondScriptTemplateVersion: 3, censusKey } }));
 census.entries = [...holderEntries];
 const passAll = async () => { const out = []; for (const [p] of holders) out.push(...(await seats.get(p.hex).run.pass())); return out; };
-const carryAll = async () => { const out = []; for (const [p] of holders) out.push(...(await seats.get(p.hex).run.carry())); return out; };
+// a seat carries every 15 s (server.js carryTimer); with real federations a peg-in can still be short of its depth at one pass, so up to three passes here
+const carryAll = () => carryMined(async () => {
+  const out = [];
+  for (let n = 0; n < (E2E ? 3 : 1); n++) {
+    const before = paid.length;
+    for (const [p] of holders) out.push(...(await seats.get(p.hex).run.carry()));
+    const waiting = out.filter((x) => x.why);
+    if (E2E && waiting.length) console.log(`#1093    carry pass ${n + 1}: ${waiting.map((x) => `${String(x.escrow).slice(0, 12)}:${x.index} ${x.why}`).join('; ')}`);
+    if (E2E && n > 0 && paid.length === before && !waiting.length) break;
+  }
+  return out;
+});
 
 // ---- A GUARDIAN'S TEMPLATE-3 BOND, ITS BONDING PRESIG AND ITS START (by the census key, FROST) ----
 async function startedGuardian(name, proofOf, btc = '0.01') {
@@ -170,7 +204,7 @@ const recordOf = (fid) => joinSignedRecord(encodeFederationRecord(buildFederatio
 const abandonedProofOf = (fid) => ({ node, bond }) => encodeAbandonedProof({ federationId: fromHex(fid), nodePubkey: node.key, proofRef: new Uint8Array(32).fill(7), txid: bond.txid, vout: bond.vout, record: recordOf(fid) });
 const theftProofOf = (fid) => ({ node, bond }) => encodeTheftProof({ federationId: fromHex(fid), nodePubkey: node.key, txid: bond.txid, vout: bond.vout, mark: { kind: 'inflation', height: tip(), session: 1 },
   record: recordOf(fid), config: Uint8Array.of(9), firstSession: 0, sessions: [Uint8Array.of(1), Uint8Array.of(2)] });
-const claim = (n, sats, height) => ({ nonce: toHex(taggedHash('ARENA/regtest/Note', Uint8Array.of(n))), amountMsat: String(BigInt(sats) * 1000n), payoutPk: `02${toHex(taggedHash('ARENA/regtest/Key', Uint8Array.of(n)))}`, height });
+const claim = (n, sats, height) => ({ nonce: toHex(taggedHash('ARENA/regtest/Note', Uint8Array.of(n))), amountMsat: String(BigInt(sats) * 1000n), payoutPk: toHex(secp256k1.getPublicKey(taggedHash('ARENA/regtest/Key', Uint8Array.of(n)), true)), height });
 
 /** Release every started guardian of `gs` by the census key, then spend its escrow to the claims; answers each escrow spend's claims and outputs, read from the seats. */
 async function releaseAndPay(gs, label) {
@@ -213,19 +247,66 @@ async function releaseAndPay(gs, label) {
 }
 
 // ---- A: an ABANDONED guardian's template-3 bond ----
-const fedA = 'a1'.repeat(32);
+const fedA = E2E ? E2E.robbed.id : 'a1'.repeat(32);
 const ga = await startedGuardian('A', abandonedProofOf(fedA));
 const hA = tip();
-ledgers.set(fedA, () => ({ accepted: [claim(1, 250_000, hA), claim(2, 400_000, hA)], coveredMsat: new Map(), afterWindow: false }));
+const player = person('player');
+const playerPk = toHex(secp256k1.getPublicKey(player.secret, true));
+let wantA = ['250000000', '400000000'];
+if (E2E) {
+  // THE PLAYER'S CLAIM: every note it held in R, handed over while R is halted, checked against the client of R joined while it was OPEN (note-validate.js),
+  // into the one claims ledger of R (liquidation-claims.js) - which the seats read as GET /liquidation-claims answers it (server.js liquidationLedger)
+  const book = createLiquidationClaims({ validate: fedimintNoteValidator({ cli: E2E.fedimintCli, dataDirFor: (f) => (f === fedA ? E2E.robbed.validator : null), home: E2E.home }),
+    liquidationOf: async (f) => (f === fedA ? { federation: fedA, haltHeight: hA - 10, liquidatesAt: hA - 5, claimWindowCloses: hA + 100000, lateClaimsUntil: hA + 100000, spentNonces: [] } : null),
+    height: async () => tip(), escrowMsatOf: async () => 0n, clocks: REGTEST_CLOCKS });
+  const ecash = readFileSync(`${E2E.dir}/player.ecash`, 'utf8').trim();
+  const t = Date.now();
+  const offered = await book.offer({ federation: fedA, ecash, payoutPk: playerPk });
+  const again = await book.offer({ federation: fedA, ecash, payoutPk: playerPk });
+  const sum = (offered.accepted || []).reduce((a, x) => a + BigInt(x.amountMsat), 0n);
+  say(offered.ok && sum === BigInt(E2E.playerPegIn.msat) && again.status === 409,
+    `A (real R ${fedA.slice(0, 8)}): the player's notes claimed: ${(offered.accepted || []).length} notes, ${sum} msat of the ${E2E.playerPegIn.msat} it held, in ${Date.now() - t} ms; the same notes again: ${again.status} (${[...new Set((again.refused || []).map((x) => x.why))].join('; ')})`);
+  const ledgerOf = async () => { const p = await book.plan(fedA); if (!p.ok) throw new Error(`the ledger of R does not plan: ${p.why}`); return { accepted: p.accepted.map((c) => ({ ...c, height: Number(c.height) })), coveredMsat: new Map(p.paidNotes.map((n) => [n.nonce, BigInt(n.msat)])), afterWindow: !!p.split }; };
+  const first = await ledgerOf();
+  ledgers.set(fedA, () => first);
+  wantA = first.accepted.map((c) => String(c.amountMsat)).sort();
+} else ledgers.set(fedA, () => ({ accepted: [claim(1, 250_000, hA), claim(2, 400_000, hA)], coveredMsat: new Map(), afterWindow: false }));
 const A = await releaseAndPay([ga], 'A abandoned');
 const a0 = A.spends[0];
-say(A.spends.length === 1 && a0.conf === 1 && a0.claims.map((c) => String(c.msat)).sort().join(',') === '250000000,400000000',
+say(A.spends.length === 1 && a0.conf === 1 && a0.claims.map((c) => String(c.msat)).sort().join(',') === wantA.join(','),
   `A: liquidation escrow spend ${a0 && a0.txid.slice(0, 16)} mined (${a0 && a0.vsize} vB), claims_id over ${a0 && a0.claims.length} claims at face: ${a0 && a0.d.outputs.map((o) => `${o.pays} ${o.value}${o.claims ? ` (${o.claims} claims)` : ''}`).join(', ')}`);
 const paidBefore = paid.length;
 await carryAll();
 const aPaid = paid.slice(paidBefore).flatMap((x) => x.list.map((y) => ({ ...y, federation: x.federation, carrier: x.carrier })));
-say(aPaid.filter((x) => x.key !== toHex(reserveKey(fedSafe))).map((x) => String(x.msat)).sort().join(',') === '250000000,400000000' && aPaid.every((x) => x.federation === fedSafe),
+say(aPaid.filter((x) => x.key !== toHex(reserveKey(fedSafe))).map((x) => String(x.msat)).sort().join(',') === wantA.join(',') && aPaid.every((x) => x.federation === fedSafe),
   `A: the carrier claimed its peg-in (${a0 && a0.slices.map((s) => s.value).join(', ')} sat on the chain) and paid each claim at face in the safest federation ${fedSafe.slice(0, 8)}: ${aPaid.map((x) => `${x.key.slice(0, 10)} ${x.msat}`).join(', ')}`);
+if (E2E) {
+  // WHAT THE CARRIERS' CLIENTS CLAIMED, AND THE PLAYER COLLECTING IN S: each payout contract to its key, refunded by that key into its own client of S
+  const carried = [...seats.values()].flatMap((x) => (x.run.served(ga.start) || { carried: [] }).carried || []).filter((c, i, all) => all.findIndex((d) => d.escrow === c.escrow && d.index === c.index) === i);
+  for (const c of carried) say(!!c.paidTxid && BigInt(c.claimedMsat || 0) >= (c.claims || []).reduce((a, x) => a + BigInt(x.msat), 0n),
+    `A: carrier output ${c.index} of ${String(c.escrow).slice(0, 16)}: the peg-in into S credited ${c.claimedMsat} msat, ${(c.claims || []).length} claim(s) paid in S transaction ${String(c.paidTxid).slice(0, 16)}${c.reserves ? `, ${c.reserves.msat} msat to S's reserve key` : ''}`);
+  // the client's notes as `fedimint-cli info` counts them (the stake-lock tool's balance lagged the redeemed notes by 16 384 msat when read 3 s after: measured)
+  const balance = () => BigInt(JSON.parse(execFileSync(E2E.fedimintCli, ['--data-dir', E2E.safe.player, 'info'], { encoding: 'utf8', env: lockEnv, timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] })).total_amount_msat);
+  const before = balance();
+  const mineDuring = setInterval(() => { try { mine(1); } catch { /* next */ } }, 5000);
+  let collected = 0n, redeemed = 0, failed = [];
+  const t = Date.now();
+  try {
+    for (const x of paid.slice(paidBefore)) for (const [i, y] of x.list.entries()) {
+      if (y.key !== playerPk) continue;
+      const at = (x.payouts || []).filter((o) => o.refundPk === playerPk)[x.list.slice(0, i).filter((z) => z.key === playerPk).length];
+      if (!at) { failed.push(`no outpoint for payout ${i} of ${x.txid}`); continue; }
+      const r = lockRun('--mode', 'redeem', '--witness', 'refund', '--data-dir', E2E.safe.player, '--outpoint', `${x.txid}:${at.outIdx}`, '--expiration', '0',
+        '--signer-secret', toHex(player.secret), '--hash', '00'.repeat(32), '--claim-pk', playerPk, '--refund-pk', playerPk, '--amount-msat', String(y.msat));
+      if (r.accepted) { redeemed++; collected += BigInt(y.msat); } else failed.push(`${x.txid.slice(0, 12)}:${at.outIdx} ${r.error}`);
+    }
+  } finally { clearInterval(mineDuring); }
+  const face = wantA.reduce((a, v) => a + BigInt(v), 0n);
+  let after = balance();
+  for (let i = 0; i < 30 && after - before < face; i++) { await new Promise((r) => setTimeout(r, 2000)); after = balance(); }
+  say(failed.length === 0 && after - before === BigInt(wantA.reduce((a, v) => a + BigInt(v), 0n)),
+    `A: the player collected in S: ${redeemed} payout(s) refunded to its key, ${collected} msat; its client of S went ${before} -> ${after} msat (${after - before} msat, the claims at face ${wantA.reduce((a, v) => a + BigInt(v), 0n)}) in ${Date.now() - t} ms${failed.length ? `; FAILED: ${failed.join('; ')}` : ''}`);
+}
 
 // ---- B: a theft's two template-3 bonds of one federation ----
 const fedT = 'b2'.repeat(32);
@@ -272,5 +353,5 @@ say(c0 && c0.claims.map((c) => String(c.msat)).sort().join(',') === owedC.map(St
 const pc = paid.length; await carryAll();
 say(paid.slice(pc).flatMap((x) => x.list).filter((y) => y.key !== toHex(reserveKey(fedSafe))).map((y) => String(y.msat)).sort().join(',') === owedC.map(String).sort().join(','), `C: carried and paid: ${paid.slice(pc).flatMap((x) => x.list).map((y) => `${y.key.slice(0, 10)} ${y.msat}`).join(', ')}`);
 
-console.log(`#1093 ${asked - wrong} of ${asked} as expected; tip ${tip()}; Fedimint not in this run (stand-in safe-federation clients: see the head of this file)`);
+console.log(`#1093 ${asked - wrong} of ${asked} as expected; tip ${tip()}; ${E2E ? `real federations: R ${E2E.robbed.id.slice(0, 8)} (halted), S ${E2E.safe.id.slice(0, 8)} (safe)` : 'Fedimint not in this run (stand-in safe-federation clients: see the head of this file)'}`);
 process.exit(wrong ? 1 : 0);
