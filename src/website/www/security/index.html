@@ -75,6 +75,12 @@
   ol.steps { padding-left: 22px; } ol.steps li { margin-bottom: 10px; }
   details.tech { margin: 14px 0 6px; color: var(--text); font-size: 15px; } details.tech > summary { font-weight: 600; color: var(--btc); padding: 6px 0; }
   .diagram svg.techsvg { max-width: 480px; margin: 0 auto; }
+  .accs { margin: 12px 0 8px; }
+  details.acc { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin: 8px 0; padding: 0 14px; color: var(--text); font-size: 15px; }
+  details.acc > summary { cursor: pointer; padding: 11px 0; font-weight: 600; color: var(--text); list-style: none; display: flex; justify-content: space-between; gap: 12px; }
+  details.acc > summary::-webkit-details-marker { display: none; }
+  details.acc > summary::after { content: '+'; color: var(--btc); font-weight: 700; } details.acc[open] > summary::after { content: '\2212'; }
+  details.acc > p { margin: 0 0 12px; color: var(--dim); }
 </style>
 </head>
 <body>
@@ -158,17 +164,17 @@
       <path d="M266 336c0 60 -40 80 -84 92" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar2)"/>
     </svg>
   </div>
-  <ol class="steps">
-    <li><b>A proof of cheating.</b> Someone holds proof that a node cheated in one of the cases above: two signatures that contradict each other, or a signature that a replay of the round contradicts. Any node may file it.</li>
-    <li><b>The hold.</b> The bond is moved to a hold on the chain. It is not spent yet and still counts as the node's. Nothing has been paid to anyone.</li>
-    <li><b>Two panels check.</b> Two separate groups of up to seven bonded nodes each check the proof themselves. Only when two thirds and one more in each group sign - 5 of 7 - is the bond released. A node that signs without a valid proof is slashed for it.</li>
-    <li><b>Paid out.</b> Every player the cheating harmed gets the real loss back first, once. The rest of the bond goes to the protocol reserves, which cover future losses.</li>
-  </ol>
+  <div class="accs">
+    <details class="acc"><summary>A proof of cheating</summary><p>Someone holds proof that a node cheated in one of the cases above: two signatures that contradict each other, or a signature that a replay of the round contradicts. Any node may file it.</p></details>
+    <details class="acc"><summary>The hold</summary><p>The bond is moved to a hold on the chain. It is not spent yet and still counts as the node's. Nothing has been paid to anyone.</p></details>
+    <details class="acc"><summary>Two panels check</summary><p>Two separate groups of up to seven bonded nodes each check the proof themselves. Only when two thirds and one more in each group sign - 5 of 7 - is the bond released. A node that signs without a valid proof is slashed for it.</p></details>
+    <details class="acc"><summary>Paid out</summary><p>Every player the cheating harmed gets the real loss back first, once. The rest of the bond goes to the protocol reserves, which cover future losses.</p></details>
+  </div>
   <p>Two things can stop the normal path, and each has its own way out:</p>
-  <ul>
-    <li><b>There is no valid proof of cheating.</b> Then the panels do not sign, and nobody else will either. The bond simply stays in the hold until its owner takes it back with the owner key - the 24 words. That is possible a day later at the earliest, and never before the bond's maturity date. The owner loses nothing.</li>
-    <li><b>The panels do not decide in time.</b> For example, too many of their nodes are offline, so fewer than 5 of 7 sign. Then, after about two days, a <b>backup group</b> may act instead: the holders of the network's <i>census key</i> (explained below). Each of them checks the same proof of cheating itself and signs only if it holds. They pay out exactly as the panels would have: the players' loss first, the rest of the bond to the reserves.</li>
-  </ul>
+  <div class="accs">
+    <details class="acc"><summary>There is no valid proof of cheating</summary><p>Then the panels do not sign, and nobody else will either. The bond simply stays in the hold until its owner takes it back with the owner key - the 24 words. That is possible a day later at the earliest, and never before the bond's maturity date. The owner loses nothing.</p></details>
+    <details class="acc"><summary>The panels do not decide in time</summary><p>For example, too many of their nodes are offline, so fewer than 5 of 7 sign. Then, after about two days, a <b>backup group</b> may act instead: the holders of the network's <i>census key</i> (explained below). Each of them checks the same proof of cheating itself and signs only if it holds. They pay out exactly as the panels would have: the players' loss first, the rest of the bond to the reserves.</p></details>
+  </div>
   <p>So a slash with a real proof cannot get stuck, and a slash with a false proof cannot get through.</p>
   <h3 style="margin-top:22px">How can other nodes reach a node's bond?</h3>
   <p>A bond is bitcoin locked on the chain like in a box with several <b>doors</b>. Each door has its own lock and opens only with the keys written on it - Bitcoin checks this, nobody else. In Bitcoin's own words a door is called a <i>leaf</i>: one of the ways an output may be spent.</p>
@@ -197,11 +203,13 @@
     </svg>
   </div>
   <p>So other nodes can never simply take a bond. They reach it only through door 2, and door 2 needs two keys at once:</p>
-  <ul>
-    <li><b>The node's own advance signature.</b> Every time a node takes a seat in a round, it signs in advance: "if I cheat in this round, my bond may be moved into this round's hold". It signs one more when it puts up the bond, for the cases that are not about a round, such as a guardian walking away. Without it the bond cannot move, and it can only move into that hold - nowhere else.</li>
-    <li><b>The census key.</b> The network's shared key (explained below). Its holders sign only after each of them has checked the proof of cheating.</li>
-  </ul>
-  <p>Inside the hold, the other nodes again need a door of their own: the two panels with a valid proof (door A), or the backup group after two days (door C). Door B always stays open for the owner, so a bond nobody can prove anything against always comes back.</p>
+  <div class="accs">
+    <details class="acc"><summary>The node's own advance signature</summary><p>Every time a node takes a seat in a round, it signs in advance: "if I cheat in this round, my bond may be moved into this round's hold". It signs one more when it puts up the bond, for the cases that are not about a round, such as a guardian walking away. Without it the bond cannot move, and it can only move into that hold - nowhere else.</p></details>
+    <details class="acc"><summary>The census key</summary><p>The network's shared key (explained below). Its holders sign only after each of them has checked the proof of cheating.</p></details>
+  </div>
+  <div class="accs">
+    <details class="acc"><summary>Inside the hold</summary><p>The other nodes again need a door of their own: the two panels with a valid proof (door A), or the backup group after two days (door C). Door B always stays open for the owner, so a bond nobody can prove anything against always comes back.</p></details>
+  </div>
 
   <h3 style="margin-top:22px">What is the census key?</h3>
   <div class="diagram" role="img" aria-label="Bonded nodes each hold pieces of one key, more pieces for a bigger bond; the key signs only when two thirds of the pieces sign together; no node holds the whole key">
@@ -234,7 +242,9 @@
       <text x="114" y="266">one signature</text><text class="d" x="114" y="288">no node holds the whole key</text>
     </svg>
   </div>
-  <p>The <b>census key</b> is one key that belongs to all bonded nodes of the network together. It is cut into pieces, and every node gets pieces in proportion to its bond. The key can sign only when nodes holding two thirds of the pieces sign together, so no single node - and no small group - can use it alone. A new census key is made at regular intervals, so the pieces follow the bonds as they change. It is used for just two things: to move a bond into its hold once a proof of cheating is checked, and as the backup group above.</p>
+  <div class="accs">
+    <details class="acc"><summary>What the census key is</summary><p>The <b>census key</b> is one key that belongs to all bonded nodes of the network together. It is cut into pieces, and every node gets pieces in proportion to its bond. The key can sign only when nodes holding two thirds of the pieces sign together, so no single node - and no small group - can use it alone. A new census key is made at regular intervals, so the pieces follow the bonds as they change. It is used for just two things: to move a bond into its hold once a proof of cheating is checked, and as the backup group above.</p></details>
+  </div>
 
 
   <details class="tech"><summary>Technical details: how a slash runs on the chain</summary>
@@ -275,15 +285,15 @@
       <text class="d" x="10" y="678">and signs only if they match the ones it is asked for.</text>
     </svg>
   </div>
-  <ol class="steps">
-    <li><b>The bond.</b> A bond is a Taproot output. Taproot lets an output carry several alternative scripts - its <i>leaves</i>, the doors above - and a spend reveals only the one it uses. A bond has two: the <i>recovery leaf</i> (door 1) lets the owner key take it back after the bond's maturity height; the <i>slash leaf</i> (door 2) needs two signatures together: one the node made in advance for each round it sits in, which can only pay into that round's hold output, and one from the <i>census key</i>. So no one can take a bond anywhere else, not even the census key.</li>
-    <li><b>The proof of cheating.</b> It is signed data anyone can check without trusting the filer: a signed result plus the replay of the round under its published game code; two signed results for one order; a signed confirmation of a result later proven false; a signed payout table that differs from the final result; a release signed with no valid proof behind it; or, for a federation, its own threshold-signed history showing more e-cash redeemed than issued, or a reserve output spent by no signed withdrawal.</li>
-    <li><b>The slashable offence, and the start.</b> What sets everything off is the slashable offence itself, proven. Any node that holds the proof of cheating asks the census key's holders to sign; each holder checks the proof itself before it signs. Only then is the <i>start</i> made: the transaction that moves the bond through the slash leaf (door 2) into the hold output. The filer adds a coin for the fee.</li>
-    <li><b>The census key.</b> It is one Schnorr key whose private part no one holds: it is split among a set of bonded nodes, drawn again every epoch, and a threshold of them must sign together. It can do only two things: sign a start, and pay out a hold after the long wait.</li>
-    <li><b>The hold.</b> The hold output has no key path and three leaves. <i>Release</i>: after 6 blocks, two-thirds plus one of each panel - two groups of up to 7 nodes drawn from the census - sign together. <i>Return</i>: after 144 blocks (about a day) and the bond's maturity, the owner key alone. <i>Fallback</i>: after 288 blocks (about two days), the census key alone - the backup group, whose holders each check the proof before they sign. While the bond sits in its hold it still counts as the node's bond.</li>
-    <li><b>The payout.</b> A release or a fallback pays a table that every signer computes the same way from public data: each harmed player's real loss once - paid into a safe federation by a carrier and on to the player's key - the filer's fee back at the start's own fee rate, and the rest to the protocol reserves. Its OP_RETURN names the proof's hash, the slash height and the table's hash, so anyone can check it against the proof.</li>
-    <li><b>Safety rules.</b> Every panel member and holder builds the transaction from the chain itself and signs only its own bytes. A panel member who signs a release with no valid proof gives a proof against itself. The times are mainnet's; testnet uses shorter ones.</li>
-  </ol>
+  <div class="accs">
+    <details class="acc"><summary>The bond</summary><p>A bond is a Taproot output. Taproot lets an output carry several alternative scripts - its <i>leaves</i>, the doors above - and a spend reveals only the one it uses. A bond has two: the <i>recovery leaf</i> (door 1) lets the owner key take it back after the bond's maturity height; the <i>slash leaf</i> (door 2) needs two signatures together: one the node made in advance for each round it sits in, which can only pay into that round's hold output, and one from the <i>census key</i>. So no one can take a bond anywhere else, not even the census key.</p></details>
+    <details class="acc"><summary>The proof of cheating</summary><p>It is signed data anyone can check without trusting the filer: a signed result plus the replay of the round under its published game code; two signed results for one order; a signed confirmation of a result later proven false; a signed payout table that differs from the final result; a release signed with no valid proof behind it; or, for a federation, its own threshold-signed history showing more e-cash redeemed than issued, or a reserve output spent by no signed withdrawal.</p></details>
+    <details class="acc"><summary>The slashable offence, and the start</summary><p>What sets everything off is the slashable offence itself, proven. Any node that holds the proof of cheating asks the census key's holders to sign; each holder checks the proof itself before it signs. Only then is the <i>start</i> made: the transaction that moves the bond through the slash leaf (door 2) into the hold output. The filer adds a coin for the fee.</p></details>
+    <details class="acc"><summary>The census key</summary><p>It is one Schnorr key whose private part no one holds: it is split among a set of bonded nodes, drawn again every epoch, and a threshold of them must sign together. It can do only two things: sign a start, and pay out a hold after the long wait.</p></details>
+    <details class="acc"><summary>The hold</summary><p>The hold output has no key path and three leaves. <i>Release</i>: after 6 blocks, two-thirds plus one of each panel - two groups of up to 7 nodes drawn from the census - sign together. <i>Return</i>: after 144 blocks (about a day) and the bond's maturity, the owner key alone. <i>Fallback</i>: after 288 blocks (about two days), the census key alone - the backup group, whose holders each check the proof before they sign. While the bond sits in its hold it still counts as the node's bond.</p></details>
+    <details class="acc"><summary>The payout</summary><p>A release or a fallback pays a table that every signer computes the same way from public data: each harmed player's real loss once - paid into a safe federation by a carrier and on to the player's key - the filer's fee back at the start's own fee rate, and the rest to the protocol reserves. Its OP_RETURN names the proof's hash, the slash height and the table's hash, so anyone can check it against the proof.</p></details>
+    <details class="acc"><summary>Safety rules</summary><p>Every panel member and holder builds the transaction from the chain itself and signs only its own bytes. A panel member who signs a release with no valid proof gives a proof against itself. The times are mainnet's; testnet uses shorter ones.</p></details>
+  </div>
   </details>
 
   <h2>The worst cases</h2>
