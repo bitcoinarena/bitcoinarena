@@ -15,7 +15,7 @@
 // signature check: no panels, no draw, no census, nothing recursive. It is what an offence with no round uses, and a node that was never seated has no other.
 import { BOND_TEMPLATE_V3, holdOutputKey, slashStartLeaf, tapLeafHash } from './bond-script.js';
 import { tapSighash } from './bond-spend.js';
-import { CARRIER_PAYOUT_MARGIN_MSAT, SLASH_CLOCKS } from './genesis.js';
+import { CARRIER_PAYOUT_FEE_MSAT, CARRIER_PAYOUT_MARGIN_MSAT, SLASH_CLOCKS } from './genesis.js';
 import { networkOf } from './constants.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from './genesis-ids.js';
 import { toHex } from './hash.js';
@@ -56,6 +56,13 @@ export function holdClocksOf(networkId) {
 export function carrierMarginOf(networkId) {
   const m = CARRIER_PAYOUT_MARGIN_MSAT[networkOf(networkId)];
   if (m === undefined) throw new Error('that network names no carrier payout margin');
+  return m;
+}
+
+/** What a carrier keeps back of a claim for its own payout's fee, msat (kanban #1086, #1093): the payout part of the margin. The rest of the margin is the peg-in's allowance. */
+export function carrierPayoutFeeOf(networkId) {
+  const m = CARRIER_PAYOUT_FEE_MSAT[networkOf(networkId)];
+  if (m === undefined) throw new Error('that network names no carrier payout fee');
   return m;
 }
 
