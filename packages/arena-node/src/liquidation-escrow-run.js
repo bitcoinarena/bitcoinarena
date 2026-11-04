@@ -222,6 +222,12 @@ export function createLiquidationEscrow({ secret, me, networkId, clocks, db, twe
     const ledger = await claimsOf(ctx.federation);
     if (!ledger) return { ok: false, due: false, why: `no claims ledger of federation ${ctx.federation.slice(0, 16)} is read here` };
     const owed = claimsOwed({ accepted: (ledger.accepted || []).filter((c) => Number(c.height) <= loadHeight), coveredMsat: ledger.coveredMsat || new Map(), assigned: assignedOf(ctx.federation) });
+    // AFTER THE CLAIM WINDOW THE REST IS SPREAD OVER THE SAFE FEDERATIONS WITH A RESERVE KEY (§27A.9.2): one whose guardian seats stand and whose key this seat has not
+    // read yet (reservePending, kanban #1129) would get no part in this seat's outputs and a part in those of a seat that read it. It waits, by name, as the slash table does
+    if (ledger.afterWindow) {
+      const unread = (await safeAt(ctx, loadHeight)).filter((f) => !f.reserveKey && f.reservePending && BigInt(f.exposureCapSats || 0) > 0n);
+      if (unread.length) return { ok: false, why: `the reserve key of federation ${unread.map((f) => String(f.federation).slice(0, 16)).join(', ')} is not read here yet: no liquidation spend is built without its reserves' part`, wait: true };
+    }
     return liquidationEscrowSpend({ escrow: { ...outpointOf(w.cur.name), value: w.cur.value }, output: ctx.output, tableId: fromHex(ctx.tableId), loadHeight, owed,
       carriers: await carriersFor(ctx, w.cur.name, loadHeight), marginMsat, rate: BigInt(ctx.h.rate), fallbackBlocks: clocks.fallbackBlocks,
       remainder: ledger.afterWindow ? { federations: await safeAt(ctx, loadHeight), retired: [] } : null });
