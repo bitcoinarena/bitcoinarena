@@ -996,6 +996,11 @@ const TYPE_STALL_NOTE = 0x41;
 const TYPE_SETTLEMENT_ASK = 0x45;
 /** The proof an abandonment's slash commits to (§23A.5, kanban #1062): the signed record holding the row, the node, the row's proof_ref and the output. */
 const TYPE_ABANDONED_PROOF = 0x42;
+/**
+ * The proof a theft's slash commits to (kanban #1093 part 2, ruling #1106): a federation's mark of theft (inflation or an unbacked spend), the guardian the
+ * signed record lists, and that guardian's output: theft-slash.js. 0x46, the first free byte past 0x45 (0x0d, 0x0f stay unused, see above).
+ */
+const TYPE_THEFT_PROOF = 0x46;
 
 /** The byte `feeTableId` opens with (fee.js). It named a fee claim once; no node claims anything (kanban #1035), and the byte stays so no table id moves. */
 const TYPE_FEE_TABLE = 0x0e;
@@ -1207,6 +1212,9 @@ const TAG = {
   slashPayoutTable: 'ARENA/v1/SlashPayoutTable',
   slashEscrowOutputs: 'ARENA/v1/SlashEscrowOutputs',
   carrierEscrowPegIn: 'ARENA/v1/CarrierEscrowPegIn',
+  // A LIQUIDATION ESCROW SPEND (kanban #1093 part 2, ruling #1111): the accepted claims it pays (claims_id), and its own outputs[] beside them
+  liquidationClaims: 'ARENA/v1/LiquidationClaims',
+  liquidationEscrowOutputs: 'ARENA/v1/LiquidationEscrowOutputs',
   censusKeyRecord: 'ARENA/v1/CensusKeyRecord',
   censusKeyShare: 'ARENA/v1/CensusKeyShare',
   reshareReady: 'ARENA/v1/ReshareReady',
@@ -7155,6 +7163,50 @@ function acceptAdvert({
   };
 }
 
+// ---- arena-protocol/src/partial-view.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE PARTS OF A PROVEN PARTIAL VIEW (kanban #925 part 2 step 2): which blocks of a view are partial, and where a transaction of one
+// stands. census.js chainViewOf proves them (see the note there: a branch proves inclusion, not completeness); the readers that need a
+// transaction's position or branch (advert-update.js, reaffirm.js, the seat's evidence and presence proofs) ask here, and a whole block
+// answers as it always did.
+
+
+const PARTIAL_BLOCKS = new WeakSet();
+/** Registers a block object as partial (census.js chainViewOf and partialViewOf alone call it). */
+const markPartial = (block) => { PARTIAL_BLOCKS.add(block); return block; };
+const isPartialBlock = (block) => !!block && typeof block === 'object' && PARTIAL_BLOCKS.has(block);
+/** Where a view's block's `i`-th transaction stands in its block: its index for a whole block, its kept position for a partial one. */
+const positionIn = (block, i) => (isPartialBlock(block) ? block.positions[i] : i);
+/** How many transactions the block holds (a partial block says, as its own index read it). */
+const txCountOf = (block) => (isPartialBlock(block) ? block.txCount : (block.transactions || []).length);
+/** The merkle branch of a view's block's `i`-th transaction: kept for a partial block, computed from `txids` (all of them) for a whole one. */
+function branchIn(block, i, txids = null) {
+  if (isPartialBlock(block)) return block.branches[i];
+  return merkleBranchOf(txids || block.transactions.map((raw) => parseTransaction(raw).txid), i);
+}
+
+/**
+ * THE VIEW OF AN INDEX RANGE: `range` is arena-index.js range(from, to) - { firstHeight, headers: [{ height, header, txCount }],
+ * transactions: [{ height, position, raw, branch }] } in chain order. Answers `{ blocks, firstHeight }`, one block per header, which
+ * chainViewOf proves as above and every census reader reads as it reads whole blocks.
+ */
+function partialViewOf(range) {
+  if (!range || !Array.isArray(range.headers) || !range.headers.length || !Number.isInteger(range.firstHeight)) throw new Error('a partial view is an index range: its headers from a first height');
+  const blocks = range.headers.map((h, i) => {
+    if (h.height !== range.firstHeight + i) throw new Error(`the index range has no header at ${range.firstHeight + i}`);
+    const b = { header: h.header, transactions: [], positions: [], branches: [], txCount: h.txCount };
+    return markPartial(b);
+  });
+  for (const t of range.transactions || []) {
+    const b = blocks[t.height - range.firstHeight];
+    if (!b) throw new Error(`the index range holds a transaction at ${t.height}, outside its headers`);
+    b.transactions.push(t.raw); b.positions.push(t.position); b.branches.push(t.branch);
+  }
+  return { blocks, firstHeight: range.firstHeight, partial: true };
+}
+
+
 // ---- arena-protocol/src/advert-update.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -7174,6 +7226,7 @@ function acceptAdvert({
 //
 // WHAT THIS FILE DOES NOT DO: check the signature. The protocol package carries no curve; every reader passes its own
 // BIP-340 verify, as the census's advertisement check does, and an update nobody verified is never applied.
+
 
 
 
@@ -7266,7 +7319,8 @@ function newestUpdates(view, entries, { atHeight, network = 'regtest', verify, s
   view.blocks.forEach((block, i) => {
     const height = view.firstHeight + i;
     if (height > atHeight) return;
-    (block.transactions || []).forEach((raw, position) => {
+    (block.transactions || []).forEach((raw, i) => {
+      const position = positionIn(block, i);   // a partial block's kept position (partial-view.js)
       let tx;
       try { tx = parseTransaction(raw); } catch { return; }
       if (!commitmentsOf(tx).some((c) => readAdvertUpdatePayload(c))) return;
@@ -7306,6 +7360,7 @@ function newestUpdates(view, entries, { atHeight, network = 'regtest', verify, s
 //
 // WHAT THIS FILE DOES NOT DO: check a signature. The protocol package carries no curve; the census is handed the same
 // BIP-340 verify it checks updates with, and an unchecked re-affirmation carries nothing.
+
 
 
 
@@ -7357,7 +7412,8 @@ function reaffirmedBonds(view, entries, { atHeight, networkId, verify } = {}) {
   view.blocks.forEach((block, i) => {
     const height = view.firstHeight + i;
     if (height > atHeight) return;
-    (block.transactions || []).forEach((raw, position) => {
+    (block.transactions || []).forEach((raw, i) => {
+      const position = positionIn(block, i);   // a partial block's kept position (partial-view.js)
       let tx;
       try { tx = parseTransaction(raw); } catch { return; }
       for (const c of commitmentsOf(tx)) {
@@ -7751,6 +7807,24 @@ function lockedExposureCap({ guardians, f, height, drainBlocks, bondMinGuardian 
   return { ok: true, cap: BigInt(places) * smallest, smallest, places, lapsing, qualifying: qualifying.length, line };
 }
 
+/**
+ * WHEN A GUARDIAN'S BOND STOPS COVERING (kanban #1093 part 7, ruling #1104: "the dashboard warns drain_blocks ahead of the moment, with
+ * Add to bond"). It qualifies at height h while its outputs maturing after h + drain_blocks sum to at least bond_min_guardian, so it lapses
+ * at m* - drain_blocks, m* the maturity at which the latest outputs first reach the floor. Answers { qualifying, lapsesAt, blocksLeft, warn }:
+ * `warn` from drain_blocks before the lapse; lapsesAt null when no outputs reach the floor at all.
+ */
+function bondLapseOf({ outputs, drainBlocks, bondMinGuardian, tip }) {
+  const floor = BigInt(bondMinGuardian || 0);
+  const outs = (outputs || []).filter((o) => o && Number.isInteger(Number(o.maturity)) && o.maturity !== null)
+    .map((o) => ({ sats: BigInt(o.bondSats ?? o.sats ?? 0), maturity: Number(o.maturity) })).sort((a, b) => b.maturity - a.maturity);
+  let sum = 0n, mStar = null;
+  for (const o of outs) { sum += o.sats; if (sum >= floor && sum > 0n) { mStar = o.maturity; break; } }
+  if (mStar === null) return { qualifying: false, lapsesAt: null, blocksLeft: 0, warn: true };
+  const lapsesAt = mStar - drainBlocks;
+  const blocksLeft = Math.max(0, lapsesAt - Number(tip));
+  return { qualifying: Number(tip) < lapsesAt, lapsesAt, blocksLeft, warn: blocksLeft <= drainBlocks };
+}
+
 /** Is a reserve within what the bonds actually cover? */
 function reserveFits({ reserve, bonds, f }) {
   const capped = exposureCap({ bonds, f });
@@ -8019,12 +8093,26 @@ const SLASH_CLOCKS = Object.freeze({
 });
 
 /**
- * A CARRIER'S PAYOUT MARGIN, msat, by network (§5A.3B, RULED 2026-11-03, kanban #1086): what every player_carrier output holds past the loss it carries, so the carrier's own
- * payout fee in the players' federation never comes out of a loss. A slash's table names it and the escrow spend's outputs[] repeat it, so no signer chooses it and every signer
- * builds the same bytes. Not in genesis and not hashed, beside it as CENSUS_KEY_BOND_MIN is. Mainnet the same as the test networks: the spec names no other value, and one
- * federation payout measured 352 msat.
+ * A CARRIER'S PAYOUT FEE, msat, by network (§5A.3B, RULED 2026-11-03, kanban #1086): the part of the margin a carrier keeps back of a claim for its own payout's fee in the
+ * players' federation, so that fee never comes out of a loss. Mainnet the same as the test networks: the spec names no other value, and one federation payout measured 352 msat.
+ * Not in genesis and not hashed, beside it as CENSUS_KEY_BOND_MIN is; nor are the two below. A slash's table names their sum (carrier_margin_msat) and the escrow spend's
+ * outputs[] repeat it, so no signer chooses it and every signer builds the same bytes.
  */
-const CARRIER_PAYOUT_MARGIN_MSAT = Object.freeze({ mainnet: 10_000n, testnet4: 10_000n, regtest: 10_000n });
+const CARRIER_PAYOUT_FEE_MSAT = Object.freeze({ mainnet: 10_000n, testnet4: 10_000n, regtest: 10_000n });
+
+/**
+ * A CARRIER'S PEG-IN FEE ALLOWANCE, msat, by network (kanban #1093, "fix both"): the receiving federation takes its own fee off a deposit before it credits it. A walletv2
+ * federation charges its consensus feerate (never under 1 sat/vB) times its config's receive_tx_vbytes: the safe federation of the real-Fedimint liquidation run took
+ * 416 sat of a 299,594 sat output (1 sat/vB), so a margin of 10 sat left the carrier 406,016 msat short of the claims and they waited for ever. The feerate moves with
+ * the chain and with the federation's pending transactions, so no seat can read one value every signer agrees on: the allowance is a network constant, as the margin
+ * was, sized for the measured peg-in (416 vB) at about 4.8 sat/vB on the test networks and about 48 sat/vB on mainnet. Unused allowance is not the carrier's: what
+ * the claim leaves past the players and the payout fee goes to the reserve key in the same payout (#1086's rule). A peg-in dearer than the allowance pays the
+ * players pro rata (slash) or waits (liquidation), as before.
+ */
+const CARRIER_PEGIN_FEE_MSAT = Object.freeze({ mainnet: 20_000_000n, testnet4: 2_000_000n, regtest: 2_000_000n });
+
+/** What every player_carrier and claims_carrier output holds past what it carries: the peg-in allowance plus the payout fee (kanban #1086, #1093). */
+const CARRIER_PAYOUT_MARGIN_MSAT = Object.freeze(Object.fromEntries(Object.keys(CARRIER_PAYOUT_FEE_MSAT).map((n) => [n, CARRIER_PAYOUT_FEE_MSAT[n] + CARRIER_PEGIN_FEE_MSAT[n]])));
 
 /** census_key_shares_max (§27A.6, §5A.3B, RULED 2026-11-02, kanban #1021): hashed as the slash clocks are, and for the same reason not on the test networks. */
 const CENSUS_KEY_SHARES_MAX = 1024;
@@ -8407,6 +8495,13 @@ function holdClocksOf(networkId) {
 function carrierMarginOf(networkId) {
   const m = CARRIER_PAYOUT_MARGIN_MSAT[networkOf(networkId)];
   if (m === undefined) throw new Error('that network names no carrier payout margin');
+  return m;
+}
+
+/** What a carrier keeps back of a claim for its own payout's fee, msat (kanban #1086, #1093): the payout part of the margin. The rest of the margin is the peg-in's allowance. */
+function carrierPayoutFeeOf(networkId) {
+  const m = CARRIER_PAYOUT_FEE_MSAT[networkOf(networkId)];
+  if (m === undefined) throw new Error('that network names no carrier payout fee');
   return m;
 }
 
@@ -8862,8 +8957,23 @@ function bondNamesStandingKey(advert, confirmationHeight, standing, censusConfir
   return { ok: true, epoch: named.epoch };
 }
 
-/** What a holder signs to name its peg-in address, for the carrying of a fallback: `carrier_peg_in(network, script)`. */
-const carrierPegInId = (networkId, script) => taggedHash(TAG.carrierPegIn, Uint8Array.from([...networkId, ...script]));
+/** The uses a release's or fallback's peg-in is for: the players' part, or a reserves' part (one byte each in carrier_peg_in). */
+const CARRIER_PEG_IN_USES = Object.freeze(['players', 'reserves']);
+/**
+ * WHAT A CARRIER SIGNS TO NAME ITS PEG-IN FOR A RELEASE OR A FALLBACK (RULED 2026-11-04, kanban #1130): its node key over
+ *
+ *   tagged_hash("ARENA/v1/CarrierPegIn", network_id ‖ start txid (internal order) ‖ start vout (u32 big-endian) ‖ federation_id ‖ use (u8: 0 players, 1 reserves) ‖ script)
+ *
+ * so a peg-in handed on by another seat names the start, the federation and the use it was made for, and cannot be passed off as another. `start` the hold
+ * output the start made { txid, vout }. (Before #1130 it covered network_id ‖ script alone; template 3 is in no release, so no height gates the change.)
+ */
+function carrierPegInId({ networkId, start, federationId, use, script }) {
+  const u = CARRIER_PEG_IN_USES.indexOf(use);
+  if (u < 0) throw new Error(`a peg-in is for ${CARRIER_PEG_IN_USES.join(' or ')}, not ${use}`);
+  const w = new Writer();
+  w.bytes32(networkId); w.bytes32(start.txid); w.u32(start.vout); w.bytes32(federationId); w.u8(u); w.bytes(script, script.length);
+  return taggedHash(TAG.carrierPegIn, w.finish());
+}
 
 /**
  * WHAT A CARRIER SIGNS TO NAME ITS PEG-IN FOR AN ESCROW SPEND (kanban #1034 answer 2, RULED 2026-11-03 #1085: `CarrierPegIn { payout_table_id, escrow outpoint,
@@ -8884,17 +8994,18 @@ function carrierEscrowPegInId({ tableId, outpoint, federationId, script }) {
  * nodes, the round's seats), each with a peg-in address signed by its node key. A holder with none is passed over. An empty answer is no refusal:
  * buildSlashPayoutTable then leaves it all in escrow and the players wait for a carrier (kanban #1034 answer 6).
  *
- *   holders   censusKeyShares' list; `bonds` Map hex -> sats; `pegIns` Map hex -> { script, signature }
+ *   holders   censusKeyShares' list; `bonds` Map hex -> sats; `pegIns` Map hex -> { script, signature }, each a players' peg-in of `federationId` for the
+ *             hold output `start` { txid, vout } (carrierPegInId, #1130)
  *
  * Answers [{ key, script, bondSats }], the `carriers` of buildSlashPayoutTable.
  */
-function fallbackCarriers({ holders, bonds, excluded = [], pegIns, networkId, verify }) {
+function fallbackCarriers({ holders, bonds, excluded = [], pegIns, networkId, start, federationId, verify }) {
   const out = new Set(excluded);
   return [...holders].sort((a, b) => b.shares - a.shares || (a.key < b.key ? -1 : 1)).flatMap((h) => {
     const peg = pegIns.get(h.key);
     if (out.has(h.key) || !peg) return [];
     let good = false;
-    try { good = verify(peg.signature, carrierPegInId(networkId, peg.script), fromHex(h.key)) === true; } catch { good = false; }
+    try { good = verify(peg.signature, carrierPegInId({ networkId, start, federationId, use: 'players', script: peg.script }), fromHex(h.key)) === true; } catch { good = false; }
     return good ? [{ key: h.key, script: peg.script, bondSats: bonds.get(h.key) || 0n }] : [];
   });
 }
@@ -11842,6 +11953,8 @@ function txidHexOf(tx) {
 
 
 
+
+
 /**
  * One census entry, encoded.
  *
@@ -12304,6 +12417,15 @@ function chainViewOf(view) {
   const blocks = [];
   for (let i = 0; i < view.blocks.length; i++) {
     const height = view.firstHeight + i;
+    // A PARTIAL BLOCK (kanban #925): its kept transactions, each proved into this header by its own branch, instead of the whole list
+    if (isPartialBlock(view.blocks[i])) {
+      const proved = partialBlockProved(view.blocks[i], height);
+      if (!proved.ok) return proved;
+      blocks.push(proved.block);
+      continue;
+    }
+    if (view.blocks[i].positions !== undefined)
+      return { ok: false, why: `block ${height} is offered as part of a block, and only a seat's own index (partialViewOf) makes one` };
     let ids;
     try { ids = view.blocks[i].transactions.map((raw) => parsedTx(raw).txid); }
     catch (e) { return { ok: false, why: `block ${height} carries something that is not a transaction: ${e.message}` }; }
@@ -12343,6 +12465,43 @@ function chainViewOf(view) {
   };
   checked[VERIFIED] = stampOf(checked);
   return checked;
+}
+
+/**
+ * A PROVEN PARTIAL VIEW (kanban #925 part 2 step 2, spec ruling #1101 A). A seat's Arena index (arena-node/src/arena-index.js) keeps
+ * every header and, of each block, only the transactions that carry a Bitcoin Arena output or spend a bond it watches - each with its
+ * position and its merkle branch. A view built from it carries every header (so it is checked mined and linked exactly as a whole view
+ * is) and, per block, those transactions: `{ header, transactions, positions, branches, txCount }`. In place of the whole-list merkle
+ * root, every transaction it carries is proved into its own header (chain.js provesTransaction) at its position, with a branch as long
+ * as a tree of txCount leaves is deep.
+ *
+ * A BRANCH PROVES INCLUSION, NOT COMPLETENESS. It says a transaction is in that block at that position; it cannot say the block holds no
+ * other transaction a reader would have wanted. §25.1: "a list provider can then OMIT but not FORGE" - and here the list provider is
+ * the seat itself: the index was filled from this seat's own bitcoind, block by block, by the same recognisers the readers use, and its
+ * completeness rests on that, not on anything in the view. So a partial block is taken only from a view this module built itself
+ * (partialViewOf, which registers each block object it makes); a block handed in from anywhere else that says it is partial is refused,
+ * as a whole view that omits a transaction always was. Readers that want a transaction's position or branch ask positionIn / branchIn,
+ * which answer the same for a whole block.
+ */
+function partialBlockProved(block, height) {
+  const { transactions, positions, branches, txCount } = block;
+  if (!Array.isArray(transactions) || !Array.isArray(positions) || !Array.isArray(branches)
+      || transactions.length !== positions.length || transactions.length !== branches.length)
+    return { ok: false, why: `block ${height} is offered in part, and its transactions, positions and branches do not pair up` };
+  if (!Number.isInteger(txCount) || txCount < 1) return { ok: false, why: `block ${height} is offered in part with no transaction count` };
+  let depth = 0; while ((1 << depth) < txCount) depth++;
+  for (let k = 0; k < transactions.length; k++) {
+    const p = positions[k];
+    if (!Number.isInteger(p) || p < 0 || p >= txCount || (k && p <= positions[k - 1]))
+      return { ok: false, why: `block ${height} offers a transaction at position ${p}, out of order or outside its ${txCount}` };
+    let tx;
+    try { tx = parsedTx(transactions[k]); }
+    catch (e) { return { ok: false, why: `block ${height} carries something that is not a transaction: ${e.message}` }; }
+    if (!Array.isArray(branches[k]) || branches[k].length !== depth || !provesTransaction(block.header, tx.txid, branches[k], p))
+      return { ok: false, why: `block ${height} does not contain the transaction offered at position ${p}` };
+  }
+  const out = markPartial({ height, header: block.header, transactions, positions, branches, txCount });
+  return { ok: true, block: out };
 }
 
 /**
@@ -12597,39 +12756,48 @@ function candidatesIn(blocks, censusHeight, network) {
     for (const raw of block.transactions) {
       let tx;
       try { tx = parsedTx(raw); } catch { continue; }
-      // THIS NETWORK'S BONDS BY ITS MARKER, AND THE ANCESTOR'S BY ITS OWN (spec 0A.9): a bond the BLWP
-      // network's operators posted is found, read by the ancestor's layout and id, and counts here only once its
-      // operator re-affirmed it for this network (deriveCensus)
-      let ancestor = false;
-      if (!paysBondMarker(tx, network)) {
-        if (!paysMarkerProgram(tx, ancestorMarker(network))) continue;
-        ancestor = true;
-      }
-
-      const advert = ancestor ? committedAncestorAdvertIn(tx) : committedAdvertIn(tx);
-      if (!advert) continue;
-      // THE BODY NAMES THE OUTPOINT, and a body that names an output this
-      // transaction does not have has named no outpoint at all - there is
-      // nothing for RESOLVE to read and nothing to exclude by name.
-      if (!tx.outputs[advert.bondVout]) continue;
-
-      // NO AMOUNT. The scan used to copy the output's value in beside the
-      // outpoint, and measured, nothing ever read it: RESOLVE takes
-      // `output.valueSats` off the funding transaction itself and overwrites
-      // the field before the floor is applied or a leaf is hashed. A number
-      // carried along that no rule consults is one a later caller can start
-      // trusting, so the scan stops writing one.
-      found.push({
-        txid: tx.txid,
-        vout: advert.bondVout,
-        pubkey: advert.nodePubkey,
-        roles: advert.roles,
-        hostedGames: advert.hostedGames,
-        ...(ancestor ? { ancestor: true } : {}),
-      });
+      const bond = bondCandidateOf(tx, network);
+      if (bond) found.push(bond);
     }
   }
   return found;
+}
+
+/**
+ * ONE TRANSACTION, AS SCAN READS IT (candidatesIn, and the seat's index - arena-index.js, kanban #925 - which keeps every
+ * transaction this answers for): the bond candidate it carries, { txid, vout, pubkey, roles, hostedGames[, ancestor] }, or null.
+ */
+function bondCandidateOf(tx, network) {
+  // THIS NETWORK'S BONDS BY ITS MARKER, AND THE ANCESTOR'S BY ITS OWN (spec 0A.9): a bond the BLWP
+  // network's operators posted is found, read by the ancestor's layout and id, and counts here only once its
+  // operator re-affirmed it for this network (deriveCensus)
+  let ancestor = false;
+  if (!paysBondMarker(tx, network)) {
+    if (!paysMarkerProgram(tx, ancestorMarker(network))) return null;
+    ancestor = true;
+  }
+
+  const advert = ancestor ? committedAncestorAdvertIn(tx) : committedAdvertIn(tx);
+  if (!advert) return null;
+  // THE BODY NAMES THE OUTPOINT, and a body that names an output this
+  // transaction does not have has named no outpoint at all - there is
+  // nothing for RESOLVE to read and nothing to exclude by name.
+  if (!tx.outputs[advert.bondVout]) return null;
+
+  // NO AMOUNT. The scan used to copy the output's value in beside the
+  // outpoint, and measured, nothing ever read it: RESOLVE takes
+  // `output.valueSats` off the funding transaction itself and overwrites
+  // the field before the floor is applied or a leaf is hashed. A number
+  // carried along that no rule consults is one a later caller can start
+  // trusting, so the scan stops writing one.
+  return {
+    txid: tx.txid,
+    vout: advert.bondVout,
+    pubkey: advert.nodePubkey,
+    roles: advert.roles,
+    hostedGames: advert.hostedGames,
+    ...(ancestor ? { ancestor: true } : {}),
+  };
 }
 
 function scanCensus(view, { contract, candidates }) {
@@ -31128,11 +31296,16 @@ function backupPostDue({ nowMs, slot, rank, posted, postedPrimary = false, cap =
 }
 /**
  * WHICH ROUNDS OF ONE WINDOW ARE PLAYED (the rule above), from what a seat sees of the rounds of one game, federation and start: `rows`
- * [{ id, backup: bool|null, drawn: bool, entries: n }] -> the Set of ids offered. A row whose role is not known yet (its publication not
- * read) counts as not a backup.
+ * [{ id, backup: bool|null, drawn: bool, entries: n, unseated?: bool }] -> the Set of ids offered. A row whose role is not known yet (its
+ * publication not read) counts as not a backup.
+ *
+ * A PRIMARY WHOSE ENTRY OPENED WITHOUT ITS SEATING CERTIFICATE IS NOT DRAWN FOR THIS RULE (kanban #1119, measured 2026-11-04 10:43Z: primary b3f22953
+ * stood uncertified all window, backup 7ac5dbc0 was seated, and every seat answered the backup played: false). `unseated`: the round's entry has
+ * opened on this seat's clock and this seat holds no certificate of both its roles - then the backup is played, unless the primary is certified after
+ * all before the backup takes an entry.
  */
 function playedOfWindow(rows) {
-  const primaryDrawn = rows.some((r) => !r.backup && r.drawn);
+  const primaryDrawn = rows.some((r) => !r.backup && r.drawn && !r.unseated);
   const backupTaken = rows.some((r) => r.backup && r.entries > 0);
   const out = new Set();
   for (const r of rows) if (r.backup ? !primaryDrawn || r.entries > 0 : !backupTaken || r.entries > 0) out.add(r.id);
