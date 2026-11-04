@@ -46,14 +46,47 @@
   svg .g { fill: none; stroke: var(--ok); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   svg .r { fill: none; stroke: var(--risk); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   svg .b { fill: var(--btc); } svg .f { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+
+  /* THE SITE'S HEADER, as on the home page */
+  body { padding-top: 64px; }
+  nav.site { position: fixed; inset: 0 0 auto 0; z-index: 20; backdrop-filter: blur(10px); background: rgba(7,9,13,.82); border-bottom: 1px solid rgba(255,255,255,.06); }
+  nav.site .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; display: flex; align-items: center; gap: 22px; height: 64px; }
+  nav.site .brand { display: flex; align-items: center; gap: 10px; font: 700 19px system-ui; letter-spacing: -0.02em; text-decoration: none; white-space: nowrap; color: var(--text); }
+  nav.site .brand i { width: 30px; height: 30px; border-radius: 8px; background: conic-gradient(from 210deg, var(--btc), #ffcf5c, var(--btc)); display: grid; place-items: center; font-style: normal; color: #1a0f00; font-weight: 800; }
+  nav.site .links { margin-left: auto; display: flex; gap: 22px; font-size: 15px; }
+  nav.site .links a { color: var(--dim); text-decoration: none; } nav.site .links a:hover, nav.site .links a.on { color: var(--text); }
+  nav.site .play { display: inline-flex; align-items: center; gap: 8px; padding: 9px 15px; border-radius: 11px; background: linear-gradient(135deg, var(--btc), #ffb347); color: #1a0f00; font: 600 15px/1 system-ui; text-decoration: none; white-space: nowrap; }
+  @media (max-width: 860px) { nav.site .links a:not(.keep) { display: none; } nav.site .links { gap: 16px; } nav.site .wrap { gap: 16px; } }
+  @media (max-width: 480px) { nav.site .links a[href*=proposals] { display: none; } nav.site .wrap { gap: 12px; } nav.site .links { gap: 12px; font-size: 14px; } nav.site .brand { font-size: 16px; } nav.site .brand i { width: 26px; height: 26px; } }
+  @media (max-width: 370px) { nav.site .brand span { display: none; } }
+  /* THE SLASHING PICTURES */
+  .ver { display: inline-block; font: 700 13px system-ui; letter-spacing: .04em; text-transform: uppercase; border-radius: 999px; padding: 3px 12px; margin: 34px 0 0; }
+  .ver.v20 { color: #1a0f00; background: var(--btc); } .ver.v19 { color: var(--text); border: 1px solid var(--line); background: var(--panel); }
+  .cases { display: grid; grid-template-columns: 1fr; gap: 12px; margin: 16px 0; }
+  @media (min-width: 640px) { .cases { grid-template-columns: 1fr 1fr; } }
+  .case { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: flex; gap: 12px; align-items: flex-start; }
+  .case svg { flex: none; } .case b { display: block; } .case span { color: var(--dim); font-size: 14px; }
+  .case.safe { border-style: dashed; }
+  .diagram { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin: 16px 0; }
+  .diagram svg { display: block; width: 100%; height: auto; }
+  .diagram svg.tall { display: none; max-width: 360px; margin: 0 auto; }
+  @media (max-width: 640px) { .diagram svg.wide { display: none; } .diagram svg.tall { display: block; } }
+  .diagram text { fill: var(--text); font: 600 13px system-ui; } .diagram text.d { fill: var(--dim); font-weight: 400; font-size: 12px; }
+  ol.steps { padding-left: 22px; } ol.steps li { margin-bottom: 10px; }
 </style>
 </head>
 <body>
+<nav class="site"><div class="wrap">
+  <a class="brand" href="https://bitcoinarena.io/" aria-label="Bitcoin Arena"><i>₿</i><span>Bitcoin Arena</span></a>
+  <div class="links"><a href="https://bitcoinarena.io/#games">Games</a><a href="https://bitcoinarena.io/#how">How it works</a><a href="https://bitcoinarena.io/#build">Build &amp; run</a><a class="keep" href="https://testnet.bitcoinarena.io/proposals/">Proposals</a><a class="keep on" href="/security/" aria-current="page">Security</a><a class="keep" href="https://docs.bitcoinarena.io/">Docs</a></div>
+  <a class="play" href="https://testnet.bitcoinarena.io/">App <span aria-hidden="true">→</span></a>
+</div></nav>
 <main>
   <h1>How your money is protected</h1>
   <p class="lead">The worst things that could happen, how likely each one is, what stops it, and what is left. Worst case first, in plain words.</p>
-  <div class="note"><b>Mainnet is not live.</b> Bitcoin Arena runs on testnet today, with test coins that have no value. Each card says whether its protection is live on testnet now, comes with version 2.0, or is planned.</div>
+  <div class="note"><b>Mainnet is not live.</b> Bitcoin Arena runs on testnet today, with test coins that have no value. This page describes <b>version 2.0</b> first: the protection Bitcoin Arena is built for. What the version running on testnet today, <b>1.9</b>, already does is in its own section below.</div>
 
+  <span class="ver v20">Version 2.0</span>
   <h2>Where your money is, and who guards it</h2>
   <div class="flow" role="img" aria-label="Three stages: in your wallet, locked in a round, paid out">
     <div class="stage">
@@ -72,6 +105,64 @@
       <span>Winnings land in your wallet as e-cash again. The 24 words you wrote down restore it on any device.</span>
     </div>
   </div>
+
+  <h2>When a node is slashed</h2>
+  <p>Every node that signs rounds or guards money puts up a <b>bond</b>: bitcoin it locks on the chain. Slashing takes that bond away. It happens only for these, and each one needs a proof anyone can check:</p>
+  <div class="cases" role="list">
+    <div class="case"><svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><rect class="f" x="6" y="8" width="32" height="28" rx="5"/><path class="r" d="M14 18l16 10M30 18L14 28"/></svg><div><b>A false result</b><span>A signer signs a result the game did not produce. Anyone can replay the round; when the replay shows a different result, that signature is the proof. Every signer of the false result is slashed - also when the whole group lied together.</span></div></div>
+    <div class="case"><svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><rect class="f" x="4" y="10" width="17" height="24" rx="4"/><rect class="f" x="23" y="10" width="17" height="24" rx="4"/><path class="r" d="M9 22h7M28 19h7M28 25h7"/></svg><div><b>Two different results</b><span>A signer signs two different results for the same order. The two signatures side by side are the proof, nothing needs to be replayed.</span></div></div>
+    <div class="case"><svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="19" cy="19" r="11"/><path class="i" d="M27 27l10 10"/><path class="r" d="M14 14l10 10M24 14L14 24"/></svg><div><b>Confirming a false result</b><span>An auditor checks a round and confirms its result. If that result is later proven false, the auditor's confirmation is the proof against the auditor.</span></div></div>
+    <div class="case"><svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><rect class="f" x="8" y="6" width="28" height="32" rx="4"/><path class="i" d="M14 14h16M14 21h16M14 28h8"/><path class="r" d="M27 26l8 8M35 26l-8 8"/></svg><div><b>A false payout table</b><span>The seats that pay a round out sign a table of who gets what. A table that pays differently than the final result is the proof against every seat that signed it.</span></div></div>
+    <div class="case"><svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><path class="f" d="M8 30h28v6H8z"/><path class="i" d="M12 30V18h20v12"/><path class="r" d="M16 10l12 12M28 10L16 22"/></svg><div><b>Releasing a bond without a proof</b><span>Freeing a held bond to someone needs a valid proof. A node that signs such a release without one is slashed itself, and its whole bond goes to the protocol reserves.</span></div></div>
+    <div class="case"><svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="14"/><path class="i" d="M22 14v9l6 4"/><path class="r" d="M34 34l6 6"/></svg><div><b>A guardian walks away</b><span>A guardian of a federation stops working and does not hand over its place in time. Its bond pays the players of that federation.</span></div></div>
+    <div class="case"><svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><path class="f" d="M8 16l14-8 14 8v20H8z"/><path class="r" d="M16 22l12 10M28 22L16 32"/></svg><div><b>Guardians steal</b><span>Enough guardians sign together and take a federation's bitcoin. Their own signed history shows it: more e-cash paid out than was issued, or reserves spent with no signed withdrawal. The bonds of all its guardians pay every note at face value.</span></div></div>
+  </div>
+  <p>Mistakes that hurt nobody are not slashed:</p>
+  <div class="cases">
+    <div class="case safe"><svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="14"/><path class="g" d="M15 22l5 5 9-10"/></svg><div><b>Not slashed: being offline</b><span>A node that is not there for a day is simply left out of the draw until it is back. Its bond is untouched.</span></div></div>
+    <div class="case safe"><svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="14"/><path class="g" d="M15 22l5 5 9-10"/></svg><div><b>Not slashed: a round that stalls</b><span>A seat named silent in failed rounds again and again is left out of the draw for up to 72 hours. Its bond is untouched; the players get their stake back.</span></div></div>
+  </div>
+
+  <h2>How slashing works</h2>
+  <div class="diagram" role="img" aria-label="A proof starts a slash; the bond moves to a hold; two panels release it with the proof; the players get their loss back and the rest goes to the reserves. If the proof does not hold, the bond returns to its owner. If the panels do not act, the holders of the census key pay it out after a wait.">
+    <svg class="wide" viewBox="0 0 720 290" aria-hidden="true">
+      <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8d99a8"/></marker></defs>
+      <rect class="f" x="8" y="36" width="156" height="74" rx="12"/><text x="86" y="66" text-anchor="middle">1. A proof</text><text class="d" x="86" y="88" text-anchor="middle">anyone can check it</text>
+      <rect class="f" x="192" y="36" width="156" height="74" rx="12"/><text x="270" y="66" text-anchor="middle">2. The hold</text><text class="d" x="270" y="88" text-anchor="middle">moved, not spent</text>
+      <rect class="f" x="376" y="36" width="156" height="74" rx="12"/><text x="454" y="66" text-anchor="middle">3. Two panels</text><text class="d" x="454" y="88" text-anchor="middle">5 of 6 sign in each</text>
+      <rect class="f" x="560" y="36" width="152" height="74" rx="12" stroke="#3fb950"/><text x="636" y="66" text-anchor="middle">4. Paid out</text><text class="d" x="636" y="88" text-anchor="middle">players first</text>
+      <path d="M164 73h26" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+      <path d="M348 73h26" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+      <path d="M532 73h26" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+      <rect class="f" x="192" y="190" width="156" height="74" rx="12" stroke="#d29922"/><text x="270" y="220" text-anchor="middle">Proof fails</text><text class="d" x="270" y="242" text-anchor="middle">bond back to its owner</text>
+      <rect class="f" x="470" y="190" width="200" height="74" rx="12" stroke="#d29922"/><text x="570" y="220" text-anchor="middle">Panels do nothing</text><text class="d" x="570" y="242" text-anchor="middle">census key pays, later</text>
+      <path d="M270 110v78" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+      <path d="M454 110c0 46 50 44 92 78" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+      <path d="M670 226c34 0 34-66 -6 -114" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+    </svg>
+    <svg class="tall" viewBox="0 0 340 480" aria-hidden="true">
+      <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8d99a8"/></marker></defs>
+      <rect class="f" x="10" y="10" width="170" height="66" rx="12"/><text x="95" y="38" text-anchor="middle">1. A proof</text><text class="d" x="95" y="60" text-anchor="middle">anyone can check it</text>
+      <rect class="f" x="10" y="140" width="170" height="66" rx="12"/><text x="95" y="168" text-anchor="middle">2. The hold</text><text class="d" x="95" y="190" text-anchor="middle">moved, not spent</text>
+      <rect class="f" x="10" y="270" width="170" height="66" rx="12"/><text x="95" y="298" text-anchor="middle">3. Two panels</text><text class="d" x="95" y="320" text-anchor="middle">5 of 6 sign in each</text>
+      <rect class="f" x="10" y="400" width="170" height="66" rx="12" stroke="#3fb950"/><text x="95" y="428" text-anchor="middle">4. Paid out</text><text class="d" x="95" y="450" text-anchor="middle">players first</text>
+      <path d="M95 76v62" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar2)"/>
+      <path d="M95 206v62" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar2)"/>
+      <path d="M95 336v62" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar2)"/>
+      <rect class="f" x="200" y="140" width="132" height="66" rx="12" stroke="#d29922"/><text x="266" y="168" text-anchor="middle">Proof fails</text><text class="d" x="266" y="190" text-anchor="middle">back to owner</text>
+      <rect class="f" x="200" y="270" width="132" height="66" rx="12" stroke="#d29922"/><text x="266" y="292" text-anchor="middle">Panels idle</text><text class="d" x="266" y="314" text-anchor="middle">census key</text><text class="d" x="266" y="328" text-anchor="middle">pays, later</text>
+      <path d="M180 173h18" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar2)"/>
+      <path d="M180 303h18" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar2)"/>
+      <path d="M266 336c0 60 -40 80 -84 92" stroke="#8d99a8" stroke-width="2" fill="none" marker-end="url(#ar2)"/>
+    </svg>
+  </div>
+  <ol class="steps">
+    <li><b>A proof.</b> Someone holds proof of one of the cases above: two signatures that contradict each other, or a signature that a replay of the round contradicts. Any node may file it.</li>
+    <li><b>The hold.</b> The bond is moved to a hold on the chain. It is not spent yet and still counts as the node's. Nothing has been paid to anyone.</li>
+    <li><b>Two panels check.</b> Two separate groups of six bonded nodes each check the proof themselves. Only when five in each group sign is the bond released. A node that signs without a valid proof is slashed for it.</li>
+    <li><b>Paid out.</b> Every player the offence harmed gets the real loss back first, once. The rest goes to the protocol reserves, which cover future losses.</li>
+  </ol>
+  <p>Two ways out keep this honest: if the proof does not hold up, the node takes its bond back by itself after about a day, never before its bond matures. If the panels do nothing at all, the holders of the network's census key - the nodes with the most bonded capital, together - pay it out after a longer wait.</p>
 
   <h2>The worst cases</h2>
 
@@ -92,7 +183,7 @@
     <dt>How likely</dt><dd>Medium. A seat only has to go quiet.</dd>
     <dt>What stops it</dt><dd>A round waits and is run again by its seats. A seat named silent in 3 failed rounds within 72 hours is left out of the draw for up to 72 hours. Your stake comes back if the round cannot finish.</dd>
     <dt class="left">What is left</dt><dd>Three seats working together can still stop a round. A losing player then gets the stake back and the winner gets nothing extra. The stall rule takes repeaters out, but it does not yet cover the payout step.</dd></dl>
-    <details><summary>Details</summary>Re-run window: §13C, #1038, in 2.0. The stall rule: #1044, #1052, in 2.0. The free bet: #1044, #1045.</details>
+    <details><summary>Details</summary>Re-run window: §13C. The stall rule: §5A.3.</details>
   </div>
 
   <div class="card"><div class="head">
@@ -112,7 +203,7 @@
     <dt>How likely</dt><dd>Low. It needs a majority of a federation's guardians. Today on testnet most guardians are run by the project; spreading them over different machines and providers comes with 2.0.</dd>
     <dt>What stops it</dt><dd>A federation may only hold as much as its guardians' bonds can cover. A theft leaves a mark in the federation's own signed history: more e-cash paid out than was ever issued, or a reserve spent with no signed withdrawal. Any seat that sees it stops deposits at once, and every note is paid at face value from the bonds of all its guardians. Updates reach only a few guardians of a federation at a time.</dd>
     <dt class="left">What is left</dt><dd>Your claim: you have 3 months to present your notes, and they are paid at once. Deposits made outside our apps and gateways past the cap may not be covered.</dd></dl>
-    <details><summary>Details</summary>Exposure cap, ReserveAlarm, guardian bonds as insurance, staged updates, spread guardians: #1093.</details>
+    <details><summary>Details</summary>Exposure cap, the reserve alarm, guardian bonds as insurance, staged updates and spread guardians: §23A.</details>
   </div>
 
   <div class="card"><div class="head">
@@ -122,7 +213,7 @@
     <dt>How likely</dt><dd>Low to medium over years.</dd>
     <dt>What stops it</dt><dd>The federation is wound up: every note presented is paid at face value, from the federation's escrow and its guardians' bonds. Your wallet claims for you automatically.</dd>
     <dt class="left">What is left</dt><dd>You have 3 months to claim. After that, what is left goes to the protocol reserves.</dd></dl>
-    <details><summary>Details</summary>Liquidation and claims: §23A.5, #1093 (claim window 3 months).</details>
+    <details><summary>Details</summary>Liquidation and claims: §23A.5 (claim window 3 months).</details>
   </div>
 
   <div class="card"><div class="head">
@@ -132,7 +223,7 @@
     <dt>How likely</dt><dd>Medium: machines get hacked.</dd>
     <dt>What stops it</dt><dd>A node never holds a player's money, and its bond can only be taken back with its owner's 24 words, which are kept off the machine. A hacked node can sign no more than its own share of a round.</dd>
     <dt class="left">What is left</dt><dd>The node owner can lose the bond if the hacked node is slashed. Players lose nothing. If the node is a guardian and its federation is robbed, its bond pays the players.</dd></dl>
-    <details><summary>Details</summary>Owner key for bonds: #1093 part 1.</details>
+    <details><summary>Details</summary>The owner key of a bond: §5A.3B.</details>
   </div>
 
   <div class="card"><div class="head">
@@ -203,9 +294,19 @@
   <p>How often one owner's nodes would sit together in a round, per round, assuming one owner holds that share of all bonded capital:</p>
   <table class="odds"><thead><tr><th>One owner's share of all bonded capital</th><th>Their nodes hold 5 of a round's 7 seats</th><th>They hold 3 of 7, enough to stall</th></tr></thead>
   <tbody><tr><td>20 %</td><td>0.5 % of rounds</td><td>14.8 %</td></tr><tr><td>30 %</td><td>2.9 %</td><td>35.3 %</td></tr><tr><td>40 %</td><td>9.6 %</td><td>58.0 %</td></tr></tbody></table>
-  <p class="src">Sources: the 5 of 7 column is §5A.10's table, the 3 of 7 column the same binomial (#1045).</p>
+  <p class="src">Sources: the 5 of 7 column is §5A.10's table, the 3 of 7 column the same binomial.</p>
 
-  <footer><a href="https://bitcoinarena.io/">Bitcoin Arena</a> · <a href="/">Docs</a> · <a href="https://testnet.bitcoinarena.io/">Play on testnet</a></footer>
+  <span class="ver v19">Version 1.9 - testnet today</span>
+  <h2>What version 1.9 does today</h2>
+  <p>Version 1.9 is what runs on testnet now. Much of the protection above is already there; slashing is not.</p>
+  <div class="cases">
+    <div class="case"><svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="14"/><path class="g" d="M15 22l5 5 9-10"/></svg><div><b>Live in 1.9</b><span>Every round can be replayed by anyone. A false result can be objected to for 10 minutes and the round is then run again. A round that cannot finish gives your stake back. Signers are drawn from a block hash nobody knows in advance. Every federation has two gateways. Game files load only when they match their published hashes. Your 24 words restore your wallet.</span></div></div>
+    <div class="case"><svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="14"/><path d="M22 14v10M22 29v1" stroke="#d29922" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg><div><b>Slashing in 1.9: proofs only</b><span>Seats already file the proofs of a false result and publish them, and every seat checks them and writes down what the slash would owe. But no bond is taken: a 1.9 bond cannot be moved by a proof. A node that lies loses the round, not its bond.</span></div></div>
+    <div class="case"><svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="14"/><path class="r" d="M16 16l12 12M28 16L16 28"/></svg><div><b>Not yet in 1.9</b><span>Taking a bond, the hold and the two panels. Guardian bonds that pay the players after a theft. Leaving silent seats and absent nodes out of the draw. A cap on what a federation may hold. All of these come with version 2.0.</span></div></div>
+  </div>
+  <div class="note">Until 2.0, Bitcoin Arena stays on testnet with coins that have no value. Mainnet starts with the protection of version 2.0, not with 1.9.</div>
+
+  <footer><a href="https://bitcoinarena.io/">Bitcoin Arena</a> · <a href="https://docs.bitcoinarena.io/">Docs</a> · <a href="https://testnet.bitcoinarena.io/">Play on testnet</a></footer>
 </main>
 </body>
 </html>
