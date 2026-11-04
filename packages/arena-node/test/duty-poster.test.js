@@ -217,6 +217,16 @@ test('one grid played per window: primary while drawn, backup when the primary i
   assert.deepEqual(ids([{ id: 'p', backup: null, drawn: true, entries: 0 }, { id: 'b', backup: true, drawn: true, entries: 0 }]), ['p']);
 });
 
+test('kanban #1119: a primary whose entry opened without its seating certificate leaves the window to its seated backup, at every seat alike', () => {
+  const ids = (rows) => [...playedOfWindow(rows)].sort();
+  // 2026-11-04 10:30Z: primary b3f22953 drawn but never certified, backup 7ac5dbc0 seated - every seat answered the backup played: false
+  assert.deepEqual(ids([{ id: 'p', backup: false, drawn: true, entries: 0, unseated: true }, { id: 'b', backup: true, drawn: true, entries: 0, unseated: false }]), ['b', 'p']);
+  // before its entry opens an uncertified primary still holds the window (its seating may close yet)
+  assert.deepEqual(ids([{ id: 'p', backup: false, drawn: true, entries: 0, unseated: false }, { id: 'b', backup: true, drawn: true, entries: 0, unseated: false }]), ['p']);
+  // once the backup took an entry it keeps the window, even if the primary is certified late
+  assert.deepEqual(ids([{ id: 'p', backup: false, drawn: true, entries: 0, unseated: false }, { id: 'b', backup: true, drawn: true, entries: 1, unseated: false }]), ['b']);
+});
+
 // THE REORGS AND FORKS OF 2026-10-26 (the owner: "The hardened round poster must also check for reorgs and forks and repost automatically as
 // needed. We may never be without a valid round on a day")
 const keptPosting = (dir, k) => writeFileSync(join(dir, `nextblock-day-${k.slot}.json`), JSON.stringify({ item: 'nextblock-day', target: new Date(dayStartMs(k.slot + 1)).toISOString(),
