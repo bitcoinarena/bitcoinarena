@@ -292,7 +292,8 @@ async function runAll() {
       // PLAYER 0'S OWN ENTRY, by the stake it locked: both players write to one keys file, and the first line is whoever entered first (measured 11-04
       // on the second test host: player 1 wrote first, its entry was switched FAILED, and the objection claimed player 0's score for it)
       const locked = l.find((x) => x.step === 'locked');
-      return locked ? keys.find((k) => k.stake === locked.outpoint) || null : null;
+      // (tn4-live-run writes a line once the locks stand, entry null, and another once the entry is taken - kanban #1123: the one with the entry)
+      return locked ? keys.find((k) => k.stake === locked.outpoint && k.entry) || null : null;
     }, 900, 2000);
     for (let i = 0; i < N; i++) writeFileSync(join(SR, `dissent-${i + 1}.txt`), `${winner.entry} fail\n`);
     writeFileSync(join(SR, 'dissent-guardians.txt'), `${winner.entry} fail\n`);
@@ -329,6 +330,17 @@ async function runAll() {
       for (const k of order.slice(0, pres.panels.n - pres.panels.t + 1)) { const pid = pidOfKey(k); if (pid) { process.kill(pid, 'SIGSTOP'); stopped.push(pid); } }
       say({ step: `round ${n}: ${stopped.length} of panel B stopped`, t: pres.panels.t });
     }
+    // THE RELEASE'S ROUND WITH ONE PANEL-A MEMBER OFFLINE (RULED 2026-11-04, kanban #1130: a member left out is no reason to refuse; the first proposal with t of each
+    // panel goes out): where the panels leave room (t < n), one of panel A - a seat of ours first - is stopped before anything is filed and let go once the releases are out
+    const offline = [];
+    let offlineUrl = null;
+    if (scenario === 'release' && pres.panels && pres.panels.t < pres.panels.n && env.SR_OFFLINE !== '0') {
+      const pidOfKey = (k) => { const i = idx(k); if (i >= 0) return Number(readFileSync(join(SR, 'seats', `seat-${i + 1}.pid`), 'utf8'));
+        const g = DP.nodes.findIndex((p) => urlOfKey.get(k) === `http://127.0.0.1:${p}`); return g >= 0 ? JSON.parse(readFileSync(join(D, 'pids', `node-${g + 1}.pid`), 'utf8')).pid : null; };
+      const k = [...pres.panels.a].sort((x, y) => (idx(y) >= 0) - (idx(x) >= 0))[0];
+      const pid = pidOfKey(k);
+      if (pid) { process.kill(pid, 'SIGSTOP'); offline.push(pid); offlineUrl = urlOfKey.get(k); say({ step: `round ${n}: one of panel A offline`, seat: idx(k) >= 0 ? idx(k) + 1 : 'guardian', t: pres.panels.t, n: pres.panels.n }); }
+    }
     // THE OBJECTION, LATE: anyone's, built from what a seat hands out, claiming what the run really gave
     const run = await getJson(`${urlOf(s0)}/audit-run?round=${ridHex}`);
     const row = run.entries.find((e) => e.id === winner.entry);
@@ -359,7 +371,7 @@ async function runAll() {
 
     // THE RELEASES (round 1) OR THE FALLBACKS (round 2), as the seats report them, and their tables at every signer
     const startsRead = await until(`round ${n}: the seats read the starts`, async () => {
-      const r = await getJson(`${watchUrls[0]}/slash-releases`);
+      const r = await getJson(`${watchUrls.find((u) => u !== offlineUrl) || watchUrls[0]}/slash-releases`);
       const mine2 = r.starts.filter((s) => s.round_id === ridHex);
       return mine2.length >= starts.length ? mine2 : null;
     }, 600, 5000);
@@ -374,7 +386,26 @@ async function runAll() {
       }
       return out.length === startsRead.length ? out : null;
     }, scenario === 'release' ? 900 : 1800, 6000);
+    for (const pid of offline.splice(0)) { try { process.kill(pid, 'SIGCONT'); } catch { /* gone */ } }
     mine(1);
+    // THE TABLES OF A START AS RULED (2026-11-04, kanban #1130): the reserves' part changes at the reserve key's cap (start confirmation + slash_return_blocks / 2),
+    // so a table built before it may differ. Every signer's newest table - built at or after the cap, as the release went out after it - is the mined one,
+    // and any other table it lists carries only its builder's own signature: it never went out (measured on run 10: a761a9f1, built by three seats before the cap)
+    if (scenario === 'release') {
+      for (const s of sent) {
+        const minedTable = (await Promise.all(watchUrls.map((w) => getJson(`${w}/slash-release?start=${s.start}`).catch(() => null)))).filter(Boolean);
+        const mined = minedTable.map((x) => x.release).find((r) => r && r.sent) || null;
+        const newest = new Set(minedTable.filter((x) => x.release).map((x) => x.release.tableId));
+        const others = [];
+        for (const x of minedTable) for (const q of (x.release && x.release.proposals) || []) {
+          if (mined && q.tableId === mined.tableId) continue;
+          const foreign = (q.signatures || []).filter((g) => g.node !== x.node).length;
+          others.push({ id: q.tableId.slice(0, 8), at: x.node.slice(0, 8), foreign });
+        }
+        ask(`round ${n}: start ${s.start.slice(0, 12)}: every signer's newest table is the mined one`, !!mined && newest.size === 1 && newest.has(mined.tableId), `${[...newest].map((x) => x.slice(0, 8)).join(' ')} at ${minedTable.filter((x) => x.release).length} signers`);
+        ask(`round ${n}: start ${s.start.slice(0, 12)}: any earlier table carries only its builder's own signature`, others.every((o) => o.foreign === 0), others.length ? others.map((o) => `${o.id}@${o.at}+${o.foreign}`).join(' ') : 'none');
+      }
+    }
     const tables = [];
     for (const s of sent) {
       const info = JSON.parse(cli('getrawtransaction', s.sent, '1'));
@@ -386,6 +417,9 @@ async function runAll() {
       ask(`round ${n}: ${path} of ${s.start.slice(0, 12)} mined, its table byte-equal at every signer that built one`, info.confirmations >= 1 && signers.every((x) => x === s.table), `${info.vsize} vB, ${signers.length} signers`);
     }
     for (const t of tables) say({ step: `round ${n} ${path}`, ...t });
+    // A FALLBACK PAST THE RESERVE KEY'S CAP (RULED 2026-11-04, kanban #1130: from the start's confirmation + slash_return_blocks / 2 every signer builds with the whole
+    // reserves' part in the escrow, and a fallback is always past it): no reserves' output in any fallback table
+    if (scenario === 'fallback') for (const t of tables) ask(`round ${n}: fallback of ${t.start.slice(0, 12)} puts the reserves' part in the escrow`, !t.outputs.some((o) => /^reserves/.test(o)), t.outputs.join(', '));
 
     // THE CARRIERS PAY: the loss to the player's key, the rest to the reserve key
     const carriedAll = await until(`round ${n}: every carried output paid`, async () => {
