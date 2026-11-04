@@ -1666,7 +1666,11 @@ export class Verifier {
     if (!ended || !standing.runId)
       return { filed: [], refused: [`that entry has not ended VOID or FORFEIT after an objection (it is ${standing.state || 'without a result'}), so its first result's signers are not slashed yet`], published: 0 };
     const contradicted = Buffer.from(standing.secondObjection ? standing.contradictedRunId : standing.runId, 'hex');
-    const report = await this.#fileFirstResultProofs(roundIdBytes, entryIdBytes, contradicted, (myRun) => myRun !== hex(contradicted));
+    // A LATE OBJECTION IS ITS OWN REPLAY (kanban #972, measured 11-04 on the slash-release regtest: all seven signers signed the false run, the
+    // objection held at all 19 seats, and not one filed - each filer needed a signed result of its own that differed, and a committee that lies
+    // as one has none). The objection held here because this seat replayed the run under the round's core and the replay contradicts it, so
+    // that replay is the differing one: a seat files with it whether it signed nothing or signed the false run itself.
+    const report = await this.#fileFirstResultProofs(roundIdBytes, entryIdBytes, contradicted, (myRun) => myRun !== hex(contradicted), { objectionReplay: late });
     // AND BY NAME, THE ONES WHO ARE NOT FILED AGAINST: this node, whose own result is the replay; and a re-run signer
     // who never signed the contradicted result.
     const signedFirst = new Set();
@@ -1778,7 +1782,7 @@ export class Verifier {
   }
 
   /** The body both first-result filings share: one proof per signer of `contradictedRunId`, on `differs(myRun)`. */
-  async #fileFirstResultProofs(roundIdBytes, entryIdBytes, contradictedRunId, differs) {
+  async #fileFirstResultProofs(roundIdBytes, entryIdBytes, contradictedRunId, differs, { objectionReplay = false } = {}) {
     const row = this.round.get(roundIdBytes);
     if (!row) return { filed: [], refused: ['no such round'], published: 0 };
     const contract = decodeRoundContract(new Uint8Array(row.contract));
@@ -1790,9 +1794,9 @@ export class Verifier {
 
     const held = this.round.results(roundIdBytes, entryIdBytes);
     const mine = held.find((r) => hex(r.nodePubkey) === hex(this.round.pubkey));
-    if (!mine) { report.refused.push('this node signed no result for that run, so it has no replay to accuse with'); return report; }
-    const myRun = hex(runId(decodePlayerResult(splitSignedResult(mine.bytes).body)));
-    const replayDiffers = differs(myRun);
+    if (!mine && !objectionReplay) { report.refused.push('this node signed no result for that run, so it has no replay to accuse with'); return report; }
+    const myRun = mine ? hex(runId(decodePlayerResult(splitSignedResult(mine.bytes).body))) : null;
+    const replayDiffers = objectionReplay || differs(myRun);
 
     let adverts = null;
     try { adverts = this.advertsFor ? this.advertsFor(roundIdBytes) : null; } catch { adverts = null; }

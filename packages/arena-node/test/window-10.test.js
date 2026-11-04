@@ -25,7 +25,7 @@ import { encodeRoundContract, roundId } from '../../arena-protocol/src/contracts
 import { roundEndMs } from '../../arena-protocol/src/first-mark.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRerunResult, splitSignedRerun, runOf } from '../../arena-protocol/src/rerun.js';
-import { splitSignedResult, decodePlayerResult } from '../../arena-protocol/src/result.js';
+import { splitSignedResult, decodePlayerResult, encodePlayerResult, joinSignedResult, resultId } from '../../arena-protocol/src/result.js';
 import { HOSTED } from './plugins/hosted.js';
 
 const S = 1000n;
@@ -181,6 +181,38 @@ test('3. an objection received at end + 604.9 s suspends the run and no FINAL is
     for (const stop = Date.now() + 15000; Date.now() < stop && (proofs = w.holder.round.slashProofs(w.rid, w.runs.dissents.eid).length) < 5;) await wait(200);
     console.log('  FACTS (3, slash):', big({ proofs }));
     assert.ok(proofs >= 5, `the late objection was not filed against the five signers: ${proofs} proof(s)`);
+  } finally { await w.close(); }
+});
+
+test('3b. a committee that lies as one is still filed: the holder signed the false run itself, and a late objection is filed against all six signers (kanban #972)', async () => {
+  const w = await roundAhead();
+  try {
+    const rewrite = (r) => ({ score: r.score + 1 });
+    w.sign('dissents', rewrite);
+    const eid = w.runs.dissents.eid;
+    // THE HOLDER SIGNS THE FALSE RUN TOO: its own honest result is replaced by the five's, signed with its own key
+    const me = w.holder.round.pubkey;
+    const own = w.holder.round.results(w.rid, eid).find((r) => toHex(r.nodePubkey) === toHex(me));
+    const shape = decodePlayerResult(splitSignedResult(own.bytes).body);
+    const lie = { ...shape, ...rewrite(shape), nodePubkey: me };
+    const id = resultId(lie);
+    w.holder.round.db.prepare('DELETE FROM results WHERE round_id = ? AND entry_id = ? AND node_pubkey = ?').run(w.rid, eid, me);
+    w.holder.round.putResult(w.rid, eid, me, id, joinSignedResult(encodePlayerResult(lie), schnorr.sign(id, w.holder.round.identity.secret)));
+    const E = roundEndMs(w.contract);
+    skipTo(Number(E + 605100n));
+    const late = await object(w, eid, undefined, { claimed: { outcome: shape.outcome, score: shape.score } });
+    const d = stateOf(w, eid);
+    await w.finalBy('dissents', 5);
+    let proofs = 0;
+    for (const stop = Date.now() + 20000; Date.now() < stop && (proofs = w.holder.round.slashProofs(w.rid, eid).length) < 6;) await wait(200);
+    const after = stateOf(w, eid);
+    const against = w.holder.round.slashProofs(w.rid, eid).map((p) => toHex(p.nodePubkey));
+    console.log('  FACTS (3b):', big({ late: late.status, atLate: [d.state, d.lateObjection], after: [after.state, after.lateObjection], proofs, againstItself: against.includes(toHex(me)) }));
+    assert.equal(late.status, 201, 'the late objection was not taken');
+    assert.equal(after.state, 'FINAL', after.why);
+    assert.equal(after.lateObjection, true);
+    assert.ok(proofs >= 6, `the late objection was not filed against the six signers: ${proofs} proof(s)`);
+    assert.ok(against.includes(toHex(me)), 'the holder did not file against itself');
   } finally { await w.close(); }
 });
 
