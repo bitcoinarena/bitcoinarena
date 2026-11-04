@@ -954,9 +954,32 @@ async fn pegin_address(client: &ClientHandle) -> anyhow::Result<()> {
 
 /// THE CLAIM of a confirmed payment to a peg-in address (--address): waits until the federation has claimed it and its
 /// e-cash is in this client (at most --timeout-s, default 900), and prints the balance before and after.
+///
+/// --outpoint TXID:VOUT [--sats N] (kanban #1093): the claim of THAT deposit. A walletv2 client has one peg-in address and claims
+/// every deposit on it in the background, so "the balance grew" read another escrow's deposit as this one's (the real-Fedimint
+/// liquidation run: 700,583,936 msat read against 900,000,000 owed). Here the module's own record of each receive names its
+/// outpoint (ReceivePaymentEvent); the newest receive of this outpoint is awaited to its end (an aborted one is retried by the
+/// client as a new operation), its e-cash awaited, and the claim is what the federation credited it - its value less the peg-in
+/// fee - less the client's own fees on the claim transaction (get_operation_fees: module fees and note dust). Prints claimed_msat,
+/// value_sat, pegin_fee_sat and claim_fees_msat beside the balances. The legacy wallet gives each deposit its own address, so there
+/// the address names it and the claim is the balance's rise, as before.
 async fn pegin_claim(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
     let before = client.get_balance_for_btc().await?;
     let timeout = std::time::Duration::from_secs(a.get("timeout-s").map_or(Ok(900), |t| t.parse())?);
+    let outpoint = a.get("outpoint").map(|o| fedimint_core::bitcoin::OutPoint::from_str(o)).transpose().context("--outpoint is TXID:VOUT")?;
+    let sats = a.get("sats").map(|s| s.parse::<u64>()).transpose().context("--sats is a whole number")?;
+    let address = a.get("address").map(|x| fedimint_core::bitcoin::Address::<fedimint_core::bitcoin::address::NetworkUnchecked>::from_str(x)).transpose()?;
+    if let (Some(op), Ok(w)) = (outpoint, client.get_first_module::<fedimint_walletv2_client::WalletClientModule>()) {
+        let got = tokio::time::timeout(timeout, walletv2_claim_of(client, &w, op, sats, address.as_ref())).await.map_err(|_| anyhow!("no claim of {op} within {timeout:?}"))??;
+        let (ev, fees) = got;
+        let credited = Amount::from_sats(ev.value.to_sat().saturating_sub(ev.fee.to_sat()));
+        let claim_fees = fees.unwrap_or(Amount::ZERO);
+        let after = client.get_balance_for_btc().await?;
+        println!("{}", serde_json::json!({ "mode": "pegin-claim", "kind": "walletv2", "outpoint": op.to_string(), "value_sat": ev.value.to_sat(), "pegin_fee_sat": ev.fee.to_sat(),
+            "claim_fees_msat": claim_fees.msats, "claim_fees_known": fees.is_some(), "claimed_msat": credited.msats.saturating_sub(claim_fees.msats),
+            "operation_id": ev.operation_id.fmt_full().to_string(), "balance_before_msat": before.msats, "balance_after_msat": after.msats }));
+        return Ok(());
+    }
     let waited = async {
         if let Ok(w) = client.get_first_module::<fedimint_wallet_client::WalletClientModule>() {
             let address = fedimint_core::bitcoin::Address::<fedimint_core::bitcoin::address::NetworkUnchecked>::from_str(need(a, "address")?)?;
@@ -979,6 +1002,44 @@ async fn pegin_claim(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
     for _ in 0..30 { if after > before { break; } tokio::time::sleep(std::time::Duration::from_secs(1)).await; after = client.get_balance_for_btc().await?; }
     println!("{}", serde_json::json!({ "mode": "pegin-claim", "kind": kind, "balance_before_msat": before.msats, "balance_after_msat": after.msats }));
     Ok(())
+}
+
+/// THE WALLETV2 RECEIVE OF ONE OUTPOINT, ended in success with its e-cash issued: the module's ReceivePaymentEvent and the client's fees on
+/// its claim transaction (None when the client kept none). A record that names no outpoint (a federation that did not report it) is taken
+/// only by this address and exactly --sats. Waits for the scanner to find and claim it; the caller bounds the wait.
+async fn walletv2_claim_of(client: &ClientHandle, w: &fedimint_walletv2_client::WalletClientModule, op: fedimint_core::bitcoin::OutPoint, sats: Option<u64>,
+    address: Option<&fedimint_core::bitcoin::Address<fedimint_core::bitcoin::address::NetworkUnchecked>>)
+    -> anyhow::Result<(fedimint_walletv2_client::events::ReceivePaymentEvent, Option<Amount>)> {
+    use fedimint_walletv2_client::events::ReceivePaymentEvent;
+    loop {
+        let mut mine: Vec<ReceivePaymentEvent> = Vec::new();
+        let mut pos = None;
+        loop {
+            let page = client.get_event_log(pos, 1000).await;
+            let Some(last) = page.last() else { break };
+            pos = Some(last.id().saturating_add(1));
+            for e in &page {
+                if e.module_kind() != Some(&fedimint_walletv2_client::common::KIND) || e.kind.to_string() != "payment-receive" { continue; }
+                let Some(ev) = e.to_event::<ReceivePaymentEvent>() else { continue };
+                let named = match ev.outpoint {
+                    Some(o) => o == op,
+                    None => address.is_some_and(|x| *x == ev.address) && sats.is_some_and(|s| s == ev.value.to_sat()),
+                };
+                if named { mine.push(ev); }
+            }
+        }
+        // THE NEWEST RECEIVE FIRST: an aborted one is retried as a new operation; a receive still funding is awaited to its end
+        for ev in mine.iter().rev() {
+            if w.await_final_receive_operation_state(ev.operation_id).await? != fedimint_walletv2_client::FinalReceiveOperationState::Success { continue; }
+            let meta = client.operation_log().get_operation(ev.operation_id).await.context("the receive's operation is not in the log")?;
+            if let fedimint_walletv2_client::WalletOperationMeta::Receive(m) = meta.meta::<fedimint_walletv2_client::WalletOperationMeta>() {
+                client.await_primary_bitcoin_module_outputs(ev.operation_id, m.change_outpoint_range.into_iter().collect()).await?;
+            }
+            let fees = client.get_operation_fees(ev.operation_id).await?.map(|f| f.get_bitcoin());
+            return Ok((ev.clone(), fees));
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
 }
 
 /// --mode receive-to-key --data-dir D --claim-pk HEX --amount-msat N --seed HEX32 --gateway URL [--expiry-secs S] [--description T]
