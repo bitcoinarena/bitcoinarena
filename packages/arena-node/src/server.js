@@ -5484,6 +5484,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // `kept` (the listing's, playedListed): what each round of the window is - its contract, whether this seat still holds its series, and
   // { backup, drawn, entries } - read once for every round of the window that asks; none: read now, as the entry and live checks ask
+  // A ROUND WHOSE ENTRY OPENED WITHOUT ITS SEATING CERTIFICATE (kanban #1119): where the seats seat (§5A.7), its roles are not both certified here and
+  // its entry - its market window's start, or its committee time - has come. Such a primary does not keep its window's backup from being played
+  const unseatedAtOpen = (k, cc) => {
+    if (!k || !k.drawn || !k.seated || (k.seated.game && k.seated.settlement)) return false;
+    const mw = marketWindowFor(cc);
+    const opensMs = mw && mw.startMs > cc.committeeTimeMs ? mw.startMs : cc.committeeTimeMs;
+    return BigInt(round.now()) >= BigInt(opensMs);
+  };
   const playedOf = (rid, c, kept = null) => {
     if (c.stakeMsat === 0n) return { played: true, backup: false };
     noteWindow(rid, c);
@@ -5501,7 +5509,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // refused every backup round of the day's first 85 minutes and no Next Block round could be played.
       if (id !== self && ('refused' in f ? f.refused : (f.refused = seriesRefusedHere(id, cc)))) continue;
       // an object where the seats seat (kanban #781)
-      if (!f.row) f.row = { id, backup: isBackupRound(r, cc), drawn: !!committeeOf(r).drawn, entries: round.entriesOf(r).length };
+      if (!f.row) { const k = committeeOf(r); f.row = { id, backup: isBackupRound(r, cc), drawn: !!k.drawn, entries: round.entriesOf(r).length, unseated: unseatedAtOpen(k, cc) }; }
       rows.push(f.row);
     }
     const me = rows.find((x) => x.id === self);
