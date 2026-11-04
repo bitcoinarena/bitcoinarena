@@ -60,6 +60,7 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
   lnd = { funds: lndFunds, peers: lndPeers, connect: lndConnect, openTo: lndOpenTo, close: lndClose }, ringMembers = null, log = () => {}, nowMs = () => Date.now(),
   restartGateway = async () => (await import('./node-services.js')).control('restart', 'gateway', { home: state.home }),
   followTunnel = async () => (await import('./node-services.js')).followTunnelNow({ home: state.home }),
+  reviveTunnel = async () => (await import('./node-services.js')).reviveDeadTunnel({ home: state.home }),
   // THE FEDERATION'S LOAD, from this node's own seat (GET /federations): { reserveSats, exposureCapSats, network } of its newest record, or null
   federationLoad = null }) {
   const loadOf = federationLoad || (async (s, fid) => {
@@ -114,6 +115,9 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
     // A QUICK TUNNEL'S NEW NAME, followed first (kanban #562): the seat then answers at it and announces it itself, off chain
     // (address-book.js; 2026-10-21 "1 default, 2 for updates so no needed updates" - no advertisement update for an address)
     if (s.reach && s.reach.mode === 'quick') {
+      // A DEAD ONE IS RESTARTED FIRST (kanban #1120): its new name is followed on the next pass
+      const d = await reviveTunnel().catch((e) => ({ dead: false, why: e.message }));
+      if (d && d.dead) { log(d.restarted ? 'the quick tunnel was dead (Tunnel not found): restarted for a new name' : `the quick tunnel is dead (Tunnel not found); the restart failed: ${d.why}`); return d.restarted ? { ok: true, did: 'tunnel-revive' } : { ok: false, why: `the dead tunnel's restart failed: ${d.why}` }; }
       const t = await followTunnel().catch((e) => ({ url: null, restarted: [], why: e.message }));
       if (t && t.restarted && t.restarted.length) { log(`the quick tunnel came back as ${t.url}: ${t.restarted.join(', ')} restarted`); return { ok: true, did: 'tunnel-name', url: t.url, restarted: t.restarted }; }
     }

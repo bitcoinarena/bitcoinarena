@@ -566,7 +566,7 @@ export function Played({ data = null }) {
     <div className="card">
       <p>
         {['day', 'week', 'month'].map((k) => <button key={k} type="button" className={by === k ? 'on' : undefined} onClick={() => setBy(k)} style={{ marginRight: 6, opacity: by === k ? 1 : 0.45 }}>{{ day: 'Days', week: 'Weeks', month: 'Months' }[k]}</button>)}
-        <label style={{ marginLeft: 12 }}><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> include the owner's and our bots' rounds</label>
+        <label style={{ marginLeft: 12 }}><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> include the developer's and our bots' rounds</label>
       </p>
       <p><b>{total.toLocaleString('en-US')}</b> {all ? 'rounds in all' : 'rounds with real players'} since {p.from}</p>
       {rows.length ? <StackedBars name={'Played rounds per ' + by} series={games.map((g, i) => ({ key: g, label: gameName(g), color: gameColor(g, i) }))}
@@ -575,9 +575,9 @@ export function Played({ data = null }) {
         {rows.map((r) => <tr key={r.period}><td className="nw">{by === 'month' ? r.period : shortDay(r.period)}</td><td><b>{n(r.all).toLocaleString('en-US')}</b></td>
           {games.map((g) => <td key={g}>{n(r.games[g]).toLocaleString('en-US')}</td>)}
           <td>{(all ? r.all.entries : r.all.realPlayers).toLocaleString('en-US')}</td>
-          <td className="dim" title={`${r.all.owner} owner, ${r.all.bot} bot entries`}>{(r.all.owner + r.all.bot).toLocaleString('en-US')}</td></tr>)}
+          <td className="dim" title={`${r.all.owner} developer, ${r.all.bot} bot entries`}>{(r.all.owner + r.all.bot).toLocaleString('en-US')}</td></tr>)}
       </tbody></table></div>) : <p className="dim">No paid rounds yet.</p>}
-      <p className="dim">A round counts for real players when at least one of its entries is not the owner's (his page's admin flag) and not one of our bots'. RPS = Rock Paper Scissors. Players: {all ? 'entries' : 'distinct real players'}. Left out: the owner's and our bots' entries. {p.marked ? `Marked: ${p.marked.owner || 0} owner, ${p.marked.bot || 0} bot entries.` : ''}</p>
+      <p className="dim">A round counts for real players when at least one of its entries is not the developer's (the page's admin flag) and not one of our bots'. RPS = Rock Paper Scissors. Players: {all ? 'entries' : 'distinct real players'}. Left out: the developer's and our bots' entries. {p.marked ? `Marked: ${p.marked.owner || 0} developer, ${p.marked.bot || 0} bot entries.` : ''}</p>
     </div>
   </>);
 }
