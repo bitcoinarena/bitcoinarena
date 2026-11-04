@@ -52,9 +52,13 @@ test('a walletv2 federation\'s reserve is its federation_wallet value, named by 
   const eps = [1, 2, 3, 4, 5, 6, 7].map((i) => `ws://v${i}`);
   const wallet = { value: 1098919, outpoint: `${'11'.repeat(32)}:0`, tweak: '22'.repeat(32) };
   const ok = await readReserve({ endpoints: eps, threshold: 5, WS: v2(Object.fromEntries(eps.map((e) => [e, wallet]))) });
-  assert.deepEqual([ok.ok, ok.reserveSats, ok.agreeing, ok.moduleId], [true, 1098919n, 5, 2]);
+  assert.deepEqual([ok.ok, ok.reserveSats, ok.agreeing, ok.moduleId, ok.outpoint], [true, 1098919n, 5, 2, wallet.outpoint]);
   const none = await readReserve({ endpoints: eps, threshold: 5, WS: v2(Object.fromEntries(eps.map((e) => [e, null]))) });
-  assert.deepEqual([none.ok, none.reserveSats], [true, 0n]);
+  assert.deepEqual([none.ok, none.reserveSats, none.outpoint], [true, 0n, null]);
+  // the same value in another output (kanban #1108: the spend watch follows the output): three name one, four another - the four are short of 5
+  const other = { ...wallet, outpoint: `${'33'.repeat(32)}:1` };
+  const split = await readReserve({ endpoints: eps, threshold: 5, WS: v2(Object.fromEntries(eps.map((e, i) => [e, i < 3 ? wallet : other]))) });
+  assert.equal(split.ok, false, 'a threshold must name the same output, not only the same sum');
 });
 
 test('a guardian endpoint no override names is routed by the seat\'s ARENA_ROUTE_MAP, its scheme carried over (kanban #549: a successor\'s guardian-next)', () => {

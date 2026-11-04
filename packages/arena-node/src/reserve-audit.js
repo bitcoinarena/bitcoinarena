@@ -17,7 +17,7 @@
 /**
  * `federations()` -> [{ federation (hex), dataDir }]: the federations this seat holds a client of. `run(args)` -> the tool's final JSON line
  * (parsed) for `--mode session-audit --data-dir ... --from ... --max-sessions ... --carry-issued-msat ... --carry-redeemed-msat ...`.
- * `load(fid)` / `save(fid, row)`: the kept totals { lastSession, issuedMsat, redeemedMsat, pegOutTxids, checkedAtMs }. `alarms`: reserve-alarms.js.
+ * `load(fid)` / `save(fid, row)`: the kept totals { lastSession, issuedMsat, redeemedMsat, pegOutTxids (the signed bitcoin txids), checkedAtMs }. `alarms`: reserve-alarms.js.
  * `height()`: the chain tip, named in an alarm.
  */
 export function createReserveAudit({ federations, run, load, save, alarms, height = async () => 0, perPass = 200, nowMs = () => Date.now(), say = () => {} }) {
@@ -29,6 +29,7 @@ export function createReserveAudit({ federations, run, load, save, alarms, heigh
     try {
       const kept = load(fid) || { lastSession: -1, issuedMsat: '0', redeemedMsat: '0', pegOutTxids: [] };
       const from = Number(kept.lastSession) + 1;
+      const startedAtMs = nowMs();   // the pass reads only the sessions finished by now (the spend watch needs this, kanban #1108)
       let got;
       try {
         got = await run(['--mode', 'session-audit', '--data-dir', dataDir, '--from', String(from), '--max-sessions', String(perPass),
@@ -40,8 +41,12 @@ export function createReserveAudit({ federations, run, load, save, alarms, heigh
       if (unverified.length) return { federation: fid, why: `session ${unverified[0]} does not verify against the federation's keys: asked again next pass`, unverified };
       const last = Number(got.lastSession);
       if (!Number.isInteger(last) || last < from - 1) return { federation: fid, why: 'the audit named no last session' };
+      // THE BITCOIN TRANSACTIONS THE SIGNED HISTORY NAMES (kanban #1108): the tool's signedPegOutTxids - a stock wallet's PegOutSignature, a
+      // walletv2 `Signatures` item - what the spend watch holds a reserve's spender against. Not its pegOutTxids: those are { session, txid
+      // (the e-cash transaction's id), recipientScript, sats } objects, and kept as strings they were "[object object]"
+      const txidsOf = (list) => (list || []).map((t) => String(t).toLowerCase()).filter((t) => /^[0-9a-f]{64}$/.test(t));
       const row = { lastSession: last, issuedMsat: String(got.cumulativeIssuedMsat ?? kept.issuedMsat), redeemedMsat: String(got.cumulativeRedeemedMsat ?? kept.redeemedMsat),
-        pegOutTxids: [...new Set([...(kept.pegOutTxids || []), ...(got.pegOutTxids || []).map((t) => String(t).toLowerCase())])], checkedAtMs: nowMs() };
+        pegOutTxids: [...new Set([...txidsOf(kept.pegOutTxids), ...txidsOf(got.signedPegOutTxids)])], startedAtMs, checkedAtMs: nowMs() };
       save(fid, row);
       const marked = got.firstInflationSession !== null && got.firstInflationSession !== undefined && Number.isInteger(Number(got.firstInflationSession))
         ? Number(got.firstInflationSession) : (BigInt(row.redeemedMsat) > BigInt(row.issuedMsat) ? last : null);

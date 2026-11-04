@@ -32,3 +32,17 @@ export function createReserveAlarms({ load = () => [], save = () => {}, nowMs = 
   }
   return { raise, of: (fid) => held.get(String(fid || '').toLowerCase()) || null, list: () => [...held.values()] };
 }
+
+/**
+ * THE SEAT'S OWN REFUSAL (kanban #1108): a round that takes a stake into a federation this seat holds an alarm for is refused at every door
+ * that takes money into it - handout, entry, lock - not only skipped by the client's pickFederation. A free round (no stake) moves no money
+ * and is not refused. `contract`: a decoded round contract ({ stakeMsat, federationId }). Answers the reason, or null.
+ */
+export function alarmRefusal(alarms, contract) {
+  if (!alarms || !contract || !(contract.stakeMsat > 0n) || !(contract.federationId instanceof Uint8Array)) return null;
+  const fid = Array.from(contract.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
+  const a = alarms.of(fid);
+  if (!a) return null;
+  const what = a.kind === 'inflation' ? `inflation at signed session ${a.session}` : `an unbacked spend of its reserve by ${a.txid}`;
+  return `this seat saw a mark of theft in federation ${fid.slice(0, 16)} (${what}, height ${a.height}): no deposit, entry or lock into it`;
+}

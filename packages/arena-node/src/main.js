@@ -530,6 +530,14 @@ if (url) {
     chainRawTx: async (txid) => fromHex(String(await call('getrawtransaction', [txid]))),
     // HOW DEEP A TRANSACTION IS ON THIS NODE'S CHAIN (kanban #1093 part 2: an unbacked spend is a mark 6 deep): confirmations, 0 in the mempool, null unknown (needs -txindex for a spent one)
     chainTxConfirmations: async (txid) => { try { const t = await call('getrawtransaction', [txid, true]); return t ? Number(t.confirmations || 0) : null; } catch { return null; } },
+    // THE TRANSACTION THAT SPENT AN OUTPUT (kanban #1108, the reserve spend watch): the blocks from..to read whole (verbosity 2), first spender
+    chainSpenderOf: async (txid, vout, from, to) => {
+      for (let h = Number(from); h <= Number(to); h++) {
+        const b = await call('getblock', [await call('getblockhash', [h]), 2]);
+        for (const t of b.tx || []) if ((t.vin || []).some((i) => i.txid === txid && Number(i.vout) === Number(vout))) return { txid: String(t.txid), height: h };
+      }
+      return null;
+    },
     chainMempoolAncestors: async (txid) => { try { return (await call('getmempoolancestors', [txid])).map(String); } catch { return []; } },
     // AND THE MINUTE AFTER A FAILED BLOCK READ (f554a896): the waiting list reads no block in it - its pass says the list is partial
     // this time - and a failed read starts it (main-process.test.js (c): this list read 12 blocks inside the minute since b7c6a3263)

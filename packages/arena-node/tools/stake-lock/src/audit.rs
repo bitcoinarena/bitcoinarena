@@ -162,7 +162,9 @@ impl State {
                         } else if let Some(fedimint_walletv2_client::common::WalletOutput::V0(v)) = any.downcast_ref::<fedimint_walletv2_client::common::WalletOutput>() {
                             self.peg_outs_sats += v.value.to_sat();
                             self.peg_out_fees_sats += v.fee.to_sat();
-                            self.peg_outs.push((idx, txid.clone(), format!("{:?}", v.destination), v.value.to_sat()));
+                            // the recipient as its script (hex), as a stock peg-out's: chain_check tells change from payment by it
+                            let script = v.destination.script_pubkey().map_or_else(|| format!("{:?}", v.destination), |s| hex(s.as_bytes()));
+                            self.peg_outs.push((idx, txid.clone(), script, v.value.to_sat()));
                         } else if let Some(LightningOutput::V0(l)) = any.downcast_ref::<LightningOutput>() {
                             self.lnv2_funded_msat += match l { LightningOutputV0::Outgoing(c) => c.amount.msats, LightningOutputV0::Incoming(c) => c.commitment.amount.msats };
                         }
@@ -175,6 +177,13 @@ impl State {
                         m.as_any().downcast_ref::<fedimint_wallet_client::WalletConsensusItem>()
                     {
                         self.signed_peg_out_txids.entry(s.txid.to_string()).or_insert(idx);
+                    }
+                    // walletv2: every bitcoin transaction of the federation (a peg-in swept, a peg-out paid) is signed in consensus,
+                    // each guardian's share an accepted `Signatures(txid, ..)` item - its txid is the federation's own move
+                    if let Some(fedimint_walletv2_client::common::WalletConsensusItem::Signatures(txid, _)) =
+                        m.as_any().downcast_ref::<fedimint_walletv2_client::common::WalletConsensusItem>()
+                    {
+                        self.signed_peg_out_txids.entry(txid.to_string()).or_insert(idx);
                     }
                 }
                 ConsensusItem::Default { variant, .. } => { *self.items_by_kind.entry(format!("default:{variant}")).or_default() += 1; }
@@ -716,6 +725,7 @@ pub fn theft_verify() -> anyhow::Result<()> {
         .iter().map(|v| v.as_str().map(str::to_owned).context("a session is not hex")).collect::<anyhow::Result<_>>()?;
     let reserve = s("reserve").map(|r| bitcoin::OutPoint::from_str(&r)).transpose()?;
     let wallet = kinds.iter().find(|(_, k)| k.as_str() == "wallet").map(|(id, _)| *id);
+    let walletv2 = kinds.iter().find(|(_, k)| k.as_str() == "walletv2").map(|(id, _)| *id);
     let mut state = State { federation: federation.clone(), next: first, ..State::default() };
     let (mut verified, mut unverified, mut bytes) = (0u64, Vec::<u64>::new(), 0u64);
     let mut votes: BTreeMap<PeerId, u32> = BTreeMap::new();
@@ -738,6 +748,18 @@ pub fn theft_verify() -> anyhow::Result<()> {
                         }
                         Some(fedimint_wallet_client::WalletConsensusItem::PegOutSignature(p)) =>
                             if reserve.is_some_and(|r| r.txid == p.txid) && created_at.is_none() { created_at = Some(idx); },
+                        _ => {}
+                    }
+                }
+                // walletv2: the same block count votes; a reserve output is created by a transaction the federation signed
+                ConsensusItem::Module(m) if Some(m.module_instance_id()) == walletv2 => {
+                    match m.as_any().downcast_ref::<fedimint_walletv2_client::common::WalletConsensusItem>() {
+                        Some(fedimint_walletv2_client::common::WalletConsensusItem::BlockCount(c)) => {
+                            let v = votes.entry(item.peer).or_default();
+                            *v = (*v).max(u32::try_from(*c).unwrap_or(u32::MAX));
+                        }
+                        Some(fedimint_walletv2_client::common::WalletConsensusItem::Signatures(txid, _)) =>
+                            if reserve.is_some_and(|r| r.txid == *txid) && created_at.is_none() { created_at = Some(idx); },
                         _ => {}
                     }
                 }
