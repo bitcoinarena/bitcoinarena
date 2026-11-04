@@ -246,9 +246,26 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
       try { seat.nameFunded(toHex(id)); } catch { /* none */ }
       if (env.ARENA_FUNDED_ROUNDS_FILE) { try { appendFileSync(env.ARENA_FUNDED_ROUNDS_FILE, `${toHex(id)}\n`); } catch (e) { say({ dutyDay: 'funded file not written', why: e.message }); } }
     }
-    announceGrid({ lines: built.lines, tx: sent.hex, targets: await seatUrls(), fetchFn })
+    const targets = await seatUrls();
+    announceGrid({ lines: built.lines, tx: sent.hex, targets, fetchFn })
       .then((s) => say({ dutyDay: 'announced', txid: sent.txid.slice(0, 16), seats: `${s.took}/${s.of}` })).catch(() => {});
-    return { ok: true, published: true, txid: sent.txid, series: built.ids.map(toHex), lines: built.lines, rounds: built.rounds, lastCloseMs: built.lastCloseMs, firstStartMs: built.start };
+    // the seats it went to are kept with the posting: a fee raise is announced to the same ones (kanban #1126)
+    return { ok: true, published: true, txid: sent.txid, series: built.ids.map(toHex), lines: built.lines, rounds: built.rounds, lastCloseMs: built.lastCloseMs, firstStartMs: built.start,
+      announcedTo: targets };
+  };
+  // A FEE RAISE ANNOUNCED AGAIN (kanban #1126): to the seats the first announcement went to and every seat known now
+  const announce = async ({ lines, tx, targets = [] }) => announceGrid({ lines, tx, targets: [...new Set([...targets, ...(await seatUrls())])], fetchFn });
+  // THE PUBLIC CHAIN (kanban #1126): a publication our chain has not confirmed is sent there too - on testnet4 only, unless
+  // ARENA_DUTY_ESPLORA names the bases ('0' none)
+  let chainName = null;
+  const publicSender = esploraSender({ bases: String(env.ARENA_DUTY_ESPLORA || DUTY_ESPLORA_TESTNET4).split(/[\s,]+/).filter((x) => x && x !== '0'),
+    ms: Number(env.ARENA_DUTY_ESPLORA_MS || 8000), fetchFn, now });
+  const publicSend = async (hex) => {
+    if (!env.ARENA_DUTY_ESPLORA) {
+      if (chainName === null) { try { chainName = String((await call('getblockchaininfo', [])).chain); } catch { return { ok: false, status: 0, text: 'the chain\'s name could not be read' }; } }
+      if (chainName !== 'testnet4') return { ok: false, status: 0, text: `not sent: the chain is ${chainName}, not testnet4 (ARENA_DUTY_ESPLORA names bases)` };
+    }
+    return publicSender(hex);
   };
   const postSeries = async (line) => postSeriesLine(line, (await seatUrls()).map((u) => [u.replace(/^https?:\/\//, ''), u]), { fetchFn });
   const fedsNow = async () => {
@@ -273,7 +290,8 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
       chain: { view: chainView, widen, censusKeysAt: async (h) => { const es = await censusEntriesAt(nid, h); remember(es); return es ? es.map((x) => x.pubkey) : null; }, seatUrls },
       chainCall: call, walletRpc: (m, p) => walletCall(wallet.wallet || '')(m, p), gridBase: gb.gridBase, openGrid: openGrid(game), postSeries, fedsNow,
       seatCatalog: gb.seatCatalog, devOf: new Proxy({}, { get: (_, k) => devOf[k] }), creator: { creatorSecret: nodeSecret }, stakeMsat: undefined, feeRate, maxFeeRate,
-      emergencyOn: env.ARENA_DUTY_EMERGENCY !== '0', seatsAgreeOn: async (hash) => gb.agreementOf(hash, await gb.seatChains()), canPay, fetchFn, say, now });
+      emergencyOn: env.ARENA_DUTY_EMERGENCY !== '0', seatsAgreeOn: async (hash) => gb.agreementOf(hash, await gb.seatChains()), canPay, fetchFn, say, now,
+      announce, publicSend: env.ARENA_DUTY_ESPLORA === '0' ? null : publicSend });
     engines.set(key, e);
     return e;
   };
@@ -357,6 +375,31 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     pass, status,
     // for the tests: one pass at once
     get engines() { return engines; },
+  };
+}
+
+/** The public testnet4 Esplora bases, in order (as the health watcher reads them, kanban #1124). */
+export const DUTY_ESPLORA_TESTNET4 = 'https://mempool.space/testnet4/api,https://blockstream.info/testnet4/api';
+
+/**
+ * A TRANSACTION SENT TO THE PUBLIC CHAIN BY ESPLORA (kanban #1126): POST /tx to each base in turn, `ms` each; a base that failed (no
+ * answer, 5xx, 429) steps back for 10 min. -> { ok, status (0: no answer), text, base }. Never throws.
+ */
+export function esploraSender({ bases, ms = 8000, fetchFn = fetch, now = Date.now }) {
+  const benched = new Map();
+  return async (hex) => {
+    const order = bases.slice().sort((a, b) => (benched.get(a) || 0) - (benched.get(b) || 0));
+    let last = { ok: false, status: 0, text: 'no Esplora base', base: null };
+    for (const base of order) {
+      try {
+        const r = await fetchFn(`${base}/tx`, { method: 'POST', body: String(hex), headers: { 'content-type': 'text/plain' }, signal: AbortSignal.timeout(ms) });
+        const text = await r.text();
+        if (r.status >= 500 || r.status === 429) { benched.set(base, now() + 600000); last = { ok: false, status: r.status, text, base }; continue; }
+        if ((benched.get(base) || 0) < now()) benched.delete(base);
+        return { ok: r.ok, status: r.status, text, base };
+      } catch (e) { benched.set(base, now() + 600000); last = { ok: false, status: 0, text: e.name === 'TimeoutError' ? `no answer in ${ms / 1000} s` : e.message, base }; }
+    }
+    return last;
   };
 }
 
