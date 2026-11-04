@@ -205,14 +205,21 @@ async function runAll() {
     if (!base) throw new Error('no paid round of the devnet to shape ours on');
     mine(1);
     const H = tip();
-    const committeeTimeMs = BigInt(Date.now()) + 40000n;
-    // SEATED BEFORE IT STARTS (§5A.7): seating_close is start - SEATING_LEAD_MS (120 s), so a start one entry window past the committee time closed the seating
-    // a minute before the committee was drawn, and no certificate could stand (measured 11-04 on the second test host: "no certificate naming its game signer
-    // nodes stands"). Two minutes for the seating after the draw, then the entry window
-    const startTimeMs = committeeTimeMs + SEATING_LEAD_MS + 120000n + MIN_ENTRY_WINDOW_MS;
-    const shaped = { ...base, censusHeight: H, bondMinSats: ROUND_FLOOR, stakeMsat: 20000000n, committeeTimeMs, startTimeMs, entryCloseMs: startTimeMs + 300000n, nodes: [] };
-    const census = censusOfView(rt.blocksFrom(0, H), decodeRoundContract(encodeRoundContract({ ...shaped, censusRoot: new Uint8Array(32) })), { network: 'regtest', standingKeys: [{ epoch: 0, publicKey: key0, height: 0 }] });
+    const timesFrom = (nowMs) => {
+      const committeeTimeMs = BigInt(nowMs) + 40000n;
+      // SEATED BEFORE IT STARTS (§5A.7): seating_close is start - SEATING_LEAD_MS (120 s), so a start one entry window past the committee time closed the seating
+      // a minute before the committee was drawn, and no certificate could stand (measured 11-04 on the second test host: "no certificate naming its game signer
+      // nodes stands"). Two minutes for the seating after the draw, then the entry window
+      const startTimeMs = committeeTimeMs + SEATING_LEAD_MS + 120000n + MIN_ENTRY_WINDOW_MS;
+      return { committeeTimeMs, startTimeMs, entryCloseMs: startTimeMs + 300000n };
+    };
+    const shaped0 = { ...base, censusHeight: H, bondMinSats: ROUND_FLOOR, stakeMsat: 20000000n, ...timesFrom(Date.now()), nodes: [] };
+    const census = censusOfView(rt.blocksFrom(0, H), decodeRoundContract(encodeRoundContract({ ...shaped0, censusRoot: new Uint8Array(32) })), { network: 'regtest', standingKeys: [{ epoch: 0, publicKey: key0, height: 0 }] });
     if (!census.ok) throw new Error(`round ${n}: no census at ${H}: ${census.why}`);
+    // THE COMMITTEE TIME FROM NOW, AFTER THE CENSUS (measured 11-04 on the main test host: reading the ~670 blocks for the census took 4.5-6 min there, 11 s
+    // on the second host; a committee time set before it had passed, the block clock had mined 26 blocks, and the beacon block came before the publication -
+    // every seat refused round 1, "there is no publication transaction to read"). The census reads only the census height and the network.
+    const shaped = { ...shaped0, ...timesFrom(Date.now()) };
     const inCensus = census.entries.map((e) => idx(e.pubkey)).filter((i) => i >= 0);
     const c = decodeRoundContract(encodeRoundContract({ ...shaped, censusRoot: census.root }));
     const rid = roundId(c), ridHex = toHex(rid), body = encodeRoundContract(c);
@@ -244,6 +251,12 @@ async function runAll() {
       for (let t = 0; t < 5; t++) { last = await postOnce(u); if (!last.startsWith('0 ')) return last; await new Promise((r) => setTimeout(r, 5000)); }
       return last;
     }));
+    // A SEAT THAT COULD NOT READ ITS GATEWAYS IS ASKED AGAIN, ONE SEAT AT A TIME (measured 11-04 on the main test host, fresh client directories: 19 seats'
+    // first gateways read at once took 30-48 s each, 5 s alone, and the seat's read stops at 20 s - every post of round 1 was refused, twice; the second
+    // host passed only because its clients still held the gateways from earlier runs). Alone, each read completes and the seat keeps its answer.
+    for (let k = 0; k < allUrls.length; k++) {
+      for (let t = 0; t < 3 && posted[k].includes('could not list its federation\'s gateways'); t++) posted[k] = await postOnce(allUrls[k]);
+    }
     say({ step: `round ${n} posted`, statuses: [...new Set(posted)] });
     if (!posted.some((x) => x.startsWith('2'))) throw new Error(`round ${n}: no seat took it`);
     // THE BEACON NEEDS BLOCKS PAST THE COMMITTEE TIME
@@ -332,8 +345,12 @@ async function runAll() {
     const accused = [...new Set(row.results.map((h) => decodePlayerResult(splitSignedResult(fromHex(h)).body)).filter((r) => r.outcome === 'FAILED').map((r) => idx(r.nodePubkey)))].filter((i) => i >= HOLDERS);
     say({ step: `round ${n}: accused`, seats: accused.map((i) => i + 1) });
     const bondOf = (i) => bonds.find((b) => b.i === i);
+    // ROUND 1 RACES THE FALLBACK AT THE BLOCK CLOCK'S PACE, NOT THE TOOL'S (measured 11-04 on the main test host, go7): mining a block every 5-6 s here on
+    // top of the devnet's 15 s clock, the six starts were mined from 1051 to 1138, so the first start's 80-block hold fallback opened before the last start
+    // stood; the panels then held 5 of 6 signatures on one table at every signer, and each release was refused, "missing-inputs" - the census key's
+    // holders had taken the fallback. Round 2's path is the fallback, so there the tool still mines.
     const starts = await until(`round ${n}: the starts mined`, async () => {
-      mine(1);
+      if (scenario !== 'release') mine(1);   // round 1: the devnet's block clock alone (above)
       const got = [];
       for (const i of accused) { const out = cli('gettxout', bondOf(i).txid, '0'); if (!out) got.push(i); }
       return got.length === accused.length ? got : null;
@@ -348,7 +365,7 @@ async function runAll() {
     }, 600, 5000);
     const path = scenario;
     const sent = await until(`round ${n}: every ${path} sent`, async () => {
-      mine(1);
+      if (scenario !== 'release') mine(1);
       const out = [];
       for (const s of startsRead) {
         let one = null;
@@ -380,7 +397,12 @@ async function runAll() {
         for (const c2 of (x && x.carried) || []) { if (c2.paidTxid) out.push({ carrier: i < N ? i + 1 : `guardian ${i - N + 1}`, start: s.start.slice(0, 12), ...c2 }); else open += 1; }
       }
       const due = tables.reduce((a, t) => a + t.outputs.filter((o) => /^(player_carrier|reserves)/.test(o)).length, 0);
-      return out.length >= due && !open ? out : null;
+      // AND THE PLAYERS' LOSSES PAID, BY WHATEVER PATH (measured 11-04 on the main test host, run 9: round 1's releases were built while no carrier of panel A
+      // answered, so the loss went to the escrow (#1034 answer 6) and a carrier paid it from an escrow spend 3 min later; this wait counted only the
+      // release tables' outputs, none, and moved on). A seat lists an escrow carry under its start (GET /slash-release, carried path 'escrow').
+      const owed = tables.flatMap((t) => t.entries).reduce((a, e) => a + BigInt(e.lossMsat), 0n);
+      const toPlayers = out.flatMap((x) => x.players || []).reduce((a, p) => a + BigInt(p.msat), 0n);
+      return out.length >= due && !open && toPlayers >= owed ? out : null;
     }, 1800, 15000).catch(() => []);
     for (const x of carriedAll) say({ step: `round ${n} carried`, ...x });
     const toPlayer = carriedAll.flatMap((x) => x.players || []).filter((p) => p.key === toHex(refundKeyOf(playerPubkey)));

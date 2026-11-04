@@ -558,6 +558,12 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
     out.carried = db.prepare('SELECT path, out_index, state FROM slash_carried WHERE start = ?').all(start).map((r) => ({ path: r.path, index: r.out_index, ...JSON.parse(r.state) }));
     const esc = escrow.served(start);
     if (esc) out.escrow = esc;
+    // AND WHAT IT CARRIED OFF THIS START'S ESCROW (kept under `escrow:<outpoint>`, slash-escrow-run.js carry): a release whose table found no carrier sends the players'
+    // part to the escrow (#1034 answer 6), and a carrier pays it from an escrow spend later - measured 11-04 on the main test host, run 9: the player was paid 36,000,000 msat
+    // at its key that way, and no door said so, because this list held only the start's own carries
+    for (const sp of (esc && esc.spends) || []) {
+      for (const r of db.prepare('SELECT path, out_index, state FROM slash_carried WHERE start = ?').all(`escrow:${sp.escrow}`)) out.carried.push({ path: r.path, index: r.out_index, escrow: sp.escrow, ...JSON.parse(r.state) });
+    }
     const liq = liquidation.served(start);
     if (liq) out.liquidation = liq;
     return out;

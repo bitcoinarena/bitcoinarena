@@ -333,6 +333,10 @@ test('the panels sign one escrow spend byte for byte at the height it names, onc
   assert.equal(await w.clients(A[0], fedA).ecashBalance(), FEE_HOLD - PAYOUT_FEE_MSAT, 'the unused fee hold, in the client of A');
   const st = done.find((d) => d.index === carried[0] - 1 && d.paidTxid);
   assert.equal(st.marginUnusedMsat, String(FEE_HOLD - PAYOUT_FEE_MSAT), 'measured: the fee hold less the payout\'s fee, owed on');
+  // AND GET /slash-release?start= SAYS SO (kanban #972, run 9 on the main test host: an escrow carry was kept under escrow:<outpoint>, and no door listed it)
+  const listed = w.run(A[0]).served(w.start.hex).carried.filter((c) => c.path === 'escrow');
+  assert.ok(listed.some((c) => c.paidTxid && (c.players || []).some((y) => y.key === toHex(refundKeyOf(player.key)) && BigInt(y.msat) === 300_000_000n)),
+    `the carrier's door lists the escrow carry under its start: ${JSON.stringify(listed).slice(0, 300)}`);
 });
 
 test('#1093: the players\' federation takes its peg-in fee off the players\' output: the margin pays it, the player gets the loss at face, and what it left goes to the reserve key', async () => {
