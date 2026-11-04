@@ -104,7 +104,7 @@ function chain(tip) {
 
 /** The holders' seats, each with its own store and run, on one chain; `ledger()` the one claims ledger of federation L as the claims door answers it. */
 /** `walletv2`: each carrier's client has ONE peg-in address per federation, as walletv2's does (kanban #1093): deposits are kept per outpoint, and a claim asked without one reads "the balance grew". */
-function world({ ledger, tip = START_HEIGHT + 1, walletv2 = false }) {
+function world({ ledger, tip = START_HEIGHT + 1, walletv2 = false, recordsAt = () => RECORDS }) {
   const start = startOf();
   const c = chain(tip);
   c.add(start.hex, 0, BOND, hold.script, START_HEIGHT);
@@ -160,7 +160,7 @@ function world({ ledger, tip = START_HEIGHT + 1, walletv2 = false }) {
     s.run = createSlashRelease({ key: p.key, secret: p.secret, networkId: NETWORK_ID_REGTEST, clocks, db: new DatabaseSync(':memory:'), tweakPoint,
       tipHeight: async () => c.tip, entriesAtTip: async () => live.entries, rawTx, unspent: async (t, v) => !!(await c.txOut(t, v)), txOut: c.txOut,
       fetchProof: async () => proofBytes, judge, panelsOf: () => ({ ok: false }), seatsOf: async () => [], lossesFor: async () => ({ ok: false, why: 'no round' }),
-      federations: async () => RECORDS, federationsAt: async () => RECORDS, portFor: async (fid) => portOf(fid), scriptOf: scriptOfAddress, reserveKeyOf: async (fid) => reserveKey(fid), urlOf,
+      federations: async () => RECORDS, federationsAt: async (h) => recordsAt(h), portFor: async (fid) => portOf(fid), scriptOf: scriptOfAddress, reserveKeyOf: async (fid) => reserveKey(fid), urlOf,
       heldKey: (k) => (toHex(k) === census.hex ? shares : null), thresholdOf: (k) => (k === census.hex ? THRESHOLD : null), holdersOf: async (k) => (k === census.hex ? holderList : []),
       signer: () => s.signer, send: c.send, stepMs: 0, fetchFn, log: (l) => logs.push(l), claimsOf: async (fid) => (fid === fedL ? ledger() : null) });
     s.signer = createCensusSigner({ key: p.key, work: censusKeyWork, held: (k) => (toHex(k) === census.hex ? shares : null), check: (request) => s.run.checkOther(request) });
@@ -326,4 +326,29 @@ test('#1093: a walletv2 federation takes a 416 sat peg-in fee and gives the carr
   assert.deepEqual(toReserves, [m1.tx.outputs[1].value * 1000n - PEGIN_FEE_MSAT - 300_000_000n - FEE_HOLD, m2.tx.outputs[1].value * 1000n - PEGIN_FEE_MSAT - 600_000_000n - FEE_HOLD],
     'each output\'s margin paid its own peg-in fee; what that left past the payout fee went to the reserve key with it');
   assert.ok(MARGIN - FEE_HOLD >= PEGIN_FEE_MSAT, 'the network\'s margin covers the measured walletv2 peg-in fee');
+});
+
+// ---- KANBAN #1129: A RESERVE KEY NOT READ YET ----
+test('#1129: after the claim window, a holder that has not read a standing safe federation\'s reserve key builds and signs no spend without its reserves\' part, and the full one once it has', async () => {
+  let known = false;
+  const w = world({ ledger: () => ({ accepted: [], coveredMsat: new Map(), afterWindow: true }),
+    // ROOM FOR MORE THAN THE ESCROW: with A read the rest is spread over A and B, without it B takes all - two different outputs[] for one escrow
+    recordsAt: () => RECORDS.map((f) => ({ ...f, exposureCapSats: '10000000' })).map((f) => (f.federation === fedA && !known ? { ...f, reserveKey: null, reservePending: true } : f)) });
+  w.c.tip = START_HEIGHT + clocks.fallbackBlocks - 1;
+  await w.passAll(); w.c.mine(); w.live.entries = w.live.entries.filter((e) => !e.hold);
+  await w.passAll();
+  w.c.tip += clocks.fallbackBlocks;
+  const said = [...(await w.passAll()), ...(await w.passAll())];
+  assert.equal(w.c.mempool.length, 0, 'no spend while A\'s key is unread');
+  assert.ok([...w.seats.values()].every((s) => !((s.run.served(w.start.hex).liquidation || { proposals: [] }).proposals.length)), 'no holder keeps outputs');
+  assert.ok(said.some((r) => new RegExp(`reserve key of federation ${fedA.slice(0, 16)} is not read here yet`).test(r.why || '')), `the wait names the federation: ${JSON.stringify(said.map((r) => r.why).filter(Boolean).slice(0, 3))}`);
+  known = true;
+  await w.passAll();
+  assert.equal(w.c.mempool.length, 1, 'once the key is read, the spend goes out');
+  w.c.mine();
+  const m = w.c.mined[w.c.mined.length - 1];
+  const prop = [...w.seats.values()].map((s) => s.run.served(w.start.hex).liquidation).flatMap((l) => (l ? l.proposals : [])).find((p) => p.txid === m.txid);
+  const d = decodeLiquidationEscrowOutputs(fromHex(prop.outputs));
+  // the carriers' peg-ins are each in its safest federation, B: B's part is its share of the spread, and A's, with no carrier of A yet, goes back to the escrow
+  assert.deepEqual(d.outputs.map((o) => o.pays), ['reserves', 'escrow'], 'B\'s part of a spread over A and B, the rest back to the escrow - not all of it to B');
 });
