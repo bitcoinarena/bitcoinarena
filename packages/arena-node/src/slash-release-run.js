@@ -49,7 +49,7 @@ export const fallbackRank = (proofId, keys, me) => [...keys].sort((a, b) => (toH
  * `federationsAt(height)` the reserves' view on the federation records in force at that height, as `federations()` answers it (an escrow spend's named height, #1085).
  * `fetchProof(id)` the bytes under a proof's hash or null; `judge(bytes, { startHeight })` -> { verdict, why, held } with `judge.read`; `panelsOf(contract, rid)`; `seatsOf(contract, rid)`
  * the round's drawn keys (hex); `lossesFor({ contract, rid, held })` -> { ok, losses: Map key hex -> msat, entryIds: Map key hex -> bytes } or { ok: false, why }.
- * `federations()` the reserves' view, [{ federation, status, reserveKey, reserveSats, exposureCapSats }]; `retired` hex; `portFor(fid hex)` a stake-lock port or null; `scriptOf(address)`;
+ * `federations()` the reserves' view, [{ federation, status, reserveKey, reserveSats, exposureCapSats, reservePending }] (`reservePending`: its guardian seats stand, so it has a key, and this seat has not read it yet); `retired` hex; `portFor(fid hex)` a stake-lock port or null; `scriptOf(address)`;
  * `reserveKeyOf(fid hex)` 33 bytes or null, or a promise of them (the seat's is async); `keepReserveRow(row)`.
  * `urlOf(key hex)`; `heldKey(publicKey)` CensusKeyStore's; `thresholdOf(key hex)`; `holdersOf(key hex, height)` -> [{ key, shares }]; `signer()` this node's census signer or null.
  * `send(hex)`. `claimsOf(fid hex)` the one claims ledger of a liquidating federation, for a slash with no round (liquidation-escrow-run.js).
@@ -199,7 +199,14 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
     const paid = await paidBefore(info);
     if (!paid) return { ok: false, why: 'an earlier slash of that round has no table this node can read yet', wait: true };
     const playersFed = toHex(contract.federationId);
-    const view = (await federations()).filter((f) => f && f.status === 'OPEN' && f.reserveKey);
+    const open = (await federations()).filter((f) => f && f.status === 'OPEN');
+    // A RESERVE KEY THIS SEAT HAS NOT READ YET IS NOT "NO RESERVE KEY" (kanban #1129, measured 11-04 on the slash-release regtest): a federation whose guardian seats
+    // stand (`reservePending`) has a key its seats name; a signer that has not read it yet would build its table with no reserves' row for it, and sign bytes no
+    // signer that read the key builds. It waits, by name, and builds once the key is read; a federation with no guardian seats has no key and takes no part (§27A.9.2)
+    const gone = new Set(retired.map((x) => String(x).toLowerCase()));
+    const unread = open.filter((f) => !f.reserveKey && f.reservePending && !gone.has(String(f.federation).toLowerCase()) && BigInt(f.exposureCapSats || 0) > 0n);
+    if (unread.length) return { ok: false, why: `the reserve key of federation ${unread.map((f) => String(f.federation).slice(0, 16)).join(', ')} is not read here yet: no table is built without its reserves' row`, wait: true };
+    const view = open.filter((f) => f.reserveKey);
     const carriers = [], reserveScripts = new Map();
     for (const c of carrierKeys) {
       const peg = await pegInOf(c.key, info.start, playersFed, 'players');

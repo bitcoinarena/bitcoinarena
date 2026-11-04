@@ -4362,11 +4362,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!owed.ok) return owed;
     return { ok: true, losses: owed.losses, entryIds: new Map(entries.map((e) => [toHex(e.playerPubkey), fromHex(e.entryId)])) };
   };
+  // A FEDERATION WHOSE GUARDIAN SEATS STAND HAS A RESERVE KEY, read here or not yet (kanban #1129): reserveKeyFor answers null for both, a table must not
+  const reserveKeyStands = (fedHex) => { try { const g = reserveGuardians()[fedHex]; return !!g && reserveNeeded(g.members.length) !== null; } catch { return false; } };
   const slashFederations = async () => {
     const out = [];
     for (const f of (fedRecords && typeof fedRecords.list === 'function' ? fedRecords.list() : [])) {
       let k = null; try { k = await reserveKeyFor(f.federation); } catch { k = null; }
-      out.push({ federation: f.federation, status: String(f.status), reserveKey: k ? toHex(k) : null, reserveSats: String(f.reserveSats || 0), exposureCapSats: String(f.exposureCapSats || 0) });
+      out.push({ federation: f.federation, status: String(f.status), reserveKey: k ? toHex(k) : null, reserveSats: String(f.reserveSats || 0), exposureCapSats: String(f.exposureCapSats || 0),
+        reservePending: !k && reserveKeyStands(f.federation) });
     }
     return out;
   };
