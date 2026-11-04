@@ -57,3 +57,16 @@ test('the custody agent restarts a dead tunnel before it follows a name, and fol
   const second = await agent.tick();
   assert.deepEqual([second.did, second.url, second.restarted, revived], ['tunnel-name', 'https://colors-marvel-mambo-gerald.trycloudflare.com', ['gateway', 'node'], 1]);
 });
+
+test('on Linux the dead tunnel is read from the journal, not tunnel.log (the 2026.1.9.25 install test: no tunnel.log there)', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'revive-linux-'));
+  nodeState(home).save({ roles: ['verify'], reach: { mode: 'quick', url: 'https://egg-gale-kerry-mustang.trycloudflare.com', port: 8770 } });
+  const asked = [];
+  const sh = async (cmd, args) => { asked.push([cmd, ...args].join(' ')); return { ok: true, out: [REG, ...Array(TUNNEL_DEAD_ERRORS).fill(GONE)].join('\n') }; };
+  const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, '.config') };
+  const r = await reviveDeadTunnel({ home, platform: 'linux', env, sh });
+  assert.equal(r.dead, true, 'the journal says Tunnel not found: dead');
+  assert.match(asked[0] || '', /^journalctl --user -u \S+ -o cat --no-pager -n 300$/);
+  const alive = await reviveDeadTunnel({ home, platform: 'linux', env, sh: async () => ({ ok: true, out: [GONE, GONE, GONE, REG].join('\n') }) });
+  assert.deepEqual(alive, { dead: false }, 'registered after the errors: alive');
+});
