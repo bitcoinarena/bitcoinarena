@@ -891,7 +891,16 @@ async function restartCmd() {
   say({ step: 'restart', node: n, was: stopped ? stopped.pid : null, pid: readPid(`node-${n}`).pid, version: env.ARENA_RELEASE_VERSION || 'the tree\'s' });
 }
 
+// stop <n>: one node stopped and left down - not stepped out, its bond untouched (kanban #784: the §5A.3 absence rule, a stopped bonded node
+// leaves a protocol-22 census after a day); `restart <n>` brings it back
+async function stopCmd() {
+  const n = Number(process.argv[3]);
+  if (!Number.isInteger(n) || n < 1 || n > PLAN.nodes.length) throw new Error(`stop <1..${PLAN.nodes.length}>`);
+  const stopped = await stopPart(`node-${n}`);
+  say({ step: 'stop', node: n, was: stopped ? stopped.pid : null, gone: stopped ? !!stopped.gone : true });
+}
+
 const cmd = process.argv[2];
-const run = { up, runner, page, status, play, replay: replayCmd, down, restart: restartCmd, 'new-game': newGame, liquidity, lnurl: lnurlDoor }[cmd];
+const run = { up, runner, page, status, play, replay: replayCmd, down, stop: stopCmd, restart: restartCmd, 'new-game': newGame, liquidity, lnurl: lnurlDoor }[cmd];
 if (!run) { console.error('devnet.mjs up | liquidity | status | play [round] [--game name] | replay [round entry] | down | new-game <dir> [name]     (DEVNET_DIR, DEVNET_BASE_PORT, BITCOIN_BIN, FEDIMINT_BIN)'); process.exit(2); }
 run().catch((e) => { console.error(`devnet ${cmd}: ${e.message}`); process.exit(1); });

@@ -43,6 +43,8 @@ import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/
 import { decodeSlashPayoutTable } from '../../arena-protocol/src/slash.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
+import { SEATING_LEAD_MS } from '../../arena-protocol/src/seating.js';
+import { publicationPayload } from '../../arena-protocol/src/publication.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const NODE_PKG = resolve(HERE, '..');
@@ -60,7 +62,8 @@ const ask = (label, ok, said = '') => { if (!ok) wrong += 1; console.log(`#972 $
 const until = async (what, fn, seconds = 300, everyMs = 3000) => {
   let last = '';
   for (const stop = Date.now() + seconds * 1000; Date.now() < stop;) {
-    try { const got = await fn(); if (got) return got; } catch (e) { last = e.message; }
+    // A FATAL ONE IS NOT ASKED AGAIN (a player that stopped: measured 11-04, the run sat out the whole wait on an error it had already seen)
+    try { const got = await fn(); if (got) return got; } catch (e) { if (e.fatal) throw e; last = e.message; }
     await wait(everyMs);
   }
   throw new Error(`never: ${what}${last ? ` (${last.slice(0, 200)})` : ''}`);
@@ -129,13 +132,16 @@ async function runAll() {
   // ---- THEIR BONDS: the holders under the rounds' floor, the others above it; template 3 naming key 0, with the presig at bonding ----
   // THE GUARDIANS' BONDS ARE LARGE (ARENA_BOND_SATS) SO THE FEDERATION HAS ROOM FOR A SLASH'S RESERVES (§23A.3: the cap is f + 1 times the smallest); the rounds' floor sits above them
   const HOLDER_BOND = 100000n, ROUND_BOND = 150000000n, ROUND_FLOOR = 50000000n;
+  // A BOND THAT OUTLIVES THE RUN (measured 11-04 on the second test host: slack 30 matured the rounders' bonds at 511-555 while the run's tip stood at 623 by the starts, so
+  // the census at the tip held none of them and every seat said "its bond is not in the census at the tip"): the block clock and the tool's own blocks pass a few hundred in a run
+  const SLACK_BLOCKS = Number(env.SR_SLACK_BLOCKS || 2000);
   const bonds = [];
   const bondsFile = join(SR, 'bonds.json');
   if (existsSync(bondsFile)) bonds.push(...JSON.parse(readFileSync(bondsFile, 'utf8')));
   else {
     for (let i = 0; i < N; i++) {
       const p = rt.postBond(ids[i].secret, { endpoint: `ws://127.0.0.1:${ports[i]}`, bondSats: i < HOLDERS ? HOLDER_BOND : ROUND_BOND, fundBtc: ((Number(i < HOLDERS ? HOLDER_BOND : ROUND_BOND) + 100000) / 1e8).toFixed(8), hostedGames: [NEXTBLOCK.gameId],
-        protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS], operatorId: `sr${i + 1}`, slackBlocks: 30, template: BOND_TEMPLATE_V3, censusKey: key0 });
+        protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS], operatorId: `sr${i + 1}`, slackBlocks: SLACK_BLOCKS, template: BOND_TEMPLATE_V3, censusKey: key0 });
       rt.include([p.hex, rt.postBondPresig(ids[i].secret, p).hex]);
       bonds.push({ i, txid: p.txid, sats: String(p.bondSats), maturity: p.maturity });
     }
@@ -169,7 +175,19 @@ async function runAll() {
   say({ step: 'federation', id: fed.federationId.slice(0, 16), reserveKey: String(fed.key || fed.reserveKey).slice(0, 18), heldMsat: fed.heldMsat });
 
   const results = [];
-  for (const [n, scenario] of [[1, 'release'], [2, 'fallback']]) results.push(await playRound(n, scenario));
+  // A WORLD WITH NO DELIVERING DRIVE IS PLAYED AGAIN AS A NEW ROUND (measured 11-04: 3 of 8 runs drew a round whose shared world gave player 0 none of 315 drives, and a
+  // shared world is not drawn again): the dissent switched for the old entry is cleared, and the next round has its own randomness. At most three rounds per scenario.
+  for (const [n, scenario] of [[1, 'release'], [2, 'fallback']]) {
+    for (let attempt = 1; ; attempt++) {
+      try { results.push(await playRound(n, scenario)); break; }
+      catch (e) {
+        if (!/no delivering drive/.test(e.message) || attempt >= 3) throw e;
+        for (let i = 0; i < N; i++) writeFileSync(join(SR, `dissent-${i + 1}.txt`), '');
+        writeFileSync(join(SR, 'dissent-guardians.txt'), '');
+        say({ step: `round ${n}: no delivering drive in that world, a new round`, attempt: attempt + 1 });
+      }
+    }
+  }
   say({ step: 'done', seconds: Math.round((Date.now() - t0) / 1000), rounds: results });
 
   // =====================================================================================================================
@@ -188,7 +206,10 @@ async function runAll() {
     mine(1);
     const H = tip();
     const committeeTimeMs = BigInt(Date.now()) + 40000n;
-    const startTimeMs = committeeTimeMs + MIN_ENTRY_WINDOW_MS;
+    // SEATED BEFORE IT STARTS (§5A.7): seating_close is start - SEATING_LEAD_MS (120 s), so a start one entry window past the committee time closed the seating
+    // a minute before the committee was drawn, and no certificate could stand (measured 11-04 on the second test host: "no certificate naming its game signer
+    // nodes stands"). Two minutes for the seating after the draw, then the entry window
+    const startTimeMs = committeeTimeMs + SEATING_LEAD_MS + 120000n + MIN_ENTRY_WINDOW_MS;
     const shaped = { ...base, censusHeight: H, bondMinSats: ROUND_FLOOR, stakeMsat: 20000000n, committeeTimeMs, startTimeMs, entryCloseMs: startTimeMs + 300000n, nodes: [] };
     const census = censusOfView(rt.blocksFrom(0, H), decodeRoundContract(encodeRoundContract({ ...shaped, censusRoot: new Uint8Array(32) })), { network: 'regtest', standingKeys: [{ epoch: 0, publicKey: key0, height: 0 }] });
     if (!census.ok) throw new Error(`round ${n}: no census at ${H}: ${census.why}`);
@@ -203,7 +224,26 @@ async function runAll() {
     // FUNDED AS THE DEVNET'S RUNNER FUNDS ITS OWN ROUNDS: the seats store a round the funded list names
     appendFileSync(join(D, 'runner', 'funded.txt'), `${ridHex}\n`);
     writeFileSync(join(SR, `round-${n}.bin`), body);
-    const posted = await Promise.all(Array.from({ length: N }, (_, i) => fetch(`${urlOf(i)}/round`, { method: 'POST', body, signal: AbortSignal.timeout(30000) }).then(async (r) => `${r.status}${r.ok ? '' : ` ${(await r.text()).slice(0, 200)}`}`, (e) => `0 ${e.message}`)));
+    // PUBLISHED ON THE CHAIN BEFORE ITS BEACON (§ publication; measured on the test host 2026-11-03: the seats held round 1 "posted ahead",
+    // found its beacon, and refused to assign it for good - "there is no publication transaction to read"): OP_RETURN "ARN" ROUND and the
+    // round's id, in a block now, as round-2of2.mjs publishOnChain does on regtest (no publication lead on regtest)
+    {
+      const raw = cli('createrawtransaction', '[]', JSON.stringify([{ data: toHex(publicationPayload(rid)) }])).trim();
+      const paid = JSON.parse(cli('fundrawtransaction', raw)).hex;
+      const signed = JSON.parse(cli('signrawtransactionwithwallet', paid)).hex;
+      cli('generateblock', cli('getnewaddress').trim(), JSON.stringify([signed]));
+      say({ step: `round ${n} published`, height: tip() });
+    }
+    // TO EVERY SEAT THE PLAYERS ASK, the devnet's seven guardian seats too (measured 11-04 on the second test host: they answered 404 for round 1 and the
+    // players' preflight stopped - "the seats do not all hold round")
+    // A POST THAT FAILED IS SENT AGAIN (measured 11-04 go32, second test host at load 128: one seat's post timed out, "0 fetch failed", and the
+    // players' preflight stopped on its 404): up to five tries, 5 s apart; a seat that answered anything over HTTP is not asked again
+    const postOnce = (u) => fetch(`${u}/round`, { method: 'POST', body, signal: AbortSignal.timeout(30000) }).then(async (r) => `${r.status}${r.ok ? '' : ` ${(await r.text()).slice(0, 200)}`}`, (e) => `0 ${e.message}`);
+    const posted = await Promise.all(allUrls.map(async (u) => {
+      let last = '';
+      for (let t = 0; t < 5; t++) { last = await postOnce(u); if (!last.startsWith('0 ')) return last; await new Promise((r) => setTimeout(r, 5000)); }
+      return last;
+    }));
     say({ step: `round ${n} posted`, statuses: [...new Set(posted)] });
     if (!posted.some((x) => x.startsWith('2'))) throw new Error(`round ${n}: no seat took it`);
     // THE BEACON NEEDS BLOCKS PAST THE COMMITTEE TIME
@@ -221,7 +261,7 @@ async function runAll() {
     const keysFile = join(SR, `keys-${n}.jsonl`);
     const players = [0, 1].map((p) => {
       const log = join(SR, `player-${n}-${p}.log`);
-      const fd = openSync(log, 'a');
+      const fd = openSync(log, 'w'); // a new round of the same number starts its log again (no delivering drive, a new round)
       const child = spawn(process.execPath, [join(HERE, 'tn4-live-run.mjs')], { detached: true, stdio: ['ignore', fd, fd], cwd: NODE_PKG,
         env: { ...env, ARENA_TN4_NETWORK: 'regtest', ROUND: ridHex, PORTS: [...inCensus.map((i) => ports[i]), ...DP.nodes].join(','), KEYS_FILE: keysFile, COLLECT_MS: '60000', INVITE_FILE: join(D, 'invite-code'),
           WASM_PKG: join(NODE_PKG, '..', 'arena-client', 'dist'), LNCLI: join(LND, 'lncli'), PAYER_DIR: join(D, 'lnd-b'), PAYER_RPC: `127.0.0.1:${DP.lnd.b.rpc}`, GATEWAY: `http://localhost:${DP.gateway.a.api}`,
@@ -234,14 +274,19 @@ async function runAll() {
     // THE WINNER'S ENTRY, AS SOON AS IT EXISTS: every seat of the round is switched to sign it FAILED (test-dissent.js `fail`), before any result is signed
     const winner = await until(`round ${n}: the first player's entry`, async () => {
       const l = lines(players[0]);
-      if (l.some((x) => x.step === 'stopped' || x.step === 'error')) throw new Error(`player 0: ${JSON.stringify(l.slice(-1)[0]).slice(0, 300)}`);
+      if (l.some((x) => x.step === 'stopped' || x.step === 'error')) throw Object.assign(new Error(`player 0: ${JSON.stringify(l.slice(-1)[0]).slice(0, 300)}`), { fatal: true });
       const keys = (() => { try { return readFileSync(keysFile, 'utf8').trim().split('\n').map((x) => JSON.parse(x)).filter((x) => x.round === ridHex); } catch { return []; } })();
-      return keys.length ? keys[0] : null;
+      // PLAYER 0'S OWN ENTRY, by the stake it locked: both players write to one keys file, and the first line is whoever entered first (measured 11-04
+      // on the second test host: player 1 wrote first, its entry was switched FAILED, and the objection claimed player 0's score for it)
+      const locked = l.find((x) => x.step === 'locked');
+      return locked ? keys.find((k) => k.stake === locked.outpoint) || null : null;
     }, 900, 2000);
     for (let i = 0; i < N; i++) writeFileSync(join(SR, `dissent-${i + 1}.txt`), `${winner.entry} fail\n`);
     writeFileSync(join(SR, 'dissent-guardians.txt'), `${winner.entry} fail\n`);
     say({ step: `round ${n}: every seat switched to sign the winner FAILED`, entry: winner.entry.slice(0, 16) });
     const driven = await until(`round ${n}: both players played`, async () => {
+      // A PLAYER THAT STOPPED STOPS THE RUN NOW, not after the wait (measured 11-04: player 0 found no delivering drive in its world, 315 tried, and the run sat 45 min)
+      for (const [k, pl] of players.entries()) { const st = lines(pl).find((x) => x.step === 'stopped' || x.step === 'error'); if (st) throw Object.assign(new Error(`player ${k}: ${String(st.why).slice(0, 200)}`), { fatal: true }); }
       const a = lines(players[0]).find((x) => x.step === 'driven'), b = lines(players[1]).find((x) => x.step === 'driven');
       return a && b ? { a, b } : null;
     }, 900, 3000);
@@ -281,7 +326,11 @@ async function runAll() {
     ask(`round ${n}: a late objection holds at a seat`, objected.status === 201 || objected.status === 200, `${objected.status} ${(await objected.text()).slice(0, 120)}`);
 
     // THE STARTS: each seat that signed the false run, by the census key's holders
-    const accused = seated.filter((i) => i >= HOLDERS);
+    // THE ACCUSED ARE THE FALSE RESULT'S SIGNERS: the game committee, not the settlement seats beside it (measured 11-04 on the second test host: the seats
+    // filed against the 7 of the game committee - 6 rounders and a guardian - and started the 6 rounders' bonds, while the run waited for 8, the union of both
+    // committees); a guardian's bond is template 2, which no census key starts, so the rounders who signed the false run are the ones started. Read off the run's own signed results: the round's drawn list also holds the reserves never seated (measured on go30: 9 drawn, 7 signed)
+    const accused = [...new Set(row.results.map((h) => decodePlayerResult(splitSignedResult(fromHex(h)).body)).filter((r) => r.outcome === 'FAILED').map((r) => idx(r.nodePubkey)))].filter((i) => i >= HOLDERS);
+    say({ step: `round ${n}: accused`, seats: accused.map((i) => i + 1) });
     const bondOf = (i) => bonds.find((b) => b.i === i);
     const starts = await until(`round ${n}: the starts mined`, async () => {
       mine(1);
