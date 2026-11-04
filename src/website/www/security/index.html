@@ -56,7 +56,8 @@
   nav.site .links { margin-left: auto; display: flex; gap: 22px; font-size: 15px; }
   nav.site .links a { color: var(--dim); text-decoration: none; } nav.site .links a:hover, nav.site .links a.on { color: var(--text); }
   nav.site .play { display: inline-flex; align-items: center; gap: 8px; padding: 9px 15px; border-radius: 11px; background: linear-gradient(135deg, var(--btc), #ffb347); color: #1a0f00; font: 600 15px/1 system-ui; text-decoration: none; white-space: nowrap; }
-  @media (max-width: 860px) { nav.site .links a:not(.keep) { display: none; } nav.site .links { gap: 16px; } nav.site .wrap { gap: 16px; } }
+  nav.site .links a, nav.site .play, nav.site .brand { white-space: nowrap; }
+  @media (max-width: 1000px) { nav.site .links a:not(.keep) { display: none; } nav.site .links { gap: 16px; } nav.site .wrap { gap: 16px; } }
   @media (max-width: 480px) { nav.site .links a[href*=proposals] { display: none; } nav.site .wrap { gap: 12px; } nav.site .links { gap: 12px; font-size: 14px; } nav.site .brand { font-size: 16px; } nav.site .brand i { width: 26px; height: 26px; } }
   @media (max-width: 370px) { nav.site .brand span { display: none; } }
   /* THE SLASHING PICTURES */
