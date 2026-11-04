@@ -174,10 +174,17 @@ test('on a fallback the holders carry, by descending shares, less those left out
   const peg = (n, ok = true) => [toHex(b32(n)), { script: Uint8Array.of(0x51, n), signature: ok ? Uint8Array.of(n) : Uint8Array.of(0) }];
   const bonds = new Map(holders.map((h) => [h.key, BigInt(h.shares) * 1000n]));
   const verify = (sig, digest, key) => sig[0] === key[0] && digest.length === 32;
-  const got = fallbackCarriers({ holders, bonds, networkId: net, verify, excluded: [toHex(b32(2))], pegIns: new Map([peg(1), peg(2), peg(3), peg(4, false), peg(5)]) });
+  const start = { txid: b32(7), vout: 0 }, federationId = b32(8);
+  const got = fallbackCarriers({ holders, bonds, networkId: net, start, federationId, verify, excluded: [toHex(b32(2))], pegIns: new Map([peg(1), peg(2), peg(3), peg(4, false), peg(5)]) });
   assert.deepEqual(got.map((c) => [c.key.slice(0, 2), c.bondSats]), [['03', 5000n], ['05', 3000n], ['01', 2000n]], 'the accused out, a bad signature passed over');
-  assert.equal(carrierPegInId(net, Uint8Array.of(1)).length, 32);
-  assert.deepEqual(fallbackCarriers({ holders, bonds, networkId: net, verify, pegIns: new Map() }), [], 'no holder with a peg-in is no refusal: the table waits in escrow');
+  assert.deepEqual(fallbackCarriers({ holders, bonds, networkId: net, start, federationId, verify, pegIns: new Map() }), [], 'no holder with a peg-in is no refusal: the table waits in escrow');
+  // #1130: A RELEASE'S OR FALLBACK'S PEG-IN NAMES ITS START, FEDERATION AND USE
+  const own = (over = {}) => toHex(carrierPegInId({ networkId: net, start, federationId, use: 'players', script: Uint8Array.of(1), ...over }));
+  assert.equal(own().length, 64);
+  assert.notEqual(own(), own({ start: { txid: b32(7), vout: 1 } }), 'a peg-in names the start it is for');
+  assert.notEqual(own(), own({ federationId: b32(9) }), 'and its federation');
+  assert.notEqual(own(), own({ use: 'reserves' }), 'and its use');
+  assert.throws(() => own({ use: 'escrow' }), /players or reserves/);
   const pegIn = (over = {}) => toHex(carrierEscrowPegInId({ tableId: b32(1), outpoint: { txid: b32(3), vout: 1 }, federationId: b32(4), script: Uint8Array.of(1), ...over }));
   assert.notEqual(pegIn(), pegIn({ tableId: b32(2) }), 'an escrow peg-in names its table');
   assert.notEqual(pegIn(), pegIn({ outpoint: { txid: b32(3), vout: 2 } }), 'and the escrow outpoint it is for');

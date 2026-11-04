@@ -71,7 +71,8 @@ const entries = [{ pubkey: accused.key, txid: bond.txid, vout: bond.vout, bondSa
 
 /**
  * The holders of `LAYOUT`, each a seat of its own: its run (createSlashRelease) and its census signer, which hands a `kind: fallback` ask to that run's checkFallback, as
- * slash-start-run.js does. `down` answers nothing at its door; `deviant` reads the federations' loads otherwise, so it builds another table.
+ * slash-start-run.js does. `down` answers nothing at its door; `deviant` reads the player's loss otherwise, so it builds another table (the loads no longer would: a fallback
+ * opens past the reserve key's cap, so its reserves' part is all in the escrow, kanban #1130).
  */
 function world({ down = [], deviant = [], tip = START_HEIGHT + clocks.fallbackBlocks - 1 } = {}) {
   const urlOf = (k) => `http://seat-${k}`;
@@ -107,7 +108,7 @@ function world({ down = [], deviant = [], tip = START_HEIGHT + clocks.fallbackBl
     s.run = createSlashRelease({ key: p.key, secret: p.secret, networkId: NETWORK_ID_REGTEST, clocks, db, tweakPoint, tipHeight: async () => tip, entriesAtTip: async () => entries, rawTx,
       unspent: async () => true, fetchProof: async () => proofBytes, judge: Object.assign(async () => ({ verdict: true, held: { offence: 'X' } }), { read: () => ({ ok: true, roundId, contract }) }),
       panelsOf: () => ({ ok: true, ...panels }), seatsOf: async () => [seat.hex],
-      lossesFor: async () => ({ ok: true, losses: new Map([[player.hex, LOSS]]), entryIds: new Map([[player.hex, b32(0x31)]]) }),
+      lossesFor: async () => ({ ok: true, losses: new Map([[player.hex, deviant.includes(p.hex) ? LOSS - 1000n : LOSS]]), entryIds: new Map([[player.hex, b32(0x31)]]) }),
       federations: async () => (deviant.includes(p.hex) ? federations.map((f) => ({ ...f, reserveSats: '0' })) : federations), portFor: async () => port,
       scriptOf: (address) => fromHex(`5120${toHex(taggedHash('ARENA/test/Address', new TextEncoder().encode(address)))}`), reserveKeyOf: async (fid) => reserveKey(fid), urlOf,
       heldKey: (k) => (toHex(k) === census.hex ? shares : null), thresholdOf: (k) => (k === census.hex ? THRESHOLD : null), holdersOf: async (k) => (k === census.hex ? holders : []),

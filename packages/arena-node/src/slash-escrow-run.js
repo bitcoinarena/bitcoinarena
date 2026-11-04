@@ -261,7 +261,8 @@ export function createSlashEscrow({ secret, me, clocks, db, tweakPoint, tipHeigh
   async function buildAt(ctx, w, path, loadHeight) {
     const federations = (await federationsAt(loadHeight)) || [];
     // A RESERVE KEY THIS SEAT HAS NOT READ YET IS NOT "NO RESERVE KEY" (kanban #1129, as the release's table, slash-release-run.js build): a federation whose guardian
-    // seats stand has a key; built without it, this seat's outputs[] place no reserves' part there and no signer that read the key builds those bytes. It waits, by name
+    // seats stand has a key; built without it, this seat's outputs[] place no reserves' part there and no signer that read the key builds those bytes. It waits, by name.
+    // NO CAP HERE (#1130 caps the hold's release and fallback, which race the owner's return leaf): the escrow has no return leaf, so a wait loses nothing
     const gone = new Set((retired || []).map((x) => String(x).toLowerCase()));
     const unread = federations.filter((f) => f && f.status === 'OPEN' && !f.reserveKey && f.reservePending && !gone.has(String(f.federation).toLowerCase()) && BigInt(f.exposureCapSats || 0) > 0n);
     if (unread.length) return { ok: false, why: `the reserve key of federation ${unread.map((f) => String(f.federation).slice(0, 16)).join(', ')} is not read here yet: no escrow spend is built without its reserves' part`, wait: true };

@@ -5,20 +5,22 @@
 // Every seat reads the started bonds of its own census at the tip. For each one it reads the start off its chain (the proof it names, its slash height, its fee input), the proof
 // by its hash, and the round in the proof. Then:
 //
-//   A PANEL MEMBER of that round, slash_hold_blocks after the start, replays the proof itself, builds the payout table from what it reads itself and signs the release only over
-//   its own bytes. It reads the others' signatures from their doors and keeps those that sign the same bytes; t of each panel, and it sends the release.
+//   A PANEL MEMBER of that round, slash_hold_blocks after the start, replays the proof itself and builds a proposal: the payout table from the checked peg-ins it holds and
+//   what it reads itself. It signs its own and every other member's proposal whose named peg-ins check and whose bytes it rebuilds equal (RULED 2026-11-04, kanban #1130);
+//   it reads the others' signatures from their doors, and the first proposal with t of each panel goes out.
 //   A HOLDER OF THE CENSUS KEY the bond names, slash_fallback_blocks after the start with the hold still there, builds the fallback with the key's holders as carriers. One holder
 //   at a time (a turn by a hash of the proof) asks the others in two rounds of FROST; each one answers only for its own bytes.
 //   A CARRIER, once the release or the fallback is out, claims the peg-in the table paid it, pays each player's loss it carries to that player's key, and the rest of what it claimed
 //   to the federation's reserve key, kept as a reserve row of kind `slash`.
 //
 // What a signer reads, it reads from the chain, the proof and the seats a round names: its own census for the panels, the holders and the bonds; the round's seats for how the
-// round settled (GET /audit-run, every signature checked); the carriers for their peg-ins, each signed by its node key; its own federation records for the reserves' load. Two
-// signers that read the same build the same bytes. Two that do not sign different bytes, nothing adds up, and the fallback is the way out.
+// round settled (GET /audit-run, every signature checked); the carriers for their peg-ins, each signed by its node key over the start, federation and use, and handed on from
+// seat to seat; its own federation records for the reserves' load, with a reserve key not read yet waited for until the start's confirmation + slash_return_blocks / 2, and
+// from then on the whole reserves' part in the escrow (#1130). Two signers that read the same build the same bytes; where they do not, the fallback is the way out.
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { BOND_TEMPLATE_V3, holdOutputKey, panelThreshold } from '../../arena-protocol/src/bond-script.js';
 import { arbitrationCommitmentIn, holdSlashSpend } from '../../arena-protocol/src/arbitration-tx.js';
-import { carrierPegInId, fallbackCarriers } from '../../arena-protocol/src/census-key.js';
+import { CARRIER_PEG_IN_USES, carrierPegInId, fallbackCarriers } from '../../arena-protocol/src/census-key.js';
 import { decodeSlashPayoutTable, fraudProofHash, slashDistribution, slashPayoutTableId } from '../../arena-protocol/src/slash.js';
 import { carrierSlices, fallbackWitness, releaseWitness, signedHoldSpend, slashEscrowOutput, slashHoldSpend, startFeeRate } from '../../arena-protocol/src/slash-release.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
@@ -68,7 +70,11 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
     CREATE TABLE IF NOT EXISTS slash_carried (start TEXT NOT NULL, path TEXT NOT NULL, out_index INTEGER NOT NULL, state TEXT NOT NULL, PRIMARY KEY (start, path, out_index));
     CREATE TABLE IF NOT EXISTS slash_margin_owed (federation TEXT PRIMARY KEY, msat TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS slash_tables (table_id TEXT PRIMARY KEY, bytes BLOB NOT NULL);
-    CREATE TABLE IF NOT EXISTS slash_confirmed (start TEXT PRIMARY KEY, path TEXT NOT NULL, table_id TEXT NOT NULL, txid TEXT NOT NULL, height INTEGER NOT NULL)`);
+    CREATE TABLE IF NOT EXISTS slash_confirmed (start TEXT PRIMARY KEY, path TEXT NOT NULL, table_id TEXT NOT NULL, txid TEXT NOT NULL, height INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS slash_pegins_held (start TEXT NOT NULL, node TEXT NOT NULL, federation TEXT NOT NULL, use TEXT NOT NULL, script BLOB NOT NULL, signature BLOB NOT NULL,
+      PRIMARY KEY (start, node, federation, use));
+    CREATE TABLE IF NOT EXISTS slash_release_props (start TEXT NOT NULL, table_id TEXT NOT NULL, tbl BLOB NOT NULL, pegins TEXT NOT NULL, signature BLOB NOT NULL, made_ms INTEGER NOT NULL,
+      PRIMARY KEY (start, table_id))`);
   // THE ESCROW READS THE START WITHOUT THE CENSUS: once the hold is spent the bond is gone from it, so its census key and fee rate are kept with the start (#1085)
   for (const col of ['census_key TEXT', 'rate INTEGER', 'hold_value INTEGER', 'hold_script BLOB', 'slash_height INTEGER']) { try { db.exec(`ALTER TABLE slash_holds ADD COLUMN ${col}`); } catch { /* there already */ } }
   const spendOf = (start, path) => db.prepare('SELECT * FROM slash_spends WHERE start = ? AND path = ?').get(start, path) || null;
@@ -132,19 +138,44 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
   // ---- WHAT A PEER SAYS AT ITS DOOR ----
   const getJson = async (url) => { const r = await fetchFn(url, { signal: AbortSignal.timeout(20000) }); if (!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0, 120)}`); return r.json(); };
 
-  /** A carrier's peg-in for this start, federation and use (the players' part or the reserves'), its node key's signature checked: { script, signature } or null. */
-  const pegInsSeen = new Map();
+  /** The hold output a start made, by the start's display txid: what a carrier's peg-in names (#1130). */
+  const startOutpoint = (start) => ({ txid: fromHex(start).reverse(), vout: 0 });
+  /**
+   * A SIGNED PEG-IN, CHECKED (RULED 2026-11-04, kanban #1130): { node, federation, use, script, signature } hex, signed by `node` over carrier_peg_in for this start, that
+   * federation and that use, `node` one of `carriers` (hex) where given. Answers { node, federation, use, script, signature } (bytes) or null.
+   */
+  function checkPegIn(rec, start, carriers = null) {
+    try {
+      const node = String(rec.node).toLowerCase(), federation = String(rec.federation).toLowerCase(), use = String(rec.use);
+      if (!CARRIER_PEG_IN_USES.includes(use) || fromHex(federation).length !== 32 || (carriers && !carriers.includes(node))) return null;
+      const script = fromHex(String(rec.script)), signature = fromHex(String(rec.signature));
+      if (!script.length || script.length > 80) return null;
+      return verifySig(signature, carrierPegInId({ networkId, start: startOutpoint(start), federationId: fromHex(federation), use, script }), fromHex(node)) ? { node, federation, use, script, signature } : null;
+    } catch { return null; }
+  }
+  const pegName = (node, fid, use) => `${node}:${String(fid).toLowerCase()}:${use}`;
+  const pegRecord = (p) => ({ node: p.node, federation: p.federation, use: p.use, script: toHex(new Uint8Array(p.script)), signature: toHex(new Uint8Array(p.signature)) });
+  /** EVERY CHECKED PEG-IN THIS SEAT HOLDS FOR A START (#1130): what it read itself and what other seats handed on, each checked. Kept, and served at GET /slash-release. */
+  const heldPegIns = (start) => db.prepare('SELECT node, federation, use, script, signature FROM slash_pegins_held WHERE start = ? ORDER BY node, federation, use').all(start).map(pegRecord);
+  const holdPegIn = (start, rec, carriers) => {
+    const p = checkPegIn(rec, start, carriers);
+    if (p) db.prepare('INSERT OR IGNORE INTO slash_pegins_held (start, node, federation, use, script, signature) VALUES (?, ?, ?, ?, ?, ?)').run(start, p.node, p.federation, p.use, p.script, p.signature);
+    return p;
+  };
+  /** The peg-ins a list names, as build() takes them: Map node:federation:use -> script. A list with one that does not check answers null. */
+  function pegsOf(list, start, carriers) {
+    const out = new Map();
+    for (const rec of list) { const p = checkPegIn(rec, start, carriers); if (!p) return null; out.set(pegName(p.node, p.federation, p.use), p.script); }
+    return out;
+  }
+
+  /** A carrier's peg-in for this start, federation and use (the players' part or the reserves'), asked of it, its node key's signature checked: the record (hex) or null. */
   async function pegInOf(keyHex, start, fid, use) {
-    const name = `${keyHex}:${start}:${fid}:${use}`;
-    if (pegInsSeen.has(name)) return pegInsSeen.get(name);
-    let got = null;
     try {
       const said = keyHex === me ? await ownPegIn(start, fid, use) : await getJson(`${urlOf(keyHex)}/slash-pegin?start=${start}&federation=${fid}&use=${use}`);
-      const script = fromHex(said.script), signature = fromHex(said.signature);
-      if (said.node === keyHex && verifySig(signature, carrierPegInId(networkId, script), fromHex(keyHex))) got = { script, signature };
-    } catch { got = null; }
-    if (got) pegInsSeen.set(name, got);
-    return got;
+      const rec = { node: said.node, federation: fid, use, script: said.script, signature: said.signature };
+      return said.node === keyHex && checkPegIn(rec, start) ? rec : null;
+    } catch { return null; }
   }
 
   /**
@@ -162,7 +193,8 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
       row = db.prepare('SELECT address, script FROM slash_pegins WHERE start = ? AND federation = ? AND use = ?').get(start, fid, use);
     }
     const script = new Uint8Array(row.script);
-    return { node: me, federation: fid, use, address: row.address, script: toHex(script), signature: toHex(schnorr.sign(carrierPegInId(networkId, script), secret)) };
+    return { node: me, federation: fid, use, address: row.address, script: toHex(script),
+      signature: toHex(schnorr.sign(carrierPegInId({ networkId, start: startOutpoint(start), federationId: fromHex(fid), use, script }), secret)) };
   }
 
   // ---- THE TABLE'S INPUTS ----
@@ -188,11 +220,15 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
   /** The bonds by node, at the tip: a carrier carries no more than its own. */
   const bondsOf = (entries) => { const m = new Map(); for (const e of entries) m.set(toHex(e.pubkey), (m.get(toHex(e.pubkey)) || 0n) + BigInt(e.bondSats)); return m; };
 
+  /** THE CAP ON A WAIT FOR A RESERVE KEY (RULED 2026-11-04, kanban #1130): the start's confirmation plus slash_return_blocks / 2 (72 mainnet, 18 testnet4, 6 regtest). */
+  const reserveCapOf = (info) => info.height + Math.floor(clocks.returnBlocks / 2);
+
   /**
-   * THE SPEND AND ITS TABLE, as this node reads it. `carriersOf(fid)` -> [{ key, script, bondSats }] in carrying order for the players' federation; the reserves' parts each go to the first
-   * of those carriers, in that order, with a peg-in of that federation. Answers slashHoldSpend's answer, or { ok: false, why, wait } where this node cannot say yet.
+   * THE SPEND AND ITS TABLE, from the peg-ins `pegs` names (Map node:federation:use -> script, pegsOf) and what this node reads itself. `carrierKeys` [{ key, bondSats }] in carrying
+   * order: the players' part to those with a players' peg-in of the round's federation, in that order; each reserves' part to the first of them with a reserves' peg-in of that
+   * federation. Answers slashHoldSpend's answer, or { ok: false, why, wait } where this node cannot say yet.
    */
-  async function build({ e, info, hold, panels, path, verdict, carrierKeys }) {
+  async function build({ e, info, hold, panels, path, verdict, carrierKeys, pegs }) {
     const { contract, roundId } = info.read;
     const owed = await lossesFor({ contract, rid: roundId, held: verdict.held });
     if (!owed.ok) return { ok: false, why: `the losses cannot be read yet: ${owed.why}`, wait: true };
@@ -202,19 +238,25 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
     const open = (await federations()).filter((f) => f && f.status === 'OPEN');
     // A RESERVE KEY THIS SEAT HAS NOT READ YET IS NOT "NO RESERVE KEY" (kanban #1129, measured 11-04 on the slash-release regtest): a federation whose guardian seats
     // stand (`reservePending`) has a key its seats name; a signer that has not read it yet would build its table with no reserves' row for it, and sign bytes no
-    // signer that read the key builds. It waits, by name, and builds once the key is read; a federation with no guardian seats has no key and takes no part (§27A.9.2)
-    const gone = new Set(retired.map((x) => String(x).toLowerCase()));
-    const unread = open.filter((f) => !f.reserveKey && f.reservePending && !gone.has(String(f.federation).toLowerCase()) && BigInt(f.exposureCapSats || 0) > 0n);
-    if (unread.length) return { ok: false, why: `the reserve key of federation ${unread.map((f) => String(f.federation).slice(0, 16)).join(', ')} is not read here yet: no table is built without its reserves' row`, wait: true };
-    const view = open.filter((f) => f.reserveKey);
+    // signer that read the key builds. It waits, by name; a federation with no guardian seats has no key and takes no part (§27A.9.2).
+    // THE WAIT HAS A CAP (RULED 2026-11-04, kanban #1130): from the start's confirmation + slash_return_blocks / 2 on, every signer puts the WHOLE reserves' part in the escrow,
+    // whatever keys it has read, so the bytes stay equal; the escrow's next spend places it by load (#1085). Players' outputs and the filer do not change.
+    const capAt = reserveCapOf(info);
+    let view = [];
+    if ((await tipHeight()) < capAt) {
+      const gone = new Set(retired.map((x) => String(x).toLowerCase()));
+      const unread = open.filter((f) => !f.reserveKey && f.reservePending && !gone.has(String(f.federation).toLowerCase()) && BigInt(f.exposureCapSats || 0) > 0n);
+      if (unread.length) return { ok: false, why: `the reserve key of federation ${unread.map((f) => String(f.federation).slice(0, 16)).join(', ')} is not read here yet: no table is built without its reserves' row before height ${capAt}`, wait: true };
+      view = open.filter((f) => f.reserveKey);
+    }
     const carriers = [], reserveScripts = new Map();
     for (const c of carrierKeys) {
-      const peg = await pegInOf(c.key, info.start, playersFed, 'players');
-      if (peg) carriers.push({ key: c.key, script: peg.script, bondSats: c.bondSats });
+      const peg = pegs.get(pegName(c.key, playersFed, 'players'));
+      if (peg) carriers.push({ key: c.key, script: peg, bondSats: c.bondSats });
       for (const f of view) {
         if (reserveScripts.has(f.federation)) continue;
-        const p = await pegInOf(c.key, info.start, f.federation, 'reserves');
-        if (p) reserveScripts.set(f.federation, p.script);
+        const p = pegs.get(pegName(c.key, f.federation, 'reserves'));
+        if (p) reserveScripts.set(f.federation, p);
       }
     }
     const feds = view.filter((f) => reserveScripts.has(f.federation)).map((f) => ({ ...f, script: reserveScripts.get(f.federation) }));
@@ -229,45 +271,118 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
     return built.ok ? { ...built, carriers, outpoint } : built;
   }
 
-  // ---- THE RELEASE: t of n of both panels ----
+  // ---- THE RELEASE: t of n of both panels, over a proposal that names its carriers (RULED 2026-11-04, kanban #1130) ----
+  /**
+   * The proposals a member serves for a start: its own (`release`) and every other it signed (`release.proposals`), each { tableId, table, pegins, signatures }.
+   */
+  const proposalsServed = (s) => {
+    const r = s && s.release;
+    if (!r) return [];
+    const own = r.table && Array.isArray(r.pegins) ? [{ tableId: r.tableId, table: r.table, pegins: r.pegins, signatures: [r.own, ...(r.signatures || [])].filter(Boolean) }] : [];
+    return [...own, ...(Array.isArray(r.proposals) ? r.proposals : [])].filter((p) => p && typeof p.tableId === 'string' && typeof p.table === 'string' && Array.isArray(p.pegins));
+  };
+  const keepProposal = (start, b, pegins, signature) => {
+    db.prepare('INSERT OR IGNORE INTO slash_tables (table_id, bytes) VALUES (?, ?)').run(toHex(b.tableId), b.bytes);
+    db.prepare('INSERT OR IGNORE INTO slash_release_props (start, table_id, tbl, pegins, signature, made_ms) VALUES (?, ?, ?, ?, ?, ?)').run(start, toHex(b.tableId), b.bytes, JSON.stringify(pegins), signature, now());
+  };
   const relDone = new Set();
+  /**
+   * A PANEL MEMBER'S PASS. The carriers are what a proposal names, not what each signer happened to read: every signer of one proposal builds from the same peg-ins.
+   *   1. It reads what the other members serve, and keeps every peg-in they hand on that checks: signed by a panel-A member, for this start, that federation and use.
+   *   2. It asks each panel-A member for the peg-ins it does not hold yet, and keeps those that check.
+   *   3. Its own proposal names every peg-in it holds; it builds the table from them and signs it.
+   *   4. Each other member's proposal: every peg-in it names must check; with exactly those, this seat rebuilds everything else itself (losses, fee, load, order, caps,
+   *      reserves, escrow), and signs when the bytes are equal. A member left out only moves its share to the next carrier or the escrow, so that is no reason to refuse.
+   *   5. A signer may sign every proposal that checks; they all spend the one hold, so one confirms. The first with t of each panel goes out.
+   */
   async function release({ e, info, hold, panels, verdict, entries }) {
     if (relDone.has(info.start)) return null;
     const bonds = bondsOf(entries);
-    const b = await build({ e, info, hold, panels, path: 'release', verdict, carrierKeys: panels.panelA.map((k) => ({ key: toHex(k), bondSats: bonds.get(toHex(k)) || 0n })) });
+    const panelA = panels.panelA.map(toHex);
+    const carrierKeys = panelA.map((k) => ({ key: k, bondSats: bonds.get(k) || 0n }));
+    const members = [...panels.panelA, ...panels.panelB].map(toHex);
+    const playersFed = toHex(info.read.contract.federationId).toLowerCase();
+    // 1. WHAT THE OTHERS SERVE, AND THE PEG-INS THEY HAND ON
+    const served = new Map();
+    await Promise.all(members.filter((k) => k !== me).map(async (k) => { try { served.set(k, await getJson(`${urlOf(k)}/slash-release?start=${info.start}`)); } catch { /* says nothing yet */ } }));
+    for (const s of served.values()) {
+      for (const rec of [...((s.release && s.release.pegins) || []), ...((s && s.pegins) || []), ...proposalsServed(s).flatMap((p) => p.pegins)]) holdPegIn(info.start, rec, panelA);
+    }
+    // 2. WHAT IT ASKS ITSELF: each member's players' peg-in, and a reserves' peg-in of each open federation
+    const fids = [...new Set([playersFed, ...(await federations()).filter((f) => f && f.status === 'OPEN').map((f) => String(f.federation).toLowerCase())])];
+    const held = new Set(heldPegIns(info.start).map((p) => pegName(p.node, p.federation, p.use)));
+    await Promise.all(panelA.map(async (k) => {
+      for (const [fid, use] of [[playersFed, 'players'], ...fids.map((f) => [f, 'reserves'])]) {
+        if (held.has(pegName(k, fid, use))) continue;
+        const rec = await pegInOf(k, info.start, fid, use);
+        if (rec) holdPegIn(info.start, rec, panelA);
+      }
+    }));
+    // 3. ITS OWN PROPOSAL
+    const mine = heldPegIns(info.start);
+    const b = await build({ e, info, hold, panels, path: 'release', verdict, carrierKeys, pegs: pegsOf(mine, info.start, panelA) });
     if (!b.ok) return b;
     const signature = schnorr.sign(b.digest, secret);
     const row = keepSpend(info.start, 'release', b, signature);
     if (row.table_id !== toHex(b.tableId)) return { ok: false, why: 'the table moved' };
     if (!row.signature || !same(new Uint8Array(row.signature), signature)) db.prepare('UPDATE slash_spends SET signature = ? WHERE start = ? AND path = ?').run(signature, info.start, 'release');
-    const members = [...panels.panelA, ...panels.panelB].map(toHex);
-    const sigs = new Map([[me, signature]]);
-    for (const r of db.prepare('SELECT node, signature FROM slash_spend_sigs WHERE start = ? AND table_id = ?').all(info.start, toHex(b.tableId))) sigs.set(r.node, new Uint8Array(r.signature));
-    for (const k of members) {
-      if (sigs.has(k)) continue;
-      try {
-        const s = await getJson(`${urlOf(k)}/slash-release?start=${info.start}`);
-        for (const x of [s.release && s.release.own, ...((s.release && s.release.signatures) || [])].filter(Boolean)) {
-          if (!members.includes(x.node) || sigs.has(x.node)) continue;
-          const sig = fromHex(x.signature);
-          if (verifySig(sig, b.digest, fromHex(x.node))) { sigs.set(x.node, sig); db.prepare('INSERT OR IGNORE INTO slash_spend_sigs (start, table_id, node, signature) VALUES (?, ?, ?, ?)').run(info.start, toHex(b.tableId), x.node, sig); }
+    keepProposal(info.start, b, mine, signature);
+    const builds = new Map([[toHex(b.tableId), b]]);
+    // 4. THE OTHERS' PROPOSALS, CHECKED AND REBUILT HERE
+    for (const s of served.values()) {
+      for (const p of proposalsServed(s)) {
+        const id = String(p.tableId).toLowerCase();
+        if (builds.has(id)) continue;
+        const pegs = pegsOf(p.pegins, info.start, panelA);
+        if (!pegs) continue;
+        const theirs = await build({ e, info, hold, panels, path: 'release', verdict, carrierKeys, pegs });
+        if (!theirs.ok || toHex(theirs.tableId) !== id || toHex(theirs.bytes) !== String(p.table).toLowerCase()) continue;
+        builds.set(id, theirs);
+        keepProposal(info.start, theirs, p.pegins.map((x) => pegRecord(checkPegIn(x, info.start, panelA))), schnorr.sign(theirs.digest, secret));
+      }
+    }
+    // ...AND THOSE SIGNED ON AN EARLIER PASS, REBUILT FROM THE PEG-INS THEY NAME
+    for (const r of db.prepare('SELECT table_id, pegins FROM slash_release_props WHERE start = ?').all(info.start)) {
+      if (builds.has(r.table_id)) continue;
+      const pegs = pegsOf(JSON.parse(r.pegins), info.start, panelA);
+      const again = pegs ? await build({ e, info, hold, panels, path: 'release', verdict, carrierKeys, pegs }) : null;
+      if (again && again.ok && toHex(again.tableId) === r.table_id) builds.set(r.table_id, again);
+    }
+    // 5. THE SIGNATURES OVER EACH, FROM EVERY MEMBER'S DOOR; ONE GOES OUT AT t OF EACH PANEL
+    for (const s of served.values()) {
+      for (const p of proposalsServed(s)) {
+        const got = builds.get(String(p.tableId).toLowerCase());
+        if (!got) continue;
+        for (const x of p.signatures || []) {
+          if (!x || !members.includes(x.node) || x.node === me) continue;
+          let sig; try { sig = fromHex(x.signature); } catch { continue; }
+          if (verifySig(sig, got.digest, fromHex(x.node))) db.prepare('INSERT OR IGNORE INTO slash_spend_sigs (start, table_id, node, signature) VALUES (?, ?, ?, ?)').run(info.start, toHex(got.tableId), x.node, sig);
         }
-      } catch { /* that member says nothing yet */ }
+      }
     }
     const t = panelThreshold(panels.panelA.length);
-    const countIn = (panel) => panel.filter((k) => sigs.has(toHex(k))).length;
-    const a = countIn(panels.panelA), z = countIn(panels.panelB);
-    if (a < t || z < t) return { ok: false, why: `${a} of panel A and ${z} of panel B have signed these bytes, ${t} of each are needed`, tableId: toHex(b.tableId) };
-    const { raw, txid } = signedHoldSpend({ spend: b.spend, witness: releaseWitness({ hold, panelA: panels.panelA, panelB: panels.panelB, signatures: sigs }) });
-    let sent;
-    try { sent = String(await send(toHex(raw))); } catch (e2) {
-      // ANOTHER MEMBER SENT THE SAME TRANSACTION FIRST: the txid does not move with whose signatures it carries
-      if (!ALREADY.test(e2.message)) return { ok: false, why: `the release was not taken: ${e2.message}` };
-      sent = display(toHex(txid));
+    let best = null;
+    for (const [id, got] of builds) {
+      const own = db.prepare('SELECT signature FROM slash_release_props WHERE start = ? AND table_id = ?').get(info.start, id);
+      const sigs = new Map(own ? [[me, new Uint8Array(own.signature)]] : []);
+      for (const r of db.prepare('SELECT node, signature FROM slash_spend_sigs WHERE start = ? AND table_id = ?').all(info.start, id)) sigs.set(r.node, new Uint8Array(r.signature));
+      const a = panels.panelA.filter((k) => sigs.has(toHex(k))).length, z = panels.panelB.filter((k) => sigs.has(toHex(k))).length;
+      if (!best || Math.min(a, z) > Math.min(best.a, best.z)) best = { id, got, sigs, a, z };
+      if (a < t || z < t) continue;
+      const { raw, txid } = signedHoldSpend({ spend: got.spend, witness: releaseWitness({ hold, panelA: panels.panelA, panelB: panels.panelB, signatures: sigs }) });
+      let sent;
+      try { sent = String(await send(toHex(raw))); } catch (e2) {
+        // ANOTHER MEMBER SENT THE SAME TRANSACTION FIRST: the txid does not move with whose signatures it carries
+        if (!ALREADY.test(e2.message)) return { ok: false, why: `the release was not taken: ${e2.message}`, tableId: id };
+        sent = display(toHex(txid));
+      }
+      relDone.add(info.start);
+      // THE ONE THAT WENT OUT is this seat's release, whoever proposed it
+      if (id !== toHex(b.tableId)) keepSpend(info.start, 'release', got, new Uint8Array(own.signature));
+      db.prepare('UPDATE slash_spends SET sent = ? WHERE start = ? AND path = ?').run(sent, info.start, 'release');
+      return { ok: true, txid: sent, tableId: id, signers: { a, b: z, t }, feeSats: got.feeSats, vsize: got.vsize, proposals: builds.size };
     }
-    relDone.add(info.start);
-    db.prepare('UPDATE slash_spends SET sent = ? WHERE start = ? AND path = ?').run(sent, info.start, 'release');
-    return { ok: true, txid: sent, tableId: toHex(b.tableId), signers: { a, b: z, t }, feeSats: b.feeSats, vsize: b.vsize };
+    return { ok: false, why: `${best.a} of panel A and ${best.z} of panel B have signed the best of ${builds.size} proposal(s), ${t} of each are needed`, tableId: best.id };
   }
 
   /**
@@ -291,10 +406,17 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
     const bonds = bondsOf(entries);
     const excluded = [toHex(e.pubkey), ...(await seatsOf(info.read.contract, info.read.roundId))];
     const playersFed = toHex(info.read.contract.federationId);
+    // A FALLBACK'S HOLDERS STILL READ THEIR CARRIERS THEMSELVES (#1130 rules the panels' proposals; a fallback is asked for by its table id)
     const pegIns = new Map();
-    for (const h of holders) { if (excluded.includes(h.key)) continue; const p = await pegInOf(h.key, info.start, playersFed, 'players'); if (p) pegIns.set(h.key, p); }
-    const carriers = fallbackCarriers({ holders, bonds, excluded, pegIns, networkId, verify: verifySig });
-    return build({ e, info, hold, panels: null, path: 'fallback', verdict, carrierKeys: carriers.map((c) => ({ key: c.key, bondSats: c.bondSats })) });
+    for (const h of holders) { if (excluded.includes(h.key)) continue; const p = await pegInOf(h.key, info.start, playersFed, 'players'); if (p) pegIns.set(h.key, { script: fromHex(p.script), signature: fromHex(p.signature) }); }
+    const carriers = fallbackCarriers({ holders, bonds, excluded, pegIns, networkId, start: startOutpoint(info.start), federationId: fromHex(playersFed), verify: verifySig });
+    const pegs = new Map(carriers.map((c) => [pegName(c.key, playersFed, 'players'), c.script]));
+    if ((await tipHeight()) < reserveCapOf(info)) {
+      for (const f of (await federations()).filter((x) => x && x.status === 'OPEN' && x.reserveKey)) {
+        for (const c of carriers) { const r = await pegInOf(c.key, info.start, String(f.federation).toLowerCase(), 'reserves'); if (r) { pegs.set(pegName(c.key, f.federation, 'reserves'), fromHex(r.script)); break; } }
+      }
+    }
+    return build({ e, info, hold, panels: null, path: 'fallback', verdict, carrierKeys: carriers.map((c) => ({ key: c.key, bondSats: c.bondSats })), pegs });
   }
 
   const fbDone = new Set(), fbSince = new Map();
@@ -562,6 +684,17 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
         own: s.signature ? { node: me, signature: toHex(new Uint8Array(s.signature)) } : null,
         signatures: db.prepare('SELECT node, signature FROM slash_spend_sigs WHERE start = ? AND table_id = ?').all(start, s.table_id).map((r) => ({ node: r.node, signature: toHex(new Uint8Array(r.signature)) })) };
     }
+    // THE PROPOSALS (RULED 2026-11-04, kanban #1130): this seat's own names the peg-ins it was built from; every other it checked and signed, with the signatures it holds over each
+    if (out.release) {
+      const own = db.prepare('SELECT pegins FROM slash_release_props WHERE start = ? AND table_id = ?').get(start, out.release.tableId);
+      if (own) out.release.pegins = JSON.parse(own.pegins);
+      out.release.proposals = db.prepare('SELECT table_id, tbl, pegins, signature FROM slash_release_props WHERE start = ? ORDER BY made_ms').all(start).map((r) => ({ tableId: r.table_id, table: toHex(new Uint8Array(r.tbl)),
+        pegins: JSON.parse(r.pegins), signatures: [{ node: me, signature: toHex(new Uint8Array(r.signature)) }, ...db.prepare('SELECT node, signature FROM slash_spend_sigs WHERE start = ? AND table_id = ?').all(start, r.table_id)
+          .map((x) => ({ node: x.node, signature: toHex(new Uint8Array(x.signature)) }))] }));
+    }
+    // EVERY CHECKED PEG-IN IT HOLDS, for the others to take (#1130)
+    const pegins = heldPegIns(start);
+    if (pegins.length) out.pegins = pegins;
     out.carried = db.prepare('SELECT path, out_index, state FROM slash_carried WHERE start = ?').all(start).map((r) => ({ path: r.path, index: r.out_index, ...JSON.parse(r.state) }));
     const esc = escrow.served(start);
     if (esc) out.escrow = esc;
