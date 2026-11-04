@@ -539,8 +539,11 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       // seat's largest cost with the garbage it made): a round before its close whose PRESENTs from every drawn node are held
       // has nothing more to learn until then; after the close it is asked until its certificate stands (the work above)
       const holds = (w) => !w.closed && db.prepare('SELECT COUNT(*) AS n FROM seat_presents WHERE round_id = ? AND role = ?').get(w.t.rid, w.role).n >= w.drawnKeys.length;
+      // BUT A DRAWN NODE WHOSE LAST REQUEST FAILED IS ASKED AGAIN BEFORE THE CLOSE once its rest is over (kanban #1119): a node whose address died this window
+      // pushed its PRESENT out, and with every PRESENT held nothing else was asked of it - its one failure, the PRESENT post, is not the two that leave it out
+      // of the seating (#979, silentOf). The second try, 30 s later, comes before the close (the window opens 60 s before it): it is left out, the next reserve in
       const asks = new Map();
-      for (const w of work) { if (holds(w)) continue; for (const b of w.others) if (!rests(b)) (asks.get(b) || asks.set(b, new Set()).get(b)).add(w.ridHex); }
+      for (const w of work) { const all = holds(w); for (const b of w.others) if (!rests(b) && (!all || failing.has(b))) (asks.get(b) || asks.set(b, new Set()).get(b)).add(w.ridHex); }
       const answers = new Map();
       await Promise.all([...asks].map(async ([b, set]) => {
         const ids = [...set]; const got = {};
@@ -759,11 +762,29 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const member = never.node;
     const signed = mySignature(w.t.rid, w.role);
     const held = db.prepare('SELECT node FROM seat_presents WHERE round_id = ? AND role = ?').all(w.t.rid, w.role).map((r) => r.node);
-    const seated = seatedFrom({ drawn: w.drawnKeys, present: held, slots: w.slots });
-    const list = seated.map(toHex);
-    if (!list.includes(me) || !seatingBefore(w, signed.seated, list)) return;
-    const id = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated }));
-    if (!db.prepare('SELECT 1 FROM seat_sigs WHERE round_id = ? AND role = ? AND seating = ? AND node != ?').get(w.t.rid, w.role, id, me)) return;
+    // THE SEATING TO GO TO (kanban #1119, measured on the live seats' stores for Up/Down b3f22953, 2026-11-04 10:28Z): six seats signed the seating of the
+    // PRESENTs held less the dead node b36828 (#979); seat 438af56f had also failed to reach c6d5d34b and signed without both. Its re-sign took the seating of
+    // all the PRESENTs it held - the dead node in again - which nobody signed, so it never moved and no certificate formed. Now the seating of the PRESENTs
+    // held is one candidate, and every seating another node signed whose seated this node holds PRESENTs of is another; each must meet the rule as before
+    // (it comes after this node's seating, seats this node, another node signed it), and of those the one most nodes signed is taken, by id on a tie.
+    const heldSet = new Set(held);
+    const candidates = new Map();      // seating id -> seated (hex, score order)
+    const own = seatedFrom({ drawn: w.drawnKeys, present: held, slots: w.slots }).map(toHex);
+    candidates.set(toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: own.map(fromHex) })), own);
+    for (const r of db.prepare('SELECT DISTINCT seating FROM seat_sigs WHERE round_id = ? AND role = ? AND node != ?').all(w.t.rid, w.role, me)) {
+      const other = seatings.get(`${w.ridHex}:${w.role}:${r.seating}`);
+      if (other && other.every((k) => heldSet.has(k))) candidates.set(r.seating, other);
+    }
+    let best = null;
+    for (const [id, list] of candidates) {
+      if (!list.includes(me) || !seatingBefore(w, signed.seated, list)) continue;
+      const n = db.prepare('SELECT COUNT(*) AS n FROM seat_sigs WHERE round_id = ? AND role = ? AND seating = ? AND node != ?').get(w.t.rid, w.role, id, me).n;
+      if (!n) continue;
+      if (!best || n > best.n || (n === best.n && id < best.id)) best = { id, list, n };
+    }
+    if (!best) return;
+    const list = best.list;
+    const seated = list.map(fromHex);
     // A 22 ROUND: THE SECOND SIGNATURE CARRIES WHY (kanban #738, RULED 2026-10-28) - the member's signed seating that does not come
     // before the first, and the hash the member's signature binds (kanban #746: the member's own reasons are its own to present);
     // no justification, no second signature. AND THE STEPS BEFORE (kanban #744): when its signature over the seating it leaves was
