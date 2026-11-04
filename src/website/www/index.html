@@ -46,7 +46,11 @@
   nav .play { display: inline-flex; align-items: center; gap: 8px; padding: 9px 15px; border-radius: 11px; background: linear-gradient(135deg, var(--btc), #ffb347); color: #1a0f00; font: 600 15px/1 Inter; text-decoration: none; white-space: nowrap; }
   /* PROPOSALS AND DOCS STAY IN THE MENU ON A PHONE, beside Play (2026-10-17: "Proposals must be visible from the
      top menu along with Play and Docs currently it's hidden far below") - the section links go, those two stay */
-  @media (max-width: 860px) { nav .links a:not(.keep) { display: none; } nav .links { gap: 16px; } nav .wrap { gap: 16px; } }
+  /* NEVER TWO LINES (kanban #1118, 2026-11-04: the bar wrapped at an iPad's ~1000 px in Safari, whose type is wider than Chrome's): a link keeps one line, and the
+     section links give way well before the bar is full; on a phone Proposals goes too, so App stays inside the screen */
+  nav .links a, nav .play, .brand { white-space: nowrap; }
+  @media (max-width: 1140px) { nav .links a:not(.keep) { display: none; } nav .links { gap: 18px; } nav .wrap { gap: 18px; } }
+  @media (max-width: 480px) { nav .links a[href*="proposals"] { display: none; } }
   @media (max-width: 480px) { nav .play .long { display: none; } nav .wrap { gap: 12px; } nav .links { gap: 12px; font-size: 14px; } .brand { font-size: 16px; } .brand i { width: 26px; height: 26px; } }
   @media (max-width: 370px) { .brand span.t { display: none; } }
 
