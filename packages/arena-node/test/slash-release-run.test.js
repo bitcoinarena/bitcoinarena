@@ -126,7 +126,7 @@ test('a fallback carries the same OP_RETURN fields and a table of the same forma
 });
 
 // ---- THE RUN: eight panel members, each with its own store, reading each other at their doors ----
-function world({ lossesOk = true } = {}) {
+function world({ lossesOk = true, federationsOf = async () => federations } = {}) {
   const members = [...A, ...B];
   const runs = new Map();
   const sent = [], kept = [], paid = [];
@@ -153,7 +153,7 @@ function world({ lossesOk = true } = {}) {
       tipHeight: async () => START_HEIGHT + 1, entriesAtTip: async () => entries, rawTx, unspent: async () => true,
       fetchProof: async () => proofBytes, judge: Object.assign(async () => ({ verdict: true, held: { offence: 'X' } }), { read: () => ({ ok: true, roundId, contract }) }),
       panelsOf: () => ({ ok: true, ...panels }), lossesFor: async () => (lossesOk ? { ok: true, losses: new Map([[player.hex, LOSS]]), entryIds: new Map([[player.hex, b32(0x31)]]) } : { ok: false, why: 'no seat answers' }),
-      federations: async () => federations, portFor: async () => port, scriptOf: (address) => fromHex(`5120${toHex(taggedHash('ARENA/test/Address', new TextEncoder().encode(address)))}`),
+      federations: federationsOf, portFor: async () => port, scriptOf: (address) => fromHex(`5120${toHex(taggedHash('ARENA/test/Address', new TextEncoder().encode(address)))}`),
       reserveKeyOf: async (fid) => reserveKey(fid), keepReserveRow: (row) => kept.push({ carrier: p.hex, row }), urlOf, send: async (hex) => { sent.push({ by: p.hex, hex }); return toHex([...parseTransaction(fromHex(hex)).txid].reverse()); }, fetchFn }));
   }
   return { runs, members, sent, kept, paid };
@@ -196,6 +196,31 @@ test('eight panel members build one table, read each other\'s signatures, and th
   const before = w.paid.length;
   await w.runs.get(first).carry();
   assert.equal(w.paid.length, before, 'paid once');
+});
+
+test('#1129: a signer that has not read a standing federation\'s reserve key signs no table without its reserves\' row, and signs the full one once it has', async () => {
+  // fedB's guardian seats stand (reservePending) but its key is not read yet: before #1129 every member built and signed a table with fedA's reserves' part alone
+  let known = false;
+  const view = async () => federations.map((f) => (f.federation === fedB && !known ? { ...f, reserveKey: null, reservePending: true } : f));
+  const w = world({ federationsOf: view });
+  const said = [];
+  for (const p of w.members) said.push(...(await w.runs.get(p.hex).pass()));
+  assert.equal(w.sent.length, 0, 'nothing sent');
+  assert.ok(w.members.every((p) => !w.runs.get(p.hex).served(startHex).release), 'no member keeps or signs a table');
+  assert.ok(said.some((r) => r.path === 'release' && new RegExp(`reserve key of federation ${fedB.slice(0, 16)} is not read here yet`).test(r.why)), 'the wait names the federation');
+  // A FEDERATION WITH NO GUARDIAN SEATS (no key, not pending) takes no part and holds nothing up
+  const none = world({ federationsOf: async () => federations.map((f) => (f.federation === fedB ? { ...f, reserveKey: null, reservePending: false } : f)) });
+  for (const p of none.members) await none.runs.get(p.hex).pass();
+  for (const p of none.members) await none.runs.get(p.hex).pass();
+  assert.ok(none.sent.length >= 1, 'released without that federation');
+  // THE KEY READ: the table every member builds has both reserves' rows
+  known = true;
+  for (const p of w.members) await w.runs.get(p.hex).pass();
+  for (const p of w.members) await w.runs.get(p.hex).pass();
+  const tables = w.members.map((p) => w.runs.get(p.hex).served(startHex).release.table);
+  assert.equal(new Set(tables).size, 1, 'byte-equal at every member');
+  assert.deepEqual(decodeSlashPayoutTable(fromHex(tables[0])).reserves.map((r) => toHex(r.federationId)), [fedA, fedB], 'a reserves\' row for each federation');
+  assert.ok(w.sent.length >= 1, 'and the release goes out');
 });
 
 test('a member that cannot read the losses signs nothing, and a peg-in not signed by its node is not a carrier', async () => {
