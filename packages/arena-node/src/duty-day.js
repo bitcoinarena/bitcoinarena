@@ -38,6 +38,11 @@ import * as guard from './duty-guard.js';
 export const DUTY_APPS = Object.freeze(['updown', 'rps', 'nextblock']);
 /** How many seats must have answered their rounds before an emergency grid is posted on what they say (fewer known: all of them). */
 export const DUTY_MIN_SEATS = 3;
+/** A publication sent again (our bitcoind, the public chain) or re-announced at most this often per tx (kanban #1126). */
+export const DUTY_RESEND_EVERY_MS = 10 * 60000;
+/** A fee raise re-announced to the seats at most this many times while a seat does not take it; parents walked this deep. */
+export const DUTY_REANNOUNCE_TRIES = 6;
+export const DUTY_RESEND_DEPTH = 4;
 // KEPT `ms`, BUT NOT AN ANSWER NOBODY GAVE (#702, measured on seat 4 2026-10-26 11:43Z: a first read that found no seat was kept 10 min and
 // judged the days "drawn on 0 of 0 seats"): `empty(v)` true is read again at the next ask
 const keptFor = (ms, read, now = Date.now, empty = () => false) => { let at = 0, v = null; return async (fresh = false) => { if (fresh || !v || empty(v) || now() - at > ms) { v = await read(); at = now(); } return v; }; };
@@ -137,6 +142,9 @@ export function createGridBase({ chainCall, prepare = null, censusEntriesAt, con
  *   role                        'primary' (the day's grid, from rank 1) or 'backup' (the day's second grid, from rank 2 - duty.js): a backup
  *                               carries the backup marker, a census DUTY_BACKUP_CENSUS_DEPTH deep, its own committee lead, no emergency grids,
  *                               and is never posted by the node that posted the primary (postedPrimary(slot))
+ *   announce({ lines, tx, targets })   (kanban #1126) POST /expected of a posting's lines with its publication (hex) to the seats -> { took, of };
+ *                               a fee raise changes the txid, and the seats must name the new one
+ *   publicSend(hex)             (kanban #1126) the publication sent to the public chain (Esplora POST /tx) -> { ok, status, text, base }; absent: not sent
  *   say(o), now()
  * -> { look(), state() }: look() runs one pass (never throws); state() what the last pass saw, for GET /duty.
  */
@@ -152,7 +160,8 @@ export function createDayDuty(o) {
     creator = {}, stakeMsat, feeRate = 0.1, maxFeeRate = 1, dry = false, gridDry = false, fromDay = 0,
     committeeLeadMs = guard.DUTY_DAY_COMMITTEE_LEAD_MS, rankCap = guard.DUTY_DAY_RANK_CAP, drawableByMs = guard.DUTY_DRAWABLE_BY_MS,
     emergencyOn = true, emergencyCommitteeLeadMs = guard.DUTY_EMERGENCY_COMMITTEE_LEAD_MS, seedWaitMs = guard.DUTY_SEED_WAIT_MS,
-    drawSeats = 12, dryRank0 = false, seatsAgreeOn = null, role = 'primary', postedPrimary = async () => false, fetchFn = fetch, say = () => {}, now = Date.now, canPay = async () => ({ ok: true }) } = o;
+    drawSeats = 12, dryRank0 = false, seatsAgreeOn = null, role = 'primary', postedPrimary = async () => false, fetchFn = fetch, say = () => {}, now = Date.now, canPay = async () => ({ ok: true }),
+    announce = null, publicSend = null } = o;
   if (!DUTY_APPS.includes(game)) throw new Error(`no day duty for ${game}`);
   const backup = role === 'backup';
   // A BACKUP'S MARKERS ARE NAMED APART ('B:' before the tag): its marker kind is 'B', the day's own 'D'
@@ -196,7 +205,7 @@ export function createDayDuty(o) {
     const n = plan ? keptOf(slot).filter((k) => k.emergency).length + 1 : 0;
     const k = { file: plan ? join(dir, `${item}-${slot}-e${n}.json`) : fileOf(slot), item, slot, target: new Date(startMs).toISOString(), txid: got.txid, series: got.series, lines: got.lines,
       posted: null, emergency: !!plan, committeeMs: times.committeeMs, firstStartMs: times.firstStartMs, censusHeight: base.censusHeight, censusHash: base.censusHash,
-      gameId: base.id, version: base.version, publishedAtMs: now() };
+      gameId: base.id, version: base.version, publishedAtMs: now(), announcedTxid: got.txid, ...(got.announcedTo ? { announcedTo: got.announcedTo } : {}) };
     keep(k);
     seen.mine.push({ app: game, slot, txid: got.txid, emergency: !!plan, atMs: now() });
     say({ dutyDay: plan ? 'EMERGENCY PUBLISHED' : 'published', item, slot, target: k.target, txid: got.txid, series: got.series.map((x) => x.slice(0, 16)), rounds: got.rounds,
@@ -229,11 +238,13 @@ export function createDayDuty(o) {
   // transaction is read once while it stays in the mempool.
   const poolSeen = new Map();
   let poolRead = false;                          // the mempool was read this pass (a pass that could not read it posts nothing)
+  let poolIds = null;                            // the mempool's txids as last read (null: not read) - kanban #1126
   const mempoolMarkers = async () => {
     let txids = [];
-    try { txids = await chainCall('getrawmempool', []); } catch { poolRead = false; return [...poolSeen.values()].flat(); }
+    try { txids = await chainCall('getrawmempool', []); } catch { poolRead = false; poolIds = null; return [...poolSeen.values()].flat(); }
     poolRead = true;
     const live = new Set(txids);
+    poolIds = live;
     for (const t of [...poolSeen.keys()]) if (!live.has(t)) poolSeen.delete(t);
     for (const txid of txids) {
       if (poolSeen.has(txid)) continue;
@@ -303,14 +314,90 @@ export function createDayDuty(o) {
     // STILL UNCONFIRMED DUTY_BUMP_WITHIN_MS (3 h) BEFORE ITS COMMITTEE TIME: its fee raised to maxFeeRate, once (it is replaceable)
     let changed = !k.verdict || k.verdict.state !== v.state || k.verdict.stage !== v.stage;
     if (v.stage === 'unconfirmed' && !k.bumped && mtpMs >= committeeMs - guard.DUTY_BUMP_WITHIN_MS && !dry) {
-      try { const b = await walletRpc('bumpfee', [k.txid, { fee_rate: maxFeeRate }]); say({ dutyDay: 'fee raised', item, slot: k.slot, from: k.txid.slice(0, 16), to: String(b.txid).slice(0, 16), feeRate: maxFeeRate }); k.txid = b.txid; }
+      try { const b = await walletRpc('bumpfee', [k.txid, { fee_rate: maxFeeRate }]); say({ dutyDay: 'fee raised', item, slot: k.slot, from: k.txid.slice(0, 16), to: String(b.txid).slice(0, 16), feeRate: maxFeeRate });
+        k.replaced = [...(k.replaced || []), k.txid]; k.txid = String(b.txid); }
       catch (e) { say({ dutyDay: 'fee not raised', item, slot: k.slot, txid: k.txid.slice(0, 16), why: e.message }); }
       k.bumped = true; changed = true;
     }
+    // THE SEATS NAME THE NEW TXID (kanban #1126, 11-04: three fee raises left every seat's /expected and /pending on a dead tx)
+    if (await reannounce(k, v, nowMs)) changed = true;
+    // AND A PUBLICATION NOT IN A BLOCK IS KEPT ALIVE (kanban #1126): in our mempool again, and on the public chain
+    if (pubHeight === null) await keepAlive(k, v, nowMs);
     k.verdict = v;
     if (changed) keep(k);
     return v;
   };
+  const dayOver = (k, nowMs) => Date.parse(k.target) + DUTY_DAY_MS <= nowMs;
+  // A WALLET TRANSACTION'S BYTES (gettransaction hex), else the node's (getrawtransaction - only while it is in the mempool)
+  const hexOf = async (txid) => {
+    try { const t = await walletRpc('gettransaction', [txid]); if (t && t.hex) return { hex: String(t.hex), confirmations: Number(t.confirmations) }; } catch { /* not the wallet's */ }
+    try { return { hex: String(await chainCall('getrawtransaction', [txid])), confirmations: 0 }; } catch { return null; }
+  };
+  /**
+   * RE-ANNOUNCED AFTER A FEE RAISE (kanban #1126): the posting's lines with its new publication to the seats the first announcement went to
+   * (and the seats known now); each seat keeps one publication per series and takes the new one in place of the old. Asked again every
+   * DUTY_RESEND_EVERY_MS while a seat did not take it, at most DUTY_REANNOUNCE_TRIES times, never past the day's end. -> changed
+   */
+  const reannounce = async (k, v, nowMs) => {
+    if (!announce || dry || !k.bumped || !k.lines || !k.lines.length || k.announcedTxid === k.txid) return false;
+    if (v.state === 'dead' || dayOver(k, nowMs)) return false;
+    const a = k.announce && k.announce.txid === k.txid ? k.announce : { txid: k.txid, tries: 0, atMs: 0 };
+    if (a.tries >= DUTY_REANNOUNCE_TRIES || nowMs - a.atMs < DUTY_RESEND_EVERY_MS) return false;
+    const raw = await hexOf(k.txid);
+    if (!raw) { say({ dutyDay: 'not re-announced', item, slot: k.slot, txid: k.txid.slice(0, 16), why: 'its bytes are neither in the wallet nor in the mempool' }); k.announce = { ...a, tries: a.tries + 1, atMs: nowMs, why: 'no bytes' }; return true; }
+    let r; try { r = await announce({ lines: k.lines, tx: raw.hex, targets: k.announcedTo || [] }); } catch (e) { r = { took: 0, of: 0, why: e.message }; }
+    k.announce = { txid: k.txid, tries: a.tries + 1, atMs: nowMs, took: r.took, of: r.of };
+    if (r.of > 0 && r.took === r.of) k.announcedTxid = k.txid;
+    say({ dutyDay: 're-announced', item, slot: k.slot, txid: k.txid.slice(0, 16), replaced: (k.replaced || []).map((x) => x.slice(0, 16)), seats: `${r.took}/${r.of}`, try: k.announce.tries, ...(r.why ? { why: r.why } : {}) });
+    return true;
+  };
+  /**
+   * KEPT ALIVE (kanban #1126): a publication in no block of our chain is sent again, parents first - to our bitcoind when it is in no
+   * mempool there (sendrawtransaction), and to the public chain (publicSend, Esplora) - at most once every DUTY_RESEND_EVERY_MS per tx.
+   * The public send runs behind the pass (short timeouts, never awaited by it). Each attempt and its answer is said.
+   */
+  const lastSent = new Map();
+  const inFlight = new Set();
+  const keepAlive = async (k, v, nowMs) => {
+    if (dry || !k.txid || v.state === 'dead' || dayOver(k, nowMs)) return;
+    if (nowMs - (lastSent.get(k.txid) || 0) < DUTY_RESEND_EVERY_MS) return;
+    const dropped = poolIds !== null && !poolIds.has(k.txid);
+    if (!dropped && !publicSend) return;
+    lastSent.set(k.txid, nowMs);
+    for (const [t] of lastSent) if (nowMs - lastSent.get(t) > DUTY_DAY_MS) lastSent.delete(t);
+    // the publication and its unconfirmed parents the wallet holds, parents first (at most DUTY_RESEND_DEPTH generations)
+    const order = [], seenIds = new Set();
+    const walk = async (txid, depth) => {
+      if (seenIds.has(txid)) return; seenIds.add(txid);
+      const raw = await hexOf(txid);
+      if (!raw || (txid !== k.txid && raw.confirmations !== 0)) return;
+      if (depth < DUTY_RESEND_DEPTH) {
+        let tx = null; try { tx = parseTransaction(fromHex(raw.hex)); } catch { tx = null; }
+        for (const i of (tx && tx.inputs) || []) await walk(toHex(Uint8Array.from(i.previousTxid).reverse()), depth + 1);
+      }
+      order.push({ txid, hex: raw.hex });
+    };
+    await walk(k.txid, 0);
+    if (!order.length || order[order.length - 1].txid !== k.txid) { say({ dutyDay: 'not rebroadcast', item, slot: k.slot, txid: k.txid.slice(0, 16), why: 'its bytes are neither in the wallet nor in the mempool' }); return; }
+    if (dropped) {
+      const answers = [];
+      for (const t of order) { try { answers.push({ txid: t.txid.slice(0, 16), ok: true, answer: String(await chainCall('sendrawtransaction', [t.hex])).slice(0, 16) }); } catch (e) { answers.push({ txid: t.txid.slice(0, 16), ok: false, answer: String(e.message).slice(0, 120) }); } }
+      say({ dutyDay: 'rebroadcast', item, slot: k.slot, txid: k.txid.slice(0, 16), why: 'in no block and not in the mempool', to: 'our bitcoind', answers });
+    }
+    if (publicSend && !inFlight.has(k.txid)) {
+      inFlight.add(k.txid);
+      const p = (async () => {
+        const answers = [];
+        for (const t of order) {
+          let r; try { r = await publicSend(t.hex); } catch (e) { r = { ok: false, status: 0, text: e.message }; }
+          answers.push({ txid: t.txid.slice(0, 16), ok: !!r.ok, status: r.status ?? null, base: r.base || null, answer: String(r.text ?? '').trim().slice(0, 120) });
+        }
+        say({ dutyDay: 'sent to the public chain', item, slot: k.slot, txid: k.txid.slice(0, 16), dropped, answers });
+      })().catch(() => {}).finally(() => { inFlight.delete(k.txid); sending.delete(p); });
+      sending.add(p);
+    }
+  };
+  const sending = new Set();
   // THE DAY'S STATE AND ITS EMERGENCY GRID (kanban #689 c, e): today's day and tomorrow's, every look - a status line when it changes (and
   // every 30 min), the status file tools/duty-status.mjs reads, and an emergency grid of what is left of a day that is dead or not drawable
   // in time. Machines stagger: this one waits its capped duty rank x 20 min after the grid fell due.
@@ -456,5 +543,7 @@ export function createDayDuty(o) {
     } catch (e) { fail(e.message); say({ dutyDay: 'look failed', item, why: e.message }); } finally { busy = false; }
     return seen;
   };
-  return { look, state: () => seen, item, tag, emergencyTag, game, role };
+  // for the tests: the public sends still running
+  const settled = () => Promise.all([...sending]);
+  return { look, state: () => seen, item, tag, emergencyTag, game, role, settled };
 }
