@@ -1033,6 +1033,20 @@ export function openStore(path = ':memory:') {
     -- A LATE LOSER'S SECOND SETTLEMENT (§13A, RULED 2026-09-24, slice C3b-1): one per (round, entry), never a second
     -- row under the round's key - an entry the round's settlement left out while it was in its re-run window, which
     -- then ended FAILED or FORFEIT. The same intent and state as the round's own settlement row.
+    -- A PROTOCOL-27 SETTLEMENT'S BATCH (kanban #1044 B1, rulings #1134 2, #1135): per (round, scope) - '' the round's own, a late entry's hex, a
+    -- federation's hex - the body the seats acked, the real txid, the signer set S and every signature the batch made (the claim, each send's auth,
+    -- each qualifier's presigned refund (c)), with what each signed. Every seat keeps it; a qualifier's client gets its refund (c) from any seat.
+    CREATE TABLE IF NOT EXISTS named_batches (
+      round_id   BLOB NOT NULL,
+      scope      TEXT NOT NULL,
+      body_id    TEXT NOT NULL,
+      txid       TEXT NOT NULL,
+      signers    TEXT NOT NULL,
+      signatures TEXT NOT NULL,
+      slots      TEXT NOT NULL,
+      made_ms    INTEGER NOT NULL,
+      PRIMARY KEY (round_id, scope)
+    );
     CREATE TABLE IF NOT EXISTS late_lock_settlements (
       round_id  BLOB NOT NULL,
       entry_id  BLOB NOT NULL,

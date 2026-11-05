@@ -10352,19 +10352,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!got.ok) return text(res, got.status || 409, got.why);
           // from protocol 26 the commit comes with the seat's signed word, which the asker's StallNote reads to clear it (§5A.3, kanban #1077); below 26 the same bytes and headers as before
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS, ...(got.word ? { 'x-settlement-commit': toHex(got.word) } : {}) });
-          return res.end(Buffer.from(encodeCommitments([got.commitment])));
+          // a protocol-27 round's commit is the seat's nonces, one pair per message of the batch (named-settlement.js, kanban #1044 B1)
+          return res.end(Buffer.from(got.wire || encodeCommitments([got.commitment])));
         }
+        // PROTOCOL 27 (kanban #1044 B1): `named=1` asks carry the signer list and the batch (named-settlement.js); settlement.js refuses either for a round below 27
+        const named = url.searchParams.get('named') === '1';
         if (url.pathname === '/settle-share') {
           let list;
-          try { list = decodeCommitments(new Uint8Array(await read(req))); } catch (e) { return text(res, 400, e.message); }
-          const got = await settlements.share(r8, list, { entry, federation, door: true, ask });
+          if (named) list = new Uint8Array(await read(req));
+          else try { list = decodeCommitments(new Uint8Array(await read(req))); } catch (e) { return text(res, 400, e.message); }
+          const got = await settlements.share(r8, list, { entry, federation, door: true, ask, named });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
-          return res.end(Buffer.from(encodeShare(got.share)));
+          return res.end(Buffer.from(got.wire || encodeShare(got.share)));
         }
         const signature = new Uint8Array(await read(req));
-        if (signature.length !== 64) return text(res, 400, 'a settlement signature is 64 bytes');
-        const got = await settlements.take(r8, signature, { entry, federation });
+        if (!named && signature.length !== 64) return text(res, 400, 'a settlement signature is 64 bytes');
+        const got = await settlements.take(r8, signature, { entry, federation, named });
         return got.ok ? text(res, 201, 'settlement signature kept') : text(res, got.status || 409, got.why);
       }
 

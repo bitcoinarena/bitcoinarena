@@ -524,6 +524,23 @@ export class WinningsSend {
     return { ...refuse(`the ${kind} signature does not verify under the claim key`), withheld: spoilt.map((x) => x.base) };
   }
 
+  /**
+   * THE PRESIGNED REFUND (c) OF AN EXPIRED SEND, SUBMITTED (protocol 27, rulings #1134 2, #1135 2, #1136): the send contract at `at` by Refund into
+   * the pre-expired payout to the qualifier's key from the batch, under the signature S made before the settlement went in.
+   */
+  async submitRefund(roundIdBytes, row, built, at) {
+    const slot = built.batch.slots.findIndex((s) => s.kind === 'refund' && s.outIdx === Number(at.outIdx));
+    if (slot < 0) return refuse('the batch holds no refund (c) for that send');
+    const r = built.batch.slots[slot];
+    const said = await (await this.portFor(roundIdBytes)).arenaSendRefund({ send: at, amountMsat: row.payoutMsat, refundPk: built.claimPk,
+      qualifierPk: fromHex(r.qualifierPk), signature: built.batch.signatures[slot] });
+    if (String(said.txid) !== String(r.txid)) return refuse(`the refund rebuilt here is ${String(said.txid).slice(0, 16)}, not the signed ${String(r.txid).slice(0, 16)}`);
+    if (!said.accepted) return refuse(`the guardians refused the refund (c): ${said.error}`);
+    this.round.markSend({ entryId: row.entryId, attempt: row.attempt, state: 'REFUNDED', txid: String(r.txid), outIdx: 0,
+      why: 'the send expired unpaid: its presigned refund (c) put the winnings in the qualifier\'s own payout contract' });
+    return { ok: true, state: 'REFUNDED', refund: String(r.txid) };
+  }
+
   /** A preimage a peer reports: kept only if it is the invoice's own (sha256 of it is the payment hash). */
   paid(roundIdBytes, entryHex, preimage) {
     const row = this.round.sendAttemptsOf(roundIdBytes).filter((r) => toHex(r.entryId) === entryHex)
@@ -552,8 +569,14 @@ export class WinningsSend {
     for (const row of this.round.sendPlansOf(roundIdBytes)) {
       const entryHex = toHex(row.entryId);
       if (row.state === PAID) { out.push({ entry: entryHex, attempt: row.attempt, state: PAID, already: true }); continue; }
+      if (row.state === 'REFUNDED') { out.push({ entry: entryHex, attempt: row.attempt, state: 'REFUNDED', already: true }); continue; }
       // A HELD DONATION SHARE: kept under the committee key, and the same recipient asked again - once it answers, the
       // re-send spends the held contract into the send to its invoice (the next pass funds and pays it).
+      // A PROTOCOL-27 HELD SHARE OR RE-SEND is signed by S after the settlement: not built yet - the share stays under KeyAgg(S) (#1134 2's residual)
+      if (built.named && (!row.invoice || row.attempt > 0)) {
+        out.push({ entry: entryHex, attempt: row.attempt, ok: false, held: true, why: 'a protocol-27 held share or re-send waits for S to sign it, which is not built yet: it stays under the signer set\'s key' });
+        continue;
+      }
       if (!row.invoice) {
         const at = await this.contractOf(roundIdBytes, row, built);
         if (!at) { out.push({ entry: entryHex, attempt: row.attempt, ok: false, why: 'no held contract for this share' }); continue; }
@@ -577,7 +600,8 @@ export class WinningsSend {
       if (row.attempt === 0 && !row.txid)
         this.round.markSend({ entryId: row.entryId, attempt: 0, state: 'SENDING', txid: toHex(at.txid), outIdx: Number(at.outIdx),
           why: 'the settlement is accepted; the committee signs the invoice and the gateway is asked' });
-      const a = await this.sign(roundIdBytes, row, built, 'auth');
+      // PROTOCOL 27 (ruling #1134 2): the auth was signed by S in the settlement's batch, before the submit - never by a key signed after it
+      const a = built.named ? presignedAuth(built, row) : await this.sign(roundIdBytes, row, built, 'auth');
       if (!a.ok) { out.push({ entry: entryHex, attempt: row.attempt, ...a }); continue; }
       const said = await (await this.portFor(roundIdBytes)).send({ gateway: row.gatewayUrl, outpoint: at, paymentHash: row.paymentHash, amountMsat: row.payoutMsat,
         expiration: row.expiration, claimPk: row.gatewayPk, refundPk: built.claimPk, invoice: row.invoice, auth: a.signature });
@@ -592,6 +616,9 @@ export class WinningsSend {
       this.round.markSend({ entryId: row.entryId, attempt: row.attempt, state: 'SENDING', why: `the gateway did not pay: ${said.why || 'no preimage'}` });
       const ex = await this.expired(roundIdBytes, row, built);
       if (!ex.expired) { out.push({ entry: entryHex, attempt: row.attempt, ok: false, why: said.why, blocksLeft: ex.blocksLeft }); continue; }
+      // PROTOCOL 27: A FAILED SEND TO A QUALIFIER IS NOT RE-SENT (ruling #1134 2): its presigned refund (c) is submitted and the winnings land in the
+      // qualifier's own payout contract. Anyone may submit it; the seat whose turn it is does, once the send expired.
+      if (built.named && !row.donation) { out.push({ entry: entryHex, attempt: row.attempt, ...(await this.submitRefund(roundIdBytes, row, built, at)) }); continue; }
       const re = await this.proposeResend(roundIdBytes, row, built);
       out.push({ entry: entryHex, attempt: row.attempt, ok: false, expired: true, resend: re.ok ? re.row.attempt : re.why });
     }
@@ -600,6 +627,12 @@ export class WinningsSend {
 }
 
 export { plain as sendPlanToJson };
+
+/** The auth S presigned for a send of a protocol-27 settlement, from the batch the seats kept: { ok, signature } or a refusal. */
+export function presignedAuth(built, row) {
+  const k = built.batch.slots.findIndex((s) => s.kind === 'auth' && String(s.paymentHash).toLowerCase() === String(row.paymentHash).toLowerCase());
+  return k < 0 ? refuse('the settlement\'s batch holds no auth for that send') : { ok: true, signature: built.batch.signatures[k] };
+}
 
 /**
  * A RE-SEND'S NONCE: the round's, the entry's and the attempt's, so every signer node rebuilds the same txid - and, for a

@@ -3049,6 +3049,19 @@ export class Round {
     return r ? JSON.parse(r.shares).map((x) => ({ pubkey: new Uint8Array(Buffer.from(x.pubkey, 'hex')), msat: BigInt(x.msat) })) : null;
   }
 
+  /** A protocol-27 settlement's batch (kanban #1044 B1): kept once per (round, scope); a batch over another body replaces it. */
+  putNamedBatch({ roundId, scope = '', bodyId, txid, signers, signatures, slots }) {
+    this.db.prepare('INSERT OR REPLACE INTO named_batches (round_id, scope, body_id, txid, signers, signatures, slots, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(roundId), String(scope), String(bodyId), String(txid), JSON.stringify(signers), JSON.stringify(signatures.map((x) => Buffer.from(x).toString('hex'))),
+        JSON.stringify(slots), this.now());
+  }
+
+  namedBatch(roundIdBytes, scope = '') {
+    const r = this.db.prepare('SELECT body_id, txid, signers, signatures, slots, made_ms FROM named_batches WHERE round_id = ? AND scope = ?').get(Buffer.from(roundIdBytes), String(scope));
+    return r ? { bodyId: r.body_id, txid: r.txid, signers: JSON.parse(r.signers), signatures: JSON.parse(r.signatures).map((x) => new Uint8Array(Buffer.from(x, 'hex'))),
+      slots: JSON.parse(r.slots), madeMs: Number(r.made_ms) } : null;
+  }
+
   /** A late loser's second settlement (slice C3b-1): its intent, then where it stands. One per (round, entry). */
   putLateLockSettlement({ roundId, entryId, txid, message, signature, state, why }) {
     this.db.prepare('INSERT OR REPLACE INTO late_lock_settlements (round_id, entry_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')

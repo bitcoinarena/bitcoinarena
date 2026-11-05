@@ -395,6 +395,35 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
         txid: j.txid || null, message: j.message_hex || null, payout: j.payout || null, preimage: j.preimage || null,
         accepted: j.accepted === true, error: j.error || null, why: j.why || null };
     },
+    /**
+     * A PROTOCOL-27 SETTLEMENT (stake-lock arena-settle, rulings #1131 3, #1135): every Arena lock in as Claim, the payouts out, a payout key Z
+     * (arena-lock.js zKey) standing for the signer set's key. Without `signers`: the BODY and its id, what the seats ack and commit over. With
+     * `signers` (S, ascending seat indices): the real transaction, its txid (`message` the 32 bytes MuSig2 signs) and KeyAgg(S) (`aggKey`, x-only
+     * hex); the tool refuses a real transaction that strips to another body. With `signature`: submitted.
+     */
+    async arenaSettle({ claims, payouts, nonce, signers = null, signature = null }) {
+      const args = ['--mode', 'arena-settle', '--data-dir', dataDir,
+        '--locks', claims.map((c) => `${outpointArg(c.outpoint)}:${toHex(c.preimage)}`).join(','),
+        '--payouts', payouts.map((p) => (p.sent
+          ? `invoice:${p.sent.paymentHash}:${p.sent.gatewayPk}:${toHex(p.payoutPk)}:${p.sent.expiration}:${p.msat}`
+          : `${toHex(p.payoutPk)}:${p.msat}`)).join(','),
+        '--nonce', toHex(nonce), ...(signers ? ['--signers', signers.join(',')] : []), ...(signature ? ['--signature', toHex(signature)] : [])];
+      const j = await run(bin, args, settleTimeoutMs);
+      return { bodyId: String(j.body_id), zSlots: j.z_slots || [], txid: j.txid ? String(j.txid) : null, message: j.message_hex ? String(j.message_hex) : null,
+        aggKey: j.agg_key ? String(j.agg_key) : null, payouts: j.payouts || [], accepted: j.accepted === true, error: j.error || null,
+        verifies: j.signature_verifies_under_agg_key === true, locksSpent: j.locks_spent === true };
+    },
+    /**
+     * THE PRESIGNED REFUND (c) OF A GATEWAY SEND (stake-lock arena-send-refund, rulings #1134 2, #1135 2, #1136): the send contract at `send`
+     * (the real settlement txid, its index) by Refund into one pre-expired payout to `qualifierPk`. Without `signature` the txid S signs; with it,
+     * submitted (anyone, from the send's expiration).
+     */
+    async arenaSendRefund({ send, amountMsat, refundPk, qualifierPk, signature = null }) {
+      const j = await run(bin, ['--mode', 'arena-send-refund', '--data-dir', dataDir, '--send', outpointArg(send), '--amount-msat', String(amountMsat),
+        '--refund-pk', toHex(refundPk), '--qualifier-pk', toHex(qualifierPk), ...(signature ? ['--signature', toHex(signature)] : [])], timeoutMs);
+      return { txid: String(j.txid), message: String(j.message_hex), nonce: String(j.nonce), payoutMsat: j.payout_msat === undefined ? null : BigInt(j.payout_msat),
+        accepted: j.accepted === true, error: j.error || null, verifies: j.signature_verifies === true };
+    },
     /** The guardians' own LNv2 fee rule, off the federation's config (W4). */
     fees() { return feesKept(); },
     async feesRead() {
