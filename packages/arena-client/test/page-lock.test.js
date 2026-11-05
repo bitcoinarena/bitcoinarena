@@ -1387,6 +1387,77 @@ test('the redeem from the seed alone: the signer nodes\' forfeit and the player\
   assert.equal(calls.length, 0, 'a lock no signer node forfeited was sent to the federation');
 });
 
+// AN ARENA LOCK GOES BACK BY arenaRedeem (protocol 27, kanban #1044 B1, ruling #1131 3): the refund and the named signers' forfeit
+// are its witnesses, the guardians hold its fields; a stock lock's refund / redeem would build an OutgoingContract the guardians
+// do not hold. Before: refundStake and redeemStake sent every lock to refund / redeem.
+const ARENA_KEYS = ['79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798', 'c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5',
+  'f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9', 'e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13',
+  '2f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4', 'fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556',
+  '5cbdf0646e5db4eaa398f365f2ea7a0e3d419b7e0330e39ce92bddedcac4f9bc'];
+const arenaFieldsFor = (refundPk, amountMsat = 980000n) => lockFieldsFromJson({ paymentImage: { kind: 'point', bytes: toHex(POINT) }, amountMsat: String(amountMsat),
+  expiration: 464, roundId: toHex(rid), claimKeys: ARENA_KEYS, threshold: 5, refundPk: toHex(refundPk) });
+class ArenaFake {
+  constructor(calls, status = {}) { this.calls = calls; this.status = status; }
+  static calls = [];
+  static async join() { return new ArenaFake(ArenaFake.calls); }
+  async refund() { this.calls.push({ stock: 'refund' }); return JSON.stringify({ accepted: false }); }
+  async redeem() { this.calls.push({ stock: 'redeem' }); return JSON.stringify({ accepted: false }); }
+  async lockStatus() { this.calls.push({ stock: 'lockStatus' }); return JSON.stringify({ block_count: 500, stored: null }); }
+  async arenaLockStatus(txid, outIdx) { this.calls.push({ arenaLockStatus: [txid, outIdx] }); return JSON.stringify({ block_count: 500, stored: { contract_id: 'c1', blocks_left: 0, expiration: 464 } }); }
+  async arenaRedeem(txid, outIdx, witness, key) {
+    this.calls.push({ arenaRedeem: { txid, outIdx, witness: JSON.parse(witness), key } });
+    return JSON.stringify({ forfeit_verifies: JSON.parse(witness).kind === 'cancel' ? true : null, accepted: true, balance_before: 0, balance_after: 978000 });
+  }
+}
+
+test('an Arena lock is refunded and redeemed by arenaRedeem with its witness, never by the stock refund or redeem', async () => {
+  const p = playerFor({ ...round, id: rid }, { seed, curve: pageCurve });
+  const refund = toHex(refundKeyOf(p.pubkey));
+  const fields = arenaFieldsFor(refundKeyOf(p.pubkey));
+  assert.equal(fields.arena, true);
+  const SIG = 'ab'.repeat(64);
+  const signerNodesSay = (forfeits) => async (url) => {
+    if (url.includes('/stake-lock'))
+      return new Response(JSON.stringify(url.includes(`refund=${refund}`) ? [{ entryId: 'ee'.repeat(32), outpoint: `${'cd'.repeat(32)}:0`, fields: lockFieldsToJson(fields), contractId: 'c1' }] : []), { status: 200 });
+    if (url.includes('/forfeit')) {
+      const said = forfeits[new URL(url).host];
+      return said ? new Response(JSON.stringify(said), { status: 200 }) : new Response('not a qualifier', { status: 409 });
+    }
+    return new Response('no', { status: 404 });
+  };
+  // THE REFUND: witness {kind: refund}, the player's own key
+  ArenaFake.calls = [];
+  const r = await refundStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: ArenaFake, nodes: ['http://a.test'], fetcher: signerNodesSay({}) });
+  assert.deepEqual(ArenaFake.calls, [{ arenaRedeem: { txid: 'cd'.repeat(32), outIdx: 0, witness: { kind: 'refund' }, key: toHex(p.secret) } }]);
+  assert.deepEqual(r.refunds.map((x) => x.accepted), [true]);
+  // THE FORFEIT: a signer node whose forfeit names no signers is passed over; the next one's signers and signature are the witness
+  ArenaFake.calls = [];
+  const d = await redeemStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: ArenaFake, nodes: ['http://a.test', 'http://b.test'],
+    fetcher: signerNodesSay({ 'a.test': { signature: SIG, contractId: 'c1', claimPk: '02'.repeat(33) }, 'b.test': { signature: SIG, contractId: 'c1', signers: [0, 1, 2, 4, 6] } }) });
+  assert.deepEqual(ArenaFake.calls, [{ arenaRedeem: { txid: 'cd'.repeat(32), outIdx: 0, witness: { kind: 'cancel', signers: [0, 1, 2, 4, 6], signature: SIG }, key: toHex(p.secret) } }]);
+  assert.deepEqual(d.redeems.map((x) => [x.accepted, x.forfeitFrom]), [[true, 'http://b.test']]);
+  // signers out of order, or none, are no forfeit of an Arena lock
+  ArenaFake.calls = [];
+  await assert.rejects(() => redeemStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: ArenaFake, nodes: ['http://a.test'],
+    fetcher: signerNodesSay({ 'a.test': { signature: SIG, contractId: 'c1', signers: [2, 1, 3, 4, 5] } }) }), /an Arena lock's forfeit names its signers/);
+  assert.deepEqual(ArenaFake.calls, []);
+  // A LOCK CLIENT WITHOUT arenaRedeem (the 1.9 wasm) is refused by name, and the stock refund is never tried
+  class Stock { static async join() { return new Stock(); } async refund() { throw new Error('the stock refund was asked'); } }
+  await assert.rejects(() => refundStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Stock, nodes: ['http://a.test'], fetcher: signerNodesSay({}) }),
+    /cannot take an Arena lock back \(it has no arenaRedeem\)/);
+});
+
+test('refundKept reads an Arena lock with arenaLockStatus and takes it back past its expiry with arenaRedeem', async () => {
+  const p = playerFor({ ...round, id: rid }, { seed, curve: pageCurve });
+  const fields = arenaFieldsFor(refundKeyOf(p.pubkey));
+  const calls = [];
+  const client = new ArenaFake(calls);
+  const got = await refundKept({ round, roundId: rid, seed, curve: pageCurve, client, locks: [{ outpoint: { txid: b32(0xcd), outIdx: 1n }, fields }] });
+  assert.deepEqual(calls, [{ arenaLockStatus: ['cd'.repeat(32), 1] },
+    { arenaRedeem: { txid: 'cd'.repeat(32), outIdx: 1, witness: { kind: 'refund' }, key: toHex(p.secret) } }]);
+  assert.deepEqual([got.ok, got.final, got.locks.map((l) => l.state), String(got.refundedMsat)], [true, true, ['refunded'], '980000']);
+});
+
 test('the join link carries the federation\'s invite, and refuses one that is not an invite code', () => {
   const base = `?round=${'aa'.repeat(32)}&node=http://a.test,http://b.test&bond=http://c.test&advert=${'ab'.repeat(64)}`;
   assert.equal(joinQuery(base).federation, null);
