@@ -192,9 +192,27 @@ const searching = new Map();
 // not searched again; the exports of every search run one after another through `lane`, the waits for a session to finish beside it
 const searched = new Set();
 let lane = Promise.resolve();
+// ONE SESSION COUNT PER FEDERATION AT A TIME, KEPT `COUNT_KEEP_MS` (measured the same day: every lock's wait asked its own count every 20 s, seven seats x four
+// locks of a round - 28 tool runs a 20 s, each a second of CPU)
+const COUNT_KEEP_MS = 15000;
+// ONE EXPORT OF A RANGE SERVES EVERY LOCK SEARCHING IT (the same day: the four locks of a round at seven seats each exported the same 8, 16, ... sessions):
+// the fundings a read named, by (federation, from, count), the last few kept
+const rangesRead = new Map();
+const counts = new Map();
+const countOf = (port, fid, now, keepMs = COUNT_KEEP_MS) => {
+  const kept = counts.get(fid);
+  if (kept && (kept.pending || now() - kept.at < keepMs)) return kept.value;
+  const value = Promise.resolve().then(() => port.sessionCount()).then((c) => Number(c));
+  const entry = { at: now(), value, pending: true };
+  counts.set(fid, entry);
+  value.then(() => { entry.pending = false; entry.at = now(); }, () => { counts.delete(fid); });
+  return value;
+};
+/** ONE SESSION READ AT A TIME IN THIS SEAT: the funding searches and the filer's reads (settlement.js) queue on the same lane. */
+export function inSessionLane(fn) { const turn = lane.then(fn); lane = turn.catch(() => {}); return turn; }
 /** For tests: forget which locks were searched. */
-export function forgetLockSearches() { searched.clear(); searching.clear(); }
-export function keepLockSessionFloor({ round, port, roundId, federationId, outpoint, waitMs = 20000, maxWaitMs = 3600000, now = () => Date.now(), log = (l) => console.log(l), sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+export function forgetLockSearches() { searched.clear(); searching.clear(); counts.clear(); rangesRead.clear(); }
+export function keepLockSessionFloor({ round, port, roundId, federationId, outpoint, waitMs = 20000, maxWaitMs = 3600000, countKeepMs = COUNT_KEEP_MS, now = () => Date.now(), log = (l) => console.log(l), sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
   if (!round.keepFundingSessionFloor || !round.fundingSessionFloor || !port || typeof port.sessionCount !== 'function'
     || typeof port.sessionExport !== 'function' || typeof port.arenaClaimRead !== 'function' || !outpoint || !(outpoint.txid instanceof Uint8Array)) return Promise.resolve(null);
   const fid = hexOf(federationId);
@@ -203,15 +221,21 @@ export function keepLockSessionFloor({ round, port, roundId, federationId, outpo
   if (searching.has(key)) return searching.get(key);
   if (searched.has(key)) return Promise.resolve(null);
   searched.add(key);
-  const foundIn = async (from) => {
-    const ex = await port.sessionExport({ from });
-    const read = await port.arenaClaimRead(claimReadInput({ config: ex.config, firstSession: ex.firstSession, sessions: ex.sessions }));
-    const f = read && (read.fundings || []).find((x) => String(x.outpoint).toLowerCase() === want);
-    return f ? Number(f.session) : null;
+  const foundIn = async (from, count) => {
+    const rangeKey = `${fid}:${from}:${count}`;
+    let fundings = rangesRead.get(rangeKey);
+    if (!fundings) {
+      const ex = await port.sessionExport({ from });
+      const read = await port.arenaClaimRead(claimReadInput({ config: ex.config, firstSession: ex.firstSession, sessions: ex.sessions }));
+      fundings = new Map(((read && read.fundings) || []).map((x) => [String(x.outpoint).toLowerCase(), Number(x.session)]));
+      rangesRead.set(rangeKey, fundings);
+      if (rangesRead.size > 64) rangesRead.delete(rangesRead.keys().next().value);
+    }
+    return fundings.has(want) ? fundings.get(want) : null;
   };
   const run = (async () => {
     try {
-      const count0 = Number(await port.sessionCount());
+      const count0 = Number(await countOf(port, fid, now, countKeepMs));
       if (!Number.isInteger(count0)) return null;
       // THE SESSION THE FUNDING SITS IN FINISHES FIRST (measured on the #1044 devnet 2026-11-05: sessions of ~4 min, and a search that gave up after 2 min
       // logged every lock of the round "not within 1024 sessions")
@@ -219,20 +243,18 @@ export function keepLockSessionFloor({ round, port, roundId, federationId, outpo
       for (const until = now() + maxWaitMs; count <= count0;) {
         if (now() > until) { log(`[slash] ${hexOf(roundId).slice(0, 16)}: no session of federation ${fid.slice(0, 16)} finished after ${count0} within ${Math.round(maxWaitMs / 60000)} min: the funding of lock ${want.slice(0, 20)} is not read, nothing is filed on it`); return null; }
         await sleep(waitMs);
-        const c = Number(await port.sessionCount());
+        const c = Number(await countOf(port, fid, now, countKeepMs));
         if (Number.isInteger(c)) count = c;
       }
       const readBack = async () => {
         let found = null;
         for (let step = FUNDING_RECENT_SESSIONS; found === null && step <= FUNDING_SEARCH_SESSIONS; step *= 2) {
-          found = await foundIn(Math.max(0, count - step));
+          found = await foundIn(Math.max(0, count - step), count);
           if (count - step <= 0) break;
         }
         return found;
       };
-      const turn = lane.then(readBack);
-      lane = turn.catch(() => {});
-      const at = await turn;
+      const at = await inSessionLane(readBack);
       if (at === null) { log(`[slash] ${hexOf(roundId).slice(0, 16)}: the funding of lock ${want.slice(0, 20)} is not within ${FUNDING_SEARCH_SESSIONS} sessions of federation ${fid.slice(0, 16)}: that lock is unread, nothing is filed on it`); return null; }
       round.keepFundingSessionFloor(roundId, fid, at);
       return at;

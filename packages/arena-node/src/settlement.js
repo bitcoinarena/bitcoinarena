@@ -36,6 +36,7 @@ import { slashHoldsOnTable, encodeSlashProof, joinTableSlashEvidence } from '../
 import { joinNamedClaimEvidence, namedClaimProofBody, claimReadInput, namedOutpointText, NAMED_ROW_OFF_TABLE, NAMED_ROW_FORFEIT, NAMED_ROW_PAYEE } from '../../arena-protocol/src/named-claim-proof.js';
 import { offTableClaims, forfeitsOfLostEntries } from '../../arena-protocol/src/named-claim-offence.js';
 import { unpayableClaims } from '../../arena-protocol/src/named-claim-payees.js';
+import { inSessionLane } from './stake-lock-signer-node.js';
 import { splitByFederation } from '../../arena-protocol/src/federation-settlement.js';
 import { pluginForRound, payoutRuleOfRound } from './plugins.js';
 import { heldOutcomes, marketVoidOf, attestedTable } from './game-market.js';
@@ -1726,8 +1727,11 @@ export class LockSettlement {
         }
         // FROM THE BOUND, NEVER SEARCHING (ruling #1139 B): the bound is the funding session the seat found when it verified the lock. A spend of
         // this round's lock whose funding lies below it names no keys and is not judged - nothing is held against a seat for it
-        ex = await port.sessionExport({ from: floor });
-        read = await port.arenaClaimRead(claimReadInput({ config: ex.config, firstSession: ex.firstSession, sessions: ex.sessions, roundId: roundIdBytes }));
+        // ON THE SEAT'S ONE SESSION LANE (stake-lock-signer-node.js inSessionLane): never beside a funding search or another read
+        ({ ex, read } = await inSessionLane(async () => {
+          const e = await port.sessionExport({ from: floor });
+          return { ex: e, read: await port.arenaClaimRead(claimReadInput({ config: e.config, firstSession: e.firstSession, sessions: e.sessions, roundId: roundIdBytes })) };
+        }));
         const unfunded = read ? (read.spends || []).filter((sp) => !sp.lock && lockOf.has(String(sp.outpoint).toLowerCase())) : [];
         for (const sp of unfunded) report.refused.push(`${fid.slice(0, 16)}: lock ${String(sp.outpoint).slice(0, 20)} was funded below the bound ${floor}: unread`);
       } catch (e) { report.refused.push(`${fid.slice(0, 16)}: the sessions were not read: ${e.message}`); continue; }

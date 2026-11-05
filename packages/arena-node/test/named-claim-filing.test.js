@@ -192,14 +192,14 @@ test('a verified lock reads back, doubling, to its own funding session and keeps
   const asked = [];
   // funded 41 sessions back: nothing read until the session running at verification (100) finished, then 8, 16, 32, 64 back from 101
   forgetLockSearches();
-  const got = await keepLockSessionFloor({ round, port: fundingPort({ fundedIn: 60, count: 100, asked, finishLater: 1 }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep });
+  const got = await keepLockSessionFloor({ round, port: fundingPort({ fundedIn: 60, count: 100, asked, finishLater: 1 }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep, countKeepMs: 0 });
   assert.equal(got, 60);
   assert.deepEqual(asked.filter((a) => a[0] === 'export').map((a) => a[1]), [93, 85, 69, 37]);
   assert.deepEqual(asked.slice(0, 3).map((a) => a[0]), ['count', 'count', 'export'], 'no read before a session after the verification finished');
   assert.equal(new Round(db).fundingSessionFloor(RID, FID), 60, 'the bound is the funding session, and it survives a restart');
   // a later lock funded higher leaves the lower bound; one funded lower moves it down
   forgetLockSearches();
-  await keepLockSessionFloor({ round, port: fundingPort({ fundedIn: 99, count: 100, asked: [], finishLater: 1 }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep });
+  await keepLockSessionFloor({ round, port: fundingPort({ fundedIn: 99, count: 100, asked: [], finishLater: 1 }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep, countKeepMs: 0 });
   assert.equal(round.fundingSessionFloor(RID, FID), 60);
   round.keepFundingSessionFloor(RID, FID, 4);
   assert.equal(round.fundingSessionFloor(RID, FID), 4);
@@ -210,14 +210,14 @@ test('a funding in the session still running is found when it finishes; one not 
   const asked = [];
   // the funding sits in session 100, the one running at verification
   forgetLockSearches();
-  const got = await keepLockSessionFloor({ round, port: fundingPort({ fundedIn: 100, count: 100, asked, finishLater: 1 }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep });
+  const got = await keepLockSessionFloor({ round, port: fundingPort({ fundedIn: 100, count: 100, asked, finishLater: 1 }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep, countKeepMs: 0 });
   assert.equal(got, 100);
   assert.equal(round.fundingSessionFloor(RID, FID), 100);
   // funded 2000 sessions back: no farther than 1024, nothing kept, logged
   const round2 = new Round(openStore(':memory:'));
   const said = [], asked2 = [];
   forgetLockSearches();
-  const none = await keepLockSessionFloor({ round: round2, port: fundingPort({ fundedIn: 1000, count: 3000, asked: asked2, finishLater: 1 }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep, log: (l) => said.push(l) });
+  const none = await keepLockSessionFloor({ round: round2, port: fundingPort({ fundedIn: 1000, count: 3000, asked: asked2, finishLater: 1 }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep, countKeepMs: 0, log: (l) => said.push(l) });
   assert.equal(none, null);
   assert.equal(round2.fundingSessionFloor(RID, FID), null);
   assert.equal(Math.min(...asked2.filter((a) => a[0] === 'export').map((a) => a[1])), 3001 - 1024);
@@ -227,12 +227,12 @@ test('a funding in the session still running is found when it finishes; one not 
   const stuck = [];
   forgetLockSearches();
   assert.equal(await keepLockSessionFloor({ round: round2, port: fundingPort({ fundedIn: 5, count: 5, asked: stuck }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint,
-    sleep: async (ms) => { t += ms; }, now: () => t, waitMs: 1000, maxWaitMs: 5000, log: (l) => said.push(l) }), null);
+    sleep: async (ms) => { t += ms; }, now: () => t, countKeepMs: 0, waitMs: 1000, maxWaitMs: 5000, log: (l) => said.push(l) }), null);
   assert.equal(stuck.filter((a) => a[0] === 'export').length, 0);
   assert.match(said.join('\n'), /no session of federation .* finished after 5 within 0 min/);
   // a federation that cannot be read keeps nothing and fails nothing
   forgetLockSearches();
-  assert.equal(await keepLockSessionFloor({ round: round2, port: { ...fundingPort({ fundedIn: 1, count: 3, asked: [] }), sessionCount: async () => { throw new Error('down'); } }, roundId: RID, federationId: b32(0x77), outpoint: E[0].stakeLockOutpoint, sleep: noSleep }), null);
+  assert.equal(await keepLockSessionFloor({ round: round2, port: { ...fundingPort({ fundedIn: 1, count: 3, asked: [] }), sessionCount: async () => { throw new Error('down'); } }, roundId: RID, federationId: b32(0x77), outpoint: E[0].stakeLockOutpoint, sleep: noSleep, countKeepMs: 0 }), null);
 });
 
 test('the filer reads from the bound once and never searches; a lock funded below it is unread, not filed', async () => {
@@ -303,16 +303,16 @@ test('a lock is searched once: a second verification of it reads nothing, and se
   const round = new Round(openStore(':memory:'));
   const asked = [];
   const port = fundingPort({ fundedIn: 98, count: 100, asked, finishLater: 1 });
-  assert.equal(await keepLockSessionFloor({ round, port, roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep }), 98);
+  assert.equal(await keepLockSessionFloor({ round, port, roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep, countKeepMs: 0 }), 98);
   const before = asked.length;
-  assert.equal(await keepLockSessionFloor({ round, port, roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep }), null);
+  assert.equal(await keepLockSessionFloor({ round, port, roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep, countKeepMs: 0 }), null);
   assert.equal(asked.length, before, 'no count, no export for a lock already searched');
   // two locks at once: never two exports running together
   let running = 0, most = 0;
   const slow = { ...fundingPort({ fundedIn: 40, count: 100, asked: [], finishLater: 2 }) };
   const exp = slow.sessionExport;
   slow.sessionExport = async (a) => { running += 1; most = Math.max(most, running); await new Promise((r) => setTimeout(r, 5)); try { return await exp(a); } finally { running -= 1; } };
-  await Promise.all([E[0].feeLockOutpoint, E[1].stakeLockOutpoint].map((outpoint) => keepLockSessionFloor({ round, port: slow, roundId: RID, federationId: TEST_FEDERATION_ID, outpoint, sleep: noSleep })));
+  await Promise.all([E[0].feeLockOutpoint, E[1].stakeLockOutpoint].map((outpoint) => keepLockSessionFloor({ round, port: slow, roundId: RID, federationId: TEST_FEDERATION_ID, outpoint, sleep: noSleep, countKeepMs: 0 })));
   assert.equal(most, 1);
 });
 
@@ -325,4 +325,34 @@ test('a filer pass with no session finished since its last read of the round exp
   const report = await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
   assert.equal(asked.filter((a) => a[0] === 'export').length, 1, 'the second pass reads the count only');
   assert.match(report.refused.join('; '), /no session finished since the last read \(7\)/);
+});
+
+test('the searches of several locks share one session count of their federation, and one export of each range', async () => {
+  forgetLockSearches();
+  const round = new Round(openStore(':memory:'));
+  const asked = [];
+  let t = 0;
+  const locks = [E[0].stakeLockOutpoint, E[0].feeLockOutpoint, E[1].stakeLockOutpoint, E[1].feeLockOutpoint];
+  const base = fundingPort({ fundedIn: 98, count: 100, asked, finishLater: 1 });
+  // all four funded in session 98
+  const port = { ...base, arenaClaimRead: async (input) => { const r = await base.arenaClaimRead(input); return { ...r, fundings: r.fundings.length ? locks.map((o) => ({ session: 98, outpoint: op(o), round_id: toHex(RID) })) : [] }; } };
+  await Promise.all(locks.map((outpoint) => keepLockSessionFloor({ round, port, roundId: RID, federationId: TEST_FEDERATION_ID, outpoint, now: () => t, sleep: async (ms) => { t += ms; } })));
+  // one count at the start for all four, and one after the wait (20 s > the 15 s it is kept)
+  assert.ok(asked.filter((a) => a[0] === 'count').length <= 2, `${asked.filter((a) => a[0] === 'count').length} counts`);
+  // and one export of the range for all four (each funded in session 98, read from 93 = 101 - 8)
+  assert.deepEqual(asked.filter((a) => a[0] === 'export').map((a) => a[1]), [93]);
+});
+
+test('a filer read and a funding search of the same seat never run their tool at the same time', async () => {
+  forgetLockSearches();
+  let running = 0, most = 0;
+  const slow = (port) => ({ ...port, sessionExport: async (a) => { running += 1; most = Math.max(most, running); await new Promise((r) => setTimeout(r, 10)); try { return await port.sessionExport(a); } finally { running -= 1; } } });
+  const round = fakeRound();
+  const s = new LockSettlement(round, { port: slow(fakePort([])), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
+  await Promise.all([
+    s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null }),
+    keepLockSessionFloor({ round: new Round(openStore(':memory:')), port: slow(fundingPort({ fundedIn: 40, count: 100, asked: [], finishLater: 1 })), roundId: RID, federationId: TEST_FEDERATION_ID,
+      outpoint: E[1].feeLockOutpoint, sleep: noSleep, countKeepMs: 0 }),
+  ]);
+  assert.equal(most, 1);
 });
