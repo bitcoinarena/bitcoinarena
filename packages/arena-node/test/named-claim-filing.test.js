@@ -72,6 +72,7 @@ function fakeRound({ floor = 3 } = {}) {
     fundingSessionFloor: (rid, fid) => (floor !== null && fid === FID ? floor : null),
     fraudProof: (_rid, _eid, evidence) => { const bytes = Uint8Array.from([0x43, ...evidence]); return { id: sha256(bytes), bytes }; },
     fileNamedClaimProof: (rid, who, row, id, bytes) => { filed.push({ who: toHex(who), row, id: toHex(id), bytes }); return 1; },
+    namedClaimProofs: () => filed.map((f) => ({ nodePubkey: Buffer.from(f.who, 'hex'), row: f.row, bytes: f.bytes })),
   };
 }
 const xhex = (s) => toHex(s.pubkey);
@@ -374,4 +375,18 @@ test('a level-1 proof (a) is not judged by a tool run: the claim spent its locks
   assert.equal(said.verdict, undefined);
   assert.match(said.why, /rebuilt offline/);
   assert.equal(toolRuns, 0);
+});
+
+test('the same offence is filed once, though a later pass reads one session more', async () => {
+  const round = fakeRound();
+  let count = 7;
+  const port = { ...fakePort([]), sessionCount: async () => count };
+  const s = new LockSettlement(round, { port, curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
+  await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
+  const first = round.filed.length;
+  assert.ok(first > 0);
+  count = 8;
+  const again = await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
+  assert.equal(round.filed.length, first, 'nothing new is kept');
+  assert.equal(again.filed.length, 0);
 });
