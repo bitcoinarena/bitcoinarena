@@ -223,7 +223,7 @@ export async function judgeTableProof({ evidence, roundIdBytes, contract, manife
  * claimed locks' contracts from the proof's own sessions, since its claim spent them at the guardians). `claimRead` or `bodyOf` answering null is "cannot say";
  * `bodyOf` answering { ok: false, why } is a proof whose own bytes do not rebuild that body.
  */
-export async function judgeNamedClaimProof({ evidence, roundIdBytes, contract, manifest = null, committee, advert, bondOutpoint, claimRead, bodyOf = async () => null, feesOf = () => null, payees = null, ownEntries = null }) {
+export async function judgeNamedClaimProof({ evidence, roundIdBytes, contract, manifest = null, committee, advert, bondOutpoint, claimRead, bodyOf = async () => null, feesOf = () => null, payees = null, ownEntries = null, forfeitAllowed = null }) {
   const no = (why) => ({ slashed: false, why });
   let got;
   try { got = splitNamedClaimEvidence(evidence); } catch (e) { return no(`not a proof of a named claim: ${e.message}`); }
@@ -243,7 +243,7 @@ export async function judgeNamedClaimProof({ evidence, roundIdBytes, contract, m
       else bodyRefused = body.why;
     } else bodyRefused = built.why;
   }
-  const held = slashHoldsOnNamedClaim({ got, read, contract, committee, verify: verifySchnorr, feesOf, manifest, rebuiltBodyId, bodyCannotSay, bodyRefused, payees, ownEntries,
+  const held = slashHoldsOnNamedClaim({ got, read, contract, committee, verify: verifySchnorr, feesOf, manifest, rebuiltBodyId, bodyCannotSay, bodyRefused, payees, ownEntries, forfeitAllowed,
     advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
   if (held.slashed === undefined) return { slashed: undefined, why: held.why };
   if (!held.slashed) return no(held.why);

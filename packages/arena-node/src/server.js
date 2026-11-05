@@ -186,7 +186,7 @@ import { createSlashStarter } from './slash-start-run.js';
 import { createProofJudge } from './proof-judge.js';
 import { coreForRound, settledEntries, slashLosses } from './arbiter.js';
 import { createSlashRelease } from './slash-release-run.js';
-import { slashHoldsOnDoubleSign } from '../../arena-protocol/src/slash.js';
+import { slashHoldsOnDoubleSign, OFFENCES } from '../../arena-protocol/src/slash.js';
 import { bondPresigDigest, holdClocksOf } from '../../arena-protocol/src/slash-presig.js';
 import { SOURCE_ENTRIES } from '../../arena-protocol/src/market-sources.js';
 import { CLOCKS as FEDERATION_CLOCKS, bondLapseOf } from '../../arena-protocol/src/federation-slash.js';
@@ -305,7 +305,7 @@ import { trancheIdOf } from './funding-book.js';
 import { moveTargets } from './reserve-move.js';
 import { FUNDING_SCHEDULES, activeNodesBefore, activeInWeeks, capStands, encodeFundingProposal, fundingProposalId, encodeFundingSignal, fundingSignalId, encodeFundingComment, fundingCommentId } from '../../arena-protocol/src/funding.js';
 import { RESERVES_VERSION as ITEM_RESERVES_FROM } from '../../arena-protocol/src/constants.js';
-import { Forfeit } from './forfeit.js';
+import { Forfeit, lostForfeitAllowed } from './forfeit.js';
 import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
 import { decodeCommitments, encodeCommitments, encodeShare } from './pool-wire.js';
 import { setTagNetwork } from '../../arena-protocol/src/tag-switch.js';
@@ -4284,6 +4284,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     claimRead: (input) => readClaims(process.env.ARENA_STAKE_LOCK_BIN || null, input),
     // A LEVEL-1 PROOF (a)'s CORRECT BODY, rebuilt offline from the locks the proof's sessions funded (its claim spent them at the guardians)
     bodyOf: (input, build) => readBody(process.env.ARENA_STAKE_LOCK_BIN || null, input, build),
+    // ROW (b): a forfeit the protocol allows (ENTRY_VOID, nobody won) is judged false here, on this seat's own record
+    lostForfeitOf: (_contract, rid, eid) => lostForfeitAllowed(round, rid, eid),
     // LEVEL 2 OF A NAMED CLAIM (rulings #1138 2, #1140): who the round may pay, as the filer reads it, and the Entry Contracts this seat holds of the round
     payeesOf: (contract, rid) => namedPayeesFor(contract, rid), entriesOf: (rid) => (round.get(rid) ? round.entriesOf(rid).map((x) => x.entry) : null),
     theft: async (bytes, beforeHeight) => (fedRecords ? fedRecords.theftVerdict(bytes, (inv) => { const f = fedOfInvite(inv); return f ? fromHex(String(f)) : null; }, beforeHeight) : { verdict: undefined, why: 'this seat holds no federation records yet' }),
@@ -4501,7 +4503,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   slashRelease = holdWatch ? createSlashRelease({ key: round.pubkey, secret: round.identity.secret, networkId: censusKey.networkId, clocks: holdClocksOf(censusKey.networkId), db: round.db, tweakPoint,
     tipHeight: censusKey.tipHeight, entriesAtTip: slashEntriesAtTip, rawTx: slashRawTx, unspent: async (txid, vout) => (typeof chainTxOut === 'function' ? !!(await chainTxOut(txid, vout).catch(() => null)) : false),
     fetchProof: (id) => proofBytesFetched(id), judge: judgeProofBytes, panelsOf: (contract, rid) => roster.slashPanelsFor(rid, { posted: contract }), seatsOf: async (contract, rid) => roundSeatKeys(contract, rid),
-    lossesFor: slashLossesFor, federations: slashFederations, retired: String(process.env.ARENA_ARBITER_RETIRED || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
+    lossesFor: slashLossesFor, handles: (held) => !held || !held.offence || OFFENCES.includes(held.offence), federations: slashFederations, retired: String(process.env.ARENA_ARBITER_RETIRED || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
     portFor: (fid) => portOfFederation(fromHex(fid)), scriptOf: (address) => addressScript(address, HRP_OF[censusKey.network] || 'tb'),
     reserveKeyOf: (fid) => reserveKeyFor(fid), keepReserveRow: (row) => round.putDonationOutputs([row]), urlOf: (k) => {
       // A PANEL MEMBER THE CENSUS AT THE TIP DOES NOT NAME IS ASKED AT ITS ANNOUNCED ADDRESS (kanban #972, measured 11-04 on the slash-release regtest: the

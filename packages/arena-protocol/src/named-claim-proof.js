@@ -125,10 +125,11 @@ export const claimReadInput = ({ config, firstSession, sessions, roundId = null 
  * (claimReadInput), or null where no tool runs here (then nothing is held: the caller answers "cannot say"); `contract` the round's, decoded;
  * `committee` the round's settlement seats (keys); `advert` the accused's advertisement; `verify(sig, msg, key)` BIP-340; `feesOf(federation hex)`;
  * `manifest` the round's game's; `rebuiltBodyId` (a) the judge's own rebuild of the shown table's body (hex), or null; with it null, `bodyCannotSay` why
- * the judge could not rebuild it (no rebuilder there: "cannot say", never false) and `bodyRefused` why the proof's own bytes do not rebuild it (false).
+ * the judge could not rebuild it (no rebuilder there: "cannot say", never false) and `bodyRefused` why the proof's own bytes do not rebuild it (false);
+ * (b) `forfeitAllowed` the judge's own reading of whether the forfeit is one the protocol allows ({ allowed: true | false | null, why }), or null where not read.
  * Returns { slashed: false, why } or { slashed: true, offence, bond, why }.
  */
-export function slashHoldsOnNamedClaim({ got, read, contract, committee, advert, verify, feesOf = () => null, manifest = null, rebuiltBodyId = null, bodyCannotSay = null, bodyRefused = null, payees = null, ownEntries = null }) {
+export function slashHoldsOnNamedClaim({ got, read, contract, committee, advert, verify, feesOf = () => null, manifest = null, rebuiltBodyId = null, bodyCannotSay = null, bodyRefused = null, payees = null, ownEntries = null, forfeitAllowed = null }) {
   const no = (why) => ({ slashed: false, why });
   if (!got || !got.proof) return no('no proof');
   const { proof } = got;
@@ -197,6 +198,10 @@ export function slashHoldsOnNamedClaim({ got, read, contract, committee, advert,
     if (!theirs) return no('the signature on the result is not the accused node\'s');
     if (body.outcome === VOID) return no('a VOID is not a lost result');
     if (isQualifier(body, contract.minScore)) return no('the accused signed that entry as a qualifier');
+    // A FORFEIT THE PROTOCOL ALLOWS (kanban #1044: ENTRY_VOID's refund, nobody won's stake back) is no offence, whatever the accused signed; the judge's
+    // own record says which (`forfeitAllowed`, arena-node forfeit.js lostForfeitAllowed), and a judge that cannot read it yet cannot say
+    if (forfeitAllowed && forfeitAllowed.allowed === true) return no(`that forfeit is one the protocol allows: ${forfeitAllowed.why}`);
+    if (forfeitAllowed && forfeitAllowed.allowed === null) return { slashed: undefined, why: `whether that forfeit was allowed cannot be read here: ${forfeitAllowed.why}` };
     const locks = new Set([namedOutpointText(entry.stakeLockOutpoint), namedOutpointText(entry.feeLockOutpoint)].filter(Boolean));
     const found = forfeitsOfLostEntries({ spends: spends.filter((s) => locks.has(nlow(s.outpoint))), entryOf: () => eid, lostBy: () => [accused] });
     if (!found.length) return no('that transaction forfeits no lock of the entry naming the accused');

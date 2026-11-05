@@ -127,7 +127,8 @@ test('a fallback carries the same OP_RETURN fields and a table of the same forma
 });
 
 // ---- THE RUN: eight panel members, each with its own store, reading each other at their doors ----
-function world({ lossesOk = true, federationsOf = async () => federations, tip = () => START_HEIGHT + 1, cut = () => false, serve = (k, body) => body } = {}) {
+function world({ lossesOk = true, federationsOf = async () => federations, tip = () => START_HEIGHT + 1, cut = () => false, serve = (k, body) => body, handles = undefined, logs = null } = {}) {
+  let lossReads = 0;
   const members = [...A, ...B];
   const runs = new Map();
   const sent = [], kept = [], paid = [];
@@ -155,11 +156,11 @@ function world({ lossesOk = true, federationsOf = async () => federations, tip =
     runs.set(p.hex, createSlashRelease({ key: p.key, secret: p.secret, networkId: NETWORK_ID_REGTEST, clocks, db: new DatabaseSync(':memory:'), tweakPoint,
       tipHeight: async () => tip(), entriesAtTip: async () => entries, rawTx, unspent: async () => true,
       fetchProof: async () => proofBytes, judge: Object.assign(async () => ({ verdict: true, held: { offence: 'X' } }), { read: () => ({ ok: true, roundId, contract }) }),
-      panelsOf: () => ({ ok: true, ...panels }), lossesFor: async () => (lossesOk ? { ok: true, losses: new Map([[player.hex, LOSS]]), entryIds: new Map([[player.hex, b32(0x31)]]) } : { ok: false, why: 'no seat answers' }),
+      panelsOf: () => ({ ok: true, ...panels }), ...(handles ? { handles } : {}), ...(logs ? { log: (l) => logs.push(l) } : {}), lossesFor: async () => (lossReads++, lossesOk ? { ok: true, losses: new Map([[player.hex, LOSS]]), entryIds: new Map([[player.hex, b32(0x31)]]) } : { ok: false, why: 'no seat answers' }),
       federations: federationsOf, portFor: async () => port, scriptOf: (address) => fromHex(`5120${toHex(taggedHash('ARENA/test/Address', new TextEncoder().encode(address)))}`),
       reserveKeyOf: async (fid) => reserveKey(fid), keepReserveRow: (row) => kept.push({ carrier: p.hex, row }), urlOf, send: async (hex) => { sent.push({ by: p.hex, hex }); return toHex([...parseTransaction(fromHex(hex)).txid].reverse()); }, fetchFn: fetchOf(p.hex) }));
   }
-  return { runs, members, sent, kept, paid };
+  return { runs, members, sent, kept, paid, lossReads: () => lossReads };
 }
 
 test('eight panel members build one table, read each other\'s signatures, and the release goes out with exactly t of each', async () => {
@@ -296,4 +297,16 @@ test('#1130: a reserve key still unread at the start\'s confirmation + slash_ret
   assert.deepEqual(t.outputs.map((o) => o.pays), ['filer', 'player_carrier', 'escrow'], 'the filer and the players unchanged, the whole reserves\' part in the escrow - fedA\'s too, whose key was read');
   assert.equal(t.reserves.length, 0);
   assert.equal(t.outputs[1].value * 1000n, LOSS + CARRIER_MARGIN, 'the players\' output is the loss plus the margin, as before the cap');
+});
+
+test('#1044: a judged start whose offence no loss rule reads is dropped once - no table built, no losses read, said once - and never retried', async () => {
+  const logs = [];
+  const w = world({ handles: (held) => held.offence !== 'X', logs, tip: () => START_HEIGHT + clocks.fallbackBlocks + 1 });
+  const said = [];
+  for (let k = 0; k < 3; k++) for (const p of w.members) said.push(...(await w.runs.get(p.hex).pass()));
+  assert.equal(w.lossReads(), 0, 'no build asks for the losses');
+  assert.equal(w.sent.length, 0);
+  assert.ok(w.members.every((p) => !w.runs.get(p.hex).served(startHex).release && !w.runs.get(p.hex).served(startHex).fallback));
+  assert.equal(said.filter((r) => r.dropped).length, w.members.length, 'dropped once at each member, on its first pass');
+  assert.equal(logs.filter((l) => /dropped from release and fallback/.test(l)).length, w.members.length, 'one line each');
 });
