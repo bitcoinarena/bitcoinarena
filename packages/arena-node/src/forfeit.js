@@ -58,6 +58,34 @@ const pubnonceOf = (c) => Uint8Array.from([...c.hiding, ...c.binding]);
 const partialBytes = (share) => Uint8Array.from(Buffer.from(BigInt(share).toString(16).padStart(64, '0'), 'hex'));
 const partialScalar = (bytes) => BigInt('0x' + (Buffer.from(bytes).toString('hex') || '0'));
 /** The forfeit as the signature door and the store carry it: 64 bytes, then (named) u8 t and the t ascending seat indices. */
+/**
+ * A FORFEIT THE PROTOCOL ALLOWS OF AN ENTRY SIGNED LOST (kanban #1044 B1, offence row (b)): the forfeit paths above that hand a non-qualifying entry's stake
+ * back to its own player, read off this seat's own record - so the filer files none of them and the judge holds none of them. In a game round they are:
+ *  - ENTRY_VOID (§16, §23.2): the outage refund, whatever a seat signed before the void;
+ *  - NOBODY WON (nobodyWonReturn, 2026-10-03): the round's settlement paid no winner, so no loser's lock is anyone else's - every one but a walk-away's
+ *    (FORFEIT, never a refund) comes back at settlement. Measured 2026-11-05 on s28a, round b94a4863: the one entry FAILED, five seats forfeited its stake
+ *    back as ruled, and six seats filed it as offence (b) - five honest bonds started.
+ * The other forfeit doors name no entry signed lost: a refused round's lock (no entry, no result), and a market's order and refund doors (no run, no result).
+ * Answers { allowed: true, why }, { allowed: false }, or { allowed: null, why } where this seat cannot read it yet (its settlement not ACCEPTED, an entry
+ * still in its window): the filer then waits, and the judge cannot say. `finalityOf` / `settledOf`: finality.js's, injected by tests.
+ */
+export function lostForfeitAllowed(round, roundIdBytes, entryIdBytes, { finalityOf = resultFinality, settledOf = settledResult } = {}) {
+  if (round.entryVoid && round.entryVoid(entryIdBytes)) return { allowed: true, why: 'the entry is ENTRY_VOID here: its stake comes back as the outage refund' };
+  if (!round.get(roundIdBytes)) return { allowed: null, why: 'this seat does not hold that round, so it cannot read whether anybody won' };
+  let result = null;
+  try { const standing = finalityOf(round, roundIdBytes, entryIdBytes); result = standing.state === FINAL ? settledOf(round, roundIdBytes, entryIdBytes, standing) : null; } catch { result = null; }
+  if (result && result.outcome === FORFEIT_OUTCOME) return { allowed: false };
+  if (stateOf(round, roundIdBytes) !== 'ACCEPTED') return { allowed: null, why: 'the round\'s settlement is not ACCEPTED here, so whether anybody won is not read yet' };
+  const shares = round.lockSettlementShares ? round.lockSettlementShares(roundIdBytes) : null;
+  if (!shares) return { allowed: null, why: 'this seat keeps no record of what its settlement paid' };
+  if (shares.length) return { allowed: false };
+  for (const e of round.entriesOf(roundIdBytes)) {
+    let st; try { st = finalityOf(round, roundIdBytes, e.entryId).state; } catch { return { allowed: null, why: 'an entry\'s result cannot be read here' }; }
+    if (st === SUSPENDED || st === PROVISIONALLY_FINAL) return { allowed: null, why: 'an entry of the round is still inside its window' };
+  }
+  return { allowed: true, why: 'nobody won: the settlement paid no winner, so a lost entry\'s stake comes back at settlement (nobodyWonReturn)' };
+}
+
 export const encodeNamedForfeit = (signature, signers) => Uint8Array.from([...signature, signers.length, ...signers]);
 export function decodeForfeitBody(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 64) return null;

@@ -61,6 +61,7 @@ import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCerti
 import { askPeers, PEER_ASK_MS, PEER_READ_MS, PEER_GRACE_MS } from './peer-ask.js';
 import { namedClaims, namedClaimKeys, namedSignerSet, zKey } from '../../arena-protocol/src/arena-lock.js';
 import { offTableOn, offTablePayouts, swapRefundOn, swappedRefundPayouts } from './test-named-offence.js';
+import { lostForfeitAllowed } from './forfeit.js';
 import { namedSlots, NamedNonces, aggregateBatch, signerSetKey, encodeNamedCommitment, decodeNamedCommitment, encodeNamedList, decodeNamedList,
   encodeNamedPartials, decodeNamedPartials, encodeNamedBatch, decodeNamedBatch } from './named-settlement.js';
 // the payouts of an accepted settlement kept as rows (GET /donations, GET /reserves): a walk-away's donation keys and a market's reserve
@@ -1781,7 +1782,12 @@ export class LockSettlement {
           console.log(`[slash] ${rid.slice(0, 16)} level 2 read claim ${x.txid.slice(0, 16)}: ${x.outputs} outputs, ${x.false ? `FALSE: ${x.why}` : 'every payee on the list'}${x.unread.length ? `; unread: ${x.unread.join('; ')}` : ''}`);
         }
       } else report.refused.push(`${fid.slice(0, 16)}: no payees read for the round: level 2 not read`);
+      // A FORFEIT THE PROTOCOL ALLOWS (forfeit.js lostForfeitAllowed: ENTRY_VOID, nobody won) IS NO OFFENCE; one this seat cannot read yet waits for a later pass
+      const allowedNow = new Map();
+      const allowedOf = (eid) => { if (!allowedNow.has(eid)) allowedNow.set(eid, lostForfeitAllowed(this.round, roundIdBytes, fromHex(eid), { finalityOf: this.finalityOf })); return allowedNow.get(eid); };
       for (const f of forfeits) for (const who of f.offenders) {
+        const ok = allowedOf(f.entryId);
+        if (ok.allowed !== false) { report.refused.push(`forfeit ${String(f.txid).slice(0, 16)} of entry ${f.entryId.slice(0, 16)}: ${ok.allowed ? `allowed - ${ok.why}` : `not read yet - ${ok.why}`}`); continue; }
         filings.push({ row: NAMED_ROW_FORFEIT, who, txid: f.txid, why: `forfeit of entry ${f.entryId.slice(0, 16)} it signed as lost`,
           parts: { ...sessions, row: NAMED_ROW_FORFEIT, entry: byId.get(f.entryId).entry, signedResult: lostSigned.get(`${f.entryId}:${who}`) }, entry: byId.get(f.entryId).entry });
       }

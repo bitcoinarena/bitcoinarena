@@ -50,13 +50,13 @@ export const fallbackRank = (proofId, keys, me) => [...keys].sort((a, b) => (toH
  * `txOut(txid display, vout)` -> { sats, script hex, confirmations } of a confirmed unspent output, or null (gettxout without the mempool); by default read from `unspent`.
  * `federationsAt(height)` the reserves' view on the federation records in force at that height, as `federations()` answers it (an escrow spend's named height, #1085).
  * `fetchProof(id)` the bytes under a proof's hash or null; `judge(bytes, { startHeight })` -> { verdict, why, held } with `judge.read`; `panelsOf(contract, rid)`; `seatsOf(contract, rid)`
- * the round's drawn keys (hex); `lossesFor({ contract, rid, held })` -> { ok, losses: Map key hex -> msat, entryIds: Map key hex -> bytes } or { ok: false, why }.
+ * the round's drawn keys (hex); `handles(held)` whether a loss rule reads that judged offence at all (false: the start is dropped once, kanban #1044); `lossesFor({ contract, rid, held })` -> { ok, losses: Map key hex -> msat, entryIds: Map key hex -> bytes } or { ok: false, why }.
  * `federations()` the reserves' view, [{ federation, status, reserveKey, reserveSats, exposureCapSats, reservePending }] (`reservePending`: its guardian seats stand, so it has a key, and this seat has not read it yet); `retired` hex; `portFor(fid hex)` a stake-lock port or null; `scriptOf(address)`;
  * `reserveKeyOf(fid hex)` 33 bytes or null, or a promise of them (the seat's is async); `keepReserveRow(row)`.
  * `urlOf(key hex)`; `heldKey(publicKey)` CensusKeyStore's; `thresholdOf(key hex)`; `holdersOf(key hex, height)` -> [{ key, shares }]; `signer()` this node's census signer or null.
  * `send(hex)`. `claimsOf(fid hex)` the one claims ledger of a liquidating federation, for a slash with no round (liquidation-escrow-run.js).
  */
-export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPoint, tipHeight, entriesAtTip, rawTx, unspent, fetchProof, judge, panelsOf, seatsOf = () => [], lossesFor,
+export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPoint, tipHeight, entriesAtTip, rawTx, unspent, fetchProof, judge, panelsOf, seatsOf = () => [], lossesFor, handles = () => true,
   federations = async () => [], retired = [], portFor = async () => null, scriptOf, reserveKeyOf = () => null, keepReserveRow = () => {}, urlOf = () => null, heldKey = () => null,
   thresholdOf = () => null, holdersOf = async () => [], signer = () => null, send, claimsOf = async () => null, stepMs = 600000, fetchFn = fetch, now = Date.now, log = () => {},
   txOut = async (txid, vout) => ((await unspent(txid, vout)) ? { confirmations: 1 } : null), federationsAt = async () => federations(), carrierMarginMsat = carrierMarginOf(networkId),
@@ -636,6 +636,7 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
     payoutFeeMsat: carrierPayoutFeeMsat });
   const escrow = createSlashEscrow({ secret, me, clocks, db, tweakPoint, tipHeight, entriesAtTip, txOut, fetchProof, judge, panelsOf, seatsOf, holdersOf, heldKey, thresholdOf, signer, urlOf,
     fetchFn, send, portFor, scriptOf, federationsAt, retired, now, stepMs, log, confirmedOf, peers: () => peers, fallbackRank, getJson, payOn });
+  const unhandled = new Set();                    // starts whose offence no loss rule reads: dropped once (pass)
   async function pass() {
     if (passing) return [];
     passing = true;
@@ -657,8 +658,19 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
         const releaseOpen = got.panels && tip >= info.height + clocks.holdBlocks - 1;
         const fallbackOpen = tip >= info.height + clocks.fallbackBlocks - 1;
         if (!(onPanel && releaseOpen) && !(holder && fallbackOpen)) continue;
+        if (unhandled.has(info.start)) continue;
         const verdict = await judge(info.bytes, { startHeight: info.height });
         if (verdict.verdict !== true) { done.push({ start: info.start, why: verdict.why }); continue; }
+        // AN OFFENCE NO LOSS RULE READS (`handles`, server.js: slash.js OFFENCES - the named claim's rows are not among them) IS DROPPED ONCE, not built again every pass (measured
+        // 2026-11-05 on s28a: 752 "the losses cannot be read yet: FORFEIT_OF_LOST_ENTRY is not one of the offences", each a build that asked every holder for
+        // its peg-in first). It can never become readable while this code runs; the hold stays as it is
+        const offence = verdict.held && verdict.held.offence;
+        if (info.read.roundId && offence && !handles(verdict.held)) {
+          unhandled.add(info.start);
+          log(`[slash] start ${info.start.slice(0, 16)} dropped from release and fallback: ${offence} has no loss rule here, so no table is built for it`);
+          done.push({ start: info.start, dropped: true, why: `${offence} has no loss rule here` });
+          continue;
+        }
         if (onPanel && releaseOpen) {
           const r = await release({ e, info, hold: got.hold, panels: got.panels, verdict, entries }).catch((x) => ({ ok: false, why: x.message }));
           if (r) { done.push({ start: info.start, path: 'release', ...r }); log(r.ok ? `[slash] release of ${info.start.slice(0, 16)} sent: ${r.txid}, table ${r.tableId.slice(0, 16)}` : `[slash] release of ${info.start.slice(0, 16)} waits: ${r.why}`); }
