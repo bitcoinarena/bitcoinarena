@@ -1001,6 +1001,25 @@ export function openStore(path = ':memory:') {
     );
     CREATE INDEX IF NOT EXISTS table_slash_proofs_round ON table_slash_proofs (round_id);
 
+    -- A NAMED CLAIM'S OFFENCE, FILED (§5A.3 rows (a), (b), protocol 27, kanban #1044 B1): one proof per named signer, row 1 (a) or 2 (b).
+    CREATE TABLE IF NOT EXISTS named_claim_proofs (
+      proof_id    BLOB PRIMARY KEY,
+      round_id    BLOB NOT NULL,
+      node_pubkey BLOB NOT NULL,
+      row         INTEGER NOT NULL,
+      bytes       BLOB NOT NULL,
+      seen_ms     INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS named_claim_proofs_round ON named_claim_proofs (round_id);
+    -- WHERE A PROTOCOL-27 ROUND'S LOCKS CAN FIRST BE FUNDED, per federation (kanban #1044 B1): the federation's finished-session count read before
+    -- the first lock of the round this seat verified - a named claim's proof carries the sessions from there. The first reading stays.
+    CREATE TABLE IF NOT EXISTS funding_session_floors (
+      round_id      BLOB NOT NULL,
+      federation_id TEXT NOT NULL,
+      floor         INTEGER NOT NULL,
+      PRIMARY KEY (round_id, federation_id)
+    );
+
     -- ROUNDS A SEAT WAS ASKED TO ACK OR COMMIT TO ANOTHER PAIR THAN IT REBUILT: read for a false table for 6 h, and only these, so no honest round costs a read.
     CREATE TABLE IF NOT EXISTS settlement_suspects (
       round_id BLOB PRIMARY KEY,

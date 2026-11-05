@@ -31,6 +31,7 @@ import { verifyFederationRecord } from '../../arena-protocol/src/federation-reco
 import { abandonedSlashPoint, networkOf } from '../../arena-protocol/src/constants.js';
 import { decodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
 import { tableBuild } from '../../arena-protocol/src/settlement-rebuild.js';
+import { splitNamedClaimEvidence, claimReadInput, slashHoldsOnNamedClaim, NAMED_ROW_OFF_TABLE } from '../../arena-protocol/src/named-claim-proof.js';
 import { planEscrowSpend } from '../../arena-protocol/src/slash-reserves.js';
 import { finalSigned, splitSignedFinalSig, decodeFinalSig } from '../../arena-protocol/src/final-sig.js';
 import { splitSignedRerun, decodeRerunResult } from '../../arena-protocol/src/rerun.js';
@@ -211,6 +212,32 @@ export async function judgeTableProof({ evidence, roundIdBytes, contract, manife
   const rebuiltTxid = built.ok ? await txidOf(table, built.build) : null;
   const held = slashHoldsOnTable({ proof: got.proof, signedAck: got.signedAck, acks: got.acks, table: got.table, entries: got.entries, finals: got.finals, contract, manifest, committee, verify: verifySchnorr,
     rebuiltTxid, feesOf, own: got.own, advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
+  if (!held.slashed) return no(held.why);
+  return { slashed: true, offence: held.offence, bond: held.bond, proof: got.proof, playerPubkey: got.proof.playerPubkey, why: held.why };
+}
+
+/**
+ * THE JUDGEMENT OF A NAMED CLAIM (§5A.3 rows (a) and (b), protocol 27, kanban #1044 B1, rulings #1131 4, #1135 2). The proof's sessions are read OFFLINE by
+ * `claimRead(input)` (the stake-lock tool's arena-claim-read: every session verified against the config's broadcast keys); for row (a) the shown table is
+ * rebuilt into its body by tableBuild and `bodyIdOf(table, build)` - the judge's own tool, without signers. `claimRead` answering null is "cannot say".
+ */
+export async function judgeNamedClaimProof({ evidence, roundIdBytes, contract, manifest = null, committee, advert, bondOutpoint, claimRead, bodyIdOf = async () => null, feesOf = () => null }) {
+  const no = (why) => ({ slashed: false, why });
+  let got;
+  try { got = splitNamedClaimEvidence(evidence); } catch (e) { return no(`not a proof of a named claim: ${e.message}`); }
+  if (toHex(got.proof.roundId) !== toHex(roundIdBytes)) return no('that claim is about another round');
+  const read = await claimRead(claimReadInput({ config: got.config, firstSession: got.firstSession, sessions: got.sessions, roundId: roundIdBytes }));
+  if (!read) return { slashed: undefined, why: 'no claim reader here: the stake-lock tool with arena-claim-read' };
+  let rebuiltBodyId = null;
+  if (got.row === NAMED_ROW_OFF_TABLE) {
+    let table;
+    try { table = decodeSettlementTable(got.table); } catch (e) { return no(`the table shown does not decode: ${e.message}`); }
+    const shown = [...got.entries, ...got.finals.map((f) => f.entry)];
+    const built = tableBuild({ table, entries: new Map(shown.map((e) => [toHex(entryIdOf(e)), e])), preimages: new Map(got.preimages.map((p) => [toHex(p.entryId), p.preimage])), pointOf: pointFromScalar });
+    if (built.ok) rebuiltBodyId = await bodyIdOf(table, built.build);
+  }
+  const held = slashHoldsOnNamedClaim({ got, read, contract, committee, verify: verifySchnorr, feesOf, manifest, rebuiltBodyId,
+    advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
   if (!held.slashed) return no(held.why);
   return { slashed: true, offence: held.offence, bond: held.bond, proof: got.proof, playerPubkey: got.proof.playerPubkey, why: held.why };
 }

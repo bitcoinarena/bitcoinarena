@@ -35,7 +35,7 @@ import { arbitrationCommitmentIn, P2TR_DUST_SATS } from './arbitration-tx.js';
 import { carrierEscrowPegInId } from './census-key.js';
 import { reserveParts } from './slash-reserves.js';
 import {
-  PROTOCOL_VERSION, speaksVersion, TYPE_SLASH_PROOF, TYPE_AUDIT_SLASH_PROOF, TYPE_SETTLEMENT_ACK, TYPE_FRAUD_PROOF, TYPE_RERUN_RESULT, TYPE_RELEASE_EVIDENCE,
+  PROTOCOL_VERSION, speaksVersion, TYPE_SLASH_PROOF, TYPE_AUDIT_SLASH_PROOF, TYPE_SETTLEMENT_ACK, TYPE_FRAUD_PROOF, TYPE_RERUN_RESULT, TYPE_RELEASE_EVIDENCE, TYPE_NAMED_CLAIM_EVIDENCE,
   SLASH_REMAINDERS, TAG,
 } from './constants.js';
 import { entryId, roundId as roundIdOf, encodeEntryContract, decodeEntryContract } from './contracts.js';
@@ -46,6 +46,7 @@ import { windowsOf } from './window.js';
 import { splitSignedAck, settlementAckId, countAcks, decodeSettlementTable, settlementTableId, namesNoEntry, SIGNED_SETTLEMENT_ACK_BYTES } from './settlement-ack.js';
 import { tableFalse, claimsProvedQualifier } from './settlement-rebuild.js';
 import { namedClaims } from './arena-lock.js';
+import { splitNamedClaimEvidence } from './named-claim-proof.js';
 import { decodeFinalSig, splitSignedFinalSig, finalSigned } from './final-sig.js';
 import { decodeAudit, auditId, auditStands, auditResultsHash } from './auditor.js';
 
@@ -307,6 +308,7 @@ export function readEvidence(evidence) {
   if (evidence[SLASH_PROOF_BYTES] === TYPE_RERUN_RESULT) return { kind: 'rerun', ...splitRerunSlashEvidence(evidence) };
   if (evidence[SLASH_PROOF_BYTES] === TYPE_SETTLEMENT_ACK) return { kind: 'table', ...splitTableSlashEvidence(evidence) };
   if (evidence[SLASH_PROOF_BYTES] === TYPE_RELEASE_EVIDENCE) return { kind: 'release', ...splitReleaseSlashEvidence(evidence) };
+  if (evidence[SLASH_PROOF_BYTES] === TYPE_NAMED_CLAIM_EVIDENCE) return { kind: 'named', ...splitNamedClaimEvidence(evidence) };
   let doubled = -1; try { doubled = doubleSlashEvidenceBytesOf(evidence); } catch { doubled = -1; }
   if (doubled === evidence.length) return { kind: 'double', ...splitDoubleSlashEvidence(evidence) };
   return { kind: 'result', ...splitSlashEvidence(evidence) };
@@ -630,6 +632,78 @@ export function slashHoldsOnAudit({
 }
 
 /**
+ * A TABLE READ AGAINST WHAT IS SHOWN (the table row's reading, kanban #1040, #1043; and offence row (a)'s correct table, ruling #1131 4): the entries bound to their
+ * rows, tableFalse, the claims of proved qualifiers, and F where F makes the table. Answers { ok: true, differs, complete } - `complete` when F was read and every
+ * row has a threshold of FINALs - or { ok: false, why } when it cannot be read.
+ */
+export function tableAgainstFinals({ claimed, roundId, contract, attested = false, payoutShares = null, entries = [], finals = [], committee, verify, feesOf = () => null, ownTable = null }) {
+  const no = (why) => ({ ok: false, why });
+  const proof = { roundId };
+  const rule = { payoutShares };
+  // THE ENTRIES, EACH BOUND TO THE ROW THAT NAMES IT
+  let finalAfterMs;
+  try { ({ finalAfterMs } = windowsOf(contract)); } catch (e) { return no(`the round's window cannot be read: ${e.message}`); }
+  const rowOf = new Map(claimed.rows.map((r) => [hex(r.entryId), r]));
+  const differs = [];
+  const shown = new Map();
+  for (const e of [...entries, ...finals.map((f) => f && f.entry)]) {
+    let id;
+    try { id = hex(entryId(e)); } catch { continue; }
+    shown.set(id, e);
+    const row = rowOf.get(id);
+    if (!row) continue;
+    if (hex(e.roundId) !== hex(proof.roundId)) differs.push(`entry ${id.slice(0, 16)} is of another round`);
+    else if (hex(e.playerPubkey) !== hex(row.pubkey)) differs.push(`entry ${id.slice(0, 16)} is another player's`);
+  }
+
+  try { differs.push(...tableFalse({ table: claimed, contract, entries: shown, payoutShares: rule.payoutShares, feesOf, attested, ownTable })); }
+  catch (e) { return no(`the table cannot be read: ${e.message}`); }
+
+  const proved = new Map();
+  for (const f of finals) {
+    if (!f || !f.entry) continue;
+    let id, body;
+    try { id = entryId(f.entry); body = decodePlayerResult(splitSignedResult(f.signedResult).body); } catch { continue; }
+    if (hex(body.roundId) !== hex(proof.roundId) || hex(body.playerPubkey) !== hex(f.entry.playerPubkey)) continue;
+    // A FINAL SIGNATURE IS JUDGED BY ITS OWN SIGNED TIME HERE: the tolerance is a receiving seat's clock, and a proof has none
+    const records = [];
+    for (const bytes of f.finalSigs || []) {
+      try { records.push({ bytes, seenMs: decodeFinalSig(splitSignedFinalSig(bytes).body).signedAtMs }); } catch { /* it does not count */ }
+    }
+    const signed = finalSigned({ roundId: proof.roundId, entryId: id, runId: runOf(body), records, committee, slots: contract.settlementSlots, finalAfterMs, verify });
+    if (signed.ok) proved.set(hex(id), { entryId: id, pubkey: f.entry.playerPubkey, outcome: body.outcome, score: body.score,
+      stakeMsat: f.entry.stakeMsat, feeMsat: f.entry.feeMsat, donationMsat: f.entry.donationMsat });
+  }
+  differs.push(...claimsProvedQualifier({ table: claimed, proved, minScore: contract.minScore }));
+
+  // F, READ ONLY WHERE F MAKES THE TABLE
+  const isLate = hex(claimed.lateEntryId) !== hex(EMPTY);
+  const readsF = !isLate && !attested && claimed.rows.length > 0 && !claimed.rows.some(namesNoEntry);
+  const complete = readsF && claimed.rows.every((r) => proved.has(hex(r.entryId)));
+  if (complete) {
+    const rows = claimed.rows.map((r) => proved.get(hex(r.entryId)));
+    let honest;
+    try { honest = computePayoutTable({ roundId: claimed.roundId, entries: rows, minScore: contract.minScore, payoutShares: rule.payoutShares }); }
+    catch (e) { return no(`F cannot be computed from those entries: ${e.message}`); }
+    const owed = new Map(honest.activated.map((e, i) => [hex(e.entryId), honest.table[i].amountMsat]));
+    for (const r of claimed.rows) {
+      const id = hex(r.entryId);
+      const want = owed.has(id) ? owed.get(id) : 0n;
+      if (r.amountMsat !== want) differs.push(`entry ${id.slice(0, 16)} is paid ${r.amountMsat} and F pays ${want}`);
+    }
+  } else if (readsF) {
+    for (const [id, e] of proved) {
+      const row = rowOf.get(id);
+      if (!row) continue;
+      if (!isQualifier(e, contract.minScore)) {
+        if (row.amountMsat !== 0n) differs.push(`entry ${id.slice(0, 16)} did not qualify and is paid ${row.amountMsat}`);
+      } else if (row.amountMsat < netStakeMsat(e)) differs.push(`entry ${id.slice(0, 16)} qualified and is paid ${row.amountMsat}, under its own net stake`);
+    }
+  }
+  return { ok: true, differs, complete };
+}
+
+/**
  * DOES THIS ACK SLASH THIS BOND? §5A.3, "a payout table that is not F", RULED 2026-11-02 (kanban #1035, #1040).
  *
  * A row stands only on bytes the accused signed with its node key, and a FROST signature names nobody. So the evidence is the accused's
@@ -708,22 +782,6 @@ export function slashHoldsOnTable({
   } catch (e) { return no(`the acks cannot be counted: ${e.message}`); }
   if (!counted.final) return no(`${counted.agreed} of the ${counted.needed} seats acked that table, so no settlement stood on it`);
 
-  // THE ENTRIES, EACH BOUND TO THE ROW THAT NAMES IT
-  let finalAfterMs;
-  try { ({ finalAfterMs } = windowsOf(contract)); } catch (e) { return no(`the round's window cannot be read: ${e.message}`); }
-  const rowOf = new Map(claimed.rows.map((r) => [hex(r.entryId), r]));
-  const differs = [];
-  const shown = new Map();
-  for (const e of [...entries, ...finals.map((f) => f && f.entry)]) {
-    let id;
-    try { id = hex(entryId(e)); } catch { continue; }
-    shown.set(id, e);
-    const row = rowOf.get(id);
-    if (!row) continue;
-    if (hex(e.roundId) !== hex(proof.roundId)) differs.push(`entry ${id.slice(0, 16)} is of another round`);
-    else if (hex(e.playerPubkey) !== hex(row.pubkey)) differs.push(`entry ${id.slice(0, 16)} is another player's`);
-  }
-
   // THE PAIR AGAINST ITSELF: no FINAL signature reads here
   let ownTable = null;
   if (own) {
@@ -736,52 +794,11 @@ export function slashHoldsOnTable({
       if (c.final && itsOwn && hex(t.roundId) === hex(proof.roundId) && hex(t.lateEntryId) === hex(EMPTY)) ownTable = t;
     } catch { ownTable = null; }
   }
-  try { differs.push(...tableFalse({ table: claimed, contract, entries: shown, payoutShares: rule.payoutShares, feesOf, attested, ownTable })); }
-  catch (e) { return no(`the table cannot be read: ${e.message}`); }
+  const read = tableAgainstFinals({ claimed, roundId: proof.roundId, contract, attested, payoutShares: rule.payoutShares, entries, finals, committee, verify, feesOf, ownTable });
+  if (!read.ok) return no(read.why);
+  const { differs, complete } = read;
   if (rebuiltTxid && hex(rebuiltTxid) !== hex(got.ack.settlementTxid))
     differs.push(`the acked ${named ? 'settlement body' : 'transaction'} ${hex(got.ack.settlementTxid).slice(0, 16)} does not rebuild from the table, which makes ${hex(rebuiltTxid).slice(0, 16)}`);
-
-  const proved = new Map();
-  for (const f of finals) {
-    if (!f || !f.entry) continue;
-    let id, body;
-    try { id = entryId(f.entry); body = decodePlayerResult(splitSignedResult(f.signedResult).body); } catch { continue; }
-    if (hex(body.roundId) !== hex(proof.roundId) || hex(body.playerPubkey) !== hex(f.entry.playerPubkey)) continue;
-    // A FINAL SIGNATURE IS JUDGED BY ITS OWN SIGNED TIME HERE: the tolerance is a receiving seat's clock, and a proof has none
-    const records = [];
-    for (const bytes of f.finalSigs || []) {
-      try { records.push({ bytes, seenMs: decodeFinalSig(splitSignedFinalSig(bytes).body).signedAtMs }); } catch { /* it does not count */ }
-    }
-    const signed = finalSigned({ roundId: proof.roundId, entryId: id, runId: runOf(body), records, committee, slots: contract.settlementSlots, finalAfterMs, verify });
-    if (signed.ok) proved.set(hex(id), { entryId: id, pubkey: f.entry.playerPubkey, outcome: body.outcome, score: body.score,
-      stakeMsat: f.entry.stakeMsat, feeMsat: f.entry.feeMsat, donationMsat: f.entry.donationMsat });
-  }
-  differs.push(...claimsProvedQualifier({ table: claimed, proved, minScore: contract.minScore }));
-
-  // F, READ ONLY WHERE F MAKES THE TABLE
-  const isLate = hex(claimed.lateEntryId) !== hex(EMPTY);
-  const readsF = !isLate && !attested && claimed.rows.length > 0 && !claimed.rows.some(namesNoEntry);
-  const complete = readsF && claimed.rows.every((r) => proved.has(hex(r.entryId)));
-  if (complete) {
-    const rows = claimed.rows.map((r) => proved.get(hex(r.entryId)));
-    let honest;
-    try { honest = computePayoutTable({ roundId: claimed.roundId, entries: rows, minScore: contract.minScore, payoutShares: rule.payoutShares }); }
-    catch (e) { return no(`F cannot be computed from those entries: ${e.message}`); }
-    const owed = new Map(honest.activated.map((e, i) => [hex(e.entryId), honest.table[i].amountMsat]));
-    for (const r of claimed.rows) {
-      const id = hex(r.entryId);
-      const want = owed.has(id) ? owed.get(id) : 0n;
-      if (r.amountMsat !== want) differs.push(`entry ${id.slice(0, 16)} is paid ${r.amountMsat} and F pays ${want}`);
-    }
-  } else if (readsF) {
-    for (const [id, e] of proved) {
-      const row = rowOf.get(id);
-      if (!row) continue;
-      if (!isQualifier(e, contract.minScore)) {
-        if (row.amountMsat !== 0n) differs.push(`entry ${id.slice(0, 16)} did not qualify and is paid ${row.amountMsat}`);
-      } else if (row.amountMsat < netStakeMsat(e)) differs.push(`entry ${id.slice(0, 16)} qualified and is paid ${row.amountMsat}, under its own net stake`);
-    }
-  }
   if (!differs.length) return no(complete ? 'the table is exactly F of the signed FINAL results' : 'the table is not false on anything shown, nor on any entry with a signed FINAL result');
 
   if (!advert || hex(advert.nodePubkey) !== hex(proof.nodePubkey)) return no('no advertisement from the accused node to name its bond');

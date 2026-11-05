@@ -33,6 +33,8 @@ import { stallsOut, silentSeats } from '../../arena-protocol/src/stall.js';
 import { signSettlementCommit, checkSettlementCommit, signSettlementAsk, checkSettlementAsk, asksBySeat, ASK_COMMIT, ASK_SHARE, signSettlementAck, settlementAckId, countAcks, joinAcks, splitAcks, splitSignedAck, encodeSettlementTable, decodeSettlementTable, settlementTableId, planTableRows, planTableBuild } from '../../arena-protocol/src/settlement-ack.js';
 import { tableBuild } from '../../arena-protocol/src/settlement-rebuild.js';
 import { slashHoldsOnTable, encodeSlashProof, joinTableSlashEvidence } from '../../arena-protocol/src/slash.js';
+import { joinNamedClaimEvidence, namedClaimProofBody, claimReadInput, namedOutpointText, NAMED_ROW_OFF_TABLE, NAMED_ROW_FORFEIT } from '../../arena-protocol/src/named-claim-proof.js';
+import { offTableClaims, forfeitsOfLostEntries } from '../../arena-protocol/src/named-claim-offence.js';
 import { splitByFederation } from '../../arena-protocol/src/federation-settlement.js';
 import { pluginForRound, payoutRuleOfRound } from './plugins.js';
 import { heldOutcomes, marketVoidOf, attestedTable } from './game-market.js';
@@ -1580,21 +1582,7 @@ export class LockSettlement {
         table = decodeSettlementTable(pair.table);
         if (toHex(settlementTableId(table)) !== toHex(pair.tableId) || toHex(table.roundId) !== toHex(roundIdBytes)) continue;
       } catch { continue; }
-      const named = [...new Set([...table.rows.map((r) => toHex(r.entryId)), ...table.claims.map((c) => toHex(c.entryId))])].filter((id) => byId.has(id));
-      const entries = named.map((id) => byId.get(id).entry);
-      const finals = [];
-      const preimages = [];
-      for (const id of named) {
-        const eid = fromHex(id);
-        const held = this.round.results(roundIdBytes, eid).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
-        const body = held ? decodePlayerResult(splitSignedResult(held.bytes).body) : null;
-        if (held) finals.push({ entry: byId.get(id).entry, signedResult: new Uint8Array(held.bytes), finalSigs: this.round.entryFinalSigs(roundIdBytes, eid).map((b) => new Uint8Array(b)) });
-        // NEVER A QUALIFIER'S P: a table naming a winner's lock is false without it, and the opening is a thing a winner's stake must never see
-        if (!table.claims.some((c) => c.kind === 'stake' && toHex(c.entryId) === id) || (body && body.outcome === 'DELIVERED')) continue;
-        const opened = await this.stakeSecrets.open({ roundId: roundIdBytes, entryId: eid, needed: receiptsNeeded(contract.settlementSlots) }).catch((e) => ({ ok: false, why: e.message }));
-        if (opened.ok) preimages.push({ entryId: eid, preimage: opened.preimage });
-        else report.refused.push(`${id.slice(0, 16)}: ${opened.why}`);
-      }
+      const { entries, finals, preimages } = await this.#tableShown(roundIdBytes, contract, table, byId, report);
       const federationIds = new Set(takesAnyFederation(contract) ? entries.map((e) => toHex(e.federationId || new Uint8Array(32))) : [toHex(contract.federationId)]);
       for (const fid of federationIds) await feesFrom(fid);
       const home = toHex(table.federationId).match(/[^0]/) ? toHex(table.federationId) : toHex(contract.federationId);
@@ -1641,6 +1629,132 @@ export class LockSettlement {
     return report;
   }
   #pairsRead = new Set();
+
+  /** What shows a table as the table row reads it: the Entry Contracts it names, this seat's own signed result with the FINAL records of each, and each loser's P. */
+  async #tableShown(roundIdBytes, contract, table, byId, report) {
+    const named = [...new Set([...table.rows.map((r) => toHex(r.entryId)), ...table.claims.map((c) => toHex(c.entryId))])].filter((id) => byId.has(id));
+    const entries = named.map((id) => byId.get(id).entry);
+    const finals = [];
+    const preimages = [];
+    for (const id of named) {
+      const eid = fromHex(id);
+      const held = this.round.results(roundIdBytes, eid).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
+      const body = held ? decodePlayerResult(splitSignedResult(held.bytes).body) : null;
+      if (held) finals.push({ entry: byId.get(id).entry, signedResult: new Uint8Array(held.bytes), finalSigs: this.round.entryFinalSigs(roundIdBytes, eid).map((b) => new Uint8Array(b)) });
+      // NEVER A QUALIFIER'S P: a table naming a winner's lock is false without it, and the opening is a thing a winner's stake must never see
+      if (!table.claims.some((c) => c.kind === 'stake' && toHex(c.entryId) === id) || (body && body.outcome === 'DELIVERED')) continue;
+      const opened = await this.stakeSecrets.open({ roundId: roundIdBytes, entryId: eid, needed: receiptsNeeded(contract.settlementSlots) }).catch((e) => ({ ok: false, why: e.message }));
+      if (opened.ok) preimages.push({ entryId: eid, preimage: opened.preimage });
+      else report.refused.push(`${id.slice(0, 16)}: ${opened.why}`);
+    }
+    return { entries, finals, preimages };
+  }
+
+  /**
+   * WHERE THIS ROUND'S LOCKS CAN FIRST BE FUNDED (kanban #1044 B1): each federation's finished-session count, read when the seat takes the round in -
+   * before any lock of it exists - and kept; a named claim's proof carries that federation's sessions from there.
+   */
+  async noteFundingFloor(roundIdBytes, contract) {
+    if (!namedClaims(contract) || !this.round.keepFundingSessionFloor) return [];
+    // (a round that takes any federation names no federation before its entries do: no floor is kept for it yet, and its claims are not filed on)
+    const fids = takesAnyFederation(contract) ? [] : [toHex(contract.federationId)];
+    const kept = [];
+    for (const fid of fids) {
+      if (this.round.fundingSessionFloor(roundIdBytes, fid) !== null) continue;
+      try {
+        const port = await this.portForFederation(fid);
+        if (!port || typeof port.sessionCount !== 'function') continue;
+        this.round.keepFundingSessionFloor(roundIdBytes, fid, await port.sessionCount());
+        kept.push(fid);
+      } catch { /* read again on the next round in; the filer then reads nothing for it */ }
+    }
+    return kept;
+  }
+
+  /**
+   * FILE A PROOF OF EACH NAMED CLAIM'S OFFENCE THIS SEAT CAN SHOW (§5A.3 rows (a), (b), protocol 27, kanban #1044 B1, rulings #1131 4, #1135 2). Per federation the
+   * round settles in: the federation's signed sessions from the round's funding floor, read OFFLINE by the stake-lock tool (arena-claim-read).
+   *  (a) offTableClaims against the bodies THIS seat acked, judging only claims that spend a lock its own bodies claim: each other body is filed with
+   *      the acked table and what shows it (entries, FINALs, losers' P) - a table this seat cannot show to be exactly F builds no proof, and the
+   *      judge would refuse one;
+   *  (b) forfeitsOfLostEntries against the signed results this seat holds: a seat that signed an entry non-qualifying and is named on its lock's forfeit.
+   * One proof per named signer, kept once by id (named_claim_proofs, listed among the held proofs slash-start-run files), posted to the round's relays.
+   * Never against this seat itself. `advertOf(hex)` -> the accused's advertisement. Money is not touched.
+   */
+  async fileNamedClaimProofs(roundIdBytes, { advertOf = () => null, relays = [] } = {}) {
+    const report = { filed: [], refused: [], published: 0 };
+    const row = this.round.get(roundIdBytes);
+    if (!row) { report.refused.push('no such round'); return report; }
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    if (!namedClaims(contract)) return report;
+    const rid = toHex(roundIdBytes);
+    const me = toHex(this.round.pubkey);
+    const own = this.round.settlementAcksOf(roundIdBytes).map((x) => { try { return { ...x, decoded: decodeSettlementTable(x.table) }; } catch { return null; } }).filter(Boolean);
+    const byId = new Map(this.round.entriesOf(roundIdBytes).map((x) => [toHex(x.entryId), x]));
+    const found = pluginForRound(contract, this.round.plugins || []);
+    const manifest = found && found.ok ? found.plugin.manifest : null;
+    const lockOf = new Map();
+    for (const [id, x] of byId) for (const o of [x.entry.stakeLockOutpoint, x.entry.feeLockOutpoint]) { const t = namedOutpointText(o); if (t) lockOf.set(t, id); }
+    const homeOf = (t) => (t.federationId && t.federationId.some((b) => b) ? toHex(t.federationId) : toHex(contract.federationId));
+    const fids = new Set([toHex(contract.federationId), ...own.map((x) => homeOf(x.decoded)), ...[...byId.values()].map((x) => { const f = entryFederation(contract, x.entry); return f.ok ? toHex(f.federationId) : null; }).filter(Boolean)]);
+    for (const fid of fids) {
+      const floor = this.round.fundingSessionFloor ? this.round.fundingSessionFloor(roundIdBytes, fid) : null;
+      if (floor === null) { report.refused.push(`${fid.slice(0, 16)}: no funding-session floor kept for this round`); continue; }
+      let port, ex, read;
+      try {
+        port = await this.portForFederation(fid);
+        ex = await port.sessionExport({ from: floor });
+        read = await port.arenaClaimRead(claimReadInput({ config: ex.config, firstSession: ex.firstSession, sessions: ex.sessions, roundId: roundIdBytes }));
+      } catch (e) { report.refused.push(`${fid.slice(0, 16)}: the sessions were not read: ${e.message}`); continue; }
+      if (!read) { report.refused.push(`${fid.slice(0, 16)}: no claim reader (arena-claim-read) here`); continue; }
+      if (read.unverified && read.unverified.length) { report.refused.push(`${fid.slice(0, 16)}: sessions ${read.unverified.join(', ')} do not verify`); continue; }
+      const sessions = { row: 0, config: ex.config, firstSession: ex.firstSession, sessions: ex.sessions };
+      const filings = [];
+      // ROW (a): the bodies this seat acked in this federation, and the claims spending their locks
+      const mine = own.filter((x) => homeOf(x.decoded) === fid);
+      const claimedBy = new Map();
+      for (const x of mine) for (const c of x.decoded.claims) claimedBy.set(`${toHex(c.outpoint.txid)}:${String(c.outpoint.outIdx)}`, x);
+      const spendsOfMine = (read.spends || []).filter((sp) => sp.kind === 'claim' && claimedBy.has(String(sp.outpoint).toLowerCase()));
+      for (const off of offTableClaims({ spends: spendsOfMine, roundId: rid, correctBodyIds: mine.map((x) => x.txid) })) {
+        const pair = claimedBy.get(String(spendsOfMine.find((sp) => String(sp.txid).toLowerCase() === off.txid).outpoint).toLowerCase());
+        const shown = await this.#tableShown(roundIdBytes, contract, pair.decoded, byId, report);
+        for (const who of off.offenders) filings.push({ row: NAMED_ROW_OFF_TABLE, who, txid: off.txid, why: off.why, parts: { ...sessions, row: NAMED_ROW_OFF_TABLE, table: pair.table, ...shown }, tableId: pair.tableId });
+      }
+      // ROW (b): each forfeit of a lock whose entry a named signer signed non-qualifying, by the signed results this seat holds
+      const lostSigned = new Map();
+      for (const id of byId.keys()) {
+        for (const r of this.round.results(roundIdBytes, fromHex(id))) {
+          let body; try { body = decodePlayerResult(splitSignedResult(r.bytes).body); } catch { continue; }
+          if (body.outcome === VOID || isQualifier(body, contract.minScore)) continue;
+          lostSigned.set(`${id}:${toHex(r.nodePubkey)}`, new Uint8Array(r.bytes));
+        }
+      }
+      const forfeits = forfeitsOfLostEntries({ spends: read.spends || [], entryOf: (o) => lockOf.get(String(o).toLowerCase()) || null,
+        lostBy: (eid) => [...lostSigned.keys()].filter((k) => k.startsWith(`${eid}:`)).map((k) => k.slice(eid.length + 1)) });
+      for (const f of forfeits) for (const who of f.offenders) {
+        filings.push({ row: NAMED_ROW_FORFEIT, who, txid: f.txid, why: `forfeit of entry ${f.entryId.slice(0, 16)} it signed as lost`,
+          parts: { ...sessions, row: NAMED_ROW_FORFEIT, entry: byId.get(f.entryId).entry, signedResult: lostSigned.get(`${f.entryId}:${who}`) }, entry: byId.get(f.entryId).entry });
+      }
+      for (const fl of filings) {
+        if (fl.who === me) continue;
+        const advert = advertOf(fl.who);
+        if (!advert) { report.refused.push(`${fl.who.slice(0, 16)}: no advertisement names its bond`); continue; }
+        const proof = namedClaimProofBody({ row: fl.row, roundId: roundIdBytes, accused: fromHex(fl.who), spendTxid: fl.txid, tableId: fl.tableId || null, entry: fl.entry || null, advert });
+        const record = joinNamedClaimEvidence(encodeSlashProof(proof), fl.parts);
+        const { id, bytes: complete } = this.round.fraudProof(roundIdBytes, null, record);
+        if (!this.round.fileNamedClaimProof(roundIdBytes, fromHex(fl.who), fl.row, id, record)) continue;
+        report.filed.push({ who: fl.who, row: fl.row === NAMED_ROW_OFF_TABLE ? 'a' : 'b', txid: fl.txid });
+        console.log(`[slash] ${rid.slice(0, 16)} filed ${fl.row === NAMED_ROW_OFF_TABLE ? 'OFF_TABLE_CLAIM' : 'FORFEIT_OF_LOST_ENTRY'} against ${fl.who.slice(0, 16)}: ${fl.why}`);
+        const put = await askPeers(relays, (relay, signal) => this.fetcher(`${String(relay).replace(/\/+$/, '')}/slash/${toHex(id)}`, { method: 'PUT', body: complete, signal }), { boundMs: this.peerReadMs });
+        for (const { peer: relay, value, error } of put) {
+          if (error) report.refused.push(`${relay}: ${error.message}`);
+          else if (value.ok) report.published += 1;
+          else report.refused.push(`${relay}: kept no proof (${value.status})`);
+        }
+      }
+    }
+    return report;
+  }
 
   /** ROUND ONE: this signer node's nonce commitment for the settlement it would sign; from version 22, only with a threshold of acks. */
   async commit(roundIdBytes, { txid = null, entry = null, federation = null, acks = null, door = false, ask = null } = {}) {

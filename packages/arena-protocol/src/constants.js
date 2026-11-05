@@ -412,6 +412,11 @@ export const TYPE_ABANDONED_PROOF = 0x42;
  * signed record lists, and that guardian's output: theft-slash.js. 0x46, the first free byte past 0x45 (0x0d, 0x0f stay unused, see above).
  */
 export const TYPE_THEFT_PROOF = 0x46;
+/**
+ * The byte after the proof body in a record of offence row (a) or (b) of the named claim (§5A.3, protocol 27, kanban #1044 B1, ruling #1131 4):
+ * named-claim-proof.js. 0x47, the first free byte past 0x46.
+ */
+export const TYPE_NAMED_CLAIM_EVIDENCE = 0x47;
 
 /** The byte `feeTableId` opens with (fee.js). It named a fee claim once; no node claims anything (kanban #1035), and the byte stays so no table id moves. */
 export const TYPE_FEE_TABLE = 0x0e;

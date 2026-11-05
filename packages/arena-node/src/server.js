@@ -51,6 +51,8 @@ import { createReserveAlarms, alarmRefusal } from './reserve-alarms.js';
 import { createReserveAudit } from './reserve-audit.js';
 import { createReserveSpendWatch, spendWatchReads } from './reserve-spend-watch.js';
 import { theftTools } from './theft-evidence.js';
+import { readClaims } from './stake-lock-port.js';
+import { namedClaims } from '../../arena-protocol/src/arena-lock.js';
 import { capacityView, capacityPlea, bondIncentive, pressureOf, guardianWeights as capacityGuardianWeights, gatewayWeights as capacityGatewayWeights } from '../../arena-protocol/src/capacity.js';
 import { GATEWAY_MINIMUMS, GATEWAY_EPOCH_BLOCKS, pegInPastCap } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
@@ -2987,6 +2989,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
   }, Number(finality.tableFileMs ?? 300000));
   if (tableFilesTimer.unref) tableFilesTimer.unref();
+  // A NAMED CLAIM'S OFFENCE (§5A.3 rows (a), (b), protocol 27, kanban #1044 B1): each protocol-27 round this seat acked a settlement of in the last 6 h, its
+  // federation's sessions read again for a claim off the bodies it acked or a forfeit of an entry a named signer signed lost; filed as soon as the accused's
+  // advertisement is held
+  const namedFilesTimer = setInterval(() => {
+    let acked = [];
+    try { acked = round.ackedRoundsSince(Date.now() - 6 * 3600000); } catch { return; }
+    for (const rid of acked) {
+      let contract = null;
+      try { contract = decodeRoundContract(new Uint8Array(round.get(rid).contract)); } catch { continue; }
+      if (!namedClaims(contract)) continue;
+      let adverts = null;
+      try { adverts = verifier.advertsFor ? verifier.advertsFor(rid) : null; } catch { adverts = null; }
+      let relays = [];
+      try { relays = relayTargets(contract.publicationRelays, verifier.peersOf(rid)); } catch { relays = []; }
+      settlements.fileNamedClaimProofs(rid, { advertOf: (k) => (adverts instanceof Map ? adverts.get(k) : null), relays })
+        .then((f) => { for (const why of f.refused) console.log(`[slash] ${toHex(rid).slice(0, 16)} named claim: ${why}`); }, (e) => console.log(`[slash] ${e.message}`));
+    }
+  }, Number(finality.namedFileMs ?? 600000));
+  if (namedFilesTimer.unref) namedFilesTimer.unref();
   async function contradictAudits(rid, eid, why) {
     for (const who of auditDesk.contradict(new Uint8Array(rid), `entry ${toHex(eid)}: ${why}`))
       console.log(`[audit] ${toHex(rid).slice(0, 16)}: the AUDIT of ${who.slice(0, 16)} vouched for the result of ${toHex(eid).slice(0, 16)} a valid objection contradicts - held as the fraud proof against it, paid nothing`);
@@ -4193,6 +4214,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       bodyId: async (build) => fromHex((await port.arenaSettle({ claims: build.claims, payouts: build.payouts, nonce: build.nonce })).bodyId) } : null; } catch { return null; } },
     abandoned: async (bytes, beforeHeight) => (fedRecords ? fedRecords.abandonedVerdict(bytes, (inv) => { const f = fedOfInvite(inv); return f ? fromHex(String(f)) : null; }, beforeHeight) : { verdict: undefined, why: 'this seat holds no federation records yet' }),
     // A THEFT (kanban #1093 part 2, ruling #1109 X): the proof's own bytes, re-verified by this seat's session verifier and its own chain; no verifier here: undefined, never false
+    // A NAMED CLAIM (kanban #1044 B1): the proof's sessions read offline by this seat's own stake-lock tool; no tool here: undefined, never false
+    claimRead: (input) => readClaims(process.env.ARENA_STAKE_LOCK_BIN || null, input),
     theft: async (bytes, beforeHeight) => (fedRecords ? fedRecords.theftVerdict(bytes, (inv) => { const f = fedOfInvite(inv); return f ? fromHex(String(f)) : null; }, beforeHeight) : { verdict: undefined, why: 'this seat holds no federation records yet' }),
     coreOf: (contract, rid) => coreForRound(contract, rid, hosted), beaconOf: (contract, rid, entry, eid) => verifier.proofBeacon(contract, rid, entry, eid), replayRunOf: (rid, eid, core) => verifier.proofReplay(rid, eid, core), vrf: auditVrf,
     // WHO COULD AUDIT, AS THE DESK TOOK IT: the round's census less its drawn nodes. Its players come out where this seat holds the round: a seat that does not cannot name them, and an AUDIT a player signed was refused at every door that held it
@@ -4308,7 +4331,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return rows.map((r) => { if (!theftSeen.has(r.proof)) theftSeen.set(r.proof, Date.now()); return { proofId: fromHex(r.proof), seenMs: theftSeen.get(r.proof) }; });
   };
   const slashStarter = holdWatch && censusKey.feeCoin ? createSlashStarter({ key: round.pubkey, network: censusKey.network, db: round.db, store: new CensusKeyStore(round.db), thresholdOf: censusKey.scan.thresholdOf, tipHeight: censusKey.tipHeight, entriesAtTip: entriesAtTipForStart,
-    heldProofs: async () => [...round.allSlashProofs(), ...round.allRerunSlashProofs(), ...round.auditSlashProofs(), ...round.doubleSlashProofs(), ...round.tableSlashProofs(), ...(await abandonedHeld()), ...(await theftHeld())].flatMap((p) => { const bytes = round.relayGet(Buffer.from(p.proofId)); return bytes ? [{ proofId: p.proofId, bytes, seenMs: p.seenMs }] : []; }), bytesOf: (id) => round.relayGet(Buffer.from(id)), judge: judgeProofBytes, holdsFor: holdsForStart, feeCoin: censusKey.feeCoin, send: (hex) => chainSend(hex), urlsOf: () => censusUrls || [],
+    heldProofs: async () => [...round.allSlashProofs(), ...round.allRerunSlashProofs(), ...round.auditSlashProofs(), ...round.doubleSlashProofs(), ...round.tableSlashProofs(), ...round.namedClaimProofs(), ...(await abandonedHeld()), ...(await theftHeld())].flatMap((p) => { const bytes = round.relayGet(Buffer.from(p.proofId)); return bytes ? [{ proofId: p.proofId, bytes, seenMs: p.seenMs }] : []; }), bytesOf: (id) => round.relayGet(Buffer.from(id)), judge: judgeProofBytes, holdsFor: holdsForStart, feeCoin: censusKey.feeCoin, send: (hex) => chainSend(hex), urlsOf: () => censusUrls || [],
     stepMs: Number(process.env.ARENA_SLASH_FILE_STEP_MS || 600000), log: (l) => console.log(l),
     checkOther: (request) => (slashRelease ? slashRelease.checkOther(request) : { ok: false, why: 'this seat runs no release or fallback' }),
     feeSecret: (proofId) => taggedHash('ARENA/v1/SlashFeeKey', Uint8Array.from([...round.identity.secret, ...proofId])),
@@ -8368,6 +8391,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
 
         const id = round.open(contract);
+        // A PROTOCOL-27 ROUND'S FUNDING FLOOR (kanban #1044 B1): the federation's finished sessions now, before any lock of it exists
+        if (namedClaims(contract)) settlements.noteFundingFloor(new Uint8Array(id), contract).catch(() => {});
         // AND KEEP THE BEACON THIS SIGNER NODE CAN NAME FOR IT NOW (M3.3-34), through
         // the kept reader above: a signer node restarted before it ever replays a run
         // of this round still has the block to replay from.
