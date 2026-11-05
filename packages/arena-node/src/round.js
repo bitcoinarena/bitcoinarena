@@ -2935,14 +2935,16 @@ export class Round {
     } catch { return false; }
   }
 
-  putForfeit({ entryId, roundId, message, signature, claimPk }) {
-    this.db.prepare('INSERT OR IGNORE INTO forfeits (entry_id, round_id, message, signature, claim_pk, made_ms) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(message), Buffer.from(signature), Buffer.from(claimPk), this.now());
+  // `signers` (protocol 27, kanban #1044 B1): the seat indices a named forfeit names; `claimPk` then their KeyAgg (02 || x)
+  putForfeit({ entryId, roundId, message, signature, claimPk, signers = null }) {
+    this.db.prepare('INSERT OR IGNORE INTO forfeits (entry_id, round_id, message, signature, claim_pk, made_ms, signers) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(message), Buffer.from(signature), Buffer.from(claimPk), this.now(), signers ? JSON.stringify(signers) : null);
   }
 
   forfeit(entryIdBytes) {
-    const r = this.db.prepare('SELECT message, signature, claim_pk, made_ms FROM forfeits WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
-    return r ? { message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claimPk: new Uint8Array(r.claim_pk), madeMs: Number(r.made_ms) } : null;
+    const r = this.db.prepare('SELECT message, signature, claim_pk, made_ms, signers FROM forfeits WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
+    return r ? { message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claimPk: new Uint8Array(r.claim_pk), madeMs: Number(r.made_ms),
+      ...(r.signers ? { signers: JSON.parse(r.signers) } : {}) } : null;
   }
 
   /** A fee lock this signer node verified (Pick A): the handed contract (JSON), its id, its outpoint. */

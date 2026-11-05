@@ -43,6 +43,45 @@ import { stateOf } from './settlement-state.js';
 import { pluginForRound } from './plugins.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
 import { askPeers, PEER_ASK_MS, PEER_GRACE_MS } from './peer-ask.js';
+import { namedClaims, namedClaimKeys, arenaLockContractId } from '../../arena-protocol/src/arena-lock.js';
+import { nonceGen, nonceAgg, sign as musigSign } from './musig2.js';
+import { evenYKey, signingSecret, namedContext, namedKey, checkSigners, aggregateNamed } from './named-claim.js';
+
+// A PROTOCOL-27 FORFEIT (kanban #1044 B1, ruling #1131 3: "Cancel { signers, signature }"; #1135 3): the lock is an Arena lock, and its forfeit is
+// the MuSig2 signature of exactly t named seats over LNv2's forfeit message - the contract id - under KeyAgg(claim_keys[S]), never the FROST key.
+// S is the t lowest seat indices that committed to that forfeit, as the asker holds them (#1137: a member checks the list's form and its own nonce,
+// not that the list is the lowest). The doors keep their bytes: a commitment travels as { id: seat + 1, hiding: R1, binding: R2 } (its BIP-327
+// public nonce R1 || R2), a partial as a 32-byte share, and the combined forfeit as its 64 bytes followed by u8 t and the t signer indices.
+const pubnonceOf = (c) => Uint8Array.from([...c.hiding, ...c.binding]);
+const partialBytes = (share) => Uint8Array.from(Buffer.from(BigInt(share).toString(16).padStart(64, '0'), 'hex'));
+const partialScalar = (bytes) => BigInt('0x' + (Buffer.from(bytes).toString('hex') || '0'));
+/** The forfeit as the signature door and the store carry it: 64 bytes, then (named) u8 t and the t ascending seat indices. */
+export const encodeNamedForfeit = (signature, signers) => Uint8Array.from([...signature, signers.length, ...signers]);
+export function decodeForfeitBody(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < 64) return null;
+  if (bytes.length === 64) return { signature: bytes.slice(0, 64), signers: null };
+  const t = bytes[64];
+  if (bytes.length !== 65 + t || t < 1) return null;
+  return { signature: bytes.slice(0, 64), signers: [...bytes.slice(65)] };
+}
+
+/**
+ * WHAT A PROTOCOL-27 SEAT SIGNS AS A FORFEIT, from the lock it verified: an Arena lock naming this round, the round's settlement seats in seat order
+ * and its threshold, its contract id rebuilt here (arena-lock.js arenaLockContractId, the guardians' forfeit message), this seat one of the keys.
+ */
+export function namedForfeitMessage({ contract, lock, roundId, pubkey }) {
+  const fields = lockFieldsFromJson(lock.fields);
+  if (!fields.arena) return refuse('this round locks to an Arena lock (protocol 27), and that lock is a stock contract to one claim key');
+  const { seatKeys, threshold } = namedClaimKeys(contract);
+  if (fields.threshold !== threshold || fields.claimKeys.length !== seatKeys.length || fields.claimKeys.some((k, i) => toHex(k) !== toHex(seatKeys[i])))
+    return refuse('that lock\'s claim keys are not this round\'s settlement seats in seat order with its threshold');
+  if (toHex(fields.roundId) !== toHex(roundId)) return refuse('that lock names another round than this one');
+  const id = toHex(arenaLockContractId(fields));
+  if (id !== String(lock.contractId).toLowerCase()) return refuse('the contract rebuilt from this signer node\'s record is not the one it verified');
+  const me = seatKeys.findIndex((k) => toHex(k) === toHex(pubkey));
+  if (me < 0) return refuse('this node is not one of the round\'s settlement seats, so it signs no forfeit of its locks');
+  return { ok: true, named: true, message: fromHex(id), claimKeys: seatKeys, threshold, me, needed: threshold, nodes: contract.nodes };
+}
 
 // A FEE LOCK'S RETURN (2026-10-09: "orders can be cancelled at no cost"): kept under its own key beside
 // the stake lock's, so an entry's two returns never stand in each other's place
@@ -50,6 +89,7 @@ const FEE_RETURN_TAG = new TextEncoder().encode('arena fee lock return v1');
 export const feeReturnKey = (entryIdBytes) => { const m = new Uint8Array(FEE_RETURN_TAG.length + 32); m.set(FEE_RETURN_TAG); m.set(entryIdBytes, FEE_RETURN_TAG.length); return sha256(m); };
 const keptUnder = (entryIdBytes, kind) => (kind === 'fee' ? feeReturnKey(entryIdBytes) : entryIdBytes);
 
+const verifies = (sig, msg, x) => { try { return schnorr.verify(sig, msg, x); } catch { return false; } };
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).sort().join('|');
 const refuse = (why, status = 409) => ({ ok: false, status, why });
 
@@ -104,7 +144,7 @@ export class Forfeit {
       if (!fl) return refuse('this signer node verified no fee lock for that entry, so it returns none');
       if (!cancelled && !this.#marketRefund(roundIdBytes, contract).ok)
         return refuse('a fee lock comes back at once only for a cancelled order or a refunded market: this one is claimed at resolution, or expires back to its player');
-      return this.#signable(contract, fl);
+      return this.#signable(contract, fl, roundIdBytes);
     }
     let lock = this.round.stakeLock(entryIdBytes);
     // §23.2 REFUSED (2026-10-06 08:57: "A round the seats refuse gets an immediate refund"): no entry,
@@ -197,14 +237,15 @@ export class Forfeit {
             + `${contract.minScore}: not a qualifier, so its stake lock is not forfeited (${back.why})`);
       }
     }
-    return this.#signable(contract, lock);
+    return this.#signable(contract, lock, roundIdBytes);
   }
 
   /** Where the round's settlement stands at this signer node - in one federation or, for a round that takes any, in all (round.js). */
   #settled(roundIdBytes) { return stateOf(this.round, roundIdBytes); }
 
   /** The lock's contract id, rebuilt from this signer node's own record, under the round's claim key - what it signs. */
-  async #signable(contract, lock) {
+  async #signable(contract, lock, roundIdBytes) {
+    if (namedClaims(contract)) return namedForfeitMessage({ contract, lock, roundId: roundIdBytes, pubkey: this.round.pubkey });
     const held = this.dkg.signerNodeFor(contract.nodes);
     if (!held.ok) return refuse(`this signer node holds no share of the round's claim key: ${held.why}`);
     const claimPk = held.pool.groupPublicKey;
@@ -252,13 +293,13 @@ export class Forfeit {
   #bookReturn(roundIdBytes, entryIdBytes, contract, kind, book) {
     const lock = kind === 'fee' ? (this.round.feeLock ? this.round.feeLock(entryIdBytes) : null) : this.round.stakeLock(entryIdBytes);
     if (!lock) return refuse(`this signer node verified no ${kind} lock for that order, so it returns none`);
-    if (this.#marketRefund(roundIdBytes, contract).ok) return this.#signable(contract, lock);
+    if (this.#marketRefund(roundIdBytes, contract).ok) return this.#signable(contract, lock, roundIdBytes);
     if (book.inPending) return refuse('that order is in a batch not decided yet: its locks wait for it');
     if (book.filled) return refuse('that order filled: its locks are claimed at resolution and its unfilled rest paid back there');
-    if (book.cancelled) return this.#signable(contract, lock);
+    if (book.cancelled) return this.#signable(contract, lock, roundIdBytes);
     const held = heldOutcomes(this.round, roundIdBytes);
     const fin = outcomeFinality(held, { windowMs: contract.objectionWindowMs, nowMs: this.round.now ? this.round.now() : Date.now() });
-    if (fin.final) return this.#signable(contract, lock);
+    if (fin.final) return this.#signable(contract, lock, roundIdBytes);
     return refuse('that order stands unfilled: cancel it (at no cost) or wait for the market to resolve');
   }
 
@@ -294,7 +335,17 @@ export class Forfeit {
     if (!m.ok) return m;
     const key = toHex(m.message);
     let pair = this.pairs.get(key);
-    if (!pair || pair.list) {
+    if (m.named) {
+      if (!pair || pair.list || !pair.named) {
+        const sk = signingSecret(this.round.identity.secret);
+        const n = nonceGen({ sk, pk: evenYKey(m.claimKeys[m.me]), rand: this.random(32) });
+        pair = { named: true, secnonce: n.secnonce, list: null, share: null,
+          commitment: { id: m.me + 1, hiding: n.pubnonce.slice(0, 33), binding: n.pubnonce.slice(33) } };
+        this.pairs.set(key, pair);
+      }
+      return { ok: true, commitment: pair.commitment };
+    }
+    if (!pair || pair.list || pair.named) {
       const hiding = nonceGenerate340(this.random(32), m.signerNode.share);
       const binding = nonceGenerate340(this.random(32), m.signerNode.share);
       pair = { hiding, binding, list: null, share: null,
@@ -313,6 +364,7 @@ export class Forfeit {
     const own = commitments.find((c) => String(c.id) === String(pair.commitment.id));
     if (!own || toHex(own.hiding) !== toHex(pair.commitment.hiding) || toHex(own.binding) !== toHex(pair.commitment.binding))
       return refuse('that list does not carry this signer node\'s own commitment');
+    if (m.named) return this.#shareNamed(m, pair, commitments);
     if (commitments.length < m.needed) return refuse(`${commitments.length} commitments, and this round's key signs at ${m.needed}`);
     const key = listKey(commitments);
     if (pair.list && pair.list !== key) return refuse('this signer node signed that forfeit over another list, and keeps no second pair');
@@ -324,10 +376,47 @@ export class Forfeit {
     return { ok: true, share: pair.share };
   }
 
+  /**
+   * ROUND TWO OF A NAMED FORFEIT (#1137): the list is exactly t seats, ascending and distinct, every one a seat of the round, this seat among them
+   * with its own nonce; one partial per nonce, for one list - the secret nonce is gone once it signed, and another list gets nothing.
+   */
+  #shareNamed(m, pair, commitments) {
+    if (!pair.named) return refuse('this signer node committed to no named forfeit of that lock');
+    const signers = commitments.map((c) => Number(c.id) - 1);
+    const form = checkSigners(m.claimKeys, m.threshold, signers);
+    if (!form.ok) return refuse(`a forfeit's signer list: ${form.why}`);
+    const key = listKey(commitments);
+    if (pair.list && pair.list !== key) return refuse('this signer node signed that forfeit over another list, and keeps no second pair');
+    if (pair.share === null) {
+      let partial;
+      try {
+        partial = musigSign(pair.secnonce, signingSecret(this.round.identity.secret), namedContext(m.claimKeys, m.threshold, signers),
+          nonceAgg(commitments.map(pubnonceOf)), m.message);
+      } catch (e) { return refuse(`no partial signature: ${e.message}`); }
+      pair.secnonce = null;
+      pair.share = partialScalar(partial);
+      pair.list = key;
+    }
+    return { ok: true, share: pair.share };
+  }
+
   /** A combined forfeit handed over by a peer: kept only if it verifies over what THIS signer node rebuilt. */
-  async take(roundIdBytes, entryIdBytes, signature, kind = 'stake') {
+  async take(roundIdBytes, entryIdBytes, body, kind = 'stake') {
     const m = await this.message(roundIdBytes, entryIdBytes, kind);
     if (!m.ok) return m;
+    const got = decodeForfeitBody(body);
+    if (!got) return refuse('a forfeit is a 64-byte signature, and a named one its signer indices after it', 400);
+    if (m.named) {
+      if (!got.signers) return refuse('an Arena lock\'s forfeit names its signers, and this one does not');
+      const form = checkSigners(m.claimKeys, m.threshold, got.signers);
+      if (!form.ok) return refuse(`that forfeit's signers: ${form.why}`);
+      const agg = namedKey(m.claimKeys, m.threshold, got.signers);
+      if (!verifies(got.signature, m.message, agg)) return refuse('that forfeit does not verify under the KeyAgg of the seats it names');
+      this.round.putForfeit({ entryId: keptUnder(entryIdBytes, kind), roundId: roundIdBytes, message: m.message, signature: got.signature, claimPk: evenYKey(agg), signers: got.signers });
+      return { ok: true };
+    }
+    if (got.signers) return refuse('a stock lock\'s forfeit is the round\'s FROST signature alone', 400);
+    const signature = got.signature;
     if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return refuse('that forfeit does not verify under the round\'s claim key');
     this.round.putForfeit({ entryId: keptUnder(entryIdBytes, kind), roundId: roundIdBytes, message: m.message, signature, claimPk: m.claimPk });
     return { ok: true };
@@ -349,7 +438,7 @@ export class Forfeit {
       try { await this.onVoid(roundIdBytes, entryIdBytes); } catch { /* each signer node still signs only on its own record */ }
     }
     const q = `round=${toHex(roundIdBytes)}&entry=${toHex(entryIdBytes)}${kind === 'fee' ? '&lock=fee' : ''}`;
-    let signature;
+    let signature, named = null;
     for (;;) {
       const own = await this.commit(roundIdBytes, entryIdBytes, kind);
       if (!own.ok) return own;
@@ -368,16 +457,20 @@ export class Forfeit {
       if (signers.length < m.needed)
         return refuse(`${signers.length} of the ${m.needed} signer nodes the forfeit needs committed to it: ${refused.join('; ')}`);
       const listed = this.#listed(q, signers, m.needed);
-      const combined = await this.#gatherShares(roundIdBytes, entryIdBytes, kind, m, q, listed);
-      if (combined.ok) { ({ signature } = combined); this.withheld.delete(q); break; }
+      // A NAMED FORFEIT: S is the t lowest seats that committed and are not left out (#1135 3), the asker itself or not
+      const set = m.named ? listed.slice().sort((a, b) => a.commitment.id - b.commitment.id).slice(0, m.needed) : listed;
+      const combined = await this.#gatherShares(roundIdBytes, entryIdBytes, kind, m, q, set);
+      if (combined.ok) { ({ signature } = combined); named = combined.signers || null; this.withheld.delete(q); break; }
       // A SEAT THAT GAVE NO SHARE, OR ONE THAT DOES NOT STAND, is left off the next list while the threshold remains, and the forfeit is asked again at once
       if (!this.#leaveOut(q, combined, listed, m.needed)) return combined;
     }
-    this.round.putForfeit({ entryId: keptUnder(entryIdBytes, kind), roundId: roundIdBytes, message: m.message, signature, claimPk: m.claimPk });
+    const claimPk = named ? evenYKey(namedKey(m.claimKeys, m.threshold, named)) : m.claimPk;
+    this.round.putForfeit({ entryId: keptUnder(entryIdBytes, kind), roundId: roundIdBytes, message: m.message, signature, claimPk, ...(named ? { signers: named } : {}) });
     // HANDED TO EVERY PEER, a slow one left off the list too: it keeps it only if it verifies over what it rebuilt. One that misses it asks again.
-    await askPeers(this.peersFor(roundIdBytes), (base, signal) => this.fetcher(`${base}/forfeit-signature?${q}`, { method: 'POST', body: signature, signal }),
+    const handed = named ? encodeNamedForfeit(signature, named) : signature;
+    await askPeers(this.peersFor(roundIdBytes), (base, signal) => this.fetcher(`${base}/forfeit-signature?${q}`, { method: 'POST', body: handed, signal }),
       { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: m.needed - 1 });
-    return { ok: true, message: m.message, signature, claimPk: m.claimPk };
+    return { ok: true, message: m.message, signature, claimPk, ...(named ? { signers: named } : {}) };
   }
 
   /** THE SEATS THAT SIGN THIS LIST (kanban #1074, settlement.js #listed): those that committed, less any that gave this asker no share for it while enough others remain. */
@@ -405,8 +498,9 @@ export class Forfeit {
    */
   async #gatherShares(roundIdBytes, entryIdBytes, kind, m, q, signers) {
     const commitments = signers.map((s) => s.commitment).sort((a, b) => a.id - b.id);
-    const mine = await this.share(roundIdBytes, entryIdBytes, commitments, kind);
-    if (!mine.ok) return mine;
+    const inList = signers.some((s) => s.base === null);
+    const mine = inList ? await this.share(roundIdBytes, entryIdBytes, commitments, kind) : null;
+    if (mine && !mine.ok) return mine;
     const body = encodeCommitments(commitments);
     const peers = signers.filter((s) => s.base !== null);
     const asked = await askPeers(peers.map((s) => s.base), async (base, signal) => {
@@ -416,6 +510,18 @@ export class Forfeit {
     }, { boundMs: this.peerAskMs });
     const none = asked.filter((x) => !x.value || !('share' in x.value));
     if (none.length) return { ...refuse(`${none[0].peer} gave no share: ${none[0].value ? none[0].value.why : none[0].error.message}`), withheld: none.map((x) => x.peer) };
+    if (m.named) {
+      // each partial in the list's order, checked against its seat's public nonce: a bad one names its seat (named-claim.js aggregateNamed)
+      const bySeat = new Map(asked.map((x, i) => [peers[i].commitment.id, x.value.share]));
+      const own = signers.find((s) => s.base === null);
+      if (own) bySeat.set(own.commitment.id, mine.share);
+      const named = commitments.map((c) => Number(c.id) - 1);
+      const agg = aggregateNamed({ claimKeys: m.claimKeys, threshold: m.threshold, signers: named, message: m.message,
+        pubnonces: commitments.map(pubnonceOf), partials: commitments.map((c) => partialBytes(bySeat.get(c.id))) });
+      if (agg.ok) return { ok: true, signature: agg.signature, signers: named };
+      const badIds = new Set(agg.bad.map((i) => commitments[i].id));
+      return { ...refuse(`the combined forfeit does not verify: ${agg.why}`, 500), withheld: peers.filter((s) => badIds.has(s.commitment.id)).map((s) => s.base) };
+    }
     const shares = [mine.share, ...asked.map((x) => x.value.share)];
     const { signature } = aggregate340({ commitments, message: m.message, groupPublicKey: m.claimPk, shares, curve: this.curve });
     if (schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return { ok: true, signature };

@@ -10341,8 +10341,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(encodeShare(got.share)));
         }
+        // 64 bytes; a protocol-27 forfeit then u8 t and its t signer indices (forfeit.js decodeForfeitBody)
         const signature = new Uint8Array(await read(req));
-        if (signature.length !== 64) return text(res, 400, 'a forfeit is a 64-byte signature');
+        if (signature.length < 64 || signature.length > 72) return text(res, 400, 'a forfeit is a 64-byte signature, a named one followed by its signers');
         const got = await forfeits.take(r8, e8, signature, kind);
         return got.ok ? text(res, 201, 'forfeit kept') : text(res, got.status || 409, got.why);
       }
@@ -10745,7 +10746,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!got.ok) return text(res, got.status || 409, got.why);
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ signature: toHex(got.signature), contractId: toHex(got.message),
-          claimPk: toHex(got.claimPk), kept: !!got.kept }));
+          claimPk: toHex(got.claimPk), kept: !!got.kept, ...(got.signers ? { signers: got.signers } : {}) }));
       }
 
       // THIS SIGNER NODE'S SIGNED CLAIM KEY (v4.6.2 §23.1 step 0, F3): "each signer node signs

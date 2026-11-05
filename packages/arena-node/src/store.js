@@ -1368,6 +1368,9 @@ export function openStore(path = ':memory:') {
   // AND THE SIGNATURE OVER A NAMED ADDRESS (kanban #1071): a store from before keeps its rows, which cannot be handed on
   if (!db.prepare('PRAGMA table_info(payout_address)').all().some((c) => c.name === 'signature'))
     db.exec('ALTER TABLE payout_address ADD COLUMN signature BLOB');
+  // AND THE SIGNERS A PROTOCOL-27 FORFEIT NAMES (kanban #1044 B1, ruling #1131 3): a row from before is a FROST forfeit and names none
+  if (!db.prepare('PRAGMA table_info(forfeits)').all().some((c) => c.name === 'signers'))
+    db.exec('ALTER TABLE forfeits ADD COLUMN signers TEXT');
   return db;
 }
 
