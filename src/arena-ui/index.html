@@ -6834,6 +6834,21 @@
       // naming a version's id still opens that version
       const tiles = ARENACLIENT.oneTilePerGame ? ARENACLIENT.oneTilePerGame(got.games) : got.games;
       let game = named ? (got.games.find((g) => g.id === String(named).toLowerCase()) || tiles.find((g) => g.name === named)) : null;
+      // AN OLD VERSION'S LINK OPENS THE GAME AS IT IS NOW (kanban #1132, the owner 2026-11-05 ~06:28Z on a phone, UI 540: Up/Down said "No window
+      // is open" all through an open window - "I think it's the browser"): the tab's link named an Up/Down version by its id, the seats run their
+      // rounds under a newer one, and the lobby keeps only the named version's rows. A named version with no live round of its own gives way to
+      // its tile's version (the newest); one that still has rounds is opened as named.
+      if (game && named && game.id === String(named).toLowerCase()) {
+        const tile = tiles.find((t) => t.name === game.name && Array.isArray(t.versions) && t.versions.includes(game.id));
+        const liveHere = Number(game.live && game.live.rounds) || 0;
+        if (tile && tile.id !== game.id && !liveHere) {
+          console.log('[arena] the link names ' + game.name + ' ' + game.id.slice(0, 16) + ', a version with no live round: opening ' + tile.id.slice(0, 16));
+          game = tile;
+          // and the link with it: the lobby reads its game from the address, so an old id there would still ask for that version's rounds
+          try { const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.set('game', tiles.filter((t) => t.name === tile.name).length === 1 ? tile.name : tile.id);
+            history.replaceState(history.state, '', location.pathname + '?' + q.toString() + location.hash); } catch (e) { /* the address keeps the old id */ }
+        }
+      }
       if (!game && tiles.length === 1) game = tiles[0];
       if (!game && tiles.length > 1) {
         const el = document.getElementById('arena-games');
@@ -6868,7 +6883,9 @@
         document.body.classList.remove('arena-picking');
         // THE GAME'S NAME IN THE LINK, its id only when two listed games share the name: the loading screen
         // reads the name before anything loads, and a reload shows this game's splash, not Next Block's
-        const byName = got.games.filter((g) => g.name === game.name).length === 1;
+        // (kanban #1132: the versions of one game are one tile, so the name is unique among the tiles; counting every version put a version's
+        // id in the link, and that link kept opening the version after the seats had moved on)
+        const byName = tiles.filter((g) => g.name === game.name).length === 1;
         try { window.ARENA_BROWSER_STORE().setItem('arena.game-name.' + game.id, game.name); } catch (e) { /* storage blocked */ }
         const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.set('game', byName ? game.name : game.id);
         history.replaceState(null, '', location.pathname + '?' + q.toString());
@@ -7247,6 +7264,7 @@
       function expectedLine(fr) {
         const hhmm = (ms) => new Date(Number(ms)).toISOString().slice(11, 16) + ' UTC';
         const inMin = (ms) => { const m = Math.round((Number(ms) - Date.now()) / 60000); return m >= 60 ? `in ${Math.floor(m / 60)} h ${m % 60} min` : m > 0 ? `in ${m} min` : 'soon'; };
+        const shownAt = Date.now();
         const paint = async () => {
           let d = null; try { d = fr.contentDocument; } catch (e) { d = null; }
           if (!d || !d.body) return;
@@ -7268,7 +7286,21 @@
           window.ARENA_UNPLAYABLE = unplayable;
           // AND THE ORDER FORM OFF while no window is playable: the sides and the sheet dimmed and not pressable (the client's own Buy is off already)
           if (!d.getElementById('arena-unplayable-style')) { const st = d.createElement('style'); st.id = 'arena-unplayable-style';
-            st.textContent = 'body[data-arena-unplayable] .sides,body[data-arena-unplayable] .sheet{opacity:.45;pointer-events:none}'; d.head.appendChild(st); }
+            st.textContent = 'body[data-arena-unplayable] .sides,body[data-arena-unplayable] .sheet{opacity:.45;pointer-events:none}'
+              + 'body[data-arena-reading] #q{display:none}body[data-arena-reading] .sides,body[data-arena-reading] .sheet{opacity:.45;pointer-events:none}'; d.head.appendChild(st); }
+          // NOT READ YET IS NOT "NO WINDOW" (kanban #1132): until the lobby's first answer is in, the client's "No window is open" and the line
+          // under it (which, with no rows, named tomorrow's grid: "Next round in 17 h 37 min") are replaced by a reading line. After 30 s
+          // without an answer the client's own words stand, so a lobby that never answers is not hidden.
+          const reading = !!(empty && !window.ARENA_LOBBY_ANSWERED_AT && now - shownAt < 30000);
+          d.body.toggleAttribute('data-arena-reading', reading);
+          if (reading) {
+            if (!el) { el = d.createElement('div'); el.id = 'arena-expected'; el.style.cssText = 'margin-top:6px;font-size:14px;opacity:.85;line-height:1.4'; q.after(el); }
+            el.dataset.why = 'reading';
+            const text = 'Reading the open rounds from the nodes …';
+            if (el.textContent !== text) el.textContent = text;
+            d.body.toggleAttribute('data-arena-unplayable', false);
+            return;
+          }
           d.body.toggleAttribute('data-arena-unplayable', !!(empty && unplayable));
           if (!empty && !unplayable) { if (el) el.remove(); return; }
           if (!el) { el = d.createElement('div'); el.id = 'arena-expected'; el.style.cssText = 'margin-top:6px;font-size:14px;opacity:.85;line-height:1.4'; q.after(el); }
@@ -7293,6 +7325,10 @@
           if (el.textContent !== text) el.textContent = text;
         };
         paint(); const t = setInterval(() => { if (!fr.isConnected) { clearInterval(t); return; } paint().catch(() => {}); }, 5000);
+        // the moment the lobby draws (kanban #1132): the first rows reach this line now, not at the next 5 s tick; the client takes them on its
+        // own next read, so a second paint 1.2 s later catches its new line
+        const onLobby = () => { if (!fr.isConnected) { window.removeEventListener('arena-lobby', onLobby); return; } paint().catch(() => {}); setTimeout(() => paint().catch(() => {}), 1200); };
+        window.addEventListener('arena-lobby', onLobby);
       }
       document.body.classList.add('arena-own-client');
       document.body.appendChild(frame);
@@ -8503,6 +8539,15 @@
         for (const r of mine) rowSearch.set(r.id, search);
         for (const r of theirs) rowSearch.set(r.id, testnet.search);
         window.ARENA_LOBBY_ROWS = [...mine, ...theirs];    // every round listed, for the next one after a run (below)
+        // THE FIRST ANSWER IS KNOWN (kanban #1132, playtest 2026-11-05 ~06:08Z: Up/Down said "No window is open on these nodes right now.
+        // Next round in 17 h 37 min" for ~15 s on a phone, then showed the open window): until every side asked has answered once, an empty
+        // list means "not read yet", not "nothing open". The app's line waits for this, and repaints the moment rows arrive.
+        // two answers, not one (measured on the preview: the first answer can come back empty and the next, a second later, with the round)
+        if (!got.pending && (!got2 || !got2.pending)) {
+          window.ARENA_LOBBY_ANSWERS = (window.ARENA_LOBBY_ANSWERS || 0) + 1;
+          if (window.ARENA_LOBBY_ANSWERS >= 2 && !window.ARENA_LOBBY_ANSWERED_AT) window.ARENA_LOBBY_ANSWERED_AT = Date.now();
+        }
+        try { window.dispatchEvent(new Event('arena-lobby')); } catch (e) { /* an old browser: the 5 s repaint still comes */ }
         if (window.ARENA_BOOT_STEP && window.ARENA_LOBBY_ROWS.length) window.ARENA_BOOT_STEP(65, 'Opening your wallet …');
         // THE ROUNDS JUST CLOSED THAT THE SEATS STILL LIST: a player's orders in them are read back after a reload
         { const closedOf = (g, srch) => ((g && g.closed) || []).filter((c) => !c.contract || paysHere(c)).map((c) => { rowSearch.set(c.id, srch); return c; });
