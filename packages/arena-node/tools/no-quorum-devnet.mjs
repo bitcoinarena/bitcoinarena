@@ -38,6 +38,9 @@ const PLANS = {
   'one-back-carried': { stop: [4, 5, 6], carry: true, limit: 1980, backAt: { 4: 800, 5: 1900, 6: 1900 } },
   'three-silent': { stop: [4, 5, 6], carry: false, limit: 1360 },
   'no-mark': { stop: [4, 5, 6], carry: false, limit: 760, noMarks: true },
+  // kanban #1044 B1 phase 4: both enter, neither plays, every seat up: VOID, nothing forfeited, and each player takes its Arena locks back by the
+  // refund once they expire (tn4-live-run REFUND_AT_EXPIRY; MINE_CMD mines the private chain to the expiration)
+  refund: { stop: [], carry: false, limit: 760, noMarks: true, refund: true },
 };
 const plan = PLANS[SCENARIO];
 if (!plan) { console.error(`SCENARIO is one of ${Object.keys(PLANS).join(', ')}`); process.exit(2); }
@@ -67,7 +70,7 @@ const players = [0, 1].map((i) => {
   const keys = join(D, `keys-${SCENARIO}.jsonl`);
   const child = spawn(process.execPath, [join(HERE, 'tn4-live-run.mjs')], { detached: true, stdio: ['ignore', fd, fd],
     // THE FIRST PLAYER SEARCHES FOR A DRIVE THAT DELIVERS, so the round has a winner to rescue; the second drives plainly
-    env: { ...env, ARENA_TN4_NETWORK: 'regtest', ROUND, PORTS: PLAN.nodes.join(','), KEYS_FILE: keys, COLLECT_MS: '60000', ...(plan.noMarks ? { NO_MARKS: '1' } : i === 0 ? { SEARCH: '1' } : {}) } });
+    env: { ...env, ARENA_TN4_NETWORK: 'regtest', ROUND, PORTS: PLAN.nodes.join(','), KEYS_FILE: keys, COLLECT_MS: '60000', ...(plan.noMarks ? { NO_MARKS: '1' } : i === 0 ? { SEARCH: '1' } : {}), ...(plan.refund ? { REFUND_AT_EXPIRY: '1' } : {}) } });
   return { i, log, child };
 });
 const lines = (p) => { try { return readFileSync(p.log, 'utf8').split('\n'); } catch { return []; } };
@@ -130,5 +133,10 @@ for (let k = 0; k < SEATS.length; k++) for (const entry of entries) {
   } catch (e) { say({ step: 'end', seat: k + 1, entry: entry.slice(0, 8), noAnswer: e.message }); }
 }
 for (const p of players) { try { process.kill(-p.child.pid, 'SIGTERM'); } catch { /* it ended */ } }
+// A REFUND SCENARIO: each player's refund, once its locks expired
+if (plan.refund) {
+  for (const stop = Date.now() + Number(env.REFUND_MS || 40 * 60000) + 60000; Date.now() < stop && !players.every((p) => said(p, 'refunded').length || p.child.exitCode !== null); await wait(10000));
+  for (const p of players) say({ step: 'refund', i: p.i, said: (said(p, 'refunded')[0] || lines(p).filter(Boolean).slice(-1)[0] || '').slice(0, 900) });
+}
 say({ step: 'done', scenario: SCENARIO, round: ROUND.slice(0, 16), t: at() });
 process.exit(0);

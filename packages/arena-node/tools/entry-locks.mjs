@@ -14,6 +14,8 @@ import { paysReserves, roundSplit } from '../../arena-protocol/src/reserves.js';
 import { decodeDonationSet } from '../../arena-protocol/src/donation.js';
 import { decodeDonationSetBody } from '../../arena-protocol/src/authority.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { namedClaims, namedClaimKeys, arenaLockFor, arenaLockFieldsToJson, arenaLockContractId } from '../../arena-protocol/src/arena-lock.js';
+import { roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
 
 /**
  * What an entry of round `c` pays: { feeMsat, donationMsat, netMsat, shares, reserveKey }. From protocol 11 the reserve key is the one
@@ -60,6 +62,7 @@ export async function lockEntry({ lc, c, split, stakePoint, player, claimPk, gat
   const refundPk = refundKeyOf(player);
   const zero = { txid: new Uint8Array(32), outIdx: 0n };
   const F = gate.pays ? rand(32) : null;
+  if (namedClaims(c)) return lockArena({ lc, c, split, stakePoint, player, refundPk, F, zero, submitOnly });
   if (!split.shares.length && !(submitOnly && typeof lc.lockSubmit === 'function')) {
     // THE STAKE AND THE FEE IN ONE TRANSACTION when the client has `lockBoth` (as the page's join, page-lock.js): one transaction
     // for the guardians to agree on, not two - kanban #576, measured 2026-10-23 10:3xZ: with 20 market bots, federation A's 7
@@ -95,6 +98,44 @@ export async function lockEntry({ lc, c, split, stakePoint, player, claimPk, gat
   const stake = { outpoint: at(so), fields: { paymentImage: { kind: 'point', bytes: stakePoint }, amountMsat: BigInt(so.amount_msat), claimPk, refundPk, expiration: so.computed_expiration } };
   const fee = fo ? { outpoint: at(fo), fields: { paymentImage: { kind: 'hash', bytes: sha256(F) }, amountMsat: BigInt(fo.amount_msat), claimPk, refundPk, expiration: fo.computed_expiration }, preimage: F } : null;
   // the reserve share is the last (donationKeyShares puts it there, marked)
+  const ri = split.shares.findIndex((d) => d.reserve);
+  return { stake, fee, txid: sub.txid, ...(submitOnly ? { accepted } : {}), entryFields: { stakeLockOutpoint: stake.outpoint, feeLockOutpoint: fee ? fee.outpoint : zero, feePreimage: fee ? F : new Uint8Array(32),
+    ...(dons.filter((_, i) => i !== ri).length ? { donationOutpoints: dons.filter((_, i) => i !== ri).map(at) } : {}),
+    ...(ri >= 0 ? { reserveOutpoint: at(dons[ri]) } : {}) } };
+}
+
+/**
+ * A PROTOCOL-27 ENTRY'S LOCKS (kanban #1044 B1, rulings #1131, #1134), as the page's lockArenaStake makes them: Arena locks naming the round, its
+ * settlement seats' node keys in seat order and its threshold, stake and fee lock and the donations in one transaction (arenaLockSubmit), each
+ * output checked against the id computed here. The fields carry `arena: true`, so the seats are handed an Arena lock.
+ */
+async function lockArena({ lc, c, split, stakePoint, player, refundPk, F, zero, submitOnly }) {
+  if (typeof lc.arenaLockSubmit !== 'function') throw new Error('this round locks to an Arena lock (protocol 27), and this lock client has no arenaLockSubmit');
+  const roundId = roundIdOf(c);
+  const { seatKeys, threshold } = namedClaimKeys(c);
+  const entry = { playerPubkey: player };
+  const stakeFields = { ...arenaLockFor({ kind: 'stake', entry, roundId, seatKeys, threshold, amountMsat: split.netMsat, imageBytes: stakePoint }), refundPk };
+  const feeFields = F ? { ...arenaLockFor({ kind: 'fee', entry, roundId, seatKeys, threshold, amountMsat: split.feeMsat, imageBytes: sha256(F) }), refundPk } : null;
+  const asJson = (f) => { const j = arenaLockFieldsToJson({ ...f, expiration: 0 }); delete j.expiration; return JSON.stringify(j); };
+  const sub = JSON.parse(await lc.arenaLockSubmit(asJson(stakeFields), feeFields ? asJson(feeFields) : '', Number(c.stakeExpiryBlocks),
+    JSON.stringify(split.shares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat), image: toHex(player) })))));
+  if (sub.arena !== true) throw new Error('the lock client answered a stock lock for a round that locks to an Arena lock');
+  const outs = sub.outputs || [];
+  const at = (o) => ({ txid: fromHex(sub.txid), outIdx: BigInt(o.out_idx) });
+  const built = (o, fields, what) => {
+    if (!o) throw new Error(`the lock client built no ${what} lock`);
+    const f = { ...fields, expiration: Number(o.computed_expiration), arena: true };
+    if (BigInt(o.amount_msat) !== f.amountMsat) throw new Error(`the lock client built ${o.amount_msat} msat of ${what}, not ${f.amountMsat}`);
+    if (String(o.computed_contract_id).toLowerCase() !== toHex(arenaLockContractId(f))) throw new Error(`the lock client built another Arena ${what} lock than computed here`);
+    return { outpoint: at(o), fields: f };
+  };
+  const stake = built(outs.find((o) => o.role === 'stake'), stakeFields, 'stake');
+  const feeMade = feeFields ? built(outs.find((o) => o.role === 'fee'), feeFields, 'fee') : null;
+  const fee = feeMade ? { ...feeMade, preimage: F } : null;
+  const dons = outs.filter((o) => o.role === 'donation');
+  if (dons.length !== split.shares.length) throw new Error(`the lock client built ${dons.length} donation outputs for ${split.shares.length} shares`);
+  const accepted = lc.arenaLockAccepted(JSON.stringify(sub));
+  if (submitOnly) accepted.catch(() => {}); else await accepted;
   const ri = split.shares.findIndex((d) => d.reserve);
   return { stake, fee, txid: sub.txid, ...(submitOnly ? { accepted } : {}), entryFields: { stakeLockOutpoint: stake.outpoint, feeLockOutpoint: fee ? fee.outpoint : zero, feePreimage: fee ? F : new Uint8Array(32),
     ...(dons.filter((_, i) => i !== ri).length ? { donationOutpoints: dons.filter((_, i) => i !== ri).map(at) } : {}),
