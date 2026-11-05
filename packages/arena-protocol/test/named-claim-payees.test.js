@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { claimPayees, unpayableClaims, entryPayeeKeys } from '../src/named-claim-payees.js';
-import { lockSettlement, bookLockSettlement } from '../src/lock-settlement.js';
+import { lockSettlement, bookLockSettlement, attestedLockSettlement, lateLockSettlement } from '../src/lock-settlement.js';
 import { DELIVERED, FAILED, FORFEIT } from '../src/payout.js';
 import { refundKeyOf } from '../src/stake-lock.js';
 import { entryFeeMsat } from '../src/fee.js';
@@ -117,11 +117,29 @@ test('gate: a walk-away\'s remainder (75 % of its stake to the sitting seats, 25
   const plan = lockSettlement({ roundId: RID, entries: [walker, loser], minScore: 1, locks: new Map([lockFor(walker, 5), lockFor(loser, 6)]), fees: NO_FEES,
     contract: ROUND, donationSet: KEYED_SET });
   assert.equal(plan.ok, true, plan.why);
-  const r = claimPayees({ spends: readOf(plan), entryKeys: entryPayeeKeys([contractOf(walker), contractOf(loser)]), payees: { nodeKeys: seatKeys(), donationKeys, reserveKeys: new Set() } });
-  // GATE HIT, reported on #1140: the remainder pays the seats out of a STAKE lock, and no fee lock is claimed - the node row's cap (the fee locks) does
-  // not hold it. Not loosened here: the hit stands until a ruling gives the remainder its own row
+  const payees = { nodeKeys: seatKeys(), donationKeys, reserveKeys: new Set(), fees: NO_FEES };
+  const keys = entryPayeeKeys([contractOf(walker), contractOf(loser)]);
+  // the remainder room (#1143 1): no qualifier paid, so the seats may take 75 % of the claimed stake, the donation set the other 25 %
+  const r = claimPayees({ spends: readOf(plan), entryKeys: keys, payees });
+  assert.equal(r.false, false, r.why);
+  // a seat paid a msat more than the 75 %: false
+  const more = { ...plan, payouts: [...plan.payouts, { kind: 'remainder node', payoutPk: refundKeyOf(SEATS[2]), msat: plan.remainder.nodesMsat - plan.payouts.filter((x) => x.kind === 'remainder node').reduce((t, x) => t + x.msat, 0n) + 1n }] };
+  assert.match(claimPayees({ spends: readOf(more), entryKeys: keys, payees }).why, new RegExp(`the remainder room ${plan.remainder.nodesMsat}`));
+  // the donation set paid above its 25 %
+  const rich = { ...plan, payouts: plan.payouts.map((p) => (p.kind === 'donation key' ? { ...p, msat: p.msat + 1n } : p)) };
+  assert.match(claimPayees({ spends: readOf(rich), entryKeys: keys, payees }).why, new RegExp(`a walk-away's remainder gives it at most ${plan.remainder.donationMsat}`));
+});
+
+test('#1143 1: where a qualifier is paid there is no remainder room - seats paid out of a stake lock beside a winner are false', () => {
+  const W = entry(1, DELIVERED, 3), L = entry(2, FAILED, 0);
+  const plan = lockSettlement({ roundId: RID, entries: [W, L], minScore: 1, fees: NO_FEES, feeBps: 500, contract: ROUND,
+    signerNodes: { gameVerify: SEATS, settlement: SEATS }, locks: new Map([lockFor(W, 1), lockFor(L, 2)]), feeLocks: new Map([feeLockFor(W, 1), feeLockFor(L, 2)]) });
+  // half the winner's payout moved to a seat: within 75 % of the stake, but a qualifier is paid
+  const half = plan.payouts.find((p) => p.kind === 'qualifier').msat / 2n;
+  const split = { ...plan, payouts: [...plan.payouts.map((p) => (p.kind === 'qualifier' ? { ...p, msat: p.msat - half } : p)), { kind: 'signer node', payoutPk: refundKeyOf(SEATS[1]), msat: half }] };
+  const r = claimPayees({ spends: readOf(split), entryKeys: entryPayeeKeys([contractOf(W), contractOf(L)]), payees: { nodeKeys: seatKeys(), donationKeys, reserveKeys: new Set(), fees: NO_FEES } });
   assert.equal(r.false, true);
-  assert.match(r.why, /node row is paid \d+ msat and the fee locks the transaction claims hold 0/);
+  assert.match(r.why, /it pays a qualifier: no remainder room/);
 });
 
 test('gate: a market\'s book settlement - orders, seats, the donation target, the reserve', () => {
@@ -137,8 +155,71 @@ test('gate: a market\'s book settlement - orders, seats, the donation target, th
     donation: { recipients: { network: KEYED_SET.recipients, game: [{ recipientPk: gameKey, shareBps: 10000, label: 'game' }] } } });
   if (!plan.ok) { assert.fail(`the book plan did not build: ${plan.why}`); }
   const spends = readOf(plan);
-  const r = claimPayees({ spends, entryKeys: entryPayeeKeys([contractOf(A), contractOf(B)]), payees: { nodeKeys: seatKeys(), donationKeys, reserveKeys: new Set([toHex(reserveKey)]) } });
-  const paysGame = plan.payouts.some((p) => toHex(p.payoutPk) === toHex(gameKey));
-  // GATE HIT where the market pays its game's own donation set (the manifest's, not the Round Contract's): reported on #1140, not loosened
-  if (paysGame) { assert.equal(r.false, true); assert.match(r.why, /a key the round may not pay/); } else assert.equal(r.false, false, r.why);
+  const keys = entryPayeeKeys([contractOf(A), contractOf(B)]);
+  const base = { nodeKeys: seatKeys(), donationKeys, reserveKeys: new Set([toHex(reserveKey)]) };
+  assert.ok(plan.payouts.some((p) => toHex(p.payoutPk) === toHex(gameKey)), 'the book pays its game\'s own set');
+  // without the game's set read it is a key the round may not pay; with it (#1143 2) honest, both sets within the donation share
+  assert.match(claimPayees({ spends, entryKeys: keys, payees: base }).why, /a key the round may not pay/);
+  const market = { nodeBps: 200, donationBps: 200 };
+  const r = claimPayees({ spends, entryKeys: keys, payees: { ...base, gameDonationKeys: new Set([toHex(gameKey)]), market } });
+  assert.equal(r.false, false, r.why);
+  // the game's set paid above the share: false
+  const claimed = plan.claims.reduce((t, c) => t + c.amountMsat, 0n);
+  const greedy = { ...plan, payouts: plan.payouts.map((p) => (toHex(p.payoutPk) === toHex(gameKey) ? { ...p, msat: claimed } : p)) };
+  assert.match(claimPayees({ spends: readOf(greedy), entryKeys: keys, payees: { ...base, gameDonationKeys: new Set([toHex(gameKey)]), market } }).why, /the market's donation share of what the transaction claims is/);
+});
+
+// ---- THE ZERO-FALSE GATE (#1139, #1143): every honest settlement the planners build here, read at level 2 with the payees a seat reads - none may be false
+test('gate: every honest settlement the planners build reads clean at level 2', () => {
+  const FEES = [NO_FEES, { ppm: 1000n, baseMsat: 0n }, { ppm: 0n, baseMsat: 1000n }];
+  const auditor = pk(0x90), guardian = pk(0x91), guardianPk = Uint8Array.from([0x03, ...b32(0x92)]), site = Uint8Array.from([0x03, ...b32(0x33)]);
+  const reserveKey = Uint8Array.from([0x02, ...b32(0x5e)]);
+  const payeesOf = (fees, extra = {}) => ({ nodeKeys: new Set([...seatKeys([auditor, guardian]), toHex(guardianPk)]), donationKeys, reserveKeys: new Set([toHex(reserveKey)]), fees, ...extra });
+  const plans = [];
+  for (const fees of FEES) {
+    // played rounds: 2..5 players, 1..n-1 winners, a website on the first, auditors and a guardian paid at its advert key
+    for (let n = 2; n <= 5; n++) for (let w = 1; w < n; w++) {
+      const es = Array.from({ length: n }, (_, i) => entry(i + 1, i < w ? DELIVERED : FAILED, i < w ? 3 : 0, i === 0 ? { frontendPk: site } : {}));
+      plans.push({ what: `played ${n}/${w}`, fees, entries: es, plan: lockSettlement({ roundId: RID, entries: es, minScore: 1, fees, feeBps: 500, contract: ROUND,
+        signerNodes: { gameVerify: SEATS, settlement: SEATS, auditors: [toHex(auditor)], guardian: [guardian], guardianPayout: new Map([[toHex(guardian), guardianPk]]) },
+        locks: new Map(es.map((e, i) => lockFor(e, i + 1))), feeLocks: new Map(es.map((e, i) => feeLockFor(e, i + 1))) }) });
+    }
+    // walk-aways: the walker alone or beside losers, with and without the fee locks
+    for (const losers of [0, 1, 3]) for (const withFee of [false, true]) {
+      const es = [entry(5, FORFEIT, 0, { atTheDoor: true }), ...Array.from({ length: losers }, (_, i) => entry(6 + i, FAILED, 0))];
+      plans.push({ what: `walk-away +${losers}${withFee ? ' fee' : ''}`, fees, entries: es, plan: lockSettlement({ roundId: RID, entries: es, minScore: 1, fees, feeBps: 500, contract: ROUND,
+        donationSet: KEYED_SET, signerNodes: { gameVerify: SEATS, settlement: SEATS }, locks: new Map(es.map((e, i) => lockFor(e, 20 + i))),
+        ...(withFee ? { feeLocks: new Map(es.map((e, i) => feeLockFor(e, 20 + i))) } : {}) }) });
+    }
+    // attested (pari-mutuel): one winner, one or two losers
+    for (const losers of [1, 2]) {
+      const es = Array.from({ length: losers + 1 }, (_, i) => ({ ...entry(30 + i, DELIVERED, 0), entryId: toHex(b32(0x30 + i)) }));
+      const rows = es.map((e, i) => ({ entryId: e.entryId, won: i === 0, netMsat: NET, payoutMsat: i === 0 ? NET * BigInt(losers + 1) : 0n }));
+      plans.push({ what: `attested 1/${losers}`, fees, entries: es, plan: attestedLockSettlement({ roundId: RID, table: { rows }, entries: es, locks: new Map(es.map((e, i) => lockFor(e, 30 + i))),
+        feeLocks: new Map(es.map((e, i) => feeLockFor(e, 30 + i))), fees, feeBps: 500, contract: ROUND, signerNodes: { gameVerify: SEATS, settlement: SEATS } }) });
+    }
+    // a late loser's lock to the winners
+    { const late = entry(40, FAILED, 0), win = entry(41, DELIVERED, 3);
+      plans.push({ what: 'late', fees, entries: [late, win], plan: lateLockSettlement({ roundId: RID, entryId: b32(0x40), entry: late, lock: lockFor(late, 40)[1], shares: [{ pubkey: win.pubkey, msat: 1n }],
+        winnerLocks: new Map([lockFor(win, 41)]), fees, feeBps: 500, contract: ROUND, signerNodes: { gameVerify: SEATS, settlement: SEATS }, feeLock: feeLockFor(late, 40)[1] }) }); }
+    // a market's book: with and without the reserve
+    for (const reserveBps of [0, 50]) {
+      const A = entry(11, DELIVERED, 0), B = entry(12, DELIVERED, 0);
+      const eid = (e) => toHex(e.pubkey);
+      const table = { claimed: [{ entry: eid(A), stakeMsat: NET, feeMsat: FEE, outMsat: 2n * NET - 2000n }, { entry: eid(B), stakeMsat: NET, feeMsat: FEE, outMsat: 0n }], feesDueMsat: 2000n + 2n * FEE };
+      plans.push({ what: `book reserve ${reserveBps}`, fees, entries: [A, B], market: { nodeBps: 200, donationBps: 200 }, plan: bookLockSettlement({ roundId: RID, table, entries: [A, B].map((e) => ({ ...e, entryId: eid(e) })),
+        locks: new Map([lockFor(A, 11), lockFor(B, 12)]), feeLocks: new Map([feeLockFor(A, 11), feeLockFor(B, 12)]), fees, contract: ROUND, nodeBps: 200, donationBps: 200, reserveBps, reserveKey,
+        donation: { recipients: { network: KEYED_SET.recipients, game: [{ recipientPk: GAME_KEY, shareBps: 10000, label: 'game' }] } } }) });
+    }
+  }
+  const built = plans.filter((x) => x.plan.ok && !x.plan.nothing && x.plan.claims.length);
+  const falseOnes = [];
+  for (const x of built) {
+    const r = claimPayees({ spends: readOf(x.plan), entryKeys: entryPayeeKeys(x.entries.map(contractOf)),
+      payees: payeesOf(x.fees, x.market ? { market: x.market, gameDonationKeys: new Set([toHex(GAME_KEY)]) } : {}) });
+    if (r.false || r.unread.length) falseOnes.push(`${x.what} ${x.fees.ppm}/${x.fees.baseMsat}: ${r.why || r.unread.join('; ')}`);
+  }
+  console.log(`#1044 gate: ${built.length} honest settlements read of ${plans.length} plans, ${falseOnes.length} false`);
+  assert.ok(built.length >= 60, `${built.length} built: ${plans.filter((x) => !x.plan.ok).map((x) => `${x.what}: ${x.plan.why}`).slice(0, 3).join(' | ')}`);
+  assert.deepEqual(falseOnes, []);
 });

@@ -2476,7 +2476,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const keys = await Promise.all([...new Set(fids)].map((f) => reserveKeyFor(f).catch(() => null)));
       reserveKeys = new Set(keys.map(hex33).filter(Boolean));
     } catch { reserveKeys = null; }
-    return { nodeKeys, donationKeys, reserveKeys };
+    // A MARKET'S GAME DONATION SET AND ITS RATES (#1143 2): the hosted registration's set (the manifest the round's game id names), the book's own rates
+    let gameDonationKeys, market;
+    try {
+      const L = orderBook && orderBook.ledger ? orderBook.ledger(rid) : null;
+      if (L && L.market) {
+        market = { nodeBps: L.market.nodeBps, donationBps: L.market.donationBps };
+        const game = contract.gameId instanceof Uint8Array ? hosted.get(toHex(contract.gameId)) : null;
+        gameDonationKeys = game && Array.isArray(game.donationSet) ? new Set(game.donationSet.map((r) => hex33(r.recipientPk)).filter(Boolean)) : null;
+      }
+    } catch { gameDonationKeys = null; market = undefined; }
+    // THE GUARDIANS' FEE RULE (#1143 1: the remainder room as the planner rounds it), for a round of one federation
+    let fees;
+    try { if (!takesAnyFederation(contract)) fees = await (await settlements.portForFederation(toHex(contract.federationId))).fees(); } catch { fees = undefined; }
+    return { nodeKeys, donationKeys, reserveKeys, ...(gameDonationKeys !== undefined ? { gameDonationKeys } : {}), ...(market ? { market } : {}), ...(fees ? { fees } : {}) };
   };
   settlements.payeesFor = namedPayeesFor;
   // WHO PROCESSED THE ROUND, KEPT (kanban #624, 2026-10-24: "Also show who processed the round, e.g for settlement and verify"): each
