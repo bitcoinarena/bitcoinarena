@@ -3172,7 +3172,8 @@
           + `beacon ${sn.derived.beacon.height}, ${sn.agreed} node(s) agree${sn.refused.length ? ', ' + sn.refused.length + ' differ: ' + sn.refused.join('; ') : ''} (${sn.derived.ms.total} ms)`);
         return sn;
       });
-      const claim = signer.then((sn) => ARENACLIENT.awaitAttestedClaimKey({
+      // A PROTOCOL-27 ROUND HAS NO CLAIM KEY (kanban #1044 B1): its locks name the settlement seats' own node keys
+      const claim = ARENACLIENT.namedClaims(round) ? Promise.resolve({ ok: true, named: true, claimPk: null }) : signer.then((sn) => ARENACLIENT.awaitAttestedClaimKey({
         round: Object.assign({}, round, { id: ARENACLIENT.fromHex(roundIdHex) }),
         signerNodes: sn.signerNodes, nodes, curve: window.ARENA_CURVE,
       }, {}));
@@ -3786,7 +3787,7 @@
         // `arena-client` against the same signer nodes, at the round's threshold. A
         // key short of it refuses the signer node by name - one signer node serving its own
         // key must not be the key a stake is locked to.
-        if (ARENACLIENT.roundLocks(named.round)) {
+        if (ARENACLIENT.roundLocks(named.round) && !ARENACLIENT.namedClaims(named.round)) {
           // WAITED FOR, A LITTLE: the signer nodes make the key when they are assigned to the
           // round, and a link opened at once can find one signer node still making it.
           const stageNow = document.getElementById('stage');
@@ -3949,6 +3950,7 @@
             // THE STAKE, FROM THE PLAYER WALLET: it asks for no deposit.
             const made = await ARENACLIENT.lockStake(Object.assign({}, wallet, {
               roundId: ARENACLIENT.fromHex(named.roundIdHex), stake, claimKey, playerPubkey: player.pubkey,
+              seating: signerNodes && signerNodes.signerNodes ? signerNodes.signerNodes : null,
             }));
             // AND ITS FEE LOCK, ONLY WHEN THE GATE SAID IT CAN PAY A SIGNER NODE (Pick b):
             // a 100 sat round makes none, so the player is charged no lock that expires unused.
