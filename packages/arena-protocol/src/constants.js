@@ -650,6 +650,9 @@ export const TAG = {
   payoutInputs: 'ARENA/v1/PayoutInputs',
   settlementAck: 'ARENA/v1/SettlementAck',
   settlementCommit: 'ARENA/v1/SettlementCommit',
+  // protocol 27 (ruling #1135 1): an ack or commit over a settlement BODY id is signed under its own tag, so it is never read as one over a txid
+  settlementAckBody: 'ARENA/v1/SettlementAckBody',
+  settlementCommitBody: 'ARENA/v1/SettlementCommitBody',
   settlementAsk: 'ARENA/v1/SettlementAsk',
   stallNote: 'ARENA/v1/StallNote',
   settlementTable: 'ARENA/v1/SettlementTable',

@@ -318,18 +318,76 @@ fn payouts(list: &str) -> anyhow::Result<Vec<OutgoingContract>> {
     }).collect()
 }
 
-/// `arena-settle`: the settlement's one transaction - every given Arena lock in as `Claim { preimage, signers }`, the
-/// payouts out. Every lock is read from the guardians and must name the same claim keys and threshold: one settlement,
-/// one signer set, one MuSig2 signature listed once per input. Without --signature this prints the txid (the message
-/// the named seats sign) and their aggregate key; with it, it checks the signature under that key and submits.
+/// THE SIGNER SET'S PLACEHOLDER KEY Z (ruling #1135 1): 02 || x for the first tagged_hash("ARENA/v1/SignerSetKey", u32 i, big-endian) that is a
+/// curve point's x. Nobody holds its key. A settlement body writes it wherever the plan puts KeyAgg(claim_keys[S]).
+pub fn z_key() -> PublicKey {
+    for i in 0u32.. {
+        let mut b = [0u8; 33];
+        b[0] = 0x02;
+        b[1..].copy_from_slice(&tagged(b"ARENA/v1/SignerSetKey", &i.to_be_bytes()));
+        if let Ok(k) = PublicKey::from_slice(&b) { return k }
+    }
+    unreachable!("some x is on the curve")
+}
+
+fn tagged(tag: &[u8], msg: &[u8]) -> [u8; 32] {
+    let t = sha256::Hash::hash(tag);
+    let mut e = sha256::Hash::engine();
+    fedimint_core::bitcoin::hashes::HashEngine::input(&mut e, t.as_ref());
+    fedimint_core::bitcoin::hashes::HashEngine::input(&mut e, t.as_ref());
+    fedimint_core::bitcoin::hashes::HashEngine::input(&mut e, msg);
+    sha256::Hash::from_engine(e).to_byte_array()
+}
+
+fn swap_key(k: &mut PublicKey, from: &PublicKey, to: &PublicKey) { if k == from { *k = *to } }
+
+/// An output with every key equal to `from` written as `to` (a stock contract's claim, refund and ephemeral keys; an Arena lock's refund key).
+fn swap_output(o: &LightningOutput, from: &PublicKey, to: &PublicKey) -> LightningOutput {
+    match o {
+        LightningOutput::V0(LightningOutputV0::Outgoing(c)) => {
+            let mut c = c.clone();
+            swap_key(&mut c.claim_pk, from, to); swap_key(&mut c.refund_pk, from, to); swap_key(&mut c.ephemeral_pk, from, to);
+            LightningOutput::V0(LightningOutputV0::Outgoing(c))
+        }
+        LightningOutput::ArenaLock(c) => { let mut c = c.clone(); swap_key(&mut c.refund_pk, from, to); LightningOutput::ArenaLock(c) }
+        other => other.clone(),
+    }
+}
+
+/// THE SETTLEMENT BODY ID (ruling #1135 1): tagged_hash("ARENA/v1/SettlementBody", the bytes the txid hashes - inputs, outputs, nonce - with every
+/// Arena-lock Claim's signers written as the empty list and every lnv2 output key equal to `agg` (KeyAgg(S)) written as Z). Other modules' items as
+/// they are. `agg` None: a body already written with Z.
+pub fn body_id(inputs: &[fedimint_core::core::DynInput], outputs: &[fedimint_core::core::DynOutput], nonce: [u8; 8], lnv2: ModuleInstanceId, agg: Option<PublicKey>) -> [u8; 32] {
+    use fedimint_core::encoding::Encodable as _;
+    let z = z_key();
+    let ins: Vec<_> = inputs.iter().map(|i| match (i.module_instance_id() == lnv2).then(|| i.as_any().downcast_ref::<LightningInput>()).flatten() {
+        Some(LightningInput::ArenaLock(op, ArenaLockWitness::Claim { preimage, .. })) =>
+            LightningInput::ArenaLock(*op, ArenaLockWitness::Claim { preimage: *preimage, signers: vec![] }).into_dyn(lnv2),
+        _ => i.clone(),
+    }).collect();
+    let outs: Vec<_> = outputs.iter().map(|o| match ((i_is(o.module_instance_id(), lnv2)).then(|| o.as_any().downcast_ref::<LightningOutput>()).flatten(), agg) {
+        (Some(l), Some(agg)) => swap_output(l, &agg, &z).into_dyn(lnv2),
+        _ => o.clone(),
+    }).collect();
+    let mut bytes = Vec::new();
+    ins.consensus_encode(&mut bytes).expect("vec write");
+    outs.consensus_encode(&mut bytes).expect("vec write");
+    nonce.consensus_encode(&mut bytes).expect("vec write");
+    tagged(b"ARENA/v1/SettlementBody", &bytes)
+}
+fn i_is(a: ModuleInstanceId, b: ModuleInstanceId) -> bool { a == b }
+
+/// `arena-settle`: the settlement's one transaction, as ruling #1135 orders it. Every given Arena lock in as Claim, the payouts out; a payout key
+/// written `Z` is the signer set's key. Without --signers: THE BODY (empty signer lists, Z in place) and its id - what the seats ack and commit
+/// over. With --signers (S, the t lowest committed seats): the real transaction (S in every claim, KeyAgg(S) for every Z), its txid - the MuSig2
+/// message - and its body id again, which must be the same. With --signature: checked under KeyAgg(S) and submitted. All locks must name the same
+/// keys and threshold: one transaction, one S, one signature listed per input.
 pub async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi) -> anyhow::Result<()> {
     require_module(api).await?;
-    let set = signers(a)?;
     let nonce: [u8; 8] = hex_bytes(need(a, "nonce")?)?.try_into().map_err(|_| anyhow!("--nonce is 8 bytes"))?;
     let fee = fee_rule(&client.config().await, lnv2)?;
-    let mut inputs = Vec::new();
-    let mut locks = Vec::new();
-    let mut key = None;
+    let mut claims = Vec::new();
+    let mut locks: Vec<(OutPoint, ArenaLockContract)> = Vec::new();
     let (mut input_msats, mut input_fee_msats) = (0u64, 0u64);
     for spec in need(a, "locks")?.split(',') {
         let parts: Vec<&str> = spec.split(':').collect();
@@ -338,33 +396,57 @@ pub async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api
         let Some((c, _)) = stored(api, op).await? else { bail!("the guardians hold no Arena lock at {txid}:{idx}") };
         let preimage = bytes32(preimage, "a preimage")?;
         if !c.verify_preimage(&preimage) { bail!("that preimage does not open the lock at {txid}:{idx}") }
-        let k = c.signer_key(&set).map_err(|e| anyhow!("lock {txid}:{idx}: {e}"))?;
-        if *key.get_or_insert(k) != k { bail!("the locks name different signer keys: one settlement is one signer set") }
+        if let Some((_, first)) = locks.first() {
+            if first.claim_keys != c.claim_keys || first.threshold != c.threshold { bail!("the locks name different claim keys or thresholds: one transaction is one signer set") }
+        }
         input_msats += c.amount.msats;
         input_fee_msats += fee.fee(c.amount).msats;
-        inputs.push(LightningInput::ArenaLock(op, ArenaLockWitness::Claim { preimage, signers: set.clone() }).into_dyn(lnv2));
+        claims.push((op, preimage));
         locks.push((op, c));
     }
-    let key = key.context("a settlement claims at least one lock")?;
-    let contracts = payouts(need(a, "payouts")?)?;
+    let (_, first) = locks.first().cloned().context("a settlement claims at least one lock")?;
+    let z = z_key();
+    let contracts = payouts(&need(a, "payouts")?.replace(":Z:", &format!(":{z}:")).split(',').map(|p| if p.starts_with("Z:") { p.replacen('Z', &z.to_string(), 1) } else { p.to_owned() }).collect::<Vec<_>>().join(","))?;
     let spendable = input_msats - input_fee_msats;
     let out: u64 = contracts.iter().map(|c| c.amount.msats).sum();
     let out_fee: u64 = contracts.iter().map(|c| fee.fee(c.amount).msats).sum();
     if out + out_fee > spendable {
         bail!("the payouts ({out} msat, {out_fee} msat in fees) are more than the locks pay for ({spendable} msat after their own fees)");
     }
-    let outputs: Vec<_> = contracts.iter().map(|c| LightningOutput::V0(LightningOutputV0::Outgoing(c.clone())).into_dyn(lnv2)).collect();
-    let txid = Transaction::tx_hash_from_parts(&inputs, &outputs, nonce);
+    let build = |set: &[u8], agg: Option<PublicKey>| {
+        let ins: Vec<_> = claims.iter().map(|(op, pre)| LightningInput::ArenaLock(*op, ArenaLockWitness::Claim { preimage: *pre, signers: set.to_vec() }).into_dyn(lnv2)).collect();
+        let outs: Vec<_> = contracts.iter().map(|c| {
+            let o = LightningOutput::V0(LightningOutputV0::Outgoing(c.clone()));
+            match agg { Some(k) => swap_output(&o, &z, &k), None => o }.into_dyn(lnv2)
+        }).collect();
+        (ins, outs)
+    };
+    let (body_ins, body_outs) = build(&[], None);
+    let body = body_id(&body_ins, &body_outs, nonce, lnv2, None);
+    let z_slots = contracts.iter().enumerate().filter(|(_, c)| c.claim_pk == z || c.refund_pk == z || c.ephemeral_pk == z).map(|(i, _)| i).collect::<Vec<_>>();
     let mut report = serde_json::json!({
-        "mode": "arena-settle", "txid": txid.to_string(), "message_hex": hex(&txid[..]), "signers": set,
-        "agg_key": key.x_only_public_key().0.to_string(),
+        "mode": "arena-settle", "body_id": hex(&body), "z_key": z.to_string(), "z_slots": z_slots,
         "inputs": locks.iter().map(|(o, c)| serde_json::json!({ "outpoint": format!("{}:{}", o.txid, o.out_idx),
             "contract_id": c.contract_id().0.to_string(), "round_id": hex(&c.round_id), "msat": c.amount.msats })).collect::<Vec<_>>(),
         "input_msat": input_msats, "input_fees_msat": input_fee_msats, "payout_msat": out, "output_fee_msat": out_fee,
         "unspent_msat": spendable - out - out_fee,
-        "payouts": contracts.iter().enumerate().map(|(i, c)| serde_json::json!({ "out_idx": i, "pk": c.refund_pk.to_string(),
-            "msat": c.amount.msats, "contract_id": c.contract_id().0.to_string() })).collect::<Vec<_>>(),
     });
+    let Some(set) = a.get("signers") else { println!("{report}"); return Ok(()) };
+    let set: Vec<u8> = set.split(',').map(|i| Ok(i.parse()?)).collect::<anyhow::Result<_>>()?;
+    let key = first.signer_key(&set).map_err(|e| anyhow!("{e}"))?;
+    let (inputs, outputs) = build(&set, Some(key));
+    let txid = Transaction::tx_hash_from_parts(&inputs, &outputs, nonce);
+    let again = body_id(&inputs, &outputs, nonce, lnv2, Some(key));
+    if again != body { bail!("the real transaction strips to another body than the one built: the signers' key stands where the body has no Z") }
+    let o = report.as_object_mut().expect("an object");
+    o.insert("signers".into(), serde_json::json!(set));
+    o.insert("agg_key".into(), key.x_only_public_key().0.to_string().into());
+    o.insert("txid".into(), txid.to_string().into());
+    o.insert("message_hex".into(), hex(&txid[..]).into());
+    o.insert("payouts".into(), outputs.iter().enumerate().map(|(i, d)| match d.as_any().downcast_ref::<LightningOutput>() {
+        Some(LightningOutput::V0(LightningOutputV0::Outgoing(c))) => serde_json::json!({ "out_idx": i, "refund_pk": c.refund_pk.to_string(),
+            "claim_pk": c.claim_pk.to_string(), "msat": c.amount.msats, "expiration": c.expiration, "contract_id": c.contract_id().0.to_string() }),
+        _ => serde_json::Value::Null }).collect::<Vec<_>>().into());
     let Some(sig_hex) = a.get("signature") else { println!("{report}"); return Ok(()) };
     let signature = Signature::from_slice(&hex_bytes(sig_hex)?)?;
     let verifies = SECP256K1.verify_schnorr(&signature, &Message::from_digest_slice(&txid[..])?, &key.x_only_public_key().0).is_ok();
@@ -372,7 +454,6 @@ pub async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api
     let outcome = client.api().submit_transaction(tx).await.try_into_inner(client.decoders())
         .map_err(|e| anyhow!("the guardians' answer did not decode: {e}"))?;
     let (accepted, error) = match outcome.0 { Ok(_) => (true, None), Err(e) => (false, Some(e.to_string())) };
-    // accepted at submission, then processed in consensus: wait (up to 60 s) for the first lock to be spent
     let started = std::time::Instant::now();
     let mut spent = false;
     while accepted && started.elapsed() < Duration::from_secs(60) {
@@ -385,7 +466,49 @@ pub async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api
     o.insert("accepted".into(), accepted.into());
     o.insert("error".into(), error.into());
     o.insert("locks_spent".into(), spent.into());
-    o.insert("wait_ms".into(), (started.elapsed().as_millis() as u64).into());
+    println!("{report}");
+    Ok(())
+}
+
+/// The nonce of a send's presigned refund (c): the first 8 bytes of tagged_hash("ARENA/v1/SendRefundNonce", real txid || u32 index), so every
+/// seat rebuilds the same transaction.
+fn send_refund_nonce(txid: &fedimint_core::TransactionId, idx: u64) -> [u8; 8] {
+    let mut m = txid[..].to_vec();
+    m.extend_from_slice(&u32::try_from(idx).unwrap_or(u32::MAX).to_be_bytes());
+    tagged(b"ARENA/v1/SendRefundNonce", &m)[..8].try_into().expect("8 bytes")
+}
+
+/// `arena-send-refund` (ruling #1134 2, #1135 2): THE PRESIGNED REFUND (c) of a gateway send - built from the real settlement transaction and the
+/// table, never acked: the send contract at (real txid, index) spent by Refund, into one pre-expired payout to the qualifier's key, of the send
+/// less the federation's fee on the input and the output. --send TXID:IDX --amount-msat (the send's) --refund-pk (KeyAgg(S), 33 bytes)
+/// --qualifier-pk HEX. Without --signature: the txid S signs; with it (anyone, from the send's expiration): checked under the refund key and
+/// submitted.
+pub async fn send_refund(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId) -> anyhow::Result<()> {
+    let op = outpoint(need(a, "send")?)?;
+    let amount = Amount::from_msats(need(a, "amount-msat")?.parse()?);
+    let refund_pk = PublicKey::from_str(need(a, "refund-pk")?)?;
+    let qualifier = PublicKey::from_str(need(a, "qualifier-pk")?)?;
+    let fee = fee_rule(&client.config().await, lnv2)?;
+    let spendable = amount.msats.saturating_sub(fee.fee(amount).msats);
+    let mut out = spendable;
+    while out > 0 && out + fee.fee(Amount::from_msats(out)).msats > spendable { out -= 1; }
+    let payout = OutgoingContract { payment_image: PaymentImage::Hash(sha256::Hash::from_byte_array([0u8; 32])), amount: Amount::from_msats(out),
+        expiration: 0, claim_pk: qualifier, refund_pk: qualifier, ephemeral_pk: qualifier };
+    let nonce = send_refund_nonce(&op.txid, op.out_idx);
+    let inputs = vec![LightningInput::V0(fedimint_lnv2_common::LightningInputV0::Outgoing(op, fedimint_lnv2_common::OutgoingWitness::Refund)).into_dyn(lnv2)];
+    let outputs = vec![LightningOutput::V0(LightningOutputV0::Outgoing(payout.clone())).into_dyn(lnv2)];
+    let txid = Transaction::tx_hash_from_parts(&inputs, &outputs, nonce);
+    let mut report = serde_json::json!({ "mode": "arena-send-refund", "send": format!("{}:{}", op.txid, op.out_idx), "txid": txid.to_string(),
+        "message_hex": hex(&txid[..]), "nonce": hex(&nonce), "payout_msat": out, "payout_contract_id": payout.contract_id().0.to_string(),
+        "qualifier_pk": qualifier.to_string() });
+    let Some(sig_hex) = a.get("signature") else { println!("{report}"); return Ok(()) };
+    let signature = Signature::from_slice(&hex_bytes(sig_hex)?)?;
+    let verifies = SECP256K1.verify_schnorr(&signature, &Message::from_digest_slice(&txid[..])?, &refund_pk.x_only_public_key().0).is_ok();
+    let tx = Transaction { inputs, outputs, nonce, signatures: TransactionSignature::NaiveMultisig(vec![signature]) };
+    let outcome = client.api().submit_transaction(tx).await.try_into_inner(client.decoders())
+        .map_err(|e| anyhow!("the guardians' answer did not decode: {e}"))?;
+    report["signature_verifies"] = verifies.into();
+    match outcome.0 { Ok(_) => report["accepted"] = true.into(), Err(e) => { report["accepted"] = false.into(); report["error"] = e.to_string().into(); } }
     println!("{report}");
     Ok(())
 }
@@ -440,6 +563,13 @@ pub fn claim_read() -> anyhow::Result<serde_json::Value> {
                     _ => serde_json::json!({ "out_idx": o, "kind": "lnv2-other" }),
                 }
             }).collect();
+            // PROOF (a), ruling #1135 2: S read from the transaction's claims (all must name the same S), KeyAgg(S) from the lock's keys, the body id
+            let named: Vec<(Vec<u8>, Option<ArenaLockContract>)> = tx.inputs.iter().filter(|i| i.module_instance_id() == lnv2).filter_map(|i| match i.as_any().downcast_ref::<LightningInput>() {
+                Some(LightningInput::ArenaLock(op, ArenaLockWitness::Claim { signers, .. })) => Some((signers.clone(), funded.get(&format!("{}:{}", op.txid, op.out_idx)).cloned())),
+                _ => None }).collect();
+            let one_set = named.windows(2).all(|w| w[0].0 == w[1].0);
+            let agg = named.first().and_then(|(set, c)| c.as_ref().and_then(|c| c.signer_key(set).ok()));
+            let tx_body = (!named.is_empty() && one_set).then(|| agg.map(|k| hex(&body_id(&tx.inputs, &tx.outputs, tx.nonce, lnv2, Some(k))))).flatten();
             for input in &tx.inputs {
                 if input.module_instance_id() != lnv2 { continue }
                 let Some(LightningInput::ArenaLock(op, w)) = input.as_any().downcast_ref::<LightningInput>() else { continue };
@@ -455,6 +585,7 @@ pub fn claim_read() -> anyhow::Result<serde_json::Value> {
                     "signers": signers, "named_keys": lock.map(|c| signers.iter().filter_map(|&s| c.claim_keys.get(usize::from(s)).map(|k| k.to_string())).collect::<Vec<_>>()),
                     "preimage": preimage, "forfeit_signature": signature,
                     "lock": lock.map(contract_json), "outputs": outputs,
+                    "body_id": tx_body, "one_signer_set": one_set, "agg_key": agg.map(|k| k.x_only_public_key().0.to_string()),
                     "tx_bytes": hex(&tx.consensus_encode_to_vec()),
                 }));
             }
