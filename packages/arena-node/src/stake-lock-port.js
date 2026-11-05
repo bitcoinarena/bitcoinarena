@@ -15,7 +15,7 @@
 // crates in would be a daemon in Rust.
 import { spawn } from 'node:child_process';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { existsSync, cpSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, cpSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 
 export const STAKE_LOCK_SETTINGS = ['ARENA_STAKE_LOCK_BIN', 'ARENA_FEDERATION_CLIENT_DIR'];
@@ -47,7 +47,8 @@ export const endTool = (c, graceMs = KILL_GRACE_MS) => {
 export const liveToolCount = () => liveTools.size;
 
 // (`onGone` is called once the tool has exited - after its answer, and after a timeout's kill too)
-const run = (bin, args, timeoutMs, { spawnFn = spawn, graceMs = KILL_GRACE_MS, onGone = () => {} } = {}) => new Promise((done, fail) => {
+// (`stdin` text is written to the tool's standard input - arena-claim-read takes its sessions there)
+const run = (bin, args, timeoutMs, { spawnFn = spawn, graceMs = KILL_GRACE_MS, onGone = () => {}, stdin = null } = {}) => new Promise((done, fail) => {
   let stdout = '', stderr = '', settled = false, timer = null, wentAway = false;
   const away = () => { if (!wentAway) { wentAway = true; onGone(); } };
   const answer = (timedOut, err) => {
@@ -65,7 +66,8 @@ const run = (bin, args, timeoutMs, { spawnFn = spawn, graceMs = KILL_GRACE_MS, o
     try { done(JSON.parse(line)); } catch { fail(new Error(`arena-stake-lock answered no JSON: ${stdout.slice(0, 200)}`)); }
   };
   let c;
-  try { c = spawnFn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { answer(false, e); away(); return; }
+  try { c = spawnFn(bin, args, { stdio: [stdin === null ? 'ignore' : 'pipe', 'pipe', 'pipe'] }); } catch (e) { answer(false, e); away(); return; }
+  if (stdin !== null && c.stdin) { c.stdin.on('error', () => { /* the tool answers or fails on its own */ }); c.stdin.end(stdin); }
   killOnExit(c);
   timer = setTimeout(() => { endTool(c, graceMs); answer(true, null); }, timeoutMs);
   c.stdout.setEncoding('utf8'); c.stderr.setEncoding('utf8');
@@ -424,6 +426,28 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
       return { txid: String(j.txid), message: String(j.message_hex), nonce: String(j.nonce), payoutMsat: j.payout_msat === undefined ? null : BigInt(j.payout_msat),
         accepted: j.accepted === true, error: j.error || null, verifies: j.signature_verifies === true };
     },
+    /**
+     * THE FEDERATION'S SIGNED HISTORY FOR A NAMED CLAIM'S PROOF (kanban #1044 B1, ruling #1131 4): the sessions `from`..`to` (to: the last finished
+     * one when null) as consensus bytes, and the client config they verify against - stake-lock session-export, written to a file beside the client.
+     * { federationId, config, firstSession, sessions: [bytes] }.
+     */
+    async sessionExport({ from, to = null }) {
+      const file = join(readDataDir, `named-sessions-${process.pid}-${now()}.json`);
+      try {
+        await run(bin, ['--mode', 'session-export', '--data-dir', readDataDir, '--from', String(from), ...(to === null ? [] : ['--to', String(to)]), '--out', file], settleTimeoutMs);
+        const ex = JSON.parse(readFileSync(file, 'utf8'));
+        if (!Array.isArray(ex.sessions) || typeof ex.config !== 'string' || Number(ex.firstSession) !== Number(from)) throw new Error('the session export is not the range asked');
+        return { federationId: String(ex.federationId), config: fromHex(ex.config), firstSession: Number(ex.firstSession), sessions: ex.sessions.map((h) => fromHex(String(h))) };
+      } finally { try { unlinkSync(file); } catch { /* none written */ } }
+    },
+    /** How many sessions the federation has finished (stake-lock session-count): a round's funding sessions start at or after it (kanban #1044 B1). */
+    async sessionCount() {
+      const j = await read(['--mode', 'session-count', '--data-dir', readDataDir]);
+      if (!Number.isSafeInteger(j.count)) throw new Error(`no session count: ${j.error || JSON.stringify(j).slice(0, 160)}`);
+      return j.count;
+    },
+    /** THE PROOF READER (stake-lock arena-claim-read, offline): `input` claimReadInput's shape; the tool's answer as it printed it. */
+    async arenaClaimRead(input) { return readClaims(bin, input, settleTimeoutMs, spawnFn); },
     /** The guardians' own LNv2 fee rule, off the federation's config (W4). */
     fees() { return feesKept(); },
     async feesRead() {
@@ -457,6 +481,19 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
   const guardiansKept = keptFor(keepMs, () => port.guardiansRead(), now, heldAnswer('guardians', shapeGuardians));
   const feesKept = keptFor(keepMs, () => port.feesRead(), now, heldAnswer('fees', shapeFees));
   return port;
+}
+
+/**
+ * THE NAMED CLAIM'S PROOF READER, NEEDING NO CLIENT (kanban #1044 B1): the stake-lock tool's `arena-claim-read` over a proof's own config and sessions
+ * (stdin), every session verified against the config's broadcast keys there. Answers the tool's line, or null where no tool runs or it reads no such
+ * mode (a judge then cannot say).
+ */
+export async function readClaims(bin, input, timeoutMs = 120000, spawnFn = spawn) {
+  if (!bin) return null;
+  try {
+    const j = await run(bin, ['--mode', 'arena-claim-read'], timeoutMs, { spawnFn, stdin: JSON.stringify(input) });
+    return j && j.mode === 'arena-claim-read' ? j : null;
+  } catch { return null; }
 }
 
 /**

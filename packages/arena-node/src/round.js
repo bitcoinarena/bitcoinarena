@@ -2310,6 +2310,32 @@ export class Round {
     return rows.map((r) => ({ roundId: new Uint8Array(r.round_id), nodePubkey: new Uint8Array(r.node_pubkey), proofId: new Uint8Array(r.proof_id), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 
+  /** A proof of a named claim's offence (§5A.3 rows (a), (b), kanban #1044 B1): kept once by its id. */
+  fileNamedClaimProof(roundIdBytes, nodePubkey, row, proofId, bytes) {
+    return this.db.prepare('INSERT OR IGNORE INTO named_claim_proofs (proof_id, round_id, node_pubkey, row, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(proofId, roundIdBytes, nodePubkey, row, bytes, this.now()).changes;
+  }
+
+  /** Every proof of a named claim this node filed for a round, or all of them (newest first). */
+  namedClaimProofs(roundIdBytes = null, { limit = 500 } = {}) {
+    const rows = roundIdBytes
+      ? this.db.prepare('SELECT round_id, node_pubkey, row, proof_id, bytes, seen_ms FROM named_claim_proofs WHERE round_id = ? ORDER BY node_pubkey').all(roundIdBytes)
+      : this.db.prepare('SELECT round_id, node_pubkey, row, proof_id, bytes, seen_ms FROM named_claim_proofs ORDER BY seen_ms DESC LIMIT ?').all(limit);
+    return rows.map((r) => ({ roundId: new Uint8Array(r.round_id), nodePubkey: new Uint8Array(r.node_pubkey), row: Number(r.row), proofId: new Uint8Array(r.proof_id),
+      bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
+  }
+
+  /** The finished-session count read before this round's first lock in a federation (kanban #1044 B1); the first reading stays. */
+  keepFundingSessionFloor(roundIdBytes, federationHex, floor) {
+    return this.db.prepare('INSERT OR IGNORE INTO funding_session_floors (round_id, federation_id, floor) VALUES (?, ?, ?)')
+      .run(Buffer.from(roundIdBytes), String(federationHex).toLowerCase(), Number(floor)).changes;
+  }
+
+  fundingSessionFloor(roundIdBytes, federationHex) {
+    const r = this.db.prepare('SELECT floor FROM funding_session_floors WHERE round_id = ? AND federation_id = ?').get(Buffer.from(roundIdBytes), String(federationHex).toLowerCase());
+    return r ? Number(r.floor) : null;
+  }
+
   markSettlementSuspect(roundIdBytes) {
     this.db.prepare('INSERT OR IGNORE INTO settlement_suspects (round_id, seen_ms) VALUES (?, ?)').run(Buffer.from(roundIdBytes), this.now());
   }
@@ -2948,6 +2974,11 @@ export class Round {
     if (held && Number(held.n) >= acks.length) return;
     this.db.prepare('INSERT OR REPLACE INTO settlement_acks (round_id, scope, txid, table_id, tbl, acks, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(roundId), scope, String(txid), Buffer.from(tableId), Buffer.from(table), Buffer.from(acks), this.now());
+  }
+
+  /** The rounds this seat kept acks of a settlement for since `sinceMs` (kanban #1044 B1: read again for a named claim's offence). */
+  ackedRoundsSince(sinceMs) {
+    return this.db.prepare('SELECT DISTINCT round_id FROM settlement_acks WHERE made_ms >= ?').all(sinceMs).map((r) => new Uint8Array(r.round_id));
   }
 
   settlementAcksOf(roundIdBytes, scope = null) {

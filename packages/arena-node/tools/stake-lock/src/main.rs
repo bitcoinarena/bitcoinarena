@@ -60,6 +60,7 @@
 //!   arena-stake-lock --mode session-proof-verify --proof FILE|- [--keys JSON|@FILE]
 //!   arena-stake-lock --mode theft-verify < {federationId, config, firstSession, sessions, spendTxid?, reserve?}
 //!   arena-stake-lock --mode session-export --data-dir D --from N --to M --out F
+//!   arena-stake-lock --mode session-count --data-dir D                        how many sessions the federation finished
 //!   arena-stake-lock --mode pegout --data-dir D --address ADDR --sats N
 //!   (src/audit.rs; the regtest rehearsal modes are in src/rehearsal.rs)
 //!   arena-id | arena-version | arena-lock | arena-status | arena-redeem | arena-settle | musig-* : THE ARENA LOCK
@@ -325,6 +326,12 @@ async fn main() -> anyhow::Result<()> {
     match mode.as_str() {
         "session-audit" => return audit::session_audit(&a, &client).await,
         "session-export" => return audit::session_export(&a, &client).await,
+        // a protocol-27 round's funding sessions start at or after this count (kanban #1044 B1: the named claim's proof reads from there)
+        "session-count" => {
+            let count = client.fetch_session_count().await.map_err(|e| anyhow!("no session count: {e}"))?;
+            println!("{}", serde_json::json!({ "mode": "session-count", "count": count }));
+            return Ok(());
+        }
         // regtest only: what a colluding threshold can do outside consensus, for the audit to mark (kanban #1108)
         "rehearsal-forge" => return rehearsal::forge(&a, &client).await,
         "rehearsal-resign" => return rehearsal::resign(&a, &client).await,
