@@ -2325,9 +2325,10 @@ export class Round {
       bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 
-  /** The finished-session count read before this round's first lock in a federation (kanban #1044 B1); the first reading stays. */
+  /** The finished-session count kept for this round in a federation (kanban #1044 B1): at POST /round or at its first verified lock (#1138 1), the lower stays. */
   keepFundingSessionFloor(roundIdBytes, federationHex, floor) {
-    return this.db.prepare('INSERT OR IGNORE INTO funding_session_floors (round_id, federation_id, floor) VALUES (?, ?, ?)')
+    return this.db.prepare('INSERT INTO funding_session_floors (round_id, federation_id, floor) VALUES (?, ?, ?) '
+      + 'ON CONFLICT (round_id, federation_id) DO UPDATE SET floor = MIN(floor, excluded.floor) WHERE excluded.floor < floor')
       .run(Buffer.from(roundIdBytes), String(federationHex).toLowerCase(), Number(floor)).changes;
   }
 
