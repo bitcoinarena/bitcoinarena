@@ -60,7 +60,7 @@ import { askerOrder, eligibleAsker } from './payout.js';
 import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate, splitPlanTaken } from './plan-taken.js';
 import { askPeers, PEER_ASK_MS, PEER_READ_MS, PEER_GRACE_MS } from './peer-ask.js';
 import { namedClaims, namedClaimKeys, namedSignerSet, zKey } from '../../arena-protocol/src/arena-lock.js';
-import { offTableOn, offTablePayouts } from './test-named-offence.js';
+import { offTableOn, offTablePayouts, swapRefundOn, swappedRefundPayouts } from './test-named-offence.js';
 import { namedSlots, NamedNonces, aggregateBatch, signerSetKey, encodeNamedCommitment, decodeNamedCommitment, encodeNamedList, decodeNamedList,
   encodeNamedPartials, decodeNamedPartials, encodeNamedBatch, decodeNamedBatch } from './named-settlement.js';
 // the payouts of an accepted settlement kept as rows (GET /donations, GET /reserves): a walk-away's donation keys and a market's reserve
@@ -1295,7 +1295,8 @@ export class LockSettlement {
     try { refundKey = signerSetKey(seatKeys, threshold, signers); } catch (e) { return refuse(`no signer set ${signers.join(',')}: ${e.message}`); }
     const port = opts.federation ? await this.portForFederation(opts.federation) : await this.portFor(roundIdBytes);
     // THE REGTEST FAULT (test-named-offence.js, off by default): this seat signs a claim off the table it acked - offence (a)
-    const offTable = offTableOn(roundIdBytes) ? offTablePayouts(m.payouts) : null;
+    // (or a send refunding to another key than KeyAgg(S), ruling #1135 2 - the same offence)
+    const offTable = offTableOn(roundIdBytes) ? offTablePayouts(m.payouts) : swapRefundOn(roundIdBytes) ? swappedRefundPayouts(m.payouts) : null;
     const real = await port.arenaSettle({ claims: m.claims, payouts: offTable || m.payouts, nonce: m.nonce, signers });
     if (!offTable && String(real.bodyId).toLowerCase() !== m.bodyId) return refuse('the real transaction strips to another body than the one acked');
     if (String(real.aggKey).toLowerCase() !== toHex(refundKey.subarray(1))) return refuse('the tool\'s KeyAgg of the signer set is not this seat\'s');
@@ -1312,7 +1313,7 @@ export class LockSettlement {
       } else {
         const c = await port.arenaSendRefund({ send: { txid: fromHex(real.txid), outIdx: BigInt(slot.outIdx) }, amountMsat: slot.msat, refundPk: refundKey, qualifierPk: slot.qualifierPk });
         messages.push(fromHex(c.message));
-        refunds.push({ outIdx: slot.outIdx, txid: c.txid, qualifierPk: toHex(slot.qualifierPk), msat: String(slot.msat) });
+        refunds.push({ outIdx: slot.outIdx, txid: c.txid, qualifierPk: toHex(slot.qualifierPk), msat: String(slot.msat), ...(c.payoutMsat !== null && c.payoutMsat !== undefined ? { payoutMsat: String(c.payoutMsat) } : {}) });
       }
     }
     const out = { ok: true, txid: String(real.txid), message: fromHex(real.message), messages, slots, refundKey, refunds, ...(offTable ? { offTable } : {}) };

@@ -36,6 +36,7 @@ import { stateOf } from './settlement-state.js';
 import { namedClaimKeys } from '../../arena-protocol/src/arena-lock.js';
 import { NamedNonces, aggregateBatch, encodeNamedCommitment, decodeNamedCommitment } from './named-settlement.js';
 import { askPeers, askWithin, PEER_ASK_MS, PEER_GRACE_MS } from './peer-ask.js';
+import { sendHoldOn } from './test-named-offence.js';
 
 /** How long an address's LNURL endpoint is waited for, at its pay request and at its callback each (kanban #1074): it is no seat, and fetch alone waits 300 s. */
 export const LNURL_ASK_MS = 15000;
@@ -694,6 +695,9 @@ export class WinningsSend {
       if (row.attempt === 0 && !row.txid)
         this.round.markSend({ entryId: row.entryId, attempt: 0, state: 'SENDING', txid: toHex(at.txid), outIdx: Number(at.outIdx),
           why: 'the settlement is accepted; the committee signs the invoice and the gateway is asked' });
+      // THE REGTEST FAULT (test-named-offence.js `send-hold`, off by default): a qualifier's send left unasked, so it expires unpaid, and its refund (c) left
+      // to anyone else (ruling #1134 2: "after a failed send, anyone submits (c)")
+      if (built.named && !row.donation && sendHoldOn(roundIdBytes)) { out.push({ entry: entryHex, attempt: row.attempt, ok: false, why: 'test switch: this seat holds the send and its refund (c) (send-hold)' }); continue; }
       // PROTOCOL 27 (ruling #1134 2): the auth was signed by S in the settlement's batch, before the submit - never by a key signed after it
       // (a donation's re-send is S's own send after the settlement: its auth is signed by S now, at the S-only doors)
       const a = built.named && row.attempt === 0 ? presignedAuth(built, row) : await this.sign(roundIdBytes, row, built, 'auth');

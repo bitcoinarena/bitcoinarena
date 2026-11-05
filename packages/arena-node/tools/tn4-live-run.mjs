@@ -416,6 +416,15 @@ try {
     published.push({ node: n, said });
   }
   log({ step: 'published', published });
+  // PAYOUT_ADDRESS (regtest, kanban #1044 B1 phase 4, ruling #1134 2): the winner names a Lightning address (an LNURL) at every seat, signed with the
+  // session key, as the page does: its winnings are then sent through a gateway, refunding to KeyAgg(S), with the presigned refund (c) to its own key
+  if (env.PAYOUT_ADDRESS) {
+    const signed = new TextEncoder().encode(env.PAYOUT_ADDRESS);
+    const body = Buffer.concat([Buffer.from(signed), Buffer.from(ed25519.sign(signed, session))]);
+    const named = [];
+    for (const n of nodes) { try { const r = await fetch(`${n}/payout-address?entry=${toHex(eid)}`, { method: 'POST', body }); named.push(r.status); } catch (e) { named.push(e.message.slice(0, 40)); } }
+    log({ step: 'payout address', address: env.PAYOUT_ADDRESS.slice(0, 24), named });
+  }
 
   // EARLY_FORFEIT=1 (regtest, kanban #1044 B1 phase 4, offence (b)): the stake lock's forfeit asked for at once and redeemed as soon as a quorum signs it -
   // before the settlement claims the lock. Honest seats sign none for an entry they hold lost; seats armed with `forfeit-lost <entry>` do
@@ -488,7 +497,27 @@ try {
     stakes.push({ kind, accepted: said.accepted === true, ...(named ? { signers: f.signers, from: f.from, txid: said.txid } : {}),
       ...(said.accepted === true ? {} : { said: JSON.stringify(said).slice(0, 200) }) });
   }
-  log({ step: 'collected', payout, stakes, balanceBeforeMsat: before, balanceAfterMsat: await lc.balanceMsat() });
+  // REFUND_C=1 (regtest, ruling #1134 2): a failed send's winnings, once anyone submitted its presigned refund (c), are the pre-expired payout contract at
+  // ((c)'s txid, 0) to this player's own key - taken into the wallet by refund, as any payout. Asked until it is there, at most COLLECT_MS
+  let refundC = null;
+  if (env.REFUND_C) {
+    for (const stop = Date.now() + Number(env.COLLECT_MS || 15 * 60000); Date.now() < stop && !(refundC && refundC.accepted);) {
+      let c = null;
+      for (const n of nodes) {
+        try { const j = await (await fetch(`${n}/send-refunds?round=${env.ROUND}`)).json(); c = (j.refunds || []).find((x) => String(x.qualifierPk).toLowerCase() === mine) || null; } catch { c = null; }
+        if (c) break;
+      }
+      if (c && c.payoutMsat) {
+        const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(c.payoutMsat), claimPk: mine, refundPk: mine, expiration: 0 };
+        const said = JSON.parse(await lc.refund(c.txid, 0, JSON.stringify(fields), toHex(me.secret)));
+        refundC = { txid: c.txid, payoutMsat: c.payoutMsat, accepted: said.accepted === true, ...(said.accepted === true ? {} : { said: JSON.stringify(said).slice(0, 160) }) };
+        if (refundC.accepted) break;
+      }
+      log({ step: 'refund (c) not in the wallet yet', refundC });
+      await new Promise((ok) => setTimeout(ok, 20000));
+    }
+  }
+  log({ step: 'collected', payout, stakes, ...(env.REFUND_C ? { refundC } : {}), balanceBeforeMsat: before, balanceAfterMsat: await lc.balanceMsat() });
   // WITHDRAW=1 (kanban #808): the money out over Lightning, to an invoice of the payer lnd, as the page's withdraw does
   if (env.WITHDRAW && ((payout && payout.accepted) || stakes.some((x) => x.accepted))) {
     const can = BigInt(await lc.withdrawableMsat()); const sat = can / 1000n - 10n;
