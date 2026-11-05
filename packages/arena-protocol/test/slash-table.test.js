@@ -386,3 +386,30 @@ test('a withheld signature is no offence: silence is not signed bytes', () => {
   assert.equal(no.slashed, false);
   assert.match(no.why, /silence is not signed bytes/);
 });
+
+// A PROTOCOL-27 ROUND'S ACKS NAME THE SETTLEMENT BODY (kanban #1044 B1, ruling #1135 2), signed under their own tag: the table row reads them as body acks and
+// compares the body the seat's own tool rebuilds from the table (arena-settle without signers) with the acked body id.
+test('protocol 27: body acks over an honest table stand, over another body they slash; a txid-tagged ack is not read as a body ack', async () => {
+  const { NETWORK_ID_REGTEST } = await import('../src/genesis-ids.js');
+  const { NEXTBLOCK_MANIFEST } = await import('../../nextblock/plugin/nextblock.js');
+  const c27 = { ...contract, protocolVersion: 27, networkId: NETWORK_ID_REGTEST };
+  const R27 = roundId(c27);
+  const t = { ...tableOf(honestRows()), roundId: R27, nonce: settlementNonce(R27) };
+  const body = rebuilt(t);
+  const bodyAck = (seat, id) => signSettlementAck({ roundId: R27, payoutTableId: settlementTableId(t), settlementBodyId: id }, seat.pubkey, (d) => schnorr.sign(d, seat.secret));
+  const judge = (id, ackOf = bodyAck) => {
+    const signedAck = ackOf(NODE, id);
+    const signedResultId = settlementAckId({ roundId: R27, payoutTableId: settlementTableId(t), settlementBodyId: id });
+    return slashHoldsOnTable({ proof: { roundId: R27, playerPubkey: new Uint8Array(32), nodePubkey: NODE.pubkey, transcriptHash: settlementTableId(t), signedResultId, bondTxid: BOND, bondVout: 3 },
+      signedAck, acks: seats.slice(1, 5).map((s) => ackOf(s, id)), table: encodeSettlementTable(t), finals: [], entries: [], contract: c27, manifest: NEXTBLOCK_MANIFEST, advert, committee, verify, rebuiltTxid: body, feesOf: () => FEES });
+  };
+  const honest = judge(body);
+  assert.equal(honest.slashed, false, honest.why);
+  const other = judge(b32(0x78));
+  assert.equal(other.slashed, true, other.why);
+  assert.match(other.why, /acked settlement body .* does not rebuild from the table/);
+  // the same bytes signed under the txid tag are no body ack of this round: nothing is read
+  const txidTagged = judge(b32(0x78), (seat, id) => signSettlementAck({ roundId: R27, payoutTableId: settlementTableId(t), settlementTxid: id }, seat.pubkey, (d) => schnorr.sign(d, seat.secret)));
+  assert.equal(txidTagged.slashed, false);
+  assert.match(txidTagged.why, /not the accused node's|not the one this proof names/);
+});

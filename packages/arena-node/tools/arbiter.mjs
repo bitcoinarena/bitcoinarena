@@ -49,6 +49,7 @@ import { splitTableSlashEvidence, fraudProofHash, decodeFraudProof, readEvidence
 import { decodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
 import { takesAnyFederation } from '../../arena-protocol/src/constants.js';
 import { stakeLockPort } from '../src/stake-lock-port.js';
+import { namedClaims } from '../../arena-protocol/src/arena-lock.js';
 import { pluginForRound, hostedPlugins, payoutRuleOfRound } from '../src/plugins.js';
 import { auditEligible } from '../../arena-protocol/src/auditor.js';
 import { makeVrf, SUITE_SECP256K1_TAI } from '../../arena-protocol/src/vrf.js';
@@ -182,7 +183,9 @@ async function handle(seat, s) {
     }
     const home = any ? toHex(table.federationId) : toHex(contract.federationId);
     verdict = await judgeTableProof({ evidence, roundIdBytes: rid, contract, manifest: found.plugin.manifest, committee, advert: accused.advert, bondOutpoint: { txid: accused.txid, vout: accused.vout },
-      feesOf: (fid) => fees.get(fid) || null, txidOf: async (_table, build) => fromHex((await portOf(home).settle(build)).txid) });
+      feesOf: (fid) => fees.get(fid) || null, txidOf: async (_table, build) => (namedClaims(contract)
+        ? fromHex((await portOf(home).arenaSettle({ claims: build.claims, payouts: build.payouts, nonce: build.nonce })).bodyId)
+        : fromHex((await portOf(home).settle(build)).txid)) });
   } else if (double) {
     verdict = judgeDoubleProof({ evidence, roundIdBytes: rid, committee, advert: accused.advert, bondOutpoint: { txid: accused.txid, vout: accused.vout } });
   } else if (audit) {

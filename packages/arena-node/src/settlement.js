@@ -1544,6 +1544,7 @@ export class LockSettlement {
     if (!row) { report.refused.push('no such round'); return report; }
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     if (!acksSettlement(contract)) return report;
+    const namedRound = namedClaims(contract);
     const committee = this.round.signerNodes(roundIdBytes);
     const pairKey = (x) => `${toHex(x.tableId)}:${String(x.txid).toLowerCase()}`;
     const own = this.round.settlementAcksOf(roundIdBytes);
@@ -1600,8 +1601,12 @@ export class LockSettlement {
       const built = tableBuild({ table, entries: new Map(entries.map((e) => [toHex(entryIdOf(e)), e])), preimages: new Map(preimages.map((p) => [toHex(p.entryId), p.preimage])), pointOf: (x) => this.curve.pointFromScalar(x) });
       let rebuiltTxid = null;
       if (built.ok) {
-        try { rebuiltTxid = fromHex((await (await this.portForFederation(home)).settle(built.build)).txid); }
-        catch (e) { report.refused.push(`no rebuild: ${e.message}`); }
+        // A PROTOCOL-27 ROUND'S ACKS NAME THE BODY (ruling #1135 2): rebuilt by this seat's own tool without signers, compared on the body id
+        try {
+          const port = await this.portForFederation(home);
+          rebuiltTxid = namedRound ? fromHex((await port.arenaSettle({ claims: built.build.claims, payouts: built.build.payouts, nonce: built.build.nonce })).bodyId)
+            : fromHex((await port.settle(built.build)).txid);
+        } catch (e) { report.refused.push(`no rebuild: ${e.message}`); }
       } else report.refused.push(`no rebuild: ${built.why}`);
       // A TABLE MARKED LATE IS CHECKED AGAINST THE ROUND'S OWN
       const first = [...pairs.values()].find((x) => { try { return toHex(decodeSettlementTable(x.table).lateEntryId) === '00'.repeat(32) && toHex(table.lateEntryId) !== '00'.repeat(32); } catch { return false; } });
@@ -1614,7 +1619,8 @@ export class LockSettlement {
         const who = toHex(got.nodePubkey);
         const advert = advertOf(who);
         if (!advert) { waits = true; report.refused.push(`${who.slice(0, 16)}: no advertisement names its bond`); continue; }
-        const proof = { roundId: roundIdBytes, playerPubkey: new Uint8Array(32), nodePubkey: got.nodePubkey, transcriptHash: got.ack.payoutTableId, signedResultId: settlementAckId(got.ack),
+        const signedAs = namedRound ? { roundId: got.ack.roundId, payoutTableId: got.ack.payoutTableId, settlementBodyId: got.ack.settlementTxid } : got.ack;
+        const proof = { roundId: roundIdBytes, playerPubkey: new Uint8Array(32), nodePubkey: got.nodePubkey, transcriptHash: got.ack.payoutTableId, signedResultId: settlementAckId(signedAs),
           bondTxid: advert.bondTxid, bondVout: advert.bondVout };
         const check = slashHoldsOnTable({ proof, signedAck, acks, table: pair.table, entries, finals, contract, manifest, advert, committee, verify: verifyAck, rebuiltTxid, feesOf: (f) => fees.get(f) || null, own: ownTable });
         if (!check.slashed) { report.refused.push(`${who.slice(0, 16)}: ${check.why}`); continue; }

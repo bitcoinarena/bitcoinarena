@@ -5,6 +5,7 @@
 // them really was false. `undefined` this seat cannot say yet, because it has no census there, no core or no beacon: a holder signs nothing and a node stays in its hold and waits.
 //
 // A replay costs a seat seconds and anyone can hand it bytes, so one proof is judged at a time, a verdict is kept by the hash, and a queue past `waiting` answers undefined.
+import { namedClaims } from '../../arena-protocol/src/arena-lock.js';
 import { decodeFraudProof, fraudProofHash, readEvidence } from '../../arena-protocol/src/slash.js';
 import { decodeAbandonedProof, isAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
 import { decodeTheftProof, isTheftProof } from '../../arena-protocol/src/theft-slash.js';
@@ -89,7 +90,7 @@ export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, repl
         fees.set(fid, await client.fees());
       }
       const hashing = await clientOf(home);
-      held = await judgeTableProof({ evidence, roundIdBytes: r.roundId, contract: r.contract, manifest, feesOf: (fid) => fees.get(fid) || null, txidOf: (_t, build) => hashing.txid(build), ...on });
+      held = await judgeTableProof({ evidence, roundIdBytes: r.roundId, contract: r.contract, manifest, feesOf: (fid) => fees.get(fid) || null, txidOf: (_t, build) => (namedClaims(r.contract) ? hashing.bodyId(build) : hashing.txid(build)), ...on });
     } else if (r.kind === 'release') {
       // THE BYTES IT COMMITTED TO ARE JUDGED AS ANY PROOF, on this seat's own word, and a release on bytes this seat cannot say about slashes nobody yet
       const panels = panelsOf(r.contract, r.roundId);
