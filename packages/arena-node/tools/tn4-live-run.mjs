@@ -319,6 +319,8 @@ try {
     if (worldIsShared(c, sharedWorldOf(c.gameId)) || tries >= 3) throw new Error('no delivering drive found for this world');
     entry.worldSecret = rand(32);
   }
+  // LOSE=1 (regtest, kanban #1044 B1 phase 4, offence (b)): a run that sends every mark and never moves the truck - a non-qualifying result the seats sign
+  if (env.LOSE) drive = { tape: Array.from({ length: N }, () => [0, 0, 0, 0, 0]) };
   const eid = entryId(entry);
   if (env.KEYS_FILE) appendFileSync(env.KEYS_FILE, `${JSON.stringify({ at: new Date().toISOString(), round: toHex(rid), entry: toHex(eid),
     secret: toHex(me.secret), stake: `${toHex(locks.stake.outpoint.txid)}:${locks.stake.outpoint.outIdx}`,
