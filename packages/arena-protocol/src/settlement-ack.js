@@ -95,11 +95,18 @@ export function checkAck(bytes, { seats, roundId, payoutTableId, settlementTxid,
  */
 export const SETTLEMENT_COMMIT_BYTES = 1 + 2 + 32 + 32 + 32;
 export const SIGNED_SETTLEMENT_COMMIT_BYTES = SETTLEMENT_COMMIT_BYTES + 32 + 64;
+/**
+ * PROTOCOL 27 (ruling #1135 1, kanban #1044 B1): a commit over a settlement BODY carries `nonces`, the seat's BIP-327 public nonces (66 bytes each,
+ * R1 || R2), one per message the batch signs - the claim, then each send's auth, then each send's refund (c) - and the hashed field covers all of
+ * them in that order: tagged_hash("ARENA/v1/SettlementCommit", R1_1 || R2_1 || ... || R1_k || R2_k). Same 99 bytes, the body id in the txid's slot,
+ * signed under ARENA/v1/SettlementCommitBody. A commit with `hiding` and `binding` (protocol 26 and below) hashes those two points as before.
+ */
 export function settlementCommitBody(c) {
-  const { roundId, hiding, binding } = c;
+  const { roundId } = c;
   const settlementTxid = slotOf(c);
-  const nonces = new Uint8Array(hiding.length + binding.length);
-  nonces.set(hiding, 0); nonces.set(binding, hiding.length);
+  const parts = Array.isArray(c.nonces) ? c.nonces : [c.hiding, c.binding];
+  const nonces = new Uint8Array(parts.reduce((t, p) => t + p.length, 0));
+  { let at = 0; for (const p of parts) { nonces.set(p, at); at += p.length; } }
   const w = new Writer();
   w.u8(TYPE_SETTLEMENT_COMMIT); w.u16(PROTOCOL_VERSION);
   w.bytes32(roundId); w.bytes32(settlementTxid); w.bytes32(taggedHash(TAG.settlementCommit, nonces));

@@ -19,6 +19,7 @@
 // (module_consensus_version; RULED #1134 1). From the height a seat neither opens, lists nor enters a round in a federation without it.
 //
 // Pure: encoding, ids, the rules a seat checks. The MuSig2 math is the seat's (arena-node/src/named-claim.js).
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { taggedHash, toHex, fromHex } from './hash.js';
 import { lockMatchesEntry } from './stake-lock.js';
 import { STAKE_EXPIRY_BLOCKS, networkOf } from './constants.js';
@@ -191,6 +192,23 @@ export function namedSignerSet({ committed, threshold, dropped = [] }) {
  * bytes do not change.
  */
 export function commitNoncesOf(pubnonce) {
+  // (protocol 27 settlements commit to one nonce pair per message: settlement-ack.js settlementCommitBody `nonces`)
   sized(pubnonce, 66, 'a public nonce');
   return { hiding: pubnonce.slice(0, 33), binding: pubnonce.slice(33) };
 }
+
+/**
+ * THE SIGNER SET'S PLACEHOLDER KEY Z (ruling #1135 1): 02 || x for the first tagged_hash("ARENA/v1/SignerSetKey", u32 i, big-endian) that is a curve
+ * point's x - the stake-lock tool's arena-z-key. Nobody holds its key. A settlement body writes it wherever the plan puts KeyAgg(claim_keys[S]).
+ */
+export const zKey = (() => {
+  let z = null;
+  return () => {
+    if (z) return z.slice();
+    for (let i = 0; ; i++) {
+      const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, i);
+      const cand = Uint8Array.from([0x02, ...taggedHash('ARENA/v1/SignerSetKey', b)]);
+      try { secp256k1.Point.fromBytes(cand); z = cand; return z.slice(); } catch { /* not on the curve: the next i */ }
+    }
+  };
+})();
