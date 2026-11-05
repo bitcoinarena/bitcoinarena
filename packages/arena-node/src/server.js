@@ -3032,24 +3032,32 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // left out of the signing reads it too) or a forfeit of an entry a named signer signed lost; filed as soon as the accused's advertisement is held.
   // ARENA_NAMED_FILE_MS (regtest only): a harness's own pace
   const namedFileMs = Number(finality.namedFileMs ?? (process.env.ARENA_DONATION_NETWORK === 'regtest' && process.env.ARENA_NAMED_FILE_MS ? process.env.ARENA_NAMED_FILE_MS : 600000));
-  const namedFilesTimer = setInterval(() => {
+  // ONE PASS AT A TIME, ITS ROUNDS ONE AFTER ANOTHER (measured 2026-11-05: every round's read started at once, each its own session export)
+  let namedPassRunning = false;
+  const namedFilesTimer = setInterval(async () => {
+    if (namedPassRunning) return;
     let acked = [];
     try {
       const since = Date.now() - 6 * 3600000;
       const seen = new Set();
       acked = [...round.ackedRoundsSince(since), ...round.entryRoundsSince(since)].filter((r) => { const k = toHex(r); if (seen.has(k)) return false; seen.add(k); return true; });
     } catch { return; }
+    namedPassRunning = true;
     for (const rid of acked) {
       let contract = null;
       try { contract = decodeRoundContract(new Uint8Array(round.get(rid).contract)); } catch { continue; }
-      if (!namedClaims(contract)) continue;
+      // a round with no stake has no Arena lock to read: its sessions are not exported
+      if (!namedClaims(contract) || !(contract.stakeMsat > 0n)) continue;
       let adverts = null;
       try { adverts = verifier.advertsFor ? verifier.advertsFor(rid) : null; } catch { adverts = null; }
       let relays = [];
       try { relays = relayTargets(contract.publicationRelays, verifier.peersOf(rid)); } catch { relays = []; }
-      settlements.fileNamedClaimProofs(rid, { advertOf: (k) => (adverts instanceof Map ? adverts.get(k) : null), relays })
-        .then((f) => { for (const why of f.refused) console.log(`[slash] ${toHex(rid).slice(0, 16)} named claim: ${why}`); }, (e) => console.log(`[slash] ${e.message}`));
+      try {
+        const f = await settlements.fileNamedClaimProofs(rid, { advertOf: (k) => (adverts instanceof Map ? adverts.get(k) : null), relays });
+        for (const why of f.refused) if (!/no session finished since/.test(why)) console.log(`[slash] ${toHex(rid).slice(0, 16)} named claim: ${why}`);
+      } catch (e) { console.log(`[slash] ${e.message}`); }
     }
+    namedPassRunning = false;
   }, namedFileMs);
   if (namedFilesTimer.unref) namedFilesTimer.unref();
   async function contradictAudits(rid, eid, why) {

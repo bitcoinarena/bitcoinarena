@@ -187,6 +187,13 @@ export async function arenaLockStands({ contract, entry, kind, fields, outpoint,
 export const FUNDING_SEARCH_SESSIONS = 1024;
 export const FUNDING_RECENT_SESSIONS = 8;
 const searching = new Map();
+// ONCE PER LOCK, ONE READ AT A TIME (measured 2026-11-05 on the #1044 devnet: a lock is verified again and again - at entry, at every refresh of its
+// standing - and each verification started its own read-back, 9-17 session exports at once and a MacBook load of 150). A lock searched in this process is
+// not searched again; the exports of every search run one after another through `lane`, the waits for a session to finish beside it
+const searched = new Set();
+let lane = Promise.resolve();
+/** For tests: forget which locks were searched. */
+export function forgetLockSearches() { searched.clear(); searching.clear(); }
 export function keepLockSessionFloor({ round, port, roundId, federationId, outpoint, waitMs = 20000, maxWaitMs = 3600000, now = () => Date.now(), log = (l) => console.log(l), sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
   if (!round.keepFundingSessionFloor || !round.fundingSessionFloor || !port || typeof port.sessionCount !== 'function'
     || typeof port.sessionExport !== 'function' || typeof port.arenaClaimRead !== 'function' || !outpoint || !(outpoint.txid instanceof Uint8Array)) return Promise.resolve(null);
@@ -194,6 +201,8 @@ export function keepLockSessionFloor({ round, port, roundId, federationId, outpo
   const want = `${hexOf(outpoint.txid)}:${String(outpoint.outIdx)}`;
   const key = `${hexOf(roundId)}:${fid}:${hexOf(outpoint.txid)}`;
   if (searching.has(key)) return searching.get(key);
+  if (searched.has(key)) return Promise.resolve(null);
+  searched.add(key);
   const foundIn = async (from) => {
     const ex = await port.sessionExport({ from });
     const read = await port.arenaClaimRead(claimReadInput({ config: ex.config, firstSession: ex.firstSession, sessions: ex.sessions }));
@@ -213,11 +222,17 @@ export function keepLockSessionFloor({ round, port, roundId, federationId, outpo
         const c = Number(await port.sessionCount());
         if (Number.isInteger(c)) count = c;
       }
-      let at = null;
-      for (let step = FUNDING_RECENT_SESSIONS; at === null && step <= FUNDING_SEARCH_SESSIONS; step *= 2) {
-        at = await foundIn(Math.max(0, count - step));
-        if (count - step <= 0) break;
-      }
+      const readBack = async () => {
+        let found = null;
+        for (let step = FUNDING_RECENT_SESSIONS; found === null && step <= FUNDING_SEARCH_SESSIONS; step *= 2) {
+          found = await foundIn(Math.max(0, count - step));
+          if (count - step <= 0) break;
+        }
+        return found;
+      };
+      const turn = lane.then(readBack);
+      lane = turn.catch(() => {});
+      const at = await turn;
       if (at === null) { log(`[slash] ${hexOf(roundId).slice(0, 16)}: the funding of lock ${want.slice(0, 20)} is not within ${FUNDING_SEARCH_SESSIONS} sessions of federation ${fid.slice(0, 16)}: that lock is unread, nothing is filed on it`); return null; }
       round.keepFundingSessionFloor(roundId, fid, at);
       return at;

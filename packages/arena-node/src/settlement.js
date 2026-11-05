@@ -1322,6 +1322,7 @@ export class LockSettlement {
   }
   #namedBuilt = new Map();
   #level2Said = new Set();
+  #namedReadAt = new Map();
 
   /** ROUND ONE AT A PROTOCOL-27 SEAT: one fresh nonce pair per message of the body's batch, made before S is known; a pair that signed a list is spent. */
   #commitNamed(roundIdBytes, m, key) {
@@ -1713,8 +1714,16 @@ export class LockSettlement {
       let port, ex, read;
       try {
         port = await this.portForFederation(fid);
-        // NO SESSION FINISHED SINCE THE BOUND: nothing to read yet (the tool refuses an empty range), asked again on the next pass
-        if (typeof port.sessionCount === 'function' && Number(await port.sessionCount()) <= floor) { report.refused.push(`${fid.slice(0, 16)}: no session finished since the bound ${floor} yet`); continue; }
+        // NO SESSION FINISHED SINCE THE BOUND: nothing to read yet (the tool refuses an empty range), asked again on the next pass. AND NONE SINCE THIS
+        // SEAT'S LAST READ OF THE ROUND: the same sessions are not exported again (measured 2026-11-05: every pass re-exported every round's sessions)
+        if (typeof port.sessionCount === 'function') {
+          const count = Number(await port.sessionCount());
+          if (count <= floor) { report.refused.push(`${fid.slice(0, 16)}: no session finished since the bound ${floor} yet`); continue; }
+          const readKey = `${rid}:${fid}`;
+          if (this.#namedReadAt.get(readKey) === count) { report.refused.push(`${fid.slice(0, 16)}: no session finished since the last read (${count})`); continue; }
+          this.#namedReadAt.set(readKey, count);
+          if (this.#namedReadAt.size > 4096) this.#namedReadAt.delete(this.#namedReadAt.keys().next().value);
+        }
         // FROM THE BOUND, NEVER SEARCHING (ruling #1139 B): the bound is the funding session the seat found when it verified the lock. A spend of
         // this round's lock whose funding lies below it names no keys and is not judged - nothing is held against a seat for it
         ex = await port.sessionExport({ from: floor });

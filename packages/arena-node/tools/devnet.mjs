@@ -161,7 +161,10 @@ function slashEnv(k) {
   if (!existsSync(offence)) writeFileSync(offence, '');
   return { ARENA_CENSUS_KEY_FIRST_HEIGHT: '100000', ARENA_CENSUS_KEY_0: path('census', `key0-${k + 1}.json`), ARENA_CENSUS_KEY_EVERY_MS: '1500',
     ARENA_SLASH_FILE_STEP_MS: env.ARENA_SLASH_FILE_STEP_MS || '500', ARENA_DUTY_POST: 'on', ARENA_DUTY_WALLET: WALLET, ARENA_DUTY_APPS: 'none',
-    ARENA_BOND_CLI: [join(BTC, 'bitcoin-cli'), ...btcArgs(), `-rpcwallet=${WALLET}`].join(','), ARENA_TEST_NAMED_OFFENCE_FILE: offence };
+    ARENA_BOND_CLI: [join(BTC, 'bitcoin-cli'), ...btcArgs(), `-rpcwallet=${WALLET}`].join(','), ARENA_TEST_NAMED_OFFENCE_FILE: offence,
+    // THE STAKE-LOCK TOOL ON FEW THREADS (measured 2026-11-05 on the MacBook: seven seats' session exports and claim reads, each a tokio runtime on every core,
+    // took the load to 150): every tool a seat spawns inherits this
+    TOKIO_WORKER_THREADS: env.TOKIO_WORKER_THREADS || '1' };
 }
 
 /** Census key 0 among nodes 1..4 (3 of 4), each node's file (founders with their shares), dealt once (DEVNET_SLASH). */

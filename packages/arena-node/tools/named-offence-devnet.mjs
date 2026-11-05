@@ -13,6 +13,10 @@
 // Every state read is printed with its time from the round's end, once per change; at the end the filed proofs (GET /slashes namedSlashes) and the slash starts
 // (GET /slash-releases) of every seat. Settings as tools/devnet.mjs (DEVNET_DIR, DEVNET_BASE_PORT), PAYER_DIR, INVITE_FILE, WASM_PKG and LNCLI as tn4-live-run.mjs takes.
 import { spawn } from 'node:child_process';
+// THE HONEST SEATS STEP OUT OF THE SIGNING (off-table): an honest asker's session over the honest body and a faulty asker's over the off-table one take each
+// other's partials as bad and drop each other until no signer set is left (measured 2026-11-05, round e868dfb6: "no signer set is left"). So the two honest
+// seats' node processes (their guardians keep running) are stopped STOP_AFTER_S after the round's end - every result signed, before the window closes -
+// and sent SIGCONT once an armed seat holds the settlement accepted, or at the limit. They then read the claim like any seat that never acked
 import { readFileSync, writeFileSync, openSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,6 +37,9 @@ const say = (o) => console.log(`#1044 ${JSON.stringify({ at: new Date().toISOStr
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const get = async (url, ms = 6000) => fetch(url, { signal: AbortSignal.timeout(ms) });
 const offenceFile = (k) => join(D, 'census', `offence-${k + 1}.txt`);
+const pidOf = (k) => JSON.parse(readFileSync(join(D, 'pids', `node-${k + 1}.pid`), 'utf8')).pid;
+const stopped = new Set();
+const backIn = (k) => { if (!stopped.has(k)) return; try { process.kill(pidOf(k), 'SIGCONT'); } catch { /* gone */ } stopped.delete(k); say({ step: 'seat back', seat: k + 1, t: at() }); };
 for (let k = 0; k < SEATS.length; k++) writeFileSync(offenceFile(k), '');
 
 for (const stop = Date.now() + 600000; Date.now() < stop; await wait(5000)) {
@@ -73,11 +80,21 @@ if (!E.length) throw new Error('no entry was played');
 if (SCENARIO === 'forfeit-lost') for (const k of armed) writeFileSync(offenceFile(k), E.map((e) => `forfeit-lost ${e}`).join('\n') + '\n');
 say({ step: 'entries', entries: E, armedLines: SCENARIO === 'forfeit-lost' ? E.length : SCENARIO === 'off-table' ? 1 : 0 });
 
+const honestSeats = SEATS.map((_, k) => k).filter((k) => !armed.includes(k));
+const stopAt = END + Number(env.STOP_AFTER_S || 60) * 1000;
+process.on('exit', () => { for (const k of [...stopped]) { try { process.kill(pidOf(k), 'SIGCONT'); } catch { /* gone */ } } });
 const last = new Map();
 const seen = (key, value) => { if (last.get(key) === value) return; last.set(key, value); say({ t: at(), [key]: value }); };
 let filedAt = null;
 for (;;) {
+  if (SCENARIO === 'off-table' && !stopped.size && !last.get('honest stopped') && Date.now() >= stopAt) {
+    for (const k of honestSeats) { process.kill(pidOf(k), 'SIGSTOP'); stopped.add(k); }
+    last.set('honest stopped', true);
+    say({ step: 'honest seats stopped', seats: honestSeats.map((k) => k + 1), t: at() });
+  }
+  if (stopped.size && (armed.some((k) => /^ACCEPTED/.test(last.get(`seat${k + 1} settlement`) || '')) || at() >= LIMIT - 300)) for (const k of [...stopped]) backIn(k);
   for (let k = 0; k < SEATS.length; k++) {
+    if (stopped.has(k)) continue;
     try { const l = await (await get(`${SEATS[k]}/lock-settlement?round=${ROUND}`)).json(); seen(`seat${k + 1} settlement`, `${l.state || l.why || 'none'}${l.txid ? ` ${String(l.txid).slice(0, 16)}` : ''}`.slice(0, 200)); } catch { /* next pass */ }
     try {
       const s = await (await get(`${SEATS[k]}/slashes`)).json();
