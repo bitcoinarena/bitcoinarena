@@ -4189,7 +4189,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     },
     panelsOf: (contract, rid) => roster.slashPanelsFor(rid, { posted: contract }), holdBlocksOf: (contract) => holdClocksOf(contract.networkId).holdBlocks,
     manifestOf: (contract) => { const found = pluginForRound(contract, hosted); return found.ok ? found.plugin.manifest : null; },
-    clientOf: async (fid) => { try { const port = await settlements.portForFederation(fid); return port ? { fees: () => port.fees(), txid: async (build) => fromHex((await port.settle(build)).txid) } : null; } catch { return null; } },
+    clientOf: async (fid) => { try { const port = await settlements.portForFederation(fid); return port ? { fees: () => port.fees(), txid: async (build) => fromHex((await port.settle(build)).txid),
+      bodyId: async (build) => fromHex((await port.arenaSettle({ claims: build.claims, payouts: build.payouts, nonce: build.nonce })).bodyId) } : null; } catch { return null; } },
     abandoned: async (bytes, beforeHeight) => (fedRecords ? fedRecords.abandonedVerdict(bytes, (inv) => { const f = fedOfInvite(inv); return f ? fromHex(String(f)) : null; }, beforeHeight) : { verdict: undefined, why: 'this seat holds no federation records yet' }),
     // A THEFT (kanban #1093 part 2, ruling #1109 X): the proof's own bytes, re-verified by this seat's session verifier and its own chain; no verifier here: undefined, never false
     theft: async (bytes, beforeHeight) => (fedRecords ? fedRecords.theftVerdict(bytes, (inv) => { const f = fedOfInvite(inv); return f ? fromHex(String(f)) : null; }, beforeHeight) : { verdict: undefined, why: 'this seat holds no federation records yet' }),

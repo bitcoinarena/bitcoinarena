@@ -45,6 +45,7 @@ import { payoutRuleForRound, isAttested } from './manifest.js';
 import { windowsOf } from './window.js';
 import { splitSignedAck, settlementAckId, countAcks, decodeSettlementTable, settlementTableId, namesNoEntry, SIGNED_SETTLEMENT_ACK_BYTES } from './settlement-ack.js';
 import { tableFalse, claimsProvedQualifier } from './settlement-rebuild.js';
+import { namedClaims } from './arena-lock.js';
 import { decodeFinalSig, splitSignedFinalSig, finalSigned } from './final-sig.js';
 import { decodeAudit, auditId, auditStands, auditResultsHash } from './auditor.js';
 
@@ -682,11 +683,15 @@ export function slashHoldsOnTable({
   try { got = splitSignedAck(signedAck); } catch (e) { return no(`the evidence is not a signed ack: ${e.message}`); }
   if (hex(got.nodePubkey) !== hex(proof.nodePubkey)) return no('the ack attached was signed by a different node');
   if (hex(got.ack.roundId) !== hex(proof.roundId)) return no('the ack attached is for a different round');
-  if (hex(settlementAckId(got.ack)) !== hex(proof.signedResultId)) return no('the ack attached is not the one this proof names');
+  // A PROTOCOL-27 ROUND'S ACKS NAME THE SETTLEMENT BODY ID (ruling #1135 2), signed under their own tag: read as body acks, compared on the body id
+  const named = namedClaims(contract);
+  const signedAs = named ? { roundId: got.ack.roundId, payoutTableId: got.ack.payoutTableId, settlementBodyId: got.ack.settlementTxid } : got.ack;
+  const over = (id) => (named ? { settlementBodyId: id } : { settlementTxid: id });
+  if (hex(settlementAckId(signedAs)) !== hex(proof.signedResultId)) return no('the ack attached is not the one this proof names');
   if (hex(got.ack.payoutTableId) !== hex(proof.transcriptHash)) return no('the proof is bound to a different table than the ack names');
   if (hex(proof.playerPubkey) !== hex(EMPTY)) return no('this row names no player: the table does');
   let theirs = false;
-  try { theirs = verify(got.signature, settlementAckId(got.ack), proof.nodePubkey) === true; } catch { theirs = false; }
+  try { theirs = verify(got.signature, settlementAckId(signedAs), proof.nodePubkey) === true; } catch { theirs = false; }
   if (!theirs) return no('the signature on the ack is not the accused node\'s');
 
   // THE TABLE IT NAMES
@@ -699,7 +704,7 @@ export function slashHoldsOnTable({
   let counted;
   try {
     counted = countAcks({ acks: [signedAck, ...acks], seats: committee, slots: contract.settlementSlots, roundId: proof.roundId,
-      payoutTableId: got.ack.payoutTableId, settlementTxid: got.ack.settlementTxid, verify });
+      payoutTableId: got.ack.payoutTableId, ...over(got.ack.settlementTxid), verify });
   } catch (e) { return no(`the acks cannot be counted: ${e.message}`); }
   if (!counted.final) return no(`${counted.agreed} of the ${counted.needed} seats acked that table, so no settlement stood on it`);
 
@@ -725,7 +730,7 @@ export function slashHoldsOnTable({
     try {
       const t = decodeSettlementTable(own.table);
       const first = splitSignedAck(own.acks[0]).ack;
-      const c = countAcks({ acks: own.acks, seats: committee, slots: contract.settlementSlots, roundId: proof.roundId, payoutTableId: settlementTableId(t), settlementTxid: first.settlementTxid, verify });
+      const c = countAcks({ acks: own.acks, seats: committee, slots: contract.settlementSlots, roundId: proof.roundId, payoutTableId: settlementTableId(t), ...over(first.settlementTxid), verify });
       // THE ACCUSED'S OWN WORD TOO: five seats can ack any table they like, and that must not turn an honest seat's late table false
       const itsOwn = c.kept.some((b) => hex(splitSignedAck(b).nodePubkey) === hex(proof.nodePubkey));
       if (c.final && itsOwn && hex(t.roundId) === hex(proof.roundId) && hex(t.lateEntryId) === hex(EMPTY)) ownTable = t;
@@ -734,7 +739,7 @@ export function slashHoldsOnTable({
   try { differs.push(...tableFalse({ table: claimed, contract, entries: shown, payoutShares: rule.payoutShares, feesOf, attested, ownTable })); }
   catch (e) { return no(`the table cannot be read: ${e.message}`); }
   if (rebuiltTxid && hex(rebuiltTxid) !== hex(got.ack.settlementTxid))
-    differs.push(`the acked transaction ${hex(got.ack.settlementTxid).slice(0, 16)} does not rebuild from the table, which makes ${hex(rebuiltTxid).slice(0, 16)}`);
+    differs.push(`the acked ${named ? 'settlement body' : 'transaction'} ${hex(got.ack.settlementTxid).slice(0, 16)} does not rebuild from the table, which makes ${hex(rebuiltTxid).slice(0, 16)}`);
 
   const proved = new Map();
   for (const f of finals) {
