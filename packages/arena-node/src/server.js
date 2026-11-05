@@ -3027,12 +3027,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
   }, Number(finality.tableFileMs ?? 300000));
   if (tableFilesTimer.unref) tableFilesTimer.unref();
-  // A NAMED CLAIM'S OFFENCE (§5A.3 rows (a), (b), protocol 27, kanban #1044 B1): each protocol-27 round this seat acked a settlement of in the last 6 h, its
-  // federation's sessions read again for a claim off the bodies it acked or a forfeit of an entry a named signer signed lost; filed as soon as the accused's
-  // advertisement is held
+  // A NAMED CLAIM'S OFFENCE (§5A.3 rows (a), (b), protocol 27, kanban #1044 B1): each protocol-27 round this seat acked a settlement of, or took an entry of, in the
+  // last 6 h, its federation's sessions read again for a claim off the bodies it acked, a claim paying a key the round may not pay (level 2: no ack needed - a seat
+  // left out of the signing reads it too) or a forfeit of an entry a named signer signed lost; filed as soon as the accused's advertisement is held.
+  // ARENA_NAMED_FILE_MS (regtest only): a harness's own pace
+  const namedFileMs = Number(finality.namedFileMs ?? (process.env.ARENA_DONATION_NETWORK === 'regtest' && process.env.ARENA_NAMED_FILE_MS ? process.env.ARENA_NAMED_FILE_MS : 600000));
   const namedFilesTimer = setInterval(() => {
     let acked = [];
-    try { acked = round.ackedRoundsSince(Date.now() - 6 * 3600000); } catch { return; }
+    try {
+      const since = Date.now() - 6 * 3600000;
+      const seen = new Set();
+      acked = [...round.ackedRoundsSince(since), ...round.entryRoundsSince(since)].filter((r) => { const k = toHex(r); if (seen.has(k)) return false; seen.add(k); return true; });
+    } catch { return; }
     for (const rid of acked) {
       let contract = null;
       try { contract = decodeRoundContract(new Uint8Array(round.get(rid).contract)); } catch { continue; }
@@ -3044,7 +3050,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       settlements.fileNamedClaimProofs(rid, { advertOf: (k) => (adverts instanceof Map ? adverts.get(k) : null), relays })
         .then((f) => { for (const why of f.refused) console.log(`[slash] ${toHex(rid).slice(0, 16)} named claim: ${why}`); }, (e) => console.log(`[slash] ${e.message}`));
     }
-  }, Number(finality.namedFileMs ?? 600000));
+  }, namedFileMs);
   if (namedFilesTimer.unref) namedFilesTimer.unref();
   async function contradictAudits(rid, eid, why) {
     for (const who of auditDesk.contradict(new Uint8Array(rid), `entry ${toHex(eid)}: ${why}`))
@@ -11199,8 +11205,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const owedTo = (r) => ({ ...r, pays: slashedGuardianPays({ federation: r.federation, halt: liquidations ? liquidations.haltOf(r.federation) : null }) });
         abandonedRows = abandonedRows.map(owedTo); theftRows = theftRows.map(owedTo);
         abandonedRows = abandonedRows.map((r) => { const got = startsByCensusKey(r.template) && seating ? seating.presigOf({ txid: r.txid, vout: r.vout }) : null; return got ? { ...r, presig: got.signature, presigRound: got.round } : r; });
+        // AND THE PROOFS OF A NAMED CLAIM'S OFFENCE (§5A.3 rows (a), (b), kanban #1044 B1): row 1 (a), 2 (b), 3 (a) at level 2, against a settlement's or a forfeit's named signers
+        const namedRows = round.namedClaimProofs().map((r) => ({ round: toHex(r.roundId), node: toHex(r.nodePubkey), row: r.row, proof: toHex(r.proofId), seenMs: r.seenMs }));
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), slashes: rows, auditSlashes: auditRows, doubleSlashes: doubleRows, tableSlashes: tableRows, abandonedSlashes: abandonedRows, theftSlashes: theftRows }));
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), slashes: rows, auditSlashes: auditRows, doubleSlashes: doubleRows, tableSlashes: tableRows, namedSlashes: namedRows, abandonedSlashes: abandonedRows, theftSlashes: theftRows }));
       }
       // A ROUND'S PROOFS OF FALSE TABLES, as published (proof, ack, the rest), one after another (kanban #1040)
       if (req.method === 'GET' && url.pathname === '/table-slash-proofs') {

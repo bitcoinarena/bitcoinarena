@@ -66,7 +66,7 @@ import { bondTransaction, blockOf } from '../../arena-protocol/tools/bond.js';
 import { encodeRoundContract, decodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
 import { deriveCensus } from '../../arena-protocol/src/census.js';
 import { bondSetFor, tweakPoint, combine } from '../src/curve.js';
-import { bondOutputKey, bondInternalKey } from '../../arena-protocol/src/bond-script.js';
+import { bondOutputKey, bondInternalKey, BOND_TEMPLATE_V3 } from '../../arena-protocol/src/bond-script.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../arena-protocol/src/constants.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
@@ -485,6 +485,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // built first and included together left the first confirming more than 6 blocks later, short of its maturity, and the
     // census excluded it. The same fix as tools/seating-regtest.mjs.
     const postedAt = [];
+    const template3Key = rt.minable && process.env.ARENA_BOND_TEMPLATE3_KEY ? fromHex(process.env.ARENA_BOND_TEMPLATE3_KEY) : null;
     const posted = toPost.map((i) => members[i]).map((m, j) => {
       const p = rt.postBond(m.id.secret, {
         // THE PUBLIC ENDPOINT, THE SAME ONE THE ADVERT NAMES (2026-09-25 21:41: the replay link a player copies
@@ -508,8 +509,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         // ON TESTNET4 THE BOND IS THE ROUND'S MINIMUM, not regtest's half a coin: 50 000 sats, the contract's
         // bond_min_sats, out of a 55 000-sat funding output (the rest is the marker, the fee and the change).
         ...bondAmount,
+        // A DEVNET THAT SLASHES (ARENA_BOND_TEMPLATE3_KEY, regtest only, kanban #1044 B1 phase 4): the bond on template 3 under that census key, so a
+        // filed proof can start its slash; its presig goes in the same block
+        ...(template3Key ? { template: BOND_TEMPLATE_V3, censusKey: template3Key } : {}),
       });
-      rt.include([p.hex]);
+      rt.include([p.hex, ...(template3Key ? [rt.postBondPresig(m.id.secret, p).hex] : [])]);
       postedAt.push(rt.height());
       return p;
     });
@@ -874,7 +878,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const asSeen = decodeRoundContract(encodeRoundContract(c));
   const census = deriveCensus(censusView, {
     contract: asSeen,
-    bond: bondSetFor(network),
+    // A DEVNET THAT SLASHES (ARENA_BOND_TEMPLATE3_KEY): its template-3 bonds count under census key 0, standing from height 0, as the seats' own scan reads it
+    bond: process.env.ARENA_BOND_TEMPLATE3_KEY && network === 'regtest'
+      ? { ...bondSetFor(network), standingKeys: [{ epoch: 0, publicKey: fromHex(process.env.ARENA_BOND_TEMPLATE3_KEY), height: 0 }] } : bondSetFor(network),
     // AS THE SEATS DERIVE IT (roster.js): updates and re-affirmed ancestor bonds checked with BIP-340
     verifyUpdate: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
     // RESOLVED FROM THE VIEW ITSELF, the way `roster.censusFor` does it: 5A.2

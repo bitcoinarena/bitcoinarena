@@ -176,17 +176,18 @@ export async function arenaLockStands({ contract, entry, kind, fields, outpoint,
 
 /**
  * THE FILER'S LOWER BOUND: THE LOCK'S OWN FUNDING SESSION, FOUND WHEN THE LOCK IS VERIFIED (kanban #1044 B1, rulings #1138 1 (i), #1139 B). When this seat
- * verifies an Arena lock (§23.1 step 5) it reads the federation's signed sessions back from its session count - the newest FUNDING_RECENT_SESSIONS
- * first, again while the funding may still sit in a session not finished yet, then doubling (16, 32, ...) - until the stake-lock tool's offline
- * reader names the lock's funding, and keeps THAT session as the bound for (round, federation): the lower of what is stored and it, across restarts.
- * The filer starts at the bound and never searches. A funding not found within FUNDING_SEARCH_SESSIONS leaves the lock unread - no filing on it,
- * nothing held against a seat - and is logged. A failed read never fails the lock; the search runs beside the verification, not in its way.
- * `outpoint` the lock's; `waitMs`/`tries` how long a funding not yet in a finished session is waited for. Answers the session kept, or null.
+ * verifies an Arena lock (§23.1 step 5) the lock's funding was accepted before, so it sits in a session no later than the one running now (the session
+ * count c0); once a later session finished (the count above c0) this seat reads the federation's signed sessions back - the newest FUNDING_RECENT_SESSIONS,
+ * then doubling (16, 32, ...) - until the stake-lock tool's offline reader names the lock's funding, and keeps THAT session as the bound for (round,
+ * federation): the lower of what is stored and it, across restarts. The filer starts at the bound and never searches. A funding not found within
+ * FUNDING_SEARCH_SESSIONS leaves the lock unread - no filing on it, nothing held against a seat - and is logged; so is a federation whose running session
+ * does not finish within `maxWaitMs` (asked every `waitMs`). A failed read never fails the lock; the search runs beside the verification, not in its way.
+ * `outpoint` the lock's. Answers the session kept, or null.
  */
 export const FUNDING_SEARCH_SESSIONS = 1024;
 export const FUNDING_RECENT_SESSIONS = 8;
 const searching = new Map();
-export function keepLockSessionFloor({ round, port, roundId, federationId, outpoint, waitMs = 20000, tries = 6, log = (l) => console.log(l), sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+export function keepLockSessionFloor({ round, port, roundId, federationId, outpoint, waitMs = 20000, maxWaitMs = 3600000, now = () => Date.now(), log = (l) => console.log(l), sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
   if (!round.keepFundingSessionFloor || !round.fundingSessionFloor || !port || typeof port.sessionCount !== 'function'
     || typeof port.sessionExport !== 'function' || typeof port.arenaClaimRead !== 'function' || !outpoint || !(outpoint.txid instanceof Uint8Array)) return Promise.resolve(null);
   const fid = hexOf(federationId);
@@ -201,15 +202,22 @@ export function keepLockSessionFloor({ round, port, roundId, federationId, outpo
   };
   const run = (async () => {
     try {
-      let count = null, at = null;
-      for (let k = 0; k < tries && at === null; k++) {
-        if (k) await sleep(waitMs);
-        count = Number(await port.sessionCount());
-        if (!Number.isInteger(count)) return null;
-        at = await foundIn(Math.max(0, count - FUNDING_RECENT_SESSIONS));
+      const count0 = Number(await port.sessionCount());
+      if (!Number.isInteger(count0)) return null;
+      // THE SESSION THE FUNDING SITS IN FINISHES FIRST (measured on the #1044 devnet 2026-11-05: sessions of ~4 min, and a search that gave up after 2 min
+      // logged every lock of the round "not within 1024 sessions")
+      let count = count0;
+      for (const until = now() + maxWaitMs; count <= count0;) {
+        if (now() > until) { log(`[slash] ${hexOf(roundId).slice(0, 16)}: no session of federation ${fid.slice(0, 16)} finished after ${count0} within ${Math.round(maxWaitMs / 60000)} min: the funding of lock ${want.slice(0, 20)} is not read, nothing is filed on it`); return null; }
+        await sleep(waitMs);
+        const c = Number(await port.sessionCount());
+        if (Number.isInteger(c)) count = c;
       }
-      for (let step = FUNDING_RECENT_SESSIONS * 2; at === null && step <= FUNDING_SEARCH_SESSIONS && count > step / 2; step *= 2)
+      let at = null;
+      for (let step = FUNDING_RECENT_SESSIONS; at === null && step <= FUNDING_SEARCH_SESSIONS; step *= 2) {
         at = await foundIn(Math.max(0, count - step));
+        if (count - step <= 0) break;
+      }
       if (at === null) { log(`[slash] ${hexOf(roundId).slice(0, 16)}: the funding of lock ${want.slice(0, 20)} is not within ${FUNDING_SEARCH_SESSIONS} sessions of federation ${fid.slice(0, 16)}: that lock is unread, nothing is filed on it`); return null; }
       round.keepFundingSessionFloor(roundId, fid, at);
       return at;

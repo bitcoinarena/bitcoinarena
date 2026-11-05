@@ -1321,6 +1321,7 @@ export class LockSettlement {
     return out;
   }
   #namedBuilt = new Map();
+  #level2Said = new Set();
 
   /** ROUND ONE AT A PROTOCOL-27 SEAT: one fresh nonce pair per message of the body's batch, made before S is known; a pair that signed a list is spent. */
   #commitNamed(roundIdBytes, m, key) {
@@ -1712,6 +1713,8 @@ export class LockSettlement {
       let port, ex, read;
       try {
         port = await this.portForFederation(fid);
+        // NO SESSION FINISHED SINCE THE BOUND: nothing to read yet (the tool refuses an empty range), asked again on the next pass
+        if (typeof port.sessionCount === 'function' && Number(await port.sessionCount()) <= floor) { report.refused.push(`${fid.slice(0, 16)}: no session finished since the bound ${floor} yet`); continue; }
         // FROM THE BOUND, NEVER SEARCHING (ruling #1139 B): the bound is the funding session the seat found when it verified the lock. A spend of
         // this round's lock whose funding lies below it names no keys and is not judged - nothing is held against a seat for it
         ex = await port.sessionExport({ from: floor });
@@ -1750,9 +1753,18 @@ export class LockSettlement {
       if (payees) {
         const atLevel1 = new Set(filings.filter((x) => x.row === NAMED_ROW_OFF_TABLE).map((x) => `${x.txid}:${x.who}`));
         const entries = [...byId.values()].map((x) => x.entry);
-        for (const off of unpayableClaims({ spends: read.spends || [], roundId: rid, entries, payees })) {
+        const readNow = [];
+        for (const off of unpayableClaims({ spends: read.spends || [], roundId: rid, entries, payees, read: readNow })) {
           for (const who of off.offenders) if (!atLevel1.has(`${off.txid}:${who}`))
             filings.push({ row: NAMED_ROW_PAYEE, who, txid: off.txid, why: off.why, parts: { ...sessions, row: NAMED_ROW_PAYEE, entries } });
+        }
+        // ONE LINE PER CLAIM READ, once: the gate (#1139) is measured on what honest settlements this seat read at level 2
+        for (const x of readNow) {
+          const k = `${rid}:${x.txid}`;
+          if (this.#level2Said.has(k)) continue;
+          this.#level2Said.add(k);
+          report.level2 = (report.level2 || []).concat([x]);
+          console.log(`[slash] ${rid.slice(0, 16)} level 2 read claim ${x.txid.slice(0, 16)}: ${x.outputs} outputs, ${x.false ? `FALSE: ${x.why}` : 'every payee on the list'}${x.unread.length ? `; unread: ${x.unread.join('; ')}` : ''}`);
         }
       } else report.refused.push(`${fid.slice(0, 16)}: no payees read for the round: level 2 not read`);
       for (const f of forfeits) for (const who of f.offenders) {

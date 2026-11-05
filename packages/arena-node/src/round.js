@@ -2979,6 +2979,11 @@ export class Round {
       .run(Buffer.from(roundId), scope, String(txid), Buffer.from(tableId), Buffer.from(table), Buffer.from(acks), this.now());
   }
 
+  /** The rounds this seat took an entry of since `sinceMs` (kanban #1044 B1: read again for a named claim's offence, acked or not). */
+  entryRoundsSince(sinceMs) {
+    return this.db.prepare('SELECT DISTINCT round_id FROM entries WHERE joined_ms >= ?').all(sinceMs).map((r) => new Uint8Array(r.round_id));
+  }
+
   /** The rounds this seat kept acks of a settlement for since `sinceMs` (kanban #1044 B1: read again for a named claim's offence). */
   ackedRoundsSince(sinceMs) {
     return this.db.prepare('SELECT DISTINCT round_id FROM settlement_acks WHERE made_ms >= ?').all(sinceMs).map((r) => new Uint8Array(r.round_id));
