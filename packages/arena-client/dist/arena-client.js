@@ -30481,7 +30481,28 @@ const UNREADABLE_MS = 30000;
 const CLOSED_KEPT_MS = 2n * 3600n * 1000n;
 
 const LOBBY_CONTRACTS_PER_READ = 64;
-async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, verifyMany = null, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS } = {}) {
+
+// A NODE WHOSE READ FAILED IS NOT ASKED AGAIN FOR FAILED_NODE_SKIP_MS (kanban #1133: every lobby read on the owner's iPhone asked the 7 stopped
+// T3 seats and the dead quick tunnels its kept list holds, 11 nodes, and paid for them each second). Failed means the read failed outright -
+// it could not load, or answered a status that is not OK; a node that is only slow (silent) is asked as before. Kept in the browser's storage
+// (key arena.nodes.down: node -> until, ms), so a reload skips them too; a node that answers is out of the list at once; when every node of a
+// read would be skipped, all of them are asked. Only for a caller that asks for it (`skipFailed`, the page's lobby).
+const FAILED_NODE_SKIP_MS = 300000;
+const DOWN_KEY = 'arena.nodes.down';
+let DOWN = null;
+const downStore = () => { try { return typeof globalThis.localStorage === 'object' && globalThis.localStorage ? globalThis.localStorage : null; } catch { return null; } };
+const downMap = () => {
+  if (DOWN) return DOWN;
+  DOWN = new Map();
+  try { const st = downStore(); const kept = st ? JSON.parse(st.getItem(DOWN_KEY) || '{}') : {}; for (const [k, v] of Object.entries(kept || {})) if (Number.isFinite(Number(v))) DOWN.set(k, Number(v)); } catch { /* none kept */ }
+  return DOWN;
+};
+const downSave = (nowMs) => { try { const st = downStore(); if (!st) return; const o = {}; for (const [k, v] of downMap()) if (v > nowMs) o[k] = v; st.setItem(DOWN_KEY, JSON.stringify(o)); } catch { /* not kept */ } };
+/** The nodes skipped now, each with the ms it is skipped until (for a page's diagnostics and tests). */
+const skippedNodes = (nowMs = Date.now()) => [...downMap()].filter(([, v]) => v > nowMs).map(([node, untilMs]) => ({ node, untilMs }));
+/** Forget every skip (tests). */
+const forgetSkippedNodes = () => { DOWN = new Map(); try { const st = downStore(); if (st) st.removeItem(DOWN_KEY); } catch { /* nothing kept */ } };
+async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, verifyMany = null, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS, skipFailed = false } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
   if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
   const refused = [];
@@ -30492,7 +30513,11 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
   const ask = answerWithin(fetcher, answerMs);
   // EVERY NODE AT ONCE, each within its limit: asked one after another, one silent node held the next one's answer back
   // and a lobby of two cost two limits. Answers are read in the order the nodes were named.
-  const unique = [...new Set(nodes)];
+  const named = [...new Set(nodes)];
+  // the nodes whose read failed within FAILED_NODE_SKIP_MS are not asked (kanban #1133); if that leaves none, all are
+  const down = downMap();
+  const skipped = skipFailed ? named.filter((n) => (down.get(String(n)) || 0) > nowMs) : [];
+  const unique = skipped.length < named.length ? named.filter((n) => !skipped.includes(n)) : named;
   // ONCE HALF HAVE ANSWERED, THE REST GET LOBBY_LAST_MS MORE (measured on testnet4 2026-10-16: seven seats answered in
   // 0.3-1.7 s and federation B's seven in 19-45 s, and the first lobby waited the full limit for them): the lobby is drawn from
   // the seats that answered; a late one is in the next read, a second later
@@ -30638,7 +30663,11 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
     });
   }
   rows.sort((x, y) => (x.phase === y.phase ? x.entryCloseMs - y.entryCloseMs : (x.phase === 'open' ? -1 : 1)));
-  return { rows, closed, refused, unanswered, failed, asked: unique.length };
+  // FAILED NOW: skipped from here on for FAILED_NODE_SKIP_MS; ANSWERED NOW: out of the list (kanban #1133)
+  if (skipFailed) { const silentNow = new Set(unanswered.map(String)), failedNow = new Set(failed.map(String));
+    for (const n of unique) { const k = String(n); if (failedNow.has(k) && !silentNow.has(k)) down.set(k, nowMs + FAILED_NODE_SKIP_MS); else if (!failedNow.has(k)) down.delete(k); }
+    downSave(nowMs); }
+  return { rows, closed, refused, unanswered, failed, asked: unique.length, skipped: unique === named ? [] : skipped };
 }
 
 /**
