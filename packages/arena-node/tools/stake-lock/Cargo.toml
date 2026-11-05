@@ -16,6 +16,11 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[features]
+# THE ARENA LOCK (kanban #1044 B1, src/arena.rs): only against the fork branch whose fedimint-lnv2-common carries arena_lock
+# (module consensus version 1.100); `cargo build --release -p arena-stake-lock --features arena-lock`
+arena-lock = []
+
 [dependencies]
 anyhow = { workspace = true }
 bitcoincore-rpc = { workspace = true }

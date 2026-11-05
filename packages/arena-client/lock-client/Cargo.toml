@@ -30,6 +30,10 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[features]
+# THE ARENA LOCK (kanban #1044 B1): src/arena.rs, against the fork branch that carries fedimint-lnv2-common arena_lock
+arena-lock = []
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
