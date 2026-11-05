@@ -29,6 +29,8 @@ fi
 # 2. THE TREE: a worktree of the fork at its testnet4 commit, the one stock patch, the denominations change, the crate
 # THE FORK REVISION (kanban #1044 B1): f1481d4bcfa as before; the Arena lock (ARENA_LOCK_CLIENT_FEATURES=arena-lock) needs the
 # fork branch that carries fedimint-lnv2-common arena_lock (ARENA_FORK_REV), in a build directory of its own (ARENA_LOCK_BUILD)
+# THE 2.0 LINE SHIPS the arena-lock build: ARENA_FORK_REV=1ca203a9f96 ARENA_LOCK_CLIENT_FEATURES=arena-lock (0.12.2 + the variant, the custody the line ships);
+# dist/ and the WebGL template hold its out/, then tools/known-clients.js. A CARGO_TARGET_DIR set outside is where wasm-bindgen reads.
 REV=${ARENA_FORK_REV:-f1481d4bcfa}
 if [ ! -d $B/tree ]; then git -C $FORK worktree add --detach $B/tree $REV; fi
 cd $B/tree
@@ -94,6 +96,6 @@ export CC_wasm32_unknown_unknown=$B/wasi-sdk/bin/clang AR_wasm32_unknown_unknown
 export CFLAGS_wasm32_unknown_unknown="--target=wasm32-unknown-unknown"
 export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS='--cfg getrandom_backend="wasm_js"'
 cargo build --release --target wasm32-unknown-unknown -p blwp-lock-client ${ARENA_LOCK_CLIENT_FEATURES:+--features $ARENA_LOCK_CLIENT_FEATURES}
-mkdir -p $B/out && $B/wasm-bindgen/wasm-bindgen --target web --out-dir $B/out target/wasm32-unknown-unknown/release/blwp_lock_client.wasm
+mkdir -p $B/out && $B/wasm-bindgen/wasm-bindgen --target web --out-dir $B/out ${CARGO_TARGET_DIR:-target}/wasm32-unknown-unknown/release/blwp_lock_client.wasm
 ls -la $B/out
 echo BUILD-OK
