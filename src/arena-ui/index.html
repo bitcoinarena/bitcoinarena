@@ -7283,12 +7283,15 @@
           // NOT READ YET IS NOT "NO WINDOW" (kanban #1132): until the lobby's first answer is in, the client's "No window is open" and the line
           // under it (which, with no rows, named tomorrow's grid: "Next round in 17 h 37 min") are replaced by a reading line. After 30 s
           // without an answer the client's own words stand, so a lobby that never answers is not hidden.
-          const reading = !!(empty && !window.ARENA_LOBBY_ANSWERED_AT && now - shownAt < 30000);
+          // and while the lobby already holds a round of this game whose window is open now: the client takes it on its own next read, about
+          // a second later (measured on UI 541: one second of "No window is open" beside "entry open until 06:45")
+          const openListed = mineRows.some((r) => Number(r.entryCloseMs) - windowMs <= now);
+          const reading = !!(empty && now - shownAt < 30000 && (!window.ARENA_LOBBY_ANSWERED_AT || openListed));
           d.body.toggleAttribute('data-arena-reading', reading);
           if (reading) {
             if (!el) { el = d.createElement('div'); el.id = 'arena-expected'; el.style.cssText = 'margin-top:6px;font-size:14px;opacity:.85;line-height:1.4'; q.after(el); }
             el.dataset.why = 'reading';
-            const text = 'Reading the open rounds from the nodes …';
+            const text = openListed ? 'Opening the open window …' : 'Reading the open rounds from the nodes …';
             if (el.textContent !== text) el.textContent = text;
             d.body.toggleAttribute('data-arena-unplayable', false);
             return;
