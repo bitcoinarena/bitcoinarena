@@ -18,52 +18,82 @@
 import { toHex } from './hash.js';
 import { refundKeyOf } from './stake-lock.js';
 import { OFF_TABLE_CLAIM } from './named-claim-offence.js';
+import { lnv2FeeMsat, REMAINDER_NODES_PERCENT } from './lock-settlement.js';
 
 const low = (x) => String(x || '').toLowerCase();
 const keyHex = (k) => (k instanceof Uint8Array ? toHex(k) : low(k));
 const setOf = (xs) => (xs === null || xs === undefined ? null : new Set([...xs].map(keyHex)));
 
-/** The keys an Entry Contract of the round names as payees: the player's refund key and the website's payout key. */
+/**
+ * The keys an Entry Contract of the round names as payees: { players } the players' refund keys, { sites } the websites' payout keys. A website is not a
+ * qualifier: a walk-away's remainder (#1143 1) is read only where no qualifier is paid, and a website's line may stand beside it.
+ */
 export function entryPayeeKeys(entries) {
-  const out = new Set();
+  const players = new Set(), sites = new Set();
   for (const e of entries || []) {
-    if (e && e.playerPubkey instanceof Uint8Array) out.add(toHex(refundKeyOf(e.playerPubkey)));
-    if (e && e.frontendPk instanceof Uint8Array) out.add(toHex(e.frontendPk));
+    if (e && e.playerPubkey instanceof Uint8Array) players.add(toHex(refundKeyOf(e.playerPubkey)));
+    if (e && e.frontendPk instanceof Uint8Array) sites.add(toHex(e.frontendPk));
   }
-  return out;
+  return { players, sites };
 }
 
 /**
  * ONE ACCEPTED CLAIM, READ BY WHO IT PAYS. `spends` the reader's spends of ONE transaction (its claims of this round's locks, each with `outputs`,
- * `agg_key`, `lock`); `entryKeys` entryPayeeKeys of the round's entries; `payees` { nodeKeys, donationKeys, reserveKeys } (33-byte keys, hex or bytes;
- * null where unread). Answers { false: true, why } or { false: false, unread: [why...] }.
+ * `agg_key`, `lock`); `entryKeys` entryPayeeKeys of the round's entries ({ players, sites }; a bare Set is read as players); `payees` { nodeKeys,
+ * donationKeys, reserveKeys, gameDonationKeys?, market?: { nodeBps, donationBps }, fees?: { ppm, baseMsat } } (33-byte keys, hex or bytes; null where unread).
+ *
+ * THE NODE ROW'S CAP: the fee locks the transaction claims, and - ONLY IN A TRANSACTION THAT PAYS NO QUALIFIER (#1143 1, a walk-away's remainder) - 75 % of
+ * what its stake locks pay after the guardians' input fees, as the planner rounds it (`fees`; without them the gross, never less than the planner's);
+ * there the donation set gets at most the other 25 %. Where a qualifier is paid there is no remainder room.
+ * A MARKET'S DONATION (#1143 2): the round's donation set and its game's own (`gameDonationKeys`, the manifest's) together at most `market.donationBps` of
+ * the whole rate on everything the transaction claims; without `market` that sum is unread, as before.
+ * Answers { false: true, why } or { false: false, unread: [why...] }.
  */
 export function claimPayees({ spends, entryKeys, payees }) {
   const first = spends[0];
   const agg = low(first.agg_key);
   const node = setOf(payees.nodeKeys), donation = setOf(payees.donationKeys), reserve = setOf(payees.reserveKeys);
-  const allRead = node !== null && donation !== null && reserve !== null;
-  const qualifiers = new Set(entryKeys || []);
-  let feeClaimed = 0n;
+  const game = payees.gameDonationKeys === undefined ? new Set() : setOf(payees.gameDonationKeys);
+  const allRead = node !== null && donation !== null && reserve !== null && game !== null;
+  const keys = entryKeys instanceof Set ? { players: entryKeys, sites: new Set() } : (entryKeys || { players: new Set(), sites: new Set() });
+  const qualifiers = new Set(keys.players || []);
+  const sites = new Set(keys.sites || []);
+  let feeClaimed = 0n, stakeClaimed = 0n, stakeFees = 0n;
   for (const s of spends) {
     if (!s.lock) continue;
     if (s.lock.refund_pk) qualifiers.add(low(s.lock.refund_pk));
-    if (s.lock.payment_image && s.lock.payment_image.hash !== undefined) feeClaimed += BigInt(s.lock.amount_msat);
+    const msat = BigInt(s.lock.amount_msat);
+    if (s.lock.payment_image && s.lock.payment_image.hash !== undefined) feeClaimed += msat;
+    else { stakeClaimed += msat; if (payees.fees) stakeFees += lnv2FeeMsat(payees.fees, msat); }
   }
   const unread = [];
-  let nodeRow = 0n;
+  let nodeRow = 0n, donated = 0n, qualifierPaid = false;
   for (const o of first.outputs || []) {
     if (o.kind !== 'outgoing') return { false: true, why: `output ${o.out_idx} is ${o.kind ? `a ${o.kind} output` : `an output of module ${o.module}`}, which no settlement makes` };
     const refund = low(o.refund_pk), claim = low(o.claim_pk);
+    const msat = BigInt(o.amount_msat);
     if (agg && refund.slice(2) === agg) continue;
     if (claim !== refund) return { false: true, why: `output ${o.out_idx} is a send refunding to ${refund.slice(0, 18)}, not to the signer set's key` };
-    if (qualifiers.has(refund) || (donation && donation.has(refund)) || (reserve && reserve.has(refund))) continue;
-    if (node && node.has(refund)) { nodeRow += BigInt(o.amount_msat); continue; }
+    if (qualifiers.has(refund)) { qualifierPaid = true; continue; }
+    if (sites.has(refund) || (reserve && reserve.has(refund))) continue;
+    if ((donation && donation.has(refund)) || (game && game.has(refund))) { donated += msat; continue; }
+    if (node && node.has(refund)) { nodeRow += msat; continue; }
     if (!allRead) { unread.push(`output ${o.out_idx} pays ${refund.slice(0, 18)}, which no payee read here names`); continue; }
-    return { false: true, why: `output ${o.out_idx} pays ${BigInt(o.amount_msat)} msat to ${refund.slice(0, 18)}, a key the round may not pay` };
+    return { false: true, why: `output ${o.out_idx} pays ${msat} msat to ${refund.slice(0, 18)}, a key the round may not pay` };
   }
-  if (node !== null && nodeRow > feeClaimed)
-    return { false: true, why: `the node row is paid ${nodeRow} msat and the fee locks the transaction claims hold ${feeClaimed}` };
+  // THE REMAINDER ROOM (#1143 1): 75 % of the claimed stake after its input fees, where nobody qualified
+  const spendable = stakeClaimed - stakeFees;
+  const remainderNodes = qualifierPaid || spendable <= 0n ? 0n : (spendable * REMAINDER_NODES_PERCENT) / 100n;
+  if (node !== null && nodeRow > feeClaimed + remainderNodes)
+    return { false: true, why: `the node row is paid ${nodeRow} msat and the fee locks the transaction claims hold ${feeClaimed}`
+      + `${qualifierPaid ? ' (it pays a qualifier: no remainder room)' : `, the remainder room ${remainderNodes}`}` };
+  if (!qualifierPaid && remainderNodes > 0n && !payees.market && donated > spendable - remainderNodes)
+    return { false: true, why: `the donation set is paid ${donated} msat and a walk-away's remainder gives it at most ${spendable - remainderNodes}` };
+  if (payees.market) {
+    const total = BigInt(payees.market.nodeBps) + BigInt(payees.market.donationBps);
+    const cap = total > 0n ? ((feeClaimed + stakeClaimed) * BigInt(payees.market.donationBps)) / total : 0n;
+    if (donated > cap) return { false: true, why: `the donation sets are paid ${donated} msat and the market's donation share of what the transaction claims is ${cap}` };
+  }
   return { false: false, unread };
 }
 
