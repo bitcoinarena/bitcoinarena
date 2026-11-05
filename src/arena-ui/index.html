@@ -2928,7 +2928,8 @@
     // screen says; when a loading line has not changed for LOAD_STALL_S, fail() says so. A line that is not a loading
     // line (a stake lock, a claim key, an invoice) is the page waiting on the player or a named step, not stuck.
     const LOAD_STALL_S = 90;
-    const LOADING_LINES = new Set(['Connecting …', 'Finding the nodes …', 'Reading the rounds …', 'Opening your wallet …', 'Starting the game …', ...STAGES.map((s) => s[1])]);
+    const LOADING_LINES = new Set(['Connecting …', 'Finding the nodes …', 'Reading the rounds …', 'Opening your wallet …', 'Starting the game …',
+      'Reading the open rounds …', 'Opening the open window …', ...STAGES.map((s) => s[1])]);
     // WHAT IT IS DOING, AND HOW FAR (kanban #946, 2026-11-01: "zeige auch an was er macht und mach eine Progress Bar"): the steps before a game's own loading, one way only, so a late one never moves the bar back
     let bootPct = 0;
     window.ARENA_BOOT_STEP = (at, words) => { if (at <= bootPct || window.unityInstance) return; const line = document.getElementById('stage'), bar = document.getElementById('bar'); if (!line || !LOADING_LINES.has(line.textContent)) return; bootPct = at; line.textContent = words; document.documentElement.classList.add('arena-boot-steps'); if (bar) bar.style.setProperty('--boot', at / 100); };
@@ -7296,6 +7297,13 @@
           const openListed = mineRows.some((r) => Number(r.entryCloseMs) - windowMs <= now);
           const reading = !!(empty && now - shownAt < 30000 && (!window.ARENA_LOBBY_ANSWERED_AT || openListed));
           d.body.toggleAttribute('data-arena-reading', reading);
+          // the held loading screen (kanban #1133): its bar follows this line, and it goes once the client shows a window, or says truly none
+          { const hold = window.ARENA_BOOT_HOLD;
+            if (hold && !hold.over) {
+              if (reading && openListed) hold.step(98, 'Opening the open window …');
+              else if (!reading && q && !empty) hold.done('the open window is shown');
+              else if (!reading && empty) hold.done('no window is open');
+            } }
           if (reading) {
             if (!el) { el = d.createElement('div'); el.id = 'arena-expected'; el.style.cssText = 'margin-top:6px;font-size:14px;opacity:.85;line-height:1.4'; q.after(el); }
             el.dataset.why = 'reading';
@@ -7332,6 +7340,8 @@
         // own next read, so a second paint 1.2 s later catches its new line
         const onLobby = () => { if (!fr.isConnected) { window.removeEventListener('arena-lobby', onLobby); return; } paint().catch(() => {}); setTimeout(() => paint().catch(() => {}), 1200); };
         window.addEventListener('arena-lobby', onLobby);
+        // while the loading screen is held (kanban #1133), every 0.5 s: it lifts within half a second of the client showing its window
+        const fast = setInterval(() => { if (!window.ARENA_BOOT_HOLD || window.ARENA_BOOT_HOLD.over || !fr.isConnected) { clearInterval(fast); return; } paint().catch(() => {}); }, 500);
       }
       document.body.classList.add('arena-own-client');
       document.body.appendChild(frame);
@@ -7339,7 +7349,22 @@
       // invoice was ever made - showDepositOffer found no #arena-deposit, removed with the boot screen), as on Unity's path
       const deposit = document.getElementById('arena-deposit');
       if (deposit) document.body.appendChild(deposit);
-      boot.remove();
+      // THE LOADING SCREEN STAYS UNTIL THE WINDOW IS OPEN (kanban #1133, the owner 2026-11-05 ~06:51Z, phone on 5G, UI 542: "Es dauert immernoch
+      // 25 Sekunden nach loading. Alles im loading screen machen mit progress bar"): a market's client is mounted under the loading screen, and
+      // the screen goes when the client shows its open window - or, with none open, when the lobby has answered (expectedLine below says when).
+      // Its bar goes on: reading the open rounds, opening the window. At most 30 s after the client is in, as the reading line.
+      if (game.kind === 'market' || game.name === 'btc-updown-15m') {
+        boot.style.position = 'fixed'; boot.style.zIndex = '9000';
+        if (window.ARENA_BOOT_STEP) window.ARENA_BOOT_STEP(94, 'Reading the open rounds …');
+        const heldAt = Date.now();
+        window.ARENA_BOOT_HOLD = {
+          step: (at, words) => { if (window.ARENA_BOOT_STEP) window.ARENA_BOOT_STEP(at, words); },
+          done: (why) => { if (!boot.parentNode || window.ARENA_BOOT_HOLD.over) return; window.ARENA_BOOT_HOLD.over = true;
+            console.log('[arena] ' + game.name + ': ' + why + ', ' + (Date.now() - t0) + ' ms after the start, ' + (Date.now() - heldAt) + ' ms under the loading screen');
+            boot.classList.add('done'); setTimeout(() => { if (boot.parentNode) boot.remove(); }, 500); },
+        };
+        setTimeout(() => window.ARENA_BOOT_HOLD.done('no window after 30 s'), 30000);
+      } else boot.remove();
       console.log('[arena] ' + game.name + ' client ' + file.hash.slice(0, 16) + ' loaded by its manifest hash, ' + (Date.now() - t0) + ' ms');
     }
     // A GAME'S CLIENT THAT IS NOT ITS MANIFEST'S IS NOT RUN, and the player is told why, with the way back to the games
