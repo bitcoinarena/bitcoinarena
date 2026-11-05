@@ -568,7 +568,7 @@ fn write_proof(path: &str, state: &State, keys: &BTreeMap<PeerId, PublicKey>, ki
 }
 
 /// The module decoders a proof names, built from the stock common crates: no client, no config download.
-fn offline_decoders(kinds: &BTreeMap<ModuleInstanceId, String>) -> ModuleDecoderRegistry {
+pub(crate) fn offline_decoders(kinds: &BTreeMap<ModuleInstanceId, String>) -> ModuleDecoderRegistry {
     use fedimint_core::module::CommonModuleInit;
     ModuleDecoderRegistry::new(kinds.iter().filter_map(|(id, k)| {
         let d = match k.as_str() {

@@ -25,7 +25,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27]);
 /**
  * THE VERSION THAT RUNS THE CENSUS KEY'S DAEMON (5A.3B, RULED 2026-11-02, kanban #1048 answer 2). A node that does not speak it cannot deal or sign, so a share given to it counts against
  * the threshold and nobody can use it: a node whose advertisement does not list this version is out of the key's census, in T and the shares alike. It is above BOND_SUM_VERSION, so

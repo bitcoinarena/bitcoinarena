@@ -280,6 +280,10 @@ fn arena_offline(mode: &str, a: &Args) -> Option<anyhow::Result<()>> {
     if mode == "arena-id" {
         return Some(arena::id(a).map(|v| println!("{v}")));
     }
+    // offence rows (a) and (b): the Arena-lock spends a federation's signed sessions name (src/arena.rs claim_read)
+    if mode == "arena-claim-read" {
+        return Some(arena::claim_read().map(|v| println!("{v}")));
+    }
     arena::musig_mode(mode, a).map(|out| out.map(|v| println!("{v}")))
 }
 
@@ -411,13 +415,17 @@ async fn serve(client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi
             "gateways" => gateways(client, api).await,
             #[cfg(feature = "arena-lock")]
             "arena-status" => arena::status(&a, api).await,
+            // THE GATE'S READ (ruling #1134 1): the module version a threshold of guardians agree on (request_current_consensus)
+            #[cfg(feature = "arena-lock")]
+            "arena-version" => arena::version(api).await.map(|v| serde_json::json!({ "mode": "arena-version", "major": v.major, "minor": v.minor,
+                "arena_lock": v >= fedimint_lnv2_common::ARENA_LOCK_CONSENSUS_VERSION })),
             #[cfg(feature = "arena-lock")]
             "arena-id" => arena::id(&a),
             "id" => match need(&a, "expiration").and_then(|e| e.parse::<u64>().map_err(Into::into)) {
                 Ok(exp) => stake_contract(&a, exp).map(|c| serde_json::json!({ "mode": "id", "contract_id": c.contract_id().0.to_string() })),
                 Err(e) => Err(e),
             },
-            other => Err(anyhow!("serve answers status, fees, guardians, gateways, id, arena-status and arena-id - not {other}")),
+            other => Err(anyhow!("serve answers status, fees, guardians, gateways, id, arena-status, arena-version and arena-id - not {other}")),
         };
         let out = match got { Ok(v) => serde_json::json!({ "id": id, "ok": true, "result": v }),
             Err(e) => serde_json::json!({ "id": id, "ok": false, "error": format!("{e:#}") }) };
