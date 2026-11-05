@@ -288,6 +288,10 @@ fn arena_offline(mode: &str, a: &Args) -> Option<anyhow::Result<()>> {
     if mode == "arena-claim-read" {
         return Some(arena::claim_read().map(|v| println!("{v}")));
     }
+    // a level-1 proof (a)'s correct body, rebuilt from the lock contracts its sessions funded (src/arena.rs body_offline)
+    if mode == "arena-body" {
+        return Some(arena::body_offline().map(|v| println!("{v}")));
+    }
     arena::musig_mode(mode, a).map(|out| out.map(|v| println!("{v}")))
 }
 

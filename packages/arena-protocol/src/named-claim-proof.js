@@ -124,10 +124,11 @@ export const claimReadInput = ({ config, firstSession, sessions, roundId = null 
  * DOES THIS PROOF OF A NAMED CLAIM SLASH THIS BOND? `got` splitNamedClaimEvidence's answer; `read` the tool's arena-claim-read over got's sessions
  * (claimReadInput), or null where no tool runs here (then nothing is held: the caller answers "cannot say"); `contract` the round's, decoded;
  * `committee` the round's settlement seats (keys); `advert` the accused's advertisement; `verify(sig, msg, key)` BIP-340; `feesOf(federation hex)`;
- * `manifest` the round's game's; `rebuiltBodyId` (a) the judge's own rebuild of the shown table's body (hex), or null.
+ * `manifest` the round's game's; `rebuiltBodyId` (a) the judge's own rebuild of the shown table's body (hex), or null; with it null, `bodyCannotSay` why
+ * the judge could not rebuild it (no rebuilder there: "cannot say", never false) and `bodyRefused` why the proof's own bytes do not rebuild it (false).
  * Returns { slashed: false, why } or { slashed: true, offence, bond, why }.
  */
-export function slashHoldsOnNamedClaim({ got, read, contract, committee, advert, verify, feesOf = () => null, manifest = null, rebuiltBodyId = null, payees = null, ownEntries = null }) {
+export function slashHoldsOnNamedClaim({ got, read, contract, committee, advert, verify, feesOf = () => null, manifest = null, rebuiltBodyId = null, bodyCannotSay = null, bodyRefused = null, payees = null, ownEntries = null }) {
   const no = (why) => ({ slashed: false, why });
   if (!got || !got.proof) return no('no proof');
   const { proof } = got;
@@ -159,7 +160,8 @@ export function slashHoldsOnNamedClaim({ got, read, contract, committee, advert,
     if (!reading.ok) return no(`the table shown cannot be read: ${reading.why}`);
     if (reading.differs.length) return no(`the table shown is not a correct table: ${reading.differs[0]}`);
     if (!reading.complete) return no('the table shown is not shown to be exactly F: not every row has a threshold of FINALs');
-    if (!rebuiltBodyId) return no('the correct table\'s body was not rebuilt');
+    if (!rebuiltBodyId && bodyCannotSay) return { slashed: undefined, why: bodyCannotSay };
+    if (!rebuiltBodyId) return no(`the correct table's body was not rebuilt${bodyRefused ? `: ${bodyRefused}` : ''}`);
     const ours = new Set(table.claims.map((c) => `${nhex(c.outpoint.txid)}:${String(c.outpoint.outIdx)}`));
     if (!spends.some((s) => s.kind === 'claim' && ours.has(nlow(s.outpoint)))) return no('that transaction claims no lock the round\'s table claims');
     const rebuilt = rebuiltBodyId instanceof Uint8Array ? nhex(rebuiltBodyId) : nlow(rebuiltBodyId);

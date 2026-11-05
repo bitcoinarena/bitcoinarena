@@ -129,12 +129,12 @@ const readOf = (spends, over = {}) => ({ mode: 'arena-claim-read', federation_id
 // the accepted claim: every lock of the honest table, named by seats 1..5, its body id another than the correct table's
 const claimSpends = (over = {}) => entries.map((e) => ({ session: 4, txid: SPEND, outpoint: op(e.stakeLockOutpoint), kind: 'claim', signers: [0, 1, 2, 3, 4],
   named_keys: seats.slice(0, 5).map(xhex), lock, body_id: OTHER_BODY, one_signer_set: true, ...over }));
-const caseA = ({ table = tableOf(honestRows()), shownFinals = finals(), spends = claimSpends(), read = null, rebuiltBodyId = REBUILT, accused = NODE } = {}) => {
+const caseA = ({ table = tableOf(honestRows()), shownFinals = finals(), spends = claimSpends(), read = null, rebuiltBodyId = REBUILT, accused = NODE, bodyCannotSay = null, bodyRefused = null } = {}) => {
   const tbytes = encodeSettlementTable(table);
   const proof = namedClaimProofBody({ row: NAMED_ROW_OFF_TABLE, roundId: ROUND, accused: accused.pubkey, spendTxid: SPEND, tableId: settlementTableId(table), advert });
   const record = joinNamedClaimEvidence(encodeSlashProof(proof), { row: NAMED_ROW_OFF_TABLE, ...sessions, table: tbytes, entries, preimages: [], finals: shownFinals });
   const got = splitNamedClaimEvidence(record);
-  return { record, held: slashHoldsOnNamedClaim({ got, read: read || readOf(spends), contract, committee, advert: { ...advert, nodePubkey: accused.pubkey }, verify, feesOf: () => FEES, rebuiltBodyId }) };
+  return { record, held: slashHoldsOnNamedClaim({ got, read: read || readOf(spends), contract, committee, advert: { ...advert, nodePubkey: accused.pubkey }, verify, feesOf: () => FEES, rebuiltBodyId, bodyCannotSay, bodyRefused }) };
 };
 
 test('the record is cut back to its parts, read as a named claim, and its bytes are the proof', () => {
@@ -173,6 +173,19 @@ test('row (a): five seats\' claim off the correct table slashes each named signe
   const elsewhere = claimSpends().map((x, i) => ({ ...x, outpoint: `${'ef'.repeat(32)}:${i}` }));
   assert.match(caseA({ spends: elsewhere }).held.why, /claims no lock the round's table claims/);
   assert.match(caseA({ rebuiltBodyId: null }).held.why, /not rebuilt/);
+});
+
+test('row (a) with no body rebuilt: a judge with no rebuilder cannot say, and a body the proof\'s own sessions do not rebuild slashes nobody', () => {
+  const cannot = caseA({ rebuiltBodyId: null, bodyCannotSay: 'no body rebuilder here: the stake-lock tool with arena-body' }).held;
+  assert.equal(cannot.slashed, undefined);
+  assert.match(cannot.why, /no body rebuilder here/);
+  const refused = caseA({ rebuiltBodyId: null, bodyRefused: 'no given session funds an Arena lock at 3131:0' }).held;
+  assert.equal(refused.slashed, false);
+  assert.match(refused.why, /not rebuilt: no given session funds an Arena lock/);
+  // a table not shown exactly F is false before any rebuild is asked about
+  assert.equal(caseA({ table: shaved(), rebuiltBodyId: null, bodyCannotSay: 'no rebuilder' }).held.slashed, false);
+  // and with the body rebuilt, the rebuilder's absence is never read
+  assert.equal(caseA({ bodyCannotSay: 'no rebuilder' }).held.slashed, true);
 });
 
 const lostBy = seats[1];

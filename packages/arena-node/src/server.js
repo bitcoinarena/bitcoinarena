@@ -51,7 +51,7 @@ import { createReserveAlarms, alarmRefusal } from './reserve-alarms.js';
 import { createReserveAudit } from './reserve-audit.js';
 import { createReserveSpendWatch, spendWatchReads } from './reserve-spend-watch.js';
 import { theftTools } from './theft-evidence.js';
-import { readClaims } from './stake-lock-port.js';
+import { readBody, readClaims } from './stake-lock-port.js';
 import { namedClaims } from '../../arena-protocol/src/arena-lock.js';
 import { capacityView, capacityPlea, bondIncentive, pressureOf, guardianWeights as capacityGuardianWeights, gatewayWeights as capacityGatewayWeights } from '../../arena-protocol/src/capacity.js';
 import { GATEWAY_MINIMUMS, GATEWAY_EPOCH_BLOCKS, pegInPastCap } from '../../arena-protocol/src/gateway-seats.js';
@@ -4281,6 +4281,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // A THEFT (kanban #1093 part 2, ruling #1109 X): the proof's own bytes, re-verified by this seat's session verifier and its own chain; no verifier here: undefined, never false
     // A NAMED CLAIM (kanban #1044 B1): the proof's sessions read offline by this seat's own stake-lock tool; no tool here: undefined, never false
     claimRead: (input) => readClaims(process.env.ARENA_STAKE_LOCK_BIN || null, input),
+    // A LEVEL-1 PROOF (a)'s CORRECT BODY, rebuilt offline from the locks the proof's sessions funded (its claim spent them at the guardians)
+    bodyOf: (input, build) => readBody(process.env.ARENA_STAKE_LOCK_BIN || null, input, build),
     // LEVEL 2 OF A NAMED CLAIM (rulings #1138 2, #1140): who the round may pay, as the filer reads it, and the Entry Contracts this seat holds of the round
     payeesOf: (contract, rid) => namedPayeesFor(contract, rid), entriesOf: (rid) => (round.get(rid) ? round.entriesOf(rid).map((x) => x.entry) : null),
     theft: async (bytes, beforeHeight) => (fedRecords ? fedRecords.theftVerdict(bytes, (inv) => { const f = fedOfInvite(inv); return f ? fromHex(String(f)) : null; }, beforeHeight) : { verdict: undefined, why: 'this seat holds no federation records yet' }),

@@ -114,6 +114,11 @@ const runInLane = (dir, bin, flags, timeoutMs) => {
 export const laneDepth = (dir) => { const l = lanes.get(dir); return l ? l.queue.length + (l.busy ? 1 : 0) : 0; };
 
 const outpointArg = (o) => `${toHex(o.txid)}:${o.outIdx}`;
+// A PROTOCOL-27 SETTLEMENT'S LOCKS AND PAYOUTS as arena-settle and arena-body both read them, so both build one body from one build
+const locksArg = (claims) => claims.map((c) => `${outpointArg(c.outpoint)}:${toHex(c.preimage)}`).join(',');
+const payoutsArg = (payouts) => payouts.map((p) => (p.sent
+  ? `invoice:${p.sent.paymentHash}:${p.sent.gatewayPk}:${toHex(p.payoutPk)}:${p.sent.expiration}:${p.msat}`
+  : `${toHex(p.payoutPk)}:${p.msat}`)).join(',');
 
 // ONE LONG-LIVED TOOL FOR THE READ-ONLY QUESTIONS (measured 2026-10-10 on the test host's paid RPS stack: a process
 // per question opened the client's database and reached the guardians each time - with 8 s paid rounds, dozens of them at
@@ -405,10 +410,8 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
      */
     async arenaSettle({ claims, payouts, nonce, signers = null, signature = null }) {
       const args = ['--mode', 'arena-settle', '--data-dir', dataDir,
-        '--locks', claims.map((c) => `${outpointArg(c.outpoint)}:${toHex(c.preimage)}`).join(','),
-        '--payouts', payouts.map((p) => (p.sent
-          ? `invoice:${p.sent.paymentHash}:${p.sent.gatewayPk}:${toHex(p.payoutPk)}:${p.sent.expiration}:${p.msat}`
-          : `${toHex(p.payoutPk)}:${p.msat}`)).join(','),
+        '--locks', locksArg(claims),
+        '--payouts', payoutsArg(payouts),
         '--nonce', toHex(nonce), ...(signers ? ['--signers', signers.join(',')] : []), ...(signature ? ['--signature', toHex(signature)] : [])];
       const j = await run(bin, args, settleTimeoutMs);
       return { bodyId: String(j.body_id), zSlots: j.z_slots || [], txid: j.txid ? String(j.txid) : null, message: j.message_hex ? String(j.message_hex) : null,
@@ -493,6 +496,22 @@ export async function readClaims(bin, input, timeoutMs = 120000, spawnFn = spawn
   try {
     const j = await run(bin, ['--mode', 'arena-claim-read'], timeoutMs, { spawnFn, stdin: JSON.stringify(input) });
     return j && j.mode === 'arena-claim-read' ? j : null;
+  } catch { return null; }
+}
+
+/**
+ * A LEVEL-1 PROOF (a)'S CORRECT BODY, REBUILT OFFLINE (kanban #1044 B1): the stake-lock tool's `arena-body` over the proof's own config and sessions
+ * (claimReadInput's shape) and the correct table's build ({ claims, payouts, nonce }, tableBuild's) - the claimed locks' contracts read from the sessions
+ * that funded them, since a proof exists only once its claim spent them at the guardians. Answers { ok: true, bodyId (hex) } or { ok: false, why }
+ * where the proof's own bytes do not rebuild it, or null where no tool runs here or it reads no such mode (a judge then cannot say).
+ */
+export async function readBody(bin, input, build, timeoutMs = 120000, spawnFn = spawn) {
+  if (!bin) return null;
+  try {
+    const j = await run(bin, ['--mode', 'arena-body'], timeoutMs, { spawnFn,
+      stdin: JSON.stringify({ ...input, locks: locksArg(build.claims), payouts: payoutsArg(build.payouts), nonce: toHex(build.nonce) }) });
+    if (!j || j.mode !== 'arena-body') return null;
+    return j.ok === true ? { ok: true, bodyId: String(j.body_id).toLowerCase() } : { ok: false, why: String(j.why || 'the tool rebuilt no body') };
   } catch { return null; }
 }
 
