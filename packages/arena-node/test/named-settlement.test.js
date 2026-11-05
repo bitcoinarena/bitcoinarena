@@ -15,7 +15,7 @@ import { namedKey } from '../src/named-claim.js';
 import { namedSlots, decodeNamedList, encodeNamedList } from '../src/named-settlement.js';
 import { zKey } from '../../arena-protocol/src/arena-lock.js';
 import { lockSettlement } from '../../arena-protocol/src/lock-settlement.js';
-import { settlementCommitBody } from '../../arena-protocol/src/settlement-ack.js';
+import { settlementCommitBody, signSettlementCommit } from '../../arena-protocol/src/settlement-ack.js';
 import { TAG } from '../../arena-protocol/src/constants.js';
 import { DELIVERED, FAILED, computePayoutTable } from '../../arena-protocol/src/payout.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
@@ -191,6 +191,42 @@ test('a member signs one list per nonce set, and only a list whose every commit 
   const other = await s2[2].share(RID, encodeNamedList([...list.slice(0, 4), { ...list[4] }].map((x) => x)), {});
   assert.equal(other.ok, true, 'the same list again answers the same partials');
   assert.deepEqual(other.partials.map(toHex), first.partials.map(toHex));
+});
+
+test('a member checks the list\'s form and its own nonce, not that the list is the lowest (ruling #1137)', async () => {
+  const { seats, stores } = world();
+  const m = await seats[2].message(RID);
+  const acks = [];
+  for (const i of [0, 1, 2, 3, 4]) acks.push((await seats[i].ack(RID, { txid: m.txid })).bytes);
+  const joined = new Uint8Array(acks.reduce((t, a) => t + a.length, 0)); { let at = 0; for (const a of acks) { joined.set(a, at); at += a.length; } }
+  const c = new Map();
+  for (const i of [0, 1, 2, 3, 4, 5, 6]) c.set(i, await seats[i].commit(RID, { txid: m.txid, acks: joined }));
+  const of = (set) => set.map((i) => ({ seat: i, word: c.get(i).word, pubnonces: c.get(i).pubnonces }));
+  // a list without this seat is refused
+  const notMe = await seats[2].share(RID, encodeNamedList(of([0, 1, 3, 4, 5])), {});
+  assert.equal(notMe.ok, false);
+  assert.match(notMe.why, /not in that signer list/);
+  // a member whose validly signed commit holds another number of nonce pairs: refused, and this seat's nonces are not spent by it
+  const short = [c.get(6).pubnonces[0]];
+  const word = signSettlementCommit({ roundId: RID, settlementBodyId: fromHex(m.txid), nonces: short }, stores[6].pubkey, (d) => schnorr.sign(d, stores[6].identity.secret));
+  const odd = [...of([0, 2, 3, 4]), { seat: 6, word, pubnonces: short }];
+  const refusedOdd = await seats[2].share(RID, encodeNamedList(odd), {});
+  assert.equal(refusedOdd.ok, false);
+  assert.match(refusedOdd.why, /seat 6 committed to 1 nonce pairs/);
+  // a list that skips seat 1, whose commit this seat holds, is signed: the asker picks S
+  const skip = await seats[2].share(RID, encodeNamedList(of([0, 2, 3, 4, 5])), {});
+  assert.equal(skip.ok, true, skip.why);
+  assert.equal(skip.partials.length, 3);
+  // a second list under the same commit is refused: one list per nonce set
+  const second = await seats[2].share(RID, encodeNamedList(of([0, 1, 2, 3, 4])), {});
+  assert.equal(second.ok, false);
+  assert.match(second.why, /over another list/);
+  // a new commit takes new nonces, and the old list with the spent nonces no longer carries this seat's own
+  const fresh = await seats[2].commit(RID, { txid: m.txid, acks: joined });
+  assert.notEqual(toHex(fresh.pubnonces[0]), toHex(c.get(2).pubnonces[0]));
+  const stale = await seats[2].share(RID, encodeNamedList(of([0, 2, 3, 4, 5])), {});
+  assert.equal(stale.ok, false);
+  assert.match(stale.why, /own nonces/);
 });
 
 test('the commit: below protocol 27 its bytes are unchanged; from 27 it hashes every nonce pair of the batch, in order', () => {
