@@ -16,7 +16,8 @@ export AWS_LC_SYS_PREBUILT_NASM=1 CARGO_NET_RETRY=10 CARGO_PROFILE_RELEASE_DEBUG
 export CFLAGS_x86_64_pc_windows_gnu="-Wno-unused-command-line-argument" CXXFLAGS_x86_64_pc_windows_gnu="-Wno-unused-command-line-argument"
 export LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib
 export BINDGEN_EXTRA_CLANG_ARGS_x86_64_pc_windows_gnu="-I$B/zig-aarch64-macos-0.16.0/lib/include -I$B/zig-aarch64-macos-0.16.0/lib/libc/include/any-windows-any"
-export FEDIMINT_BUILD_FORCE_GIT_HASH=5fa01c5d7e66c73074bd0cd96db83f0d86f15429 CARGO_TARGET_DIR=$B/target-custody
+# FORK_HASH (kanban #1044 B1): the fork commit the binaries are built from; the Arena lock's is 1ca203a9f96 (branch blwp/arena-lock-1044)
+export FEDIMINT_BUILD_FORCE_GIT_HASH=${FORK_HASH:-5fa01c5d7e66c73074bd0cd96db83f0d86f15429} CARGO_TARGET_DIR=$B/target-custody
 say() { echo "$(date -u +%T) $*"; }
 rustup target add x86_64-pc-windows-gnu x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin >/dev/null 2>&1 || { say "rustup targets failed"; exit 1; }
 cd $F
@@ -26,7 +27,7 @@ for row in "x86_64-pc-windows-gnu zig windows-x64 .exe" "x86_64-unknown-linux-gn
   set -- $row; tgt=$1; how=$2; key=$3; ext=${4/-/}; dir=${tgt%.2.31}
   [ -n "${ONLY:-}" ] && [[ " $ONLY " != *" $key "* ]] && continue
   for bin in ${BINS:-gatewayd fedimintd fedimint-cli fedimint-dbtool arena-stake-lock}; do
-    case $bin in arena-stake-lock) spec="-p arena-stake-lock";; gatewayd) spec="-p fedimint-gateway-server --bin gatewayd";; fedimintd) spec="-p fedimintd --no-default-features";; fedimint-cli) spec="-p fedimint-cli --no-default-features";; fedimint-dbtool) spec="-p fedimint-dbtool";; esac
+    case $bin in arena-stake-lock) spec="-p arena-stake-lock${STAKE_LOCK_FEATURES:+ --features $STAKE_LOCK_FEATURES}";; gatewayd) spec="-p fedimint-gateway-server --bin gatewayd";; fedimintd) spec="-p fedimintd --no-default-features";; fedimint-cli) spec="-p fedimint-cli --no-default-features";; fedimint-dbtool) spec="-p fedimint-dbtool";; esac
     t0=$(date +%s); say "$bin for $key ($tgt)"
     if [ $how = zig ]; then cargo zigbuild --release --target $tgt $spec > $B/custody-$bin-$key.log 2>&1
     else cargo build --release --target $tgt $spec > $B/custody-$bin-$key.log 2>&1; fi

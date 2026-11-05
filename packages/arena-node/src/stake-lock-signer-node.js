@@ -31,6 +31,8 @@ import { lockMatchesEntry, lockFieldsFromJson, lockFieldsToJson } from '../../ar
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { donationOutputsExpected } from '../../arena-protocol/src/donation.js';
 import { reservesEntryExpected, paysReserves } from '../../arena-protocol/src/reserves.js';
+import { namedClaims, namedClaimKeys, arenaLockContractId, arenaLockMatchesEntry } from '../../arena-protocol/src/arena-lock.js';
+import { toHex as hexOf } from '../../arena-protocol/src/hash.js';
 
 /**
  * WHETHER THIS ROUND'S GATE MINTS FEE LOCKS (Pick b), by the federation's own fee rule
@@ -149,8 +151,30 @@ export async function verifyEntryGifts({ round, port, entry, contract, entryIdBy
   return { ok: true, rows: [...devs.rows, ...res.rows.map((r) => ({ ...r, reserve: true }))] };
 }
 
+/**
+ * §23.1 STEP 5 FOR A PROTOCOL-27 ROUND (kanban #1044 B1): its locks are Arena locks. The federation must run the variant (`gate(contract, federation
+ * hex)` -> null or why: a threshold of its guardians at LNv2 >= 1.100), hold at the outpoint exactly the contract handed over (its id, its expiration),
+ * and the contract must name this round, its settlement seats in seat order and its threshold, beside every stock field. A stock contract handed
+ * for such a round, or an Arena lock for an older one, is refused by name. Answers { ok, contractId, height } or { ok: false, why }.
+ */
+export async function arenaLockStands({ contract, entry, kind, fields, outpoint, port, gate = null, federationId }) {
+  const named = namedClaims(contract);
+  if (!named) return fields.arena ? { ok: false, why: `this round locks to the stock contract (protocol ${contract.protocolVersion}): that ${kind} lock is an Arena lock` } : null;
+  if (!fields.arena) return { ok: false, why: `this round locks to an Arena lock (protocol 27): that ${kind} lock is a stock contract to one claim key` };
+  if (gate) { const g = await gate(contract, hexOf(federationId)); if (g) return { ok: false, why: g }; }
+  if (!port.arenaStatus) return { ok: false, why: 'this node\'s federation tool reads no Arena lock' };
+  const st = await port.arenaStatus(outpoint);
+  if (!st || !st.stored) return { ok: false, why: `the federation holds no Arena lock at the entry's ${kind}_lock_outpoint` };
+  const id = hexOf(arenaLockContractId(fields));
+  if (id !== String(st.stored.contractId)) return { ok: false, why: `the lock at that outpoint is not the ${kind} contract handed over: its id is another` };
+  if (fields.expiration !== st.stored.expiration) return { ok: false, why: `that ${kind} contract's expiration is not the one the federation holds` };
+  const { seatKeys, threshold } = namedClaimKeys(contract);
+  const m = arenaLockMatchesEntry({ lock: fields, entry, kind, roundId: entry.roundId, seatKeys, threshold, height: st.blockCount, expiryBlocks: contract.stakeExpiryBlocks });
+  return m.ok ? { ok: true, contractId: id, height: st.blockCount } : m;
+}
+
 // `timing` (kanban #605): an object the caller reads afterwards - ms spent asking the federation, checking gifts and reading the fee gate
-export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined, timing = {} }) {
+export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined, timing = {}, namedGate = null }) {
   const stored = round.entry(entryIdBytes);
   if (!stored) return { ok: false, why: 'this node holds no such entry' };
   const entry = decodeEntryContract(stored);
@@ -170,10 +194,18 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   if (taken && !Buffer.from(taken.entryId).equals(Buffer.from(entryIdBytes)))
     return { ok: false, why: 'that stake lock already stakes another entry in this round: one lock is one entry' };
 
+  let t = Date.now();
+  // PROTOCOL 27: AN ARENA LOCK, checked as arenaLockStands says; null for a round on the stock contract
+  const arena = await arenaLockStands({ contract, entry, kind: 'stake', fields, outpoint, port, gate: namedGate, federationId: fed.federationId });
+  let st, id;
+  if (arena) {
+    if (!arena.ok) return arena;
+    timing.statusMs = Date.now() - t;
+    id = arena.contractId; st = { blockCount: arena.height };
+  } else {
   // THE FEDERATION'S WORD AND THE CONTRACT'S ID ASKED TOGETHER (2026-10-02: "stake/fee verification of 5 of 7
   // confirmations must also be much faster"): two stock-client runs, one after the other before.
-  let t = Date.now();
-  const [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
+  [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
   timing.statusMs = Date.now() - t;
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s stake_lock_outpoint' };
   if (String(id) !== String(st.stored.contractId))
@@ -184,6 +216,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
 
   const matches = lockMatchesEntry({ lock: fields, entry, kind: 'stake', claimPk, height: st.blockCount, expiryBlocks: contract.stakeExpiryBlocks });
   if (!matches.ok) return matches;
+  }
 
   // AND ITS DONATION, IN THE SAME TRANSACTION (2026-10-03): a stake whose donation outputs are wrong or missing is
   // not counted - nothing is kept for it, and the lock may be handed over again.
@@ -212,7 +245,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
  * by field against the entry as the stake lock is. It is claimed for the round's
  * sitting signer nodes in the one settlement, whatever the result.
  */
-export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk }) {
+export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk, namedGate = null }) {
   const stored = round.entry(entryIdBytes);
   if (!stored) return { ok: false, why: 'this node holds no such entry' };
   const entry = decodeEntryContract(stored);
@@ -227,7 +260,13 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   const outpoint = entry.feeLockOutpoint;
   if (!outpoint || zero(outpoint.txid)) return { ok: false, why: 'that entry names no fee lock outpoint' };
   if (zero(entry.feePreimage)) return { ok: false, why: 'that entry hands over no F, so its fee lock could never be claimed' };
-  const [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
+  const arena = await arenaLockStands({ contract, entry, kind: 'fee', fields, outpoint, port, gate: namedGate, federationId: fed.federationId });
+  let st, id;
+  if (arena) {
+    if (!arena.ok) return arena;
+    id = arena.contractId; st = { blockCount: arena.height };
+  } else {
+  [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s fee_lock_outpoint' };
 
   if (String(id) !== String(st.stored.contractId))
@@ -237,6 +276,7 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   if (!(claimPk instanceof Uint8Array)) return { ok: false, why: 'this signer node holds no claim key for that round' };
   const matches = lockMatchesEntry({ lock: fields, entry, kind: 'fee', claimPk, height: st.blockCount, expiryBlocks: contract.stakeExpiryBlocks });
   if (!matches.ok) return matches;
+  }
   round.putFeeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
   // AND A STAKE LOCK ALREADY VERIFIED AND WAITING FOR THIS ONE IS COUNTED NOW (pick a).
   const staked = round.stakeLock ? round.stakeLock(entryIdBytes) : null;

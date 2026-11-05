@@ -263,6 +263,21 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
         stored: j.stored ? { contractId: String(j.stored.contract_id), blocksLeft: Number(j.stored.blocks_left) } : null,
       };
     },
+    /**
+     * THE FEDERATION'S LNv2 MODULE CONSENSUS VERSION (protocol 27, ruling #1134 1): what a threshold of its guardians agree on
+     * (module_consensus_version through request_current_consensus), { major, minor, arenaLock }. A federation on stock LNv2 answers no
+     * such endpoint: that is an error here, and the gate reads it as "not running".
+     */
+    /** What the guardians hold at an outpoint as an Arena lock (stake-lock arena-status): { blockCount, stored: { contractId, blocksLeft, expiration } | null }. */
+    async arenaStatus(outpoint) {
+      const j = await read(['--mode', 'arena-status', '--data-dir', readDataDir, '--outpoint', outpointArg(outpoint)]);
+      return { blockCount: Number(j.block_count),
+        stored: j.stored ? { contractId: String(j.stored.contract_id), blocksLeft: Number(j.stored.blocks_left), expiration: Number(j.stored.expiration) } : null };
+    },
+    async moduleVersion() {
+      const j = await read(['--mode', 'arena-version', '--data-dir', readDataDir]);
+      return { major: Number(j.major), minor: Number(j.minor), arenaLock: j.arena_lock === true };
+    },
     async contractId(fields) {
       const j = await read(['--mode', 'id', ...contractArgs(fields)]);
       return String(j.contract_id);

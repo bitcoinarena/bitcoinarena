@@ -21,7 +21,8 @@
 // Pure: encoding, ids, the rules a seat checks. The MuSig2 math is the seat's (arena-node/src/named-claim.js).
 import { taggedHash, toHex, fromHex } from './hash.js';
 import { lockMatchesEntry } from './stake-lock.js';
-import { STAKE_EXPIRY_BLOCKS } from './constants.js';
+import { STAKE_EXPIRY_BLOCKS, networkOf } from './constants.js';
+import { receiptsNeeded } from './threshold.js';
 
 /** The protocol version of the named claim. */
 export const NAMED_CLAIM_VERSION = 27;
@@ -40,6 +41,25 @@ export const namedClaimPoint = (network) => {
 export function namedClaimsAt(network, censusHeight, pointOf = namedClaimPoint) {
   const p = pointOf(network);
   return p !== null && p !== undefined && Number.isInteger(censusHeight) && censusHeight >= p;
+}
+
+/**
+ * DOES THIS ROUND LOCK TO AN ARENA LOCK? Written at protocol 27 or above, and at a census height at or above its network's NAMED_CLAIM_HEIGHT,
+ * as every gated rule reads its round (stall.js stallsOut). A protocol-26 round keeps stock LNv2 and the FROST claim_pk at any height.
+ */
+export function namedClaims(contract, pointOf = namedClaimPoint) {
+  if (!contract || !(Number(contract.protocolVersion) >= NAMED_CLAIM_VERSION)) return false;
+  let net; try { net = networkOf(contract.networkId); } catch { return false; }
+  return namedClaimsAt(net, Number(contract.censusHeight), pointOf);
+}
+
+/**
+ * THE KEYS A ROUND'S ARENA LOCKS NAME: its settlement seats' node keys in seat order (the round contract's `nodes`, the keys their bonds name) and
+ * the threshold its settlement takes (receiptsNeeded of its settlement slots: 5 of 7).
+ */
+export function namedClaimKeys(contract) {
+  const seatKeys = (contract && contract.nodes) || [];
+  return { seatKeys, threshold: receiptsNeeded(Number.isInteger(contract && contract.settlementSlots) && contract.settlementSlots > 0 ? contract.settlementSlots : seatKeys.length) };
 }
 
 /** The LNv2 module consensus version that carries the variant (fedimint-lnv2-common ARENA_LOCK_CONSENSUS_VERSION). */
