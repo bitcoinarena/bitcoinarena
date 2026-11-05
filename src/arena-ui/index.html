@@ -7362,7 +7362,7 @@
                 const strip = document.createElement('div'); strip.id = 'arena-admin-diag';
                 strip.style.cssText = 'position:fixed;left:0;right:0;top:calc(41px + env(safe-area-inset-top,0px));z-index:9100;font:11px/1.35 ui-monospace,monospace;color:#9aa4b2;background:rgba(13,16,20,.92);padding:3px 8px;word-break:break-all;pointer-events:none';
                 const draw = () => { const g = window.ARENA_LOBBY_DIAG || {}; strip.textContent = line + ' | lobby ' + g.from + ' nodes ' + g.nodes + (g.testnet ? ' tn ' + g.testnet : '') + ' raw ' + g.gotRaw
-                  + ' kept ' + g.kept + ' held ' + g.unoffered + ' unans ' + g.unanswered + ' ref ' + g.refused + (g.pending ? ' PENDING' : '') + ' game ' + g.game + ' ' + g.search; };
+                  + ' kept ' + g.kept + ' held ' + g.unoffered + ' unans ' + g.unanswered + ' ref ' + g.refused + ' skip ' + g.skipped + (g.pending ? ' PENDING' : '') + ' game ' + g.game + ' ' + g.search; };
                 draw(); document.body.appendChild(strip); setInterval(draw, 5000); } } catch (e) { /* timing only */ }
             boot.classList.add('done'); setTimeout(() => { if (boot.parentNode) boot.remove(); }, 500); },
         };
@@ -8468,7 +8468,8 @@
         // 2 OF 2 (M3.3-34): each signer node's listing is its own BIP-340 signature,
         // checked with the curve the daemons sign under; Join is offered only
         // when the round's threshold of its own signer nodes say open and assigned.
-        const read = (nodes) => ARENACLIENT.fetchLobby({ nodes, verifyMany: window.ARENA_VERIFY_MANY,
+        // skipFailed (kanban #1133): a node whose read failed is not asked again for 5 min (FAILED_NODE_SKIP_MS), kept across reloads
+        const read = (nodes) => ARENACLIENT.fetchLobby({ nodes, skipFailed: true, verifyMany: window.ARENA_VERIFY_MANY,
           verify: (s, m, k) => !!(window.ARENA_CURVE && window.ARENA_CURVE.verify && window.ARENA_CURVE.verify(s, m, k)) })
           .catch((e) => ({ rows: [], refused: [e.message], unanswered: [], failed: (nodes || []).map(String), asked: (nodes || []).length }));
         // EACH SIDE DRAWN AS SOON AS IT ANSWERS (2026-10-01: both rows, always): measured on the live page, a paint
@@ -8561,7 +8562,7 @@
         // WHAT THE LOBBY READ AND WHAT EACH FILTER LEFT (kanban #1133: the owner's phone showed "No window is open" after two answers while a fresh
         // browser showed the window; for an admin these numbers are drawn at the top, see ARENA_START_LINE)
         try { window.ARENA_LOBBY_DIAG = { from: window.ARENA_LOBBY_FROM || '?', nodes: ((named && named.nodes) || []).length, testnet: testnet ? ((testnet.named && testnet.named.nodes) || []).length : 0,
-          gotRaw: (got.rows || []).length + ((got2 && got2.rows) || []).length, pending: !!got.pending, unanswered: (got.unanswered || []).length, refused: (got.refused || []).length,
+          gotRaw: (got.rows || []).length + ((got2 && got2.rows) || []).length, pending: !!got.pending, unanswered: (got.unanswered || []).length, refused: (got.refused || []).length, skipped: (got.skipped || []).length,
           game: String(window.ARENA_GAME_ID || '').slice(0, 8), search: location.search.slice(0, 80) }; } catch (e) { /* diagnostics only */ }
         const mine = kept.mine = ARENACLIENT.lobbyKeepWhenUnanswered(kept.mine,
           { ...got, rows: testnet ? got.rows.filter((r) => r.free) : got.rows.filter((r) => r.free || (paysHere(r) && drawable(r) && enterable(r))) }, now);
