@@ -356,3 +356,22 @@ test('a filer read and a funding search of the same seat never run their tool at
   ]);
   assert.equal(most, 1);
 });
+
+test('a level-1 proof (a) is not judged by a tool run: the claim spent its locks, so its body cannot be rebuilt through the guardians', async () => {
+  const { createProofJudge } = await import('../src/proof-judge.js');
+  const { encodeFraudProof } = await import('../../arena-protocol/src/slash.js');
+  const round = fakeRound();
+  const s = new LockSettlement(round, { port: fakePort([]), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
+  await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
+  const filedA = round.filed.find((f) => f.row === NAMED_ROW_OFF_TABLE);
+  const complete = encodeFraudProof({ evidence: filedA.bytes, contract: encodeRoundContract(contract) });
+  const census = { ok: true, entries: seats.map((x, i) => ({ pubkey: x.pubkey, txid: b32(0x90 + i), vout: i, advert: {} })) };
+  let toolRuns = 0;
+  const judge = createProofJudge({ committeeOf: () => ({ ok: true, committee }), censusOf: () => census, coreOf: () => null, beaconOf: () => ({ ok: false }), replayRunOf: () => null,
+    manifestOf: () => ({}), clientOf: async () => { toolRuns += 1; return { fees: async () => ({ ppm: 0n, baseMsat: 0n }), bodyId: async () => { toolRuns += 1; throw new Error('the guardians hold no Arena lock'); } }; },
+    claimRead: async (input) => { toolRuns += 1; return { mode: 'arena-claim-read', federation_id: FID, first_session: input.firstSession, sessions: input.sessions.length, unverified: [], spends: SPENDS }; } });
+  const said = await judge(complete);
+  assert.equal(said.verdict, undefined);
+  assert.match(said.why, /rebuilt offline/);
+  assert.equal(toolRuns, 0);
+});

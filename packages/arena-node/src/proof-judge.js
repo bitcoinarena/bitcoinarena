@@ -95,6 +95,10 @@ export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, repl
     } else if (r.kind === 'named') {
       // A NAMED CLAIM (§5A.3 rows (a), (b), kanban #1044 B1): the sessions replayed offline by this seat's own tool; row (a)'s table rebuilt by its own client, without signers
       const manifest = manifestOf(r.contract);
+      // ROW (a) AT LEVEL 1 CANNOT BE JUDGED YET (measured 2026-11-05, round a8e68cb6): its correct body is rebuilt by the stake-lock tool's arena-settle, which
+      // reads each lock from the guardians - and a proof exists only once the claim spent them ("the guardians hold no Arena lock"). Each try was a tool run
+      // at every seat; none is made until the body is rebuilt offline from the sessions' own lock contracts. Level 2 (row 3) needs no rebuild
+      if (r.got.row === NAMED_ROW_OFF_TABLE) return { verdict: undefined, why: 'a level-1 proof of a named claim needs its correct body rebuilt offline, which this seat cannot do yet' };
       if (r.got.row === NAMED_ROW_OFF_TABLE && !manifest) return { verdict: undefined, why: 'this seat does not host that round\'s game' };
       let table = null;
       if (r.got.row === NAMED_ROW_OFF_TABLE) { try { table = decodeSettlementTable(r.got.table); } catch (e) { return { verdict: false, why: `not a proof of a named claim: ${e.message}` }; } }
