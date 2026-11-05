@@ -1785,6 +1785,20 @@ export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch }
 }
 
 /**
+ * AN ARENA LOCK GOES BACK THROUGH ITS OWN CALL (protocol 27, kanban #1044 B1, ruling #1131 3): the guardians hold its fields, and
+ * it is spent by its witness - the named signers' forfeit `{ kind: 'cancel', signers, signature }` or, from its expiration,
+ * `{ kind: 'refund' }` - with the player's key through the lock client's arenaRedeem. A stock lock keeps refund / redeem.
+ * The answer is the stock calls' shape (accepted, txid, error, balances, stored_before/after).
+ */
+export const isArenaLock = (fields) => !!(fields && fields.arena === true);
+export async function arenaTakeBack(client, outpoint, witness, playerSecret) {
+  if (!client || typeof client.arenaRedeem !== 'function')
+    throw new Error('this lock client cannot take an Arena lock back (it has no arenaRedeem): the round locked to an Arena lock, which only the 2.0 lock client spends');
+  return JSON.parse(await client.arenaRedeem(toHex(outpoint.txid), Number(outpoint.outIdx), JSON.stringify(witness), toHex(playerSecret)));
+}
+const lockStatusOf = (client, fields, txid, outIdx) => (isArenaLock(fields) ? client.arenaLockStatus(txid, outIdx) : client.lockStatus(txid, outIdx));
+
+/**
  * THE PLAYER'S REFUND, FROM THE SEED ALONE (§23.2: the default path - nobody
  * acts, the lock expires, the player's key takes it back). The seed gives the
  * round's player key and the lock client's secret; the signer nodes say where the lock
@@ -1805,8 +1819,10 @@ export async function refundStake({ round, roundId, invite, seed, curve, LockCli
   const refunds = [];
   for (const l of locks) {
     onStep('refunding the lock');
-    const said = JSON.parse(await client.refund(toHex(l.outpoint.txid), Number(l.outpoint.outIdx),
-      JSON.stringify(lockFieldsToJson(l.fields)), toHex(player.secret)));
+    const said = isArenaLock(l.fields)
+      ? await arenaTakeBack(client, l.outpoint, { kind: 'refund' }, player.secret)
+      : JSON.parse(await client.refund(toHex(l.outpoint.txid), Number(l.outpoint.outIdx),
+        JSON.stringify(lockFieldsToJson(l.fields)), toHex(player.secret)));
     refunds.push({ outpoint: l.outpoint, ...said });
   }
   return { client, refunds };
@@ -1822,15 +1838,23 @@ export async function refundStake({ round, roundId, invite, seed, curve, LockCli
  */
 // `lock`: 'stake', or 'fee' - a market order's fee lock, which the seats return whole for an order the book
 // never filled and claim at resolution for one it did
-export async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch, lock = 'stake' } = {}) {
+// `named`: the lock is an Arena lock (protocol 27): its forfeit names its signers (`signers`, t distinct seat indices ascending,
+// ruling #1131 3), and an answer without them is not taken - the next signer node is asked
+export async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch, lock = 'stake', named = false } = {}) {
   const refused = [];
   for (const node of [...new Set(nodes || [])]) {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/forfeit?round=${toHex(roundId)}&entry=${entryId}${lock === 'fee' ? '&lock=fee' : ''}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) { refused.push(`${node}: ${r.status} ${(await r.text()).trim()}`); continue; }
       const j = await r.json();
-      if (/^[0-9a-f]{128}$/.test(String(j.signature))) return { ok: true, signature: j.signature, contractId: j.contractId, claimPk: j.claimPk, from: node };
-      refused.push(`${node}: answered no signature`);
+      if (!/^[0-9a-f]{128}$/.test(String(j.signature))) { refused.push(`${node}: answered no signature`); continue; }
+      if (named) {
+        const s = j.signers;
+        const ok = Array.isArray(s) && s.length > 0 && s.every((i, k) => Number.isInteger(i) && i >= 0 && i < 7 && (k === 0 || i > s[k - 1]));
+        if (!ok) { refused.push(`${node}: an Arena lock's forfeit names its signers, and this one does not`); continue; }
+        return { ok: true, signature: j.signature, contractId: j.contractId, signers: s.slice(), from: node };
+      }
+      return { ok: true, signature: j.signature, contractId: j.contractId, claimPk: j.claimPk, from: node };
     } catch (e) { refused.push(`${node}: ${e.message}`); }
   }
   return { ok: false, why: `no signer node gave a forfeit of this lock: ${refused.join('; ')}`, refused };
@@ -1853,7 +1877,7 @@ export async function redeemStake({ round, roundId, invite, seed, curve, LockCli
   const forfeits = [];
   for (const l of locks) {
     onStep('asking the signer nodes for the forfeit of the lock');
-    const f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher });
+    const f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher, named: isArenaLock(l.fields) });
     if (!f.ok) throw new Error(f.why);
     forfeits.push({ lock: l, forfeit: f });
   }
@@ -1867,7 +1891,7 @@ export async function redeemStake({ round, roundId, invite, seed, curve, LockCli
   const feeEntry = locks.find((l) => l.entryId) || null;
   if (fee && feeEntry) {
     onStep('asking the signer nodes for the forfeit of the fee lock');
-    const f = await forfeitOf({ roundId, entryId: feeEntry.entryId, nodes, fetcher, lock: 'fee' });
+    const f = await forfeitOf({ roundId, entryId: feeEntry.entryId, nodes, fetcher, lock: 'fee', named: isArenaLock(fee.fields) });
     if (f.ok) forfeits.push({ lock: { outpoint: fee.outpoint, fields: fee.fields, entryId: feeEntry.entryId, fee: true }, forfeit: f });
   }
   const secret = lockSecretFor(seed, roundId);
@@ -1879,8 +1903,10 @@ export async function redeemStake({ round, roundId, invite, seed, curve, LockCli
   const redeems = [];
   for (const { lock: l, forfeit: f } of forfeits) {
     onStep('redeeming the lock');
-    const said = JSON.parse(await client.redeem(toHex(l.outpoint.txid), Number(l.outpoint.outIdx),
-      JSON.stringify(lockFieldsToJson(l.fields)), f.signature, toHex(player.secret)));
+    const said = isArenaLock(l.fields)
+      ? await arenaTakeBack(client, l.outpoint, { kind: 'cancel', signers: f.signers, signature: f.signature }, player.secret)
+      : JSON.parse(await client.redeem(toHex(l.outpoint.txid), Number(l.outpoint.outIdx),
+        JSON.stringify(lockFieldsToJson(l.fields)), f.signature, toHex(player.secret)));
     redeems.push({ outpoint: l.outpoint, forfeitFrom: f.from, ...(l.fee ? { fee: true } : {}), ...said });
   }
   return { client, redeems };
@@ -2438,14 +2464,16 @@ export async function refundKept({ round, roundId, seed, curve, client, storage,
     const txid = toHex(l.outpoint.txid);
     const outIdx = Number(l.outpoint.outIdx);
     const amountMsat = BigInt(l.fields.amountMsat);
-    const st = JSON.parse(await client.lockStatus(txid, outIdx));
+    const st = JSON.parse(await lockStatusOf(client, l.fields, txid, outIdx));
     if (!st.stored) { each.push({ kind: l.kind, state: 'gone', amountMsat }); continue; }
     const left = Number(st.stored.blocks_left);
     if (left > 0) {
       each.push({ kind: l.kind, state: 'waiting', amountMsat, blocksLeft: left, blockCount: Number(st.block_count), expiration: Number(l.fields.expiration) });
       continue;
     }
-    const said = JSON.parse(await client.refund(txid, outIdx, JSON.stringify(lockFieldsToJson(l.fields)), toHex(player.secret)));
+    const said = isArenaLock(l.fields)
+      ? await arenaTakeBack(client, l.outpoint, { kind: 'refund' }, player.secret)
+      : JSON.parse(await client.refund(txid, outIdx, JSON.stringify(lockFieldsToJson(l.fields)), toHex(player.secret)));
     each.push({ kind: l.kind, state: said.accepted === true ? 'refunded' : 'refused', amountMsat, error: said.error || null,
       balance_before: said.balance_before, balance_after: said.balance_after });
   }
@@ -2497,7 +2525,7 @@ async function expiredBack(client, locks) {
   if (!client) return null;
   const back = [];
   for (const l of locks || []) {
-    const st = JSON.parse(await client.lockStatus(toHex(l.outpoint.txid), Number(l.outpoint.outIdx)));
+    const st = JSON.parse(await lockStatusOf(client, l.fields, toHex(l.outpoint.txid), Number(l.outpoint.outIdx)));
     if (!st.stored) continue;
     if (Number(st.stored.blocks_left) > 0) return null;
     back.push({ outpoint: l.outpoint, fields: l.fields });
@@ -2509,7 +2537,7 @@ async function expiredBack(client, locks) {
 async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, client, handoutBody = null }) {
   const still = [];
   for (const lock of (locks || []).filter((l) => l && l.outpoint)) {
-    const st = JSON.parse(await client.lockStatus(toHex(lock.outpoint.txid), Number(lock.outpoint.outIdx)));
+    const st = JSON.parse(await lockStatusOf(client, lock.fields, toHex(lock.outpoint.txid), Number(lock.outpoint.outIdx)));
     if (st.stored) still.push(lock);
   }
   if (!still.length) return null;
@@ -2530,7 +2558,7 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
   const found = still.map((l) => named.find((n) => at(n) === at(l))).filter(Boolean);
   if (!found.length) return (await expiredBack(client, still)) || { state: 'waiting', how: 'forfeit', refused: true, msat, why: 'handed to the signer nodes, and none names it yet' };
   for (const l of found) {
-    const f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher });
+    const f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher, named: isArenaLock(l.fields) });
     if (!f.ok) return (await expiredBack(client, still)) || { state: 'waiting', how: 'forfeit', refused: true, msat, why: f.why };
   }
   const owed = found.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
@@ -2544,7 +2572,8 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
   const rid = toHex(roundId);
   const note = (k) => { try { const v = storage && storage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } };
   // STILL AT ITS OUTPOINT? The federation's read-only answer; without a wallet it is not asked.
-  const held = async (txid, outIdx) => !client || !!JSON.parse(await client.lockStatus(txid, Number(outIdx))).stored;
+  // (an Arena lock is read with its own call: `fields` says which; a payout output is a stock contract)
+  const held = async (txid, outIdx, fields = null) => !client || !!JSON.parse(await lockStatusOf(client, fields, txid, Number(outIdx))).stored;
   const s = await settlementOf({ roundId, nodes, fetcher });
   let payout;
   const paidNote = note(`${PAYOUT_NOTE}${rid}${orderTag(order)}`);
@@ -2574,11 +2603,11 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
       stake = { state: 'waiting', why: `no signer node answered where this seed's lock is (${locks.said.join('; ')})` };
     else if (locks.length) {
       let msat = 0n;
-      for (const l of locks) if (await held(toHex(l.outpoint.txid), l.outpoint.outIdx)) msat += BigInt(l.fields.amountMsat);
+      for (const l of locks) if (await held(toHex(l.outpoint.txid), l.outpoint.outIdx, l.fields)) msat += BigInt(l.fields.amountMsat);
       const whole = locks.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
       if (msat === 0n) stake = { state: 'gone', how: 'forfeit', msat: whole };
       else {
-        const f = await forfeitOf({ roundId, entryId: locks[0].entryId, nodes, fetcher });
+        const f = await forfeitOf({ roundId, entryId: locks[0].entryId, nodes, fetcher, named: isArenaLock(locks[0].fields) });
         if (f.ok) stake = { state: 'owed', msat, how: 'forfeit' };
         // NOBODY WON (2026-10-03): a signer node not yet ACCEPTED, or a round entry still in its window, is waiting
         else if (/that run is \S+ with score/.test(f.why)
@@ -2605,7 +2634,7 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
         else {
           let owed = 0n; let gone = 0; let waiting = null;
           for (const l of ls) {
-            const st = JSON.parse(await client.lockStatus(toHex(l.outpoint.txid), Number(l.outpoint.outIdx)));
+            const st = JSON.parse(await lockStatusOf(client, l.fields, toHex(l.outpoint.txid), Number(l.outpoint.outIdx)));
             if (!st.stored) { gone++; continue; }
             if (Number(st.stored.blocks_left) > 0) { waiting = { expiration: Number(l.fields.expiration), blockCount: Number(st.block_count) }; continue; }
             owed += BigInt(l.fields.amountMsat);
