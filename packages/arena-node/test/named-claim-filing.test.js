@@ -21,7 +21,7 @@ import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donatio
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 import { toHex, sha256 } from '../../arena-protocol/src/hash.js';
-import { keepLockSessionFloor } from '../src/stake-lock-signer-node.js';
+import { keepLockSessionFloor, forgetLockSearches } from '../src/stake-lock-signer-node.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
@@ -191,12 +191,14 @@ test('a verified lock reads back, doubling, to its own funding session and keeps
   const round = new Round(db);
   const asked = [];
   // funded 41 sessions back: nothing read until the session running at verification (100) finished, then 8, 16, 32, 64 back from 101
+  forgetLockSearches();
   const got = await keepLockSessionFloor({ round, port: fundingPort({ fundedIn: 60, count: 100, asked, finishLater: 1 }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep });
   assert.equal(got, 60);
   assert.deepEqual(asked.filter((a) => a[0] === 'export').map((a) => a[1]), [93, 85, 69, 37]);
   assert.deepEqual(asked.slice(0, 3).map((a) => a[0]), ['count', 'count', 'export'], 'no read before a session after the verification finished');
   assert.equal(new Round(db).fundingSessionFloor(RID, FID), 60, 'the bound is the funding session, and it survives a restart');
   // a later lock funded higher leaves the lower bound; one funded lower moves it down
+  forgetLockSearches();
   await keepLockSessionFloor({ round, port: fundingPort({ fundedIn: 99, count: 100, asked: [], finishLater: 1 }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep });
   assert.equal(round.fundingSessionFloor(RID, FID), 60);
   round.keepFundingSessionFloor(RID, FID, 4);
@@ -207,12 +209,14 @@ test('a funding in the session still running is found when it finishes; one not 
   const round = new Round(openStore(':memory:'));
   const asked = [];
   // the funding sits in session 100, the one running at verification
+  forgetLockSearches();
   const got = await keepLockSessionFloor({ round, port: fundingPort({ fundedIn: 100, count: 100, asked, finishLater: 1 }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep });
   assert.equal(got, 100);
   assert.equal(round.fundingSessionFloor(RID, FID), 100);
   // funded 2000 sessions back: no farther than 1024, nothing kept, logged
   const round2 = new Round(openStore(':memory:'));
   const said = [], asked2 = [];
+  forgetLockSearches();
   const none = await keepLockSessionFloor({ round: round2, port: fundingPort({ fundedIn: 1000, count: 3000, asked: asked2, finishLater: 1 }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep, log: (l) => said.push(l) });
   assert.equal(none, null);
   assert.equal(round2.fundingSessionFloor(RID, FID), null);
@@ -221,11 +225,13 @@ test('a funding in the session still running is found when it finishes; one not 
   // the running session never finishes within maxWaitMs: nothing read, nothing kept, logged
   let t = 0;
   const stuck = [];
+  forgetLockSearches();
   assert.equal(await keepLockSessionFloor({ round: round2, port: fundingPort({ fundedIn: 5, count: 5, asked: stuck }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint,
     sleep: async (ms) => { t += ms; }, now: () => t, waitMs: 1000, maxWaitMs: 5000, log: (l) => said.push(l) }), null);
   assert.equal(stuck.filter((a) => a[0] === 'export').length, 0);
   assert.match(said.join('\n'), /no session of federation .* finished after 5 within 0 min/);
   // a federation that cannot be read keeps nothing and fails nothing
+  forgetLockSearches();
   assert.equal(await keepLockSessionFloor({ round: round2, port: { ...fundingPort({ fundedIn: 1, count: 3, asked: [] }), sessionCount: async () => { throw new Error('down'); } }, roundId: RID, federationId: b32(0x77), outpoint: E[0].stakeLockOutpoint, sleep: noSleep }), null);
 });
 
@@ -288,4 +294,35 @@ test('no session finished since the bound: nothing is exported (the tool refuses
   assert.deepEqual(asked.map((a) => a[0]), ['count']);
   assert.equal(round.filed.length, 0);
   assert.match(report.refused.join('; '), /no session finished since the bound 7 yet/);
+});
+
+// ---- the MacBook load of 2026-11-05 (150): a lock verified again and again started a read-back each time, and every filer pass re-exported every round
+
+test('a lock is searched once: a second verification of it reads nothing, and searches of several locks export one after another', async () => {
+  forgetLockSearches();
+  const round = new Round(openStore(':memory:'));
+  const asked = [];
+  const port = fundingPort({ fundedIn: 98, count: 100, asked, finishLater: 1 });
+  assert.equal(await keepLockSessionFloor({ round, port, roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep }), 98);
+  const before = asked.length;
+  assert.equal(await keepLockSessionFloor({ round, port, roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep }), null);
+  assert.equal(asked.length, before, 'no count, no export for a lock already searched');
+  // two locks at once: never two exports running together
+  let running = 0, most = 0;
+  const slow = { ...fundingPort({ fundedIn: 40, count: 100, asked: [], finishLater: 2 }) };
+  const exp = slow.sessionExport;
+  slow.sessionExport = async (a) => { running += 1; most = Math.max(most, running); await new Promise((r) => setTimeout(r, 5)); try { return await exp(a); } finally { running -= 1; } };
+  await Promise.all([E[0].feeLockOutpoint, E[1].stakeLockOutpoint].map((outpoint) => keepLockSessionFloor({ round, port: slow, roundId: RID, federationId: TEST_FEDERATION_ID, outpoint, sleep: noSleep })));
+  assert.equal(most, 1);
+});
+
+test('a filer pass with no session finished since its last read of the round exports nothing', async () => {
+  const asked = [];
+  const round = fakeRound();
+  const s = new LockSettlement(round, { port: fakePort(asked), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
+  await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
+  assert.equal(asked.filter((a) => a[0] === 'export').length, 1);
+  const report = await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
+  assert.equal(asked.filter((a) => a[0] === 'export').length, 1, 'the second pass reads the count only');
+  assert.match(report.refused.join('; '), /no session finished since the last read \(7\)/);
 });
