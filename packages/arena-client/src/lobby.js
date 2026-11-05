@@ -246,6 +246,9 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     } catch (e) { refused.push(`${node}: ${e.message}`); failed.push(String(node)); if (e && e.silent) unanswered.push(String(node)); }
   }
   const rows = [], closed = [];
+  // WHY NO ROW (kanban #1133): listings read, rounds named, contracts known, listings stale or with a false signature, rounds short of agreement
+  const why = { listings: 0, rounds: said.size, contracts: 0, stale: 0, sigFalse: 0, notEnough: 0 };
+  for (const counts of said.values()) why.listings += counts.length;
   // A ROUND'S CONTRACT FROM A NODE THAT ANSWERED FIRST, so a silent one costs its limit once per paint, not once per row.
   // AND A NODE WHOSE READ FAILED OUTRIGHT GOES LAST TOO (kanban #1133, the owner's iPhone 2026-11-05 09:10 local: "raw 0 ... ref 11" - the page's
   // kept list began with dead quick tunnels and the stopped T3 seats; fetchRound asked each of them twice, in order, before a live seat, so
@@ -304,6 +307,8 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     for (const c of counts) {
       c.counts = !!(c.fresh && signerNodes.has(c.key) && c.phase === 'open' && c.assignedHere && c.signed);   // the signature last: it is the costly part
       if (c.counts) agreeing.add(c.key);
+      // why a listing did not count (kanban #1133, for a page's diagnostics)
+      if (!c.fresh) why.stale++; else if (signerNodes.has(c.key) && c.phase === 'open' && c.assignedHere && !c.signed) why.sigFalse++;
     }
     // THE SEATED (§5A.7): where the seats seat, the row lists who a certificate seats - and is not joined before one stands
     const seatingSaid = counts.map((c) => c.committee).filter((x) => x && x.seated);
@@ -349,7 +354,8 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
   if (skipFailed) { const silentNow = new Set(unanswered.map(String)), failedNow = new Set(failed.map(String));
     for (const n of unique) { const k = String(n); if (failedNow.has(k) && !silentNow.has(k)) down.set(k, nowMs + FAILED_NODE_SKIP_MS); else if (!failedNow.has(k)) down.delete(k); }
     downSave(nowMs); }
-  return { rows, closed, refused, unanswered, failed, asked: unique.length, skipped: unique === named ? [] : skipped };
+  return { rows, closed, refused, unanswered, failed, asked: unique.length, skipped: unique === named ? [] : skipped, why: { ...why, contracts: [...said.keys()].filter((id) => CONTRACTS.has(id)).length, unreadable: [...said.keys()].filter((id) => UNREADABLE.has(id)).length,
+    contractError: (refused.find((r) => /^[0-9a-f]{16}: /.test(r)) || '').slice(0, 160) } };
 }
 
 /**

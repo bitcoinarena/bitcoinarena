@@ -2687,12 +2687,21 @@
     window.ARENA_VERIFY_MANY = (() => {
       try {
         const src = 'importScripts(' + JSON.stringify(new URL('arena-curve.js', location.href).href) + ');'
-          + 'onmessage = (e) => { const C = globalThis.ARENA_CURVE; postMessage({ id: e.data.id, ok: e.data.list.map((a) => { try { return !!C.verify(a.sig, a.msg, a.key); } catch { return false; } }) }); };';
+          // (kanban #1133) a worker without the curve says so instead of answering false for every signature: the page then checks them itself
+          + 'onmessage = (e) => { const C = globalThis.ARENA_CURVE; if (!C || typeof C.verify !== "function") { postMessage({ id: e.data.id, error: "no curve in the worker" }); return; }'
+          + ' postMessage({ id: e.data.id, ok: e.data.list.map((a) => { try { return !!C.verify(a.sig, a.msg, a.key); } catch { return false; } }) }); };';
         const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
         const waiting = new Map(); let seq = 0;
-        w.onmessage = (e) => { const f = waiting.get(e.data.id); if (f) { waiting.delete(e.data.id); f.done(e.data.ok); } };
+        w.onmessage = (e) => { const f = waiting.get(e.data.id); if (f) { waiting.delete(e.data.id); if (e.data.error) f.fail(new Error(e.data.error)); else f.done(e.data.ok); } };
         w.onerror = () => { for (const f of waiting.values()) f.fail(new Error('the signature worker failed')); waiting.clear(); };
-        return (list) => new Promise((done, fail) => {
+        // THE WORKER CHECKED AGAINST THE PAGE (kanban #1133: the owner's iPhone read 15 live seats and kept no row, "raw 0"; a worker that
+        // answers false for every signature is not caught by the fallback, which only covers a missing or silent worker): the first signature
+        // of each batch is checked on the page too, and a worker that says false where the page says true is not used again - fetchLobby then
+        // checks each listing on the page, as without a worker
+        const broken = (why) => { if (!window.ARENA_VERIFY_WORKER_BROKEN) { window.ARENA_VERIFY_WORKER_BROKEN = why; console.warn('[arena] signature worker not used: ' + why); } };
+        return (list) => window.ARENA_VERIFY_WORKER_BROKEN ? Promise.reject(new Error('the signature worker is not used: ' + window.ARENA_VERIFY_WORKER_BROKEN)) : new Promise((done0, fail0) => {
+          const fail = (e) => { broken(e && e.message ? e.message : String(e)); fail0(e); };
+          const done = (ok) => { try { const a = list[0]; if (a && Array.isArray(ok) && ok[0] !== true && window.ARENA_VERIFY_KEPT && window.ARENA_VERIFY_KEPT(a.sig, a.msg, a.key)) { fail(new Error('the worker said false where the page says true')); return; } } catch { /* the worker's answer stands */ } done0(ok); };
           const id = ++seq; waiting.set(id, { done, fail }); w.postMessage({ id, list });
           setTimeout(() => { if (waiting.delete(id)) fail(new Error('the signature worker did not answer in 20 s')); }, 20000);
         });
@@ -7362,7 +7371,7 @@
                 const strip = document.createElement('div'); strip.id = 'arena-admin-diag';
                 strip.style.cssText = 'position:fixed;left:0;right:0;top:calc(41px + env(safe-area-inset-top,0px));z-index:9100;font:11px/1.35 ui-monospace,monospace;color:#9aa4b2;background:rgba(13,16,20,.92);padding:3px 8px;word-break:break-all;pointer-events:none';
                 const draw = () => { const g = window.ARENA_LOBBY_DIAG || {}; strip.textContent = line + ' | lobby ' + g.from + ' nodes ' + g.nodes + (g.testnet ? ' tn ' + g.testnet : '') + ' raw ' + g.gotRaw
-                  + ' kept ' + g.kept + ' held ' + g.unoffered + ' unans ' + g.unanswered + ' ref ' + g.refused + ' skip ' + g.skipped + (g.pending ? ' PENDING' : '') + ' game ' + g.game + ' ' + g.search; };
+                  + ' kept ' + g.kept + ' held ' + g.unoffered + ' unans ' + g.unanswered + ' ref ' + g.refused + ' skip ' + g.skipped + (g.why ? ' | listed ' + g.why.listings + ' rounds ' + g.why.rounds + ' contracts ' + g.why.contracts + ' stale ' + g.why.stale + ' sigfalse ' + g.why.sigFalse + ' unreadable ' + g.why.unreadable + (g.why.contractError ? ' err ' + g.why.contractError : '') : '') + ' worker ' + g.worker + (g.pending ? ' PENDING' : '') + ' game ' + g.game + ' ' + g.search; };
                 draw(); document.body.appendChild(strip); setInterval(draw, 5000); } } catch (e) { /* timing only */ }
             boot.classList.add('done'); setTimeout(() => { if (boot.parentNode) boot.remove(); }, 500); },
         };
@@ -8562,7 +8571,7 @@
         // WHAT THE LOBBY READ AND WHAT EACH FILTER LEFT (kanban #1133: the owner's phone showed "No window is open" after two answers while a fresh
         // browser showed the window; for an admin these numbers are drawn at the top, see ARENA_START_LINE)
         try { window.ARENA_LOBBY_DIAG = { from: window.ARENA_LOBBY_FROM || '?', nodes: ((named && named.nodes) || []).length, testnet: testnet ? ((testnet.named && testnet.named.nodes) || []).length : 0,
-          gotRaw: (got.rows || []).length + ((got2 && got2.rows) || []).length, pending: !!got.pending, unanswered: (got.unanswered || []).length, refused: (got.refused || []).length, skipped: (got.skipped || []).length,
+          gotRaw: (got.rows || []).length + ((got2 && got2.rows) || []).length, pending: !!got.pending, unanswered: (got.unanswered || []).length, refused: (got.refused || []).length, skipped: (got.skipped || []).length, why: got.why || null, worker: window.ARENA_VERIFY_WORKER_BROKEN ? 'broken' : 'ok',
           game: String(window.ARENA_GAME_ID || '').slice(0, 8), search: location.search.slice(0, 80) }; } catch (e) { /* diagnostics only */ }
         const mine = kept.mine = ARENACLIENT.lobbyKeepWhenUnanswered(kept.mine,
           { ...got, rows: testnet ? got.rows.filter((r) => r.free) : got.rows.filter((r) => r.free || (paysHere(r) && drawable(r) && enterable(r))) }, now);
