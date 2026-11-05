@@ -168,49 +168,74 @@ test('a seat\'s judge holds a filed row (b) on its own reading of the proof\'s s
   assert.equal(forged.verdict, false);
 });
 
-// ---- ruling #1138 1 (i): the bound kept at the first verified lock, once per federation, the lower of it and POST /round's
+// ---- ruling #1139 B: the bound is the lock's own funding session, found when the lock is verified; the filer never searches
 
-test('the first verified lock of a round in a federation keeps that federation\'s session count as the bound, once, across a restart, the lower one standing', async () => {
+// a federation whose lock (txid 0x31.., index 0) was funded in session `fundedIn`, `count` sessions finished; `finishLater` sessions finish one per count read
+function fundingPort({ fundedIn, count, asked, finishLater = 0 }) {
+  let finished = count;
+  return {
+    sessionCount: async () => { asked.push(['count']); const c = finished; if (finishLater > 0) { finished += 1; finishLater -= 1; } return c; },
+    sessionExport: async ({ from }) => { asked.push(['export', from]); return { federationId: FID, config: Uint8Array.from([9]), firstSession: from, sessions: Array.from({ length: Math.max(0, finished - from) }, () => Uint8Array.from([1])) }; },
+    arenaClaimRead: async (input) => {
+      const last = input.firstSession + input.sessions.length;
+      const fundings = fundedIn >= input.firstSession && fundedIn < last ? [{ session: fundedIn, outpoint: op(E[0].stakeLockOutpoint), round_id: toHex(RID) }] : [];
+      return { mode: 'arena-claim-read', federation_id: FID, first_session: input.firstSession, sessions: input.sessions.length, unverified: [], spends: [], fundings };
+    },
+  };
+}
+const noSleep = async () => {};
+
+test('a verified lock reads back, doubling, to its own funding session and keeps it as the bound, across a restart, the lower one standing', async () => {
   const db = openStore(':memory:');
   const round = new Round(db);
   const asked = [];
-  const port = fakePort(asked);
-  assert.equal(await keepLockSessionFloor({ round, port, roundId: RID, federationId: TEST_FEDERATION_ID }), 7);
-  assert.equal(await keepLockSessionFloor({ round, port, roundId: RID, federationId: TEST_FEDERATION_ID }), null, 'a second lock reads no count');
-  assert.equal(asked.filter((a) => a[0] === 'count').length, 1);
-  assert.equal(new Round(db).fundingSessionFloor(RID, FID), 7, 'the bound survives a restart');
-  // a second federation of the same round keeps its own
-  const other = 'ab'.repeat(32);
-  await keepLockSessionFloor({ round, port: { sessionCount: async () => 11 }, roundId: RID, federationId: Buffer.from(other, 'hex') });
-  assert.equal(round.fundingSessionFloor(RID, other), 11);
-  // the lower of two readings stands, whichever came first
-  round.keepFundingSessionFloor(RID, FID, 9);
-  assert.equal(round.fundingSessionFloor(RID, FID), 7);
+  // funded 40 sessions back: 8 (6 times, a funding not yet finished is waited for), then 16, 32, 64
+  const got = await keepLockSessionFloor({ round, port: fundingPort({ fundedIn: 60, count: 100, asked }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep });
+  assert.equal(got, 60);
+  assert.deepEqual(asked.filter((a) => a[0] === 'export').map((a) => a[1]), [92, 92, 92, 92, 92, 92, 84, 68, 36]);
+  assert.equal(new Round(db).fundingSessionFloor(RID, FID), 60, 'the bound is the funding session, and it survives a restart');
+  // a later lock funded higher leaves the lower bound; one funded lower moves it down
+  await keepLockSessionFloor({ round, port: fundingPort({ fundedIn: 99, count: 100, asked: [] }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep });
+  assert.equal(round.fundingSessionFloor(RID, FID), 60);
   round.keepFundingSessionFloor(RID, FID, 4);
   assert.equal(round.fundingSessionFloor(RID, FID), 4);
-  // a federation whose count cannot be read keeps nothing and fails nothing
-  assert.equal(await keepLockSessionFloor({ round, port: { sessionCount: async () => { throw new Error('down'); } }, roundId: RID, federationId: b32(0x77) }), null);
-  assert.equal(round.fundingSessionFloor(RID, toHex(b32(0x77))), null);
 });
 
-test('a lock funded below the bound kept at its verification is read back to its funding, and the claim is filed', async () => {
-  // the claim's lock is funded in a session below the bound: the reader names no keys for it until the read reaches its funding
+test('a funding not yet in a finished session is found when its session finishes; one not within 1024 sessions leaves the lock unread', async () => {
+  const round = new Round(openStore(':memory:'));
+  const asked = [];
+  // the funding sits in session 100, which finishes after two more count reads
+  const got = await keepLockSessionFloor({ round, port: fundingPort({ fundedIn: 100, count: 99, asked, finishLater: 3 }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep });
+  assert.equal(got, 100);
+  assert.equal(round.fundingSessionFloor(RID, FID), 100);
+  // funded 2000 sessions back: no farther than 1024, nothing kept, logged
+  const round2 = new Round(openStore(':memory:'));
+  const said = [], asked2 = [];
+  const none = await keepLockSessionFloor({ round: round2, port: fundingPort({ fundedIn: 1000, count: 3000, asked: asked2 }), roundId: RID, federationId: TEST_FEDERATION_ID, outpoint: E[0].stakeLockOutpoint, sleep: noSleep, log: (l) => said.push(l) });
+  assert.equal(none, null);
+  assert.equal(round2.fundingSessionFloor(RID, FID), null);
+  assert.equal(Math.min(...asked2.filter((a) => a[0] === 'export').map((a) => a[1])), 3000 - 1024);
+  assert.match(said.join('\n'), /not within 1024 sessions.*unread/);
+  // a federation that cannot be read keeps nothing and fails nothing
+  assert.equal(await keepLockSessionFloor({ round: round2, port: { ...fundingPort({ fundedIn: 1, count: 3, asked: [] }), sessionCount: async () => { throw new Error('down'); } }, roundId: RID, federationId: b32(0x77), outpoint: E[0].stakeLockOutpoint, sleep: noSleep }), null);
+});
+
+test('the filer reads from the bound once and never searches; a lock funded below it is unread, not filed', async () => {
   const asked = [];
   const reads = [];
   const port = {
     sessionExport: async ({ from }) => { asked.push(from); return { federationId: FID, config: Uint8Array.from([9]), firstSession: from, sessions: [Uint8Array.from([1])] }; },
     arenaClaimRead: async (input) => {
       reads.push(input.firstSession);
-      const funded = input.firstSession <= 20;
+      // funded at 20, below the bound 30: the reader names no keys for those spends
       return { mode: 'arena-claim-read', federation_id: FID, first_session: input.firstSession, sessions: 1, unverified: [],
-        spends: SPENDS.map((x) => ({ ...x, lock: funded ? x.lock : null, named_keys: funded ? x.named_keys : null, body_id: funded ? x.body_id : null })) };
+        spends: SPENDS.map((x) => ({ ...x, lock: null, named_keys: null, body_id: null })) };
     },
   };
   const round = fakeRound({ floor: 30 });
-  const anyFed = { ...contract };
-  const s = new LockSettlement({ ...round, get: () => ({ contract: encodeRoundContract(anyFed) }) }, { port, curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
+  const s = new LockSettlement(round, { port, curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
   const report = await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
-  assert.deepEqual(asked, [30, 22, 14], 'the read reaches back, doubling, until the funding is in it');
-  assert.equal(report.filed.length, 6, report.refused.join('; '));
-  for (const f of round.filed) assert.equal(splitNamedClaimEvidence(f.bytes).firstSession, 14, 'the proof carries the sessions from the funding');
+  assert.deepEqual(asked, [30], 'one read, from the bound');
+  assert.equal(report.filed.length, 0);
+  assert.match(report.refused.join('; '), /funded below the bound 30: unread/);
 });

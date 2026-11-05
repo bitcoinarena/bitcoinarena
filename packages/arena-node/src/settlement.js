@@ -58,6 +58,7 @@ import { askerOrder, eligibleAsker } from './payout.js';
 import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate, splitPlanTaken } from './plan-taken.js';
 import { askPeers, PEER_ASK_MS, PEER_READ_MS, PEER_GRACE_MS } from './peer-ask.js';
 import { namedClaims, namedClaimKeys, namedSignerSet, zKey } from '../../arena-protocol/src/arena-lock.js';
+import { offTableOn, offTablePayouts } from './test-named-offence.js';
 import { namedSlots, NamedNonces, aggregateBatch, signerSetKey, encodeNamedCommitment, decodeNamedCommitment, encodeNamedList, decodeNamedList,
   encodeNamedPartials, decodeNamedPartials, encodeNamedBatch, decodeNamedBatch } from './named-settlement.js';
 // the payouts of an accepted settlement kept as rows (GET /donations, GET /reserves): a walk-away's donation keys and a market's reserve
@@ -96,8 +97,6 @@ const lockKeyStands = (fields, claimPk, contract) => {
 const roundKeyOf = (dkg, contract) => (namedClaims(contract) ? { ok: true, signerNode: null, pool: { groupPublicKey: zKey() } } : dkg.signerNodeFor(contract.nodes));
 const outpointOf = (s) => { const [txid, idx] = String(s).split(':'); return { txid: fromHex(txid), outIdx: BigInt(idx) }; };
 
-/** How far below its bound the filer reads a federation's sessions for the funding of a lock it judges (kanban #1044 B1, #1138 1). */
-export const FUNDING_LOOKBACK_SESSIONS = 1024;
 
 /** How often the backfill tries a recovered round it could not rebuild before it marks it checked. */
 export const BACKFILL_TRIES = 4;
@@ -1270,7 +1269,7 @@ export class LockSettlement {
   /** The submit: the stock settle with the FROST signature, or the real transaction with S and the MuSig2 signature. */
   async #submit(port, m, { payouts, nonce, signature }) {
     if (!m.named) return port.settle({ claimPk: m.claimPk, claims: m.claims, payouts, nonce, signature });
-    const r = await port.arenaSettle({ claims: m.claims, payouts, nonce, signers: m.signers, signature });
+    const r = await port.arenaSettle({ claims: m.claims, payouts: m.offTable || payouts, nonce, signers: m.signers, signature });
     if (r.txid && String(r.txid) !== String(m.txid)) return { accepted: false, error: `the tool built ${String(r.txid).slice(0, 16)}, not the signed ${String(m.txid).slice(0, 16)}` };
     return { accepted: r.accepted, error: r.error };
   }
@@ -1290,8 +1289,10 @@ export class LockSettlement {
     let refundKey;
     try { refundKey = signerSetKey(seatKeys, threshold, signers); } catch (e) { return refuse(`no signer set ${signers.join(',')}: ${e.message}`); }
     const port = opts.federation ? await this.portForFederation(opts.federation) : await this.portFor(roundIdBytes);
-    const real = await port.arenaSettle({ claims: m.claims, payouts: m.payouts, nonce: m.nonce, signers });
-    if (String(real.bodyId).toLowerCase() !== m.bodyId) return refuse('the real transaction strips to another body than the one acked');
+    // THE REGTEST FAULT (test-named-offence.js, off by default): this seat signs a claim off the table it acked - offence (a)
+    const offTable = offTableOn(roundIdBytes) ? offTablePayouts(m.payouts) : null;
+    const real = await port.arenaSettle({ claims: m.claims, payouts: offTable || m.payouts, nonce: m.nonce, signers });
+    if (!offTable && String(real.bodyId).toLowerCase() !== m.bodyId) return refuse('the real transaction strips to another body than the one acked');
     if (String(real.aggKey).toLowerCase() !== toHex(refundKey.subarray(1))) return refuse('the tool\'s KeyAgg of the signer set is not this seat\'s');
     const slots = namedSlots(m.payouts);
     const sender = opts.entry ? this.lateWinningsFor(roundIdBytes, opts.entry) : this.winnings;
@@ -1309,7 +1310,8 @@ export class LockSettlement {
         refunds.push({ outIdx: slot.outIdx, txid: c.txid, qualifierPk: toHex(slot.qualifierPk), msat: String(slot.msat) });
       }
     }
-    const out = { ok: true, txid: String(real.txid), message: fromHex(real.message), messages, slots, refundKey, refunds };
+    const out = { ok: true, txid: String(real.txid), message: fromHex(real.message), messages, slots, refundKey, refunds, ...(offTable ? { offTable } : {}) };
+    if (offTable) console.log(`[settle] ${toHex(roundIdBytes).slice(0, 16)} TEST FAULT: signs claim ${String(real.txid).slice(0, 16)} off its table (ARENA_TEST_NAMED_OFFENCE_FILE)`);
     this.#namedBuilt.set(memo, out);
     if (this.#namedBuilt.size > 1024) this.#namedBuilt.delete(this.#namedBuilt.keys().next().value);
     return out;
@@ -1463,7 +1465,7 @@ export class LockSettlement {
       await askPeers(this.peersFor(roundIdBytes), (base, signal) => this.fetcher(`${base}/settle-signature?${q}&named=1`, { method: 'POST', body: batch, signal }),
         { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: m.needed - 1 });
     }
-    return { ok: true, m: { ...m, txid: built.txid, message: built.message, signers, refundKey: built.refundKey }, signature: signatures[0] };
+    return { ok: true, m: { ...m, txid: built.txid, message: built.message, signers, refundKey: built.refundKey, ...(built.offTable ? { offTable: built.offTable } : {}) }, signature: signatures[0] };
   }
 
   #keepBatch(roundIdBytes, sc, m, built, signers, signatures) {
@@ -1706,15 +1708,12 @@ export class LockSettlement {
       let port, ex, read;
       try {
         port = await this.portForFederation(fid);
-        // A LOCK FUNDED BELOW THE BOUND (#1138 1 keeps the bound at the first verified lock, after its funding): a spend of this round's lock whose
-        // funding the sessions read do not hold names no keys, so the read reaches back, doubling, until every such lock's funding is in it
-        for (let from = floor, step = 8; ; step *= 2) {
-          ex = await port.sessionExport({ from });
-          read = await port.arenaClaimRead(claimReadInput({ config: ex.config, firstSession: ex.firstSession, sessions: ex.sessions, roundId: roundIdBytes }));
-          const unfunded = read && (read.spends || []).some((sp) => !sp.lock && lockOf.has(String(sp.outpoint).toLowerCase()));
-          if (!unfunded || from === 0 || floor - from >= FUNDING_LOOKBACK_SESSIONS) break;
-          from = Math.max(0, floor - step);
-        }
+        // FROM THE BOUND, NEVER SEARCHING (ruling #1139 B): the bound is the funding session the seat found when it verified the lock. A spend of
+        // this round's lock whose funding lies below it names no keys and is not judged - nothing is held against a seat for it
+        ex = await port.sessionExport({ from: floor });
+        read = await port.arenaClaimRead(claimReadInput({ config: ex.config, firstSession: ex.firstSession, sessions: ex.sessions, roundId: roundIdBytes }));
+        const unfunded = read ? (read.spends || []).filter((sp) => !sp.lock && lockOf.has(String(sp.outpoint).toLowerCase())) : [];
+        for (const sp of unfunded) report.refused.push(`${fid.slice(0, 16)}: lock ${String(sp.outpoint).slice(0, 20)} was funded below the bound ${floor}: unread`);
       } catch (e) { report.refused.push(`${fid.slice(0, 16)}: the sessions were not read: ${e.message}`); continue; }
       if (!read) { report.refused.push(`${fid.slice(0, 16)}: no claim reader (arena-claim-read) here`); continue; }
       if (read.unverified && read.unverified.length) { report.refused.push(`${fid.slice(0, 16)}: sessions ${read.unverified.join(', ')} do not verify`); continue; }

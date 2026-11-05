@@ -44,6 +44,8 @@ import { pluginForRound } from './plugins.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
 import { askPeers, PEER_ASK_MS, PEER_GRACE_MS } from './peer-ask.js';
 import { namedClaims, namedClaimKeys, arenaLockContractId } from '../../arena-protocol/src/arena-lock.js';
+import { forfeitLostOn } from './test-named-offence.js';
+import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { nonceGen, nonceAgg, sign as musigSign } from './musig2.js';
 import { evenYKey, signingSecret, namedContext, namedKey, checkSigners, aggregateNamed } from './named-claim.js';
 
@@ -164,6 +166,16 @@ export class Forfeit {
       }
     }
     if (!lock) return refuse('this signer node verified no stake lock for that entry, so it forfeits nothing');
+    // THE REGTEST FAULT (test-named-offence.js, off by default): offence (b) - the forfeit of an entry this seat itself signed non-qualifying
+    if (!refused && namedClaims(contract) && forfeitLostOn(entryIdBytes)) {
+      const mine = (this.round.results ? this.round.results(roundIdBytes, entryIdBytes) : []).some((r) => {
+        if (toHex(r.nodePubkey) !== toHex(this.round.pubkey)) return false;
+        try { const b = decodePlayerResult(splitSignedResult(r.bytes).body); return !isQualifier(b, contract.minScore); } catch { return false; }
+      });
+      if (!mine) return refuse('test fault armed for that entry, and this seat has signed no non-qualifying result for it yet');
+      console.log(`[forfeit] ${toHex(roundIdBytes).slice(0, 16)} TEST FAULT: forfeits entry ${toHex(entryIdBytes).slice(0, 16)}, which it signed lost (ARENA_TEST_NAMED_OFFENCE_FILE)`);
+      return this.#signable(contract, lock, roundIdBytes);
+    }
     // ENTRY_VOID (§16, §23.2 "forfeit at once; if nobody acts, the lock expires"):
     // an outage refund, on THIS signer node's own record of it - never on an asker's
     // word, and never for a late start (that is FORFEIT, first-mark.js) or a

@@ -33,6 +33,7 @@ import { donationOutputsExpected } from '../../arena-protocol/src/donation.js';
 import { reservesEntryExpected, paysReserves } from '../../arena-protocol/src/reserves.js';
 import { namedClaims, namedClaimKeys, arenaLockContractId, arenaLockMatchesEntry } from '../../arena-protocol/src/arena-lock.js';
 import { toHex as hexOf } from '../../arena-protocol/src/hash.js';
+import { claimReadInput } from '../../arena-protocol/src/named-claim-proof.js';
 
 /**
  * WHETHER THIS ROUND'S GATE MINTS FEE LOCKS (Pick b), by the federation's own fee rule
@@ -174,20 +175,49 @@ export async function arenaLockStands({ contract, entry, kind, fields, outpoint,
 }
 
 /**
- * THE FILER'S LOWER BOUND, KEPT AT THE FIRST VERIFIED LOCK (kanban #1044 B1, ruling #1138 1 (i)): when this seat first verifies a lock of a protocol-27 round
- * in a federation, it keeps that federation's session count as the bound for (round, federation) - once per federation, across restarts, the lower of it
- * and one kept at POST /round. A claim or forfeit rows (a)/(b) read comes after this verification, so none sits below it. A failed read never fails the lock.
+ * THE FILER'S LOWER BOUND: THE LOCK'S OWN FUNDING SESSION, FOUND WHEN THE LOCK IS VERIFIED (kanban #1044 B1, rulings #1138 1 (i), #1139 B). When this seat
+ * verifies an Arena lock (§23.1 step 5) it reads the federation's signed sessions back from its session count - the newest FUNDING_RECENT_SESSIONS
+ * first, again while the funding may still sit in a session not finished yet, then doubling (16, 32, ...) - until the stake-lock tool's offline
+ * reader names the lock's funding, and keeps THAT session as the bound for (round, federation): the lower of what is stored and it, across restarts.
+ * The filer starts at the bound and never searches. A funding not found within FUNDING_SEARCH_SESSIONS leaves the lock unread - no filing on it,
+ * nothing held against a seat - and is logged. A failed read never fails the lock; the search runs beside the verification, not in its way.
+ * `outpoint` the lock's; `waitMs`/`tries` how long a funding not yet in a finished session is waited for. Answers the session kept, or null.
  */
-export async function keepLockSessionFloor({ round, port, roundId, federationId }) {
-  if (!round.keepFundingSessionFloor || !round.fundingSessionFloor || !port || typeof port.sessionCount !== 'function') return null;
+export const FUNDING_SEARCH_SESSIONS = 1024;
+export const FUNDING_RECENT_SESSIONS = 8;
+const searching = new Map();
+export function keepLockSessionFloor({ round, port, roundId, federationId, outpoint, waitMs = 20000, tries = 6, log = (l) => console.log(l), sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+  if (!round.keepFundingSessionFloor || !round.fundingSessionFloor || !port || typeof port.sessionCount !== 'function'
+    || typeof port.sessionExport !== 'function' || typeof port.arenaClaimRead !== 'function' || !outpoint || !(outpoint.txid instanceof Uint8Array)) return Promise.resolve(null);
   const fid = hexOf(federationId);
-  if (round.fundingSessionFloor(roundId, fid) !== null) return null;
-  try {
-    const count = await port.sessionCount();
-    if (!Number.isInteger(Number(count))) return null;
-    round.keepFundingSessionFloor(roundId, fid, Number(count));
-    return Number(count);
-  } catch { return null; }
+  const want = `${hexOf(outpoint.txid)}:${String(outpoint.outIdx)}`;
+  const key = `${hexOf(roundId)}:${fid}:${hexOf(outpoint.txid)}`;
+  if (searching.has(key)) return searching.get(key);
+  const foundIn = async (from) => {
+    const ex = await port.sessionExport({ from });
+    const read = await port.arenaClaimRead(claimReadInput({ config: ex.config, firstSession: ex.firstSession, sessions: ex.sessions }));
+    const f = read && (read.fundings || []).find((x) => String(x.outpoint).toLowerCase() === want);
+    return f ? Number(f.session) : null;
+  };
+  const run = (async () => {
+    try {
+      let count = null, at = null;
+      for (let k = 0; k < tries && at === null; k++) {
+        if (k) await sleep(waitMs);
+        count = Number(await port.sessionCount());
+        if (!Number.isInteger(count)) return null;
+        at = await foundIn(Math.max(0, count - FUNDING_RECENT_SESSIONS));
+      }
+      for (let step = FUNDING_RECENT_SESSIONS * 2; at === null && step <= FUNDING_SEARCH_SESSIONS && count > step / 2; step *= 2)
+        at = await foundIn(Math.max(0, count - step));
+      if (at === null) { log(`[slash] ${hexOf(roundId).slice(0, 16)}: the funding of lock ${want.slice(0, 20)} is not within ${FUNDING_SEARCH_SESSIONS} sessions of federation ${fid.slice(0, 16)}: that lock is unread, nothing is filed on it`); return null; }
+      round.keepFundingSessionFloor(roundId, fid, at);
+      return at;
+    } catch { return null; }
+  })();
+  searching.set(key, run);
+  run.finally(() => searching.delete(key));
+  return run;
 }
 
 // `timing` (kanban #605): an object the caller reads afterwards - ms spent asking the federation, checking gifts and reading the fee gate
@@ -219,7 +249,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
     if (!arena.ok) return arena;
     timing.statusMs = Date.now() - t;
     id = arena.contractId; st = { blockCount: arena.height };
-    await keepLockSessionFloor({ round, port, roundId: entry.roundId, federationId: fed.federationId });
+    keepLockSessionFloor({ round, port, roundId: entry.roundId, federationId: fed.federationId, outpoint });
   } else {
   // THE FEDERATION'S WORD AND THE CONTRACT'S ID ASKED TOGETHER (2026-10-02: "stake/fee verification of 5 of 7
   // confirmations must also be much faster"): two stock-client runs, one after the other before.
@@ -283,7 +313,7 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   if (arena) {
     if (!arena.ok) return arena;
     id = arena.contractId; st = { blockCount: arena.height };
-    await keepLockSessionFloor({ round, port, roundId: entry.roundId, federationId: fed.federationId });
+    keepLockSessionFloor({ round, port, roundId: entry.roundId, federationId: fed.federationId, outpoint });
   } else {
   [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s fee_lock_outpoint' };
