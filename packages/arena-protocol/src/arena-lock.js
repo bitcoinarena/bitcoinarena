@@ -32,9 +32,25 @@ export const NAMED_CLAIM_VERSION = 27;
  * above the tip at that time.
  */
 export const NAMED_CLAIM_HEIGHT = Object.freeze({ mainnet: 0, testnet4: null, regtest: 0, devnet: 0 });
+/**
+ * A REGTEST HARNESS'S OWN HEIGHT (kanban #1044 B1 phase 4, a test switch, off by default): ARENA_TEST_NAMED_CLAIM_HEIGHT=<n> moves regtest's point to n,
+ * so one private chain runs a round below it (stock LNv2) and one at or above it (the Arena lock). Read only for regtest; a seat started with it on any
+ * other network does not start (namedClaimHeightOverride throws, main.js asks it first). A page has no process environment and never reads it.
+ */
+export const NAMED_CLAIM_HEIGHT_ENV = 'ARENA_TEST_NAMED_CLAIM_HEIGHT';
+export function namedClaimHeightOverride(env = (typeof process !== 'undefined' && process.env) || {}) {
+  const v = env[NAMED_CLAIM_HEIGHT_ENV];
+  if (v === undefined || v === '') return null;
+  const net = env.ARENA_DONATION_NETWORK || '';
+  if (net !== 'regtest') throw new Error(`${NAMED_CLAIM_HEIGHT_ENV} is a regtest test switch, and this seat runs on ${net || 'no named network'}: refused`);
+  if (!/^\d+$/.test(String(v))) throw new Error(`${NAMED_CLAIM_HEIGHT_ENV} is a block height, not ${v}`);
+  return Number(v);
+};
+const regtestOverride = () => { try { return namedClaimHeightOverride(); } catch { return null; } };
 /** The point of `network` ('testnet' is testnet4), null on a network that names none. */
 export const namedClaimPoint = (network) => {
   const n = network === 'testnet' ? 'testnet4' : String(network || '');
+  if (n === 'regtest') { const o = regtestOverride(); if (o !== null) return o; }
   return Object.prototype.hasOwnProperty.call(NAMED_CLAIM_HEIGHT, n) ? NAMED_CLAIM_HEIGHT[n] : null;
 };
 /** Does a round at `censusHeight` on `network` lock to an Arena lock? `pointOf` a harness's own. */

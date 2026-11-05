@@ -111,6 +111,16 @@ if (!ln.ok) {
   process.exit(2);
 }
 
+// REGTEST TEST SWITCHES, REFUSED ANYWHERE ELSE (kanban #1044 B1 phase 4): the named claim's offences (test-named-offence.js) and regtest's own
+// NAMED_CLAIM_HEIGHT (arena-lock.js). A seat started with either on another network does not start.
+{
+  const { namedOffenceSwitch } = await import('./test-named-offence.js');
+  const { namedClaimHeightOverride } = await import('../../arena-protocol/src/arena-lock.js');
+  for (const check of [namedOffenceSwitch, namedClaimHeightOverride]) {
+    try { const on = check(process.env); if (on !== null) console.log(`[test] ${check.name}: ${JSON.stringify(on)} (regtest only)`); }
+    catch (e) { console.error(e.message); process.exit(2); }
+  }
+}
 const db = openStore(path);
 // THE GAMES THIS NODE HOSTS (§0A.4): the registration modules ARENA_APPS names, each exporting GAME -
 // a manifest as its developer signed it with the dev client (public bytes only), the cores installed for it, its replay

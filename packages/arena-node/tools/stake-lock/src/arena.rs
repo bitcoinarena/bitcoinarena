@@ -541,7 +541,7 @@ pub fn claim_read() -> anyhow::Result<serde_json::Value> {
     let only_round = input.get("roundId").and_then(|v| v.as_str()).map(|s| s.to_lowercase());
     let sessions = input.get("sessions").and_then(|v| v.as_array()).context("no sessions")?;
     let mut funded: BTreeMap<String, ArenaLockContract> = BTreeMap::new();
-    let (mut spends, mut unverified) = (Vec::new(), Vec::new());
+    let (mut spends, mut unverified, mut fundings) = (Vec::new(), Vec::new(), Vec::new());
     for (i, h) in sessions.iter().enumerate() {
         let idx = first + i as u64;
         let sso = match h.as_str().and_then(|h| hex_bytes(h).ok()).and_then(|b| SignedSessionOutcome::consensus_decode_whole(&b, &decoders).ok()) {
@@ -560,6 +560,8 @@ pub fn claim_read() -> anyhow::Result<serde_json::Value> {
                         "payment_image": match &c.payment_image { PaymentImage::Hash(h) => h.to_string(), PaymentImage::Point(p) => p.to_string() } }),
                     Some(LightningOutput::ArenaLock(c)) => {
                         funded.insert(format!("{txid}:{o}"), c.clone());
+                        // WHERE EACH ARENA LOCK WAS FUNDED (ruling #1139 B): a seat verifying a lock reads back to this session and keeps it as its bound
+                        fundings.push(serde_json::json!({ "session": idx, "outpoint": format!("{txid}:{o}"), "round_id": hex(&c.round_id) }));
                         let mut j = contract_json(c); j["out_idx"] = o.into(); j["kind"] = "arena-lock".into(); j
                     }
                     _ => serde_json::json!({ "out_idx": o, "kind": "lnv2-other" }),
@@ -594,7 +596,7 @@ pub fn claim_read() -> anyhow::Result<serde_json::Value> {
         }
     }
     Ok(serde_json::json!({ "mode": "arena-claim-read", "federation_id": config.calculate_federation_id().to_string(),
-        "first_session": first, "sessions": sessions.len(), "unverified": unverified, "spends": spends }))
+        "first_session": first, "sessions": sessions.len(), "unverified": unverified, "spends": spends, "fundings": fundings }))
 }
 
 #[cfg(test)]
