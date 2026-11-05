@@ -39,7 +39,8 @@ test('the header: the logo to bitcoinarena.io, "‚Üê Arena" back to the games, ‚ò
   const page = read('src/arena-ui/index.html');
   const menus = [...page.matchAll(/<nav id="arena-(?:wb-)?nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena">(.*?)<\/nav>/g)].map((m) => m[1]);
   assert.equal(menus.length, 2);
-  for (const m of menus) assert.equal(m, '<a href="/proposals/">Proposals</a><a href="https://explorer.bitcoinarena.io/">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a>');
+  for (const m of menus) assert.equal(m, '<a href="/proposals/">Proposals</a><a href="https://explorer.bitcoinarena.io/">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a>'
+    + '<a class="arena-nav-nostr" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)">Nostr: bitcoinarena.io &#10003;</a>');   // the verified Nostr profile last (kanban #1144)
   // the footer's Donate opens the Arena page's box
   assert.match(CHROME, /<a class="asc-donate" href="' \+ esc\(site\) \+ '#donate">&hearts; Donate<\/a>/);
   assert.match(page, /if \(location\.hash === '#donate'\) \{ try \{ history\.replaceState\(null, '', location\.pathname \+ location\.search\); \} catch \{ \/\* the box opens anyway \*\/ \} window\.ARENA_DONATE_OPEN\(\); \}/);
