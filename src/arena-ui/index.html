@@ -6814,6 +6814,8 @@
       // THE WALLET FROM HERE, BEFORE THE PICK (the games screen shows the balance) - the games are read already
       if (got.games && got.games.length && window.ARENA_OPEN_WALLET_EARLY) window.ARENA_OPEN_WALLET_EARLY(window.ARENA_LEDGER_LOBBY);
       console.log('[arena] games of ' + nodes.length + ' node(s): ' + got.games.map((g) => g.name).join(', ') + ' in ' + (Date.now() - t0) + ' ms');
+      // THE START'S STEPS, TIMED (kanban #1133): read by the loading screen's end, shown to an admin beside the build stamp
+      (window.ARENA_START_T = window.ARENA_START_T || {}).games = performance.now();
       window.ARENA_GAMES = got.games.map((g) => ({ id: g.id, name: g.name, title: g.title, known: g.known, attested: g.attested, nodes: g.nodes.length }));
       // EVERY VERSION'S MANIFEST, for the shop and a round's items
       window.ARENA_GAMES_FULL = got.games;
@@ -7350,6 +7352,12 @@
           step: (at, words) => { if (window.ARENA_BOOT_STEP) window.ARENA_BOOT_STEP(at, words); },
           done: (why) => { if (!boot.parentNode || window.ARENA_BOOT_HOLD.over) return; window.ARENA_BOOT_HOLD.over = true;
             console.log('[arena] ' + game.name + ': ' + why + ', ' + (Date.now() - t0) + ' ms after the start, ' + (Date.now() - heldAt) + ' ms under the loading screen');
+            // to an admin, on the phone itself: how long the start took and where (kanban #1133: 25 s on the owner's phone, under 11 s on every
+            // throttled test here, so the phone's own numbers are what can say why)
+            try { const T = window.ARENA_START_T || {}; const sec = (x) => x ? (x / 1000).toFixed(1) : '-';
+              const line = 'open ' + sec(performance.now()) + ' s (games ' + sec(T.games) + ' · client ' + sec(heldAt - (performance.timeOrigin || 0) > 0 ? performance.now() - (Date.now() - heldAt) : 0) + ' · rounds ' + sec(T.rounds) + ')';
+              console.log('[arena] start: ' + line); window.ARENA_START_LINE = line;
+              if (window.ARENA_ADMIN) { const b = document.getElementById('arena-build'); if (b && !/open /.test(b.textContent)) b.textContent += ' \u00b7 ' + line; } } catch (e) { /* timing only */ }
             boot.classList.add('done'); setTimeout(() => { if (boot.parentNode) boot.remove(); }, 500); },
         };
         setTimeout(() => window.ARENA_BOOT_HOLD.done('no window after 30 s'), 30000);
@@ -8561,6 +8569,7 @@
         // list means "not read yet", not "nothing open". The app's line waits for this, and repaints the moment rows arrive.
         // two answers, not one (measured on the preview: the first answer can come back empty and the next, a second later, with the round)
         if (!got.pending && (!got2 || !got2.pending)) {
+          { const T = (window.ARENA_START_T = window.ARENA_START_T || {}); if (!T.rounds) T.rounds = performance.now(); }
           window.ARENA_LOBBY_ANSWERS = (window.ARENA_LOBBY_ANSWERS || 0) + 1;
           if (window.ARENA_LOBBY_ANSWERS >= 2 && !window.ARENA_LOBBY_ANSWERED_AT) window.ARENA_LOBBY_ANSWERED_AT = Date.now();
         }
