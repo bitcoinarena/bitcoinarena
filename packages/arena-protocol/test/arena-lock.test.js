@@ -9,7 +9,7 @@ import { refundKeyOf } from '../src/stake-lock.js';
 import { SUPPORTED_PROTOCOL_VERSIONS } from '../src/constants.js';
 import { signSettlementCommit, checkSettlementCommit } from '../src/settlement-ack.js';
 import {
-  NAMED_CLAIM_VERSION, NAMED_CLAIM_HEIGHT, namedClaimsAt, namedClaimRefusal, runsArenaLock, encodeArenaLockContract, arenaLockContractId,
+  zKey, NAMED_CLAIM_VERSION, NAMED_CLAIM_HEIGHT, namedClaimsAt, namedClaimRefusal, runsArenaLock, encodeArenaLockContract, arenaLockContractId,
   arenaLockValid, arenaLockFieldsFromJson, arenaLockFieldsToJson, arenaLockFor, arenaLockMatchesEntry, namedSignerSet, commitNoncesOf,
 } from '../src/arena-lock.js';
 import { offTableClaims, forfeitsOfLostEntries, OFF_TABLE_CLAIM, FORFEIT_OF_LOST_ENTRY } from '../src/named-claim-offence.js';
@@ -159,4 +159,14 @@ test('offence (b): only a forfeiter that itself signed the entry lost', () => {
   assert.deepEqual(forfeitsOfLostEntries({ spends: [cancel], entryOf, lostBy: () => [KEYS[6]] }), []);
   // a claim is never row (b)
   assert.deepEqual(forfeitsOfLostEntries({ spends: [{ ...cancel, kind: 'claim' }], entryOf, lostBy }), []);
+});
+
+// THE PAGE'S BUNDLE CARRIES arena-lock.js (page-lock.js builds a protocol-27 entry's locks with it), and the bundle carries no curve library and drops
+// imports: the module imports only this package's own files, and Z is found with plain BigInt arithmetic - the same Z as the stake-lock tool's
+// arena-z-key (ruling #1135 1).
+test('arena-lock.js imports only the protocol\'s own files, and Z is 02b3f7cd...2f9d', async () => {
+  const { readFileSync } = await import('node:fs');
+  const text = readFileSync(new URL('../src/arena-lock.js', import.meta.url), 'utf8');
+  for (const m of text.matchAll(/^import\s[\s\S]*?from\s+'([^']+)';/gm)) assert.match(m[1], /^\.\//, `arena-lock.js imports ${m[1]}`);
+  assert.equal(toHex(zKey()), '02b3f7cd89f2ce17f8e075d67398c8e65f9952b877c2eae657d8236af11ca82f9d');
 });

@@ -42,6 +42,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { CORE_HASH } from '../../arena-node/tools/core-hash.mjs';
 import { joinedWithLock, CLAIM } from '../../arena-node/test/lock-fixture.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
+import { arenaLockFieldsFromJson, arenaLockContractId } from '../../arena-protocol/src/arena-lock.js';
 import { TRUCK_68E2_HASH } from '../../nextblock/plugin/truck-cores.js';   // the truck versions 1-4 name (kanban #523: the tree now builds a5c5766a)
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -70,7 +71,7 @@ const claimKey = { ok: true, claimPk: CLAIM, ref: b32(0x9a) };
  * hold, as the stock dry run does. The allowance is the stock
  * TRANSACTION_FEE_DEFAULT's arithmetic (2 sat + 3000 ppm).
  */
-function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = null, both = false, badFee = false, donations = false, badDonation = null, submit = false, acceptAs = 'same' } = {}) {
+function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = null, both = false, badFee = false, donations = false, badDonation = null, submit = false, acceptAs = 'same', arena = null } = {}) {
   const log = [];
   // Its wallet is kept in the store it is handed, as the real one's database
   // is: one key, the balance, written when a deposit is claimed.
@@ -181,6 +182,32 @@ function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = nu
       await new Promise((r) => setTimeout(r, 20));
       if (acceptAs === 'refused') throw new Error('the guardians did not accept the lock transaction: spent inputs');
       const one = (o) => ({ txid: s.txid, out_idx: acceptAs === 'moved' && o.role === 'stake' ? 7 : o.out_idx, computed_contract_id: o.computed_contract_id,
+        stored_contract_id: o.computed_contract_id, ids_match: true, computed_expiration: o.computed_expiration, stored_expiration: o.computed_expiration,
+        amount_msat: o.amount_msat, recipient_pk: o.recipient_pk });
+      return JSON.stringify({ stake: one(s.outputs[0]), fee: s.with_fee ? one(s.outputs[1]) : null, donations: s.outputs.filter((o) => o.role === 'donation').map(one) });
+    };
+  }
+  // THE ARENA LOCK OF A PROTOCOL-27 ROUND (kanban #1044 B1): arenaLockSubmit builds each lock from the fields it is handed and computes its id
+  // as the wasm does (arenaLockContractId); `arena` 'lie' answers another id than the fields', 'moved' stores the stake at another output
+  if (arena) {
+    Fake.prototype.arenaLockSubmit = async function (stakeJson, feeJson, delta, given) {
+      const ds = JSON.parse(given);
+      const exp = 1000 + delta;
+      const lockOut = (j, role, out_idx) => {
+        const f = arenaLockFieldsFromJson({ ...JSON.parse(j), expiration: exp });
+        const id = toHex(arenaLockContractId(f));
+        return { out_idx, role, computed_contract_id: arena === 'lie' && role === 'stake' ? 'ff'.repeat(32) : id, computed_expiration: exp, amount_msat: Number(f.amountMsat), recipient_pk: null };
+      };
+      log.push({ arenaLockSubmit: { stake: JSON.parse(stakeJson), fee: feeJson ? JSON.parse(feeJson) : null, delta, donations: ds } });
+      const outputs = [lockOut(stakeJson, 'stake', 0)];
+      if (feeJson) outputs.push(lockOut(feeJson, 'fee', 1));
+      ds.forEach((d, i) => outputs.push({ out_idx: outputs.length, role: 'donation', computed_contract_id: `d${i}`, computed_expiration: 0, amount_msat: Number(d.msat), recipient_pk: d.pk }));
+      return JSON.stringify({ operation: 'op27', txid: '27'.repeat(32), block_count_at_lock: 1000, expiry_delta: delta, with_fee: !!feeJson, arena: true, outputs });
+    };
+    Fake.prototype.arenaLockAccepted = async function (sub) {
+      const s = JSON.parse(sub);
+      log.push({ arenaLockAccepted: s.operation });
+      const one = (o) => ({ txid: s.txid, out_idx: arena === 'moved' && o.role === 'stake' ? 7 : o.out_idx, computed_contract_id: o.computed_contract_id,
         stored_contract_id: o.computed_contract_id, ids_match: true, computed_expiration: o.computed_expiration, stored_expiration: o.computed_expiration,
         amount_msat: o.amount_msat, recipient_pk: o.recipient_pk });
       return JSON.stringify({ stake: one(s.outputs[0]), fee: s.with_fee ? one(s.outputs[1]) : null, donations: s.outputs.filter((o) => o.role === 'donation').map(one) });
@@ -2287,4 +2314,60 @@ test('a wallet is packed in place: nothing is lost, it takes under a third of th
   twin.remove('22'); s.remove('11'); packWallets(L);
   assert.equal([...map.keys()].filter((k) => k.startsWith('arena.walletblob.')).length, 0, 'a value no wallet names goes');
   s.remove('ab'.repeat(90)); assert.equal(JSON.parse(s.entries()).length, 1);
+});
+
+// A PROTOCOL-27 ROUND LOCKS TO AN ARENA LOCK (kanban #1044 B1, rulings #1131 1-2): no claim key, no step-0 attestation; the stake lock, the fee
+// lock and the donation outputs in ONE transaction (the seats' verifyEntryGifts reads the donations in the stake's transaction), each lock naming
+// the round's settlement seats' node keys in the contract's order, its threshold and its round, its id checked here against the fields.
+test('a protocol-27 round: one arenaLockSubmit with stake, fee and donations, no claim key, the lock JSON the seats are handed names the seats', async () => {
+  const DEVS = [{ recipientPk: Uint8Array.of(2, ...b32(0xa1)), shareBps: 6667, label: 'dev a' }, { recipientPk: Uint8Array.of(3, ...b32(0xb2)), shareBps: 3333, label: 'dev b' }];
+  const round27 = { ...round, stakeMsat: 100000n, protocolVersion: 27 };
+  const rid27 = b32(0x27);
+  const go = async (arena, extra = {}) => {
+    const { LockClient, log } = lockClient({ feeRule: RULE, both: true, donations: true, submit: true, arena });
+    const tab = tabStorage();
+    await fundPlayerWallet({ round: round27, invite: INVITE, seed, LockClient, storage: tab, donationMsat: 2000n, donationRecipients: DEVS });
+    const got = lockStake({ round: round27, roundId: rid27, invite: INVITE, seed, stake: { stakePoint: POINT }, playerPubkey: player,
+      LockClient, storage: tab, donationMsat: 2000n, donationRecipients: DEVS, ...extra });
+    return { got, log };
+  };
+  const { got: p, log } = await go('same');
+  const got = await p;
+  assert.deepEqual(log.filter((l) => l.lockSubmit || l.lockBoth || l.lockWithDonations || l.lock || l.arenaLockSubmit || l.arenaLockAccepted).map((l) => Object.keys(l)[0]),
+    ['arenaLockSubmit', 'arenaLockAccepted'], 'stake, fee and donation were not one Arena transaction');
+  const sub = log.find((l) => l.arenaLockSubmit).arenaLockSubmit;
+  assert.deepEqual(sub.stake.claimKeys, round27.nodes.map(toHex));
+  assert.equal(sub.stake.threshold, 2);
+  assert.equal(sub.stake.roundId, toHex(rid27));
+  assert.equal(sub.stake.refundPk, toHex(refundKeyOf(player)));
+  assert.equal(sub.stake.paymentImage.kind, 'point');
+  assert.equal(sub.fee.paymentImage.kind, 'hash');
+  assert.equal(sub.fee.paymentImage.bytes, toHex(sha256(feeSecretFor(seed, rid27))));
+  assert.deepEqual(sub.donations.map((d) => d.msat), ['1334', '666']);
+  // the entry's outpoints and fields: an Arena lock, its id the fields' own, handed to the seats as the Arena lock's JSON
+  assert.equal(got.fields.arena, true);
+  assert.equal(got.fields.expiration, 1144);
+  assert.equal(got.contractId, toHex(arenaLockContractId(got.fields)));
+  assert.equal(got.feeLock.contractId, toHex(arenaLockContractId(got.feeLock.fields)));
+  assert.deepEqual([got.outpoint.outIdx, got.feeLock.outpoint.outIdx, ...got.donations.map((d) => d.outIdx)], [0n, 1n, 2n, 3n]);
+  const json = lockFieldsToJson(got.fields);
+  assert.deepEqual(json.claimKeys, round27.nodes.map(toHex));
+  assert.equal(json.claimPk, undefined);
+  const back = lockFieldsFromJson(json);
+  assert.equal(back.arena, true);
+  assert.equal(toHex(arenaLockContractId(back)), got.contractId);
+  assert.equal((await got.accepted).ok, true);
+  // the guardians hold the stake elsewhere: acceptance rejects
+  await assert.rejects((await (await go('moved')).got).accepted, /another output than the entry names/);
+  // a lock client that answers another id than the fields make: refused before the entry names it
+  await assert.rejects((await go('lie')).got, /another Arena lock than the one this page computes/);
+  // the seating the page verified: the same keys in any order pass, other keys refuse
+  assert.equal((await (await go('same', { seating: [...round27.nodes].reverse() })).got).fields.arena, true);
+  await assert.rejects((await go('same', { seating: [b32(0x31), b32(0x33)] })).got, /not the seating this page verified/);
+  // a lock client without the Arena lock: refused by name, nothing locked
+  await assert.rejects((await go(null)).got, /locks to an Arena lock \(protocol 27\), and this page's lock client cannot/);
+  // a protocol-26 round keeps the step-0 claim key
+  const { LockClient } = lockClient({ feeRule: RULE, both: true, submit: true });
+  await assert.rejects(lockStake({ round: { ...round27, protocolVersion: 26 }, roundId: rid27, invite: INVITE, seed, stake: { stakePoint: POINT }, playerPubkey: player,
+    LockClient, storage: tabStorage() }), /no claim key has its signer nodes' attestation/);
 });

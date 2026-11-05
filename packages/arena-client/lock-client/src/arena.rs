@@ -6,6 +6,10 @@
 //!   arenaLockContractId(fields)              the contract id (hex), no federation
 //!   arenaModuleVersion()                     the federation's LNv2 module version; the lock needs 1.100
 //!   arenaLock(fields, expiry_delta)          one Arena lock funded from this ecash, and what the guardians stored
+//!   arenaLockSubmit(stake, fee, expiry_delta, donations)
+//!                                            the stake lock, the fee lock (fee "" for none) and the donation outputs in ONE
+//!                                            transaction, answered on submission (lockSubmit's shape, "arena": true)
+//!   arenaLockAccepted(submitted)             its acceptance, every output read where it was built (lockAccepted's shape)
 //!   arenaLockStatus(txid, out_idx)           the block count and the lock held there, if any
 //!   arenaRedeem(txid, out_idx, witness, player_secret)
 //!                                            witness {"kind":"cancel","signers":[..],"signature":HEX} or {"kind":"refund"}
@@ -25,12 +29,16 @@ use fedimint_core::secp256k1::schnorr::Signature;
 use fedimint_core::secp256k1::{PublicKey, SECP256K1, SecretKey, XOnlyPublicKey};
 use fedimint_core::{Amount, OutPoint, TransactionId};
 use fedimint_lnv2_common::arena_lock::{ArenaLockContract, ArenaLockWitness};
-use fedimint_lnv2_common::contracts::PaymentImage;
+use fedimint_lnv2_common::contracts::{OutgoingContract, PaymentImage};
 use fedimint_lnv2_common::endpoint_constants::{ARENA_LOCK_CONTRACT_ENDPOINT, MODULE_CONSENSUS_VERSION_ENDPOINT};
-use fedimint_lnv2_common::{ARENA_LOCK_CONSENSUS_VERSION, LightningInput, LightningOutput};
+use fedimint_lnv2_common::{ARENA_LOCK_CONSENSUS_VERSION, LightningInput, LightningOutput, LightningOutputV0};
 use wasm_bindgen::prelude::{JsError, wasm_bindgen};
 
-use crate::{LockClient, block_count, consensus_with_retries, js, secret_from_hex};
+use crate::{LockClient, block_count, consensus_with_retries, donation_image, js, secret_from_hex, stored_soon};
+
+/// The federations a threshold of guardians said run the Arena lock (module version >= 1.100). A version never goes down
+/// (ruling #1134 1), so a "yes" is kept for the page's life and a join asks once.
+static ARENA_YES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
 fn contract_from_fields(fields: &str, expiration: Option<u64>) -> Result<ArenaLockContract, JsError> {
     let f: serde_json::Value = serde_json::from_str(fields).map_err(js)?;
@@ -138,6 +146,140 @@ impl LockClient {
             }
         }
         Err(js(format!("the lock transaction {txid} was accepted but no outpoint of it holds this Arena lock")))
+    }
+
+    /// THE STAKE, ITS FEE LOCK AND THE PLAYER'S DONATION IN ONE TRANSACTION, FOR A PROTOCOL-27 ROUND (kanban #1044 B1): as
+    /// `lockSubmit`, with the stake and the fee lock Arena locks (`stake`, `fee`: the lock fields without expiration; `fee` ""
+    /// for none) and each donation the same pre-expired payout contract `lockSubmit` makes - the seats' verifyEntryGifts reads
+    /// the donation outputs in the stake's own transaction. Refused before anything is paid when the federation does not run
+    /// the Arena lock or a lock's fields would be refused. Answered on submission: { operation, txid, block_count_at_lock,
+    /// expiry_delta, with_fee, arena: true, outputs: [{ out_idx, role, computed_contract_id, computed_expiration, amount_msat,
+    /// recipient_pk }] }; `arenaLockAccepted` checks each against what the guardians store.
+    #[wasm_bindgen(js_name = arenaLockSubmit)]
+    pub async fn arena_lock_submit(&self, stake: String, fee: String, expiry_delta: u32, donations: String) -> Result<String, JsError> {
+        let api = self.client.api().with_module(self.lnv2);
+        let fed = self.client.federation_id().to_string();
+        let known = ARENA_YES.lock().map(|g| g.contains(&fed)).unwrap_or(false);
+        if !known {
+            let v = module_version(&api).await.map_err(|e| js(format!("this federation does not run the Arena lock: {e}")))?;
+            if v < ARENA_LOCK_CONSENSUS_VERSION {
+                return Err(js(format!("this federation runs LNv2 {}.{}, the Arena lock needs 1.100", v.major, v.minor)));
+            }
+            if let Ok(mut g) = ARENA_YES.lock() {
+                g.push(fed);
+            }
+        }
+        let count = self.count_for_lock(&api).await.map_err(js)?;
+        let expiration = count + u64::from(expiry_delta);
+        let mut locks: Vec<(ArenaLockContract, &str)> = vec![(contract_from_fields(&stake, Some(expiration))?, "stake")];
+        let with_fee = !fee.trim().is_empty();
+        if with_fee {
+            locks.push((contract_from_fields(&fee, Some(expiration))?, "fee"));
+        }
+        for (c, role) in &locks {
+            c.validate().map_err(|e| js(format!("the {role} lock would be refused: {e}")))?;
+        }
+        let given: Vec<serde_json::Value> = serde_json::from_str(&donations).map_err(js)?;
+        let mut gifts: Vec<OutgoingContract> = Vec::with_capacity(given.len());
+        for d in &given {
+            let pk = PublicKey::from_str(d.get("pk").and_then(|v| v.as_str()).ok_or_else(|| js("a donation names no pk"))?).map_err(js)?;
+            let msat: u64 = d.get("msat").and_then(|v| v.as_str()).ok_or_else(|| js("a donation names no msat"))?.parse().map_err(js)?;
+            if msat == 0 {
+                return Err(js("a donation output of 0 msat is not made"));
+            }
+            gifts.push(OutgoingContract {
+                payment_image: donation_image(d)?,
+                amount: Amount::from_msats(msat),
+                expiration: 0,
+                claim_pk: pk,
+                refund_pk: pk,
+                ephemeral_pk: pk,
+            });
+        }
+        let mut outputs: Vec<ClientOutput<LightningOutput>> = locks
+            .iter()
+            .map(|(c, _)| ClientOutput { output: LightningOutput::ArenaLock(c.clone()), amounts: Amounts::new_bitcoin(c.amount) })
+            .collect();
+        outputs.extend(gifts.iter().map(|c| ClientOutput {
+            output: LightningOutput::V0(LightningOutputV0::Outgoing(c.clone())),
+            amounts: Amounts::new_bitcoin(c.amount),
+        }));
+        let bundle = ClientOutputBundle::new_no_sm(outputs).into_dyn(self.lnv2);
+        let operation = OperationId::new_random();
+        let change = self
+            .client
+            .finalize_and_submit_transaction(operation, "arena-lock", |_| (), TransactionBuilder::new().with_outputs(bundle))
+            .await
+            .map_err(js)?;
+        let txid = change.txid();
+        let mut built: Vec<serde_json::Value> = locks
+            .iter()
+            .enumerate()
+            .map(|(i, (c, role))| {
+                serde_json::json!({ "out_idx": i, "role": role, "computed_contract_id": c.contract_id().0.to_string(),
+                    "computed_expiration": c.expiration, "amount_msat": c.amount.msats, "recipient_pk": serde_json::Value::Null })
+            })
+            .collect();
+        built.extend(gifts.iter().enumerate().map(|(i, c)| {
+            serde_json::json!({ "out_idx": locks.len() + i, "role": "donation", "computed_contract_id": c.contract_id().0.to_string(),
+                "computed_expiration": c.expiration, "amount_msat": c.amount.msats, "recipient_pk": c.refund_pk.to_string() })
+        }));
+        Ok(serde_json::json!({
+            "operation": operation.fmt_full().to_string(), "txid": txid.to_string(), "block_count_at_lock": count,
+            "expiry_delta": expiry_delta, "with_fee": with_fee, "arena": true, "outputs": built,
+        })
+        .to_string())
+    }
+
+    /// AND ITS ACCEPTANCE: `arenaLockSubmit`'s answer awaited until the guardians accept it, then every output read where it
+    /// was built - an Arena lock by the Arena lock's endpoint, a donation as `lockAccepted` reads one - and its stored id
+    /// compared with the id computed. JSON in `lockAccepted`'s shape: { stake, fee, donations }, each { txid, out_idx,
+    /// computed_contract_id, stored_contract_id, computed_expiration, stored_expiration, ids_match, amount_msat, recipient_pk }.
+    /// An output held nowhere is an error: the entry named that outpoint.
+    #[wasm_bindgen(js_name = arenaLockAccepted)]
+    pub async fn arena_lock_accepted(&self, submitted: String) -> Result<String, JsError> {
+        let s: serde_json::Value = serde_json::from_str(&submitted).map_err(js)?;
+        let operation = OperationId::from_str(s.get("operation").and_then(|v| v.as_str()).ok_or_else(|| js("no operation"))?).map_err(js)?;
+        let txid = TransactionId::from_str(s.get("txid").and_then(|v| v.as_str()).ok_or_else(|| js("no txid"))?).map_err(js)?;
+        let outputs = s.get("outputs").and_then(|v| v.as_array()).ok_or_else(|| js("no outputs"))?.clone();
+        self.client
+            .transaction_updates(operation)
+            .await
+            .await_tx_accepted(txid)
+            .await
+            .map_err(|e| js(format!("the guardians did not accept the lock transaction: {e}")))?;
+        let api = self.client.api().with_module(self.lnv2);
+        let at_read = block_count(&api).await.map_err(js)?;
+        let mut stake = serde_json::Value::Null;
+        let mut fee = serde_json::Value::Null;
+        let mut donations = Vec::new();
+        for o in &outputs {
+            let out_idx = o.get("out_idx").and_then(|v| v.as_u64()).ok_or_else(|| js("an output names no index"))?;
+            let role = o.get("role").and_then(|v| v.as_str()).unwrap_or("");
+            let computed = o.get("computed_contract_id").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let outpoint = OutPoint { txid, out_idx };
+            let (stored_id, stored_expiration) = if role == "donation" {
+                let (id, left) = stored_soon(&api, outpoint, 40).await.map_err(js)?
+                    .ok_or_else(|| js(format!("the lock transaction {txid} was accepted but its output {out_idx} holds no donation contract")))?;
+                (id.0.to_string(), at_read + left)
+            } else {
+                let (held, _) = stored(&api, outpoint).await.map_err(js)?
+                    .ok_or_else(|| js(format!("the lock transaction {txid} was accepted but its output {out_idx} holds no Arena lock")))?;
+                (held.contract_id().0.to_string(), held.expiration)
+            };
+            let one = serde_json::json!({
+                "txid": txid.to_string(), "out_idx": out_idx, "computed_contract_id": computed, "stored_contract_id": stored_id,
+                "computed_expiration": o.get("computed_expiration").cloned().unwrap_or_default(), "stored_expiration": stored_expiration,
+                "ids_match": stored_id == computed, "amount_msat": o.get("amount_msat").cloned().unwrap_or_default(),
+                "recipient_pk": o.get("recipient_pk").cloned().unwrap_or_default(), "block_count_at_read": at_read,
+            });
+            match role {
+                "stake" => stake = one,
+                "fee" => fee = one,
+                _ => donations.push(one),
+            }
+        }
+        Ok(serde_json::json!({ "stake": stake, "fee": fee, "donations": donations }).to_string())
     }
 
     #[wasm_bindgen(js_name = arenaLockStatus)]

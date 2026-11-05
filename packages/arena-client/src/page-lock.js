@@ -33,6 +33,7 @@ import { encodeRoundContract, decodeRoundContract, roundId as roundIdOf, custody
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 import { takesDeposits } from '../../arena-protocol/src/known-federations.js';
 import { splitDonation, donationSetPaysKeys } from '../../arena-protocol/src/donation.js';
+import { namedClaims, namedClaimKeys, arenaLockFor, arenaLockContractId, arenaLockValid, arenaLockFieldsToJson } from '../../arena-protocol/src/arena-lock.js';
 
 const namesNothing = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
 
@@ -1349,9 +1350,12 @@ export function donationOutputsFromClient(said, shares) {
  * holds it, and the wallet's balance before and after.
  */
 export async function lockStake({ round, roundId, invite, seed, stake, claimKey, playerPubkey, LockClient,
-  storage, donationMsat = 0n, donationRecipients = null, onStep = () => {} } = {}) {
+  storage, donationMsat = 0n, donationRecipients = null, onStep = () => {}, seating = null } = {}) {
   paysIntoALock(round, invite, LockClient);
   if (!stake || namesNothing(stake.stakePoint)) throw new Error('a lock is to the stake\'s point, and this stake names none');
+  // A PROTOCOL-27 ROUND LOCKS TO AN ARENA LOCK (kanban #1044 B1, ruling #1131 2): its claim names the round's settlement seats' own node keys,
+  // so there is no per-round claim key and no step-0 attestation to wait for
+  if (namedClaims(round)) return lockArenaStake({ round, roundId, invite, seed, stake, playerPubkey, LockClient, storage, donationMsat, donationRecipients, onStep, seating });
   if (!claimKey || !claimKey.ok || namesNothing(claimKey.claimPk))
     throw new Error('no claim key has its signer nodes\' attestation: a client must refuse to lock to a key without it (23.1 step 0)');
   if (!(playerPubkey instanceof Uint8Array) || playerPubkey.length !== 32)
@@ -1476,6 +1480,84 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
     feeLock = { ...made, preimage };
   }
   return { ...lock, client, feeLock, feeGate, walletBeforeMsat: before, walletAfterMsat: BigInt(await client.balanceMsat()) };
+}
+
+/**
+ * THE ARENA LOCK OF A PROTOCOL-27 ROUND (kanban #1044 B1, rulings #1131 1-2, #1134): the stake lock and, when Pick b's gate says it pays, the
+ * fee lock are the fork's ArenaLockContract - the round's settlement seats' node keys in seat order (the round contract's `nodes`), its
+ * threshold, its round id, the player's refund key - and the donation outputs ride in the SAME transaction (the seats' verifyEntryGifts reads
+ * them there). `seating`, when given, is the settlement seating this page verified (§5A.5): the keys must be exactly it. Submitted at once
+ * (`arenaLockSubmit`), accepted behind (`arenaLockAccepted`), each output checked against the id computed here; the entry hands the seats
+ * the lock's JSON (lockFieldsToJson, `arena: true`).
+ */
+export async function lockArenaStake({ round, roundId, invite, seed, stake, playerPubkey, LockClient, storage, donationMsat = 0n,
+  donationRecipients = null, onStep = () => {}, seating = null } = {}) {
+  if (!(playerPubkey instanceof Uint8Array) || playerPubkey.length !== 32)
+    throw new Error('a lock refunds to the player\'s key, and that is 32 bytes');
+  if (!(roundId instanceof Uint8Array) || roundId.length !== 32) throw new Error('an Arena lock names its round, and this one names none');
+  const { seatKeys, threshold } = namedClaimKeys(round);
+  // the contract fixes the order (its sorted `nodes`, the seats' order); the seating the page verified must be the same keys
+  const seen = new Set((seating || []).map((k) => toHex(k)));
+  if (seating && (seen.size !== seatKeys.length || seatKeys.some((k) => !seen.has(toHex(k)))))
+    throw new Error('this round\'s settlement seats are not the seating this page verified: no stake is locked to them');
+  const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
+  if (typeof client.arenaLockSubmit !== 'function' || typeof client.arenaLockAccepted !== 'function')
+    throw new Error('this round locks to an Arena lock (protocol 27), and this page\'s lock client cannot - reload the page');
+  const locks = await locksFor(round, client, donationMsat, donationRecipients);
+  const { amount, feeGate, feeMsat } = locks;
+  const before = BigInt(await client.balanceMsat());
+  const n = await needFor(client, LockClient, locks);
+  if (n.need === null || before < n.need)
+    throw new Error(`no stake is locked to this round: the player wallet holds ${before} msat and this round's locks need `
+      + `${n.need === null ? `at least ${n.floor}` : n.need} msat - top the player wallet up first; the stake itself asks for no deposit`);
+  const refundPk = refundKeyOf(playerPubkey);
+  const delta = Number(round.stakeExpiryBlocks);
+  const donationShares = donationKeyShares(donationMsat, donationRecipients);
+  const preimage = feeGate.pays ? feeSecretFor(seed, roundId) : null;
+  const image = preimage ? sha256(preimage) : null;
+  const entry = { playerPubkey };
+  const stakeFields = { ...arenaLockFor({ kind: 'stake', entry, roundId, seatKeys, threshold, amountMsat: amount, imageBytes: stake.stakePoint }), refundPk };
+  const feeFields = feeGate.pays ? { ...arenaLockFor({ kind: 'fee', entry, roundId, seatKeys, threshold, amountMsat: feeMsat, imageBytes: image }), refundPk } : null;
+  for (const [what, f] of [['stake', stakeFields], ['fee', feeFields]]) {
+    if (!f) continue;
+    const v = arenaLockValid(f);
+    if (!v.ok) throw new Error(`no ${what} lock is made for this round: ${v.why}`);
+  }
+  const asJson = (f) => { const j = arenaLockFieldsToJson({ ...f, expiration: 0 }); delete j.expiration; return JSON.stringify(j); };
+  onStep(`locking the stake${feeGate.pays ? ', the node fee' : ''}${donationShares.length ? ' and the donation' : ''} to the round's ${seatKeys.length} settlement seats, ${threshold} named signers (submitted, accepted behind)`);
+  const submitted = JSON.parse(await client.arenaLockSubmit(asJson(stakeFields), feeFields ? asJson(feeFields) : '', delta,
+    JSON.stringify(donationShares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat), image: toHex(playerPubkey) })))));
+  if (submitted.arena !== true) throw new Error('the lock client answered a stock lock for a round that locks to an Arena lock');
+  const outs = submitted.outputs || [];
+  const built = (o, fields) => {
+    if (!o) return null;
+    const f = { ...fields, expiration: Number(o.computed_expiration), arena: true };
+    if (BigInt(o.amount_msat) !== f.amountMsat) throw new Error(`the lock client built ${o.amount_msat} msat, and this lock holds ${f.amountMsat}`);
+    if (!Number.isSafeInteger(f.expiration) || f.expiration < 1) throw new Error('the lock client built no expiration');
+    const id = toHex(arenaLockContractId(f));
+    if (String(o.computed_contract_id).toLowerCase() !== id) throw new Error('the lock client built another Arena lock than the one this page computes');
+    return { outpoint: { txid: fromHex(submitted.txid), outIdx: BigInt(o.out_idx) }, fields: f, contractId: id };
+  };
+  const lock = built(outs.find((o) => o.role === 'stake'), stakeFields);
+  if (!lock) throw new Error('the lock client built no stake lock');
+  const feeMade = feeFields ? built(outs.find((o) => o.role === 'fee'), feeFields) : null;
+  if (feeFields && !feeMade) throw new Error('the lock client built no fee lock, and this entry pays one');
+  const feeLock = feeMade ? { ...feeMade, preimage } : null;
+  const donations = donationOutputsFromClient(outs.filter((o) => o.role === 'donation').map((o) => ({ ...o, txid: submitted.txid, ids_match: true })), donationShares);
+  const held = (said, made, what) => {
+    if (!said || said.ids_match !== true || String(said.stored_contract_id).toLowerCase() !== made.contractId || BigInt(said.out_idx) !== made.outpoint.outIdx)
+      throw new Error(`the guardians hold the ${what} lock at another output than the entry names`);
+    if (Number(said.stored_expiration) !== made.fields.expiration) throw new Error(`the guardians hold the ${what} lock to another expiration than built`);
+  };
+  const accepted = (async () => {
+    const all = JSON.parse(await client.arenaLockAccepted(JSON.stringify(submitted)));
+    held(all.stake, lock, 'stake');
+    if (feeLock) held(all.fee, feeLock, 'fee');
+    donationOutputsFromClient(all.donations, donationShares);
+    return { ok: true, walletAfterMsat: BigInt(await client.balanceMsat()) };
+  })();
+  accepted.catch(() => { /* the caller is handed it; unobserved, it must not be an unhandled rejection */ });
+  return { ...lock, client, feeLock, feeGate, donations, accepted, walletBeforeMsat: before, walletAfterMsat: null };
 }
 
 const FEE_SECRET_TAG = new TextEncoder().encode('blwp fee preimage v1');

@@ -19,7 +19,6 @@
 // (module_consensus_version; RULED #1134 1). From the height a seat neither opens, lists nor enters a round in a federation without it.
 //
 // Pure: encoding, ids, the rules a seat checks. The MuSig2 math is the seat's (arena-node/src/named-claim.js).
-import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { taggedHash, toHex, fromHex } from './hash.js';
 import { lockMatchesEntry } from './stake-lock.js';
 import { STAKE_EXPIRY_BLOCKS, networkOf } from './constants.js';
@@ -85,7 +84,7 @@ export const ARENA_LOCK_CONTRACT_TAG = 'ARENA/v1/LockContract';
 export const ARENA_LOCK_MAX_KEYS = 7;
 
 /** Fedimint's integer encoding (lightning BigSize, big-endian). */
-function bigsize(n) {
+function lockBigsize(n) {
   const v = BigInt(n);
   if (v < 0n) throw new Error('BigSize is unsigned');
   if (v < 0xfdn) return Uint8Array.of(Number(v));
@@ -95,8 +94,8 @@ function bigsize(n) {
   if (v <= 0xffffffffffffffffn) return Uint8Array.from([0xff, ...be(8)]);
   throw new Error('BigSize is at most 64 bits');
 }
-const cat = (...parts) => { const out = new Uint8Array(parts.reduce((s, p) => s + p.length, 0)); let at = 0; for (const p of parts) { out.set(p, at); at += p.length; } return out; };
-const sized = (b, n, what) => { if (!(b instanceof Uint8Array) || b.length !== n) throw new Error(`${what} is ${n} bytes`); return b; };
+const lockCat = (...parts) => { const out = new Uint8Array(parts.reduce((s, p) => s + p.length, 0)); let at = 0; for (const p of parts) { out.set(p, at); at += p.length; } return out; };
+const lockSized = (b, n, what) => { if (!(b instanceof Uint8Array) || b.length !== n) throw new Error(`${what} is ${n} bytes`); return b; };
 
 /**
  * THE CONTRACT'S CONSENSUS ENCODING, byte for byte as the fork's derive writes it: the payment image an enum (variant BigSize, then its bytes
@@ -104,13 +103,13 @@ const sized = (b, n, what) => { if (!(b instanceof Uint8Array) || b.length !== n
  */
 export function encodeArenaLockContract(f) {
   const img = f.paymentImage || {};
-  const image = img.kind === 'hash' ? cat(bigsize(0), bigsize(32), sized(img.bytes, 32, 'a hash image'))
-    : img.kind === 'point' ? cat(bigsize(1), bigsize(33), sized(img.bytes, 33, 'a point image'))
+  const image = img.kind === 'hash' ? lockCat(lockBigsize(0), lockBigsize(32), lockSized(img.bytes, 32, 'a hash image'))
+    : img.kind === 'point' ? lockCat(lockBigsize(1), lockBigsize(33), lockSized(img.bytes, 33, 'a point image'))
       : (() => { throw new Error('a payment image is a point or a hash'); })();
   if (!Array.isArray(f.claimKeys)) throw new Error('a lock names its claim keys');
   if (!Number.isInteger(f.threshold) || f.threshold < 0 || f.threshold > 255) throw new Error('a threshold is one byte');
-  return cat(image, bigsize(f.amountMsat), bigsize(f.expiration), sized(f.roundId, 32, 'a round id'), bigsize(f.claimKeys.length),
-    ...f.claimKeys.map((k) => sized(k, 32, 'a claim key')), Uint8Array.of(f.threshold), sized(f.refundPk, 33, 'a refund key'));
+  return lockCat(image, lockBigsize(f.amountMsat), lockBigsize(f.expiration), lockSized(f.roundId, 32, 'a round id'), lockBigsize(f.claimKeys.length),
+    ...f.claimKeys.map((k) => lockSized(k, 32, 'a claim key')), Uint8Array.of(f.threshold), lockSized(f.refundPk, 33, 'a refund key'));
 }
 /** The contract id the guardians store the lock under (and its forfeit message). */
 export const arenaLockContractId = (f) => taggedHash(ARENA_LOCK_CONTRACT_TAG, encodeArenaLockContract(f));
@@ -193,7 +192,7 @@ export function namedSignerSet({ committed, threshold, dropped = [] }) {
  */
 export function commitNoncesOf(pubnonce) {
   // (protocol 27 settlements commit to one nonce pair per message: settlement-ack.js settlementCommitBody `nonces`)
-  sized(pubnonce, 66, 'a public nonce');
+  lockSized(pubnonce, 66, 'a public nonce');
   return { hiding: pubnonce.slice(0, 33), binding: pubnonce.slice(33) };
 }
 
@@ -203,12 +202,16 @@ export function commitNoncesOf(pubnonce) {
  */
 export const zKey = (() => {
   let z = null;
+  // on the curve: x below p and x^3 + 7 a square mod p (Euler's criterion) - plain BigInt, so the page's bundle carries no curve library
+  const P = 2n ** 256n - 2n ** 32n - 977n;
+  const pow = (b, e) => { let r = 1n; b %= P; while (e > 0n) { if (e & 1n) r = (r * b) % P; b = (b * b) % P; e >>= 1n; } return r; };
+  const onCurve = (x) => { if (x >= P) return false; const y2 = (pow(x, 3n) + 7n) % P; return y2 === 0n || pow(y2, (P - 1n) / 2n) === 1n; };
   return () => {
     if (z) return z.slice();
     for (let i = 0; ; i++) {
       const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, i);
-      const cand = Uint8Array.from([0x02, ...taggedHash('ARENA/v1/SignerSetKey', b)]);
-      try { secp256k1.Point.fromBytes(cand); z = cand; return z.slice(); } catch { /* not on the curve: the next i */ }
+      const x = taggedHash('ARENA/v1/SignerSetKey', b);
+      if (onCurve(BigInt('0x' + toHex(x)))) { z = Uint8Array.from([0x02, ...x]); return z.slice(); }
     }
   };
 })();
