@@ -21,6 +21,9 @@ import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donatio
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 import { toHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { keepLockSessionFloor } from '../src/stake-lock-signer-node.js';
+import { openStore } from '../src/store.js';
+import { Round } from '../src/round.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const seats = [1, 2, 3, 4, 5, 6, 7].map((n) => { const secret = b32(0x40 + n); return { secret, pubkey: schnorr.getPublicKey(secret) }; });
@@ -163,4 +166,51 @@ test('a seat\'s judge holds a filed row (b) on its own reading of the proof\'s s
   // the same proof over sessions that do not verify is false
   const forged = await judgeWith(async (input) => ({ mode: 'arena-claim-read', federation_id: FID, first_session: input.firstSession, sessions: input.sessions.length, unverified: [3], spends: SPENDS }))(complete);
   assert.equal(forged.verdict, false);
+});
+
+// ---- ruling #1138 1 (i): the bound kept at the first verified lock, once per federation, the lower of it and POST /round's
+
+test('the first verified lock of a round in a federation keeps that federation\'s session count as the bound, once, across a restart, the lower one standing', async () => {
+  const db = openStore(':memory:');
+  const round = new Round(db);
+  const asked = [];
+  const port = fakePort(asked);
+  assert.equal(await keepLockSessionFloor({ round, port, roundId: RID, federationId: TEST_FEDERATION_ID }), 7);
+  assert.equal(await keepLockSessionFloor({ round, port, roundId: RID, federationId: TEST_FEDERATION_ID }), null, 'a second lock reads no count');
+  assert.equal(asked.filter((a) => a[0] === 'count').length, 1);
+  assert.equal(new Round(db).fundingSessionFloor(RID, FID), 7, 'the bound survives a restart');
+  // a second federation of the same round keeps its own
+  const other = 'ab'.repeat(32);
+  await keepLockSessionFloor({ round, port: { sessionCount: async () => 11 }, roundId: RID, federationId: Buffer.from(other, 'hex') });
+  assert.equal(round.fundingSessionFloor(RID, other), 11);
+  // the lower of two readings stands, whichever came first
+  round.keepFundingSessionFloor(RID, FID, 9);
+  assert.equal(round.fundingSessionFloor(RID, FID), 7);
+  round.keepFundingSessionFloor(RID, FID, 4);
+  assert.equal(round.fundingSessionFloor(RID, FID), 4);
+  // a federation whose count cannot be read keeps nothing and fails nothing
+  assert.equal(await keepLockSessionFloor({ round, port: { sessionCount: async () => { throw new Error('down'); } }, roundId: RID, federationId: b32(0x77) }), null);
+  assert.equal(round.fundingSessionFloor(RID, toHex(b32(0x77))), null);
+});
+
+test('a lock funded below the bound kept at its verification is read back to its funding, and the claim is filed', async () => {
+  // the claim's lock is funded in a session below the bound: the reader names no keys for it until the read reaches its funding
+  const asked = [];
+  const reads = [];
+  const port = {
+    sessionExport: async ({ from }) => { asked.push(from); return { federationId: FID, config: Uint8Array.from([9]), firstSession: from, sessions: [Uint8Array.from([1])] }; },
+    arenaClaimRead: async (input) => {
+      reads.push(input.firstSession);
+      const funded = input.firstSession <= 20;
+      return { mode: 'arena-claim-read', federation_id: FID, first_session: input.firstSession, sessions: 1, unverified: [],
+        spends: SPENDS.map((x) => ({ ...x, lock: funded ? x.lock : null, named_keys: funded ? x.named_keys : null, body_id: funded ? x.body_id : null })) };
+    },
+  };
+  const round = fakeRound({ floor: 30 });
+  const anyFed = { ...contract };
+  const s = new LockSettlement({ ...round, get: () => ({ contract: encodeRoundContract(anyFed) }) }, { port, curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
+  const report = await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
+  assert.deepEqual(asked, [30, 22, 14], 'the read reaches back, doubling, until the funding is in it');
+  assert.equal(report.filed.length, 6, report.refused.join('; '));
+  for (const f of round.filed) assert.equal(splitNamedClaimEvidence(f.bytes).firstSession, 14, 'the proof carries the sessions from the funding');
 });

@@ -173,6 +173,23 @@ export async function arenaLockStands({ contract, entry, kind, fields, outpoint,
   return m.ok ? { ok: true, contractId: id, height: st.blockCount } : m;
 }
 
+/**
+ * THE FILER'S LOWER BOUND, KEPT AT THE FIRST VERIFIED LOCK (kanban #1044 B1, ruling #1138 1 (i)): when this seat first verifies a lock of a protocol-27 round
+ * in a federation, it keeps that federation's session count as the bound for (round, federation) - once per federation, across restarts, the lower of it
+ * and one kept at POST /round. A claim or forfeit rows (a)/(b) read comes after this verification, so none sits below it. A failed read never fails the lock.
+ */
+export async function keepLockSessionFloor({ round, port, roundId, federationId }) {
+  if (!round.keepFundingSessionFloor || !round.fundingSessionFloor || !port || typeof port.sessionCount !== 'function') return null;
+  const fid = hexOf(federationId);
+  if (round.fundingSessionFloor(roundId, fid) !== null) return null;
+  try {
+    const count = await port.sessionCount();
+    if (!Number.isInteger(Number(count))) return null;
+    round.keepFundingSessionFloor(roundId, fid, Number(count));
+    return Number(count);
+  } catch { return null; }
+}
+
 // `timing` (kanban #605): an object the caller reads afterwards - ms spent asking the federation, checking gifts and reading the fee gate
 export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined, timing = {}, namedGate = null }) {
   const stored = round.entry(entryIdBytes);
@@ -202,6 +219,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
     if (!arena.ok) return arena;
     timing.statusMs = Date.now() - t;
     id = arena.contractId; st = { blockCount: arena.height };
+    await keepLockSessionFloor({ round, port, roundId: entry.roundId, federationId: fed.federationId });
   } else {
   // THE FEDERATION'S WORD AND THE CONTRACT'S ID ASKED TOGETHER (2026-10-02: "stake/fee verification of 5 of 7
   // confirmations must also be much faster"): two stock-client runs, one after the other before.
@@ -265,6 +283,7 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   if (arena) {
     if (!arena.ok) return arena;
     id = arena.contractId; st = { blockCount: arena.height };
+    await keepLockSessionFloor({ round, port, roundId: entry.roundId, federationId: fed.federationId });
   } else {
   [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s fee_lock_outpoint' };
