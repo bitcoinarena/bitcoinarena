@@ -37,7 +37,7 @@ export const filerRank = (proofId, keys, me) => [...keys].sort((a, b) => (toHex(
  * THE REPAID FEE (sweep): `txOut(txid display, vout)` a confirmed unspent output { sats, script hex } or null (bitcoind's gettxout without the mempool); `returnScript()` this node's own wallet
  * script; `ownServed(start)` this seat's own GET /slash-release answer, if it built the release or the fallback itself.
  */
-export function createSlashStarter({ key, network, db, store, thresholdOf, tipHeight, entriesAtTip, heldProofs, bytesOf, judge, holdsFor, feeCoin, send, urlsOf, checkOther = null, feeSecret = () => schnorr.utils.randomSecretKey(), stepMs = 600000, feeSats = 700n, fetchFn = fetch, now = Date.now, log = () => {},
+export function createSlashStarter({ key, network, db, store, thresholdOf, tipHeight, entriesAtTip, heldProofs, bytesOf, judge, holdsFor, feeCoin, send, urlsOf, checkOther = null, feeSecret = () => schnorr.utils.randomSecretKey(), stepMs = 600000, judgeAgainMs = 600000, feeSats = 700n, fetchFn = fetch, now = Date.now, log = () => {},
   txOut = null, returnScript = async () => null, ownServed = null, sweepEveryMs = 60000 }) {
   const me = toHex(key);
   db.exec(`CREATE TABLE IF NOT EXISTS slash_starts (proof_id BLOB PRIMARY KEY, bond TEXT NOT NULL, txid TEXT NOT NULL, kept_ms INTEGER NOT NULL)`);
@@ -126,6 +126,9 @@ export function createSlashStarter({ key, network, db, store, thresholdOf, tipHe
   const skipSaid = new Map();
   const skipped = (p, why) => { const k = toHex(p.proofId); if (skipSaid.get(k) === why) return; skipSaid.set(k, why); if (skipSaid.size > 1024) skipSaid.delete(skipSaid.keys().next().value); log(`[slash] ${k.slice(0, 16)} not filed: ${why}`); };
 
+  // A VERDICT IS ASKED ONCE PER `judgeAgainMs` (measured 2026-11-05 on the #1044 devnet: four proofs a named claim's judge could not say about were judged
+  // again every 500 ms pass at seven seats, each judgement an arena-settle run - load 160). A false one is not asked again; an undefined one after judgeAgainMs
+  const judged = new Map();
   /** One pass over the proofs this seat holds: nothing is replayed for a bond that is no template-3 unstarted bond of this census, or before this seat's turn. Only a proof this seat's own judge holds to is filed. */
   async function pass() {
     const done = [];
@@ -142,8 +145,14 @@ export function createSlashStarter({ key, network, db, store, thresholdOf, tipHe
       if (entry.advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V3) { skipped(p, `its bond is template ${entry.advert.bondScriptTemplateVersion}, not 3`); continue; }
       const keys = [...new Set(entries.map((e) => toHex(e.pubkey)))];
       if (now() - p.seenMs < filerRank(p.proofId, keys, me) * stepMs) continue;
+      const k = toHex(p.proofId), last = judged.get(k);
+      if (last && (last.verdict === false || now() - last.at < judgeAgainMs)) continue;
       const verdict = await judge(p.bytes);
-      if (verdict.verdict !== true) { skipped(p, `this seat's judge says ${verdict.verdict}: ${verdict.why}`); continue; }
+      if (verdict.verdict !== true) {
+        judged.set(k, { verdict: verdict.verdict, at: now() });
+        if (judged.size > 4096) judged.delete(judged.keys().next().value);
+        skipped(p, `this seat's judge says ${verdict.verdict}: ${String(verdict.why).slice(0, 200)}`); continue;
+      }
       let r; try { r = await file({ bytes: p.bytes, said, entry, entries }); } catch (e) { r = { ok: false, why: e.message }; }
       log(r.ok ? `[slash] start filed against ${toHex(entry.pubkey).slice(0, 16)}: ${r.txid}, ${r.signers.length} holders, ${r.shares} shares` : `[slash] no start against ${toHex(entry.pubkey).slice(0, 16)} yet: ${r.why}${r.refused && r.refused.length ? ` (${r.refused.map((x) => x.why).join('; ')})` : ''}`);
       done.push(r);

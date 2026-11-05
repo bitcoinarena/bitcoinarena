@@ -1761,14 +1761,14 @@ export class LockSettlement {
       const forfeits = forfeitsOfLostEntries({ spends: read.spends || [], entryOf: (o) => lockOf.get(String(o).toLowerCase()) || null,
         lostBy: (eid) => [...lostSigned.keys()].filter((k) => k.startsWith(`${eid}:`)).map((k) => k.slice(eid.length + 1)) });
       // ROW (a) AT LEVEL 2 (rulings #1138 2, #1140): EVERY claim of the round's locks, by who it pays - an output to a key the round may not pay, or the
-      // node row above the fee locks it claims. A claim already filed at level 1 is not filed again
+      // node row above the fee locks it claims. Filed beside a level-1 proof of the same claim too: a level-1 judge rebuilds the correct table's body through
+      // the federation, which holds no lock the claim spent (measured 2026-11-05, round a8e68cb6: every judge said undefined), and level 2 needs no rebuild
       const payees = this.payeesFor ? await this.payeesFor(contract, roundIdBytes).catch(() => null) : null;
       if (payees) {
-        const atLevel1 = new Set(filings.filter((x) => x.row === NAMED_ROW_OFF_TABLE).map((x) => `${x.txid}:${x.who}`));
         const entries = [...byId.values()].map((x) => x.entry);
         const readNow = [];
         for (const off of unpayableClaims({ spends: read.spends || [], roundId: rid, entries, payees, read: readNow })) {
-          for (const who of off.offenders) if (!atLevel1.has(`${off.txid}:${who}`))
+          for (const who of off.offenders)
             filings.push({ row: NAMED_ROW_PAYEE, who, txid: off.txid, why: off.why, parts: { ...sessions, row: NAMED_ROW_PAYEE, entries } });
         }
         // ONE LINE PER CLAIM READ, once: the gate (#1139) is measured on what honest settlements this seat read at level 2

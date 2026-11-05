@@ -56,7 +56,9 @@ const height = async () => { try { return (await (await get(`${SEATS[0]}/chain-t
 // THE SEAT ORDER: the contract's nodes, each one's devnet node by its /identity
 const ids = await Promise.all(SEATS.map(async (s) => toHex(new Uint8Array(await (await get(`${s}/identity`)).arrayBuffer()))));
 const order = contract.nodes.map((k) => ids.indexOf(toHex(k)));
-const armed = order.slice(0, 5);
+// ARMED_N (default 6): the claim is signed by the threshold (5), but with only 5 seats up one failed session of a body leaves no signer set at all
+// (measured 2026-11-05, round a8e68cb6: two armed askers at once, each seat's pair spent on the first list it saw); a sixth gives the signing its slack
+const armed = order.slice(0, Number(env.ARMED_N || 6));
 say({ step: 'round', scenario: SCENARIO, round: ROUND, version: contract.protocolVersion, censusHeight: contract.censusHeight, end: new Date(END).toISOString(),
   seatOrder: order.map((k) => k + 1), armed: SCENARIO === 'off-table' || SCENARIO === 'forfeit-lost' ? armed.map((k) => k + 1) : [] });
 if (SCENARIO === 'off-table') for (const k of armed) writeFileSync(offenceFile(k), `off-table ${ROUND}\n`);
