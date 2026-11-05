@@ -30540,7 +30540,13 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
   }
   const rows = [], closed = [];
   // A ROUND'S CONTRACT FROM A NODE THAT ANSWERED FIRST, so a silent one costs its limit once per paint, not once per row.
-  const answeredFirst = [...unique.filter((n) => !unanswered.includes(String(n))), ...unique.filter((n) => unanswered.includes(String(n)))];
+  // AND A NODE WHOSE READ FAILED OUTRIGHT GOES LAST TOO (kanban #1133, the owner's iPhone 2026-11-05 09:10 local: "raw 0 ... ref 11" - the page's
+  // kept list began with dead quick tunnels and the stopped T3 seats; fetchRound asked each of them twice, in order, before a live seat, so
+  // every contract came late or not at all, and a round that failed is held unreadable for UNREADABLE_MS: the lobby showed no window).
+  // Order: answered, then silent, then failed.
+  const failedSet = new Set(failed.map(String)), silentSet = new Set(unanswered.map(String));
+  const answeredFirst = [...unique.filter((n) => !failedSet.has(String(n))), ...unique.filter((n) => silentSet.has(String(n))),
+    ...unique.filter((n) => failedSet.has(String(n)) && !silentSet.has(String(n)))];
   // KEPT BY ID, FETCHED 16 AT A TIME (2026-09-30, testnet4 series 3cfbe516: ~450 rounds listed, each contract
   // fetched one after another on every paint). A round's id is its contract's hash, so a kept contract cannot go stale.
   // THE SOONEST FIRST, A FEW AT A READ (kanban #946, measured 2026-11-01: 304 contracts before the first paint, 3.6 of 7.7 s): a lobby shows the next round of each kind; the far ones come with the next reads
