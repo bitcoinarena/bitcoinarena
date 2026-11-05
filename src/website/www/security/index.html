@@ -53,6 +53,7 @@
   nav.site .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; display: flex; align-items: center; gap: 22px; height: 64px; }
   nav.site .brand { display: flex; align-items: center; gap: 10px; font: 700 19px system-ui; letter-spacing: -0.02em; text-decoration: none; white-space: nowrap; color: var(--text); }
   nav.site .brand i { width: 30px; height: 30px; border-radius: 8px; background: conic-gradient(from 210deg, var(--btc), #ffcf5c, var(--btc)); display: grid; place-items: center; font-style: normal; color: #1a0f00; font-weight: 800; }
+  nav.site .nid { display: inline-flex; align-items: center; color: #b98cff; } nav.site .nid svg { display: block; width: 22px; height: 22px; fill: currentColor; } nav.site .nid:hover { color: var(--text); }   /* kanban #1144 */
   nav.site .links { margin-left: auto; display: flex; gap: 22px; font-size: 15px; }
   nav.site .links a { color: var(--dim); text-decoration: none; } nav.site .links a:hover, nav.site .links a.on { color: var(--text); }
   nav.site .play { display: inline-flex; align-items: center; gap: 8px; padding: 9px 15px; border-radius: 11px; background: linear-gradient(135deg, var(--btc), #ffb347); color: #1a0f00; font: 600 15px/1 system-ui; text-decoration: none; white-space: nowrap; }
@@ -85,11 +86,13 @@
   details.acc.section { margin-top: 22px; } details.acc.section > summary { font-size: 17px; }
   details.acc.section > .inner { padding-bottom: 6px; } details.acc.section > .inner > p { color: var(--text); }
 </style>
+<link rel="me" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2">
 </head>
 <body>
 <nav class="site"><div class="wrap">
   <a class="brand" href="https://bitcoinarena.io/" aria-label="Bitcoin Arena"><i>₿</i><span>Bitcoin Arena</span></a>
   <div class="links"><a href="https://bitcoinarena.io/#games">Games</a><a href="https://bitcoinarena.io/#how">How it works</a><a href="https://bitcoinarena.io/#build">Build &amp; run</a><a class="keep" href="https://testnet.bitcoinarena.io/proposals/">Proposals</a><a class="keep on" href="/security/" aria-current="page">Security</a><a class="keep" href="https://docs.bitcoinarena.io/">Docs</a></div>
+  <a class="nid" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)" aria-label="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)"><svg viewBox="48 44 167 167" aria-hidden="true" focusable="false"><path d="M210.8 199.4c0 3.1-2.5 5.7-5.7 5.7h-68c-3.1 0-5.7-2.5-5.7-5.7v-15.5c.3-19 2.3-37.2 6.5-45.5 2.5-5 6.7-7.7 11.5-9.1 9.1-2.7 24.9-.9 31.7-1.2 0 0 20.4.8 20.4-10.7s-9.1-8.6-9.1-8.6c-10 .3-17.7-.4-22.6-2.4-8.3-3.3-8.6-9.2-8.6-11.2-.4-23.1-34.5-25.9-64.5-20.1-32.8 6.2.4 53.3.4 116.1v8.4c0 3.1-2.6 5.6-5.7 5.6H57.7c-3.1 0-5.7-2.5-5.7-5.7v-144c0-3.1 2.5-5.7 5.7-5.7h31.7c3.1 0 5.7 2.5 5.7 5.7 0 4.7 5.2 7.2 9 4.5 11.4-8.2 26-12.5 42.4-12.5 36.6 0 64.4 21.4 64.4 68.7v83.2ZM150 99.3c0-6.7-5.4-12.1-12.1-12.1s-12.1 5.4-12.1 12.1 5.4 12.1 12.1 12.1S150 106 150 99.3Z"/></svg></a>
   <a class="play" href="https://testnet.bitcoinarena.io/">App <span aria-hidden="true">→</span></a>
 </div></nav>
 <main>
@@ -445,7 +448,7 @@
   </div>
   <div class="note">Until 2.0, Bitcoin Arena stays on testnet with coins that have no value. Mainnet starts with the protection of version 2.0, not with 1.9.</div>
 
-  <footer><a href="https://bitcoinarena.io/">Bitcoin Arena</a> · <a href="https://docs.bitcoinarena.io/">Docs</a> · <a href="https://testnet.bitcoinarena.io/">Play on testnet</a></footer>
+  <footer><a href="https://bitcoinarena.io/">Bitcoin Arena</a> · <a href="https://docs.bitcoinarena.io/">Docs</a> · <a href="https://testnet.bitcoinarena.io/">Play on testnet</a> · <a class="nostr-id" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)">Nostr: bitcoinarena.io <span aria-label="verified">&#10003;</span></a></footer>
 </main>
 </body>
 </html>
