@@ -131,7 +131,9 @@ for (const [hi, [p, xs]] of holders.entries()) {
       if (fid !== fedSafe) return null;
       if (!clients.has(fid)) {
         const real = stakeLockPort({ bin: E2E.lockBin, dataDir: E2E.safe.carriers[hi], serve: false, timeoutMs: 120000 });
-        clients.set(fid, { peginAddress: () => real.peginAddress(), peginClaim: (a) => real.peginClaim(a, 600),
+        // THE CLAIM OF ONE DEPOSIT, BY ITS OUTPOINT (kanban #1093): the run's own { outpoint, sats } passed on, with 600 s to wait. Measured 11-05 on the main test host: this
+        // wrapper passed 600 in their place, so case B's second escrow was claimed by "the balance grew" and read the first one's deposit (701,593,600 msat against 900,000,000)
+        clients.set(fid, { peginAddress: () => real.peginAddress(), peginClaim: (a, opts) => real.peginClaim(a, { ...(opts && typeof opts === 'object' ? opts : {}), waitS: 600 }),
           payouts: async (list) => { const r = await real.payouts(list); paid.push({ carrier: p.hex, federation: fid, list, txid: r.txid, payouts: r.payouts }); return r; } });
       }
       return clients.get(fid);
@@ -318,7 +320,7 @@ const bClaims = Bt.spends.map((s) => s.claims.map((c) => c.msat));
 say(Bt.spends.length === 2 && Bt.spends.every((s) => s.conf >= 1) && bClaims.flat().map(String).sort().join(',') === ['600000000', '700000000', '300000000'].sort().join(','),
   `B: two escrows spent one at a time, every claim once: ${bClaims.map((c, i) => `spend ${i + 1} ${c.join(' + ')} msat`).join('; ')}`);
 const pb = paid.length; await carryAll();
-say(paid.slice(pb).flatMap((x) => x.list).filter((y) => y.key !== toHex(reserveKey(fedSafe))).length === 3, `B: the carriers paid ${paid.slice(pb).flatMap((x) => x.list).length} payouts, the three claims at face`);
+say(paid.slice(pb).flatMap((x) => x.list).filter((y) => y.key !== toHex(reserveKey(fedSafe))).length === 3, `B: the carriers paid ${paid.slice(pb).flatMap((x) => x.list).length} payouts, the three claims at face: ${paid.slice(pb).map((x) => `${String(x.txid).slice(0, 12)} [${x.list.map((y) => `${y.key === toHex(reserveKey(fedSafe)) ? 'reserves' : y.key.slice(0, 10)} ${y.msat}`).join(', ')}]`).join('; ')}`);
 
 // ---- C: one template-2 bond in the mix, paying first ----
 const fedC = 'c3'.repeat(32);
