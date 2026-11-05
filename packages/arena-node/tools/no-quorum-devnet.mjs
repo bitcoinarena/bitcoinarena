@@ -75,7 +75,7 @@ const said = (p, step) => lines(p).filter((l) => l.includes(`"step":"${step}"`) 
 const inRound = plan.noMarks ? 'no marks sent' : 'published';
 for (const stop = END - 15000; Date.now() < stop && !players.every((p) => said(p, inRound).length); await wait(plan.noMarks ? 200 : 2000));
 const entries = [];
-try { for (const l of readFileSync(join(D, `keys-${SCENARIO}.jsonl`), 'utf8').trim().split('\n')) { const x = JSON.parse(l); if (x.round === ROUND) entries.push(x.entry); } } catch { /* the file says which entries there are */ }
+try { for (const l of readFileSync(join(D, `keys-${SCENARIO}.jsonl`), 'utf8').trim().split('\n')) { const x = JSON.parse(l); if (x.round === ROUND && x.entry && !entries.includes(x.entry)) entries.push(x.entry); } } catch { /* the file says which entries there are */ }
 for (const p of players) say({ step: 'player', i: p.i, published: said(p, inRound).length > 0, driven: (said(p, 'driven')[0] || '').slice(0, 170), last: lines(p).filter(Boolean).slice(-1)[0]?.slice(0, 200) });
 if (!entries.length) throw new Error('no entry was played');
 
