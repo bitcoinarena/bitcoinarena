@@ -389,3 +389,77 @@ pub async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api
     println!("{report}");
     Ok(())
 }
+
+/// `arena-claim-read` (offline; stdin { config, firstSession, sessions: [hex, ...], roundId? }): THE PROOF READER OF OFFENCE ROWS (a) AND (b)
+/// (ruling #1131 4). Every session is checked against the federation's broadcast keys from the given config (consensus bytes) - a session
+/// that does not verify is named and read no further - and every Arena-lock input of every accepted transaction is listed: its session,
+/// the transaction, the outpoint, Claim (with its preimage) or Cancel or Refund, the named signers, and the transaction's outputs as the
+/// table row reads them (each stock payout contract's fields, each Arena lock's id). With `roundId`, only locks funded in these sessions
+/// with that round id are listed (a lock funded earlier is listed with `round_id: null` unless its funding session is included).
+pub fn claim_read() -> anyhow::Result<serde_json::Value> {
+    use fedimint_core::config::ClientConfig;
+    use fedimint_core::encoding::{Decodable, Encodable as _};
+    use fedimint_core::epoch::ConsensusItem;
+    use fedimint_core::module::registry::ModuleDecoderRegistry;
+    use fedimint_core::session_outcome::SignedSessionOutcome;
+    use std::collections::BTreeMap;
+    let mut raw = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut raw)?;
+    let input: serde_json::Value = serde_json::from_str(&raw).context("stdin is no JSON object")?;
+    let config = ClientConfig::consensus_decode_whole(&hex_bytes(input.get("config").and_then(|v| v.as_str()).context("no config")?)?,
+        &ModuleDecoderRegistry::default().with_fallback())?;
+    let keys = config.global.broadcast_public_keys.clone().context("the config names no broadcast keys")?;
+    let kinds: BTreeMap<_, String> = config.modules.iter().map(|(id, m)| (*id, m.kind.to_string())).collect();
+    let lnv2 = kinds.iter().find(|(_, k)| k.as_str() == "lnv2").map(|(id, _)| *id).context("the federation has no lnv2 module")?;
+    let decoders = crate::audit::offline_decoders(&kinds);
+    let first = input.get("firstSession").and_then(serde_json::Value::as_u64).context("no firstSession")?;
+    let only_round = input.get("roundId").and_then(|v| v.as_str()).map(|s| s.to_lowercase());
+    let sessions = input.get("sessions").and_then(|v| v.as_array()).context("no sessions")?;
+    let mut funded: BTreeMap<String, ArenaLockContract> = BTreeMap::new();
+    let (mut spends, mut unverified) = (Vec::new(), Vec::new());
+    for (i, h) in sessions.iter().enumerate() {
+        let idx = first + i as u64;
+        let sso = match h.as_str().and_then(|h| hex_bytes(h).ok()).and_then(|b| SignedSessionOutcome::consensus_decode_whole(&b, &decoders).ok()) {
+            Some(s) if s.verify(&keys, idx) => s,
+            _ => { unverified.push(idx); continue; }
+        };
+        for item in &sso.session_outcome.items {
+            let ConsensusItem::Transaction(tx) = &item.item else { continue };
+            let txid = tx.tx_hash();
+            let outputs: Vec<serde_json::Value> = tx.outputs.iter().enumerate().map(|(o, out)| {
+                if out.module_instance_id() != lnv2 { return serde_json::json!({ "out_idx": o, "module": kinds.get(&out.module_instance_id()) }) }
+                match out.as_any().downcast_ref::<LightningOutput>() {
+                    Some(LightningOutput::V0(LightningOutputV0::Outgoing(c))) => serde_json::json!({ "out_idx": o, "kind": "outgoing",
+                        "contract_id": c.contract_id().0.to_string(), "amount_msat": c.amount.msats, "expiration": c.expiration,
+                        "claim_pk": c.claim_pk.to_string(), "refund_pk": c.refund_pk.to_string(),
+                        "payment_image": match &c.payment_image { PaymentImage::Hash(h) => h.to_string(), PaymentImage::Point(p) => p.to_string() } }),
+                    Some(LightningOutput::ArenaLock(c)) => {
+                        funded.insert(format!("{txid}:{o}"), c.clone());
+                        let mut j = contract_json(c); j["out_idx"] = o.into(); j["kind"] = "arena-lock".into(); j
+                    }
+                    _ => serde_json::json!({ "out_idx": o, "kind": "lnv2-other" }),
+                }
+            }).collect();
+            for input in &tx.inputs {
+                if input.module_instance_id() != lnv2 { continue }
+                let Some(LightningInput::ArenaLock(op, w)) = input.as_any().downcast_ref::<LightningInput>() else { continue };
+                let lock = funded.get(&format!("{}:{}", op.txid, op.out_idx));
+                if let (Some(r), Some(c)) = (&only_round, lock) { if &hex(&c.round_id) != r { continue } }
+                let (kind, signers, preimage, signature) = match w {
+                    ArenaLockWitness::Claim { preimage, signers } => ("claim", signers.clone(), Some(hex(preimage)), None),
+                    ArenaLockWitness::Cancel { signers, signature } => ("cancel", signers.clone(), None, Some(hex(&signature.serialize()))),
+                    ArenaLockWitness::Refund => ("refund", vec![], None, None),
+                };
+                spends.push(serde_json::json!({
+                    "session": idx, "txid": txid.to_string(), "outpoint": format!("{}:{}", op.txid, op.out_idx), "kind": kind,
+                    "signers": signers, "named_keys": lock.map(|c| signers.iter().filter_map(|&s| c.claim_keys.get(usize::from(s)).map(|k| k.to_string())).collect::<Vec<_>>()),
+                    "preimage": preimage, "forfeit_signature": signature,
+                    "lock": lock.map(contract_json), "outputs": outputs,
+                    "tx_bytes": hex(&tx.consensus_encode_to_vec()),
+                }));
+            }
+        }
+    }
+    Ok(serde_json::json!({ "mode": "arena-claim-read", "federation_id": config.calculate_federation_id().to_string(),
+        "first_session": first, "sessions": sessions.len(), "unverified": unverified, "spends": spends }))
+}

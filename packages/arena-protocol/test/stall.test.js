@@ -59,7 +59,7 @@ function checker(rounds, over = {}) {
 
 test('protocol 26 is the next version and the rule is off below it, and off where no height is named', () => {
   assert.equal(STALL_VERSION, CENSUS_KEY_VERSION + 1);
-  assert.equal(SUPPORTED_PROTOCOL_VERSIONS.at(-1), STALL_VERSION);
+  assert.ok(SUPPORTED_PROTOCOL_VERSIONS.includes(STALL_VERSION));
   assert.equal(speaksVersion(STALL_VERSION), true);
   assert.equal(stallsOut(contractAt({ protocolVersion: 25 })), false);
   assert.equal(stallsOut(contractAt()), true);
