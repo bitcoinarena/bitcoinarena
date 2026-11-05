@@ -61,6 +61,9 @@ say({ step: 'round', scenario: SCENARIO, round: ROUND, version: contract.protoco
   seatOrder: order.map((k) => k + 1), armed: SCENARIO === 'off-table' || SCENARIO === 'forfeit-lost' ? armed.map((k) => k + 1) : [] });
 if (SCENARIO === 'off-table') for (const k of armed) writeFileSync(offenceFile(k), `off-table ${ROUND}\n`);
 
+// THE FEDERATION'S HEIGHT CATCHES UP FIRST (measured 2026-11-05 on s27b/s27c: an opening mines its blocks at once, the guardians' consensus height trailed the
+// chain by 15 and every seat refused the locks made then as "more than 12 blocks below the height it is verified at")
+await wait(Number(env.WAIT_AFTER_OPEN_S || 90) * 1000);
 const keysFile = join(D, `keys-${SCENARIO}-${ROUND.slice(0, 8)}.jsonl`);
 const players = [0, 1].map((i) => {
   const log = join(D, `player-${SCENARIO}-${ROUND.slice(0, 8)}-${i}.log`);
