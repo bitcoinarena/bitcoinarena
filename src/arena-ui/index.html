@@ -8998,10 +8998,17 @@
           }
         },
       };
-      await paint();
+      // THE GAME'S OWN CLIENT DOES NOT WAIT FOR THE FIRST READ (kanban #1133, measured in WebKit with a kept node list holding dead nodes: the
+      // client mounted 10-13 s after the games, every second of it this first paint; the owner's iPhone: games 2.1 s, client 15.4 s). Another
+      // game's client loads beside it, under the loading screen, which stays until its window is shown. Unity still waits: it reads the lobby
+      // as it starts.
+      let painting = false;
+      if (window.ARENA_UNITY === false) { painting = true; window.ARENA_LOBBY_PAINTING = true;
+        paint().catch((e) => console.warn('[arena] first lobby read: ' + e.message))
+          .finally(() => { painting = false; window.ARENA_LOBBY_PAINTING = false; window.ARENA_LOBBY_PAINTED_AT = Date.now(); }); }
+      else await paint();
       // EVERY SECOND, ONE AT A TIME (2026-09-16 15:36): every 5 s the list trailed a new round, a
       // join and the countdown; a paint that is still waiting on a signer node is not started again.
-      let painting = false;
       // AND EVERY 30 S WHILE A RUN HIDES IT (2026-10-16: "Lower the amount of concurrent connections and network
       // load"; measured on live UI 160 with GET /rounds's callers sampled: every seat's /rounds about every 10 s - 238 in 3 min - while
       // the player drove and nobody saw the lobby). Joined and Unity's lobby down: a read every LOBBY_IN_RUN_MS keeps the next rounds known.
