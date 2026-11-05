@@ -72,7 +72,7 @@ const players = [0, 1].map((i) => {
   const fd = openSync(log, 'a');
   const child = spawn(process.execPath, [join(HERE, 'tn4-live-run.mjs')], { detached: true, stdio: ['ignore', fd, fd],
     env: { ...env, ARENA_TN4_NETWORK: 'regtest', ARENA_REGTEST_CENSUS_KEY_0: join(D, 'census', 'key0.json'), ROUND, PORTS: PLAN.nodes.join(','), KEYS_FILE: keysFile, COLLECT_MS: String(env.COLLECT_MS || 900000),
-      ...(i === 0 ? { SEARCH: '1' } : {}), ...(SCENARIO === 'forfeit-lost' ? { EARLY_FORFEIT: '1' } : {}) } });
+      ...(i === 0 ? { SEARCH: '1' } : SCENARIO === 'forfeit-lost' ? { LOSE: '1' } : {}), ...(SCENARIO === 'forfeit-lost' ? { EARLY_FORFEIT: '1' } : {}) } });
   return { i, log, child };
 });
 const lines = (p) => { try { return readFileSync(p.log, 'utf8').split('\n'); } catch { return []; } };
