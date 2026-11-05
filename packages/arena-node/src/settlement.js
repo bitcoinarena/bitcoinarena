@@ -1354,6 +1354,10 @@ export class LockSettlement {
     if (!pair || !pair.named || toHex(pair.message) !== toHex(m.message)) return refuse('this signer node committed to no settlement of that round');
     if (mine.pubnonces.length !== pair.nonces.pubnonces.length || mine.pubnonces.some((p, k) => toHex(p) !== toHex(pair.nonces.pubnonces[k])))
       return refuse('that list does not carry this signer node\'s own nonces');
+    // every member's commit holds one nonce pair per message of this body's batch, checked before a secret nonce is touched (ruling #1137: the
+    // member checks the list's form and its own nonce, never that the list is the lowest one)
+    const odd = list.find((x) => x.pubnonces.length !== pair.nonces.pubnonces.length);
+    if (odd) return refuse(`seat ${odd.seat} committed to ${odd.pubnonces.length} nonce pairs and this body's batch signs ${pair.nonces.pubnonces.length}`);
     const lk = toHex(bytes);
     if (pair.list) return pair.list === lk ? { ok: true, partials: pair.nonces.partials, wire: encodeNamedPartials(pair.nonces.partials) } : refuse('this signer node signed that settlement over another list, and keeps no second pair');
     const built = await this.#namedMessages(roundIdBytes, m, signers, opts);
