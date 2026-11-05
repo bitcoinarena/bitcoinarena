@@ -44,7 +44,7 @@ import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/
 import { addressBook } from './signer-addresses.mjs';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
-import { settlementOf, forfeitOf } from '../../arena-client/src/page-lock.js';
+import { settlementOf, forfeitOf, isArenaLock } from '../../arena-client/src/page-lock.js';
 import { GATE_X } from '../../nextblock/src/rules/gate.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
@@ -375,7 +375,29 @@ try {
   log({ step: 'handed over', entry: toHex(eid).slice(0, 16), signerNodes });
   if (signerNodes.filter((x) => x.lock >= 200 && x.lock < 300).length < needed) throw new Error('fewer seats than needed took the lock');
   // NO_MARKS=1: IN THE ROUND AND NEVER PLAYED: not one mark is sent (tools/no-quorum-devnet.mjs)
-  if (env.NO_MARKS) { log({ step: 'no marks sent' }); process.exit(0); }
+  if (env.NO_MARKS && !env.REFUND_AT_EXPIRY) { log({ step: 'no marks sent' }); process.exit(0); }
+  // REFUND_AT_EXPIRY=1 (with NO_MARKS, kanban #1044 B1 phase 4): an Arena lock nobody forfeits goes back to its player by the refund from its
+  // expiration - the lock client's arenaRedeem { kind: 'refund' }. MINE_CMD "<bin> <args...>" mines blocks on a private chain meanwhile.
+  if (env.REFUND_AT_EXPIRY) {
+    log({ step: 'no marks sent' });
+    const refunds = [];
+    for (const [l, kind] of [[locks.stake, 'stake'], [locks.fee, 'fee']]) {
+      if (!l || !isArenaLock(l.fields)) continue;
+      for (const stop = Date.now() + Number(env.REFUND_MS || 40 * 60000); ;) {
+        const st = JSON.parse(await lc.arenaLockStatus(toHex(l.outpoint.txid), Number(l.outpoint.outIdx)));
+        if (Number(st.block_count) >= Number(l.fields.expiration)) break;
+        if (Date.now() > stop) throw new Error(`the ${kind} lock did not expire: block count ${st.block_count}, expiration ${l.fields.expiration}`);
+        log({ step: 'waiting for expiry', kind, blockCount: st.block_count, expiration: l.fields.expiration });
+        if (env.MINE_CMD) { const [bin, ...args] = env.MINE_CMD.split(' '); await run(bin, args); }
+        await new Promise((ok) => setTimeout(ok, 10000));
+      }
+      const said = JSON.parse(await lc.arenaRedeem(toHex(l.outpoint.txid), Number(l.outpoint.outIdx), JSON.stringify({ kind: 'refund' }), toHex(me.secret)));
+      refunds.push({ kind, outpoint: `${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}`, accepted: said.accepted === true, txid: said.txid, error: said.error || undefined,
+        blockCount: said.block_count, expiration: said.expiration });
+    }
+    log({ step: 'refunded', refunds, balanceMsat: await lc.balanceMsat() });
+    process.exit(refunds.length && refunds.every((x) => x.accepted) ? 0 : 1);
+  }
 
 
   // after the round's start, as a player's inputs are
@@ -435,10 +457,15 @@ try {
   const stakes = [];
   for (const [l, kind] of [[locks.stake, 'stake'], [locks.fee, 'fee']]) {
     if (!l) continue;
-    const f = await forfeitOf({ roundId: rid, entryId: toHex(eid), nodes, lock: kind });
+    // AN ARENA LOCK (protocol 27, kanban #1044 B1): its forfeit names its signers, and the 2.0 lock client spends it by arenaRedeem
+    const named = isArenaLock(l.fields);
+    const f = await forfeitOf({ roundId: rid, entryId: toHex(eid), nodes, lock: kind, named });
     if (!f.ok) { stakes.push({ kind, forfeit: f.why.slice(0, 160) }); continue; }
-    const said = JSON.parse(await lc.redeem(toHex(l.outpoint.txid), Number(l.outpoint.outIdx), JSON.stringify(lockFieldsToJson(l.fields)), f.signature, toHex(me.secret)));
-    stakes.push({ kind, accepted: said.accepted === true, ...(said.accepted === true ? {} : { said: JSON.stringify(said).slice(0, 200) }) });
+    const said = named
+      ? JSON.parse(await lc.arenaRedeem(toHex(l.outpoint.txid), Number(l.outpoint.outIdx), JSON.stringify({ kind: 'cancel', signers: f.signers, signature: f.signature }), toHex(me.secret)))
+      : JSON.parse(await lc.redeem(toHex(l.outpoint.txid), Number(l.outpoint.outIdx), JSON.stringify(lockFieldsToJson(l.fields)), f.signature, toHex(me.secret)));
+    stakes.push({ kind, accepted: said.accepted === true, ...(named ? { signers: f.signers, from: f.from, txid: said.txid } : {}),
+      ...(said.accepted === true ? {} : { said: JSON.stringify(said).slice(0, 200) }) });
   }
   log({ step: 'collected', payout, stakes, balanceBeforeMsat: before, balanceAfterMsat: await lc.balanceMsat() });
   // WITHDRAW=1 (kanban #808): the money out over Lightning, to an invoice of the payer lnd, as the page's withdraw does

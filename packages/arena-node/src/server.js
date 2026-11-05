@@ -8295,6 +8295,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // A SEAT WHOSE OWNER SAID LEAVE takes no round formed after it - one it already holds it serves
         if (owner && !takesRound(contract, owner.leavingAtMs()) && !round.get(roundIdOf(contract)))
           return text(res, 409, `this seat is leaving (since ${new Date(owner.leavingAtMs()).toISOString()}): it takes no new round, and serves the ones it holds`);
+        // PROTOCOL 27'S GATE, WAITED FOR HERE (kanban #1044 B1): a round handed in is not refused only because its federation was not asked yet
+        if (!takesAnyFederation(contract) && contract.federationId instanceof Uint8Array) await namedClaimGate.refusalNow(contract, toHex(contract.federationId));
         { const why = offerRefusal(contract); if (why) return text(res, 409, `series round refused: ${why}`); }
         // PICK B (arena-protocol/src/old-series.js): testnet4's id before genesis_series_start opens a round of series 3cfbe516
         // and nothing else.
