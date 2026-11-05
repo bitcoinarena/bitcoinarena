@@ -27,9 +27,12 @@ if [ ! -x $B/wasm-bindgen/wasm-bindgen ]; then
   mkdir -p wasm-bindgen && tar xzf wb.tgz -C wasm-bindgen --strip-components=1
 fi
 # 2. THE TREE: a worktree of the fork at its testnet4 commit, the one stock patch, the denominations change, the crate
-if [ ! -d $B/tree ]; then git -C $FORK worktree add --detach $B/tree f1481d4bcfa; fi
+# THE FORK REVISION (kanban #1044 B1): f1481d4bcfa as before; the Arena lock (ARENA_LOCK_CLIENT_FEATURES=arena-lock) needs the
+# fork branch that carries fedimint-lnv2-common arena_lock (ARENA_FORK_REV), in a build directory of its own (ARENA_LOCK_BUILD)
+REV=${ARENA_FORK_REV:-f1481d4bcfa}
+if [ ! -d $B/tree ]; then git -C $FORK worktree add --detach $B/tree $REV; fi
 cd $B/tree
-git checkout -- . && git clean -fdq
+git checkout -- . && git clean -fdq && git checkout -q --detach $REV
 patch -p1 < $HERE/fedimint-lnv2-send-expiry.patch
 # 1 SAT = 1 SAT: the client issues and spends notes from 1 msat (the federation signs 0..41 already)
 patch -p1 < $HERE/fedimint-mintv2-whole-msat.patch
@@ -90,7 +93,7 @@ grep -q '"blwp-lock-client"' Cargo.toml || perl -0pi -e 's/^members = \[/members
 export CC_wasm32_unknown_unknown=$B/wasi-sdk/bin/clang AR_wasm32_unknown_unknown=$B/wasi-sdk/bin/llvm-ar
 export CFLAGS_wasm32_unknown_unknown="--target=wasm32-unknown-unknown"
 export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS='--cfg getrandom_backend="wasm_js"'
-cargo build --release --target wasm32-unknown-unknown -p blwp-lock-client
+cargo build --release --target wasm32-unknown-unknown -p blwp-lock-client ${ARENA_LOCK_CLIENT_FEATURES:+--features $ARENA_LOCK_CLIENT_FEATURES}
 mkdir -p $B/out && $B/wasm-bindgen/wasm-bindgen --target web --out-dir $B/out target/wasm32-unknown-unknown/release/blwp_lock_client.wasm
 ls -la $B/out
 echo BUILD-OK

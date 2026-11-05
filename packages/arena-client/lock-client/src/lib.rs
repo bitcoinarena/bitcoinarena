@@ -22,12 +22,20 @@
 //!                                      player, expiration = count + delta - and
 //!                                      what the guardians stored at its outpoint
 //!
+//!   arenaLock / arenaRedeem / arenaLockStatus / arenaLockContractId / arenaModuleVersion
+//!                                      THE ARENA LOCK (kanban #1044 B1), whose claim and forfeit name their
+//!                                      signers: src/arena.rs
+//!
 //! The lock is built exactly as tools/stake-lock's lock mode builds it; this
 //! is that code for the browser's target. No consensus code and no crypto of
 //! ours: the stock transaction builder funds the output, the stock contract
 //! hashes itself.
 use std::str::FromStr;
 
+// THE ARENA LOCK (kanban #1044 B1) needs the fork's LNv2 with the ArenaLockContract variant (module version 1.100):
+// built with --features arena-lock against that fork; without the feature the client builds on the older trees as before
+#[cfg(feature = "arena-lock")]
+mod arena;
 mod store;
 
 use fedimint_api_client::api::{DynModuleApi, FederationApiExt};

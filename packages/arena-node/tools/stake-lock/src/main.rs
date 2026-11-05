@@ -62,6 +62,8 @@
 //!   arena-stake-lock --mode session-export --data-dir D --from N --to M --out F
 //!   arena-stake-lock --mode pegout --data-dir D --address ADDR --sats N
 //!   (src/audit.rs; the regtest rehearsal modes are in src/rehearsal.rs)
+//!   arena-id | arena-version | arena-lock | arena-status | arena-redeem | arena-settle | musig-* : THE ARENA LOCK
+//!   (kanban #1044 B1), whose claim and forfeit name their signers - src/arena.rs
 //!
 //! A CLIENT WITH NO ESPLORA (regtest): ARENA_CLIENT_BITCOIND=http://user:pass@host:port gives the wallet client a
 //! bitcoind to watch peg-in addresses with, instead of the federation's default Bitcoin API.
@@ -73,6 +75,9 @@
 #![recursion_limit = "256"] // the session-audit report is one json! object
 use std::collections::HashMap;
 
+// THE ARENA LOCK (kanban #1044 B1): --features arena-lock, against the fork's LNv2 with the ArenaLockContract variant
+#[cfg(feature = "arena-lock")]
+mod arena;
 mod audit;
 mod rehearsal;
 use std::path::PathBuf;
@@ -270,6 +275,19 @@ fn stake_contract(a: &Args, expiration: u64) -> anyhow::Result<OutgoingContract>
     })
 }
 
+#[cfg(feature = "arena-lock")]
+fn arena_offline(mode: &str, a: &Args) -> Option<anyhow::Result<()>> {
+    if mode == "arena-id" {
+        return Some(arena::id(a).map(|v| println!("{v}")));
+    }
+    arena::musig_mode(mode, a).map(|out| out.map(|v| println!("{v}")))
+}
+
+#[cfg(not(feature = "arena-lock"))]
+fn arena_offline(_mode: &str, _a: &Args) -> Option<anyhow::Result<()>> {
+    None
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let a = args()?;
@@ -281,6 +299,10 @@ async fn main() -> anyhow::Result<()> {
         let contract = stake_contract(&a, need(&a, "expiration")?.parse()?)?;
         println!("{}", serde_json::json!({ "mode": "id", "contract_id": contract.contract_id().0.to_string() }));
         return Ok(());
+    }
+    // THE ARENA LOCK OFFLINE (kanban #1044 B1): a lock's id, and the named seats' two MuSig2 rounds (src/arena.rs)
+    if let Some(done) = arena_offline(&mode, &a) {
+        return done;
     }
     if mode == "join" {
         let client = join(PathBuf::from(need(&a, "data-dir")?), need(&a, "invite")?).await?;
@@ -319,6 +341,22 @@ async fn main() -> anyhow::Result<()> {
         // stays, the client open, and answers one JSON request per stdin line - { "id", "mode", "args": { name: value } } ->
         // { "id", "ok", "result" | "error" }. Only status, fees, guardians, gateways and id: nothing that moves money.
         "serve" => serve(&client, lnv2, &api).await,
+        // THE ARENA LOCK (kanban #1044 B1, ruling #1131): claim and forfeit name their signers (src/arena.rs)
+        #[cfg(feature = "arena-lock")]
+        "arena-version" => {
+            let v = arena::version(&api).await?;
+            println!("{}", serde_json::json!({ "mode": "arena-version", "major": v.major, "minor": v.minor,
+                "arena_lock": v >= fedimint_lnv2_common::ARENA_LOCK_CONSENSUS_VERSION }));
+            Ok(())
+        }
+        #[cfg(feature = "arena-lock")]
+        "arena-lock" => arena::lock(&a, &client, lnv2, &api).await,
+        #[cfg(feature = "arena-lock")]
+        "arena-status" => { println!("{}", arena::status(&a, &api).await?); Ok(()) }
+        #[cfg(feature = "arena-lock")]
+        "arena-redeem" => arena::redeem(&a, &client, lnv2, &api).await,
+        #[cfg(feature = "arena-lock")]
+        "arena-settle" => arena::settle(&a, &client, lnv2, &api).await,
         "send" => send(&a, &client).await,
         // THE ARBITER'S PEG-IN (spec §5A.3: "the arbitration set pegs it into the round's federation"): an
         // address the federation controls, and the claim once a payment to it is confirmed - the escrow becomes e-cash in
@@ -339,7 +377,7 @@ async fn main() -> anyhow::Result<()> {
         "ecash-send" => ecash_send(&a, &client).await,
         "ecash-receive" => ecash_receive(&a, &client).await,
         "balance" => { println!("{}", serde_json::json!({ "mode": "balance", "msat": client.get_balance_for_btc().await?.msats })); Ok(()) }
-        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send, serve, pegin-address, pegin-claim, pay, receive-to-key, claim-incoming, ecash-send, ecash-receive, balance, session-audit or id"),
+        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send, serve, pegin-address, pegin-claim, pay, receive-to-key, claim-incoming, ecash-send, ecash-receive, balance, session-audit, id, arena-id, arena-version, arena-lock, arena-status, arena-redeem, arena-settle or musig-*"),
     }
 }
 
@@ -371,11 +409,15 @@ async fn serve(client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi
             "fees" => fees(client, lnv2).await,
             "guardians" => guardians(client).await,
             "gateways" => gateways(client, api).await,
+            #[cfg(feature = "arena-lock")]
+            "arena-status" => arena::status(&a, api).await,
+            #[cfg(feature = "arena-lock")]
+            "arena-id" => arena::id(&a),
             "id" => match need(&a, "expiration").and_then(|e| e.parse::<u64>().map_err(Into::into)) {
                 Ok(exp) => stake_contract(&a, exp).map(|c| serde_json::json!({ "mode": "id", "contract_id": c.contract_id().0.to_string() })),
                 Err(e) => Err(e),
             },
-            other => Err(anyhow!("serve answers status, fees, guardians, gateways and id - not {other}")),
+            other => Err(anyhow!("serve answers status, fees, guardians, gateways, id, arena-status and arena-id - not {other}")),
         };
         let out = match got { Ok(v) => serde_json::json!({ "id": id, "ok": true, "result": v }),
             Err(e) => serde_json::json!({ "id": id, "ok": false, "error": format!("{e:#}") }) };
