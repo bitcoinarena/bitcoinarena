@@ -37,6 +37,7 @@
 import { sha256, toHex, fromHex } from './hash.js';
 import { netStakeMsat } from './payout.js';
 import { STAKE_EXPIRY_BLOCKS, STAKE_LOCK_FRESHNESS_BLOCKS } from './constants.js';
+import { arenaLockFieldsFromJson, arenaLockFieldsToJson } from './arena-lock.js';
 
 /**
  * THE CONTRACT A PLAYER HANDS A SIGNER NODE (POST /lock), as JSON: hex bytes, the
@@ -45,6 +46,8 @@ import { STAKE_EXPIRY_BLOCKS, STAKE_LOCK_FRESHNESS_BLOCKS } from './constants.js
  */
 export function lockFieldsFromJson(j) {
   if (!j || typeof j !== 'object') throw new Error('a stake lock is a JSON object');
+  // AN ARENA LOCK (protocol 27, arena-lock.js): it names its claim keys, threshold and round in place of one claim_pk; `arena` says so
+  if (Array.isArray(j.claimKeys)) return { ...arenaLockFieldsFromJson(j), arena: true };
   const img = j.paymentImage || {};
   if (img.kind !== 'point' && img.kind !== 'hash') throw new Error('a payment image is a point or a hash');
   const f = {
@@ -58,7 +61,7 @@ export function lockFieldsFromJson(j) {
   return f;
 }
 
-export const lockFieldsToJson = (f) => ({
+export const lockFieldsToJson = (f) => (f.arena ? arenaLockFieldsToJson(f) : {
   paymentImage: { kind: f.paymentImage.kind, bytes: toHex(f.paymentImage.bytes) },
   amountMsat: String(f.amountMsat), claimPk: toHex(f.claimPk), refundPk: toHex(f.refundPk), expiration: f.expiration,
 });

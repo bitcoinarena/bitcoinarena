@@ -283,6 +283,7 @@ import { decodeDonationProposal, donationProposalId, donationApprovalDigest, enc
 
 import { TABLE_IS_NOT_F, splitTableSlashEvidence, splitSlashEvidence, AUDIT_CONTRADICTED, REPLAY_CONTRADICTS, splitAuditSlashEvidence, TWO_RESULTS, splitDoubleSlashEvidence, fraudProofHash, decodeFraudProof, readEvidence } from '../../arena-protocol/src/slash.js';
 import { splitSignedAck, settlementAckId, settlementTableId, decodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
+import { NamedClaimGate } from './named-claim-gate.js';
 import { slashOwing, entriesForSlash } from './slash-owing.js';
 import os from 'node:os';
 import { createNodeFactsBook, measureFacts, measureBandwidth, measureOrigin, signFacts, FACTS_EVERY_MS, PROBE_BYTES } from './node-facts.js';
@@ -4797,7 +4798,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return reserveMissing.has(fed) ? `paused: this market pays the protocol reserve, and its federation ${fed.slice(0, 8)} has no reserve key yet - an order could not settle; orders open again once the key stands` : null;
   };
+  // PROTOCOL 27'S GATE (kanban #1044 B1, ruling #1134 1): a round that locks to an Arena lock is opened, listed and entered here only in a federation a
+  // threshold of whose guardians report LNv2 >= 1.100 - read through the federation's stake-lock port, a yes kept for good (named-claim-gate.js). A
+  // round that takes any federation is gated per entry, at its lock.
+  const namedClaimGate = new NamedClaimGate({ versionOf: async (fid) => { const port = await portOfFederation(fromHex(fid)); return port && port.moduleVersion ? port.moduleVersion() : null; } });
+  const namedClaimRefusalOf = (contract) => (takesAnyFederation(contract) || !(contract.federationId instanceof Uint8Array) ? null : namedClaimGate.refusal(contract, toHex(contract.federationId)));
   const offerRefusal = (contract) => seriesRefusal(contract) || droppedRefusal(contract) || donationInForceRefusal(contract) || reserveRefusal(contract)
+    || namedClaimRefusalOf(contract)
     // A FEDERATION THIS SEAT HOLDS A RESERVE ALARM FOR (kanban #1108): no stake goes into it here, whatever the client picked
     || alarmRefusal(reserveAlarms, contract)
     || drainingRefusal(contract) || fileRefusal(contract) || (typeof refusedFor === 'function' ? refusedFor(contract) : null)
@@ -4836,14 +4843,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (ef.ok) { const t = Date.now(); reserveKey = await reserveKeyFor(toHex(ef.federationId)); timing.reserveKeyMs = Date.now() - t; } split = roundSplitBps(feesFor(rcx)); }
     try {
       const t = Date.now(); const port = (await portOfEntryBytes(stored)) || stakeLocks; timing.portMs = Date.now() - t;
-      return await verifyStakeLock({ round, port, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split, timing });
+      return await verifyStakeLock({ round, port, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split, timing, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid) });
     } catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
   };
   const takeFeeLock = async (eid, fields) => {
     const stored = round.entry(eid);
     if (!stored) return { ok: false, status: 404, why: 'this node holds no such entry' };
     const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
-    try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
+    try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid) }); }
     catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
   };
   // WHAT A SEAT HANDS ON OF A HEAD-TO-HEAD ENTRY (kanban #1068, entry-relay.js)
