@@ -70,9 +70,9 @@ export function claimPayees({ spends, entryKeys, payees }) {
 /**
  * LEVEL 2 OVER A READ: every accepted claim of round `roundId` (hex) in the reader's `spends`, by transaction. Answers
  * [{ offence, level: 2, txid, session, why, offenders }] for each false one, the named signers its offenders; a transaction whose lock's funding was not
- * read (no lock, no named keys) is not judged.
+ * read (no lock, no named keys) is not judged. `read`, an array when given, gets one line per claim read: { txid, outputs, false, why, unread }.
  */
-export function unpayableClaims({ spends, roundId, entries, payees }) {
+export function unpayableClaims({ spends, roundId, entries, payees, read = null }) {
   const round = low(roundId);
   const byTx = new Map();
   for (const s of spends || []) {
@@ -84,6 +84,8 @@ export function unpayableClaims({ spends, roundId, entries, payees }) {
   const out = [];
   for (const [txid, list] of byTx) {
     const r = claimPayees({ spends: list, entryKeys, payees });
+    // `read` (an array, optional): every claim read, false or not, with what was unread - what a seat logs of its pass
+    if (Array.isArray(read)) read.push({ txid, outputs: (list[0].outputs || []).length, false: r.false, why: r.why || null, unread: r.unread || [] });
     if (!r.false) continue;
     const offenders = [...new Set(list.flatMap((s) => (s.named_keys || []).map(low)))].sort();
     out.push({ offence: OFF_TABLE_CLAIM, level: 2, txid, session: list[0].session, why: r.why, offenders });

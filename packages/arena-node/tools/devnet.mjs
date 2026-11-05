@@ -64,6 +64,10 @@ const BTC = env.BITCOIN_BIN || dirOnPath('bitcoind');
 const FED = env.FEDIMINT_BIN || dirOnPath('fedimintd');
 const LOCK = env.LOCK_BIN || (FED ? join(FED, 'arena-stake-lock') : null);
 const PAGE_DIR = env.DEVNET_PAGE_DIR || '';
+// A DEVNET THAT SLASHES (DEVNET_SLASH=1, kanban #1044 B1 phase 4; as tools/slash-flow-regtest.mjs sets one up): census key 0 dealt among nodes 1..4 (3 of 4), every
+// bond on template 3 with its presig, a filer stepping every ARENA_SLASH_FILE_STEP_MS (default 500), the devnet's wallet paying the slash start's fee, and each
+// node reading its own regtest offence file (census/offence-<n>.txt, empty: nothing armed; test-named-offence.js). Kept in census/ for every later command
+const SLASH = env.DEVNET_SLASH === '1' || existsSync(join(D, 'census', 'key0.json'));
 const PAGE = PAGE_DIR ? `http://127.0.0.1:${PLAN.page}` : (env.DEVNET_PAGE || 'https://testnet.bitcoinarena.io').replace(/\/+$/, '');
 // THE GAMES BEYOND NEXTBLOCK (DEVNET_APPS, registration modules exporting GAME): named once at `up` and kept in the devnet's
 // own directory, so every later command - and the runner, started elsewhere - hosts, opens and replays the same games
@@ -151,9 +155,51 @@ function needBins() {
 
 /** The environment every fedimint tool and node runs with: the fork's binaries first on PATH, HOME inside the devnet. */
 /** One node's process, as `up` starts it; `extra` env on top (restart: ARENA_RELEASE_VERSION for a staged update, kanban #1093 part 3). */
+function slashEnv(k) {
+  if (!SLASH) return {};
+  const offence = path('census', `offence-${k + 1}.txt`);
+  if (!existsSync(offence)) writeFileSync(offence, '');
+  return { ARENA_CENSUS_KEY_FIRST_HEIGHT: '100000', ARENA_CENSUS_KEY_0: path('census', `key0-${k + 1}.json`), ARENA_CENSUS_KEY_EVERY_MS: '1500',
+    ARENA_SLASH_FILE_STEP_MS: env.ARENA_SLASH_FILE_STEP_MS || '500', ARENA_DUTY_POST: 'on', ARENA_DUTY_WALLET: WALLET, ARENA_DUTY_APPS: 'none',
+    ARENA_BOND_CLI: [join(BTC, 'bitcoin-cli'), ...btcArgs(), `-rpcwallet=${WALLET}`].join(','), ARENA_TEST_NAMED_OFFENCE_FILE: offence };
+}
+
+/** Census key 0 among nodes 1..4 (3 of 4), each node's file (founders with their shares), dealt once (DEVNET_SLASH). */
+async function censusKey0() {
+  if (!SLASH || existsSync(path('census', 'key0.json'))) return;
+  const { randomBytes } = await import('node:crypto');
+  const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const { openStore, nodeIdentity } = await import('../src/store.js');
+  const { CensusDkg } = await import('../src/dkg.js');
+  const { feldmanGroup } = await import('../src/curve.js');
+  const { censusKey0Shares } = await import('../../arena-protocol/src/census-key.js');
+  const { founderRun } = await import('../../arena-protocol/src/census-dkg.js');
+  const { toHex } = await import('../../arena-protocol/src/hash.js');
+  mkdirSync(path('census'), { recursive: true });
+  const ids = PLAN.nodes.map((_, k) => { const db = openStore(storeOf(k)); const id = nodeIdentity(db); db.close(); return id; });
+  const founders = [0, 1, 2, 3].map((k) => ({ secret: ids[k].secret, key: schnorr.getPublicKey(ids[k].secret) }));
+  const run = founderRun(censusKey0Shares({ holders: founders.map((f) => f.key), threshold: 3 }));
+  const dkgs = founders.map((f) => new CensusDkg({ key: f.key, secret: f.secret, run, curve: feldmanGroup, random: (n) => new Uint8Array(randomBytes(n)) }));
+  const deals = [];
+  for (const d of dkgs) deals.push((await d.deal()).bytes);
+  for (const d of dkgs) for (const b of deals) await d.accept(b);
+  for (const d of dkgs) d.check();
+  const said = dkgs.map((d) => d.statement());
+  const made = dkgs.map((d) => d.finish(said));
+  const genesis = { publicKey: toHex(made[0].groupPublicKey.subarray(1)), holders: founders.map((f) => toHex(f.key)), threshold: 3 };
+  for (const k of PLAN.nodes.keys()) {
+    const m = k < 4 ? made[k] : null;
+    writeFileSync(path('census', `key0-${k + 1}.json`), JSON.stringify({ ...genesis, ...(m ? { held: { runId: toHex(run.runId), negated: !!m.negated,
+      shares: [...m.shares].map(([x, v]) => [x, v.toString(16)]), commitments: m.commitments.map(toHex) } } : {}) }));
+  }
+  writeFileSync(path('census', 'key0.json'), JSON.stringify(genesis) + '\n');
+  say({ step: 'census key 0', key: genesis.publicKey.slice(0, 16), holders: 'nodes 1..4', threshold: 3 });
+}
+
 function startNode(k, { invite, apps, extra = {} }) {
   const port = PLAN.nodes[k], client = path('clients', `node-${k + 1}`);
   mkdirSync(client, { recursive: true });
+  extra = { ...slashEnv(k), ...extra };
   return startPart(`node-${k + 1}`, process.execPath, ['src/main.js', String(port), storeOf(k)], { env: fedEnv({
     ARENA_STAKE_LOCK_BIN: LOCK, ARENA_FEDERATION_CLIENT_DIR: client, ARENA_FEDERATION_CLIENTS_DIR: path('clients', `node-${k + 1}-others`),
     ARENA_FEDERATION_INVITE: invite, ARENA_CLOSE_AT_END: '1', ARENA_FUND_FREE_ROUNDS: '1', ARENA_DONATION_NETWORK: 'regtest',
@@ -226,6 +272,7 @@ async function up() {
   // advertise it (a bond is posted once): start a devnet on a fresh DEVNET_DIR for it, or its rounds find no committee
   const apps = [join(NODE_PKG, '..', 'nextblock', 'plugin', 'nextblock.js'), ...APP_FILES];
   writeFileSync(path('games.json'), JSON.stringify(APP_FILES) + '\n');
+  await censusKey0();
   for (const k of PLAN.nodes.keys()) {
     if (running(`node-${k + 1}`)) continue;
     startNode(k, { invite, apps });
@@ -452,6 +499,8 @@ async function runner() {
     // node's own store, read-only, and the advertisement says what the running node says - its endpoint, that it is a
     // guardian and where, and which key of the federation it holds
     process.env.ARENA_POST_FIRST_BONDS = '1';
+    // A DEVNET THAT SLASHES: every first bond on template 3 under census key 0, its presig posted beside it (round-2of2.mjs)
+    if (SLASH) process.env.ARENA_BOND_TEMPLATE3_KEY = JSON.parse(readFileSync(path('census', 'key0.json'), 'utf8')).publicKey;
     const { standUpRound } = await import('./round-2of2.mjs');
     const lock = stakeLockPort({ bin: LOCK, dataDir: path('clients', 'runner') });
     const fed = await lock.guardians();

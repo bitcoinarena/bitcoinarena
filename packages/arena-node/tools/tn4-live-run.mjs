@@ -415,6 +415,25 @@ try {
   }
   log({ step: 'published', published });
 
+  // EARLY_FORFEIT=1 (regtest, kanban #1044 B1 phase 4, offence (b)): the stake lock's forfeit asked for at once and redeemed as soon as a quorum signs it -
+  // before the settlement claims the lock. Honest seats sign none for an entry they hold lost; seats armed with `forfeit-lost <entry>` do
+  // (ARENA_TEST_NAMED_OFFENCE_FILE). Asked until a seat holds the accepted settlement, at most COLLECT_MS; then the run goes on as before
+  if (env.EARLY_FORFEIT && locks.stake && isArenaLock(locks.stake.fields)) {
+    for (const stop = Date.now() + Number(env.COLLECT_MS || 15 * 60000); Date.now() < stop;) {
+      const f = await forfeitOf({ roundId: rid, entryId: toHex(eid), nodes, lock: 'stake', named: true });
+      if (f.ok) {
+        const l = locks.stake;
+        const said = JSON.parse(await lc.arenaRedeem(toHex(l.outpoint.txid), Number(l.outpoint.outIdx), JSON.stringify({ kind: 'cancel', signers: f.signers, signature: f.signature }), toHex(me.secret)));
+        log({ step: 'early forfeit', outpoint: `${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}`, signers: f.signers, from: f.from, accepted: said.accepted === true, txid: said.txid,
+          error: said.error || undefined, balanceMsat: await lc.balanceMsat() });
+        process.exit(said.accepted === true ? 0 : 1);
+      }
+      const stl0 = await settlementOf({ roundId: rid, nodes });
+      if (stl0.ok) { log({ step: 'no early forfeit: the settlement came first', txid: stl0.txid.slice(0, 16), why: f.why.slice(0, 160) }); break; }
+      await new Promise((ok) => setTimeout(ok, 10000));
+    }
+  }
+
   // THE CLOSE AND THE SETTLEMENT, as the page watches them
   const endMs = Number(c.startTimeMs) + Number(c.runMs || 0n);
   const until = Date.now() + 15 * 60000;
