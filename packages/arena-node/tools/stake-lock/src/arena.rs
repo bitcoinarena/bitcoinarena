@@ -470,12 +470,14 @@ pub async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api
     Ok(())
 }
 
-/// The nonce of a send's presigned refund (c): the first 8 bytes of tagged_hash("ARENA/v1/SendRefundNonce", real txid || u32 index), so every
-/// seat rebuilds the same transaction.
-fn send_refund_nonce(txid: &fedimint_core::TransactionId, idx: u64) -> [u8; 8] {
+/// The nonce of a send's presigned refund (c) (ruled #1136): the first 8 bytes of BIP-340 tagged_hash("ARENA/v1/SendRefundNonce", the real txid
+/// (32 bytes, consensus order) || the send's output index as u32 big-endian), so every seat rebuilds the same transaction. An index above
+/// u32::MAX is refused, never clamped: two sends must never share a nonce.
+pub fn send_refund_nonce(txid: &fedimint_core::TransactionId, idx: u64) -> anyhow::Result<[u8; 8]> {
+    let i = u32::try_from(idx).map_err(|_| anyhow!("a send's output index {idx} is above u32::MAX: no refund nonce"))?;
     let mut m = txid[..].to_vec();
-    m.extend_from_slice(&u32::try_from(idx).unwrap_or(u32::MAX).to_be_bytes());
-    tagged(b"ARENA/v1/SendRefundNonce", &m)[..8].try_into().expect("8 bytes")
+    m.extend_from_slice(&i.to_be_bytes());
+    Ok(tagged(b"ARENA/v1/SendRefundNonce", &m)[..8].try_into().expect("8 bytes"))
 }
 
 /// `arena-send-refund` (ruling #1134 2, #1135 2): THE PRESIGNED REFUND (c) of a gateway send - built from the real settlement transaction and the
@@ -494,7 +496,7 @@ pub async fn send_refund(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId
     while out > 0 && out + fee.fee(Amount::from_msats(out)).msats > spendable { out -= 1; }
     let payout = OutgoingContract { payment_image: PaymentImage::Hash(sha256::Hash::from_byte_array([0u8; 32])), amount: Amount::from_msats(out),
         expiration: 0, claim_pk: qualifier, refund_pk: qualifier, ephemeral_pk: qualifier };
-    let nonce = send_refund_nonce(&op.txid, op.out_idx);
+    let nonce = send_refund_nonce(&op.txid, op.out_idx)?;
     let inputs = vec![LightningInput::V0(fedimint_lnv2_common::LightningInputV0::Outgoing(op, fedimint_lnv2_common::OutgoingWitness::Refund)).into_dyn(lnv2)];
     let outputs = vec![LightningOutput::V0(LightningOutputV0::Outgoing(payout.clone())).into_dyn(lnv2)];
     let txid = Transaction::tx_hash_from_parts(&inputs, &outputs, nonce);
@@ -593,4 +595,27 @@ pub fn claim_read() -> anyhow::Result<serde_json::Value> {
     }
     Ok(serde_json::json!({ "mode": "arena-claim-read", "federation_id": config.calculate_federation_id().to_string(),
         "first_session": first, "sessions": sessions.len(), "unverified": unverified, "spends": spends }))
+}
+
+#[cfg(test)]
+mod tests {
+    use fedimint_core::TransactionId;
+    use fedimint_core::bitcoin::hashes::Hash as _;
+
+    use super::{send_refund_nonce, z_key};
+
+    #[test]
+    fn send_refund_nonce_is_the_ruled_hash_and_refuses_an_index_past_u32() {
+        let txid = TransactionId::from_byte_array([7; 32]);
+        // tagged_hash("ARENA/v1/SendRefundNonce", [7; 32] || 00000003)[..8], computed outside Rust
+        assert_eq!(super::hex(&send_refund_nonce(&txid, 3).expect("index 3")), "ff96429f578a02c6");
+        assert!(send_refund_nonce(&txid, u64::from(u32::MAX)).is_ok());
+        assert!(send_refund_nonce(&txid, u64::from(u32::MAX) + 1).is_err());
+        assert_ne!(send_refund_nonce(&txid, 0).expect("0"), send_refund_nonce(&txid, 1).expect("1"));
+    }
+
+    #[test]
+    fn z_is_the_first_signer_set_tag_on_the_curve() {
+        assert_eq!(z_key().to_string(), "02b3f7cd89f2ce17f8e075d67398c8e65f9952b877c2eae657d8236af11ca82f9d");
+    }
 }
