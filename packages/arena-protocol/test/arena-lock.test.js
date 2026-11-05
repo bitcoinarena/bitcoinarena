@@ -109,20 +109,41 @@ test('the SettlementCommit carries H(public nonce pair) in the bytes it always h
 
 const ROUND = '11'.repeat(32);
 const lockJson = { round_id: ROUND, claim_keys: KEYS.map(toHex), threshold: 5 };
-const claim = (txid, signers) => ({ kind: 'claim', txid, session: 7, outpoint: 'aa:0', signers, named_keys: signers.map((i) => toHex(KEYS[i])), lock: lockJson });
+const claim = (txid, signers, body = 'b0d1') => ({ kind: 'claim', txid, session: 7, outpoint: 'aa:0', signers, named_keys: signers.map((i) => toHex(KEYS[i])), lock: lockJson,
+  body_id: body, one_signer_set: true });
 
-test('offence (a): a correct table\'s claim is never an offence; an off-table claim names exactly its signers', () => {
+test('offence (a) on the body id: a correct table\'s body is never an offence; another body, or two signer sets, names the signers', () => {
   const spends = [claim('c0ffee', [0, 2, 3, 5, 6]), { ...claim('c0ffee', [0, 2, 3, 5, 6]), outpoint: 'aa:1' }];
-  assert.deepEqual(offTableClaims({ spends, roundId: ROUND, correctTxids: ['C0FFEE'] }), []);
-  const got = offTableClaims({ spends, roundId: ROUND, correctTxids: ['beef'] });
+  // the txid follows S, the body does not: a correct body is no offence, whatever the txid
+  assert.deepEqual(offTableClaims({ spends, roundId: ROUND, correctBodyIds: ['B0D1'] }), []);
+  const got = offTableClaims({ spends, roundId: ROUND, correctBodyIds: ['beef'] });
   assert.equal(got.length, 1);
   assert.equal(got[0].offence, OFF_TABLE_CLAIM);
+  assert.match(got[0].why, /not the body of a correct table/);
   assert.deepEqual(got[0].offenders, [0, 2, 3, 5, 6].map((i) => toHex(KEYS[i])).sort());
-  // another round's claim, or a claim whose lock was not read, is not judged here
-  assert.deepEqual(offTableClaims({ spends, roundId: '22'.repeat(32), correctTxids: [] }), []);
-  assert.deepEqual(offTableClaims({ spends: [{ ...claim('dd', [0, 1, 2, 3, 4]), lock: null }], roundId: ROUND, correctTxids: [] }), []);
-  // a forfeit or a refund is not a claim
-  assert.deepEqual(offTableClaims({ spends: [{ ...claim('dd', [0, 1, 2, 3, 4]), kind: 'cancel' }], roundId: ROUND, correctTxids: [] }), []);
+  // claims naming two sets in one transaction are false by themselves, even on a correct body
+  const mixed = offTableClaims({ spends: [{ ...claim('c1', [0, 1, 2, 3, 4]), one_signer_set: false }], roundId: ROUND, correctBodyIds: ['b0d1'] });
+  assert.match(mixed[0].why, /different signer sets/);
+  // another round's claim, a claim whose lock was not read, a forfeit: not judged here
+  assert.deepEqual(offTableClaims({ spends, roundId: '22'.repeat(32), correctBodyIds: [] }), []);
+  assert.deepEqual(offTableClaims({ spends: [{ ...claim('dd', [0, 1, 2, 3, 4]), lock: null }], roundId: ROUND, correctBodyIds: [] }), []);
+  assert.deepEqual(offTableClaims({ spends: [{ ...claim('dd', [0, 1, 2, 3, 4]), kind: 'cancel' }], roundId: ROUND, correctBodyIds: [] }), []);
+});
+
+test('protocol 27 acks and commits name the body id under their own tags: never read as over a txid', async () => {
+  const { signSettlementAck, checkAck } = await import('../src/settlement-ack.js');
+  const sk = b32(0x41), pk = schnorr.getPublicKey(sk), verify = (s, d, k) => schnorr.verify(s, d, k), sign = (d) => schnorr.sign(d, sk);
+  const base = { roundId: b32(0x11), payoutTableId: b32(0x33) };
+  const bodyAck = signSettlementAck({ ...base, settlementBodyId: b32(0x44) }, pk, sign);
+  assert.equal(checkAck(bodyAck, { seats: [pk], ...base, settlementBodyId: b32(0x44), verify }).ok, true);
+  assert.match(checkAck(bodyAck, { seats: [pk], ...base, settlementTxid: b32(0x44), verify }).why, /does not verify/);
+  const txAck = signSettlementAck({ ...base, settlementTxid: b32(0x44) }, pk, sign);
+  assert.match(checkAck(txAck, { seats: [pk], ...base, settlementBodyId: b32(0x44), verify }).why, /does not verify/);
+  const nonces = commitNoncesOf(new Uint8Array(66).fill(2));
+  const bodyCommit = { roundId: b32(0x11), settlementBodyId: b32(0x44), ...nonces };
+  const word = signSettlementCommit(bodyCommit, pk, sign);
+  assert.equal(checkSettlementCommit(word, { seats: [pk], commit: bodyCommit, verify }).ok, true);
+  assert.equal(checkSettlementCommit(word, { seats: [pk], commit: { roundId: b32(0x11), settlementTxid: b32(0x44), ...nonces }, verify }).ok, false);
 });
 
 test('offence (b): only a forfeiter that itself signed the entry lost', () => {

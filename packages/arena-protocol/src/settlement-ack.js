@@ -21,7 +21,18 @@ export const SIGNED_SETTLEMENT_ACK_BYTES = SETTLEMENT_ACK_BYTES + 32 + 64;
 const ZERO = new Uint8Array(32);
 const is32 = (b) => b instanceof Uint8Array && b.length === 32;
 
-export function encodeSettlementAck({ roundId, payoutTableId, settlementTxid }) {
+/**
+ * PROTOCOL 27 (ruling #1135): a round with Arena locks acks and commits over the SETTLEMENT BODY ID - the transaction with its claims' signer lists
+ * empty and every output key of the signer set written as Z (stake-lock arena-settle) - not the txid, which depends on the set. The body id stands in
+ * the txid's slot, and the ack's and commit's signatures are made under their own tags, so an old reader never takes one for the other. An ack or a
+ * commit object names it as `settlementBodyId` in place of `settlementTxid`.
+ */
+const slotOf = (a) => (a.settlementBodyId !== undefined ? a.settlementBodyId : a.settlementTxid);
+const isBody = (a) => a.settlementBodyId !== undefined;
+
+export function encodeSettlementAck(a) {
+  const { roundId, payoutTableId } = a;
+  const settlementTxid = slotOf(a);
   const w = new Writer();
   w.u8(TYPE_SETTLEMENT_ACK);
   w.u16(PROTOCOL_VERSION);
@@ -40,7 +51,7 @@ export function decodeSettlementAck(bytes) {
   return out;
 }
 
-export const settlementAckId = (a) => taggedHash(TAG.settlementAck, encodeSettlementAck(a));
+export const settlementAckId = (a) => taggedHash(isBody(a) ? TAG.settlementAckBody : TAG.settlementAck, encodeSettlementAck(a));
 
 /** The ack as it travels: its body, the seat's node key, the seat's BIP-340 signature over `settlementAckId`. `sign(digest)` -> 64 bytes. */
 export function signSettlementAck(ack, nodePubkey, sign) {
@@ -62,13 +73,14 @@ export function splitSignedAck(bytes) {
 }
 
 /** One seat's ack, checked: { ok, who, nodePubkey } or { ok: false, why } naming what was wrong. */
-export function checkAck(bytes, { seats, roundId, payoutTableId, settlementTxid, verify }) {
+export function checkAck(bytes, { seats, roundId, payoutTableId, settlementTxid, settlementBodyId, verify }) {
   let got;
   try { got = splitSignedAck(bytes); } catch (e) { return { ok: false, why: `no signed ack (${e.message})` }; }
+  if (settlementBodyId !== undefined) { got.ack = { roundId: got.ack.roundId, payoutTableId: got.ack.payoutTableId, settlementBodyId: got.ack.settlementTxid }; settlementTxid = settlementBodyId; }
   const who = toHex(got.nodePubkey);
   if (!seats.some((k) => toHex(k) === who)) return { ok: false, why: `signed by ${who.slice(0, 16)}, which is not one of the round's seats` };
   if (toHex(got.ack.roundId) !== toHex(roundId)) return { ok: false, why: `${who.slice(0, 16)} acked another round` };
-  if (toHex(got.ack.settlementTxid) !== toHex(settlementTxid)) return { ok: false, why: `${who.slice(0, 16)} acked another settlement (${toHex(got.ack.settlementTxid).slice(0, 16)})` };
+  if (toHex(slotOf(got.ack)) !== toHex(settlementTxid)) return { ok: false, why: `${who.slice(0, 16)} acked another settlement (${toHex(slotOf(got.ack)).slice(0, 16)})` };
   if (toHex(got.ack.payoutTableId) !== toHex(payoutTableId)) return { ok: false, why: `${who.slice(0, 16)} computed another table (${toHex(got.ack.payoutTableId).slice(0, 16)})` };
   let good = false;
   try { good = verify(got.signature, settlementAckId(got.ack), got.nodePubkey) === true; } catch { good = false; }
@@ -83,7 +95,9 @@ export function checkAck(bytes, { seats, roundId, payoutTableId, settlementTxid,
  */
 export const SETTLEMENT_COMMIT_BYTES = 1 + 2 + 32 + 32 + 32;
 export const SIGNED_SETTLEMENT_COMMIT_BYTES = SETTLEMENT_COMMIT_BYTES + 32 + 64;
-export function settlementCommitBody({ roundId, settlementTxid, hiding, binding }) {
+export function settlementCommitBody(c) {
+  const { roundId, hiding, binding } = c;
+  const settlementTxid = slotOf(c);
   const nonces = new Uint8Array(hiding.length + binding.length);
   nonces.set(hiding, 0); nonces.set(binding, hiding.length);
   const w = new Writer();
@@ -97,7 +111,7 @@ export function signSettlementCommit(commit, nodePubkey, sign) {
   const out = new Uint8Array(SIGNED_SETTLEMENT_COMMIT_BYTES);
   out.set(body, 0);
   out.set(nodePubkey, SETTLEMENT_COMMIT_BYTES);
-  out.set(sign(taggedHash(TAG.settlementCommit, body)), SETTLEMENT_COMMIT_BYTES + 32);
+  out.set(sign(taggedHash(isBody(commit) ? TAG.settlementCommitBody : TAG.settlementCommit, body)), SETTLEMENT_COMMIT_BYTES + 32);
   return out;
 }
 /** One seat's signed commit, against what it was asked: { ok, who } or { ok: false, why }. */
@@ -107,7 +121,7 @@ export function checkSettlementCommit(bytes, { seats, commit, verify }) {
   if (!seats.some((k) => toHex(k) === who)) return { ok: false, why: `signed by ${who.slice(0, 16)}, which is not one of the round's seats` };
   if (toHex(body) !== toHex(settlementCommitBody(commit))) return { ok: false, why: `${who.slice(0, 16)} committed to other bytes` };
   let good = false;
-  try { good = verify(bytes.slice(SETTLEMENT_COMMIT_BYTES + 32), taggedHash(TAG.settlementCommit, body), nodePubkey) === true; } catch { good = false; }
+  try { good = verify(bytes.slice(SETTLEMENT_COMMIT_BYTES + 32), taggedHash(isBody(commit) ? TAG.settlementCommitBody : TAG.settlementCommit, body), nodePubkey) === true; } catch { good = false; }
   return good ? { ok: true, who } : { ok: false, why: `${who.slice(0, 16)}'s signature over its commit does not verify` };
 }
 
@@ -167,13 +181,13 @@ export function checkSettlementAsk(bytes, { seats, ask, verify }) {
  * THE THRESHOLD OF ACKS: distinct seats, each verified, over one (round, table, txid), against `receiptsNeeded(slots)`: 2 of 2, 5 of 7.
  * Answers the count, the need, the acks that counted and every one that did not, named.
  */
-export function countAcks({ acks, seats, slots = seats.length, roundId, payoutTableId, settlementTxid, verify }) {
+export function countAcks({ acks, seats, slots = seats.length, roundId, payoutTableId, settlementTxid, settlementBodyId, verify }) {
   const needed = receiptsNeeded(slots);
   const seen = new Set();
   const kept = [];
   const refused = [];
   for (const bytes of acks || []) {
-    const c = checkAck(bytes, { seats, roundId, payoutTableId, settlementTxid, verify });
+    const c = checkAck(bytes, { seats, roundId, payoutTableId, settlementTxid, settlementBodyId, verify });
     if (!c.ok) { refused.push(c.why); continue; }
     if (seen.has(c.who)) continue;
     seen.add(c.who);

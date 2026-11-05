@@ -281,6 +281,9 @@ fn arena_offline(mode: &str, a: &Args) -> Option<anyhow::Result<()>> {
         return Some(arena::id(a).map(|v| println!("{v}")));
     }
     // offence rows (a) and (b): the Arena-lock spends a federation's signed sessions name (src/arena.rs claim_read)
+    if mode == "arena-z-key" {
+        return Some(Ok(println!("{}", serde_json::json!({ "mode": "arena-z-key", "z_key": arena::z_key().to_string() }))));
+    }
     if mode == "arena-claim-read" {
         return Some(arena::claim_read().map(|v| println!("{v}")));
     }
@@ -361,6 +364,8 @@ async fn main() -> anyhow::Result<()> {
         "arena-redeem" => arena::redeem(&a, &client, lnv2, &api).await,
         #[cfg(feature = "arena-lock")]
         "arena-settle" => arena::settle(&a, &client, lnv2, &api).await,
+        #[cfg(feature = "arena-lock")]
+        "arena-send-refund" => arena::send_refund(&a, &client, lnv2).await,
         "send" => send(&a, &client).await,
         // THE ARBITER'S PEG-IN (spec §5A.3: "the arbitration set pegs it into the round's federation"): an
         // address the federation controls, and the claim once a payment to it is confirmed - the escrow becomes e-cash in
