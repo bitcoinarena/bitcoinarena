@@ -191,7 +191,7 @@ import { SOURCE_ENTRIES } from '../../arena-protocol/src/market-sources.js';
 import { CLOCKS as FEDERATION_CLOCKS, bondLapseOf } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
-import { WinningsSend, sendPlanToJson } from './winnings-send.js';
+import { WinningsSend, sendPlanToJson, decodeNamedResendList } from './winnings-send.js';
 import { TYPE_SETTLEMENT_ACK, TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, TYPE_ABANDONED_PROOF, TYPE_THEFT_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION, seatingRulesEpochOf } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
@@ -10528,7 +10528,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const got = sender.paid(r8, eHex, pre);
           return got.ok ? text(res, 201, 'the winning is kept as paid') : text(res, got.status || 409, got.why);
         }
-        const built = late8 ? await settlements.lateMessage(r8, late8) : await settlements.message(r8);
+        // A PROTOCOL-27 SETTLEMENT'S SENDS read its kept batch: S, KeyAgg(S) and the real txid (sendBuilt; below 27 the build as it is)
+        const built = settlements.sendBuilt(r8, late8 ? await settlements.lateMessage(r8, late8) : await settlements.message(r8), { entry: late8 });
         if (!built.ok) return text(res, built.status || 409, built.why);
         const kind = url.searchParams.get('kind') === 'resend' ? 'resend' : 'auth';
         const attempt = url.searchParams.has('attempt') ? Number(url.searchParams.get('attempt')) : null;
@@ -10536,14 +10537,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const got = await sender.commit(r8, eHex, built, kind, attempt, { hash: url.searchParams.get('hash') });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
-          return res.end(Buffer.from(encodeCommitments([got.commitment])));
+          // (a member of S answers its seat and its MuSig2 nonces, kanban #1044 B1)
+          return res.end(Buffer.from(got.named ? got.wire : encodeCommitments([got.commitment])));
         }
         let list;
-        try { list = decodeCommitments(new Uint8Array(await read(req))); } catch (e) { return text(res, 400, e.message); }
+        try { const raw = new Uint8Array(await read(req)); list = built.named ? decodeNamedResendList(raw) : decodeCommitments(raw); } catch (e) { return text(res, 400, e.message); }
         const got = await sender.share(r8, eHex, built, list, kind, attempt);
         if (!got.ok) return text(res, got.status || 409, got.why);
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
-        return res.end(Buffer.from(encodeShare(got.share)));
+        return res.end(Buffer.from(got.named ? got.wire : encodeShare(got.share)));
       }
 
       // A RE-SEND OF AN EXPIRED WINNING, between signer nodes: kept only if the previous attempt expired here, the gateway
@@ -10560,7 +10562,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (lateHex && !/^[0-9a-f]{64}$/.test(lateHex)) return text(res, 400, 'a late settlement is named by a 32-byte entry id');
         const late8 = lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null;
         if (late8 && !round.lateLockSettlement(new Uint8Array(rid), late8)) return text(res, 409, 'no late settlement for that entry');
-        const built = late8 ? await settlements.lateMessage(new Uint8Array(rid), late8) : await settlements.message(new Uint8Array(rid));
+        const built = settlements.sendBuilt(new Uint8Array(rid), late8 ? await settlements.lateMessage(new Uint8Array(rid), late8) : await settlements.message(new Uint8Array(rid)), { entry: late8 });
         if (!built.ok) return text(res, built.status || 409, built.why);
         const sender = late8 ? settlements.lateWinningsFor(new Uint8Array(rid), late8) : winnings;
         const got = await sender.checkResend(new Uint8Array(rid), built, proposed);

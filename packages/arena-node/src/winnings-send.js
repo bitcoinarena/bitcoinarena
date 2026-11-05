@@ -33,6 +33,8 @@ import { encodeCommitments, decodeCommitments, decodeShare } from './pool-wire.j
 import { largestPayoutMsat, lnv2FeeMsat } from '../../arena-protocol/src/lock-settlement.js';
 import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { stateOf } from './settlement-state.js';
+import { namedClaimKeys } from '../../arena-protocol/src/arena-lock.js';
+import { NamedNonces, aggregateBatch, encodeNamedCommitment, decodeNamedCommitment } from './named-settlement.js';
 import { askPeers, askWithin, PEER_ASK_MS, PEER_GRACE_MS } from './peer-ask.js';
 
 /** How long an address's LNURL endpoint is waited for, at its pay request and at its callback each (kanban #1074): it is no seat, and fetch alone waits 300 s. */
@@ -424,6 +426,7 @@ export class WinningsSend {
     const message = await this.messageFor(kind, roundIdBytes, row, built);
     if (!message) return refuse('this signer node cannot rebuild that message');
     const key = `${kind}:${toHex(roundIdBytes)}:${entryHex}:${row.attempt}`;
+    if (built.named) return this.#commitNamed(built, key, message);
     let pair = this.pairs.get(key);
     // A PAIR THAT SIGNED A LIST IS SPENT (kanban #1074, the settlement's #1070): the next commit draws a new one, so a list one seat never completed binds nobody
     if (!pair || toHex(pair.message) !== toHex(message) || pair.list) {
@@ -443,6 +446,7 @@ export class WinningsSend {
     const message = await this.messageFor(kind, roundIdBytes, row, built);
     const pair = this.pairs.get(`${kind}:${toHex(roundIdBytes)}:${entryHex}:${row.attempt}`);
     if (!message || !pair || toHex(pair.message) !== toHex(message)) return refuse(`this signer node committed to no ${kind} of that send`);
+    if (built.named) return this.#shareNamed(built, pair, commitments, kind);
     const own = commitments.find((c) => String(c.id) === String(pair.commitment.id));
     if (!own || toHex(own.hiding) !== toHex(pair.commitment.hiding) || toHex(own.binding) !== toHex(pair.commitment.binding))
       return refuse('that list does not carry this signer node\'s own commitment');
@@ -464,6 +468,7 @@ export class WinningsSend {
   async sign(roundIdBytes, row, built, kind) {
     const entryHex = toHex(row.entryId);
     const q = `round=${toHex(roundIdBytes)}&entry=${entryHex}&kind=${kind}&attempt=${row.attempt}&hash=${row.paymentHash}${this.scopeParam}`;
+    if (built.named) return this.#signNamed(roundIdBytes, row, built, kind, q);
     for (;;) {
       const own = await this.commit(roundIdBytes, entryHex, built, kind, row.attempt);
       if (!own.ok) return own;
@@ -480,6 +485,95 @@ export class WinningsSend {
       if (combined.ok) { this.withheld.delete(q); return combined; }
       if (!this.#leaveOut(q, combined, listed, built.needed)) return combined;
     }
+  }
+
+  /**
+   * S-ONLY SIGNING AFTER THE SETTLEMENT (protocol 27, kanban #1044 B1, ruling #1134 2): a held donation share's re-send and its send's auth are signed by the
+   * settlement's signer set S - the key its refund names is KeyAgg(claim_keys[S]) - with BIP-327 MuSig2, one message a session. Only a member of S commits;
+   * every member of S must sign, since no other set makes that key; a member of S gone for good leaves the share where it is (the written residual).
+   * The commit door answers the seat's index and its public nonce pair; the share door is asked over the list of every member's (seat, pubnonce),
+   * ascending - exactly S - and each nonce pair signs one list, once.
+   */
+  #namedSeat(built) {
+    const { seatKeys, threshold } = namedClaimKeys(built.contract);
+    const seat = seatKeys.findIndex((k) => toHex(k) === toHex(this.round.pubkey));
+    return { seatKeys, threshold, seat, signers: built.signers || [] };
+  }
+
+  #commitNamed(built, key, message) {
+    const { seat, signers } = this.#namedSeat(built);
+    if (seat < 0 || !signers.includes(seat)) return refuse('this seat is not in the signer set S of that settlement: only S signs under its key');
+    let pair = this.pairs.get(key);
+    if (!pair || !pair.named || toHex(pair.message) !== toHex(message) || pair.list) {
+      pair = { named: true, message, list: null, partial: null,
+        nonces: new NamedNonces({ count: 1, secret: this.round.identity.secret, myKey: this.round.pubkey, rand: this.random }) };
+      this.pairs.set(key, pair);
+    }
+    return { ok: true, named: true, seat, pubnonces: pair.nonces.pubnonces, wire: encodeNamedResendCommit(seat, pair.nonces.pubnonces) };
+  }
+
+  #shareNamed(built, pair, members, kind) {
+    const { seatKeys, threshold, seat, signers } = this.#namedSeat(built);
+    if (!pair.named) return refuse(`this signer node committed to no ${kind} of that send under S`);
+    if (!Array.isArray(members) || members.length !== signers.length || members.some((m, i) => m.seat !== signers[i]))
+      return refuse(`that list is not the signer set S (${signers.join(', ')}) of the settlement`);
+    const own = members.find((m) => m.seat === seat);
+    if (!own || own.pubnonces.length !== 1 || toHex(own.pubnonces[0]) !== toHex(pair.nonces.pubnonces[0])) return refuse('that list does not carry this seat\'s own nonces');
+    const key = members.map((m) => `${m.seat}:${toHex(m.pubnonces[0] || new Uint8Array(0))}`).join('|');
+    if (pair.list && pair.list !== key) return refuse(`this seat signed that ${kind} over another list, and keeps no second nonce`);
+    if (members.some((m) => m.pubnonces.length !== 1)) return refuse('a member of that list commits to another number of nonces');
+    if (pair.partial === null) {
+      pair.partial = pair.nonces.sign({ claimKeys: seatKeys, threshold, signers, pubnoncesBySigner: members.map((m) => m.pubnonces), messages: [pair.message] })[0];
+      pair.list = key;
+    }
+    return { ok: true, named: true, partial: pair.partial, wire: pair.partial };
+  }
+
+  async #signNamed(roundIdBytes, row, built, kind, q) {
+    const entryHex = toHex(row.entryId);
+    const { seatKeys, threshold, seat, signers } = this.#namedSeat(built);
+    if (!signers.length) return refuse('the settlement names no signer set S');
+    const message = await this.messageFor(kind, roundIdBytes, row, built);
+    if (!message) return refuse('this signer node cannot rebuild that message');
+    const members = new Map();
+    let mineKey = null;
+    if (signers.includes(seat)) {
+      const own = await this.commit(roundIdBytes, entryHex, built, kind, row.attempt);
+      if (!own.ok) return own;
+      members.set(seat, { seat, pubnonces: own.pubnonces, base: null });
+      mineKey = `${kind}:${toHex(roundIdBytes)}:${entryHex}:${row.attempt}`;
+    }
+    const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
+      const r = await this.fetcher(`${base}/send-commit?${q}`, { method: 'POST', signal });
+      return r.ok ? decodeNamedResendCommit(new Uint8Array(await r.arrayBuffer())) : null;
+    }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: signers.length - members.size, counts: (x) => !!(x && x.pubnonces) });
+    for (const { peer: base, value } of asked) {
+      if (value && signers.includes(value.seat) && !members.has(value.seat) && value.pubnonces.length === 1) members.set(value.seat, { ...value, base });
+    }
+    const missing = signers.filter((i) => !members.has(i));
+    // A MEMBER OF S GONE: no other set makes S's key, so the share stays where it is until it answers (ruling #1134 2's residual)
+    if (missing.length) return { ...refuse(`seat(s) ${missing.join(', ')} of the signer set S did not commit to the ${kind}: only S signs under its key, and the share stays held`), held: true };
+    const list = signers.map((i) => members.get(i));
+    const body = encodeNamedResendList(list);
+    const partials = new Map();
+    if (mineKey) {
+      const mine = await this.share(roundIdBytes, entryHex, built, list, kind, row.attempt);
+      if (!mine.ok) return mine;
+      partials.set(seat, mine.partial);
+    }
+    const peers = list.filter((x) => x.base !== null);
+    const got = await askPeers(peers.map((x) => x.base), async (base, signal) => {
+      const r = await this.fetcher(`${base}/send-share?${q}&named=1`, { method: 'POST', body, signal });
+      if (!r.ok) return { why: (await r.text()).trim() };
+      return { partial: new Uint8Array(await r.arrayBuffer()) };
+    }, { boundMs: this.peerAskMs });
+    got.forEach(({ value }, i) => { if (value && value.partial && value.partial.length === 32) partials.set(peers[i].seat, value.partial); });
+    const agg = aggregateBatch({ claimKeys: seatKeys, threshold, signers, messages: [message], pubnoncesBySigner: list.map((x) => x.pubnonces),
+      partialsBySigner: signers.map((i) => (partials.has(i) ? [partials.get(i)] : null)) });
+    if (!agg.ok) return { ...refuse(`the ${kind} under S was not made: ${agg.why} (seat(s) ${agg.bad.join(', ')})`), held: true };
+    const signature = agg.signatures[0];
+    if (!schnorr.verify(signature, message, built.claimPk.subarray(1))) return refuse(`the ${kind} signature does not verify under the signer set's key`);
+    return { ok: true, signature };
   }
 
   /** THE SEATS THAT SIGN THIS LIST (settlement.js #listed): those that committed, less any that gave this asker no share for it while enough others remain. */
@@ -572,9 +666,9 @@ export class WinningsSend {
       if (row.state === 'REFUNDED') { out.push({ entry: entryHex, attempt: row.attempt, state: 'REFUNDED', already: true }); continue; }
       // A HELD DONATION SHARE: kept under the committee key, and the same recipient asked again - once it answers, the
       // re-send spends the held contract into the send to its invoice (the next pass funds and pays it).
-      // A PROTOCOL-27 HELD SHARE OR RE-SEND is signed by S after the settlement: not built yet - the share stays under KeyAgg(S) (#1134 2's residual)
-      if (built.named && (!row.invoice || row.attempt > 0)) {
-        out.push({ entry: entryHex, attempt: row.attempt, ok: false, held: true, why: 'a protocol-27 held share or re-send waits for S to sign it, which is not built yet: it stays under the signer set\'s key' });
+      // A PROTOCOL-27 QUALIFIER'S SEND IS NEVER RE-SENT (its refund (c) is): only a donation's held share or re-send is signed by S after the settlement
+      if (built.named && !row.donation && row.attempt > 0) {
+        out.push({ entry: entryHex, attempt: row.attempt, ok: false, why: 'a protocol-27 qualifier\'s send is not re-sent: its presigned refund (c) is submitted' });
         continue;
       }
       if (!row.invoice) {
@@ -601,7 +695,8 @@ export class WinningsSend {
         this.round.markSend({ entryId: row.entryId, attempt: 0, state: 'SENDING', txid: toHex(at.txid), outIdx: Number(at.outIdx),
           why: 'the settlement is accepted; the committee signs the invoice and the gateway is asked' });
       // PROTOCOL 27 (ruling #1134 2): the auth was signed by S in the settlement's batch, before the submit - never by a key signed after it
-      const a = built.named ? presignedAuth(built, row) : await this.sign(roundIdBytes, row, built, 'auth');
+      // (a donation's re-send is S's own send after the settlement: its auth is signed by S now, at the S-only doors)
+      const a = built.named && row.attempt === 0 ? presignedAuth(built, row) : await this.sign(roundIdBytes, row, built, 'auth');
       if (!a.ok) { out.push({ entry: entryHex, attempt: row.attempt, ...a }); continue; }
       const said = await (await this.portFor(roundIdBytes)).send({ gateway: row.gatewayUrl, outpoint: at, paymentHash: row.paymentHash, amountMsat: row.payoutMsat,
         expiration: row.expiration, claimPk: row.gatewayPk, refundPk: built.claimPk, invoice: row.invoice, auth: a.signature });
@@ -648,4 +743,31 @@ export function resendNonce({ roundId, lateEntryId = null, entryId, attempt }) {
 /** A plan's order key: its payment hashes, sorted and joined. Two plans for one round compare by it. */
 export function planKey(rows) {
   return rows.map((r) => String(r.paymentHash).toLowerCase()).sort().join(':');
+}
+
+/** A member of S at the re-send commit door (protocol 27): u8 seat index, then its public nonces (u16 k, k x 66 bytes). */
+export const encodeNamedResendCommit = (seat, pubnonces) => Uint8Array.from([seat, ...encodeNamedCommitment(pubnonces)]);
+export function decodeNamedResendCommit(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < 3) throw new Error('a re-send commit is a seat index and its nonces');
+  return { seat: bytes[0], pubnonces: decodeNamedCommitment(bytes.subarray(1)) };
+}
+/** The list the re-send share door is asked over: u8 n, then per member u8 seat, u16 k and k public nonces - exactly S, ascending. */
+export function encodeNamedResendList(members) {
+  const parts = [Uint8Array.of(members.length), ...members.flatMap((m) => [Uint8Array.of(m.seat), encodeNamedCommitment(m.pubnonces)])];
+  const out = new Uint8Array(parts.reduce((t, p) => t + p.length, 0)); let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+}
+export function decodeNamedResendList(bytes) {
+  const out = []; let at = 1;
+  const n = bytes[0];
+  for (let i = 0; i < n; i++) {
+    const seat = bytes[at]; const k = (bytes[at + 1] << 8) | bytes[at + 2];
+    const end = at + 3 + 66 * k;
+    if (end > bytes.length) throw new Error('the re-send list ends early');
+    out.push({ seat, pubnonces: decodeNamedCommitment(bytes.subarray(at + 1, end)) });
+    at = end;
+  }
+  if (at !== bytes.length) throw new Error('the re-send list runs on');
+  return out;
 }

@@ -60,10 +60,20 @@ test('a send to a qualifier that expires unpaid is not re-sent: its presigned re
   assert.equal(calls.refund.length, 1);
 });
 
-test('a held donation share of a protocol-27 settlement is not re-sent under a key signed later', async () => {
-  const { w, built, calls } = world({ held: true, donation: true });
+test('a held donation share of a protocol-27 settlement stays held under KeyAgg(S) and goes to a re-send S signs (named-resend-s-only.test.js); nothing is sent before', async () => {
+  const { w, built, calls, marks } = world({ held: true, donation: true });
+  w.port.gateways = async () => ({ gateways: [], height: 600 });
   const out = await w.sendAll(RID, built);
   assert.equal(out[0].held, true);
-  assert.match(out[0].why, /protocol-27/);
+  assert.match(String(out[0].resend), /no other live gateway/);
+  assert.equal(marks[0].state, 'HELD');
   assert.equal(calls.send.length + calls.refund.length, 0);
+});
+
+test('a protocol-27 qualifier\'s later attempt is never re-sent: its refund (c) is the way back', async () => {
+  const { w, built, calls, row } = world();
+  row.attempt = 1;
+  const out = await w.sendAll(RID, built);
+  assert.match(out[0].why, /not re-sent: its presigned refund \(c\)/);
+  assert.equal(calls.send.length, 0);
 });
