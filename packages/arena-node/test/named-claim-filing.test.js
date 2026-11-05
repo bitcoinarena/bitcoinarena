@@ -358,23 +358,35 @@ test('a filer read and a funding search of the same seat never run their tool at
   assert.equal(most, 1);
 });
 
-test('a level-1 proof (a) is not judged by a tool run: the claim spent its locks, so its body cannot be rebuilt through the guardians', async () => {
+test('a level-1 proof (a) is judged: its correct body is rebuilt offline from the proof\'s own sessions, never through the guardians the claim spent', async () => {
   const { createProofJudge } = await import('../src/proof-judge.js');
-  const { encodeFraudProof } = await import('../../arena-protocol/src/slash.js');
-  const round = fakeRound();
-  const s = new LockSettlement(round, { port: fakePort([]), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
-  await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
-  const filedA = round.filed.find((f) => f.row === NAMED_ROW_OFF_TABLE);
-  const complete = encodeFraudProof({ evidence: filedA.bytes, contract: encodeRoundContract(contract) });
+  const { encodeFraudProof, encodeSlashProof } = await import('../../arena-protocol/src/slash.js');
+  const { joinNamedClaimEvidence, namedClaimProofBody } = await import('../../arena-protocol/src/named-claim-proof.js');
+  // A TABLE THAT BUILDS: both entries' fee locks claimed (F is in each Entry Contract), one payout; the claim at THEFT spent them under another body
+  const table = { roundId: RID, rows: [], nonce: Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8]),
+    claims: E.map((e, i) => ({ entryId: EID[i], outpoint: e.feeLockOutpoint, amountMsat: e.feeMsat, kind: 'fee' })), payouts: [{ payoutPk: Uint8Array.from([2, ...b32(0x66)]), msat: 1000n }] };
+  const accused = seats[1];
+  const proof = namedClaimProofBody({ row: NAMED_ROW_OFF_TABLE, roundId: RID, accused: accused.pubkey, spendTxid: THEFT, tableId: settlementTableId(table), advert: adverts.get(xhex(accused)) });
+  const record = joinNamedClaimEvidence(encodeSlashProof(proof), { row: NAMED_ROW_OFF_TABLE, config: Uint8Array.from([9]), firstSession: 3, sessions: [Uint8Array.from([1]), Uint8Array.from([2])],
+    table: encodeSettlementTable(table), entries: E, preimages: [], finals: [] });
+  const complete = encodeFraudProof({ evidence: record, contract: encodeRoundContract(contract) });
   const census = { ok: true, entries: seats.map((x, i) => ({ pubkey: x.pubkey, txid: b32(0x90 + i), vout: i, advert: {} })) };
-  let toolRuns = 0;
-  const judge = createProofJudge({ committeeOf: () => ({ ok: true, committee }), censusOf: () => census, coreOf: () => null, beaconOf: () => ({ ok: false }), replayRunOf: () => null,
-    manifestOf: () => ({}), clientOf: async () => { toolRuns += 1; return { fees: async () => ({ ppm: 0n, baseMsat: 0n }), bodyId: async () => { toolRuns += 1; throw new Error('the guardians hold no Arena lock'); } }; },
-    claimRead: async (input) => { toolRuns += 1; return { mode: 'arena-claim-read', federation_id: FID, first_session: input.firstSession, sessions: input.sessions.length, unverified: [], spends: SPENDS }; } });
-  const said = await judge(complete);
-  assert.equal(said.verdict, undefined);
-  assert.match(said.why, /rebuilt offline/);
-  assert.equal(toolRuns, 0);
+  const spends = E.map((e) => ({ ...SPENDS[0], outpoint: op(e.feeLockOutpoint) }));
+  let guardianRuns = 0;
+  const judgeWith = (bodyOf) => createProofJudge({ committeeOf: () => ({ ok: true, committee }), censusOf: () => census, coreOf: () => null, beaconOf: () => ({ ok: false }), replayRunOf: () => null,
+    manifestOf: () => ({}), clientOf: async () => ({ fees: async () => ({ ppm: 0n, baseMsat: 0n }), bodyId: async () => { guardianRuns += 1; throw new Error('the guardians hold no Arena lock'); } }),
+    claimRead: async (input) => ({ mode: 'arena-claim-read', federation_id: FID, first_session: input.firstSession, sessions: input.sessions.length, unverified: [], spends }), bodyOf });
+  const bodies = [];
+  const said = await judgeWith(async (input, build) => { bodies.push({ input, build }); return { ok: true, bodyId: ACKED_BODY }; })(complete);
+  // THE REBUILD RAN, OFFLINE: the proof's own config and sessions, the table's claims with each F, its payouts and nonce; the guardians were never asked
+  assert.equal(bodies.length, 1);
+  assert.deepEqual(bodies[0].input, { config: '09', firstSession: 3, sessions: ['01', '02'] });
+  assert.deepEqual(bodies[0].build.claims.map((c) => [op(c.outpoint), toHex(c.preimage)]), E.map((e) => [op(e.feeLockOutpoint), toHex(e.feePreimage)]));
+  assert.deepEqual([bodies[0].build.payouts.length, toHex(bodies[0].build.nonce)], [1, '0102030405060708']);
+  assert.equal(guardianRuns, 0);
+  // a seat that can say: this table shows no FINALs, so the bytes do not slash - a verdict, not "cannot say"
+  assert.equal(said.verdict, false);
+  assert.doesNotMatch(said.why, /rebuilt offline|cannot do yet/);
 });
 
 test('the same offence is filed once, though a later pass reads one session more', async () => {

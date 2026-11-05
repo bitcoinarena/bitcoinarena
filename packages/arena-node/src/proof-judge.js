@@ -19,10 +19,10 @@ import { takesAnyFederation } from '../../arena-protocol/src/constants.js';
 
 /**
  * `committeeOf(contract, rid)` -> { ok, committee[] of keys } or { ok: false, why }, its signer nodes; `censusOf(contract, rid)` -> { ok, entries } or { ok: false, why }; `coreOf(contract, rid)` the round's core, or
- * null where this seat does not host it; `beaconOf(contract, rid, entry, eid)` -> { ok, hash } or { ok: false, why }; `replayRunOf(rid, eid, core)` this seat's replay in its worker pool; `auditSetOf(contract, rid)` { eligible, total } who could audit the round, or null; `vrf` the secp256k1 ECVRF; `manifestOf(contract)` the round's game's manifest, or null; `clientOf(fid hex)` -> { fees(), txid(build) } this seat's own client of a federation, or null; `panelsOf(contract, rid)` -> { ok, panelA, panelB } of keys or { ok: false, why }; `holdBlocksOf(contract)`; `abandoned(bytes, beforeHeight)` -> { verdict, why } this seat's word on an abandonment's proof (federation-records.js abandonedVerdict); `theft(bytes, beforeHeight)` the same on a theft's proof (theftVerdict, kanban #1093 part 2); `claimRead(input)` the stake-lock tool's arena-claim-read over a named claim's sessions (offline), or null where none runs here (kanban #1044 B1); `payeesOf(contract, rid)` -> { nodeKeys, donationKeys, reserveKeys } who the round may pay (named-claim-payees.js), or null; `entriesOf(rid)` the round's Entry Contracts this seat holds, or null.
+ * null where this seat does not host it; `beaconOf(contract, rid, entry, eid)` -> { ok, hash } or { ok: false, why }; `replayRunOf(rid, eid, core)` this seat's replay in its worker pool; `auditSetOf(contract, rid)` { eligible, total } who could audit the round, or null; `vrf` the secp256k1 ECVRF; `manifestOf(contract)` the round's game's manifest, or null; `clientOf(fid hex)` -> { fees(), txid(build) } this seat's own client of a federation, or null; `panelsOf(contract, rid)` -> { ok, panelA, panelB } of keys or { ok: false, why }; `holdBlocksOf(contract)`; `abandoned(bytes, beforeHeight)` -> { verdict, why } this seat's word on an abandonment's proof (federation-records.js abandonedVerdict); `theft(bytes, beforeHeight)` the same on a theft's proof (theftVerdict, kanban #1093 part 2); `claimRead(input)` the stake-lock tool's arena-claim-read over a named claim's sessions (offline), or null where none runs here (kanban #1044 B1); `bodyOf(input, build)` its arena-body, a level-1 proof (a)'s correct body rebuilt offline from the same sessions (stake-lock-port.js readBody), or null where none runs here; `payeesOf(contract, rid)` -> { nodeKeys, donationKeys, reserveKeys } who the round may pay (named-claim-payees.js), or null; `entriesOf(rid)` the round's Entry Contracts this seat holds, or null.
  * Answers `judge(bytes)` -> { verdict, why }, and `judge.read(bytes)`, the cheap part, with no replay: { ok, kind, bond: { txid, vout }, roundId, contract, floorHeight, nodePubkey } or { ok: false, why }.
  */
-export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, replayRunOf, auditSetOf = () => null, vrf = null, manifestOf = () => null, clientOf = async () => null, panelsOf = () => ({ ok: false, why: 'no panels here' }), holdBlocksOf = () => null, abandoned = async () => ({ verdict: undefined, why: 'this seat reads no federation records' }), theft = async () => ({ verdict: undefined, why: 'this seat audits no federation' }), claimRead = async () => null, payeesOf = async () => null, entriesOf = () => null, waiting = 32, kept = 256 }) {
+export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, replayRunOf, auditSetOf = () => null, vrf = null, manifestOf = () => null, clientOf = async () => null, panelsOf = () => ({ ok: false, why: 'no panels here' }), holdBlocksOf = () => null, abandoned = async () => ({ verdict: undefined, why: 'this seat reads no federation records' }), theft = async () => ({ verdict: undefined, why: 'this seat audits no federation' }), claimRead = async () => null, bodyOf = async () => null, payeesOf = async () => null, entriesOf = () => null, waiting = 32, kept = 256 }) {
   /** Everything that needs no chain: the bytes read as a proof, and the contract in them is the round the proof names. */
   function read(bytes) {
     if (isAbandonedProof(bytes)) {
@@ -93,17 +93,14 @@ export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, repl
       const hashing = await clientOf(home);
       held = await judgeTableProof({ evidence, roundIdBytes: r.roundId, contract: r.contract, manifest, feesOf: (fid) => fees.get(fid) || null, txidOf: (_t, build) => (namedClaims(r.contract) ? hashing.bodyId(build) : hashing.txid(build)), ...on });
     } else if (r.kind === 'named') {
-      // A NAMED CLAIM (§5A.3 rows (a), (b), kanban #1044 B1): the sessions replayed offline by this seat's own tool; row (a)'s table rebuilt by its own client, without signers
+      // A NAMED CLAIM (§5A.3 rows (a), (b), kanban #1044 B1): the sessions replayed offline by this seat's own tool; row (a)'s correct body rebuilt by the same tool, offline and without signers
       const manifest = manifestOf(r.contract);
-      // ROW (a) AT LEVEL 1 CANNOT BE JUDGED YET (measured 2026-11-05, round a8e68cb6): its correct body is rebuilt by the stake-lock tool's arena-settle, which
-      // reads each lock from the guardians - and a proof exists only once the claim spent them ("the guardians hold no Arena lock"). Each try was a tool run
-      // at every seat; none is made until the body is rebuilt offline from the sessions' own lock contracts. Level 2 (row 3) needs no rebuild
-      if (r.got.row === NAMED_ROW_OFF_TABLE) return { verdict: undefined, why: 'a level-1 proof of a named claim needs its correct body rebuilt offline, which this seat cannot do yet' };
+      // ROW (a) AT LEVEL 1 (measured 2026-11-05, round a8e68cb6): a proof exists only once its claim spent the round's locks, so its correct body is not
+      // rebuilt through the guardians ("the guardians hold no Arena lock") but offline by `bodyOf`, from the lock contracts the proof's own sessions funded
       if (r.got.row === NAMED_ROW_OFF_TABLE && !manifest) return { verdict: undefined, why: 'this seat does not host that round\'s game' };
       let table = null;
       if (r.got.row === NAMED_ROW_OFF_TABLE) { try { table = decodeSettlementTable(r.got.table); } catch (e) { return { verdict: false, why: `not a proof of a named claim: ${e.message}` }; } }
       const fees = new Map();
-      let hashing = null;
       if (table) {
         const any = takesAnyFederation(r.contract);
         const named = any ? [...r.got.entries, ...r.got.finals.map((f) => f.entry)].map((x) => toHex(x.federationId || new Uint8Array(32))) : [toHex(r.contract.federationId)];
@@ -113,12 +110,11 @@ export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, repl
           if (!client) return { verdict: undefined, why: `this seat holds no client of federation ${fid.slice(0, 16)}` };
           fees.set(fid, await client.fees());
         }
-        hashing = await clientOf(home);
       }
       // LEVEL 2 (rulings #1138 2, #1140): who the round may pay, from this seat's own bytes, and the entries it holds of the round
       const level2 = r.got.row === NAMED_ROW_PAYEE ? { payees: await payeesOf(r.contract, r.roundId), ownEntries: entriesOf(r.roundId) } : {};
       const named = await judgeNamedClaimProof({ evidence, roundIdBytes: r.roundId, contract: r.contract, manifest, claimRead, feesOf: (fid) => fees.get(fid) || null, ...level2,
-        bodyIdOf: async (_t, build) => (hashing && hashing.bodyId ? hashing.bodyId(build) : null), ...on });
+        bodyOf, ...on });
       if (named.slashed === undefined) return { verdict: undefined, why: named.why };
       held = named;
     } else if (r.kind === 'release') {
