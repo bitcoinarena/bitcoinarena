@@ -2441,6 +2441,44 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         ...(Number(contract.protocolVersion) >= AUDITOR_VERSION ? { auditors: auditDesk.held(rid) } : {}) };
     },
   });
+  // WHO A PROTOCOL-27 ROUND MAY PAY (level 2 of proof (a), rulings #1138 2, #1139 A, #1140 A-C), from this seat's own bytes; the filer and the judge read the
+  // same. A set this seat cannot read is null, and an output it could hold is then unread, never held against a seat (named-claim-payees.js).
+  //   node row: refundKeyOf of every seat of the game and settlement pools and the Round Contract's nodes (the remainder), of each node the census at the
+  //             round's census height makes eligible to audit (auditEligible: the draw is secret, so the eligible set, no VRF proof), of each guardian,
+  //             gateway and liquidity provider seated for the round, and the advert payout key each seated guardian names; the publisher's fee-back key
+  //             refundKeyOf(creator) of a series round
+  //   donation: the recipients' keys of the set the Round Contract names by hash, in force at its census height
+  //   reserve:  the round's federations' reserve keys
+  const namedPayeesFor = async (contract, rid) => {
+    const hex33 = (k) => (k instanceof Uint8Array && k.length === 33 ? toHex(k) : null);
+    let nodeKeys = null;
+    try {
+      const s = settlements.signerNodesFor(rid, contract);
+      const audit = auditSetFor(rid);
+      if (s && audit && audit.eligible) {
+        const nodes = [...(s.gameVerify || []), ...(s.settlement || []), ...(contract.nodes || []), ...(s.guardian || []), ...(s.gateway || []), ...(s.liquidity || [])];
+        nodeKeys = new Set(nodes.map((k) => toHex(refundKeyOf(k))));
+        for (const k of audit.eligible.keys()) nodeKeys.add(toHex(refundKeyOf(fromHex(k))));
+        // an advert payout key only for a node seated in one of those roles (#1140 A): anyone can sign an advert
+        const seated = new Set([...(s.guardian || []), ...(s.gateway || []), ...(s.liquidity || [])].map((k) => toHex(k)));
+        if (s.guardianPayout instanceof Map) for (const [node, pk] of s.guardianPayout) { const h = hex33(pk); if (h && seated.has(String(node).toLowerCase())) nodeKeys.add(h); }
+        if (contract.seriesId instanceof Uint8Array && contract.creatorPubkey instanceof Uint8Array) nodeKeys.add(toHex(refundKeyOf(contract.creatorPubkey)));
+      }
+    } catch { nodeKeys = null; }
+    let donationKeys = null;
+    try {
+      const ds = donationSetFor(contract);
+      if (ds.ok) donationKeys = new Set(ds.set.recipients.map((r) => hex33(r.recipientPk)).filter(Boolean));
+    } catch { donationKeys = null; }
+    let reserveKeys = null;
+    try {
+      const fids = takesAnyFederation(contract) ? round.entriesOf(rid).map((x) => toHex(x.entry.federationId || new Uint8Array(32))) : [toHex(contract.federationId)];
+      const keys = await Promise.all([...new Set(fids)].map((f) => reserveKeyFor(f).catch(() => null)));
+      reserveKeys = new Set(keys.map(hex33).filter(Boolean));
+    } catch { reserveKeys = null; }
+    return { nodeKeys, donationKeys, reserveKeys };
+  };
+  settlements.payeesFor = namedPayeesFor;
   // WHO PROCESSED THE ROUND, KEPT (kanban #624, 2026-10-24: "Also show who processed the round, e.g for settlement and verify"): each
   // settlement step this seat takes - committed, gave its share, combined and submitted, took a peer's signature - with its time, for GET /tx
   {
@@ -4216,6 +4254,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // A THEFT (kanban #1093 part 2, ruling #1109 X): the proof's own bytes, re-verified by this seat's session verifier and its own chain; no verifier here: undefined, never false
     // A NAMED CLAIM (kanban #1044 B1): the proof's sessions read offline by this seat's own stake-lock tool; no tool here: undefined, never false
     claimRead: (input) => readClaims(process.env.ARENA_STAKE_LOCK_BIN || null, input),
+    // LEVEL 2 OF A NAMED CLAIM (rulings #1138 2, #1140): who the round may pay, as the filer reads it, and the Entry Contracts this seat holds of the round
+    payeesOf: (contract, rid) => namedPayeesFor(contract, rid), entriesOf: (rid) => (round.get(rid) ? round.entriesOf(rid).map((x) => x.entry) : null),
     theft: async (bytes, beforeHeight) => (fedRecords ? fedRecords.theftVerdict(bytes, (inv) => { const f = fedOfInvite(inv); return f ? fromHex(String(f)) : null; }, beforeHeight) : { verdict: undefined, why: 'this seat holds no federation records yet' }),
     coreOf: (contract, rid) => coreForRound(contract, rid, hosted), beaconOf: (contract, rid, entry, eid) => verifier.proofBeacon(contract, rid, entry, eid), replayRunOf: (rid, eid, core) => verifier.proofReplay(rid, eid, core), vrf: auditVrf,
     // WHO COULD AUDIT, AS THE DESK TOOK IT: the round's census less its drawn nodes. Its players come out where this seat holds the round: a seat that does not cannot name them, and an AUDIT a player signed was refused at every door that held it
