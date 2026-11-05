@@ -29,9 +29,13 @@ import { isQualifier, VOID } from './payout.js';
 import { decodeSettlementTable, settlementTableId } from './settlement-ack.js';
 import { isAttested, payoutRuleForRound } from './manifest.js';
 import { offTableClaims, forfeitsOfLostEntries, OFF_TABLE_CLAIM, FORFEIT_OF_LOST_ENTRY } from './named-claim-offence.js';
+import { unpayableClaims } from './named-claim-payees.js';
 
 export const NAMED_ROW_OFF_TABLE = 1;
 export const NAMED_ROW_FORFEIT = 2;
+/** Row (a) at level 2 (rulings #1138 2, #1140): a claim that pays a key the round may not pay, or the node row more than the fee locks it claims. */
+export const NAMED_ROW_PAYEE = 3;
+const NAMED_ROWS = [NAMED_ROW_OFF_TABLE, NAMED_ROW_FORFEIT, NAMED_ROW_PAYEE];
 const ZERO32 = new Uint8Array(32);
 const nhex = (b) => toHex(b);
 const nlow = (x) => String(x || '').toLowerCase();
@@ -53,7 +57,7 @@ export function namedClaimEvidenceBytesOf(bytes, at = 0) {
 export function joinNamedClaimEvidence(proofBytes, parts) {
   if (proofBytes.length !== SLASH_PROOF_BYTES) throw new Error(`a slash proof is ${SLASH_PROOF_BYTES} bytes, got ${proofBytes.length}`);
   const { row, config, firstSession, sessions } = parts;
-  if (row !== NAMED_ROW_OFF_TABLE && row !== NAMED_ROW_FORFEIT) throw new Error('a named claim\'s proof is row (a) or row (b)');
+  if (!NAMED_ROWS.includes(row)) throw new Error('a named claim\'s proof is row (a) or row (b)');
   if (!Number.isSafeInteger(firstSession) || firstSession < 0) throw new Error('the first session is an index');
   const w = new Writer();
   nlong(w, config);
@@ -65,6 +69,8 @@ export function joinNamedClaimEvidence(proofBytes, parts) {
     w.vec(parts.entries || [], (e, ww) => nlong(ww, encodeEntryContract(e)));
     w.vec(parts.preimages || [], (p, ww) => { ww.bytes32(p.entryId); ww.bytes32(p.preimage); });
     w.vec(parts.finals || [], (f, ww) => { nlong(ww, encodeEntryContract(f.entry)); nlong(ww, f.signedResult); ww.vec(f.finalSigs, (s, w2) => nlong(w2, s)); });
+  } else if (row === NAMED_ROW_PAYEE) {
+    w.vec(parts.entries || [], (e, ww) => nlong(ww, encodeEntryContract(e)));
   } else {
     nlong(w, encodeEntryContract(parts.entry));
     nlong(w, parts.signedResult);
@@ -84,7 +90,7 @@ export function splitNamedClaimEvidence(bytes) {
   if (n < 0 || bytes.length !== n) throw new Error('that is not a published proof of a named claim');
   const proofBytes = bytes.subarray(0, SLASH_PROOF_BYTES);
   const row = bytes[SLASH_PROOF_BYTES + 1];
-  if (row !== NAMED_ROW_OFF_TABLE && row !== NAMED_ROW_FORFEIT) throw new Error('a named claim\'s proof is row (a) or row (b)');
+  if (!NAMED_ROWS.includes(row)) throw new Error('a named claim\'s proof is row (a) or row (b)');
   const r = new Reader(bytes.subarray(SLASH_PROOF_BYTES + 6));
   const out = { proof: decodeSlashProof(proofBytes), proofBytes, row };
   out.config = nlongOf(r);
@@ -99,6 +105,8 @@ export function splitNamedClaimEvidence(bytes) {
     out.entries = r.vec((rr) => decodeEntryContract(nlongOf(rr)));
     out.preimages = r.vec((rr) => ({ entryId: rr.bytes32(), preimage: rr.bytes32() }));
     out.finals = r.vec((rr) => ({ entry: decodeEntryContract(nlongOf(rr)), signedResult: nlongOf(rr), finalSigs: rr.vec(nlongOf) }));
+  } else if (row === NAMED_ROW_PAYEE) {
+    out.entries = r.vec((rr) => decodeEntryContract(nlongOf(rr)));
   } else {
     out.entry = decodeEntryContract(nlongOf(r));
     out.signedResult = nlongOf(r);
@@ -119,7 +127,7 @@ export const claimReadInput = ({ config, firstSession, sessions, roundId = null 
  * `manifest` the round's game's; `rebuiltBodyId` (a) the judge's own rebuild of the shown table's body (hex), or null.
  * Returns { slashed: false, why } or { slashed: true, offence, bond, why }.
  */
-export function slashHoldsOnNamedClaim({ got, read, contract, committee, advert, verify, feesOf = () => null, manifest = null, rebuiltBodyId = null }) {
+export function slashHoldsOnNamedClaim({ got, read, contract, committee, advert, verify, feesOf = () => null, manifest = null, rebuiltBodyId = null, payees = null, ownEntries = null }) {
   const no = (why) => ({ slashed: false, why });
   if (!got || !got.proof) return no('no proof');
   const { proof } = got;
@@ -159,6 +167,15 @@ export function slashHoldsOnNamedClaim({ got, read, contract, committee, advert,
     if (!found) return no(`transaction ${txid.slice(0, 16)} is the rebuild of the correct table`);
     if (!found.offenders.includes(accused)) return no('the accused is not a named signer of that claim');
     held = { offence: OFF_TABLE_CLAIM, why: `the node is a named signer of claim ${txid.slice(0, 16)}: ${found.why}` };
+  } else if (got.row === NAMED_ROW_PAYEE) {
+    // LEVEL 2 (rulings #1138 2, #1140): the judge's OWN payees and its OWN entries of the round, the proof's entries added - a filer that leaves an entry
+    // out cannot make its player's payout look unpayable here. A judge that does not hold the round, or reads no payee, cannot say.
+    if (!payees || !Array.isArray(ownEntries) || !ownEntries.length) return { slashed: undefined, why: 'this seat does not hold the round\'s entries and payees, so it cannot read who that claim may pay' };
+    if (got.entries.some((e) => nhex(e.roundId) !== nhex(rid))) return no('an entry shown is of another round');
+    const found = unpayableClaims({ spends, roundId: nhex(rid), entries: [...ownEntries, ...got.entries], payees }).find((x) => x.txid === txid);
+    if (!found) return no(`transaction ${txid.slice(0, 16)} pays only keys the round may pay, within the node row's cap`);
+    if (!found.offenders.includes(accused)) return no('the accused is not a named signer of that claim');
+    held = { offence: OFF_TABLE_CLAIM, why: `the node is a named signer of claim ${txid.slice(0, 16)}: ${found.why}` };
   } else {
     const entry = got.entry;
     let eid;
@@ -194,7 +211,7 @@ export function namedClaimProofBody({ row, roundId, accused, spendTxid, tableId 
   return {
     roundId, nodePubkey: accused, signedResultId: fromHex(spendTxid),
     playerPubkey: row === NAMED_ROW_FORFEIT ? entry.playerPubkey : ZERO32,
-    transcriptHash: row === NAMED_ROW_FORFEIT ? entryIdOf(entry) : tableId,
+    transcriptHash: row === NAMED_ROW_FORFEIT ? entryIdOf(entry) : (tableId || ZERO32),
     bondTxid: advert.bondTxid, bondVout: advert.bondVout,
   };
 }

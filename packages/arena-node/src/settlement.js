@@ -33,8 +33,9 @@ import { stallsOut, silentSeats } from '../../arena-protocol/src/stall.js';
 import { signSettlementCommit, checkSettlementCommit, signSettlementAsk, checkSettlementAsk, asksBySeat, ASK_COMMIT, ASK_SHARE, signSettlementAck, settlementAckId, countAcks, joinAcks, splitAcks, splitSignedAck, encodeSettlementTable, decodeSettlementTable, settlementTableId, planTableRows, planTableBuild } from '../../arena-protocol/src/settlement-ack.js';
 import { tableBuild } from '../../arena-protocol/src/settlement-rebuild.js';
 import { slashHoldsOnTable, encodeSlashProof, joinTableSlashEvidence } from '../../arena-protocol/src/slash.js';
-import { joinNamedClaimEvidence, namedClaimProofBody, claimReadInput, namedOutpointText, NAMED_ROW_OFF_TABLE, NAMED_ROW_FORFEIT } from '../../arena-protocol/src/named-claim-proof.js';
+import { joinNamedClaimEvidence, namedClaimProofBody, claimReadInput, namedOutpointText, NAMED_ROW_OFF_TABLE, NAMED_ROW_FORFEIT, NAMED_ROW_PAYEE } from '../../arena-protocol/src/named-claim-proof.js';
 import { offTableClaims, forfeitsOfLostEntries } from '../../arena-protocol/src/named-claim-offence.js';
+import { unpayableClaims } from '../../arena-protocol/src/named-claim-payees.js';
 import { splitByFederation } from '../../arena-protocol/src/federation-settlement.js';
 import { pluginForRound, payoutRuleOfRound } from './plugins.js';
 import { heldOutcomes, marketVoidOf, attestedTable } from './game-market.js';
@@ -182,7 +183,7 @@ export class LockSettlement {
   constructor(round, { dkg, port, curve, random, stakeSecrets, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
     signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null,
     turnClock = null, donationSetFor = null, donationTargetFor = null, orderBook = null, now = () => Date.now(), conflictsFor = null,
-    reserveKeyFor = null, feesFor = null, peerKeyOf = () => null, peerAskMs = PEER_ASK_MS, peerReadMs = PEER_READ_MS, peerGraceMs = PEER_GRACE_MS, askPointOf = undefined, finalityOf = resultFinality } = {}) {
+    reserveKeyFor = null, payeesFor = null, feesFor = null, peerKeyOf = () => null, peerAskMs = PEER_ASK_MS, peerReadMs = PEER_READ_MS, peerGraceMs = PEER_GRACE_MS, askPointOf = undefined, finalityOf = resultFinality } = {}) {
     this.round = round;
     // WHERE A NETWORK'S SETTLEMENT_ASK_HEIGHT LIES (kanban #1075): constants.js settlementAskPoint; a harness's own to read a round below it
     this.askPointOf = askPointOf;
@@ -197,6 +198,9 @@ export class LockSettlement {
     this.feesFor = feesFor;
     // A FEDERATION'S RESERVE KEY (server.js `reserveKeyFor(fedHex)`, async): where a market's protocol reserve is paid
     this.reserveKeyFor = reserveKeyFor;
+    // WHO A ROUND MAY PAY (level 2 of proof (a), rulings #1138 2, #1140; server.js `namedPayeesFor(contract, rid)`, async): { nodeKeys, donationKeys,
+    // reserveKeys } from this seat's own bytes, null where unread - the filer reads every claim of the round against it
+    this.payeesFor = payeesFor;
     // `conflictsFor` is no longer consulted (§5A.13, ruled 2026-10-14): no player declares an operator
     this.conflictsFor = conflictsFor;
     this.now = now;
@@ -1740,6 +1744,17 @@ export class LockSettlement {
       }
       const forfeits = forfeitsOfLostEntries({ spends: read.spends || [], entryOf: (o) => lockOf.get(String(o).toLowerCase()) || null,
         lostBy: (eid) => [...lostSigned.keys()].filter((k) => k.startsWith(`${eid}:`)).map((k) => k.slice(eid.length + 1)) });
+      // ROW (a) AT LEVEL 2 (rulings #1138 2, #1140): EVERY claim of the round's locks, by who it pays - an output to a key the round may not pay, or the
+      // node row above the fee locks it claims. A claim already filed at level 1 is not filed again
+      const payees = this.payeesFor ? await this.payeesFor(contract, roundIdBytes).catch(() => null) : null;
+      if (payees) {
+        const atLevel1 = new Set(filings.filter((x) => x.row === NAMED_ROW_OFF_TABLE).map((x) => `${x.txid}:${x.who}`));
+        const entries = [...byId.values()].map((x) => x.entry);
+        for (const off of unpayableClaims({ spends: read.spends || [], roundId: rid, entries, payees })) {
+          for (const who of off.offenders) if (!atLevel1.has(`${off.txid}:${who}`))
+            filings.push({ row: NAMED_ROW_PAYEE, who, txid: off.txid, why: off.why, parts: { ...sessions, row: NAMED_ROW_PAYEE, entries } });
+        }
+      } else report.refused.push(`${fid.slice(0, 16)}: no payees read for the round: level 2 not read`);
       for (const f of forfeits) for (const who of f.offenders) {
         filings.push({ row: NAMED_ROW_FORFEIT, who, txid: f.txid, why: `forfeit of entry ${f.entryId.slice(0, 16)} it signed as lost`,
           parts: { ...sessions, row: NAMED_ROW_FORFEIT, entry: byId.get(f.entryId).entry, signedResult: lostSigned.get(`${f.entryId}:${who}`) }, entry: byId.get(f.entryId).entry });
@@ -1752,8 +1767,8 @@ export class LockSettlement {
         const record = joinNamedClaimEvidence(encodeSlashProof(proof), fl.parts);
         const { id, bytes: complete } = this.round.fraudProof(roundIdBytes, null, record);
         if (!this.round.fileNamedClaimProof(roundIdBytes, fromHex(fl.who), fl.row, id, record)) continue;
-        report.filed.push({ who: fl.who, row: fl.row === NAMED_ROW_OFF_TABLE ? 'a' : 'b', txid: fl.txid });
-        console.log(`[slash] ${rid.slice(0, 16)} filed ${fl.row === NAMED_ROW_OFF_TABLE ? 'OFF_TABLE_CLAIM' : 'FORFEIT_OF_LOST_ENTRY'} against ${fl.who.slice(0, 16)}: ${fl.why}`);
+        report.filed.push({ who: fl.who, row: fl.row === NAMED_ROW_FORFEIT ? 'b' : fl.row === NAMED_ROW_PAYEE ? 'a2' : 'a', txid: fl.txid, proofId: toHex(id) });
+        console.log(`[slash] ${rid.slice(0, 16)} filed ${fl.row === NAMED_ROW_FORFEIT ? 'FORFEIT_OF_LOST_ENTRY' : fl.row === NAMED_ROW_PAYEE ? 'OFF_TABLE_CLAIM (level 2, who is paid)' : 'OFF_TABLE_CLAIM'} against ${fl.who.slice(0, 16)}: ${fl.why} (proof ${toHex(id).slice(0, 16)})`);
         const put = await askPeers(relays, (relay, signal) => this.fetcher(`${String(relay).replace(/\/+$/, '')}/slash/${toHex(id)}`, { method: 'PUT', body: complete, signal }), { boundMs: this.peerReadMs });
         for (const { peer: relay, value, error } of put) {
           if (error) report.refused.push(`${relay}: ${error.message}`);

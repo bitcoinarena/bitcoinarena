@@ -114,7 +114,7 @@ import { resultId } from '../src/result.js';
 import { fraudProofHash, readEvidence, encodeFraudProof, decodeFraudProof } from '../src/slash.js';
 import { encodeRoundContract } from '../src/contracts.js';
 import {
-  joinNamedClaimEvidence, splitNamedClaimEvidence, slashHoldsOnNamedClaim, namedClaimProofBody, claimReadInput, NAMED_ROW_OFF_TABLE, NAMED_ROW_FORFEIT,
+  joinNamedClaimEvidence, splitNamedClaimEvidence, slashHoldsOnNamedClaim, namedClaimProofBody, claimReadInput, NAMED_ROW_OFF_TABLE, NAMED_ROW_FORFEIT, NAMED_ROW_PAYEE,
 } from '../src/named-claim-proof.js';
 import { OFF_TABLE_CLAIM, FORFEIT_OF_LOST_ENTRY } from '../src/named-claim-offence.js';
 
@@ -203,4 +203,35 @@ test('row (b): a named signer of a forfeit of an entry it signed as lost is slas
   assert.match(caseB({ spends: [{ txid: SPEND, outpoint: op(e.stakeLockOutpoint), kind: 'cancel', named_keys: seats.slice(2, 7).map(xhex), lock }] }).why, /forfeits no lock of the entry/);
   // the fee lock is the entry's lock too
   assert.equal(caseB({ spends: [{ txid: SPEND, outpoint: op(e.feeLockOutpoint), kind: 'cancel', named_keys: seats.slice(1, 6).map(xhex), lock }] }).slashed, true);
+});
+
+// ---- row (a) at level 2, who is paid (rulings #1138 2, #1140): the judge's own payees and entries, the proof's entries added
+test('row (a) level 2: a claim paying a key on no list slashes each named signer; the judge without the round or its payees cannot say', () => {
+  const thief = '02' + 'ee'.repeat(32);
+  const outputs = [{ out_idx: 0, kind: 'outgoing', claim_pk: thief, refund_pk: thief, amount_msat: 5000 },
+    { out_idx: 1, kind: 'outgoing', claim_pk: toHex(refundKeyOf(entries[0].playerPubkey)), refund_pk: toHex(refundKeyOf(entries[0].playerPubkey)), amount_msat: 1000 }];
+  const spends = claimSpends({ outputs, agg_key: 'ab'.repeat(32), lock: { round_id: toHex(ROUND), amount_msat: 98000, refund_pk: toHex(refundKeyOf(b32(0x99))), payment_image: { point: '02' } } });
+  const payees = { nodeKeys: new Set(committee.map((k) => toHex(refundKeyOf(k)))), donationKeys: new Set(), reserveKeys: new Set() };
+  const judge = ({ accused = NODE, shown = entries.slice(0, 1), own = entries, p = payees, out = spends } = {}) => {
+    const proof = namedClaimProofBody({ row: NAMED_ROW_PAYEE, roundId: ROUND, accused: accused.pubkey, spendTxid: SPEND, advert });
+    const record = joinNamedClaimEvidence(encodeSlashProof(proof), { row: NAMED_ROW_PAYEE, ...sessions, entries: shown });
+    const got = splitNamedClaimEvidence(record);
+    assert.equal(got.row, NAMED_ROW_PAYEE);
+    return slashHoldsOnNamedClaim({ got, read: readOf(out), contract, committee, advert: { ...advert, nodePubkey: accused.pubkey }, verify, payees: p, ownEntries: own });
+  };
+  const held = judge();
+  assert.equal(held.slashed, true, held.why);
+  assert.equal(held.offence, OFF_TABLE_CLAIM);
+  assert.match(held.why, /a key the round may not pay/);
+  assert.match(judge({ accused: seats[6] }).why, /not a named signer/);
+  // the thief's key is a recipient of the round's donation set: nothing held
+  assert.equal(judge({ p: { ...payees, donationKeys: new Set([thief]) } }).slashed, false);
+  // a filer that leaves an entry out cannot make its player's payout look unpayable: the judge adds its own entries
+  const paysPlayer2 = spends.map((s) => ({ ...s, outputs: [{ ...outputs[1], claim_pk: toHex(refundKeyOf(entries[1].playerPubkey)), refund_pk: toHex(refundKeyOf(entries[1].playerPubkey)) }] }));
+  assert.equal(judge({ out: paysPlayer2, shown: [] }).slashed, false);
+  // no payees here, or the round not held: cannot say
+  assert.equal(judge({ p: null }).slashed, undefined);
+  assert.equal(judge({ own: null }).slashed, undefined);
+  // the payee set unread: unread, never against the seat
+  assert.equal(judge({ p: { ...payees, donationKeys: null } }).slashed, false);
 });

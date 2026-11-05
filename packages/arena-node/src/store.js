@@ -1001,7 +1001,7 @@ export function openStore(path = ':memory:') {
     );
     CREATE INDEX IF NOT EXISTS table_slash_proofs_round ON table_slash_proofs (round_id);
 
-    -- A NAMED CLAIM'S OFFENCE, FILED (§5A.3 rows (a), (b), protocol 27, kanban #1044 B1): one proof per named signer, row 1 (a) or 2 (b).
+    -- A NAMED CLAIM'S OFFENCE, FILED (§5A.3 rows (a), (b), protocol 27, kanban #1044 B1): one proof per named signer, row 1 (a), 2 (b) or 3 (a) at level 2.
     CREATE TABLE IF NOT EXISTS named_claim_proofs (
       proof_id    BLOB PRIMARY KEY,
       round_id    BLOB NOT NULL,

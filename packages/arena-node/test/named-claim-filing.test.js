@@ -13,7 +13,7 @@ import { LockSettlement } from '../src/settlement.js';
 import { encodeRoundContract, roundId as roundIdOf, entryId } from '../../arena-protocol/src/contracts.js';
 import { encodeSettlementTable, settlementTableId } from '../../arena-protocol/src/settlement-ack.js';
 import { encodePlayerResult, joinSignedResult, resultId } from '../../arena-protocol/src/result.js';
-import { splitNamedClaimEvidence, NAMED_ROW_OFF_TABLE, NAMED_ROW_FORFEIT } from '../../arena-protocol/src/named-claim-proof.js';
+import { splitNamedClaimEvidence, NAMED_ROW_OFF_TABLE, NAMED_ROW_FORFEIT, NAMED_ROW_PAYEE } from '../../arena-protocol/src/named-claim-proof.js';
 import { readEvidence } from '../../arena-protocol/src/slash.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
@@ -22,6 +22,7 @@ import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 import { toHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { keepLockSessionFloor } from '../src/stake-lock-signer-node.js';
+import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 
@@ -238,4 +239,35 @@ test('the filer reads from the bound once and never searches; a lock funded belo
   assert.deepEqual(asked, [30], 'one read, from the bound');
   assert.equal(report.filed.length, 0);
   assert.match(report.refused.join('; '), /funded below the bound 30: unread/);
+});
+
+// ---- level 2 of row (a), who is paid (rulings #1138 2, #1140): every claim of the round, read against the payees the seat holds
+
+test('a claim paying a key the round may not pay is filed at level 2 against each other named signer; an honest one, or no payees read, files nothing', async () => {
+  const thief = '02' + 'ee'.repeat(32);
+  const player = toHex(refundKeyOf(E[0].playerPubkey));
+  const outputs = (to) => [{ out_idx: 0, kind: 'outgoing', claim_pk: to, refund_pk: to, amount_msat: 97000 }];
+  // a claim of entry 2's stake lock under the body this seat acked (no level-1 offence), named by seats 1..5
+  const claim = (to) => [{ session: 4, txid: THEFT, outpoint: op(E[1].stakeLockOutpoint), kind: 'claim', signers: [0, 1, 2, 3, 4], named_keys: seats.slice(0, 5).map(xhex),
+    lock: { round_id: toHex(RID), amount_msat: 98000, refund_pk: toHex(refundKeyOf(E[1].playerPubkey)), payment_image: { point: '02' } }, body_id: ACKED_BODY, one_signer_set: true,
+    agg_key: 'ab'.repeat(32), outputs: outputs(to) }];
+  const payeesFor = async () => ({ nodeKeys: new Set(committee.map((k) => toHex(refundKeyOf(k)))), donationKeys: new Set(), reserveKeys: new Set() });
+  const run = async (spends, opts = { payeesFor }) => {
+    const round = fakeRound();
+    const s = new LockSettlement(round, { port: fakePort([], spends), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }), ...opts });
+    return { round, report: await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null }) };
+  };
+  const off = await run(claim(thief));
+  assert.deepEqual(off.round.filed.map((f) => f.row), [NAMED_ROW_PAYEE, NAMED_ROW_PAYEE, NAMED_ROW_PAYEE, NAMED_ROW_PAYEE]);
+  assert.deepEqual(off.round.filed.map((f) => f.who).sort(), seats.slice(1, 5).map(xhex).sort(), 'never this seat itself');
+  for (const f of off.round.filed) {
+    const got = splitNamedClaimEvidence(f.bytes);
+    assert.equal(toHex(got.proof.signedResultId), THEFT);
+    assert.equal(got.entries.length, 2, 'the proof carries the round\'s entries this seat holds');
+  }
+  assert.ok(off.report.filed.every((x) => x.row === 'a2'));
+  assert.equal((await run(claim(player))).round.filed.length, 0, 'paying the qualifier is honest');
+  const none = await run(claim(thief), {});
+  assert.equal(none.round.filed.length, 0);
+  assert.match(none.report.refused.join('; '), /no payees read for the round: level 2 not read/);
 });
