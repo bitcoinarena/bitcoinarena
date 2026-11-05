@@ -33,7 +33,7 @@ import { stallsOut, silentSeats } from '../../arena-protocol/src/stall.js';
 import { signSettlementCommit, checkSettlementCommit, signSettlementAsk, checkSettlementAsk, asksBySeat, ASK_COMMIT, ASK_SHARE, signSettlementAck, settlementAckId, countAcks, joinAcks, splitAcks, splitSignedAck, encodeSettlementTable, decodeSettlementTable, settlementTableId, planTableRows, planTableBuild } from '../../arena-protocol/src/settlement-ack.js';
 import { tableBuild } from '../../arena-protocol/src/settlement-rebuild.js';
 import { slashHoldsOnTable, encodeSlashProof, joinTableSlashEvidence } from '../../arena-protocol/src/slash.js';
-import { joinNamedClaimEvidence, namedClaimProofBody, claimReadInput, namedOutpointText, NAMED_ROW_OFF_TABLE, NAMED_ROW_FORFEIT, NAMED_ROW_PAYEE } from '../../arena-protocol/src/named-claim-proof.js';
+import { joinNamedClaimEvidence, splitNamedClaimEvidence, namedClaimProofBody, claimReadInput, namedOutpointText, NAMED_ROW_OFF_TABLE, NAMED_ROW_FORFEIT, NAMED_ROW_PAYEE } from '../../arena-protocol/src/named-claim-proof.js';
 import { offTableClaims, forfeitsOfLostEntries } from '../../arena-protocol/src/named-claim-offence.js';
 import { unpayableClaims } from '../../arena-protocol/src/named-claim-payees.js';
 import { inSessionLane } from './stake-lock-signer-node.js';
@@ -1784,8 +1784,14 @@ export class LockSettlement {
         filings.push({ row: NAMED_ROW_FORFEIT, who, txid: f.txid, why: `forfeit of entry ${f.entryId.slice(0, 16)} it signed as lost`,
           parts: { ...sessions, row: NAMED_ROW_FORFEIT, entry: byId.get(f.entryId).entry, signedResult: lostSigned.get(`${f.entryId}:${who}`) }, entry: byId.get(f.entryId).entry });
       }
+      // ONE PROOF PER (ACCUSED, ROW, SPEND) (measured 2026-11-05 on s27d: each pass after a new session built the same offence's proof over one session more -
+      // a new id - and kept it again, 12 proofs a seat in ten minutes)
+      const kept = new Set((this.round.namedClaimProofs ? this.round.namedClaimProofs(roundIdBytes) : []).map((x) => {
+        try { return `${toHex(x.nodePubkey)}:${x.row}:${toHex(splitNamedClaimEvidence(x.bytes).proof.signedResultId)}`; } catch { return null; }
+      }).filter(Boolean));
       for (const fl of filings) {
         if (fl.who === me) continue;
+        if (kept.has(`${fl.who}:${fl.row}:${String(fl.txid).toLowerCase()}`)) continue;
         const advert = advertOf(fl.who);
         if (!advert) { report.refused.push(`${fl.who.slice(0, 16)}: no advertisement names its bond`); continue; }
         const proof = namedClaimProofBody({ row: fl.row, roundId: roundIdBytes, accused: fromHex(fl.who), spendTxid: fl.txid, tableId: fl.tableId || null, entry: fl.entry || null, advert });
