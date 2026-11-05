@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { namedOffenceSwitch, offTablePayouts, OFF_TABLE_KEY } from '../src/test-named-offence.js';
+import { namedOffenceSwitch, offTablePayouts, swappedRefundPayouts, OFF_TABLE_KEY } from '../src/test-named-offence.js';
 import { namedClaimHeightOverride, namedClaimPoint, namedClaimsAt } from '../../arena-protocol/src/arena-lock.js';
 
 const MAIN = new URL('../src/main.js', import.meta.url).pathname;
@@ -63,4 +63,16 @@ test('off-table payouts: the largest payout that is not a send goes to the test 
   assert.deepEqual(out[2].payoutPk, OFF_TABLE_KEY);
   assert.deepEqual(out[1].payoutPk, k(2));
   assert.equal(offTablePayouts([{ payoutPk: k(1), msat: 1n, sent: {} }]), null);
+});
+
+test('a swapped refund key: the first gateway send refunds to the test key, its amount, invoice and gateway unchanged; a plan with no send has none', () => {
+  const k = (b) => new Uint8Array(33).fill(b);
+  const sent = { paymentHash: 'aa', gatewayPk: '02' + 'bb'.repeat(32), expiration: 700 };
+  const payouts = [{ payoutPk: k(1), msat: 5n }, { payoutPk: k(2), msat: 90n, sent }, { payoutPk: k(2), msat: 40n, sent: { ...sent, paymentHash: 'cc' } }];
+  const out = swappedRefundPayouts(payouts);
+  assert.deepEqual(out.map((p) => p.msat), [5n, 90n, 40n]);
+  assert.deepEqual(out[1].payoutPk, OFF_TABLE_KEY);
+  assert.deepEqual(out[1].sent, sent);
+  assert.deepEqual([out[0].payoutPk, out[2].payoutPk], [k(1), k(2)]);
+  assert.equal(swappedRefundPayouts([{ payoutPk: k(1), msat: 1n }]), null);
 });

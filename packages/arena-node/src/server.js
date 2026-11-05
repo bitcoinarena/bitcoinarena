@@ -52,7 +52,8 @@ import { createReserveAudit } from './reserve-audit.js';
 import { createReserveSpendWatch, spendWatchReads } from './reserve-spend-watch.js';
 import { theftTools } from './theft-evidence.js';
 import { readBody, readClaims } from './stake-lock-port.js';
-import { namedClaims } from '../../arena-protocol/src/arena-lock.js';
+import { namedClaims, namedClaimKeys } from '../../arena-protocol/src/arena-lock.js';
+import { signerSetKey } from './named-settlement.js';
 import { capacityView, capacityPlea, bondIncentive, pressureOf, guardianWeights as capacityGuardianWeights, gatewayWeights as capacityGatewayWeights } from '../../arena-protocol/src/capacity.js';
 import { GATEWAY_MINIMUMS, GATEWAY_EPOCH_BLOCKS, pegInPastCap } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
@@ -10479,6 +10480,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const s = Buffer.from(held.signature);
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ signed: s.subarray(0, s.length - 64).toString('utf8'), signature: toHex(s.subarray(s.length - 64)) }));
+      }
+      // THE PRESIGNED REFUNDS (c) OF A PROTOCOL-27 SETTLEMENT (kanban #1044 B1, ruling #1134 2: "the qualifier's client gets (c) from any seat"; "after a
+      // failed send, anyone submits (c)"): what this seat's kept batch holds for each send to a qualifier - the send contract (real txid, index), its
+      // amount, the refund key KeyAgg(S), the qualifier's key, (c)'s txid and S's signature over it. The signature moves nothing but that refund, into
+      // the qualifier's own pre-expired payout, and only from the send's expiration. `scope`: a late entry's hex or a federation's, as the batch's.
+      if (req.method === 'GET' && url.pathname === '/send-refunds') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'the refunds (c) are asked for by round id');
+        const row = round.get(new Uint8Array(rid));
+        if (!row) return text(res, 404, 'this node holds no such round');
+        const scope = String(url.searchParams.get('scope') || '').toLowerCase();
+        const batch = round.namedBatch ? round.namedBatch(new Uint8Array(rid), scope) : null;
+        if (!batch) return text(res, 404, 'this node keeps no signed batch of that settlement');
+        let refundKey;
+        try { const { seatKeys, threshold } = namedClaimKeys(decodeRoundContract(new Uint8Array(row.contract))); refundKey = toHex(signerSetKey(seatKeys, threshold, batch.signers)); }
+        catch (e) { return text(res, 409, `no signer set key: ${e.message}`); }
+        const refunds = batch.slots.map((x, k) => ({ x, k })).filter(({ x }) => x.kind === 'refund').map(({ x, k }) => ({ send: `${batch.txid}:${x.outIdx}`, amountMsat: String(x.msat),
+          refundPk: refundKey, qualifierPk: x.qualifierPk, txid: x.txid, payoutMsat: x.payoutMsat || null, signature: toHex(batch.signatures[k]) }));
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ round: rid.toString('hex'), scope, settlementTxid: batch.txid, signers: batch.signers, refundKey, refunds }));
       }
       // WHERE A WINNING GOES, NAMED ONCE (2026-09-21: "winnings are always sent. There is no Collect").
       // The body is the Lightning address and a 64-byte signature over it by the entry's session key: a standing

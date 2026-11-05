@@ -8,6 +8,10 @@
 //     off-table <round hex>         (a) this seat's named batch for that round signs a claim whose payout with the most msat (not a send) is paid to
 //                                   OFF_TABLE_KEY instead: a transaction that is not the rebuild of the table it acked. It still acks the honest table.
 //     forfeit-lost <entry hex>      (b) this seat signs the forfeit of that entry's stake lock although it signed the entry non-qualifying itself.
+//     swap-refund <round hex>       (a), ruling #1135 2: this seat's named batch for that round signs a claim whose first gateway send refunds to
+//                                   OFF_TABLE_KEY instead of KeyAgg(S) - a send contract only the thief can take back. It still acks the honest table.
+//     send-hold <round hex>         ruling #1134 2's failed send: this seat never asks a gateway to pay that round's qualifier sends and never
+//                                   submits their presigned refund (c) itself, so a send expires unpaid and (c) is left to anyone else.
 //
 // Refused off regtest: a seat started with the variable on any other network (ARENA_DONATION_NETWORK not 'regtest') does not start (main.js asks
 // namedOffenceSwitch first). Unset - every seat's default - nothing reads the file and every answer below is false.
@@ -50,6 +54,20 @@ const on = (word, id) => !!id && named().some(([w, x]) => w === word && x === he
 export const offTableOn = (roundIdBytes) => on('off-table', roundIdBytes);
 /** (b): this seat forfeits entry `entryIdBytes`'s stake lock although it signed the entry lost. */
 export const forfeitLostOn = (entryIdBytes) => on('forfeit-lost', entryIdBytes);
+/** (a) by a swapped refund key: this seat signs round `roundIdBytes`'s claim with a send refunding to OFF_TABLE_KEY. */
+export const swapRefundOn = (roundIdBytes) => on('swap-refund', roundIdBytes);
+/** A failed send: this seat leaves round `roundIdBytes`'s qualifier sends unasked and their refunds (c) unsubmitted. */
+export const sendHoldOn = (roundIdBytes) => on('send-hold', roundIdBytes);
+
+/**
+ * THE SWAPPED REFUND KEY: the plan's payouts with the first gateway send's refund key (its payoutPk, Z in the body) written as OFF_TABLE_KEY - same
+ * amounts, invoice and gateway, so the guardians take it. Null where the plan sends nothing.
+ */
+export function swappedRefundPayouts(payouts) {
+  const at = (payouts || []).findIndex((p) => p.sent && p.payoutPk);
+  if (at < 0) return null;
+  return payouts.map((p, i) => (i === at ? { ...p, payoutPk: OFF_TABLE_KEY, kind: 'swapped-refund' } : p));
+}
 
 /**
  * THE OFF-TABLE PAYOUTS: the plan's payouts with the largest non-send payout paid to OFF_TABLE_KEY - same amounts, so the guardians take it.
