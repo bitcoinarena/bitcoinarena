@@ -40,21 +40,40 @@ export function censusKeyAnchorSpend({ carrier, secret, funding, output }) {
 export function createFeeCoin({ call, walletCall, env = {} }) {
   const setting = dutySetting(env.ARENA_DUTY_POST);
   const feeRate = Number(env.ARENA_DUTY_FEE_RATE || 0.1);
-  return async function fund(spk, value) {
+  const named = String(env.ARENA_DUTY_WALLET || '').trim();
+  async function fund(spk, value) {
     if (setting === 'off') return { ok: false, why: 'round posting is off (duty_post=off), and that wallet pays this too' };
     let listed; try { listed = await call('listwallets', []); } catch (e) { listed = e; }
-    const named = String(env.ARENA_DUTY_WALLET || '').trim();
     const pre = walletVerdict({ listed, named, unspent: [] });
     if (!pre.wallet || listed instanceof Error) return { ok: false, why: pre.why };
     const rpc = walletCall(pre.wallet);
     let unspent; try { unspent = await rpc('listunspent', [1, 9999999, [], false]); } catch (e) { unspent = e; }
     const wallet = walletVerdict({ listed, named, unspent });
     if (!wallet.canPay) return { ok: false, why: wallet.why };
-    try {
-      const funded = await fundAtRate(rpc, [Buffer.concat([le64(value), Buffer.from([spk.length]), Buffer.from(spk)])], feeRate);
-      return { ok: true, txid: String(await rpc('sendrawtransaction', [funded.hex])), vout: 0, value: BigInt(value) };
-    } catch (e) { return { ok: false, why: e.message.slice(0, 200) }; }
+    let funded;
+    try { funded = await fundAtRate(rpc, [Buffer.concat([le64(value), Buffer.from([spk.length]), Buffer.from(spk)])], feeRate); } catch (e) { return { ok: false, why: e.message.slice(0, 200) }; }
+    // A SEND WHOSE ANSWER IS LOST MAY HAVE GONE OUT (kanban #1191): `unknown`, so the starter looks for it (find) before it funds again
+    try { return { ok: true, txid: String(await rpc('sendrawtransaction', [funded.hex])), vout: 0, value: BigInt(value) }; } catch (e) { return { ok: false, unknown: true, why: e.message.slice(0, 200) }; }
+  }
+  /**
+   * THE COIN THIS WALLET FUNDED AT `spk`, if any (kanban #1191): its recent sends, each read whole - { txid, vout, value } or null. A coin this wallet funded is one of
+   * its own sends, in the mempool or a block; one the wallet abandoned or a block took away is not there, and is funded again.
+   */
+  fund.find = async (spk) => {
+    let listed; try { listed = await call('listwallets', []); } catch (e) { throw new Error(`no wallet list: ${e.message}`); }
+    const pre = walletVerdict({ listed, named, unspent: [] });
+    if (!pre.wallet) throw new Error(pre.why || 'no wallet');
+    const rpc = walletCall(pre.wallet), want = toHex(spk);
+    const sends = [...new Set((await rpc('listtransactions', ['*', 500, 0, true])).filter((t) => t.category === 'send' && Number(t.confirmations) >= 0 && !t.abandoned).map((t) => t.txid))];
+    for (const txid of sends.reverse()) {
+      const t = await rpc('gettransaction', [txid, true, true]);
+      if (Number(t.confirmations) < 0 || !t.decoded) continue;
+      const out = t.decoded.vout.find((o) => o.scriptPubKey && o.scriptPubKey.hex === want);
+      if (out) return { txid, vout: out.n, value: BigInt(Math.round(Number(out.value) * 1e8)) };
+    }
+    return null;
   };
+  return fund;
 }
 
 /**
