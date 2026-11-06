@@ -145,6 +145,10 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
     const p = haltProof(all, { record: held.record, censusSeats: censusSeats(), abandonBlocks: clocks.abandonBlocks, verify,
       laterSession: laterSession !== null && all.every((o) => o.session < laterSession) ? laterSession : null });
     if (!p.ok) return null;
+    // A SESSION THIS SEAT SAW PAST THE PROOF'S VOIDS IT, WHATEVER ELSE IS HELD (kanban #1223, audit 2 #1204 FED-A2): the void above is passed
+    // only while every kept observation is below the session seen, so one census seat's observation at a huge session switched it off and a
+    // federation that had stalled and recovered was proven HALTED again from its old halt height
+    if (mine && Number.isInteger(mine.session) && mine.session > p.session) return null;
     // f + 1 OF ITS GUARDIANS ANSWER THIS SEAT NOW BELOW S (kanban #1158): they never reached the session the halt is said to stop at
     if (mine && Number.isInteger(mine.reading) && mine.reading < p.session) return null;
     return p;
