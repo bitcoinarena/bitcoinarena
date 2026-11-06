@@ -53,6 +53,44 @@ const keptUnder = (entryIdBytes, kind) => (kind === 'fee' ? feeReturnKey(entryId
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).sort().join('|');
 const refuse = (why, status = 409) => ({ ok: false, status, why });
 
+/**
+ * WHAT THIS SEAT COMMITTED A LOCK TO, ONE ENUM AND ONE TRANSITION FUNCTION (kanban #1184, the 2026-11-06 state-machine audit). A lock has two ways
+ * out a seat can sign: the settlement's Claim (into the winners' payouts) and the forfeit's Cancel (back to its player). A seat that acked, shared,
+ * was handed or kept a settlement claiming a lock and later learned ENTRY_VOID (or a qualifier rule) signed a forfeit of the same lock too: two
+ * valid spends, the faster wins. Now: none -> CLAIMING (ack, share, take or keep of a settlement that claims it) | RETURNING (share, take or keep
+ * of a forfeit of it); either is final, and the other is refused. Persisted (round.js putLockFate, compare-and-set) before the ack, share or
+ * forfeit leaves this seat. A lock left unspent by a refusal still returns to its player at its expiry.
+ */
+export const LOCK_FATE = Object.freeze({ CLAIMING: 'CLAIMING', RETURNING: 'RETURNING' });
+export function lockFateStep(held, next) {
+  if (!Object.values(LOCK_FATE).includes(next)) return { ok: false, why: `${next} is not a fate of a lock` };
+  if (!held || held === next) return { ok: true };
+  return { ok: false, why: held === LOCK_FATE.CLAIMING
+    ? 'this seat committed to a settlement that claims that lock: it signs no forfeit of it - the lock returns to its player at its expiry if that settlement never lands'
+    : 'this seat signed a forfeit of that lock back to its player: it signs no claim of it' };
+}
+
+/**
+ * WHAT THIS SEAT HOLDS A LOCK AT (kanban #1184): its persisted fate, and - for a store whose history predates lock_fates - CLAIMING when any
+ * settlement of the round this seat signed, was handed or kept the moves of claims the outpoint. null with neither.
+ */
+export function lockFateOf(round, roundIdBytes, outpoint) {
+  const kept = typeof round.lockFate === 'function' ? round.lockFate(String(outpoint)) : null;
+  if (kept) return kept.state;
+  if (typeof round.claimedOutpointsOf === 'function' && round.claimedOutpointsOf(roundIdBytes).has(String(outpoint))) return LOCK_FATE.CLAIMING;
+  return null;
+}
+
+/** Move a lock to `next` (kanban #1184): checked by lockFateStep and written as a compare-and-set. { ok } or { ok: false, why }. */
+export function markLockFate(round, { roundId, outpoint, state, txid = null, why }) {
+  const st = lockFateStep(lockFateOf(round, roundId, outpoint), state);
+  if (!st.ok) return st;
+  if (typeof round.putLockFate !== 'function') return { ok: true };
+  return round.putLockFate({ outpoint: String(outpoint), roundId, state, txid, why })
+    ? { ok: true } : { ok: false, why: lockFateStep(lockFateOf(round, roundId, outpoint), state).why || 'another fate was written for that lock meanwhile' };
+}
+
+
 export class Forfeit {
   /**
    * `dkg` holds this signer node's share of the round's claim key; `port` is the
@@ -104,7 +142,7 @@ export class Forfeit {
       if (!fl) return refuse('this signer node verified no fee lock for that entry, so it returns none');
       if (!cancelled && !this.#marketRefund(roundIdBytes, contract).ok)
         return refuse('a fee lock comes back at once only for a cancelled order or a refunded market: this one is claimed at resolution, or expires back to its player');
-      return this.#signable(contract, fl);
+      return this.#signable(contract, fl, roundIdBytes);
     }
     let lock = this.round.stakeLock(entryIdBytes);
     // §23.2 REFUSED (2026-10-06 08:57: "A round the seats refuse gets an immediate refund"): no entry,
@@ -198,14 +236,29 @@ export class Forfeit {
             + `${contract.minScore}: not a qualifier, so its stake lock is not forfeited (${back.why})`);
       }
     }
-    return this.#signable(contract, lock);
+    return this.#signable(contract, lock, roundIdBytes);
   }
 
   /** Where the round's settlement stands at this signer node - in one federation or, for a round that takes any, in all (round.js). */
   #settled(roundIdBytes) { return stateOf(this.round, roundIdBytes); }
 
+  // A LOCK THIS SEAT COMMITTED TO CLAIMING IS NEVER FORFEITED HERE (kanban #1184): whichever path asks - ENTRY_VOID, a qualifier, nobody won, a
+  // refused round, a market's return door - the lock's fate here is read first
+  async #signable(contract, lock, roundIdBytes) {
+    const outpoint = String(lock.outpoint);
+    const st = lockFateStep(lockFateOf(this.round, roundIdBytes, outpoint), LOCK_FATE.RETURNING);
+    if (!st.ok) return refuse(st.why);
+    const m = await this.#signableMessage(contract, lock);
+    return m.ok ? { ...m, outpoint } : m;
+  }
+
+  /** RETURNING ON DISK BEFORE A SHARE, A TAKE OR A KEEP OF THE FORFEIT (kanban #1184): false-y `ok` when the lock is CLAIMING here. */
+  #returning(roundIdBytes, m, step) {
+    return markLockFate(this.round, { roundId: roundIdBytes, outpoint: m.outpoint, state: LOCK_FATE.RETURNING, why: step });
+  }
+
   /** The lock's contract id, rebuilt from this signer node's own record, under the round's claim key - what it signs. */
-  async #signable(contract, lock) {
+  async #signableMessage(contract, lock) {
     const held = this.dkg.signerNodeFor(contract.nodes);
     if (!held.ok) return refuse(`this signer node holds no share of the round's claim key: ${held.why}`);
     const claimPk = held.pool.groupPublicKey;
@@ -253,14 +306,14 @@ export class Forfeit {
   #bookReturn(roundIdBytes, entryIdBytes, contract, kind, book) {
     const lock = kind === 'fee' ? (this.round.feeLock ? this.round.feeLock(entryIdBytes) : null) : this.round.stakeLock(entryIdBytes);
     if (!lock) return refuse(`this signer node verified no ${kind} lock for that order, so it returns none`);
-    if (this.#marketRefund(roundIdBytes, contract).ok) return this.#signable(contract, lock);
+    if (this.#marketRefund(roundIdBytes, contract).ok) return this.#signable(contract, lock, roundIdBytes);
     if (book.inPending) return refuse('that order is in a batch not decided yet: its locks wait for it');
     if (book.filled) return refuse('that order filled: its locks are claimed at resolution and its unfilled rest paid back there');
-    if (book.cancelled) return this.#signable(contract, lock);
+    if (book.cancelled) return this.#signable(contract, lock, roundIdBytes);
     // FINAL ON THE ROUND'S PERSISTED STATE (kanban #1151): nothing can fill it then
     const f = pluginForRound(contract, this.round.plugins);
     const fin = f.ok && f.attested ? marketStateOf(this.round, roundIdBytes, { contract, manifest: f.plugin.manifest, nowMs: this.round.now ? this.round.now() : Date.now() }) : { final: false };
-    if (fin.final) return this.#signable(contract, lock);
+    if (fin.final) return this.#signable(contract, lock, roundIdBytes);
     return refuse('that order stands unfilled: cancel it (at no cost) or wait for the market to resolve');
   }
 
@@ -317,6 +370,7 @@ export class Forfeit {
     if (commitments.length < m.needed) return refuse(`${commitments.length} commitments, and this round's key signs at ${m.needed}`);
     const key = listKey(commitments);
     if (pair.list && pair.list !== key) return refuse('this signer node signed that forfeit over another list, and keeps no second pair');
+    { const r = this.#returning(roundIdBytes, m, 'a forfeit share given'); if (!r.ok) return refuse(r.why); }
     if (pair.share === null) {
       pair.share = signShare340({ id: pair.commitment.id, share: m.signerNode.share, groupPublicKey: m.claimPk,
         nonces: { hiding: pair.hiding, binding: pair.binding }, message: m.message, commitments, curve: this.curve });
@@ -330,6 +384,7 @@ export class Forfeit {
     const m = await this.message(roundIdBytes, entryIdBytes, kind);
     if (!m.ok) return m;
     if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return refuse('that forfeit does not verify under the round\'s claim key');
+    { const r = this.#returning(roundIdBytes, m, 'a forfeit handed and kept'); if (!r.ok) return refuse(r.why); }
     this.round.putForfeit({ entryId: keptUnder(entryIdBytes, kind), roundId: roundIdBytes, message: m.message, signature, claimPk: m.claimPk });
     return { ok: true };
   }
@@ -374,6 +429,7 @@ export class Forfeit {
       // A SEAT THAT GAVE NO SHARE, OR ONE THAT DOES NOT STAND, is left off the next list while the threshold remains, and the forfeit is asked again at once
       if (!this.#leaveOut(q, combined, listed, m.needed)) return combined;
     }
+    { const r = this.#returning(roundIdBytes, m, 'a forfeit combined and kept'); if (!r.ok) return refuse(r.why); }
     this.round.putForfeit({ entryId: keptUnder(entryIdBytes, kind), roundId: roundIdBytes, message: m.message, signature, claimPk: m.claimPk });
     // HANDED TO EVERY PEER, a slow one left off the list too: it keeps it only if it verifies over what it rebuilt. One that misses it asks again.
     await askPeers(this.peersFor(roundIdBytes), (base, signal) => this.fetcher(`${base}/forfeit-signature?${q}`, { method: 'POST', body: signature, signal }),
