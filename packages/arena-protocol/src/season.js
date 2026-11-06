@@ -17,6 +17,9 @@
 // stable, which means it keeps the INPUT order on a tie, and the input order is exactly what must not decide a place.
 // The rounds are read in round-id order for the same reason, so even the list of what was left out is the same list.
 import { VOID, ENTRY_VOID, DELIVERED } from './payout.js';
+import { decodeRoundContract, encodeRoundContract, roundId as roundIdOfContract, idBodyOf } from './contracts.js';
+import { taggedHash, sha256, toHex, fromHex } from './hash.js';
+import { utf8Encode } from './utf8.js';
 
 export const DAY_MS = 86400000;
 /** The window a season door shows when none is asked, and the longest it shows: a week, and a quarter. */
@@ -343,5 +346,148 @@ export function seasonRoundsFromJson(list) {
   return list.map((r) => (!r || typeof r !== 'object' ? r : { roundId: r.roundId, gameId: r.gameId, startMs: big(r.startMs), void: r.void === true,
     entries: Array.isArray(r.entries) ? r.entries.map((e) => (!e || typeof e !== 'object' ? e : { player: e.player, name: e.name ?? null,
       stakeMsat: big(e.stakeMsat), payoutMsat: big(e.payoutMsat), outcome: e.outcome ?? null, score: e.score ?? null,
-      roundKey: e.roundKey ?? null, ...(e.bot === true ? { bot: true } : {}) })) : r.entries }));
+      roundKey: e.roundKey ?? null, ...(e.bot === true ? { bot: true } : {}) })) : r.entries,
+    // A SIGNED ACCOUNT'S EVIDENCE (kanban #1153), handed on as it came, for mergeSignedSeasonAccounts to check
+    ...(r.contract !== undefined ? { contract: r.contract } : {}), ...(Array.isArray(r.sigs) ? { sigs: r.sigs } : {}) }));
 }
+
+// SIGNED SEASON ACCOUNTS (kanban #1153, critical). What a leaderboard payout pays from the reserves, and what a weekly board badge
+// awards, must not stand on accounts seats only CLAIM: GET /season-rounds is unsigned JSON, a seat names itself in it, and three
+// colluding bonded seats handing in byte-identical invented rounds were enough (SEASON_NETWORK_AGREE) to put an identity into the
+// top N of a payout. So for money and badges a round counts only when this seat can check:
+//   - ITS CONTRACT BY ID: the contract's bytes travel with the account; they decode, their id is the round's id, and the game and
+//     the start time the account names are the contract's own (seasonContractOf).
+//   - ITS ACCOUNT SIGNED BY THE ROUND'S OWN SEATS: each seat signs, with its node key, the account its own store holds once every
+//     entry of it is settled there (seasonAccountOf: FINAL results, the amounts its ACCEPTED settlement paid - season-read.js). The
+//     account counts when `needed` distinct seats of the round's draw - the draw THIS seat computes from the contract, its own
+//     census and the beacon (`seatsOf`) - signed the same account: the round's committee threshold, 5 of 7. Who answered, from
+//     which address, and what an answer says it is decide nothing: a signature names its seat.
+// A forged round then takes `needed` seats of its own draw signing the same lie - as many as could take a real round's pot.
+
+/** Tag of a seat's signature over a season account. */
+export const SEASON_ACCOUNT_TAG = 'ARENA/v1/SeasonAccount';
+
+/** WHAT A SIGNED SEASON CANNOT CHECK, beside SEASON_UNCHECKED. */
+export const SEASON_SIGNED_UNCHECKED = [
+  'the seats\' stores (a round counts when the threshold of its own draw, as this seat draws it from the contract, signed the same '
+  + 'account of it - mergeSignedSeasonAccounts - and only then)',
+];
+
+const bytesOf = (v) => (v instanceof Uint8Array ? v : typeof v === 'string' && /^([0-9a-f]{2})+$/i.test(v) ? fromHex(v.toLowerCase()) : null);
+
+/**
+ * A ROUND'S CONTRACT, CHECKED AGAINST THE ACCOUNT BY ID: { ok, contract, body } or { ok: false, why }. `body`: the hash (hex) of the
+ * contract's id body (idBodyOf: without what a v2 seat writes in), so two seats' copies of one round name the same contract.
+ */
+export function seasonContractOf(raw) {
+  const bytes = bytesOf(raw && raw.contract);
+  if (!bytes) return { ok: false, why: 'the account carries no contract' };
+  let c; try { c = decodeRoundContract(bytes); } catch (e) { return { ok: false, why: `its contract does not decode: ${e.message}` }; }
+  let id; try { id = toHex(roundIdOfContract(c)); } catch (e) { return { ok: false, why: `its contract has no id: ${e.message}` }; }
+  if (id !== String(raw.roundId || '').toLowerCase()) return { ok: false, why: 'its contract is of another round' };
+  if (!(c.gameId instanceof Uint8Array) || toHex(c.gameId) !== String(raw.gameId || '').toLowerCase()) return { ok: false, why: 'its contract is of another game than the account names' };
+  if (ms(raw.startMs) !== BigInt(c.startTimeMs)) return { ok: false, why: 'its contract starts at another time than the account names' };
+  return { ok: true, contract: c, body: toHex(sha256(encodeRoundContract(idBodyOf(c)))) };
+}
+
+/**
+ * THE ACCOUNT A SEAT SIGNS, from a round in season()'s shape - round keys included, names left out (a name is presentation, and two
+ * seats that hold another name record would not agree) - or { ok: false, why } while it cannot be signed: a round with no entry, or
+ * an entry whose amount is not held yet (an account changes until every entry is settled; a seat signs it only once it cannot).
+ * `contractBody`: seasonContractOf's `body`, so the signature names the contract too. Answers { ok, id (32 bytes), canon, round }.
+ */
+export function seasonAccountOf(raw, contractBody) {
+  if (!raw || typeof raw !== 'object') return { ok: false, why: 'that is not a round' };
+  const entries = Array.isArray(raw.entries) ? raw.entries.map((e) => (e && typeof e === 'object' ? { ...e, name: null } : e)) : raw.entries;
+  const r = readRound({ ...raw, entries }, { keys: true });
+  if (r.why) return { ok: false, why: r.why };
+  if (!r.entries.length) return { ok: false, why: 'that round has no entry' };
+  if (r.entries.some((e) => e.payoutMsat === null)) return { ok: false, why: 'an entry of that round is not settled at that seat yet' };
+  if (!HEX64.test(String(contractBody || ''))) return { ok: false, why: 'no contract names that account' };
+  const canon = JSON.stringify([r.canon, contractBody]);
+  return { ok: true, id: taggedHash(SEASON_ACCOUNT_TAG, utf8Encode(canon)), canon, round: normalised(r) };
+}
+
+/** A seat's signature over its account of a round: { node, sig } in hex, or null while it cannot sign it. `sign(digest)` -> 64 bytes. */
+export function signSeasonAccount(raw, nodePubkey, sign) {
+  const k = seasonContractOf(raw);
+  if (!k.ok) return null;
+  const a = seasonAccountOf(raw, k.body);
+  return a.ok ? { node: typeof nodePubkey === 'string' ? nodePubkey.toLowerCase() : toHex(nodePubkey), sig: toHex(sign(a.id)) } : null;
+}
+
+/**
+ * THE ROUNDS WHOSE ACCOUNTS THEIR OWN SEATS SIGNED. `answers`: a Map (or an object, or an array) of rounds lists, each round season()'s
+ * shape plus `contract` (hex) and `sigs` [{ node, sig }] (hex) - a seat's GET /season-rounds carries its own one signature per round, a
+ * frozen record's evidence every signature it gathered. The labels decide nothing. `seatsOf(roundIdHex, contract)` -> { ok, seats:
+ * [node key hex], needed } the round's draw as THIS seat computes it and the signatures it takes, or { ok: false, pending, why }
+ * (`pending`: this seat cannot draw it YET). `verify(sig, msg, key)` BIP-340.
+ *
+ * Every account of a round is read - its contract checked by id, each signer a seat of the draw whose signature verifies, counted once.
+ * ONE ACCOUNT SIGNED BY `needed` OF THEM: the round counts with it. NONE: left out. TWO: the seats signed two accounts of one round, and
+ * the season does not choose - left out. Answers { ok, rounds (normalised, round-id order), evidence [{ roundId, accountId, contract,
+ * round (wire JSON), sigs }] - every account that stood, both of a contradiction too, so whoever is handed the evidence reaches the same
+ * answer - pairs [[roundId, accountId]] of it, excluded, pending [roundId] }.
+ */
+export function mergeSignedSeasonAccounts(answers, { seatsOf, verify } = {}) {
+  if (typeof seatsOf !== 'function' || typeof verify !== 'function') return { ok: false, why: 'a signed season needs the round\'s draw and a signature check' };
+  const lists = answers instanceof Map ? [...answers.values()] : Array.isArray(answers) ? answers : answers && typeof answers === 'object' ? Object.values(answers) : null;
+  if (!lists) return { ok: false, why: 'no seats\' rounds to merge' };
+  const excluded = [];
+  const pending = new Set();
+  const draws = new Map();                       // roundId|contract body -> seatsOf's answer
+  const accounts = new Map();                    // accountId -> { roundId, a, contract, needed, sigs: Map node -> sig }
+  for (const list of lists) {
+    for (const raw of Array.isArray(list) ? list : []) {
+      const rid = String((raw && raw.roundId) || '').toLowerCase();
+      if (!HEX64.test(rid)) { excluded.push({ round: null, why: 'a round is named by its 32-byte id in hex' }); continue; }
+      const k = seasonContractOf(raw);
+      if (!k.ok) { excluded.push({ round: rid, why: k.why }); continue; }
+      const a = seasonAccountOf(raw, k.body);
+      if (!a.ok) { excluded.push({ round: rid, why: a.why }); continue; }
+      const dk = `${rid}|${k.body}`;
+      if (!draws.has(dk)) { let d; try { d = seatsOf(rid, k.contract); } catch (e) { d = { ok: false, why: e.message }; } draws.set(dk, d || { ok: false, why: 'no draw' }); }
+      const d = draws.get(dk);
+      if (!d.ok) { if (d.pending) pending.add(rid); else excluded.push({ round: rid, why: `this seat cannot draw that round's seats: ${d.why}` }); continue; }
+      const seats = new Set((d.seats || []).map((x) => String(x).toLowerCase()));
+      const aid = toHex(a.id);
+      const acc = accounts.get(aid) || { roundId: rid, a, contract: toHex(bytesOf(raw.contract)), needed: d.needed, sigs: new Map() };
+      for (const s of Array.isArray(raw.sigs) ? raw.sigs : []) {
+        const node = String((s && s.node) || '').toLowerCase();
+        if (!HEX64.test(node) || acc.sigs.has(node)) continue;
+        if (!seats.has(node)) { excluded.push({ round: rid, seat: node, why: 'signed by a seat that is not of that round\'s draw' }); continue; }
+        const sig = bytesOf(s.sig);
+        let good = false; try { good = !!sig && sig.length === 64 && verify(sig, a.id, fromHex(node)) === true; } catch { good = false; }
+        if (!good) { excluded.push({ round: rid, seat: node, why: 'a signature over that account does not verify' }); continue; }
+        acc.sigs.set(node, toHex(sig));
+      }
+      accounts.set(aid, acc);
+    }
+  }
+  const standing = new Map();                    // roundId -> [accountId] signed by enough of its seats
+  for (const [aid, acc] of accounts) {
+    const need = Number.isSafeInteger(acc.needed) && acc.needed >= 1 ? acc.needed : Infinity;
+    if (acc.sigs.size >= need) standing.set(acc.roundId, [...(standing.get(acc.roundId) || []), aid]);
+  }
+  const rounds = [], evidence = [];
+  for (const rid of [...new Set([...accounts.values()].map((x) => x.roundId))].sort()) {
+    const stood = (standing.get(rid) || []).sort();
+    for (const aid of stood) {
+      const acc = accounts.get(aid);
+      evidence.push({ roundId: rid, accountId: aid, contract: acc.contract, round: seasonRoundsToJson([acc.a.round])[0],
+        sigs: [...acc.sigs].sort(([x], [y]) => (x < y ? -1 : 1)).map(([node, sig]) => ({ node, sig })) });
+    }
+    pending.delete(rid);
+    if (stood.length === 1) { rounds.push(accounts.get(stood[0]).a.round); continue; }
+    if (stood.length > 1) { excluded.push({ round: rid, why: 'the round\'s seats signed two accounts of it: the season does not choose between them' }); continue; }
+    const most = Math.max(0, ...[...accounts.values()].filter((x) => x.roundId === rid).map((x) => x.sigs.size));
+    excluded.push({ round: rid, why: `no account of that round is signed by enough of its seats (${most} at most)` });
+  }
+  const ek = (x) => `${x.round || ''}|${x.seat || ''}|${x.why}`;
+  excluded.sort((x, y) => (ek(x) < ek(y) ? -1 : ek(x) > ek(y) ? 1 : 0));
+  return { ok: true, rounds, evidence, pairs: evidence.map((e) => [e.roundId, e.accountId]), excluded, pending: [...pending].sort() };
+}
+
+/** A frozen record's evidence as mergeSignedSeasonAccounts reads it again: each item a one-round list, its round with its contract and signatures. */
+export const evidenceAnswers = (evidence) => (Array.isArray(evidence) ? evidence : [])
+  .map((e) => (e && e.round ? seasonRoundsFromJson([{ ...e.round, contract: e.contract, sigs: e.sigs }]) : []));
