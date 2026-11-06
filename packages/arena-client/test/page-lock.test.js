@@ -508,12 +508,14 @@ test('after the settlement the winner\'s page redeems its own stake by the signe
   assert.equal(again.amountMsat, 980000n);
   assert.equal(asked.length + redeemed.length + joins, 0);
 
-  // A LOSER: every signer node refuses the forfeit as not a qualifier - final, nothing asked of the wallet.
+  // A LOSER: every signer node refuses the forfeit as not a qualifier - nothing asked of the wallet, and NOT FINAL on their words (kanban
+  // #1163): a stake the settlement claimed reads gone in the federation, one it did not comes back by the player's key at its expiry
   const lost = await returnStake({ ...ask, fetcher: signerNodes({ forfeit: 409 }) });
   console.log(`  loser: "${stakeBackLine(lost)}"; joins ${joins}, redeems ${redeemed.length}`);
   assert.equal(lost.ok, false);
-  assert.equal(lost.final, true);
-  assert.match(stakeBackLine(lost), /^No stake back: .*went into the round's pool/);
+  assert.equal(lost.final, false);
+  assert.equal(lost.lostSaid, true);
+  assert.match(stakeBackLine(lost), /^Stake: not back yet - .*went into the round's pool/);
   assert.equal(joins + redeemed.length, 0, 'a loser\'s page asked the lock client');
 
   // A STAKE LOCK ALREADY BACK (another tab took it): refused, and the guardians hold no contract
@@ -582,11 +584,13 @@ test('the page looks at what a seed is owed and spends nothing: a winner\'s payo
   assert.deepEqual(spent, [], 'looking at what is owed spent something');
   assert.match(owedLine(won), /^978000 msat payout and your 980000 msat stake - yours in the round's federation until you withdraw it/);
 
-  const lost = await lookOwed({ ...ask, fetcher: signerNodes({ payout: false, forfeit: 409 }), client: wallet(0), kept });
+  // A LOSER (kanban #1163): said lost, never final while its lock is held - and past the lock's expiry the player's key takes it back
+  const lost = await lookOwed({ ...ask, fetcher: signerNodes({ payout: false, forfeit: 409 }), client: wallet(140), kept });
   assert.equal(lost.owedMsat, 0n);
   assert.equal(lost.stakeLost, true);
-  assert.equal(lost.final, true);
-  assert.match(owedLine(lost), /^No payout · No stake back/);
+  assert.equal(lost.final, false);
+  const lostExpired = await lookOwed({ ...ask, fetcher: signerNodes({ payout: false, forfeit: 409 }), client: wallet(0), kept });
+  assert.equal(lostExpired.refundMsat, 980000n, 'a lost run\'s lock past its expiry was not owed back by the player\'s key');
 
   const early = await lookOwed({ ...ask, fetcher: signerNodes({ payout: false, known: false }), client: wallet(150), kept });
   assert.equal(early.owedMsat, 0n);
