@@ -8784,6 +8784,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { signed = sig.length === 64 && schnorr.verify(sig, lobbyNameId(rec), rec.playerPubkey); } catch { signed = false; }
         if (!signed) return answer(400, { why: 'the signature does not verify under the player key the record names' });
         if (!round.get(rec.roundId)) return answer(404, { why: 'this signer node holds no such round' });
+        // A ROUND'S IDENTITY IS FIXED AT ITS ENTRY CLOSE (kanban #1213, audit 2 #1204 MKT-1): the name record says which identity the round is
+        // booked to on the season board and the leaderboard, and the newest record won at any time - so a player named only the rounds he had
+        // won, after they settled, and the leaderboard payout from the reserves went by results picked afterwards. After the entry close (and
+        // a minute's grace for a join's own record on its way) no record is taken; the lobby shows the name held then.
+        { let close = null; try { close = Number(decodeRoundContract(new Uint8Array(round.get(rec.roundId).contract)).entryCloseMs); } catch { close = null; }
+          if (close !== null && Number.isFinite(close) && Number(round.now()) > close + lobbyNameGraceMs)
+            return answer(409, { why: 'that round\'s entry closed: the identity its entries are booked to is fixed (kanban #1213)' }); }
         if (!round.entriesOf(rec.roundId).some((e) => toHex(e.entry.playerPubkey) === toHex(rec.playerPubkey)))
           return answer(409, { why: 'this signer node holds no player with that key in that round' });
         const kept = round.putLobbyName({ roundId: rec.roundId, playerPubkey: rec.playerPubkey, record: bytes, signature: sig, atMs: rec.atMs });
