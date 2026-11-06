@@ -4668,12 +4668,12 @@
           const co = await ARENACLIENT.collectIntoPlayerWallet({ look: lo, ...roundAsk(older, lco) });
           if (co.collected) {
             console.log('[arena] owed (round ' + older.roundIdHex.slice(0, 8) + (older.order ? ' order ' + older.order : '') + '), collected into the player wallet: ' + co.creditedMsat + ' msat');
-            ARENACLIENT.markCollectDone(vault(), older.roundIdHex, { payout: ARENACLIENT.owedToLine(lo), stake: null }, older.seed, older.order || 0);
-            stakeBack.delete(backKey(older));
+            // DONE ONLY WHEN EVERY PART IS (kanban #1163): a payout collected with the stake still in its lock stays open, looked at again
+            if (ARENACLIENT.markCollectDone(vault(), older.roundIdHex, { payout: ARENACLIENT.owedToLine(lo), stake: null }, older.seed, older.order || 0, { look: lo, co })) stakeBack.delete(backKey(older));
+            else collectNote(older.roundIdHex.slice(0, 8) + (older.order ? '.o' + older.order : ''), 'older round collected in part, still open: ' + ARENACLIENT.collectState(lo, co).why);
             if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
             paintHistory();
-          } else if (lo.final && lo.inTabMsat === 0n) {
-            ARENACLIENT.markCollectDone(vault(), older.roundIdHex, { payout: ARENACLIENT.owedToLine(lo), stake: null }, older.seed, older.order || 0);
+          } else if (lo.final && lo.inTabMsat === 0n && ARENACLIENT.markCollectDone(vault(), older.roundIdHex, { payout: ARENACLIENT.owedToLine(lo), stake: null }, older.seed, older.order || 0, { look: lo })) {
             stakeBack.delete(backKey(older));
             collectNote(older.roundIdHex.slice(0, 8) + (older.order ? '.o' + older.order : ''), 'older round MARKED DONE: ' + ARENACLIENT.owedToLine(lo) + ' <- ' + lookSaid(lo));
           }
@@ -4700,8 +4700,9 @@
           const c = await ARENACLIENT.collectIntoPlayerWallet({ look, ...roundAsk(newest, lcn) });
           if (c.collected) {
             console.log('[arena] owed (round ' + newest.roundIdHex.slice(0, 8) + (newest.order ? ' order ' + newest.order : '') + '), collected into the player wallet: ' + c.creditedMsat + ' msat');
-            ARENACLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: ARENACLIENT.owedToLine(look), stake: null }, newest.seed, newest.order || 0);
-            stakeBack.delete(backKey(newest));
+            // DONE ONLY WHEN EVERY PART IS (kanban #1163)
+            if (ARENACLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: ARENACLIENT.owedToLine(look), stake: null }, newest.seed, newest.order || 0, { look, co: c })) stakeBack.delete(backKey(newest));
+            else collectNote(newest.roundIdHex.slice(0, 8) + (newest.order ? '.o' + newest.order : ''), 'newest round collected in part, still open: ' + ARENACLIENT.collectState(look, c).why);
             if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
             paintHistory();
           }
@@ -4710,8 +4711,7 @@
         else if (newest.done) window.ARENA_COLLECT_LINE = [newest.done.payout, newest.done.stake].filter(Boolean).join(' · ');
         else if (look.final && look.inTabMsat === 0n) {
           const line = ARENACLIENT.owedToLine(look);
-          ARENACLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: line, stake: null }, newest.seed, newest.order || 0);
-          stakeBack.delete(backKey(newest));
+          if (ARENACLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: line, stake: null }, newest.seed, newest.order || 0, { look })) stakeBack.delete(backKey(newest));
           console.log('[arena] owed: ' + line);
           collectNote(newest.roundIdHex.slice(0, 8) + (newest.order ? '.o' + newest.order : ''), 'newest round MARKED DONE: ' + line + ' <- ' + lookSaid(look));
         }
@@ -4771,12 +4771,12 @@
                 if (c.collected) {
                   const got = BigInt(c.creditedMsat || 0);
                   collected += got;
-                  ARENACLIENT.markCollectDone(vault(), r.roundIdHex, { payout: ARENACLIENT.owedToLine(look), stake: null }, r.seed, r.order || 0);
-                  stakeBack.delete(backKey(r));
+                  // DONE ONLY WHEN EVERY PART IS (kanban #1163)
+                  if (ARENACLIENT.markCollectDone(vault(), r.roundIdHex, { payout: ARENACLIENT.owedToLine(look), stake: null }, r.seed, r.order || 0, { look, co: c })) stakeBack.delete(backKey(r));
                   rows.push({ key: backKey(r), text: name + ': ' + sat(got) + ' brought back' });
                 } else rows.push({ key: backKey(r), text: name + ': ' + sat(look.owedMsat) + ' owed, not collected yet - ' + String(c.why || 'asked again on the next look').slice(0, 120) });
               } else if (look.final && look.inTabMsat === 0n) {
-                ARENACLIENT.markCollectDone(vault(), r.roundIdHex, { payout: ARENACLIENT.owedToLine(look), stake: null }, r.seed, r.order || 0);
+                ARENACLIENT.markCollectDone(vault(), r.roundIdHex, { payout: ARENACLIENT.owedToLine(look), stake: null }, r.seed, r.order || 0, { look });
               } else if (look.stake && look.stake.state === 'waiting' && look.stake.msat) {
                 waiting += BigInt(look.stake.msat);
                 rows.push({ key: backKey(r), text: name + ': ' + sat(look.stake.msat) + ' waiting - ' + (look.stake.how === 'refund' && look.stake.expiration
