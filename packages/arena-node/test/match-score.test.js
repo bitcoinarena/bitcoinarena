@@ -82,3 +82,30 @@ test('the same two players round after round: 1:0, 1:1, a draw keeps 1:1; both s
     assert.deepEqual(row.score.score, m.score);
   } finally { await w.close(); }
 });
+
+// KANBAN #1224 (audit 2 #1204 INSTALLER-DOORS-6): a reveal's identity was bound to nothing but its own key - anyone who had seen the move and
+// salt posted them with an identity of their own, and the first one a seat stored won the round on the season board, the badges and the
+// leaderboard. Where the player's name record (signed by the entry's own round key) is held, the reveal's identity must be the one it names.
+test('#1224 a stranger\'s identity on a seen reveal is refused where the player\'s name record is held; the player\'s own is kept', async () => {
+  const { encodeLobbyName } = await import('../../arena-protocol/src/lobby-name.js');
+  const w = await lockRound({ serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 4000 });
+  const MALLORY = ident();
+  try {
+    skipTo(Number(w.c.committeeTimeMs) + 20);
+    const sa = new Uint8Array(randomBytes(32));
+    const a = await lockAndPlay(w, player(), { hidden: { move: ROCK, salt: sa }, noMarks: true });
+    // the name record each seat holds for Alice's entry names her identity (as the page posts it at the join)
+    const playerKey = a.entry ? a.entry.playerPubkey : null;
+    for (const d of w.nodes) {
+      const pk = playerKey || d.round.entriesOf(w.rid).find((x) => toHex(x.entryId) === toHex(a.eid)).entry.playerPubkey;
+      d.round.putLobbyName({ roundId: w.rid, playerPubkey: pk, record: encodeLobbyName({ roundId: w.rid, playerPubkey: pk, identityPubkey: ALICE.key, atMs: 1n }), signature: new Uint8Array(64), atMs: 1n });
+    }
+    skipTo(Number(w.c.entryCloseMs) + 500);
+    const stolen = await reveal(w, a, ROCK, sa, proof(MALLORY, w.rid, a.eid));
+    const own = await reveal(w, a, ROCK, sa, proof(ALICE, w.rid, a.eid));
+    const kept = w.nodes.map((d) => { const i = d.round.identityOf(a.eid); return i ? toHex(i.identity) : null; });
+    console.log('  FACTS #1224:', JSON.stringify({ stolen, own: own.map((x) => x.slice(0, 3)), kept: kept.map((x) => x && x.slice(0, 8)) }));
+    assert.ok(stolen.every((x) => x.startsWith('403')), `a stranger's identity was taken: ${stolen.join(' | ')}`);
+    assert.deepEqual(kept, w.nodes.map(() => toHex(ALICE.key)), 'the entry is booked to its player');
+  } finally { await w.close(); }
+});

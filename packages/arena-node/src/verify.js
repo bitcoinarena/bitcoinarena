@@ -758,6 +758,8 @@ export class Verifier {
           const entryId = new Uint8Array(Buffer.from(r.entry, 'hex')), key = new Uint8Array(Buffer.from(r.identity.key, 'hex')), sig = new Uint8Array(Buffer.from(r.identity.sig, 'hex'));
           let good = false;
           try { good = schnorr.verify(sig, matchProofId({ roundId: roundIdBytes, entryId, identityKey: key }), key); } catch { good = false; }
+          // and only the identity the player's name record names, where it is held (kanban #1224)
+          if (good && typeof this.round.namedIdentityOf === 'function') { const named = this.round.namedIdentityOf(roundIdBytes, entry.playerPubkey); if (named && named !== hex(key)) good = false; }
           if (good) this.round.putIdentity({ roundId: roundIdBytes, entryId, identity: key, sig });
         }
       }
