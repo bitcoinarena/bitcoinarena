@@ -20,7 +20,34 @@
 //                       operation log (stake-lock ecash-sent); found, it is the answer; not found, the send is made then; a tool that
 //                       cannot say holds the exchange and pays nothing a second time.
 //   paid, refused       go nowhere.
+//
+// THE NOTES, NOT THE STRING (kanban #1204 RES-3): the federation reads an e-cash string case-blind and drops the bits after its last
+// whole byte, so one set of notes has many spellings - and a row keyed by the spelling took a re-cased copy as a new exchange whose
+// AlreadyReceived (the notes' own earlier receive) it paid again. Now (1) the row is keyed by the notes: the bytes the federation
+// decodes (noteKey, Fedimint's base32 exactly), and (2) an AlreadyReceived is this exchange's own only when THIS row asked for the
+// reissue before (`receive_asked`, written before each ask): a row's first ask that answers AlreadyReceived was received under another
+// exchange or outside the seat, and is refused for good.
 import { createHash } from 'node:crypto';
+
+// Fedimint's base32 (fedimint-core base32.rs decode_prefixed_bytes): lowercased, the "fedimint" prefix, RFC 4648 lower-case alphabet,
+// 5 bits a character, least significant first, the bits after the last whole byte dropped
+const B32 = '0123456789abcdefghijklmnopqrstuv';
+export function decodeEcashBytes(ecash) {
+  const s = String(ecash || '').trim().toLowerCase();
+  if (!s.startsWith('fedimint')) return null;
+  const out = []; let buf = 0, bits = 0;
+  for (const ch of s.slice('fedimint'.length)) {
+    const v = B32.indexOf(ch); if (v < 0) return null;
+    buf |= v << bits; bits += 5;
+    while (bits >= 8) { out.push(buf & 0xff); buf >>>= 8; bits -= 8; }
+  }
+  return Uint8Array.from(out);
+}
+/** THE EXCHANGE'S KEY (kanban #1204 RES-3): sha256 of the notes' bytes; a string the federation cannot decode keys by its lowercased self. */
+export function noteKey(ecash) {
+  const b = decodeEcashBytes(ecash);
+  return createHash('sha256').update(b ? Buffer.concat([Buffer.from('notes:'), Buffer.from(b)]) : Buffer.from(`string:${String(ecash).trim().toLowerCase()}`)).digest('hex');
+}
 
 export const EXCHANGE = Object.freeze({ RECEIVING: 'receiving', TAKEN: 'taken', SENDING: 'sending', PAID: 'paid', REFUSED: 'refused' });
 export const EXCHANGE_NEXT = Object.freeze({
@@ -45,6 +72,9 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
   )`);
   // kanban #1160: what the exchange asked for, and the amount the payout is named for before it leaves
   for (const col of ['want_msat', 'pay_msat']) if (!db.prepare('PRAGMA table_info(ecash_exchanges)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE ecash_exchanges ADD COLUMN ${col} TEXT`);
+  // kanban #1204 RES-3: 0 on a new row until its first reissue is asked; a row from before (NULL) may have asked already
+  if (!db.prepare('PRAGMA table_info(ecash_exchanges)').all().some((c) => c.name === 'receive_asked')) db.exec('ALTER TABLE ecash_exchanges ADD COLUMN receive_asked INTEGER');
+  const markAsked = db.prepare("UPDATE ecash_exchanges SET receive_asked = 1 WHERE id = ? AND state = 'receiving'");
   const get = db.prepare('SELECT * FROM ecash_exchanges WHERE id = ?');
   // an hour's spend counts what is out or on its way out
   const lastHour = db.prepare("SELECT out_msat, pay_msat FROM ecash_exchanges WHERE state IN ('paid', 'sending') AND made_ms >= ?");
@@ -75,7 +105,9 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
     let want; try { want = BigInt(amountMsat); } catch { want = -1n; }
     if (want <= 0n) return refuse(400, 'amountMsat is the amount the e-cash carries');
     if (want > maxMsat) return refuse(409, `this seat exchanges at most ${maxMsat / 1000n} sat at a time`);
-    const id = createHash('sha256').update(ecash.trim()).digest('hex');
+    // a row from before kanban #1204 is keyed by the string as it came: its retries find it there
+    const legacy = createHash('sha256').update(ecash.trim()).digest('hex');
+    const id = get.get(legacy) ? legacy : noteKey(ecash);
     const run = queue.then(() => step({ id, from, to, ecash: ecash.trim(), want }));
     queue = run.catch(() => {});
     return run;
@@ -98,18 +130,26 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
       const holds = await pout.ecashBalance();
       if (holds < want) return refuse(409, `this seat holds ${holds / 1000n} sat in federation ${to.slice(0, 8)}: too little for ${want / 1000n} sat`);
       // THE RECORD FIRST (kanban #1160): the exchange exists before the player's notes are reissued
-      const t = transition(id, null, EXCHANGE.RECEIVING, { from_fed: from, to_fed: to, want_msat: String(want) });
+      const t = transition(id, null, EXCHANGE.RECEIVING, { from_fed: from, to_fed: to, want_msat: String(want), receive_asked: 0 });
       if (!t.ok) return t;
       r = get.get(id);
     }
     // THE PLAYER'S NOTES IN: reissued into the seat's client of `from`
     if (r.state === EXCHANGE.RECEIVING) {
+      // kanban #1204 RES-3: did THIS row ask before? Written before the ask, so a stop after it still counts the ask
+      const askedBefore = r.receive_asked === null || r.receive_asked === undefined || Number(r.receive_asked) === 1;
+      if (!askedBefore) markAsked.run(id);
       let got;
       try { got = await pin.ecashReceive(ecash); }
       catch (e) { note(id, EXCHANGE.RECEIVING, `the receive did not answer: ${e.message}`); return refuse(503, `federation ${from.slice(0, 8)} did not answer the reissue (${String(e.message).slice(0, 120)}); ask again with the same e-cash`); }
       let carried = null;
       if (got.state === 'Success') carried = BigInt(got.msat || 0);
-      else if (got.state === 'AlreadyReceived') {
+      else if (got.state === 'AlreadyReceived' && !askedBefore) {
+        // RECEIVED BEFORE, BUT NOT BY THIS EXCHANGE (kanban #1204 RES-3): another spelling of the same notes, or notes this seat took elsewhere
+        transition(id, EXCHANGE.RECEIVING, EXCHANGE.REFUSED, { why: 'those notes were received here before, not by this exchange' });
+        log(`[exchange] ${id.slice(0, 12)}: AlreadyReceived on its first ask - refused, nothing paid`);
+        return refuse(409, `federation ${from.slice(0, 8)} has those notes here already, from another exchange: nothing paid`);
+      } else if (got.state === 'AlreadyReceived') {
         // OUR OWN EARLIER RECEIVE: the row was written before it, so this string was reissued for this exchange - its amount as the tool
         // reads it back (a tool from before #1160 cannot: the exchange is held, nothing paid)
         if (got.earlier && got.earlier !== 'Success') { note(id, EXCHANGE.RECEIVING, `the earlier receive is ${got.earlier}`); return refuse(503, `the earlier reissue of that e-cash is ${got.earlier}; ask again`); }
