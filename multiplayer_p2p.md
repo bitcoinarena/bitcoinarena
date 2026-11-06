@@ -7660,8 +7660,12 @@ capital for all of the reserves.
   has no vote.
 - "Age" is the age of the node's current bond. An advertisement update keeps it; a new bond starts again at zero.
 - A passed vote is read on through its last payment's due block.
-- The number of parts is fixed the first time the seat asks: the amount over 1 % of the reserves it holds then. Each part is its
-  own payout (id: the proposal's for a single payment, else a tagged hash of the proposal and the part).
+- **The number of parts is the same on every seat** *(kanban #1175, 2026-11-06; awaiting a ruling)*: every payout goes in 4 parts,
+  an amount under 4 sat in one. The count was the amount over 1 % of the reserves the seat held at its first ask. Seats hold different
+  reserve rows, so they named different part ids and a payout plan was "no passed vote" at its peers. No figure of the protocol
+  reserves is read alike by every seat, so rule 5's 1 % is not applied. Each part is its own payout (id: the proposal's for a single
+  payment, else a tagged hash of the proposal and the part). A row the old rule fixed is set right while no part is payable yet, and
+  rule 4 counts a proposal's payouts under either id. A cancellation is kept once (compare-and-set) and never moves.
 - A stopped proposal keeps listing the parts due before the stopping one, so their records still stand on every seat.
 - The payout's signers apply the same caps and re-count to their own records before they sign. A seat without the chain tip pays
   nothing.
