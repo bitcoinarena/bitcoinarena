@@ -16,8 +16,13 @@
 //               replacement's height for an alternate) is a no-show, replaced in its position (replaceNoShows). Not slashed: it
 //               held nothing.
 //   VOID        "if the window passes without a federation, the founding is void and the next trigger draws again": at beacon +
-//               founding_window with no federation running (the seated guardian's consensus, `setup.done()`, or a peer that says
-//               so), the founding is void - and so is one whose alternates ran out.
+//               founding_window with no federation running (the seated guardian's consensus, `setup.done()`, or a threshold of the
+//               seated nodes that say so, kanban #1161 - never one peer's word), the founding is void - and so is one whose alternates
+//               ran out.
+//   PHASE       one enum and one transition (kanban #1161): COLLECTING (codes) -> DKG (this node started its key generation) ->
+//               RUNNING (its own guardian in consensus, or thresholdOf(seated) seated nodes say so); COLLECTING or DKG -> VOID (the
+//               window passed, or the alternates ran out); COLLECTING -> RUNNING for a seat that sits in no guardian. RUNNING and VOID
+//               are final.
 //   SEATED FIRST a succession (§23A.6 step 1) seats the old federation's seated, non-departing guardians first, in
 //               the order given (`seatedFirst`, census entries), and draws only the missing seats (drawGuardians). A seated-first
 //               node is held to the same window and fifth as a drawn one: no code a fifth after the beacon, and the next alternate
@@ -36,6 +41,13 @@ import { drawGuardians, replaceNoShows } from '../../arena-protocol/src/guardian
 import { Writer } from '../../arena-protocol/src/encode.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { tagAt, tagsAccepted, TAG_PAIRS } from '../../arena-protocol/src/tag-switch.js';
+import { thresholdOf } from '../../arena-protocol/src/federation-record.js';
+
+/** A founding's phase (kanban #1161). */
+export const PHASE = Object.freeze({ COLLECTING: 'COLLECTING', DKG: 'DKG', RUNNING: 'RUNNING', VOID: 'VOID' });
+const NEXT = Object.freeze({ COLLECTING: ['DKG', 'RUNNING', 'VOID'], DKG: ['RUNNING', 'VOID'], RUNNING: [], VOID: [] });
+/** The one transition: `to` when it follows `phase`, else `phase` unchanged (a final phase never moves). */
+export const foundingStep = (phase, to) => (NEXT[phase] && NEXT[phase].includes(to) ? to : phase);
 
 /** The founding's id: H(founding tag, seed || trigger_height) - one per beacon and trigger; the tag by the trigger height (kanban #525). */
 export function foundingId(seed, triggerHeight) {
@@ -61,7 +73,9 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
   const windowEnd = beacon + foundingWindow; // ... and closes here, replacements or not
   const fifth = Math.max(1, Math.ceil(foundingWindow / 5));
   const seatedSince = new Map(seated.map((e) => [toHex(e.pubkey), beacon]));   // node hex -> the height it was seated at
-  let posted = false, started = false, failed = null, invite = null, federation = false, voided = null;
+  let posted = false, started = false, failed = null, invite = null, phase = PHASE.COLLECTING;
+  const seenRunning = new Set();             // seated nodes whose own seat said the federation runs (node hex)
+  const step = (to, why = null) => { const was = phase; phase = foundingStep(phase, to); if (phase !== was && phase === PHASE.VOID) failed = why; return phase !== was; };
   const isSeated = (hex) => seated.some((e) => toHex(e.pubkey) === hex);
   const position = (hex) => seated.findIndex((e) => toHex(e.pubkey) === hex);
 
@@ -80,8 +94,19 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
     return { ok: true, status: 201, kept: true };
   }
 
-  /** A peer says the federation runs (its GET /founding `federation`): no void here for a federation that exists. */
-  const federationSeen = () => { federation = true; };
+  /**
+   * A SEATED NODE'S OWN SEAT SAYS THE FEDERATION RUNS (its GET /founding `federation`, read at that node's census endpoint): counted per
+   * node, and the founding RUNS here - no void for a federation that exists - once thresholdOf(seated) seated nodes said so (kanban #1161:
+   * one peer's answer froze a succession or genesis until restart). A node not seated, or none named, counts nothing.
+   */
+  const federationSeen = (node = null) => {
+    const k = String(node || '').toLowerCase();
+    if (!k || !isSeated(k)) return false;
+    seenRunning.add(k);
+    const n = seated.filter((e) => seenRunning.has(toHex(e.pubkey))).length;
+    if (n >= thresholdOf(seated.length) && step(PHASE.RUNNING)) say({ founding: toHex(id).slice(0, 16), federation: 'running', seenBy: n, of: seated.length });
+    return true;
+  };
   /**
    * One advance at chain height `tip`: the void at the window's end, no-shows past their fifth, this node's code, the DKG once all
    * codes are in, and whether the federation now runs.
@@ -123,14 +148,14 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
     } catch (e) { say({ founding: toHex(id).slice(0, 16), ownCode: `not made yet: ${e.message}` }); }
   }
   async function advance(tip) {
-    if (!draw.ok || failed || federation) return state();
+    if (!draw.ok || phase === PHASE.VOID || phase === PHASE.RUNNING) return state();
     // THE FEDERATION RUNS: this node's guardian, seated and past its DKG, is in consensus
     if (started && setup && typeof setup.done === 'function') {
-      try { if (await setup.done()) { federation = true; say({ founding: toHex(id).slice(0, 16), federation: 'running', at: tip }); return state(); } } catch { /* asked again next advance */ }
+      try { if (await setup.done()) { step(PHASE.RUNNING); say({ founding: toHex(id).slice(0, 16), federation: 'running', at: tip }); return state(); } } catch { /* asked again next advance */ }
     }
     // VOID: the window passed without a federation (§23A.2) - the next trigger draws again
     if (tip >= windowEnd) {
-      failed = voided = `the founding window (${foundingWindow} blocks from the beacon ${beacon}) passed at ${windowEnd} without a federation: void, the next trigger draws again`;
+      step(PHASE.VOID, `the founding window (${foundingWindow} blocks from the beacon ${beacon}) passed at ${windowEnd} without a federation: void, the next trigger draws again`);
       say({ founding: toHex(id).slice(0, 16), void: true, at: tip, windowEnd });
       return state();
     }
@@ -147,7 +172,7 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
       if (missing.length) {
         for (const k of missing) noShows.add(k);
         const r = replaceNoShows({ drawn: draw.drawn, alternates: draw.alternates, noShows: [...noShows] });
-        if (!r.ok) { failed = voided = `${r.why}: void`; say({ founding: toHex(id).slice(0, 16), failed }); return state(); }
+        if (!r.ok) { step(PHASE.VOID, `${r.why}: void`); say({ founding: toHex(id).slice(0, 16), failed }); return state(); }
         seated = r.seated;
         for (const e of seated) if (!seatedSince.has(toHex(e.pubkey))) seatedSince.set(toHex(e.pubkey), tip);
         say({ founding: toHex(id).slice(0, 16), noShows: missing.map((k) => k.slice(0, 8)), at: tip, seated: seated.map((e) => toHex(e.pubkey).slice(0, 8)) });
@@ -170,7 +195,7 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
         added.add(k);
       }
       await setup.startDkg();
-      started = true;
+      started = true; step(PHASE.DKG);
       try { invite = await setup.invite(); } catch { invite = null; }
       say({ founding: toHex(id).slice(0, 16), dkg: 'started', seated: seated.length, invite: invite ? String(invite).slice(0, 24) : null });
     }
@@ -180,7 +205,7 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
   function state() {
     return { id: toHex(id), ok: draw.ok, why: draw.ok ? null : draw.why, eligible: draw.eligible, seatedFirst: draw.seatedFirst || 0, beacon, windowEnd, fifth, foundingWindow,
       seated: seated.map((e, i) => ({ position: i, node: toHex(e.pubkey), code: codes.has(toHex(e.pubkey)), since: seatedSince.get(toHex(e.pubkey)) })),
-      alternates: (draw.alternates || []).map((e) => toHex(e.pubkey)), noShows: [...noShows], started, federation, void: !!voided, failed, invite,
+      alternates: (draw.alternates || []).map((e) => toHex(e.pubkey)), noShows: [...noShows], started, phase, federation: phase === PHASE.RUNNING, void: phase === PHASE.VOID, failed, invite,
       codes: [...codes.entries()].map(([node, c]) => ({ node, code: c.code, signature: c.signature })) };
   }
   // a code to take again from a peer's GET /founding (the codes list, as state() shows it)
