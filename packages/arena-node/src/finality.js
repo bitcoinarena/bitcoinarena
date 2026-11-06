@@ -41,12 +41,67 @@ import { dissentsOn } from './test-dissent.js';
 const hex = (b) => [...b].map((v) => v.toString(16).padStart(2, '0')).join('');
 const utc = (ms) => new Date(Number(ms)).toISOString();
 
+/** How long an objection's check may hold the entry SUSPENDED here (kanban #1173): a replay answers in seconds; a check that never answered frees it. */
+export const PENDING_OBJECTION_MS = 120000;
+
+/**
+ * WHERE THE ENTRY STANDS, ONE TRANSITION FUNCTION OVER WHAT THE EVIDENCE SAYS NOW (kanban #1173, the 2026-11-06 state-machine audit). `computed` is the
+ * finality recomputed from the evidence (computeFinality); this step makes it monotonic where money moves on it:
+ *  - FINAL is kept once reached (entry_finals) and never undone: an objection that reaches this seat after it is evidence (lateObjection), not a
+ *    suspension. Before, the state was recomputed on every read, so an objection stored after the seat had signed FINAL, released P or acked, but
+ *    dated before final_after, turned the entry back to SUSPENDED;
+ *  - an objection still being checked (pending_objections, written at its arrival, before its replay) that arrived before the run's final_after
+ *    holds the entry SUSPENDED (`pendingObjection`): no FINAL, no `signable`, so no FINAL signature, no P, no ack - until its check answered.
+ * Every other state passes as computed. Kept only when asked at this seat's own clock: a look ahead (a caller's `now` past it) writes nothing.
+ */
+export function finalityStep(round, roundIdBytes, entryIdBytes, computed, { now = round.now() } = {}) {
+  const kept = typeof round.entryFinal === 'function' ? round.entryFinal(roundIdBytes, entryIdBytes) : null;
+  if (kept) {
+    if (computed && computed.state === FINAL && String(computed.runId) === kept.runId) return computed;
+    return keptFinal(round, roundIdBytes, entryIdBytes, kept, computed);
+  }
+  if (!computed) return computed;
+  const finalAfter = computed.finalAfterMs !== undefined && computed.finalAfterMs !== null ? BigInt(computed.finalAfterMs) : null;
+  const pending = typeof round.pendingObjectionAt === 'function' ? round.pendingObjectionAt(roundIdBytes, entryIdBytes, Number(now) - PENDING_OBJECTION_MS) : null;
+  if (pending !== null && (computed.state === FINAL || computed.signable) && (finalAfter === null || BigInt(pending) < finalAfter)) {
+    const { signable: _signable, ...rest } = computed;
+    return { ...rest, state: SUSPENDED, pendingObjection: true, pendingObjectionAtMs: pending, computedState: computed.state,
+      why: `an objection reached this seat at ${utc(pending)}${finalAfter !== null ? `, before ${utc(finalAfter)}` : ''}, and its check has not answered: no FINAL signature, no P, no ack until it has (kanban #1173); the evidence alone reads ${computed.state}: ${computed.why}` };
+  }
+  if (computed.state === FINAL && computed.runId && BigInt(now) <= BigInt(round.now()) && typeof round.putEntryFinal === 'function' && finalAfter !== null) {
+    try {
+      if (round.putEntryFinal({ roundId: roundIdBytes, entryId: entryIdBytes, runId: String(computed.runId), finalAfterMs: finalAfter, onRerun: !!(computed.rerun && computed.rerun.runId), atMs: now }))
+        console.log(`#1173 [finality] ${hex(entryIdBytes).slice(0, 16)} FINAL on ${String(computed.runId).slice(0, 16)} kept: it is never undone here`);
+    } catch { /* kept on the next read */ }
+  }
+  return computed;
+}
+
+/** A kept FINAL, as the readers read one: its run, its final_after, its re-run's result when it is FINAL on one - whatever the evidence says now. */
+function keptFinal(round, roundIdBytes, entryIdBytes, kept, computed) {
+  let rerunResult = null;
+  if (kept.onRerun && typeof round.reruns === 'function') {
+    for (const r of round.reruns(roundIdBytes, entryIdBytes)) {
+      try { const x = decodeRerunResult(splitSignedRerun(r.bytes).body); if (hex(runOf(x.result)) === kept.runId) { rerunResult = x.result; break; } } catch { /* not that one */ }
+    }
+  }
+  const late = !!(computed && (computed.state === SUSPENDED || computed.objection || computed.lateObjection || computed.secondObjection));
+  return { state: FINAL, kept: true, published: true, runId: kept.runId, finalAfterMs: BigInt(kept.finalAfterMs), keptAtMs: kept.atMs, lateObjection: late,
+    ...(kept.onRerun ? { rerun: { runId: kept.runId }, ...(rerunResult ? { rerunResult } : {}) } : {}),
+    why: `FINAL here on ${kept.runId.slice(0, 16)} since ${utc(kept.atMs)}, kept once reached (kanban #1173)${computed && computed.state !== FINAL ? `; the evidence now reads ${computed.state} - evidence only: ${computed.why}` : ''}` };
+}
+
 /**
  * Where one run stands on this node, now: `state` is null (no threshold yet), PROVISIONALLY_FINAL, FINAL or SUSPENDED
  * (or §13C's VOID/FORFEIT), with `why`, `closesAtMs`, and - when this seat may sign FINAL now - `signable`
- * ({ runId, finalAfterMs }). `nextAtMs`: the next instant at which the clock alone changes the answer, if any.
+ * ({ runId, finalAfterMs }). `nextAtMs`: the next instant at which the clock alone changes the answer, if any. Through
+ * finalityStep (kanban #1173): FINAL kept once reached, and an objection being checked holds it SUSPENDED.
  */
 export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.now() } = {}) {
+  return finalityStep(round, roundIdBytes, entryIdBytes, computeFinality(round, roundIdBytes, entryIdBytes, { now }), { now });
+}
+
+function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now() } = {}) {
   const row = round.get(roundIdBytes);
   if (!row) return { state: null, why: 'no such round' };
   const contract = decodeRoundContract(new Uint8Array(row.contract));
