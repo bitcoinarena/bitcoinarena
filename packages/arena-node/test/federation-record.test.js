@@ -50,7 +50,8 @@ function seven({ leaving = [], successor = null, closed = false, retiring = [], 
       const absent = (u.searchParams.get('absent') || '').split(',').filter(Boolean);
       const departed = (u.searchParams.get('departed') || '').split(',').filter(Boolean);
       const emergency = (u.searchParams.get('emergency') || '').split(',').filter(Boolean);
-      const body = await (gone.length ? j.mySignatureWithGone(u.searchParams.get('federation'), gone, null, rv, absent, departed, emergency) : j.mySignature(u.searchParams.get('federation'), null, rv));
+      const left = (u.searchParams.get('left') || '').split(',').filter(Boolean);
+      const body = await (gone.length ? j.mySignatureWithGone(u.searchParams.get('federation'), gone, null, rv, absent, departed, emergency, { left }) : j.mySignature(u.searchParams.get('federation'), null, rv));
       return new Response(JSON.stringify(body), { status: body.ok ? 200 : 404 });
     },
   }));
@@ -670,4 +671,92 @@ test('how many of a federation\'s guardian seats hold it CLOSED: a retiring guar
   for (const seat of open.seats) await seat.gather(FED, inviteFederationId);
   assert.deepEqual(await ask(open, (i) => (i < 4 ? closed.seats[i].list() : open.seats[i].list())).closedAtGuardians(toHex(FED)), { closed: 3, of: 7 },
     'seats 1-3 closed (seat 0 is this one, holding none): below the threshold of 5');
+});
+
+// KANBAN #1157: A GUARDIAN IS SIGNED GONE ONLY ON A PROOF THE SIGNING SEAT CHECKS. Before, a body naming a guardian gone with no attestation,
+// notice or emergency request was signed DEPARTED by every guardian seat asked (`if (!about.length) gone.push(...)`), so anyone could gather
+// 5 of 7 honest signatures over a record naming 1 honest guardian gone (DRAINING: succession, the reserve moved) or 3 (HALTED: liquidation).
+async function askedGone(s, goneIdx, { left = [] } = {}) {
+  const fid = toHex(FED), goneHex = goneIdx.map((i) => toHex(s.nodes[i].guardianKey));
+  const said = await Promise.all(s.seats.map((seat) => seat.mySignatureWithGone(fid, goneHex, null, null, [], [], [], { left })));
+  const signed = said.filter((x) => x.ok);
+  if (!signed.length) return { signed: 0, why: said.map((x) => x.why), status: null };
+  const body = signed[0].body;
+  const sigs = signed.filter((x) => x.body === body).map((x) => ({ nodePubkey: fromHex(x.nodePubkey), signature: fromHex(x.signature) }));
+  const v = verifyFederationRecord(joinSignedRecord(fromHex(body), sigs), { census: s.census.entries, verify, inviteFederationId });
+  return { signed: sigs.length, status: v.ok ? v.status : null, why: v.ok ? null : v.why, said };
+}
+
+test('#1157 a guardian named gone with no proof is not signed gone: no DRAINING, no HALTED record from the gatherer\'s word alone', async () => {
+  const s = seven();
+  const one = await askedGone(s, [3]);
+  const three = await askedGone(s, [1, 3, 5]);
+  console.log(`#1157 measure: 1 honest guardian named gone, no proof -> ${one.signed} of 7 sign, record ${one.status || 'none'}; 3 named gone -> ${three.signed} of 7 sign, record ${three.status || 'none'}`);
+  assert.deepEqual([one.signed, one.status], [0, null], 'nobody signs DRAINING on no proof');
+  assert.deepEqual([three.signed, three.status], [0, null], 'nobody signs HALTED on no proof');
+  assert.match(String(one.why[0]), /named gone with no proof/);
+});
+
+test('#1157 a leaving guardian\'s own signed statement, handed along, is the proof: the gather still signs DRAINING; a forged or replayed one is refused', async () => {
+  // the gather (as in the first test of this file) hands the statements along: one leaving -> DRAINING, signed by all seven
+  const s = seven({ leaving: [3] });
+  const got = await s.seats[0].gather(FED, inviteFederationId);
+  assert.deepEqual([got.ok, got.status, got.signers, got.gone], [true, 'DRAINING', 7, 1], got.why);
+  // the statement seat 3 signs over the plain body, read off its own GET /federation-record answer
+  const own = await s.seats[3].mySignature(toHex(FED));
+  const real = `${toHex(s.nodes[3].guardianKey)}${own.leaveSig}`;
+  const withIt = await askedGone(s, [3], { left: [real] });
+  assert.deepEqual([withIt.signed, withIt.status], [7, 'DRAINING'], 'the statement stands at every seat');
+  // a statement by another node's key, or over "staying", proves nothing
+  const forged = `${toHex(s.nodes[3].guardianKey)}${toHex(schnorr.sign(new Uint8Array(33), s.nodes[0].secret))}`;
+  const bad = await askedGone(s, [3], { left: [forged] });
+  assert.deepEqual([bad.signed, bad.status], [0, null]);
+  // seat 3 no longer leaving: its old statement over the same body is refused BY ITSELF, the six others still check the signature
+  const stayed = seven({ leaving: [] });
+  const plain = await stayed.seats[3].mySignature(toHex(FED));
+  const plainId = federationRecordId(decodeFederationRecord(fromHex(plain.body)));
+  const replay = `${toHex(stayed.nodes[3].guardianKey)}${toHex(schnorr.sign(Uint8Array.from([...plainId, 1]), stayed.nodes[3].secret))}`;
+  const self = await stayed.seats[3].mySignatureWithGone(toHex(FED), [toHex(stayed.nodes[3].guardianKey)], null, null, [], [], [], { left: [replay] });
+  assert.deepEqual([self.ok, self.why], [false, 'this node is not leaving: it does not sign itself gone']);
+  assert.equal((await stayed.seats[0].mySignatureWithGone(toHex(FED), [toHex(stayed.nodes[3].guardianKey)], null, null, [], [], [], { left: [replay] })).ok, true, 'its signature over this body stands at the others');
+});
+
+test('#1157 a mirror never takes a worse status at the height this seat holds, from one node or from all', async () => {
+  const open = seven(), drain = seven({ leaving: [3] });
+  for (const seat of [...open.seats, ...drain.seats]) assert.equal((await seat.gather(FED, inviteFederationId)).ok, true);
+  assert.deepEqual([open.seats[0].list()[0].status, drain.seats[0].list()[0].status], ['OPEN', 'DRAINING']);
+  let lists = open.seats.map((x) => x.list());
+  const me = { secret: new Uint8Array(32).fill(0x58) }; me.pubkey = schnorr.getPublicKey(me.secret);
+  const o = federationRecords({
+    round: { pubkey: me.pubkey, identity: { secret: me.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: 156036, networkId: NET } }),
+    roster: { censusFor: () => open.census }, inviteFor: () => null, networkId: NET,
+    fetcher: async (url) => {
+      const i = open.nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')));
+      if (!url.endsWith('/federations') || i < 0) return new Response('no', { status: 404 });
+      return new Response(JSON.stringify({ federations: lists[i] }), { status: 200 });
+    },
+  });
+  assert.equal((await o.gatherAll(inviteFederationId))[0].status, 'OPEN');
+  // one node serves a (validly signed) DRAINING body at the same height
+  lists = open.seats.map((x, i) => (i === 3 ? drain.seats[3].list() : x.list()));
+  await o.gatherAll(inviteFederationId);
+  const mixed = o.list()[0].status;
+  lists = drain.seats.map((x) => x.list());
+  await o.gatherAll(inviteFederationId);
+  const allWorse = o.list()[0].status;
+  console.log(`#1157 measure: kept OPEN at one height, then a mirror serving DRAINING at that height -> kept ${mixed} (one node), ${allWorse} (every node)`);
+  assert.equal(mixed, 'OPEN', 'one node serving a worse body sets nothing');
+  assert.equal(allWorse, 'OPEN', 'a mirror does not worsen the status at the height held');
+});
+
+test('#1157 recordStep: older refused, CLOSED final, a mirror never worse at one height, a gather may', async () => {
+  const { recordStep } = await import('../src/federation-records.js');
+  assert.equal(recordStep(null, { height: 5, status: 'HALTED' }, 'mirror').take, true);
+  assert.equal(recordStep({ height: 6, status: 'OPEN' }, { height: 5, status: 'OPEN' }).take, false);
+  assert.equal(recordStep({ height: 5, status: 'CLOSED' }, { height: 5, status: 'OPEN' }).take, false);
+  assert.equal(recordStep({ height: 5, status: 'OPEN' }, { height: 5, status: 'CLOSED' }, 'mirror').take, true);
+  assert.equal(recordStep({ height: 5, status: 'OPEN' }, { height: 5, status: 'HALTED' }, 'mirror').take, false);
+  assert.equal(recordStep({ height: 5, status: 'HALTED' }, { height: 5, status: 'OPEN' }, 'mirror').take, true);
+  assert.equal(recordStep({ height: 5, status: 'OPEN' }, { height: 5, status: 'DRAINING' }, 'gather').take, true);
+  assert.equal(recordStep({ height: 5, status: 'OPEN' }, { height: 6, status: 'HALTED' }, 'mirror').take, true);
 });

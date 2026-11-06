@@ -9781,7 +9781,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const absentHex = String(url.searchParams.get('absent') || '').split(',').filter(Boolean);
         const departedHex = String(url.searchParams.get('departed') || '').split(',').filter(Boolean);
         const emergencyHexes = String(url.searchParams.get('emergency') || '').split(',').filter(Boolean);
-        const r = goneHex.length ? await fedRecords.mySignatureWithGone(fid, goneHex, atHeight, rv, absentHex, departedHex, emergencyHexes) : await fedRecords.mySignature(fid, atHeight, rv);
+        // `left`: the leave statements of the guardians named gone by their own word, each peer key + signature in hex (kanban #1157)
+        const left = String(url.searchParams.get('left') || '').split(',').filter(Boolean);
+        if (!left.every((x) => /^[0-9a-fA-F]{194}$/.test(x))) return text(res, 400, 'a leave statement is a peer key (33 bytes) and a signature (64 bytes), in hex');
+        const r = goneHex.length ? await fedRecords.mySignatureWithGone(fid, goneHex, atHeight, rv, absentHex, departedHex, emergencyHexes, { left }) : await fedRecords.mySignature(fid, atHeight, rv);
         res.writeHead(r.ok ? 200 : 404, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify(r));
       }
