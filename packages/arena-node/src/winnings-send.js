@@ -55,6 +55,8 @@ function payRequestUrl(address) {
 
 const refuse = (why, status = 409) => ({ ok: false, status, why });
 const PAID = SEND.PAID;
+/** Where an attempt's contract stands at the federation (kanban #1186, contractFate). */
+export const CONTRACT_FATE = Object.freeze({ LIVE: 'LIVE', EXPIRED: 'EXPIRED', GONE: 'GONE', NEVER: 'NEVER' });
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).join('|');
 const plain = (row) => ({ entry: toHex(row.entryId), attempt: row.attempt || 0, address: row.address, invoice: row.invoice,
   paymentHash: row.paymentHash, invoiceMsat: String(row.invoiceMsat), payoutMsat: String(row.payoutMsat), owedMsat: String(row.owedMsat),
@@ -350,13 +352,40 @@ export class WinningsSend {
     return tx;
   }
 
-  /** Has this attempt's contract expired unpaid, as this signer node reads the federation? */
-  async expired(roundIdBytes, row, built) {
+  /**
+   * WHERE AN ATTEMPT'S CONTRACT STANDS AT THE FEDERATION (kanban #1186): one of CONTRACT_FATE. "Not stored" was read as "spent", so a contract no landed
+   * transaction ever made (a re-send that never went in, a first send of a settlement that never landed) read as claimed and never expired. Now a
+   * contract not stored is GONE (claimed by the gateway, or refunded) only when it is known to have been made - attempt 0 by its settlement's row
+   * ACCEPTED on that txid here (#1171: only on what the guardians hold), attempt N by its re-send's input, attempt N-1's contract, no longer held -
+   * and NEVER otherwise.
+   */
+  async contractFate(roundIdBytes, row, built) {
     const at = await this.contractOf(roundIdBytes, row, built);
-    if (!at) return { expired: false, why: 'no contract for that attempt' };
-    const st = await (await this.portFor(roundIdBytes)).status(at);
-    if (!st.stored) return { expired: false, spent: true, why: 'the contract is no longer held: the gateway claimed it, or it was refunded' };
-    return { expired: st.stored.blocksLeft <= 0, blocksLeft: st.stored.blocksLeft, height: st.blockCount };
+    if (!at) return { fate: CONTRACT_FATE.NEVER, why: 'no contract for that attempt' };
+    const port = await this.portFor(roundIdBytes);
+    const st = await port.status(at);
+    if (st.stored) return { fate: st.stored.blocksLeft <= 0 ? CONTRACT_FATE.EXPIRED : CONTRACT_FATE.LIVE, at, blocksLeft: st.stored.blocksLeft, height: st.blockCount };
+    if (row.attempt === 0) {
+      const s = typeof this.round.lockSettlement === 'function' ? this.round.lockSettlement(roundIdBytes) : null;
+      // (a round that takes any federation: the federation's row whose transaction made it)
+      const rows = s ? [s] : (typeof this.round.fedLockSettlementsOf === 'function' ? this.round.fedLockSettlementsOf(roundIdBytes) : []);
+      return rows.some((x) => x.state === 'ACCEPTED' && String(x.txid) === toHex(at.txid))
+        ? { fate: CONTRACT_FATE.GONE, at, why: 'the contract is no longer held: the gateway claimed it, or it was refunded' }
+        : { fate: CONTRACT_FATE.NEVER, at, why: `the contract is not held, and its settlement ${toHex(at.txid).slice(0, 12)} is not ACCEPTED here: no landed transaction made it` };
+    }
+    const prev = this.rowOf(roundIdBytes, toHex(row.entryId), row.attempt - 1);
+    const from = prev ? await this.contractOf(roundIdBytes, prev, built) : null;
+    const input = from ? await port.status(from) : null;
+    if (input && input.stored) return { fate: CONTRACT_FATE.NEVER, at, why: `the re-send's input, attempt ${row.attempt - 1}'s contract, is still held: the re-send never went in` };
+    return { fate: CONTRACT_FATE.GONE, at, why: 'the contract is no longer held and its input is spent: the gateway claimed it, or it was refunded' };
+  }
+
+  /** Has this attempt's contract expired unpaid, as this signer node reads the federation? `spent` only for a contract that was made (contractFate). */
+  async expired(roundIdBytes, row, built) {
+    const f = await this.contractFate(roundIdBytes, row, built);
+    if (f.fate === CONTRACT_FATE.GONE) return { expired: false, spent: true, fate: f.fate, why: f.why };
+    if (f.fate === CONTRACT_FATE.NEVER) return { expired: false, never: true, fate: f.fate, why: f.why };
+    return { expired: f.fate === CONTRACT_FATE.EXPIRED, fate: f.fate, blocksLeft: f.blocksLeft, height: f.height };
   }
 
   /** The next gateway: the lowest live key the entry's earlier attempts did not use. */
@@ -600,12 +629,26 @@ export class WinningsSend {
         out.push({ entry: entryHex, attempt: row.attempt, ok: false, held: true, resend: re.ok ? re.row.attempt : re.why });
         continue;
       }
-      if (row.attempt > 0 && !row.txid) {
+      if (row.attempt > 0 && (!row.txid || row.state === SEND.FUNDING)) {
+        // A RE-SEND SUBMITTED BEFORE (kanban #1186): FUNDING carries its txid, so the federation is asked first - a contract made by it, or its input
+        // spent, is not submitted again; only one whose input is still held (it never went in) is
+        if (row.state === SEND.FUNDING && row.txid) {
+          const f = await this.contractFate(roundIdBytes, row, built);
+          if (f.fate !== CONTRACT_FATE.NEVER) {
+            if (this.round.markSend({ entryId: row.entryId, attempt: row.attempt, state: SEND.SENDING, txid: row.txid, outIdx: 0,
+              why: `the re-send ${String(row.txid).slice(0, 12)} went in before (${f.fate}): not submitted again` }) !== false) row.state = SEND.SENDING;
+          }
+        }
+      }
+      if (row.attempt > 0 && row.state !== SEND.SENDING && (!row.txid || row.state === SEND.FUNDING)) {
         await this.offerResend(roundIdBytes, row);
         const s = await this.sign(roundIdBytes, row, built, 'resend');
         if (!s.ok) { out.push({ entry: entryHex, attempt: row.attempt, ...s }); continue; }
-        // FUNDING IS ON DISK BEFORE THE GUARDIANS ARE HANDED THE RE-SEND (kanban #1154)
-        if (this.round.markSend({ entryId: row.entryId, attempt: row.attempt, state: SEND.FUNDING,
+        // FUNDING, WITH THE RE-SEND'S TXID, IS ON DISK BEFORE THE GUARDIANS ARE HANDED THE RE-SEND (kanban #1154, #1186): the txid is the unsigned
+        // rebuild's - the nonce is the round's, the entry's and the attempt's, so it is the same transaction every time
+        const unsigned = await this.resendTx(roundIdBytes, row, built);
+        if (!unsigned || !unsigned.txid) { out.push({ entry: entryHex, attempt: row.attempt, ok: false, why: 'the re-send does not rebuild here' }); continue; }
+        if (this.round.markSend({ entryId: row.entryId, attempt: row.attempt, state: SEND.FUNDING, txid: String(unsigned.txid), outIdx: 0,
           why: `the re-send is signed and handed to the guardians: attempt ${row.attempt - 1} refunded into a contract through ${row.gatewayUrl}` }) === false) {
           out.push({ entry: entryHex, attempt: row.attempt, ok: false, why: `this send is ${row.state} here, not one a re-send is funded from` }); continue;
         }
