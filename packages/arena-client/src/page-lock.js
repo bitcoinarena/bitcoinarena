@@ -2283,13 +2283,13 @@ export async function redeemPayout({ round, roundId, invite, seed, curve, LockCl
   // A PAYOUT THIS TAB ALREADY COLLECTED is answered from the tab's note: after a
   // reload the contract is spent, and asking the federation again could only fail
   // every time the page asks.
-  const noted = `${PAYOUT_NOTE}${toHex(roundId)}${orderTag(order)}`;
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
+  const mine = toHex(refundKeyOf(player.pubkey));
+  const noted = noteKeyOf(PAYOUT_NOTE, roundId, mine, order);
   try {
     const kept = storage && storage.getItem(noted);
     if (kept) return { ...JSON.parse(kept), amountMsat: BigInt(JSON.parse(kept).amountMsat), ok: true, final: true, kept: true };
   } catch { /* an unreadable note is no note */ }
-  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
-  const mine = toHex(refundKeyOf(player.pubkey));
   onStep('asking the signer nodes for the round\'s settlement');
   const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine });
   if (!s.ok) return { ok: false, final: false, why: s.why };
@@ -2316,6 +2316,11 @@ export async function redeemPayout({ round, roundId, invite, seed, curve, LockCl
   return { ...got, client };
 }
 const PAYOUT_NOTE = 'arena.payout.';
+// A NOTE IS THE PHRASE'S (kanban #1220, audit 3 #1210 PAGE-1): keyed by round and order only, a second phrase of this browser in the same round
+// (two tabs are two players) read the first phrase's note as its own - its payout and stake "collected", its record closed while both stayed
+// in their contracts. Now every note names the phrase's refund key too; a note of the old shape is not read (a phrase that did collect is
+// told so by the federation: already spent, only its key could).
+const noteKeyOf = (prefix, roundId, mineHex, order, extra = '') => `${prefix}${toHex(roundId)}.${String(mineHex).slice(0, 16)}${extra}${orderTag(order)}`;
 
 /**
  * A ROUND THAT TAKES ANY FEDERATION'S SETTLEMENTS (2026.0.3 step 7): one transaction per federation, listed by the
@@ -2357,7 +2362,7 @@ export async function redeemPayoutsAcross({ round, roundId, seed, curve, storage
     const at = f.moved.payouts.findIndex((p) => p.kind === 'qualifier' && String(p.pk).toLowerCase() === mine);
     if (at < 0) continue;
     const fid = String(f.federation).toLowerCase();
-    const noted = `${PAYOUT_NOTE}${toHex(roundId)}.${fid.slice(0, 16)}${orderTag(order)}`;
+    const noted = noteKeyOf(PAYOUT_NOTE, roundId, mine, order, `.${fid.slice(0, 16)}`);
     try { const kept = storage && storage.getItem(noted); if (kept) { const k = JSON.parse(kept); collected.push({ ...k, amountMsat: BigInt(k.amountMsat), kept: true }); continue; } } catch { /* no note */ }
     const p = f.moved.payouts[at];
     const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(p.msat), claimPk: mine, refundPk: mine, expiration: 0 };
@@ -2387,12 +2392,12 @@ export async function redeemSlashPayout({ round, roundId, invite, seed, curve, L
   client: given = null, onStep = () => {}, order = 0, listed: given_list = null } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so it has no slash payout');
   if (!arbiter) return { ok: false, final: false, why: 'no arbitration service named' };
-  const noted = `${SLASH_PAYOUT_NOTE}${toHex(roundId)}${orderTag(order)}`;
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
+  const noted = noteKeyOf(SLASH_PAYOUT_NOTE, roundId, toHex(refundKeyOf(player.pubkey)), order);
   try {
     const kept = storage && storage.getItem(noted);
     if (kept) return { ...JSON.parse(kept), amountMsat: BigInt(JSON.parse(kept).amountMsat), ok: true, final: true, kept: true };
   } catch { /* an unreadable note is no note */ }
-  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
   const mine = toHex(refundKeyOf(player.pubkey));
   onStep('asking the arbitration service for slash payouts');
   let listed = given_list;
@@ -2426,7 +2431,11 @@ export function slashPayoutMine(listed, { round, roundId, seed, curve, order = 0
   return ((listed && listed.payouts) || []).find((p) => p.round === toHex(roundId) && String(p.refundPk).toLowerCase() === mine) || null;
 }
 /** Whether this tab already collected that round's slash payout (its note), so nothing is opened for it again. */
-export const slashPayoutKept = (storage, roundId, order = 0) => { try { return !!(storage && storage.getItem(`${SLASH_PAYOUT_NOTE}${toHex(roundId)}${orderTag(order)}`)); } catch { return false; } };
+// `who` { round, seed, curve }: the phrase whose note it is (kanban #1220); without it no note is this phrase's
+export const slashPayoutKept = (storage, roundId, order = 0, who = null) => { try {
+  if (!who || !who.seed || !who.round) return false;
+  const player = playerFor({ ...who.round, id: roundId }, { seed: who.seed, curve: who.curve, order });
+  return !!(storage && storage.getItem(noteKeyOf(SLASH_PAYOUT_NOTE, roundId, toHex(refundKeyOf(player.pubkey)), order))); } catch { return false; } };
 
 /**
  * A SLASH PAYOUT INTO THE PLAYER WALLET: collected by Refund (redeemSlashPayout) into the wallet every
@@ -2454,7 +2463,7 @@ export async function collectSlashPayout({ round, roundId, invite, seed, curve, 
 export async function returnStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
   client = null, onStep = () => {}, refused = false, forfeited = false, order = 0 } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
-  const noted = `${STAKE_NOTE}${toHex(roundId)}${orderTag(order)}`;
+  const noted = noteKeyOf(STAKE_NOTE, roundId, toHex(refundKeyOf(playerFor({ ...round, id: roundId }, { seed, curve, order }).pubkey)), order);
   try {
     const kept = storage && storage.getItem(noted);
     if (kept) { const k = JSON.parse(kept); return { ...k, amountMsat: BigInt(k.amountMsat), ok: true, final: true, kept: true }; }
@@ -2941,7 +2950,7 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
   const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine });
   const contractIdOf = contractIdVia(LockClient || (client && client.constructor));
   let payout;
-  const paidNote = note(`${PAYOUT_NOTE}${rid}${orderTag(order)}`);
+  const paidNote = note(noteKeyOf(PAYOUT_NOTE, roundId, mine, order));
   if (paidNote) payout = { state: 'collected', msat: BigInt(paidNote.amountMsat) };
   else if (!s.ok) payout = { state: 'waiting', why: s.why };
   else {
@@ -2952,7 +2961,7 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
   }
   let stake;
   let lockAnswers = null;
-  const backNote = note(`${STAKE_NOTE}${rid}${orderTag(order)}`);
+  const backNote = note(noteKeyOf(STAKE_NOTE, roundId, mine, order));
   if (backNote) stake = { state: 'collected', msat: BigInt(backNote.amountMsat) };
   else {
     // ASKED WITH OR WITHOUT A SETTLEMENT (kanban #593, playtest 2026-10-23: round 8464c5fd never ran - no settlement - and its
