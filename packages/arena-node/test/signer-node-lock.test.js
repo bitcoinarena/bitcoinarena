@@ -159,3 +159,30 @@ test('#1214 two entries handing the same lock at the same moment: one is staked,
     } finally { await s.close(); }
   }
 });
+
+// KANBAN #1215 (audit 3 #1210 MONEY-1): the settlement keys every lock by its entry's player key. Two entries of one key, each with ITS
+// OWN lock, were both staked - and the second took the first one's place in the plan: a loser could void the round's settlement and take
+// a lost stake back. One player key stakes one entry in a round; one after the other and at the same moment.
+test('#1215 a second entry of the same player key with its own lock is refused - one after the other, and both at once', async () => {
+  for (const mode of ['one-after-the-other', 'at-once']) {
+    const s = await joinedWithLock(WITH_KEY);
+    try {
+      const out2 = { txid: b32(0x55), outIdx: 0n };
+      const second = { ...s.entry, worldSecret: b32(0x19), sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()), stakeLockOutpoint: out2 };
+      const joined = await fetch(`http://127.0.0.1:${s.d.port}/entry`, { method: 'POST', body: encodeEntryContract(second) });
+      assert.equal(joined.status, 201, await joined.text());
+      const eid2 = entryId(second);
+      await s.port.put(out2, s.fields);
+      const status = s.port.status.bind(s.port);
+      s.port.status = async (o) => { await new Promise((r) => setTimeout(r, 80)); return status(o); };
+      const hand = (eid) => fetch(`http://127.0.0.1:${s.d.port}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(s.fields)) })
+        .then(async (r) => ({ status: r.status, said: (await r.text()).trim() }));
+      const got = mode === 'at-once' ? await Promise.all([hand(s.eid), hand(eid2)]) : [await hand(s.eid), await hand(eid2)];
+      const kept = [s.d.round.stakeLock(s.eid), s.d.round.stakeLock(eid2)].filter(Boolean).length;
+      console.log(`  #1215 ${mode}: ${got.map((x) => x.status).join(' / ')} - ${got.find((x) => x.status === 409)?.said || 'none refused'}`);
+      assert.deepEqual(got.map((x) => x.status).sort(), [201, 409], `${mode}: ${got.map((x) => x.said).join(' | ')}`);
+      assert.match(got.find((x) => x.status === 409).said, /one player key stakes one entry/);
+      assert.equal(kept, 1, `${mode}: ${kept} entries of one key staked`);
+    } finally { await s.close(); }
+  }
+});
