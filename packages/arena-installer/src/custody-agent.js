@@ -142,7 +142,7 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
         catch (e) { waits = `the liquidity deposit is not sent yet: ${e.message}`; }
         if (tx) {
           const txid = await chainKit.broadcast(s.chain, tx.hex);
-          state.save({ custody: { ...(state.read().custody || {}), liquidityFund: { address: f.address, sats: deposit, txid, atMs: nowMs() } } });
+          state.merge('custody', { liquidityFund: { address: f.address, sats: deposit, txid, atMs: nowMs() } });
           log(`liquidity deposit: ${deposit} sat to LND (${txid})`);
           return { ok: true, did: 'liquidity-fund', txid };
         }
@@ -183,7 +183,7 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
       const j = await gw.joinFederation({ ...s.gateway, invite: g.invite });
       if (!j.ok) return { ok: false, why: `the gateway did not join yet: ${j.why}` };
       const t = await gw.testGateway(s.gateway);
-      state.save({ gateway: { ...state.read().gateway, federations: t.ok ? t.federations : [{ federationId: g.federationId }] } });
+      state.merge('gateway', { federations: t.ok ? t.federations : [{ federationId: g.federationId }] });
       log(`gateway joined ${g.federationId.slice(0, 16)}`);
       return { ok: true, did: 'join' };
     }
@@ -202,7 +202,7 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
       try { tx = buildSend({ wallet: w, coins, script: addressScript(a.address), sats: c.pegInSats }); }
       catch (e) { return { ok: false, why: `peg-in not sent yet: ${e.message}` }; }
       const txid = await chainKit.broadcast(s.chain, tx.hex);
-      state.save({ custody: { ...state.read().custody, pegIn: { federationId: g.federationId, address: a.address, sats: c.pegInSats, txid, atMs: Date.now() } } });
+      state.merge('custody', { pegIn: { federationId: g.federationId, address: a.address, sats: c.pegInSats, txid, atMs: Date.now() } });
       log(`peg-in of ${c.pegInSats} sat to ${a.address}: ${txid}`);
       return { ok: true, did: 'peg-in', txid };
     }
@@ -225,7 +225,7 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
           lightningPubkey: s.lightning.pubkey, capacitySats: ch.ok ? ch.publicCapacitySats : 0, pegInSats: c.pegIn.sats, atMs: nowMs(),
           inboundSats: ch.ok ? ch.inboundSats || 0 : 0, outboundSats: ch.ok ? ch.outboundSats || 0 : 0, outsideInboundSats: outsideIn, lightningAddr: await lightningAddrOf(s) }, (h) => schnorr.sign(h, nodeSecret));
         writeFileSync(claimFile, JSON.stringify(claim, null, 2) + '\n');
-        state.save({ custody: { ...state.read().custody, claimAtMs: nowMs() } });
+        state.merge('custody', { claimAtMs: nowMs() });
         log(`gateway seat claimed: inbound ${claim.inboundSats} sat (${claim.outsideInboundSats} from outside the federation), outbound ${claim.outboundSats} sat, peg-in ${claim.pegInSats} sat`);
         return { ok: true, did: 'gateway-claim' };
       }
@@ -245,7 +245,7 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
           try { tx = buildSend({ wallet: w, coins, script: addressScript(f.address), sats: OUTSIDE_RESERVE_SATS }); }
           catch (e) { return { ok: false, why: `the outside channel is not funded yet: ${e.message}` }; }
           const txid = await chainKit.broadcast(s.chain, tx.hex);
-          state.save({ custody: { ...state.read().custody, outsideFund: { address: f.address, sats: OUTSIDE_RESERVE_SATS, txid, atMs: nowMs() } } });
+          state.merge('custody', { outsideFund: { address: f.address, sats: OUTSIDE_RESERVE_SATS, txid, atMs: nowMs() } });
           log(`outside channel funds: ${OUTSIDE_RESERVE_SATS} sat to LND (${txid})`);
           return { ok: true, did: 'outside-fund', txid };
         }
@@ -254,7 +254,7 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
         if (!k.ok) return { ok: false, why: `the outside hub did not answer at ${host}: ${k.why}` };
         const o = await lnd.openTo(s.lightning, { pubkey, sats: OUTSIDE_SATS });
         if (!o.ok) return o;
-        state.save({ custody: { ...state.read().custody, outside: { pubkey, sats: OUTSIDE_SATS, fundingTxid: o.fundingTxid, atMs: nowMs() } } });
+        state.merge('custody', { outside: { pubkey, sats: OUTSIDE_SATS, fundingTxid: o.fundingTxid, atMs: nowMs() } });
         log(`outside channel of ${OUTSIDE_SATS} sat to ${pubkey.slice(0, 12)}…: ${o.fundingTxid}`);
         return { ok: true, did: 'outside-channel', txid: o.fundingTxid };
       }
@@ -285,7 +285,7 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
         if (stillMember && !settled) return { ok: true, idle: `the ring waits for the new member ${next.node.slice(0, 12)}… to open its own channel before this one moves to it` };
         const k = await lnd.close(s.lightning, { channelPoint: old.channelPoint });
         if (!k.ok) return { ok: false, why: `the old ring channel did not close: ${k.why}` };
-        state.save({ custody: { ...state.read().custody, ring: { ...c.ring, closing: old.channelPoint, closingAtMs: nowMs() } } });
+        state.merge('custody', { ring: { ...c.ring, closing: old.channelPoint, closingAtMs: nowMs() } });
         log(`ring moves to ${next.node.slice(0, 12)}…: closing the channel to ${c.ring.next.slice(0, 12)}… (${old.channelPoint})`);
         return { ok: true, did: 'ring-close', channelPoint: old.channelPoint };
       }
@@ -299,7 +299,7 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
           try { tx = buildSend({ wallet: w, coins, script: addressScript(f.address), sats: RING_RESERVE_SATS }); }
           catch (e) { return { ok: false, why: `the ring channel is not funded yet: ${e.message}` }; }
           const txid = await chainKit.broadcast(s.chain, tx.hex);
-          state.save({ custody: { ...state.read().custody, ringFund: { address: f.address, sats: RING_RESERVE_SATS, txid, atMs: nowMs() } } });
+          state.merge('custody', { ringFund: { address: f.address, sats: RING_RESERVE_SATS, txid, atMs: nowMs() } });
           log(`ring channel funds: ${RING_RESERVE_SATS} sat to LND (${txid})`);
           return { ok: true, did: 'ring-fund', txid };
         }
@@ -311,7 +311,7 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
         }
         const o = await lnd.openTo(s.lightning, { pubkey: next.lightningPubkey, sats: RING_SATS });
         if (!o.ok) return o;
-        state.save({ custody: { ...state.read().custody, ring: { next: next.node, lightningPubkey: next.lightningPubkey, sats: RING_SATS, fundingTxid: o.fundingTxid, atMs: nowMs() } } });
+        state.merge('custody', { ring: { next: next.node, lightningPubkey: next.lightningPubkey, sats: RING_SATS, fundingTxid: o.fundingTxid, atMs: nowMs() } });
         log(`ring channel of ${RING_SATS} sat to ${next.node.slice(0, 12)}…: ${o.fundingTxid}`);
         return { ok: true, did: 'ring-channel', txid: o.fundingTxid };
       }
