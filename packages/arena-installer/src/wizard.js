@@ -934,7 +934,7 @@ const serviceRun = async (b) => {
             // check asked again after a crash or a lost answer sends the same payment again, never a second one
             const bw = walletOf(fromHex(baseSeed));
             const sats = needSats - total;
-            const r = await onchainAction({ state: fundFrom, kind: `fund-node ${state.home}`, once: true, chainKit,
+            const r = await onchainAction({ state: fundFrom, kind: `fund-node ${state.home}`, once: true, chainKit, chain: s.chain,
               build: async (n) => {
                 const got = await chainKit.coinsOf(n.chain || s.chain, bw.spk);
                 let tx;
