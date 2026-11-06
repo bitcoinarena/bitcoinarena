@@ -64,10 +64,12 @@ test('a repeal - a config the network ran before - runs on the short schedule; a
     return { ...p, signature: schnorr.sign(proposalBodyId(p), secret) };
   };
   const facts = { publishedAt: 1000, depositSats: 100, lowestBondMinSats: 100000, verify, history };
-  const back = make(Uint8Array.of(1), 1720);
+  // voting 720, then the 2-block cooldown (kanban #1152): the outcome is written 3 deep, the block before the activation
+  const back = make(Uint8Array.of(1), 1722);
   assert.equal(isRepeal(back, history), true);
   const s = proposalStands(back, facts);
   assert.deepEqual([s.ok, s.repeal, s.votingFrom, s.votingUntil], [true, true, 1000, 1720], s.why);
+  assert.match(proposalStands(make(Uint8Array.of(1), 1720), facts).why, /before the end of cooldown \(1722\)/, 'a repeal active at its last voting block decided at depth 1: refused');
   const forward = make(Uint8Array.of(9), 1720);
   assert.equal(isRepeal(forward, history), false);
   const m = SCHEDULES.mainnet[CLASS.MONEY];

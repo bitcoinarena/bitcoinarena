@@ -59,6 +59,7 @@ import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { votesInBlock, outpointInBlock } from '../../arena-protocol/src/ballot-chain.js';
+import { chainHashReader } from './ballot-tally.js';
 import { networkOf } from '../../arena-protocol/src/constants.js';
 import { censusOfView, censusReplacer, censusReviver, censusEvidenceOf } from './roster.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -479,6 +480,10 @@ if (url) {
       tipHeight: async () => Number(await call('getblockcount')),
       // the block at a height by its hash - the tally holds a count to the hashes it read (a reorg is followed); null above the tip
       blockHashAt: async (height) => { try { return String(await call('getblockhash', [height])); } catch { return null; } },
+      // AND THE SAME READ FOR THE TALLY, WITH ITS THREE ANSWERS (kanban #1152): the hash; null only when the height is above
+      // the tip (bitcoind's -8 "Block height out of range", or a tip below it); and an RPC that did not answer THROWS - a work
+      // queue that is full, a timeout, a reindex is no reorg, and the tally skips that pass instead of forgetting anything
+      chainHashAt: chainHashReader(call),
       votesAt: async (height, hash) => {
         const raw = fromHex(String(await call('getblock', [hash || await call('getblockhash', [height]), 0])));
         return votesInBlock(raw, height);
