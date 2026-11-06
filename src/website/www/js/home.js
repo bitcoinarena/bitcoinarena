@@ -21,7 +21,7 @@ const NEEDED = 5;   // a reserve total counts only when this many nodes name the
   if (!btn) return;
   btn.addEventListener('click', () => {
     const v = document.createElement('video');
-    v.src = '/next/media/trailer-v2.mp4'; v.controls = true; v.playsInline = true; v.autoplay = true; v.poster = '/next/media/poster-v2.jpg';
+    v.src = '/media/trailer-v2.mp4'; v.controls = true; v.playsInline = true; v.autoplay = true; v.poster = '/media/poster-v2.jpg';
     v.setAttribute('aria-label', 'Bitcoin Arena trailer, 60 seconds');
     v.style.border = '1px solid var(--line)'; v.style.borderRadius = '4px'; v.style.background = '#000';
     btn.replaceWith(v);

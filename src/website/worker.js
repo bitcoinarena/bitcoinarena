@@ -148,9 +148,9 @@ async fetch(request, env, ctx) {
   if (url.pathname === '/__login') return Response.redirect(url.origin + '/', 303);
   if (url.searchParams.has('password')) { url.searchParams.delete('password'); return Response.redirect(url.toString(), 301); }
   if (url.pathname === '/api/chain-nodes') return chainNodes(env, ctx);
-  // THE HOMEPAGE'S VIDEOS IN BYTE RANGES (kanban #1197): the asset store answers a Range request with the whole file (200), and Safari on an
+  // THE HOMEPAGE'S VIDEOS IN BYTE RANGES (/media/) (kanban #1197): the asset store answers a Range request with the whole file (200), and Safari on an
   // iPhone plays an mp4 only from 206 partial answers - so the Worker cuts the asked range itself (the files are a few MB)
-  if (url.pathname.startsWith('/next/media/') && /\.(mp4|webm)$/.test(url.pathname) && request.method === 'GET') {
+  if (url.pathname.startsWith('/media/') && /\.(mp4|webm)$/.test(url.pathname) && request.method === 'GET') {
     const whole = await env.ASSETS.fetch(new Request(url.toString(), { method: 'GET' }));
     if (!whole.ok) return whole;
     const buf = await whole.arrayBuffer(); const size = buf.byteLength;
