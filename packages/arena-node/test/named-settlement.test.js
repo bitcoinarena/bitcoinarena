@@ -59,7 +59,8 @@ function arenaPort(seatKeys, log) {
       if (!signature) return { bodyId, txid, message: txid, aggKey: toHex(agg) };
       const accepted = verify(signature, fromHex(txid), agg);
       log.push({ txid, signers, accepted });
-      return { bodyId, txid, message: txid, aggKey: toHex(agg), accepted, error: accepted ? null : 'bad signature' };
+      // AS THE TOOL ANSWERS (stake-lock arena-settle): an accepted submit's first claimed lock is spent within its wait (kanban #1171: locks_spent)
+      return { bodyId, txid, message: txid, aggKey: toHex(agg), accepted, error: accepted ? null : 'bad signature', locksSpent: accepted };
     },
     send: async ({ invoice }) => ({ message: sha256(new TextEncoder().encode(invoice)) }),
     arenaSendRefund: async ({ send, refundPk, qualifierPk }) => {

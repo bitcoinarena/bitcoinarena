@@ -3072,6 +3072,23 @@ export class Round {
       .run(Buffer.from(roundId), String(txid), JSON.stringify(claims), Number(payouts));
   }
 
+  /** A settlement txid of the round (kanban #1171): kept once with what it moves; its signature filled in when it is known. */
+  putSettlementTxid({ roundId, txid, message, signature = null, claims = null, payouts = null }) {
+    const had = this.db.prepare('SELECT 1 FROM lock_settlement_txids WHERE round_id = ? AND txid = ?').get(Buffer.from(roundId), String(txid));
+    if (!had) {
+      if (claims === null || payouts === null) return;
+      this.db.prepare('INSERT INTO lock_settlement_txids (round_id, txid, message, signature, claims, payouts, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(Buffer.from(roundId), String(txid), Buffer.from(message || new Uint8Array(0)), Buffer.from(signature || new Uint8Array(0)), JSON.stringify(claims), Number(payouts), this.now());
+    } else if (signature && signature.length) {
+      this.db.prepare('UPDATE lock_settlement_txids SET signature = ? WHERE round_id = ? AND txid = ? AND length(signature) = 0').run(Buffer.from(signature), Buffer.from(roundId), String(txid));
+    }
+  }
+
+  settlementTxidsOf(roundIdBytes) {
+    return this.db.prepare('SELECT txid, message, signature, claims, payouts FROM lock_settlement_txids WHERE round_id = ? ORDER BY made_ms').all(Buffer.from(roundIdBytes))
+      .map((r) => ({ txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claims: JSON.parse(r.claims), payouts: Number(r.payouts) }));
+  }
+
   /** A stake lock of the round read gone at the federation (kanban #1183): kept once, never removed. */
   putGoneStake({ roundId, outpoint, why }) {
     this.db.prepare('INSERT OR IGNORE INTO gone_stakes (round_id, outpoint, why, made_ms) VALUES (?, ?, ?, ?)').run(Buffer.from(roundId), String(outpoint), String(why), this.now());

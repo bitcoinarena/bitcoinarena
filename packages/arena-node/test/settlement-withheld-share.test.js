@@ -43,7 +43,7 @@ function stubRound() {
 /** The seven seats. `misbehave(k, path, url)` answers for seat k at that door or throws as a dropped connection; undefined is the honest door. */
 function seven({ misbehave = () => undefined, seed = 0x70 } = {}) {
   const seats = [];
-  const port = { settled: [], settle: async (x) => { port.settled.push(x); return { accepted: true }; } };
+  const port = { settled: [], settle: async (x) => { port.settled.push(x); return { accepted: true, payoutsStored: [{ id: 'payout-0' }], locksAfter: [null] }; } };   // as the tool answers (kanban #1171)
   const refusals = [];
   for (let k = 0; k < 7; k++) {
     let drawn = 0;

@@ -46,7 +46,7 @@ function seven({ hungAt = () => false, wire = [], seed = 0x61, boundMs = BOUND_M
   const keys = [0, 1, 2, 3, 4, 5, 6].map((k) => sha256(Uint8Array.from([0x10, k])));
   const contract = version === null ? undefined : { protocolVersion: version, nodes: keys.map((x) => schnorr.getPublicKey(x)), settlementSlots: 7 };
   const seats = [];
-  const port = { settled: [], settle: async (x) => { port.settled.push(x); return { accepted: true }; } };
+  const port = { settled: [], settle: async (x) => { port.settled.push(x); return { accepted: true, payoutsStored: [{ id: 'payout-0' }], locksAfter: [null] }; } };   // as the tool answers (kanban #1171)
   for (let k = 0; k < 7; k++) {
     let drawn = 0;
     // A FIXED STREAM PER SEAT: the same nonces whichever order the peers are asked in, so the bytes on the wire can be compared

@@ -1058,6 +1058,18 @@ export function openStore(path = ':memory:') {
     -- A LOSER'S STAKE LOCK READ GONE AT THE FEDERATION (kanban #1183, ruling #1146 A): F' leaves its entry out as refunded. Kept, so a seat restarted
     -- after the read builds F' again instead of F (it built F after every restart, its peers on F', neither reaching 5); one row per lock, never removed:
     -- a spent lock does not come back
+    -- EVERY SETTLEMENT TXID THIS SEAT SIGNED OR WAS HANDED FOR A ROUND (kanban #1171): F and F' are two transactions; only one lands. Each with what it
+    -- moves, so the federation is asked about every one of them before the round's row says REFUSED, and a landed one is found after a restart
+    CREATE TABLE IF NOT EXISTS lock_settlement_txids (
+      round_id     BLOB NOT NULL,
+      txid         TEXT NOT NULL,
+      message      BLOB NOT NULL,
+      signature    BLOB NOT NULL,
+      claims       TEXT NOT NULL,
+      payouts      INTEGER NOT NULL,
+      made_ms      INTEGER NOT NULL,
+      PRIMARY KEY (round_id, txid)
+    );
     CREATE TABLE IF NOT EXISTS gone_stakes (
       round_id     BLOB NOT NULL,
       outpoint     TEXT NOT NULL,

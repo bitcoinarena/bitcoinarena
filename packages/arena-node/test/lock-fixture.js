@@ -259,7 +259,8 @@ export function lockPort({ height = 1000, gateways = TWO_GATEWAYS } = {}) {
       });
       port.accepted.add(toHex(message));
       void claimPk;
-      return { ...said, accepted: true };
+      // AS THE TOOL ANSWERS (tools/stake-lock main.rs): what the guardians hold afterwards - each payout stored, each claimed lock gone (kanban #1171)
+      return { ...said, accepted: true, payoutsStored: payouts.map((p, i) => ({ id: `payout-${i}` })), locksAfter: [...claims, ...refunds].map(() => null) };
     },
     accepted: new Set(),
   };
