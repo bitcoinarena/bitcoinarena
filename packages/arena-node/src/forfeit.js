@@ -131,6 +131,43 @@ const verifies = (sig, msg, x) => { try { return schnorr.verify(sig, msg, x); } 
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).sort().join('|');
 const refuse = (why, status = 409) => ({ ok: false, status, why });
 
+/**
+ * WHAT THIS SEAT COMMITTED A LOCK TO, ONE ENUM AND ONE TRANSITION FUNCTION (kanban #1184, the 2026-11-06 state-machine audit). A lock has two ways
+ * out a seat can sign: the settlement's Claim (into the winners' payouts) and the forfeit's Cancel (back to its player). A seat that acked, shared,
+ * was handed or kept a settlement claiming a lock and later learned ENTRY_VOID (or a qualifier rule) signed a forfeit of the same lock too: two
+ * valid spends, the faster wins. Now: none -> CLAIMING (ack, share, take or keep of a settlement that claims it) | RETURNING (share, take or keep
+ * of a forfeit of it); either is final, and the other is refused. Persisted (round.js putLockFate, compare-and-set) before the ack, share or
+ * forfeit leaves this seat. A lock left unspent by a refusal still returns to its player at its expiry.
+ */
+export const LOCK_FATE = Object.freeze({ CLAIMING: 'CLAIMING', RETURNING: 'RETURNING' });
+export function lockFateStep(held, next) {
+  if (!Object.values(LOCK_FATE).includes(next)) return { ok: false, why: `${next} is not a fate of a lock` };
+  if (!held || held === next) return { ok: true };
+  return { ok: false, why: held === LOCK_FATE.CLAIMING
+    ? 'this seat committed to a settlement that claims that lock: it signs no forfeit of it - the lock returns to its player at its expiry if that settlement never lands'
+    : 'this seat signed a forfeit of that lock back to its player: it signs no claim of it' };
+}
+
+/**
+ * WHAT THIS SEAT HOLDS A LOCK AT (kanban #1184): its persisted fate, and - for a store whose history predates lock_fates - CLAIMING when any
+ * settlement of the round this seat signed, was handed or kept the moves of claims the outpoint. null with neither.
+ */
+export function lockFateOf(round, roundIdBytes, outpoint) {
+  const kept = typeof round.lockFate === 'function' ? round.lockFate(String(outpoint)) : null;
+  if (kept) return kept.state;
+  if (typeof round.claimedOutpointsOf === 'function' && round.claimedOutpointsOf(roundIdBytes).has(String(outpoint))) return LOCK_FATE.CLAIMING;
+  return null;
+}
+
+/** Move a lock to `next` (kanban #1184): checked by lockFateStep and written as a compare-and-set. { ok } or { ok: false, why }. */
+export function markLockFate(round, { roundId, outpoint, state, txid = null, why }) {
+  const st = lockFateStep(lockFateOf(round, roundId, outpoint), state);
+  if (!st.ok) return st;
+  if (typeof round.putLockFate !== 'function') return { ok: true };
+  return round.putLockFate({ outpoint: String(outpoint), roundId, state, txid, why })
+    ? { ok: true } : { ok: false, why: lockFateStep(lockFateOf(round, roundId, outpoint), state).why || 'another fate was written for that lock meanwhile' };
+}
+
 export class Forfeit {
   /**
    * `dkg` holds this signer node's share of the round's claim key; `port` is the
@@ -210,7 +247,7 @@ export class Forfeit {
       });
       if (!mine) return refuse('test fault armed for that entry, and this seat has signed no non-qualifying result for it yet');
       console.log(`[forfeit] ${toHex(roundIdBytes).slice(0, 16)} TEST FAULT: forfeits entry ${toHex(entryIdBytes).slice(0, 16)}, which it signed lost (ARENA_TEST_NAMED_OFFENCE_FILE)`);
-      return this.#signable(contract, lock, roundIdBytes);
+      return this.#signable(contract, lock, roundIdBytes, { fault: true });
     }
     // ENTRY_VOID (§16, §23.2 "forfeit at once; if nobody acts, the lock expires"):
     // an outage refund, on THIS signer node's own record of it - never on an asker's
@@ -292,7 +329,25 @@ export class Forfeit {
   #settled(roundIdBytes) { return stateOf(this.round, roundIdBytes); }
 
   /** The lock's contract id, rebuilt from this signer node's own record, under the round's claim key - what it signs. */
-  async #signable(contract, lock, roundIdBytes) {
+  // A LOCK THIS SEAT COMMITTED TO CLAIMING IS NEVER FORFEITED HERE (kanban #1184): whichever path asks - ENTRY_VOID, a qualifier, nobody won, a
+  // refused round, a market's return door - the lock's fate here is read first; the regtest fault (`fault`, offence (b)) alone skips it
+  async #signable(contract, lock, roundIdBytes, { fault = false } = {}) {
+    const outpoint = String(lock.outpoint);
+    if (!fault) {
+      const st = lockFateStep(lockFateOf(this.round, roundIdBytes, outpoint), LOCK_FATE.RETURNING);
+      if (!st.ok) return refuse(st.why);
+    }
+    const m = await this.#signableMessage(contract, lock, roundIdBytes);
+    return m.ok ? { ...m, outpoint, fault } : m;
+  }
+
+  /** RETURNING ON DISK BEFORE A SHARE, A TAKE OR A KEEP OF THE FORFEIT (kanban #1184): false-y `ok` when the lock is CLAIMING here. */
+  #returning(roundIdBytes, m, step) {
+    if (m.fault) return { ok: true };
+    return markLockFate(this.round, { roundId: roundIdBytes, outpoint: m.outpoint, state: LOCK_FATE.RETURNING, why: step });
+  }
+
+  async #signableMessage(contract, lock, roundIdBytes) {
     if (namedClaims(contract)) return namedForfeitMessage({ contract, lock, roundId: roundIdBytes, pubkey: this.round.pubkey });
     const held = this.dkg.signerNodeFor(contract.nodes);
     if (!held.ok) return refuse(`this signer node holds no share of the round's claim key: ${held.why}`);
@@ -412,6 +467,7 @@ export class Forfeit {
     const own = commitments.find((c) => String(c.id) === String(pair.commitment.id));
     if (!own || toHex(own.hiding) !== toHex(pair.commitment.hiding) || toHex(own.binding) !== toHex(pair.commitment.binding))
       return refuse('that list does not carry this signer node\'s own commitment');
+    { const r = this.#returning(roundIdBytes, m, 'a forfeit share given'); if (!r.ok) return refuse(r.why); }
     if (m.named) return this.#shareNamed(m, pair, commitments);
     if (commitments.length < m.needed) return refuse(`${commitments.length} commitments, and this round's key signs at ${m.needed}`);
     const key = listKey(commitments);
@@ -460,12 +516,14 @@ export class Forfeit {
       if (!form.ok) return refuse(`that forfeit's signers: ${form.why}`);
       const agg = namedKey(m.claimKeys, m.threshold, got.signers);
       if (!verifies(got.signature, m.message, agg)) return refuse('that forfeit does not verify under the KeyAgg of the seats it names');
+      { const r = this.#returning(roundIdBytes, m, 'a forfeit handed and kept'); if (!r.ok) return refuse(r.why); }
       this.round.putForfeit({ entryId: keptUnder(entryIdBytes, kind), roundId: roundIdBytes, message: m.message, signature: got.signature, claimPk: evenYKey(agg), signers: got.signers });
       return { ok: true };
     }
     if (got.signers) return refuse('a stock lock\'s forfeit is the round\'s FROST signature alone', 400);
     const signature = got.signature;
     if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return refuse('that forfeit does not verify under the round\'s claim key');
+    { const r = this.#returning(roundIdBytes, m, 'a forfeit handed and kept'); if (!r.ok) return refuse(r.why); }
     this.round.putForfeit({ entryId: keptUnder(entryIdBytes, kind), roundId: roundIdBytes, message: m.message, signature, claimPk: m.claimPk });
     return { ok: true };
   }
@@ -513,6 +571,7 @@ export class Forfeit {
       if (!this.#leaveOut(q, combined, listed, m.needed)) return combined;
     }
     const claimPk = named ? evenYKey(namedKey(m.claimKeys, m.threshold, named)) : m.claimPk;
+    { const r = this.#returning(roundIdBytes, m, 'a forfeit combined and kept'); if (!r.ok) return refuse(r.why); }
     this.round.putForfeit({ entryId: keptUnder(entryIdBytes, kind), roundId: roundIdBytes, message: m.message, signature, claimPk, ...(named ? { signers: named } : {}) });
     // HANDED TO EVERY PEER, a slow one left off the list too: it keeps it only if it verifies over what it rebuilt. One that misses it asks again.
     const handed = named ? encodeNamedForfeit(signature, named) : signature;
