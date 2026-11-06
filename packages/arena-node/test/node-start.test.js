@@ -204,3 +204,46 @@ test('a keyed guardian\'s seat starts the absence and spent-set producers; the f
     try { assert.deepEqual(c.guardianWiring(), { founding: false, absences: false, spentSet: false }); } finally { await c.close(); }
   } finally { put('ARENA_FOUNDING', was.f); put('ARENA_SPENT_SET_CLIENT_DIR', was.s); rmSync(dir, { recursive: true, force: true }); }
 });
+
+// KANBAN #1177: a node started in setup that finished its DKG in this process still had plan.own === 'setup'; its fresh setup set the live
+// guardian's database aside. The key files are read again at the moment anything would move.
+test('#1177 a setup-mode node whose guardian finished its key generation in this process never sets its database aside', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'node-start-1177-'));
+  const { chain } = standInSeen(dir);
+  try {
+    const path = join(dir, 'n.db');
+    const p = await port(23611);
+    const n = await launchNode({ db: openStore(path), path }, { port: p }, chain({ ARENA_FOUNDING: '1' }));
+    try {
+      assert.equal(n.guardianSetup, true, 'started in setup mode');
+      // its DKG finishes: the federation's files and its database are there now
+      mkdirSync(`${path}.guardian/database`, { recursive: true }); writeFileSync(`${path}.guardian/database/CURRENT`, 'x');
+      founded(path); writeFileSync(`${path}.guardian/client.json`, '{}');
+      const ctl = n.guardianControl;
+      const r = ctl ? await ctl.freshSetup() : { ok: true };
+      console.log(`#1177 freshSetup on a guardian with its key files: ok=${r.ok} why="${r.why || ''}" database still there=${existsSync(`${path}.guardian/database/CURRENT`)}`);
+      assert.equal(r.ok, false);
+      assert.match(r.why, /key files/);
+      assert.ok(existsSync(`${path}.guardian/database/CURRENT`), 'the guardian\'s database stays');
+      assert.equal((await ctl.local()).keyed, true);
+    } finally { await n.close(); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('#1177 a setup-mode node with no key files still starts a fresh setup (its old database kept beside it)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'node-start-1177b-'));
+  const { chain } = standInSeen(dir);
+  try {
+    const path = join(dir, 'n.db');
+    const p = await port(23711);
+    const n = await launchNode({ db: openStore(path), path }, { port: p }, chain({ ARENA_FOUNDING: '1' }));
+    try {
+      mkdirSync(`${path}.guardian/database`, { recursive: true });
+      assert.deepEqual(await n.guardianControl.local(), { keyed: false, alive: true });
+      const r = await n.guardianControl.freshSetup();
+      assert.equal(r.ok, true, r.why);
+      assert.match(String(r.kept), /database\.void-/);
+      assert.ok(existsSync(r.kept), 'kept beside it');
+    } finally { await n.close(); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
