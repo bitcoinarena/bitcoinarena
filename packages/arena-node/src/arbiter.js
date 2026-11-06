@@ -50,6 +50,7 @@ import { runId, verifiedFinal } from './verdict.js';
 import { entryForSlash } from './slash-owing.js';
 import { REMAINDER_FEE_MARGIN_MSAT } from './liquidation-claims.js';
 import { tweakPoint, combine, pointFromScalar } from './curve.js';
+import { keyedPay, payoutOf, PAYOUT, runPayouts } from './keyed-payout.js';
 import { nonceGen, bondSigningContext, bondPartialSign, MusigError } from './musig2.js';
 import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
 
@@ -469,11 +470,21 @@ export async function payOutSlash({ proof, v, set, rpc, keep = () => {}, say = (
     const want = due.reduce((t, x) => t + BigInt(x.msat), 0n);
     const pays = due.map((x) => ({ x, key: toHex(refundKeyOf(fromHex(x.key))), msat: want <= spendable ? BigInt(x.msat) : (BigInt(x.msat) * (spendable > 0n ? spendable : 0n)) / want }));
     const rest = spendable - pays.reduce((t, x) => t + x.msat, 0n);
-    const toReserves = p.reserveKey && rest > 0n ? rest : 0n;
+    let toReserves = p.reserveKey && rest > 0n ? rest : 0n;
     const list = [...pays.map((x) => `${x.key}:${x.msat}`), ...(toReserves > 0n ? [`${p.reserveKey}:${toReserves}`] : [])];
-    if (!list.length) { p.paidTxid = 'nothing'; keep(); continue; }
-    const paid = await run(dir, ['--mode', 'pay', '--payouts', list.join(',')], 300000);
-    if (!paid.txid) return { why: `no payout transaction: ${paid.error || JSON.stringify(paid)}` };
+    if (!list.length && payoutOf(p.pay) !== PAYOUT.ASKED) { p.paidTxid = 'nothing'; keep(); continue; }
+    // THE PAYOUT ONCE (kanban #1174, keyed-payout.js): ASKED - its key (the proof, the stage, the federation) and its list - written before the tool;
+    // after a stop the recorded list is read back under its key (the pays below are taken from it), never paid twice
+    if (!p.pay) p.pay = {};
+    const asList = list.map((x) => { const [key, msat] = x.split(':'); return { key, msat }; });
+    const got = await keyedPay({ rec: p.pay, save: keep, list: asList, key: `slash-arb:${proof}:${v.stages.length - 1}:${p.federation}`, ...runPayouts((args) => run(dir, args, 300000)) });
+    if (!got.ok) return { why: `no payout transaction: ${got.why}`, held: !!got.held };
+    if (p.pay.list) {   // what was paid is the recorded list (a pay after a stop pays it, not one worked out again)
+      const at = new Map(p.pay.list.map((x) => [x.key.toLowerCase(), BigInt(x.msat)]));
+      for (const x of pays) x.msat = at.get(x.key.toLowerCase()) ?? 0n;
+      if (p.reserveKey) toReserves = at.get(String(p.reserveKey).toLowerCase()) ?? 0n;
+    }
+    const paid = { txid: got.txid, payouts: got.payouts };
     const rowOf = (key) => (paid.payouts || []).find((y) => String(y.refund_pk).toLowerCase() === key.toLowerCase());
     v.payouts = [...(v.payouts || []), ...pays.map(({ x, key, msat }) => { const y = rowOf(key); x.paidMsat = String(msat);
       return { round: v.round, entry: x.entry || v.entry, federation: p.federation, refundPk: key, msat: String(msat), txid: paid.txid, outIdx: y ? y.out_idx : null, contractId: y ? y.contract_id : null }; })];

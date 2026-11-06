@@ -127,7 +127,8 @@ test('a fallback carries the same OP_RETURN fields and a table of the same forma
 });
 
 // ---- THE RUN: eight panel members, each with its own store, reading each other at their doors ----
-function world({ lossesOk = true, federationsOf = async () => federations, tip = () => START_HEIGHT + 1, cut = () => false, serve = (k, body) => body, handles = undefined, logs = null } = {}) {
+function world({ lossesOk = true, federationsOf = async () => federations, tip = () => START_HEIGHT + 1, cut = () => false, serve = (k, body) => body, handles = undefined, logs = null,
+  portOf = null } = {}) {
   let lossReads = 0;
   const members = [...A, ...B];
   const runs = new Map();
@@ -153,6 +154,8 @@ function world({ lossesOk = true, federationsOf = async () => federations, tip =
     let made = 0;
     const port = { peginAddress: async () => `addr-${p.hex}-${made++}`, peginClaim: async () => ({ claimedMsat: 400_000_000n }),
       payouts: async (list) => { paid.push({ carrier: p.hex, list }); return { txid: 'cc'.repeat(32), payouts: list.map((x, i) => ({ refundPk: x.key, outIdx: i, contractId: `c${i}` })) }; } };
+    // `portOf(p, port, paid)`: the carrier's client as a test makes it (kanban #1174: a tool whose answer is lost after it paid)
+    if (portOf) Object.assign(port, portOf(p, port, paid));
     runs.set(p.hex, createSlashRelease({ key: p.key, secret: p.secret, networkId: NETWORK_ID_REGTEST, clocks, db: new DatabaseSync(':memory:'), tweakPoint,
       tipHeight: async () => tip(), entriesAtTip: async () => entries, rawTx, unspent: async () => true,
       fetchProof: async () => proofBytes, judge: Object.assign(async () => ({ verdict: true, held: { offence: 'X' } }), { read: () => ({ ok: true, roundId, contract }) }),
@@ -309,4 +312,52 @@ test('#1044: a judged start whose offence no loss rule reads is dropped once - n
   assert.ok(w.members.every((p) => !w.runs.get(p.hex).served(startHex).release && !w.runs.get(p.hex).served(startHex).fallback));
   assert.equal(said.filter((r) => r.dropped).length, w.members.length, 'dropped once at each member, on its first pass');
   assert.equal(logs.filter((l) => /dropped from release and fallback/.test(l)).length, w.members.length, 'one line each');
+});
+
+// ---- kanban #1174: A CARRIER'S PAYOUT, ONCE, WHATEVER STOPS ----
+// THE STAKE-LOCK TOOL AS IT IS NOW: `pay` under a key submits one operation per key (the client refuses a second) and answers it again after;
+// `pay-sent` reads a key's payout back. `lose` the answers lost (the tool paid, the seat never heard: a crash, a timeout) - one per call
+function keyedTool(p, paid, { lose = 0, readBack = true } = {}) {
+  const byKey = new Map();
+  let lost = lose;
+  const out = (txid, list) => ({ txid, payouts: list.map((x, i) => ({ refundPk: x.key, outIdx: i, contractId: `c${i}` })) });
+  return {
+    payouts: async (list, { key: asked = null } = {}) => {
+      const key = readBack ? asked : null;   // a tool from before #1174 takes no key: every pay pays
+      if (key && byKey.has(key)) return { ...out(byKey.get(key).txid, list), again: true };
+      const txid = `${(paid.length + 1).toString(16).padStart(2, '0')}`.repeat(32);
+      paid.push({ carrier: p.hex, list, key });
+      if (key) byKey.set(key, { txid });
+      if (lost > 0) { lost--; throw new Error('the tool did not answer in 600 s (killed)'); }
+      return out(txid, list);
+    },
+    ...(readBack ? { payoutsSent: async (list, key) => (byKey.has(key) ? { found: true, ...out(byKey.get(key).txid, list) } : { found: false }) }
+      : { payoutsSent: async () => { throw new Error('this stake-lock tool cannot read a keyed payout back: no mode pay-sent'); } }),
+  };
+}
+
+test('kanban #1174: a carrier whose tool paid and whose answer was lost pays nothing twice: the payout is ASKED on disk first, then read back by its key', async () => {
+  const facts = {};
+  for (const [name, o] of [['lostAnswer', { lose: 1 }], ['oldTool', { lose: 1, readBack: false }]]) {
+    const w = world({ portOf: (p, port, paid) => keyedTool(p, paid, o) });
+    for (const q of w.members) await w.runs.get(q.hex).pass();
+    for (const q of w.members) await w.runs.get(q.hex).pass();
+    const first = A[0].hex, run = w.runs.get(first);
+    // three passes of the carrier: the first loses one answer
+    const passes = [];
+    for (let i = 0; i < 3; i++) passes.push((await run.carry()).filter((r) => r.why).map((r) => r.why.replace(/[0-9a-f]{16,}/g, '<id>').slice(0, 240)));
+    const mine = w.paid.filter((x) => x.carrier === first);
+    const toPlayer = mine.filter((x) => x.list.some((y) => y.key === toHex(refundKeyOf(player.key))));
+    const carried = run.served(startHex).carried || [];
+    facts[name] = { payoutsMade: mine.length, playerPaidTimes: toPlayer.length, outputsPaid: carried.filter((c) => c.paidTxid).length, outputs: carried.length,
+      states: carried.map((c) => (c.pay ? c.pay.step : null)), waits: [...new Set(passes.flat())] };
+  }
+  console.log('  MEASURED #1174 payOn:', JSON.stringify(facts));
+  // three outputs carried (the players' part and a reserves' part in each federation): three payouts, the player paid once
+  assert.deepEqual([facts.lostAnswer.payoutsMade, facts.lostAnswer.playerPaidTimes, facts.lostAnswer.outputsPaid], [3, 1, 3], 'a lost answer was paid again');
+  assert.deepEqual(facts.lostAnswer.states, ['PAID', 'PAID', 'PAID']);
+  // a tool that cannot read a key back: the payout is held, never paid twice, and said
+  assert.equal(facts.oldTool.playerPaidTimes, 1, 'an old tool paid the player twice');
+  assert.equal(facts.oldTool.payoutsMade, 3);
+  assert.ok(facts.oldTool.waits.some((x) => /held, never paid twice/.test(x)), JSON.stringify(facts.oldTool.waits));
 });

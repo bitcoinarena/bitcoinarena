@@ -358,10 +358,21 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
       if (!(j.balance_after_msat > j.balance_before_msat)) throw new Error(`the peg-in is not claimed yet: ${j.error || JSON.stringify(j).slice(0, 160)}`);
       return { claimedMsat: BigInt(j.balance_after_msat) - BigInt(j.balance_before_msat) };
     },
-    async payouts(list) {
-      const j = await run(bin, ['--mode', 'pay', '--data-dir', dataDir, '--payouts', list.map((p) => `${p.key}:${p.msat}`).join(',')], timeoutMs * 5);
+    /** `key` (kanban #1174): the payout's idempotency key - the tool submits one transaction per key and answers it again ("again") after. */
+    async payouts(list, { key = null } = {}) {
+      const j = await run(bin, ['--mode', 'pay', '--data-dir', dataDir, '--payouts', list.map((p) => `${p.key}:${p.msat}`).join(','), ...(key ? ['--key', String(key)] : [])], timeoutMs * 5);
       if (!j.txid) throw new Error(`no payout transaction: ${j.error || JSON.stringify(j).slice(0, 160)}`);
-      return { txid: String(j.txid), payouts: (j.payouts || []).map((y) => ({ refundPk: String(y.refund_pk).toLowerCase(), outIdx: y.out_idx, contractId: y.contract_id })) };
+      return { txid: String(j.txid), again: j.again === true, payouts: (j.payouts || []).map((y) => ({ refundPk: String(y.refund_pk).toLowerCase(), outIdx: y.out_idx, contractId: y.contract_id })) };
+    },
+    /**
+     * WHAT A KEYED PAYOUT PAID (kanban #1174, the tool's pay-sent): { found, txid, payouts, rejected } - found false: never submitted under that key;
+     * rejected: the guardians refused it, nothing paid. A tool built before this cannot answer: it throws, and the caller holds (never pays twice).
+     */
+    async payoutsSent(list, key) {
+      const j = await run(bin, ['--mode', 'pay-sent', '--data-dir', dataDir, '--payouts', list.map((p) => `${p.key}:${p.msat}`).join(','), '--key', String(key)], timeoutMs);
+      if (j.mode !== 'pay-sent' || typeof j.found !== 'boolean') throw new Error(`this stake-lock tool cannot read a keyed payout back: ${j.error || JSON.stringify(j).slice(0, 120)}`);
+      return { found: j.found, rejected: j.rejected === true, why: j.why || null, txid: j.txid ? String(j.txid) : null,
+        payouts: (j.payouts || []).map((y) => ({ refundPk: String(y.refund_pk).toLowerCase(), outIdx: y.out_idx, contractId: y.contract_id })) };
     },
     /**
      * E-cash reissued into the seat's client here: { state: 'Success' | 'Rejected' | 'AlreadyReceived', msat } (kanban #614). An
