@@ -3985,6 +3985,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     { const p = playedHere(rid, c); if (!p.played) return p.why; }
     return offerRefusal(c);
   };
+  // AN ORDER'S LOCK THAT CAME AFTER ITS MARKET CLOSED (kanban #1150: POST /lock had no entry-close check, and a late lock filled against
+  // the resting orders): kept and verified - so it can come back by the return door - but the order never trades (order-batch.js refuses
+  // any order tradable here only after the close). Answers why, or null for a lock in time or an entry that is no order.
+  const orderLockAfterClose = (stored) => {
+    const e = decodeEntryContract(stored);
+    if (e.limitPrice === undefined || e.limitPrice === null) return null;
+    const row = round.get(e.roundId);
+    if (!row) return null;
+    let close;
+    try { close = decodeRoundContract(new Uint8Array(row.contract)).entryCloseMs; } catch { return null; }
+    if (BigInt(round.now()) < close) return null;
+    return `the market closed at ${new Date(Number(close)).toISOString()}: this order never trades, and its locks come back by the return door`;
+  };
   // AN ENTRY'S STAKE LOCK AND FEE LOCK, CHECKED WITH THE FEDERATION AND KEPT: what POST /lock and POST /fee-lock do, and what a seat does
   // for an order a certified batch names that never reached it (replayOrder below). Answers verifyStakeLock's / verifyFeeLock's answer.
   const takeStakeLock = async (eid, fields, timing = {}) => {
@@ -8839,10 +8852,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = await takeStakeLock(eid, fields, timing);
         lockTimed(got.ok ? 'verified' : got.why.slice(0, 60));
         if (!got.ok) return text(res, 409, got.why);
-        // AN ORDER (comment 1127): tradable here once both its locks are verified
-        if (decodeEntryContract(stored).limitPrice !== undefined) orderBook.noteTradable(decodeEntryContract(stored).roundId);
+        // AN ORDER (comment 1127): tradable here once both its locks are verified - and only before its market's entry close
+        const lateOrder = orderLockAfterClose(stored);
+        if (decodeEntryContract(stored).limitPrice !== undefined && !lateOrder) orderBook.noteTradable(decodeEntryContract(stored).roundId);
         return text(res, 201, `stake lock verified: contract ${got.contractId} holds ${got.paidMsat} msat`
-          + (got.waitsForFeeLock ? ' - counted once its fee lock is verified (this round mints fee locks)' : ''));
+          + (got.waitsForFeeLock ? ' - counted once its fee lock is verified (this round mints fee locks)' : '') + (lateOrder ? ` - ${lateOrder}` : ''));
       }
 
       // AND THE PLAYER'S FEE LOCK (Pick A, F5): the entry's 2% locked to H(F),
@@ -8861,8 +8875,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = await takeFeeLock(eid, fields);
         steps.at(got.ok ? 'verified' : 'refused');
         if (!got.ok) return text(res, 409, got.why);
-        if (decodeEntryContract(stored).limitPrice !== undefined) orderBook.noteTradable(decodeEntryContract(stored).roundId);
-        return text(res, 201, `fee lock verified: contract ${got.contractId} holds ${got.feeMsat} msat`);
+        const lateOrder = orderLockAfterClose(stored);
+        if (decodeEntryContract(stored).limitPrice !== undefined && !lateOrder) orderBook.noteTradable(decodeEntryContract(stored).roundId);
+        return text(res, 201, `fee lock verified: contract ${got.contractId} holds ${got.feeMsat} msat` + (lateOrder ? ` - ${lateOrder}` : ''));
       }
 
       // WHERE A PLAYER'S STAKE LOCK IS, BY ITS REFUND KEY (W5a). A player who
