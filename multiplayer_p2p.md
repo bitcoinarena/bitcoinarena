@@ -7607,6 +7607,13 @@ carry no weight in any count.
     - A silent LNURL or a wrong invoice signs nothing, and the next pass asks again.
   - **Records:** one record per proposal on every seat (`reserve_payouts`). A second plan for a proposal is refused, and a
     spent output is never planned again.
+    - *(2026-11-06, kanban #1156)* A record handed to another seat is signed by the sender's node key. A seat keeps it only
+      from a guardian seat of the federation whose step it is (the destination's for a move's claim).
+    - SHORT is kept only when the seat's own reserves cannot pay either. A step past PLANNED is kept only when the seat's
+      own port shows the plan's transaction and its spent inputs (a seat with no port keeps the signed record and the
+      preimage).
+    - Every write is one compare-and-set step along one transition table. The inputs and the rows it makes (change, refund,
+      winners, claim) go in the same step. A kept row is never replaced by one with other fields.
   - **Shown:** `GET /reserves` lists `payouts` and no longer counts spent outputs; `GET /reserve-payouts`.
   - **Not built:** a re-try after a refund, a payout split over federations, giving up on an LNURL silent for days.
 
