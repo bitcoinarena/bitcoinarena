@@ -59,6 +59,9 @@ test('three offences name one entry and the other four name the paying field (ka
     // template 3: a release with no valid proof harmed a node, and paying off the table harmed the paying field
     [RELEASE_WITHOUT_PROOF]: [],
     [RELEASE_OFF_TABLE]: ['a1', 'a2', 'a4'],
+    // the named claim (kanban #1146 B): a forfeit of Alice's lost entry harmed every other activated entry; an off-table claim names whose locks it claimed - none here
+    OFF_TABLE_CLAIM: [],
+    FORFEIT_OF_LOST_ENTRY: ['a2', 'a4'],
   });
 });
 

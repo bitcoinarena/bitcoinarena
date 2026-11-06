@@ -186,7 +186,8 @@ import { createSlashStarter } from './slash-start-run.js';
 import { createProofJudge } from './proof-judge.js';
 import { coreForRound, settledEntries, slashLosses } from './arbiter.js';
 import { createSlashRelease } from './slash-release-run.js';
-import { slashHoldsOnDoubleSign, OFFENCES } from '../../arena-protocol/src/slash.js';
+import { slashHoldsOnDoubleSign, OFFENCES, FORFEIT_OF_LOST_ENTRY } from '../../arena-protocol/src/slash.js';
+import { lockActions as lockActionsOf, CLAIM as CLAIM_ACTION } from '../../arena-protocol/src/lock-action.js';
 import { bondPresigDigest, holdClocksOf } from '../../arena-protocol/src/slash-presig.js';
 import { SOURCE_ENTRIES } from '../../arena-protocol/src/market-sources.js';
 import { CLOCKS as FEDERATION_CLOCKS, bondLapseOf } from '../../arena-protocol/src/federation-slash.js';
@@ -257,7 +258,7 @@ import { resultFinality, finalSignatureNow, finalRerunResult, NO_RUN } from './f
 import { standingOf, marketStandingOf, settledOutcomeOf } from './standing.js';
 import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
 import { outageOutcome } from '../../arena-protocol/src/entry-void.js';
-import { ENTRY_VOID, netStakeMsat } from '../../arena-protocol/src/payout.js';
+import { ENTRY_VOID, netStakeMsat, withGoneStakes } from '../../arena-protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
@@ -4441,12 +4442,44 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       finals: round.entryFinalSigs(Buffer.from(rid), e.entryId).map((r) => toHex(r)) })) });
     return { round: ridHex, entries: [...byEntry.values()].sort((a, b) => (a.id < b.id ? -1 : 1)) };
   };
-  const slashLossesFor = async ({ contract, rid, held }) => {
+  // OFFENCE (b)'S ROUND, SETTLED OR NOT (RULED 2026-11-06, kanban #1146 B): every stake lock F′ claims is gone at its federation (claimed, or refunded) or run out.
+  // Settled once is settled for good; a lock whose federation this seat cannot read is not settled
+  const namedRoundSettledKept = new Set();
+  const namedLossSaid = new Set();
+  const namedRoundSettled = async (contract, rid, run, entries, held, payoutShares) => {
+    const ridHex = toHex(rid);
+    if (namedRoundSettledKept.has(ridHex)) return { settled: true };
+    let h; try { h = lockActionsOf({ roundId: rid, entries: withGoneStakes(entries, new Set([toHex(held.playerPubkey)])), minScore: contract.minScore, payoutShares }); } catch (e) { return { settled: false, why: e.message }; }
+    const byKey = new Map(entries.map((e) => [toHex(e.playerPubkey), e]));
+    for (const a of h.actions) {
+      if (a.action !== CLAIM_ACTION) continue;
+      const e = byKey.get(toHex(a.entry.pubkey));
+      const row = e && run.entries.find((x) => x.id === e.entryId);
+      let x; try { x = decodeEntryContract(fromHex(row.entry)); } catch { return { settled: false, why: 'an entry F′ claims is not shown' }; }
+      const fed = entryFederation(contract, x);
+      let st;
+      try { const port = await settlements.portForFederation(toHex(fed.ok ? fed.federationId : contract.federationId)); st = port && typeof port.arenaStatus === 'function' ? await port.arenaStatus(x.stakeLockOutpoint) : await port.status(x.stakeLockOutpoint); }
+      catch (err) { return { settled: false, why: `the federation did not answer: ${String(err && err.message).slice(0, 120)}` }; }
+      if (st && st.stored && Number(st.stored.blocksLeft) > 0) return { settled: false, why: `the stake lock of entry ${e.entryId.slice(0, 16)} is still held, ${st.stored.blocksLeft} blocks left` };
+    }
+    namedRoundSettledKept.add(ridHex);
+    return { settled: true };
+  };
+  const slashLossesFor = async ({ contract, rid, held, tip = null, capAt = null }) => {
     if (!held || !held.offence) return { ok: true, losses: new Map(), entryIds: new Map() };
     const committee = roundSeatKeys(contract, rid).map(fromHex);
     const run = await settledRunOf(contract, rid);
     if (!run.entries.length) return { ok: false, why: 'no seat of that round answers how it settled' };
     let entries; try { entries = settledEntries({ run, roundId: rid, contract, committee, finalAfterMs: windowsOf(contract).finalAfterMs }); } catch (e) { return { ok: false, why: e.message }; }
+    // (b) WAITS FOR THE ROUND: its loss is F - F′ once the round's remaining locks are settled or run out; from the cap on, an unsettled lock counts as gone back to its player
+    let settled = true;
+    if (held.offence === FORFEIT_OF_LOST_ENTRY && entries.every((e) => !e.activated || e.outcome)) {
+      const r = payoutRuleOfRound(contract, hosted);
+      if (!r.ok) return { ok: false, why: r.why };
+      const st = await namedRoundSettled(contract, rid, run, entries, held, r.payoutShares);
+      if (!st.settled && (tip === null || capAt === null || tip < capAt)) return { ok: false, why: `the round's remaining locks are not settled yet: ${st.why}${capAt !== null ? `; the table waits until height ${capAt}` : ''}` };
+      settled = st.settled;
+    }
     // AN AUDIT'S PROOF NAMES A RUN, NOT A SIGNED RESULT: that run's outcome and score come off the round's results for the entry, as the arbitration set reads them
     let signed = held.signed;
     if (held.offence === AUDIT_CONTRADICTED && held.proof && held.proof.entryId) {
@@ -4455,8 +4488,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     const rule = payoutRuleOfRound(contract, hosted);
     if (!rule.ok) return { ok: false, why: rule.why };
-    const owed = slashLosses({ verdict: held, entries, contract, roundId: rid, signed, payoutShares: rule.payoutShares });
+    const owed = slashLosses({ verdict: held, entries, contract, roundId: rid, signed, payoutShares: rule.payoutShares, settled });
     if (!owed.ok) return owed;
+    const said = `${toHex(rid)}:${held.offence}:${owed.level}:${settled}:${[...owed.losses].join(',')}`;
+    if ((held.offence === FORFEIT_OF_LOST_ENTRY || held.offence === 'OFF_TABLE_CLAIM') && !namedLossSaid.has(said) && namedLossSaid.add(said)) console.log(`#1044 [slash] ${toHex(rid).slice(0, 16)} ${held.offence} level ${owed.level}${settled ? '' : ' (unsettled at the cap)'}: ${[...owed.losses].map(([k, v]) => `${k.slice(0, 12)} ${v} msat`).join(', ') || 'no loss'}`);
     return { ok: true, losses: owed.losses, entryIds: new Map(entries.map((e) => [toHex(e.playerPubkey), fromHex(e.entryId)])) };
   };
   // A FEDERATION WHOSE GUARDIAN SEATS STAND HAS A RESERVE KEY, read here or not yet (kanban #1129): reserveKeyFor answers null for both, a table must not

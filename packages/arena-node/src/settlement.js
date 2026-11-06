@@ -46,7 +46,8 @@ import { paysReserves } from '../../arena-protocol/src/reserves.js';
 import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
 import { isScalar, marketOfRound } from '../../arena-protocol/src/manifest.js';
 import { outcomeFinality } from '../../arena-protocol/src/attested.js';
-import { FORFEIT, VOID, ENTRY_VOID, isQualifier, computePayoutTable } from '../../arena-protocol/src/payout.js';
+import { FORFEIT, VOID, ENTRY_VOID, isQualifier, computePayoutTable, withGoneStakes } from '../../arena-protocol/src/payout.js';
+import { lockActions, CLAIM } from '../../arena-protocol/src/lock-action.js';
 import { signShare340, aggregate340, nonceGenerate340, verifyShare340 } from '../../arena-protocol/src/frost-bip340.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { lockFieldsFromJson } from '../../arena-protocol/src/stake-lock.js';
@@ -116,6 +117,8 @@ export const locksStake = (contract) => contract.federationId instanceof Uint8Ar
   && (contract.federationId.some((b) => b !== 0) || takesAnyFederation(contract)) && contract.stakeMsat > 0n;
 
 const NO_FEES = { ppm: 0n, baseMsat: 0n };
+// A BUILD THAT NAMES A LOCK THE GUARDIANS DO NOT HOLD (stake-lock arena.rs: "the guardians hold no Arena lock at ...")
+const NO_LOCK_HELD = /hold(s)? no (Arena )?lock/i;
 /**
  * A ROUND THAT TAKES ANY FEDERATION, SETTLED (2026.0.3): its plan decided once - lockSettlement with no fee, since
  * every federation prices its own (splitByFederation) - and split into one balanced transaction per federation. `args`:
@@ -910,7 +913,13 @@ export class LockSettlement {
       }
       claims.push({ ...c, preimage: opened.preimage });
     }
-    const tx = await this.#build(await this.portFor(roundIdBytes), contract, { claimPk, claims, payouts: plan.payouts, nonce: plan.nonce });
+    let tx;
+    try { tx = await this.#build(await this.portFor(roundIdBytes), contract, { claimPk, claims, payouts: plan.payouts, nonce: plan.nonce }); }
+    catch (e) {
+      // A LOCK THE GUARDIANS NO LONGER HOLD (kanban #1146 A): the next plan reads this round's losers' locks at the federation and leaves the gone ones out
+      if (NO_LOCK_HELD.test(String(e && e.message))) { this.#suspectGone.add(key); console.log(`#1044 [settle] ${key.slice(0, 16)}: ${String(e.message).slice(0, 120)} - its losers' locks are read at the federation next`); }
+      throw e;
+    }
     const built = { ok: true, ...tx, plan, claims, claimPk,
       signerNode: held.signerNode, needed: receiptsNeeded(contract.settlementSlots), contract,
       ackTable: ackTableOf({ roundId: roundIdBytes }, plan, claimPk, ackRows || planTableRows(plan), byLockKey(lockEntry)) };
@@ -971,15 +980,15 @@ export class LockSettlement {
         return this.#attestedPlan(roundIdBytes, a, claimPk, held);
       } }
 
-    const on = this.entriesOnRecord(roundIdBytes, contract);
-    if (!on.ok) return on;
+    const onRecord = this.entriesOnRecord(roundIdBytes, contract);
+    if (!onRecord.ok) return onRecord;
     // THE GAME'S PAYOUT RULE: §18A's curve or its manifest's top split - the table every seat settles by
     const rule = payoutRuleOfRound(contract, this.round.plugins);
     if (!rule.ok) return refuse(`no lock is claimed: ${rule.why}`);
     const payoutShares = rule.payoutShares;
     const locks = new Map();
     const lockEntry = new Map();
-    for (const e of on.entries) {
+    for (const e of onRecord.entries) {
       const lock = this.round.stakeLock(e.entryId);
       if (!lock) continue;
       const fields = lockFieldsFromJson(lock.fields);
@@ -987,6 +996,12 @@ export class LockSettlement {
       locks.set(toHex(e.pubkey), { outpoint: outpointOf(lock.outpoint), amountMsat: fields.amountMsat, refundPk: fields.refundPk, fields });
       lockEntry.set(toHex(e.pubkey), e.entryId);
     }
+    // A SETTLEMENT CLAIMS ONLY THE LOCKS THE FEDERATION STILL HOLDS (RULED 2026-11-06, kanban #1146 A): a loser's stake lock spent by a forfeit, or run out and
+    // refunded, is read as refunded - F′, the same table code over the entries with that stake out (payout.js withGoneStakes) - and its fee lock is left
+    // where it is, as a refunded entry's is: a claimed lock with no row is a false table (settlement-rebuild.js tableFalse). Every table this plan makes - the
+    // claims, the payouts, the acked rows - is F′'s. Unchanged where every loser's lock stands.
+    const gone = await this.#goneStakes(roundIdBytes, contract, onRecord.entries, locks, payoutShares);
+    const on = gone.size ? { ...onRecord, entries: withGoneStakes(onRecord.entries, gone), gone } : onRecord;
     // AND EVERY FEE LOCK THIS SIGNER NODE VERIFIED (Pick A), with the F its entry hands over.
     const feeLocks = new Map();
     for (const e of on.entries) {
@@ -1327,6 +1342,43 @@ export class LockSettlement {
   #namedBuilt = new Map();
   #level2Said = new Set();
   #namedReadAt = new Map();
+  #suspectGone = new Set();     // round id hex: a build named a lock the guardians do not hold (kanban #1146 A)
+  #goneLocks = new Set();       // outpoint text of a stake lock read gone: a spent or refunded lock never comes back
+
+  /**
+   * THE LOSERS' STAKE LOCKS THE FEDERATION NO LONGER HOLDS (RULED 2026-11-06, kanban #1146 A): of the locks F claims, those whose outpoint the guardians hold
+   * nothing at, or hold run out (no block left). Read only for a round whose build named a lock the guardians do not hold - or one already read gone here -
+   * so a round whose locks stand costs no federation read. Answers a Set of player key hex.
+   */
+  async #goneStakes(roundIdBytes, contract, entries, locks, payoutShares) {
+    const key = toHex(roundIdBytes), gone = new Set();
+    let h;
+    try { h = lockActions({ roundId: roundIdBytes, entries, minScore: contract.minScore, payoutShares }); } catch { return gone; }
+    const suspect = this.#suspectGone.has(key);
+    for (const a of h.actions) {
+      if (a.action !== CLAIM) continue;
+      const k = toHex(a.entry.pubkey), lock = locks.get(k);
+      if (!lock) continue;
+      const at = `${toHex(lock.outpoint.txid)}:${String(lock.outpoint.outIdx)}`;
+      if (this.#goneLocks.has(at)) { gone.add(k); continue; }
+      if (!suspect) continue;
+      let port = null;
+      try {
+        const ef = takesAnyFederation(contract) ? entryFederation(contract, decodeEntryContract(new Uint8Array(this.round.entry(a.entry.entryId)))) : null;
+        port = ef && ef.ok ? await this.portForFederation(toHex(ef.federationId)) : await this.portFor(roundIdBytes);
+      } catch { port = null; }
+      if (!port) continue;
+      let st = null;
+      try { st = lock.fields && lock.fields.arena && typeof port.arenaStatus === 'function' ? await port.arenaStatus(lock.outpoint) : await port.status(lock.outpoint); } catch { continue; }
+      if (!st || !st.stored || !(Number(st.stored.blocksLeft) > 0)) {
+        this.#goneLocks.add(at);
+        gone.add(k);
+        console.log(`#1044 [settle] ${key.slice(0, 16)}: the stake lock at ${at.slice(0, 20)} is ${st && st.stored ? 'run out' : 'gone'} - its entry is read as refunded (F′)`);
+      }
+    }
+    if (this.#goneLocks.size > 8192) this.#goneLocks.delete(this.#goneLocks.values().next().value);
+    return gone;
+  }
 
   /** ROUND ONE AT A PROTOCOL-27 SEAT: one fresh nonce pair per message of the body's batch, made before S is known; a pair that signed a list is spent. */
   #commitNamed(roundIdBytes, m, key) {
@@ -2151,6 +2203,8 @@ export class LockSettlement {
       ? `claimed ${stakeClaims} loser lock(s), ${m.plan.poolMsat} msat; paid ${qualifiers} qualifier(s) ${m.plan.paidMsat} msat${remainder}${feePart}`
       : `the guardians refused it: ${sent.error}`;
     this.round.putLockSettlement({ roundId: roundIdBytes, txid: m.txid, message: m.message, signature, state, why });
+    // A REFUSED CLAIM MAY NAME A LOCK THAT WENT AFTER IT WAS BUILT (kanban #1146 A): the next plan reads the losers' locks at the federation, from a fresh build
+    if (!sent.accepted) { const k = toHex(roundIdBytes); this.#suspectGone.add(k); this.built.delete(k); this.byPlan.delete(k); }
     // SAID, AND NEVER LOST IN A THROW (2026.1.9.11 release check: no seat held a settlement row since 10-25 - the website share of
     // settlement ed86a2fa (800 msat) was listed under its key nowhere, so a referrer's wallet could never collect it)
     if (sent.accepted) {
