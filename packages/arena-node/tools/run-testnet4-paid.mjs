@@ -433,6 +433,28 @@ if (env.PAID_DUTY_DAILY === '1') {
     }
     return feds;
   };
+  // THE SERIES' CREATORS AS THE LOCAL SEATS HOLD THEM (kanban #1168): read again at most every 2 min, and at once for a series not seen yet
+  const { schnorr: { getPublicKey: schnorrPub } } = await import('@noble/curves/secp256k1.js');
+  let seatCreators = new Map(), seatCreatorsAt = 0;
+  const readSeatCreators = async () => {
+    const m = new Map();
+    for (const u of localSeats()) {
+      for (const path of ['/series', '/expected']) {
+        try {
+          const r = await fetch(`${u}${path}`, { signal: AbortSignal.timeout(15000) });
+          if (!r.ok) continue;
+          const j = await r.json();
+          for (const x of (path === '/series' ? j.series : j.expected) || []) if (x && x.series && /^[0-9a-f]{64}$/.test(String(x.creator || ''))) m.set(String(x.series), String(x.creator));
+        } catch { /* the next seat */ }
+      }
+      if (m.size) break;
+    }
+    return m;
+  };
+  const dutyCreatorOf = async (idHex) => {
+    if (!seatCreators.has(idHex) && Date.now() - seatCreatorsAt > 120000) { seatCreators = await readSeatCreators(); seatCreatorsAt = Date.now(); }
+    return seatCreators.get(idHex) || null;
+  };
   // THE DAY'S DUTY ITSELF (src/duty-day.js, kanban #702): the node's own duty poster runs the same engine
   const duty = createDayDuty({ game, item, networkId: round.contract.networkId, local, dir: join(home, 'paid', 'duty-day'),
     chain: round.dutyChain, chainCall, walletRpc: rpc, gridBase, openGrid: (kind, opts) => round.openGrid(kind, opts),
@@ -441,7 +463,11 @@ if (env.PAID_DUTY_DAILY === '1') {
     fromDay: Number(env.DUTY_FROM_DAY || 0), committeeLeadMs, rankCap, drawableByMs, emergencyOn,
     emergencyCommitteeLeadMs: Number(env.DUTY_EMERGENCY_COMMITTEE_LEAD_MS || guard.DUTY_EMERGENCY_COMMITTEE_LEAD_MS), seedWaitMs: Number(env.DUTY_SEED_WAIT_MS || guard.DUTY_SEED_WAIT_MS),
     drawSeats: Number(env.DUTY_DRAW_SEATS || 12), dryRank0: env.DUTY_DRY_RANK0 === '1',
-    seatsAgreeOn: async (hash) => agreementOf(hash, await seatChains()), say });
+    seatsAgreeOn: async (hash) => agreementOf(hash, await seatChains()), say,
+    // WHO A DAY MARKER IS FROM (kanban #1168, duty-day.js MARKER): the creator of a series a local seat holds (GET /series) or was announced
+    // (GET /expected), its line's signature checked there; this runner's own creator key and DUTY_CREATORS count beside the day's duty order
+    creatorOf: dutyCreatorOf, creators: [...(CREATOR.creatorSecret ? [toHex(schnorrPub(CREATOR.creatorSecret))] : []),
+      ...String(env.DUTY_CREATORS || '').split(',').map((x) => x.trim()).filter(Boolean)] });
   const look = () => duty.look();
   look(); setInterval(look, 60000);
 }

@@ -6038,6 +6038,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const e = { game: game ? String(game.name) : toHex(t.gameId).slice(0, 16), gameId: toHex(t.gameId), series: id,
       firstWindowMs: Number(t.entryCloseMs - period), firstCloseMs: Number(t.entryCloseMs), lastCloseMs: lastClose, slots: count,
       committeeTimeMs: Number(t.committeeTimeMs), federation: t.federationId ? toHex(t.federationId) : '',
+      // ITS CREATOR, whose signature over the series id was checked above: who a day marker of its publication is from (kanban #1168)
+      creator: t.creatorPubkey instanceof Uint8Array ? toHex(t.creatorPubkey) : null,
       publication: { txid: toHex(Uint8Array.from(tx.txid).reverse()), height: null }, announcedAtMs: Date.now() };
     announced.set(id, e);
     try { round.db.prepare('INSERT INTO expected_grids (series, body, last_close_ms) VALUES (?, ?, ?) ON CONFLICT(series) DO UPDATE SET body = excluded.body, last_close_ms = excluded.last_close_ms').run(id, JSON.stringify(e), lastClose); } catch { /* kept in memory */ }
@@ -7119,7 +7121,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!e || !e.game || !Number.isFinite(Number(e.lastCloseMs)) || Number(e.lastCloseMs) < now) continue;
           out.push({ game: String(e.game), gameId: String(e.gameId || ''), firstWindowMs: String(e.firstWindowMs), firstCloseMs: String(e.firstCloseMs), lastCloseMs: String(e.lastCloseMs),
             slots: Number(e.slots) || 0, committeeTimeMs: String(e.committeeTimeMs), publication: e.publication ? { txid: String(e.publication.txid || ''), height: e.publication.height ?? null } : null,
-            federation: String(e.federation || '') });
+            federation: String(e.federation || ''), series: e.series ? String(e.series) : null, creator: e.creator ? String(e.creator) : null });
         }
         let tip = null; try { tip = typeof chainTip === 'function' ? Number(await chainTip()) : null; } catch { tip = null; }
         return claimJson(200, { nowMs: String(now), tip, expected: out });
@@ -12710,6 +12712,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     };
     duty.attach({ port: http.address().port, host, endpoint: publicEndpoint, heldTemplates: () => series.slice(),
       nameFunded: (idHex) => { if (typeof funded.nameRound === 'function') funded.nameRound(idHex); }, donationSetAt: inForce, nodeKey: round.pubkey,
+      // the creator of a grid announced here (POST /expected, its creator signature checked there) - a day marker's poster (kanban #1168)
+      announcedCreatorOf: (idHex) => { const e = announced.get(String(idHex)); return e && e.creator ? String(e.creator) : null; },
       // a 22 census less its absent (kanban #727)
       lessAbsent: postingLessAbsent });
   };
