@@ -1136,6 +1136,8 @@ const TAG = {
   marketSell: 'ARENA/v1/MarketSell',
   // a seat's word that it did not sign a batch and never will (a batch is void once 5 can no longer be reached)
   marketBatchDecline: 'ARENA/v1/MarketBatchDecline',
+  // a round seat's ask that the others answer whether they signed a batch past its signing window, or decline it (kanban #1167)
+  marketBatchVoidAsk: 'ARENA/v1/MarketBatchVoidAsk',
   // a player's identity key naming its head-to-head entry, and a seat's signed running score of two identities
   matchProof: 'ARENA/v1/MatchProof',
   matchRecord: 'ARENA/v1/MatchRecord',
@@ -34653,6 +34655,17 @@ function batchDeclineId({ roundId, k }) {
   const w = new Writer();
   w.bytes32(roundId); w.u64(k);
   return taggedHash(TAG.marketBatchDecline, w.finish());
+}
+
+/**
+ * A ROUND SEAT'S VOID ASK (kanban #1167): the bytes a seat of the round signs when it asks the others whether they signed batch k, whose
+ * set `batchId` its leader signed - each answers its signature, or declines k for good. A seat answers only that seat's signed ask.
+ */
+function batchVoidAskId({ roundId, k, batchId }) {
+  if (!obIs32(roundId) || typeof k !== 'bigint' || k < 0n || !obIs32(batchId)) throw new Error('a void ask names a 32-byte round, a BigInt batch and the 32-byte set its leader signed');
+  const w = new Writer();
+  w.bytes32(roundId); w.u64(k); w.bytes32(batchId);
+  return taggedHash(TAG.marketBatchVoidAsk, w.finish());
 }
 
 // ---- arena-client/src/market.js
