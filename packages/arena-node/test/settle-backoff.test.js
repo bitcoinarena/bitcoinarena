@@ -4,7 +4,7 @@
 // state clears the wait; rounds no longer waiting drop out.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSettleBackoff } from '../src/settle-backoff.js';
+import { createSettleBackoff, refusedForGood, REFUSAL } from '../src/settle-backoff.js';
 
 test('a refused round waits 10, 20, 40, then 60 s at most; a round never refused is always due', () => {
   let t = 0;
@@ -52,4 +52,14 @@ test("a refusal that cannot change waits up to its own cap: 10, 20, 40, 80 s ...
   const from = t;
   while (!b.due("y")) t += 1000;
   assert.equal(t - from, 60000, "without a cap of its own a round waits 60 s at most");
+});
+
+test('an attested round with no counted entry takes the long wait, by code (#1186)', () => {
+  assert.ok(refusedForGood({ ok: false, code: REFUSAL.NO_COUNTED_ENTRY, why: 'any words' }));
+  for (const code of [REFUSAL.NOTHING_CLAIMED, REFUSAL.NOT_A_SEAT, REFUSAL.NO_ASKER]) assert.equal(refusedForGood({ ok: false, code }), false, code);
+  // THE TEXT DECIDES NOTHING (kanban #1186): the old regex's phrases with no code, and a turn refusal, wait as any other
+  for (const why of ['an attested round with no counted entry: nothing is claimed', 'no lock is claimed: no order filled: nothing is claimed - every lock comes back whole',
+    "not this signer node's turn to combine: this node is not one of the round's signer nodes"]) assert.equal(refusedForGood({ ok: false, why }), false, why);
+  assert.equal(refusedForGood({ ok: false, code: REFUSAL.NOT_MY_TURN, takeoverAt: 158700 }), false);
+  assert.equal(refusedForGood({ ok: true, code: REFUSAL.NO_COUNTED_ENTRY }), false, 'an answer that settled is no refusal');
 });

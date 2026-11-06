@@ -148,7 +148,7 @@ import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
 import { createHalts, wsSessionCount } from './halts.js';
 import { reserveMembersOf } from './reserve-members.js';
-import { createSettleBackoff } from './settle-backoff.js';
+import { createSettleBackoff, refusedForGood, REFUSAL } from './settle-backoff.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
 import { DrawnAttestor } from './drawn-attestor.js';
@@ -800,9 +800,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // settlement silent - the sweep logged only answers with a state, and a plan's refusal carries none)
         if (got && !got.ok && !got.state && got.why) {
           // a closed, attested round with no counted entry has nothing to claim and will not get an entry: its long wait
-          attestedWait.refused(k, /^an attested round with no counted entry/.test(got.why) ? { maxMs: NO_COUNTED_ENTRY_WAIT_MS } : undefined);
-          const takeover = /^not this signer node's turn to combine: .* may take over at height (\d+)/.exec(got.why);
-          if (takeover && st !== 'SUBMITTING') attestedTurnAt.set(k, Number(takeover[1]));
+          // BY THE REFUSAL'S CODE (kanban #1186), never its text
+          attestedWait.refused(k, refusedForGood(got) ? { maxMs: NO_COUNTED_ENTRY_WAIT_MS } : undefined);
+          if (got.code === REFUSAL.NOT_MY_TURN && Number.isInteger(got.takeoverAt) && st !== 'SUBMITTING') attestedTurnAt.set(k, got.takeoverAt);
           const was = attestedWhy.get(k);
           if (was !== got.why) { attestedWhy.set(k, got.why); console.log(`[outcome] ${k.slice(0, 16)} not settled yet: ${got.why}`); }
         } else attestedWait.clear(k);

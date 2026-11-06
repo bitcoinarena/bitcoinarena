@@ -48,6 +48,8 @@ import { resultFinality } from './finality.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
 import { sendPlanToJson, planKey } from './winnings-send.js';
 import { askerOrder, eligibleAsker } from './payout.js';
+import { REFUSAL } from './settle-backoff.js';
+import { RETRY, retryStep, retryBlocks, locksExpired, isFinalRetry } from './settle-retry.js';
 import { LOCK_FATE, lockFateStep, lockFateOf, markLockFate } from './forfeit.js';
 import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate } from './plan-taken.js';
 import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } from './send-plan-ask.js';
@@ -64,7 +66,8 @@ const feeLine = (payouts) => {
 };
 
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).sort().join('|');
-const refuse = (why, status = 409) => ({ ok: false, status, why });
+// `code` (settle-backoff.js REFUSAL, kanban #1186): what a sweep decides by - never the text
+const refuse = (why, status = 409, code = null, more = {}) => ({ ok: false, status, why, ...(code ? { code } : {}), ...more });
 const outpointOf = (s) => { const [txid, idx] = String(s).split(':'); return { txid: fromHex(txid), outIdx: BigInt(idx) }; };
 
 /** How often the backfill tries a recovered round it could not rebuild before it marks it checked. */
@@ -105,7 +108,7 @@ const NO_FEES = { ppm: 0n, baseMsat: 0n };
 export function federationPlans(args, { federationOf, feesOf }) {
   const plan = lockSettlement({ ...args, fees: NO_FEES });
   if (!plan.ok) return { ok: false, why: plan.why };
-  if (plan.nothing) return { ok: false, why: plan.why };
+  if (plan.nothing) return { ok: false, why: plan.why, ...(plan.noFill ? { code: REFUSAL.NOTHING_CLAIMED } : {}) };
   const split = splitByFederation(plan, { roundId: args.roundId, federationOf, feesOf });
   if (!split.ok) return { ok: false, why: split.why };
   return { ok: true, plan, split };
@@ -623,7 +626,7 @@ export class LockSettlement {
         book, { claimPk, held, lockEntry, table }, reserveBps > 0);
     const plan = book(fees);
     if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
-    if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`);
+    if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`, 409, plan.noFill ? REFUSAL.NOTHING_CLAIMED : null);
     return { ok: true, plan, base: { plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry, table };
   }
 
@@ -669,7 +672,7 @@ export class LockSettlement {
     if (!fed.ok) return fed;
     const plan = planWith(NO_FEES);
     if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
-    if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`);
+    if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`, 409, plan.noFill ? REFUSAL.NOTHING_CLAIMED : null);
     // each federation's reserve key, read before the split: the split itself is not async
     const reserveKeys = new Map();
     if (paysReserve && plan.payouts.some((p) => p.reserve)) {
@@ -688,7 +691,7 @@ export class LockSettlement {
       .map(({ entryId, entry }) => ({ entryId: toHex(entryId), pubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat,
         donationMsat: entry.donationMsat, pick: entry.pick, feePreimage: entry.feePreimage, entryIdBytes: entryId,
         ...(entry.frontendPk ? { frontendPk: entry.frontendPk } : {}) }));
-    if (!entries.length) return refuse('an attested round with no counted entry: nothing is claimed');
+    if (!entries.length) return refuse('an attested round with no counted entry: nothing is claimed', 409, REFUSAL.NO_COUNTED_ENTRY);
     // THE TABLE BY THE GAME'S RULE: pari-mutuel on the outcome, or a scalar market's split by its signed value (feature 8)
     let table;
     try { table = attestedTable(a.plugin.manifest, entries, a.finality, a.contract); } catch (e) { return refuse(e.message); }
@@ -731,7 +734,7 @@ export class LockSettlement {
         attested, { claimPk, held, lockEntry, table });
     const plan = attested(fees);
     if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
-    if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`);
+    if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`, 409, plan.noFill ? REFUSAL.NOTHING_CLAIMED : null);
     return { ok: true, plan, base: { plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry, table };
   }
 
@@ -763,7 +766,7 @@ export class LockSettlement {
           }
         }
       }
-      return refuse(`not this signer node's turn to combine: ${t.why}`, 409);
+      return refuse(`not this signer node's turn to combine: ${t.why}`, 409, t.code || REFUSAL.NOT_MY_TURN, Number.isInteger(t.takeoverAt) ? { takeoverAt: t.takeoverAt } : {});
     }
     // THE LATE SEND PLANS FIRST, as for the round's own settlement: proposed here, checked by every peer, or nothing.
     if (this.winnings && !(kept && kept.state === SUBMITTING)) {
@@ -1019,7 +1022,7 @@ export class LockSettlement {
       donationSet: ds && ds.ok ? ds.set : null, ...this.roundFees(contract) };
     let plan = lockSettlement(args);
     if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
-    if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`);
+    if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`, 409, plan.noFill ? REFUSAL.NOTHING_CLAIMED : null);
     const base = { plan, entryOf: lockEntry };
     // THE PLAN THAT IS SIGNED pays every addressed qualifier by its accepted send - never by a contract its key moves.
     if (withSends && plan.payouts.some((p) => p.kind === 'qualifier' || p.kind === 'donation')) {
@@ -1353,8 +1356,24 @@ export class LockSettlement {
     try {
       const now = Number(this.now());
       for (const k of this.#retriedAt.keys()) if (now - this.#retriedAt.get(k).at > windowMs) this.#retriedAt.delete(k);
-      for (const rid of this.round.closedLockRoundsUnsettled(now - windowMs, now - ageMs)) {
+      // THE CHAIN TIP DECIDES HOW FAR BACK (kanban #1186): with a tip, every closed lock round not SETTLED or EXPIRED here, however old - a round is let
+      // go only when its locks are past expiry; without one, the last day as before
+      let tip = null;
+      try { tip = this.turnClock && this.turnClock.tip ? await this.turnClock.tip() : null; } catch { tip = null; }
+      if (!Number.isInteger(tip)) tip = null;
+      const persisted = typeof this.round.settleRetry === 'function';
+      for (const rid of this.round.closedLockRoundsUnsettled(tip !== null && persisted ? 0 : now - windowMs, now - ageMs)) {
         const k = toHex(rid);
+        const row = persisted ? this.round.settleRetry(rid, '') : null;
+        if (row && isFinalRetry(row.state)) continue;
+        // EVERY LOCK PAST EXPIRY: nothing can be claimed, each lock is its player's again - EXPIRED, never asked again
+        const gone = persisted && typeof this.round.lastLockExpiration === 'function' ? locksExpired(this.round.lastLockExpiration(rid), tip) : null;
+        if (gone) {
+          if (this.#retryMove(rid, row, { state: RETRY.EXPIRED, tries: row ? row.tries : 0, why: `every stake lock of the round is past its expiration at height ${tip}: nothing is claimed, each returns to its player` }))
+            out.push({ round: k, ok: false, state: RETRY.EXPIRED, why: 'every stake lock past its expiration: not asked again' });
+          continue;
+        }
+        if (row && row.nextAtHeight !== null && tip !== null && tip < row.nextAtHeight) continue;
         const was = this.#retriedAt.get(k);
         if (was && now - was.at < everyMs) continue;
         const seats = this.round.signerNodes(rid);
@@ -1364,12 +1383,24 @@ export class LockSettlement {
         const got = await this.settle(rid).catch((e) => ({ ok: false, why: e.message }));
         const why = String(got.why || '');
         this.#retriedAt.set(k, { at: now, why });
+        const settled = got.state === ACCEPTED || (typeof this.round.lockSettlement === 'function' && (this.round.lockSettlement(rid) || {}).state === ACCEPTED);
+        const tries = (row ? row.tries : 0) + 1;
+        this.#retryMove(rid, row, settled ? { state: RETRY.SETTLED, tries, why: why || 'ACCEPTED' }
+          : { state: RETRY.WAITING, tries, nextAtHeight: tip === null ? null : tip + retryBlocks(tries), why: why || 'not settled' });
         if (got.ok || !was || was.why !== why) out.push({ round: k, ok: !!got.ok, state: got.state || null, why });
       }
     } finally { this.#retrying = false; }
     return out;
   }
   #retrying = false;
+
+  /** A retry row moved through settle-retry.js retryStep, compare-and-set on the state it was read in (kanban #1186). True if it moved. */
+  #retryMove(rid, row, next) {
+    if (typeof this.round.putSettleRetry !== 'function') return true;
+    const st = retryStep(row ? row.state : null, next.state);
+    if (!st.ok) { console.log(`#1186 [settle] ${toHex(rid).slice(0, 16)} retry not moved: ${st.why}`); return false; }
+    return this.round.putSettleRetry({ roundId: rid, scope: '', from: row ? row.state : null, ...next });
+  }
   #retriedAt = new Map();   // round id hex -> { at, why } of its last ask (retryUnsettled)
 
   /**
@@ -1433,7 +1464,7 @@ export class LockSettlement {
       const t = await this.turn(roundIdBytes);
       if (!t.mine) {
         if (kept && kept.state === SUBMITTING) this.confirmSoon(roundIdBytes);
-        return refuse(`not this signer node's turn to combine: ${t.why}`, 409);
+        return refuse(`not this signer node's turn to combine: ${t.why}`, 409, t.code || REFUSAL.NOT_MY_TURN, Number.isInteger(t.takeoverAt) ? { takeoverAt: t.takeoverAt } : {});
       }
     }
     // THE SEND PLANS, before anything is rebuilt: proposed here, checked by every peer, or no settlement. After the
@@ -1543,7 +1574,7 @@ export class LockSettlement {
     if (!got.ok) return got;
     if (this.winnings) {
       const t = await this.turn(roundIdBytes);
-      if (!t.mine) return refuse(`not this signer node's turn to combine: ${t.why}`, 409);
+      if (!t.mine) return refuse(`not this signer node's turn to combine: ${t.why}`, 409, t.code || REFUSAL.NOT_MY_TURN, Number.isInteger(t.takeoverAt) ? { takeoverAt: t.takeoverAt } : {});
     }
     this.keepFederationMoves(roundIdBytes, got);
     const results = [];
@@ -1888,9 +1919,9 @@ export class LockSettlement {
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     const nodes = [...contract.nodes].sort((a, b) => (toHex(a) < toHex(b) ? -1 : 1));
     const ring = askerOrder(roundIdBytes, nodes);
-    if (!ring.ok) return { mine: false, why: ring.why };
+    if (!ring.ok) return { mine: false, why: ring.why, code: REFUSAL.NO_ASKER };
     const place = ring.order.findIndex((k) => toHex(k) === toHex(this.round.pubkey));
-    if (place < 0) return { mine: false, place, why: 'this node is not one of the round\'s signer nodes' };
+    if (place < 0) return { mine: false, place, why: 'this node is not one of the round\'s signer nodes', code: REFUSAL.NOT_A_SEAT };
     if (place === 0) return { mine: true, place, why: 'this node is the round\'s asker' };
     const clock = this.turnClock;
     let beacon = null; let tip = null;
@@ -1901,7 +1932,7 @@ export class LockSettlement {
     const e = eligibleAsker({ roundId: roundIdBytes, signerNodes: nodes, beaconHeight: beacon, tipHeight: tip });
     if (!e.ok) return { mine: false, place, why: e.why };
     return place < e.allowed.length ? { mine: true, place, why: `this node takes over at ${tip}, ${e.advanced} block(s) past the beacon` }
-      : { mine: false, place, why: `this node is ${place} of ${ring.order.length} in the asker order and may take over at height ${beacon + place * 2}; the chain is at ${tip}` };
+      : { mine: false, place, takeoverAt: beacon + place * 2, why: `this node is ${place} of ${ring.order.length} in the asker order and may take over at height ${beacon + place * 2}; the chain is at ${tip}` };
   }
 
   /** A SIGNATURE THIS SIGNER NODE WAS HANDED, checked against the federation every 2 s until it is in, a bounded while. */
