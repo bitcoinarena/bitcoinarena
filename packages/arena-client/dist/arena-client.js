@@ -29422,72 +29422,242 @@ function entryWarnings(contract, fromSeats = []) {
 /** The sentences a page shows for the codes. */
 const warningsSay = (codes) => (codes || []).map((k) => WARNING_SAYS[k]).filter(Boolean);
 
+// ---- arena-protocol/src/arbitration-event.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// AN EVENT OF THE ARBITRATION SET, CHECKED (kanban #723; kanban #1148): the bytes the set's members sign and the check that k of them did -
+// shared by the seats (arena-node arbitration-events.js keeps and hands them on) and the page (arena-client liquidation-claim.js acts on a
+// liquidation only when its event stands). One copy, so a seat and a browser can never read the same event differently.
+
+
+const EVENT_KINDS = ['liquidation', 'slash'];
+const EVENT_SUBJECT_HEX = /^[0-9a-f]{64}$/;
+const MAX_EVENT_BYTES = 512 * 1024;
+
+/** JSON with every object's keys in order: the bytes the members sign are the same on every machine. */
+function canonicalJson(v) {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v === undefined ? null : typeof v === 'bigint' ? String(v) : v);
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(',')}]`;
+  return `{${Object.keys(v).filter((k) => v[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(v[k])}`).join(',')}}`;
+}
+const eventMessage = (event) => taggedHash('BLWP/v1/ArbitrationEvent', new TextEncoder().encode(canonicalJson(event)));
+const subjectOf = (event) => (event && event.kind === 'slash' ? event.proof : event ? event.federation : null);
+const eventKey = (event) => `${event.kind}:${subjectOf(event)}`;
+
+const arbitrationKeyHex = (x) => (typeof x === 'string' ? x.toLowerCase() : Array.from(x, (b) => b.toString(16).padStart(2, '0')).join(''));
+
+/** Does a published event stand: its shape, and k valid signatures of distinct members of `keys` over it? */
+function eventStands(said, { keys, k, verify }) {
+  const e = said && said.event;
+  if (!e || typeof e !== 'object' || !EVENT_KINDS.includes(e.kind)) return { ok: false, why: `an event is one of ${EVENT_KINDS.join(', ')}` };
+  if (!EVENT_SUBJECT_HEX.test(String(subjectOf(e) || ''))) return { ok: false, why: e.kind === 'slash' ? 'a slash names its proof (64 hex)' : 'a liquidation names its federation (64 hex)' };
+  if (!Number.isFinite(e.atMs) || !Number.isFinite(e.firstMs)) return { ok: false, why: 'an event says when it was first made and last changed (firstMs, atMs)' };
+  if (canonicalJson(e).length > MAX_EVENT_BYTES) return { ok: false, why: 'that event is too large' };
+  if (!Number.isInteger(k) || k < 1) return { ok: false, why: 'no arbitration threshold is known for this chain' };
+  const members = new Set((keys || []).map(arbitrationKeyHex));
+  const msg = eventMessage(e);
+  const good = new Set();
+  for (const s of Array.isArray(said.signatures) ? said.signatures : []) {
+    const key = String((s && s.key) || '').toLowerCase();
+    if (!members.has(key) || good.has(key) || !/^[0-9a-f]{128}$/.test(String(s.sig || ''))) continue;
+    let ok = false;
+    try { ok = verify(fromHex(s.sig), msg, fromHex(key)); } catch { ok = false; }
+    if (ok) good.add(key);
+  }
+  if (good.size < k) return { ok: false, why: `${good.size} valid signatures of the arbitration set, and an event needs ${k}` };
+  return { ok: true, signers: good.size };
+}
+
+/** A claims door the set may name: an https URL (http only on regtest, whose set runs on a private machine). */
+function doorOk(door, network) {
+  let u;
+  try { u = new URL(String(door)); } catch { return false; }
+  return u.protocol === 'https:' || (network === 'regtest' && u.protocol === 'http:');
+}
+
+/**
+ * THE LIQUIDATION A BROWSER MAY ACT ON (kanban #1148): of `events` (the { event, signatures } rows any seat lists at GET /liquidations), the
+ * newest liquidation of `federation` on `network` that k of the arbitration set's `keys` signed, that names the set's claims door (`door`)
+ * and its halt height. Its claim window comes from that signed halt height and the network's pinned clocks - never from a seat's word.
+ * Answers { ok, event, door, window: { opens, closes } } or { ok: false, why }. A seat can withhold an event; it cannot make one.
+ */
+function standingLiquidation({ events, federation, network, keys, k, verify }) {
+  const fid = String(federation || '').toLowerCase();
+  const mine = (Array.isArray(events) ? events : []).filter((r) => r && r.event && r.event.kind === 'liquidation' && String(r.event.federation || '').toLowerCase() === fid)
+    .sort((a, b) => Number(b.event.atMs) - Number(a.event.atMs));
+  if (!mine.length) return { ok: false, why: 'the arbitration set has published no liquidation of that federation' };
+  let why = null;
+  for (const r of mine) {
+    const st = eventStands(r, { keys, k, verify });
+    if (!st.ok) { why = why || st.why; continue; }
+    const e = r.event;
+    if (e.network !== network) { why = why || `that liquidation is of ${e.network}, and this page runs on ${network}`; continue; }
+    if (!doorOk(e.door, network)) { why = why || 'the signed liquidation names no claims door of the arbitration set'; continue; }
+    const h = e.halt && e.halt.height;
+    const c = clocksFor(network);
+    if (!c.ok) return { ok: false, why: c.why };
+    const when = liquidationSchedule({ haltHeight: h, clocks: c.clocks });
+    if (!when.ok) { why = why || `the signed liquidation names no halt height: ${when.why}`; continue; }
+    return { ok: true, event: e, signers: st.signers, door: String(e.door).replace(/\/+$/, '').replace(/\/liquidation-claims$/, ''),
+      // the last height a claim is still paid at: the late-claim tail where a line has one (1.9: halt + drain_blocks), else the close
+      window: { opens: when.claimWindowOpens, closes: Number.isInteger(when.lateClaimsUntil) ? when.lateClaimsUntil : when.claimWindowCloses } };
+  }
+  return { ok: false, why };
+}
+
+/** The claims the set's signed event lists as accepted for `payoutPk` (64 hex): what makes a kept claim taken. */
+const acceptedFor = (event, payoutPk) => ((event && event.claims && Array.isArray(event.claims.accepted)) ? event.claims.accepted : [])
+  .filter((c) => String(c && c.payoutPk || '').toLowerCase() === String(payoutPk || '').toLowerCase());
+
 // ---- arena-client/src/liquidation-claim.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CLIENT PRESENTS ITS NOTES TO A LIQUIDATION (spec §23A.5 step 2): "The client does the rest on its own: on
 // every start it presents each unspent note it holds for that federation, as it would present them to the federation itself."
 //
-// For each federation a seat lists at GET /liquidations whose claim window is open and that names where claims go, and that this
-// browser holds a wallet in: the whole wallet as out-of-band e-cash (the lock client's sendAllEcash - the notes leave the wallet),
-// presented with the player's payout key. The e-cash is written to storage BEFORE it is presented and removed only once the
-// arbitration set took it, so a closed tab or a refused post loses nothing: the next start presents the same string again,
-// and notes claimed before are named, not lost.
+// ONLY TO A LIQUIDATION THE ARBITRATION SET SIGNED, AT THE DOOR IT SIGNED (kanban #1148, the 2026-11-06 state-machine audit): it took the
+// list and its `claims` URL from the first seat that answered, never passed the chain tip, and deleted the kept notes on a refusal's
+// wording - so one seat listing { federation: <the player's>, claims: "https://attacker" } emptied the wallet into bearer e-cash posted there.
+// Now a federation is acted on only when k of the chain's arbitration keys signed its liquidation event (arbitration-event.js
+// standingLiquidation), the notes go only to the door that event names, the claim window is the signed halt height on the network's pinned
+// clocks against the tip the page read, and a kept claim is TAKEN only when a later signed event lists this seed's payout key as accepted.
+//
+// ONE CLAIM, ONE RECORD, ONE TRANSITION FUNCTION (claimStep). Each state is written (putRoomy) before the step that cannot be undone:
+//   none --(the intent written)--> intent --(sendAllEcash, the notes written)--> kept --(posted at the signed door, it answered ok)--> posted
+//   intent --(the wallet held nothing / could not hand over)--> none;  kept|posted --(a signed event lists this payout key accepted)--> none
+// A record that cannot be written stops the claim before the wallet is touched. Notes handed over that then cannot be written are taken
+// back into the wallet (receiveEcash); a halted federation that cannot take them back has them presented at the signed door at once.
+
+
+
 const LIQUIDATION_ECASH_PREFIX = 'arena-liquidation-ecash-';   // the arena- names: was blwp- (moved once by movedKey, kanban #522)
 const pendingClaimKey = (fid) => `${LIQUIDATION_ECASH_PREFIX}${String(fid).toLowerCase()}`;
+const CLAIM_STATES = Object.freeze({ NONE: 'none', INTENT: 'intent', KEPT: 'kept', POSTED: 'posted' });
+const CLAIM_EDGES = Object.freeze({ none: ['intent', 'kept'], intent: ['kept', 'none'], kept: ['posted', 'none'], posted: ['posted', 'none'] });
+const REPOST_MS = 3600000;   // a posted claim not yet listed by the set is presented again at most hourly (the door answers "claimed before")
+
+/** THE ONE TRANSITION: `rec` (or null) to state `to` with `patch`; null for none. Throws for a step the claim does not take. */
+function claimStep(rec, to, patch = {}) {
+  const from = rec && rec.state ? rec.state : 'none';
+  if (!(CLAIM_EDGES[from] || []).includes(to)) throw new Error(`a liquidation claim goes ${from} -> ${(CLAIM_EDGES[from] || []).join(' | ')}, not -> ${to}`);
+  return to === 'none' ? null : { v: 2, ...(rec || {}), ...patch, state: to };
+}
+
+/** A kept record: v2 JSON, or the notes string an older page kept (read as kept). */
+function readClaim(storage, key) {
+  const raw = storage.getItem(movedKey(storage, key));
+  if (!raw) return null;
+  if (raw.startsWith('{')) { try { const r = JSON.parse(raw); if (r && r.v === 2 && r.state) return r; } catch { /* the older form */ } }
+  return { v: 2, state: 'kept', ecash: raw, legacy: true };
+}
+const writeClaim = (storage, key, rec, put) => (rec === null ? storage.removeItem(key) : put(storage, key, JSON.stringify(rec)));
 
 /**
- * `liquidations`: a seat's GET /liquidations entries; `held`: federation ids hex this browser holds a wallet in (ledgerFederations);
- * `walletFor(fid)`: the open lock client of that federation (with sendAllEcash); `payoutPk`: 64 hex, the key the claim is paid
- * to; `height`: the chain tip the page read; `storage`: getItem/setItem/removeItem. Answers one row per federation acted on.
+ * `events`: the arbitration set's { event, signatures } rows a seat lists at GET /liquidations (any seat: it can withhold, not forge);
+ * `network` the page's chain; `arbitration` { keys, k } the chain's arbitration set (committee.js BOND_TERMS); `held`: federation ids hex
+ * this browser holds a wallet in; `walletFor(fid)`: the open lock client of that federation (sendAllEcash, receiveEcash, pendingOutputs);
+ * `payoutPk`: the claim key hex (02/03 and x, or x), or `payoutPkFor(fid)`; `height`: the chain tip the page read - none, and nothing is handed over;
+ * `storage`: getItem/setItem/removeItem; `verify(sig, msg, key)` the page's schnorr check (window.ARENA_CURVE.verify - this client carries no
+ * crypto). `liquidations` (a seat's own list) is no longer read. Answers one row per federation acted on.
  */
-async function presentNotes({ liquidations, held, walletFor, payoutPk, height, storage, fetcher = fetch }) {
+async function presentNotes({ events, network, arbitration = BOND_TERMS[network], verify, held, walletFor, payoutPk = null,
+  payoutPkFor = null, height, storage, fetcher = fetch, put = putRoomy, nowMs = Date.now() }) {
   const out = [];
-  const mine = new Set((held || []).map((f) => String(f).toLowerCase()));
-  for (const l of liquidations || []) {
-    const fid = String(l.federation || '').toLowerCase();
-    if (!mine.has(fid) || !l.claims) continue;
-    if (Number.isInteger(height) && (height < l.liquidatesAt || height > l.lateClaimsUntil)) { out.push({ federation: fid, ok: false, why: height < l.liquidatesAt ? `claims open at ${l.liquidatesAt}` : 'the claims closed' }); continue; }
-    // THE NOTES (a wallet with none, or one that could not hand them over, still presents its pending outputs below)
-    let ecash = storage.getItem(movedKey(storage, pendingClaimKey(fid)));
-    if (!ecash) {
-      let sent = null;
-      try { sent = JSON.parse(await (await walletFor(fid)).sendAllEcash()); } catch (e) { out.push({ federation: fid, ok: false, why: `the wallet could not hand over its notes: ${e.message}` }); }
-      if (sent && !sent.ecash) out.push({ federation: fid, ok: true, nothing: true, why: 'this wallet holds no note of that federation' });
-      if (sent && sent.ecash) { ecash = sent.ecash; storage.setItem(pendingClaimKey(fid), ecash); }   // kept before it leaves the page
-    }
-    if (ecash) {
-      try {
-        const r = await fetcher(String(l.claims).replace(/\/+$/, '').replace(/\/liquidation-claims$/, '') + '/liquidation-claims',
-          { method: 'POST', body: JSON.stringify({ federation: fid, ecash, payoutPk }), signal: AbortSignal.timeout(30000) });
-        const j = await r.json().catch(() => ({}));
-        const taken = r.ok || (Array.isArray(j.refused) && j.refused.length && j.refused.every((x) => /claimed before|spent set/.test(x.why)));
-        if (taken) storage.removeItem(pendingClaimKey(fid));
-        out.push({ federation: fid, ok: !!r.ok, accepted: j.accepted || [], refused: j.refused || [], inWindow: j.inWindow, why: j.why || null, kept: !taken });
-      } catch (e) { out.push({ federation: fid, ok: false, why: e.message, kept: true }); }
-    }
-    // AND THE OUTPUTS STILL IN ISSUANCE AT THE HALT (spec §23A.5 "Notes still in issuance at the halt", RULED 2026-10-14): what was
-    // issued to this seed and never signed - the lock client's pendingOutputs, read from one answering guardian - presented by
-    // their issuance requests. Kept like the e-cash until the arbitration set took them; claimed before counts as taken.
-    try {
-      const w = await walletFor(fid);
-      let reqs = JSON.parse(storage.getItem(movedKey(storage, pendingRequestsKey(fid))) || 'null');
-      if (!reqs && w && typeof w.pendingOutputs === 'function') {
-        reqs = (JSON.parse(await w.pendingOutputs()) || []).map((x) => x.request).filter(Boolean);
-        if (reqs.length) storage.setItem(pendingRequestsKey(fid), JSON.stringify(reqs));
+  if (typeof verify !== 'function') return [{ ok: false, why: 'nothing handed over: no signature check was given to read the arbitration set with' }];
+  const mine = [...new Set((held || []).map((f) => String(f).toLowerCase()))];
+  const listed = [...new Set((events || []).filter((r) => r && r.event && r.event.kind === 'liquidation').map((r) => String(r.event.federation || '').toLowerCase()))];
+  for (const fid of mine.filter((f) => listed.includes(f))) {
+    const st = standingLiquidation({ events, federation: fid, network, keys: arbitration && arbitration.keys, k: arbitration && arbitration.k, verify });
+    if (!st.ok) { out.push({ federation: fid, ok: false, why: `nothing handed over: ${st.why}` }); continue; }
+    const pk = String(payoutPkFor ? payoutPkFor(fid) : payoutPk || '').toLowerCase();
+    if (!/^(0[23])?[0-9a-f]{64}$/.test(pk)) { out.push({ federation: fid, ok: false, why: 'no payout key to claim to' }); continue; }
+    const door = st.door + '/liquidation-claims';
+    const taken = acceptedFor(st.event, pk).length > 0;
+    const step = (key, rec, to, patch) => { const next = claimStep(rec, to, patch); writeClaim(storage, key, next, put); return next; };
+
+    // THE NOTES
+    const eKey = pendingClaimKey(fid);
+    let rec = readClaim(storage, eKey);
+    if (rec && rec.state !== 'intent' && taken) { step(eKey, rec, 'none'); out.push({ federation: fid, ok: true, taken: true, why: 'the arbitration set lists this claim as accepted' }); rec = undefined; }
+    if (rec !== undefined) {
+      const inWindow = Number.isInteger(height) && height >= st.window.opens && height <= st.window.closes;
+      if (!Number.isInteger(height)) out.push({ federation: fid, ok: false, why: 'the chain tip is not known: nothing is handed over', kept: !!rec });
+      else if (!inWindow && !rec) out.push({ federation: fid, ok: false, why: height < st.window.opens ? `claims open at ${st.window.opens}` : 'the claims closed' });
+      else {
+        // an intent left by a tab closed during the hand-over: what the wallet still holds is handed over again below
+        if (rec && rec.state === 'intent') { rec = step(eKey, rec, 'none'); out.push({ federation: fid, ok: false, why: 'an earlier hand-over did not finish; the wallet hands over what it still holds' }); }
+        if (!rec && inWindow) {
+          let wrote = false;
+          try { rec = step(eKey, null, 'intent', { door: st.door, atMs: nowMs }); wrote = true; }
+          catch (e) { out.push({ federation: fid, ok: false, why: `nothing handed over: this browser could not write the claim first (${e.message})` }); }
+          if (wrote) {
+            let sent = null, w = null;
+            try { w = await walletFor(fid); sent = JSON.parse(await w.sendAllEcash()); }
+            catch (e) { rec = step(eKey, rec, 'none'); out.push({ federation: fid, ok: false, why: `the wallet could not hand over its notes: ${e.message}` }); }
+            if (sent && !sent.ecash) { rec = step(eKey, rec, 'none'); out.push({ federation: fid, ok: true, nothing: true, why: 'this wallet holds no note of that federation' }); }
+            if (sent && sent.ecash) {
+              try { rec = step(eKey, rec, 'kept', { ecash: sent.ecash }); }
+              catch (e) {
+                // THE NOTES LEFT THE WALLET AND CANNOT BE WRITTEN: back into the wallet, or - a halted federation - at the signed door now
+                let back = false;
+                try { if (w && typeof w.receiveEcash === 'function') { await w.receiveEcash(sent.ecash); back = true; } } catch { back = false; }
+                if (back) { try { storage.removeItem(eKey); } catch { /* the intent stays: the next start finds the wallet holding them */ } out.push({ federation: fid, ok: false, why: `this browser could not keep the notes (${e.message}); they are back in the wallet` }); rec = null; }
+                else rec = { v: 2, state: 'kept', ecash: sent.ecash, memoryOnly: true };
+              }
+            }
+          }
+        }
+        if (rec && (rec.state === 'kept' || (rec.state === 'posted' && nowMs - Number(rec.postedAtMs || 0) >= REPOST_MS))) {
+          try {
+            const r = await fetcher(door, { method: 'POST', body: JSON.stringify({ federation: fid, ecash: rec.ecash, payoutPk: pk }), signal: AbortSignal.timeout(30000) });
+            const j = await r.json().catch(() => ({}));
+            if (r.ok && !rec.memoryOnly) rec = step(eKey, rec, 'posted', { door: st.door, postedAtMs: nowMs });
+            out.push({ federation: fid, ok: !!r.ok, accepted: j.accepted || [], refused: j.refused || [], inWindow: j.inWindow, why: j.why || null, kept: !rec.memoryOnly, door: st.door, ...(rec.memoryOnly ? { memoryOnly: true } : {}) });
+          } catch (e) { out.push({ federation: fid, ok: false, why: e.message, kept: !rec.memoryOnly, door: st.door }); }
+        } else if (rec && rec.state === 'posted') out.push({ federation: fid, ok: true, posted: true, kept: true, why: 'presented; waiting for the arbitration set to list it', door: st.door });
       }
-      if (Array.isArray(reqs) && reqs.length) {
-        const r = await fetcher(String(l.claims).replace(/\/+$/, '').replace(/\/liquidation-claims$/, '') + '/liquidation-claims',
-          { method: 'POST', body: JSON.stringify({ federation: fid, pending: reqs, payoutPk }), signal: AbortSignal.timeout(60000) });
-        const j = await r.json().catch(() => ({}));
-        const taken = r.ok || (Array.isArray(j.refused) && j.refused.length && j.refused.every((x) => /claimed before|spent set|not in the issued set/.test(x.why)));
-        if (taken) storage.removeItem(pendingRequestsKey(fid));
-        out.push({ federation: fid, pending: true, ok: !!r.ok, accepted: j.accepted || [], refused: j.refused || [], why: j.why || null, kept: !taken });
+    }
+
+    // AND THE OUTPUTS STILL IN ISSUANCE AT THE HALT (spec §23A.5 "Notes still in issuance at the halt", RULED 2026-10-14): what was issued to this
+    // seed and never signed - the lock client's pendingOutputs - presented by their issuance requests, at the same signed door, kept the same way
+    try {
+      const pKey = pendingRequestsKey(fid);
+      let prec = null;
+      const raw = storage.getItem(movedKey(storage, pKey));
+      if (raw) { try { const j = JSON.parse(raw); prec = Array.isArray(j) ? { v: 2, state: 'kept', reqs: j } : (j && j.v === 2 ? j : null); } catch { prec = null; } }
+      if (prec && taken) { step(pKey, prec, 'none'); prec = undefined; }
+      if (prec !== undefined && Number.isInteger(height) && height >= st.window.opens && height <= st.window.closes) {
+        if (!prec) {
+          const w = await walletFor(fid);
+          const reqs = w && typeof w.pendingOutputs === 'function' ? (JSON.parse(await w.pendingOutputs()) || []).map((x) => x.request).filter(Boolean) : [];
+          if (reqs.length) prec = step(pKey, null, 'kept', { reqs, door: st.door });
+        }
+        if (prec && (prec.state === 'kept' || (prec.state === 'posted' && nowMs - Number(prec.postedAtMs || 0) >= REPOST_MS))) {
+          const r = await fetcher(door, { method: 'POST', body: JSON.stringify({ federation: fid, pending: prec.reqs, payoutPk: pk }), signal: AbortSignal.timeout(60000) });
+          const j = await r.json().catch(() => ({}));
+          if (r.ok) prec = step(pKey, prec, 'posted', { door: st.door, postedAtMs: nowMs });
+          out.push({ federation: fid, pending: true, ok: !!r.ok, accepted: j.accepted || [], refused: j.refused || [], why: j.why || null, kept: true, door: st.door });
+        }
       }
     } catch (e) { out.push({ federation: fid, pending: true, ok: false, why: e.message }); }
   }
   return out;
 }
+/**
+ * THE ARBITRATION SET'S CLAIMS DOORS (kanban #1148): one per liquidation of `network` whose signed event stands - where this seed's payouts
+ * are listed (GET /liquidation-payouts). A seat's `claims` field is not read: it is that seat operator's word.
+ */
+function liquidationDoors({ events, network, arbitration = BOND_TERMS[network], verify }) {
+  if (typeof verify !== 'function') return [];
+  const fids = [...new Set((events || []).filter((r) => r && r.event && r.event.kind === 'liquidation').map((r) => String(r.event.federation || '').toLowerCase()))];
+  const doors = new Set();
+  for (const fid of fids) {
+    const st = standingLiquidation({ events, federation: fid, network, keys: arbitration && arbitration.keys, k: arbitration && arbitration.k, verify });
+    if (st.ok) doors.add(st.door);
+  }
+  return [...doors];
+}
+
 const pendingRequestsKey = (fid) => `arena-liquidation-pending-${String(fid).toLowerCase()}`;
 
 // THE KEY A CLAIM IS PAID TO: one per federation, from the player's seed alone (the derivation of a round's player key over a
@@ -35817,7 +35987,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
          lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, roundAttestors: roundAttestors, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, movePlayerWallet: movePlayerWallet, moveCanMsat: moveCanMsat, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, rememberedInvite: rememberedInvite, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyRowOffered: lobbyRowOffered, lobbyRowNotOffered: lobbyRowNotOffered, unplayableWindowLine: unplayableWindowLine, fetchKeylessFederations: fetchKeylessFederations, keylessFundsLine: keylessFundsLine, gatewayUrlsOfView: gatewayUrlsOfView, settledWords: settledWords, onStorageFull: onStorageFull, inactiveFederations: inactiveFederations, nextRoundLine: nextRoundLine, inHoursMinutes: inHoursMinutes, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
-         presentNotes: presentNotes, liquidationKeyFor: liquidationKeyFor, collectLiquidationPayouts: collectLiquidationPayouts, roundVerdict: roundVerdict, secureTranscript: secureTranscript,
+         presentNotes: presentNotes, liquidationKeyFor: liquidationKeyFor, collectLiquidationPayouts: collectLiquidationPayouts, liquidationDoors: liquidationDoors, claimStep: claimStep, roundVerdict: roundVerdict, secureTranscript: secureTranscript,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,
          dailyLobbySearch: dailyLobbySearch,
