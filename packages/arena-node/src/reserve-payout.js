@@ -76,8 +76,9 @@ const refuse = (why, status = 422) => ({ ok: false, status, why });
 const utf8 = (s) => new TextEncoder().encode(s);
 const PLAN_KEYS = ['proposal', 'federation', 'reserveKey', 'lnurl', 'amountSats', 'invoiceMsat', 'contractMsat', 'changeMsat', 'refunds', 'invoice',
   'paymentHash', 'gatewayUrl', 'gatewayPk', 'expiration', 'nonce', 'kind', 'to', 'toKey', 'contractHex', 'decidableAt', 'seedTag'];
-/** A plan's id: the tagged hash of its fields in one order - what a second plan for the same proposal is told apart by. */
-export const planIdOf = (plan) => toHex(taggedHash('ARENA/v1/ReservePayoutPlan', utf8(JSON.stringify(PLAN_KEYS.map((k) => plan[k])))));
+/** A plan's id: the tagged hash of its fields in one order - what a second plan for the same proposal is told apart by. A leaderboard
+ *  plan's id names its winners list too (kanban #1153: `winnersId`, leaderboard-freeze.js winnersIdOf), so two lists are two plans. */
+export const planIdOf = (plan) => toHex(taggedHash('ARENA/v1/ReservePayoutPlan', utf8(JSON.stringify([...PLAN_KEYS, ...(plan && plan.kind === 'leaderboard' ? ['winnersId'] : [])].map((k) => plan[k])))));
 /** The transaction nonce, the proposal's own: every signer rebuilds the same transaction. 8 bytes, a federation transaction's
  *  nonce (kanban #326, measured 2026-10-22 on second-host seat 4: the 32-byte hash was refused, "--nonce is 8 bytes", so no move could start). */
 export const payoutNonce = (proposalHex, kind = 'pay') => taggedHash('ARENA/v1/ReservePayoutNonce', utf8(`${kind}:${proposalHex}`)).subarray(0, 8);
@@ -125,10 +126,14 @@ export function moveAmountSats(inputs, gwFee, fees) {
  * verifiedMs }] under that federation's reserve key; `portOf(fedHex)`; `payRequest(lnurl, msat)` and `invoiceFor(lnurl, msat)` as
  * winnings-send.js; `network`; `keepRow(row)` a reserve row to keep (putDonationOutputs' shape); `broadcast(record)` to every seat.
  */
-// `leaderboards()` -> [{ id, federation (hex), amountSats, paymentHeight, decidableAt }] the leaderboard payouts whose vote passed here
-//; `winnersOf(id)` -> { ok, winners: [{ player, payoutPk (33-byte hex), msat }] } this seat's own reading of the season
+// `leaderboards()` -> [{ id, federation (hex), amountSats, paymentHeight, decidableAt }] the leaderboard payouts whose vote passed here;
+// `winners` the seat's winners book (leaderboard-freeze.js createWinnersBook, kanban #1153): its own frozen read of the season's SIGNED
+// accounts, the list a plan carries checked against it, and that list persisted before this seat commits. A guardian peer's `winners(id)`
+// is its GET /leaderboard-winners. With no book a leaderboard payout is never planned or signed.
+const NO_WINNERS = { freeze: async () => ({ ok: false, why: 'this seat keeps no winners book' }), union: async () => ({ ok: false, why: 'this seat keeps no winners book' }),
+  check: async () => ({ ok: false, status: 503, why: 'this seat keeps no winners book' }), plan: () => ({ ok: false, status: 503, why: 'this seat keeps no winners book' }) };
 export function createReservePayouts({ db, me, curve, random, passed, guardians, reserveRows, portOf, payRequest, invoiceFor, network = 'testnet',
-  keepRow = () => {}, broadcast = () => {}, log = () => {}, now = () => Date.now(), moves = () => [], leaderboards = () => [], winnersOf = async () => ({ ok: false, why: 'no season reader' }) }) {
+  keepRow = () => {}, broadcast = () => {}, log = () => {}, now = () => Date.now(), moves = () => [], leaderboards = () => [], winners: winnersBook = NO_WINNERS }) {
   db.exec(RESERVE_PAYOUT_SQL);
   // A MOVE'S CLAIM (the drained-federation move): the destination's claim transaction and what it put under its reserve key
   for (const col of ['claim_txid', 'claim_msat']) if (!db.prepare('PRAGMA table_info(reserve_payouts)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE reserve_payouts ADD COLUMN ${col} TEXT`);
@@ -222,9 +227,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
    */
   // `late`: a record past PLANNED (the federation accepted it, five signers agreed) - its structure is checked, not the invoice's
   // window, which has moved on since
-  async function planStands(plan, { late = false } = {}) {
+  async function planStands(plan, { late = false, evidence = [] } = {}) {
     if (!plan || typeof plan !== 'object') return refuse('no plan');
-    if (plan.kind === 'leaderboard') return leaderboardPlanStands(plan, { late });
+    if (plan.kind === 'leaderboard') return leaderboardPlanStands(plan, { late, evidence });
     const isMove = plan.kind === 'move';
     if (isMove) {
       // A MOVE: this seat's own records call for it - the same drained federation, the same destination and its key
@@ -302,10 +307,11 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   /**
    * DOES A LEADERBOARD PLAN STAND HERE - a signer's own rebuild: the vote passed in its own record and the payment height is
    * reached; its own key of that federation; no other plan for it; every input one of its own unspent reserve outputs at that amount and
-   * no more of them than the payout needs; the winners exactly as its own reading of the season names them (who, how much, in that
-   * order); at most 10 % of that federation's reserves; the change as those inputs leave it.
+   * no more of them than the payout needs; the winners exactly what the plan's signed rounds give, none of the rounds of this seat's own
+   * frozen read left out (winners book `check`, kanban #1153); at most 10 % of that federation's reserves; the change as those inputs
+   * leave it. `bind` in the answer: the list to persist (book `plan`) before this seat commits.
    */
-  async function leaderboardPlanStands(plan, { late = false } = {}) {
+  async function leaderboardPlanStands(plan, { late = false, evidence = [] } = {}) {
     const lb = (leaderboards() || []).find((x) => x.id === plan.proposal);
     if (!lb) return refuse('this seat has no passed leaderboard payout of that id');
     if (lb.federation !== plan.federation || String(lb.amountSats) !== String(plan.amountSats)) return refuse('the plan pays from another federation or another amount than the request');
@@ -340,12 +346,15 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     const held = unspent(plan.federation, plan.proposal).reduce((t, r) => t + BigInt(r.amountMsat), 0n) / 1000n;
     const cap = leaderboardCap({ amountSats: plan.amountSats, reservesSats: held });
     if (!cap.ok) return refuse(cap.why);
-    const w = await winnersOf(plan.proposal);
-    if (!w || !w.ok) return refuse(`this seat cannot read the season's winners: ${w ? w.why : '?'}`, 503);
-    const same = (a, b) => a.length === b.length && a.every((x, i) => String(x.payoutPk).toLowerCase() === String(b[i].payoutPk).toLowerCase() && String(x.msat) === String(b[i].msat));
-    if (!same(plan.winners, w.winners)) return refuse('the plan pays other winners or other amounts than this seat\'s reading of the season');
-    return { ok: true, planId: pid, signer: g };
+    // THE WINNERS: never read again here - the plan's list, checked against this seat's frozen read and the signed rounds it names
+    const fetchPeers = async () => (await Promise.all((g.peers || []).map(async (p) => { try { return typeof p.winners === 'function' ? await p.winners(plan.proposal) : null; } catch { return null; } })))
+      .filter((x) => x && Array.isArray(x.evidence)).map((x) => x.evidence);
+    const w = await winnersBook.check(plan.proposal, plan, { evidence, fetch: fetchPeers });
+    if (!w || !w.ok) return refuse(`the plan's winners do not stand here: ${w ? w.why : '?'}`, (w && w.status) || 422);
+    return { ok: true, planId: pid, signer: g, bind: w.bind };
   }
+  // A LEADERBOARD PLAN'S LIST, PERSISTED (winners FROZEN -> PLANNED) before anything is written or signed for it
+  const bindWinners = (plan, st) => (plan && plan.kind === 'leaderboard' ? (st && st.bind ? winnersBook.plan(plan.proposal, st.bind) : refuse('no winners list to persist for that plan', 503)) : { ok: true });
 
   // FROST, ROUND ONE: a commitment to the message of `kind` this seat rebuilt for that plan (taken, and recorded as PLANNED, only once
   // the plan stands here)
@@ -361,7 +370,10 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     }
     const g = guardians().get(plan.federation);
     if (!g || !g.signer) return refuse('this seat holds no share of that reserve key');
-    if (!rowOf(plan.proposal)) { write(plan.proposal, { plan_id: planIdOf(plan), federation: plan.federation, state: PAYOUT.PLANNED, plan: JSON.stringify(plan) }); markInputs(plan.proposal, plan); }
+    if (!rowOf(plan.proposal)) {
+      const b = bindWinners(plan, st); if (!b.ok) return b;
+      write(plan.proposal, { plan_id: planIdOf(plan), federation: plan.federation, state: PAYOUT.PLANNED, plan: JSON.stringify(plan) }); markInputs(plan.proposal, plan);
+    }
     return pairFor(plan, kind, g, await messageFor(kind, plan, { txid }));
   }
   // THE DESTINATION'S CLAIM OF A MOVE: only once the move is PAID here (its preimage checked) and only by a guardian of the destination,
@@ -439,7 +451,10 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     // A GUARDIAN OF THAT FEDERATION keeps a plan it was told about only when the plan stands on its own records: a forged plan
     // would otherwise hold the proposal's one place here and refuse the real one
     const g = guardians().get(rec.plan.federation);
-    if (g && g.signer && !(had && had.plan_id === rec.planId)) { const st = await planStands(rec.plan, { late: rec.state !== PAYOUT.PLANNED }); if (!st.ok) return st; }
+    if (g && g.signer && !(had && had.plan_id === rec.planId)) {
+      const st = await planStands(rec.plan, { late: rec.state !== PAYOUT.PLANNED }); if (!st.ok) return st;
+      if (rec.state === PAYOUT.PLANNED) { const b = bindWinners(rec.plan, st); if (!b.ok) return b; }
+    }
     const rank = { [PAYOUT.PLANNED]: 0, [PAYOUT.SENT]: 1, [PAYOUT.PAID]: 2, [PAYOUT.REFUNDED]: 2, [PAYOUT.CLAIMED]: 3 };
     const final = had && (had.state === PAYOUT.CLAIMED || had.state === PAYOUT.REFUNDED || had.state === PAYOUT.SHORT || (had.state === PAYOUT.PAID && rec.state !== PAYOUT.CLAIMED));
     if (final || (had && rank[had.state] > rank[rec.state])) return { ok: true, kept: had.state };
@@ -541,7 +556,11 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         const heldSats = have.reduce((t, x) => t + BigInt(x.amountMsat), 0n) / 1000n;
         const cap = leaderboardCap({ amountSats: lb.amountSats, reservesSats: heldSats });
         if (!cap.ok) { out.push(short(cap.why)); continue; }
-        const w = await winnersOf(lb.id);
+        // THE WINNERS (kanban #1153): this seat's own read frozen once, merged with every guardian peer's frozen evidence, so the plan
+        // holds every signed round any co-signer counts; each co-signer checks that list on the evidence and persists it before it commits
+        const theirs = (await Promise.all((g.peers || []).map(async (p) => { try { return typeof p.winners === 'function' ? await p.winners(lb.id) : null; } catch { return null; } })))
+          .filter((x) => x && Array.isArray(x.evidence)).map((x) => x.evidence);
+        const w = await winnersBook.union(lb.id, theirs);
         if (!w || !w.ok) { out.push({ id: lb.id, ok: false, why: w ? w.why : 'no winners read' }); continue; }   // read again next pass
         if (!w.winners.length) { out.push(short('the season names no identity to pay')); continue; }
         const winners = w.winners.map((x) => ({ player: x.player, payoutPk: String(x.payoutPk).toLowerCase(), msat: String(x.msat) }));
@@ -550,9 +569,11 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         const amounts = leaderboardAmounts({ inputs, winners, fees });
         if (!amounts.covers) { out.push(short(`the reserves there (${heldSats} sat) do not cover ${lb.amountSats} sat and the fees`)); continue; }
         plan = { kind: 'leaderboard', proposal: lb.id, federation: lb.federation, reserveKey: toHex(g.key), amountSats: String(lb.amountSats), winners,
-          refunds: inputs, changeMsat: String(amounts.changeMsat), nonce: toHex(payoutNonce(lb.id)) };
-        const st = await planStands(plan);
+          rounds: w.pairs, winnersId: w.winnersId, refunds: inputs, changeMsat: String(amounts.changeMsat), nonce: toHex(payoutNonce(lb.id)) };
+        const st = await planStands(plan, { evidence: w.evidence });
         if (!st.ok) { log(`[leaderboard] ${lb.id.slice(0, 16)}: own plan refused - ${st.why}`); out.push({ id: lb.id, ...st }); continue; }
+        const b = bindWinners(plan, st);
+        if (!b.ok) { log(`[leaderboard] ${lb.id.slice(0, 16)}: winners not persisted - ${b.why}`); out.push({ id: lb.id, ...b }); continue; }
         write(lb.id, { plan_id: st.planId, federation: lb.federation, state: PAYOUT.PLANNED, plan: JSON.stringify(plan) }); markInputs(lb.id, plan);
         broadcast(recordOf(rowOf(lb.id)));
       }
