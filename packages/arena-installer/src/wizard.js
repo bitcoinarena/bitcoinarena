@@ -30,7 +30,8 @@ import { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncSt
 import { createHash } from 'node:crypto';
 import * as reachKit from './reach.js';
 import { DatabaseSync } from 'node:sqlite';
-import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
+import { walletOf, payoutKeyOf, coinsOf, broadcast, txSeen } from './wallet.js';
+import { onchainAction, resumeOpen } from './onchain-action.js';
 import { buildBond, buildAdvertUpdate, buildSend, advertFor, lockOf, censusKeyOfNode, bondNetworkOf, BOND_MIN_SATS, EMERGENCY_IN_ADVERT } from './bond.js';
 import { installMinimum } from './install-minimum.js';
 import { writeLaunchers, installUpdater } from './launchers.js';
@@ -142,7 +143,7 @@ export async function repairCorePorts({ state, network, coreKit = { freeCorePort
 export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_PORT, bridgePort = null, test = testConnection, install = installService,
   // tailscale: the test host app's own CLI when it is installed, else the one in PATH
   fetcher = fetch, reach = reachKit, cloudflared = 'cloudflared', tailscale = process.env.ARENA_TAILSCALE || (process.platform === 'darwin' && existsSync('/Applications/Tailscale.app/Contents/MacOS/Tailscale') ? '/Applications/Tailscale.app/Contents/MacOS/Tailscale' : 'tailscale'),
-  tailscaleSh = undefined, workersKit = workersKitDefault, chainKit = { coinsOf, broadcast },
+  tailscaleSh = undefined, workersKit = workersKitDefault, chainKit = { coinsOf, broadcast, seen: txSeen },
   coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, freeCorePorts, installProgram },
   lndKit = { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, installProgram, lndFunds, lndOpenChannel, lndChannels },
   gwKit = { findGatewayd, configureGateway, testGateway, joinFederation, installProgram }, launch = writeLaunchers, nowMs = () => Date.now(), onDone = () => {}, log = () => {},
@@ -931,11 +932,19 @@ const serviceRun = async (b) => {
         if (!baseSeed) fundWhy = 'the first node has no wallet yet';
         else {
           try {
+            // AN ON-CHAIN ACTION OF NODE 1'S WALLET, ONCE PER NODE PAID FOR (kanban #1165): kept in node 1's state before it is sent, so a
+            // check asked again after a crash or a lost answer sends the same payment again, never a second one
             const bw = walletOf(fromHex(baseSeed));
-            const got = await chainKit.coinsOf(s.chain, bw.spk);
-            const tx = buildSend({ wallet: bw, coins: got.coins, script: w.spk, sats: needSats - total, feeRate: 2 });
-            const txid = await chainKit.broadcast(s.chain, tx.hex);
-            fundedFrom = { txid, sats: needSats - total, atMs: nowMs() };
+            const sats = needSats - total;
+            const r = await onchainAction({ state: fundFrom, kind: `fund-node ${state.home}`, once: true, chainKit,
+              build: async (n) => {
+                const got = await chainKit.coinsOf(n.chain || s.chain, bw.spk);
+                let tx;
+                try { tx = buildSend({ wallet: bw, coins: got.coins, script: w.spk, sats, feeRate: 2 }); } catch (e) { return { ok: false, why: e.message }; }
+                return { ok: true, tip: got.tip, txs: [{ name: 'send', hex: tx.hex }], ops: [], result: { txid: tx.txid, sats } };
+              } });
+            if (!r.ok) throw new Error(r.why);
+            fundedFrom = { txid: r.result.txid, sats: r.result.sats, atMs: nowMs() };
             state.save({ fundedFrom });
           } catch (e) { fundWhy = `the first node's wallet could not pay this node's part: ${e.message}`; }
         }
@@ -961,49 +970,71 @@ const serviceRun = async (b) => {
       return { ok: true, txid: r.txid, sats: r.sats };
     },
     'POST /api/bond/post': async (b) => {
+      // THE BOND IS AN ON-CHAIN ACTION (kanban #1165, onchain-action.js): its bytes written before they are sent; a post asked again after a
+      // crash, a lost answer or a double click sends the SAME bytes again and records them, never a second bond. One sent and not recorded
+      // yet is finished first - here or by the owner page's Bond panel (add-bond.js firstBond, the same kind)
+      const resumed = await resumeOpen(state, { chainKit });
+      if (resumed.open) return { ok: false, pending: true, why: resumed.why };
+      const just = resumed.done && (resumed.done.kind === 'first-bond' || resumed.done.kind.startsWith('custody-advert ')) ? resumed.done : null;
       const s = state.read();
       if (!(s.done || {}).service) return { ok: false, why: 'install the node first' };
       if (!(s.done || {}).promise) return { ok: false, why: 'read the bond\'s rules first and type I UNDERSTAND' };
-      if (s.bond && s.bond.txid && !(laterCustody(s) && !s.bond.custodyAdvert)) return { ok: false, why: `this node's bond is posted already (${s.bond.txid})` };
+      if (!just && s.bond && s.bond.txid && !(laterCustody(s) && !s.bond.custodyAdvert)) return { ok: false, why: `this node's bond is posted already (${s.bond.txid})` };
       const seed = fromHex(state.readSecret('seed.hex'));
       const w = walletOf(seed);
-      const { tip, coins } = await chainKit.coinsOf(s.chain, w.spk);
-      const db = new DatabaseSync(state.path('node.db'), { readOnly: true });
-      let nodeSecret;
-      try { nodeSecret = new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
+      const nodeSecretNow = () => {
+        const db = new DatabaseSync(state.path('node.db'), { readOnly: true });
+        try { return new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
+      };
       // custody added to a node with a bond: the bond's advertisement is updated to name custody and the guardian's endpoint (§5A.2)
-      if (laterCustody(s)) {
-        const advert = advertFor({ hostedGames: s.hostedGames, hostGroup: s.hostGroup, nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles, endpoint: s.reach.url,
-          payoutPubkey: payoutKeyOf(seed), maturity: s.bond.maturity, softwareHash: commitOf(), guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
-          ...(s.bond.censusKey ? { censusKey: fromHex(s.bond.censusKey) } : {}),
-          emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });   // the census reads the newest advertisement: the key kept
-        let u;
-        try { u = buildAdvertUpdate({ wallet: w, nodeSecret, coins, bond: { txid: s.bond.txid, vout: s.bond.vout || 0 }, advert }); }
-        catch (e) { return { ok: false, why: e.message }; }
-        await chainKit.broadcast(s.chain, u.funding.hex);
-        const txid = await chainKit.broadcast(s.chain, u.update.hex);
-        const bond = { ...s.bond, custodyAdvert: { txid, advertId: u.advertId, atTip: tip, atMs: Date.now() } };
-        mark('bond', { bond, advertProtocols: [...SUPPORTED_PROTOCOL_VERSIONS] });   // what its advertisement declares (change-roles refreshHostedGames)
+      if (just ? just.kind.startsWith('custody-advert ') : laterCustody(s)) {
+        const r = just ? { ok: true, result: just.result } : await onchainAction({ state, kind: `custody-advert ${s.bond.txid}`, once: true, chainKit,
+          build: async (n) => {
+            if (!laterCustody(n) || n.bond.txid !== s.bond.txid) return { ok: false, why: 'the bond changed meanwhile: ask again' };
+            const { tip, coins } = await chainKit.coinsOf(n.chain, w.spk);
+            const nodeSecret = nodeSecretNow();
+            const advert = advertFor({ hostedGames: n.hostedGames, hostGroup: n.hostGroup, nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${n.owner.pubkey.slice(0, 12)}`, roles: n.roles, endpoint: n.reach.url,
+              payoutPubkey: payoutKeyOf(seed), maturity: n.bond.maturity, softwareHash: commitOf(), guardianEndpoint: (guardianSetupOf(n, { release }) || {}).endpoint || null,
+              ...(n.bond.censusKey ? { censusKey: fromHex(n.bond.censusKey) } : {}),
+              emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });   // the census reads the newest advertisement: the key kept
+            let u;
+            try { u = buildAdvertUpdate({ wallet: w, nodeSecret, coins, bond: { txid: n.bond.txid, vout: n.bond.vout || 0 }, advert }); }
+            catch (e) { return { ok: false, why: e.message }; }
+            const custodyAdvert = { txid: u.update.txid, advertId: u.advertId, atTip: tip, atMs: Date.now() };
+            // what its advertisement declares (change-roles refreshHostedGames), and the step done - with the bond as it stands then
+            return { ok: true, tip, txs: [{ name: 'funding', hex: u.funding.hex }, { name: 'update', hex: u.update.hex }],
+              ops: [{ op: 'merge', key: 'bond', value: { custodyAdvert } }, { op: 'set', key: 'advertProtocols', value: [...SUPPORTED_PROTOCOL_VERSIONS] }, { op: 'done', step: 'bond' }],
+              result: { txid: u.update.txid } };
+          } });
+        if (!r.ok) return r;
         await installAgent();
-        return { ok: true, bond, update: txid };
+        return { ok: true, bond: state.read().bond, update: r.result.txid };
       }
       const minimum = BigInt(bondMinimumOf(s));
       const bondSats = b.bondSats ? BigInt(b.bondSats) : minimum;
-      if (bondSats < minimum) return { ok: false, why: minimum > BOND_MIN_SATS ? `a new node bonds at least ${minimum} sat now: the network's bond target (${(s.bondMinimum || {}).why || 'GET /capacity'})` : `a bond is at least ${BOND_MIN_SATS} sat` };
-      const censusKey = await censusKeyOfNode(s);
-      let built;
-      try {
-        built = buildBond({ network: bondNetworkOf(s), hostedGames: s.hostedGames, hostGroup: s.hostGroup, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
-          endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash: commitOf(), feeRate: 2, censusKey,
-          guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
-          emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
-      } catch (e) { return { ok: false, why: e.message }; }
-      const fundingTxid = await chainKit.broadcast(s.chain, built.funding.hex);
-      const bondTxid = await chainKit.broadcast(s.chain, built.bond.hex);
-      const presigTxid = built.presigUpdate ? await chainKit.broadcast(s.chain, built.presigUpdate.hex) : null;
-      const bond = { txid: bondTxid, vout: 0, fundingTxid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
-        lock: lockOf(tip, { maturity: built.maturity }), atMs: Date.now(), ...(presigTxid ? { censusKey: built.censusKey, presigUpdate: presigTxid } : {}) };
-      mark('bond', { bond, advertProtocols: [...SUPPORTED_PROTOCOL_VERSIONS] });   // what its advertisement declares (change-roles refreshHostedGames)
+      if (!just && bondSats < minimum) return { ok: false, why: minimum > BOND_MIN_SATS ? `a new node bonds at least ${minimum} sat now: the network's bond target (${(s.bondMinimum || {}).why || 'GET /capacity'})` : `a bond is at least ${BOND_MIN_SATS} sat` };
+      const r = just ? { ok: true, result: just.result } : await onchainAction({ state, kind: 'first-bond', chainKit,
+        build: async (n) => {
+          // compare-and-set on the state read now: a bond recorded meanwhile (the owner page, another tab) is never posted a second time
+          if (n.bond && n.bond.txid) return { ok: false, why: `this node's bond is posted already (${n.bond.txid})` };
+          const { tip, coins } = await chainKit.coinsOf(n.chain, w.spk);
+          const censusKey = await censusKeyOfNode(n);
+          let built;
+          try {
+            built = buildBond({ network: bondNetworkOf(n), hostedGames: n.hostedGames, hostGroup: n.hostGroup, wallet: w, nodeSecret: nodeSecretNow(), coins, tip, bondSats, operatorId: `op-${n.owner.pubkey.slice(0, 12)}`, roles: n.roles,
+              endpoint: n.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash: commitOf(), feeRate: 2, censusKey,
+              guardianEndpoint: (guardianSetupOf(n, { release }) || {}).endpoint || null,
+              emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
+          } catch (e) { return { ok: false, why: e.message }; }
+          const bond = { txid: built.bond.txid, vout: 0, fundingTxid: built.funding.txid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
+            lock: lockOf(tip, { maturity: built.maturity }), atMs: Date.now(), ...(built.presigUpdate ? { censusKey: built.censusKey, presigUpdate: built.presigUpdate.txid } : {}) };
+          // the wizard's mark('bond') with it: the step done, and what its advertisement declares (change-roles refreshHostedGames)
+          return { ok: true, tip, txs: [{ name: 'funding', hex: built.funding.hex }, { name: 'bond', hex: built.bond.hex }, built.presigUpdate ? { name: 'presig', hex: built.presigUpdate.hex } : null],
+            ops: [{ op: 'set', key: 'bond', value: bond }, { op: 'set', key: 'advertProtocols', value: [...SUPPORTED_PROTOCOL_VERSIONS] }, { op: 'done', step: 'bond' }], result: { bond } };
+        } });
+      if (!r.ok) return r;
+      const bond = r.result.bond;
+      const nodeSecret = nodeSecretNow();
       // a custody node's agent: guardian_of, the gateway's own federation and the peg-in, once a founding has drawn it (custody-agent.js)
       if ((s.roles || []).includes('custody') || (s.roles || []).includes('liquidity')) await installAgent();
       // THE LIQUIDITY PROVIDER SERVICE (§23A.10): its node key for its claims (0600 beside the node's other secrets), its LND, its claim
