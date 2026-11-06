@@ -32,6 +32,13 @@ export function holdsGuardianKey(storePath, dir = '.guardian') {
 }
 
 /**
+ * WHAT A FINISHED KEY GENERATION LEAVES IN A GUARDIAN'S DIRECTORY (kanban #1177): any one of these files there and the guardian guards (or
+ * guarded) a federation - its directory is never set aside for a fresh setup, whatever its setup API answers or fails to answer.
+ */
+export const CEREMONY_FILES = Object.freeze(['private.json', 'consensus.json', 'client.json', 'invite-code']);
+export const holdsCeremonyFiles = (dir) => !!dir && CEREMONY_FILES.some((f) => existsSync(join(dir, f)));
+
+/**
  * WHICH GUARDIANS A NODE STARTS, from its store and its environment:
  *
  *   own    its ceremony files held: the guardian, as always. None held and ARENA_FOUNDING=1: the guardian in SETUP MODE (fedimintd on
@@ -78,7 +85,7 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
   }
   const stopBoth = async () => { try { await next.stop(); } finally { await guardian.stop(); } };
   const as = (g, setup) => ({ apiPort: g.apiPort, p2pPort: g.p2pPort, endpoint: g.endpoint, dataDir: g.dataDir, ...(setup ? { setup: true } : {}) });
-  let node;
+  let node, control = null;
   try {
     node = await serve(db, {
       ...options,
@@ -86,7 +93,7 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
       ...(next.running ? { guardianNext: as(next, plan.next === 'setup') } : {}),
       // THE GUARDIAN STARTED AND STOPPED FROM THE OWNER PAGE (kanban #563): the node runs it, so the node starts and stops it - a node
       // without a guardian key and no setup to wait in has none to start
-      guardianControl: {
+      guardianControl: control = {
         has: () => !!plan.own,
         running: () => !!guardian.running,
         stop: async () => { if (!guardian.running) return { ok: true }; await (guardian.halt || guardian.stop)(); guardian = none; return { ok: true }; },
@@ -112,10 +119,21 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
           guardian = await start('guardian');
           return guardian.running ? { ok: true, kept, setup: true } : { ok: false, kept, why: guardian.why || 'the guardian in setup did not start' };
         },
-        freshSetup: async () => {
-          if (plan.own !== 'setup') return { ok: false, why: 'only a guardian waiting in setup starts its setup again' };
-          // also a guardian that already exited (kanban #495, 2026-10-22: after a key generation's checksum failure the guardians stopped)
+        // WHAT THE NODE ITSELF KNOWS OF ITS GUARDIAN (kanban #1177, founding-seat.js GUARDIAN): its ceremony files held, and whether its process runs
+        local: async () => {
           const dir = guardian.dataDir || `${path}.guardian`;
+          let alive = false;
+          if (guardian.running) { try { alive = typeof guardian.alive === 'function' ? !!(await guardian.alive()) : null; } catch { alive = null; } }
+          return { keyed: holdsGuardianKey(path) || holdsCeremonyFiles(dir), alive };
+        },
+        freshSetup: async () => {
+          // READ AGAIN AT THE MOMENT IT WOULD MOVE ANYTHING (kanban #1177): a node that started in setup and finished its DKG in this process still
+          // had plan.own === 'setup' from its start; its guardian's database was set aside on a founding's misreading. The key files decide, now.
+          const dir = guardian.dataDir || `${path}.guardian`;
+          const now = guardiansToStart(path, chain.env || process.env);
+          if (now.own === 'keyed' || holdsCeremonyFiles(dir)) return { ok: false, why: 'this guardian holds a federation\'s key files: its setup is never started again' };
+          if (plan.own !== 'setup' || now.own !== 'setup') return { ok: false, why: 'only a guardian waiting in setup starts its setup again' };
+          // also a guardian that already exited (kanban #495, 2026-10-22: after a key generation's checksum failure the guardians stopped)
           if (guardian.running) await (guardian.halt || guardian.stop)();
           guardian = none;   // a kept guardian really stops here (its stop leaves it running)
           const db = join(dir, 'database');
@@ -169,6 +187,8 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
     }
   }, Number((chain.env || process.env).ARENA_GUARDIAN_EXIT_WATCH_MS || 30000));
   if (exitWatch.unref) exitWatch.unref();
+  // ITS GUARDIAN'S CONTROLS, for a launcher or a test to call as the node does (kanban #1177)
+  node.guardianControl = control;
   const closeNode = node.close;
   node.close = async () => { if (cookieWatch) clearInterval(cookieWatch); clearInterval(exitWatch); try { await closeNode(); } finally { await stopBoth(); } };
   node.guardianRunning = guardian.running;
