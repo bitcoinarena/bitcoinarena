@@ -30,10 +30,10 @@ export const recipientMetadata = (name) => JSON.stringify([['text/plain', `BLWP 
 
 /**
  * Binds the recipients at `host:port` and answers `{ port, base, issued, refused, close }`.
- * `invoice({ amountMsat, descriptionHash })` answers `{ request }`. `onAsk(method, path)`, if given, is told of every request.
+ * `invoice({ amountMsat, descriptionHash })` answers `{ request }`. `onAsk(method, path)`, if given, is told of every request, `onConnect(remote)` of every connection.
  */
 export function serveDonationRecipients({ host = '127.0.0.1', port = TEST_RECIPIENT_PORT, names = TEST_RECIPIENT_NAMES,
-  invoice = null, minSendable = 1, maxSendable = 100000000000, onAsk = null } = {}) {
+  invoice = null, minSendable = 1, maxSendable = 100000000000, onAsk = null, onConnect = null } = {}) {
   const issued = [];
   const refused = [];
   let base = null;
@@ -61,6 +61,7 @@ export function serveDonationRecipients({ host = '127.0.0.1', port = TEST_RECIPI
       issued.push({ name, amountMsat, comment: u.searchParams.get('comment'), request: made.request });
       return json(200, { pr: made.request, routes: [] });
     });
+    if (onConnect) server.on('connection', (sock) => onConnect(`${sock.remoteAddress}:${sock.remotePort}`));   // kanban #1044: a connection with no request
     server.on('error', reject);
     server.listen(port, host, () => {
       base = `http://${host}:${server.address().port}`;
