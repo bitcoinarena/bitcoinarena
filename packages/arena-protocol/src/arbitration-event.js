@@ -75,7 +75,8 @@ export function standingLiquidation({ events, federation, network, keys, k, veri
     const when = liquidationSchedule({ haltHeight: h, clocks: c.clocks });
     if (!when.ok) { why = why || `the signed liquidation names no halt height: ${when.why}`; continue; }
     return { ok: true, event: e, signers: st.signers, door: String(e.door).replace(/\/+$/, '').replace(/\/liquidation-claims$/, ''),
-      window: { opens: when.claimWindowOpens, closes: when.claimWindowCloses } };
+      // the last height a claim is still paid at: the late-claim tail where a line has one (1.9: halt + drain_blocks), else the close
+      window: { opens: when.claimWindowOpens, closes: Number.isInteger(when.lateClaimsUntil) ? when.lateClaimsUntil : when.claimWindowCloses } };
   }
   return { ok: false, why };
 }
