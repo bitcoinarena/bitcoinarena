@@ -119,3 +119,26 @@ test('#1156 a seat whose keepRow refuses the change row keeps neither the state 
   assert.equal(s.api.stateOf(PROPOSAL).state, PAYOUT.SENT);
   assert.equal(s.api.spent().size, 2);
 });
+
+// KANBAN #1221 (audit 2 #1204 RES-2): a record stood when a guardian of the federation IT NAMES signed it, and its inputs were locked by
+// outpoint alone. A guardian of federation F2 posted a PLANNED for F2 whose inputs were federation FED's reserve outputs: every seat that is
+// no signer of F2 kept it, and FED's reserves read spent for good. Now an input must be a reserve output of the plan's own federation here.
+test('#1221 a PLANNED of one federation naming another federation\'s reserve outputs locks nothing', async () => {
+  const F2 = 'f2'.repeat(32);
+  const create = (o) => rp.createReservePayouts({ ...o,
+    guardians: () => new Map([...o.guardians(), [F2, { members: [toHex(schnorr.getPublicKey(OUTSIDER))], key: o.guardians().get(FED).key, needed: 1, signer: null, peers: [] }]]),
+    reserveRows: (f) => (f === F2 ? [] : o.reserveRows(f)) });
+  const w = world({ create });
+  const real = (await (async () => { const x = world(); await x.seats[0].api.round({ height: 500 }); return x.seats[0].api.stateOf(PROPOSAL).plan; })());
+  for (const variant of ['F2 names FED\'s outputs', 'the same, a second proposal']) {
+    const plan = { ...real, federation: F2 };
+    const rec = signedBy(OUTSIDER, { proposal: variant.includes('second') ? 'bb'.repeat(32) : 'cc'.repeat(32), planId: planIdOf(plan), federation: F2, state: PAYOUT.PLANNED, plan });
+    for (const s of w.seats) {
+      const a = await s.api.learn(rec);
+      assert.equal(a.ok, false, `${variant}: kept (${a.why || a.kept})`);
+      assert.equal(s.api.spent().size, 0, `${variant}: FED's reserve outputs marked spent`);
+    }
+  }
+  const [r] = await w.seats[0].api.round({ height: 500 });
+  assert.equal(r.state, PAYOUT.PAID, r.why);
+});
