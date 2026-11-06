@@ -10508,11 +10508,11 @@
      "Nodes"
     ],
     "summary": "Ask this seat to sign a price",
-    "description": "Asks this seat to sign a price sample or opening tape it read too.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; signed only if within 0.05 % of this seat's own reading for that moment, a reading no older than 5 s\n\nReturns: 200 JSON {ok, key, signature}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5147.",
+    "description": "Asks this seat to sign a price sample or opening tape it read too.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the moment's leader's signature (leaderSig: seat k mod n, the tape's seat 0); signed only if within 0.05 % of this seat's own reading for that moment, a reading no older than 5 s, one value per moment (kanban #1181)\n\nReturns: 200 JSON {ok, key, signature}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5147.",
     "operationId": "post_price_sign",
     "requestBody": {
      "required": true,
-     "description": "{round, kind:\"sample\", k, priceCents} or {round, kind:\"tape\", prices[]}.",
+     "description": "{round, kind:\"sample\", k, priceCents, leaderSig} or {round, kind:\"tape\", prices[], leaderSig}.",
      "content": {
       "application/json": {
        "schema": {}
