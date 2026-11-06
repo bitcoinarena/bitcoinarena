@@ -97,6 +97,12 @@ export const BATCH_MOVES = Object.freeze({
   [BATCH.CERTIFIED]: Object.freeze([]),
   [BATCH.VOID]: Object.freeze([]),
 });
+/**
+ * A ROUND'S READ OF THE OTHER SEATS' CERTIFIED BATCHES, AS THIS SEAT KEEPS IT (kanban #1182): UNREAD -> KEPT once a read was complete;
+ * KEPT -> STALE when a certificate is stored after it (sync then reads again, whole); a read that saw a certificate stored meanwhile is
+ * not kept. In memory: a restart reads again (safe).
+ */
+export const SYNC_STATE = Object.freeze({ UNREAD: 'UNREAD', KEPT: 'KEPT', STALE: 'STALE' });
 /** How long a seat waits for one other seat's answer while it leads a batch (proposals, void asks, sets, certificates). */
 export const BATCH_FETCH_MS = 1000;
 class Conflict extends Error {}
@@ -425,8 +431,12 @@ export class OrderBook {
     return [...ok].map(([seat, signature]) => ({ seat, signature }));
   }
 
-  /** POST /batch-certificate: a batch with at least the threshold of the round's seats' signatures - in the book from now. */
-  certify(roundIdBytes, cert) {
+  /**
+   * POST /batch-certificate: a batch with at least the threshold of the round's seats' signatures - in the book from now. A certificate
+   * stored fresh outside a read of the other seats (`reading`: the read's own takes) makes the round's kept read STALE (kanban #1182):
+   * the book moved after it, so the next settlement reads the other seats again, whole.
+   */
+  certify(roundIdBytes, cert, { reading = false } = {}) {
     const m = this.market(roundIdBytes);
     if (!m.ok) return m;
     // A CERTIFICATE THIS SEAT HOLDS ALREADY (kanban #576): carry() hands every peer's certificates of the round to every settlement,
@@ -450,6 +460,7 @@ export class OrderBook {
       write: () => { const h = heldQ.get(rid, k); this.#store(rid, roundIdBytes, k, c.id, cert.record, h ? h.own_sig : null, JSON.stringify(sigs), this.now()); },
     });
     if (!moved.ok) return moved.from === BATCH.CERTIFIED ? { ok: true, fresh: false } : moved;
+    if (!reading) this.#syncStep(toHex(roundIdBytes), { kind: 'certified', k });
     return { ok: true, fresh: true };
   }
 
@@ -733,13 +744,41 @@ export class OrderBook {
   async sync(roundIdBytes, { force = false } = {}) {
     const key = toHex(roundIdBytes);
     const kept = this.#synced.get(key);
-    if (kept && !force) return { ok: true, heard: kept.heard, needed: kept.needed, fresh: 0, kept: true };
+    if (kept && kept.state === SYNC_STATE.KEPT && !force) return { ok: true, heard: kept.heard, needed: kept.needed, fresh: 0, kept: true };
     if (this.#syncing.has(key)) return this.#syncing.get(key);
     const p = this.#syncOnce(roundIdBytes).finally(() => this.#syncing.delete(key));
     this.#syncing.set(key, p);
     return p;
   }
-  #synced = new Map();    // round id hex -> { heard, needed } once a read was complete
+  #synced = new Map();    // round id hex -> { state, epoch, heard, needed } (SYNC_STATE, kanban #1182)
+  /**
+   * THE ONE TRANSITION OF A ROUND'S READ (kanban #1182), compare-and-set on its epoch:
+   *   'kept' { epoch, heard, needed }  -> KEPT, only when no certificate was stored since the read began (its epoch is the round's still)
+   *   'certified' { k }                -> STALE, the epoch moves on; a k at or below a seat's cursor (a lower k certified late) drops the
+   *                                       round's cursors too, so the next read lists every batch again
+   * A read is kept no longer than the book it read: a later certificate (a lower k another seat certified late) is read again.
+   */
+  #syncStep(rid, ev) {
+    const was = this.#synced.get(rid) || { state: SYNC_STATE.UNREAD, epoch: 0 };
+    if (ev.kind === 'kept') {
+      if (ev.epoch !== was.epoch) return { ok: false, why: 'a certificate was stored during the read' };
+      this.#synced.delete(rid);
+      this.#synced.set(rid, { state: SYNC_STATE.KEPT, epoch: was.epoch, heard: ev.heard, needed: ev.needed });
+      if (this.#synced.size > 4096) this.#synced.delete(this.#synced.keys().next().value);
+      return { ok: true };
+    }
+    if (ev.kind === 'certified') {
+      const cursors = this.#after.get(rid);
+      if (cursors && [...cursors.values()].some((c) => Number(ev.k) <= Number(c))) this.#after.delete(rid);
+      // nothing kept or in flight: nothing to move (no entry is made for a round never read)
+      if (!this.#synced.has(rid) && !this.#syncing.has(rid)) return { ok: true };
+      this.#synced.set(rid, { state: SYNC_STATE.STALE, epoch: was.epoch + 1 });
+      return { ok: true };
+    }
+    return { ok: false, why: 'no such step' };
+  }
+  /** The state of a round's read of the other seats here (SYNC_STATE). */
+  syncState(roundIdBytes) { const x = this.#synced.get(toHex(roundIdBytes)); return x ? x.state : SYNC_STATE.UNREAD; }
   // A REPLAY THAT FAILED IS NOT ASKED AGAIN AT ONCE (kanban #1087, measured 2026-11-03 on a live seat: 108 refusals a minute, the same 6
   // orders of old rounds asked of 18 peers each settle pass, each refused because the stake lock is older than the freshness window - a
   // refusal no later block can lift). An order refused for that reason is not replayed again; any other refusal waits REPLAY_RETRY_MS,
@@ -754,6 +793,7 @@ export class OrderBook {
     const m = this.market(roundIdBytes);
     if (!m.ok) return m;
     const rid = toHex(roundIdBytes);
+    const epoch = (this.#synced.get(rid) || { epoch: 0 }).epoch;   // the read is kept only if no certificate is stored meanwhile
     const peers = this.peersFor(roundIdBytes);
     // A BATCH CERTIFIED HERE ALREADY IS NOT LOOKED AT AGAIN (kanban #576, profiled 2026-10-24 12:4xZ on test host seat 1: every peer hands
     // every certified batch of the round, and certify() read and decoded the round's contract and hashed the batch for each one - ~3 % of
@@ -791,8 +831,7 @@ export class OrderBook {
     if (heard < m.needed)
       return { ok: false, status: 409, heard, needed: m.needed, fresh: state.fresh,
         why: `${heard} of the ${m.needed} seats' certified batches heard here${state.unheard.length ? ` (${state.unheard.slice(0, 3).join('; ')})` : ''}` };
-    if (state.complete) this.#synced.set(rid, { heard, needed: m.needed });
-    if (this.#synced.size > 4096) this.#synced.delete(this.#synced.keys().next().value);
+    if (state.complete) this.#syncStep(rid, { kind: 'kept', epoch, heard, needed: m.needed });
     if (state.fresh) console.log(`[orders] ${rid.slice(0, 16)}: ${state.fresh} certified batch(es) this seat had missed taken from the other seats (${heard} of ${m.needed} heard)`);
     return { ok: true, heard, needed: m.needed, fresh: state.fresh };
   }
@@ -824,14 +863,14 @@ export class OrderBook {
         if (done.get(k) === false) done.set(k, true);
         continue;
       }
-      let got = this.certify(roundIdBytes, cert);
+      let got = this.certify(roundIdBytes, cert, { reading: true });
       // A CERTIFIED BATCH NAMING AN ORDER THAT NEVER REACHED THIS SEAT (kanban #620: round 42835aaa never settled - two seats lacked
       // one order of batch 3585700432, refused its certificate here without a word, and rebuilt another settlement): the batch's orders
       // this seat lacks are replayed from the seat that handed it (replayOrder: the entry checked by its hash, its locks by the
       // federation), then the certificate is taken again. A refusal that stands is said.
       if (!got.ok && /holds no entry/.test(String(got.why)) && typeof this.replayOrder === 'function' && Array.isArray(cert.record.orders)) {
         for (const o of cert.record.orders) if (isHex(String(o), 32) && !this.#orderWhole(String(o))) await this.#replay(rid, k, String(o), base);
-        got = this.certify(roundIdBytes, cert);
+        got = this.certify(roundIdBytes, cert, { reading: true });
       }
       if (got.ok) { held.add(k); done.set(k, true); if (got.fresh) state.fresh += 1; }
       else { state.complete = false; console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: the certificate ${base} holds is not taken here: ${got.why}`); }
