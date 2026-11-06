@@ -315,8 +315,10 @@ try {
     if (!env.SEARCH) { drive = drivenTape(seed.seedWord, N); break; }
     drive = searchedTape(A, config, seed.seedWord, N, { ...(unlocks.length ? { items: unlocks } : {}), ...(seed.slot === undefined ? {} : { slot: seed.slot }) }, { ms: Number(env.SEARCH_MS || 60000) });
     log({ step: 'searched', tries, drivesTried: drive.tried, outcome: drive.outcome, score: drive.score, drive: drive.drive });
-    if (drive.tape) break;
-    if (worldIsShared(c, sharedWorldOf(c.gameId)) || tries >= 3) throw new Error('no delivering drive found for this world');
+    // QUALIFY=1 (regtest, kanban #1044): a delivery at or above the round's minimum score, so the round has a winner (measured 2026-11-05 on s27g, round
+    // 687ebcdb: the search's first delivery scored 13,587 under a minimum of 100,000 - nobody won, and offence (b) had nothing to stand on)
+    if (drive.tape && (!env.QUALIFY || BigInt(drive.score) >= BigInt(c.minScore))) break;
+    if (worldIsShared(c, sharedWorldOf(c.gameId)) || tries >= (env.QUALIFY ? 8 : 3)) throw new Error(`no ${env.QUALIFY ? 'qualifying' : 'delivering'} drive found for this world`);
     entry.worldSecret = rand(32);
   }
   // LOSE=1 (regtest, kanban #1044 B1 phase 4, offence (b)): a run that sends every mark and never moves the truck - a non-qualifying result the seats sign
@@ -489,8 +491,14 @@ try {
     if (!l) continue;
     // AN ARENA LOCK (protocol 27, kanban #1044 B1): its forfeit names its signers, and the 2.0 lock client spends it by arenaRedeem
     const named = isArenaLock(l.fields);
-    const f = await forfeitOf({ roundId: rid, entryId: toHex(eid), nodes, lock: kind, named });
-    if (!f.ok) { stakes.push({ kind, forfeit: f.why.slice(0, 160) }); continue; }
+    let f = await forfeitOf({ roundId: rid, entryId: toHex(eid), nodes, lock: kind, named });
+    // FORFEIT_RETRY_S (regtest, kanban #1044): asked again every 20 s, as a page left open asks - a seat whose settlement is not ACCEPTED yet refuses the
+    // nobody-won return now and signs it a minute later (measured 2026-11-05 on s27g, round b4900236: asked once while seat 1 was still SUBMITTING)
+    for (const stop = Date.now() + Number(env.FORFEIT_RETRY_S || 0) * 1000; !f.ok && kind === 'stake' && Date.now() < stop;) {
+      await new Promise((ok) => setTimeout(ok, 20000));
+      f = await forfeitOf({ roundId: rid, entryId: toHex(eid), nodes, lock: kind, named });
+    }
+    if (!f.ok) { stakes.push({ kind, forfeit: f.why.slice(0, 300) }); continue; }
     const said = named
       ? JSON.parse(await lc.arenaRedeem(toHex(l.outpoint.txid), Number(l.outpoint.outIdx), JSON.stringify({ kind: 'cancel', signers: f.signers, signature: f.signature }), toHex(me.secret)))
       : JSON.parse(await lc.redeem(toHex(l.outpoint.txid), Number(l.outpoint.outIdx), JSON.stringify(lockFieldsToJson(l.fields)), f.signature, toHex(me.secret)));

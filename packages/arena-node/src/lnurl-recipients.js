@@ -30,10 +30,10 @@ export const recipientMetadata = (name) => JSON.stringify([['text/plain', `BLWP 
 
 /**
  * Binds the recipients at `host:port` and answers `{ port, base, issued, refused, close }`.
- * `invoice({ amountMsat, descriptionHash })` answers `{ request }`.
+ * `invoice({ amountMsat, descriptionHash })` answers `{ request }`. `onAsk(method, path)`, if given, is told of every request.
  */
 export function serveDonationRecipients({ host = '127.0.0.1', port = TEST_RECIPIENT_PORT, names = TEST_RECIPIENT_NAMES,
-  invoice = null, minSendable = 1, maxSendable = 100000000000 } = {}) {
+  invoice = null, minSendable = 1, maxSendable = 100000000000, onAsk = null } = {}) {
   const issued = [];
   const refused = [];
   let base = null;
@@ -43,6 +43,7 @@ export function serveDonationRecipients({ host = '127.0.0.1', port = TEST_RECIPI
       const refuse = (reason) => { refused.push(reason); return json(200, { status: 'ERROR', reason }); };
       if (req.method === 'OPTIONS') { res.writeHead(204, { ...OPEN, 'access-control-allow-methods': 'GET' }); return res.end(); }
       const u = new URL(req.url, 'http://local');
+      if (onAsk) onAsk(req.method, u.pathname);   // a harness's count of what was asked (kanban #1044)
       const m = u.pathname.match(/^\/lnurlp\/([a-z0-9-]+)(\/cb)?$/);
       if (req.method !== 'GET' || !m || !names.includes(m[1])) return json(404, { status: 'ERROR', reason: 'no such recipient here' });
       const name = m[1];

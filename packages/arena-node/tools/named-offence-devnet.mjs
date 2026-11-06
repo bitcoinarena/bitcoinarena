@@ -13,6 +13,12 @@
 //   SCENARIO=send-refund   a failed send (ruling #1134 2): every seat armed `send-hold`, so no gateway is asked and no seat submits (c); after the send's
 //                          expiration an outside client (no seat, its own data dir) submits (c) - first before the expiration and with the qualifier key
 //                          swapped to OFF_TABLE_KEY, both refused - and the winner takes the refund's payout into its wallet
+//   SCENARIO=nobody-won    nothing armed, both players lose (LOSE=1): nobody won, every stake comes back by its forfeit (nobodyWonReturn) - and no seat may file
+//                          that as offence (b) (kanban #1044, measured 2026-11-05 on s28a round b94a4863: five honest bonds started)
+//   SCENARIO=donation-resend  ruling #1145 A (#1134 2's donation residual): a loser (LOSE) and a walk-away (NO_MARKS), nobody qualifying, so the walk-away's
+//                          lock is split 75% to the seats and 25% to the donation set by gateway sends (with a winner it goes to the winner: s29a round 578b9f87); the set's two LNURL recipients (127.0.0.1:18777, the signed regtest set - the devnet started with
+//                          DEVNET_DONATION_SET=lnurl) answer their first invoice with a hold invoice cancelled at once, so that send fails; this tool mines to
+//                          its expiration, the contract refunds to KeyAgg(S) and S re-sends it through the other gateway to a fresh invoice
 //   SCENARIO=stop-s        nothing armed: a member of S is stopped (SIGSTOP) as soon as a seat keeps the signed batch; the sends must still be paid
 //
 // The three last name a Lightning address for both players (PAYOUT_ADDRESS): an https LNURL door on base + 9 answering with lnd C's invoices, its
@@ -36,6 +42,8 @@ import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { windowsOf } from '../../arena-protocol/src/window.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { OFF_TABLE_KEY } from '../src/test-named-offence.js';
+import { serveDonationRecipients } from '../src/lnurl-recipients.js';
+import { randomBytes } from 'node:crypto';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const env = process.env;
@@ -44,7 +52,7 @@ const PLAN = devnetPorts(Number(env.DEVNET_BASE_PORT || 24000));
 const SEATS = PLAN.nodes.map((p) => `http://127.0.0.1:${p}`);
 const SCENARIO = env.SCENARIO || 'honest';
 const LIMIT = Number(env.LIMIT_S || 1500);
-const SCENARIOS = ['off-table', 'forfeit-lost', 'honest', 'stock', 'swap-refund', 'send-refund', 'stop-s'];
+const SCENARIOS = ['off-table', 'forfeit-lost', 'honest', 'stock', 'swap-refund', 'send-refund', 'stop-s', 'nobody-won', 'donation-resend'];
 if (!SCENARIOS.includes(SCENARIO)) { console.error(`SCENARIO is ${SCENARIOS.join(', ')}`); process.exit(2); }
 // THE CLAIM SIGNED OFF THE CORRECT BODY BY FIVE ARMED SEATS, the honest ones stopped through the signing: (a) by a payout (off-table) or by a send's refund key
 const OFF = SCENARIO === 'off-table' || SCENARIO === 'swap-refund';
@@ -84,6 +92,32 @@ if (ADDRESSED) {
   door.unref();
   ADDRESS = `winner@127.0.0.1:${port}`;
 }
+// THE DONATION RECIPIENTS (donation-resend): each one's first invoice a hold invoice cancelled as soon as it is issued - a send to it fails - then plain invoices
+let recipients = null;
+const lncC = (...a) => spawnSync(env.LNCLI, [`--lnddir=${join(D, 'lnd-c')}`, `--rpcserver=127.0.0.1:${PLAN.lnd.c.rpc}`, '--network=regtest', ...a], { encoding: 'utf8', timeout: 30000 });
+if (SCENARIO === 'donation-resend') {
+  const failed = new Set();
+  // EVERY ASK OF THE DOOR IS SAID (measured on s29b round 764e3ecb: both shares held as "did not answer" and this tool printed no invoice at all)
+  const paths = new Map();
+  setInterval(() => { say({ step: 'recipient asks', asks: Object.fromEntries(paths), listening: !!recipients }); paths.clear(); }, 60000).unref();
+  recipients = await serveDonationRecipients({ onAsk: (m, p) => paths.set(`${m} ${p}`, (paths.get(`${m} ${p}`) || 0) + 1), invoice: async ({ amountMsat, descriptionHash }) => {
+    const dh = toHex(descriptionHash);
+    if (!failed.has(dh)) {
+      failed.add(dh);
+      const hash = toHex(randomBytes(32));
+      const r = lncC('addholdinvoice', hash, `--amt_msat=${amountMsat}`, `--description_hash=${dh}`, '--expiry=3600');
+      if (r.status !== 0) throw new Error(String(r.stderr).trim().slice(-160));
+      const c = lncC('cancelinvoice', hash);
+      say({ step: 'recipient invoice that fails', msat: String(amountMsat), hash: hash.slice(0, 16), cancelled: c.status === 0 });
+      return { request: JSON.parse(r.stdout).payment_request };
+    }
+    const r = lncC('addinvoice', `--amt_msat=${amountMsat}`, `--description_hash=${dh}`, '--expiry=3600');
+    if (r.status !== 0) throw new Error(String(r.stderr).trim().slice(-160));
+    say({ step: 'recipient invoice', msat: String(amountMsat), hash: JSON.parse(r.stdout).r_hash.slice(0, 16) });
+    return { request: JSON.parse(r.stdout).payment_request };
+  } });
+}
+if (recipients) { try { const r = await fetch(`${recipients.base}/lnurlp/blwp-test-a`); say({ step: 'recipients door', base: recipients.base, selfProbe: r.status }); } catch (e) { say({ step: 'recipients door', selfProbe: e.message }); } }
 const opened = await (await fetch(`http://127.0.0.1:${PLAN.control}/open-paid?stakeMsat=${env.STAKE_MSAT || 100000000}&windowMs=${env.WINDOW_MS || 420000}`, { method: 'POST' })).json();
 if (!opened.id) throw new Error(`no round opened: ${JSON.stringify(opened)}`);
 const ROUND = opened.id;
@@ -112,7 +146,7 @@ const players = [0, 1].map((i) => {
   const fd = openSync(log, 'a');
   const child = spawn(process.execPath, [join(HERE, 'tn4-live-run.mjs')], { detached: true, stdio: ['ignore', fd, fd],
     env: { ...env, ARENA_TN4_NETWORK: 'regtest', ARENA_REGTEST_CENSUS_KEY_0: join(D, 'census', 'key0.json'), ROUND, PORTS: PLAN.nodes.join(','), KEYS_FILE: keysFile, COLLECT_MS: String(env.COLLECT_MS || 900000),
-      ...(i === 0 ? { SEARCH: '1' } : SCENARIO === 'forfeit-lost' ? { LOSE: '1' } : {}), ...(SCENARIO === 'forfeit-lost' ? { EARLY_FORFEIT: '1' } : {}),
+      ...(SCENARIO === 'nobody-won' ? { LOSE: '1', FORFEIT_RETRY_S: env.FORFEIT_RETRY_S || '600' } : SCENARIO === 'donation-resend' ? (i === 1 ? { NO_MARKS: '1' } : { LOSE: '1' }) : i === 0 ? { SEARCH: '1', QUALIFY: '1' } : SCENARIO === 'forfeit-lost' ? { LOSE: '1' } : {}), ...(SCENARIO === 'forfeit-lost' ? { EARLY_FORFEIT: '1' } : {}),
       ...(ADDRESS ? { PAYOUT_ADDRESS: ADDRESS } : {}), ...(SCENARIO === 'send-refund' ? { REFUND_C: '1' } : {}) } });
   return { i, log, child };
 });
@@ -163,6 +197,7 @@ async function outsiderSubmits() {
 }
 // A MEMBER OF S STOPPED RIGHT AFTER THE BATCH (stop-s): the highest seat of S, as soon as any seat answers its kept batch
 let sStopped = null;
+let mined = null;
 
 const honestSeats = SEATS.map((_, k) => k).filter((k) => !armed.includes(k));
 const stopAt = END + Number(env.STOP_AFTER_S || 60) * 1000;
@@ -187,11 +222,23 @@ for (;;) {
       break;
     }
   }
+  // THE DONATION SENDS (donation-resend), as the seats keep them, and the mining to a failed send's expiration
+  if (SCENARIO === 'donation-resend') {
+    for (let k = 0; k < SEATS.length; k++) {
+      const q = spawnSync('/usr/bin/sqlite3', [join(D, 'nodes', `node-${k + 1}.db`), `SELECT lower(hex(entry_id)), attempt, state, gateway_url, expiration, txid, out_idx, coalesce(preimage,''), substr(why,1,90) FROM donation_sends WHERE lower(hex(round_id)) = '${ROUND}' ORDER BY entry_id, attempt`], { encoding: 'utf8', timeout: 10000 });
+      seen(`seat${k + 1} donation sends`, String(q.stdout).trim().split('\n').filter(Boolean).map((l) => { const x = l.split('|'); return `${x[0].slice(0, 8)}#${x[1]} ${x[2]} gw${x[3].slice(-5)} exp${x[4]} ${String(x[5]).slice(0, 16)}:${x[6]}${x[7] ? ' preimage' : ''} ${x[8]}`; }).join(' ; ') || 'none');
+    }
+    const rows = [...last.entries()].filter(([key]) => key.endsWith('donation sends')).map(([, v]) => v).join(' ; ');
+    const exp = [...rows.matchAll(/#0 SENDING gw\S* exp(\d+)/g)].map((m) => Number(m[1]));
+    const h = Number(bcli('getblockcount').stdout);
+    if (exp.length && !mined && h <= Math.max(...exp)) { const n = Math.max(...exp) - h + 3; bcli('generatetoaddress', String(n), 'bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080'); mined = { from: h, to: h + n, t: at() }; say({ step: 'mined to the failed send\'s expiration', ...mined }); }
+  }
   if (SCENARIO === 'send-refund' && !outsider && [...last.entries()].some(([key, v]) => key.endsWith(' settlement') && /^ACCEPTED/.test(v || ''))) await outsiderSubmits();
   if (ADDRESSED) for (const [i, e] of E.entries()) {
     try { const w = await (await get(`${SEATS[SEATS.findIndex((_, k) => !stopped.has(k))]}/winnings?entry=${e}`)).json(); seen(`entry${i} send`, w.send ? `${w.send.state} ${String(w.send.why || '').slice(0, 120)}${w.send.preimage ? ' preimage' : ''}` : 'none'); } catch { /* next pass */ }
   }
   if (OFF && stopped.size && (armed.some((k) => /^ACCEPTED/.test(last.get(`seat${k + 1} settlement`) || '')) || at() >= LIMIT - 300)) for (const k of [...stopped]) backIn(k);
+if (recipients) await recipients.close();
   for (let k = 0; k < SEATS.length; k++) {
     if (stopped.has(k)) continue;
     try { const l = await (await get(`${SEATS[k]}/lock-settlement?round=${ROUND}`)).json(); seen(`seat${k + 1} settlement`, `${l.state || l.why || 'none'}${l.txid ? ` ${String(l.txid).slice(0, 16)}` : ''}`.slice(0, 200)); } catch { /* next pass */ }
@@ -206,9 +253,12 @@ for (;;) {
   for (const p of players) for (const step of ['early forfeit', 'collected', 'stopped', 'settled', 'no early forfeit: the settlement came first']) if (said(p, step).length) seen(`player${p.i} ${step}`, said(p, step)[0].slice(0, 400));
   if (at() >= LIMIT) break;
   if (filedAt && Date.now() - filedAt > Number(env.AFTER_FILED_S || 600) * 1000) break;
-  if (SCENARIO === 'honest' || SCENARIO === 'stock' || SCENARIO === 'stop-s' || SCENARIO === 'send-refund') {
+  if (SCENARIO === 'donation-resend' && [...last.entries()].some(([key, v]) => key.endsWith('donation sends') && /#1 PAID/.test(v || '')) && at() > 300) break;
+  if (SCENARIO === 'honest' || SCENARIO === 'stock' || SCENARIO === 'stop-s' || SCENARIO === 'send-refund' || SCENARIO === 'nobody-won') {
     if (players.every((p) => p.child.exitCode !== null || said(p, 'collected').length) && at() > 300 && (SCENARIO !== 'send-refund' || (outsider && outsider.step !== 'started'))
-      && (SCENARIO !== 'stop-s' || /^PAID/.test(last.get('entry0 send') || '') || at() > 1200)) break;
+      && (SCENARIO !== 'stop-s' || /^PAID/.test(last.get('entry0 send') || '') || at() > 1200)
+      // NOBODY WON: the filers' passes after the stakes came back, every one of them (ARENA_NAMED_FILE_MS), are what is measured
+      && (SCENARIO !== 'nobody-won' || at() >= Number(env.QUIET_S || 1300))) break;
   }
   await wait(10000);
 }
