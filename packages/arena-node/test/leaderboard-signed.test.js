@@ -46,6 +46,8 @@ const G = evenGroupSecret(0x7654321n, curve);
 const DEAL = trustedDealerSplit({ secret: G.secret, max: 7, min: 5, coefficients: [3n, 5n, 7n, 11n], curve });
 const KEY = DEAL.groupPublicKey;
 const NODE_KEYS = Array.from({ length: 7 }, (_, i) => toHex(schnorr.getPublicKey(Uint8Array.from({ length: 32 }, (_, j) => (j === 31 ? i + 1 : 8))))).sort();
+// each seat's node key signs the payout records it hands on (kanban #1156)
+const SECRET_OF = new Map(Array.from({ length: 7 }, (_, i) => { const sk = Uint8Array.from({ length: 32 }, (_, j) => (j === 31 ? i + 1 : 8)); return [toHex(schnorr.getPublicKey(sk)), sk]; }));
 const FEES = { ppm: 100n, baseMsat: 1000n };
 const FED = 'b1'.repeat(32);
 const LB = 'cc'.repeat(32);
@@ -59,6 +61,7 @@ function world(views, { clock = { now: DUE_MS } } = {}) {
   const seats = [];
   const port = {
     fees: async () => FEES,
+    status: async (at) => { const c = fed.contracts.get(`${toHex(at.txid)}:${at.outIdx}`); return { blockCount: 0, stored: c && !c.spent ? { contractId: 'c', blocksLeft: 0 } : null }; },
     settle: async ({ claimPk, refunds, payouts, nonce, signature = null }) => {
       const message = msgOf({ k: claimPk, r: refunds.map((x) => [toHex(x.outpoint.txid), String(x.outpoint.outIdx), x.amountMsat]), p: payouts, n: nonce });
       if (!signature) return { message: toHex(message) };
@@ -78,7 +81,7 @@ function world(views, { clock = { now: DUE_MS } } = {}) {
     const db = openStore(':memory:');
     s.book = createWinnersBook({ db, paramsOf: async () => ({ ok: true, ...SEASON }), collect: async () => { s.collects++; return new Map(views(i)); },
       seatsOf: DRAW, verify, now: () => clock.now });
-    s.api = createReservePayouts({ db, me: NODE_KEYS[i], curve, random: rand, network: 'testnet4', passed: () => [], leaderboards: () => due, winners: s.book,
+    s.api = createReservePayouts({ db, me: NODE_KEYS[i], curve, random: rand, network: 'testnet4', passed: () => [], leaderboards: () => due, winners: s.book, sign: (d) => schnorr.sign(d, SECRET_OF.get(NODE_KEYS[i])),
       reserveRows: () => reserveRows, portOf: async () => port, payRequest: async () => ({ ok: false }), invoiceFor: async () => ({ ok: false }),
       broadcast: (rec) => { for (const o of seats) if (o !== s) o.inbox.push(rec); },
       guardians: () => new Map([[FED, { members: NODE_KEYS, key: KEY, needed: 5, signer: { id: i + 1, share: DEAL.shares[i].share },

@@ -16,6 +16,9 @@
 //   STATES        PLANNED -> SENT (the transaction accepted) -> PAID (the preimage checked) | REFUNDED (the gateway did not pay: the
 //                 expired contract spent back to the reserve key). SHORT: the reserves cannot cover it - nothing is paid, for good.
 //                 One record per proposal on every seat; a second plan for a proposal is refused; a spent output is never planned again.
+//                 Every write is one compare-and-set step along PAYOUT_NEXT (kanban #1156); a record from another seat is kept only signed
+//                 by a guardian seat of the federation whose step it is, a SHORT only as this seat's reserves say it, a step past PLANNED
+//                 only as the federation says it.
 //   NOT HERE      a re-try after a refund, a payout split over federations, giving up on an LNURL that stays silent.
 //
 // The transport is injected: `peers` are objects with commit / share (the seat's HTTP doors; direct calls in a test).
@@ -67,6 +70,21 @@ export function lnurlClient({ fetch: get = (u, o) => fetch(u, o), network = 'tes
 }
 
 export const PAYOUT = Object.freeze({ PLANNED: 'PLANNED', SENT: 'SENT', PAID: 'PAID', REFUNDED: 'REFUNDED', SHORT: 'SHORT', CLAIMED: 'CLAIMED' });
+/**
+ * THE ONE TRANSITION TABLE (kanban #1156): from a state (NONE: no record yet) to the states it may go to, and no other. Every write of a
+ * payout record is one compare-and-set step along it (`transition`); REFUNDED, SHORT and CLAIMED go nowhere, PAID only to CLAIMED (a move).
+ */
+export const PAYOUT_NEXT = Object.freeze({
+  NONE: [PAYOUT.PLANNED, PAYOUT.SENT, PAYOUT.PAID, PAYOUT.REFUNDED, PAYOUT.SHORT, PAYOUT.CLAIMED],
+  [PAYOUT.PLANNED]: [PAYOUT.SENT, PAYOUT.PAID, PAYOUT.REFUNDED, PAYOUT.CLAIMED],
+  [PAYOUT.SENT]: [PAYOUT.PAID, PAYOUT.REFUNDED, PAYOUT.CLAIMED],
+  [PAYOUT.PAID]: [PAYOUT.CLAIMED],
+  [PAYOUT.REFUNDED]: [], [PAYOUT.SHORT]: [], [PAYOUT.CLAIMED]: [],
+});
+export const canMove = (from, to) => (PAYOUT_NEXT[from || 'NONE'] || []).includes(to);
+/** WHAT A PAYOUT RECORD'S SIGNATURE COVERS (kanban #1156): every field it carries, the seat that says it last. */
+const RECORD_FIELDS = ['proposal', 'planId', 'federation', 'state', 'plan', 'txid', 'preimage', 'refundTxid', 'why', 'claimTxid', 'claimMsat', 'from'];
+export const recordDigestOf = (rec) => taggedHash('ARENA/v1/ReservePayoutRecord', new TextEncoder().encode(JSON.stringify(RECORD_FIELDS.map((k) => (rec[k] === undefined ? null : rec[k])))));
 export const TAKEOVER_BLOCKS = 2;
 export const RESERVE_PAYOUT_SQL = `CREATE TABLE IF NOT EXISTS reserve_payouts (proposal TEXT PRIMARY KEY, plan_id TEXT, federation TEXT, state TEXT NOT NULL,
     plan TEXT, txid TEXT, preimage TEXT, refund_txid TEXT, why TEXT, updated_ms INTEGER NOT NULL);
@@ -132,8 +150,12 @@ export function moveAmountSats(inputs, gwFee, fees) {
 // is its GET /leaderboard-winners. With no book a leaderboard payout is never planned or signed.
 const NO_WINNERS = { freeze: async () => ({ ok: false, why: 'this seat keeps no winners book' }), union: async () => ({ ok: false, why: 'this seat keeps no winners book' }),
   check: async () => ({ ok: false, status: 503, why: 'this seat keeps no winners book' }), plan: () => ({ ok: false, status: 503, why: 'this seat keeps no winners book' }) };
+// `sign(digest)` this seat's node-key signature (BIP-340) over a 32-byte digest: every record it hands on is signed (kanban #1156); a seat
+// without it hands on records nobody keeps. `keepRow` must keep a row once and throw on an outpoint kept with other fields: it runs inside
+// the record's transition, and a throw undoes the whole step.
 export function createReservePayouts({ db, me, curve, random, passed, guardians, reserveRows, portOf, payRequest, invoiceFor, network = 'testnet',
-  keepRow = () => {}, broadcast = () => {}, log = () => {}, now = () => Date.now(), moves = () => [], leaderboards = () => [], winners: winnersBook = NO_WINNERS }) {
+  keepRow = () => {}, broadcast = () => {}, log = () => {}, now = () => Date.now(), moves = () => [], leaderboards = () => [], winners: winnersBook = NO_WINNERS,
+  sign: signNode = null }) {
   db.exec(RESERVE_PAYOUT_SQL);
   // A MOVE'S CLAIM (the drained-federation move): the destination's claim transaction and what it put under its reserve key
   for (const col of ['claim_txid', 'claim_msat']) if (!db.prepare('PRAGMA table_info(reserve_payouts)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE reserve_payouts ADD COLUMN ${col} TEXT`);
@@ -149,14 +171,46 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   const rowOf = (pid) => db.prepare('SELECT * FROM reserve_payouts WHERE proposal = ?').get(pid) || null;
   const planOfRow = (r) => (r && r.plan ? JSON.parse(r.plan) : null);
   const spentBy = (outpoint) => { const r = db.prepare('SELECT proposal FROM reserve_payout_inputs WHERE outpoint = ?').get(outpoint); return r ? r.proposal : null; };
-  const write = (pid, fields) => {
-    const had = rowOf(pid);
-    const r = { plan_id: null, federation: null, plan: null, txid: null, preimage: null, refund_txid: null, why: null, claim_txid: null, claim_msat: null, ...(had || {}), ...fields, proposal: pid, updated_ms: now() };
-    db.prepare(`INSERT OR REPLACE INTO reserve_payouts (proposal, plan_id, federation, state, plan, txid, preimage, refund_txid, why, updated_ms, claim_txid, claim_msat)
-      VALUES (@proposal, @plan_id, @federation, @state, @plan, @txid, @preimage, @refund_txid, @why, @updated_ms, @claim_txid, @claim_msat)`).run(r);
-    return r;
-  };
-  const markInputs = (pid, plan) => { for (const x of plan.refunds) db.prepare('INSERT OR IGNORE INTO reserve_payout_inputs (outpoint, proposal) VALUES (?, ?)').run(x.outpoint, pid); };
+  /**
+   * THE ONE WRITE OF A PAYOUT RECORD (kanban #1156): `from` -> `to` along PAYOUT_NEXT, compare-and-set - the row must still be in `from`
+   * (none for a new record) or nothing is written. In the same database step: `fields` (column names), the plan's inputs marked spent
+   * (`plan`; an input another payout holds undoes the step) and the derived reserve rows (`rows`, keepRow). All of it or none of it.
+   */
+  const COLS = ['plan_id', 'federation', 'plan', 'txid', 'preimage', 'refund_txid', 'why', 'claim_txid', 'claim_msat'];
+  function transition(pid, from, to, fields = {}, { plan = null, rows = [] } = {}) {
+    if (!canMove(from, to)) return refuse(`a payout does not go from ${from || 'no record'} to ${to}`, 409);
+    const set = Object.fromEntries(Object.entries(fields).filter(([k, v]) => COLS.includes(k) && v !== undefined));
+    db.exec('SAVEPOINT reserve_payout_step');
+    try {
+      if (!from) {
+        const r = { ...Object.fromEntries(COLS.map((c) => [c, null])), ...set, proposal: pid, state: to, updated_ms: now() };
+        const c = db.prepare(`INSERT OR IGNORE INTO reserve_payouts (proposal, plan_id, federation, state, plan, txid, preimage, refund_txid, why, updated_ms, claim_txid, claim_msat)
+          VALUES (@proposal, @plan_id, @federation, @state, @plan, @txid, @preimage, @refund_txid, @why, @updated_ms, @claim_txid, @claim_msat)`).run(r);
+        if (c.changes !== 1) throw new Error(`a record of that payout is kept already: not ${to} from nothing`);
+      } else {
+        const keys = Object.keys(set);
+        const c = db.prepare(`UPDATE reserve_payouts SET state = @state, updated_ms = @updated_ms${keys.map((k) => `, ${k} = @${k}`).join('')} WHERE proposal = @proposal AND state = @from`)
+          .run({ ...set, state: to, updated_ms: now(), proposal: pid, from });
+        if (c.changes !== 1) throw new Error(`that payout is no longer ${from} here: not moved to ${to}`);
+      }
+      if (plan) for (const x of plan.refunds || []) {
+        const sb = spentBy(x.outpoint);
+        if (sb && sb !== pid) throw new Error(`${String(x.outpoint).slice(0, 16)}… is spent by another payout`);
+        db.prepare('INSERT OR IGNORE INTO reserve_payout_inputs (outpoint, proposal) VALUES (?, ?)').run(x.outpoint, pid);
+      }
+      for (const row of rows) keepRow(row);
+      db.exec('RELEASE reserve_payout_step');
+      return { ok: true, state: to };
+    } catch (e) {
+      db.exec('ROLLBACK TO reserve_payout_step'); db.exec('RELEASE reserve_payout_step');
+      return refuse(e.message, 409);
+    }
+  }
+  /** What a step said, kept on the record without moving it (only while it is still in `state`). */
+  const note = (pid, state, why) => db.prepare('UPDATE reserve_payouts SET why = ?, updated_ms = ? WHERE proposal = ? AND state = ?').run(why, now(), pid, state);
+  // A RECORD HANDED ON, signed by this seat's node key (kanban #1156): the record the others keep, and who said it
+  const signed = (rec) => { const r = { ...rec, from: me }; return signNode ? { ...r, sig: toHex(signNode(recordDigestOf(r))) } : r; };
+  const say = (rec) => broadcast(signed(rec));
   const unspent = (fed, alsoBy = null) => (reserveRows(fed) || []).filter((r) => { const s = spentBy(r.outpoint); return !s || (alsoBy && s === alsoBy); })
     .sort((a, b) => (a.verifiedMs - b.verifiedMs) || (a.outpoint < b.outpoint ? -1 : 1));
   const recordResent = new Set();
@@ -372,7 +426,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     if (!g || !g.signer) return refuse('this seat holds no share of that reserve key');
     if (!rowOf(plan.proposal)) {
       const b = bindWinners(plan, st); if (!b.ok) return b;
-      write(plan.proposal, { plan_id: planIdOf(plan), federation: plan.federation, state: PAYOUT.PLANNED, plan: JSON.stringify(plan) }); markInputs(plan.proposal, plan);
+      const t = transition(plan.proposal, null, PAYOUT.PLANNED, { plan_id: planIdOf(plan), federation: plan.federation, plan: JSON.stringify(plan) }, { plan }); if (!t.ok) return t;
     }
     return pairFor(plan, kind, g, await messageFor(kind, plan, { txid }));
   }
@@ -439,15 +493,133 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     return { ok: true, signature };
   }
 
-  // A RECORD ANOTHER SEAT SENT (its broadcast): kept once per proposal - a PAID one only with the preimage of the plan's invoice
+  /**
+   * WHO SAID A RECORD (kanban #1156): its `from` signed every field of it with its node key, and `from` is a guardian seat of the
+   * federation whose step it is - the paying federation's, the destination's for a move's claim. Nobody else moves a record here.
+   */
+  function saidByGuardian(rec) {
+    if (typeof rec.from !== 'string' || !/^[0-9a-f]{64}$/.test(rec.from) || typeof rec.sig !== 'string' || !/^[0-9a-f]{128}$/.test(rec.sig))
+      return refuse('a payout record is signed by the guardian seat that says it (from, sig)', 401);
+    let good = false; try { good = schnorr.verify(fromHex(rec.sig), recordDigestOf(rec), fromHex(rec.from)); } catch { good = false; }
+    if (!good) return refuse('that record\'s signature does not verify under its from key', 401);
+    const fed = rec.state === PAYOUT.CLAIMED ? rec.plan && rec.plan.to : rec.plan ? rec.plan.federation : rec.federation;
+    const isGuardian = (f) => { const g = typeof f === 'string' ? guardians().get(f) : null; return !!(g && (g.members || []).includes(rec.from)); };
+    // a move's PAID record is handed on by the destination's claimer too (kanban #326): the claim is its step next
+    const handedOn = rec.state === PAYOUT.PAID && rec.plan && rec.plan.kind === 'move' && isGuardian(rec.plan.to);
+    if (!isGuardian(fed) && !handedOn) return refuse(`${rec.from.slice(0, 16)}… is no guardian seat of the federation that record's step is for`, 403);
+    if (rec.plan && rec.federation && rec.federation !== rec.plan.federation) return refuse('the record names another federation than its plan');
+    return { ok: true, fed };
+  }
+  // WHICH FEDERATION PAYS A PASSED PROPOSAL, as this seat holds the reserves: the lowest federation id whose unspent reserves cover X
+  // plus fees, or none (`needs` what each one holds and needs)
+  async function payerFor(v, feds) {
+    const needs = {};
+    for (const fed of [...feds.keys()].sort()) {
+      const g = feds.get(fed); if (!g.key) continue;
+      const port = await portOf(fed); if (!port) continue;
+      const [fees, gws] = await Promise.all([port.fees(), port.gateways()]);
+      const gw = lowestLiveGateway(gws.gateways || []); if (!gw) continue;
+      const contractMsat = contractForInvoice(BigInt(v.amountSats) * 1000n, gw.sendFeeDefault);
+      const have = unspent(fed);
+      const held = have.reduce((t, x) => t + BigInt(x.amountMsat), 0n);
+      needs[fed] = { held: String(held), need: String(contractMsat + lnv2FeeMsat(fees, contractMsat)) };
+      if (payAmountsCover(have, contractMsat, fees)) return { payer: fed, needs };
+    }
+    return { payer: null, needs };
+  }
+  /**
+   * A SHORTFALL ANOTHER SEAT SAID (kanban #1156): a seat that holds a share of a reserve key - one that would pay - keeps it only when
+   * its own records come to the same: the vote passed here and no federation's reserves, as it holds them, cover it (a leaderboard
+   * payout: over the cap, no winner, or not covered). A seat that pays nothing keeps the signed record as it was said.
+   */
+  async function shortStands(rec) {
+    const feds = guardians();
+    if (![...feds.values()].some((g) => g && g.signer)) return { ok: true };
+    const lb = (leaderboards() || []).find((x) => x.id === rec.proposal);
+    if (lb) {
+      if (rec.federation !== lb.federation) return refuse('that shortfall names another federation than the leaderboard payout');
+      const have = unspent(lb.federation);
+      const heldSats = have.reduce((t, x) => t + BigInt(x.amountMsat), 0n) / 1000n;
+      if (!leaderboardCap({ amountSats: lb.amountSats, reservesSats: heldSats }).ok) return { ok: true };
+      const port = await portOf(lb.federation);
+      if (!port) return refuse('this seat reaches no port into that federation: it cannot recompute the shortfall', 503);
+      const w = await winnersBook.union(lb.id, []);
+      if (!w || !w.ok) return refuse(`this seat cannot read the season's winners: ${w ? w.why : '?'}`, 503);
+      if (!w.winners.length) return { ok: true };
+      const winners = w.winners.map((x) => ({ payoutPk: String(x.payoutPk).toLowerCase(), msat: String(x.msat) }));
+      const fees = await port.fees();
+      return leaderboardAmounts({ inputs: have, winners, fees }).covers ? refuse('this seat\'s reserves there cover that leaderboard payout: no shortfall here', 409) : { ok: true };
+    }
+    const v = (passed() || []).find((p) => p.id === rec.proposal);
+    if (!v) return refuse('this seat has no passed vote for that proposal: it keeps no shortfall of it', 409);
+    const { payer } = await payerFor(v, feds);
+    return payer ? refuse(`this seat's reserves in ${payer.slice(0, 8)} cover that payout: no shortfall here`, 409) : { ok: true };
+  }
+  // THE TRANSACTION A PLAN MAKES, rebuilt here without signing (the stake-lock tool's dry run): its id, or null
+  async function txidOfPlan(port, plan, kind = 'tx', extra = {}) {
+    let tx;
+    if (kind === 'refund') {
+      const fees = await port.fees();
+      tx = await port.settle({ claimPk: fromHex(plan.reserveKey), claims: [], refunds: [{ outpoint: { txid: fromHex(extra.txid), outIdx: 0n }, amountMsat: BigInt(plan.contractMsat) }],
+        payouts: [{ payoutPk: fromHex(plan.reserveKey), msat: largestPayoutMsat(fees, BigInt(plan.contractMsat)) }], nonce: payoutNonce(plan.proposal, 'refund') });
+    } else {
+      tx = await port.settle({ claimPk: fromHex(plan.reserveKey), claims: [], refunds: plan.refunds.map((x) => ({ outpoint: outpointOf(x.outpoint), amountMsat: BigInt(x.amountMsat) })),
+        payouts: payoutsOf({ plan: JSON.stringify(plan) }), nonce: fromHex(plan.nonce) });
+    }
+    const id = tx && (tx.txid && tx.txid !== 'undefined' ? tx.txid : tx.message);
+    return id ? String(id).toLowerCase() : null;
+  }
+  /**
+   * WHAT THE FEDERATION SAYS OF A RECORD PAST PLANNED (kanban #1156), read through this seat's own port into it: the transaction the
+   * record names is the one its plan makes, and the plan's inputs are spent; REFUNDED - the refund is the one the plan makes and the
+   * contract is gone. A seat with no port into it keeps the guardian's signed word and the preimage.
+   */
+  async function federationSays(rec) {
+    if (rec.state === PAYOUT.PLANNED || rec.state === PAYOUT.CLAIMED) return { ok: true };
+    if (!/^[0-9a-f]{64}$/.test(String(rec.txid || ''))) return refuse(`a ${rec.state} record names its transaction`);
+    if (!Array.isArray(rec.plan.refunds) || !rec.plan.refunds.length) return refuse('a plan spends at least one reserve output');
+    const port = await portOf(rec.plan.federation);
+    if (!port) return { ok: true };
+    let built; try { built = await txidOfPlan(port, rec.plan); } catch (e) { return refuse(`this seat cannot rebuild that plan's transaction: ${e.message}`, 503); }
+    if (built !== String(rec.txid).toLowerCase()) return refuse('the record names another transaction than its plan makes');
+    const st = async (outpoint) => { try { return await port.status(outpoint); } catch (e) { return { error: e.message }; } };
+    // THE PLAN'S INPUTS ARE SPENT in the federation (its first one, read here): the transaction went in. Not its output 0 - by the time
+    // a SENT arrives the gateway may have paid and spent the contract already
+    const first = await st(outpointOf(rec.plan.refunds[0].outpoint));
+    if (first.error) return refuse(`this seat cannot read the federation: ${first.error}`, 503);
+    if (first.stored) return refuse(`the plan's inputs are unspent in the federation: not ${rec.state}`, 409);
+    if (rec.state === PAYOUT.REFUNDED) {
+      if (!/^[0-9a-f]{64}$/.test(String(rec.refundTxid || ''))) return refuse('a refunded record names its refund');
+      let back; try { back = await txidOfPlan(port, rec.plan, 'refund', { txid: rec.txid }); } catch (e) { return refuse(`this seat cannot rebuild the refund: ${e.message}`, 503); }
+      if (back !== String(rec.refundTxid).toLowerCase()) return refuse('the record names another refund than its plan makes');
+      const s = await st({ txid: fromHex(rec.txid), outIdx: 0n });
+      if (s.error) return refuse(`this seat cannot read the federation: ${s.error}`, 503);
+      if (s.stored) return refuse('the federation still holds the contract: not REFUNDED', 409);
+    }
+    return { ok: true };
+  }
+
+  // A RECORD ANOTHER SEAT SENT (its broadcast): signed by a guardian seat of the federation whose step it is (kanban #1156), kept once per
+  // proposal - a PAID one only with the preimage of the plan's invoice, a step past PLANNED only as the federation says it, a SHORT one
+  // only as this seat's own records come to it - and moved only along PAYOUT_NEXT
   async function learn(rec) {
-    if (!rec || typeof rec.proposal !== 'string' || !PAYOUT[rec.state]) return refuse('no payout record');
+    if (!rec || typeof rec.proposal !== 'string' || !/^[0-9a-f]{64}$/.test(rec.proposal) || !PAYOUT[rec.state]) return refuse('no payout record');
+    const who = saidByGuardian(rec);
+    if (!who.ok) return who;
     const had = rowOf(rec.proposal);
-    if (rec.state === PAYOUT.SHORT) { if (!had) write(rec.proposal, { state: PAYOUT.SHORT, why: rec.why || null, federation: rec.federation || null }); return { ok: true }; }
-    if (!rec.plan || planIdOf(rec.plan) !== rec.planId) return refuse('the record\'s plan is not its id');
+    if (rec.state === PAYOUT.SHORT) {
+      if (had) return { ok: true, kept: had.state };
+      const st = await shortStands(rec); if (!st.ok) return st;
+      const t = transition(rec.proposal, null, PAYOUT.SHORT, { why: typeof rec.why === 'string' ? rec.why.slice(0, 500) : null, federation: who.fed });
+      return t.ok ? { ok: true, kept: PAYOUT.SHORT } : t;
+    }
+    if (!rec.plan || typeof rec.plan !== 'object' || planIdOf(rec.plan) !== rec.planId) return refuse('the record\'s plan is not its id');
     if (had && had.plan_id && had.plan_id !== rec.planId) return refuse('another plan of that proposal is kept here', 409);
-    if (rec.state === PAYOUT.PAID && rec.plan.kind === 'leaderboard' && !rec.txid) return refuse('a paid leaderboard payout names its transaction');
+    if (had && !canMove(had.state, rec.state)) return { ok: true, kept: had.state };
     if (rec.state === PAYOUT.PAID && rec.plan.kind !== 'leaderboard' && !(rec.preimage && toHex(sha256(fromHex(rec.preimage))) === rec.plan.paymentHash)) return refuse('that preimage is not the invoice\'s');
+    if (rec.state === PAYOUT.CLAIMED && !(rec.plan.kind === 'move' && rec.claimTxid && rec.claimMsat && rec.preimage && toHex(sha256(fromHex(rec.preimage))) === rec.plan.paymentHash))
+      return refuse('a claimed move names its claim and the payment\'s preimage');
+    if (rec.state === PAYOUT.CLAIMED && !/^[0-9a-f]{64}$/.test(String(rec.claimTxid))) return refuse('a claimed move names its claim transaction');
     // A GUARDIAN OF THAT FEDERATION keeps a plan it was told about only when the plan stands on its own records: a forged plan
     // would otherwise hold the proposal's one place here and refuse the real one
     const g = guardians().get(rec.plan.federation);
@@ -455,24 +627,23 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       const st = await planStands(rec.plan, { late: rec.state !== PAYOUT.PLANNED }); if (!st.ok) return st;
       if (rec.state === PAYOUT.PLANNED) { const b = bindWinners(rec.plan, st); if (!b.ok) return b; }
     }
-    const rank = { [PAYOUT.PLANNED]: 0, [PAYOUT.SENT]: 1, [PAYOUT.PAID]: 2, [PAYOUT.REFUNDED]: 2, [PAYOUT.CLAIMED]: 3 };
-    const final = had && (had.state === PAYOUT.CLAIMED || had.state === PAYOUT.REFUNDED || had.state === PAYOUT.SHORT || (had.state === PAYOUT.PAID && rec.state !== PAYOUT.CLAIMED));
-    if (final || (had && rank[had.state] > rank[rec.state])) return { ok: true, kept: had.state };
-    if (rec.state === PAYOUT.CLAIMED && !(rec.plan.kind === 'move' && rec.claimTxid && rec.claimMsat && rec.preimage && toHex(sha256(fromHex(rec.preimage))) === rec.plan.paymentHash))
-      return refuse('a claimed move names its claim and the payment\'s preimage');
-    write(rec.proposal, { plan_id: rec.planId, federation: rec.plan.federation, state: rec.state, plan: JSON.stringify(rec.plan), txid: rec.txid || (had && had.txid) || null,
-      preimage: rec.preimage || null, refund_txid: rec.refundTxid || null, why: rec.why || null, claim_txid: rec.claimTxid || null, claim_msat: rec.claimMsat || null });
-    if (rec.state === PAYOUT.CLAIMED) keepRow(claimRowOf(rec.plan, rec.claimTxid, rec.claimMsat));
-    markInputs(rec.proposal, rec.plan);
-    if (rec.txid && BigInt(rec.plan.changeMsat) > 0n) keepRow(changeRowOf(rec.plan, rec.txid));
-    if (rec.state === PAYOUT.PAID && rec.plan.kind === 'leaderboard' && rec.txid) for (const row of winnerRowsOf(rec.plan, rec.txid)) keepRow(row);
-    // THE REFUNDED CONTRACT is back under the reserve key: kept as a reserve row here too (its amount the refund's, rebuilt from the fees)
-    if (rec.state === PAYOUT.REFUNDED && rec.refundTxid) {
+    const fs = await federationSays(rec);
+    if (!fs.ok) return fs;
+    const txid = rec.txid || (had && had.txid) || null;
+    // THE ROWS THE STEP MAKES, kept in the same step: the change, a leaderboard's winners, a move's claim, a refund's return
+    const rows = [];
+    if (txid && BigInt(rec.plan.changeMsat || 0) > 0n) rows.push(changeRowOf(rec.plan, txid));
+    if (rec.state === PAYOUT.PAID && rec.plan.kind === 'leaderboard') rows.push(...winnerRowsOf(rec.plan, txid));
+    if (rec.state === PAYOUT.CLAIMED) rows.push(claimRowOf(rec.plan, rec.claimTxid, rec.claimMsat));
+    if (rec.state === PAYOUT.REFUNDED) {
       const port = await portOf(rec.plan.federation);
       if (port) { const back = largestPayoutMsat(await port.fees(), BigInt(rec.plan.contractMsat));
-        keepRow({ ...changeRowOf(rec.plan, rec.refundTxid), outpoint: { txid: fromHex(rec.refundTxid), outIdx: 0n }, amountMsat: back, contractId: `payout-refund:${rec.proposal}`, item: 'payout refund' }); }
+        rows.push({ ...changeRowOf(rec.plan, rec.refundTxid), outpoint: { txid: fromHex(rec.refundTxid), outIdx: 0n }, amountMsat: back, contractId: `payout-refund:${rec.proposal}`, item: 'payout refund' }); }
     }
-    return { ok: true, kept: rec.state };
+    const t = transition(rec.proposal, had ? had.state : null, rec.state, { plan_id: rec.planId, federation: rec.plan.federation, plan: JSON.stringify(rec.plan), txid,
+      preimage: rec.preimage || (had && had.preimage) || null, refund_txid: rec.refundTxid || null, why: typeof rec.why === 'string' ? rec.why.slice(0, 500) : null,
+      claim_txid: rec.claimTxid || null, claim_msat: rec.claimMsat ? String(rec.claimMsat) : null }, { plan: rec.plan, rows });
+    return t.ok ? { ok: true, kept: rec.state } : t;
   }
 
   /** THE COORDINATOR'S PASS: plan, sign, submit, have the gateway pay - for every passed proposal whose turn this seat has. */
@@ -487,19 +658,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       // which federation pays: the lowest federation id whose unspent reserves (as this seat holds them) cover X plus fees
       let payer = null, needs = {};
       if (r) payer = r.federation;
-      else {
-        for (const fed of [...feds.keys()].sort()) {
-          const g = feds.get(fed); if (!g.key) continue;
-          const port = await portOf(fed); if (!port) continue;
-          const [fees, gws] = await Promise.all([port.fees(), port.gateways()]);
-          const gw = lowestLiveGateway(gws.gateways || []); if (!gw) continue;
-          const contractMsat = contractForInvoice(BigInt(v.amountSats) * 1000n, gw.sendFeeDefault);
-          const have = unspent(fed);
-          const held = have.reduce((t, x) => t + BigInt(x.amountMsat), 0n);
-          needs[fed] = { held: String(held), need: String(contractMsat + lnv2FeeMsat(fees, contractMsat)) };
-          if (payAmountsCover(have, contractMsat, fees)) { payer = fed; break; }
-        }
-      }
+      else ({ payer, needs } = await payerFor(v, feds));
       const coordFed = payer || [...feds.keys()].filter((f) => feds.get(f).key).sort()[0];
       const g = coordFed && feds.get(coordFed);
       if (!g || !g.signer) continue;                                      // not a guardian of the paying federation: it only records
@@ -507,7 +666,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       if (i < 0 || !(Number.isInteger(height) && height >= v.decidableAt + TAKEOVER_BLOCKS * i)) continue;   // not this seat's turn yet
       if (!r && !payer) {
         const why = `the reserves cannot pay ${v.amountSats} sat: ${Object.entries(needs).map(([f, n]) => `${f.slice(0, 8)} holds ${n.held} msat, needs ${n.need}`).join('; ') || 'no federation can be read'} (a payout over several federations is not built)`;
-        write(v.id, { state: PAYOUT.SHORT, why }); broadcast({ proposal: v.id, state: PAYOUT.SHORT, why });
+        const t = transition(v.id, null, PAYOUT.SHORT, { why, federation: coordFed });
+        if (!t.ok) { out.push({ id: v.id, ...t }); continue; }
+        say({ proposal: v.id, state: PAYOUT.SHORT, why, federation: coordFed });
         log(`[payout] ${v.id.slice(0, 16)}: SHORT - ${why}`); out.push({ id: v.id, state: PAYOUT.SHORT }); continue;
       }
       let plan = planOfRow(r);
@@ -527,8 +688,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
           nonce: toHex(payoutNonce(v.id)) };
         const st = await planStands(plan);
         if (!st.ok) { log(`[payout] ${v.id.slice(0, 16)}: own plan refused - ${st.why}`); out.push({ id: v.id, ...st }); continue; }
-        write(v.id, { plan_id: st.planId, federation: payer, state: PAYOUT.PLANNED, plan: JSON.stringify(plan) }); markInputs(v.id, plan);
-        broadcast(recordOf(rowOf(v.id)));
+        const t = transition(v.id, null, PAYOUT.PLANNED, { plan_id: st.planId, federation: payer, plan: JSON.stringify(plan) }, { plan });
+        if (!t.ok) { out.push({ id: v.id, ...t }); continue; }
+        say(recordOf(rowOf(v.id)));
       }
       out.push({ id: v.id, ...(await advance(v.id, plan)) });
     }
@@ -548,7 +710,8 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       if (i < 0 || !(Number.isInteger(height) && height >= from + TAKEOVER_BLOCKS * i)) continue;
       let plan = planOfRow(r);
       if (!plan) {
-        const short = (why) => { write(lb.id, { state: PAYOUT.SHORT, why, federation: lb.federation }); broadcast({ proposal: lb.id, state: PAYOUT.SHORT, why, federation: lb.federation });
+        const short = (why) => { const t = transition(lb.id, null, PAYOUT.SHORT, { why, federation: lb.federation }); if (!t.ok) return { id: lb.id, ...t };
+          say({ proposal: lb.id, state: PAYOUT.SHORT, why, federation: lb.federation });
           log(`[leaderboard] ${lb.id.slice(0, 16)}: SHORT - ${why}`); return { id: lb.id, state: PAYOUT.SHORT, why }; };
         const port = await portOf(lb.federation); if (!port) continue;
         const fees = await port.fees();
@@ -574,8 +737,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         if (!st.ok) { log(`[leaderboard] ${lb.id.slice(0, 16)}: own plan refused - ${st.why}`); out.push({ id: lb.id, ...st }); continue; }
         const b = bindWinners(plan, st);
         if (!b.ok) { log(`[leaderboard] ${lb.id.slice(0, 16)}: winners not persisted - ${b.why}`); out.push({ id: lb.id, ...b }); continue; }
-        write(lb.id, { plan_id: st.planId, federation: lb.federation, state: PAYOUT.PLANNED, plan: JSON.stringify(plan) }); markInputs(lb.id, plan);
-        broadcast(recordOf(rowOf(lb.id)));
+        const t = transition(lb.id, null, PAYOUT.PLANNED, { plan_id: st.planId, federation: lb.federation, plan: JSON.stringify(plan) }, { plan });
+        if (!t.ok) { out.push({ id: lb.id, ...t }); continue; }
+        say(recordOf(rowOf(lb.id)));
       }
       const s = await sign(plan, 'tx');
       if (!s.ok) { out.push({ id: lb.id, ...s }); continue; }
@@ -583,10 +747,10 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       const tx = await port.settle({ claimPk: fromHex(plan.reserveKey), claims: [], refunds: plan.refunds.map((x) => ({ outpoint: outpointOf(x.outpoint), amountMsat: BigInt(x.amountMsat) })),
         payouts: payoutsOf({ plan: JSON.stringify(plan) }), nonce: fromHex(plan.nonce), signature: s.signature });
       if (!tx || !tx.accepted) { out.push({ id: lb.id, ...refuse(`the guardians refused the payout: ${tx ? tx.error : '?'}`) }); continue; }
-      write(lb.id, { state: PAYOUT.PAID, txid: tx.txid, why: `${plan.winners.length} winner(s) paid ${plan.amountSats} sat in the federation` });
-      for (const row of winnerRowsOf(plan, tx.txid)) keepRow(row);
-      if (BigInt(plan.changeMsat) > 0n) keepRow(changeRowOf(plan, tx.txid));
-      broadcast(recordOf(rowOf(lb.id)));
+      const t = transition(lb.id, PAYOUT.PLANNED, PAYOUT.PAID, { txid: tx.txid, why: `${plan.winners.length} winner(s) paid ${plan.amountSats} sat in the federation` },
+        { rows: [...winnerRowsOf(plan, tx.txid), ...(BigInt(plan.changeMsat) > 0n ? [changeRowOf(plan, tx.txid)] : [])] });
+      if (!t.ok) { out.push({ id: lb.id, ...t }); continue; }
+      say(recordOf(rowOf(lb.id)));
       log(`[leaderboard] ${lb.id.slice(0, 16)}: PAID ${plan.amountSats} sat to ${plan.winners.length} winner(s) (tx ${String(tx.txid).slice(0, 16)})`);
       out.push({ id: lb.id, ok: true, state: PAYOUT.PAID, txid: tx.txid });
     }
@@ -607,7 +771,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       if (i < 0 || !(Number.isInteger(height) && height >= from + TAKEOVER_BLOCKS * (i + 1))) continue;
       // THE RECORD HANDED ON FIRST, once a process (kanban #326, measured 2026-10-22: four of A's seats restarted after the PAID
       // record went round and kept no such move - the claim stopped at "3 of 5 guardian seats committed")
-      if (!recordResent.has(r.proposal)) { recordResent.add(r.proposal); broadcast(recordOf(r)); }
+      if (!recordResent.has(r.proposal)) { recordResent.add(r.proposal); say(recordOf(r)); }
       out.push({ id: r.proposal, ...(await claimMove(r.proposal, plan)) });
     }
     // the moves the records call for, and those under way here (planned or sent: no longer listed once their inputs are spent)
@@ -651,8 +815,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
           gatewayPk: String(gw.modulePublicKey).toLowerCase(), expiration: String(proposedExpiration(gws.height, gw)), nonce: toHex(payoutNonce(m.id)), seedTag };
         const st = await planStands(plan);
         if (!st.ok) { log(`[move] ${m.id.slice(0, 16)}: own plan refused - ${st.why}`); out.push({ id: m.id, ...st }); continue; }
-        write(m.id, { plan_id: st.planId, federation: m.from, state: PAYOUT.PLANNED, plan: JSON.stringify(plan) }); markInputs(m.id, plan);
-        broadcast(recordOf(rowOf(m.id)));
+        const t = transition(m.id, null, PAYOUT.PLANNED, { plan_id: st.planId, federation: m.from, plan: JSON.stringify(plan) }, { plan });
+        if (!t.ok) { out.push({ id: m.id, ...t }); continue; }
+        say(recordOf(rowOf(m.id)));
       }
       out.push({ id: m.id, ...(await advance(m.id, plan)) });
     }
@@ -666,9 +831,10 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     const c = await to.claimIncoming({ contractHex: plan.contractHex, seed: moveSeedFor(plan), payoutPk: fromHex(plan.toKey), nonce: payoutNonce(pid, 'claim'), signature: s.signature });
     if (!c || !c.accepted) return refuse(`the destination's guardians refused the claim: ${c ? c.error : '?'}`);
     const msat = String(c.payout && c.payout.msat);
-    write(pid, { state: PAYOUT.CLAIMED, claim_txid: c.txid, claim_msat: msat, why: `claimed into ${msat} msat under the destination's reserve key` });
-    keepRow(claimRowOf(plan, c.txid, msat));
-    broadcast(recordOf(rowOf(pid)));
+    const t = transition(pid, PAYOUT.PAID, PAYOUT.CLAIMED, { claim_txid: c.txid, claim_msat: msat, why: `claimed into ${msat} msat under the destination's reserve key` },
+      { rows: [claimRowOf(plan, c.txid, msat)] });
+    if (!t.ok) return t;
+    say(recordOf(rowOf(pid)));
     log(`[move] ${pid.slice(0, 16)}: CLAIMED ${msat} msat in ${String(plan.to).slice(0, 8)} (tx ${String(c.txid).slice(0, 16)})`);
     return { ok: true, state: PAYOUT.CLAIMED };
   }
@@ -683,9 +849,10 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       const tx = await port.settle({ claimPk: fromHex(plan.reserveKey), claims: [], refunds: plan.refunds.map((x) => ({ outpoint: outpointOf(x.outpoint), amountMsat: BigInt(x.amountMsat) })),
         payouts: payoutsOf(r), nonce: fromHex(plan.nonce), signature: s.signature });
       if (!tx || !tx.accepted) return refuse(`the guardians refused the payout: ${tx ? tx.error : '?'}`);
-      write(pid, { state: PAYOUT.SENT, txid: tx.txid, why: 'the payout transaction is accepted; the gateway is asked' });
-      if (BigInt(plan.changeMsat) > 0n) keepRow(changeRowOf(plan, tx.txid));
-      broadcast(recordOf(rowOf(pid)));
+      const t = transition(pid, PAYOUT.PLANNED, PAYOUT.SENT, { txid: tx.txid, why: 'the payout transaction is accepted; the gateway is asked' },
+        { rows: BigInt(plan.changeMsat) > 0n ? [changeRowOf(plan, tx.txid)] : [] });
+      if (!t.ok) return t;
+      say(recordOf(rowOf(pid)));
       r = rowOf(pid);
     }
     if (r.state !== PAYOUT.SENT) return { ok: true, state: r.state };
@@ -700,9 +867,10 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       const tx = await port.settle({ claimPk: fromHex(plan.reserveKey), claims: [], refunds: [{ outpoint: at, amountMsat: BigInt(plan.contractMsat) }],
         payouts: [{ payoutPk: fromHex(plan.reserveKey), msat: back }], nonce: payoutNonce(pid, 'refund'), signature: s.signature });
       if (!tx || !tx.accepted) return refuse(`the guardians refused the refund: ${tx ? tx.error : '?'}`);
-      write(pid, { state: PAYOUT.REFUNDED, refund_txid: tx.txid, why: `the gateway did not pay; ${back} msat back to the reserve key` });
-      keepRow({ ...changeRowOf(plan, tx.txid), outpoint: { txid: fromHex(tx.txid), outIdx: 0n }, amountMsat: back, contractId: `payout-refund:${pid}`, item: 'payout refund' });
-      broadcast(recordOf(rowOf(pid)));
+      const t = transition(pid, PAYOUT.SENT, PAYOUT.REFUNDED, { refund_txid: tx.txid, why: `the gateway did not pay; ${back} msat back to the reserve key` },
+        { rows: [{ ...changeRowOf(plan, tx.txid), outpoint: { txid: fromHex(tx.txid), outIdx: 0n }, amountMsat: back, contractId: `payout-refund:${pid}`, item: 'payout refund' }] });
+      if (!t.ok) return t;
+      say(recordOf(rowOf(pid)));
       return { ok: true, state: PAYOUT.REFUNDED };
     }
     const a = await sign(plan, 'auth', { txid: r.txid });
@@ -710,12 +878,13 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     const said = await port.send({ gateway: plan.gatewayUrl, outpoint: at, paymentHash: plan.paymentHash, amountMsat: BigInt(plan.contractMsat), expiration: BigInt(plan.expiration),
       claimPk: plan.gatewayPk, refundPk: fromHex(plan.reserveKey), invoice: plan.invoice, auth: a.signature });
     if (said && said.sent && said.preimage && toHex(sha256(said.preimage)) === plan.paymentHash) {
-      write(pid, { state: PAYOUT.PAID, preimage: toHex(said.preimage), why: `the gateway at ${plan.gatewayUrl} paid ${plan.amountSats} sat to ${plan.lnurl}; its preimage checked` });
-      broadcast(recordOf(rowOf(pid)));
+      const t = transition(pid, PAYOUT.SENT, PAYOUT.PAID, { preimage: toHex(said.preimage), why: `the gateway at ${plan.gatewayUrl} paid ${plan.amountSats} sat to ${plan.lnurl}; its preimage checked` });
+      if (!t.ok) return t;
+      say(recordOf(rowOf(pid)));
       log(`[payout] ${pid.slice(0, 16)}: PAID ${plan.amountSats} sat to ${plan.lnurl} (tx ${r.txid.slice(0, 16)})`);
       return { ok: true, state: PAYOUT.PAID };
     }
-    write(pid, { why: `the gateway did not pay yet: ${(said && said.why) || 'no preimage'}` });
+    note(pid, PAYOUT.SENT, `the gateway did not pay yet: ${(said && said.why) || 'no preimage'}`);
     return refuse(`the gateway did not pay yet: ${(said && said.why) || 'no preimage'}`, 503);
   }
 
