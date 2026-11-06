@@ -2989,6 +2989,37 @@ export class Round {
     return r ? JSON.parse(r.shares).map((x) => ({ pubkey: new Uint8Array(Buffer.from(x.pubkey, 'hex')), msat: BigInt(x.msat) })) : null;
   }
 
+  /** A txid of a federation's or a late entry's settlement (kanban #1172), `scope` 'fed:<hex>' | 'late:<hex>': kept once with what it moves; its signature filled in. */
+  putScopedSettlementTxid({ roundId, scope, txid, message, signature = null, claims = null, payouts = null }) {
+    const had = this.db.prepare('SELECT 1 FROM scoped_settlement_txids WHERE round_id = ? AND scope = ? AND txid = ?').get(Buffer.from(roundId), String(scope), String(txid));
+    if (!had) {
+      if (claims === null || payouts === null) return;
+      this.db.prepare('INSERT INTO scoped_settlement_txids (round_id, scope, txid, message, signature, claims, payouts, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(Buffer.from(roundId), String(scope), String(txid), Buffer.from(message || new Uint8Array(0)), Buffer.from(signature || new Uint8Array(0)), JSON.stringify(claims), Number(payouts), this.now());
+    } else if (signature && signature.length) {
+      this.db.prepare('UPDATE scoped_settlement_txids SET signature = ? WHERE round_id = ? AND scope = ? AND txid = ? AND length(signature) = 0')
+        .run(Buffer.from(signature), Buffer.from(roundId), String(scope), String(txid));
+    }
+  }
+
+  scopedSettlementTxidsOf(roundIdBytes, scope) {
+    return this.db.prepare('SELECT txid, message, signature, claims, payouts FROM scoped_settlement_txids WHERE round_id = ? AND scope = ? ORDER BY made_ms, txid')
+      .all(Buffer.from(roundIdBytes), String(scope))
+      .map((r) => ({ txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claims: JSON.parse(r.claims), payouts: Number(r.payouts) }));
+  }
+
+  /** Every (round, federation) row in `state` (kanban #1172: SUBMITTING and REFUSED rows are asked again at start). */
+  fedLockSettlementsIn(state) {
+    return this.db.prepare('SELECT round_id, federation_id FROM fed_lock_settlements WHERE state = ? ORDER BY made_ms').all(state)
+      .map((r) => ({ roundId: new Uint8Array(r.round_id), federation: r.federation_id }));
+  }
+
+  /** Every (round, late entry) row in `state` (kanban #1172). */
+  lateLockSettlementsIn(state) {
+    return this.db.prepare('SELECT round_id, entry_id FROM late_lock_settlements WHERE state = ? ORDER BY made_ms').all(state)
+      .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id) }));
+  }
+
   /** A late loser's second settlement (slice C3b-1): its intent, then where it stands. One per (round, entry). */
   putLateLockSettlement({ roundId, entryId, txid, message, signature, state, why }) {
     this.db.prepare('INSERT OR REPLACE INTO late_lock_settlements (round_id, entry_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
