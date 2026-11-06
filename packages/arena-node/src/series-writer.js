@@ -96,6 +96,8 @@ export function seriesWriter(round, template, { horizonMs: given = SERIES_HORIZO
     const ahead = [...written.entries()].filter(([, w]) => w.startTimeMs >= now).sort((a, b) => a[0] - b[0]);
     const at = (e) => (e ? { index: e[0], id: e[1].id, startTimeMs: String(e[1].startTimeMs) } : null);
     return { series: toHex(id), startTimeMs: String(template.startTimeMs), committeeTimeMs: String(template.committeeTimeMs),
+      // its creator (checked against the line's signature when the series was taken): who a day marker is from (kanban #1168)
+      creator: template.creatorPubkey instanceof Uint8Array ? toHex(template.creatorPubkey) : null,
       horizonMs: String(horizonMs), written: written.size, ahead: ahead.length, first: at(ahead[0]), last: at(ahead[ahead.length - 1]) };
   };
   return Object.assign(writer, { id, template, write, ids, summary, startingWithin, soonest });

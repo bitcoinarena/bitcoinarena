@@ -273,9 +273,23 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
       chain: { view: chainView, widen, censusKeysAt: async (h) => { const es = await censusEntriesAt(nid, h); remember(es); return es ? es.map((x) => x.pubkey) : null; }, seatUrls },
       chainCall: call, walletRpc: (m, p) => walletCall(wallet.wallet || '')(m, p), gridBase: gb.gridBase, openGrid: openGrid(game), postSeries, fedsNow,
       seatCatalog: gb.seatCatalog, devOf: new Proxy({}, { get: (_, k) => devOf[k] }), creator: { creatorSecret: nodeSecret }, stakeMsat: undefined, feeRate, maxFeeRate,
-      emergencyOn: env.ARENA_DUTY_EMERGENCY !== '0', seatsAgreeOn: async (hash) => gb.agreementOf(hash, await gb.seatChains()), canPay, fetchFn, say, now });
+      emergencyOn: env.ARENA_DUTY_EMERGENCY !== '0', seatsAgreeOn: async (hash) => gb.agreementOf(hash, await gb.seatChains()), canPay, fetchFn, say, now,
+      // WHO A DAY MARKER IS FROM (kanban #1168): the creator of a series this seat holds or was announced; ARENA_DUTY_CREATORS the creator
+      // keys (hex, comma-separated) the operator counts as duty posters beside the day's duty order - a runner whose key is not a census node
+      creatorOf, creators: String(env.ARENA_DUTY_CREATORS || '').split(',').map((x) => x.trim()).filter(Boolean) });
     engines.set(key, e);
     return e;
+  };
+  // THE CREATOR OF A SERIES THIS SEAT HOLDS (its line's signature checked when it was taken), else of one announced to it (POST /expected)
+  let creators = new Map(), creatorsAt = -1;
+  const creatorOf = (idHex) => {
+    const held = seat.heldTemplates();
+    if (held.length !== creatorsAt) {
+      creators = new Map();
+      for (const t of held) { if (!(t && t.creatorPubkey instanceof Uint8Array)) continue; try { creators.set(toHex(seriesId(t)), toHex(t.creatorPubkey)); } catch { /* not a series */ } }
+      creatorsAt = held.length;
+    }
+    return creators.get(String(idHex)) || (typeof seat.announcedCreatorOf === 'function' ? seat.announcedCreatorOf(String(idHex)) : null);
   };
   let gridBases = null;
   const gridBaseOf = () => gridBases || (gridBases = createGridBase({ chainCall: call,

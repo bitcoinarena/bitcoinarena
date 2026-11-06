@@ -46,7 +46,10 @@ const header = (timeS, n) => { const h = new Uint8Array(80); h[0] = n & 0xff; h[
  */
 function world({ nowMs = T0 + 10 * MIN, local = [ORDER[0]], inBlocks = [], mempool = [], wallet = {}, blockHash = {}, seats = ['http://s1'], seatRounds = null,
   canPay = async () => ({ ok: true }), role = 'primary', postedPrimary = async () => false, game = 'nextblock', view = null, dir = null,
-  census = async () => KEYS, mempoolFails = false } = {}) {
+  census = async () => KEYS, mempoolFails = false,
+  // WHO A MARKER'S SERIES IS FROM (kanban #1168: only a posting by a node of the day's duty order counts): every series here is held, its
+  // creator the census key its first byte names
+  creatorOf = async (id) => toHex(KEYS[parseInt(String(id).slice(0, 2), 16) % KEYS.length]) } = {}) {
   const firstHeight = 1000;
   const blocks = [];
   for (let t = T0 - 40 * H, i = 0; t <= nowMs; t += 10 * MIN, i++) blocks.push({ header: header(Math.floor(t / 1000), i), transactions: [], t });
@@ -83,7 +86,7 @@ function world({ nowMs = T0 + 10 * MIN, local = [ORDER[0]], inBlocks = [], mempo
     // THE SEATS DRAW TODAY'S ROUNDS (the day before this duty's is covered), unless a test says otherwise
     fetchFn: async (url) => ({ ok: true, json: async () => (seatRounds ? seatRounds(url) : { rounds: [0, 1, 2].map((i) => ({ game: { id: GID },
       startTime: new Date(Math.max(T0, nowMs) + 10 * MIN + i * 90000).toISOString(), committee: { drawn: { game: ['k'], settlement: ['k'] } } })) }) }),
-    canPay, now: () => nowMs, say: () => {},
+    canPay, now: () => nowMs, say: () => {}, creatorOf,
   };
   return { opts, did, tip, blocks, firstHeight };
 }
@@ -194,7 +197,7 @@ test('the backup grid: rank 2 posts it from 02:00 even when rank 1 is down, with
   await createDayDuty(first.opts).look(); assert.equal(first.did.published.length, 0);
   const own = world({ local: [ORDER[1]], nowMs: T0 + 3 * H, role: 'backup', postedPrimary: async () => true });
   await createDayDuty(own.opts).look(); assert.equal(own.did.published.length, 0);
-  const seen = txOf([backupMarkerOutput(DAY, 'nextblock-day')]);
+  const seen = txOf([backupMarkerOutput(DAY, 'nextblock-day'), seriesPublicationOutput(new Uint8Array(32).fill(4))]);
   const twice = world({ local: [ORDER[2]], nowMs: T0 + 4 * H, role: 'backup', mempool: [seen] });
   await createDayDuty(twice.opts).look(); assert.equal(twice.did.published.length, 0);
   // and the primary engine does not take a backup marker for the day's own
@@ -295,13 +298,13 @@ test('seat 4: a census at the anchor that does not read gives no order, says why
 
 test('seat 4: no emergency grid on the word of seats that did not answer, nor before the mempool was read; an empty answer is not kept', async () => {
   // today's grid posted by another node, its rounds drawn - but no seat answers yet: no emergency grid, and the next pass asks again
-  const pub = txOf([dutyMarkerOutput(DAY - 1, 'nextblock-day')]);
+  const pub = txOf([dutyMarkerOutput(DAY - 1, 'nextblock-day'), seriesPublicationOutput(new Uint8Array(32).fill(8))]);
   let answering = false, asked = 0;
   const w = world({ local: [ORDER[0]], nowMs: T0 + 30 * MIN, inBlocks: [{ atMs: T0 - 20 * H, raw: pub.raw }], seats: ['http://s1', 'http://s2', 'http://s3'],
     seatRounds: () => { asked++; if (!answering) throw new Error('fetch failed'); return { rounds: [0, 1, 2].map((i) => ({ game: { id: GID }, startTime: new Date(T0 + H + i * 90000).toISOString(),
       committee: { drawn: { game: ['k'], settlement: ['k'] } } })) }; } });
   // tomorrow's posted too, so the only thing a pass could post is an emergency grid
-  w.opts.chain.view = (await (async () => { const v = await w.opts.chain.view(); v.blocks[v.blocks.length - 3].transactions.push(txOf([dutyMarkerOutput(DAY, 'nextblock-day')]).raw); return async () => v; })());
+  w.opts.chain.view = (await (async () => { const v = await w.opts.chain.view(); v.blocks[v.blocks.length - 3].transactions.push(txOf([dutyMarkerOutput(DAY, 'nextblock-day'), seriesPublicationOutput(new Uint8Array(32).fill(10))]).raw); return async () => v; })());
   const d = createDayDuty(w.opts);
   const st = await d.look();
   assert.equal(w.did.published.length, 0, JSON.stringify(st.days));
