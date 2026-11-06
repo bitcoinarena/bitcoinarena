@@ -7,62 +7,46 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
+import { exchangeRig, payingSeat, refusingSeat } from './ecash-1149-rig.js';
 
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
-const A = '33'.repeat(32), B = '4d'.repeat(32);
+const A = '33'.repeat(32), B = '4d'.repeat(32);   // the rig's two federations
 
-function page({ seats }) {
-  const store = new Map();
-  const vault = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
-  const keys = () => [...store.keys()];
-  const log = [];
-  const wallet = (fed) => ({
-    sendEcash: async (m) => { log.push(['send', fed, m]); return JSON.stringify({ msat: Number(m), ecash: `notes-${fed.slice(0, 2)}-${m}` }); },
-    receiveEcash: async (e) => { log.push(['receive', fed, e]); return JSON.stringify({ state: 'Success' }); },
-  });
-  const window = { ARENA_BROWSER_STORE: () => new Proxy(vault, { ownKeys: () => keys(), getOwnPropertyDescriptor: () => ({ enumerable: true, configurable: true }) }),
-    ARENA_WALLET_BALANCE: { parts: [{ federation: A, sats: 1000, merging: 0, arriving: 0 }] }, ARENA_WALLETS: new Map([[A, wallet(A)], [B, wallet(B)]]) };
-  const fetch = async (url, o) => {
-    const seat = seats[new URL(url).origin];
-    const said = await seat(JSON.parse(o.body));
-    return { ok: said.status === 200, status: said.status, json: async () => said.body, text: async () => String(said.body) };
-  };
-  const a = HTML.indexOf('    window.ARENA_EXCHANGE_INTO = async');
-  const code = HTML.slice(a, HTML.indexOf('\n    };\n', a) + 7);
-  pageFunction(PAGE, ['window', 'ARENACLIENT', 'fetch', 'AbortSignal'], [code], '')(window, { fromHex: (h) => Buffer.from(h, 'hex') }, fetch, { timeout: () => undefined });
-  return { window, log, keys };
-}
-
-test('the round\'s federation lacks it: the other federation\'s e-cash to a seat, the seat\'s e-cash of the round\'s back', async () => {
-  const seen = [];
-  const p = page({ seats: {
-    'http://s1': async () => ({ status: 409, body: 'this seat holds 0 sat in federation 4d4d4d4d: too little' }),
-    'http://s2': async (b) => { seen.push(b); return { status: 200, body: { ok: true, msat: b.amountMsat, ecash: 'notes-from-seat', federation: B } }; } } });
-  const r = await p.window.ARENA_EXCHANGE_INTO({ to: B, toInvite: 'inv', needMsat: 100000n, nodes: ['http://s1', 'http://s2'], seed: null, LockClient: null });
-  assert.equal(r.ok, true, r.why);
-  assert.equal(r.from, A);
-  assert.deepEqual(seen.map((b) => [b.from, b.to, b.amountMsat]), [[A, B, '100000']]);
-  assert.deepEqual(p.log, [['send', A, '100000'], ['receive', B, 'notes-from-seat']]);
-  assert.equal(p.keys().filter((k) => k.startsWith('arena.ecash.exchange.')).length, 0, 'nothing kept once received');
+// THE EXCHANGE ITSELF (kanban #1149): one seat per bearer string, each step written first - ecash-1149-rig.js runs the page's own code
+test('the round\'s federation lacks it: the other federation\'s e-cash to the one seat that offers it, the seat\'s e-cash of the round\'s back', async () => {
+  const r = exchangeRig({ seats: { 'http://s1': refusingSeat({}), 'http://s2': payingSeat({ [B]: '500000' }) } });
+  const said = await r.exchange({ to: B, needMsat: 100000n, nodes: ['http://s1', 'http://s2'] });
+  assert.equal(said.ok, true, said.why);
+  assert.equal(said.from, A);
+  assert.deepEqual([...r.seen.values()], [['http://s2']], 'handed to the offering seat only');
+  assert.deepEqual(r.log.map((x) => x.slice(0, 3)), [['send', '33', '100000'], ['receive', '4d', 'Success']]);
+  assert.equal(r.kept().length, 0, 'nothing kept once received');
 });
 
-test('every seat refuses outright: the notes come back to the wallet they left', async () => {
-  const p = page({ seats: { 'http://s1': async () => ({ status: 409, body: 'too little' }) } });
-  const r = await p.window.ARENA_EXCHANGE_INTO({ to: B, toInvite: 'inv', needMsat: 100000n, nodes: ['http://s1'], seed: null, LockClient: null });
-  assert.equal(r.ok, false);
-  assert.deepEqual(p.log.map((x) => [x[0], x[1]]), [['send', A], ['receive', A]]);
+test('the one offering seat refuses outright: the notes come back to the wallet they left', async () => {
+  const r = exchangeRig({ seats: { 'http://s1': refusingSeat({ [B]: '500000' }) } });
+  const said = await r.exchange({ to: B, needMsat: 100000n, nodes: ['http://s1'] });
+  assert.equal(said.ok, false);
+  assert.deepEqual(r.log.map((x) => [x[0], x[1]]), [['send', '33'], ['receive', '33']]);
+  assert.equal(r.kept().length, 0);
 });
 
 test('a seat that took the notes and failed to pay is asked again with the same notes at the next exchange', async () => {
-  let calls = 0;
-  const p = page({ seats: { 'http://s1': async (b) => (++calls === 1 ? { status: 503, body: 'the payout failed; ask again' } : { status: 200, body: { ok: true, msat: b.amountMsat, ecash: `paid-${b.ecash}` } }) } });
-  const r1 = await p.window.ARENA_EXCHANGE_INTO({ to: B, toInvite: 'inv', needMsat: 100000n, nodes: ['http://s1'], seed: null, LockClient: null });
+  let calls = 0; const took = new Map();
+  const seat = { holds: { [B]: '500000' }, post: async (b, { take, mint }) => {
+    if (++calls === 1) { took.set(b.ecash, take(b.ecash)); return { status: 503, body: 'the payout failed; ask again' }; }
+    const n = took.get(b.ecash) || take(b.ecash);
+    return { status: 200, body: { ok: true, msat: String(n.msat), ecash: mint(b.to, n.msat) } };
+  } };
+  const r = exchangeRig({ seats: { 'http://s1': seat } });
+  const r1 = await r.exchange({ to: B, needMsat: 100000n, nodes: ['http://s1'] });
   assert.equal(r1.ok, false);
-  assert.equal(p.keys().filter((k) => k.startsWith('arena.ecash.exchange.')).length, 1, 'kept, not taken back');
-  assert.ok(!p.log.some((x) => x[0] === 'receive' && x[1] === A), 'never received back while a seat may hold it');
-  await p.window.ARENA_EXCHANGE_INTO({ to: B, toInvite: 'inv', needMsat: 50000n, nodes: ['http://s1'], seed: null, LockClient: null });
-  assert.ok(p.log.some((x) => x[0] === 'receive' && x[1] === B && x[2] === 'paid-notes-33-100000'), 'the kept exchange was paid into B');
+  assert.equal(r.kept().length, 1, 'kept, not taken back');
+  assert.ok(!r.log.some((x) => x[0] === 'receive' && x[1] === '33'), 'never received back while the seat may hold it');
+  await r.exchange({ to: B, needMsat: 50000n, nodes: ['http://s1'] });
+  assert.equal(r.bal.get(B), 150000n, 'the kept exchange was paid into B, and the new one');
+  assert.equal(r.kept().length, 0);
 });
 
 function prepare({ parts, rows }) {
