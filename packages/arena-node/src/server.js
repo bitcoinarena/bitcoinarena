@@ -11432,7 +11432,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // `previous`: the record the gathering seat keeps the band's gap from, signed, in hex (§23A.3a); this seat takes the higher of that and its own
         const previous = url.searchParams.get('previous');
         if (previous !== null && !/^[0-9a-f]{2,14000}$/.test(previous)) return text(res, 400, 'a signed record, in hex');
-        const handed = { previous, inviteFederationId: inviteFedId };
+        // `left`: the leave statements of the guardians named gone by their own word, each peer key + signature in hex (kanban #1157)
+        const left = String(url.searchParams.get('left') || '').split(',').filter(Boolean);
+        if (!left.every((x) => /^[0-9a-fA-F]{194}$/.test(x))) return text(res, 400, 'a leave statement is a peer key (33 bytes) and a signature (64 bytes), in hex');
+        const handed = { previous, inviteFederationId: inviteFedId, left };
         const r = goneHex.length ? await fedRecords.mySignatureWithGone(fid, goneHex, atHeight, rv, absentHex, departedHex, emergencyHexes, handed) : await fedRecords.mySignature(fid, atHeight, rv, handed);
         res.writeHead(r.ok ? 200 : 404, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify(r));
