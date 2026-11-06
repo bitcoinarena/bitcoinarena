@@ -3,9 +3,10 @@
 // THE 5-OF-7 LNURL PAYOUT'S WORLD (reserve-payout.test.js, kanban #1156/#1159): seven guardian seats in one process, one fake federation
 // (contracts, the settle and send the stake-lock tool answers), one fake gateway and one fake LNURL endpoint. `create` is the module under
 // test (a measure script hands in an older one); `more(i)` adds options to seat i.
-import { schnorr } from '@noble/curves/secp256k1.js';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { openStore } from '../src/store.js';
 import { createReservePayouts } from '../src/reserve-payout.js';
+import { payeeOf } from '../src/winnings-send.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { trustedDealerSplit } from '../../arena-protocol/src/frost.js';
 import { evenGroupSecret } from '../../arena-protocol/src/frost-bip340.js';
@@ -28,18 +29,24 @@ export const GW = { url: 'https://gw.example/', lightningPublicKey: '02' + 'ab'.
 export const LNURL = 'dev@bitcoin-arena.io', METADATA = '[["text/plain","Bitcoin Arena development"]]';
 export const PROPOSAL = 'aa'.repeat(32);
 
-// A BOLT11 INVOICE as the reader takes it (the node's signature is not read: zeros)
-export function invoiceOf(msat, paymentHash, metadata) {
+// A BOLT11 INVOICE, signed by `secret` as BOLT11 says (kanban #1154: a seat checks who an invoice pays, the key its signature recovers
+// to). By default the address's own node key signs it, so the address answers every seat with invoices of one payee, as a real one does.
+export const PAYEE_SECRET = new Uint8Array(32).fill(0x5e);
+export function invoiceOf(msat, paymentHash, metadata, secret = PAYEE_SECRET) {
   const words = [];
   let ts = 1792200000; const t = []; for (let i = 0; i < 7; i++) { t.unshift(ts % 32); ts = Math.floor(ts / 32); } words.push(...t);
   const field = (type, bytes) => { const w = convertBits([...bytes], 8, 5, true); words.push(type, Math.floor(w.length / 32), w.length % 32, ...w); };
   field(1, paymentHash); field(23, sha256(new TextEncoder().encode(metadata)));
-  words.push(...new Array(104).fill(0));
-  return bech32Encode(`lntb${msat * 10n}p`, words);
+  const hrp = `lntb${msat * 10n}p`, hb = new TextEncoder().encode(hrp), body = Uint8Array.from(convertBits(words, 5, 8, true));
+  const msg = new Uint8Array(hb.length + body.length); msg.set(hb, 0); msg.set(body, hb.length);
+  // noble's recovered form is recovery id || r || s; BOLT11 carries r || s || recovery id
+  const rec = secp256k1.sign(sha256(msg), secret, { prehash: false, format: 'recovered' });
+  const sig = new Uint8Array(65); sig.set(rec.subarray(1), 0); sig[64] = rec[0];
+  return bech32Encode(hrp, [...words, ...convertBits([...sig], 8, 5, true)]);
 }
 
 export function world({ rows = [60000000n, 40000000n, 50000000n], amountSats = 70000n, gatewayFails = false, down = [], create = createReservePayouts, more = () => ({}) } = {}) {
-  const fed = { height: 1000, contracts: new Map(), submits: [], payments: [], preimages: new Map(), invoiceAsks: 0, gatewayFails };
+  const fed = { height: 1000, contracts: new Map(), submits: [], payments: [], preimages: new Map(), invoiceAsks: 0, payeeAsks: 0, gatewayFails };
   const reserveRows = rows.map((m, i) => ({ outpoint: `${String(i + 1).padStart(2, '0').repeat(32)}:0`, amountMsat: String(m), verifiedMs: i + 1 }));
   for (const r of reserveRows) fed.contracts.set(r.outpoint, { key: toHex(KEY), msat: BigInt(r.amountMsat), expiration: 0, spent: false });
   const msgOf = (o) => sha256(new TextEncoder().encode(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v))));
@@ -79,6 +86,10 @@ export function world({ rows = [60000000n, 40000000n, 50000000n], amountSats = 7
       if (address !== LNURL) return { ok: false, why: 'no such address' };
       const pre = rand(32), hash = sha256(pre); fed.preimages.set(toHex(hash), pre);
       return { ok: true, invoice: invoiceOf(msat, hash, METADATA), paymentHash: toHex(hash), metadata: METADATA }; },
+    // a co-signer's own invoice from the address, read only for its payee (kanban #1154): counted apart from the invoices a plan pays
+    payeeFor: async (address, msat) => { fed.payeeAsks++;
+      if (address !== LNURL) return { ok: false, why: 'no such address' };
+      return { ok: true, payee: payeeOf(invoiceOf(msat, rand(32), METADATA)) }; },
   };
   const state = { passed: [{ id: PROPOSAL, lnurl: LNURL, amountSats, decidableAt: 500 }], kept: [] };
   const seats = [];
@@ -88,7 +99,7 @@ export function world({ rows = [60000000n, 40000000n, 50000000n], amountSats = 7
     const s = { me, down: down.includes(i), inbox: [] };
     s.api = create({ db: openStore(':memory:'), me, heightNow: () => chain.tip, curve, random: rand, network: 'testnet4', sign: (d) => schnorr.sign(d, SECRET_OF.get(me)),
       passed: () => state.passed, reserveRows: () => [...reserveRows, ...state.kept.filter((k) => k.seat === i).map((k) => k.row)],
-      portOf: async () => port, payRequest: lnurl.payRequest, invoiceFor: lnurl.invoiceFor,
+      portOf: async () => port, payRequest: lnurl.payRequest, invoiceFor: lnurl.invoiceFor, payeeFor: lnurl.payeeFor,
       // as putDonationOutputs: one row per outpoint (INSERT OR REPLACE)
       keepRow: (row) => { const o = `${toHex(row.outpoint.txid)}:${row.outpoint.outIdx}`; if (!state.kept.some((k) => k.seat === i && k.row.outpoint === o)) state.kept.push({ seat: i, row: { outpoint: o, amountMsat: String(row.amountMsat), verifiedMs: 99 } }); },
       broadcast: (rec) => { for (const o of seats) if (o !== s) o.inbox.push(rec); },

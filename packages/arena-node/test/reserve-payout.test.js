@@ -6,7 +6,7 @@
 // refunds and records, and nothing is paid twice.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '@noble/curves/secp256k1.js';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { contractForInvoice, PAYOUT, planIdOf, heldBeforeOwnPayment } from '../src/reserve-payout.js';
 import { capStands } from '../../arena-protocol/src/funding.js';
 import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
@@ -131,4 +131,26 @@ test('a payment\'s cap reads the reserves as they were before it: its own plan d
   assert.equal(heldBeforeOwnPayment(1980n, null), 1980n);
   assert.equal(heldBeforeOwnPayment(1980n, { state: PAYOUT.PAID, plan }), 1980n);
   assert.equal(heldBeforeOwnPayment(1980n, { state: PAYOUT.SHORT, plan: null }), 1980n);
+});
+
+test('kanban #1154 on the reserves: a plan whose invoice another node signed is refused by every co-signer - nothing signed, nothing paid', async () => {
+  // the coordinator's address answers it with invoices of an outsider's node (a coordinator that swaps in its own invoice): the
+  // description hash and the amount are right, the payee is not the one the address answers every other seat with
+  const OUT = new Uint8Array(32).fill(0x77);
+  const evil = {
+    invoiceFor: async (address, msat) => { const pre = rand(32), hash = sha256(pre); return { ok: true, invoice: invoiceOf(msat, hash, METADATA, OUT), paymentHash: toHex(hash), metadata: METADATA }; },
+    payeeFor: async () => ({ ok: true, payee: toHex(secp256k1.getPublicKey(OUT, true)) }),
+  };
+  const w = world({ more: (i) => (i === 0 ? evil : {}) });
+  const out = await w.seats[0].api.round({ height: 500 });
+  await w.deliver();
+  assert.equal(w.fed.submits.length, 0, 'no transaction');
+  assert.equal(w.fed.payments.length, 0, 'no gateway payment');
+  assert.ok(out.every((r) => r.state !== PAYOUT.PAID), JSON.stringify(out));
+  assert.ok(w.fed.payeeAsks >= 4, `the co-signers read the address's own invoice (${w.fed.payeeAsks})`);
+  // and the honest world still pays, each co-signer having read its own invoice's payee
+  const ok = world();
+  const [r] = await ok.seats[0].api.round({ height: 500 });
+  assert.equal(r.state, PAYOUT.PAID, r.why);
+  assert.ok(ok.fed.payeeAsks >= 4, `${ok.fed.payeeAsks} payee reads`);
 });
