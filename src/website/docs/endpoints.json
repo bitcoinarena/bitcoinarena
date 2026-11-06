@@ -4482,8 +4482,8 @@
  {
   "method": "POST",
   "path": "/price-sign",
-  "params": "body JSON {round, kind:\"tape\", prices[]} or {round, kind:\"sample\", k, priceCents}",
-  "auth": "none; signed only if within 0.05 % of this seat's own reading for that moment, a reading no older than 5 s",
+  "params": "body JSON {round, kind:\"tape\", prices[], leaderSig} or {round, kind:\"sample\", k, priceCents, leaderSig}",
+  "auth": "the moment's leader's signature (leaderSig: seat k mod n, the tape's seat 0); signed only if within 0.05 % of this seat's own reading for that moment, a reading no older than 5 s, one value per moment (kanban #1181)",
   "returns": "200 JSON {ok, key, signature}; 400/404/409",
   "purpose": "Asks this seat to sign a price sample or opening tape it read too.",
   "audience": "node-to-node",
