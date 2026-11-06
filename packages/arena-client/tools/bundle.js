@@ -236,6 +236,8 @@ out += '         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchRese
 out += '         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,\n';
 out += '         withdrawPlayerWallet: withdrawPlayerWallet,\n';
 out += '         onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,\n';
+// THE STAKE LOCK'S RECORD AS ONE STATE MACHINE (kanban #1162): a submitted lock read in the federation before reuse, the entry it is named in kept
+out += '         reconcileKeptLock: reconcileKeptLock, bindLockEntry: bindLockEntry, lockRecordOf: lockRecordOf,\n';
 // AND THE ROUND'S CLOSE, which ends a reloaded tab's resume (keptLockUse beforeClose)
 out += '         roundEndMs: roundEndMs,\n';
 out += '         ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes, ledgerHistory: ledgerHistory,\n';
