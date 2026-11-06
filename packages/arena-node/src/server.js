@@ -10259,7 +10259,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         else {
           const k = url.searchParams.get('k') || '';
           if (!/^[0-9]{1,15}$/.test(k)) return text(res, 400, 'POST /batch-void-ask?round=<id>&k=<batch>');
-          got = orderBook.voidAsk(rid, Number(k));
+          got = orderBook.voidAsk(rid, Number(k), body);
         }
         if (!got.ok) return text(res, got.status || 409, got.why);
         res.writeHead(got.fresh === false ? 200 : 201, { 'content-type': 'application/json', ...CORS });
