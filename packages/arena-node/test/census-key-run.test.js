@@ -85,6 +85,7 @@ function network(bonds, { c = chain(), down = [], canPay = () => true, entries =
     n.db = openStore(':memory:');
     n.store = new CensusKeyStore(n.db);
     n.posted = [];
+    n.tried = [];                                   // every height this node's wallet was asked to post at, paid or not (kanban #1188)
     n.build = (extra = {}) => {
       n.scan = createCensusKeyScan({ store: n.store, network: NETWORK, networkId: NET, firstHeight: FIRST, foundingWindow: WINDOW, censusConfirmations: CONF, censusKey0, tipHeight: () => c.tip, blockHashAt: c.hashAt,
         blockAt: c.blockAt, censusEntriesAt: read, censusNamedAt: readNamed, verify });
@@ -92,6 +93,7 @@ function network(bonds, { c = chain(), down = [], canPay = () => true, entries =
         tipHeight: () => c.tip, blockHashAt: c.hashAt, censusEntriesAt: read, standing: n.scan.standing, scannedTo: n.scan.scannedTo, plan: n.scan.planAt, reshareList: n.scan.reshareList,
         generationOf: n.scan.generationOf, fetchFn, work: censusKeyWork,
         post: async ({ body, output }) => {
+          n.tried.push(c.tip);
           if (!canPay(i)) return { ok: false, why: 'this wallet holds no confirmed coins' };
           const secret = new Uint8Array(32).fill(200), carrier = censusKeyCarrier(secret, body);
           const raw = censusKeyAnchorSpend({ carrier, secret, funding: { txid: '11'.repeat(32), vout: 0, value: 10000n }, output });
@@ -511,6 +513,10 @@ test('reshare: the census moves under the key, the chain says who is present, an
   assert.equal(n0.scan.generationOf(toHex(key)).epoch, EPOCH + 1, 'the record of the new census stands');
   assert.equal(n0.scan.standing().filter((k) => toHex(k.publicKey) === toHex(key)).length, 1, 'and no key was added by it');
   await w.pass(2);
+  // #1188: NOT WHILE A REORG CAN TAKE THE RECORD OFF. The scan follows reorgs 288 blocks deep; restarted here with one that follows them 2 deep, the old shares go 3 blocks on
+  assert.ok(w.nodes[2].store.held(key), 'the old shares stay while the record is shallower than a reorg the scan follows');
+  for (const n of w.nodes) n.build({ reorgDepth: 2 });
+  w.c.mine(3); await w.pass(2);
   assert.equal(w.nodes[2].store.held(key), null, 'the node that left no longer keeps its shares');
   // THE NEW SHARES OPEN THE SAME KEY: enough of them, interpolated at zero
   const shares = new Map();
@@ -559,7 +565,10 @@ test('key 0 is a key like any other: genesis names its holders, the 80 % trigger
   assert.equal(n0.scan.generationOf(toHex(key)).epoch, EPOCH, 'the record stands');
   assert.equal(n0.scan.standing().filter((k) => toHex(k.publicKey) === toHex(key)).length, 1, 'and adds no key');
   await w.pass(2);
-  assert.equal(w.nodes[1].store.held(key, 0), null, 'a founder deletes its old shares once the record stands');
+  assert.ok(w.nodes[1].store.held(key, 0), '#1188 a founder keeps its old shares while a reorg could take the record off');
+  for (const n of w.nodes) n.build({ reorgDepth: 2 });
+  w.c.mine(3); await w.pass(2);
+  assert.equal(w.nodes[1].store.held(key, 0), null, 'a founder deletes its old shares once the record stands deep');
   const newer = new Map();
   for (const i of [0, 1, 2, 4]) for (const [x, v] of w.nodes[i].store.held(key, EPOCH).shares) newer.set(x, v);
   const xs = [...newer.keys()].sort((a, b) => a - b);
@@ -726,4 +735,78 @@ test('censusKeyFailing: a reshare that did not finish counts as a key that was n
   const failed = censusKeyFailing([{ epoch: 8, keygen: false, reshare: true, madeReshare: false }, { epoch: 7, keygen: true, madeKey: false, reshare: true, madeReshare: true }, { epoch: 6, keygen: true, madeKey: true }]);
   assert.deepEqual(failed, { epochs: 2, since: 7, keygen: 1, reshare: 1, warn: true });
   assert.match(censusKeyFailingWarning(failed).says, /no new key was made and a reshare did not finish/);
+});
+
+// #1188 THE CENSUS-KEY RUN: NOTHING IRREVERSIBLE BEFORE ITS STATE IS ON DISK. Before: the one try of the anchor per block was kept in memory, so a restart in the same block asked
+// the wallet again (a funded carrier whose reveal fails costs its fee), and the shares a reshare replaced went the pass its record was read, so a reorg that took the record off left
+// the holder with no share of the key that still stands.
+const rankOneOf = (n) => censusKeyPostOrder({ networkId: NET, epoch: EPOCH, holders: censusKeyShares({ entries: entriesOf(Array.from({ length: n }, (_, i) => ({ ...person(i), bond: BOND }))), network: NETWORK }).holders })[0];
+
+test('#1188 a try of the anchor is on disk: a restart in the same block asks the wallet no second time', async () => {
+  const rank1 = rankOneOf(4);
+  const w = network(Array.from({ length: 4 }, () => BOND), { canPay: (i) => toHex(person(i).key) !== rank1 });
+  await w.pass(2);
+  await w.to(midpoint + 1);
+  await w.pass(3);
+  const r1 = w.nodes.find((n) => toHex(n.key) === rank1);
+  const before = r1.tried.length;
+  assert.ok(before >= 1, 'rank 1 tried, and its wallet could not pay');
+  r1.build(); await r1.run.pass(); await r1.run.pass();           // the seat restarts, twice, in the same block
+  console.log(`  FACTS #1188: rank 1 tried at ${r1.tried.join(', ')} (tip ${w.c.tip}); after restarts in that block: ${r1.tried.length - before} more`);
+  assert.equal(r1.tried.length, before, 'no second try in the block of the first');
+  assert.equal(r1.run.status().run.state.anchor.state, 'refused');
+  w.c.mine(); await w.pass();
+  assert.equal(r1.tried.length, before + 1, 'one try in the next block');
+});
+
+test('#1188 an anchor whose answer was never heard waits for the chain: the wallet is not asked again each block', async () => {
+  const rank1 = rankOneOf(4);
+  const w = network(Array.from({ length: 4 }, () => BOND));
+  const r1 = w.nodes.find((n) => toHex(n.key) === rank1);
+  const held = [];                                  // what the wallet sent, held back from the blocks until `release`
+  r1.build({ post: async ({ body, output }) => {
+    r1.tried.push(w.c.tip);
+    const secret = new Uint8Array(32).fill(201 + r1.tried.length), carrier = censusKeyCarrier(secret, body);
+    held.push(censusKeyAnchorSpend({ carrier, secret, funding: { txid: '22'.repeat(32), vout: r1.tried.length, value: 10000n }, output }));
+    throw new Error('the wallet\'s answer was lost');
+  } });
+  const pass = async () => { for (const n of w.live()) { await n.scan.pass(); await n.run.pass().catch(() => null); } };
+  await pass(); await pass();
+  while (w.c.tip < midpoint + 1) { w.c.mine(); await pass(); await pass(); }
+  for (let i = 0; i < 3; i += 1) await pass();
+  const first = r1.tried.length;
+  assert.equal(first, 1, 'rank 1 asked its wallet once');
+  for (let i = 0; i < 3; i += 1) { w.c.mine(); await pass(); }   // three blocks while the anchor sits unmined
+  const meanwhile = r1.tried.length - first;
+  w.c.mempool.push(held[0]); w.c.mine(); await pass(); await pass();
+  console.log(`  FACTS #1188: the wallet's answer lost; asked again in the 3 blocks before the anchor confirmed: ${meanwhile} times; anchors sent in all: ${held.length}`);
+  assert.equal(meanwhile, 0, 'no second carrier while the first may be out');
+  assert.ok(w.nodes.every((n) => n.scan.standing().length === 1), 'the first anchor stands');
+  assert.equal(r1.run.status().run.state.anchor.state, 'sent');
+  w.c.mine(CENSUS_KEY_POST_STEP * 2); await pass();
+  assert.equal(held.length, 1, 'and never after');
+});
+
+test('#1188 a reorg that takes a reshare\'s record off leaves every old holder its shares', async () => {
+  const w = fourThenMoved();
+  const key = await firstKey(w);
+  await jump(w, resharedStart);
+  const n0 = w.nodes[0];
+  await w.pass(2);
+  while (w.c.tip < rw.ready + 3 && !w.c.mempool.some((t) => reshareAnchorIn(parseTransaction(t).outputs))) { w.c.mine(); await w.pass(2); }
+  w.c.mine(); await w.pass(2);
+  await w.to(rw.midpoint + 1);
+  await w.pass(3);
+  for (let i = 0; i < CENSUS_KEY_POST_STEP * 4 && n0.scan.generationOf(toHex(key)).epoch !== EPOCH + 1; i++) { w.c.mine(); await w.pass(2); }
+  const g = n0.scan.generationOf(toHex(key));
+  assert.equal(g.epoch, EPOCH + 1, 'the record of the new census stands');
+  await w.pass(2);
+  const keptBefore = [0, 1, 2, 3].map((i) => !!w.nodes[i].store.held(key, EPOCH));
+  // THE REORG: from the record's block a branch without it
+  w.c.forkAt = g.height; w.c.branch = 'b';
+  await w.pass(2);
+  assert.equal(n0.scan.generationOf(toHex(key)).epoch, EPOCH, 'off the chain: the old census holds the key again');
+  const kept = [0, 1, 2, 3].map((i) => !!w.nodes[i].store.held(key, EPOCH));
+  console.log(`  FACTS #1188: old holders keeping their epoch-${EPOCH} shares once the record stood: ${keptBefore.filter(Boolean).length} of 4; after the reorg took it off: ${kept.filter(Boolean).length} of 4`);
+  assert.deepEqual(kept, [true, true, true, true], 'every old holder can still sign for the key that stands');
 });

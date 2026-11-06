@@ -248,6 +248,8 @@ export function createCensusKeyScan({ store, network, networkId, firstHeight, fo
     dead: () => deadKeys,
     /** The keys that stand on this node's chain, oldest first: [{ epoch, publicKey, height }], the census' `bond.standingKeys`. */
     standing: () => keys,
+    /** How many blocks deep the scan follows a reorg: a record shallower than this can still be taken off (kanban #1188). */
+    keepHashes,
     /** The highest height read, null before the first. */
     scannedTo: () => { const t = store.scanTop(); return t ? t.height : null; },
     /** The newest record of a key on the chain, a reshare's or its own, or null. */

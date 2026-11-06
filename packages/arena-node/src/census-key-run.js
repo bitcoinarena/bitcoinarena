@@ -38,6 +38,17 @@ import { censusKeyInWorker } from './census-key-work.js';
 export const CENSUS_KEY_POST_STEP = 6;
 /** From the end of a reshare's first quarter, how many blocks each next rank waits: a list has only until the midpoint. */
 export const RESHARE_POST_STEP = 1;
+/** How deep the scan follows a reorg (census-key-chain.js keepHashes): a reshare's record replaces the old shares only once it is buried deeper than that (kanban #1188). */
+export const CENSUS_KEY_REORG_DEPTH = 288;
+/**
+ * ONE RUN'S ANCHOR, AND THE ONE WAY IT MOVES (kanban #1188). none -> sending (written, with the height, before the wallet is asked) -> refused (the wallet said why) | sent (its txid).
+ * refused -> sending at a later block. A `sending` found after a restart is an answer never heard: the anchor may be out, so the same node asks again only CENSUS_KEY_POST_STEP blocks
+ * later, by when the chain shows it (and the run is `sent`, by another) or does not. Any state -> sent when the chain holds the record. Sent never changes.
+ */
+export const ANCHOR = Object.freeze({ NONE: 'none', SENDING: 'sending', REFUSED: 'refused', SENT: 'sent' });
+const ANCHOR_MOVES = Object.freeze({ [ANCHOR.NONE]: [ANCHOR.SENDING, ANCHOR.SENT], [ANCHOR.SENDING]: [ANCHOR.REFUSED, ANCHOR.SENT, ANCHOR.SENDING], [ANCHOR.REFUSED]: [ANCHOR.SENDING, ANCHOR.SENT], [ANCHOR.SENT]: [] });
+/** A run's anchor state as its row has it; a row from before #1188 that names a txid is sent. */
+export const anchorStateOf = (state) => (state.anchored ? ANCHOR.SENT : (state.anchor && state.anchor.state) || ANCHOR.NONE);
 const safeVerify = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
 const reach = (u) => String(u || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
 const dealersOf = (r) => (r.run.reshare ? r.run.reshare.dealers : r.run.holders);
@@ -65,7 +76,7 @@ export function censusKeySigners({ holders, threshold, statements, recordId }) {
  */
 export function createCensusKeyRun({ store, network, networkId, key, secret, firstHeight, foundingWindow, censusConfirmations, genesis = null, sharesMax = undefined,
   tipHeight, blockHashAt, censusEntriesAt, standing, scannedTo, plan, reshareList, generationOf, post = null, fetchFn = fetch, work = censusKeyInWorker, peersPerPass = 8, pushAtOnce = 8,
-  timeoutMs = 20000, log = () => {} }) {
+  timeoutMs = 20000, reorgDepth = CENSUS_KEY_REORG_DEPTH, log = () => {} }) {
   const me = toHex(key);
   const runs = new Map();               // epoch:hash[:key] -> the run, read once
   const active = new Map();             // run id hex -> the runs doors answer for: this epoch's keygen and its reshare
@@ -75,6 +86,14 @@ export function createCensusKeyRun({ store, network, networkId, key, secret, fir
   const retiredShares = new Set();
 
   const setState = (r, change) => { r.state = { ...r.state, ...change }; store.putRunState(r.run.runId, r.run.epoch, r.state); };
+  /** THE ANCHOR'S ONE TRANSITION (kanban #1188): compare and set on the row, written before anything follows from it. False when `from` is not the state now. */
+  function anchorMove(r, from, to, data = {}) {
+    if (anchorStateOf(r.state) !== from || !ANCHOR_MOVES[from].includes(to)) return false;
+    setState(r, to === ANCHOR.SENT ? { anchored: data.txid, anchor: { state: to, txid: data.txid, at: data.at ?? null } } : { anchor: { state: to, ...data } });
+    return true;
+  }
+  /** Sent by another, as the chain shows: from whatever state this node's own try is in. */
+  const anchoredByAnother = (r) => { const from = anchorStateOf(r.state); if (from !== ANCHOR.SENT) anchorMove(r, from, ANCHOR.SENT, { txid: 'by another' }); };
 
   /** The census of an epoch and its shares, from the chain alone, or null while it is not readable. */
   async function censusOf(epoch) {
@@ -316,15 +335,25 @@ export function createCensusKeyRun({ store, network, networkId, key, secret, fir
   async function anchorIfDue(r, tip) {
     const rank = r.order.indexOf(me) + 1;
     const due = r.state.complete + (rank - 1) * CENSUS_KEY_POST_STEP;
-    // ONE TRY PER BLOCK: a funded carrier whose reveal failed costs its fee, and a try every pass would spend that every 10 s
-    if (tip < due || r.state.anchored || !post || r.triedAt === tip) return;
-    r.triedAt = tip;
+    const from = anchorStateOf(r.state), at = r.state.anchor ? r.state.anchor.at : null;
+    if (tip < due || from === ANCHOR.SENT || !post) return;
+    // ONE TRY PER BLOCK, ON DISK (kanban #1188): a funded carrier whose reveal failed costs its fee, and a try every pass would spend that every 10 s. Before: the height was kept in memory,
+    // so a restart in the same block posted a second anchor. A try whose answer was never heard waits CENSUS_KEY_POST_STEP blocks for the chain to show it
+    if (from === ANCHOR.REFUSED && at === tip) return;
+    if (from === ANCHOR.SENDING && tip < at + CENSUS_KEY_POST_STEP) return;
     const record = decodeCensusKeyRecord(fromHex(r.state.record));
     const signatures = censusKeySigners({ holders: r.run.holders, threshold: r.run.threshold, statements: store.statements(r.run.runId), recordId: censusKeyRecordId(record) });
     if (!signatures) return;
-    const sent = await post({ body: encodeCensusKeyBody({ record, signatures }), output: censusKeyAnchor(record) });
-    if (!sent.ok) { lastWhy = `the anchor of epoch ${r.run.epoch} is not posted by this node: ${sent.why}`; log(`[census-key] ${lastWhy}`); return; }
-    setState(r, { anchored: sent.txid });
+    if (!anchorMove(r, from, ANCHOR.SENDING, { at: tip })) return;
+    let sent;
+    try { sent = await post({ body: encodeCensusKeyBody({ record, signatures }), output: censusKeyAnchor(record) }); } catch (e) { sent = { ok: false, why: e.message, unknown: true }; }
+    if (!sent.ok) {
+      lastWhy = `the anchor of epoch ${r.run.epoch} is not posted by this node: ${sent.why}`; log(`[census-key] ${lastWhy}`);
+      // A THROW IS NO ANSWER: the carrier may be out, so it stays sending and waits as after a restart
+      if (!sent.unknown) anchorMove(r, ANCHOR.SENDING, ANCHOR.REFUSED, { at: tip, why: String(sent.why || '').slice(0, 200) });
+      return;
+    }
+    anchorMove(r, ANCHOR.SENDING, ANCHOR.SENT, { txid: sent.txid, at: tip });
     log(`[census-key] epoch ${r.run.epoch}: anchor ${sent.txid} posted at rank ${rank}, ${signatures.length} signers, ${sent.vsize} vB`);
   }
 
@@ -377,16 +406,26 @@ export function createCensusKeyRun({ store, network, networkId, key, secret, fir
       for (const s of held2.signatures || []) if (!ready.heard.has(s.node)) { ready.heard.add(s.node); takeReady({ key: t.key, run: ready.epoch, ...s }); }
     }));
     const due = w.ready + ready.order.indexOf(me) * RESHARE_POST_STEP;
-    if (tip < due || tip >= w.midpoint || !post || ready.triedAt === tip || ready.posted) return;
-    ready.triedAt = tip;
+    // THE LIST'S POST, AS AN ANCHOR'S (kanban #1188): its state on the ready row, written before the wallet is asked, so a restart neither posts it twice in a block nor forgets it was sent
+    const row = store.runState(id), was = (row.list && row.list.state) || ANCHOR.NONE, wasAt = row.list ? row.list.at : null;
+    const listMove = (to, data) => { store.putRunState(id, ready.epoch, { ...store.runState(id), list: { state: to, ...data } }); };
+    if (tip < due || tip >= w.midpoint || !post || was === ANCHOR.SENT) return;
+    if ((was === ANCHOR.REFUSED && wasAt === tip) || (was === ANCHOR.SENDING && tip < wasAt + RESHARE_POST_STEP + 1)) return;
     // A DEALER THIS NODE NAMED LAST TIME STAYS OFF THE LIST, unless the threshold needs it: a list naming it can still hold, and none cannot (#1050 reading 6)
     const heard = store.statements(id), named = store.namedDealers(generationName(t));
     const signatures = censusKeySigners({ holders: t.holders, threshold: t.threshold, statements: heard.filter((s) => !named.has(toHex(s.node))), recordId: id })
       || censusKeySigners({ holders: t.holders, threshold: t.threshold, statements: heard, recordId: id });
     if (!signatures) { lastWhy = `the ReshareReady signatures of ${t.key.slice(0, 16)} do not cover its threshold of ${t.threshold} at ${tip}`; return; }
     const body = encodeReshareList({ networkId, key: t.publicKey, run: ready.epoch, signatures });
-    const sent = await post({ body, output: reshareAnchor(body) });
-    if (!sent.ok) { lastWhy = `the list of ${t.key.slice(0, 16)} is not posted by this node: ${sent.why}`; log(`[census-key] ${lastWhy}`); return; }
+    listMove(ANCHOR.SENDING, { at: tip });
+    let sent;
+    try { sent = await post({ body, output: reshareAnchor(body) }); } catch (e) { sent = { ok: false, why: e.message, unknown: true }; }
+    if (!sent.ok) {
+      lastWhy = `the list of ${t.key.slice(0, 16)} is not posted by this node: ${sent.why}`; log(`[census-key] ${lastWhy}`);
+      if (!sent.unknown) listMove(ANCHOR.REFUSED, { at: tip, why: String(sent.why || '').slice(0, 200) });
+      return;
+    }
+    listMove(ANCHOR.SENT, { at: tip, txid: sent.txid });
     ready.posted = sent.txid;
     log(`[census-key] epoch ${ready.epoch}: list ${sent.txid} posted, ${signatures.length} signers, ${sent.vsize} vB`);
   }
@@ -415,18 +454,24 @@ export function createCensusKeyRun({ store, network, networkId, key, secret, fir
     if (r.holder || r.dealer) active.set(toHex(r.run.runId), r);
     else return { phase: 'not in it', key: t.key };
     const generation = generationOf(t.key);
-    if (r.state.complete && !r.state.anchored && generation && generation.epoch === epoch) setState(r, { anchored: 'by another' });
+    if (r.state.complete && !r.state.anchored && generation && generation.epoch === epoch) anchoredByAnother(r);
     return { phase: await step(r, tip), key: t.key };
   }
 
-  /** The shares a reshare replaced go once its record stands, not before: only the chain says the run held. */
+  /**
+   * The shares a reshare replaced go once its record stands, not before: only the chain says the run held. AND ONLY ONCE IT IS DEEP (kanban #1188): before, they went the pass the record
+   * was read, and a reorg that took the record off left the holder with no share of the key that still stands. Now the record is buried deeper than the scan follows a reorg (`reorgDepth`).
+   */
   function dropReplacedShares() {
+    const read = scannedTo();
+    if (read === null || read === undefined) return;
     for (const k of standing()) {
       const hex = toHex(k.publicKey);
       const g = generationOf(hex);
       if (!g || retiredShares.has(`${hex}:${g.epoch}`)) continue;
+      if (g.height === null || g.height === undefined || read - g.height + 1 <= reorgDepth) continue;   // not deep yet: asked again next pass
       retiredShares.add(`${hex}:${g.epoch}`);
-      if (store.dropHeldBefore(k.publicKey, g.epoch)) log(`[census-key] the old shares of ${hex.slice(0, 16)} are gone: the record of epoch ${g.epoch} stands`);
+      if (store.dropHeldBefore(k.publicKey, g.epoch)) log(`[census-key] the old shares of ${hex.slice(0, 16)} are gone: the record of epoch ${g.epoch} stands ${read - g.height + 1} blocks deep`);
     }
   }
 
@@ -452,7 +497,7 @@ export function createCensusKeyRun({ store, network, networkId, key, secret, fir
       else if (!r.holder) out.idle = 'this node holds no share of this run';
       else {
         active.set(toHex(r.run.runId), r);
-        if (standing().some((k) => k.epoch === epoch) && r.state.complete && !r.state.anchored) setState(r, { anchored: 'by another' });
+        if (standing().some((k) => k.epoch === epoch) && r.state.complete && !r.state.anchored) anchoredByAnother(r);
         out.phase = await step(r, tip);
         out.epoch = epoch;
       }
@@ -471,7 +516,7 @@ export function createCensusKeyRun({ store, network, networkId, key, secret, fir
     status: () => {
       const keygen = inRun().find((r) => !r.run.reshare), reshare = inRun().find((r) => r.run.reshare);
       return { run: keygen ? runStatus(keygen) : null,
-        reshare: ready ? { key: ready.target.key, run: ready.epoch, window: ready.window, signed: store.statements(ready.id).length, list: reshareList(ready.target.key, ready.epoch), posted: ready.posted || null,
+        reshare: ready ? { key: ready.target.key, run: ready.epoch, window: ready.window, signed: store.statements(ready.id).length, list: reshareList(ready.target.key, ready.epoch), posted: ready.posted || (store.runState(ready.id).list || {}).txid || null,
           ...(reshare ? { dealers: reshare.run.reshare.dealers.length, ...runStatus(reshare) } : {}) } : null,
         recent: store.runsNewestFirst(4).map((x) => ({ epoch: x.epoch, complete: x.complete ?? null, failed: !!x.failed, anchored: x.anchored ?? null, ...(x.reshareOf ? { reshareOf: x.reshareOf, named: x.named } : {}) })), lastWhy };
     },
