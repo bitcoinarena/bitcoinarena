@@ -601,11 +601,14 @@ test('from the point the count holds to the version too: a cohort does not trigg
 });
 
 // VOID, NOT STUCK (kanban #1025): from the point a succession redraws by the chain, a run founding is kept, and a named successor ends it
-function redrawSeat({ w, recs, setup = {}, reader = null, fetchJson = null }) {
+function redrawSeat({ w, recs, setup = {}, reader = null, fetchJson = null, peers = null }) {
   const made = [];
   const s = createFoundingSeat({ records: () => recs(), entriesAt: async (h) => { made.push(h); return entries; }, beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
     guardianInSetup: async () => true, setup: { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null, ...setup }, nominal: 4, bondMinGuardian: 500000n,
-    clocks: { abandonBlocks: 10, foundingWindow: 5 }, ownKey: keys[0].pub, sign: () => new Uint8Array(64), verify, redrawFrom: 0, ...(reader ? { pressureBondAt: reader } : {}), ...(fetchJson ? { fetchJson, peers: () => ['https://peer'] } : {}) });
+    clocks: { abandonBlocks: 10, foundingWindow: 5 }, ownKey: keys[0].pub, sign: () => new Uint8Array(64), verify, redrawFrom: 0, ...(reader ? { pressureBondAt: reader } : {}),
+    // each node's seat at its guardian endpoint's host (https://g<i>), as a census advert names it
+    endpointOf: (e) => String(e.advert.guardianEndpoint).replace(/^wss:/, 'https:'),
+    ...(fetchJson ? { fetchJson, peers: peers || (() => ['https://peer']) } : {}) });
   return s;
 }
 const drainingAt = (height, extra = {}) => [{ federation: 'aa'.repeat(32), status: 'DRAINING', height, ...extra }];
@@ -640,10 +643,11 @@ test('a draw that started nothing by its height + founding_window is void and ho
 
 test('a founding that runs is not drawn over at its trigger\'s next height, and a record naming the successor ends the trigger', async () => {
   const w = { tip: 201 }; let recs = drainingAt(200), s = null;
-  s = redrawSeat({ w, recs: () => recs, fetchJson: async () => ({ id: s.state().id, codes: [], federation: true }) });
+  // a threshold of the seated nodes' own seats say it runs (kanban #1161)
+  s = redrawSeat({ w, recs: () => recs, fetchJson: async () => ({ id: s.state().id, codes: [], federation: true }), peers: () => entries.map((e) => String(e.advert.guardianEndpoint).replace(/^wss:/, 'https:')) });
   await s.tick();
   const id = s.state().id;
-  assert.equal(s.state().federation, true, 'a peer says it runs');
+  assert.equal(s.state().federation, true, 'the seated say it runs');
   w.tip = 208;
   await s.tick();
   assert.equal(s.state().id, id, 'kept: no redraw over a federation that runs');
@@ -657,4 +661,29 @@ test('a made-up federation in an advert stops no founding from the point on', as
   const s = redrawSeat({ w, recs: () => drainingAt(200), reader: async () => null });
   const r = await s.tick();
   assert.equal(r.ok, true, r.why);
+});
+
+// KANBAN #1161: ONE PEER SAYING federation: true HOLDS NO TRIGGER. Before, a seat took any peer's GET /founding `federation: true`, kept the
+// trigger over every redraw and never voided the founding: one lying node froze the succession.
+test('#1161 one peer, or one drawn node, saying the federation runs does not hold the trigger: the draw voids and is drawn again', async () => {
+  const run = async (peers, nodeOf = () => undefined) => {
+    const w = { tip: 201 }; const recs = drainingAt(200); let s = null;
+    // only the roots named say it runs; every other drawn node's seat (asked too, at its census endpoint) says it does not
+    s = redrawSeat({ w, recs: () => recs, peers: () => peers, fetchJson: async (u) => ({ id: s.state().id, codes: [], federation: peers.includes(u.replace(/\/founding$/, '')), node: nodeOf(u) }) });
+    await s.tick();
+    const id = s.state().id, at201 = s.state().federation;
+    w.tip = 206; await s.tick();
+    w.tip = 208; const r = await s.tick();
+    return { at201, voided: s.state().void || s.state().id !== id, redrawn: r.ok && r.trigger.height !== 200 };
+  };
+  const seatedRoots = (n) => entries.map((e) => String(e.advert.guardianEndpoint).replace(/^wss:/, 'https:')).slice(0, n);
+  const peer = await run(['https://peer']);
+  const one = await run(seatedRoots(1));
+  const lying = await run(seatedRoots(6), () => toHex(keys[5].pub));
+  const all = await run(seatedRoots(6));
+  console.log(`#1161 measure: "federation: true" from one non-drawn peer -> runs ${peer.at201}, redrawn ${peer.redrawn}; from one drawn node -> runs ${one.at201}, redrawn ${one.redrawn}; every root answering in one node's name -> runs ${lying.at201}; from the seated nodes' own seats -> runs ${all.at201}, redrawn ${all.redrawn}`);
+  assert.deepEqual([peer.at201, peer.redrawn], [false, true]);
+  assert.deepEqual([one.at201, one.redrawn], [false, true]);
+  assert.equal(lying.at201, false, 'a root answering in another node\'s name counts nothing');
+  assert.deepEqual([all.at201, all.redrawn], [true, false]);
 });

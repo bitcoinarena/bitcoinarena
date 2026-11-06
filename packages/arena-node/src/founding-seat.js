@@ -351,10 +351,21 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     // endpoints (kanban #495, measured 2026-10-21 on the 10-node cohort 8fbeab5e at 157,174: the seven new seats hold no round, so
     // peers() - the configured seats and the newest held round's census - never named one another; each seat held only its own code
     // and every draw went void, "more no-shows than alternates")
+    // ... AND WHETHER THE FEDERATION RUNS, counted only from a seated node's own seat at its census endpoint (kanban #1161): founding.js
+    // runs it once a threshold of the seated say so; a root that is no drawn node's, or answers in another node's name, counts nothing
+    const rootNode = new Map();
+    for (const e of current.entries || []) {
+      let u = null; try { u = e && e.advert ? endpointOf(e) : null; } catch { u = null; }
+      if (u) rootNode.set(String(u).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''), toHex(e.pubkey));
+    }
     if (fetchJson) for (const root of [...new Set([...peers(), ...drawnRoots()])]) {
       try {
         const s = await fetchJson(`${root}/founding`);
-        if (s && s.id === current.founding.id) { current.founding.takeAll(s.codes); if (s.federation === true) current.founding.federationSeen(); }
+        if (s && s.id === current.founding.id) {
+          current.founding.takeAll(s.codes);
+          const node = rootNode.get(String(root).replace(/\/+$/, ''));
+          if (s.federation === true && node && (!s.node || lower(s.node) === node)) current.founding.federationSeen(node);
+        }
       } catch { /* the next tick */ }
     }
     const st = await current.founding.advance(h);
