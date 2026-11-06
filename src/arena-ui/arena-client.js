@@ -1361,6 +1361,8 @@ const TAG = {
   marketSell: 'ARENA/v1/MarketSell',
   // a seat's word that it did not sign a batch and never will (a batch is void once 5 can no longer be reached)
   marketBatchDecline: 'ARENA/v1/MarketBatchDecline',
+  // a round seat's ask that the others answer whether they signed a batch past its signing window, or decline it (kanban #1167)
+  marketBatchVoidAsk: 'ARENA/v1/MarketBatchVoidAsk',
   // a player's identity key naming its head-to-head entry, and a seat's signed running score of two identities
   matchProof: 'ARENA/v1/MatchProof',
   matchRecord: 'ARENA/v1/MatchRecord',
@@ -22157,13 +22159,18 @@ function donationOutputsFromClient(said, shares) {
  * the top-up is `fundPlayerWallet`, before. Returns the outpoint and the contract (`lockFromClient`), the client that
  * holds it, and the wallet's balance before and after.
  */
-async function lockStake({ round, roundId, invite, seed, stake, claimKey, playerPubkey, LockClient,
-  storage, donationMsat = 0n, donationRecipients = null, onStep = () => {}, seating = null } = {}) {
+async function lockStake(ask = {}) {
+  // `keep`: the page's join (kanban #1162) - the lock is written ahead, kept and stepped as one record (keptLockStake); a caller that keeps its
+  // own (a bot, a tool) leaves it out, and nothing changes for it
+  return ask.keep ? keptLockStake(ask) : lockStakeNow(ask);
+}
+async function lockStakeNow({ round, roundId, invite, seed, stake, claimKey, playerPubkey, LockClient,
+  storage, donationMsat = 0n, donationRecipients = null, onStep = () => {}, seating = null, onSubmitted = () => {} } = {}) {
   paysIntoALock(round, invite, LockClient);
   if (!stake || namesNothing(stake.stakePoint)) throw new Error('a lock is to the stake\'s point, and this stake names none');
   // A PROTOCOL-27 ROUND LOCKS TO AN ARENA LOCK (kanban #1044 B1, ruling #1131 2): its claim names the round's settlement seats' own node keys,
   // so there is no per-round claim key and no step-0 attestation to wait for
-  if (namedClaims(round)) return lockArenaStake({ round, roundId, invite, seed, stake, playerPubkey, LockClient, storage, donationMsat, donationRecipients, onStep, seating });
+  if (namedClaims(round)) return lockArenaStake({ round, roundId, invite, seed, stake, playerPubkey, LockClient, storage, donationMsat, donationRecipients, onStep, seating, onSubmitted });
   if (!claimKey || !claimKey.ok || namesNothing(claimKey.claimPk))
     throw new Error('no claim key has its signer nodes\' attestation: a client must refuse to lock to a key without it (23.1 step 0)');
   if (!(playerPubkey instanceof Uint8Array) || playerPubkey.length !== 32)
@@ -22200,6 +22207,7 @@ async function lockStake({ round, roundId, invite, seed, stake, claimKey, player
     const submitted = JSON.parse(await client.lockSubmit(toHex(stake.stakePoint), String(amount), image ? toHex(image) : '',
       String(feeGate.pays ? feeMsat : 0n), toHex(claimKey.claimPk), toHex(refundPk), delta,
       JSON.stringify(donationShares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat), image: toHex(playerPubkey) })))));
+    onSubmitted(submitted);
     // WHERE THE LOCK'S TIME WENT, AS THE LOCK CLIENT MEASURED IT (kanban #623: a browser lock 0.3-2.7 s, a bot's 60-160 ms on the same
     // federation): the block count (kept or read), building the outputs, finalizing and submitting, the mint outputs' wait, the store
     if (submitted.timing) console.log('[arena] TIMED lock inside: ' + JSON.stringify(submitted.timing));
@@ -22299,7 +22307,7 @@ async function lockStake({ round, roundId, invite, seed, stake, claimKey, player
  * the lock's JSON (lockFieldsToJson, `arena: true`).
  */
 async function lockArenaStake({ round, roundId, invite, seed, stake, playerPubkey, LockClient, storage, donationMsat = 0n,
-  donationRecipients = null, onStep = () => {}, seating = null } = {}) {
+  donationRecipients = null, onStep = () => {}, seating = null, onSubmitted = () => {} } = {}) {
   if (!(playerPubkey instanceof Uint8Array) || playerPubkey.length !== 32)
     throw new Error('a lock refunds to the player\'s key, and that is 32 bytes');
   if (!(roundId instanceof Uint8Array) || roundId.length !== 32) throw new Error('an Arena lock names its round, and this one names none');
@@ -22335,6 +22343,7 @@ async function lockArenaStake({ round, roundId, invite, seed, stake, playerPubke
   onStep(`locking the stake${feeGate.pays ? ', the node fee' : ''}${donationShares.length ? ' and the donation' : ''} to the round's ${seatKeys.length} settlement seats, ${threshold} named signers (submitted, accepted behind)`);
   const submitted = JSON.parse(await client.arenaLockSubmit(asJson(stakeFields), feeFields ? asJson(feeFields) : '', delta,
     JSON.stringify(donationShares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat), image: toHex(playerPubkey) })))));
+  onSubmitted(submitted);
   if (submitted.arena !== true) throw new Error('the lock client answered a stock lock for a round that locks to an Arena lock');
   const outs = submitted.outputs || [];
   const built = (o, fields) => {
@@ -22456,22 +22465,143 @@ function ledgerReadSavedStakes(storage, federationId) {
 }
 
 const savedLockKey = (roundId, playerPubkey) => `arena.lock.saved.${toHex(roundId)}.${toHex(playerPubkey).slice(0, 16)}`;
+const lockIntentKey = (roundId, playerPubkey) => `arena.lock.intent.${toHex(roundId)}.${toHex(playerPubkey).slice(0, 16)}`;
+
+/**
+ * ONE STAKE LOCK, ONE RECORD, ONE TRANSITION FUNCTION (kanban #1162, the 2026-11-06 state-machine audit). The lock was made first and kept
+ * after, with a raw write: a full browser (QuotaExceededError, #616) or a tab closed between the two left a lock no record names, the join
+ * refused, and the next PLAY locked the same round again; a lock the guardians refused was kept anyway and reused on every reload; and the
+ * entry it was named in lived only in memory, so a reload reused it under a new entry the seats that took the first refuse.
+ *   none --(the intent written, room taken: nothing spent before it)--> intent --(lockSubmit answered)--> submitted
+ *   submitted --(the guardians accept it, or a reload reads it stored: lockStatus)--> accepted --(needed seats took it)--> committed
+ *   submitted --(a reload reads it stored nowhere, `tries` times)--> refused --(a new PLAY)--> intent
+ *   intent --(a lock client that answers only once accepted)--> accepted;  intent --(a new PLAY over one that failed)--> intent
+ * Only an accepted or committed lock is reused; a submitted one is read first (keptLockUse 'check', reconcileKeptLock). The entry a lock is
+ * named in is written before that entry goes out (bindLockEntry), once; committed is final.
+ */
+const LOCK_RECORD_STATES = Object.freeze({ NONE: 'none', INTENT: 'intent', SUBMITTED: 'submitted', ACCEPTED: 'accepted', REFUSED: 'refused', COMMITTED: 'committed' });
+const LOCK_RECORD_EDGES = Object.freeze({ none: ['intent'], intent: ['intent', 'submitted', 'accepted'], submitted: ['accepted', 'refused', 'committed'],
+  accepted: ['committed'], refused: ['intent'], committed: [] });
+/** THE ONE TRANSITION: a record's state `from` to `to`. Throws for a step a lock does not take. */
+function lockRecordStep(from, to) {
+  const f = from || 'none';
+  if (!(LOCK_RECORD_EDGES[f] || []).includes(to)) throw new Error(`a stake lock goes ${f} -> ${(LOCK_RECORD_EDGES[f] || []).join(' | ') || 'nothing (final)'}, not -> ${to}`);
+  return to;
+}
+/** A kept record's state. A record kept before #1162 names none: committed when it names its entry, else submitted - read before it is reused. */
+const lockStateOf = (j) => (j && j.state && j.state !== 'none' && LOCK_RECORD_EDGES[j.state] ? j.state : j && j.committedTo ? 'committed' : 'submitted');
+const readJson = (storage, key) => { try { const raw = storage.getItem(key); return raw ? JSON.parse(raw) : null; } catch { return null; } };
+/** WHERE A ROUND'S LOCK STANDS FOR THIS PLAYER: the kept record (its state), else the intent, else none. */
+function lockRecordOf(storage, { roundId, playerPubkey }) {
+  const saved = storage ? readJson(storage, savedLockKey(roundId, playerPubkey)) : null;
+  if (saved) return { state: lockStateOf(saved), record: saved, key: savedLockKey(roundId, playerPubkey) };
+  const intent = storage ? readJson(storage, lockIntentKey(roundId, playerPubkey)) : null;
+  if (intent) return { state: 'intent', record: intent, key: lockIntentKey(roundId, playerPubkey) };
+  return { state: 'none', record: null, key: null };
+}
+// the state written: compare-and-set on what is kept now, never on what a caller read earlier
+function stepLockRecord(storage, who, to, patch = {}, { expect = null } = {}) {
+  const now = lockRecordOf(storage, who);
+  if (expect && !expect.includes(now.state)) throw new Error(`the stake lock is ${now.state} here, not ${expect.join(' or ')}`);
+  lockRecordStep(now.state, to);
+  const next = { ...(now.record || {}), ...patch, state: to, stateMs: Date.now() };
+  putRoomy(storage, savedLockKey(who.roundId, who.playerPubkey), JSON.stringify(next));
+  return next;
+}
+
+/** An intent younger than this is another tab still asking its lock client; an older one that did not fail is a tab that closed meanwhile. */
+const LOCK_INTENT_LIVE_MS = 120000;
+// what a kept record needs beyond its intent's stake: outpoints, the contract's fields, the fee lock, a few donation outputs
+const LOCK_RECORD_ROOM = 2400;
+// one tab at a time, never waited for: a lock another tab (or a lock client of this one that never answered) holds refuses this PLAY by name
+const exclusively = (name, fn) => {
+  const locks = typeof navigator !== 'undefined' && navigator ? navigator.locks : null;
+  if (!locks || typeof locks.request !== 'function') return fn();
+  return locks.request(name, { ifAvailable: true }, (held) => (held ? fn()
+    : Promise.reject(new Error('another tab is locking this round\'s stake for this player right now: no second lock is made'))));
+};
+
+/**
+ * THE PAGE'S LOCK, WRITTEN AHEAD (kanban #1162): one navigator lock per round and player around the steps; the intent (the stake, the net
+ * amount, the refund key) written with room taken BEFORE the lock client is asked, so a browser too full to keep it spends nothing; the
+ * submitted transaction's id written into it the moment it is answered; then the record (saveLock) and the acceptance stepped behind. A lock
+ * made that then cannot be kept is still handed back (the entry goes out and names it), said in `kept` - never a refused join.
+ */
+async function keptLockStake(ask) {
+  const { storage, roundId, playerPubkey, stake, federationId = null } = ask;
+  if (!storage || !(roundId instanceof Uint8Array) || !(playerPubkey instanceof Uint8Array)) return lockStakeNow(ask);
+  const who = { roundId, playerPubkey };
+  const tag = `${toHex(roundId)}.${toHex(playerPubkey).slice(0, 16)}`;
+  return exclusively(`arena.lock.${tag}`, async () => {
+    const now = lockRecordOf(storage, who);
+    if (['submitted', 'accepted', 'committed'].includes(now.state))
+      throw new Error(`no second lock is made for this round: this player's stake lock for it is already ${now.state}`);
+    const iKey = lockIntentKey(roundId, playerPubkey);
+    if (now.state === 'intent') {
+      const r = now.record;
+      if (!r.failed && Date.now() - Number(r.atMs || 0) < LOCK_INTENT_LIVE_MS)
+        throw new Error('another tab is locking this round\'s stake for this player right now: no second lock is made');
+      // a tab closed while its lock client was asked: the transaction it names (if any) may hold the stake - kept aside, never written over
+      if (!r.failed) {
+        try { putRoomy(storage, `arena.lock.orphan.${tag}.${Number(r.atMs || 0)}`, JSON.stringify(r)); } catch { /* the next intent is refused for room below */ }
+        console.warn(`[arena] #1162 an earlier stake lock for this round did not finish (${r.txid ? `transaction ${String(r.txid).slice(0, 16)}… submitted` : 'nothing answered'}): kept as arena.lock.orphan.${tag}.*`);
+      }
+    }
+    lockRecordStep(now.state, 'intent');
+    // ROOM FIRST: the intent holds the record's room (`room`, given back when the record takes its place), so the record written after it
+    // fits where it was; refused here, nothing is spent
+    putRoomy(storage, iKey, JSON.stringify({ v: 2, state: 'intent', atMs: Date.now(), preimage: toHex(stake.preimage), body: toHex(stake.body || new Uint8Array(0)),
+      amountMsat: String(lockAmountMsat(ask.round, ask.donationMsat || 0n)), refundPk: toHex(refundKeyOf(playerPubkey)), txid: null, room: '-'.repeat(LOCK_RECORD_ROOM) }));
+    let made;
+    try {
+      made = await lockStakeNow({ ...ask, onSubmitted: (sub) => {
+        // the transaction's id the moment it is answered, before anything else can happen to the tab (written into the intent's own room)
+        try { const r = readJson(storage, iKey) || {}; storage.setItem(iKey, JSON.stringify({ ...r, room: '-'.repeat(LOCK_RECORD_ROOM - 200), txid: String((sub && sub.txid) || ''), operation: String((sub && sub.operation) || '') })); } catch { /* the intent without it */ }
+      } });
+    } catch (e) {
+      // nothing submitted: the intent failed, and the next PLAY writes over it; submitted and then refused by this page: it stays, for the collect
+      const r = readJson(storage, iKey);
+      if (r && !r.txid) { try { storage.setItem(iKey, JSON.stringify({ ...r, failed: String((e && e.message) || e).slice(0, 200) })); } catch { storage.removeItem(iKey); } }
+      throw e;
+    }
+    let kept = true;
+    // the intent gives its room to the record; a record still refused puts the intent (its transaction named) back where it was
+    const intentNow = storage.getItem(iKey);
+    storage.removeItem(iKey);
+    try {
+      saveLock(storage, { ...who, stake, lock: made, federationId, state: made.accepted ? 'submitted' : 'accepted' });
+    } catch (e) {
+      kept = false;
+      try { if (intentNow) storage.setItem(iKey, intentNow); } catch { /* nothing left to write it to */ }
+      console.error(`[arena] #1162 the stake lock is made and could not be kept in this browser (${e && e.message}): the entry still names it; the intent keeps its transaction`);
+    }
+    if (made.accepted && kept) {
+      made.accepted.then(() => { try { stepLockRecord(storage, who, 'accepted', { acceptedMs: Date.now() }, { expect: ['submitted'] }); } catch { /* committed already */ } }, () => {
+        // the lock client's refusal is its word only; the record stays submitted and the next load reads the federation (reconcileKeptLock)
+      });
+    }
+    return Object.assign(made, { kept });
+  });
+}
 
 /**
  * A LOCK THIS TAB MADE, WITH THE STAKE IT LOCKS - kept so a reload before any
  * signer node has committed it uses the same stake and the same lock. The stake's
  * preimage is kept where the player's seed already is (the tab's storage), and
- * its handout as the bytes the signer nodes took.
+ * its handout as the bytes the signer nodes took. `state` (kanban #1162): submitted while the guardians' acceptance is still to come.
  */
-function saveLock(storage, { roundId, playerPubkey, stake, lock, federationId = null }) {
+function saveLock(storage, { roundId, playerPubkey, stake, lock, federationId = null, state = 'accepted' }) {
   const lockMsat = BigInt(lock.fields && lock.fields.amountMsat ? lock.fields.amountMsat : 0n)
     + BigInt(lock.feeLock && lock.feeLock.fields && lock.feeLock.fields.amountMsat ? lock.feeLock.fields.amountMsat : 0n);
-  if (federationId) ledgerAppend(storage, federationId, { kind: 'stake', round: toHex(roundId), player: toHex(playerPubkey).slice(0, 16),
-    entry: null, msat: String(lockMsat) });
-  storage.setItem(savedLockKey(roundId, playerPubkey), JSON.stringify({
+  const was = lockRecordOf(storage, { roundId, playerPubkey }).state;
+  // a new lock takes the place of none or of a refused one; a kept lock is never written over by another
+  lockRecordStep(was === 'none' || was === 'refused' ? 'intent' : was, state);
+  // THE RECORD FIRST, WITH ROOM (kanban #1162: a raw write the browser refused lost a lock already made); the history after it
+  putRoomy(storage, savedLockKey(roundId, playerPubkey), JSON.stringify({
+    v: 2, state, stateMs: Date.now(),
     preimage: toHex(stake.preimage), body: toHex(stake.body),
     outpoint: { txid: toHex(lock.outpoint.txid), outIdx: String(lock.outpoint.outIdx) },
-    fields: lockFieldsToJson(lock.fields), committedTo: null,
+    fields: lockFieldsToJson(lock.fields), committedTo: null, entry: null,
     // AND ITS FEE LOCK, when one was minted (Pick b): the same reload keeps it.
     feeLock: lock.feeLock ? { preimage: toHex(lock.feeLock.preimage),
       outpoint: { txid: toHex(lock.feeLock.outpoint.txid), outIdx: String(lock.feeLock.outpoint.outIdx) },
@@ -22479,12 +22609,14 @@ function saveLock(storage, { roundId, playerPubkey, stake, lock, federationId = 
     // AND ITS DONATION OUTPUTS (2026-10-03): the entry names them, so a reload names the same
     donations: (lock.donations || []).map((d) => ({ txid: toHex(d.txid), outIdx: String(d.outIdx), recipientPk: toHex(d.recipientPk), amountMsat: String(d.amountMsat) })),
   }));
+  if (federationId) ledgerAppend(storage, federationId, { kind: 'stake', round: toHex(roundId), player: toHex(playerPubkey).slice(0, 16),
+    entry: null, msat: String(lockMsat) });
   // THE DONATION IN THE WALLET'S HISTORY, paid with the stake
   const donated = (lock.donations || []).reduce((t, d) => t + BigInt(d.amountMsat), 0n);
   if (federationId && donated > 0n) ledgerAppend(storage, federationId, { kind: 'donation', msat: String(donated), round: toHex(roundId) });
 }
 
-/** The kept lock for this round and player, rebuilt - or null. `committedTo` names the entry a signer node committed it to. */
+/** The kept lock for this round and player, rebuilt - or null. `committedTo` names the entry a signer node committed it to; `state` where it stands. */
 function savedLock(storage, { roundId, playerPubkey }) {
   let raw = null;
   try { raw = storage && storage.getItem(savedLockKey(roundId, playerPubkey)); } catch { return null; }
@@ -22503,10 +22635,32 @@ function savedLock(storage, { roundId, playerPubkey }) {
         fields: lockFieldsFromJson(j.feeLock.fields) } : null,
       donations: (j.donations || []).map((d) => ({ txid: fromHex(d.txid), outIdx: BigInt(d.outIdx), recipientPk: fromHex(d.recipientPk), amountMsat: BigInt(d.amountMsat) })) },
     committedTo: j.committedTo || null,
+    state: lockStateOf(j), entry: j.entry || j.committedTo || null,
   };
 }
 
-/** A signer node committed the kept lock to `entryId`: from now on it is that entry's stake, not one to reuse. */
+/**
+ * A KEPT LOCK STILL SUBMITTED, READ WHERE THE GUARDIANS HOLD IT (kanban #1162): stored at its outpoint - accepted, and reused; stored nowhere
+ * in `tries` reads `waitMs` apart - refused, and the next PLAY locks anew (a refused lock holds nothing). A read that fails leaves it submitted
+ * and throws: a lock that may exist is neither reused nor locked over. Answers the kept lock as savedLock rebuilds it.
+ */
+async function reconcileKeptLock(storage, { roundId, playerPubkey, client, tries = 3, waitMs = 2000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+  const who = { roundId, playerPubkey };
+  const kept = savedLock(storage, who);
+  if (!kept || kept.state !== 'submitted') return kept;
+  const txid = toHex(kept.lock.outpoint.txid), outIdx = Number(kept.lock.outpoint.outIdx);
+  for (let i = 0; i < tries; i++) {
+    if (i) await sleep(waitMs);
+    const st = JSON.parse(await lockStatusOf(client, kept.lock.fields, txid, outIdx));
+    if (st && st.stored) {
+      stepLockRecord(storage, who, 'accepted', { acceptedMs: Date.now(), readFrom: 'lockStatus' }, { expect: ['submitted'] });
+      return savedLock(storage, who);
+    }
+  }
+  stepLockRecord(storage, who, 'refused', { refusedMs: Date.now(), readFrom: 'lockStatus' }, { expect: ['submitted'] });
+  return savedLock(storage, who);
+}
+
 /**
  * WHAT A TAB DOES WITH THE LOCK IT KEPT FOR THIS ROUND, ON A RELOAD (6d, W4 hole 1). None:
  * a new join. One no signer node committed: the same stake and lock, no second deposit (W1b).
@@ -22515,17 +22669,25 @@ function savedLock(storage, { roundId, playerPubkey }) {
  * a second deposit for a round the player already stakes. A tab that kept the very entry the lock is committed to
  * plays it again (before the start) or resumes it (until the close); otherwise the join stops, says why, and the
  * payout and stake are still collected from the tab's kept record.
+ * BY ITS STATE (kanban #1162): refused - a new join (it holds nothing); submitted - 'check' (reconcileKeptLock) before anything else; named
+ * in an entry (bindLockEntry) - only that entry, never another.
  */
 function keptLockUse(kept, { entry = null, beforeStart = false, beforeClose = false } = {}) {
   if (!kept) return { use: 'new' };
+  if (kept.state === 'refused') return { use: 'new', refused: true };
+  if (kept.state === 'submitted') return { use: 'check', kept };
+  let keptId = null;
+  // entryId by its own name: the bundle strips imports, and an "as" alias is undefined there (measured: 0.0.2491 refused)
+  try { keptId = entry ? toHex(entryId(entry)) : null; } catch { keptId = null; }
+  // NAMED IN AN ENTRY, NOT YET COMMITTED (kanban #1162): the seats that took that entry refuse the lock under any other ("one lock is one entry")
+  if (!kept.committedTo && kept.entry && keptId !== String(kept.entry)) return { use: 'staked', kept,
+    why: `this tab's stake in this round is already locked and named in entry ${String(kept.entry).slice(0, 16)}…: no second deposit - `
+      + 'another entry cannot use it, and its stake comes back after the window' };
   if (!kept.committedTo) return { use: 'reuse', kept };
   // UNLESS THE TAB KEPT THAT VERY ENTRY AND THE ROUND HAS NOT STARTED (measured 2026-10-03 13:58:51Z on 0.0.2490: a reload
   // 10 s into a chained join, 84 s before its round's start, refused here - the lock was committed and the kept entry and
   // session key (PAID-NIGHT-2155) were never reached). Before the start there is no run to lose: the same entry is sent
   // again, the seats take it as the one they hold, and the run is played from its start.
-  let keptId = null;
-  // entryId by its own name: the bundle strips imports, and an "as" alias is undefined there (measured: 0.0.2491 refused)
-  try { keptId = entry ? toHex(entryId(entry)) : null; } catch { keptId = null; }
   if (beforeStart && keptId && keptId === String(kept.committedTo)) return { use: 'reuse', kept, resumed: true };
   // AND AFTER THE START, UNTIL THE ROUND CLOSES (2026-10-03: "a reload after the round has started ... That run must
   // not be lost"): the same entry, lock and session key, and the run is RESUMED from what the seats hold of it (the bridge
@@ -22536,11 +22698,32 @@ function keptLockUse(kept, { entry = null, beforeStart = false, beforeClose = fa
       + 'no second deposit - the run cannot be resumed after a reload, and its payout and stake are collected after the window' };
 }
 
+/**
+ * THE ENTRY A KEPT LOCK IS NAMED IN, WRITTEN BEFORE THAT ENTRY GOES OUT (kanban #1162): once - the same entry again is fine, another one
+ * throws, and the entry is then not sent with it. Nothing kept (a tab that could not keep its lock): nothing to check, false.
+ */
+function bindLockEntry(storage, { roundId, playerPubkey, entryId: eid }) {
+  const now = lockRecordOf(storage, { roundId, playerPubkey });
+  if (now.state === 'none' || now.state === 'intent') return false;
+  const id = toHex(eid);
+  const named = now.record.entry || now.record.committedTo || null;
+  if (named && named !== id) throw new Error(`this stake lock is named in entry ${named.slice(0, 16)}…, and one lock is one entry: entry ${id.slice(0, 16)}… is not sent with it`);
+  if (now.state === 'refused') throw new Error('this stake lock was refused by the guardians: no entry is sent with it');
+  if (named === id) return true;
+  putRoomy(storage, now.key, JSON.stringify({ ...now.record, entry: id }));
+  return true;
+}
+
+/** A signer node committed the kept lock to `entryId`: from now on it is that entry's stake, not one to reuse. Final: never another entry. */
 function markLockCommitted(storage, { roundId, playerPubkey, entryId }) {
-  const key = savedLockKey(roundId, playerPubkey);
-  const raw = storage.getItem(key);
-  if (!raw) return;
-  storage.setItem(key, JSON.stringify({ ...JSON.parse(raw), committedTo: toHex(entryId) }));
+  const who = { roundId, playerPubkey };
+  const now = lockRecordOf(storage, who);
+  if (now.state === 'none' || now.state === 'intent') return;
+  const id = toHex(entryId);
+  const named = now.state === 'committed' ? now.record.committedTo : now.record.entry;
+  if (named && named !== id) { console.error(`[arena] #1162 the stake lock is ${now.state === 'committed' ? 'committed to' : 'named in'} entry ${String(named).slice(0, 16)}…; a commit to ${id.slice(0, 16)}… is not written`); return; }
+  if (now.state === 'committed') return;
+  try { stepLockRecord(storage, who, 'committed', { committedTo: id, entry: id }); } catch (e) { console.error(`[arena] #1162 ${e.message}`); return; }
   // AND THE STAKE ROW NAMES ITS ENTRY, in whichever federation's history holds it
   const round = toHex(roundId), player = toHex(playerPubkey).slice(0, 16);
   for (const k of storageKeys(storage)) {
@@ -28576,6 +28759,9 @@ class Client {
    */
   async join(entry) {
     const mine = entryId(entry);
+    // THE ENTRY THE STAKE LOCK IS NAMED IN, KEPT BEFORE THE ENTRY GOES OUT (kanban #1162): a lock already named in another entry throws here,
+    // and this entry is not sent - the seats that took the first refuse the lock under any other
+    if (this.stakeLock && typeof this.stakeLock.onNamed === 'function') this.stakeLock.onNamed(mine);
     const r = await postEntry(`${this.base}/entry`, encodeEntryContract(entry));
 
     // WHO THIS CLIENT JOINED, kept for the ghost field. A reload keeps the
@@ -39014,6 +39200,17 @@ function batchDeclineId({ roundId, k }) {
   return taggedHash(TAG.marketBatchDecline, w.finish());
 }
 
+/**
+ * A ROUND SEAT'S VOID ASK (kanban #1167): the bytes a seat of the round signs when it asks the others whether they signed batch k, whose
+ * set `batchId` its leader signed - each answers its signature, or declines k for good. A seat answers only that seat's signed ask.
+ */
+function batchVoidAskId({ roundId, k, batchId }) {
+  if (!obIs32(roundId) || typeof k !== 'bigint' || k < 0n || !obIs32(batchId)) throw new Error('a void ask names a 32-byte round, a BigInt batch and the 32-byte set its leader signed');
+  const w = new Writer();
+  w.bytes32(roundId); w.u64(k); w.bytes32(batchId);
+  return taggedHash(TAG.marketBatchVoidAsk, w.finish());
+}
+
 // ---- arena-client/src/market.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -40708,6 +40905,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
+         reconcileKeptLock: reconcileKeptLock, bindLockEntry: bindLockEntry, lockRecordOf: lockRecordOf,
          roundEndMs: roundEndMs,
          ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes, ledgerHistory: ledgerHistory,
          depositChoices: depositChoices, withdrawChoices: withdrawChoices, invoiceAmountMsat: invoiceAmountMsat, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, restOfFeesMsat: restOfFeesMsat, restInvoiceMsat: restInvoiceMsat, REST_FLOOR_MSAT: REST_FLOOR_MSAT, ceilNote: ceilNote, roundsDepositMsat: roundsDepositMsat, recordDonation: recordDonation, recordReceived: recordReceived, collectIntoPlayerWallet: collectIntoPlayerWallet, donationCostMsat: donationCostMsat, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, issuingMsat: issuingMsat, awaitIssued: awaitIssued, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,
