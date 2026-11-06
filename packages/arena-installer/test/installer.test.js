@@ -678,7 +678,9 @@ test('one deposit for all nodes: node 1 asks for N parts, a further node is paid
     const baseSpk = toHex(walletOf(Buffer.from('aa'.repeat(32), 'hex')).spk);
     const sent = [];
     const chainKit = { coinsOf: async (chain, spk) => ({ tip: 157430, coins: toHex(spk) === baseSpk ? [{ txid: 'cd'.repeat(32), vout: 1, sats: 300000, height: 157420 }] : [] }),
-      broadcast: async (chain, hex) => { sent.push(hex); return 'ef'.repeat(32); } };
+      // the txid a node answers is the transaction's own (the payment is written, with it, before it is sent: kanban #1165)
+      broadcast: async (chain, hex) => { sent.push(hex); return txidOfHex(hex); } };
+    const { txidOfHex } = await import('../src/onchain-action.js');
     const w = createWizard({ state: b, release: RELEASE, seatPort: 1, chainKit, fundFrom: base, fetcher: async () => { throw new Error('offline'); } });
     const server = http.createServer((q, s) => w.handle(q, s));
     await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
@@ -687,11 +689,11 @@ test('one deposit for all nodes: node 1 asks for N parts, a further node is paid
     const r = (await c.post('/api/bond/check', {})).json;
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.equal(r.parts.otherNodes, undefined, 'node b asks for its own part only');
-    assert.deepEqual([r.fundedFrom.txid, r.fundedFrom.sats], ['ef'.repeat(32), r.needSats], 'paid from node 1\'s wallet');
+    assert.deepEqual([r.fundedFrom.txid, r.fundedFrom.sats], [txidOfHex(sent[0]), r.needSats], 'paid from node 1\'s wallet');
     assert.equal(sent.length, 1);
     const again = (await c.post('/api/bond/check', {})).json;
     assert.equal(sent.length, 1, 'paid once, not at every check');
-    assert.equal(again.fundedFrom.txid, 'ef'.repeat(32));
+    assert.equal(again.fundedFrom.txid, txidOfHex(sent[0]));
     server.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
