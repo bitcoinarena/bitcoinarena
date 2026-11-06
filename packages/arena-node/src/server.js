@@ -7915,8 +7915,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = await keepItemPurchase({ p, manifest: game.manifest, networkSet: vestedShares(forced.recipients, height), gameSet: game.donationSet,
           served: { fromMs: merged.fromMs, toMs: merged.toMs, nodes: merged.nodes, root: merged.root }, port: await portOfFederation(p.federationId), db: round.db,
           verify: (sg, m, k) => schnorr.verify(sg, m, k), reserveKey: itemReserveKey, keepReserve: (row) => round.putDonationOutputs([row]), keepDonations: (rows) => round.putDonationOutputs(rows), fees: feesAtHeight(height),
-          // kanban #1180: the payment names the item (purchaseImage); a payment with the buyer's key alone as its image only where the
-          // operator stops taking them (ARENA_ITEM_LEGACY_IMAGE=0): on the 1.9 line pages from before it still pay that way, so it is taken by default
+          // kanban #1180: the payment names the item (purchaseImage); a payment with the buyer's key alone as its image is still taken on
+          // the 1.9 line, where pages from before it pay that way, unless the operator stops it (ARENA_ITEM_LEGACY_IMAGE=0)
           legacyImage: process.env.ARENA_ITEM_LEGACY_IMAGE !== '0' });
         if (!got.ok) return text(res, got.status || 422, got.why);
         // KEPT HERE THE FIRST TIME: handed on to every other seat, each of which checks it for itself and hands it on only when it
