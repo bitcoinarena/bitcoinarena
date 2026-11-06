@@ -497,6 +497,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // `contractId(fields)`, the stock client's answers (arena-stake-lock). Null:
   // this node verifies no stake lock.
   stakeLocks = null,
+  // THE EXPLORERS A CENSUS OBJECTION IS CHECKED AGAINST (kanban #1209, audit 2 #1204 INSTALLER-DOORS-3): the operator's, never the
+  // client's - an objection naming any other explorer is refused. None named (the default): this seat upholds no census objection.
+  // HOW LONG AFTER A ROUND'S ENTRY CLOSE A PLAYER'S NAME RECORD IS STILL TAKEN (kanban #1213): after it, the identity a round is booked to is fixed
+  lobbyNameGraceMs = 60000,
+  censusExplorers = String(process.env.ARENA_CENSUS_EXPLORERS || '').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean),
   // HOW A WINNER'S LIGHTNING ADDRESS IS FETCHED (winnings-send.js), and the round network its invoices are for.
   lnurlFetch = (u, o) => fetch(u, o),
   // HOW A NETWORK SEASON ASKS THE OTHER SEATS FOR THEIR ROUNDS (GET /season?scope=network): the process's fetch -
@@ -8113,6 +8118,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a census objection is JSON { round, explorer }'); }
         const rh = String(j.round || '').toLowerCase(), explorer = String(j.explorer || '');
         if (!/^[0-9a-f]{64}$/.test(rh) || !/^(https:\/\/[^\s]+|http:\/\/127\.0\.0\.1(:\d+)?(\/[^\s]*)?)$/.test(explorer)) return text(res, 400, 'a census objection names its round (64 hex) and an https explorer');
+        // ONLY AN EXPLORER THIS SEAT'S OPERATOR NAMED (kanban #1209): a client's own explorer answered any hash it liked, and every
+        // round it was named for took no entry on any seat (and an http://127.0.0.1 base made the seat read its own local ports)
+        if (!censusExplorers.length) return text(res, 409, 'not upheld: this seat checks census objections only against explorers its operator named (ARENA_CENSUS_EXPLORERS), and it names none');
+        if (!censusExplorers.includes(explorer.replace(/\/+$/, ''))) return text(res, 409, `not upheld: this seat checks census objections only against its operator's explorers (${censusExplorers.join(', ')})`);
         const rid = fromHex(rh); const row = round.get(rid);
         if (!row) return text(res, 404, 'this seat holds no such round');
         const c = decodeRoundContract(new Uint8Array(row.contract));
