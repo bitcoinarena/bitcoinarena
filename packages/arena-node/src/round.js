@@ -111,6 +111,9 @@ const sendRow = (r) => ({ entryId: new Uint8Array(r.entry_id), attempt: r.attemp
 /** A transcript (transcript.js) frames each batch with a u16 length: no batch longer than this can be in one. */
 export const TRANSCRIPT_BATCH_MAX_BYTES = 65535;
 
+const namedBatchRow = (r) => ({ bodyId: r.body_id, txid: r.txid, signers: JSON.parse(r.signers), signatures: JSON.parse(r.signatures).map((x) => new Uint8Array(Buffer.from(x, 'hex'))),
+  slots: JSON.parse(r.slots), madeMs: Number(r.made_ms) });
+
 export class Round {
   /** How long openHeld trusts its last count of the open rows when this store wrote none (kanban #786). */
   static OPEN_HELD_MS = 250;
@@ -3122,17 +3125,77 @@ export class Round {
     return r ? JSON.parse(r.shares).map((x) => ({ pubkey: new Uint8Array(Buffer.from(x.pubkey, 'hex')), msat: BigInt(x.msat) })) : null;
   }
 
-  /** A protocol-27 settlement's batch (kanban #1044 B1): kept once per (round, scope); a batch over another body replaces it. */
-  putNamedBatch({ roundId, scope = '', bodyId, txid, signers, signatures, slots }) {
-    this.db.prepare('INSERT OR REPLACE INTO named_batches (round_id, scope, body_id, txid, signers, signatures, slots, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(Buffer.from(roundId), String(scope), String(bodyId), String(txid), JSON.stringify(signers), JSON.stringify(signatures.map((x) => Buffer.from(x).toString('hex'))),
-        JSON.stringify(slots), this.now());
+  /**
+   * A protocol-27 settlement's batch (kanban #1044 B1): every batch kept once by (round, scope, txid), never replaced (kanban #1170); `standing` also
+   * makes it the scope's batch (named_batches) - the caller decides that through namedBatchStep, never this store.
+   */
+  putNamedBatch({ roundId, scope = '', bodyId, txid, signers, signatures, slots, standing = true }) {
+    const args = [Buffer.from(roundId), String(scope), String(bodyId), String(txid), JSON.stringify(signers), JSON.stringify(signatures.map((x) => Buffer.from(x).toString('hex'))),
+      JSON.stringify(slots), this.now()];
+    this.db.prepare('INSERT OR IGNORE INTO named_batch_txids (round_id, scope, body_id, txid, signers, signatures, slots, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(...args);
+    if (standing) this.db.prepare('INSERT OR REPLACE INTO named_batches (round_id, scope, body_id, txid, signers, signatures, slots, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(...args);
   }
 
+  /** The batch the scope stands on (named_batches), or null. */
   namedBatch(roundIdBytes, scope = '') {
     const r = this.db.prepare('SELECT body_id, txid, signers, signatures, slots, made_ms FROM named_batches WHERE round_id = ? AND scope = ?').get(Buffer.from(roundIdBytes), String(scope));
-    return r ? { bodyId: r.body_id, txid: r.txid, signers: JSON.parse(r.signers), signatures: JSON.parse(r.signatures).map((x) => new Uint8Array(Buffer.from(x, 'hex'))),
-      slots: JSON.parse(r.slots), madeMs: Number(r.made_ms) } : null;
+    return r ? namedBatchRow(r) : null;
+  }
+
+  /** The scope's batch of one txid (kanban #1170): from every batch kept, else the standing one when it is that txid (kept before the history). */
+  namedBatchOf(roundIdBytes, scope, txid) {
+    const r = this.db.prepare('SELECT body_id, txid, signers, signatures, slots, made_ms FROM named_batch_txids WHERE round_id = ? AND scope = ? AND txid = ?')
+      .get(Buffer.from(roundIdBytes), String(scope), String(txid));
+    if (r) return namedBatchRow(r);
+    const s = this.namedBatch(roundIdBytes, scope);
+    return s && s.txid === String(txid) ? s : null;
+  }
+
+  /** Every batch of the scope kept, oldest first (kanban #1170). */
+  namedBatchesOf(roundIdBytes, scope = '') {
+    return this.db.prepare('SELECT body_id, txid, signers, signatures, slots, made_ms FROM named_batch_txids WHERE round_id = ? AND scope = ? ORDER BY made_ms, txid')
+      .all(Buffer.from(roundIdBytes), String(scope)).map(namedBatchRow);
+  }
+
+  /** The kept batch of `txid` becomes the one the scope stands on (kanban #1170: the row moved onto that txid). False with no such batch kept. */
+  standNamedBatch(roundIdBytes, scope, txid) {
+    const b = this.namedBatchOf(roundIdBytes, scope, txid);
+    if (!b) return false;
+    this.db.prepare('INSERT OR REPLACE INTO named_batches (round_id, scope, body_id, txid, signers, signatures, slots, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(roundIdBytes), String(scope), b.bodyId, b.txid, JSON.stringify(b.signers), JSON.stringify(b.signatures.map((x) => Buffer.from(x).toString('hex'))),
+        JSON.stringify(b.slots), b.madeMs);
+    return true;
+  }
+
+  /** A txid of a federation's or a late entry's settlement (kanban #1172), `scope` 'fed:<hex>' | 'late:<hex>': kept once with what it moves; its signature filled in. */
+  putScopedSettlementTxid({ roundId, scope, txid, message, signature = null, claims = null, payouts = null }) {
+    const had = this.db.prepare('SELECT 1 FROM scoped_settlement_txids WHERE round_id = ? AND scope = ? AND txid = ?').get(Buffer.from(roundId), String(scope), String(txid));
+    if (!had) {
+      if (claims === null || payouts === null) return;
+      this.db.prepare('INSERT INTO scoped_settlement_txids (round_id, scope, txid, message, signature, claims, payouts, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(Buffer.from(roundId), String(scope), String(txid), Buffer.from(message || new Uint8Array(0)), Buffer.from(signature || new Uint8Array(0)), JSON.stringify(claims), Number(payouts), this.now());
+    } else if (signature && signature.length) {
+      this.db.prepare('UPDATE scoped_settlement_txids SET signature = ? WHERE round_id = ? AND scope = ? AND txid = ? AND length(signature) = 0')
+        .run(Buffer.from(signature), Buffer.from(roundId), String(scope), String(txid));
+    }
+  }
+
+  scopedSettlementTxidsOf(roundIdBytes, scope) {
+    return this.db.prepare('SELECT txid, message, signature, claims, payouts FROM scoped_settlement_txids WHERE round_id = ? AND scope = ? ORDER BY made_ms, txid')
+      .all(Buffer.from(roundIdBytes), String(scope))
+      .map((r) => ({ txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claims: JSON.parse(r.claims), payouts: Number(r.payouts) }));
+  }
+
+  /** Every (round, federation) row in `state` (kanban #1172: SUBMITTING and REFUSED rows are asked again at start). */
+  fedLockSettlementsIn(state) {
+    return this.db.prepare('SELECT round_id, federation_id FROM fed_lock_settlements WHERE state = ? ORDER BY made_ms').all(state)
+      .map((r) => ({ roundId: new Uint8Array(r.round_id), federation: r.federation_id }));
+  }
+
+  /** Every (round, late entry) row in `state` (kanban #1172). */
+  lateLockSettlementsIn(state) {
+    return this.db.prepare('SELECT round_id, entry_id FROM late_lock_settlements WHERE state = ? ORDER BY made_ms').all(state)
+      .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id) }));
   }
 
   /** A late loser's second settlement (slice C3b-1): its intent, then where it stands. One per (round, entry). */
@@ -3215,13 +3278,17 @@ export class Round {
    * THE LATE LOSERS TO ASK ABOUT (slice C3b-1): every objected entry of a round whose own settlement is ACCEPTED and
    * which holds no ACCEPTED second settlement. An entry is left out of the round's settlement only while an objection
    * holds it in its re-run window - or, past its bound, a no-quorum entry whose FINAL signatures came late (kanban #1038): those have
-   * re-runs and no objection - so nothing else can be one.
+   * re-runs and no objection - so nothing else can be one. A round that takes any federation has no row of its own (kanban #1172): its settlement is
+   * ACCEPTED once every federation's row is (settlementState), and its late losers are asked about from then.
    */
   lateSettlementCandidates() {
     return this.db.prepare(`SELECT o.round_id, o.entry_id FROM (SELECT round_id, entry_id FROM objections UNION SELECT round_id, entry_id FROM reruns) o
-      JOIN lock_settlements s ON s.round_id = o.round_id AND s.state = 'ACCEPTED'
       LEFT JOIN late_lock_settlements l ON l.round_id = o.round_id AND l.entry_id = o.entry_id
-      WHERE l.state IS NULL OR l.state <> 'ACCEPTED'`).all()
+      WHERE (l.state IS NULL OR l.state <> 'ACCEPTED')
+        AND (EXISTS (SELECT 1 FROM lock_settlements s WHERE s.round_id = o.round_id AND s.state = 'ACCEPTED')
+          OR (NOT EXISTS (SELECT 1 FROM lock_settlements s WHERE s.round_id = o.round_id)
+            AND EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id)
+            AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id AND f.state <> 'ACCEPTED')))`).all()
       .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id) }));
   }
 

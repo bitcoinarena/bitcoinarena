@@ -63,7 +63,8 @@ function arenaPort(seatKeys, log) {
       if (!signature) return { bodyId, txid, message: txid, aggKey: toHex(agg) };
       const accepted = verify(signature, fromHex(txid), agg);
       log.push({ bodyId, txid, signers, accepted, nonce: toHex(nonce) });
-      return { bodyId, txid, message: txid, aggKey: toHex(agg), accepted, error: accepted ? null : 'bad signature' };
+      // AS THE TOOL ANSWERS (kanban #1171, #1172): an accepted submit's claimed lock is spent within its wait (locks_spent)
+      return { bodyId, txid, message: txid, aggKey: toHex(agg), accepted, error: accepted ? null : 'bad signature', locksSpent: accepted };
     },
   };
 }

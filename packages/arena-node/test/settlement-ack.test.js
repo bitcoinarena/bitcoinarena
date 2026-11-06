@@ -51,7 +51,8 @@ function fedPort(fid, log) {
       if (!signature) return { message: toHex(msg), txid: toHex(msg) };
       const accepted = schnorr.verify(signature, msg, claimPk.subarray(1));
       log.push({ fid, accepted });
-      return accepted ? { accepted: true } : { accepted: false, error: 'bad signature' };
+      // AS THE TOOL ANSWERS (kanban #1171, #1172): an accepted submit's payouts stored and its claimed locks gone
+      return accepted ? { accepted: true, payoutsStored: payouts.map(() => ({ stored: true })), locksAfter: claims.map(() => null) } : { accepted: false, error: 'bad signature' };
     },
   };
 }
@@ -186,7 +187,8 @@ test('a late loser\'s second settlement goes through the same acks, under its ow
       claimPk: w.deal.groupPublicKey, signerNode: w.deal.shares[i], needed: 2, contract: w.contract,
       ackTable: { roundId: RID, lateEntryId: LATE, rows: [{ entryId: new Uint8Array(32), pubkey: pk(1), amountMsat: 7n }] } });
     ls.turn = async () => ({ mine: true });
-    ls.portFor = async () => ({ settle: async ({ claimPk, signature }) => { const accepted = schnorr.verify(signature, message, claimPk.subarray(1)); log.push(accepted); return { accepted }; } });
+    ls.portFor = async () => ({ settle: async ({ claimPk, signature }) => { const accepted = schnorr.verify(signature, message, claimPk.subarray(1)); log.push(accepted); return { accepted, payoutsStored: [{ stored: true }], locksAfter: [null] }; } });
+    ls.latePort = ls.portFor;   // the late loser's federation's port (kanban #1172)
     ls.sendLate = async () => null;
   });
   const realFetch = w.nodes[0].fetcher;

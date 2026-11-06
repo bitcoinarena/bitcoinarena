@@ -4186,7 +4186,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const attestedBoot = setTimeout(() => settleAttestedSoon(), 1000);
   if (attestedBoot.unref) attestedBoot.unref();
   const settleRecoverTimer = setInterval(() => {
-    if (!shuttingDown && round.lockSettlementsIn(SUBMITTING).length) recoverSettlements();
+    // AND A FEDERATION'S OR A LATE ENTRY'S ROW THIS SIGNER NODE WAS INSIDE (kanban #1172): asked of its own federation as the round's row is
+    if (!shuttingDown && (round.lockSettlementsIn(SUBMITTING).length || round.fedLockSettlementsIn(SUBMITTING).length || round.lateLockSettlementsIn(SUBMITTING).length)) recoverSettlements();
     // AND A CLOSED LOCK ROUND NOBODY SETTLED (kanban #803): no other path reaches one after its close
     if (!shuttingDown) settlements.retryUnsettled()
       .then((done) => { for (const d of done) console.log(`[settle] ${d.round.slice(0, 16)} unsettled, asked again: ${d.state || (d.ok ? 'ok' : 'refused')} - ${d.why.slice(0, 200)}`); })
@@ -10622,7 +10623,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const row = round.get(new Uint8Array(rid));
         if (!row) return text(res, 404, 'this node holds no such round');
         const scope = String(url.searchParams.get('scope') || '').toLowerCase();
-        const batch = round.namedBatch ? round.namedBatch(new Uint8Array(rid), scope) : null;
+        if (scope && !/^[0-9a-f]{64}$/.test(scope)) return text(res, 404, 'this node keeps no signed batch of that settlement');
+        // THE BATCH OF THE TXID THE SCOPE'S ROW STANDS ON (kanban #1170): never another signer set's over the same body, whose refunds spend nothing
+        const r8 = new Uint8Array(rid);
+        const where = !scope ? {} : round.fedLockSettlement(r8, scope) ? { federation: scope } : { entry: new Uint8Array(Buffer.from(scope, 'hex')) };
+        const batch = settlements.batchFor(r8, where);
         if (!batch) return text(res, 404, 'this node keeps no signed batch of that settlement');
         let refundKey;
         try { const { seatKeys, threshold } = namedClaimKeys(decodeRoundContract(new Uint8Array(row.contract))); refundKey = toHex(signerSetKey(seatKeys, threshold, batch.signers)); }
