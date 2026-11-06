@@ -55,3 +55,30 @@ test('notices and attestations a seat holds are there again after a restart; one
   // no store: as before
   assert.equal(createAbsences({ verify }).listDepartures().length, 0);
 });
+
+// KANBAN #1222 (audit 2 #1204 FED-B1): a notice was kept per (federation, peer) and the newest posted_at won, checked only against the key the
+// notice itself names - anyone signed one with a key of their own and a later posted_at, displaced the guardian's real notice, and the
+// leaver was recorded ABANDONED. Now each node key keeps its own notice, a notice from another node key than the record names for that
+// guardian is refused where the record is held, and departureFor finds the guardian's own notice whatever else is held.
+test('#1222 a stranger\'s later notice for a guardian does not displace the guardian\'s own; with the record held it is refused', async () => {
+  const { signDeparture } = await import('../../arena-protocol/src/absence.js');
+  const mallory = { secret: new Uint8Array(32).fill(9) }; mallory.pubkey = schnorr.getPublicKey(mallory.secret);
+  const sign = (who, posted) => signDeparture({ federationId: FED, peerKey: peer, leaveAfterHeight: posted + 18, postedAt: posted, nodePubkey: who.pubkey }, (m) => schnorr.sign(m, who.secret));
+  const record = { federationId: FED, guardians: [{ peerKey: peer, nodePubkey: g.pubkey, operatorId: '', bondTxid: new Uint8Array(32), bondVout: 0, endpoint: '' }] };
+  const own = sign(g, 100), forged = sign(mallory, 4000000000);
+  // no record held (a seat that has not read it yet): both kept, the guardian's own is the one that stands
+  const h = createAbsences({ verify });
+  assert.equal(h.offerDeparture(own).kept, true);
+  assert.equal(h.offerDeparture(forged).kept, true);
+  const due = h.departureFor(record, peer, 18, 200);
+  assert.equal(due.ok, true, due.why);
+  assert.equal(Buffer.from(due.notice.nodePubkey).toString('hex'), Buffer.from(g.pubkey).toString('hex'));
+  // the forged one first, then the real one: still the real one
+  const h2 = createAbsences({ verify });
+  h2.offerDeparture(forged); h2.offerDeparture(own);
+  assert.equal(h2.departureFor(record, peer, 18, 200).ok, true);
+  // the record held: the stranger's notice is refused at the door
+  const h3 = createAbsences({ verify, nodeOf: () => Buffer.from(g.pubkey).toString('hex') });
+  assert.match(h3.offerDeparture(forged).why, /another node key than the federation record names/);
+  assert.equal(h3.offerDeparture(own).kept, true);
+});
