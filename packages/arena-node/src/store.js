@@ -796,6 +796,12 @@ export function openStore(path = ':memory:') {
       k           INTEGER NOT NULL,
       PRIMARY KEY (round_id, k)
     );
+    -- A BATCH SHOWN VOID (kanban #1150, order-batch.js BATCH.VOID): enough seats declined it that it can never be certified - for good.
+    CREATE TABLE IF NOT EXISTS market_batch_voids (
+      round_id    BLOB NOT NULL,
+      k           INTEGER NOT NULL,
+      PRIMARY KEY (round_id, k)
+    );
 
     -- A MARKET ENTRY ITS PLAYER CANCELLED: signed with the entry's session key before the round's entry close,
     -- taken at this seat's door or pulled from a peer before settlement. One per entry; the entry is out of the round's table
