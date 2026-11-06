@@ -966,6 +966,25 @@ export function openStore(path = ':memory:') {
     -- A LATE LOSER'S SECOND SETTLEMENT (§13A, RULED 2026-09-24, slice C3b-1): one per (round, entry), never a second
     -- row under the round's key - an entry the round's settlement left out while it was in its re-run window, which
     -- then ended FAILED or FORFEIT. The same intent and state as the round's own settlement row.
+    -- AN OBJECTION BEING CHECKED (kanban #1173): written at its arrival, before its replay runs, and gone once the check answered. While one that
+    -- arrived before final_after stands, this seat holds the entry SUSPENDED: no FINAL signature, no P, no ack.
+    CREATE TABLE IF NOT EXISTS pending_objections (
+      round_id   BLOB NOT NULL,
+      entry_id   BLOB NOT NULL,
+      arrived_ms INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id, arrived_ms)
+    );
+    -- AN ENTRY FINAL AT THIS SEAT (kanban #1173): kept once reached, never undone - the run it is FINAL on, the final_after it was FINAL past, and
+    -- whether that run is an agreed re-run. An objection that reaches this seat afterwards is evidence, never a suspension.
+    CREATE TABLE IF NOT EXISTS entry_finals (
+      round_id       BLOB NOT NULL,
+      entry_id       BLOB NOT NULL,
+      run_id         TEXT NOT NULL,
+      final_after_ms INTEGER NOT NULL,
+      on_rerun       INTEGER NOT NULL,
+      at_ms          INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id)
+    );
     CREATE TABLE IF NOT EXISTS late_lock_settlements (
       round_id  BLOB NOT NULL,
       entry_id  BLOB NOT NULL,
