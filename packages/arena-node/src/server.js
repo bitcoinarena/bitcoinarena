@@ -197,6 +197,7 @@ import { CLOCKS as FEDERATION_CLOCKS, bondLapseOf } from '../../arena-protocol/s
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson, decodeNamedResendList } from './winnings-send.js';
+import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } from './send-plan-ask.js';
 import { TYPE_SETTLEMENT_ACK, TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, TYPE_ABANDONED_PROOF, TYPE_THEFT_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION, seatingRulesEpochOf } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
@@ -5011,6 +5012,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const past = c.seriesId instanceof Uint8Array ? pastSeries.get(toHex(c.seriesId)) : null;
     if (past) { const k = seriesRoundCheck(c, [past]); return k.ok ? null : k.why; }
     return seriesRefusal(c);
+  };
+  // A SEND PLAN AT THE DOOR (kanban #1154): { ok, who } when the x-send-plan-ask header is a seat of this round's contract signing these
+  // very bytes for this round (and late entry), else the refusal - a round this seat does not hold has no seats to check against
+  const sendPlanAskOf = (req, rid, kind, lateHex, raw) => {
+    const row = round.get(rid);
+    if (!row) return { ok: false, status: 409, why: 'this seat holds no such round' };
+    let c;
+    try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch (e) { return { ok: false, status: 409, why: `the round's contract does not decode: ${e.message}` }; }
+    return checkSendPlanAsk(req.headers[SEND_PLAN_ASK_HEADER], { kind, roundId: rid, lateEntryId: lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null,
+      body: raw, seats: c.nodes });
   };
   const offerRefusalOfRound = (rid) => {
     const row = round.get(rid);
@@ -10658,8 +10669,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // A LATE SETTLEMENT'S PLANS (C3b-2a), asked for by its late entry as well.
         const lateHex = url.searchParams.get('late');
         const sender = lateHex ? settlements.lateWinningsFor(new Uint8Array(rid), new Uint8Array(Buffer.from(lateHex, 'hex'))) : winnings;
-        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify(sender.keptPlan(new Uint8Array(rid))));
+        const kept = JSON.stringify(sender.keptPlan(new Uint8Array(rid)));
+        // SIGNED BY THIS SEAT (kanban #1154): an asker that adopts it knows a seat of the round kept it
+        const late8 = /^[0-9a-f]{64}$/.test(lateHex || '') ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null;
+        const signed = !lateHex || late8 ? sendPlanAskHeaders(round, { kind: PLAN_ASK.KEPT, roundId: new Uint8Array(rid), lateEntryId: late8, body: kept }) : {};
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS, ...signed });
+        return res.end(kept);
       }
 
       // THE COORDINATOR'S SEND PLANS, between signer nodes: kept only if each stands here (winnings-send.js).
@@ -10668,13 +10683,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (rid.length !== 32) return text(res, 400, 'send plans are for a round id');
         { const why = seriesRefusalOfRound(new Uint8Array(rid)); if (why) return text(res, 409, `settlement refused: ${why}`); }
         let proposed;
-        try { proposed = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { return text(res, 400, `not JSON: ${e.message}`); }
+        const raw = new Uint8Array(await read(req));
+        try { proposed = JSON.parse(Buffer.from(raw).toString('utf8')); } catch (e) { return text(res, 400, `not JSON: ${e.message}`); }
         if (!Array.isArray(proposed)) return text(res, 400, 'send plans are a list');
         const lateHex = url.searchParams.get('late');
         if (lateHex && !/^[0-9a-f]{64}$/.test(lateHex)) return text(res, 400, 'a late settlement is named by a 32-byte entry id');
+        // ONLY FROM A SEAT OF THE ROUND (kanban #1154): the plan signed by its proposer's node key, over these bytes, checked against the contract's nodes
+        const by = sendPlanAskOf(req, new Uint8Array(rid), PLAN_ASK.PROPOSE, lateHex, raw);
+        if (!by.ok) return text(res, by.status || 403, `this seat takes a send plan only from a seat of the round: ${by.why}`);
         const got = lateHex
-          ? await settlements.takeLateSends(new Uint8Array(rid), new Uint8Array(Buffer.from(lateHex, 'hex')), proposed)
-          : await settlements.takeSends(new Uint8Array(rid), proposed);
+          ? await settlements.takeLateSends(new Uint8Array(rid), new Uint8Array(Buffer.from(lateHex, 'hex')), proposed, { from: by.who })
+          : await settlements.takeSends(new Uint8Array(rid), proposed, { from: by.who });
         // THE ANSWER IS THIS SEAT'S SIGNATURE over the plan's id (plan-taken.js), not a status the asker counts.
         if (!got.ok) return text(res, got.status || 409, got.why);
         res.writeHead(201, { 'content-type': 'application/octet-stream', ...CORS });
@@ -10766,17 +10785,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (rid.length !== 32) return text(res, 400, 'a re-send is for a round id');
         if (!winnings) return text(res, 409, 'this signer node sends no winnings');
         let proposed;
-        try { proposed = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { return text(res, 400, `not JSON: ${e.message}`); }
+        const raw = new Uint8Array(await read(req));
+        try { proposed = JSON.parse(Buffer.from(raw).toString('utf8')); } catch (e) { return text(res, 400, `not JSON: ${e.message}`); }
         // A LATE SETTLEMENT'S RE-SEND (slice C3b-2b): `late` names it; its rows and its rebuilt transaction answer, and a
         // `late` that names no late settlement of this round - a first-round entry, say - is refused by name.
         const lateHex = url.searchParams.get('late');
         if (lateHex && !/^[0-9a-f]{64}$/.test(lateHex)) return text(res, 400, 'a late settlement is named by a 32-byte entry id');
+        // ONLY FROM A SEAT OF THE ROUND (kanban #1154): attempt N+1 went to whoever posted it first
+        const by = sendPlanAskOf(req, new Uint8Array(rid), PLAN_ASK.RESEND, lateHex, raw);
+        if (!by.ok) return text(res, by.status || 403, `this seat takes a re-send only from a seat of the round: ${by.why}`);
         const late8 = lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null;
         if (late8 && !round.lateLockSettlement(new Uint8Array(rid), late8)) return text(res, 409, 'no late settlement for that entry');
         const built = settlements.sendBuilt(new Uint8Array(rid), late8 ? await settlements.lateMessage(new Uint8Array(rid), late8) : await settlements.message(new Uint8Array(rid)), { entry: late8 });
         if (!built.ok) return text(res, built.status || 409, built.why);
         const sender = late8 ? settlements.lateWinningsFor(new Uint8Array(rid), late8) : winnings;
-        const got = await sender.checkResend(new Uint8Array(rid), built, proposed);
+        const got = await sender.checkResend(new Uint8Array(rid), built, proposed, { from: by.who });
         return got.ok ? text(res, 201, 're-send checked and kept') : text(res, got.status || 409, got.why);
       }
 
