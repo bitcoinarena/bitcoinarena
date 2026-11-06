@@ -137,6 +137,9 @@ export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, repl
   }
 
   const verdicts = new Map();
+  // ONE PROOF IS ONE PLACE IN THE QUEUE (kanban #1187): every holder's commit reaches this judge, and the same bytes asked again while their replay runs wait on that replay
+  // instead of taking another place, so a filer repeating one request cannot fill the queue and leave an honest start's proof answered undefined
+  const judging = new Map();
   let tail = Promise.resolve(), queued = 0;
   async function judge(bytes, { startHeight = null } = {}) {
     // AN ABANDONMENT IS READ OFF THE CHAIN AS IT STANDS: no replay, and its answer moves with the output, so it is kept nowhere
@@ -145,16 +148,22 @@ export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, repl
     if (isTheftProof(bytes)) return theft(bytes, startHeight === null ? null : startHeight - 1);
     const id = toHex(fraudProofHash(bytes)), had = verdicts.get(id);
     if (had) return had;
+    if (judging.has(id)) return judging.get(id);
     if (queued >= waiting) return { verdict: undefined, why: 'this seat has too many proofs to judge just now' };
     queued += 1;
     const turn = tail.then(() => verdicts.get(id) || fresh(bytes));
     tail = turn.catch(() => null);
-    try {
-      const got = await turn;
-      if (got.verdict !== undefined) { verdicts.set(id, got); if (verdicts.size > kept) verdicts.delete(verdicts.keys().next().value); }
-      return got;
-    } catch (e) { return { verdict: undefined, why: e.message }; } finally { queued -= 1; }
+    const answer = (async () => {
+      try {
+        const got = await turn;
+        if (got.verdict !== undefined) { verdicts.set(id, got); if (verdicts.size > kept) verdicts.delete(verdicts.keys().next().value); }
+        return got;
+      } catch (e) { return { verdict: undefined, why: e.message }; } finally { queued -= 1; judging.delete(id); }
+    })();
+    judging.set(id, answer);
+    return answer;
   }
+  judge.queued = () => queued;
   judge.read = read;
   return judge;
 }
