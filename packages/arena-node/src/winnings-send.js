@@ -50,6 +50,20 @@ function payRequestUrl(address) {
 }
 
 const refuse = (why, status = 409) => ({ ok: false, status, why });
+/**
+ * A FAILED FETCH, IN FULL (kanban #1044): fetch says only "fetch failed" - the reason (ECONNREFUSED 127.0.0.1:18777, a reset, a timeout) is in its cause chain.
+ * Every message and code down the chain, joined, so a held donation share says why it was held.
+ */
+export function fetchErrorText(e) {
+  const out = [];
+  for (let c = e, i = 0; c && i < 5; c = c.cause, i++) {
+    const bits = [c.name && c.name !== 'Error' && c.name !== 'TypeError' ? c.name : '', c.message || (typeof c === 'string' ? c : ''), c.code || '',
+      c.address ? `${c.address}${c.port ? `:${c.port}` : ''}` : ''].filter(Boolean);
+    if (bits.length) out.push(bits.join(' '));
+    if (Array.isArray(c.errors)) for (const x of c.errors.slice(0, 3)) out.push(fetchErrorText(x));
+  }
+  return out.join(' <- ') || String(e);
+}
 const PAID = 'PAID';
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).join('|');
 const plain = (row) => ({ entry: toHex(row.entryId), attempt: row.attempt || 0, address: row.address, invoice: row.invoice,
@@ -72,6 +86,7 @@ export class WinningsSend {
     this.pairs = new Map();      // `${round}:${entry}:${attempt}` -> nonce pair for the auth signature
     this.withheld = new Map();   // a signing's query -> the peers that gave this asker no share for it (kanban #1074)
     this.rebuilt = new Map();    // an unsigned re-send transaction, by everything it is built from
+    this.resendSaid = new Map(); // `${round}:${entry}` -> the last reason a re-send's invoice did not stand, as said (kanban #1044)
   }
 
   /**
@@ -92,7 +107,7 @@ export class WinningsSend {
     const ep = payRequestUrl(address);
     if (!ep.ok) return refuse(ep.why);
     let said;
-    try { said = await askWithin(async (signal) => (await this.lnurlFetch(ep.url, { signal })).json(), this.lnurlMs); } catch (e) { return refuse(`${ep.url} did not answer: ${e.message}`); }
+    try { said = await askWithin(async (signal) => (await this.lnurlFetch(ep.url, { signal })).json(), this.lnurlMs); } catch (e) { return refuse(`${ep.url} did not answer: ${fetchErrorText(e)}`); }
     const pr = payRequestStands(said, amountMsat);
     return pr.ok ? { ok: true, ...pr } : refuse(pr.why);
   }
@@ -103,7 +118,7 @@ export class WinningsSend {
     if (!pr.ok) return pr;
     let said;
     try { said = await askWithin(async (signal) => (await this.lnurlFetch(callbackFor({ callback: pr.callback, amountMsat }), { signal })).json(), this.lnurlMs); }
-    catch (e) { return refuse(`the address's callback did not answer: ${e.message}`); }
+    catch (e) { return refuse(`the address's callback did not answer: ${fetchErrorText(e)}`); }
     const inv = invoiceAnswersPayRequest({ invoice: said && said.pr, amountMsat, metadata: pr.metadata, network: this.network });
     if (!inv.ok) return refuse(inv.why);
     return { ok: true, invoice: said.pr, paymentHash: toHex(inv.paymentHash), metadata: pr.metadata };
@@ -139,7 +154,9 @@ export class WinningsSend {
         payoutMsat: payout.msat, owedMsat: payout.owedMsat, gatewayUrl: gw.url, gatewayPk: gw.modulePublicKey,
         expiration: proposedExpiration(g.height, gw), donation: !!donation });
     }
-    for (const r of rows) this.round.putSendPlan({ ...r, why: r.heldWhy ? `held: the recipient did not answer (${String(r.heldWhy).slice(0, 120)})` : 'proposed by this signer node' });
+    for (const r of rows) this.round.putSendPlan({ ...r, why: r.heldWhy ? `held: the recipient did not answer (${String(r.heldWhy).slice(0, 400)})` : 'proposed by this signer node' });
+    // EVERY HELD SHARE'S REASON, SAID WHOLE (kanban #1044: the row's why is overwritten by HELD, and the sweep's line is cut at 200)
+    for (const r of rows) if (r.heldWhy) console.log(`[winnings] ${toHex(roundIdBytes).slice(0, 16)} donation share ${toHex(r.entryId).slice(0, 8)} held, ${r.address.slice(0, 24)}: ${r.heldWhy}`);
     return { ok: true, rows: this.round.sendPlansOf(roundIdBytes) };
   }
 
@@ -355,7 +372,12 @@ export class WinningsSend {
     const invoiceMsat = sendableInvoiceMsat(out, gw.sendFeeDefault);
     if (invoiceMsat <= 0n) return refuse('the refunded winning does not cover the next gateway\'s fee');
     const inv = await this.invoiceFor(prev.address, invoiceMsat);
-    if (!inv.ok) return refuse(`the winner's invoice does not stand, so nothing is re-sent on it: ${inv.why}`);
+    if (!inv.ok) {
+      // SAID WHOLE, ONCE PER CHANGE (kanban #1044): the proposer's sweep asks every pass
+      const k = `${toHex(roundIdBytes)}:${entryHex}`;
+      if (this.resendSaid.get(k) !== inv.why) { this.resendSaid.set(k, inv.why); console.log(`[winnings] ${toHex(roundIdBytes).slice(0, 16)} re-send of ${entryHex.slice(0, 8)} not proposed: ${inv.why}`); }
+      return refuse(`the winner's invoice does not stand, so nothing is re-sent on it: ${inv.why}`);
+    }
     const row = { entryId: prev.entryId, roundId: roundIdBytes, attempt: prev.attempt + 1, address: prev.address, invoice: inv.invoice,
       paymentHash: inv.paymentHash, invoiceMsat, payoutMsat: out, owedMsat: prev.owedMsat, gatewayUrl: gw.url, gatewayPk: gw.modulePublicKey,
       expiration: proposedExpiration(g.height, gw), donation: !!prev.donation };

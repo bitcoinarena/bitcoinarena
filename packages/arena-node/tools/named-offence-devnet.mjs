@@ -99,8 +99,9 @@ if (SCENARIO === 'donation-resend') {
   const failed = new Set();
   // EVERY ASK OF THE DOOR IS SAID (measured on s29b round 764e3ecb: both shares held as "did not answer" and this tool printed no invoice at all)
   const paths = new Map();
-  setInterval(() => { say({ step: 'recipient asks', asks: Object.fromEntries(paths), listening: !!recipients }); paths.clear(); }, 60000).unref();
-  recipients = await serveDonationRecipients({ onAsk: (m, p) => paths.set(`${m} ${p}`, (paths.get(`${m} ${p}`) || 0) + 1), invoice: async ({ amountMsat, descriptionHash }) => {
+  let conns = 0;
+  setInterval(() => { say({ step: 'recipient asks', asks: Object.fromEntries(paths), connections: conns, listening: !!recipients }); paths.clear(); conns = 0; }, 60000).unref();
+  recipients = await serveDonationRecipients({ onConnect: () => { conns += 1; }, onAsk: (m, p) => paths.set(`${m} ${p}`, (paths.get(`${m} ${p}`) || 0) + 1), invoice: async ({ amountMsat, descriptionHash }) => {
     const dh = toHex(descriptionHash);
     if (!failed.has(dh)) {
       failed.add(dh);
@@ -238,7 +239,6 @@ for (;;) {
     try { const w = await (await get(`${SEATS[SEATS.findIndex((_, k) => !stopped.has(k))]}/winnings?entry=${e}`)).json(); seen(`entry${i} send`, w.send ? `${w.send.state} ${String(w.send.why || '').slice(0, 120)}${w.send.preimage ? ' preimage' : ''}` : 'none'); } catch { /* next pass */ }
   }
   if (OFF && stopped.size && (armed.some((k) => /^ACCEPTED/.test(last.get(`seat${k + 1} settlement`) || '')) || at() >= LIMIT - 300)) for (const k of [...stopped]) backIn(k);
-if (recipients) await recipients.close();
   for (let k = 0; k < SEATS.length; k++) {
     if (stopped.has(k)) continue;
     try { const l = await (await get(`${SEATS[k]}/lock-settlement?round=${ROUND}`)).json(); seen(`seat${k + 1} settlement`, `${l.state || l.why || 'none'}${l.txid ? ` ${String(l.txid).slice(0, 16)}` : ''}`.slice(0, 200)); } catch { /* next pass */ }
@@ -274,4 +274,7 @@ for (let k = 0; k < SEATS.length; k++) writeFileSync(offenceFile(k), '');
 for (const k of [...stopped]) backIn(k);
 for (const p of players) { try { process.kill(-p.child.pid, 'SIGTERM'); } catch { /* it ended */ } }
 say({ step: 'done', scenario: SCENARIO, round: ROUND, t: at(), height: await height() });
+// THE DONATION RECIPIENTS' DOOR IS CLOSED HERE, AFTER THE WATCH (kanban #1044): measured on s29b-s29e, it was closed inside the watch loop's first pass,
+// before the round ended - every seat's ask of 18777 was refused, and both shares were held "the recipient did not answer" with the door never asked
+if (recipients) await recipients.close();
 process.exit(0);
