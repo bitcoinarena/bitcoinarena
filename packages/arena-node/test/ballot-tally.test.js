@@ -61,7 +61,7 @@ test('the tally from blocks: votes outside the phase ignored, the last vote per 
   ]);
   const ch = chain(votes);
   const proposals = store([record]);
-  const t = createBallotTally({ proposals, tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, verify, decideDepthFor: () => 1,
+  const t = createBallotTally({ proposals, tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, verify, decideDepthFor: () => 1, minDecideDepthFor: () => 1,
     genesisFor: () => BALLOT_GENESIS });
   ch.tip = 100; await t.pass();
   assert.equal(t.list()[0].phase, 'review'); assert.deepEqual(ch.reads, [], 'nothing is read in review');
@@ -99,14 +99,15 @@ function forkable(votesByHeight, top = 120) {
   c.censusAt = async () => { c.censusReads++; return CENSUS; };
   return c;
 }
-/** store() with proposals.js's undecide and forget. */
+/** store() with proposals.js's undecide, orphan and restore (kanban #1152: nothing is forgotten, an orphan keeps its bytes). */
 function reorgStore(records) {
   const held = new Map(records.map((r) => [r.id, r]));
-  const s = { writes: 0, forgotten: [],
+  const s = { writes: 0, orphaned: [],
     list: () => [...held.values()],
-    decide: (id, outcome) => { const h = held.get(id); if (!h || h.decided) return false; held.set(id, { ...h, decided: outcome }); s.writes++; return true; },
+    decide: (id, outcome) => { const h = held.get(id); if (!h || h.decided || h.orphaned) return false; held.set(id, { ...h, decided: outcome }); s.writes++; return true; },
     undecide: (id) => { const h = held.get(id); if (!h || !h.decided) return false; const { decided, ...rest } = h; held.set(id, rest); s.writes++; return true; },
-    forget: (id) => { if (!held.delete(id)) return false; s.forgotten.push(id); s.writes++; return true; } };
+    orphan: (id) => { const h = held.get(id); if (!h || h.orphaned) return false; const { decided, ...rest } = h; held.set(id, { ...rest, state: 'ORPHANED', orphaned: { was: decided ? 'decided' : 'COUNTING' } }); s.orphaned.push(id); s.writes++; return true; },
+    restore: (id) => { const h = held.get(id); if (!h || !h.orphaned) return false; const { orphaned, state, ...rest } = h; held.set(id, rest); s.writes++; return true; } };
   return s;
 }
 
@@ -116,7 +117,7 @@ test('a reorg below a decided proposal takes its outcome back and counts it agai
   const ch = forkable(yes);
   const proposals = reorgStore([{ ...record, blockHash: ch.blocks.get(100) }]);
   const t = createBallotTally({ proposals, tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, blockHashAt: ch.blockHashAt, verify,
-    decideDepthFor: () => 1 });
+    decideDepthFor: () => 1, minDecideDepthFor: () => 1 });
   ch.tip = 106; await t.pass();
   const first = proposals.list()[0].decided;
   assert.deepEqual([first.passed, first.yesSats, first.anchor], [true, '50000000', { height: 106, hash: ch.blocks.get(106) }], 'decided with its anchor: the last voting block');
@@ -138,15 +139,15 @@ test('a reorg below a decided proposal takes its outcome back and counts it agai
   assert.deepEqual([again.decided.passed, again.decided.yesSats, again.decided.noSats, again.decided.anchor.hash], [false, '0', '80000000', ch.blocks.get(106)]);
   assert.equal(t.list()[0].phase, 'failed');
   assert.equal(t.live(toHex(H(0x4e))).configHash, toHex(BALLOT_GENESIS.configHash), 'the config it made live is taken back with it');
-  assert.equal(proposals.forgotten.length, 0, 'its publication still stands: kept');
+  assert.equal(proposals.orphaned.length, 0, 'its publication still stands: kept');
 });
 
-test('a reorg inside an open phase reads its votes again; a reorg under its publication forgets the proposal', async () => {
+test('a reorg inside an open phase reads its votes again; a reorg under its publication orphans the proposal, kept with its bytes', async () => {
   const { idBytes, record } = kept();
   const ch = forkable(new Map([[102, [vote(A, idBytes, CHOICE.YES, 102, 'a1')]]]));
   const proposals = reorgStore([{ ...record, blockHash: ch.blocks.get(100) }]);
   const t = createBallotTally({ proposals, tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, blockHashAt: ch.blockHashAt, verify,
-    decideDepthFor: () => 1 });
+    decideDepthFor: () => 1, minDecideDepthFor: () => 1 });
   ch.tip = 103; await t.pass();
   assert.equal(t.list()[0].tally.yesSats, '50000000');
   ch.fork(102, new Map([[102, [vote(A, idBytes, CHOICE.NO, 102, 'a1x')]]]));
@@ -156,7 +157,7 @@ test('a reorg inside an open phase reads its votes again; a reorg under its publ
   assert.deepEqual([running.running, running.yesSats, running.noSats], [true, '0', '50000000'], 'the vote on the old branch is gone, the new one counts');
   assert.deepEqual(ch.reads, [101, 102, 103, 104]);
   assert.match(t.reorgs()[0].what, /its votes are read again/);
-  // IN REVIEW, ITS PUBLICATION BLOCK REPLACED: not published on this chain - forgotten (posted again, it is taken again)
+  // IN REVIEW, ITS PUBLICATION BLOCK REPLACED: not published on this chain - orphaned, its bytes kept (kanban #1152)
   const late = kept({ configHash: H(0x24), config: Uint8Array.of(4), publishedAt: 110 });
   const p2 = reorgStore([{ ...late.record, blockHash: ch.blocks.get(110) }]);
   const t2 = createBallotTally({ proposals: p2, tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, blockHashAt: ch.blockHashAt, verify });
@@ -164,14 +165,15 @@ test('a reorg inside an open phase reads its votes again; a reorg under its publ
   assert.equal(t2.list()[0].phase, 'review');
   ch.fork(110, new Map()); ch.tip = 111;
   assert.equal((await t2.pass()).reorged, 1);
-  assert.deepEqual([p2.list().length, p2.forgotten], [0, [late.record.id]]);
+  assert.deepEqual([p2.list().length, p2.orphaned, p2.list()[0].proposal], [1, [late.record.id], late.record.proposal]);
+  assert.equal(t2.list()[0].phase, 'orphaned');
   assert.match(t2.reorgs()[0].what, /publication block left this chain/);
 });
 
 test('a DESIGN proposal under 30 % turnout fails, and the config stays the genesis', async () => {
   const { idBytes, record } = kept();
   const ch = chain(new Map([[101, [vote(C, idBytes, CHOICE.YES, 101, 'c')]]]));         // 20 % of the bonded capital
-  const t = createBallotTally({ proposals: store([record]), tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, verify, decideDepthFor: () => 1 });
+  const t = createBallotTally({ proposals: store([record]), tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, verify, decideDepthFor: () => 1, minDecideDepthFor: () => 1 });
   ch.tip = 120; await t.pass();
   const got = t.list()[0];
   assert.deepEqual([got.phase, got.tally.turnoutPct, got.tally.quorum, got.tally.passed], ['failed', 20, false, false]);
@@ -279,7 +281,7 @@ test('the bonded nodes change the source list: it goes live at its height, and o
   const { idBytes, record } = kept({ parent: SOURCES_GENESIS.configHash, configHash: configHashOf(config), config, cls: CLASS.SOURCES });
   const votes = new Map([[101, [vote(A, idBytes, CHOICE.YES, 101, 'a1')]], [102, [vote(B, idBytes, CHOICE.YES, 102, 'b1')]]]);
   const ch = chain(votes);
-  const t = createBallotTally({ proposals: store([record]), tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, verify, decideDepthFor: () => 1 });
+  const t = createBallotTally({ proposals: store([record]), tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, verify, decideDepthFor: () => 1, minDecideDepthFor: () => 1 });
   const net = toHex(H(0x4e));
   ch.tip = 100; await t.pass();
   assert.deepEqual(t.sources(net).hosts, [...MARKET_HOSTS].sort());
@@ -297,18 +299,18 @@ test('a list needs over half of the voting bonds, and yes from 25 % of all bonds
   const { idBytes, record } = kept({ parent: SOURCES_GENESIS.configHash, configHash: configHashOf(config), config, cls: CLASS.SOURCES });
   const votes = new Map([[101, [vote(A, idBytes, CHOICE.YES, 101, 'a1'), vote(B, idBytes, CHOICE.NO, 101, 'b1'), vote(C, idBytes, CHOICE.NO, 101, 'c1')]]]);
   const ch = chain(votes);
-  const t = createBallotTally({ proposals: store([record]), tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, verify, decideDepthFor: () => 1 });
+  const t = createBallotTally({ proposals: store([record]), tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, verify, decideDepthFor: () => 1, minDecideDepthFor: () => 1 });
   ch.tip = 112; await t.pass(); await t.pass();
   assert.equal(t.list()[0].phase, 'failed');
   assert.ok(!t.sources(toHex(H(0x4e))).hosts.includes('attacker.example.org'));
   const few = kept({ parent: SOURCES_GENESIS.configHash, configHash: configHashOf(config), config, cls: CLASS.SOURCES, publishedAt: 200 });
   const c2 = chain(new Map([[201, [vote(C, few.idBytes, CHOICE.YES, 201, 'c1')]]]));   // 20 M of 100 M: the turnout is met, the 25 % is not
-  const t2 = createBallotTally({ proposals: store([few.record]), tipHeight: c2.tipHeight, votesAt: c2.votesAt, censusAt: c2.censusAt, verify, decideDepthFor: () => 1 });
+  const t2 = createBallotTally({ proposals: store([few.record]), tipHeight: c2.tipHeight, votesAt: c2.votesAt, censusAt: c2.censusAt, verify, decideDepthFor: () => 1, minDecideDepthFor: () => 1 });
   c2.tip = 212; await t2.pass(); await t2.pass();
   assert.equal(t2.list()[0].phase, 'failed');
   const enough = kept({ parent: SOURCES_GENESIS.configHash, configHash: configHashOf(config), config, cls: CLASS.SOURCES, publishedAt: 300 });
   const c3 = chain(new Map([[301, [vote(B, enough.idBytes, CHOICE.YES, 301, 'b1')]]]));   // 30 M of 100 M
-  const t3 = createBallotTally({ proposals: store([enough.record]), tipHeight: c3.tipHeight, votesAt: c3.votesAt, censusAt: c3.censusAt, verify, decideDepthFor: () => 1 });
+  const t3 = createBallotTally({ proposals: store([enough.record]), tipHeight: c3.tipHeight, votesAt: c3.votesAt, censusAt: c3.censusAt, verify, decideDepthFor: () => 1, minDecideDepthFor: () => 1 });
   c3.tip = 312; await t3.pass(); await t3.pass();
   assert.equal(t3.list()[0].phase, 'activated');
 });

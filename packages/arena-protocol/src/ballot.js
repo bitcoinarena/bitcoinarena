@@ -35,11 +35,15 @@ export const SCHEDULES = Object.freeze({
 /**
  * A REPEAL (§27A.7.6): "review 0, voting 720, cooldown 0 - but only if its config is byte-identical to an ancestor that was live
  * before. It can go back, never forward." Regtest's is 0 / 6 / 0 (a choice made here, named: its voting phase as for the others).
+ * THE COOLDOWN IS 2 BLOCKS on mainnet and testnet4 (kanban #1152; a spec question - §27A.7.6 says 0): a seat writes an outcome
+ * only once the last voting block is 3 deep (arena-node ballot-tally.js MIN_DECIDE_DEPTH), and with no cooldown a repeal was
+ * decided at depth 1 - a one-block reorg made it live, or took it back, after rounds were created. 2 = 3 - 1: the outcome
+ * lands the block before the activation, as every other proposal's does. A host removal (§27A.7.6 for sources) the same.
  */
 export const REPEAL_SCHEDULES = Object.freeze({
-  mainnet: Object.freeze({ review: 0, voting: 720, cooldown: 0 }),
+  mainnet: Object.freeze({ review: 0, voting: 720, cooldown: 2 }),
   regtest: Object.freeze({ review: 0, voting: 6, cooldown: 0 }),
-  testnet4: Object.freeze({ review: 0, voting: 144, cooldown: 0 }),   // a day (kanban #785)
+  testnet4: Object.freeze({ review: 0, voting: 144, cooldown: 2 }),   // a day (kanban #785)
 });
 /** Is `p` a repeal: its config byte-identical to one in `history` - the configs that were live before, [{ config }] - other than the current. */
 export function isRepeal(p, history = []) {
@@ -133,7 +137,7 @@ export function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats,
   }
   const removal = !!history && isHostRemoval(p, history);
   const repeal = removal || (!!history && isRepeal(p, history));
-  const s = removal ? { review: 0, voting: Math.min(HOST_REMOVAL_VOTING, repealSchedule.voting), cooldown: 0 } : repeal ? repealSchedule : schedule[p.class];
+  const s = removal ? { review: 0, voting: Math.min(HOST_REMOVAL_VOTING, repealSchedule.voting), cooldown: repealSchedule.cooldown } : repeal ? repealSchedule : schedule[p.class];
   const earliest = publishedAt + s.review + s.voting + s.cooldown;
   if (p.activationHeight < earliest) return { ok: false, why: `activation_height ${p.activationHeight} is before the end of cooldown (${earliest}): invalid on its face` };
   const cap = BigInt(lowestBondMinSats) / 100n;
