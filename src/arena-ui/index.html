@@ -4592,7 +4592,7 @@
         try {
           const wasm = await window.ARENA_LOCK_WASM();
           const ask = roundAsk(r, wasm.LockClient);
-          if (ARENACLIENT.slashPayoutKept(ask.storage, ask.roundId, ask.order) || !ARENACLIENT.slashPayoutMine(listed, ask)) continue;
+          if (ARENACLIENT.slashPayoutKept(ask.storage, ask.roundId, ask.order, ask) || !ARENACLIENT.slashPayoutMine(listed, ask)) continue;
           const got = await withRecordPhrase(r, () => ARENACLIENT.collectSlashPayout({ ...ask, arbiter, listed }));
           if (got === null) continue;   // that phrase is held by another tab of this browser: collected there
           if (got && got.ok) { console.log('[arena] slash payout (round ' + r.roundIdHex.slice(0, 8) + '), collected into the player wallet: ' + got.creditedMsat + ' msat'); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); paintHistory(); }
