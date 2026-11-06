@@ -25,7 +25,12 @@ const coinsOfJson = (p) => p.map((x) => ({ value: BigInt(x.value), script: fromH
 const bondOf = (e) => ({ txid: e.txid, vout: e.vout, value: BigInt(e.bondSats), script: e.script });
 const display = (internal) => toHex(Uint8Array.from(internal).reverse());
 /** A send refused because the very transaction is already there: this seat sent it before. */
-const ALREADY = /already in (the )?(mempool|block ?chain)|txn-already-known|txn-already-in-mempool|already known/i;
+const ALREADY = /already in (the )?(mempool|block ?chain)|txn-already-known|txn-already-in-mempool|already known|outputs already in utxo set/i;
+
+/** A PROOF'S FEE COIN AS THIS SEAT KEEPS IT (kanban #1191): slash_fee_coins, moved by coinStep only (createSlashStarter). */
+export const FEE_COIN = Object.freeze({ NONE: 'none', FUNDING: 'funding', FUNDED: 'funded', FILING: 'filing', FILED: 'filed' });
+const FEE_COIN_MOVES = Object.freeze({ [FEE_COIN.NONE]: [FEE_COIN.FUNDING], [FEE_COIN.FUNDING]: [FEE_COIN.FUNDED, FEE_COIN.NONE], [FEE_COIN.FUNDED]: [FEE_COIN.FILING],
+  [FEE_COIN.FILING]: [FEE_COIN.FILED, FEE_COIN.FUNDED], [FEE_COIN.FILED]: [] });
 
 /** Which seat files first, of the seats a proof reached: a hash of the proof and the key, so nobody picks its place. */
 export const filerRank = (proofId, keys, me) => [...keys].sort((a, b) => (toHex(taggedHash('ARENA/v1/SlashFiler', Uint8Array.from([...proofId, ...fromHex(a)]))) < toHex(taggedHash('ARENA/v1/SlashFiler', Uint8Array.from([...proofId, ...fromHex(b)]))) ? -1 : 1)).indexOf(me);
@@ -38,7 +43,7 @@ export const filerRank = (proofId, keys, me) => [...keys].sort((a, b) => (toHex(
  * script; `ownServed(start)` this seat's own GET /slash-release answer, if it built the release or the fallback itself.
  */
 export function createSlashStarter({ key, network, db, store, thresholdOf, totalOf = () => null, tipHeight, entriesAtTip, heldProofs, bytesOf, judge, holdsFor, feeCoin, send, urlsOf, checkOther = null, feeSecret = () => schnorr.utils.randomSecretKey(), stepMs = 600000, judgeAgainMs = 600000, feeSats = 700n, fetchFn = fetch, now = Date.now, log = () => {},
-  txOut = null, returnScript = async () => null, ownServed = null, sweepEveryMs = 60000 }) {
+  txOut = null, returnScript = async () => null, ownServed = null, sweepEveryMs = 60000, feeFind = null }) {
   const me = toHex(key);
   db.exec(`CREATE TABLE IF NOT EXISTS slash_starts (proof_id BLOB PRIMARY KEY, bond TEXT NOT NULL, txid TEXT NOT NULL, kept_ms INTEGER NOT NULL)`);
   db.exec(`CREATE TABLE IF NOT EXISTS slash_handed (proof_id BLOB PRIMARY KEY, seen_ms INTEGER NOT NULL)`);
@@ -78,15 +83,90 @@ export function createSlashStarter({ key, network, db, store, thresholdOf, total
     const q = tweakPoint(HOLD_INTERNAL_KEY, tapTweak(HOLD_INTERNAL_KEY, leafHash));
     return { script: fromHex(`5120${toHex(q.outputKey)}`), secret, leaf, leafHash, control: Uint8Array.from([TAPLEAF_VERSION | q.parity, ...HOLD_INTERNAL_KEY]) };
   };
-  const feeHeld = new Map();                     // proof id hex -> the coin funded for it, so a start tried again pays once
+  // THE FEE COIN OF A PROOF, ON DISK BEFORE EACH IRREVERSIBLE STEP (kanban #1191, the state machine audit of 2026-11-06). Before, the funded coin was kept in memory
+  // until the start's row was written: a stop in between (or a start that gathered too few shares, then a restart) funded a second coin at the same script.
+  //   none -> funding     written BEFORE the wallet is asked to fund (the script is the proof's own, so a coin found there later is this one)
+  //   funding -> funded   the wallet's txid:vout, written as soon as it answers; a funding found on disk after a stop is looked for first (`feeFind`), and funded
+  //                       again only when the wallet's history shows no coin at that script; with no `feeFind` it is held, never funded twice
+  //   funding -> none     the wallet said it funded nothing (refused before its send)
+  //   funded -> filing    the signed start's bytes and txid, written BEFORE they are sent; a filing found after a stop is sent again, the same bytes
+  //   filing -> filed     the start was taken (or the chain already holds it); its slash_starts row in the same transaction
+  //   filing -> funded    refused: the coin is kept for the next try
+  db.exec(`CREATE TABLE IF NOT EXISTS slash_fee_coins (proof_id BLOB PRIMARY KEY, state TEXT NOT NULL, txid TEXT, vout INTEGER, value TEXT, raw TEXT, start TEXT, bond TEXT, rate INTEGER,
+    at_ms INTEGER NOT NULL)`);
+  const COLS = ['txid', 'vout', 'value', 'raw', 'start', 'bond', 'rate'];
+  const coinRow = (id) => db.prepare('SELECT * FROM slash_fee_coins WHERE proof_id = ?').get(id) || null;
+  /** THE ONE TRANSITION: compare and set on the row's state. False, nothing written, when the row is not in `from` or FEE_COIN_MOVES has no such move. */
+  function coinStep(id, from, to, fields = {}) {
+    if (!FEE_COIN_MOVES[from] || !FEE_COIN_MOVES[from].includes(to)) return false;
+    const row = coinRow(id);
+    if (((row && row.state) || FEE_COIN.NONE) !== from) return false;
+    if (to === FEE_COIN.NONE) return Number(db.prepare('DELETE FROM slash_fee_coins WHERE proof_id = ? AND state = ?').run(id, from).changes) === 1;
+    const next = COLS.map((c) => (c in fields ? fields[c] : row ? row[c] : null));
+    const r = row
+      ? db.prepare(`UPDATE slash_fee_coins SET state = ?, ${COLS.map((c) => `${c} = ?`).join(', ')}, at_ms = ? WHERE proof_id = ? AND state = ?`).run(to, ...next, now(), id, from)
+      : db.prepare(`INSERT OR IGNORE INTO slash_fee_coins (proof_id, state, ${COLS.join(', ')}, at_ms) VALUES (${Array(COLS.length + 3).fill('?').join(', ')})`).run(id, to, ...next, now());
+    return Number(r.changes) === 1;
+  }
+  const coinOf = (row, key) => ({ ok: true, txid: fromHex(row.txid).reverse(), vout: Number(row.vout), value: BigInt(row.value), ...key });
+  /** This proof's fee coin: the one on disk, else one funded now - funding written before the wallet is asked. */
   async function feeFor(idHex) {
-    if (feeHeld.has(idHex)) return feeHeld.get(idHex);
-    const key = feeKeyOf(fromHex(idHex));
-    const got = await feeCoin(key.script, feeSats);
-    if (!got.ok) return got;
-    const coin = { ok: true, txid: fromHex(got.txid).reverse(), vout: got.vout, value: got.value, ...key };
-    feeHeld.set(idHex, coin);
-    return coin;
+    const id = fromHex(idHex), key = feeKeyOf(id);
+    const row = coinRow(id);
+    if (row && row.state === FEE_COIN.FUNDED) return coinOf(row, key);
+    if (row && row.state !== FEE_COIN.FUNDING) return { ok: false, why: `the fee coin of this proof is ${row.state}` };
+    if (row) {
+      // ASKED BEFORE A STOP, OR AN ANSWER NEVER HEARD: the wallet's own history says whether it funded that script
+      if (typeof feeFind !== 'function') return { ok: false, held: true, why: 'a fee coin for this proof was asked of the wallet before and this seat cannot look for it: held, never funded twice' };
+      let found; try { found = await feeFind(key.script); } catch (e) { return { ok: false, held: true, why: `a fee coin for this proof was asked before and the wallet could not be read (${String(e.message || e).slice(0, 160)}): held, never funded twice` }; }
+      if (found && found.txid) {
+        if (!coinStep(id, FEE_COIN.FUNDING, FEE_COIN.FUNDED, { txid: String(found.txid), vout: Number(found.vout), value: String(found.value) })) return { ok: false, why: 'the fee coin moved while it was read' };
+        log(`[slash] ${idHex.slice(0, 16)}: the fee coin funded before a stop was found at ${found.txid}:${found.vout}, not funded again`);
+        return coinOf(coinRow(id), key);
+      }
+      coinStep(id, FEE_COIN.FUNDING, FEE_COIN.NONE);
+    }
+    if (!coinStep(id, FEE_COIN.NONE, FEE_COIN.FUNDING)) return { ok: false, why: 'the fee coin moved while it was read' };
+    let got; try { got = await feeCoin(key.script, feeSats); } catch (e) { got = { ok: false, unknown: true, why: String(e.message || e).slice(0, 200) }; }
+    if (!got || !got.ok) {
+      // A REFUSAL BEFORE THE SEND FUNDED NOTHING; AN ANSWER LOST AT THE SEND (`unknown`) STAYS FUNDING, to be looked for
+      if (!(got && got.unknown)) coinStep(id, FEE_COIN.FUNDING, FEE_COIN.NONE);
+      return got || { ok: false, why: 'the wallet gave no answer' };
+    }
+    coinStep(id, FEE_COIN.FUNDING, FEE_COIN.FUNDED, { txid: String(got.txid), vout: Number(got.vout), value: String(got.value) });
+    return coinOf(coinRow(id), key);
+  }
+  /** The start is taken: its row, its sweep's rate and the coin's end in one transaction. */
+  function filedNow(proofId, row) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare('INSERT OR IGNORE INTO slash_starts (proof_id, bond, txid, kept_ms) VALUES (?, ?, ?, ?)').run(proofId, row.bond, String(row.start), now());
+      // THE START'S OWN RATE, what its sweep pays later: the filer chose it, as the release does
+      db.prepare('INSERT OR IGNORE INTO slash_fee_sweeps (proof_id, rate, state) VALUES (?, ?, ?)').run(proofId, Number(row.rate), '{}');
+      coinStep(proofId, FEE_COIN.FILING, FEE_COIN.FILED);
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+  }
+  /** The signed start, on disk as FILING, sent: { ok, txid } or { ok: false, why } with the coin FUNDED again. A send the chain already holds is a send. */
+  async function sendFiling(proofId) {
+    const row = coinRow(proofId);
+    let txid;
+    try { txid = String(await send(row.raw)); } catch (e) {
+      if (!ALREADY.test(e.message)) { coinStep(proofId, FEE_COIN.FILING, FEE_COIN.FUNDED, { raw: null, start: null, bond: null, rate: null }); return { ok: false, why: `the start was not taken: ${String(e.message).slice(0, 200)}` }; }
+      txid = row.start;
+    }
+    filedNow(proofId, { ...row, start: txid });
+    return { ok: true, txid };
+  }
+  /** FILINGS A STOP LEFT: sent again, the very bytes, before anything else (a start the chain holds has its bond started, so no pass would file it again). */
+  async function resume() {
+    const done = [];
+    for (const r of db.prepare('SELECT proof_id FROM slash_fee_coins WHERE state = ?').all(FEE_COIN.FILING)) {
+      const got = await sendFiling(new Uint8Array(r.proof_id)).catch((e) => ({ ok: false, why: e.message }));
+      log(got.ok ? `[slash] a start filed before a stop was sent again: ${got.txid}` : `[slash] a start filed before a stop was not taken again: ${got.why}`);
+      done.push({ resumed: true, ...got });
+    }
+    return done;
   }
 
   /** One filing: { ok, txid, signers } or { ok: false, why, refused }. */
@@ -108,12 +188,12 @@ export function createSlashStarter({ key, network, db, store, thresholdOf, total
     const feeWitness = scriptPathWitness({ stack: [schnorr.sign(tapSighash({ ...tx, prevouts, inputIndex: 1, leafHash: fee.leafHash }), fee.secret)], script: fee.leaf, controlBlock: fee.control });
     const control = controlBlockFor('slash', bondKeyOf(nodeKey, entry.advert.bondMaturityHeight, network, censusKey, entry.advert.ownerPubkey)).controlBlock;
     const raw = signedSlashStart({ tx, nodeKey, censusKey, censusSignature: got.signature, presig, control, feeWitness });
-    const txid = await send(toHex(raw));
-    db.prepare('INSERT OR IGNORE INTO slash_starts (proof_id, bond, txid, kept_ms) VALUES (?, ?, ?, ?)').run(proofId, `${toHex(entry.txid)}:${entry.vout}`, String(txid), now());
-    // THE START'S OWN RATE, what its sweep pays later: the filer chose it, as the release does
-    db.prepare('INSERT OR IGNORE INTO slash_fee_sweeps (proof_id, rate, state) VALUES (?, ?, ?)').run(proofId, Number(startFeeRate({ startRaw: raw, prevouts })), '{}');
-    feeHeld.delete(idHex);
-    return { ok: true, txid: String(txid), signers: got.signers, shares: got.shares, refused: got.refused, size: parseTransaction(raw).outputs.length };
+    // THE START ON DISK BEFORE IT LEAVES (kanban #1191): its bytes, txid, bond and rate; a stop after the send sends these bytes again, never others
+    if (!coinStep(proofId, FEE_COIN.FUNDED, FEE_COIN.FILING, { raw: toHex(raw), start: display(parseTransaction(raw).txid), bond: `${toHex(entry.txid)}:${entry.vout}`, rate: Number(startFeeRate({ startRaw: raw, prevouts })) }))
+      return { ok: false, why: 'the fee coin moved while the start was signed' };
+    const sent = await sendFiling(proofId);
+    if (!sent.ok) return { ...sent, signers: got.signers };
+    return { ok: true, txid: sent.txid, signers: got.signers, shares: got.shares, refused: got.refused, size: parseTransaction(raw).outputs.length };
   }
 
   /** A PROOF HANDED TO THIS SEAT (PUT /slash/<id>): judged on the next pass, not at the door, since a replay costs seconds and the door is anyone's. */
@@ -133,8 +213,8 @@ export function createSlashStarter({ key, network, db, store, thresholdOf, total
   const judged = new Map();
   /** One pass over the proofs this seat holds: nothing is replayed for a bond that is no template-3 unstarted bond of this census, or before this seat's turn. Only a proof this seat's own judge holds to is filed. */
   async function pass() {
-    const done = [];
-    const proofs = [...new Map([...(await heldProofs()), ...handedProofs()].map((p) => [toHex(p.proofId), p])).values()].filter((p) => !filed(p.proofId));
+    const done = await resume();
+    const proofs =[...new Map([...(await heldProofs()), ...handedProofs()].map((p) => [toHex(p.proofId), p])).values()].filter((p) => !filed(p.proofId));
     if (!proofs.length) return done;
     const entries = await entriesAtTip();
     if (!entries) return done;
