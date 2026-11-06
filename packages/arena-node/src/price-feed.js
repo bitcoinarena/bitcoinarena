@@ -9,11 +9,17 @@
 //         PERIOD AHEAD: it takes its own reading at round time (k - 1) x 5 s, signs the sample (round, tick, price) and asks
 //         every other seat (POST /price-sign), so the attested sample is at the player's page before the run reaches its
 //         tick (measured need: a sample signed at its own moment reached the page 1-2 s after the tick it names).
+//         The ask carries the leader's own signature of the sample (`leaderSig`); a seat signs only an ask its leader signed
+//         (kanban #1181: any caller could ask every seat first with a price within tolerance, collect a threshold, and choose
+//         BULLS, BEARS or FLAT; the real leader was then refused).
 //   SIGN. A seat signs only a sample of a round it holds, whose moment is now (within SIGN_SLACK_MS), at the tick that moment
 //         names, and whose price is within `tolerance` of its OWN reading at that moment - so no seat can pick the price,
-//         only report one the others saw too. It signs one price per (round, k): a second, different ask is refused.
+//         only report one the others saw too. It signs one price per (round, k): a second, different ask is refused - and that
+//         one price is written to its database before the signature leaves it (kanban #1181), so a restart signs no second one.
 //   HOLD. With the threshold of the committee's signatures (receiptsNeeded) the leader hands the attested sample to every
-//         seat (POST /price-attested); each checks it stands before keeping it. GET /price-samples serves what a seat holds.
+//         seat (POST /price-attested); each checks it stands before keeping it, and keeps the FIRST that stands per (round, k):
+//         a second attested sample or tape of the same moment is refused (kanban #1181: INSERT OR REPLACE let a later one replace
+//         it). GET /price-samples serves what a seat holds.
 //   THE TAPE. The 64 prices before the start are one PriceTape, led by the round's seat 0 at the start: its readings on the
 //         grid before the start; a seat signs it when every reading it holds for those moments is within tolerance and it
 //         holds at least half of them.
@@ -71,6 +77,26 @@ export const DEFAULT_TOLERANCE = 0.0005;
 const verify = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
 const refuse = (why, status = 409) => ({ ok: false, status, why });
 const NO_PROPOSAL = 'a round of protocol 5 takes no proposed price: each seat signs its own reading (POST /price-reading) and the sample is their median';
+/**
+ * A LEGACY SAMPLE'S STATE AT THIS SEAT (kanban #1181), per (round, k) and per round's tape, one transition function:
+ *   SIGNED  this seat signed one value (a price, or a tape's id): the same value is signed again, another is refused
+ *   HELD    an attested one stands and is kept: another of the same moment is refused, the same is taken again
+ * `x` { signed, held } (each the value or null); `ev` { kind: 'sign' | 'hold', value }. Answers { ok, x, again } or { ok: false, why }.
+ */
+export const LEGACY_SAMPLE_STATE = Object.freeze({ SIGNED: 'SIGNED', HELD: 'HELD' });
+export function legacySampleStep(x, ev) {
+  const was = x || { signed: null, held: null };
+  const v = String(ev.value);
+  if (ev.kind === 'sign') {
+    if (was.signed !== null && was.signed !== undefined) return String(was.signed) === v ? { ok: true, x: was, again: true } : { ok: false, why: 'this seat signed another value for that moment' };
+    return { ok: true, x: { ...was, signed: v } };
+  }
+  if (ev.kind === 'hold') {
+    if (was.held !== null && was.held !== undefined) return String(was.held) === v ? { ok: true, x: was, again: true } : { ok: false, why: 'another attested value of that moment is held here: the first stands' };
+    return { ok: true, x: { ...was, held: v } };
+  }
+  return { ok: false, why: 'no such step' };
+}
 const roundOf = (body) => (body && typeof body.round === 'string' && /^[0-9a-f]{64}$/.test(body.round) ? fromHex(body.round) : null);
 const grid = (ms) => Math.floor(ms / EVERY) * EVERY;
 /** Sample k is applied at round time k x 5 s and reads the price one period before: round time (k - 1) x 5 s. */
@@ -142,8 +168,17 @@ export class PriceFeed {
       this.ends = {
         put: round.db.prepare('INSERT OR REPLACE INTO price_ends (round, k, tick, cents, sigs) VALUES (?, ?, ?, ?, ?)'),
         get: round.db.prepare('SELECT k, tick, cents, sigs FROM price_ends WHERE round = ? AND k = ?'),
+        // a legacy end is kept first-wins (kanban #1181); protocol 5's `put` replaces as more readings come
+        putFirst: round.db.prepare('INSERT OR IGNORE INTO price_ends (round, k, tick, cents, sigs) VALUES (?, ?, ?, ?, ?)'),
       };
-    } catch { this.ends = null; }   // a stand-in store without SQL: the ends live in memory only
+      // WHAT THIS SEAT SIGNED, per (round, k) or (round, 'tape') - written before the signature leaves it (kanban #1181)
+      round.db.exec('CREATE TABLE IF NOT EXISTS price_signed (round TEXT NOT NULL, slot TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (round, slot))');
+      this.signedDb = {
+        get: round.db.prepare('SELECT value FROM price_signed WHERE round = ? AND slot = ?'),
+        put: round.db.prepare('INSERT OR IGNORE INTO price_signed (round, slot, value) VALUES (?, ?, ?)'),
+        drop: round.db.prepare('DELETE FROM price_signed WHERE round = ?'),
+      };
+    } catch { this.ends = null; this.signedDb = null; }   // a stand-in store without SQL: the ends live in memory only
   }
 
   /** Sample k of a round as held: in memory, else from the database. */
@@ -203,13 +238,51 @@ export class PriceFeed {
   }
   #sign(id) { return { key: toHex(this.round.identity.pubkey || this.round.pubkey), signature: toHex(schnorr.sign(id, this.round.identity.secret)) }; }
 
-  /** POST /price-sign: { round, kind: 'sample', k, priceCents } or { round, kind: 'tape', prices } - this seat's signature, or why not. */
-  sign(body) {
+  /**
+   * POST /price-sign: { round, kind: 'sample', k, priceCents, leaderSig } or { round, kind: 'tape', prices, leaderSig } - this seat's
+   * signature, or why not. Only an ask the moment's LEADER signed (kanban #1181): sample k's leader is the round's seat k mod n, the
+   * tape's its seat 0, and `leaderSig` is the leader's own BIP340 signature of the sample's (tape's) id. The leader signs its own
+   * sample itself (leadSample), never at this door: a stranger's ask first would pin the leader to his price.
+   */
+  sign(body) { return this.#signAsk(body, { leading: false }); }
+  /** What this seat signed for (round, slot): from memory, else from its database. */
+  #signedOf(roundHex, slot) {
+    const key = `${roundHex}:${slot}`;
+    if (this.signed.has(key)) return this.signed.get(key);
+    if (!this.signedDb) return null;
+    let r = null; try { r = this.signedDb.get.get(roundHex, String(slot)); } catch { r = null; }
+    if (!r) return null;
+    const v = slot === 'tape' ? r.value : Number(r.value);
+    this.signed.set(key, v);
+    return v;
+  }
+  /** One 'sign' step, kept in the database (compare-and-set: a row there with another value refuses) before the signature is made. */
+  #stepSign(roundHex, slot, value) {
+    const had = this.#signedOf(roundHex, slot);
+    const s = legacySampleStep({ signed: had, held: null }, { kind: 'sign', value });
+    if (!s.ok || s.again) return s;
+    if (this.signedDb) {
+      let ch = 0; try { ch = this.signedDb.put.run(roundHex, String(slot), String(value)).changes; } catch { ch = 0; }
+      if (ch !== 1) { this.signed.delete(`${roundHex}:${slot}`); const now = this.#signedOf(roundHex, slot); if (String(now) !== String(value)) return { ok: false, why: 'this seat signed another value for that moment' }; }
+    }
+    this.signed.set(`${roundHex}:${slot}`, value);
+    return s;
+  }
+  #signAsk(body, { leading }) {
     const rid = typeof body.round === 'string' && /^[0-9a-f]{64}$/.test(body.round) ? fromHex(body.round) : null;
     if (!rid) return refuse('a price ask names its round (64 hex)', 400);
     const c = this.#contract(rid); if (!c.ok) return c;
     if (c.median) return refuse(NO_PROPOSAL);
     const start = Number(c.contract.startTimeMs);
+    const me = toHex(this.round.identity.pubkey || this.round.pubkey);
+    // THE LEADER'S OWN SIGNATURE ON THE ASK (kanban #1181): checked before anything is signed or written
+    const leaderOk = (leader, id) => {
+      if (leading) return toHex(leader) === me ? null : refuse('this seat does not lead that moment');
+      if (toHex(leader) === me) return refuse('this seat leads that moment: it signs its own reading when it leads, never an ask');
+      const sig = typeof body.leaderSig === 'string' && /^[0-9a-f]{128}$/.test(body.leaderSig) ? fromHex(body.leaderSig) : null;
+      if (!sig) return refuse('a price ask carries its leader\'s signature (leaderSig, 128 hex)', 400);
+      return verify(sig, id, leader) ? null : refuse('that ask is not signed by the leader of its moment', 403);
+    };
     if (body.kind === 'tape') {
       if (!Array.isArray(body.prices) || body.prices.length !== PRICE_TAPE_LENGTH) return refuse(`a tape is ${PRICE_TAPE_LENGTH} prices`, 400);
       if (this.now() < start - EVERY - 1000 || this.now() > start + SIGN_SLACK_MS * 4) return refuse('a round\'s tape is signed at its start');
@@ -221,23 +294,25 @@ export class PriceFeed {
         if (!this.#within(body.prices[i], own)) return refuse(`price ${i} of the tape is not what this seat read (${own} cents)`);
       }
       if (held < PRICE_TAPE_LENGTH / 2) return refuse(`this seat read ${held} of the tape's moments, too few to vouch for it`);
-      const key = `${body.round}:tape`;
-      const id = priceTapeId({ roundId: rid, tick: 0, prices: body.prices });
-      if (this.signed.has(key) && this.signed.get(key) !== toHex(id)) return refuse('this seat signed another tape for that round');
-      this.signed.set(key, toHex(id));
+      let id; try { id = priceTapeId({ roundId: rid, tick: 0, prices: body.prices }); } catch (e) { return refuse(e.message, 400); }
+      const lead = leaderOk(c.contract.nodes[0], id); if (lead) return lead;
+      const st = this.#stepSign(body.round, 'tape', toHex(id));
+      if (!st.ok) return refuse('this seat signed another tape for that round');
       return { ok: true, ...this.#sign(id) };
     }
     const k = Number(body.k);
     if (!Number.isInteger(k) || k < 0) return refuse('a sample names its k (0, 1, ... every 5 s of round time)', 400);
+    if (!Number.isInteger(body.priceCents) || body.priceCents <= 0) return refuse('a sample names its price in whole cents', 400);
+    const sid = priceSampleId({ roundId: rid, tick: sampleTick(k), priceCents: body.priceCents });
+    const lead = leaderOk(c.contract.nodes[k % c.contract.nodes.length], sid); if (lead) return lead;
     const at = readingMoment(start, k);
     if (this.now() < at - 1000 || this.now() > at + SIGN_SLACK_MS) return refuse(`sample ${k} reads the price of ${new Date(at).toISOString()}, not now`);
     const own = this.ownAt(at);
     if (own === null) return refuse('this seat has no reading of its own for that moment');
     if (!this.#within(body.priceCents, own)) return refuse(`${body.priceCents} cents is not within ${this.tolerance * 100} % of this seat's reading, ${own}`);
-    const key = `${body.round}:${k}`;
-    if (this.signed.has(key) && this.signed.get(key) !== body.priceCents) return refuse('this seat signed another price for that sample');
-    this.signed.set(key, body.priceCents);
-    return { ok: true, ...this.#sign(priceSampleId({ roundId: rid, tick: sampleTick(k), priceCents: body.priceCents })) };
+    const st = this.#stepSign(body.round, k, body.priceCents);
+    if (!st.ok) return refuse('this seat signed another price for that sample');
+    return { ok: true, ...this.#sign(sid) };
   }
 
   /** POST /price-attested: an attested sample or tape - kept once it stands with the round's committee. */
@@ -251,7 +326,11 @@ export class PriceFeed {
       let id; try { id = priceTapeId(t); } catch (e) { return refuse(e.message, 400); }
       const s = priceAttestationStands({ id, sigs: body.sigs, committee: c.committee, threshold: c.needed, verify });
       if (!s.ok) return refuse(`that tape does not stand: ${s.why}`);
-      this.tapes.set(body.round, { tick: 0, prices: body.prices, sigs: body.sigs });
+      // THE FIRST TAPE THAT STANDS IS KEPT (kanban #1181): another is refused, the same is taken again
+      const had = this.tapes.get(body.round);
+      const step = legacySampleStep({ signed: null, held: had ? toHex(priceTapeId({ roundId: rid, tick: 0, prices: had.prices })) : null }, { kind: 'hold', value: toHex(id) });
+      if (!step.ok) return refuse(step.why);
+      if (!step.again) this.tapes.set(body.round, { tick: 0, prices: body.prices, sigs: body.sigs });
       return { ok: true };
     }
     const k = Number(body.k);
@@ -259,11 +338,17 @@ export class PriceFeed {
     let id; try { id = priceSampleId(sample); } catch (e) { return refuse(e.message, 400); }
     const s = priceAttestationStands({ id, sigs: body.sigs, committee: c.committee, threshold: c.needed, verify });
     if (!s.ok) return refuse(`that sample does not stand: ${s.why}`);
+    // THE FIRST SAMPLE THAT STANDS IS KEPT, per (round, k) (kanban #1181): in memory, and an end in the database first-wins
+    const had = this.#held(body.round, k);
+    const step = legacySampleStep({ signed: null, held: had ? had.priceCents : null }, { kind: 'hold', value: body.priceCents });
+    if (!step.ok) return refuse(step.why);
+    if (step.again) return { ok: true };
+    if (this.ends && (k === 0 || k === closeSampleK(Number(c.contract.blockTicks)))) {
+      let ch = 1; try { ch = this.ends.putFirst.run(body.round, k, sample.tick, body.priceCents, JSON.stringify(body.sigs)).changes; } catch { ch = 1; /* kept in memory */ }
+      if (ch !== 1) return refuse('another attested value of that moment is held here: the first stands');
+    }
     if (!this.samples.has(body.round)) this.samples.set(body.round, new Map());
     this.samples.get(body.round).set(k, { k, tick: sample.tick, priceCents: body.priceCents, sigs: body.sigs });
-    if (this.ends && (k === 0 || k === closeSampleK(Number(c.contract.blockTicks)))) {
-      try { this.ends.put.run(body.round, k, sample.tick, body.priceCents, JSON.stringify(body.sigs)); } catch { /* kept in memory */ }
-    }
     return { ok: true };
   }
 
@@ -339,8 +424,8 @@ export class PriceFeed {
     const at = readingMoment(Number(c.contract.startTimeMs), k);
     const priceCents = this.ownAt(at);
     if (priceCents === null) return refuse('this seat has no reading for that moment');
-    const own = this.sign({ round: rh, kind: 'sample', k, priceCents }); if (!own.ok) return own;
-    const sigs = [{ key: own.key, signature: own.signature }, ...await this.#ask(roundIdBytes, { round: rh, kind: 'sample', k, priceCents })];
+    const own = this.#signAsk({ round: rh, kind: 'sample', k, priceCents }, { leading: true }); if (!own.ok) return own;
+    const sigs = [{ key: own.key, signature: own.signature }, ...await this.#ask(roundIdBytes, { round: rh, kind: 'sample', k, priceCents, leaderSig: own.signature })];
     const held = this.hold({ round: rh, kind: 'sample', k, priceCents, sigs });
     if (!held.ok) return held;
     await this.#handOut(roundIdBytes, { round: rh, kind: 'sample', k, priceCents, sigs });
@@ -356,8 +441,8 @@ export class PriceFeed {
     // A MOMENT THIS SEAT DID NOT READ STAYS UNREAD (interim C): it is not filled with an older price - the tape goes
     // out only when this seat read every moment; the other seats vouch for the moments they read (sign: at least half)
     if (prices.some((p) => p === null)) return refuse('this seat did not read every moment before the start, and fills none with an older price');
-    const own = this.sign({ round: rh, kind: 'tape', prices }); if (!own.ok) return own;
-    const sigs = [{ key: own.key, signature: own.signature }, ...await this.#ask(roundIdBytes, { round: rh, kind: 'tape', prices })];
+    const own = this.#signAsk({ round: rh, kind: 'tape', prices }, { leading: true }); if (!own.ok) return own;
+    const sigs = [{ key: own.key, signature: own.signature }, ...await this.#ask(roundIdBytes, { round: rh, kind: 'tape', prices, leaderSig: own.signature })];
     const held = this.hold({ round: rh, kind: 'tape', prices, sigs });
     if (!held.ok) return held;
     await this.#handOut(roundIdBytes, { round: rh, kind: 'tape', prices, sigs });
@@ -465,6 +550,8 @@ export class PriceFeed {
       for (const rh of rounds) if (this.#finished(rh, now)) gone.add(rh);
       for (const m of [this.samples, this.tapes, this.heard, this.heardTapes, this.endsAsked]) for (const rh of gone) m.delete(rh);
       if (gone.size) for (const m of [this.signed, this.mine, this.built]) for (const key of m.keys()) if (gone.has(key.slice(0, 64))) m.delete(key);
+      // a finished round signs nothing more: its signed rows go too (kanban #1181)
+      if (gone.size && this.signedDb) for (const rh of gone) { try { this.signedDb.drop.run(rh); } catch { /* kept */ } }
       this.evicted += gone.size;
     }
     if (this.heldLoggedAt === null || now - this.heldLoggedAt >= HELD_LOG_EVERY_MS) {
