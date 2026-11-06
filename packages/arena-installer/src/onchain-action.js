@@ -120,7 +120,7 @@ export async function settleOpen(state, { chainKit, log = () => {}, nowMs = () =
   const s = state.read();
   const a = openActionOf(s);
   if (!a) return { none: true };
-  const chain = s.chain;
+  const chain = a.chain || s.chain;   // an action of another node's wallet names the chain it is sent on
   if (a.phase === A.BUILT) {
     let from = 0;
     while (from < a.txs.length) {
@@ -174,7 +174,7 @@ export async function resumeOpen(state, o = {}) {
  * meta, result } - is written BUILT (only if nothing began or finished meanwhile: the action count `seq` compare-and-set), then sent.
  * Answers { ok: true, result, txids, already? } | { ok: false, pending: true, why } | { ok: false, why }.
  */
-export async function onchainAction({ state, kind, key = null, once = false, sameWithinMs = 0, build, chainKit, log = () => {}, nowMs = () => Date.now(), _again = false }) {
+export async function onchainAction({ state, kind, key = null, once = false, sameWithinMs = 0, build, chainKit, chain = null, log = () => {}, nowMs = () => Date.now(), _again = false }) {
   const first = await resumeOpen(state, { chainKit, log, nowMs });
   if (first.open) return { ok: false, pending: true, kind: first.open.kind, txids: first.open.txs.map((t) => t.txid), why: first.why };
   const s = state.read();
@@ -186,7 +186,7 @@ export async function onchainAction({ state, kind, key = null, once = false, sam
   if (!built || !built.ok) return built || { ok: false, why: `${kind}: nothing built` };
   const action = { id: randomBytes(8).toString('hex'), kind, key, phase: A.BUILT, atMs: nowMs(), tip: built.tip ?? null,
     txs: built.txs.filter(Boolean).map((t) => ({ name: t.name || null, hex: t.hex, txid: t.txid || txidOfHex(t.hex) })),
-    ops: built.ops || [], effect: built.effect || null, meta: built.meta || null, result: built.result || null };
+    ops: built.ops || [], effect: built.effect || null, meta: built.meta || null, result: built.result || null, ...(chain ? { chain } : {}) };
   let began = false;
   state.update((n) => {
     const now = onchainOf(n);
@@ -197,7 +197,7 @@ export async function onchainAction({ state, kind, key = null, once = false, sam
   if (!began) {
     // another process began or finished an action of this wallet between the read and here: its answer, or this one built again on it
     if (_again) return { ok: false, why: 'another transaction of this node\'s wallet began at the same moment: try again' };
-    return onchainAction({ state, kind, key, once, sameWithinMs, build, chainKit, log, nowMs, _again: true });
+    return onchainAction({ state, kind, key, once, sameWithinMs, build, chainKit, chain, log, nowMs, _again: true });
   }
   const r = await settleOpen(state, { chainKit, log, nowMs });
   if (r.done && r.done.id === action.id) return { ok: true, result: r.done.result, txids: r.done.txids };
