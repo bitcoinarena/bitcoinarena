@@ -70,7 +70,10 @@ test('no qualifier, the donation set not answering: the walker\'s lock is claime
     assert.equal(latest.length, 2);
     assert.ok(latest.every((r) => r.state === 'PAID' && r.attempt >= 1), 'the held shares were not re-sent and paid');
     assert.deepEqual(latest.map((r) => r.address).sort(), TEST_DONATION_SET_REGTEST.recipients.map((r) => r.lnurl).sort(), 'paid to another address than the set\'s');
-    assert.equal(issued.length, 2, 'the set\'s recipients were not each invoiced once');
+    // EACH RECIPIENT IS INVOICED ONCE BY THE PROPOSER AND ONCE BY EVERY SEAT THAT CHECKS THE RE-SEND (kanban #1154: the checker's own invoice
+    // from the address names who it pays, and the plan's must be signed by that node), each time for the amount the re-send carries
+    assert.equal(issued.length, 2 * w.nodes.length, 'the set\'s recipients were not each invoiced once by every seat');
+    assert.deepEqual([...new Set(issued.map((i) => String(i.amountMsat)))].sort(), latest.map((r) => String(r.invoiceMsat)).sort(), 'a recipient was invoiced for another amount');
     assert.deepEqual(heldAfter, [false, false], 'the held contracts were not spent by the retry');
     assert.equal(nodePayoutsAfter, nodePayoutsBefore, 'the retry paid a pre-expired contract - the 25% went to a key, not the set');
   } finally { await w.close(); }
