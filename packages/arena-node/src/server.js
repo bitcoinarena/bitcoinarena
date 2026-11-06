@@ -352,8 +352,22 @@ export const NOTHING_IS_FUNDED = () => false;
  */
 export const settleWaitsOn = (standing) => standing.filter((x) => x.state === PROVISIONALLY_FINAL && !x.rerun);
 
+/**
+ * AN OBJECTION'S CHECK, WRITTEN AHEAD (kanban #1173): its arrival kept as pending before `check` runs (its replay), and dropped once `check` answered -
+ * taken or refused, or thrown. Answers what `check` answers.
+ */
+export async function withPendingObjection(round, rid, eid, arrivedMs, check) {
+  const pend = typeof round.putPendingObjection === 'function';
+  if (pend) round.putPendingObjection(rid, eid, arrivedMs);
+  try { return await check(); } finally { if (pend) round.dropPendingObjection(rid, eid, arrivedMs); }
+}
+
 export function objectionIntake(round, rid, eid, blockHash = null, bundle = null, arrivedMs = null) {
   try {
+    // AN ENTRY FINAL HERE STAYS FINAL (kanban #1173): an objection that reaches it is dated no earlier than the final_after it went FINAL past, so it is
+    // kept as evidence (late) and suspends nothing - this seat may have signed FINAL, released P or acked on it already
+    const kept = typeof round.entryFinal === 'function' ? round.entryFinal(rid, eid) : null;
+    if (kept && BigInt(arrivedMs ?? round.now()) < BigInt(kept.finalAfterMs)) arrivedMs = kept.finalAfterMs;
     // AN OBJECTION COUNTS BY WHEN IT REACHED THIS SEAT, ON ITS OWN CLOCK (§13A, WINDOW-10-SPEC, RULED 2026-10-01):
     // before this seat's window close + 5 s it suspends the run here; after, it suspends nothing and is kept as evidence.
     // A block it names is kept and decides nothing.
@@ -836,6 +850,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     } catch (e) { console.error(`[replay] cannot keep this node's core in ${replayCores}: ${e.message}`); }
   }
   const round = new Round(db, undefined, { plugins: hosted });
+  // AN OBJECTION'S CHECK DOES NOT OUTLIVE ITS PROCESS (kanban #1173): its pending row held the entry SUSPENDED while the replay ran; the replay is gone
+  { const n = round.clearPendingObjections(); if (n) console.log(`#1173 [objection] ${n} check(s) cut short by the restart dropped: those objections are taken again when sent again`); }
   const addressBook = createAddressBook({ db, verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } } });
   // EVERY COMMITTEE PEER AT ITS ANNOUNCED ADDRESS FIRST (kanban #757): roster.js endpointsOf with the address book's resolver -
   // a node whose quick tunnel restarted is dialed where its signed announcement says, not at its bond's dead endpoint
@@ -10396,14 +10412,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if ((round.objected(rid, eid) && !rerunAgreed) || round.rerunObjectedAt(rid, eid) !== null)
           return text(res, 200, 'already objected');
         const against = standing && standing.rerun && standing.rerun.runId ? standing.rerun.runId : standing && standing.runId;
-        const checked = await verifier.checkObjection(new Uint8Array(rid), new Uint8Array(eid), bundle,
-          typeof against === 'string' ? new Uint8Array(Buffer.from(against, 'hex')) : against instanceof Uint8Array ? against : null);
+        // ITS ARRIVAL ON DISK BEFORE ITS REPLAY (kanban #1173): while the check runs the entry is SUSPENDED here (finalityStep) - no FINAL signature, no P,
+        // no ack. Before, it was stored only after the replay, with its arrival time, so a seat that went FINAL meanwhile flipped back after acting on it
+        const checked = await withPendingObjection(round, new Uint8Array(rid), new Uint8Array(eid), arrivedMs, () => verifier.checkObjection(new Uint8Array(rid), new Uint8Array(eid), bundle,
+          typeof against === 'string' ? new Uint8Array(Buffer.from(against, 'hex')) : against instanceof Uint8Array ? against : null)
+          .then((c) => (c.holds ? { ...c, taken: objectionIntake(round, rid, eid, /^[0-9a-f]{64}$/.test(blockHex) ? new Uint8Array(Buffer.from(blockHex, 'hex')) : null, bundle, arrivedMs) } : c)));
         console.log(`[objection] ${toHex(eid).slice(0, 16)} ${checked.holds ? 'holds' : `refused at ${checked.step}`}: ${checked.why}`
           + (checked.replayedRunId ? ` (replayed run ${checked.replayedRunId.slice(0, 16)} ${checked.replayed.outcome} ${checked.replayed.score}, `
             + `claimed ${checked.claimedRunId.slice(0, 16)}, signed run ${checked.signedRunId.slice(0, 16)})` : '')
           + `; objection replays here so far ${verifier.objectionReplayCount}`);
         if (!checked.holds) return text(res, 422, checked.why);
-        const taken = objectionIntake(round, rid, eid, /^[0-9a-f]{64}$/.test(blockHex) ? new Uint8Array(Buffer.from(blockHex, 'hex')) : null, bundle, arrivedMs);
+        // TAKEN IN BEFORE THE PENDING ROW WENT (kanban #1173): no read between the two sees the entry unsuspended
+        const taken = checked.taken;
         // AND TO THE ROUND'S PUBLICATION RELAYS (§25.2,: "It is sent to the seats and to the round's
         // publication_relays[] at once"): an objection this seat took for the first time goes on, unawaited; each relay checks
         // it on its own evidence, and one holding it already answers "already objected" - so relaying relays do not loop
