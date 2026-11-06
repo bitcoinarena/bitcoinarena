@@ -168,13 +168,50 @@ test('the window passes without a federation: void at beacon + founding_window, 
     assert.equal(x.void, true);
     assert.match(String(x.failed), /founding window \(10 blocks from the beacon 101\) passed at 111 without a federation: void, the next trigger draws again/);
   }
-  // A SEAT THAT SITS IN NO GUARDIAN: told by a peer that the federation runs, it does not void
+  // A SEAT THAT SITS IN NO GUARDIAN: told by a threshold of the seated that the federation runs, it does not void (kanban #1161)
   const m = network({ done: () => false });
   const watcher = m.seats.findIndex((s, i) => !s.state().seated.some((x) => idx(x.node) === i));
   for (const t of [101, 102]) await m.round(t);
-  m.seats[watcher].federationSeen();
+  for (const x of m.seats[watcher].state().seated.slice(0, 3)) m.seats[watcher].federationSeen(x.node);
   await m.round(111);
-  assert.deepEqual([m.seats[watcher].state().federation, m.seats[watcher].state().void], [true, false]);
+  assert.deepEqual([m.seats[watcher].state().federation, m.seats[watcher].state().void, m.seats[watcher].state().phase], [true, false, 'RUNNING']);
+});
+
+// KANBAN #1161: ONE PEER'S ANSWER NEVER SETS federation = true. Before, any peer's GET /founding `federation: true` stopped the void at the
+// window's end, the no-show replacement and the redraw - one lying drawn node froze a succession or genesis until restart, and again after.
+test('#1161 one seated node saying the federation runs is not enough: the founding still voids at the window\'s end; a threshold of the seated is', async () => {
+  const run = async (tellers) => {
+    const m = network({ done: () => false });
+    const watcher = m.seats.findIndex((s, i) => !s.state().seated.some((x) => idx(x.node) === i));
+    for (const t of [101, 102]) await m.round(t);
+    const st = m.seats[watcher].state();
+    const told = tellers === 'stranger' ? [toHex(keys[watcher].pub)] : st.seated.slice(0, tellers).map((x) => x.node);
+    for (const k of told) { m.seats[watcher].federationSeen(k); m.seats[watcher].federationSeen(k); }   // twice: one node counts once
+    m.seats[watcher].federationSeen();                                                                   // a root no node answers for
+    await m.round(111);
+    return m.seats[watcher].state();
+  };
+  const one = await run(1), two = await run(2), three = await run(3), stranger = await run('stranger');
+  const said = (x) => (x.federation ? 'runs, no void' : x.void ? 'void' : 'open');
+  console.log(`#1161 measure: a watcher told "federation runs" by 1 seated node -> ${said(one)} at the window's end; by 2 -> ${said(two)}; by 3 of 4 -> ${said(three)}; by a node not seated -> ${said(stranger)}`);
+  assert.deepEqual([one.federation, one.void, one.phase], [false, true, 'VOID']);
+  assert.deepEqual([two.federation, two.void], [false, true], 'two of four is short of the threshold of three');
+  assert.deepEqual([three.federation, three.void, three.phase], [true, false, 'RUNNING']);
+  assert.deepEqual([stranger.federation, stranger.void], [false, true]);
+});
+
+test('#1161 the phase: one transition, RUNNING and VOID final', async () => {
+  const { foundingStep, PHASE } = await import('../src/founding.js');
+  assert.equal(foundingStep(PHASE.COLLECTING, PHASE.DKG), PHASE.DKG);
+  assert.equal(foundingStep(PHASE.DKG, PHASE.COLLECTING), PHASE.DKG, 'no way back');
+  assert.equal(foundingStep(PHASE.VOID, PHASE.RUNNING), PHASE.VOID, 'a void founding stays void');
+  assert.equal(foundingStep(PHASE.RUNNING, PHASE.VOID), PHASE.RUNNING, 'a running one is never voided');
+  // a founding void at the window's end is not brought back by a threshold told after it
+  const m = network({ done: () => false });
+  const watcher = m.seats.findIndex((s, i) => !s.state().seated.some((x) => idx(x.node) === i));
+  await m.round(101); await m.round(111);
+  for (const x of m.seats[watcher].state().seated) m.seats[watcher].federationSeen(x.node);
+  assert.deepEqual([m.seats[watcher].state().phase, m.seats[watcher].state().federation], ['VOID', false]);
 });
 
 // SEATED FIRST (§23A.6 step 1): a succession seats the old guardians n0..n2 first, in order - n0 leads - and draws one of the

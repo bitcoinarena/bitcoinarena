@@ -537,3 +537,31 @@ test('a seat that first ticks long after the run of free operators began reads b
   assert.equal(b.state().id, a.state().id, 'and the same founding');
   assert.ok(rb.length <= 2 * 6 + 3, `B read ${rb.length} heights, not 288`);
 });
+
+// KANBAN #1161: ONE PEER SAYING federation: true STOPS NO VOID. Before, a seat took any peer's GET /founding `federation: true` and its
+// founding never voided at the window's end: one lying node froze the succession until restart.
+test('#1161 one peer, or one drawn node, saying the federation runs does not stop the void; the seated nodes\' own seats do', async () => {
+  const roots = entries.map((e) => String(e.advert.guardianEndpoint).replace(/^wss:/, 'https:'));
+  const run = async (sayers, nodeOf = () => undefined) => {
+    const w = { tip: 201 }; const recs = [{ federation: 'aa'.repeat(32), status: 'DRAINING', height: 200 }]; let s = null;
+    s = createFoundingSeat({ records: () => recs, entriesAt: async (h) => (h === 200 ? entries : null), beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null),
+      tip: async () => w.tip, guardianInSetup: async () => true, setup: { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null },
+      nominal: 4, bondMinGuardian: 500000n, clocks, ownKey: keys[0].pub, sign: () => new Uint8Array(64), verify,
+      endpointOf: (e) => String(e.advert.guardianEndpoint).replace(/^wss:/, 'https:'), peers: () => [...new Set([...sayers, 'https://peer'])],
+      // only the roots named say it runs; every other drawn node's seat says it does not
+      fetchJson: async (u) => ({ id: s.state().id, codes: [], federation: sayers.includes(u.replace(/\/founding$/, '')), node: nodeOf(u) }) });
+    await s.tick();
+    const at201 = s.state().federation;
+    w.tip = 211; await s.tick();
+    return { at201, void: s.state().void };
+  };
+  const peer = await run(['https://peer']);
+  const one = await run(roots.slice(0, 1));
+  const lying = await run(roots, () => toHex(keys[5].pub));
+  const all = await run(roots);
+  console.log(`#1161 measure: "federation: true" from one non-drawn peer -> runs ${peer.at201}, void at the window's end ${peer.void}; from one drawn node -> runs ${one.at201}, void ${one.void}; every root answering in one node's name -> runs ${lying.at201}; from the seated nodes' own seats -> runs ${all.at201}, void ${all.void}`);
+  assert.deepEqual([peer.at201, peer.void], [false, true]);
+  assert.deepEqual([one.at201, one.void], [false, true]);
+  assert.equal(lying.at201, false, 'a root answering in another node\'s name counts nothing');
+  assert.deepEqual([all.at201, all.void], [true, false]);
+});
