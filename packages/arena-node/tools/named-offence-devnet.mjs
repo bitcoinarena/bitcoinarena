@@ -95,7 +95,13 @@ if (ADDRESSED) {
 // THE DONATION RECIPIENTS (donation-resend): each one's first invoice a hold invoice cancelled as soon as it is issued - a send to it fails - then plain invoices
 let recipients = null;
 const lncC = (...a) => spawnSync(env.LNCLI, [`--lnddir=${join(D, 'lnd-c')}`, `--rpcserver=127.0.0.1:${PLAN.lnd.c.rpc}`, '--network=regtest', ...a], { encoding: 'utf8', timeout: 30000 });
+const lncA = (...a) => spawnSync(env.LNCLI, [`--lnddir=${join(D, 'lnd-a')}`, `--rpcserver=127.0.0.1:${PLAN.lnd.a.rpc}`, '--network=regtest', ...a], { encoding: 'utf8', timeout: 30000 });
 if (SCENARIO === 'donation-resend') {
+  // THE OTHER GATEWAY REACHES THE RECIPIENTS (measured on s29f round 99e27117): the re-send goes through gateway B, whose lnd B reaches lnd C only through
+  // lnd A, and a gateway pays with no routing budget beyond its own fee (the invoice is sized to it) - "FailureReasonNoRoute", lnd A asking 1015 msat.
+  // So lnd A forwards for nothing here, set before the round: its policy is gossiped to lnd B by the time of the re-send
+  const pol = lncA('updatechanpolicy', '--base_fee_msat=0', '--fee_rate_ppm=0', '--time_lock_delta=80');
+  say({ step: 'lnd A forwards free', ok: pol.status === 0, said: String(pol.status === 0 ? pol.stdout : pol.stderr).replace(/\s+/g, ' ').slice(0, 160) });
   const failed = new Set();
   // EVERY ASK OF THE DOOR IS SAID (measured on s29b round 764e3ecb: both shares held as "did not answer" and this tool printed no invoice at all)
   const paths = new Map();
@@ -199,6 +205,7 @@ async function outsiderSubmits() {
 // A MEMBER OF S STOPPED RIGHT AFTER THE BATCH (stop-s): the highest seat of S, as soon as any seat answers its kept batch
 let sStopped = null;
 let mined = null;
+const SHORT_OF = Number(env.SHORT_OF || 6);
 
 const honestSeats = SEATS.map((_, k) => k).filter((k) => !armed.includes(k));
 const stopAt = END + Number(env.STOP_AFTER_S || 60) * 1000;
@@ -232,7 +239,10 @@ for (;;) {
     const rows = [...last.entries()].filter(([key]) => key.endsWith('donation sends')).map(([, v]) => v).join(' ; ');
     const exp = [...rows.matchAll(/#0 SENDING gw\S* exp(\d+)/g)].map((m) => Number(m[1]));
     const h = Number(bcli('getblockcount').stdout);
-    if (exp.length && !mined && h <= Math.max(...exp)) { const n = Math.max(...exp) - h + 3; bcli('generatetoaddress', String(n), 'bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080'); mined = { from: h, to: h + n, t: at() }; say({ step: 'mined to the failed send\'s expiration', ...mined }); }
+    // MINED TO JUST SHORT OF THE EXPIRATION, THE BLOCK CLOCK DOING THE REST (measured on s29f round 99e27117: mined past it in one go, 1,389 blocks, a seat
+    // named the re-send's expiration over its gateway list kept from before the mining - 60 s - so it was 1860 at a tip of 1828 and the gateway answered
+    // "TimeoutTooClose"). SHORT_OF (default 6) blocks of the clock give every seat's kept list time to read the federation's height after the jump
+    if (exp.length && !mined && h < Math.max(...exp) - SHORT_OF) { const n = Math.max(...exp) - SHORT_OF - h; bcli('generatetoaddress', String(n), 'bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080'); mined = { from: h, to: h + n, expiration: Math.max(...exp), t: at() }; say({ step: 'mined to just short of the failed send\'s expiration', ...mined }); }
   }
   if (SCENARIO === 'send-refund' && !outsider && [...last.entries()].some(([key, v]) => key.endsWith(' settlement') && /^ACCEPTED/.test(v || ''))) await outsiderSubmits();
   if (ADDRESSED) for (const [i, e] of E.entries()) {
@@ -253,7 +263,10 @@ for (;;) {
   for (const p of players) for (const step of ['early forfeit', 'collected', 'stopped', 'settled', 'no early forfeit: the settlement came first']) if (said(p, step).length) seen(`player${p.i} ${step}`, said(p, step)[0].slice(0, 400));
   if (at() >= LIMIT) break;
   if (filedAt && Date.now() - filedAt > Number(env.AFTER_FILED_S || 600) * 1000) break;
-  if (SCENARIO === 'donation-resend' && [...last.entries()].some(([key, v]) => key.endsWith('donation sends') && /#1 PAID/.test(v || '')) && at() > 300) break;
+  // EVERY RECIPIENT'S SHARE PAID BY A RE-SEND at some seat - not only the first one paid
+  const everyResent = (v) => { const rows = String(v || '').split(' ; ').filter((r) => /^[0-9a-f]{8}#/.test(r)); const ents = new Set(rows.map((r) => r.slice(0, 8)));
+    return ents.size > 0 && [...ents].every((e) => rows.some((r) => r.startsWith(e) && /^[0-9a-f]{8}#[1-9]\d* PAID/.test(r))); };
+  if (SCENARIO === 'donation-resend' && [...last.entries()].some(([key, v]) => key.endsWith('donation sends') && everyResent(v)) && at() > 300) break;
   if (SCENARIO === 'honest' || SCENARIO === 'stock' || SCENARIO === 'stop-s' || SCENARIO === 'send-refund' || SCENARIO === 'nobody-won') {
     if (players.every((p) => p.child.exitCode !== null || said(p, 'collected').length) && at() > 300 && (SCENARIO !== 'send-refund' || (outsider && outsider.step !== 'started'))
       && (SCENARIO !== 'stop-s' || /^PAID/.test(last.get('entry0 send') || '') || at() > 1200)
