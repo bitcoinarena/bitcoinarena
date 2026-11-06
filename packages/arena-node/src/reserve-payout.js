@@ -36,6 +36,7 @@ import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 import { moveSeedOf, moveSeedFor } from './reserve-move.js';
 import { leaderboardCap } from '../../arena-protocol/src/leaderboard-winners.js';
+import { payeeOf } from './winnings-send.js';
 
 /**
  * A LEADERBOARD PAYOUT'S MONEY: the inputs (reserve outputs) less their fees pay every winner's output and its fee; what is
@@ -184,6 +185,8 @@ export function moveAmountSats(inputs, gwFee, fees) {
  * signer { id, share } or null, needed, peers: [{ commit(body), share(body) }] }; `reserveRows(fedHex)` -> [{ outpoint, amountMsat,
  * verifiedMs }] under that federation's reserve key; `portOf(fedHex)`; `payRequest(lnurl, msat)` and `invoiceFor(lnurl, msat)` as
  * winnings-send.js; `network`; `keepRow(row)` a reserve row to keep (putDonationOutputs' shape); `broadcast(record)` to every seat.
+ * `payeeFor(lnurl, msat)` -> { ok, payee } the node key of an invoice THIS seat fetched from the address for that amount (kanban #1154:
+ * sendPlanStands takes a plan only when its invoice is signed by the same key); by default this seat's own `invoiceFor`, read by payeeOf.
  */
 // `leaderboards()` -> [{ id, federation (hex), amountSats, paymentHeight, decidableAt }] the leaderboard payouts whose vote passed here;
 // `winners` the seat's winners book (leaderboard-freeze.js createWinnersBook, kanban #1153): its own frozen read of the season's SIGNED
@@ -196,8 +199,13 @@ const NO_WINNERS = { freeze: async () => ({ ok: false, why: 'this seat keeps no 
 // the record's transition, and a throw undoes the whole step.
 export function createReservePayouts({ db, me, curve, random, passed, guardians, reserveRows, portOf, payRequest, invoiceFor, network = 'testnet',
   keepRow = () => {}, broadcast = () => {}, log = () => {}, now = () => Date.now(), moves = () => [], leaderboards = () => [], winners: winnersBook = NO_WINNERS,
-  sign: signNode = null, heightNow = () => null }) {
+  sign: signNode = null, heightNow = () => null, payeeFor = null }) {
   db.exec(RESERVE_PAYOUT_SQL);
+  const ownPayee = payeeFor || (async (lnurl, msat) => {
+    const inv = await invoiceFor(lnurl, msat);
+    if (!inv || !inv.ok) return inv || refuse('no answer', 503);
+    try { return { ok: true, payee: payeeOf(inv.invoice) }; } catch (e) { return refuse(`the address's own invoice names no payee: ${e.message}`); }
+  });
   // A MOVE'S CLAIM (the drained-federation move): the destination's claim transaction and what it put under its reserve key
   for (const col of ['claim_txid', 'claim_msat']) if (!db.prepare('PRAGMA table_info(reserve_payouts)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE reserve_payouts ADD COLUMN ${col} TEXT`);
   // kanban #1159: the height this seat first held the plan at, its attempt, and the signed transaction / refund kept before it is handed in
@@ -411,8 +419,12 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     }
     const pr = await payRequest(plan.lnurl, invoiceMsat);
     if (!pr.ok) return refuse(`the LNURL did not answer here: ${pr.why}`, 503);
+    // WHO THE PLAN PAYS (kanban #1154, as the winnings sender checks it): an invoice of this seat's own from the address, for the same
+    // amount - the plan's invoice must be signed by that invoice's node key, or anyone's invoice with the public description hash stands
+    const said = await ownPayee(plan.lnurl, invoiceMsat);
+    if (!said || !said.ok) return refuse(`this seat could not read the address's own invoice: ${said ? said.why : 'no answer'}`, 503);
     const st = sendPlanStands({ plan: { invoice: plan.invoice, paymentHash: plan.paymentHash, gatewayUrl: plan.gatewayUrl, gatewayPk: plan.gatewayPk, expiration: plan.expiration },
-      payoutMsat: contractMsat, gateways: gws.gateways || [], height: gws.height, metadata: pr.metadata, network });
+      payoutMsat: contractMsat, gateways: gws.gateways || [], height: gws.height, metadata: pr.metadata, network, payee: said.payee, payeeOf });
     if (!st.ok) return refuse(st.why);
     return { ok: true, planId: pid, signer: g };
   }
