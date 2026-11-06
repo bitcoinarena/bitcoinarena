@@ -193,7 +193,9 @@ test('two values are DISPUTED and VOID; no value by the deadline is VOID', async
 });
 
 test('the door: a value attestation is held for a scalar round and served with its bounds; an index is refused for it, a value for any other market; two values DISPUTED', async () => {
-  const d = await serve(openStore(':memory:'), { plugins: [MARKET.registration, BUCKETS.registration], port: 0, ...opts });
+  // THE SEAT'S CLOCK AT THE RESOLUTION TIME, inside the market's deadline (kanban #1151: nothing is taken after the deadline, and
+  // this fixture's rounds are before the wall clock)
+  const d = await serve(openStore(':memory:'), { plugins: [MARKET.registration, BUCKETS.registration], port: 0, ...opts, roundClock: () => Number(RESOLVE_AT) + 1000 });
   try {
     const M = market({ stakeMsat: 0n });
     const B = market({ stakeMsat: 0n, gameId: BUCKETS.registration.gameId });

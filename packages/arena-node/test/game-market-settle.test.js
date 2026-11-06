@@ -316,7 +316,9 @@ test('a seat without the source round fetches it: a lying seat\'s contract is pa
 });
 
 test('the seat serves it: GET /outcome names a held game outcome with its evidence and table, a held VOID as VOID; the attested sweep reads the table', async () => {
-  const d = await serve(openStore(':memory:'), { plugins: [MARKET.registration], port: 0, ...opts });
+  // THE SEAT'S CLOCK AFTER THE SOURCE'S END and inside the market's deadline (kanban #1151: an outcome received after the deadline
+  // counts for nothing, and this fixture's rounds are in 2026-08, before the wall clock)
+  const d = await serve(openStore(':memory:'), { plugins: [MARKET.registration], port: 0, ...opts, roundClock: () => AFTER_END });
   try {
     const M = market({ stakeMsat: 0n });
     const V = market({ stakeMsat: 0n, entryCloseMs: S - 61000n });
