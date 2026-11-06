@@ -10256,6 +10256,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           let good = false;
           try { good = !!(key && sig) && schnorr.verify(sig, matchProofId({ roundId: entry.roundId, entryId: new Uint8Array(eid), identityKey: key }), key); } catch { good = false; }
           if (!good) return text(res, 403, 'that identity is not signed by its key over this round and entry');
+          // THE PLAYER'S OWN IDENTITY ONLY (kanban #1224, audit 2 #1204 INSTALLER-DOORS-6): anyone who had seen a reveal's move and salt posted it
+          // with an identity of their own, signed by that identity's key, and the first one stored won - the win booked to them on the season
+          // board, the badges and the leaderboard. Where the player's name record (signed by the entry's round key) is held, the reveal's
+          // identity must be the one it names.
+          { const named = typeof round.namedIdentityOf === 'function' ? round.namedIdentityOf(entry.roundId, entry.playerPubkey) : null;
+            if (named && named !== toHex(key)) return text(res, 403, 'that identity is not the one the player\'s name record names for this round'); }
           round.putIdentity({ roundId: entry.roundId, entryId: new Uint8Array(eid), identity: key, sig });
         }
         const fresh = round.putReveal({ roundId: entry.roundId, entryId: eid, move: body.move, salt, receivedMs: round.now() });

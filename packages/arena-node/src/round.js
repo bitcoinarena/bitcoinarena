@@ -3474,6 +3474,18 @@ export class Round {
       .all(Buffer.from(roundIdBytes)).map((r) => ({ entryId: new Uint8Array(r.entry_id), signature: new Uint8Array(r.signature), receivedMs: Number(r.received_ms) }));
   }
 
+  /**
+   * THE IDENTITY A PLAYER'S NAME RECORD NAMES IN A ROUND (kanban #1224): the record is signed by the entry's own round key and, since #1213,
+   * fixed at the entry close - so a head-to-head reveal's identity is the player's only when it is this one. Hex, or null with no record held.
+   */
+  namedIdentityOf(roundIdBytes, playerPubkeyBytes) {
+    const r = this.db.prepare('SELECT record FROM lobby_names WHERE round_id = ? AND player_pubkey = ?').get(Buffer.from(roundIdBytes), Buffer.from(playerPubkeyBytes));
+    if (!r) return null;
+    // the record's layout (lobby-name.js encodeLobbyName): round id (32), player key (32), identity key (32), ...
+    const b = new Uint8Array(r.record);
+    return b.length >= 96 ? Buffer.from(b.subarray(64, 96)).toString('hex') : null;
+  }
+
   /** A head-to-head entry's identity, kept once: the key and its signature over matchProofId. */
   putIdentity({ roundId, entryId, identity, sig }) {
     return this.db.prepare('INSERT OR IGNORE INTO h2h_identities (entry_id, round_id, identity, sig) VALUES (?, ?, ?, ?)')
