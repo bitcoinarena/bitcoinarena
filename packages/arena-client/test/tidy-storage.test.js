@@ -109,14 +109,14 @@ test('a write refused for room frees storage and goes in; with no room to free i
   onStorageFull(null);
 });
 
-test('a phrase lock with no heartbeat for two minutes is taken over, not asked of a tab that is not there (the owner 2026-10-30)', () => {
+// NEVER TAKEN OVER (kanban #1164, the 2026-11-06 audit): 2026-10-30 stole a lock after two minutes without a heartbeat, and a hidden tab that
+// still held it ran its wallet client on beside the merge's - a lock with no fresh heartbeat is asked of its tab like any other
+test('a phrase lock with no heartbeat for two minutes is never taken over: its tab is asked over BroadcastChannel like any other (kanban #1164)', () => {
   const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
-  const at = src.indexOf('A LOCK NO LIVING TAB STANDS BEHIND');
+  const at = src.indexOf('A LOCK IS NEVER TAKEN OVER');
   const ask = src.indexOf("is open in another tab - asking that tab to hand its money over", at);
-  assert.ok(at > 0 && ask > at, 'looked at before any tab is asked');
-  const block = src.slice(at, ask);
-  assert.match(block, /Date\.now\(\) - Number\(beat\.at\) > 120000/);
-  assert.match(block, /\{ steal: true \}, hold\)/);
+  assert.ok(at > 0 && ask > at, 'the merge does not say a lock is never taken over before it asks the tab');
+  assert.doesNotMatch(src, /locks\.request\([^;]*steal:\s*true/);
 });
 
 test('past its room a lock wallet goes on in memory, whole, and the browser\'s refusal never reaches the lock client (kanban #803)', () => {
