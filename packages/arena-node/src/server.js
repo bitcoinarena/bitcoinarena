@@ -266,14 +266,14 @@ import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedAppsCheck, payoutRuleOfRound } from './plugins.js';
-import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, VALUE_HELD_OUTCOME } from './game-market.js';
+import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, marketFinalityOf, marketStateOf, VALUE_HELD_OUTCOME } from './game-market.js';
 import { isHeadToHead, marketOfRound, isGameMarket, isScalar, isDrawnAttest, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
 import { decodeValueAttestation, valueAttestationStands, valueAttestationBodyId, isValueAttestationBytes } from '../../arena-protocol/src/scalar.js';
 import { encodeManifest, decodeManifest, gameIdOf, MARKET_SOURCE_KIND, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { gameTypeOf, gameInfoStands } from '../../arena-protocol/src/game-info.js';
 import { genesisFor, committeesStand } from '../../arena-protocol/src/genesis.js';
 import { nonceGen as musigNonceGen, bondSigningContext as musigBondContext, bondPartialSign as musigBondPartial } from './musig2.js';
-import { marketWindowOf, decodeAttestation, attestationStands, attestationBodyId, outcomeFinality, attestationTimely, roundTermsOf } from '../../arena-protocol/src/attested.js';
+import { marketWindowOf, decodeAttestation, attestationStands, attestationBodyId, outcomeStanding, marketTerminal, attestationTimely, roundTermsOf } from '../../arena-protocol/src/attested.js';
 import { verifyEd25519 } from './ed25519.js';
 import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync, readdirSync, renameSync, appendFileSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
@@ -710,15 +710,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!stands.ok) return { held: false, status: 409, why: stands.why };
     // AND NOT BEFORE THE LAST PICK (§0A.7a slice 2): the round's entries closed on this seat's clock, and the outcome seen after
     // AND NOT BEFORE THE MARKET'S RESOLUTION TIME, when its manifest names one
+    // AND NOT AFTER THE MARKET'S DEADLINE (kanban #1151): a market with no outcome by then is VOID, its stakes back at once
     const timely = attestationTimely(a, { entryCloseMs: c.entryCloseMs, nowMs: round.now(), terms: roundTermsOf(plugin.manifest, c) });
     if (!timely.ok) return { held: false, status: 409, why: timely.why };
+    // ONE HELD ONCE THE ROUND IS FINAL OR VOID (its persisted state, game-market.js marketStateOf) is kept as evidence only
+    const decided = marketTerminal(marketStateOf(round, new Uint8Array(roundIdOf(c)), { contract: c, manifest: plugin.manifest, nowMs: round.now() }).state);
     // a value is kept in the same table under its own body id, its outcome column -1 (no index: the value is in its bytes)
     const fresh = round.putOutcomeAttestation({ bodyId: valued ? valueAttestationBodyId(a) : attestationBodyId(a), roundId: a.roundId,
       outcome: valued ? VALUE_HELD_OUTCOME : a.outcome, observedAtMs: a.observedAtMs, bytes: raw, receivedMs: round.now() });
     if (fresh) settleAttestedSoon();
     const now = outcomeOf(a.roundId, c);
-    console.log(`[outcome] ${toHex(a.roundId).slice(0, 16)}: ${stands.why}${fresh ? '' : ' (held already)'} - the round is ${now.state}`);
-    return { held: true, fresh, why: stands.why, now };
+    console.log(`[outcome] ${toHex(a.roundId).slice(0, 16)}: ${stands.why}${fresh ? '' : ' (held already)'}${decided ? ' - evidence only, the round was decided' : ''} - the round is ${now.state}`);
+    return { held: true, fresh, why: stands.why, now: decided ? { ...now, evidenceOnly: true } : now };
   };
   // A GAME WHOSE ATTESTORS ARE DRAWN (kanban #630, protocol 21): an attestation is checked against the round's 7 drawn node keys and their
   // BIP-340 signatures; a game naming fixed keys, against those and Ed25519, as before
@@ -767,23 +770,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // EVERY STANDING OUTCOME: the attestations, and a market on a game's held source result in an attestation's shape (kanban
     // feature 6, game-market.js heldOutcomes)
     const held = heldOutcomes(round, rid);
-    // FINAL 600 s AFTER THE FIRST STANDING ATTESTATION, on this seat's clock (§0A.7a slice 2)
-    const standing = outcomeFinality(held, { windowMs: c.objectionWindowMs, nowMs: round.now() });
+    // THE ROUND'S PERSISTED STATE (kanban #1151, game-market.js marketFinalityOf): FINAL 600 s after the first standing attestation
+    // on this seat's clock (§0A.7a slice 2), VOID by its deadline, a contradiction inside the window or a held game VOID - and
+    // never changed once FINAL or VOID: what came after is evidence only (`contradicted`)
+    const standing = marketFinalityOf(round, rid, { contract: c, manifest: plugin.manifest, nowMs: round.now() });
     // A MARKET ON A GAME HELD VOID (its source result refunds it, or its source can never fit it): VOID at once, its evidence beside
-    const voidHeld = gameVoidOf(round, rid);
+    const voidHeld = standing.state === 'VOID' && standing.reason === 'game' ? gameVoidOf(round, rid) : null;
     // the evidence of a held outcome: an attestation's own bytes, or a source round's signed result and contract
     const evidence = (h) => (h.game ? { gameOutcome: gameEvidenceOf(h.game) } : { attestation: toHex(h.bytes) });
     // A ROUND OF A TEMPLATE (feature 5) answers ITS OWN question and labels (contracts.js `event`); any other market
     // its manifest's, as before
     const market = marketOfRound(plugin.manifest, c);
     const out = { state: standing.state, outcomes: market.outcomes, attestThreshold: plugin.manifest.attestThreshold,
-      attestors: plugin.manifest.attestors.length, entryCloseMs: String(c.entryCloseMs),
+      attestors: plugin.manifest.attestors.length, entryCloseMs: String(c.entryCloseMs), market: standing.market,
       ...(c.event ? { question: c.event.question, resolveAtMs: String(c.event.resolveAtMs) } : {}),
       // A SCALAR MARKET (feature 8): its bounds and their unit, every number a decimal string
       ...(isScalar(plugin.manifest) ? { scalar: { low: String(market.scalar.low), high: String(market.scalar.high), unit: market.scalar.unit } } : {}) };
-    if (voidHeld) {
-      Object.assign(out, { state: 'VOID', why: voidHeld.why, gameOutcome: gameEvidenceOf(voidHeld) });
-    } else if (standing.state === 'ATTESTED') {
+    // the held evidence of the round's own outcome: the rows that name it (its first is the one that made it stand)
+    const named = standing.state === 'ATTESTED' ? held.filter((h) => (typeof standing.value === 'bigint' ? h.value === standing.value : typeof h.value !== 'bigint' && h.outcome === standing.outcome)) : [];
+    if (standing.state === 'VOID') {
+      Object.assign(out, { why: standing.why, ...(voidHeld ? { gameOutcome: gameEvidenceOf(voidHeld) } : {}) });
+    } else if (standing.state === 'ATTESTED' && named.length) {
       // a scalar market's standing is the VALUE its attestors signed, and where it pays - clamped to the bounds (feature 8)
       if (typeof standing.value === 'bigint') {
         const sc = market.scalar;
@@ -791,10 +798,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         Object.assign(out, { value: String(standing.value), clamped: String(clamped) });
       }
       Object.assign(out, { outcome: standing.outcome, label: market.outcomes[standing.outcome],
-        observedAtMs: String(held[0].observedAtMs), final: standing.final, finalAtMs: String(standing.finalAtMs),
+        observedAtMs: String(named[0].observedAtMs), final: standing.final, finalAtMs: String(standing.finalAtMs),
         // the attestation's own bytes: a page checks its signatures against the manifest it pinned, not this seat's word - or,
         // for a market on a game, the source's RoundResult, its committee's signatures and the source contract
-        ...evidence(held[0]) });
+        ...evidence(named[0]),
+        // A CONTRADICTION THAT CAME AFTER THE ROUND WAS DECIDED (or after its deadline): kept as proof, and it changes nothing
+        ...(held.length > named.length ? { contradicted: { proof: held.map((h) => (h.game ? gameEvidenceOf(h.game) : toHex(h.bytes))), why: 'held after the round\'s outcome was decided here (past its objection window or its deadline): kept as proof, it changes nothing' } } : {}) });
       if (table) {
         // THE ENTRIES THAT COUNT: a free round's every entry; a paying round's only those whose stake this seat has seen
         const counted = round.entriesOf(rid).filter(({ entryId }) => c.stakeMsat === 0n || !!round.stakeSeen(entryId))
@@ -804,7 +813,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         out.table = JSON.parse(JSON.stringify(t, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
       }
     } else if (standing.state === 'DISPUTED') {
-      Object.assign(out, { outcomesNamed: standing.outcomes, ...(standing.values ? { valuesNamed: standing.values.map(String) } : {}), why: standing.why,
+      const disp = outcomeStanding(held);
+      Object.assign(out, { outcomesNamed: disp.outcomes || [], ...(disp.values ? { valuesNamed: disp.values.map(String) } : {}), why: standing.why,
         proof: held.map((h) => (h.game ? gameEvidenceOf(h.game) : toHex(h.bytes))) });
     }
     return out;
@@ -9599,7 +9609,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try {
             const bk = orderBook && orderBook.standing ? orderBook.standing(en.roundId, fromHex(idHex)) : null;
             if (bk && bk.book && !bk.filled && !bk.inPending) {
-              const fin = outcomeFinality(heldOutcomes(round, en.roundId), { windowMs: decodeRoundContract(new Uint8Array(row.contract)).objectionWindowMs, nowMs: round.now() });
+              const rc = decodeRoundContract(new Uint8Array(row.contract)), mp = attestedOf(rc);
+              const fin = mp ? marketFinalityOf(round, en.roundId, { contract: rc, manifest: mp.manifest, nowMs: round.now() }) : { final: false };
               if (bk.cancelled || fin.final) return { state: 'unfilled', stakeMsat: String(stake), feeMsat: String(fee), netMsat: '0', why: bk.cancelled ? 'cancelled before it filled' : 'never filled: its locks come back whole' };
             }
           } catch { /* read as before */ }
