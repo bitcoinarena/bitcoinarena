@@ -11102,7 +11102,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     duty.attach({ port: http.address().port, host, endpoint: publicEndpoint, heldTemplates: () => series.slice(),
       nameFunded: (idHex) => { if (typeof funded.nameRound === 'function') funded.nameRound(idHex); }, donationSetAt: inForce, nodeKey: round.pubkey,
       // the creator of a grid announced here (POST /expected, its creator signature checked there) - a day marker's poster (kanban #1168)
-      announcedCreatorOf: (idHex) => { const e = announced.get(String(idHex)); return e && e.creator ? String(e.creator) : null; } });
+      announcedCreatorOf: (idHex) => { const e = announced.get(String(idHex)); return e && e.creator ? String(e.creator) : null; },
+      // and the whole announced grid: its game and first close, so a marker counts only for its own app's day (kanban #1204 FED-C1)
+      announcedOf: (idHex) => announced.get(String(idHex)) || null });
   };
   return new Promise((resolve) => {
     http.listen(port, host, () => { dutyAttach(); resolve({

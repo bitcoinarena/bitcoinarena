@@ -47,7 +47,7 @@ const sid = (n) => new Uint8Array(32).fill(n);
 
 /** The fake chain and node of duty-poster.test.js, with `lines` the series ids (hex) a seat holds -> their creator (hex). */
 function world({ nowMs = T0 + 10 * MIN, local = [ORDER[0]], inBlocks = [], mempool = [], wallet = {}, hexes = {}, seatRounds = null, role = 'primary', dir = null,
-  lines = {}, creators = [] } = {}) {
+  lines = {}, creators = [], infos = null } = {}) {
   const firstHeight = 1000, blocks = [];
   for (let t = T0 - 40 * H, i = 0; t <= nowMs; t += 10 * MIN, i++) blocks.push({ header: header(Math.floor(t / 1000), i), transactions: [], t });
   for (const { atMs, raw } of inBlocks) blocks.find((x) => x.t >= atMs).transactions.push(raw);
@@ -83,6 +83,7 @@ function world({ nowMs = T0 + 10 * MIN, local = [ORDER[0]], inBlocks = [], mempo
       startTime: new Date(Math.max(T0, nowMs) + 10 * MIN + i * 90000).toISOString(), committee: { drawn: { game: ['k'], settlement: ['k'] } } })) }) }),
     canPay: async () => ({ ok: true }), now: () => nowMs, say: () => {},
     creatorOf: async (id) => lines[id] || null, creators,
+    ...(infos ? { seriesInfoOf: async (id) => infos[id] || null } : {}),
   };
   return { opts, did };
 }
@@ -182,4 +183,35 @@ test('kanban #1168: a day marker counts only from a duty poster, and a fee raise
   assert.deepEqual(facts.E.afterBumpfee.restart, { postedAgain: 0, bumpedAgain: 0, txidIsRaise: true, verdict: 'pending' });
   assert.deepEqual(facts.E.insideBumpfee.fileAtCrash, { txidIsRaise: false, bumped: false, bump: 'ASKED' });
   assert.deepEqual(facts.E.insideBumpfee.restart, { postedAgain: 0, bumpedAgain: 0, txidIsRaise: true, verdict: 'pending' });
+});
+
+// KANBAN #1204 FED-C1 (audit 2): the #1168 fix took ANY series id a seat holds - so one cheap tx with tomorrow's marker beside a copy of a
+// REAL held id (yesterday's posting, or another app's) counted as the day's posting at every seat: no primary, no rounds the next day.
+// Now a marker speaks only for a series of its own app whose first round closes inside the marker's target day.
+test('#1204 FED-C1: a day marker beside a copied real series id (yesterday\'s, another app\'s) counts for nothing; the day\'s own posting still does', async () => {
+  const TOMORROW = dayStartMs(DAY + 1), TODAY = T0;
+  const yesterday = toHex(sid(0x61)), otherApp = toHex(sid(0x62)), own = toHex(sid(0x63));
+  const infos = {
+    [yesterday]: { creator: toHex(ORDER[3]), gameId: GID, firstCloseMs: TODAY + 60000 },          // the posting of the day before: plays today
+    [otherApp]: { creator: toHex(ORDER[3]), gameId: 'd5'.repeat(32), firstCloseMs: TOMORROW + 60000 },   // tomorrow, but another app
+    [own]: { creator: toHex(ORDER[3]), gameId: GID, firstCloseMs: TOMORROW + 60000 },               // tomorrow's own posting
+  };
+  const lines = Object.fromEntries(Object.entries(infos).map(([k, v]) => [k, v.creator]));
+  const copiedY = txOf([dutyMarkerOutput(DAY, 'nextblock-day'), seriesPublicationOutput(sid(0x61))]);
+  const copiedO = txOf([dutyMarkerOutput(DAY, 'nextblock-day'), seriesPublicationOutput(sid(0x62))]);
+  const f1 = world({ local: [ORDER[0]], mempool: [copiedY, copiedO], lines, infos });
+  const s1 = await createDayDuty(f1.opts).look();
+  const real = txOf([dutyMarkerOutput(DAY, 'nextblock-day'), seriesPublicationOutput(sid(0x63))]);
+  const f2 = world({ local: [ORDER[0]], mempool: [real], lines, infos });
+  const s2 = await createDayDuty(f2.opts).look();
+  // the same copy, a second time and at another node of the order: still nothing
+  const f3 = world({ local: [ORDER[1]], nowMs: T0 + 70 * MIN, mempool: [copiedY, copiedO], lines, infos });
+  await createDayDuty(f3.opts).look();
+  console.log('  MEASURED FED-C1:', JSON.stringify({ copied: { published: f1.did.published.length, posted: s1.posted, ignored: (s1.ignored || []).map((m) => m.standing) },
+    real: { published: f2.did.published.length, standing: (s2.markers || []).map((m) => m.standing) }, rank2: f3.did.published.length }));
+  assert.equal(f1.did.published.length, 1, 'a copied held id held the duty node back');
+  assert.equal(s1.posted, false);
+  assert.equal(f2.did.published.length, 0, 'the day\'s own posting is still seen');
+  assert.deepEqual((s2.markers || []).map((m) => m.standing), ['DUTY']);
+  assert.equal(f3.did.published.length, 1, 'rank 2 posts too when nothing real is there');
 });
