@@ -16,6 +16,7 @@
 // entry for it (halt height, clocks, the newest spent set's nonces); `height()` the arbitration set's chain tip;
 // `escrowMsatOf(federationHex)` what the escrow holds. Nothing here pays: `plan` is the table the window's end pays out.
 import { settleClaims } from '../../arena-protocol/src/federation-slash.js';
+import { keyedPay, payoutOf, PAYOUT, runPayouts } from './keyed-payout.js';
 
 const isHex = (s, n) => typeof s === 'string' && new RegExp(`^[0-9a-f]{${n}}$`).test(s);
 
@@ -152,25 +153,37 @@ export async function payOutLiquidation({ fid, v, claims, height, run, spendEscr
   const p = await claims.plan(fid, { escrowMsat: BigInt(v.claimedMsat) });
   if (!p.ok) return { why: p.why };
   const done = new Set(v.paidNonces || []);
-  const due = p.paidNotes.filter((n) => !done.has(n.nonce) && BigInt(n.msat) > 0n);
+  // A NOTE BATCH ASKED BEFORE A STOP (kanban #1174) is the batch: its notes, its list, read back under its key - not the notes due now
+  const asked = v.notesPay && payoutOf(v.notesPay) === PAYOUT.ASKED ? v.notesPay : null;
+  const due = asked ? asked.notes.map((n) => ({ ...n })) : p.paidNotes.filter((n) => !done.has(n.nonce) && BigInt(n.msat) > 0n);
   if (!due.length) {
     // THE REMAINDER, once: only after drain_blocks (settleClaims names a split only then), every note's payout made first
     if (!p.split || v.remainderTxid || !remainderPayees) return { paid: 0, notes: done.size, ...(p.split && !remainderPayees ? { why: 'the remainder waits for its payees' } : {}) };
-    const rest = BigInt(p.remainderMsat);
-    const to = (await remainderPayees(fid, rest)).filter((x) => BigInt(x.msat) > 0n);
+    // A REMAINDER ASKED BEFORE A STOP (kanban #1174): its record is the remainder, read back under its key
+    const askedRest = v.remainderPay && payoutOf(v.remainderPay) === PAYOUT.ASKED ? v.remainderPay : null;
+    const rest = askedRest ? BigInt(askedRest.rest) : BigInt(p.remainderMsat);
+    const to = askedRest ? askedRest.list.map((x) => ({ ...x })) : (await remainderPayees(fid, rest)).filter((x) => BigInt(x.msat) > 0n);
     if (!to.length) return { why: 'no payee for the remainder' };
     if (to.reduce((a, x) => a + BigInt(x.msat), 0n) > rest) return { why: 'the remainder\'s payees come to more than the remainder' };
-    const r = await run(['--mode', 'pay', '--payouts', to.map((x) => `${x.key}:${x.msat}`).join(',')]);
-    if (!r.txid) return { why: `no remainder transaction: ${r.error || JSON.stringify(r)}` };
+    // THE REMAINDER ONCE (kanban #1174, keyed-payout.js): its record ASKED (key, list) before the tool
+    if (!v.remainderPay) v.remainderPay = { rest: String(rest) };
+    const got = await keyedPay({ rec: v.remainderPay, save: keep, list: to, key: `liq-remainder:${fid}`, ...runPayouts(run) });
+    if (!got.ok) return { why: `no remainder transaction: ${got.why}`, held: !!got.held };
+    const r = { txid: got.txid, payouts: got.payouts };
     Object.assign(v, { remainderTxid: r.txid, remainderMsat: String(rest), remainderPayees: to.length }); keep();
     say({ federation: fid.slice(0, 16), remainder: String(rest), payees: to.length, txid: r.txid });
     return { paid: 0, notes: done.size, remainder: String(rest) };
   }
   const byKey = new Map();
   for (const n of due) byKey.set(n.payoutPk, (byKey.get(n.payoutPk) || 0n) + BigInt(n.msat));
-  const paid = await run(['--mode', 'pay', '--payouts', [...byKey.entries()].map(([k, m]) => `${k}:${m}`).join(',')]);
-  if (!paid.txid) return { why: `no payout transaction: ${paid.error || JSON.stringify(paid)}` };
-  v.paidNonces = [...done, ...due.map((n) => n.nonce)];
+  // THE BATCH ONCE (kanban #1174, keyed-payout.js): its record ASKED - key (the federation and the batch's number), notes and list - before the tool
+  if (!asked) v.notesPay = { batch: (v.notesBatches || 0) + 1, notes: due.map((n) => ({ nonce: n.nonce, payoutPk: n.payoutPk, msat: String(n.msat) })) };
+  const got = await keyedPay({ rec: v.notesPay, save: keep, list: [...byKey.entries()].map(([k, m]) => ({ key: k, msat: m })), key: `liq-notes:${fid}:${v.notesPay.batch}`, ...runPayouts(run) });
+  if (!got.ok) return { why: `no payout transaction: ${got.why}`, held: !!got.held };
+  const paid = { txid: got.txid, payouts: got.payouts };
+  v.notesBatches = v.notesPay.batch;
+  v.notesPay = null;
+  v.paidNonces = [...done, ...due.map((n) => n.nonce).filter((x) => !done.has(x))];
   v.payouts = [...(v.payouts || []), ...(paid.payouts || []).map((x) => ({ payoutPk: x.refund_pk, msat: String(x.amount_msat), txid: paid.txid, outIdx: x.out_idx }))];
   keep();
   say({ federation: fid.slice(0, 16), paidNotes: due.length, keys: byKey.size, txid: paid.txid });

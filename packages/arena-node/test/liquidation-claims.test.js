@@ -212,3 +212,71 @@ test('the client presents its outputs still in issuance too: once, at the signed
   await run(ev({ atMs: 2, claims: { accepted: [{ nonce: '02aa', amountMsat: '8192', height: 1010, payoutPk: PK }], refused: [], msat: '8192' } }));
   assert.equal(store.has(pendingRequestsKey(FED)), false, 'taken: the set listed this key');
 });
+
+// ---- kanban #1174: THE TABLE'S PAYOUTS, ONCE, WHATEVER STOPS ----
+// THE TOOL AS IT IS NOW: a keyed pay submits once per key and answers it again; pay-sent reads it back. `lose` answers are lost after the tool
+// paid (a crash, a timeout); `old` a tool from before #1174 (no key, no pay-sent). The state `v` is reloaded from what keep() wrote, as a restart does
+function liqTool({ lose = 0, old = false, heldMsat = 9_000_000 } = {}) {
+  const pays = [], byKey = new Map();
+  let lost = lose;
+  const rows = (arg) => arg.split(',').map((x, i) => ({ refund_pk: x.split(':')[0], amount_msat: Number(x.split(':')[1]), out_idx: i }));
+  const run = async (args) => {
+    const at = (k) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : null; };
+    if (args[1] === 'pegin-address') return { address: 'tb1qsafe' };
+    if (args[1] === 'pegin-claim') return { balance_before_msat: 0, balance_after_msat: 9_000_000 };
+    if (args[1] === 'balance') return { msat: heldMsat - pays.reduce((a, p) => a + p.msat, 0) };
+    if (args[1] === 'pay-sent') {
+      if (old) return { error: 'no mode pay-sent' };
+      const k = at('--key');
+      return byKey.has(k) ? { mode: 'pay-sent', found: true, txid: byKey.get(k), payouts: rows(at('--payouts')) } : { mode: 'pay-sent', found: false };
+    }
+    if (args[1] === 'pay') {
+      const key = old ? null : at('--key');
+      if (key && byKey.has(key)) return { txid: byKey.get(key), payouts: rows(at('--payouts')), again: true };
+      const txid = `pay${pays.length + 1}`;
+      pays.push({ payouts: at('--payouts'), msat: rows(at('--payouts')).reduce((a, x) => a + x.amount_msat, 0) });
+      if (key) byKey.set(key, txid);
+      if (lost > 0) { lost--; return { error: 'the tool did not answer in 300 s (killed)' }; }
+      return { txid, payouts: rows(at('--payouts')) };
+    }
+    return {};
+  };
+  return { run, pays };
+}
+
+test('kanban #1174: a note batch and the remainder whose tool paid and whose answer was lost are paid once - ASKED on disk first, read back by its key', async () => {
+  const facts = {};
+  // `restart`: every pass starts from what keep() last wrote
+  const passes = ({ b, tool, h, remainderPayees = null, n, start = '{}' }) => {
+    let disk = start, v = {};
+    const keep = () => { disk = JSON.stringify(v); };
+    const said = [];
+    const go = async () => { for (let i = 0; i < n; i++) { v = JSON.parse(disk); const r = await payOutLiquidation({ fid: FED, v, claims: b.claims, height: async () => h(), run: tool.run,
+      spendEscrow: async () => ({ txid: 'escrow-into-safe' }), remainderPayees, keep }); if (r.why) said.push(r.why.replace(/liq-[a-z]+:[0-9a-f]+(:\d+)?/g, '<key>').slice(0, 240)); } return { v: JSON.parse(disk), said: [...new Set(said)], disk }; };
+    return go();
+  };
+  for (const [name, o] of [['notesLost', { lose: 1 }], ['notesOldTool', { lose: 1, old: true }]]) {
+    const b = book(); b.at(1012);
+    await b.claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+    const tool = liqTool(o);
+    const r = await passes({ b, tool, h: () => 1021, n: 3 });   // on this line the notes are paid once the claim window closed
+    facts[name] = { pays: tool.pays.length, paidNonces: (r.v.paidNonces || []).length, payoutsKept: (r.v.payouts || []).length, said: r.said };
+  }
+  // THE REMAINDER: every note paid, the window over, its pay's answer lost
+  {
+    const b = book(); b.at(1012);
+    await b.claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+    const remainderPayees = async (_fid, msat) => [{ key: 'aa'.repeat(32), msat, part: 'reserves' }];
+    let h = 1021;
+    const first = await passes({ b, tool: liqTool(), h: () => h, remainderPayees, n: 1 });
+    b.at(1101); h = 1101;
+    const tool = liqTool({ lose: 1, heldMsat: 9_000_000 - 768_000 });
+    const r = await passes({ b, tool, h: () => h, remainderPayees, n: 3, start: first.disk });
+    facts.remainderLost = { remainderPays: tool.pays.length, remainderTxid: r.v.remainderTxid || null, said: r.said };
+  }
+  console.log('  MEASURED #1174 liquidation:', JSON.stringify(facts));
+  assert.deepEqual([facts.notesLost.pays, facts.notesLost.paidNonces, facts.notesLost.payoutsKept], [1, 2, 1], 'a lost answer paid the notes again');
+  assert.equal(facts.notesOldTool.pays, 1, 'a tool that cannot read a key back paid the notes again');
+  assert.ok(facts.notesOldTool.said.some((x) => /held, never paid twice/.test(x)), JSON.stringify(facts.notesOldTool.said));
+  assert.deepEqual([facts.remainderLost.remainderPays, !!facts.remainderLost.remainderTxid], [1, true], 'a lost answer paid the remainder again');
+});
