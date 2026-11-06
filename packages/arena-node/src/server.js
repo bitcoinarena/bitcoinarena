@@ -3755,7 +3755,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const censusKeyRun = censusKey ? createCensusKeyRun({ store: new CensusKeyStore(round.db), network: censusKey.network, networkId: censusKey.networkId, key: round.identity.pubkey,
     secret: round.identity.secret, firstHeight: censusKey.firstHeight, foundingWindow: censusKey.foundingWindow, censusConfirmations: censusKey.censusConfirmations, tipHeight: censusKey.tipHeight,
     blockHashAt: censusKey.blockHashAt, censusEntriesAt: censusKey.censusEntriesAt, standing: censusKey.scan.standing, scannedTo: censusKey.scan.scannedTo, plan: censusKey.scan.planAt,
-    reshareList: censusKey.scan.reshareList, generationOf: censusKey.scan.generationOf, post: censusKey.post,
+    reshareList: censusKey.scan.reshareList, generationOf: censusKey.scan.generationOf, post: censusKey.post, reorgDepth: censusKey.scan.keepHashes,
     log: (l) => console.log(l) }) : null;
   const censusKeyTimer = censusKey ? setInterval(() => {
     if (shuttingDown) return;
