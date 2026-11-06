@@ -19,7 +19,18 @@ export const UNBACKED_DEPTH = 6;
  * `historyTxids(fid)` -> { txids: Set, startedAtMs, lastSession } the wallet transactions the signed history names (reserve-audit.js), when the
  * audit pass that read it started, and the last session it read. `load(fid)` / `save(fid, row)`: { seen: { outpoint: height }, spends: { outpoint: { txid, height, seenAtMs } } }.
  */
-export function createReserveSpendWatch({ walletOutpoint, isSpent, spenderOf, historyTxids, tip, load, save, alarms, nowMs = () => Date.now(), depth = UNBACKED_DEPTH, say = () => {} }) {
+// A SPEND IS HELD TO ITS BLOCK (kanban #1176): its block's hash is kept when it is found and read again on every pass (`hashAt(height)` -> the
+// active chain's hash, null when no block stands there, a throw when the chain did not answer). A spend whose block left the chain is dropped
+// - its outpoint is watched again from below that block - and an alarm raised on it is WITHDRAWN (reserve-alarms.js). Depth was height
+// arithmetic alone: a reorg that dropped the spending block still counted it 6 deep, and the first alarm stood for good.
+export function createReserveSpendWatch({ walletOutpoint, isSpent, spenderOf, historyTxids, tip, load, save, alarms, hashAt = null, nowMs = () => Date.now(), depth = UNBACKED_DEPTH, say = () => {} }) {
+  // true: the block stands at its height; false: it left the chain; null: the chain did not say
+  const stands = async (s) => {
+    if (typeof hashAt !== 'function') return true;
+    let got; try { got = await hashAt(Number(s.height)); } catch { return null; }
+    if (!s.hash) return got ? null : false;          // found before its hash was kept: kept on this pass (below)
+    return got === null || got === undefined ? false : String(got).toLowerCase() === s.hash;
+  };
   async function watchOne(fid) {
     const f = String(fid).toLowerCase();
     const row = load(f) || { seen: {}, spends: {} };
@@ -28,19 +39,39 @@ export function createReserveSpendWatch({ walletOutpoint, isSpent, spenderOf, hi
     // a new outpoint is remembered; a known one's height moves only when the chain says it is still unspent (below), so its spender is
     // looked for from the last block it was seen unspent - the one the threshold still names too: a guardian set that stole names its old output
     if (now && !(now in row.seen)) row.seen[now] = h;
+    const out = [];
+    // 1b. every spend held, judged or not, is held to its block: one that left the chain is dropped (and its alarm withdrawn)
+    for (const [op, s] of Object.entries(row.spends)) {
+      if (!s.hash && typeof hashAt === 'function') { try { const got = await hashAt(Number(s.height)); if (got) s.hash = String(got).toLowerCase(); } catch { /* next pass */ } }
+      const st = await stands(s);
+      if (st !== false) continue;
+      delete row.spends[op];
+      row.seen[op] = Math.max(0, Number(s.height) - 1);
+      if (s.judged === 'unbacked' && alarms && typeof alarms.withdraw === 'function') {
+        const w = alarms.withdraw({ federation: f, txid: s.txid, why: `the spending block ${s.height} (${String(s.hash || '').slice(0, 16)}) left this seat's chain` });
+        say({ federation: f.slice(0, 16), withdrawn: s.txid, outpoint: op, height: s.height, kept: w.ok });
+      }
+      out.push({ outpoint: op, reorged: s.txid, height: s.height });
+    }
     // 2. outpoints seen before and spent since: find the spender
     for (const [op, lastUnspent] of Object.entries(row.seen)) {
       if (row.spends[op]) continue;
       let spent = null; try { spent = await isSpent(op); } catch { spent = null; }
       if (spent !== true) { if (spent === false) row.seen[op] = h; continue; }
       let by = null; try { by = await spenderOf(op, Number(lastUnspent), h); } catch { by = null; }
-      if (by && by.txid) row.spends[op] = { txid: String(by.txid).toLowerCase(), height: Number(by.height), seenAtMs: nowMs() };
+      if (by && by.txid) {
+        let hash = by.hash ? String(by.hash).toLowerCase() : null;
+        if (!hash && typeof hashAt === 'function') { try { const got = await hashAt(Number(by.height)); hash = got ? String(got).toLowerCase() : null; } catch { hash = null; } }
+        row.spends[op] = { txid: String(by.txid).toLowerCase(), height: Number(by.height), ...(hash ? { hash } : {}), seenAtMs: nowMs() };
+      }
     }
     // 3. each spend 6 deep: the federation's own move, or a mark
-    const out = [];
     const hist = (await historyTxids(f)) || { txids: new Set(), readAtMs: 0 };
     for (const [op, s] of Object.entries(row.spends)) {
       if (s.judged) continue;
+      // re-confirmed at judgment: its block is still the chain's at its height (a spend with no hash kept yet waits for one)
+      const st = await stands(s);
+      if (st !== true) { out.push({ outpoint: op, wait: 'the spending block is not confirmed on this seat\'s chain yet' }); continue; }
       if (h - s.height + 1 < depth) { out.push({ outpoint: op, wait: `the spend is ${h - s.height + 1} deep, ${depth} needed` }); continue; }
       if (hist.txids.has(s.txid)) { s.judged = 'consensus'; delete row.seen[op]; out.push({ outpoint: op, consensus: s.txid }); continue; }
       // A HISTORY READ AFTER THE SPEND WAS SEEN IS NOT ENOUGH (kanban #1108, measured on the regtest devnet 2026-11-04 09:57Z: the federation's

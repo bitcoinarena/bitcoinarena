@@ -447,8 +447,12 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
    * output is listed under the first proof built for it. No alarm, no read; no evidence, nothing listed. Answers [{ federation, node, proof, kind, markHeight, recordHeight, txid, vout, sats, template }].
    */
   const evidenceHeld = new Map();           // fid -> the evidence read once for its alarm
+  const evidenceMark = new Map();           // fid -> the mark that evidence was read for (kanban #1176)
   async function theftSlashes() {
-    const marked = [...kept.entries()].flatMap(([federation, k]) => { const alarm = alarmOf(federation); return alarm && k.record ? [{ federation, k, alarm }] : []; });
+    // kanban #1176: only a CONFIRMED alarm (seated nodes signed the same mark) files slashes; a RAISED one stops deposits only. The evidence
+    // is read once per mark: an alarm withdrawn and raised again on another spend reads its own
+    const marked = [...kept.entries()].flatMap(([federation, k]) => { const alarm = alarmOf(federation); return alarm && k.record && alarm.state === 'CONFIRMED' ? [{ federation, k, alarm }] : []; });
+    for (const f of [...evidenceHeld.keys()]) { const a = alarmOf(f); if (!a || evidenceMark.get(f) !== `${a.kind}:${a.txid || a.session}`) { evidenceHeld.delete(f); evidenceMark.delete(f); } }
     if (!marked.length) return [];
     const h = await bondsAtBasis();
     if (h === null) return [];
@@ -456,7 +460,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     for (const { federation, k, alarm } of marked) {
       const owed = theftTakes(k.record).flatMap((node) => theftOutputs(bondsRead.get(h), node, h).map((o) => ({ node, o })));
       if (!owed.length) continue;
-      if (!evidenceHeld.has(federation)) { let ev = null; try { ev = await theftEvidenceOf(federation, alarm); } catch { ev = null; } if (!ev) continue; evidenceHeld.set(federation, ev); }
+      if (!evidenceHeld.has(federation)) { let ev = null; try { ev = await theftEvidenceOf(federation, alarm); } catch { ev = null; } if (!ev) continue; evidenceHeld.set(federation, ev); evidenceMark.set(federation, `${alarm.kind}:${alarm.txid || alarm.session}`); }
       const ev = evidenceHeld.get(federation);
       for (const { node, o } of owed) {
         const name = `theft:${federation}:${toHex(node)}:${o.txid}:${o.vout}`;

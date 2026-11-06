@@ -549,7 +549,7 @@ if (url) {
     chainSpenderOf: async (txid, vout, from, to) => {
       for (let h = Number(from); h <= Number(to); h++) {
         const b = await call('getblock', [await call('getblockhash', [h]), 2]);
-        for (const t of b.tx || []) if ((t.vin || []).some((i) => i.txid === txid && Number(i.vout) === Number(vout))) return { txid: String(t.txid), height: h };
+        for (const t of b.tx || []) if ((t.vin || []).some((i) => i.txid === txid && Number(i.vout) === Number(vout))) return { txid: String(t.txid), height: h, hash: String(b.hash) };   // its block's hash: the spend is held to it (kanban #1176)
       }
       return null;
     },

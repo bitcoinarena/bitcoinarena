@@ -5711,8 +5711,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const retireBook = createRetireBook(db && db.arenaPath ? `${db.arenaPath}.retire.json` : null);
   // THE RESERVE ALARMS THIS SEAT SAW (kanban #1093 parts 2 and 5): kept in its database, listed with each record so clients stop depositing
   round.db.exec('CREATE TABLE IF NOT EXISTS reserve_alarms (federation TEXT PRIMARY KEY, alarm TEXT NOT NULL)');
+  // kanban #1176: an alarm moves RAISED -> CONFIRMED (seated nodes' signed statements) or WITHDRAWN (its spend reorged away), so a kept row is
+  // replaced by its next state (the book's alarmStep guards every move); another seat's statement counts only from a node of the census
   reserveAlarms = reserveAlarmsBook || createReserveAlarms({ load: () => round.db.prepare('SELECT alarm FROM reserve_alarms').all().map((r) => JSON.parse(r.alarm)),
-    save: (all) => { for (const a of all) round.db.prepare('INSERT INTO reserve_alarms (federation, alarm) VALUES (?, ?) ON CONFLICT(federation) DO NOTHING').run(a.federation, JSON.stringify(a)); } });
+    save: (all) => { const put = round.db.prepare('INSERT INTO reserve_alarms (federation, alarm) VALUES (?, ?) ON CONFLICT(federation) DO UPDATE SET alarm = excluded.alarm');
+      round.db.transaction(() => { for (const a of all) put.run(a.federation, JSON.stringify(a)); })(); },
+    me: toHex(round.pubkey), verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } },
+    isSeat: (hex) => { try { return (fedRecords && fedRecords.censusKeys ? fedRecords.censusKeys() : []).some((k) => toHex(k) === hex); } catch { return false; } },
+    confirmSeats: Number(process.env.ARENA_ALARM_CONFIRM_SEATS) > 0 ? Number(process.env.ARENA_ALARM_CONFIRM_SEATS) : undefined });
   // THE FEDERATIONS' SIGNED HISTORY, AUDITED (kanban #1093 part 2, ruling #1106): off until measured; ARENA_RESERVE_AUDIT=<fid hex>:<client dir>,...
   // names the federations whose clients this seat holds. Every ARENA_RESERVE_AUDIT_MS (10 min) the stake-lock tool reads the sessions since the
   // last pass and an inflation raises the federation's alarm (deposits stop)
@@ -5737,12 +5743,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const auditRow = (fid) => { const r = round.db.prepare('SELECT row FROM reserve_audit WHERE federation = ?').get(fid); return r ? JSON.parse(r.row) : null; };
       const watch = createReserveSpendWatch({ ...spendWatchReads({ endpointsOf: fedEndpointsOf, readReserve, thresholdOf: thresholdOfFederation, chainTxOut, chainSpenderOf, auditRow }),
         tip: async () => Number(await chainTip()),
+        // kanban #1176: each spend held to its block's hash (the read that throws when the chain did not answer, where the launcher hands one)
+        hashAt: ballot && typeof ballot.chainHashAt === 'function' ? ballot.chainHashAt : ballot && typeof ballot.blockHashAt === 'function' ? ballot.blockHashAt : null,
         load: (fid) => { const r = round.db.prepare('SELECT row FROM reserve_spend_watch WHERE federation = ?').get(fid); return r ? JSON.parse(r.row) : null; },
         save: (fid, row) => round.db.prepare('INSERT INTO reserve_spend_watch (federation, row) VALUES (?, ?) ON CONFLICT(federation) DO UPDATE SET row = excluded.row').run(fid, JSON.stringify(row)),
         alarms: reserveAlarms, say: (o) => console.log(`[reserve-spend-watch] ${JSON.stringify(o)}`) });
       const watchTick = async () => { for (const { federation } of auditFeds) { try { await watch.watchOne(federation); } catch (e) { console.log(`[reserve-spend-watch] ${federation.slice(0, 16)}: ${e.message}`); } } };
       setTimeout(watchTick, 30_000).unref?.(); setInterval(watchTick, Number(process.env.ARENA_RESERVE_SPEND_WATCH_MS || 300_000)).unref?.();
     }
+  }
+  // A RAISED ALARM IS CONFIRMED BY OTHER SEATS' SIGNED WORD (kanban #1176): every 5 min, while this seat holds a RAISED alarm, it reads the
+  // network's seats' GET /reserve-alarms; a statement counts only signed by its seated node over the same mark (reserve-alarms.js confirm)
+  if (!reserveAlarmsBook) {
+    const confirmTick = async () => {
+      const raised = reserveAlarms.list().filter((a) => reserveAlarms.stateOf(a.federation) === 'RAISED');
+      if (!raised.length) return;
+      let seats = []; try { seats = networkSeats().slice(0, 32); } catch { seats = []; }
+      const said = (await Promise.all(seats.map(async (base) => { try { const r = await fetch(`${base}/reserve-alarms`, { signal: AbortSignal.timeout(8000) }); const j = r.ok ? await r.json() : null;
+        return j && Array.isArray(j.alarms) ? j.alarms.map((alarm) => ({ node: j.node, alarm })) : []; } catch { return []; } }))).flat();
+      for (const a of raised) { const c = reserveAlarms.confirm(a.federation, said); if (c.ok) console.log(`[reserve-alarm] ${a.federation.slice(0, 16)}: CONFIRMED by ${c.alarm.confirmedBy.length} seats`); }
+    };
+    setInterval(() => { confirmTick().catch((e) => console.log(`[reserve-alarm] confirm: ${e.message}`)); }, Number(process.env.ARENA_ALARM_CONFIRM_MS || 300_000)).unref?.();
   }
   fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf,
     alarmOf: (fid) => reserveAlarms.of(fid),
@@ -11762,7 +11783,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return json(res, 200, { node: toHex(round.pubkey), height, records });
       }
       // THE RESERVE ALARMS THIS SEAT HOLDS (kanban #1093 part 5): the marks of theft it saw, each with what shows it
-      if (req.method === 'GET' && url.pathname === '/reserve-alarms') return json(res, 200, { node: toHex(round.pubkey), alarms: reserveAlarms ? reserveAlarms.list() : [] });
+      // each standing one signed by this seat's node key (kanban #1176: what other seats count to confirm it), a withdrawn one with its reason
+      if (req.method === 'GET' && url.pathname === '/reserve-alarms') return json(res, 200, { node: toHex(round.pubkey),
+        alarms: reserveAlarms ? (typeof reserveAlarms.signed === 'function' ? reserveAlarms.signed((d) => schnorr.sign(d, round.identity.secret)) : reserveAlarms.list()) : [] });
       if (req.method === 'GET' && url.pathname === '/federations') {
         if (url.searchParams.get('fresh') === '1') { try { await fedRecords.gatherAll((inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; }); } catch { /* the kept ones */ } }
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
