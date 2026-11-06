@@ -630,8 +630,10 @@ export class WinningsSend {
       if (said.sent && said.preimage && toHex(sha256(said.preimage)) === row.paymentHash) {
         this.keepPaid(row, said.preimage, `the gateway at ${row.gatewayUrl} paid the winner's invoice; its preimage checked`);
         // EVERY PEER AT ONCE, WITHIN THE BOUND (kanban #1074): a peer that misses it asks again
+        // SIGNED BY THIS SEAT'S NODE KEY (kanban #1185): a peer keeps a preimage only from a seat of the round
+        const paidHeaders = sendPlanAskHeaders(this.round, { kind: PLAN_ASK.PAID, roundId: roundIdBytes, lateEntryId: this.round.lateEntryId || null, body: said.preimage });
         await askPeers(this.peersFor(roundIdBytes), (base, signal) => this.fetcher(`${base}/winnings-paid?round=${toHex(roundIdBytes)}&entry=${entryHex}${this.scopeParam}`,
-          { method: 'POST', body: said.preimage, signal }), { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: 0 });
+          { method: 'POST', body: said.preimage, headers: paidHeaders, signal }), { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: 0 });
         out.push({ entry: entryHex, attempt: row.attempt, ok: true, state: PAID, preimage: toHex(said.preimage), gateway: row.gatewayUrl });
         continue;
       }

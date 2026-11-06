@@ -1310,12 +1310,23 @@ export class LockSettlement {
     const seen = `${paid} of ${moves.payouts} payout contract(s) of ${kept.txid.slice(0, 12)} stored, ${locksGone} of ${moves.claims.length} claimed lock(s) gone`;
     if (paid > 0 && locksGone === moves.claims.length) return { verdict: 'in', why: seen };
     // A SENT WINNING IS NOT STORED ONCE IT IS PAID: the gateway claims its contract (measured: every look read "0 of 1
-    // payout contract(s) stored" after the winner was paid). Its preimage, held here only if it hashes to the invoice
-    // the settlement's contract named, is the proof that contract was made - so every claimed lock gone and a paid
-    // winning of this round held is IN. A lock that left by its own refund, with nothing paid, is still neither.
+    // payout contract(s) stored" after the winner was paid). A PAID ROW IS NO PROOF THE CONTRACT WAS MADE (kanban #1185): the payee holds its
+    // invoice's preimage from the start, and a settlement that never landed, whose claimed locks refunded at expiry, read "every lock gone + a paid
+    // send" and went ACCEPTED - forfeits gated on ACCEPTED then moved on false moves. The proof is the gateway's claim of one of this txid's
+    // outgoing contracts, read from the federation (port.sendClaimed: the preimage the guardians stored when the gateway claimed that outpoint -
+    // there is none for an outpoint no landed transaction made). A port that cannot read it leaves the row where it is ('mixed').
     if (paid === 0 && locksGone === moves.claims.length && this.winnings) {
       const paidSends = this.round.sendAttemptsOf(roundIdBytes).filter((r) => r.state === 'PAID' && r.preimage);
-      if (paidSends.length) return { verdict: 'in', why: `${seen}; ${paidSends.length} sent winning(s) of this round paid, the preimage held here` };
+      if (paidSends.length) {
+        const port = await this.portFor(roundIdBytes);
+        if (!port || typeof port.sendClaimed !== 'function')
+          return { verdict: 'mixed', why: `${seen}; ${paidSends.length} send(s) of this round PAID here, and this seat reads no gateway claim at the federation to tell it landed` };
+        for (let i = 0; i < moves.payouts; i++) {
+          const c = await port.sendClaimed({ txid: fromHex(kept.txid), outIdx: BigInt(i) }).catch(() => null);
+          if (c && c.claimed) return { verdict: 'in', why: `${seen}; the gateway's claim of ${kept.txid.slice(0, 12)}:${i} is held by the federation` };
+        }
+        return { verdict: 'mixed', why: `${seen}; ${paidSends.length} send(s) PAID here, and the federation holds no gateway claim of a contract of ${kept.txid.slice(0, 12)}` };
+      }
     }
     if (paid === 0 && locksGone === 0) return { verdict: 'out', why: seen };
     return { verdict: 'mixed', why: seen };

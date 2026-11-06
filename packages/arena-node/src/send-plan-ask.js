@@ -17,15 +17,18 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { sha256, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 export const SEND_PLAN_ASK_HEADER = 'x-send-plan-ask';
-/** What the signature is for: a proposed first plan, a re-send, a seat's kept plan as it hands it out. */
-export const PLAN_ASK = Object.freeze({ PROPOSE: 1, RESEND: 2, KEPT: 3 });
+/**
+ * What the signature is for: a proposed first plan, a re-send, a seat's kept plan as it hands it out - and (kanban #1185) a paid send's preimage
+ * handed to the round's other seats (POST /winnings-paid; the body is the 32-byte preimage).
+ */
+export const PLAN_ASK = Object.freeze({ PROPOSE: 1, RESEND: 2, KEPT: 3, PAID: 4 });
 
 const TAG_HASH = sha256(new TextEncoder().encode('ARENA/v1/SendPlanAsk'));
 const bytesOf = (body) => (body instanceof Uint8Array ? body : new TextEncoder().encode(String(body ?? '')));
 
 /** The digest a seat signs: the kind, the round, the late entry (or zeros), and the body's hash. */
 export function sendPlanAskDigest({ kind, roundId, lateEntryId = null, body }) {
-  if (!Object.values(PLAN_ASK).includes(kind)) throw new Error('a send plan ask is a proposal, a re-send or a kept plan');
+  if (!Object.values(PLAN_ASK).includes(kind)) throw new Error('a send plan ask is a proposal, a re-send, a kept plan or a paid preimage');
   if (!(roundId instanceof Uint8Array) || roundId.length !== 32) throw new Error('a send plan ask names a 32-byte round');
   if (lateEntryId && (!(lateEntryId instanceof Uint8Array) || lateEntryId.length !== 32)) throw new Error('a late entry is 32 bytes');
   const msg = new Uint8Array(64 + 1 + 32 + 32 + 32);
