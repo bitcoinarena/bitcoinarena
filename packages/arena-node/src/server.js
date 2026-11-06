@@ -7918,7 +7918,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try {
             const { addBondOnNode } = await import('../../arena-installer/src/add-bond.js');
             const args = body.args || {};
-            const r = await addBondOnNode({ home, release: fileURLToPath(new URL('../../../', import.meta.url)), addSats: args.sats, post: args.post === true, censusKey: newestCensusKey() });
+            const r = await addBondOnNode({ home, release: fileURLToPath(new URL('../../../', import.meta.url)), addSats: args.sats, post: args.post === true, censusKey: newestCensusKey(),
+              key: typeof args.key === 'string' && args.key ? args.key.slice(0, 64) : null });   // the same add asked again answers the one done (kanban #1165)
             if (!r.ok) return answer(400, r);
             const { funding, bondTx, presigUpdate, ...plan } = r.plan;   // the transactions' bytes stay on the machine
             if (r.bond) console.log(`[bond] added ${plan.addSats} sat beside the bond: ${r.bond.txid}:0 (total ${plan.totalSats} sat)`);

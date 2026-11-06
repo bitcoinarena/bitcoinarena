@@ -13,7 +13,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
+import { walletOf, payoutKeyOf, coinsOf, broadcast, txSeen } from './wallet.js';
+import { onchainAction, resumeOpen } from './onchain-action.js';
 import { advertFor, advertRoles, buildAdvertUpdate, EMERGENCY_IN_ADVERT, NEXTBLOCK_GAME_ID } from './bond.js';
 import { emergencyOf } from './seed.js';
 import { nodeState, guardianSetupOf } from './state.js';
@@ -34,8 +35,9 @@ export function stateRolesFor(asked, had) {
   return out;
 }
 
-export async function changeRolesOnNode({ home, release, roles, custody, post = false, chainKit = { coinsOf, broadcast }, state = null, guardianOf = null, nowMs = Date.now() }) {
+export async function changeRolesOnNode({ home, release, roles, custody, post = false, chainKit = { coinsOf, broadcast, seen: txSeen }, state = null, guardianOf = null, nowMs = Date.now() }) {
   const st = state || nodeState(home);
+  await resumeOpen(st, { chainKit });   // an action of the wallet sent before and not recorded: finished first (kanban #1165)
   const s = st.read();
   const asked = [...new Set((roles || []).map(String))];
   const bad = asked.filter((r) => !ADVERT_ROLES.includes(r));
@@ -52,16 +54,26 @@ export async function changeRolesOnNode({ home, release, roles, custody, post = 
   // relay alone (always named, 2026-10-26) serves no round: a node needs another role or custody
   if (!after.roles.filter((r) => r !== 'relay').length && !custodyNow) return { ok: false, why: 'a node with no role at all serves nothing: keep at least one' };
   if (JSON.stringify(before) === JSON.stringify(after)) return { ok: false, why: 'those are the roles this node already advertises' };
-  const built = await advertUpdateOf({ st, s, release, roles: next, guardianOf, nowMs, chainKit });
-  if (!built.ok) return built;
-  const u = built.update;
-  const plan = { before, after, bond: `${s.bond.txid}:${s.bond.vout || 0}`, feeSats: String(u.fees.funding + u.fees.update), countsAfter: 6 };
-  if (!post) return { ok: true, plan };
-  await chainKit.broadcast(s.chain, u.funding.hex);
-  const txid = await chainKit.broadcast(s.chain, u.update.hex);
-  // the owner's own choice of the audit role stands from now on: no later update adds it again (auditGrantDue)
-  st.save({ roles: next, auditGranted: true, rolesUpdate: { txid, advertId: u.advertId, before, after, atMs: nowMs } });
-  return { ok: true, plan, update: { txid } };
+  const planOf = (s2, u) => ({ before, after, bond: `${s2.bond.txid}:${s2.bond.vout || 0}`, feeSats: String(u.fees.funding + u.fees.update), countsAfter: 6 });
+  if (!post) {
+    const built = await advertUpdateOf({ st, s, release, roles: next, guardianOf, nowMs, chainKit });
+    return built.ok ? { ok: true, plan: planOf(s, built.update) } : built;
+  }
+  // AN ON-CHAIN ACTION (kanban #1165, onchain-action.js): built on the state and coins as they are once any open action is through, written
+  // before it is sent; the roles recorded with it when it is
+  const r = await onchainAction({ state: st, kind: 'roles', key: JSON.stringify(after), chainKit,
+    build: async (s2) => {
+      if (!s2.bond || s2.bond.txid !== s.bond.txid) return { ok: false, why: 'the bond changed meanwhile: ask again' };
+      const built = await advertUpdateOf({ st, s: s2, release, roles: next, guardianOf, nowMs, chainKit });
+      if (!built.ok) return built;
+      const u = built.update;
+      // the owner's own choice of the audit role stands from now on: no later update adds it again (auditGrantDue)
+      return { ok: true, tip: built.tip, txs: [{ name: 'funding', hex: u.funding.hex }, { name: 'update', hex: u.update.hex }],
+        ops: [{ op: 'set', key: 'roles', value: next }, { op: 'set', key: 'auditGranted', value: true }, { op: 'set', key: 'rolesUpdate', value: { txid: u.update.txid, advertId: u.advertId, before, after, atMs: nowMs } }],
+        result: { plan: planOf(s2, u), txid: u.update.txid } };
+    } });
+  if (!r.ok) return r;
+  return { ok: true, plan: r.result.plan, update: { txid: r.result.txid } };
 }
 
 /**
@@ -91,11 +103,11 @@ async function advertUpdateOf({ st, s, release, roles, hostedGames = s.hostedGam
     ...(s.bond.censusKey ? { censusKey: fromHex(s.bond.censusKey) } : {}),
     emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null, guardianOf: seats });
   const w = walletOf(seed);
-  const { coins } = await chainKit.coinsOf(s.chain, w.spk);
+  const { tip, coins } = await chainKit.coinsOf(s.chain, w.spk);
   let u;
   try { u = buildAdvertUpdate({ wallet: w, nodeSecret, coins, bond: { txid: s.bond.txid, vout: s.bond.vout || 0 }, advert }); }
   catch (e) { return { ok: false, why: e.message }; }
-  return { ok: true, update: u };
+  return { ok: true, update: u, tip };
 }
 
 /**
@@ -108,8 +120,9 @@ async function advertUpdateOf({ st, s, release, roles, hostedGames = s.hostedGam
 /** Whether an update adds the audit role: the node plays and checks rounds, does not audit, and was never given it (auditGranted). */
 export const auditGrantDue = (s) => !!s && (s.roles || []).includes('verify') && !(s.roles || []).includes('audit') && !s.auditGranted;
 
-export async function refreshHostedGames({ home, release, post = false, chainKit = { coinsOf, broadcast }, state = null, nowMs = Date.now() }) {
+export async function refreshHostedGames({ home, release, post = false, chainKit = { coinsOf, broadcast, seen: txSeen }, state = null, nowMs = Date.now() }) {
   const st = state || nodeState(home);
+  await resumeOpen(st, { chainKit });   // kanban #1165
   const s = st.read();
   if (!s.bond || !s.bond.txid) return { ok: false, why: 'no bond yet: its advertisement will name the games when it is posted' };
   const { appsIn, chosenApps, hostedGameIdsOf } = await import('./apps.js');
@@ -129,14 +142,24 @@ export async function refreshHostedGames({ home, release, post = false, chainKit
   const grantAudit = auditGrantDue(s);
   const rolesNow = grantAudit ? [...roles, 'audit'] : roles;
   if (JSON.stringify(had) === JSON.stringify(now) && sameProtocols && !grantAudit) return { ok: true, unchanged: true };
-  const built = await advertUpdateOf({ st, s, release, roles: rolesNow, hostedGames: now, nowMs, chainKit });
-  if (!built.ok) return built;
-  const u = built.update;
-  const plan = { before: had.length, after: now.length, added: now.filter((g) => !had.includes(g)).length, protocols: Math.max(...protocols), protocolsBefore: protocolsHad ? Math.max(...protocolsHad) : null,
-    ...(grantAudit ? { auditAdded: true } : {}), feeSats: String(u.fees.funding + u.fees.update), countsAfter: 6 };
-  if (!post) return { ok: true, plan };
-  await chainKit.broadcast(s.chain, u.funding.hex);
-  const txid = await chainKit.broadcast(s.chain, u.update.hex);
-  st.save({ hostedGames: now, advertProtocols: protocols, ...(grantAudit ? { roles: rolesNow, auditGranted: true } : {}), gamesUpdate: { txid, advertId: u.advertId, before: had.length, after: now.length, protocols: Math.max(...protocols), atMs: nowMs } });
-  return { ok: true, plan, update: { txid } };
+  const planOf = (u) => ({ before: had.length, after: now.length, added: now.filter((g) => !had.includes(g)).length, protocols: Math.max(...protocols), protocolsBefore: protocolsHad ? Math.max(...protocolsHad) : null,
+    ...(grantAudit ? { auditAdded: true } : {}), feeSats: String(u.fees.funding + u.fees.update), countsAfter: 6 });
+  if (!post) {
+    const built = await advertUpdateOf({ st, s, release, roles: rolesNow, hostedGames: now, nowMs, chainKit });
+    return built.ok ? { ok: true, plan: planOf(built.update) } : built;
+  }
+  // AN ON-CHAIN ACTION (kanban #1165): written before it is sent, finished at the next ask (the update after the next), never sent twice
+  const r = await onchainAction({ state: st, kind: 'games', key: JSON.stringify({ now, protocols, rolesNow }), chainKit,
+    build: async (s2) => {
+      if (!s2.bond || s2.bond.txid !== s.bond.txid) return { ok: false, why: 'the bond changed meanwhile: ask again' };
+      const built = await advertUpdateOf({ st, s: s2, release, roles: rolesNow, hostedGames: now, nowMs, chainKit });
+      if (!built.ok) return built;
+      const u = built.update;
+      return { ok: true, tip: built.tip, txs: [{ name: 'funding', hex: u.funding.hex }, { name: 'update', hex: u.update.hex }],
+        ops: [{ op: 'set', key: 'hostedGames', value: now }, { op: 'set', key: 'advertProtocols', value: protocols }, ...(grantAudit ? [{ op: 'set', key: 'roles', value: rolesNow }, { op: 'set', key: 'auditGranted', value: true }] : []),
+          { op: 'set', key: 'gamesUpdate', value: { txid: u.update.txid, advertId: u.advertId, before: had.length, after: now.length, protocols: Math.max(...protocols), atMs: nowMs } }],
+        result: { plan: planOf(u), txid: u.update.txid } };
+    } });
+  if (!r.ok) return r;
+  return { ok: true, plan: r.result.plan, update: { txid: r.result.txid } };
 }
