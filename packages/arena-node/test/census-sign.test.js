@@ -73,7 +73,7 @@ test('a holder that refuses is named; short of the threshold nothing is asked of
   const refuses = holder(2, [3, 4], { check: async () => ({ ok: false, why: 'it does not replay' }) });
   const hs = [holder(1, [1, 2]), refuses];
   const wired = wire(hs);
-  const got = await gatherCensusSignature({ request: {}, digest, publicKey, threshold: 4, urls: hs.map((h) => h.url), fetchFn: async (u, i) => { if (u.endsWith('/share')) asked += 1; return wired(u, i); } });
+  const got = await gatherCensusSignature({ request: {}, digest, publicKey, threshold: 4, urls: hs.map((h) => h.url), fetchFn: async (u, i) => { if (u.endsWith('/share') && JSON.parse(i.body).signers.length) asked += 1; return wired(u, i); } });   // a share with no signers hands a session back (#1187)
   assert.deepEqual([got.ok, got.why, asked], [false, '2 of the 4 shares of that key answered', 0]);
   assert.deepEqual(got.refused, [{ who: 'http://h2', why: 'it does not replay' }]);
 });
