@@ -3280,6 +3280,42 @@ export class Round {
         Buffer.from(source), Number(observedMs), Number(receivedMs)).changes === 1;
   }
 
+  /**
+   * A MARKET ROUND'S PERSISTED STATE (kanban #1151, store.js market_states): { state, outcome?, value?, observedAtMs?, firstMs?,
+   * finalAtMs?, reason?, why?, atMs } - or null: OPEN, nothing persisted yet.
+   */
+  marketState(roundIdBytes) {
+    const r = this.db.prepare('SELECT state, outcome, value, observed_ms, first_ms, final_at_ms, reason, why, at_ms FROM market_states WHERE round_id = ?').get(Buffer.from(roundIdBytes));
+    if (!r) return null;
+    const out = { state: r.state, atMs: Number(r.at_ms) };
+    if (r.outcome !== null) out.outcome = Number(r.outcome);
+    if (r.value !== null) out.value = BigInt(r.value);
+    if (r.observed_ms !== null) out.observedAtMs = BigInt(r.observed_ms);
+    if (r.first_ms !== null) out.firstMs = Number(r.first_ms);
+    if (r.final_at_ms !== null) out.finalAtMs = Number(r.final_at_ms);
+    if (r.reason !== null) out.reason = r.reason;
+    if (r.why !== null) out.why = r.why;
+    return out;
+  }
+
+  /**
+   * COMPARE-AND-SET a market round's state: `from` the state the caller read (null: no row, OPEN; 'ATTESTED' with the `fromFirstMs`
+   * it read), `next` the state attested.js marketTransition answered. Answers true only if this write moved it; a row that moved
+   * meanwhile, or a terminal one (never written again - the store's triggers refuse it too), answers false.
+   */
+  casMarketState(roundIdBytes, from, next, fromFirstMs = null) {
+    if (from === 'FINAL' || from === 'VOID' || next.state === 'OPEN') return false;
+    const cols = [next.state, Number.isInteger(next.outcome) ? next.outcome : null, typeof next.value === 'bigint' ? String(next.value) : null,
+      next.observedAtMs !== undefined && next.observedAtMs !== null ? Number(next.observedAtMs) : null,
+      Number.isFinite(next.firstMs) ? next.firstMs : null, Number.isFinite(next.finalAtMs) ? next.finalAtMs : null,
+      next.reason || null, next.why || null, Number.isFinite(next.atMs) ? next.atMs : this.now()];
+    if (from === null || from === undefined || from === 'OPEN')
+      return this.db.prepare('INSERT OR IGNORE INTO market_states (state, outcome, value, observed_ms, first_ms, final_at_ms, reason, why, at_ms, round_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(...cols, Buffer.from(roundIdBytes)).changes === 1;
+    return this.db.prepare("UPDATE market_states SET state = ?, outcome = ?, value = ?, observed_ms = ?, first_ms = ?, final_at_ms = ?, reason = ?, why = ?, at_ms = ? WHERE round_id = ? AND state = 'ATTESTED' AND first_ms IS ?")
+      .run(...cols, Buffer.from(roundIdBytes), fromFirstMs).changes === 1;
+  }
+
   /** Every game outcome this seat holds for a market round, oldest first: [{ resultId, sourceRoundId, outcome, why, result, sigs, source, observedMs, receivedMs }]. */
   gameOutcomes(roundIdBytes) {
     return this.db.prepare('SELECT result_id, source_round_id, outcome, why, result, sigs, source, observed_ms, received_ms FROM game_outcomes WHERE round_id = ? ORDER BY received_ms, result_id')

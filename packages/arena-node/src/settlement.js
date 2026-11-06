@@ -39,13 +39,12 @@ import { unpayableClaims } from '../../arena-protocol/src/named-claim-payees.js'
 import { inSessionLane } from './stake-lock-signer-node.js';
 import { splitByFederation } from '../../arena-protocol/src/federation-settlement.js';
 import { pluginForRound, payoutRuleOfRound } from './plugins.js';
-import { heldOutcomes, marketVoidOf, attestedTable } from './game-market.js';
+import { heldOutcomes, marketFinalityOf, attestedTable } from './game-market.js';
 import { lockSettlement, lateLockSettlement, attestedLockSettlement, bookLockSettlement, RESERVE_LATER_PK } from '../../arena-protocol/src/lock-settlement.js';
 import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
 import { paysReserves } from '../../arena-protocol/src/reserves.js';
 import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
 import { isScalar, marketOfRound } from '../../arena-protocol/src/manifest.js';
-import { outcomeFinality } from '../../arena-protocol/src/attested.js';
 import { FORFEIT, VOID, ENTRY_VOID, isQualifier, computePayoutTable, withGoneStakes } from '../../arena-protocol/src/payout.js';
 import { lockActions, CLAIM } from '../../arena-protocol/src/lock-action.js';
 import { signShare340, aggregate340, nonceGenerate340, verifyShare340 } from '../../arena-protocol/src/frost-bip340.js';
@@ -523,8 +522,9 @@ export class LockSettlement {
     // contradicted themselves, is VOID - nothing is claimed, every stake comes back by the return door (forfeit.js)
     // AND A MARKET ON A GAME WHOSE SOURCE RESULT REFUNDS IT, OR WHOSE SOURCE CAN NEVER FIT IT (feature 6): VOID at once,
     // not at its deadline (game-market.js marketVoidOf)
-    const voided = marketVoidOf(this.round, roundIdBytes, { contract: a.contract, manifest: a.plugin.manifest, held: a.held, nowMs: this.round.now ? this.round.now() : Date.now() });
-    if (voided.voided) return { ok: false, state: 'VOID', why: `a market round that is not settled on any outcome: ${voided.why}`, outcome: 'VOID' };
+    // ON THE ROUND'S PERSISTED STATE (kanban #1151): VOID and FINAL are terminal, so a round VOID here never settles, and one FINAL
+    // here is never voided by what comes after - a late contradiction is evidence only
+    if (a.finality.voided) return { ok: false, state: 'VOID', why: `a market round that is not settled on any outcome: ${a.finality.why}`, outcome: 'VOID' };
     if (a.finality.final) return null;
     const f = a.finality;
     const why = f.state === 'OPEN' ? 'an attested round with no outcome attested: nothing is settled, and its locks expire back to their players'
@@ -542,9 +542,11 @@ export class LockSettlement {
     if (!found.ok || !found.attested) return null;
     // EVERY STANDING OUTCOME: the attestations, and a market on a game's held source result in an attestation's shape (kanban
     // feature 6, game-market.js heldOutcomes) - final, held, disputed and paid by the same rules
+    // THE FINALITY IS THE ROUND'S PERSISTED STATE (kanban #1151, game-market.js marketFinalityOf): final only once FINAL is stored
+    // here, so no lock is claimed before that state is persisted
     const held = heldOutcomes(this.round, roundIdBytes);
     return { contract, plugin: found.plugin, held,
-      finality: outcomeFinality(held, { windowMs: contract.objectionWindowMs, nowMs: this.round.now ? this.round.now() : Date.now() }) };
+      finality: marketFinalityOf(this.round, roundIdBytes, { contract, manifest: found.plugin.manifest, nowMs: this.round.now ? this.round.now() : Date.now() }) };
   }
 
   /**

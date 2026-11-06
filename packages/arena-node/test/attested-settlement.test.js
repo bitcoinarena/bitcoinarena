@@ -9,7 +9,7 @@
 //     stake locks not claimed;
 //   - nobody right: only the fee locks are claimed;
 //   - no attestation at all: nothing is claimed;
-//   - a contradiction after the settlement is held as proof and undoes nothing.
+//   - a contradiction after the settlement is held as proof and undoes nothing: the round stays FINAL (kanban #1151).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { lockRound, openLockRound, lockAndPlay, closeRound, standing } from './lock-round-fixture.js';
@@ -136,10 +136,11 @@ test('the door, the window, the table paid by the seats\' own sweep, and a contr
     const late = await post(w.a, w.rid, signedBy({ roundId: w.rid, outcome: 2, observedAtMs: w.c.entryCloseMs + 5n }, [A1, A2]));
     const afterLate = await outcome(w.a, w.rid);
     const still = await standing(w.a, w);
-    console.log('  LATE CONTRADICTION:', JSON.stringify({ answer: late.slice(0, 3), state: afterLate.state, proof: (afterLate.proof || []).length, settlement: still.state, txid: still.txid === got.txid }));
+    console.log('  LATE CONTRADICTION:', JSON.stringify({ answer: late.slice(0, 3), state: afterLate.state, market: afterLate.market, proof: ((afterLate.contradicted || {}).proof || []).length, settlement: still.state, txid: still.txid === got.txid }));
     assert.equal(late.slice(0, 3), '201');
-    assert.equal(afterLate.state, 'DISPUTED');
-    assert.equal(afterLate.proof.length, 2);
+    // THE ROUND IS FINAL AND STAYS FINAL (kanban #1151): the contradiction is kept as proof beside its outcome, never a DISPUTED
+    assert.deepEqual([afterLate.state, afterLate.market, afterLate.final, afterLate.outcome], ['ATTESTED', 'FINAL', true, 0]);
+    assert.equal(afterLate.contradicted.proof.length, 2);
     assert.equal(still.state, 'ACCEPTED');
     assert.equal(still.txid, got.txid, 'the settlement changed after the contradiction');
   } finally { await w.close(); }
