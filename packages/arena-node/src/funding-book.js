@@ -30,6 +30,46 @@ export const FUNDING_SQL = `CREATE TABLE IF NOT EXISTS funding_items (id TEXT PR
 export const trancheIdOf = (pid, k, of) => (of === 1 ? pid : createHash('sha256').update(`ARENA/v1/FundingTranche:${pid}:${k}`).digest('hex'));
 
 /**
+ * HOW MANY PARTS A PASSED PROPOSAL PAYS IN (§27A.9.5 rule 5, kanban #1175): a function of the proposal's own amount, which every seat
+ * reads alike. It was fixed from the reserves this seat held at its first ask - rows that differ between seats (and can be forged) - so
+ * seats fixed different counts, named different part ids, and a payout plan was "no passed vote" at its peers: it never reached its
+ * 5 signatures. Every payout now goes in FUNDING_TRANCHES monthly parts; an amount too small to split (under one sat a part) in one.
+ */
+export const trancheCountOf = (amountSats) => (BigInt(amountSats) >= BigInt(FUNDING_TRANCHES) ? FUNDING_TRANCHES : 1);
+/** Every id a proposal's payment can have had (one part, or FUNDING_TRANCHES): what counts as paid by that proposal (rule 4). */
+export const paymentIdsOf = (pid) => [pid, ...Array.from({ length: FUNDING_TRANCHES }, (_, k) => trancheIdOf(pid, k, FUNDING_TRANCHES))];
+
+/**
+ * A PROPOSAL'S PAYMENT ROW, ONE STATE AND ONE TRANSITION FUNCTION (kanban #1175): FIXED (its part count) -> CANCELLED (from part k,
+ * for good). `row` the stored { tranches, cancelled, cancelled_k } or null; `ev` one of
+ *   { kind: 'fix', tranches }                        null -> FIXED
+ *   { kind: 'refix', tranches, payable: false }      FIXED -> FIXED with the derived count, only while no part is payable yet (no part
+ *                                                    can have gone under the old ids): a row the old reserve rule fixed
+ *   { kind: 'cancel', k, why }                       FIXED -> CANCELLED; a CANCELLED row never changes
+ * Answers { ok: true, row } or { ok: false, why }.
+ */
+export const FUNDING_PAYMENT_STATE = Object.freeze({ FIXED: 'FIXED', CANCELLED: 'CANCELLED' });
+export const fundingPaymentStateOf = (row) => (!row ? null : row.cancelled !== null && row.cancelled !== undefined ? FUNDING_PAYMENT_STATE.CANCELLED : FUNDING_PAYMENT_STATE.FIXED);
+export function fundingPaymentStep(row, ev) {
+  const state = fundingPaymentStateOf(row);
+  const count = (n) => n === 1 || n === FUNDING_TRANCHES;
+  if (ev.kind === 'fix') return state === null && count(ev.tranches) ? { ok: true, row: { tranches: ev.tranches, cancelled: null, cancelled_k: null } }
+    : { ok: false, why: state ? 'its parts are fixed already' : 'no such part count' };
+  if (ev.kind === 'refix') {
+    if (state !== FUNDING_PAYMENT_STATE.FIXED) return { ok: false, why: state ? 'a cancelled proposal keeps its parts' : 'nothing fixed to change' };
+    if (ev.payable !== false) return { ok: false, why: 'a part is payable already: it may have gone under its id' };
+    if (!count(ev.tranches) || ev.tranches === row.tranches) return { ok: false, why: 'no other part count' };
+    return { ok: true, row: { ...row, tranches: ev.tranches } };
+  }
+  if (ev.kind === 'cancel') {
+    if (state !== FUNDING_PAYMENT_STATE.FIXED) return { ok: false, why: state ? 'cancelled already, for good' : 'nothing fixed to cancel' };
+    if (!Number.isInteger(ev.k) || ev.k < 0 || ev.k >= row.tranches) return { ok: false, why: 'no such part' };
+    return { ok: true, row: { ...row, cancelled: String(ev.why || 'cancelled'), cancelled_k: ev.k } };
+  }
+  return { ok: false, why: 'no such step' };
+}
+
+/**
  * `db` a better-sqlite3 handle; `verify(sig, digest, key32)` BIP340; `isBonded(nodeHex)` true / false, or null when this seat cannot
  * tell yet; `tip()` this seat's height (a promise; null when unknown); `activeAt(endHeight)` -> { ok, nodes: [hex] } or { ok: false, why };
  * `schedule` FUNDING_SCHEDULES.spec unless a live proof runs the short one; `seasonedNodes(networkHex, publishedHeight, atHeight)` -> [hex]
@@ -143,25 +183,43 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     return done;
   }
   /**
-   * THE PAYMENTS A PASSED PROPOSAL MAY MAKE NOW (§27A.9.5 rule 5): its tranches (fixed once, from `reservesSatsOf(pid)` - its paying
-   * reserves when first asked), each payable when its due block is `decideDepth` deep and a re-count of every vote up to it still
-   * passes. A failed re-count cancels that payment and every later one, for good. Answers [{ id, proposal, k, of, lnurl, amountSats,
-   * proposalSats, dueAt, decidableAt }] and, in `cancelled`, the proposals stopped.
+   * THE PAYMENTS A PASSED PROPOSAL MAY MAKE NOW (§27A.9.5 rule 5): its parts (trancheCountOf: from its own amount, so every seat names
+   * the same part ids - kanban #1175; `reservesSatsOf` is no longer read), each payable when its due block is `decideDepth` deep and a
+   * re-count of every vote up to it still passes. A failed re-count cancels that payment and every later one, for good. Answers [{ id,
+   * proposal, k, of, lnurl, amountSats, proposalSats, dueAt, decidableAt }].
    */
-  function payments({ tip, reservesSatsOf = () => 0n } = {}) {
+  // every write of a payment row is one fundingPaymentStep, kept by compare-and-set on the row as it was read
+  const paymentRow = (pid) => db.prepare('SELECT tranches, cancelled, cancelled_k FROM funding_payments WHERE proposal = ?').get(pid) || null;
+  function stepPayment(pid, ev) {
+    const was = paymentRow(pid);
+    const s = fundingPaymentStep(was, ev); if (!s.ok) return { ...s, row: was };
+    const r = s.row;
+    const ch = was === null
+      ? db.prepare('INSERT OR IGNORE INTO funding_payments (proposal, tranches, cancelled, cancelled_k) VALUES (?, ?, ?, ?)').run(pid, r.tranches, r.cancelled, r.cancelled_k).changes
+      : db.prepare('UPDATE funding_payments SET tranches = ?, cancelled = ?, cancelled_k = ? WHERE proposal = ? AND tranches = ? AND cancelled IS ? AND cancelled_k IS ?')
+        .run(r.tranches, r.cancelled, r.cancelled_k, pid, was.tranches, was.cancelled, was.cancelled_k).changes;
+    return ch === 1 ? { ok: true, row: r } : { ok: false, why: 'the row moved meanwhile', row: paymentRow(pid) };
+  }
+  function payments({ tip } = {}) {
     const out = [];
     for (const row of rows('proposal')) {
       const decided = voteOutcome(row.id); if (!decided || !decided.passed) continue;
       const p = read('proposal', row.hex); if (!p.ok) continue;
       const period = votePeriodOf({ proposal: p.obj, signal: outcomeOf(row.id), schedule }); if (!period) continue;
-      let fixed = db.prepare('SELECT tranches, cancelled, cancelled_k FROM funding_payments WHERE proposal = ?').get(row.id);
-      if (!fixed) {
-        const n = trancheSchedule({ amountSats: p.obj.amountSats, reservesSats: BigInt(reservesSatsOf(row.id) || 0n), last: period.last, schedule }).length;
-        db.prepare('INSERT OR IGNORE INTO funding_payments (proposal, tranches, cancelled) VALUES (?, ?, NULL)').run(row.id, n);
-        fixed = { tranches: n, cancelled: null, cancelled_k: null };
+      const n = trancheCountOf(p.obj.amountSats);
+      const scheduleOf = (parts) => trancheSchedule({ amountSats: p.obj.amountSats, reservesSats: parts === 1 ? 0n : p.obj.amountSats, last: period.last, schedule });
+      let fixed = paymentRow(row.id);
+      if (!fixed) fixed = stepPayment(row.id, { kind: 'fix', tranches: n }).row;
+      else if (fixed.tranches !== n && fundingPaymentStateOf(fixed) === FUNDING_PAYMENT_STATE.FIXED) {
+        // a row the old reserve rule fixed: set right while no part of either count is payable yet, else it stands (a part may have gone)
+        const payable = [scheduleOf(fixed.tranches)[0], scheduleOf(n)[0]].some((t) => Number.isInteger(tip) && tip >= t.payableAt);
+        const s = stepPayment(row.id, { kind: 'refix', tranches: n, payable });
+        if (s.ok) log(`[funding] ${row.id.slice(0, 16)}: its payment goes in ${n} part(s), not the ${fixed.tranches} this seat's reserve rows once gave`);
+        fixed = s.row;
       }
+      if (!fixed) continue;
       const held = voteBlocks(row.id); const readTo = held.length ? held[held.length - 1].height : -1;
-      const plan = trancheSchedule({ amountSats: p.obj.amountSats, reservesSats: fixed.tranches === 1 ? 0n : p.obj.amountSats, last: period.last, schedule });
+      const plan = scheduleOf(fixed.tranches);
       for (const t of plan) {
         // a cancelled proposal keeps listing the payments due before the cancelling one: they may have gone, and their records stand
         if (fixed.cancelled_k !== null && t.k >= fixed.cancelled_k) break;
@@ -169,8 +227,8 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         const again = countOf(row.id, period, p.obj, t.dueAt + 1);
         if (!again || !again.passed) {
           const why = `payment ${t.k + 1} of ${t.of} cancelled at its due block ${t.dueAt}: YES ${again ? again.approvalPct : '?'} % of YES + NO, ${again ? again.yesOfAllPct : '?'} % of everyone who could vote`;
-          db.prepare('UPDATE funding_payments SET cancelled = ?, cancelled_k = ? WHERE proposal = ?').run(why, t.k, row.id);
-          log(`[funding] ${row.id.slice(0, 16)}: ${why}`);
+          // compare-and-set from FIXED: a re-count after a reorg never moves a cancellation already kept
+          if (stepPayment(row.id, { kind: 'cancel', k: t.k, why }).ok) log(`[funding] ${row.id.slice(0, 16)}: ${why}`);
           break;
         }
         out.push({ id: trancheIdOf(row.id, t.k, t.of), proposal: row.id, k: t.k, of: t.of, lnurl: p.obj.lnurl, amountSats: t.amountSats,
