@@ -9357,6 +9357,19 @@ the same clock the census already uses.
 `activation_height` MUST be at or after the end of cooldown; a proposal that
 names an earlier one is invalid on its face.
 
+**A seat decides a ballot 3 blocks deep at least (RULED 2026-11-06, kanban #1196,
+#1152).** A seat decides a proposal once its last voting block is buried as deep
+as 6 blocks, counting the block itself, but never later than the block before
+`activation_height`. It never decides at fewer than 3. A proposal whose
+`activation_height` leaves fewer than 3 blocks after its last voting block is invalid on its
+face, so a 1- or 2-block reorg can never activate or undo a config after rounds
+were made under it. A deeper reorg that replaces the counted last block reopens
+the decision, as before. Regtest keeps its own schedule (1 / 6 / 1) and depth 1.
+This applies to proposals published at or after the network's `BALLOT_DEPTH_HEIGHT`
+(regtest 0, testnet4 the height its seats roll to this rule, mainnet from its first
+block). Older proposals keep the old rule, so seats on older releases never split
+over them.
+
 **Thresholds by class**, of the bonded capital in the snapshot:
 
 | | turnout | approval of non-abstaining weight |
@@ -9397,7 +9410,8 @@ start. The network degrades to no rounds rather than to bad rounds, which is
 the correct direction.
 
 And a **repeal** runs on a short schedule - review 0, voting 720, cooldown
-0 - but *only* if its `config` is byte-identical to an ancestor that was
+2 (RULED 2026-11-06, kanban #1196: it was 0, which let a repeal decided 3 deep
+activate before its decision was final; regtest stays 0 / 6 / 0) - but *only* if its `config` is byte-identical to an ancestor that was
 live before. It can go back, never forward. That cannot be abused into a
 fast path for new changes, because the only configurations it can reach are
 ones the network already ran.
