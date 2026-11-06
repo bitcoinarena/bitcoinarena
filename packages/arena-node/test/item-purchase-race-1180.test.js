@@ -14,6 +14,7 @@ import * as purchase from '../../arena-protocol/src/purchase.js';
 import { ITEMS_VERSION } from '../../arena-protocol/src/constants.js';
 import { SERVED_WINDOW_MS } from '../../arena-protocol/src/served-nodes.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { donationContractFields } from '../src/stake-lock-signer-node.js';
 
 const { keepItemPurchase, itemsOwned } = seat;
 const { purchaseOutputs, purchaseId } = purchase;
@@ -83,4 +84,26 @@ test('#1180: the purchase row\'s transition function: PENDING -> KEPT; KEPT neve
   assert.equal(step(kept, { kind: 'keep', id: 'aa'.repeat(32) }, 2000).ok, false, 'kept once');
   assert.equal(step(kept, { kind: 'drop', id: 'aa'.repeat(32) }, 2000).ok, false, 'a kept purchase is never dropped');
   assert.equal(step(kept, { kind: 'claim', id: 'bb'.repeat(32) }, 10 ** 12).status, 409, 'nor taken over, however old');
+});
+
+// KANBAN #1217 (audit 3 #1210 FIXES-5): #1180 checked the payment against the item's image, but every row it wrote still named the buyer's
+// key as the image - and a collector rebuilds the contract from the row's image: a contract nobody could rebuild, every developer share of
+// every purchase since the fix stuck. Now a row names the image its output was matched with; an old page's payment keeps the buyer's key.
+test('#1217 a purchase\'s rows name the image the federation holds: a collector rebuilds each contract - item image and legacy key alike', async () => {
+  for (const kind of ['item image', 'legacy buyer key']) {
+    const db = openStore(':memory:');
+    const p = record('large-truck');
+    const image = kind === 'item image' ? imageOf(p) : p.playerPubkey;
+    const held = paidWith(p, image);
+    const rows = [];
+    const r = await keepItemPurchase({ ...base, db, p, port: slowFed(held), keepDonations: (x) => rows.push(...x), legacyImage: true });
+    assert.equal(r.ok, true, `${kind}: ${r.why}`);
+    const all = [...rows, ...(r.reserve ? [r.reserve] : [])];
+    assert.ok(all.length >= p.outputs.length - 1, `${kind}: rows written`);
+    for (const row of all) {
+      // as a collector does: the stock contract from the row's recipient, amount and image
+      const rebuilt = cid(donationContractFields({ recipientPk: row.recipientPk, amountMsat: row.amountMsat, image: Uint8Array.from(Buffer.from(row.image, 'hex')) }));
+      assert.equal(rebuilt, held.get(`${toHex(row.outpoint.txid)}:${row.outpoint.outIdx}`), `${kind}: output ${row.outpoint.outIdx} cannot be rebuilt from its row`);
+    }
+  }
 });
