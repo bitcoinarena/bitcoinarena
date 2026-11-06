@@ -214,7 +214,8 @@ function fedEnv(extra = {}) {
   return { ...env, PATH: [FED, dirname(process.execPath), env.PATH || ''].join(delimiter), HOME: path('home'),
     ARENA_BITCOIND_URL: RPC_URL, ARENA_BITCOIND_COOKIE: COOKIE(), ARENA_TN4_NETWORK: 'regtest',
     // FROM PROTOCOL 11 AN ENTRY PAYS THE DEVELOPERS AND THE RESERVES AS KEYS: the seats serve, and the rounds name, the regtest key set
-    ...(Number(env.ARENA_PROTOCOL_VERSION || 1) >= 11 ? { ARENA_REGTEST_DONATION_SET: 'keys' } : {}),
+    // DEVNET_DONATION_SET=lnurl (kanban #1044, ruling #1145 A): the signed regtest LNURL set instead, so a walk-away's donation is a gateway send
+    ...(Number(env.ARENA_PROTOCOL_VERSION || 1) >= 11 && env.DEVNET_DONATION_SET !== 'lnurl' ? { ARENA_REGTEST_DONATION_SET: 'keys' } : {}),
     // EACH GUARDIAN'S ENDPOINT, NAMED: the node's own /guardian door on 127.0.0.1. Derived from Tailscale otherwise
     // (guardian.js readTailscale), which on a machine with a Funnel asks it for every node - and a devnet is local.
     ...Object.fromEntries(PLAN.nodes.map((p) => [`ARENA_GUARDIAN_ENDPOINT_${p}`, `ws://127.0.0.1:${p}/guardian`])),
@@ -554,6 +555,9 @@ async function runner() {
     // THE FIRST ROUND IS THE LOBBY'S FREE ONE, the paid one beside it (openNext): a paid round that a node refuses does not
     // take the devnet down with it - it is said, and the free round still plays
     const round = await standUpRound({ host: '127.0.0.1', portA: pa, portB: pb, extraPorts: more, store: path('runner'), network: 'regtest',
+      // DEVNET_DONATION_SET=lnurl (kanban #1044): the set's recipients door on 18777 is the harness's (tools/named-offence-devnet.mjs donation-resend),
+      // so the runner binds none - measured 2026-11-06 on s29b/s29c: both bound it and the runner's, with no Lightning node to invoice from, took every ask
+      ...(env.DEVNET_DONATION_SET === 'lnurl' ? { donationRecipients: null } : {}),
       // each node's own store, read-only, for the secret its first bond is posted with
       storePaths: PLAN.nodes.map((_, k) => storeOf(k)),
       wallet: WALLET, cli: cliW, rpc, federationId: fed.federationId, invite, guardianOf, entryWindowMs: BigInt(FREE_WINDOW_MS),
