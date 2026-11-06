@@ -208,7 +208,7 @@ export function createDayDuty(o) {
     committeeLeadMs = guard.DUTY_DAY_COMMITTEE_LEAD_MS, rankCap = guard.DUTY_DAY_RANK_CAP, drawableByMs = guard.DUTY_DRAWABLE_BY_MS,
     emergencyOn = true, emergencyCommitteeLeadMs = guard.DUTY_EMERGENCY_COMMITTEE_LEAD_MS, seedWaitMs = guard.DUTY_SEED_WAIT_MS,
     drawSeats = 12, dryRank0 = false, seatsAgreeOn = null, role = 'primary', postedPrimary = async () => false, fetchFn = fetch, say = () => {}, now = Date.now, canPay = async () => ({ ok: true }),
-    announce = null, publicSend = null, creatorOf = null, creators = [] } = o;
+    announce = null, publicSend = null, creatorOf = null, seriesInfoOf = null, creators = [] } = o;
   // WHO A MARKER IS FROM (kanban #1168, MARKER above): `creatorOf(seriesIdHex)` the creator key (hex) of a series whose signed line this
   // process holds - null for none; `creators` the creator keys the operator names as duty posters beside the day's duty order
   const trusted = new Set((creators || []).map((k) => String(k).trim().toLowerCase()).filter((k) => /^[0-9a-f]{64}$/.test(k)));
@@ -234,12 +234,29 @@ export function createDayDuty(o) {
   const keep = (k) => { const { file, ...rest } = k; writeFileSync(file, JSON.stringify(rest) + '\n'); };
   // THIS DUTY'S OWN POSTINGS OF A DAY: their txids, and the ones a fee raise replaced
   const ownTxids = (slot) => new Set([...keptOf(slot).flatMap((k) => [k.txid, ...(k.replaced || [])]), ...seen.mine.filter((x) => x.slot === slot).map((x) => x.txid)].filter(Boolean));
+  // A MARKER'S POSTER IS THE CREATOR OF A SERIES IT PUBLISHES FOR ITS DAY (kanban #1204 FED-C1): with `seriesInfoOf`, only a series of
+  // this app (any version) whose first round closes inside the marker's target day speaks for it - a copied id of a series already held
+  // (yesterday's, another app's) made one cheap tx count as the day's posting at every seat (the #1168 fix took any held id)
+  const allFamilyIds = async () => {
+    const all = [...((await seatCatalog().catch(() => null)) || new Map()).values()].filter((g) => g.name === guard.DUTY_APP_NAMES[game] && (!devOf[game] || g.dev === devOf[game]));
+    return new Set(all.map((g) => String(g.id)));
+  };
   const creatorOfMarker = async (m) => {
-    if (creatorOfTx.has(m.txid)) return creatorOfTx.get(m.txid);
-    if (typeof creatorOf !== 'function') return null;
+    const key = `${m.txid}:${m.slot}:${m.tag}`;
+    if (creatorOfTx.has(key)) return creatorOfTx.get(key);
+    if (typeof creatorOf !== 'function' && typeof seriesInfoOf !== 'function') return null;
+    const day = targetDay(m.slot);
+    let family = null;
     for (const id of m.series || []) {
-      let c = null; try { c = await creatorOf(id); } catch { c = null; }
-      if (c) { c = String(c).toLowerCase(); creatorOfTx.set(m.txid, c); if (creatorOfTx.size > 5000) creatorOfTx.delete(creatorOfTx.keys().next().value); return c; }
+      let c = null;
+      if (typeof seriesInfoOf === 'function') {
+        let info = null; try { info = await seriesInfoOf(id); } catch { info = null; }
+        if (!info || !info.creator) continue;
+        if (!(Number(info.firstCloseMs) >= day.startMs && Number(info.firstCloseMs) < day.endMs)) continue;
+        if (info.gameId) { if (!family) family = await allFamilyIds(); if (family.size && !family.has(String(info.gameId))) continue; }
+        c = info.creator;
+      } else { try { c = await creatorOf(id); } catch { c = null; } }
+      if (c) { c = String(c).toLowerCase(); creatorOfTx.set(key, c); if (creatorOfTx.size > 5000) creatorOfTx.delete(creatorOfTx.keys().next().value); return c; }
     }
     return null;
   };

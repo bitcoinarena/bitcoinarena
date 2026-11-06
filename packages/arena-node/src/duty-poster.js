@@ -309,7 +309,7 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
       announce, publicSend: env.ARENA_DUTY_ESPLORA === '0' ? null : publicSend,
       // WHO A DAY MARKER IS FROM (kanban #1168): the creator of a series this seat holds or was announced; ARENA_DUTY_CREATORS the creator
       // keys (hex, comma-separated) the operator counts as duty posters beside the day's duty order - a runner whose key is not a census node
-      creatorOf, creators: String(env.ARENA_DUTY_CREATORS || '').split(',').map((x) => x.trim()).filter(Boolean) });
+      creatorOf, seriesInfoOf, creators: String(env.ARENA_DUTY_CREATORS || '').split(',').map((x) => x.trim()).filter(Boolean) });
     engines.set(key, e);
     return e;
   };
@@ -323,6 +323,21 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
       creatorsAt = held.length;
     }
     return creators.get(String(idHex)) || (typeof seat.announcedCreatorOf === 'function' ? seat.announcedCreatorOf(String(idHex)) : null);
+  };
+  // WHAT A MARKER'S SERIES IS (kanban #1204 FED-C1): its creator, its game and when its first round closes - a day marker counts only
+  // for a series of its own app that plays the day it posts, so a copied id of yesterday's (or another app's) series does not
+  let infos = new Map(), infosAt = -1;
+  const seriesInfoOf = (idHex) => {
+    const held = seat.heldTemplates();
+    if (held.length !== infosAt) {
+      infos = new Map();
+      for (const t of held) { if (!(t && t.creatorPubkey instanceof Uint8Array)) continue;
+        try { infos.set(toHex(seriesId(t)), { creator: toHex(t.creatorPubkey), gameId: t.gameId ? toHex(t.gameId) : null, firstCloseMs: Number(t.entryCloseMs) }); } catch { /* not a series */ } }
+      infosAt = held.length;
+    }
+    const h = infos.get(String(idHex)); if (h) return h;
+    const a = typeof seat.announcedOf === 'function' ? seat.announcedOf(String(idHex)) : null;
+    return a && a.creator ? { creator: String(a.creator), gameId: a.gameId || null, firstCloseMs: Number(a.firstCloseMs) } : null;
   };
   let gridBases = null;
   const gridBaseOf = () => gridBases || (gridBases = createGridBase({ chainCall: call,

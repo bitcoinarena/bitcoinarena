@@ -12814,7 +12814,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // the creator of a grid announced here (POST /expected, its creator signature checked there) - a day marker's poster (kanban #1168)
       announcedCreatorOf: (idHex) => { const e = announced.get(String(idHex)); return e && e.creator ? String(e.creator) : null; },
       // a 22 census less its absent (kanban #727)
-      lessAbsent: postingLessAbsent });
+      lessAbsent: postingLessAbsent,
+      // and the whole announced grid: its game and first close, so a marker counts only for its own app's day (kanban #1204 FED-C1)
+      announcedOf: (idHex) => announced.get(String(idHex)) || null });
   };
   return new Promise((resolve) => {
     http.listen(port, host, () => { dutyAttach(); resolve({
