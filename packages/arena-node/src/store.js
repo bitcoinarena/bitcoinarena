@@ -1216,6 +1216,20 @@ export function openStore(path = ':memory:') {
       made_ms      INTEGER NOT NULL
     );
 
+    -- WHEN A CLOSED LOCK ROUND NOBODY SETTLED IS ASKED AGAIN (kanban #1186), per (round, scope) - scope '' the round's own settlement: its tries and the
+    -- chain height before which it is not asked again, kept across restarts, and a terminal state: SETTLED (ACCEPTED here) or EXPIRED (every stake
+    -- lock of the round past its expiration: nothing can be claimed any more, each lock returns to its player). Moved only by settle-retry.js.
+    CREATE TABLE IF NOT EXISTS settle_retries (
+      round_id        BLOB NOT NULL,
+      scope           TEXT NOT NULL,
+      state           TEXT NOT NULL,
+      tries           INTEGER NOT NULL,
+      next_at_height  INTEGER,
+      why             TEXT NOT NULL,
+      updated_ms      INTEGER NOT NULL,
+      PRIMARY KEY (round_id, scope)
+    );
+
     -- WHAT THIS SEAT COMMITTED A LOCK TO (kanban #1184): CLAIMING once it acked, shared, was handed or kept a settlement that claims the
     -- outpoint; RETURNING once it gave a share of, took or kept a forfeit of it. Written once (compare-and-set: INSERT OR IGNORE, then read
     -- back), before the ack, share or forfeit leaves this seat; a lock is never both - two valid spends of one lock, the faster wins.
