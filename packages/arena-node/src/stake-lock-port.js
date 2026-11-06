@@ -159,7 +159,14 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
   // asks every question the old way, one run each.
   const server = serve && readDataDir !== dataDir ? stakeLockServer({ bin, dataDir: readDataDir, timeoutMs: Math.min(timeoutMs, 10000), spawnFn, now }) : null;
   const read = async (flags) => {
-    if (server) { try { return await server.ask(flags[1], argsOf(flags.slice(2).filter((x, i, a) => !(x === '--data-dir' || a[i - 1] === '--data-dir')))); } catch { /* the old way below */ } }
+    if (server) {
+      try { return await server.ask(flags[1], argsOf(flags.slice(2).filter((x, i, a) => !(x === '--data-dir' || a[i - 1] === '--data-dir')))); } catch (e) {
+        // SEND-CLAIMED ON A TOOL BUILT BEFORE IT (kanban #1185): its server answers every mode the one run does, so a server that does not
+        // know it is a binary that does not - the one run would wait on the read directory the server holds before it says so; said at once
+        if (flags[1] === 'send-claimed' && /serve answers .* - not send-claimed/.test(String(e && e.message))) throw e;
+        /* the old way below */
+      }
+    }
     return run(bin, flags, Math.min(timeoutMs, READ_TIMEOUT_MS));
   };
   // A CONFIG READ IS KEPT ON DISK BESIDE THE CLIENT: the raw answer, so a restart shapes it as the read does
@@ -180,6 +187,17 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
         blockCount: Number(j.block_count),
         stored: j.stored ? { contractId: String(j.stored.contract_id), blocksLeft: Number(j.stored.blocks_left) } : null,
       };
+    },
+    /**
+     * DID A GATEWAY CLAIM THE OUTGOING CONTRACT AT THIS OUTPOINT (kanban #1185, the tool's send-claimed): the preimage the guardians
+     * stored when its Claim(preimage) input was accepted. { claimed, state: 'claimed' | 'stored' | 'gone', preimage? } - 'gone' is
+     * refunded or never made, which the guardians do not tell apart. A tool without the mode throws: settlement reads that as 'mixed'.
+     */
+    async sendClaimed(outpoint) {
+      const j = await read(['--mode', 'send-claimed', '--data-dir', readDataDir, '--outpoint', outpointArg(outpoint)]);
+      if (j.mode !== 'send-claimed' || typeof j.claimed !== 'boolean') throw new Error(`this stake-lock tool cannot read a gateway's claim: ${j.error || JSON.stringify(j).slice(0, 120)}`);
+      return { claimed: j.claimed === true && typeof j.preimage === 'string' && j.preimage.length === 64, state: String(j.state),
+        preimage: j.preimage ? fromHex(String(j.preimage)) : null };
     },
     async contractId(fields) {
       const j = await read(['--mode', 'id', ...contractArgs(fields)]);
