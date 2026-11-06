@@ -2791,6 +2791,34 @@ export class Round {
       .run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(message), Buffer.from(signature), Buffer.from(claimPk), this.now());
   }
 
+  /** A round's retry row (kanban #1186): { state, tries, nextAtHeight, why } or null. */
+  settleRetry(roundIdBytes, scope = '') {
+    const r = this.db.prepare('SELECT state, tries, next_at_height, why FROM settle_retries WHERE round_id = ? AND scope = ?').get(Buffer.from(roundIdBytes), String(scope));
+    return r ? { state: r.state, tries: Number(r.tries), nextAtHeight: r.next_at_height === null ? null : Number(r.next_at_height), why: r.why } : null;
+  }
+
+  /** A retry row moved, compare-and-set on the state it was read in (`from`: null for none): true if it moved. */
+  putSettleRetry({ roundId, scope = '', from = null, state, tries, nextAtHeight = null, why }) {
+    const args = [String(state), Number(tries), nextAtHeight === null ? null : Number(nextAtHeight), String(why), this.now()];
+    if (from === null)
+      return this.db.prepare('INSERT OR IGNORE INTO settle_retries (state, tries, next_at_height, why, updated_ms, round_id, scope) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(...args, Buffer.from(roundId), String(scope)).changes > 0;
+    return this.db.prepare('UPDATE settle_retries SET state = ?, tries = ?, next_at_height = ?, why = ?, updated_ms = ? WHERE round_id = ? AND scope = ? AND state = ?')
+      .run(...args, Buffer.from(roundId), String(scope), String(from)).changes > 0;
+  }
+
+  /** The highest expiration (block height) of the round's stake locks this seat verified, or null with none (kanban #1186). */
+  lastLockExpiration(roundIdBytes) {
+    let most = null;
+    for (const r of this.db.prepare('SELECT fields FROM stake_locks WHERE round_id = ?').all(Buffer.from(roundIdBytes))) {
+      let e;
+      try { e = Number(JSON.parse(r.fields).expiration); } catch { return null; }
+      if (!Number.isSafeInteger(e)) return null;
+      most = most === null ? e : Math.max(most, e);
+    }
+    return most;
+  }
+
   /** What this seat committed a lock to (kanban #1184): { state, roundId, txid, why } or null. */
   lockFate(outpoint) {
     const r = this.db.prepare('SELECT round_id, state, txid, why FROM lock_fates WHERE outpoint = ?').get(String(outpoint));
@@ -2910,6 +2938,7 @@ export class Round {
     return this.db.prepare(`SELECT DISTINCT r.round_id FROM stake_locks s JOIN rounds r ON r.round_id = s.round_id
       WHERE r.state = ? AND r.closed_ms >= ? AND r.closed_ms < ?
         AND NOT EXISTS (SELECT 1 FROM lock_settlements l WHERE l.round_id = r.round_id AND l.state = 'ACCEPTED')
+        AND NOT EXISTS (SELECT 1 FROM settle_retries t WHERE t.round_id = r.round_id AND t.scope = '' AND t.state IN ('SETTLED', 'EXPIRED'))
         AND NOT (EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id)
           AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id AND f.state <> 'ACCEPTED'))`)
       .all(CLOSED, fromMs, toMs).map((r) => new Uint8Array(r.round_id));

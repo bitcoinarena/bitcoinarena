@@ -8,6 +8,20 @@
 // A REFUSAL THAT CANNOT CHANGE WAITS LONGER (measured 2026-10-23, 2,350 attested rounds a seat with 20 market bots: a closed,
 // attested round with no counted entry - every round of the federation the bots do not pay through - was asked every 60 s for
 // good): `refused(k, { maxMs })` lets the caller cap that one round's wait higher.
+// BY CODE, NOT BY TEXT (kanban #1186): the sweep read these off a regex over the English refusal, so a reworded refusal fell back to the 60 s wait and a
+// refusal quoting one of these phrases took the long one. settlement.js names each refusal of this kind with a REFUSAL code; the text is for people.
+export const REFUSAL = Object.freeze({
+  NO_COUNTED_ENTRY: 'NO_COUNTED_ENTRY',   // an attested round with no counted entry: nothing is claimed
+  NOTHING_CLAIMED: 'NOTHING_CLAIMED',     // the plan claims no lock (no order filled, nobody lost a lock)
+  NOT_A_SEAT: 'NOT_A_SEAT',               // this node is not one of the round's signer nodes
+  NO_ASKER: 'NO_ASKER',                   // the round names no asker (it joined nobody)
+  NOT_MY_TURN: 'NOT_MY_TURN',             // another seat combines now; `takeoverAt` the height this one may, when it reads one
+});
+// THIS LINE'S LONG WAIT IS FOR THE ONE REFUSAL IT HAD (an attested round with no counted entry); #1067's others are the 2.0 line's
+const FOR_GOOD = new Set([REFUSAL.NO_COUNTED_ENTRY]);
+/** Whether a settle's answer is a refusal that cannot change (kanban #1067), by its code. */
+export const refusedForGood = (got) => !!got && !got.ok && FOR_GOOD.has(got.code);
+
 export function createSettleBackoff({ now = () => Date.now(), firstMs = 5000, maxMs = 60000 } = {}) {
   const waits = new Map();                   // round hex -> { at, tries }
   return {
