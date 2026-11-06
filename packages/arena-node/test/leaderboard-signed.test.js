@@ -59,6 +59,7 @@ function world(views, { clock = { now: DUE_MS } } = {}) {
   for (const r of reserveRows) fed.contracts.set(r.outpoint, { key: toHex(KEY), msat: BigInt(r.amountMsat), spent: false });
   const msgOf = (o) => sha256(new TextEncoder().encode(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v))));
   const seats = [];
+  const chain = { tip: null };
   const port = {
     fees: async () => FEES,
     status: async (at) => { const c = fed.contracts.get(`${toHex(at.txid)}:${at.outIdx}`); return { blockCount: 0, stored: c && !c.spent ? { contractId: 'c', blocksLeft: 0 } : null }; },
@@ -81,11 +82,13 @@ function world(views, { clock = { now: DUE_MS } } = {}) {
     const db = openStore(':memory:');
     s.book = createWinnersBook({ db, paramsOf: async () => ({ ok: true, ...SEASON }), collect: async () => { s.collects++; return new Map(views(i)); },
       seatsOf: DRAW, verify, now: () => clock.now });
-    s.api = createReservePayouts({ db, me: NODE_KEYS[i], curve, random: rand, network: 'testnet4', passed: () => [], leaderboards: () => due, winners: s.book, sign: (d) => schnorr.sign(d, SECRET_OF.get(NODE_KEYS[i])),
+    s.api = createReservePayouts({ db, me: NODE_KEYS[i], heightNow: () => chain.tip, curve, random: rand, network: 'testnet4', passed: () => [], leaderboards: () => due, winners: s.book, sign: (d) => schnorr.sign(d, SECRET_OF.get(NODE_KEYS[i])),
       reserveRows: () => reserveRows, portOf: async () => port, payRequest: async () => ({ ok: false }), invoiceFor: async () => ({ ok: false }),
       broadcast: (rec) => { for (const o of seats) if (o !== s) o.inbox.push(rec); },
       guardians: () => new Map([[FED, { members: NODE_KEYS, key: KEY, needed: 5, signer: { id: i + 1, share: DEAL.shares[i].share },
         peers: seats.filter((o) => o !== s).map((o) => ({ commit: (b) => o.api.commit(b), share: (b) => o.api.share(b), winners: async (id) => o.book.recordOf(id) })) }]]) });
+    // ONE CHAIN (kanban #1159): every seat reads the height the last pass ran at, as a seat reads its tip
+    { const pass = s.api.round; s.api.round = (o = {}) => { chain.tip = o.height; return pass(o); }; }
     seats.push(s);
   }
   const deliver = async () => { for (const s of seats) { while (s.inbox.length) await s.api.learn(s.inbox.shift()); } };
@@ -123,7 +126,9 @@ test('nothing irreversible before its state is persisted: at the transaction eve
   const at = w.fed.atSubmit[0];
   const planned = at.filter((x) => x.winners === WINNERS.PLANNED);
   assert.ok(planned.length >= 5, `${planned.length} seats held the list PLANNED when the transaction went in`);
-  assert.ok(planned.every((x) => x.payout === PAYOUT.PLANNED), 'and the payout PLANNED');
+  // the co-signers hold the payout PLANNED; the coordinator SUBMITTING - its signed transaction kept before it went in (kanban #1159)
+  assert.equal(at[0].payout, PAYOUT.SUBMITTING, 'the coordinator kept the signed transaction first');
+  assert.ok(planned.every((x) => x.payout === PAYOUT.PLANNED || x.payout === PAYOUT.SUBMITTING), 'and the payout PLANNED');
   assert.equal(new Set(planned.map((x) => x.list)).size, 1, 'the same list at every co-signer');
 });
 
