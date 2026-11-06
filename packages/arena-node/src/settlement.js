@@ -185,7 +185,7 @@ export class LockSettlement {
   constructor(round, { dkg, port, curve, random, stakeSecrets, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
     signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null,
     turnClock = null, donationSetFor = null, donationTargetFor = null, orderBook = null, now = () => Date.now(), conflictsFor = null,
-    reserveKeyFor = null, payeesFor = null, feesFor = null, peerKeyOf = () => null, peerAskMs = PEER_ASK_MS, peerReadMs = PEER_READ_MS, peerGraceMs = PEER_GRACE_MS, askPointOf = undefined, finalityOf = resultFinality } = {}) {
+    reserveKeyFor = null, payeesFor = null, feesFor = null, peerKeyOf = () => null, peerAskMs = PEER_ASK_MS, peerReadMs = PEER_READ_MS, peerGraceMs = PEER_GRACE_MS, askPointOf = undefined, finalityOf = resultFinality, settledOf = settledResult } = {}) {
     this.round = round;
     // WHERE A NETWORK'S SETTLEMENT_ASK_HEIGHT LIES (kanban #1075): constants.js settlementAskPoint; a harness's own to read a round below it
     this.askPointOf = askPointOf;
@@ -216,6 +216,7 @@ export class LockSettlement {
     // HOW THIS SIGNER NODE READS A RUN'S FINALITY - `resultFinality`; a test may hand another view (a test aid, as
     // `finality.rerunMs` is), since two signer nodes that agree on a run cannot hold a valid objection against it.
     this.finalityOf = finalityOf;
+    this.settledOf = settledOf;   // a settled result, as finality.js reads it (lostForfeitAllowed); injected by tests
     // WHOSE TURN IT IS TO COMBINE (M3.3-19's clock): the round's beacon height and this node's chain tip, or null.
     this.turnClock = turnClock;
     // WINNINGS ALWAYS SENT (winnings-send.js): when given, a qualifier who named an address is paid by send, not collect.
@@ -1784,7 +1785,7 @@ export class LockSettlement {
       } else report.refused.push(`${fid.slice(0, 16)}: no payees read for the round: level 2 not read`);
       // A FORFEIT THE PROTOCOL ALLOWS (forfeit.js lostForfeitAllowed: ENTRY_VOID, nobody won) IS NO OFFENCE; one this seat cannot read yet waits for a later pass
       const allowedNow = new Map();
-      const allowedOf = (eid) => { if (!allowedNow.has(eid)) allowedNow.set(eid, lostForfeitAllowed(this.round, roundIdBytes, fromHex(eid), { finalityOf: this.finalityOf })); return allowedNow.get(eid); };
+      const allowedOf = (eid) => { if (!allowedNow.has(eid)) allowedNow.set(eid, lostForfeitAllowed(this.round, roundIdBytes, fromHex(eid), { finalityOf: this.finalityOf, settledOf: this.settledOf })); return allowedNow.get(eid); };
       for (const f of forfeits) for (const who of f.offenders) {
         const ok = allowedOf(f.entryId);
         if (ok.allowed !== false) { report.refused.push(`forfeit ${String(f.txid).slice(0, 16)} of entry ${f.entryId.slice(0, 16)}: ${ok.allowed ? `allowed - ${ok.why}` : `not read yet - ${ok.why}`}`); continue; }

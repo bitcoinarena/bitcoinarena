@@ -58,7 +58,7 @@ const lostResult = (seat, score = 0, outcome = 'FAILED') => {
   return joinSignedResult(encodePlayerResult(body), schnorr.sign(resultId(body), seat.secret));
 };
 
-// `nobodyWon`: the round's settlement ACCEPTED with no winner's share (forfeit.js nobodyWonReturn); by default a winner was paid
+// `nobodyWon`: no entry qualifies (forfeit.js nobodyWonReturn); by default entry 1 DELIVERED above the minimum - a winner
 function fakeRound({ floor = 3, nobodyWon = false } = {}) {
   const filed = [];
   return {
@@ -68,6 +68,7 @@ function fakeRound({ floor = 3, nobodyWon = false } = {}) {
     settlementState: () => 'ACCEPTED',
     lockSettlementShares: () => (nobodyWon ? [] : [{ pubkey: E[0].playerPubkey, msat: 98000n }]),
     entryVoid: () => null,
+    resultOf: (eid) => (!nobodyWon && toHex(eid) === toHex(EID[0]) ? { outcome: 'DELIVERED', score: 1000 } : { outcome: 'FAILED', score: 0 }),
     pubkey: seats[0].pubkey,
     plugins: [],
     get: (rid) => (toHex(rid) === toHex(RID) ? { contract: encodeRoundContract(contract) } : null),
@@ -101,7 +102,7 @@ const adverts = new Map(seats.map((s, i) => [xhex(s), { nodePubkey: s.pubkey, bo
 test('a seat files row (a) against each other named signer of a claim off its acked body, and row (b) against a named signer of a forfeit of an entry it signed lost', async () => {
   const asked = [];
   const round = fakeRound();
-  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), port: fakePort(asked), curve, stakeSecrets: { open: async () => ({ ok: false, why: 'not opened here' }) }, fetcher: async () => ({ ok: true }) });
+  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), settledOf: (...a) => FINALITY.settledOf(...a), port: fakePort(asked), curve, stakeSecrets: { open: async () => ({ ok: false, why: 'not opened here' }) }, fetcher: async () => ({ ok: true }) });
   const report = await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
   assert.deepEqual(asked.map((a) => a[0]), ['count', 'export', 'read']);
   assert.equal(asked[1][1], 3, 'the sessions are read from the round\'s funding floor');
@@ -130,13 +131,13 @@ test('the rebuild of its own acked body, a claim of locks it never claimed, or a
   const elsewhere = SPENDS.slice(0, 2).map((x, i) => ({ ...x, outpoint: `${'ef'.repeat(32)}:${i}` }));
   for (const spends of [honest, elsewhere]) {
     const round = fakeRound();
-    const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), port: fakePort([], spends), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
+    const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), settledOf: (...a) => FINALITY.settledOf(...a), port: fakePort([], spends), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
     await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
     assert.deepEqual(round.filed, []);
   }
   const asked = [];
   const none = fakeRound({ floor: null });
-  const s = new LockSettlement(none, { finalityOf: (...a) => FINALITY.finalityOf(...a), port: fakePort(asked), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
+  const s = new LockSettlement(none, { finalityOf: (...a) => FINALITY.finalityOf(...a), settledOf: (...a) => FINALITY.settledOf(...a), port: fakePort(asked), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
   const report = await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
   assert.deepEqual([none.filed.length, asked.length], [0, 0]);
   assert.match(report.refused.join('; '), /no funding-session floor kept/);
@@ -146,7 +147,7 @@ test('the funding floor is the federation\'s session count when the round comes 
   const kept = new Map();
   const asked = [];
   const round = { keepFundingSessionFloor: (rid, fid, n) => { if (!kept.has(fid)) kept.set(fid, n); }, fundingSessionFloor: (rid, fid) => (kept.has(fid) ? kept.get(fid) : null) };
-  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), port: fakePort(asked), curve, stakeSecrets: {}, fetcher: async () => ({ ok: true }) });
+  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), settledOf: (...a) => FINALITY.settledOf(...a), port: fakePort(asked), curve, stakeSecrets: {}, fetcher: async () => ({ ok: true }) });
   assert.deepEqual(await s.noteFundingFloor(RID, contract), [FID]);
   assert.deepEqual(await s.noteFundingFloor(RID, contract), []);
   assert.deepEqual([kept.get(FID), asked.filter((a) => a[0] === 'count').length], [7, 1]);
@@ -158,7 +159,7 @@ test('a seat\'s judge holds a filed row (b) on its own reading of the proof\'s s
   const { createProofJudge } = await import('../src/proof-judge.js');
   const { encodeFraudProof } = await import('../../arena-protocol/src/slash.js');
   const round = fakeRound();
-  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), port: fakePort([]), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
+  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), settledOf: (...a) => FINALITY.settledOf(...a), port: fakePort([]), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
   await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
   const filedB = round.filed.find((f) => f.row === NAMED_ROW_FORFEIT && f.who === xhex(seats[1]));
   const complete = encodeFraudProof({ evidence: filedB.bytes, contract: encodeRoundContract(contract) });
@@ -255,7 +256,7 @@ test('the filer reads from the bound once and never searches; a lock funded belo
     },
   };
   const round = fakeRound({ floor: 30 });
-  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), port, curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
+  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), settledOf: (...a) => FINALITY.settledOf(...a), port, curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
   const report = await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
   assert.deepEqual(asked, [30], 'one read, from the bound');
   assert.equal(report.filed.length, 0);
@@ -275,7 +276,7 @@ test('a claim paying a key the round may not pay is filed at level 2 against eac
   const payeesFor = async () => ({ nodeKeys: new Set(committee.map((k) => toHex(refundKeyOf(k)))), donationKeys: new Set(), reserveKeys: new Set() });
   const run = async (spends, opts = { payeesFor }) => {
     const round = fakeRound();
-    const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), port: fakePort([], spends), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }), ...opts });
+    const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), settledOf: (...a) => FINALITY.settledOf(...a), port: fakePort([], spends), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }), ...opts });
     return { round, report: await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null }) };
   };
   const off = await run(claim(thief));
@@ -296,7 +297,7 @@ test('a claim paying a key the round may not pay is filed at level 2 against eac
 test('no session finished since the bound: nothing is exported (the tool refuses an empty range), and it is said', async () => {
   const asked = [];
   const round = fakeRound({ floor: 7 });
-  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), port: fakePort(asked), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
+  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), settledOf: (...a) => FINALITY.settledOf(...a), port: fakePort(asked), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
   const report = await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
   assert.deepEqual(asked.map((a) => a[0]), ['count']);
   assert.equal(round.filed.length, 0);
@@ -326,7 +327,7 @@ test('a lock is searched once: a second verification of it reads nothing, and se
 test('a filer pass with no session finished since its last read of the round exports nothing', async () => {
   const asked = [];
   const round = fakeRound();
-  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), port: fakePort(asked), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
+  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), settledOf: (...a) => FINALITY.settledOf(...a), port: fakePort(asked), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
   await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
   assert.equal(asked.filter((a) => a[0] === 'export').length, 1);
   const report = await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
@@ -355,7 +356,7 @@ test('a filer read and a funding search of the same seat never run their tool at
   let running = 0, most = 0;
   const slow = (port) => ({ ...port, sessionExport: async (a) => { running += 1; most = Math.max(most, running); await new Promise((r) => setTimeout(r, 10)); try { return await port.sessionExport(a); } finally { running -= 1; } } });
   const round = fakeRound();
-  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), port: slow(fakePort([])), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
+  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), settledOf: (...a) => FINALITY.settledOf(...a), port: slow(fakePort([])), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
   await Promise.all([
     s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null }),
     keepLockSessionFloor({ round: new Round(openStore(':memory:')), port: slow(fundingPort({ fundedIn: 40, count: 100, asked: [], finishLater: 1 })), roundId: RID, federationId: TEST_FEDERATION_ID,
@@ -399,7 +400,7 @@ test('the same offence is filed once, though a later pass reads one session more
   const round = fakeRound();
   let count = 7;
   const port = { ...fakePort([]), sessionCount: async () => count };
-  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), port, curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
+  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), settledOf: (...a) => FINALITY.settledOf(...a), port, curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
   await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
   const first = round.filed.length;
   assert.ok(first > 0);
@@ -411,7 +412,7 @@ test('the same offence is filed once, though a later pass reads one session more
 
 // ---- kanban #1044 (measured 2026-11-05 on s28a, round b94a4863): a forfeit the protocol allows is no offence (b) ----
 // every result FINAL, entry 2's FAILED (finality.js reads a whole store; this round is a fake)
-const FINALITY = { finalityOf: () => ({ state: 'FINAL' }), settledOf: () => ({ outcome: 'FAILED', score: 0 }) };
+const FINALITY = { finalityOf: (r) => ({ state: r.notFinal ? 'PROVISIONALLY_FINAL' : 'FINAL' }), settledOf: (r, _rid, eid) => r.resultOf(eid) };
 
 test('an honest nobody-won round files no row (b): the stake forfeited back to its player is the nobody-won return', async () => {
   const { lostForfeitAllowed } = await import('../src/forfeit.js');
@@ -419,19 +420,21 @@ test('an honest nobody-won round files no row (b): the stake forfeited back to i
   const said = lostForfeitAllowed(round, RID, EID[1], FINALITY);
   assert.equal(said.allowed, true, said.why);
   assert.match(said.why, /nobody won/);
-  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), port: fakePort([]), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
+  const s = new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), settledOf: (...a) => FINALITY.settledOf(...a), port: fakePort([]), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) });
   const report = await s.fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
   assert.deepEqual(round.filed.filter((f) => f.row === NAMED_ROW_FORFEIT), []);
   assert.match(report.refused.join('; '), /allowed - nobody won/);
-  // a round whose settlement is not ACCEPTED yet files none either: it is read again on a later pass
+  // a round with an entry not final yet files none either: it is read again on a later pass
   const early = fakeRound();
-  early.settlementState = () => 'SUBMITTING';
-  await new LockSettlement(early, { finalityOf: (...a) => FINALITY.finalityOf(...a), port: fakePort([]), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) }).fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
+  early.notFinal = true;
+  await new LockSettlement(early, { finalityOf: (...a) => FINALITY.finalityOf(...a), settledOf: (...a) => FINALITY.settledOf(...a), port: fakePort([]), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) }).fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
   assert.deepEqual(early.filed.filter((f) => f.row === NAMED_ROW_FORFEIT), []);
   // an ENTRY_VOID entry's refund is allowed too; a winner paid is not, and its walk-away's forfeit never is
   assert.equal(lostForfeitAllowed({ ...fakeRound(), entryVoid: () => ({ learned: 'own' }) }, RID, EID[1], FINALITY).allowed, true);
   assert.equal(lostForfeitAllowed(fakeRound(), RID, EID[1], FINALITY).allowed, false);
   assert.equal(lostForfeitAllowed(fakeRound({ nobodyWon: true }), RID, EID[1], { finalityOf: () => ({ state: 'FINAL' }), settledOf: () => ({ outcome: 'FORFEIT', score: 0 }) }).allowed, false, 'a walk-away is never a refund');
+  // and the reading needs no settlement: a forfeit that took a loser's lock leaves it unbuildable (s29a round b0bfe1be), the winner is in the results
+  assert.equal(lostForfeitAllowed({ ...fakeRound(), settlementState: () => 'NONE', lockSettlementShares: () => null }, RID, EID[1], FINALITY).allowed, false);
 });
 
 test('a proof of a nobody-won return is judged false, and one the judge cannot read yet is "cannot say" - never a slash', async () => {
@@ -439,7 +442,7 @@ test('a proof of a nobody-won return is judged false, and one the judge cannot r
   const { encodeFraudProof } = await import('../../arena-protocol/src/slash.js');
   const { lostForfeitAllowed } = await import('../src/forfeit.js');
   const round = fakeRound();
-  await new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), port: fakePort([]), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) }).fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
+  await new LockSettlement(round, { finalityOf: (...a) => FINALITY.finalityOf(...a), settledOf: (...a) => FINALITY.settledOf(...a), port: fakePort([]), curve, stakeSecrets: { open: async () => ({ ok: false }) }, fetcher: async () => ({ ok: true }) }).fileNamedClaimProofs(RID, { advertOf: (k) => adverts.get(k) || null });
   const filedB = round.filed.find((f) => f.row === NAMED_ROW_FORFEIT && f.who === xhex(seats[1]));
   const complete = encodeFraudProof({ evidence: filedB.bytes, contract: encodeRoundContract(contract) });
   const census = { ok: true, entries: seats.map((x, i) => ({ pubkey: x.pubkey, txid: b32(0x90 + i), vout: i, advert: {} })) };
@@ -450,7 +453,9 @@ test('a proof of a nobody-won return is judged false, and one the judge cannot r
   assert.equal(nobody.verdict, false);
   assert.match(nobody.why, /the protocol allows: nobody won/);
   const unsettled = fakeRound();
-  unsettled.settlementState = () => 'SUBMITTING';
+  unsettled.notFinal = true;
   assert.equal((await judgeOn(unsettled)(complete)).verdict, undefined);
+  // a winner by the results, the settlement never built (the forfeit took a loser's lock): held, as before the fix
+  assert.equal((await judgeOn({ ...fakeRound(), settlementState: () => 'NONE', lockSettlementShares: () => null })(complete)).verdict, true);
   assert.equal((await judgeOn(fakeRound())(complete)).verdict, true);
 });
