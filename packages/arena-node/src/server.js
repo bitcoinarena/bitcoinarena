@@ -141,7 +141,7 @@ import { federationRecords } from './federation-records.js';
 import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departureHex, readEmergencyHex, emergencyHex } from './absences.js';
 import { emergencyDepartureStands } from '../../arena-protocol/src/emergency.js';
 import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture } from './absence-producer.js';
-import { createFoundingSeat, cliSetup, execCli } from './founding-seat.js';
+import { createFoundingSeat, cliSetup, execCli, fileKeySet } from './founding-seat.js';
 import { FOUNDING_WINDOW } from '../../arena-protocol/src/guardian-founding.js';
 import { createEndpointsOf, federationOfDir, configInvite } from './federation-endpoints.js';
 import { execFile as execFileCb } from 'node:child_process';
@@ -4638,6 +4638,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const runCli = (args) => execCli(execFileCb, process.env.ARENA_FEDIMINT_CLI || 'fedimint-cli', args);
     const foundingSetup = cliSetup({ run: runCli, apiPort: guardian.apiPort, password: password(), guardianName: toHex(round.pubkey).slice(0, 16),
       freshSetup: guardianControl && guardianControl.freshSetup ? () => guardianControl.freshSetup() : null,
+      // the node's own word on its guardian: key files held, process alive (kanban #1177: a fresh setup only on a verified reading)
+      local: guardianControl && guardianControl.local ? () => guardianControl.local() : null,
       codeFile: guardian.dataDir ? `${guardian.dataDir}/founding-code.json` : null });
     // THE GUARDIAN-NEXT'S SETUP: a guardian in consensus seated first in a successor takes part through it
     const nextSetup = guardianNext && guardianNext.apiPort && guardianNext.dataDir
@@ -4671,6 +4673,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       tip: async () => Number(await chainTip()),
       guardianInSetup: async () => foundingSetup.inSetup(),
       setup: foundingSetup,
+      // the foundings a fresh setup was asked for, beside the guardian's directory: never twice for one founding, across restarts (kanban #1177)
+      freshTried: fileKeySet(`${guardian.dataDir}.fresh-tried.json`),
       // guardingOpen: by default the census adverts' guardian_of[] naming a federation held OPEN, other than the one succeeded
       nominal: g && Number.isInteger(g.federationNominal) ? g.federationNominal : 4, bondMinGuardian: BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000),
       // a founding every 6 blocks on every network (guardian-founding.js FOUNDING_WINDOW); the genesis clock stays in the network id
