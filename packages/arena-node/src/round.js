@@ -3222,6 +3222,25 @@ export class Round {
         Array.isArray(r.parts) && r.parts.length ? JSON.stringify(r.parts.slice(0, 500)) : null);
   }
 
+  /**
+   * DERIVED RESERVE ROWS, KEPT ONCE (kanban #1156): a payout's change, refund, claim or winners' outputs. A row already kept at that
+   * outpoint with the same federation, key, amount and contract is left as it is; one with other fields is never replaced - this throws,
+   * and the payout step that asked for it is undone (reserve-payout.js transition).
+   */
+  putDonationOutputsOnce(rows) {
+    const had = this.db.prepare('SELECT federation_id, recipient_pk, amount_msat, contract_id FROM donation_outputs WHERE outpoint = ?');
+    const fresh = [];
+    for (const r of rows) {
+      const o = `${Buffer.from(r.outpoint.txid).toString('hex')}:${r.outpoint.outIdx}`;
+      const h = had.get(o);
+      if (!h) { if (!fresh.some((x) => `${Buffer.from(x.outpoint.txid).toString('hex')}:${x.outpoint.outIdx}` === o)) fresh.push(r); continue; }
+      const same = Buffer.from(h.federation_id).equals(Buffer.from(r.federationId)) && h.recipient_pk === Buffer.from(r.recipientPk).toString('hex')
+        && String(h.amount_msat) === String(r.amountMsat) && h.contract_id === r.contractId;
+      if (!same) throw new Error(`${o.slice(0, 16)}… is kept already with other fields: not replaced`);
+    }
+    if (fresh.length) this.putDonationOutputs(fresh);
+  }
+
   /** How many donation-key outputs of this round's settlement are indexed. */
   settlementDonationOutputs(roundIdBytes) {
     return this.db.prepare("SELECT COUNT(*) AS n FROM donation_outputs WHERE round_id = ? AND contract_id LIKE 'settlement:%'").get(Buffer.from(roundIdBytes)).n;
