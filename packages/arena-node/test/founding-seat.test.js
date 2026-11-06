@@ -8,7 +8,8 @@ import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { setupDigest } from '../src/founding.js';
-import { createFoundingSeat, guardingWhy, cliSetup, execCli } from '../src/founding-seat.js';
+import * as seatMod from '../src/founding-seat.js';
+const { createFoundingSeat, guardingWhy, cliSetup, execCli } = seatMod;
 import { drawGuardians } from '../../arena-protocol/src/guardian-founding.js';
 import { execFile } from 'node:child_process';
 import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
@@ -270,6 +271,8 @@ test('a drawn node whose guardian is not in setup (left in a failed key generati
     beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
     guardianInSetup: async () => flags.inSetup,
     setup: { localParams: async () => `code-${i}`, addPeer: async () => {}, startDkg: async () => {}, invite: async () => null, done: async () => flags.running,
+      // the guardian exited (verified by its node: DOWN), or runs its federation (kanban #1177: a fresh setup only on a verified reading)
+      status: async () => (flags.running ? 'running' : flags.inSetup ? 'setup' : 'down'),
       freshSetup: async () => { flags.fresh++; flags.inSetup = true; return { ok: true, kept: 'database.void-x' }; } },
     nominal: 4, bondMinGuardian: 500000n, clocks: cClocks, ownKey: all[i].pub, sign: (h) => schnorr.sign(h, all[i].secret), verify });
   // find a node the draw seats
@@ -298,6 +301,7 @@ test('a guardian that waits in setup only after the tick that started it takes p
     beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
     guardianInSetup: async () => flags.inSetup,
     setup: { localParams: async () => `code-${i}`, addPeer: async () => {}, startDkg: async () => {}, invite: async () => null, done: async () => false,
+      status: async () => (flags.inSetup ? 'setup' : 'down'),
       freshSetup: async () => { flags.fresh++; return { ok: true, kept: 'database.void-x' }; } },
     nominal: 4, bondMinGuardian: 500000n, clocks: cClocks, ownKey: all[i].pub, sign: (h) => schnorr.sign(h, all[i].secret), verify });
   const probe = make(0, { inSetup: true, fresh: 0 }); await probe.tick(); w.tip = 301; await probe.tick();
@@ -580,7 +584,7 @@ test('capacity pressure reaches the probe: a node named only under pressure star
   const own = many.findIndex((e, i) => { const d = drawGuardians({ entries: raised(i), seed, height: 200, nominal: 4, bondMinGuardian: 500000n });
     return ![...d.drawn, ...d.alternates].some((x) => toHex(x.pubkey) === toHex(e.pubkey)); });
   assert.ok(own >= 0, 'such a node exists in this fixture');
-  const tried = (extra) => { const log = []; return [pressureSeat({ ents: raised(own), own, inSetup: false, setup: { freshSetup: async () => { log.push('fresh'); return { ok: false, why: 'test' }; } }, ...extra }), log]; };
+  const tried = (extra) => { const log = []; return [pressureSeat({ ents: raised(own), own, inSetup: false, setup: { status: async () => 'down', freshSetup: async () => { log.push('fresh'); return { ok: false, why: 'test' }; } }, ...extra }), log]; };
   const [plain, none] = tried({}); await plain.tick();
   assert.deepEqual(none, [], 'not named in the plain draw: its guardian is left alone');
   const [under, log] = tried({ pressureBondAt: async () => 2000000n }); await under.tick();
@@ -686,4 +690,83 @@ test('#1161 one peer, or one drawn node, saying the federation runs does not hol
   assert.deepEqual([one.at201, one.redrawn], [false, true]);
   assert.equal(lying.at201, false, 'a root answering in another node\'s name counts nothing');
   assert.deepEqual([all.at201, all.redrawn], [true, false]);
+});
+
+// KANBAN #1177: NO DESTRUCTIVE STEP ON AN UNKNOWN READING. A node that started in setup and finished its DKG in the same process, named in a new
+// draw while its setup API timed out once, was read "not running" and its live guardian's database was set aside for a fresh setup.
+function freshWorld(tag) {
+  const all = Array.from({ length: 12 }, (_, i) => key(`${tag}${i}`));
+  const ents = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash(`TEST/${tag}tx`, Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
+    advert: { operatorId: `${tag}op${i}`, guardianCapable: true, guardianEndpoint: `wss://${tag}${i}`, guardianOf: [] } }));
+  const held = [{ federation: 'bb'.repeat(32), status: 'OPEN', height: 300 }];
+  const w = { tip: 300 };
+  const make = (i, setup, extra = {}) => createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? ents : []),
+    beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
+    guardianInSetup: async () => setup.inSetup(), setup, nominal: 4, bondMinGuardian: 500000n, clocks: cClocks, ownKey: all[i].pub,
+    sign: (h) => schnorr.sign(h, all[i].secret), verify, ...extra });
+  return { all, w, make };
+}
+// the real CLI setup over a fedimint-cli that times out, and the node's own word on its guardian
+function timingOut(g) {
+  return cliSetup({ run: async (args) => { if (g.answer) return `"${g.answer}"`; throw Object.assign(new Error(`fedimint-cli ${args.slice(-1)}: timed out`), { killed: true }); },
+    apiPort: 1, password: 'p', guardianName: 'n', local: async () => ({ keyed: g.keyed, alive: g.alive }),
+    freshSetup: async () => { g.fresh++; g.answer = 'AwaitingLocalParams'; return { ok: true, kept: 'database.void-x' }; } });
+}
+async function namedNode(tag) {
+  const x = freshWorld(tag);
+  const probe = x.make(0, { inSetup: async () => true, localParams: async () => 'c', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null });
+  await probe.tick(); x.w.tip = 301; await probe.tick();
+  const i = x.all.findIndex((k) => toHex(k.pub) === probe.state().seated[0].node);
+  x.w.tip = 300;
+  return { ...x, i };
+}
+
+test('#1177 a live guardian (key files held) whose setup API times out is never set aside, however often it is drawn', async () => {
+  const { w, make, i } = await namedNode('k');
+  const g = { keyed: true, alive: true, fresh: 0, answer: null };
+  const s = make(i, timingOut(g));
+  await s.tick(); w.tip = 301; await s.tick(); await s.tick();
+  console.log(`#1177 keyed guardian, setup API timing out, named in a new draw: fresh setups started = ${g.fresh}`);
+  assert.equal(g.fresh, 0, 'its database stays where it is');
+  assert.equal(await timingOut(g).status(), seatMod.GUARDIAN?.RUNNING ?? 'running');
+});
+
+test('#1177 a timeout with the guardian alive is UNKNOWN: nothing is set aside; once its node verifies it gone it starts again, once, kept across a restart', async () => {
+  const { w, make, i } = await namedNode('u');
+  const g = { keyed: false, alive: true, fresh: 0, answer: null };
+  const dir = mkdtempSync(join(tmpdir(), 'fresh-tried-'));
+  const store = () => (seatMod.fileKeySet ? seatMod.fileKeySet(join(dir, 'fresh-tried.json')) : undefined);
+  const s = make(i, timingOut(g), { freshTried: store() });
+  await s.tick(); w.tip = 301; await s.tick(); await s.tick();
+  console.log(`#1177 no key files, process alive, setup API timing out: fresh setups started = ${g.fresh}`);
+  assert.equal(g.fresh, 0, 'an unknown reading moves nothing');
+  // its node verifies the process gone: DOWN - started again in a fresh setup, and it takes part
+  g.alive = false;
+  await s.tick();
+  assert.equal(g.fresh, 1, 'a verified DOWN starts it again');
+  assert.equal(s.state().via, 'guardian', 'and it takes part');
+  // the seat restarts: the founding is kept as tried, the guardian is not set aside again
+  g.answer = null; g.alive = false;
+  w.tip = 300;
+  const again = make(i, timingOut(g), { freshTried: store() });
+  await again.tick(); w.tip = 301; await again.tick(); await again.tick();
+  assert.equal(g.fresh, 1, 'not twice for one founding, across a restart');
+});
+
+test('#1177 freshSetupStep: only a verified DOWN of a named node not yet tried', () => {
+  const { freshSetupStep, GUARDIAN } = seatMod;
+  const acts = [[true, GUARDIAN.DOWN, false], [true, GUARDIAN.UNKNOWN, false], [true, GUARDIAN.RUNNING, false], [true, GUARDIAN.SETUP, false], [false, GUARDIAN.DOWN, false], [true, GUARDIAN.DOWN, true]]
+    .map(([named, reading, tried]) => freshSetupStep({ named, reading, tried }).act);
+  assert.deepEqual(acts, ['fresh', 'wait', 'leave', 'leave', 'leave', 'leave']);
+});
+
+test('#1177 cliSetup.status: three answers from the API, DOWN only on the node\'s own word, key files are RUNNING', async () => {
+  const said = (out, l) => cliSetup({ run: async () => { if (out instanceof Error) throw out; return `"${out}"`; }, apiPort: 1, password: 'p', guardianName: 'n', local: l ? async () => l : null });
+  assert.equal(await said('ConsensusIsRunning').status(), 'running');
+  assert.equal(await said('SharingConnectionCodes').status(), 'setup');
+  assert.equal(await said(new Error('timed out')).status(), 'unknown', 'no answer, no word from the node');
+  assert.equal(await said(new Error('timed out'), { keyed: false, alive: true }).status(), 'unknown', 'no answer, the process alive');
+  assert.equal(await said(new Error('connection refused'), { keyed: false, alive: false }).status(), 'down');
+  assert.equal(await said(new Error('connection refused'), { keyed: true, alive: false }).status(), 'running', 'key files held: never down');
+  assert.equal(await said('AwaitingLocalParams', { keyed: true, alive: true }).status(), 'running');
 });
