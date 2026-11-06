@@ -74,7 +74,7 @@ import { serviceLog } from './log-level.js';
 // and the settings that shaped its start; debug: every request it makes and answers, and every program it runs with its exit code
 const seatLog = serviceLog({ env: process.env, tag: 'log' });
 seatLog.tag('log').env(['ARENA_BITCOIND_URL', 'ARENA_BITCOIND_COOKIE', 'ARENA_LNCLI', 'ARENA_LND_DIR', 'ARENA_LND_RPC', 'ARENA_LND_NETWORK', 'ARENA_STAKE_LOCK_BIN',
-  'ARENA_FEDERATION_CLIENT_DIR', 'ARENA_FEDIMINTD', 'ARENA_FOUNDING', 'ARENA_APPS', 'ARENA_DONATION_NETWORK', 'ARENA_BIND', 'ARENA_TLS_CERT', 'ARENA_CLOSE_AT_END', 'ARENA_PRICE_FEED'],
+  'ARENA_FEDERATION_CLIENT_DIR', 'ARENA_FEDIMINTD', 'ARENA_FOUNDING', 'ARENA_APPS', 'ARENA_DONATION_NETWORK', 'ARENA_BIND', 'ARENA_TLS_CERT', 'ARENA_CLOSE_AT_END', 'ARENA_CENSUS_EXPLORERS', 'ARENA_PRICE_FEED'],
   'the settings that decide how this seat starts (chain, Lightning, custody, apps, network, address)');
 
 const port = Number(process.argv[2] || 8080);
