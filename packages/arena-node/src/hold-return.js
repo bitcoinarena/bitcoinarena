@@ -6,6 +6,7 @@
 // The owner signs with the 24 words."). The node holds no key that can move the bond: it prepares, the owner's page signs, the node sends.
 //
 // The chain, the replay and the proof's bytes are the caller's. A start that names a true proof is left alone: this is not a way out of a slash.
+import { DatabaseSync } from 'node:sqlite';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { holdReturnSpend, arbitrationCommitmentIn } from '../../arena-protocol/src/arbitration-tx.js';
 import { holdControlBlock, holdOutputKey } from '../../arena-protocol/src/bond-script.js';
@@ -19,6 +20,17 @@ import { TAG } from '../../arena-protocol/src/constants.js';
 import { fromHex, taggedHash, toHex } from '../../arena-protocol/src/hash.js';
 
 const same = (a, b) => toHex(a) === toHex(b);
+
+/**
+ * A STARTED BOND'S RETURN AS THIS NODE SEES IT (kanban #1193, the state machine audit of 2026-11-06), per { bond, start txid, start height, proof id } - a reorg that moves the
+ * start is another key. none -> owed (the leaf is open and the proof does not check here: prepared for the owner) | kept (the proof checks: the bond is left to its slash).
+ * owed -> owed (prepared again, another address) | kept (the proof checks after all: the prepared return is recalled) | sent (the owner's signature went out).
+ * KEPT IS FOR GOOD: `proofChecks` need not be monotone (a replay that lacked a round's data, a reorg), so a start whose proof checked once is never owed a return here again,
+ * and the node neither prepares nor sends one against it. The return leaf and the release race by design (#1130's cap comes before the leaf opens); this is the node's part only.
+ */
+export const HOLD_RETURN = Object.freeze({ NONE: 'none', OWED: 'owed', KEPT: 'kept', SENT: 'sent' });
+const HOLD_RETURN_MOVES = Object.freeze({ [HOLD_RETURN.NONE]: [HOLD_RETURN.OWED, HOLD_RETURN.KEPT, HOLD_RETURN.SENT], [HOLD_RETURN.OWED]: [HOLD_RETURN.OWED, HOLD_RETURN.KEPT, HOLD_RETURN.SENT],
+  [HOLD_RETURN.KEPT]: [], [HOLD_RETURN.SENT]: [] });
 
 /** The first tip the return can be mined on top of: both its clocks read from the next block. */
 export const returnOpensAt = ({ startHeight, returnBlocks, bondMaturity }) => Math.max(startHeight + returnBlocks - 1, bondMaturity);
@@ -120,34 +132,78 @@ export function holdsOfOwnBond({ ownerKey, censusKey, bondMaturity, panels = [],
  * `hold` and `ownerKey`. `rawTxAt(height, txid)` a transaction's bytes off that block, `holdsFor(bond)` holdsOfOwnBond's map, `clocks` the
  * network's. Pure of the seat: the caller says what the census says. No secret here: the owner signs (kanban #1093 part 1).
  */
-export function createHoldWatch({ clocks, holdsFor, rawTxAt, tipHeight, broadcast, fetchProof = async () => null, proofChecks = async () => undefined, returnScript = async () => null, feeSats = 1000n, notify = () => {}, log = (l) => console.log(l) }) {
+export function createHoldWatch({ clocks, holdsFor, rawTxAt, tipHeight, broadcast, fetchProof = async () => null, proofChecks = async () => undefined, returnScript = async () => null, feeSats = 1000n, notify = () => {}, log = (l) => console.log(l),
+  db = new DatabaseSync(':memory:'), now = Date.now }) {
   const startOf = async (bond) => {
     const raw = await rawTxAt(bond.hold.height, bond.hold.txid);
     return readSlashStart(raw, { txid: fromHex(bond.txid).reverse(), vout: bond.vout }, holdsFor(bond));
   };
-  const owed = new Map();                        // bond -> { why, opensAt, prepared? }: what the dashboard shows and the owner signs
+  // WHAT THE DASHBOARD SHOWS AND THE OWNER SIGNS, ON DISK (kanban #1193): one row per { bond, start, start height, proof }, moved by returnStep only (HOLD_RETURN)
+  db.exec(`CREATE TABLE IF NOT EXISTS hold_returns (bond TEXT NOT NULL, start TEXT NOT NULL, start_height INTEGER NOT NULL, proof_id TEXT NOT NULL, state TEXT NOT NULL, why TEXT,
+    opens_at INTEGER, to_script TEXT, fee TEXT, sent TEXT, at_ms INTEGER NOT NULL, PRIMARY KEY (bond, start, start_height, proof_id))`);
+  const keyOf = (bond, start) => [`${bond.txid}:${bond.vout}`, String(bond.hold.txid), Number(bond.hold.height), start && start.proofId ? toHex(start.proofId) : ''];
+  const rowOf = (k) => db.prepare('SELECT * FROM hold_returns WHERE bond = ? AND start = ? AND start_height = ? AND proof_id = ?').get(...k) || null;
+  const stateOf = (k) => { const r = rowOf(k); return r ? r.state : HOLD_RETURN.NONE; };
+  /** THE ONE TRANSITION: compare and set on the row. False, nothing written, unless the start is in `from` now and HOLD_RETURN_MOVES has the move. */
+  function returnStep(k, from, to, fields = {}) {
+    if (!HOLD_RETURN_MOVES[from].includes(to) || stateOf(k) !== from) return false;
+    const had = rowOf(k);
+    const v = { why: fields.why ?? (had && had.why), opensAt: fields.opensAt ?? (had && had.opens_at), toScript: fields.toScript ?? (had && had.to_script), fee: fields.fee ?? (had && had.fee), sent: fields.sent ?? (had && had.sent) };
+    const r = had
+      ? db.prepare('UPDATE hold_returns SET state = ?, why = ?, opens_at = ?, to_script = ?, fee = ?, sent = ?, at_ms = ? WHERE bond = ? AND start = ? AND start_height = ? AND proof_id = ? AND state = ?')
+        .run(to, v.why ?? null, v.opensAt ?? null, v.toScript ?? null, v.fee ?? null, v.sent ?? null, now(), ...k, from)
+      : db.prepare('INSERT OR IGNORE INTO hold_returns (bond, start, start_height, proof_id, state, why, opens_at, to_script, fee, sent, at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(...k, to, v.why ?? null, v.opensAt ?? null, v.toScript ?? null, v.fee ?? null, v.sent ?? null, now());
+    return Number(r.changes) === 1;
+  }
+  /** A start whose proof checks on this node's replay is KEPT, for good: a prepared return is recalled and none is prepared or sent again for it. */
+  const keep = (k, why) => {
+    const from = stateOf(k);
+    if (from === HOLD_RETURN.KEPT || from === HOLD_RETURN.SENT) return from === HOLD_RETURN.KEPT;
+    if (!returnStep(k, from, HOLD_RETURN.KEPT, { why })) return false;
+    if (from === HOLD_RETURN.OWED) log(`[hold] ${k[0].slice(0, 16)}: the return prepared for start ${k[1].slice(0, 16)} is recalled: ${why}`);
+    return true;
+  };
+  /** The owed return as the dashboard shows it, rebuilt from its row (the same bytes: returnToSign is a function of the start, the script and the fee). */
+  const owedOf = (bond, start) => {
+    const r = start && rowOf(keyOf(bond, start));
+    if (!r || r.state !== HOLD_RETURN.OWED) return null;
+    return { why: r.why, opensAt: r.opens_at, prepared: r.to_script ? returnToSign({ start, bondMaturity: bond.maturity, returnBlocks: clocks.returnBlocks, toScript: fromHex(r.to_script), feeSats: BigInt(r.fee) }) : null };
+  };
   /** What an owner is told: when each way out opens, in heights, whether this node knows the hold, and a return owed to sign. */
   async function read(bond) {
     const startHeight = bond.hold.height;
     const start = await startOf(bond);
     const out = { startTxid: bond.hold.txid, startHeight, known: !!start, returnOpensAt: returnOpensAt({ startHeight, returnBlocks: clocks.returnBlocks, bondMaturity: bond.maturity }),
       fallbackOpensAt: startHeight + clocks.fallbackBlocks - 1, proofId: start && start.proofId ? toHex(start.proofId) : null,
-      returnOwed: owed.get(`${bond.txid}:${bond.vout}`) || null };
+      returnOwed: owedOf(bond, start) };
     return start && start.hold.leaves.release ? { ...out, releaseOpensAt: startHeight + clocks.holdBlocks - 1 } : out;
   }
-  /** The return to `toScript`, prepared for the owner to sign once its clocks read true: { ok, prepared } or { ok: false, why }. The owner's choice. */
+  /** This node's own word on the start now: a proof that checks moves it to KEPT. Answers why not, or null. */
+  async function refusal(bond, start, tip) {
+    const k = keyOf(bond, start);
+    if (stateOf(k) === HOLD_RETURN.KEPT) return 'the proof this start names checked on this node\'s replay: this node prepares and sends no return against it';
+    const decided = await decideReturn({ start, startHeight: bond.hold.height, bondMaturity: bond.maturity, returnBlocks: clocks.returnBlocks, tip, fetchProof, proofChecks });
+    if (decided.action === 'keep') { keep(k, decided.why); return `${decided.why}: this node prepares and sends no return against it`; }
+    return null;
+  }
+  /** The return to `toScript`, prepared for the owner to sign once its clocks read true: { ok, prepared } or { ok: false, why }. The owner's choice - but never against a proof that checks here. */
   async function returnTo(bond, toScript, fee = feeSats) {
     const start = await startOf(bond);
     if (!start) return { ok: false, why: `the slash started at block ${bond.hold.height} pays no hold output this node signed` };
     const opensAt = returnOpensAt({ startHeight: bond.hold.height, returnBlocks: clocks.returnBlocks, bondMaturity: bond.maturity }), tip = await tipHeight();
     if (tip < opensAt) return { ok: false, why: `the return opens at block ${opensAt}, ${opensAt - tip} from now` };
+    const no = await refusal(bond, start, tip);
+    if (no) return { ok: false, why: no };
     return { ok: true, prepared: returnToSign({ start, bondMaturity: bond.maturity, returnBlocks: clocks.returnBlocks, toScript, feeSats: fee }) };
   }
-  /** The owner's signature over a prepared return: checked against the bond's owner key, then sent. */
+  /** The owner's signature over a prepared return: checked against the bond's owner key, the proof asked again, then sent. */
   async function submit(bond, prepared, signatureHex) {
     let hex; try { hex = withOwnerSignature(prepared, signatureHex, bond.ownerKey); } catch (e) { return { ok: false, why: e.message }; }
+    const start = await startOf(bond);
+    if (start) { const no = await refusal(bond, start, await tipHeight()); if (no) return { ok: false, why: no }; }
     let sent; try { sent = await broadcast(hex); } catch (e) { return { ok: false, why: `the return was not sent: ${e.message}` }; }
-    owed.delete(`${bond.txid}:${bond.vout}`);
+    if (start) { const k = keyOf(bond, start), from = stateOf(k); if (from !== HOLD_RETURN.SENT) returnStep(k, from, HOLD_RETURN.SENT, { sent: String(sent) }); }
     log(`[hold] ${bond.txid.slice(0, 16)}: the owner's return sent: ${sent}`);
     return { ok: true, sent, hex };
   }
@@ -156,19 +212,23 @@ export function createHoldWatch({ clocks, holdsFor, rawTxAt, tipHeight, broadcas
     const done = [];
     for (const bond of bonds) {
       if (!bond.hold) continue;
-      const key = `${bond.txid}:${bond.vout}`;
       const start = await startOf(bond);
       if (!start) { log(`[hold] the slash started at block ${bond.hold.height} pays no hold output this node signed`); continue; }
+      const k = keyOf(bond, start), state = stateOf(k);
+      // KEPT IS FOR GOOD (kanban #1193): a replay that later says otherwise prepares nothing; SENT is done
+      if (state === HOLD_RETURN.KEPT || state === HOLD_RETURN.SENT) { done.push({ action: state === HOLD_RETURN.KEPT ? 'keep' : 'sent', why: `this start is ${state} here`, bond }); continue; }
+      const toScript = await returnScript();
       const decided = await prepareReturnIfOwed({ start, startHeight: bond.hold.height, bondMaturity: bond.maturity, returnBlocks: clocks.returnBlocks, tip: await tipHeight(),
-        fetchProof, proofChecks, toScript: await returnScript(), feeSats });
+        fetchProof, proofChecks, toScript, feeSats });
+      if (decided.action === 'keep') keep(k, decided.why);
       if (decided.action === 'return') {
-        const first = !owed.has(key);
-        owed.set(key, { why: decided.why, opensAt: decided.opensAt, prepared: decided.prepared || null });
+        const first = state === HOLD_RETURN.NONE;
+        returnStep(k, state, HOLD_RETURN.OWED, { why: decided.why, opensAt: decided.opensAt, ...(decided.prepared ? { toScript: toHex(toScript), fee: String(feeSats) } : {}) });
         if (first) { log(`[hold] ${bond.txid.slice(0, 16)} owes its owner a return (${decided.why}): prepared, waiting for the owner's signature`); try { notify({ bond, why: decided.why }); } catch { /* told on the dashboard */ } }
       }
       done.push({ ...decided, bond });
     }
     return done;
   }
-  return { read, returnTo, submit, pass };
+  return { read, returnTo, submit, pass, stateOf: (bond, start) => stateOf(keyOf(bond, start)) };
 }

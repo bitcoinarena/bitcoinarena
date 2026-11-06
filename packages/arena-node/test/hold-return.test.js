@@ -141,6 +141,53 @@ test('the bytes under the hash are the proof: other bytes are no copy of anythin
   assert.equal((await decide(Uint8Array.of(7, 7, 8), async () => true)).action, 'return', 'bytes that do not hash are never judged');
 });
 
+// ---- kanban #1193: THE RETURN'S STATE IS PER START AND ON DISK, AND A PROOF THAT CHECKED ONCE IS KEPT FOR GOOD ----
+test('kanban #1193: a proof that checks after the return was prepared recalls it; a later "does not check" prepares nothing; neither page nor node sends one', async () => {
+  const [plain] = holdsFor(bond).values();
+  const raw = startPaying(plain.script), sent = [];
+  let verdict = false;
+  const w = watch(raw, { tipHeight: async () => 500, broadcast: async (h) => { sent.push(h); return 'tx'; }, fetchProof: async () => proof, proofChecks: async () => verdict, returnScript: async () => script });
+  assert.equal((await w.pass([bond]))[0].action, 'return');
+  const prepared = (await w.read(bond)).returnOwed.prepared;
+  assert.ok(prepared, 'prepared for the owner');
+  // THE REPLAY NOW HOLDS THE PROOF (its round's data came in)
+  verdict = true;
+  await w.pass([bond]);
+  const recalled = (await w.read(bond)).returnOwed;
+  // AND LATER SAYS OTHERWISE AGAIN (a replay that is not monotone)
+  verdict = false;
+  const later = (await w.pass([bond]))[0].action;
+  const again = (await w.read(bond)).returnOwed;
+  const submitted = await w.submit(bond, prepared, ownerSigns(prepared));
+  const asked = await w.returnTo(bond, script);
+  const facts = { recalled: recalled === null, laterAction: later, preparedAgain: again !== null, submitted: submitted.ok, returnToOk: asked.ok, sent: sent.length };
+  console.log('  FACTS (#1193, proof checks after the return was prepared):', JSON.stringify(facts));
+  assert.deepEqual(facts, { recalled: true, laterAction: 'keep', preparedAgain: false, submitted: false, returnToOk: false, sent: 0 });
+  assert.match(submitted.why, /checked on this node's replay|checks on this node's replay/);
+});
+
+test('kanban #1193: the owed return survives a restart, and a reorg that moves the start is another start, judged at its own height', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(':memory:');
+  const [plain] = holdsFor(bond).values();
+  const raw = startPaying(plain.script);
+  // THE REPLAY SAYS FALSE AT THE START'S FIRST HEIGHT, TRUE ONCE A REORG MINED IT AT 483 (the round's census reads otherwise there)
+  const checks = async (bytes, { startHeight }) => startHeight === 483;
+  const w = (over = {}) => watch(raw, { db, tipHeight: async () => 520, fetchProof: async () => proof, proofChecks: checks, returnScript: async () => script, ...over });
+  await w().pass([bond]);
+  const restarted = (await w().read(bond)).returnOwed;
+  // ONE RUN THROUGH THE REORG: it prepared the return at 480, then reads the start at 483
+  const one = w();
+  await one.pass([bond]);
+  const moved = { ...bond, hold: { ...bond.hold, height: 483 } };
+  const atNew = (await one.pass([moved]))[0].action;
+  const owedNew = (await one.read(moved)).returnOwed;
+  const facts = { owedAfterRestart: !!(restarted && restarted.prepared), afterReorg: atNew, owedAfterReorg: owedNew !== null };
+  console.log('  FACTS (#1193, restart and reorg):', JSON.stringify(facts));
+  assert.deepEqual(facts, { owedAfterRestart: true, afterReorg: 'keep', owedAfterReorg: false });
+  assert.equal(restarted.prepared.digest, (await w().returnTo(bond, script, 1000n)).prepared.digest, 'the same return as prepared before the stop');
+});
+
 test('an owner\'s return the mempool refuses can be sent again', async () => {
   const [plain] = holdsFor(bond).values();
   const sent = [];
