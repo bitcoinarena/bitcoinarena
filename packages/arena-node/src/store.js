@@ -929,6 +929,18 @@ export function openStore(path = ':memory:') {
       claims       TEXT NOT NULL,
       payouts      INTEGER NOT NULL
     );
+    -- EVERY SETTLEMENT TXID THIS SEAT SIGNED OR WAS HANDED FOR A ROUND (kanban #1171): two askers with other bytes are two transactions; only one lands.
+    -- Each with what it moves, so the federation is asked about every one before the round's row says REFUSED, and a landed one is found after a restart
+    CREATE TABLE IF NOT EXISTS lock_settlement_txids (
+      round_id     BLOB NOT NULL,
+      txid         TEXT NOT NULL,
+      message      BLOB NOT NULL,
+      signature    BLOB NOT NULL,
+      claims       TEXT NOT NULL,
+      payouts      INTEGER NOT NULL,
+      made_ms      INTEGER NOT NULL,
+      PRIMARY KEY (round_id, txid)
+    );
     -- A LATE LOSER'S SECOND SETTLEMENT (§13A, RULED 2026-09-24, slice C3b-1): one per (round, entry), never a second
     -- row under the round's key - an entry the round's settlement left out while it was in its re-run window, which
     -- then ended FAILED or FORFEIT. The same intent and state as the round's own settlement row.
