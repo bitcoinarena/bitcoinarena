@@ -1319,18 +1319,46 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } },
     store: { read: () => { try { return round.db.prepare('SELECT json FROM ballot_proposals').all().map((r) => JSON.parse(r.json)); } catch { return []; } },
       write: (list) => { round.db.exec('CREATE TABLE IF NOT EXISTS ballot_proposals (id TEXT PRIMARY KEY, json TEXT NOT NULL)');
-        const put = round.db.prepare('INSERT OR REPLACE INTO ballot_proposals (id, json) VALUES (?, ?)'); for (const x of list) put.run(x.id, JSON.stringify(x)); },
-      // a proposal whose publication left the chain is not kept (ballot-tally.js, a reorg)
-      remove: (id) => { try { round.db.prepare('DELETE FROM ballot_proposals WHERE id = ?').run(id); } catch { /* no table yet: nothing kept */ } } } }) : null);
+        const put = round.db.prepare('INSERT OR REPLACE INTO ballot_proposals (id, json) VALUES (?, ?)'); for (const x of list) put.run(x.id, JSON.stringify(x)); } } }) : null);
+  // (NOTHING IS EVER DELETED from ballot_proposals, kanban #1152: a proposal whose publication left the chain is ORPHANED and kept with its bytes)
   if (counts && proposals) {
     // A REGTEST OUTCOME IS WRITTEN AS SOON AS THE LAST VOTING BLOCK IS MINED ("two operators can drive a whole governance cycle
     // through to activation in under a minute", 27A.7.4); every other chain waits for it to be six deep
     // A REORG IS FOLLOWED when the launcher hands the block hashes (ballot.blockHashAt): a count is held to the blocks it read
+    // (kanban #1152: the read that THROWS when the chain did not answer, `chainHashAt`, where the launcher hands one). ON THE
+    // 1.9 LINE THE DEPTH STAYS AS IT WAS (minDecideDepthFor 1): the 3-deep floor needs the repeal's 2-block cooldown (2.0,
+    // REPEAL_SCHEDULES), a rule a proposal stands by - a spec question (§27A.7.6 says 0), and not changed under seats that run
+    // releases without it
+    const hashRead = typeof ballot.chainHashAt === 'function' ? ballot.chainHashAt : typeof ballot.blockHashAt === 'function' ? ballot.blockHashAt : null;
     ballotTally = createBallotTally({ proposals, tipHeight: ballot.tipHeight, votesAt: ballot.votesAt, censusAt: ballot.censusAt,
-      ...(typeof ballot.blockHashAt === 'function' ? { blockHashAt: ballot.blockHashAt } : {}),
+      ...(hashRead ? { blockHashAt: hashRead } : {}),
       verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } },
-      decideDepthFor: (net) => (isRegtestNet(net) ? 1 : 6), log: (l) => console.log(l) });
+      decideDepthFor: (net) => (isRegtestNet(net) ? 1 : 6), minDecideDepthFor: () => 1, log: (l) => console.log(l) });
   }
+  // THE PROPOSALS THIS SEAT DID NOT HEAR OF, PULLED FROM THE SEATS IT KNOWS (kanban #1152): a seat that was down when a proposal
+  // was posted, or one posted to a single seat, still counts it - each one checked by proposals.add as if posted here (its
+  // deposit in the block it names on THIS seat's chain, the proposal on its face), nothing a peer says taken on trust.
+  // Every ARENA_PROPOSALS_PULL_MS (10 min), the first 30 s after the start; one pull at a time.
+  let proposalsPulling = false;
+  const pullProposals = async () => {
+    if (!proposals || typeof proposals.pull !== 'function' || proposalsPulling) return 0;
+    proposalsPulling = true;
+    let took = 0;
+    try {
+      let seats = []; try { seats = networkSeats(); } catch { seats = []; }
+      for (const u of seats.slice(0, 32)) {
+        let got; try { const r = await seasonFetch(`${u}/proposals`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await r.json() : null; } catch { got = null; }
+        if (got && Array.isArray(got.proposals)) took += await proposals.pull(got.proposals);
+      }
+      if (took) console.log(`[ballot] took ${took} proposal(s) from the seats it knows`);
+    } finally { proposalsPulling = false; }
+    return took;
+  };
+  const proposalsPullMs = Number(process.env.ARENA_PROPOSALS_PULL_MS || 600000);
+  const proposalsPull = proposals && proposalsPullMs > 0 ? setInterval(() => { pullProposals().catch(() => {}); }, proposalsPullMs) : null;
+  if (proposalsPull && proposalsPull.unref) proposalsPull.unref();
+  const proposalsFirstPull = proposals && proposalsPullMs > 0 ? setTimeout(() => { pullProposals().catch(() => {}); }, 30000) : null;
+  if (proposalsFirstPull && proposalsFirstPull.unref) proposalsFirstPull.unref();
   // A SEAT SERVES A ROUND ONLY UNDER A CONFIG IT RUNS FOR THAT ROUND (27A.7.5): of the configs the ballot named, the one live at
   // the round's creation - its census height (ballot-chain.js configServesRound). A config the ballot never named is not
   // governed here and is served as before; with no proposal passed the history holds the genesis alone, and nothing changes.
@@ -10644,6 +10672,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       listingSignatures: () => listingSigned,
       // THE BALLOT'S PASS, for a test or a harness that moves the chain itself (ballot-tally.js); null on a seat that counts none
       ballotPass: ballotTally ? () => ballotTally.pass() : null,
+      pullProposals: proposals ? () => pullProposals() : null,
       // which guardian wirings started here: the founding, the absence producer, the spent-set producer
       guardianWiring: () => ({ ...guardianWiring }),
       port: http.address().port,
@@ -10677,6 +10706,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (seriesPullTimer) clearInterval(seriesPullTimer);
         if (seriesPullFirst) clearTimeout(seriesPullFirst);
         if (ballotTimer) clearInterval(ballotTimer);
+        if (proposalsPull) clearInterval(proposalsPull); if (proposalsFirstPull) clearTimeout(proposalsFirstPull);
         for (const t of finalityTimers) clearTimeout(t);
         finalityTimers.clear();
         for (const t of rerunTimers) clearTimeout(t);
