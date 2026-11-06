@@ -8,8 +8,9 @@
 import { port, INSTANCE, PORT_OFFSET, homeDefault } from './instance.js';
 import { envToConfValues, formatConf } from '../../arena-node/src/arena-conf.js';
 import { appsIn, appsEnvValue, chosenApps } from './apps.js';
-import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, chmodSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, readFileSync, renameSync, existsSync, chmodSync, openSync, writeSync, fsyncSync, closeSync, unlinkSync, statSync, readdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { randomBytes } from 'node:crypto';
 
 /** The liquidity provider service's local port (127.0.0.1): its claim, and a new top-up address for the owner page. */
 export const LIQUIDITY_PROVIDER_PORT = port(8477);   // + ARENA_PORT_OFFSET (instance.js)
@@ -33,24 +34,102 @@ export const ROLES = Object.freeze({
   liquidity: { title: 'Liquidity provider', does: 'gives new nodes incoming Lightning', chips: ['₿ own Bitcoin Core', '⚡ LND', '💰 500,000 sat'], needs: 'Opens incoming Lightning channels to new nodes so they can receive deposits. Any number of nodes can be providers; each new node gets a channel from one or two of them, picked by a fair draw. Needs a Lightning node (LND, set up in the Lightning step) and your own Bitcoin Core, and a deposit of 500,000 sat on testnet4 (5 x the 100,000 sat channel) in LND\'s wallet.', slice: 1 },
 });
 
-const atomicWrite = (path, text) => {
-  writeFileSync(`${path}.tmp`, text, { mode: 0o600 });
-  renameSync(`${path}.tmp`, path);
-};
+// ONE STATE FILE, SEVERAL PROCESSES (kanban #1178, the state machine audit 2026-11-06): the wizard, the seat's owner page, the custody agent
+// and the updater all read-modify-write state.json. Before: one fixed `state.json.tmp` every writer shared, no fsync, no lock - concurrent
+// saves lost each other's fields (custody.pegIn, then sent again), and a file that did not parse read as a fresh install (done{} and the
+// bond gone, so POST /api/bond/post allowed a second bond). Now:
+//   - every write is a temp file of its own + fsync + rename (+ the folder fsync'd): a reader sees the old file or the new, never half;
+//   - every read-modify-write (save, update) runs under <home>/state.json.lock, across processes, and reads the file afresh inside it;
+//   - state.json.bak holds the same last state; a state.json that does not parse is read from it, and with no good .bak the read REFUSES
+//     (StateUnreadable) - it never starts fresh over a node that exists.
+// The file's format is unchanged: a state.json any older installer wrote reads as it did, and one this code writes reads in an older
+// installer (what it adds - `onchain`, onchain-action.js - is a field an older one ignores).
+const sleepSync = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch { const t = Date.now() + ms; while (Date.now() < t) { /* spin */ } } };
+const RENAME_BUSY = new Set(['EPERM', 'EBUSY', 'EACCES']);   // Windows: a reader holds the target open for a moment
 
-/** The state of the node at `home`: { read(), save(patch), path(name) }. A new home starts at the first step. */
+/** Write `text` to `path` so that no reader ever sees half of it: a temp file of its own, fsync, rename over it, the folder fsync'd. */
+export function atomicWrite(path, text, { mode = 0o600, platform = process.platform } = {}) {
+  const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+  const fd = openSync(tmp, 'w', mode);
+  try { writeSync(fd, text); fsyncSync(fd); } finally { closeSync(fd); }
+  for (let i = 0; ; i++) {
+    try { renameSync(tmp, path); break; } catch (e) {
+      if (i >= 50 || !RENAME_BUSY.has(e.code)) { try { unlinkSync(tmp); } catch { /* gone */ } throw e; }
+      sleepSync(20);
+    }
+  }
+  if (platform !== 'win32') { try { const d = openSync(dirname(path), 'r'); try { fsyncSync(d); } finally { closeSync(d); } } catch { /* a folder that cannot be fsync'd: the rename stands */ } }
+}
+
+/** A state.json that does not read, and no good copy beside it: nothing goes on from a guess (kanban #1178). */
+export class StateUnreadable extends Error {
+  constructor(file, why, backups = []) {
+    super(`${file} does not read (${why}) and ${file}.bak is no good copy: nothing goes on from a fresh state over an existing node. Put back a good state.json`
+      + (backups.length ? ` (the newest update backup: ${backups[0]})` : ''));
+    this.code = 'STATE_UNREADABLE';
+  }
+}
+
+export const STATE_LOCK_STALE_MS = 10000;   // a holder writes a few KB inside it: a lock this old was left by a process that died
+export const STATE_LOCK_WAIT_MS = 15000;
+const alivePid = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+const heldLocks = new Map();   // lock file -> depth (in one process a save inside an update takes no second lock)
+/** Run `fn` (synchronous) holding `lockFile` against every other process of this node. */
+export function withStateLock(lockFile, fn, { staleMs = STATE_LOCK_STALE_MS, waitMs = STATE_LOCK_WAIT_MS, now = Date.now, alive = alivePid } = {}) {
+  if (heldLocks.get(lockFile)) { heldLocks.set(lockFile, heldLocks.get(lockFile) + 1); try { return fn(); } finally { heldLocks.set(lockFile, heldLocks.get(lockFile) - 1); } }
+  const t0 = now();
+  for (;;) {
+    try { const fd = openSync(lockFile, 'wx', 0o600); try { writeSync(fd, JSON.stringify({ pid: process.pid, atMs: now() })); } finally { closeSync(fd); } break; }
+    catch (e) { if (e.code !== 'EEXIST') throw e; }
+    let age = 0, holder = null;
+    try { age = now() - statSync(lockFile).mtimeMs; holder = JSON.parse(readFileSync(lockFile, 'utf8')); } catch { holder = null; }
+    // left over: older than any write takes, or its process is gone (a pid only counts once the file names it)
+    if (age > staleMs || (holder && Number.isInteger(holder.pid) && holder.pid !== process.pid && !alive(holder.pid))) { try { unlinkSync(lockFile); } catch { /* another took it over */ } continue; }
+    if (now() - t0 > waitMs) throw new Error(`${lockFile} is held by another process of this node (pid ${holder ? holder.pid : '?'}): try again`);
+    sleepSync(5 + Math.floor(Math.random() * 20));
+  }
+  heldLocks.set(lockFile, 1);
+  try { return fn(); } finally { heldLocks.delete(lockFile); try { unlinkSync(lockFile); } catch { /* taken over as stale */ } }
+}
+
+/** The state of the node at `home`: { read(), save(patch), update(fn), path(name) }. A new home starts at the first step. */
 export function nodeState(home) {
   mkdirSync(home, { recursive: true, mode: 0o700 });
   chmodSync(home, 0o700);
   const file = join(home, 'state.json');
+  const bak = `${file}.bak`;
+  const lockFile = `${file}.lock`;
+  const parse = (f) => { const v = JSON.parse(readFileSync(f, 'utf8')); if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('not a state object'); return v; };
   const read = () => {
-    try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return { network: 'testnet4', step: 'chain', createdMs: Date.now() }; }
+    let why;
+    try { return parse(file); } catch (e) { why = e.code === 'ENOENT' ? null : e.message; }
+    // the copy beside it (the same last state, written with it): for a state.json an older installer or the disk tore
+    try { return parse(bak); } catch (e) { if (why === null && e.code === 'ENOENT') return { network: 'testnet4', step: 'chain', createdMs: Date.now() }; }
+    let backups = [];
+    try { backups = readdirSync(join(home, 'backups')).sort().reverse().map((d) => join(home, 'backups', d, 'state.json')).filter((f) => existsSync(f)); } catch { backups = []; }
+    throw new StateUnreadable(file, why || 'missing, while state.json.bak does not read', backups);
   };
+  // the copy first: a crash between the two leaves state.json at the state before, whose save never answered
+  const write = (s) => { const text = JSON.stringify(s, null, 2) + '\n'; atomicWrite(bak, text); atomicWrite(file, text); };
+  /** THE READ-MODIFY-WRITE (kanban #1178): `fn(the state read afresh, inside the lock)` answers a patch, merged at the top level, or
+   *  null - nothing written (a compare-and-set that did not hold). `fn` is synchronous. Answers the state after. */
+  const update = (fn) => withStateLock(lockFile, () => {
+    const now = read();
+    const patch = fn(now);
+    if (patch && typeof patch.then === 'function') throw new Error('state.update takes a synchronous function');
+    if (!patch) return now;
+    const s = { ...now, ...patch, updatedMs: Date.now() };
+    write(s);
+    return s;
+  });
   return {
     home,
     path: (name) => join(home, name),
     read,
-    save(patch) { const s = { ...read(), ...patch, updatedMs: Date.now() }; atomicWrite(file, JSON.stringify(s, null, 2) + '\n'); return s; },
+    update,
+    save(patch) { return update(() => patch); },
+    /** `fields` merged into the object at `key` as it stands now (never a copy read earlier: kanban #1178, custody.pegIn lost). */
+    merge(key, fields) { return update((n) => ({ [key]: { ...((n && n[key]) || {}), ...fields } })); },
     writeSecret(name, text) { atomicWrite(join(home, name), text); },
     readSecret(name) { try { return readFileSync(join(home, name), 'utf8').trim(); } catch { return null; } },
     exists: (name) => existsSync(join(home, name)),

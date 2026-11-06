@@ -202,7 +202,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   };
   // THE RELEASE'S APPS (kanban #569): read once - the release folder does not change under a running wizard
   const releaseApps = (() => { try { return appsIn(release); } catch (e) { log(`apps: ${e.message}`); return []; } })();
-  const mark = (step, patch = {}) => { const s = state.read(); return state.save({ ...patch, done: { ...(s.done || {}), [step]: Date.now() } }); };
+  const mark = (step, patch = {}) => state.update((n) => ({ ...patch, done: { ...(n.done || {}), [step]: Date.now() } }));   // the done map as it stands (kanban #1178)
   // A FUNDAMENTAL CHANGED ON AN INSTALLED NODE (kanban #734, the owner: "when re-running the install script and changing fundamental options
   // like bitcoin, lightning, roles, reach, the new setting should reflect in the owners page correctly instead of raising errors"): the
   // node's settings (arena.conf) are written only by "Install and start", which stayed done on a re-run - so a new Bitcoin source or new
@@ -385,7 +385,7 @@ const serviceRun = async (b) => {
     if (s.reach.mode === 'quick') {
       const url = await reach.quickTunnelUrl({ home: state.home, sinceMs: installAt });
       if (url) {
-        s = state.save({ reach: { ...s.reach, url } });
+        s = state.merge('reach', { url });
         const before = seatConf(conf, { home: state.home, release }), after = seatConf({ ...s, port, bridgePort }, { home: state.home, release });
         state.writeSecret('arena.conf', after);
         // THE SEAT READS WHAT ITS SETTINGS NOW SAY (kanban #577, measured 2026-10-22 on the second machine: installer nodes 3-7 ran on the 15 settings
@@ -404,7 +404,7 @@ const serviceRun = async (b) => {
       if (!target) return { ok: false, why: 'the node runs, but its quick tunnel gave no name for the Worker to forward to', identity: r.identity };
       const d = await workersKit.deployForwarder({ token: state.readSecret('cf-workers-token'), accountId: s.reach.accountId, name: s.reach.workerName, target, fetcher });
       if (!d.ok) return { ok: false, why: `the node runs, but ${d.why}`, identity: r.identity };
-      s = state.save({ reach: { ...s.reach, target, targetAtMs: Date.now() } });
+      s = state.merge('reach', { target, targetAtMs: Date.now() });
       const k = await gwKit.installProgram({ id: 'workers', description: 'Bitcoin Arena: keeper of the workers.dev address', home: state.home, boot,
         args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'workers-keeper.mjs'), '--home', state.home] });
       if (!k.ok) return { ok: false, why: `the Worker forwards, but its keeper did not start: ${k.why}`, identity: r.identity };
@@ -415,7 +415,7 @@ const serviceRun = async (b) => {
       const t = await (reach.testWithNewTunnels || reachKit.testWithNewTunnels)({ url: s.reach.url, identity: r.identity, fetcher, log, test: reach.testPublicUrl,
         newTunnel: async () => { const rt = await restartTunnel(state.home); return rt && rt.tunnel ? rt.tunnel.url : null; } });
       reachTest = t.reachTest;
-      if (t.url !== s.reach.url) s = state.save({ reach: { ...state.read().reach, url: t.url } });
+      if (t.url !== s.reach.url) s = state.merge('reach', { url: t.url });
     } else if (s.reach.mode !== 'direct') reachTest = s.reach.url ? await reach.testPublicUrl({ url: s.reach.url, identity: r.identity, fetcher }) : { ok: false, why: 'the quick tunnel gave no name' };
     let login = null;
     if (s.owner.mode === 'seed') { stage('login'); login = await ownerLogin(signedBySeed(r.identity)); }
@@ -881,7 +881,7 @@ const serviceRun = async (b) => {
       const j = await gwKit.joinFederation({ ...s.gateway, invite: b.invite });
       if (!j.ok) return j;
       const t = await gwKit.testGateway(s.gateway);
-      if (t.ok) state.save({ gateway: { ...state.read().gateway, federations: t.federations } });
+      if (t.ok) state.merge('gateway', { federations: t.federations });
       return { ok: true, federationId: j.federationId, federations: t.ok ? t.federations : null };
     },
     // THE FEDERATION (2026-10-18: "it should be its own point and the default is find a new federation with 9 other nodes or
@@ -919,7 +919,7 @@ const serviceRun = async (b) => {
       const total = coins.reduce((a, c) => a + c.sats, 0);
       const custody = (s.roles || []).includes('custody');
       const pegInSats = custody ? Math.max(0, Math.floor(Number((b && b.pegInSats) ?? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS))) : 0;
-      if (custody) state.save({ custody: { ...(state.read().custody || {}), pegInSats } });
+      if (custody) state.merge('custody', { pegInSats });
       // THE MINIMUM ASKED OF THE SEATS (kanban #543): a new node bonds at least the network's target, so it is useful from the start
       if (!laterCustody(s)) { const m = await installMinimum({ fetcher }); state.save({ bondMinimum: { sats: m.sats, from: m.from, why: m.why, atMs: nowMs() } }); }
       const parts = withOtherNodes(state.read(), depositParts(state.read(), pegInSats), { further: !!fundFrom });
@@ -1016,7 +1016,7 @@ const serviceRun = async (b) => {
       }
       return { ok: true, bond };
     },
-    'POST /api/bond/later': async () => { const s = state.read(); mark('bond', { bond: s.bond && s.bond.txid ? s.bond : null }); return { ok: true }; },   // a posted bond stays
+    'POST /api/bond/later': async () => { state.update((n) => ({ bond: n.bond && n.bond.txid ? n.bond : null, done: { ...(n.done || {}), bond: Date.now() } })); return { ok: true }; },   // a posted bond stays - the one recorded now, not one read before (kanban #1178)
 
     'POST /api/finish': async () => {
       saveLaunchers();

@@ -87,7 +87,7 @@ export async function setUpOwnLnd({ state, release, fetcher = fetch, reach = rea
   // start because no router answered NAT-PMP) - asked as LND would ask it (router-probe.js); nat=true only when one answered. With none,
   // LND runs and dials out to its peers; the step says how peers can reach it (a port forward, or Tor)
   const fwd = !lnReach.reached && !torOn ? await router().catch((e) => ({ answered: false, by: null, why: e.message })) : null;
-  if (fwd) state.save({ lnReach: { ...state.read().lnReach, router: { answered: fwd.answered, by: fwd.by, why: fwd.why } } });
+  if (fwd) state.merge('lnReach', { router: { answered: fwd.answered, by: fwd.by, why: fwd.why } });
   onStage('start');
   const cfg = lndKit.configureLnd({ home: state.home, chain, tor: torOn ? torPorts : null, externalIp: lnReach.reached ? lnReach.address : null, nat: Boolean(fwd && fwd.answered) });
   const r = await lndKit.installProgram({ id: 'lnd', description: 'LND for Bitcoin Arena (custody)', args: lndKit.lndArgs({ lnd: got.lnd, lnddir: cfg.lnddir }), home: state.home, boot, partOf: torOn ? 'tor' : null,
