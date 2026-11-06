@@ -793,6 +793,19 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       return t.ok ? { ok: true, kept: PAYOUT.SHORT } : t;
     }
     if (!rec.plan || typeof rec.plan !== 'object' || planIdOf(rec.plan) !== rec.planId) return refuse('the record\'s plan is not its id');
+    // A PLAN SPENDS ONLY ITS OWN FEDERATION'S RESERVES (kanban #1221, audit 2 #1204 RES-2): a record stands on a guardian of the federation
+    // it names, and its inputs were locked by outpoint alone - a guardian of one federation named another's reserve outputs in a PLANNED of
+    // its own, and every seat that is no signer of it read them spent for good. An input this seat holds as a reserve output of another
+    // federation is refused; one it holds as none is not counted here either way.
+    { const own = new Set((reserveRows(rec.plan.federation) || []).map((r) => String(r.outpoint)));
+      for (const x of rec.plan.refunds || []) {
+        const o = String(x && x.outpoint);
+        if (own.has(o)) continue;
+        for (const f of guardians().keys()) {
+          if (f === rec.plan.federation) continue;
+          if ((reserveRows(f) || []).some((r) => String(r.outpoint) === o)) return refuse(`input ${o.slice(0, 16)}… is a reserve output of federation ${String(f).slice(0, 8)} here, not of ${String(rec.plan.federation).slice(0, 8)}: a plan spends only its own federation's reserves`, 403);
+        }
+      } }
     let from = had ? had.state : null, release = false;
     if (had && had.plan_id && had.plan_id !== rec.planId) {
       // ANOTHER PLAN OF THE PROPOSAL (kanban #1159): a later attempt over one that expired (here, or - a seat that pays nothing - on the
