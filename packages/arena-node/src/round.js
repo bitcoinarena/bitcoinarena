@@ -3015,10 +3015,14 @@ export class Round {
    * holds it in its re-run window, so nothing else can be one.
    */
   lateSettlementCandidates() {
+    // A ROUND THAT TAKES ANY FEDERATION HAS NO ROW OF ITS OWN (kanban #1172): its late losers are asked about once every federation's row is ACCEPTED
     return this.db.prepare(`SELECT o.round_id, o.entry_id FROM objections o
-      JOIN lock_settlements s ON s.round_id = o.round_id AND s.state = 'ACCEPTED'
       LEFT JOIN late_lock_settlements l ON l.round_id = o.round_id AND l.entry_id = o.entry_id
-      WHERE l.state IS NULL OR l.state <> 'ACCEPTED'`).all()
+      WHERE (l.state IS NULL OR l.state <> 'ACCEPTED')
+        AND (EXISTS (SELECT 1 FROM lock_settlements s WHERE s.round_id = o.round_id AND s.state = 'ACCEPTED')
+          OR (NOT EXISTS (SELECT 1 FROM lock_settlements s WHERE s.round_id = o.round_id)
+            AND EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id)
+            AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id AND f.state <> 'ACCEPTED')))`).all()
       .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id) }));
   }
 

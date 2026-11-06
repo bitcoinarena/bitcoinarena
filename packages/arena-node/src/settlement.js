@@ -318,6 +318,20 @@ export class LockSettlement {
     return (await p.forFederation(toHex(c.federationId))) || p;
   }
 
+  /**
+   * THE PORT A LATE LOSER'S SETTLEMENT IS IN (kanban #1172): a round in one federation, that one; a round that takes any federation, the late loser's
+   * entry's federation - its lock is there, and the winners' payouts are to keys, the same in every federation. null when it names none reachable.
+   */
+  async latePort(roundIdBytes, entryIdBytes) {
+    const row = this.round.get(roundIdBytes);
+    const c = row ? decodeRoundContract(new Uint8Array(row.contract)) : null;
+    if (!c || !takesAnyFederation(c)) return this.portFor(roundIdBytes);
+    const raw = this.round.entry(entryIdBytes);
+    let ef = null;
+    try { ef = raw ? entryFederation(c, decodeEntryContract(new Uint8Array(raw))) : null; } catch { ef = null; }
+    return ef && ef.ok ? this.portForFederation(toHex(ef.federationId)) : null;
+  }
+
   /** THE PORT OF ONE FEDERATION by its id hex (2026.0.3): a router's port for it, else the one port this node has. */
   async portForFederation(fid) {
     const p = this.port;
@@ -382,8 +396,9 @@ export class LockSettlement {
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     if (!locksStake(contract)) return refuse('that round\'s stake is not a federation lock, so there is no lock to claim');
     if (!this.port || typeof this.port.settle !== 'function') return refuse('this signer node reaches no federation, so it settles nothing');
-    const first = this.round.lockSettlement(roundIdBytes);
-    if (!first || first.state !== ACCEPTED) return refuse('the round\'s own settlement is not accepted here yet, so no entry is late');
+    // A ROUND THAT TAKES ANY FEDERATION HAS NO ROW OF ITS OWN (kanban #1172): its settlement is ACCEPTED once every federation's row is
+    const first = this.round.settlementState ? this.round.settlementState(roundIdBytes) : (this.round.lockSettlement(roundIdBytes) || {}).state;
+    if (first !== ACCEPTED) return refuse('the round\'s own settlement is not accepted here yet, so no entry is late');
     const shares = this.round.lockSettlementShares ? this.round.lockSettlementShares(roundIdBytes) : null;
     if (!shares) return refuse('this signer node kept no shares of the round\'s settlement, so it cannot split a late stake');
     const lockRow = this.round.stakeLock(entryIdBytes);
@@ -423,8 +438,12 @@ export class LockSettlement {
     }
     const fl = this.round.feeLock ? this.round.feeLock(entryIdBytes) : null;
     const feeLock = fl ? { outpoint: outpointOf(fl.outpoint), amountMsat: lockFieldsFromJson(fl.fields).amountMsat, preimage: e.feePreimage } : null;
-    let fees = this.fees.get(toHex(roundIdBytes));
-    if (!fees) { fees = await (await this.portFor(roundIdBytes)).fees(); this.fees.set(toHex(roundIdBytes), fees); }
+    // THE LATE LOSER'S FEDERATION'S PORT AND FEE RULE (kanban #1172): its lock is there; for a round in one federation, the round's
+    const port = await this.latePort(roundIdBytes, entryIdBytes);
+    if (!port || typeof port.settle !== 'function') return refuse('this signer node reaches no federation of that late loser\'s lock, so it builds nothing');
+    const feeKey = takesAnyFederation(contract) ? `${toHex(roundIdBytes)}:late:${toHex(entryIdBytes)}` : toHex(roundIdBytes);
+    let fees = this.fees.get(feeKey);
+    if (!fees) { fees = await port.fees(); this.fees.set(feeKey, fees); }
     const args = { roundId: roundIdBytes, entryId: entryIdBytes, entry, lock, feeLock, shares, fees,
       signerNodes: feeLock ? this.signerNodesFor(roundIdBytes, contract) : null, contract, ...this.roundFees(contract) };
     // THE BASE PLAN the late sends are sized from (C3b-2a). With a winnings sender it is never signed, so a winner whose
@@ -450,7 +469,7 @@ export class LockSettlement {
       }
       claims.push({ ...c, preimage: opened.preimage });
     }
-    const tx = await (await this.portFor(roundIdBytes)).settle({ claimPk, claims, payouts: plan.payouts, nonce: plan.nonce });
+    const tx = await port.settle({ claimPk, claims, payouts: plan.payouts, nonce: plan.nonce });
     const built = { ok: true, message: fromHex(tx.message), txid: tx.txid, plan, claims, claimPk,
       signerNode: held.signerNode, needed: receiptsNeeded(contract.settlementSlots) };
     this.built.set(key, built);
@@ -741,8 +760,9 @@ export class LockSettlement {
     if (!t.mine) {
       if (kept && kept.state === SUBMITTING) {
         const m = await this.lateMessage(roundIdBytes, entryIdBytes);
-        if (m.ok && m.txid === kept.txid && this.port && typeof this.port.status === 'function') {
-          const held = async (o) => !!(await (await this.portFor(roundIdBytes)).status(o)).stored;
+        if (m.ok && m.txid === kept.txid && this.port && typeof this.port.status === 'function' && (await this.latePort(roundIdBytes, entryIdBytes))) {
+          const lp = await this.latePort(roundIdBytes, entryIdBytes);
+          const held = async (o) => !!(await lp.status(o)).stored;
           let gone = 0;
           for (const c of m.claims) if (!(await held(c.outpoint))) gone++;
           let paid = 0;
@@ -780,7 +800,9 @@ export class LockSettlement {
     }
     this.round.putLateLockSettlement({ roundId: roundIdBytes, entryId: entryIdBytes, txid: m.txid, message: m.message, signature, state: SUBMITTING,
       why: 'about to submit; if this signer node dies here, ask the federation for the claimed lock' });
-    const sent = await (await this.portFor(roundIdBytes)).settle({ claimPk: m.claimPk, claims: m.claims, payouts: m.plan.payouts, nonce: m.plan.nonce, signature });
+    const latePort = await this.latePort(roundIdBytes, entryIdBytes);
+    if (!latePort) return refuse('this signer node reaches no federation of that late loser\'s lock');
+    const sent = await latePort.settle({ claimPk: m.claimPk, claims: m.claims, payouts: m.plan.payouts, nonce: m.plan.nonce, signature });
     const state = sent.accepted ? ACCEPTED : REFUSED;
     const why = sent.accepted
       ? `claimed the late loser's lock, ${m.plan.poolMsat} msat; paid ${m.plan.payouts.filter((p) => p.kind !== 'signer node').length} winner(s) ${m.plan.paidMsat} msat`
