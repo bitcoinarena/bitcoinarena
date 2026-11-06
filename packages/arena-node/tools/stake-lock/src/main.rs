@@ -282,6 +282,8 @@ async fn main() -> anyhow::Result<()> {
         // THE SLASH'S PAYOUTS (spec §5A.3B): each wronged player's share, from the arbiter's own e-cash (the escrow
         // it pegged in), as a settlement pays a qualifier - a pre-expired lock only that player's key ever moves
         "pay" => pay(&a, &client, lnv2, &api).await,
+        // kanban #1174: the payout a keyed pay made, read back from the client's operation log (never paid twice)
+        "pay-sent" => pay_sent(&a, &client, &api).await,
         // THE PROTOCOL RESERVES MOVED BETWEEN FEDERATIONS (2026-10-17 decision A: "Add the two receive-and-claim
         // modes to the stake-lock tool"): an invoice of a gateway of THIS federation whose incoming contract only the destination's
         // reserve key - a 5-of-7 key nobody holds alone - can claim; and that claim, FROST-signed by the seats, into a reserve output
@@ -295,7 +297,7 @@ async fn main() -> anyhow::Result<()> {
         // kanban #1160: the e-cash a keyed ecash-send made, read back from the client's operation log (never spent twice)
         "ecash-sent" => ecash_sent(&a, &client).await,
         "balance" => { println!("{}", serde_json::json!({ "mode": "balance", "msat": client.get_balance_for_btc().await?.msats })); Ok(()) }
-        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send, serve, pegin-address, pegin-claim, pay, receive-to-key, claim-incoming, ecash-send, ecash-receive, ecash-sent, balance or id"),
+        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send, serve, pegin-address, pegin-claim, pay, pay-sent, receive-to-key, claim-incoming, ecash-send, ecash-receive, ecash-sent, balance or id"),
     }
 }
 
@@ -519,12 +521,9 @@ async fn lock(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &Dyn
     bail!("the lock transaction {txid} was accepted but no outpoint of it holds an outgoing contract")
 }
 
-/// --mode pay --payouts PK:MSAT[,PK:MSAT...] (spec §5A.3B "the arbitration set pegs it into the round's
-/// federation and locks each share to its player"): ONE transaction from this client's own e-cash, one output per player -
-/// the payout shape of --mode settle: expiration 0 (pre-expired, so Claim is refused for everybody), claim and refund keys
-/// the player's, the image unused - so only that player's key ever moves it, by the refund the page already takes for a
-/// settlement's payout. Each payout's outpoint is read back from the guardians by its contract id.
-async fn pay(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi) -> anyhow::Result<()> {
+/// THE PAYOUT CONTRACTS OF --payouts PK:MSAT[,PK:MSAT...]: pre-expired (expiration 0, so Claim is refused for everybody), claim and refund
+/// keys the player's, the image unused - so only that player's key ever moves one, by the refund the page already takes for a settlement's payout.
+fn payout_contracts(a: &Args) -> anyhow::Result<Vec<OutgoingContract>> {
     let mut contracts: Vec<OutgoingContract> = Vec::new();
     for spec in need(a, "payouts")?.split(',') {
         let (pk, msat) = spec.split_once(':').context("a payout is PK:MSAT")?;
@@ -538,23 +537,17 @@ async fn pay(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynM
             ephemeral_pk: pk,
         });
     }
-    let outputs = contracts
-        .iter()
-        .map(|c| ClientOutput { output: LightningOutput::V0(LightningOutputV0::Outgoing(c.clone())), amounts: Amounts::new_bitcoin(c.amount) })
-        .collect::<Vec<_>>();
-    let bundle = ClientOutputBundle::new_no_sm(outputs).into_dyn(lnv2);
-    let operation = OperationId::new_random();
-    let change = client
-        .finalize_and_submit_transaction(operation, "arena-slash-payouts", |_| (), TransactionBuilder::new().with_outputs(bundle))
-        .await?;
-    let txid = change.txid();
-    client
-        .transaction_updates(operation)
-        .await
-        .await_tx_accepted(txid)
-        .await
-        .map_err(|e| anyhow!("the guardians did not accept the payout transaction: {e}"))?;
-    // WHERE EACH PAYOUT LANDED: the builder places the change, so every outpoint is read and matched by contract id
+    Ok(contracts)
+}
+
+/// A KEYED PAYOUT'S OPERATION (kanban #1174): H("arena-payout:" || key) - the client refuses a second operation of one id, so a payout
+/// of one key is submitted once, and its operation log entry names the transaction it made.
+fn payout_operation(key: &str) -> OperationId {
+    OperationId(sha256::Hash::hash(format!("arena-payout:{key}").as_bytes()).to_byte_array())
+}
+
+/// WHERE EACH PAYOUT OF `txid` LANDED: the builder places the change, so every outpoint is read and matched by contract id.
+async fn payouts_at(api: &DynModuleApi, txid: TransactionId, contracts: &[OutgoingContract]) -> anyhow::Result<Vec<serde_json::Value>> {
     let mut found = Vec::new();
     for out_idx in 0..(contracts.len() as u64 + 16) {
         if let Some((stored_id, _)) = stored_at(api, OutPoint { txid, out_idx }).await? {
@@ -567,8 +560,79 @@ async fn pay(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynM
     if found.len() != contracts.len() {
         bail!("the payout transaction {txid} was accepted, and {} of its {} payouts were found at the guardians", found.len(), contracts.len());
     }
+    Ok(found)
+}
+
+/// WHAT A KEYED PAYOUT MADE BEFORE (kanban #1174): None - this client never submitted one of that key; Some(Ok(txid)) - it did and the guardians
+/// accepted it; Some(Err(why)) - it did and they refused it (nothing was paid: a new key pays it).
+async fn payout_sent_with(client: &ClientHandle, operation: OperationId) -> anyhow::Result<Option<Result<TransactionId, String>>> {
+    let Some(entry) = client.operation_log().get_operation(operation).await else { return Ok(None) };
+    let meta = entry.try_meta::<serde_json::Value>().context("the keyed payout's operation has no meta")?;
+    let txid = TransactionId::from_str(meta.get("txid").and_then(|v| v.as_str()).context("the keyed payout's operation names no transaction")?)?;
+    match client.transaction_updates(operation).await.await_tx_accepted(txid).await {
+        Ok(()) => Ok(Some(Ok(txid))),
+        Err(e) => Ok(Some(Err(format!("{e}")))),
+    }
+}
+
+/// --mode pay --payouts PK:MSAT[,PK:MSAT...] [--key K] (spec §5A.3B "the arbitration set pegs it into the round's
+/// federation and locks each share to its player"): ONE transaction from this client's own e-cash, one output per player -
+/// the payout shape of --mode settle (payout_contracts). Each payout's outpoint is read back from the guardians by its contract id.
+/// KEYED (kanban #1174): with --key K the transaction is the operation payout_operation(K), its meta {"arena_payout": K, "txid"}; a pay of a
+/// key paid before answers that transaction again ("again": true) instead of paying a second time; one the guardians refused is said so.
+async fn pay(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi) -> anyhow::Result<()> {
+    let contracts = payout_contracts(a)?;
+    let key = a.get("key").cloned();
+    let operation = match &key { Some(k) => payout_operation(k), None => OperationId::new_random() };
+    if key.is_some() {
+        match payout_sent_with(client, operation).await? {
+            Some(Ok(txid)) => {
+                let found = payouts_at(api, txid, &contracts).await?;
+                let balance = client.get_balance_for_btc().await.map(|b| b.msats).unwrap_or(0);
+                println!("{}", serde_json::json!({ "mode": "pay", "txid": txid.to_string(), "payouts": found, "balance_after_msat": balance, "key": key, "again": true }));
+                return Ok(());
+            }
+            Some(Err(why)) => bail!("the keyed payout {} was refused by the guardians ({why}): nothing was paid under that key - pay it under a new key", key.clone().unwrap_or_default()),
+            None => {}
+        }
+    }
+    let outputs = contracts
+        .iter()
+        .map(|c| ClientOutput { output: LightningOutput::V0(LightningOutputV0::Outgoing(c.clone())), amounts: Amounts::new_bitcoin(c.amount) })
+        .collect::<Vec<_>>();
+    let bundle = ClientOutputBundle::new_no_sm(outputs).into_dyn(lnv2);
+    let named = key.clone();
+    let change = client
+        .finalize_and_submit_transaction(operation, "arena-slash-payouts",
+            move |range| serde_json::json!({ "arena_payout": named.clone(), "txid": range.txid().to_string() }),
+            TransactionBuilder::new().with_outputs(bundle))
+        .await?;
+    let txid = change.txid();
+    client
+        .transaction_updates(operation)
+        .await
+        .await_tx_accepted(txid)
+        .await
+        .map_err(|e| anyhow!("the guardians did not accept the payout transaction: {e}"))?;
+    let found = payouts_at(api, txid, &contracts).await?;
     let balance = client.get_balance_for_btc().await.map(|b| b.msats).unwrap_or(0);
-    println!("{}", serde_json::json!({ "mode": "pay", "txid": txid.to_string(), "payouts": found, "balance_after_msat": balance }));
+    println!("{}", serde_json::json!({ "mode": "pay", "txid": txid.to_string(), "payouts": found, "balance_after_msat": balance, "key": key }));
+    Ok(())
+}
+
+/// --mode pay-sent --payouts PK:MSAT[,...] --key K (kanban #1174): {"mode", "key", "found", "txid", "payouts"} - the payout a keyed pay made,
+/// with each payout's outpoint; found false: this client never paid under that key, and a pay may be made; "rejected": the guardians refused it.
+async fn pay_sent(a: &Args, client: &ClientHandle, api: &DynModuleApi) -> anyhow::Result<()> {
+    let key = need(a, "key")?;
+    let contracts = payout_contracts(a)?;
+    match payout_sent_with(client, payout_operation(key)).await? {
+        Some(Ok(txid)) => {
+            let found = payouts_at(api, txid, &contracts).await?;
+            println!("{}", serde_json::json!({ "mode": "pay-sent", "key": key, "found": true, "txid": txid.to_string(), "payouts": found }));
+        }
+        Some(Err(why)) => println!("{}", serde_json::json!({ "mode": "pay-sent", "key": key, "found": false, "rejected": true, "why": why })),
+        None => println!("{}", serde_json::json!({ "mode": "pay-sent", "key": key, "found": false })),
+    }
     Ok(())
 }
 

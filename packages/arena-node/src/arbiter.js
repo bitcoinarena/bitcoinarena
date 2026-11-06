@@ -32,6 +32,7 @@ import { transcriptHash, decodeTranscript } from '../../arena-protocol/src/trans
 import { checkObjectionBundle } from './objection-check.js';
 import { runId } from './verdict.js';
 import { tweakPoint, combine } from './curve.js';
+import { keyedPay, runPayouts } from './keyed-payout.js';
 import { nonceGen, bondSigningContext, bondPartialSign, MusigError } from './musig2.js';
 import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
 
@@ -186,8 +187,13 @@ export async function payOutSlash({ proof, v, set, rpc, keep = () => {}, say = (
     const want = v.players.reduce((t, p) => t + BigInt(p.sats) * 1000n, 0n);
     const have = BigInt(v.claimedMsat);
     const payouts = v.players.map((p) => ({ key: toHex(refundKeyOf(fromHex(p.key))), msat: have >= want ? BigInt(p.sats) * 1000n : (BigInt(p.sats) * 1000n * have) / want }));
-    const paid = await run(['--mode', 'pay', ...dir, '--payouts', payouts.map((p) => `${p.key}:${p.msat}`).join(',')], 300000);
-    if (!paid.txid) return { why: `no payout transaction: ${paid.error || JSON.stringify(paid)}` };
+    // THE PAYOUT ONCE (kanban #1174, keyed-payout.js): its record ASKED - key (the proof) and list - written before the tool; after a stop it is read
+    // back under its key (pay-sent), never paid twice; a tool without pay-sent holds it
+    if (!v.pay) v.pay = {};
+    const got = await keyedPay({ rec: v.pay, save: keep, list: payouts, key: `slash-arb:${proof}`,
+      ...runPayouts((args) => run([...args.slice(0, 2), ...dir, ...args.slice(2)], 300000)) });
+    if (!got.ok) return { why: `no payout transaction: ${got.why}`, held: !!got.held };
+    const paid = { txid: got.txid, payouts: got.payouts };
     v.payouts = paid.payouts.map((x) => ({ round: v.round, entry: v.entry, refundPk: x.refund_pk, msat: String(x.amount_msat), txid: paid.txid, outIdx: x.out_idx, contractId: x.contract_id }));
     keep();
     say({ proof: proof.slice(0, 16), paid: v.payouts.length, txid: paid.txid });
