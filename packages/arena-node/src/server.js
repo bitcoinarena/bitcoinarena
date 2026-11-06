@@ -1676,12 +1676,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
     if (!now.ok) return {};
     // one seat per node key: a node with two bonds is two census entries (reserve-members.js, kanban #397)
-    const out = reserveMembersOf(now.entries);
+    // only the guardians each federation's held record names (kanban #1204 RES-1)
+    const guardiansOf = (f) => { const k = fedRecords && typeof fedRecords.recordOf === 'function' ? fedRecords.recordOf(f) : null; return k && k.record ? k.record.guardians : null; };
+    const out = reserveMembersOf(now.entries, { guardiansOf });
     // A FEDERATION THE BASIS DOES NOT NAME YET is read from the chain's newest census, as its record is (#549; kanban #397, measured
     // 2026-10-23 04:08Z: e2f42eea's ten guardian seats held its 7-of-10 key while test host seat 1, whose newest round's census predates
     // their advert updates, listed it with 0 members). A federation the basis names keeps its members: no reserve epoch moves.
     if (fedRecords && fedRecords.censusNewest) {
-      try { for (const [f, es] of Object.entries(reserveMembersOf(fedRecords.censusNewest() || []))) if (!out[f]) out[f] = es; } catch { /* the basis alone */ }
+      try { for (const [f, es] of Object.entries(reserveMembersOf(fedRecords.censusNewest() || [], { guardiansOf }))) if (!out[f]) out[f] = es; } catch { /* the basis alone */ }
     }
     return Object.fromEntries(Object.entries(out).map(([f, es]) => [f, { members: es.map((e) => e.pubkey), peers: peerEndpointsOf(es, round.pubkey) }]));
   };
