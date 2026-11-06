@@ -37,7 +37,7 @@ import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { lockFieldsFromJson } from '../../arena-protocol/src/stake-lock.js';
 import { FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../arena-protocol/src/objection.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
-import { resultFinality, settledResult } from './finality.js';
+import { resultFinality, settledResult, agreedRerunOf } from './finality.js';
 import { stateOf } from './settlement-state.js';
 import { pluginForRound } from './plugins.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
@@ -67,11 +67,17 @@ const partialScalar = (bytes) => BigInt('0x' + (Buffer.from(bytes).toString('hex
  * The other forfeit doors name no entry signed lost: a refused round's lock (no entry, no result), and a market's order and refund doors (no run, no result).
  * Answers { allowed: true, why }, { allowed: false }, or { allowed: null, why } where this seat cannot read it yet (an entry not final here): the filer then waits, and the judge cannot say. `finalityOf` / `settledOf`: finality.js's, injected by tests.
  */
-export function lostForfeitAllowed(round, roundIdBytes, entryIdBytes, { finalityOf = resultFinality, settledOf = settledResult } = {}) {
+export function lostForfeitAllowed(round, roundIdBytes, entryIdBytes, { finalityOf = resultFinality, settledOf = settledResult, rerunOf = agreedRerunOf } = {}) {
   if (round.entryVoid && round.entryVoid(entryIdBytes)) return { allowed: true, why: 'the entry is ENTRY_VOID here: its stake comes back as the outage refund' };
   if (!round.get(roundIdBytes)) return { allowed: null, why: 'this seat does not hold that round, so it cannot read whether anybody won' };
   let contract;
   try { contract = decodeRoundContract(new Uint8Array(round.get(roundIdBytes).contract)); } catch { return { allowed: null, why: 'the round\'s contract does not decode here' }; }
+  // AN AGREED RE-RUN THAT MAKES THE ENTRY A QUALIFIER ALLOWS ITS STAKE BACK (kanban #1173, row (b)): a seat that saw the objection late holds FINAL on the
+  // lost first run, while the seats that saw it in time went FINAL on the committee's re-run and forfeit the qualifier's stake back, as ruled - by the
+  // re-run, not by this seat's own window, that forfeit is no offence. Measured in reading: lostForfeitAllowed read only this seat's finality
+  const rr = rerunOf(round, roundIdBytes, entryIdBytes);
+  if (rr && rr.ok && rr.result && isQualifier(rr.result, contract.minScore))
+    return { allowed: true, why: `the committee agreed a re-run (${String(rr.runId).slice(0, 16)}) by which the entry qualifies: its stake comes back by its own forfeit` };
   // WHO WON, BY THE RESULTS THIS SEAT HOLDS FINAL - not by its settlement: a forfeit of a loser's lock leaves the settlement unbuildable (the lock is gone
   // from the guardians, measured 2026-11-06 on s29a round b0bfe1be), so a reading that waited for ACCEPTED would never file the offence it is about
   const settled = new Map();
