@@ -18,46 +18,18 @@
 //                  payouts: [{ refundPk, msat, txid (federation), outIdx, round, entry, federation }],
 //                  reserves: [{ federation, reserveKey, msat, txid (federation), outIdx }] }
 // An event is named by its kind and its subject (the federation liquidated, the slash proof); a newer `atMs` replaces the one kept.
-import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { toHex } from '../../arena-protocol/src/hash.js';
+// THE EVENT AND ITS CHECK live in arena-protocol (kanban #1148): the page checks a liquidation the same way before it hands over a note
+import { EVENT_KINDS, canonicalJson, eventMessage, subjectOf, eventKey, eventStands } from '../../arena-protocol/src/arbitration-event.js';
+export { EVENT_KINDS, canonicalJson, eventMessage, subjectOf, eventKey, eventStands };
 
-export const EVENT_KINDS = ['liquidation', 'slash'];
 const hex64 = /^[0-9a-f]{64}$/;
-const MAX_EVENT_BYTES = 512 * 1024;
 const MAX_EVENTS = 2000;
-
-/** JSON with every object's keys in order: the bytes the members sign are the same on every machine. */
-export function canonicalJson(v) {
-  if (v === null || typeof v !== 'object') return JSON.stringify(v === undefined ? null : typeof v === 'bigint' ? String(v) : v);
-  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(',')}]`;
-  return `{${Object.keys(v).filter((k) => v[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(v[k])}`).join(',')}}`;
-}
-export const eventMessage = (event) => taggedHash('BLWP/v1/ArbitrationEvent', new TextEncoder().encode(canonicalJson(event)));
-export const subjectOf = (event) => (event && event.kind === 'slash' ? event.proof : event ? event.federation : null);
-export const eventKey = (event) => `${event.kind}:${subjectOf(event)}`;
 
 /** The event signed by k members of the set (`set` as arbiter.js arbitrationMembers answers it), each on its own. */
 export function signEvent(event, set, sign) {
   const msg = eventMessage(event);
   return { event, signatures: set.members.slice(0, set.k).map((m) => ({ key: toHex(m.key), sig: toHex(sign(m, msg)) })) };
-}
-
-/** Does a published event stand: its shape, and k valid signatures of distinct members of `keys` over it? */
-export function eventStands(said, { keys, k, verify }) {
-  const e = said && said.event;
-  if (!e || typeof e !== 'object' || !EVENT_KINDS.includes(e.kind)) return { ok: false, why: `an event is one of ${EVENT_KINDS.join(', ')}` };
-  if (!hex64.test(String(subjectOf(e) || ''))) return { ok: false, why: e.kind === 'slash' ? 'a slash names its proof (64 hex)' : 'a liquidation names its federation (64 hex)' };
-  if (!Number.isFinite(e.atMs) || !Number.isFinite(e.firstMs)) return { ok: false, why: 'an event says when it was first made and last changed (firstMs, atMs)' };
-  if (canonicalJson(e).length > MAX_EVENT_BYTES) return { ok: false, why: 'that event is too large' };
-  const members = new Set((keys || []).map((x) => (typeof x === 'string' ? x : toHex(x))));
-  const msg = eventMessage(e);
-  const good = new Set();
-  for (const s of Array.isArray(said.signatures) ? said.signatures : []) {
-    const key = String(s && s.key || '').toLowerCase();
-    if (!members.has(key) || good.has(key) || !/^[0-9a-f]{128}$/.test(String(s.sig || ''))) continue;
-    if (verify(fromHex(s.sig), msg, fromHex(key))) good.add(key);
-  }
-  if (good.size < k) return { ok: false, why: `${good.size} valid signatures of the arbitration set, and an event needs ${k}` };
-  return { ok: true, signers: good.size };
 }
 
 /**
@@ -96,7 +68,7 @@ const n = (x) => (x === null || x === undefined || x === '' ? null : Number(x));
  * `firstMs` / `atMs` are the arbiter's, see stampEvent). `claims` are the accepted claims of that federation (the claims book),
  * `liq` the seats' listing of it (halt, proof), `escrowAt` the escrow outpoint "txid:vout", `into` the safe federation paid in.
  */
-export function liquidationEvent({ network, fid, v = {}, claims = [], liq = null, escrowAt = null, into = null }) {
+export function liquidationEvent({ network, fid, v = {}, claims = [], liq = null, escrowAt = null, into = null, door = null }) {
   const halt = v.halt || (liq ? { height: n(liq.haltHeight), proof: liq.haltProof ? { session: liq.haltProof.session, observers: liq.haltProof.observers,
     abandoned: liq.haltProof.abandoned || [], id: liq.haltProof.id } : null } : null);
   const accepted = claims.map((c) => ({ nonce: c.nonce, amountMsat: String(c.amountMsat), height: n(c.height), payoutPk: c.payoutPk }))
@@ -109,7 +81,8 @@ export function liquidationEvent({ network, fid, v = {}, claims = [], liq = null
     payees: n(v.remainderPayees) ?? rp.length, payouts: rp } : null;
   const status = remainder ? 'paid out' : payouts.length ? 'claims paid, remainder waits' : v.claimedMsat ? 'escrow claimed in the safe federation'
     : v.escrowTxid ? 'escrow sent to the safe federation' : 'claims open';
-  return { kind: 'liquidation', network, federation: fid, status, halt,
+  // THE SET'S CLAIMS DOOR, SIGNED (kanban #1148): a page presents its notes only here - never at a URL a seat listed
+  return { kind: 'liquidation', network, federation: fid, status, halt, ...(door ? { door: String(door).replace(/\/+$/, '') } : {}),
     escrow: { outpoint: str(escrowAt), sats: str(v.escrowSats), txid: str(v.escrowTxid), address: str(v.pegInAddress), into: intoFed,
       claimedMsat: str(v.claimedMsat), atMs: n(v.escrowAtMs), claimedAtMs: n(v.claimedAtMs) },
     claims: { accepted, refused: (v.refused || []).map((r) => ({ nonce: str(r.nonce), why: str(r.why), height: n(r.height) })),
