@@ -6,13 +6,13 @@
 //   1. WHO SERVED: every seat's signed FINALs of the 24 h before now (GET /served?finals=1), merged by round and each FINAL checked
 //      here (served-nodes.js) - the same list every seat rebuilds when it checks the purchase.
 //   2. THE SPLIT: purchaseOutputs over the item's price, those nodes and the two donation sets (purchase.js).
-//   3. THE PAYMENT: the lock client's paySubmit (one transaction of pre-expired payout contracts, the buyer's key as their image),
+//   3. THE PAYMENT: the lock client's paySubmit (one transaction of pre-expired payout contracts, purchaseImage as their image - kanban #1180),
 //      its acceptance read back output by output (lockAccepted).
 //   4. THE RECORD: the game, the item, the price, the buyer, the federation, the transaction, every output and the served list,
 //      signed with the player's key, handed to a seat (POST /item-purchase), which hands it on to every other.
 // No float touches an amount; every step that fails says which, and nothing is paid before the list and the split stand.
 import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS } from '../../arena-protocol/src/served-nodes.js';
-import { purchaseOutputs, purchaseOutputsReserves, purchaseId, encodePurchase } from '../../arena-protocol/src/purchase.js';
+import { purchaseOutputs, purchaseOutputsReserves, purchaseId, encodePurchase, purchaseImage } from '../../arena-protocol/src/purchase.js';
 import { itemOf, itemPriceFor, ITEM_DEV_SHARES, ITEM_DEV_SHARE_DEFAULT } from '../../arena-protocol/src/items.js';
 import { itemSplitReserves, ITEM_DEV_SHARES_RESERVES, ITEM_DEV_SHARE_RESERVES_DEFAULT } from '../../arena-protocol/src/reserves.js';
 import { gameIdOf } from '../../arena-protocol/src/manifest.js';
@@ -91,9 +91,13 @@ export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, f
       ? purchaseOutputsReserves({ priceSat: item.priceSat, servedKeys: got.served.nodes.map((n) => n.key), networkSet, gameSet, devsPct: Number(devsPct), reserveKey })
       : purchaseOutputs({ priceSat: item.priceSat, servedKeys: got.served.nodes.map((n) => n.key), networkSet, gameSet, devsPct: Number(devsPct) });
   } catch (e) { return no('split', e.message); }
+  // THE PAYMENT NAMES THE ITEM (kanban #1180): every contract's image commits to the buyer, the game, the item, its price and the served
+  // window (purchaseImage), so this payment stands for this item's record alone
+  const image = toHex(purchaseImage({ playerPubkey: player.pubkey, gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat,
+    servedFromMs: got.served.fromMs, servedToMs: got.served.toMs }));
   let submitted, accepted;
   try {
-    submitted = JSON.parse(await wallet.paySubmit(JSON.stringify(built.outputs.map((o) => ({ pk: toHex(o.pk), msat: String(o.msat), image: toHex(player.pubkey) })))));
+    submitted = JSON.parse(await wallet.paySubmit(JSON.stringify(built.outputs.map((o) => ({ pk: toHex(o.pk), msat: String(o.msat), image })))));
     accepted = JSON.parse(await wallet.lockAccepted(JSON.stringify(submitted)));
   } catch (e) { return no('payment', String(e && e.message || e)); }
   const outs = accepted.donations || [];
