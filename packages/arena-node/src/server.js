@@ -4386,7 +4386,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const keepOwnerSign = (x) => { const now = Date.now(); for (const [k, v] of ownerSigns) if (now - v.at > 1800000) ownerSigns.delete(k); ownerSigns.set(x.prepared.digest, { ...x, at: now }); };
   // A STARTED BOND OF THIS NODE (5A.3B): what it reads of its hold output, and its way out
   let slashRelease = null;                       // slash-release-run.js, made below: a fallback a holder is asked to sign goes to it
-  const holdWatch = censusKey && censusKey.rawTxAt ? createHoldWatch({ clocks: holdClocksOf(censusKey.networkId), tipHeight: censusKey.tipHeight, rawTxAt: censusKey.rawTxAt,
+  const holdWatch = censusKey && censusKey.rawTxAt ? createHoldWatch({ db: round.db, clocks: holdClocksOf(censusKey.networkId), tipHeight: censusKey.tipHeight, rawTxAt: censusKey.rawTxAt,
     broadcast: (hex) => chainSend(hex), log: (l) => console.log(l), fetchProof: (id) => proofBytesFetched(id), proofChecks: async (bytes, at) => (await judgeProofBytes(bytes, at)).verdict, returnScript: () => ownReturnScript(), notify: ({ bond, why }) => console.log(`[hold] the owner of ${bond.txid.slice(0, 16)} is owed a return to sign on the owner page: ${why}`),
     holdsFor: (b) => holdsOfOwnBond({ ownerKey: b.ownerKey ? fromHex(b.ownerKey) : null, censusKey: fromHex(b.censusKey), bondMaturity: b.maturity, clocks: holdClocksOf(censusKey.networkId), tweakPoint,
       panels: seating ? seating.ownHoldPanels({ txid: toHex(fromHex(b.txid).reverse()), vout: b.vout }) : [] }) }) : null;
