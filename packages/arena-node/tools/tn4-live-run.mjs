@@ -22,7 +22,7 @@
  * THROUGH A REFERRAL PROGRAM (kanban #675): FRONTEND_PK=<33-byte website key hex> - the entry names it as a page that came by a ?ref= link
  * does; at settlement the key is paid 10% of the nodes' fee on this stake (GET /referral-fees on the seats then counts it).
  */
-import { readFileSync, copyFileSync, appendFileSync } from 'node:fs';
+import { readFileSync, copyFileSync, appendFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -382,8 +382,7 @@ try {
   if (env.NO_MARKS && !env.REFUND_AT_EXPIRY) { log({ step: 'no marks sent' }); process.exit(0); }
   // REFUND_AT_EXPIRY=1 (with NO_MARKS, kanban #1044 B1 phase 4): an Arena lock nobody forfeits goes back to its player by the refund from its
   // expiration - the lock client's arenaRedeem { kind: 'refund' }. MINE_CMD "<bin> <args...>" mines blocks on a private chain meanwhile.
-  if (env.REFUND_AT_EXPIRY) {
-    log({ step: 'no marks sent' });
+  async function refundAtExpiry() {
     const refunds = [];
     for (const [l, kind] of [[locks.stake, 'stake'], [locks.fee, 'fee']]) {
       if (!l || !isArenaLock(l.fields)) continue;
@@ -402,6 +401,7 @@ try {
     log({ step: 'refunded', refunds, balanceMsat: await lc.balanceMsat() });
     process.exit(refunds.length && refunds.every((x) => x.accepted) ? 0 : 1);
   }
+  if (env.REFUND_AT_EXPIRY) { log({ step: 'no marks sent' }); await refundAtExpiry(); }
 
 
   // after the round's start, as a player's inputs are
@@ -418,6 +418,16 @@ try {
     published.push({ node: n, said });
   }
   log({ step: 'published', published });
+  // REFUND_AFTER_PLAY=1 (regtest, kanban #1044 hole 1, three settlement seats silent): a loser who played takes its stake and fee lock back by the
+  // refund from their expiration, once REFUND_GO_FILE exists (the harness writes it when the stall has been watched), never asking for a forfeit
+  if (env.REFUND_AFTER_PLAY) {
+    for (const stop = Date.now() + Number(env.REFUND_GO_MS || 3 * 3600000); !(env.REFUND_GO_FILE && existsSync(env.REFUND_GO_FILE)); ) {
+      if (Date.now() > stop) throw new Error('REFUND_GO_FILE never came');
+      await new Promise((ok) => setTimeout(ok, 5000));
+    }
+    log({ step: 'refund go' });
+    await refundAtExpiry();
+  }
   // PAYOUT_ADDRESS (regtest, kanban #1044 B1 phase 4, ruling #1134 2): the winner names a Lightning address (an LNURL) at every seat, signed with the
   // session key, as the page does: its winnings are then sent through a gateway, refunding to KeyAgg(S), with the presigned refund (c) to its own key
   if (env.PAYOUT_ADDRESS) {

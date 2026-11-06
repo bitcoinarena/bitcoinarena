@@ -12,6 +12,9 @@
 //                                   OFF_TABLE_KEY instead of KeyAgg(S) - a send contract only the thief can take back. It still acks the honest table.
 //     send-hold <round hex>         ruling #1134 2's failed send: this seat never asks a gateway to pay that round's qualifier sends and never
 //                                   submits their presigned refund (c) itself, so a send expires unpaid and (c) is left to anyone else.
+//     settle-hold <round hex>       kanban #1044 hole 1: this seat is SILENT in that round's settlement - it starts none of its own and its
+//                                   /settle-ack, /settle-commit and /settle-share doors drop the connection unanswered - while it signs results,
+//                                   serves its guardian and answers everything else. Three seats so held stall a round whose result is FINAL.
 //
 // Refused off regtest: a seat started with the variable on any other network (ARENA_DONATION_NETWORK not 'regtest') does not start (main.js asks
 // namedOffenceSwitch first). Unset - every seat's default - nothing reads the file and every answer below is false.
@@ -58,6 +61,8 @@ export const forfeitLostOn = (entryIdBytes) => on('forfeit-lost', entryIdBytes);
 export const swapRefundOn = (roundIdBytes) => on('swap-refund', roundIdBytes);
 /** A failed send: this seat leaves round `roundIdBytes`'s qualifier sends unasked and their refunds (c) unsubmitted. */
 export const sendHoldOn = (roundIdBytes) => on('send-hold', roundIdBytes);
+/** Hole 1: this seat takes no part in round `roundIdBytes`'s settlement (no session of its own, no answer at its settle doors). */
+export const settleHoldOn = (roundIdBytes) => on('settle-hold', roundIdBytes);
 
 /**
  * THE SWAPPED REFUND KEY: the plan's payouts with the first gateway send's refund key (its payoutPk, Z in the body) written as OFF_TABLE_KEY - same

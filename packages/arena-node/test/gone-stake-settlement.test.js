@@ -100,3 +100,32 @@ test('a gone lock read once stays gone: the next plan does not ask the federatio
   assert.deepEqual(claimed(again.plan), [outpointOf(L2)]);
   assert.equal(asked.filter((a) => a === outpointOf(L1)).length, n);
 });
+
+test('a seat that built F while the lock stood reads it again when a peer refuses the ack over the gone lock or another rebuild (s47a, round a0620247)', async () => {
+  const goneAt = new Set();
+  const { ls, asked } = seat({ goneAt });
+  // built during the stall, every lock standing: F, kept for an identical plan
+  const before = await ls.message(RID);
+  assert.equal(before.ok, true, before.why);
+  assert.deepEqual(claimed(before.plan), [outpointOf(L1), outpointOf(L2)].sort());
+  // the loser takes its lock back at expiry; this seat's plan is unchanged, so its build is reused and it never meets the gone lock itself
+  goneAt.add(outpointOf(L1));
+  const reused = await ls.message(RID);
+  assert.deepEqual(claimed(reused.plan), [outpointOf(L1), outpointOf(L2)].sort());
+  assert.equal(asked.length, 0);
+  // a refusal that names neither leaves it as it is
+  assert.equal(ls.peerSaysGone(RID, ['http://p: fetch failed']), false);
+  // a peer's refusal naming the gone lock (or its own other rebuild): the next plan reads the losers' locks and is F'
+  assert.equal(ls.peerSaysGone(RID, ['http://p: this signer node rebuilt settlement 260b6a9da2f7fa77, not 2b76947075208434: it commits to no other bytes']), true);
+  const after = await ls.message(RID);
+  assert.equal(after.ok, true, after.why);
+  assert.deepEqual(claimed(after.plan), [outpointOf(L2)]);
+  assert.ok(asked.includes(outpointOf(L1)), 'the gone lock was read at the federation');
+  // a lock that stands is never left out because a peer said so
+  const { ls: ls2, asked: asked2 } = seat();
+  await ls2.message(RID);
+  assert.equal(ls2.peerSaysGone(RID, ['http://p: arena-stake-lock: Error: the guardians hold no Arena lock at 00:0']), true);
+  const still = await ls2.message(RID);
+  assert.deepEqual(claimed(still.plan), [outpointOf(L1), outpointOf(L2)].sort());
+  assert.ok(asked2.length > 0);
+});

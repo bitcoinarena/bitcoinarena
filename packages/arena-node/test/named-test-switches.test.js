@@ -76,3 +76,18 @@ test('a swapped refund key: the first gateway send refunds to the test key, its 
   assert.deepEqual([out[0].payoutPk, out[2].payoutPk], [k(1), k(2)]);
   assert.equal(swappedRefundPayouts([{ payoutPk: k(1), msat: 1n }]), null);
 });
+
+test('settle-hold (kanban #1044 hole 1): on for the named round only, read from the file, off unset or off regtest', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'settle-hold-'));
+  const file = join(dir, 'offence.txt');
+  const mod = new URL('../src/test-named-offence.js', import.meta.url).href;
+  const held = 'ab'.repeat(32), other = 'cd'.repeat(32);
+  const code = `import { writeFileSync } from 'node:fs'; const m = await import(${JSON.stringify(mod)});
+    const id = (h) => Uint8Array.from(Buffer.from(h, 'hex'));
+    writeFileSync(${JSON.stringify(file)}, 'settle-hold ${held}\\n');
+    console.log(JSON.stringify([m.settleHoldOn(id('${held}')), m.settleHoldOn(id('${other}')), m.sendHoldOn(id('${held}'))]));`;
+  const run = (env) => JSON.parse(spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', env: { PATH: process.env.PATH, ...env } }).stdout.trim());
+  assert.deepEqual(run({ ARENA_TEST_NAMED_OFFENCE_FILE: file, ARENA_DONATION_NETWORK: 'regtest' }), [true, false, false]);
+  assert.deepEqual(run({ ARENA_DONATION_NETWORK: 'regtest' }), [false, false, false]);
+  assert.deepEqual(run({ ARENA_TEST_NAMED_OFFENCE_FILE: file, ARENA_DONATION_NETWORK: 'testnet4' }), [false, false, false]);
+});
