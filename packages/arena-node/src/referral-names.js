@@ -3,10 +3,23 @@
 // REFERRAL PROGRAMS' NAMES, AS A SEAT KEEPS THEM (kanban #675; protocol referral-name.js): the newest signed name of each website key, kept
 // when its signature verifies; GET /referral-fees and the explorer and Health name a website by it.
 import { decodeReferralName, referralNameStands } from '../../arena-protocol/src/referral-name.js';
-import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 
 export const REFERRAL_NAMES_SQL = `CREATE TABLE IF NOT EXISTS referral_names (
   site TEXT PRIMARY KEY, name TEXT NOT NULL, at_ms INTEGER NOT NULL, bytes BLOB NOT NULL, signature BLOB NOT NULL, kept_ms INTEGER NOT NULL)`;
+
+/**
+ * WHICH OF TWO NAMES OF ONE SITE STANDS (kanban #1190, the 2026-11-06 state-machine audit): the later one, its date read no later than this seat's clock when
+ * it was taken (a name dated ahead of the clock blocked every rename until its date came: the newest name won by `atMs` alone); two names of one date
+ * ordered by their record's hash, the lower first (two seats that got them in another order kept other names). `had` and `next` are
+ * { atMs (as kept: clamped), hash }. Answers 'new' (next stands), 'held' (the same record) or 'older' (had stands).
+ */
+export function referralNameStep(had, next) {
+  if (!had) return 'new';
+  if (had.hash && had.hash === next.hash) return 'held';
+  if (next.atMs !== had.atMs) return next.atMs > had.atMs ? 'new' : 'older';
+  return had.hash && next.hash < had.hash ? 'new' : 'older';
+}
 
 /** Check and keep one record ({ record, signature } in hex). { ok, kept: 'new' | 'held' | 'older', site, name } or { ok: false, status, why }. */
 export function keepReferralName(db, body, { verify, nowMs = Date.now() }) {
@@ -18,11 +31,21 @@ export function keepReferralName(db, body, { verify, nowMs = Date.now() }) {
   if (!st.ok) return { ok: false, status: 422, why: st.why };
   db.exec(REFERRAL_NAMES_SQL);
   const site = toHex(r.site);
-  const had = db.prepare('SELECT at_ms, name FROM referral_names WHERE site = ?').get(site);
-  if (had && Number(had.at_ms) === Number(r.atMs) && had.name === r.name) return { ok: true, kept: 'held', site, name: r.name };
-  if (had && Number(had.at_ms) >= Number(r.atMs)) return { ok: true, kept: 'older', site, name: had.name };
-  db.prepare('INSERT OR REPLACE INTO referral_names (site, name, at_ms, bytes, signature, kept_ms) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(site, r.name, Number(r.atMs), Buffer.from(fromHex(String(body.record).toLowerCase())), Buffer.from(sig), nowMs);
+  const bytes = fromHex(String(body.record).toLowerCase());
+  // A NAME DATED AHEAD IS READ AS DATED NOW (kanban #1190): it stands until a later name comes, not until its own date
+  const next = { atMs: Math.min(Number(r.atMs), Number(nowMs)), hash: toHex(sha256(bytes)) };
+  // ONE STEP, READ AND WRITTEN IN ONE TRANSACTION: two posts of one site never both win
+  const own = !db.isTransaction;   // inside a caller's transaction this step is part of it
+  if (own) db.exec('BEGIN IMMEDIATE');
+  try {
+    const row = db.prepare('SELECT at_ms, name, bytes FROM referral_names WHERE site = ?').get(site);
+    const had = row ? { atMs: Number(row.at_ms), hash: toHex(sha256(new Uint8Array(row.bytes))), name: row.name } : null;
+    const step = referralNameStep(had, next);
+    if (step !== 'new') { if (own) db.exec('COMMIT'); return { ok: true, kept: step, site, name: step === 'held' ? r.name : had.name }; }
+    db.prepare('INSERT OR REPLACE INTO referral_names (site, name, at_ms, bytes, signature, kept_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(site, r.name, next.atMs, Buffer.from(bytes), Buffer.from(sig), nowMs);
+    if (own) db.exec('COMMIT');
+  } catch (e) { if (own) { try { db.exec('ROLLBACK'); } catch { /* none open */ } } throw e; }
   return { ok: true, kept: 'new', site, name: r.name };
 }
 
