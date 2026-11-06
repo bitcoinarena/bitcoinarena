@@ -948,12 +948,18 @@ export function importSeed(text, { storage, key = 'arena.player.seed' } = {}) {
  * tab; a wrong word (by name); a seed another open tab holds (its heartbeat 'arena.seed.held.<id>' under 12 s old - the
  * keeper's lock would otherwise drop it after the reload). Returns { ok, hex, from, previous } or { ok: false, why }.
  */
-export function restoreSeed({ text, session, kept, now = Date.now(), liveRun = false } = {}) {
+// `heldElsewhere(hex)` (kanban #1164): whether another tab holds that phrase's lock now, read from the browser's locks - a heartbeat's age
+// is a clock, and a hidden tab beats late; either refuses
+export function restoreSeed({ text, session, kept, now = Date.now(), liveRun = false, heldElsewhere = null } = {}) {
   if (liveRun) return { ok: false, why: 'leave the round first: the seed cannot change during a run' };
   const got = seedHexFromInput(text);
   if (!got.ok) return { ok: false, why: got.why };
   const hex = got.hex;
   const previous = session ? session.getItem(TAB_SEED_KEY) : null;
+  if (typeof heldElsewhere === 'function' && hex !== previous) {
+    let held = false; try { held = !!heldElsewhere(hex); } catch { held = false; }
+    if (held) return { ok: false, why: 'that seed is open in another tab: close it there first' };
+  }
   if (kept) {
     let held = null;
     try { held = JSON.parse(kept.getItem('arena.seed.held.' + hex.slice(0, 16)) || 'null'); } catch { held = null; }
