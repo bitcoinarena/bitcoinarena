@@ -305,3 +305,14 @@ export function batchDeclineId({ roundId, k }) {
   w.bytes32(roundId); w.u64(k);
   return taggedHash(TAG.marketBatchDecline, w.finish());
 }
+
+/**
+ * A ROUND SEAT'S VOID ASK (kanban #1167): the bytes a seat of the round signs when it asks the others whether they signed batch k, whose
+ * set `batchId` its leader signed - each answers its signature, or declines k for good. A seat answers only that seat's signed ask.
+ */
+export function batchVoidAskId({ roundId, k, batchId }) {
+  if (!obIs32(roundId) || typeof k !== 'bigint' || k < 0n || !obIs32(batchId)) throw new Error('a void ask names a 32-byte round, a BigInt batch and the 32-byte set its leader signed');
+  const w = new Writer();
+  w.bytes32(roundId); w.u64(k); w.bytes32(batchId);
+  return taggedHash(TAG.marketBatchVoidAsk, w.finish());
+}
