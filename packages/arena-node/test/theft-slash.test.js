@@ -32,7 +32,7 @@ function signed({ gone = [{ peerKey: nodes[3].guardianKey, sinceHeight: 300, kin
   return joinSignedRecord(encodeFederationRecord(record), signers.map((n) => ({ nodePubkey: n.pubkey, signature: schnorr.sign(federationRecordId(record), n.secret) })));
 }
 const SIGNED = signed();
-const ALARM = { federation: toHex(FED), kind: 'inflation', height: 330, session: 4 };
+const ALARM = { federation: toHex(FED), kind: 'inflation', height: 330, session: 4, state: 'CONFIRMED' };   // kanban #1176: only a CONFIRMED alarm files slashes
 const sessions = Array.from({ length: 5 }, (_, i) => Uint8Array.of(0xee, i));
 const EVIDENCE = { mark: { kind: 'inflation', height: 330, session: 4 }, config: Uint8Array.of(7, 7), firstSession: 0, sessions };
 const answer = (input, over = {}) => ({ mode: 'theft-verify', federationMatches: input.federationId === toHex(FED), sessions: input.sessions.length, verified: input.sessions.length, unverified: [],
@@ -61,6 +61,9 @@ test('a standing alarm: one TheftProof per template-3 output of every seated gua
   const none = seat({ alarm: null });
   await none.restore(inviteFederationId);
   assert.deepEqual(await none.theftSlashes(), [], 'no alarm in this seat\'s own book: no proof');
+  const raised = seat({ alarm: { ...ALARM, state: 'RAISED' } });
+  await raised.restore(inviteFederationId);
+  assert.deepEqual(await raised.theftSlashes(), [], 'kanban #1176: a RAISED alarm (no other seat signed the mark) files no slash');
   const noEvidence = seat({ evidence: async () => null });
   await noEvidence.restore(inviteFederationId);
   assert.deepEqual(await noEvidence.theftSlashes(), [], 'no sessions exported: nothing to file');

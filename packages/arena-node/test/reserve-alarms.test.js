@@ -17,7 +17,7 @@ test('the book: the first mark per federation stands, kept and loaded again; a m
   assert.match(b.raise({ federation: FED, kind: 'unbacked-spend', height: 1 }).why, /names its transaction/);
   assert.deepEqual(b.raise({ federation: FED, kind: 'inflation', height: 900, session: 9600, issuedMsat: 5n, redeemedMsat: 7n }).kept, true);
   assert.equal(b.raise({ federation: FED, kind: 'unbacked-spend', height: 901, txid: 'ee'.repeat(32) }).kept, false, 'the first stands');
-  assert.deepEqual(b.of(FED), { federation: FED, kind: 'inflation', height: 900, session: 9600, issuedMsat: '5', redeemedMsat: '7', seenAtMs: 1 });
+  assert.deepEqual(b.of(FED), { federation: FED, kind: 'inflation', height: 900, session: 9600, issuedMsat: '5', redeemedMsat: '7', seenAtMs: 1, state: 'RAISED' });
   assert.equal(b.of(OTHER), null);
   assert.deepEqual(createReserveAlarms({ load: () => saved }).of(FED).session, 9600, 'kept across a restart');
 });
