@@ -51,6 +51,7 @@ import { pluginForRound, hostedPlugins, runLengthFits } from './plugins.js';
 import { chainIndex } from './finality.js';
 import { withinTolerance } from '../../arena-protocol/src/window.js';
 import { decodeRerunResult, splitSignedRerun } from '../../arena-protocol/src/rerun.js';
+import { statesBefore } from './send-state.js';
 
 /**
  * 5-of-7 unless the round's contract is the 2-slot test genesis.
@@ -2351,20 +2352,27 @@ export class Round {
   putSendPlan({ entryId, roundId, attempt = 0, address, invoice, paymentHash, invoiceMsat, payoutMsat, owedMsat, gatewayUrl, gatewayPk,
     expiration, state = 'PLANNED', why, donation = false }) {
     const now = this.now();
-    this.db.prepare(`INSERT INTO ${donation ? 'donation_sends' : 'winnings_sends'} (entry_id, attempt, round_id, address, invoice, payment_hash, invoice_msat, payout_msat, `
+    return this.db.prepare(`INSERT INTO ${donation ? 'donation_sends' : 'winnings_sends'} (entry_id, attempt, round_id, address, invoice, payment_hash, invoice_msat, payout_msat, `
       + 'owed_msat, gateway_url, gateway_pk, expiration, state, why, planned_ms, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
       + 'ON CONFLICT(entry_id, attempt) DO NOTHING')
       .run(Buffer.from(entryId), attempt, Buffer.from(roundId), String(address), String(invoice), String(paymentHash).toLowerCase(),
         Number(invoiceMsat), Number(payoutMsat), Number(owedMsat), String(gatewayUrl), String(gatewayPk).toLowerCase(), Number(expiration),
-        state, String(why), now, now);
+        state, String(why), now, now).changes > 0;   // false: that (entry, attempt) was kept already, and the first row stands
   }
 
-  /** Where a send stands: its contract (txid, output), its preimage once the gateway paid, and its state. */
+  /**
+   * Where a send stands: its contract (txid, output), its preimage once the gateway paid, and its state - MOVED ONLY AS send-state.js
+   * ALLOWS (kanban #1154): a compare-and-set on the row's state, so a final row never moves and nothing jumps a step. True if it moved.
+   */
   markSend({ entryId, attempt = 0, state, why, txid = null, outIdx = null, preimage = null }) {
+    const from = statesBefore(state);
+    if (!from.length) return false;
+    let moved = 0;
     for (const table of ['winnings_sends', 'donation_sends'])
-      this.db.prepare(`UPDATE ${table} SET state = ?, why = ?, txid = COALESCE(?, txid), out_idx = COALESCE(?, out_idx), `
-        + 'preimage = COALESCE(?, preimage), updated_ms = ? WHERE entry_id = ? AND attempt = ?')
-        .run(state, String(why), txid, outIdx === null ? null : Number(outIdx), preimage, this.now(), Buffer.from(entryId), attempt);
+      moved += this.db.prepare(`UPDATE ${table} SET state = ?, why = ?, txid = COALESCE(?, txid), out_idx = COALESCE(?, out_idx), `
+        + `preimage = COALESCE(?, preimage), updated_ms = ? WHERE entry_id = ? AND attempt = ? AND state IN (${from.map(() => '?').join(', ')})`)
+        .run(state, String(why), txid, outIdx === null ? null : Number(outIdx), preimage, this.now(), Buffer.from(entryId), attempt, ...from).changes;
+    return moved > 0;
   }
 
   /** A round's send rows, the winners' and the donation set's, in entry (send id) then attempt order. */
@@ -2956,17 +2964,20 @@ export class Round {
       putSendPlan({ entryId, roundId, attempt = 0, address, invoice, paymentHash, invoiceMsat, payoutMsat, owedMsat, gatewayUrl, gatewayPk,
         expiration, state = 'PLANNED', why }) {
         const now = base.now();
-        base.db.prepare('INSERT INTO late_winnings_sends (round_id, late_entry_id, entry_id, attempt, address, invoice, payment_hash, invoice_msat, '
+        return base.db.prepare('INSERT INTO late_winnings_sends (round_id, late_entry_id, entry_id, attempt, address, invoice, payment_hash, invoice_msat, '
           + 'payout_msat, owed_msat, gateway_url, gateway_pk, expiration, state, why, planned_ms, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
           + 'ON CONFLICT(round_id, late_entry_id, entry_id, attempt) DO NOTHING')
           .run(Buffer.from(roundId), late, Buffer.from(entryId), attempt, String(address), String(invoice), String(paymentHash).toLowerCase(),
             Number(invoiceMsat), Number(payoutMsat), Number(owedMsat), String(gatewayUrl), String(gatewayPk).toLowerCase(), Number(expiration),
-            state, String(why), now, now);
+            state, String(why), now, now).changes > 0;
       },
+      // AS THE ROUND'S OWN (kanban #1154): a compare-and-set by send-state.js, true if it moved
       markSend({ entryId, attempt = 0, state, why, txid = null, outIdx = null, preimage = null }) {
-        base.db.prepare('UPDATE late_winnings_sends SET state = ?, why = ?, txid = COALESCE(?, txid), out_idx = COALESCE(?, out_idx), '
-          + 'preimage = COALESCE(?, preimage), updated_ms = ? WHERE late_entry_id = ? AND entry_id = ? AND attempt = ?')
-          .run(state, String(why), txid, outIdx === null ? null : Number(outIdx), preimage, base.now(), late, Buffer.from(entryId), attempt);
+        const from = statesBefore(state);
+        if (!from.length) return false;
+        return base.db.prepare('UPDATE late_winnings_sends SET state = ?, why = ?, txid = COALESCE(?, txid), out_idx = COALESCE(?, out_idx), '
+          + `preimage = COALESCE(?, preimage), updated_ms = ? WHERE late_entry_id = ? AND entry_id = ? AND attempt = ? AND state IN (${from.map(() => '?').join(', ')})`)
+          .run(state, String(why), txid, outIdx === null ? null : Number(outIdx), preimage, base.now(), late, Buffer.from(entryId), attempt, ...from).changes > 0;
       },
       sendAttemptsOf(roundIdBytes) { return all(roundIdBytes).map(rowOf); },
       sendPlansOf(roundIdBytes) {

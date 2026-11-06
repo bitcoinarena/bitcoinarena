@@ -50,6 +50,7 @@ import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from '
 import { sendPlanToJson, planKey } from './winnings-send.js';
 import { askerOrder, eligibleAsker } from './payout.js';
 import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate } from './plan-taken.js';
+import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } from './send-plan-ask.js';
 import { askPeers, PEER_ASK_MS, PEER_READ_MS, PEER_GRACE_MS } from './peer-ask.js';
 // the payouts of an accepted settlement kept as rows (GET /donations, GET /reserves): a walk-away's donation keys and a market's reserve
 // AND THE WEBSITE THAT BROUGHT AN ENTRY (kanban #676: "total referrer fees accumulated" on the explorer's metrics): its 'frontend' payout is a row
@@ -821,12 +822,12 @@ export class LockSettlement {
     return { ok: true, rows: proposed.rows };
   }
 
-  /** A PEER'S TAKE of the asker's late send plans, checked against its own late base plan. */
-  async takeLateSends(roundIdBytes, entryIdBytes, proposed) {
+  /** A PEER'S TAKE of the asker's late send plans, checked against its own late base plan; `from` as `takeSends`. */
+  async takeLateSends(roundIdBytes, entryIdBytes, proposed, { from = null } = {}) {
     if (!this.winnings) return refuse('this signer node sends no winnings');
     const got = await this.lateMessage(roundIdBytes, entryIdBytes, { onlyBase: true });
     if (!got.ok) return got;
-    const checked = await this.lateWinningsFor(roundIdBytes, entryIdBytes).check(roundIdBytes, got.base, proposed);
+    const checked = await this.lateWinningsFor(roundIdBytes, entryIdBytes).check(roundIdBytes, got.base, proposed, { from });
     if (checked.ok) this.built.delete(`${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`);
     return checked.ok ? { ...checked, taken: this.planTakenBy(planTakenId({ roundId: roundIdBytes, lateEntryId: entryIdBytes, rows: proposed })) } : checked;
   }
@@ -1780,10 +1781,12 @@ export class LockSettlement {
   async planAgreed(roundIdBytes, lateEntryId, body, contract, peers, query) {
     const planId = planTakenId({ roundId: roundIdBytes, lateEntryId, rows: JSON.parse(body) });
     const own = this.planTakenBy(planId);
+    // THE PLAN GOES SIGNED BY THIS SEAT'S NODE KEY (kanban #1154): a seat takes a send plan only from a seat of the round
+    const headers = sendPlanAskHeaders(this.round, { kind: PLAN_ASK.PROPOSE, roundId: roundIdBytes, lateEntryId, body });
     // EVERY PEER AT ONCE, AND THE THRESHOLD GOES ON (kanban #1061): `receiptsNeeded` as `countPlanTaken` reads it, this seat's own acceptance among them. A seat left past the
     // grace is still sent the plan; only its acceptance is not in this certificate.
     const asked = await askPeers(peers, async (base, signal) => {
-      const r = await this.fetcher(`${base}/settle-sends?round=${query}`, { method: 'POST', body, signal });
+      const r = await this.fetcher(`${base}/settle-sends?round=${query}`, { method: 'POST', body, headers, signal });
       if (!r.ok) return { why: (await r.text()).trim() };
       return { bytes: new Uint8Array(await r.arrayBuffer()) };
     }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: receiptsNeeded(contract.settlementSlots) - 1, counts: (x) => !!x.bytes });
@@ -1904,32 +1907,50 @@ export class LockSettlement {
     this.retryTimers.add(t);
   }
 
-  /** The plans this asker's peers keep, lowest-keyed first; the first that stands here is kept (see `check`). */
+  /**
+   * The plans this asker's peers keep, lowest-keyed first; the first that stands here is kept (see `check`). EACH ANSWER SIGNED BY THE SEAT
+   * THAT KEPT IT (kanban #1154): a plan a seat of the round signed may replace this asker's own lower-keyed; an unsigned one (a seat that
+   * does not sign its answer yet) is only adopted where this asker keeps none, and is checked as any plan is.
+   */
   async adoptPeerPlan(roundIdBytes, base) {
     const plans = [];
+    const row = this.round.get(roundIdBytes);
+    const seats = row ? decodeRoundContract(new Uint8Array(row.contract)).nodes : [];
     // EVERY SEAT'S PLAN IS WEIGHED, lowest-keyed first below, so all are read at once and none is cut off by a threshold; a peer down or hung: the others decide
     const asked = await askPeers(this.peersFor(roundIdBytes), async (peer, signal) => {
       const r = await this.fetcher(`${peer}/settle-sends?round=${toHex(roundIdBytes)}`, { signal });
-      return r.ok ? r.json() : null;
+      if (!r.ok) return null;
+      const text = typeof r.text === 'function' ? await r.text() : JSON.stringify(await r.json());
+      const by = checkSendPlanAsk(r.headers && r.headers.get ? r.headers.get(SEND_PLAN_ASK_HEADER) : null,
+        { kind: PLAN_ASK.KEPT, roundId: roundIdBytes, body: text, seats });
+      return { rows: JSON.parse(text), from: by.ok ? by.who : null };
     }, { boundMs: this.peerReadMs });
-    for (const { value: rows } of asked)
-      if (Array.isArray(rows) && rows.length && !plans.some((p) => planKey(p) === planKey(rows))) plans.push(rows);
-    plans.sort((a, b) => (planKey(a) < planKey(b) ? -1 : 1));
+    for (const { value } of asked) {
+      const rows = value && value.rows;
+      if (!Array.isArray(rows) || !rows.length) continue;
+      const same = plans.find((p) => planKey(p.rows) === planKey(rows));
+      if (!same) plans.push({ rows, from: value.from });
+      else if (!same.from && value.from) same.from = value.from;
+    }
+    plans.sort((a, b) => (planKey(a.rows) < planKey(b.rows) ? -1 : 1));
     const mine = this.round.sendAttemptsOf(roundIdBytes).filter((x) => x.attempt === 0);
-    for (const rows of plans) {
+    for (const { rows, from } of plans) {
       if (mine.length && !(planKey(rows) < planKey(mine))) break;
-      const took = await this.winnings.check(roundIdBytes, base, rows);
+      const took = await this.winnings.check(roundIdBytes, base, rows, { from });
       if (took.ok) { this.built.delete(toHex(roundIdBytes)); return took; }
     }
     return null;
   }
 
-  /** A PEER takes the coordinator's plans only if each stands here - and then rebuilds with them. */
-  async takeSends(roundIdBytes, proposed) {
+  /**
+   * A PEER takes the coordinator's plans only if each stands here - and then rebuilds with them. `from`: the seat of the round that signed
+   * them (server.js checked its signature against the contract's nodes, kanban #1154).
+   */
+  async takeSends(roundIdBytes, proposed, { from = null } = {}) {
     if (!this.winnings) return refuse('this signer node sends no winnings');
     const got = await this.planOf(roundIdBytes);
     if (!got.ok) return got;
-    const checked = await this.winnings.check(roundIdBytes, got.base, proposed);
+    const checked = await this.winnings.check(roundIdBytes, got.base, proposed, { from });
     if (checked.ok) this.built.delete(toHex(roundIdBytes));
     return checked.ok ? { ...checked, taken: this.planTakenBy(planTakenId({ roundId: roundIdBytes, rows: proposed })) } : checked;
   }
