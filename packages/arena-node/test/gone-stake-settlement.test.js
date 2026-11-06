@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as curve from '../src/curve.js';
-import { LockSettlement } from '../src/settlement.js';
+import { LockSettlement, GONE_MARGIN_BLOCKS } from '../src/settlement.js';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { encodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -33,9 +33,9 @@ const entry = (n, outcome, score) => ({ entryId: b32(0x10 + n), pubkey: b32(0x20
 const W = entry(1, DELIVERED, 5), L1 = entry(2, FAILED, 0), L2 = entry(3, FAILED, 0);
 const outpointOf = (e) => `${toHex(b32(0x40 + e.pubkey[0]))}:0`;
 
-function seat({ goneAt = new Set() } = {}) {
+function seat({ goneAt = new Set(), round: given = null, left = new Map() } = {}) {
   const asked = [];
-  const round = new Round(openStore(':memory:'));
+  const round = given || new Round(openStore(':memory:'));
   round.get = (rid) => (toHex(rid) === toHex(RID) ? { contract: CONTRACT } : null);
   const byId = new Map([W, L1, L2].map((e) => [toHex(e.entryId), e]));
   round.stakeLock = (eid) => {
@@ -48,12 +48,12 @@ function seat({ goneAt = new Set() } = {}) {
       for (const c of claims) { const at = `${toHex(c.outpoint.txid)}:${String(c.outpoint.outIdx)}`; if (goneAt.has(at)) throw new Error(`the guardians hold no lock at ${at}`); }
       return { message: '00'.repeat(32), txid: 'ab'.repeat(32) };
     },
-    status: async (o) => { const at = `${toHex(o.txid)}:${String(o.outIdx)}`; asked.push(at); return { blockCount: 500, stored: goneAt.has(at) ? null : { contractId: 'cd'.repeat(32), blocksLeft: 100 } }; },
+    status: async (o) => { const at = `${toHex(o.txid)}:${String(o.outIdx)}`; asked.push(at); return { blockCount: 500, stored: goneAt.has(at) ? null : { contractId: 'cd'.repeat(32), blocksLeft: left.has(at) ? left.get(at) : 100 } }; },
   };
   const ls = new LockSettlement(round, { curve, port, dkg: { signerNodeFor: () => ({ ok: true, signerNode: { id: 1 }, pool: { groupPublicKey: CLAIM_PK } }) },
     stakeSecrets: { open: async () => ({ ok: true, preimage: b32(0x99) }) }, winnings: { sendsFor: () => new Map() } });
   ls.entriesOnRecord = () => ({ ok: true, entries: [W, L1, L2] });
-  return { ls, asked };
+  return { ls, asked, round };
 }
 
 const claimed = (plan) => plan.claims.filter((c) => c.kind !== 'fee').map((c) => `${toHex(c.outpoint.txid)}:${String(c.outpoint.outIdx)}`).sort();
@@ -128,4 +128,41 @@ test('a seat that built F while the lock stood reads it again when a peer refuse
   const still = await ls2.message(RID);
   assert.deepEqual(claimed(still.plan), [outpointOf(L1), outpointOf(L2)].sort());
   assert.ok(asked2.length > 0);
+});
+
+test('a gone lock read once is kept: a seat restarted on the same store builds F\u2032 again without asking the federation (kanban #1183)', async () => {
+  const goneAt = new Set([outpointOf(L1)]);
+  const first = seat({ goneAt });
+  await assert.rejects(first.ls.message(RID), /hold no lock/);
+  assert.deepEqual(claimed((await first.ls.planOf(RID)).plan), [outpointOf(L2)]);
+  // the restart: a new LockSettlement over the same store, its memory empty
+  const again = seat({ goneAt, round: first.round });
+  const plan = await again.ls.planOf(RID);
+  assert.deepEqual(claimed(plan.plan), [outpointOf(L2)], 'F\u2032 after the restart, as before it');
+  assert.equal(again.asked.length, 0, 'read from the store, not the federation');
+});
+
+test('a lock this round\'s own settlement claimed is not read as refunded (kanban #1183)', async () => {
+  const goneAt = new Set([outpointOf(L1)]);
+  const { ls, round } = seat({ goneAt });
+  // this seat's settlement of the round, kept with what it claims: both losers' locks
+  round.putLockSettlement({ roundId: RID, txid: 'ab'.repeat(32), message: new Uint8Array(32), signature: new Uint8Array(64), state: 'SUBMITTED', why: 'submitted' });
+  round.putLockSettlementMoves({ roundId: RID, txid: 'ab'.repeat(32), claims: [outpointOf(L1), outpointOf(L2)], payouts: 1 });
+  await assert.rejects(ls.message(RID), /hold no lock/);
+  const plan = await ls.planOf(RID);
+  assert.deepEqual(claimed(plan.plan), [outpointOf(L1), outpointOf(L2)].sort(), 'still F: L1 is gone because this settlement spent it');
+  assert.deepEqual(round.goneStakesOf(RID), []);
+});
+
+test('a loser\'s lock with GONE_MARGIN_BLOCKS or fewer left is not claimed - the claim would land after its locktime (s47a round 87da156f; kanban #1183)', async () => {
+  // L1 stored, but 3 blocks from its expiration; the settlement once built on it is refused by the guardians
+  const left = new Map([[outpointOf(L1), GONE_MARGIN_BLOCKS]]);
+  const { ls } = seat({ left, goneAt: new Set([outpointOf(L1)]) });
+  await assert.rejects(ls.message(RID));
+  const near = seat({ left });
+  near.ls.peerSaysGone(RID, ['http://p: arena-stake-lock: Error: the guardians hold no Arena lock at x']);
+  assert.deepEqual(claimed((await near.ls.planOf(RID)).plan), [outpointOf(L2)], 'read as run out, left out');
+  const far = seat({ left: new Map([[outpointOf(L1), GONE_MARGIN_BLOCKS + 1]]) });
+  far.ls.peerSaysGone(RID, ['http://p: arena-stake-lock: Error: the guardians hold no Arena lock at x']);
+  assert.deepEqual(claimed((await far.ls.planOf(RID)).plan), [outpointOf(L1), outpointOf(L2)].sort(), 'more blocks left: claimed');
 });

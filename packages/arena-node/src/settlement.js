@@ -119,6 +119,7 @@ export const locksStake = (contract) => contract.federationId instanceof Uint8Ar
 const NO_FEES = { ppm: 0n, baseMsat: 0n };
 // A BUILD THAT NAMES A LOCK THE GUARDIANS DO NOT HOLD (stake-lock arena.rs: "the guardians hold no Arena lock at ...")
 const NO_LOCK_HELD = /hold(s)? no (Arena )?lock/i;
+export const GONE_MARGIN_BLOCKS = 3;   // kanban #1183: a stake lock this close to its expiration is not claimed (the claim would land after it)
 /**
  * A ROUND THAT TAKES ANY FEDERATION, SETTLED (2026.0.3): its plan decided once - lockSettlement with no fee, since
  * every federation prices its own (splitByFederation) - and split into one balanced transaction per federation. `args`:
@@ -1355,12 +1356,19 @@ export class LockSettlement {
     let h;
     try { h = lockActions({ roundId: roundIdBytes, entries, minScore: contract.minScore, payoutShares }); } catch { return gone; }
     const suspect = this.#suspectGone.has(key);
+    // READ GONE BEFORE, KEPT (kanban #1183): a restarted seat builds F' again from its store, not F
+    const kept = new Set(typeof this.round.goneStakesOf === 'function' ? this.round.goneStakesOf(roundIdBytes) : []);
+    // THIS ROUND'S OWN CLAIM IS NO REFUND (kanban #1183): a lock this round's signed settlement claims is gone because that settlement landed, not because
+    // its player took it back - read it as refunded and the seat would rebuild a table without the loser it was paid by
+    const own = (() => { const m = typeof this.round.lockSettlementMoves === 'function' ? this.round.lockSettlementMoves(roundIdBytes) : null;
+      const row = typeof this.round.lockSettlement === 'function' ? this.round.lockSettlement(roundIdBytes) : null;
+      return m && row && row.txid === m.txid && row.state !== 'REFUSED' ? new Set((m.claims || []).map(String)) : new Set(); })();
     for (const a of h.actions) {
       if (a.action !== CLAIM) continue;
       const k = toHex(a.entry.pubkey), lock = locks.get(k);
       if (!lock) continue;
       const at = `${toHex(lock.outpoint.txid)}:${String(lock.outpoint.outIdx)}`;
-      if (this.#goneLocks.has(at)) { gone.add(k); continue; }
+      if (this.#goneLocks.has(at) || kept.has(at)) { gone.add(k); continue; }
       if (!suspect) continue;
       let port = null;
       try {
@@ -1370,9 +1378,15 @@ export class LockSettlement {
       if (!port) continue;
       let st = null;
       try { st = lock.fields && lock.fields.arena && typeof port.arenaStatus === 'function' ? await port.arenaStatus(lock.outpoint) : await port.status(lock.outpoint); } catch { continue; }
-      if (!st || !st.stored || !(Number(st.stored.blocksLeft) > 0)) {
+      // GONE, OR AS GOOD AS GONE BY THE TIME A CLAIM LANDS (kanban #1183): a lock with GONE_MARGIN_BLOCKS or fewer left is read as run out. Measured
+      // 2026-11-06 on s47a round 87da156f: a settlement built on a lock with blocks left was refused by the guardians - "The contracts locktime has
+      // passed" - and the seats were left SUBMITTING, neither in nor out. Monotonic (a lock only runs out), so two seats reading it a block apart meet
+      // on the next read (peerSaysGone)
+      if (!st || !st.stored || !(Number(st.stored.blocksLeft) > GONE_MARGIN_BLOCKS)) {
+        if (own.has(at)) { console.log(`#1183 [settle] ${key.slice(0, 16)}: the stake lock at ${at.slice(0, 20)} is spent by this round's own settlement - not read as refunded`); continue; }
         this.#goneLocks.add(at);
         gone.add(k);
+        try { if (typeof this.round.putGoneStake === 'function') this.round.putGoneStake({ roundId: roundIdBytes, outpoint: at, why: st && st.stored ? 'run out' : 'gone' }); } catch { /* read again next time */ }
         console.log(`#1044 [settle] ${key.slice(0, 16)}: the stake lock at ${at.slice(0, 20)} is ${st && st.stored ? 'run out' : 'gone'} - its entry is read as refunded (F′)`);
       }
     }
