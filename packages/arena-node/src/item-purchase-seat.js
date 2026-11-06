@@ -89,6 +89,9 @@ export async function keepItemPurchase({ p, manifest, networkSet, gameSet, serve
   const drop = () => { db.prepare("DELETE FROM item_purchases WHERE id = ? AND state = 'PENDING'").run(id); };
   // 2. THE FEDERATION: every output the contract to its payee, for its msat, with the image that names this item (kanban #1180)
   const heldIds = new Map();
+  // THE IMAGE EACH OUTPUT'S CONTRACT WAS MATCHED WITH (kanban #1217, audit 3 #1210 FIXES-5): the rows named the buyer's key whatever matched,
+  // so a purchase paid with the item's image (#1180) was indexed with a contract nobody could rebuild - every developer share stuck
+  const imageAt = new Map();
   try {
     const bound = purchaseImage(p);
     for (const o of p.outputs) {
@@ -102,6 +105,7 @@ export async function keepItemPurchase({ p, manifest, networkSet, gameSet, serve
         drop(); return no(422, `the output at ${at} is not ${o.msat} msat to key ${toHex(o.pk).slice(0, 16)}… paid for this item by this buyer`);
       }
       heldIds.set(o.outIdx, got);
+      imageAt.set(o.outIdx, got === String(want) ? toHex(bound) : toHex(p.playerPubkey));
     }
   } catch (e) { drop(); return no(503, `the federation's outputs could not be read: ${e.message}`); }
   // 3. KEPT: compare-and-set from this purchase's own PENDING claim - only the request that holds it goes on to write rows and hand it on
@@ -114,12 +118,12 @@ export async function keepItemPurchase({ p, manifest, networkSet, gameSet, serve
   if (!kept.ok) return no(kept.status || 409, kept.why);
   // THE RESERVES' 20 %: its output, checked above with the federation like every other, kept as a reserve row
   // under the federation's reserve key - what GET /reserves counts - with the purchase's id in the entry's place
-  const reserve = reserveRowOf(p, id, (outIdx) => heldIds.get(outIdx));
+  const reserve = reserveRowOf(p, id, (outIdx) => heldIds.get(outIdx), (outIdx) => imageAt.get(outIdx));
   if (reserve && keepReserve) keepReserve(reserve);
   // AND EVERY OTHER OUTPUT - the protocol developers', the game developers' - indexed for its recipient, naming the game and the item
   // (kanban #578, 2026-10-22: "add the item that is being purchased so we can group by it later. Group it by game and item
   // name"): before, only the reserve's output was indexed, so no dev client ever saw an item's donation or which item it was for
-  const donations = donationRowsOf(p, id, (outIdx) => heldIds.get(outIdx)).filter((r) => !reserve || toHex(r.recipientPk) !== toHex(reserve.recipientPk));
+  const donations = donationRowsOf(p, id, (outIdx) => heldIds.get(outIdx), (outIdx) => imageAt.get(outIdx)).filter((r) => !reserve || toHex(r.recipientPk) !== toHex(reserve.recipientPk));
   if (donations.length && keepDonations) keepDonations(donations);
   return { ok: true, id, kept: 'new', reserve, donations: donations.length };
 }
@@ -128,12 +132,12 @@ export async function keepItemPurchase({ p, manifest, networkSet, gameSet, serve
  * THE RESERVE ROW OF A PURCHASE ON THE RESERVES' TERMS, in the shape putDonationOutputs keeps (round id zeros: it is no round's),
  * or null for a purchase on the old terms. The output paying the record's reserve key is the one; the record stood, so there is one.
  */
-export function reserveRowOf(p, idHex, contractIdAt = () => null) {
+export function reserveRowOf(p, idHex, contractIdAt = () => null, imageAt = () => null) {
   if (!p || !(p.reserveKey instanceof Uint8Array)) return null;
   const o = p.outputs.find((x) => toHex(x.pk) === toHex(p.reserveKey));
   if (!o) return null;
   return { outpoint: { txid: p.txid, outIdx: BigInt(o.outIdx) }, entryId: fromHex(idHex), roundId: new Uint8Array(32), federationId: p.federationId,
-    recipientPk: p.reserveKey, amountMsat: o.msat, contractId: contractIdAt(o.outIdx) || `item:${idHex}`, senderOnContract: true, image: toHex(p.playerPubkey),
+    recipientPk: p.reserveKey, amountMsat: o.msat, contractId: contractIdAt(o.outIdx) || `item:${idHex}`, senderOnContract: true, image: imageAt(o.outIdx) || toHex(p.playerPubkey),
     item: itemLabel(p.gameName, p.itemId) };
 }
 
@@ -148,10 +152,10 @@ export function itemOfRow(label) {
  * EVERY OUTPUT OF A PURCHASE AS A DONATION ROW, in the shape putDonationOutputs keeps: round id zeros (it is no round's), the purchase's
  * id in the entry's place, the buyer's key as the image, and the item it paid for (kanban #578).
  */
-export function donationRowsOf(p, idHex, contractIdAt = () => null) {
+export function donationRowsOf(p, idHex, contractIdAt = () => null, imageAt = () => null) {
   return (p.outputs || []).map((o) => ({ outpoint: { txid: p.txid, outIdx: BigInt(o.outIdx) }, entryId: fromHex(idHex), roundId: new Uint8Array(32),
     federationId: p.federationId, recipientPk: o.pk, amountMsat: o.msat, contractId: contractIdAt(o.outIdx) || `item:${idHex}`, senderOnContract: true,
-    image: toHex(p.playerPubkey), item: itemLabel(p.gameName, p.itemId) }));
+    image: imageAt(o.outIdx) || toHex(p.playerPubkey), item: itemLabel(p.gameName, p.itemId) }));
 }
 
 /** THE ITEMS A PLAYER OWNS here (optionally of one game): [{ id, gameDev, gameName, itemId, txid, purchase (hex), signature (hex) }]. */
