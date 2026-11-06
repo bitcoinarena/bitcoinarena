@@ -772,6 +772,8 @@ export const TAG = {
   marketSell: 'ARENA/v1/MarketSell',
   // a seat's word that it did not sign a batch and never will (a batch is void once 5 can no longer be reached)
   marketBatchDecline: 'ARENA/v1/MarketBatchDecline',
+  // a round seat's ask that the others answer whether they signed a batch past its signing window, or decline it (kanban #1167)
+  marketBatchVoidAsk: 'ARENA/v1/MarketBatchVoidAsk',
   // a player's identity key naming its head-to-head entry, and a seat's signed running score of two identities
   matchProof: 'ARENA/v1/MatchProof',
   matchRecord: 'ARENA/v1/MatchRecord',
