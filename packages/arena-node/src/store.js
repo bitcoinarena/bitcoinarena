@@ -1117,6 +1117,33 @@ export function openStore(path = ':memory:') {
       made_ms    INTEGER NOT NULL,
       PRIMARY KEY (round_id, scope)
     );
+    -- EVERY BATCH OF A SCOPE, BY ITS TXID (kanban #1170): two signer sets over one body are two txids, both valid. Kept once each, never replaced;
+    -- named_batches holds the one the scope's row stands on, and a batch of another txid never takes its place while the row is SUBMITTING or
+    -- ACCEPTED on it.
+    CREATE TABLE IF NOT EXISTS named_batch_txids (
+      round_id   BLOB NOT NULL,
+      scope      TEXT NOT NULL,
+      txid       TEXT NOT NULL,
+      body_id    TEXT NOT NULL,
+      signers    TEXT NOT NULL,
+      signatures TEXT NOT NULL,
+      slots      TEXT NOT NULL,
+      made_ms    INTEGER NOT NULL,
+      PRIMARY KEY (round_id, scope, txid)
+    );
+    -- EVERY TXID OF A FEDERATION'S OR A LATE ENTRY'S SETTLEMENT (kanban #1172), as lock_settlement_txids is the round's own: scope 'fed:<hex>' or
+    -- 'late:<hex>', what each moves, so the federation is asked about every one before a row is REFUSED.
+    CREATE TABLE IF NOT EXISTS scoped_settlement_txids (
+      round_id     BLOB NOT NULL,
+      scope        TEXT NOT NULL,
+      txid         TEXT NOT NULL,
+      message      BLOB NOT NULL,
+      signature    BLOB NOT NULL,
+      claims       TEXT NOT NULL,
+      payouts      INTEGER NOT NULL,
+      made_ms      INTEGER NOT NULL,
+      PRIMARY KEY (round_id, scope, txid)
+    );
     CREATE TABLE IF NOT EXISTS late_lock_settlements (
       round_id  BLOB NOT NULL,
       entry_id  BLOB NOT NULL,

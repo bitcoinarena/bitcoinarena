@@ -52,7 +52,8 @@ function stubRound(k) {
 function seven({ askPointOf, beforeShare = async () => {}, wire = [], seed = 0x75 } = {}) {
   const contract = { protocolVersion: 22, networkId: NETWORK_ID_REGTEST, censusHeight: CENSUS, nodes: NODES, settlementSlots: 7 };
   const seats = [];
-  const port = { settled: [], settle: async (x) => { port.settled.push(x); return { accepted: true }; } };
+  // AS THE TOOL ANSWERS (kanban #1171, #1172): an accepted submit's payouts stored and its claimed locks gone
+  const port = { settled: [], settle: async (x) => { port.settled.push(x); return { accepted: true, payoutsStored: [{ stored: true }], locksAfter: [null] }; } };
   const refusals = [];
   for (let k = 0; k < 7; k++) {
     let drawn = 0;
