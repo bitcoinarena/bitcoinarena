@@ -5033,62 +5033,41 @@
       return inReact;
     };
     // THE E-CASH EXCHANGE, THE PAGE'S SIDE (kanban #614): `needMsat` of the wallet's e-cash of the federation holding the most spendable sats
-    // handed to a seat (POST /exchange), the seat's e-cash of `to` received here. Kept in this browser (arena.ecash.exchange.*) until it is
-    // done: a seat that refused it outright gets nothing and the notes come back here; a seat that took it and did not answer is asked
-    // again with the same notes (the seat answers a retry the same, never pays twice - ecash-exchange.js).
+    // handed to a seat (POST /exchange), the seat's e-cash of `to` received here. ONE SEAT, ONE RECORD (kanban #1149): the record
+    // (arena.ecash.exchange.*) is written before the send and again before the hand-over, the notes go to the one seat whose offer covers
+    // them, a seat that refused has them taken back before another seat is handed new ones, and the record is dropped only once what came
+    // back was received at the agreed amount (ecash-transfer.js). A seat that took them and did not answer is asked again, the same seat
+    // with the same notes (it answers a retry the same, never pays twice - ecash-exchange.js).
     window.ARENA_EXCHANGE_INTO = async ({ to, toInvite, needMsat, nodes, seed, LockClient, onStep = () => {} }) => {
       const t0 = Date.now();
       const vault = () => window.ARENA_BROWSER_STORE();
       const openW = async (fid, invite) => (window.ARENA_WALLETS && window.ARENA_WALLETS.get(fid))
         || ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fid), invite, seed, LockClient, storage: vault() });
-      // AN EXCHANGE LEFT UNANSWERED BEFORE (a seat that took the notes and did not answer): asked again with the same notes, then received
-      for (const k of Object.keys(vault()).filter((x) => x.startsWith('arena.ecash.exchange.'))) {
-        let x; try { x = JSON.parse(vault().getItem(k)); } catch { vault().removeItem(k); continue; }
-        for (const n of nodes) {
-          try {
-            const r = await fetch(String(n).replace(/\/+$/, '') + '/exchange', { method: 'POST', signal: AbortSignal.timeout(30000), body: JSON.stringify({ from: x.from, to: x.to, ecash: x.ecash, amountMsat: x.msat }) });
-            if (!r.ok) continue;
-            const a = await r.json();
-            const tw = await openW(x.to, x.to === to ? toInvite : (ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(vault(), x.to) : null));
-            if (window.ARENA_NOTE_ARRIVING) window.ARENA_NOTE_ARRIVING(x.to, 'exchanged in from federation ' + String(x.from).slice(0, 8), 30000);
-            const got = JSON.parse(await tw.receiveEcash(a.ecash));
-            if (got.state === 'Success' || got.state === 'AlreadyReceived') { vault().removeItem(k); console.log(`[arena] exchange kept since ${k.slice(21)} answered: ${a.msat} msat into ${String(x.to).slice(0, 8)}`); }
-            break;
-          } catch { /* the next seat */ }
-        }
+      const inviteOf = (fid) => (fid === to ? toInvite : (ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(vault(), fid) : null));
+      // AN EXCHANGE LEFT BEFORE (a seat that took the notes and did not answer, a tab closed on the way): moved on first
+      const keptKeys = Object.keys(vault()).filter((x) => x.startsWith(ARENACLIENT.ECASH_EXCHANGE_PREFIX));
+      if (keptKeys.length) {
+        const said = await ARENACLIENT.resumeEcashExchanges({ storage: vault(), keys: keptKeys, seats: nodes, fetcher: (u, o) => fetch(u, o),
+          walletFor: async (fid) => { const w = await openW(fid, inviteOf(fid)); if (fid !== to || !window.ARENA_NOTE_ARRIVING) return w; window.ARENA_NOTE_ARRIVING(fid, 'exchanged in', 30000); return w; } });
+        for (const r of said) console.log(`[arena] exchange kept since ${r.key.slice(21)}: ${r.ok ? `${r.msat} msat received` : r.why}`);
       }
       const spendable = (p) => BigInt(Math.max(0, Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0))) * 1000n;
       const parts = ((window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || []).filter((p) => /^[0-9a-f]{64}$/.test(p.federation) && p.federation !== to);
       const src = parts.filter((p) => spendable(p) >= needMsat).sort((x, y) => (spendable(y) > spendable(x) ? 1 : -1))[0];
       if (!src) return { ok: false, why: 'no other federation of this wallet holds enough spendable sats' };
       const from = src.federation;
-      const w = await openW(from, ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(vault(), from) : null);
+      const w = await openW(from, inviteOf(from));
       if (typeof w.sendEcash !== 'function') return { ok: false, why: 'this page\'s wallet cannot send an amount of e-cash' };
       onStep(`moving ${Math.ceil(Number(needMsat) / 1000).toLocaleString('en-US')} sat from federation ${from.slice(0, 8)} into this round's`);
-      const sent = JSON.parse(await w.sendEcash(String(needMsat)));
-      const key = 'arena.ecash.exchange.' + Date.now();
-      vault().setItem(key, JSON.stringify({ from, to, ecash: sent.ecash, msat: String(sent.msat) }));
-      let answer = null, why = '', taken = false;
-      for (const n of nodes) {
-        try {
-          const r = await fetch(String(n).replace(/\/+$/, '') + '/exchange', { method: 'POST', signal: AbortSignal.timeout(60000),
-            body: JSON.stringify({ from, to, ecash: sent.ecash, amountMsat: String(sent.msat) }) });
-          if (r.ok) { answer = await r.json(); break; }
-          why = `${r.status} ${(await r.text()).trim().slice(0, 160)}`;
-          if (r.status === 503) { taken = true; break; }
-        } catch (e) { why = e.message; taken = true; break; }   // no answer: the seat may have taken it - asked again later, not taken back
-      }
-      if (!answer) {
-        if (!taken) { try { await w.receiveEcash(sent.ecash); vault().removeItem(key); } catch { /* kept: received at the next merge */ } }
-        return { ok: false, from, why: why || 'no seat exchanges' };
-      }
-      for (let i = 0; i < 240 && Date.now() < (window.ARENA_ORDER_BUSY_UNTIL || 0); i++) await new Promise((r) => setTimeout(r, 250));   // the order first
-      const tw = await openW(to, toInvite);
-      if (window.ARENA_NOTE_ARRIVING) window.ARENA_NOTE_ARRIVING(to, 'exchanged in from federation ' + String(from).slice(0, 8), 30000);
-      const got = JSON.parse(await tw.receiveEcash(answer.ecash));
-      if (got.state === 'Success' || got.state === 'AlreadyReceived') vault().removeItem(key);
+      const walletTo = async () => {
+        for (let i = 0; i < 240 && Date.now() < (window.ARENA_ORDER_BUSY_UNTIL || 0); i++) await new Promise((r) => setTimeout(r, 250));   // the order first
+        const tw = await openW(to, toInvite);
+        if (window.ARENA_NOTE_ARRIVING) window.ARENA_NOTE_ARRIVING(to, 'exchanged in from federation ' + String(from).slice(0, 8), 30000);
+        return tw;
+      };
+      const r = await ARENACLIENT.exchangeEcashInto({ storage: vault(), from, to, needMsat, seats: nodes, walletFrom: w, walletTo, onStep, fetcher: (u, o) => fetch(u, o) });
       if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
-      return { ok: got.state === 'Success' || got.state === 'AlreadyReceived', from, to, msat: answer.msat, ms: Date.now() - t0, state: got.state };
+      return { ...r, ms: Date.now() - t0 };
     };
     // THE MONEY MOVED BEFORE THE PRESS (kanban #614, 2026-10-24: "Das darf auch nicht länger als 100-300ms dauern"): an exchange is
     // two reissues - seconds - so it is done when the lobby shows rounds this wallet could not pay where its money is, not when the player
@@ -5753,9 +5732,9 @@
         .filter((x) => x.feds.length);
       const onWay = [];
       for (const k of Object.keys(L).filter((x) => x.startsWith('arena.ecash.pending.'))) {
-        let rec; try { rec = JSON.parse(L.getItem(k)); } catch { rec = null; }
-        if (!rec || !rec.ecash || !rec.fed) continue;
-        const f = String(rec.fed).toLowerCase(), row = onWay.find((x) => x.federation === f), sats = Math.floor(Number(rec.msat || 0) / 1000);
+        const rec = ARENACLIENT.readEcashTransfer ? ARENACLIENT.readEcashTransfer(L, k) : null;
+        if (!rec || !rec.fed || !ARENACLIENT.ecashTransferMsatInFlight(rec)) continue;
+        const f = String(rec.fed).toLowerCase(), row = onWay.find((x) => x.federation === f), sats = Math.floor(Number(ARENACLIENT.ecashTransferMsatInFlight(rec)) / 1000);
         if (row) row.sats += sats; else onWay.push({ federation: f, sats });
       }
       const states = window.ARENA_MERGE_STATE || {};
@@ -7594,10 +7573,12 @@
         }
         if (!c || typeof c.sendAllEcash !== 'function') return reply({ ok: false, why: 'that tab has no wallet open in federation ' + m.fed.slice(0, 8) + ' and no invite to open one' });
         try {
-          const sent = JSON.parse(await c.sendAllEcash());
-          if (!sent.ecash) return reply({ ok: true, msat: '0' });
+          // KEPT BEFORE IT LEAVES THE WALLET (kanban #1149): the record first, the send tagged with it, the string written after
           const L = vault();
-          L.setItem('arena.ecash.pending.' + m.fed.slice(0, 16) + '.' + Date.now() + '.' + cur.slice(0, 8), JSON.stringify({ ecash: sent.ecash, msat: String(sent.msat), from: cur.slice(0, 8) + ' (another tab)', fed: m.fed, to: m.to, at: Date.now() }));
+          const sent = await ARENACLIENT.sendKeptEcash({ storage: L, key: ARENACLIENT.ECASH_PENDING_PREFIX + m.fed.slice(0, 16) + '.' + Date.now() + '.' + cur.slice(0, 8), wallet: c,
+            fields: { kind: 'merge', msat: '0', from: cur.slice(0, 8) + ' (another tab)', fromKey: cur.slice(0, 16), fed: m.fed, to: m.to, at: Date.now() } });
+          if (!sent.sent) return reply(sent.nothing ? { ok: true, msat: '0' } : { ok: false, why: 'that tab could not send its notes: ' + sent.why });
+          if (sent.memoryOnly) return reply({ ok: false, why: 'that tab could not keep its notes: ' + sent.why });
           L.removeItem('arena.wallet.known.' + m.fed.slice(0, 16) + '.' + cur.slice(0, 16));
           console.log('[arena] handed ' + sent.msat + ' msat in federation ' + m.fed.slice(0, 8) + ' over to this browser\'s other tab');
           reply({ ok: true, msat: String(sent.msat) });
@@ -7822,32 +7803,40 @@
           let receiving = Promise.resolve();
           const receiveKept = () => { receiving = receiving.catch(() => {}).then(receiveKeptPass); return receiving; };
           const receiveKeptPass = async () => {
-            for (const k of Object.keys(L).filter((x) => x.startsWith('arena.ecash.pending.'))) {
-              let rec; try { rec = JSON.parse(L.getItem(k)); } catch { rec = null; }
-              if (!rec || !rec.ecash) { L.removeItem(k); continue; }
-              if (rec.fed ? rec.fed !== fedHex : !legacy) continue;   // never into another federation's wallet
+            for (const k of Object.keys(L).filter((x) => x.startsWith(ARENACLIENT.ECASH_PENDING_PREFIX))) {
+              // ONE RECORD, ONE STATE (kanban #1149): a kept string is received here; an intent left by a closed tab is resolved by the wallet
+              // that sent it (its log keeps the string), here when that wallet is this one; a short or refused record stays as the evidence
+              let rec = ARENACLIENT.readEcashTransfer(L, k);
+              if (!rec) continue;
+              if (rec.fed ? String(rec.fed).toLowerCase() !== fedHex : !legacy) continue;   // never into another federation's wallet
+              if (rec.state === 'intent' && rec.fromKey === cur.slice(0, 16)) {
+                const back = await ARENACLIENT.recoverEcashIntent({ storage: L, key: k, rec, wallet: main });
+                if (!back.ok || !back.rec) continue;
+                rec = back.rec;
+              }
+              if (rec.state !== 'kept') continue;
               // handed over to another tab's phrase (#615): that tab's to receive - for two minutes; then any tab's merge (the asking tab closed)
               if (rec.to && rec.to !== cur.slice(0, 16) && Date.now() - Number(rec.at || 0) < 120000) continue;
               let before = null; try { before = BigInt(await main.balanceMsat()); } catch { before = null; }
               // EACH KEPT COPY ON ITS OWN: one the federation does not take (or a receive that throws) no longer stops the others, and is named
-              let said;
               if (window.ARENA_NOTE_ARRIVING) window.ARENA_NOTE_ARRIVING(fedHex, 'merging in ' + Math.round(Number(rec.msat) / 1000).toLocaleString('en-US') + ' sat from ' + (/another tab/.test(String(rec.from)) ? 'this browser\'s other tab' : 'your other wallet ' + String(rec.from).slice(0, 8)), 30000);
               const step = (x) => { try { if (window.ARENA_TX_STEP) window.ARENA_TX_STEP(x); } catch { /* not kept */ } };
               const recvAt = performance.now();
               step('-> merge receive ' + Math.round(Number(rec.msat) / 1000) + ' sat');
-              try { said = JSON.parse(await Promise.race([main.receiveEcash(rec.ecash), new Promise((_, no) => setTimeout(() => no(new Error('the federation did not answer the receive in ' + MERGE_RECEIVE_MS / 1000 + ' s')), MERGE_RECEIVE_MS))])); }
-              catch (e) { step('<- merge receive ' + Math.round(Number(rec.msat) / 1000) + ' sat (' + (e && e.message ? e.message : e) + ')'); mergeSaid(fedHex, 'stuck', 'receiving ' + rec.msat + ' msat from wallet ' + rec.from + ': ' + (e && e.message ? e.message : e)); continue; }
-              step('<- merge receive ' + Math.round(Number(rec.msat) / 1000) + ' sat (' + said.state + ', ' + Math.round(performance.now() - recvAt) + ' ms)');
-              if (!['Success', 'AlreadyReceived', 'Rejected'].includes(said.state)) mergeSaid(fedHex, 'stuck', 'receiving ' + rec.msat + ' msat from wallet ' + rec.from + ': the federation said ' + said.state);
-              console.log('[arena] combined ' + rec.msat + ' msat from wallet ' + rec.from + ' in federation ' + fedHex.slice(0, 8) + ': ' + said.state);
               // THE KEPT COPY STAYS COUNTED UNTIL THE BALANCE SHOWS IT (measured on UI 268, 19:29:09Z: one sum read 0 sat between "combined ... Success"
               // and the reissued notes landing ~3 s later): after a Success, dropped once this wallet's balance rose, or after 5 s at the latest
-              if (said.state === 'Success' && before !== null) {
+              const settle = async () => {
+                if (before === null) return;
                 step('-> merge balance shows it');
                 for (let w = 0; w < 10; w++) { let now = before; try { now = BigInt(await main.balanceMsat()); } catch { now = before; } if (now > before) break; await new Promise((r) => setTimeout(r, 500)); }
                 step('<- merge balance shows it');
-              }
-              if (said.state === 'Success' || said.state === 'AlreadyReceived' || said.state === 'Rejected') L.removeItem(k);
+              };
+              // DROPPED ONLY ON A SUCCESS (or AlreadyReceived) CREDITING AT LEAST WHAT WAS SENT (kanban #1149): a Rejected - spent elsewhere - is kept as refused
+              const said = await ARENACLIENT.receiveKeptEcash({ storage: L, key: k, rec, federation: fedHex, settle,
+                receive: (ecash) => Promise.race([main.receiveEcash(ecash), new Promise((_, no) => setTimeout(() => no(new Error('the federation did not answer the receive in ' + MERGE_RECEIVE_MS / 1000 + ' s')), MERGE_RECEIVE_MS))]) });
+              step('<- merge receive ' + Math.round(Number(rec.msat) / 1000) + ' sat (' + (said.state || said.why) + ', ' + Math.round(performance.now() - recvAt) + ' ms)');
+              if (!said.ok && !said.refused) mergeSaid(fedHex, 'stuck', 'receiving ' + rec.msat + ' msat from wallet ' + rec.from + ': ' + (said.why || 'the federation said ' + said.state));
+              console.log('[arena] combined ' + rec.msat + ' msat from wallet ' + rec.from + ' in federation ' + fedHex.slice(0, 8) + ': ' + (said.state || said.why) + (said.short ? ' (short: ' + said.why + ')' : ''));
             }
           };
           if (typeof main.receiveEcash !== 'function') return;
@@ -7897,10 +7886,24 @@
               if (holds === 0n) { noteEmpty(); return; }
               mergeSaid(fedHex, 'merging', 'sending the notes of wallet ' + from);
               L.setItem(knownKey, String(holds)); if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
-              const sent = JSON.parse(await other.sendAllEcash());
-              if (!sent.ecash) { noteEmpty(); return; }
+              // KEPT BEFORE IT LEAVES THE WALLET (kanban #1149): the intent written, the send tagged with it (the wallet's log keeps the string
+              // with that tag), the string written; a browser that cannot write the intent sends nothing
+              const fromKey = x.hex.slice(0, 16) + (x.ancestor ? '.blwp' : '');
+              for (const k of Object.keys(L).filter((y) => y.startsWith(ARENACLIENT.ECASH_PENDING_PREFIX + fedHex.slice(0, 16) + '.'))) {
+                const left = ARENACLIENT.readEcashTransfer(L, k);
+                if (left && left.state === 'intent' && left.fromKey === fromKey) await ARENACLIENT.recoverEcashIntent({ storage: L, key: k, rec: left, wallet: other });
+              }
+              const sent = await ARENACLIENT.sendKeptEcash({ storage: L, key: ARENACLIENT.ECASH_PENDING_PREFIX + fedHex.slice(0, 16) + '.' + Date.now() + '.' + x.hex.slice(0, 8) + (x.ancestor ? '.blwp' : ''),
+                wallet: other, fields: { kind: 'merge', msat: String(holds), from, fromKey, fed: fedHex } });
+              if (sent.nothing) { noteEmpty(); return; }
+              if (!sent.sent) throw new Error(sent.why);
+              if (sent.memoryOnly) {
+                // not kept anywhere but here: received now, or named
+                const said = await ARENACLIENT.receiveKeptEcash({ storage: L, key: '', rec: sent.rec, receive: (e) => main.receiveEcash(e), federation: fedHex });
+                if (!said.ok) throw new Error(sent.why + '; ' + said.why);
+                L.removeItem(knownKey); return;
+              }
               // from here the kept e-cash is what is counted (the sum reads it), not the remembered balance
-              L.setItem('arena.ecash.pending.' + fedHex.slice(0, 16) + '.' + Date.now() + '.' + x.hex.slice(0, 8) + (x.ancestor ? '.blwp' : ''), JSON.stringify({ ecash: sent.ecash, msat: String(sent.msat), from, fed: fedHex }));
               L.removeItem(knownKey);
               await receiveKept();
               if (BigInt(await other.balanceMsat()) === 0n) noteEmpty();
@@ -8009,7 +8012,7 @@
           const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
           const out = [];
           for (const x of kept.filter((y) => /^[0-9a-f]{64}$/i.test(y.hex) && y.hex !== cur && ARENACLIENT.phraseWalletEntries(L, y.hex, k) > 0)) {
-            try { out.push({ label: x.hex.slice(0, 8), client: await ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(k), invite: inv, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L }) }); }
+            try { out.push({ label: x.hex.slice(0, 8), hex: x.hex, client: await ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(k), invite: inv, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L }) }); }
             catch (e) { console.log('[arena] wallet ' + x.hex.slice(0, 8) + ' in federation ' + k.slice(0, 8) + ' did not open: ' + (e && e.message ? e.message : e)); }
           }
           return out;
@@ -8017,13 +8020,12 @@
         const sweep = async (from) => {
           if (!from || typeof from.client.sendAllEcash !== 'function' || typeof client.receiveEcash !== 'function') return;
           const L = vault();
-          const sent = JSON.parse(await from.client.sendAllEcash());
-          if (!sent.ecash) return;
-          const key = 'arena.ecash.pending.' + Date.now() + '.' + from.label;
-          L.setItem(key, JSON.stringify({ ecash: sent.ecash, msat: String(sent.msat), from: from.label }));
-          const said = JSON.parse(await client.receiveEcash(sent.ecash));
-          console.log('[arena] the deposit claimed in wallet ' + from.label + ' moved into this wallet: ' + sent.msat + ' msat, ' + said.state);
-          if (said.state === 'Success' || said.state === 'AlreadyReceived') L.removeItem(key);
+          // KEPT BEFORE IT LEAVES THE WALLET, DROPPED ONLY WHEN RECEIVED IN FULL (kanban #1149)
+          const key = ARENACLIENT.ECASH_PENDING_PREFIX + k.slice(0, 16) + '.' + Date.now() + '.' + from.label;
+          const sent = await ARENACLIENT.sendKeptEcash({ storage: L, key, wallet: from.client, fields: { kind: 'merge', msat: '0', from: from.label, fromKey: String(from.hex || '').slice(0, 16), fed: k } });
+          if (!sent.sent) { if (!sent.nothing) console.log('[arena] the deposit claimed in wallet ' + from.label + ' was not moved: ' + sent.why); return; }
+          const said = await ARENACLIENT.receiveKeptEcash({ storage: L, key, rec: sent.rec, receive: (e) => client.receiveEcash(e), federation: k });
+          console.log('[arena] the deposit claimed in wallet ' + from.label + ' moved into this wallet: ' + sent.msat + ' msat, ' + (said.state || said.why) + (said.short ? ' (short)' : ''));
         };
         // AND THE OTHER KEPT PHRASES' WALLETS IN THIS FEDERATION MERGED INTO THIS ONE (combineIn), once per page, by themselves (the owner 18:5xZ:
         // "The wallet must be automatically be merged and be shown"): only notes already there move - a deposit still to be claimed is the resume's
@@ -8111,7 +8113,8 @@
             for (const k of Object.keys(L2)) {
               let f = null, m = 0n;
               if (k.startsWith('arena.wallet.known.')) { const seg = k.split('.'); if (!seg[5] && seg[4] === curHex) continue; if (!keptHex.has(seg[4])) continue; f = seg[3]; try { m = BigInt(L2.getItem(k) || 0); } catch { m = 0n; } }
-              else if (k.startsWith('arena.ecash.pending.')) { try { const r = JSON.parse(L2.getItem(k)); f = String(r.fed || '').slice(0, 16) || null; m = BigInt(r.msat || 0); } catch { f = null; } }
+              // a record that still holds money (kanban #1149): an intent, a short or a refused record is not counted
+              else if (k.startsWith('arena.ecash.pending.')) { try { const r = ARENACLIENT.readEcashTransfer(L2, k); f = String((r && r.fed) || '').slice(0, 16) || null; m = ARENACLIENT.ecashTransferMsatInFlight(r); } catch { f = null; } }
               if (f && m > 0n) by.set(f, (by.get(f) || 0n) + m);
             }
             for (const [f, m] of by) {
