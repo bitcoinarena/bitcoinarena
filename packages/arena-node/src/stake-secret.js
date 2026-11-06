@@ -40,8 +40,7 @@ import { resultFinality } from './finality.js';
 import { FINAL } from '../../arena-protocol/src/objection.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { outcomeFinality } from '../../arena-protocol/src/attested.js';
-import { heldOutcomes, attestedTable } from './game-market.js';
+import { marketStateOf, attestedTable } from './game-market.js';
 import { isScalar } from '../../arena-protocol/src/manifest.js';
 import { pluginForRound } from './plugins.js';
 import { askPeers } from './peer-ask.js';
@@ -146,9 +145,9 @@ export class StakeSecrets {
     { const contract = decodeRoundContract(new Uint8Array(row.contract));
       const found = this.round.plugins ? pluginForRound(contract, this.round.plugins) : null;
       if (found && found.ok && found.attested) {
-        // (a market on a game's held source result counts as its attestation would: feature 6, heldOutcomes)
-        const heldAtt = heldOutcomes(this.round, roundIdBytes);
-        const f = outcomeFinality(heldAtt, { windowMs: contract.objectionWindowMs, nowMs: this.round.now ? this.round.now() : Date.now() });
+        // (a market on a game's held source result counts as its attestation would: feature 6, heldOutcomes) - FINAL as the round's
+        // PERSISTED state (kanban #1151, game-market.js marketStateOf), so no share is handed out before FINAL is stored, nor after a VOID
+        const f = marketStateOf(this.round, roundIdBytes, { contract, manifest: found.plugin.manifest, nowMs: this.round.now ? this.round.now() : Date.now() });
         if (!f.final) return { ok: false, why: `no share of an attested round is handed out before its outcome is final (${f.state}${f.finalAtMs ? `, final at ${new Date(f.finalAtMs).toISOString()}` : ''})` };
         // A SCALAR MARKET (feature 8): a lock is claimed when its entry gets back less than its net stake - by the table
         // the settlement pays (game-market.js attestedTable over the entries whose stake this seat saw), and only then
