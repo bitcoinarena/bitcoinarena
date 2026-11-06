@@ -113,7 +113,7 @@ function world({ down = [], deviant = [], tip = START_HEIGHT + clocks.fallbackBl
       scriptOf: (address) => fromHex(`5120${toHex(taggedHash('ARENA/test/Address', new TextEncoder().encode(address)))}`), reserveKeyOf: async (fid) => reserveKey(fid), urlOf,
       heldKey: (k) => (toHex(k) === census.hex ? shares : null), thresholdOf: (k) => (k === census.hex ? THRESHOLD : null), holdersOf: async (k) => (k === census.hex ? holders : []),
       signer: () => s.signer, send: send(p.hex), stepMs: 0, fetchFn });
-    s.signer = createCensusSigner({ key: p.key, work: censusKeyWork, held: (k) => (toHex(k) === census.hex ? shares : null),
+    s.signer = createCensusSigner({ key: p.key, work: censusKeyWork, held: (k) => (toHex(k) === census.hex ? shares : null), rosterOf: () => ({ total: 8, threshold: THRESHOLD }),
       check: (request) => (request && request.kind === 'fallback' ? s.run.checkFallback(request) : { ok: false, why: 'this test signs only fallbacks' }) });
     seats.set(p.hex, s);
   }

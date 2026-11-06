@@ -14,7 +14,7 @@ import { fromHex, taggedHash, toHex } from '../../arena-protocol/src/hash.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { tweakPoint } from './curve.js';
 import { bondKeyOf } from './bond-withdraw.js';
-import { createCensusSigner, gatherCensusSignature } from './census-sign.js';
+import { createCensusSigner, gatherCensusSignature, rosterOfRecord } from './census-sign.js';
 
 const verifySig = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const HINT = new TextEncoder().encode('arena');
@@ -31,13 +31,13 @@ const ALREADY = /already in (the )?(mempool|block ?chain)|txn-already-known|txn-
 export const filerRank = (proofId, keys, me) => [...keys].sort((a, b) => (toHex(taggedHash('ARENA/v1/SlashFiler', Uint8Array.from([...proofId, ...fromHex(a)]))) < toHex(taggedHash('ARENA/v1/SlashFiler', Uint8Array.from([...proofId, ...fromHex(b)]))) ? -1 : 1)).indexOf(me);
 
 /**
- * `key`; `db`; `store` CensusKeyStore; `thresholdOf(keyHex)`; `tipHeight()`; `entriesAtTip()` the census at the tip; `heldProofs()` [{ proofId, bytes, seenMs }] of the proofs this seat filed and the abandoned outputs it lists; `bytesOf(id)` what its relay keeps under a hash; `judge(bytes)` this seat's own
+ * `key`; `db`; `store` CensusKeyStore; `thresholdOf(keyHex)`; `totalOf(keyHex)` its shares; `tipHeight()`; `entriesAtTip()` the census at the tip; `heldProofs()` [{ proofId, bytes, seenMs }] of the proofs this seat filed and the abandoned outputs it lists; `bytesOf(id)` what its relay keeps under a hash; `judge(bytes)` this seat's own
  * word on a complete proof (proof-judge.js): { verdict: true | false | undefined, why }, with `judge.read`; `holdsFor(entry, roundId, contract)` -> { holds: [{ script }], presig?(bytes), holdScript? } by this seat's own reckoning, `presig`/`holdScript` naming the one a filer uses;
  * `feeCoin(spk, value)`, `send(hex)`, `urlsOf(entries)`.
  * THE REPAID FEE (sweep): `txOut(txid display, vout)` a confirmed unspent output { sats, script hex } or null (bitcoind's gettxout without the mempool); `returnScript()` this node's own wallet
  * script; `ownServed(start)` this seat's own GET /slash-release answer, if it built the release or the fallback itself.
  */
-export function createSlashStarter({ key, network, db, store, thresholdOf, tipHeight, entriesAtTip, heldProofs, bytesOf, judge, holdsFor, feeCoin, send, urlsOf, checkOther = null, feeSecret = () => schnorr.utils.randomSecretKey(), stepMs = 600000, judgeAgainMs = 600000, feeSats = 700n, fetchFn = fetch, now = Date.now, log = () => {},
+export function createSlashStarter({ key, network, db, store, thresholdOf, totalOf = () => null, tipHeight, entriesAtTip, heldProofs, bytesOf, judge, holdsFor, feeCoin, send, urlsOf, checkOther = null, feeSecret = () => schnorr.utils.randomSecretKey(), stepMs = 600000, judgeAgainMs = 600000, feeSats = 700n, fetchFn = fetch, now = Date.now, log = () => {},
   txOut = null, returnScript = async () => null, ownServed = null, sweepEveryMs = 60000 }) {
   const me = toHex(key);
   db.exec(`CREATE TABLE IF NOT EXISTS slash_starts (proof_id BLOB PRIMARY KEY, bond TEXT NOT NULL, txid TEXT NOT NULL, kept_ms INTEGER NOT NULL)`);
@@ -67,7 +67,9 @@ export function createSlashStarter({ key, network, db, store, thresholdOf, tipHe
     return { ok: true, digest: c.digest, publicKey: entry.advert.censusKey };
   }
   // ONE SIGNER FOR EVERY ASK OF THIS NODE'S SHARES: a start here, a fallback (slash-release-run.js checkFallback) by its `kind`
-  const signer = createCensusSigner({ key, held: (publicKey) => store.held(publicKey),
+  // THE ROSTER A SIGNING SET IS READ AGAINST (kanban #1155): the record this node's keygen kept, or for key 0, kept without one, the chain's word on that key
+  const rosterOf = (publicKey, held) => rosterOfRecord(publicKey, held) || (held.record && held.record.length ? null : { total: totalOf(toHex(publicKey)), threshold: thresholdOf(toHex(publicKey)) });
+  const signer = createCensusSigner({ key, held: (publicKey) => store.held(publicKey), rosterOf,
     check: (request) => (request && request.kind && request.kind !== 'start' ? (checkOther ? checkOther(request) : { ok: false, why: `this seat signs no ${request.kind} yet` }) : check(request)) });
 
   // THE FEE COIN'S KEY, FROM THE NODE'S OWN AND THE PROOF: the release repays this coin to the very script it came from (5A.3B, pays = filer), so the filer can still spend it, after a restart too

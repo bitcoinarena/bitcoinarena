@@ -194,6 +194,8 @@ export function verifyShare340({ id, share, publicShare, groupPublicKey, message
  * as long as the number of nodes, and `aggregate340` and a BIP-340 verifier take the answer as they are.
  *
  * `id` the node's number in the list; `held` Map x -> share; `lambda` Map x -> coefficient, from census-dkg.js lagrangeOf over all the x.
+ * A list whose commitments carry `xs` (census-sign.js) hashes them into the binding factors (frost.js encodeCommitmentList), so the set the
+ * coefficients are taken over is fixed with R.
  */
 export function signNodeShare340({ id, held, lambda, groupPublicKey, nonces, message, commitments, curve }) {
   if (!hasEvenY(groupPublicKey)) throw new Error('that group key has odd y: normalise the secret when it is dealt, not here');
@@ -203,6 +205,15 @@ export function signNodeShare340({ id, held, lambda, groupPublicKey, nonces, mes
   const factors = bindingFactors({ groupPublicKey, commitments, message, context: TR_CONTEXT });
   const mine = factors.find((f) => String(f.id) === String(id));
   if (!mine) throw new Error(`participant ${id} did not commit to this signature`);
+  // THE SHARES SIGNED FOR ARE THE ONES COMMITTED TO (kanban #1155): with `xs` in the list they are in the binding factors, so a node signs for
+  // exactly those, each with a coefficient.
+  const own = commitments.find((x) => String(x.id) === String(id));
+  if (own.xs !== undefined) {
+    const named = new Set(own.xs);
+    if (named.size !== own.xs.length || named.size !== held.size || [...held.keys()].some((x) => !named.has(x)))
+      throw new Error(`participant ${id} committed to other shares than it holds`);
+  }
+  for (const x of held.keys()) if (typeof (lambda && lambda.get(x)) !== 'bigint') throw new Error(`no coefficient for the share at ${x}`);
   const commitment = groupCommitment({ commitments, factors, curve });
   const flip = hasEvenY(commitment) ? 1n : -1n;
   const c = challenge340(xOnly(commitment), xOnly(groupPublicKey), message);

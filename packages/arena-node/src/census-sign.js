@@ -3,53 +3,119 @@
 // THE CENSUS KEY SIGNS (spec 5A.3B, kanban #972). FROST over BIP-340, one nonce pair per node for its several shares (frost-bip340.js signNodeShare340). Two rounds, seat to seat. A holder answers the first only after its own
 // `check` of the request: for a slash start, that it pays the hold output its node signed to, and that the proof holds on this holder's own replay. Whatever it answers is bound to that digest. A nonce is used once, whatever
 // comes back: the session goes before anything is signed, and a restart loses it, which costs a filer one more try. Nothing here is a secret on the wire.
+// THE SIGNING SET IS BOUND (kanban #1155): the x each node brings set the Lagrange coefficients, so a holder signs only for a set of real shares of the key (its own record says
+// which), with its own shares exactly, and the xs go into the binding factors with the nonces: a list whose xs were changed after R is another signature, and adds up to nothing.
 //
-//   POST /census-sign/commit   a request -> { ok, session, node, xs, hiding, binding } or { ok: false, why }
+//   POST /census-sign/commit   a request -> { ok, session, node, xs, hiding, binding, bind } or { ok: false, why }
 //   POST /census-sign/share    { session, signers: [{ id, node, xs, hiding, binding }] } -> { ok, z }
 import { randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
 import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
+import { decodeCensusKeyRecord } from '../../arena-protocol/src/census-key.js';
 import { feldmanGroup } from './curve.js';
 import { censusKeyInWorker } from './census-key-work.js';
 
 const random = (n) => new Uint8Array(randomBytes(n));
 const SESSION_MS = 600000;
 const scalarHex = (z) => z.toString(16).padStart(64, '0');
-/** The wire's commitment list as the signers hash it: by id, whatever order it came in. */
-const commitmentsOf = (signers) => signers.map((s) => ({ id: s.id, hiding: fromHex(s.hiding), binding: fromHex(s.binding) })).sort((a, b) => a.id - b.id);
+/**
+ * The wire's commitment list as the signers hash it: by id, whatever order it came in, each node with the x of the shares it signs for. The xs are in the
+ * binding factors (frost.js encodeCommitmentList, kanban #1155), so the Lagrange set is fixed with R.
+ */
+const commitmentsOf = (signers) => signers.map((s) => ({ id: s.id, hiding: fromHex(s.hiding), binding: fromHex(s.binding), xs: s.xs })).sort((a, b) => a.id - b.id);
+/** What a holder that binds the xs says at its commit. A filer leaves out one that does not: its share would not add up with the others'. */
+export const CENSUS_SIGN_BIND = 1;
+
+/**
+ * ONE SIGNING SESSION'S STATE, AND THE ONE WAY IT MOVES (kanban #1155). none -> committed (a nonce pair drawn, in memory only) -> used (gone before
+ * anything is signed, whatever comes of it). Nothing moves back, and a restart is none: the nonce was never written down.
+ */
+export const SESSION = Object.freeze({ NONE: 'none', COMMITTED: 'committed', USED: 'used' });
+const MOVES = Object.freeze({ [SESSION.NONE]: [SESSION.COMMITTED], [SESSION.COMMITTED]: [SESSION.USED], [SESSION.USED]: [] });
+
+const isHex = (v, bytes) => typeof v === 'string' && v.length === bytes * 2 && /^[0-9a-f]+$/.test(v);
+/**
+ * THE SIGNING SET A HOLDER ACCEPTS (kanban #1155): a list from the wire, read against what this holder knows of the key. Every x is an integer share
+ * of the key, 1..total, brought once; this node's entry carries its own commitment and exactly the x it holds; together they reach the threshold.
+ * Answers { ok, mine } or { ok: false, why }.
+ */
+export function signingSetOf(signers, { me, hiding, binding, held, total, threshold }) {
+  if (!Array.isArray(signers) || !signers.length) return { ok: false, why: 'name the signers' };
+  if (signers.length > total) return { ok: false, why: `${signers.length} signers of a key of ${total} shares` };
+  const ids = new Set(), nodes = new Set(), xs = new Set();
+  for (const x of signers) {
+    if (!x || typeof x !== 'object') return { ok: false, why: 'a signer is an object' };
+    if (!Number.isInteger(x.id) || x.id < 1 || x.id > signers.length || ids.has(x.id)) return { ok: false, why: `signer id ${x.id} is not one of 1..${signers.length}, once` };
+    if (!isHex(x.node, 32) || nodes.has(x.node)) return { ok: false, why: 'a signer names a node key, once' };
+    if (!isHex(x.hiding, 33) || !isHex(x.binding, 33)) return { ok: false, why: `signer ${x.id} carries no commitment` };
+    if (!Array.isArray(x.xs) || !x.xs.length) return { ok: false, why: `signer ${x.id} names no shares` };
+    for (const v of x.xs) {
+      if (!Number.isInteger(v) || v < 1 || v > total) return { ok: false, why: `${v} is not a share of this key: they are 1..${total}` };
+      if (xs.has(v)) return { ok: false, why: `the share at ${v} is named twice` };
+      xs.add(v);
+    }
+    ids.add(x.id); nodes.add(x.node);
+  }
+  const mine = signers.find((x) => x.node === me);
+  if (!mine || mine.hiding !== hiding || mine.binding !== binding) return { ok: false, why: 'that list does not carry this node\'s commitment' };
+  if (mine.xs.length !== held.size || mine.xs.some((v) => !held.has(v))) return { ok: false, why: 'that list names other shares for this node than it holds' };
+  if (xs.size < threshold) return { ok: false, why: `${xs.size} of the ${threshold} shares that key takes` };
+  return { ok: true, mine };
+}
+
+/** What this holder knows of a key it holds: its shares' range and threshold, from the record its own keygen kept (CensusKeyStore). Null for none (key 0 is kept without one). */
+export const rosterOfRecord = (publicKey, shares) => {
+  if (!shares.record || !shares.record.length) return null;
+  const r = decodeCensusKeyRecord(shares.record);
+  if (toHex(r.publicKey) !== toHex(publicKey)) return null;
+  return { total: r.totalShares, threshold: r.threshold };
+};
 
 /**
  * THE HOLDER'S SIDE. `check(request)` -> { ok, digest, publicKey } or { ok: false, why }; `held(publicKey)` CensusKeyStore's. `work` the worker's job, as in a run.
+ * `rosterOf(publicKey, held)` -> { total, threshold } this holder trusts for that key, by default its own record of it.
  */
-export function createCensusSigner({ key, check, held, work = censusKeyInWorker, now = Date.now }) {
+export function createCensusSigner({ key, check, held, work = censusKeyInWorker, now = Date.now, rosterOf = rosterOfRecord }) {
   const me = toHex(key);
-  const sessions = new Map();
-  const prune = () => { for (const [id, s] of sessions) if (now() - s.atMs > SESSION_MS) sessions.delete(id); };
+  const sessions = new Map();                    // session id -> { state: committed, ... }; none and used are not in it
+  const stateOf = (id) => (sessions.get(id) || { state: SESSION.NONE }).state;
+  /** THE ONE TRANSITION. Compare and set: `from` must be the state now, or nothing moves and the answer is null. To used drops the nonce first. */
+  function move(id, from, to, data = {}) {
+    const s = sessions.get(id) || { state: SESSION.NONE };
+    if (s.state !== from || !MOVES[from].includes(to)) return null;
+    if (to === SESSION.COMMITTED) { const next = { ...data, state: to }; sessions.set(id, next); return next; }
+    sessions.delete(id);
+    return { ...s, state: to };
+  }
+  const prune = () => { for (const [id, s] of sessions) if (now() - s.atMs > SESSION_MS) move(id, SESSION.COMMITTED, SESSION.USED); };
   async function takeCommit(request) {
     const checked = await check(request);
     if (!checked.ok) return checked;
     const shares = held(checked.publicKey);
     if (!shares) return { ok: false, why: 'this node holds no shares of that key' };
+    const roster = rosterOf(checked.publicKey, shares);
+    if (!roster || !Number.isInteger(roster.total) || !Number.isInteger(roster.threshold) || roster.threshold < 1 || roster.threshold > roster.total)
+      return { ok: false, why: 'this node keeps no record of that key to sign by' };
+    if ([...shares.shares.keys()].some((x) => !Number.isInteger(x) || x < 1 || x > roster.total)) return { ok: false, why: 'this node\'s shares are not that key\'s' };
     prune();
     const anyShare = [...shares.shares.values()][0];
     const nonces = { hiding: nonceGenerate340(random(32), anyShare), binding: nonceGenerate340(random(32), anyShare) };
     const session = toHex(random(16)), hiding = toHex(feldmanGroup.pointFromScalar(nonces.hiding)), binding = toHex(feldmanGroup.pointFromScalar(nonces.binding));
-    sessions.set(session, { nonces, digest: checked.digest, publicKey: checked.publicKey, shares, hiding, binding, atMs: now() });
-    return { ok: true, session, node: me, xs: [...shares.shares.keys()], hiding, binding };
+    if (!move(session, SESSION.NONE, SESSION.COMMITTED, { nonces, digest: checked.digest, publicKey: checked.publicKey, shares, roster, hiding, binding, atMs: now() }))
+      return { ok: false, why: 'that session is taken' };
+    return { ok: true, session, node: me, xs: [...shares.shares.keys()], hiding, binding, bind: CENSUS_SIGN_BIND };
   }
-  async function takeShare({ session, signers }) {
-    const s = sessions.get(session);
-    sessions.delete(session);                    // ONE USE, whatever comes of it
+  async function takeShare({ session, signers } = {}) {
+    const s = move(session, SESSION.COMMITTED, SESSION.USED);   // ONE USE, whatever comes of it
     if (!s) return { ok: false, why: 'no such session here' };
-    if (!Array.isArray(signers)) return { ok: false, why: 'name the signers' };
-    const mine = signers.find((x) => x.node === me);
-    if (!mine || mine.hiding !== s.hiding || mine.binding !== s.binding) return { ok: false, why: 'that list does not carry this node\'s commitment' };
-    const z = await work({ kind: 'frostShare', id: mine.id, held: s.shares.shares, all: signers.flatMap((x) => x.xs), groupPublicKey: Uint8Array.from([0x02, ...s.publicKey]), nonces: s.nonces, message: s.digest, commitments: commitmentsOf(signers) });
+    const set = signingSetOf(signers, { me, hiding: s.hiding, binding: s.binding, held: s.shares.shares, total: s.roster.total, threshold: s.roster.threshold });
+    if (!set.ok) return set;
+    const z = await work({ kind: 'frostShare', id: set.mine.id, held: s.shares.shares, groupPublicKey: Uint8Array.from([0x02, ...s.publicKey]), nonces: s.nonces, message: s.digest, commitments: commitmentsOf(signers) });
     if (!z.ok) return z;
     return { ok: true, z: scalarHex(z.z) };
   }
-  return { takeCommit, takeShare, sessions: () => sessions.size };
+  return { takeCommit, takeShare, sessions: () => sessions.size, stateOf };
 }
 
 /**
@@ -61,10 +127,13 @@ export async function gatherCensusSignature({ request, digest, publicKey, thresh
     const r = await fetchFn(`${url}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
     return r.json();
   };
-  const said = [], refused = [];
+  const said = [], refused = [], taken = new Set();
   let have = 0;
+  // A COMMIT COUNTS ONCE PER NODE AND PER x, and only from a holder that binds its xs (kanban #1155): an older one would sign another list
   const take = (who, c) => {
-    if (c && c.ok && !said.some((x) => x.node === c.node)) { said.push({ ...c, ask: who }); have += c.xs.length; } else if (c && !c.ok) refused.push({ who: who || 'this node', why: c.why });
+    if (c && c.ok && c.bind !== CENSUS_SIGN_BIND) { refused.push({ who: who || 'this node', why: 'that holder does not bind its shares into the signature (kanban #1155): it needs the update' }); return; }
+    const fresh = c && c.ok && Array.isArray(c.xs) && c.xs.length && new Set(c.xs).size === c.xs.length && c.xs.every((x) => Number.isInteger(x) && x > 0 && !taken.has(x));
+    if (fresh && !said.some((x) => x.node === c.node)) { said.push({ ...c, ask: who }); have += c.xs.length; for (const x of c.xs) taken.add(x); } else if (c && !c.ok) refused.push({ who: who || 'this node', why: c.why });
   };
   if (own) take(null, await own.takeCommit(request).catch((e) => ({ ok: false, why: e.message })));
   const left = [...urls];

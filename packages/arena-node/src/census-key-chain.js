@@ -265,6 +265,12 @@ export function createCensusKeyScan({ store, network, networkId, firstHeight, fo
       if (rows.length) return rows[rows.length - 1].threshold;
       return censusKey0 && toHex(censusKey0.publicKey) === keyHex ? censusKey0.threshold : null;
     },
+    /** The shares a key has, as its newest record or genesis says: what a holder reads a signing set's x against when it keeps no record (key 0, kanban #1155). Null for a key this node does not read. */
+    totalOf: (keyHex) => {
+      const rows = store.anchors().filter((a) => a.stands && a.kind === 'K').map((a) => decodeCensusKeyBody(a.body).record).filter((r) => toHex(r.publicKey) === keyHex);
+      if (rows.length) return rows[rows.length - 1].totalShares;
+      return censusKey0 && toHex(censusKey0.publicKey) === keyHex ? censusKey0Shares(censusKey0).total : null;
+    },
     /** The first valid list of a run: { height, present }, or null. */
     reshareList: (keyHex, run) => lists.get(`${keyHex}:${run}`) || null,
     status: () => ({ firstHeight, scannedTo: (store.scanTop() || { height: null }).height, failing, dead: deadKeys,

@@ -154,8 +154,21 @@ export function encodeCommitmentList(commitments) {
   for (let i = 1; i < sorted.length; i++)
     if (sorted[i].id === sorted[i - 1].id)
       throw new Error(`two commitments for participant ${sorted[i].id} are one commitment`);
-  return cat(...sorted.map((c) => cat(idBytes(c.id), c.hiding, c.binding)));
+  // A NODE'S SHARES ARE PART OF ITS COMMITMENT WHEN IT SIGNS FOR SEVERAL (signNodeShare340, the census key, kanban #1155): the x each
+  // participant brings set the Lagrange coefficients, so they are hashed into the binding factors with the nonces and cannot be chosen
+  // after R and c. A list without `xs` (RFC 9591, every one-share signer) encodes exactly as before; a list is all one or all the other.
+  const withXs = sorted.filter((c) => c.xs !== undefined).length;
+  if (withXs === 0) return cat(...sorted.map((c) => cat(idBytes(c.id), c.hiding, c.binding)));
+  if (withXs !== sorted.length) throw new Error('a commitment list names the shares of every participant or of none');
+  return cat(XS_LIST, ...sorted.map((c) => cat(idBytes(c.id), c.hiding, c.binding, u32(c.xs.length), ...c.xs.map(u32))));
 }
+
+/** The node-share list's first bytes, so no list with `xs` encodes like one without. */
+const XS_LIST = new TextEncoder().encode('ARENA/node-shares/v1');
+const u32 = (n) => {
+  if (!Number.isInteger(n) || n < 0 || n > 0xffffffff) throw new Error(`${n} is not a share's x`);
+  return Uint8Array.of(n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255);
+};
 
 /** Section 4.4: one binding factor per participant, over the whole list. */
 export function bindingFactors({ groupPublicKey, commitments, message, context = CONTEXT }) {
