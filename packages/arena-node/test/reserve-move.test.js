@@ -26,6 +26,7 @@ const dealt = (secret) => { const G = evenGroupSecret(secret, curve); return tru
 const DX = dealt(0x7777n), DY = dealt(0x8888n);
 const nodeKeys = (k) => Array.from({ length: 7 }, (_, i) => toHex(schnorr.getPublicKey(Uint8Array.from({ length: 32 }, (_, j) => (j === 31 ? i + 1 : k))))).sort();
 const KX = nodeKeys(1), KY = nodeKeys(2);
+const SECRET_OF = new Map([1, 2].flatMap((k) => Array.from({ length: 7 }, (_, i) => { const sk = Uint8Array.from({ length: 32 }, (_, j) => (j === 31 ? i + 1 : k)); return [toHex(schnorr.getPublicKey(sk)), sk]; })));
 const FEES = { ppm: 100n, baseMsat: 1000n };
 const GW = { url: 'https://gw.example/', lightningPublicKey: '02' + 'ab'.repeat(32), modulePublicKey: '03' + 'cd'.repeat(32), live: true,
   sendFeeDefault: { baseMsat: 2000, ppm: 1000 }, expirationDeltaDefault: 144, expirationDeltaMinimum: 10 };
@@ -107,7 +108,7 @@ function world({ statusX = 'DRAINING', gatewayFails = false, downY = [], noGatew
     const me = keys[i];
     const s = { me, fed, down, inbox: [] };
     const rowsFor = (f) => [...rows.filter((r) => r.fed === f), ...w.kept.filter((k) => k.seat === s && k.fed === f).map((k) => k.row)];
-    s.api = createReservePayouts({ db: openStore(':memory:'), me, curve, random: rand, network: 'testnet4', passed: () => [],
+    s.api = createReservePayouts({ db: openStore(':memory:'), me, curve, random: rand, network: 'testnet4', passed: () => [], sign: (d) => schnorr.sign(d, SECRET_OF.get(me)),
       reserveRows: (f) => rowsFor(f), portOf: async (f) => port(f), payRequest: async () => ({ ok: false }), invoiceFor: async () => ({ ok: false }),
       keepRow: (row) => { const o = `${toHex(row.outpoint.txid)}:${row.outpoint.outIdx}`, f = toHex(row.federationId);
         if (!w.kept.some((k) => k.seat === s && k.row.outpoint === o)) w.kept.push({ seat: s, fed: f, row: { outpoint: o, amountMsat: String(row.amountMsat), verifiedMs: 99 } }); },

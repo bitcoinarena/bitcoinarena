@@ -122,6 +122,7 @@ const G = evenGroupSecret(0x7654321n, curve);
 const DEAL = trustedDealerSplit({ secret: G.secret, max: 7, min: 5, coefficients: [3n, 5n, 7n, 11n], curve });
 const KEY = DEAL.groupPublicKey;
 const NODE_KEYS = Array.from({ length: 7 }, (_, i) => toHex(schnorr.getPublicKey(Uint8Array.from({ length: 32 }, (_, j) => (j === 31 ? i + 1 : 8))))).sort();
+const SECRET_OF = new Map(Array.from({ length: 7 }, (_, i) => { const sk = Uint8Array.from({ length: 32 }, (_, j) => (j === 31 ? i + 1 : 8)); return [toHex(schnorr.getPublicKey(sk)), sk]; }));
 const FEES = { ppm: 100n, baseMsat: 1000n };
 const LB = 'cc'.repeat(32);
 
@@ -132,6 +133,7 @@ function world({ reserves = [20000000n, 20000000n] } = {}) {
   const msgOf = (o) => sha256(new TextEncoder().encode(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v))));
   const port = {
     fees: async () => FEES,
+    status: async (at) => { const c = fed.contracts.get(`${toHex(at.txid)}:${at.outIdx}`); return { blockCount: 0, stored: c && !c.spent ? { contractId: 'c', blocksLeft: 0 } : null }; },
     settle: async ({ claimPk, refunds, payouts, nonce, signature = null }) => {
       if (!(nonce instanceof Uint8Array) || nonce.length !== 8) throw new Error('--nonce is 8 bytes');   // as the stake-lock tool
       const message = msgOf({ k: claimPk, r: refunds.map((x) => [toHex(x.outpoint.txid), String(x.outpoint.outIdx), x.amountMsat]), p: payouts, n: nonce });
@@ -154,7 +156,7 @@ function world({ reserves = [20000000n, 20000000n] } = {}) {
     const db = openStore(':memory:');
     s.book = createWinnersBook({ db, paramsOf: async () => ({ ok: true, ...WIN, rounds: undefined }), collect: async () => answersOf(SIGNED),
       seatsOf: drawOf(new Map(), [1, 2, 3, 4, 5, 6, 7, 8, 9]), verify, now: () => WIN.toMs + FREEZE_GRACE_MS });
-    s.api = createReservePayouts({ db, me: NODE_KEYS[i], curve, random: rand, network: 'testnet4', passed: () => [],
+    s.api = createReservePayouts({ db, me: NODE_KEYS[i], curve, random: rand, network: 'testnet4', passed: () => [], sign: (d) => schnorr.sign(d, SECRET_OF.get(NODE_KEYS[i])),
       leaderboards: () => due, winners: s.book,
       reserveRows: () => [...reserveRows, ...state.kept.filter((k) => k.seat === i && k.row.recipientPk === toHex(KEY)).map((k) => ({ outpoint: k.row.outpoint, amountMsat: k.row.amountMsat, verifiedMs: 99 }))],
       portOf: async () => port, payRequest: async () => ({ ok: false }), invoiceFor: async () => ({ ok: false }),
