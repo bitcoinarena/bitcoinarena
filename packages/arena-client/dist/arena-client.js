@@ -29536,7 +29536,9 @@ const LIQUIDATION_ECASH_PREFIX = 'arena-liquidation-ecash-';   // the arena- nam
 const pendingClaimKey = (fid) => `${LIQUIDATION_ECASH_PREFIX}${String(fid).toLowerCase()}`;
 const CLAIM_STATES = Object.freeze({ NONE: 'none', INTENT: 'intent', KEPT: 'kept', POSTED: 'posted' });
 const CLAIM_EDGES = Object.freeze({ none: ['intent', 'kept'], intent: ['kept', 'none'], kept: ['posted', 'none'], posted: ['posted', 'none'] });
-const REPOST_MS = 3600000;   // a posted claim not yet listed by the set is presented again at most hourly (the door answers "claimed before")
+const REPOST_MS = 3600000;
+/** The chain's arbitration set as standingLiquidation reads it: committee.js BOND_TERMS names its fields arbitrationKeys / arbitrationK. */
+const arbitrationOf = (network) => { const g = BOND_TERMS[network]; return g ? { keys: g.arbitrationKeys, k: g.arbitrationK } : null; };   // a posted claim not yet listed by the set is presented again at most hourly (the door answers "claimed before")
 
 /** THE ONE TRANSITION: `rec` (or null) to state `to` with `patch`; null for none. Throws for a step the claim does not take. */
 function claimStep(rec, to, patch = {}) {
@@ -29562,7 +29564,7 @@ const writeClaim = (storage, key, rec, put) => (rec === null ? storage.removeIte
  * `storage`: getItem/setItem/removeItem; `verify(sig, msg, key)` the page's schnorr check (window.ARENA_CURVE.verify - this client carries no
  * crypto). `liquidations` (a seat's own list) is no longer read. Answers one row per federation acted on.
  */
-async function presentNotes({ events, network, arbitration = BOND_TERMS[network], verify, held, walletFor, payoutPk = null,
+async function presentNotes({ events, network, arbitration = arbitrationOf(network), verify, held, walletFor, payoutPk = null,
   payoutPkFor = null, height, storage, fetcher = fetch, put = putRoomy, nowMs = Date.now() }) {
   const out = [];
   if (typeof verify !== 'function') return [{ ok: false, why: 'nothing handed over: no signature check was given to read the arbitration set with' }];
@@ -29649,7 +29651,7 @@ async function presentNotes({ events, network, arbitration = BOND_TERMS[network]
  * THE ARBITRATION SET'S CLAIMS DOORS (kanban #1148): one per liquidation of `network` whose signed event stands - where this seed's payouts
  * are listed (GET /liquidation-payouts). A seat's `claims` field is not read: it is that seat operator's word.
  */
-function liquidationDoors({ events, network, arbitration = BOND_TERMS[network], verify }) {
+function liquidationDoors({ events, network, arbitration = arbitrationOf(network), verify }) {
   if (typeof verify !== 'function') return [];
   const fids = [...new Set((events || []).filter((r) => r && r.event && r.event.kind === 'liquidation').map((r) => String(r.event.federation || '').toLowerCase()))];
   const doors = new Set();
