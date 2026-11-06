@@ -18,7 +18,9 @@ function seat({ holdsB = 500_000n, payFails = 0 } = {}) {
     [A]: { ecashBalance: async () => 0n, ecashSend: async () => { throw new Error('no'); },
       ecashReceive: async (e) => { calls.push(['receive', e]); if (received.has(e)) return { state: 'AlreadyReceived', msat: 0n }; received.add(e); return { state: 'Success', msat: 100_000n }; } },
     [B]: { ecashReceive: async () => ({ state: 'Rejected', msat: 0n }), ecashBalance: async () => holdsB,
-      ecashSend: async (m) => { calls.push(['send', m]); if (fails > 0) { fails--; throw new Error('the federation did not answer'); } holdsB -= m; return { ecash: `fedimintB-${++n}-${m}`, msat: m }; } },
+      ecashSend: async (m) => { calls.push(['send', m]); if (fails > 0) { fails--; throw new Error('the federation did not answer'); } holdsB -= m; return { ecash: `fedimintB-${++n}-${m}`, msat: m }; },
+      // the keyed send read back (kanban #1160): a send that failed before it spent left nothing in the operation log
+      ecashSent: async () => ({ found: false }) },
   };
   const ex = createEcashExchange({ db: new DatabaseSync(':memory:'), portOf: async (f) => ports[f] || null });
   return { ex, calls };

@@ -292,8 +292,10 @@ async fn main() -> anyhow::Result<()> {
         // notes of the other federation handed back (ecash-send), and what the seat's client holds (balance)
         "ecash-send" => ecash_send(&a, &client).await,
         "ecash-receive" => ecash_receive(&a, &client).await,
+        // kanban #1160: the e-cash a keyed ecash-send made, read back from the client's operation log (never spent twice)
+        "ecash-sent" => ecash_sent(&a, &client).await,
         "balance" => { println!("{}", serde_json::json!({ "mode": "balance", "msat": client.get_balance_for_btc().await?.msats })); Ok(()) }
-        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send, serve, pegin-address, pegin-claim, pay, receive-to-key, claim-incoming, ecash-send, ecash-receive, balance or id"),
+        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send, serve, pegin-address, pegin-claim, pay, receive-to-key, claim-incoming, ecash-send, ecash-receive, ecash-sent, balance or id"),
     }
 }
 
@@ -944,12 +946,54 @@ async fn pegin_claim(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
 /// Prints the invoice, its payment hash, the contract id and the contract itself (consensus-encoded hex) for --mode claim-incoming.
 /// E-CASH OUT (kanban #614): exactly --amount-msat of this client's notes as the prefixed base32 string another wallet of the same
 /// federation receives. Prints {"mode", "msat", "ecash"}; spent here, the string is the only copy - the caller keeps it until it is received.
+/// KEYED (kanban #1160): with --key K the send is named K in the operation log (its custom meta {"arena_exchange": K}), and a send of
+/// that key made before is answered again instead of spending a second time ("again": true). The answer echoes "key".
 async fn ecash_send(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
     let mint = client.get_first_module::<fedimint_mintv2_client::MintClientModule>()?;
     let amount = Amount::from_msats(need(a, "amount-msat")?.parse()?);
-    let (_, ecash) = mint.send(amount, serde_json::Value::Null, false).await?;
+    let key = a.get("key").cloned();
+    if let Some(k) = &key {
+        if let Some(found) = ecash_sent_with(client, k).await? {
+            println!("{}", serde_json::json!({ "mode": "ecash-send", "msat": ecash_msat(&found)?, "ecash": found, "key": k, "again": true }));
+            return Ok(());
+        }
+    }
+    let meta = match &key { Some(k) => serde_json::json!({ "arena_exchange": k }), None => serde_json::Value::Null };
+    let (_, ecash) = mint.send(amount, meta, false).await?;
     println!("{}", serde_json::json!({ "mode": "ecash-send", "msat": amount.msats,
-        "ecash": fedimint_core::base32::encode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, &ecash) }));
+        "ecash": fedimint_core::base32::encode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, &ecash), "key": key }));
+    Ok(())
+}
+
+/// THE AMOUNT AN E-CASH STRING CARRIES, msat.
+fn ecash_msat(s: &str) -> anyhow::Result<u64> {
+    let e: fedimint_mintv2_client::ECash = fedimint_core::base32::decode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, s.trim())?;
+    Ok(e.amount().msats)
+}
+
+/// THE NEWEST mintv2 SEND whose custom meta names `key` ("arena_exchange"), its e-cash string; None when this client never made one.
+async fn ecash_sent_with(client: &ClientHandle, key: &str) -> anyhow::Result<Option<String>> {
+    let mut last = None;
+    loop {
+        let page = client.operation_log().paginate_operations_rev(100, last).await;
+        if page.is_empty() { return Ok(None); }
+        for (_, entry) in &page {
+            if let Ok(fedimint_mintv2_client::MintOperationMeta::Send { ecash, custom_meta }) = entry.try_meta::<fedimint_mintv2_client::MintOperationMeta>() {
+                if custom_meta.get("arena_exchange").and_then(|v| v.as_str()) == Some(key) { return Ok(Some(ecash)); }
+            }
+        }
+        last = page.last().map(|(k, _)| *k);
+    }
+}
+
+/// --mode ecash-sent --data-dir D --key K (kanban #1160): {"mode", "key", "found", "ecash", "msat"} - the e-cash a keyed ecash-send made,
+/// or found false: this client never spent for that key, and a send may be made.
+async fn ecash_sent(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
+    let key = need(a, "key")?;
+    match ecash_sent_with(client, key).await? {
+        Some(e) => println!("{}", serde_json::json!({ "mode": "ecash-sent", "key": key, "found": true, "msat": ecash_msat(&e)?, "ecash": e })),
+        None => println!("{}", serde_json::json!({ "mode": "ecash-sent", "key": key, "found": false })),
+    }
     Ok(())
 }
 
@@ -962,7 +1006,12 @@ async fn ecash_receive(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
     let operation = match mint.receive(bytes, serde_json::Value::Null).await {
         Ok(op) => op,
         Err(fedimint_mintv2_client::ReceiveECashError::AlreadyReceived) => {
-            println!("{}", serde_json::json!({ "mode": "ecash-receive", "state": "AlreadyReceived", "msat": 0 }));
+            // kanban #1160: received here before - by this client's own earlier receive of it (the operation is the string's own id):
+            // its final state awaited, and the amount the string carries, so a caller that wrote its record first can finish
+            let e: fedimint_mintv2_client::ECash = fedimint_core::base32::decode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, need(a, "ecash")?.trim())?;
+            let earlier = fedimint_core::core::OperationId::from_encodable(&e);
+            let state = mint.await_final_receive_operation_state(earlier).await.map(|s| format!("{s:?}")).unwrap_or_else(|err| format!("unknown: {err}"));
+            println!("{}", serde_json::json!({ "mode": "ecash-receive", "state": "AlreadyReceived", "msat": 0, "earlier": state, "carried_msat": e.amount().msats }));
             return Ok(());
         }
         Err(e) => return Err(anyhow!("{e}")),
