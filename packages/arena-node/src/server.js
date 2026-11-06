@@ -80,6 +80,7 @@ import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
 import { createAdvertSelf, firstCheckDelayMs } from './advert-self.js';
 import { paysBondMarker } from '../../arena-protocol/src/chain.js';
 import { createServer, request as httpRequest } from 'node:http';
+import { settleHoldOn } from './test-named-offence.js';
 import { createServer as createHttpsServer } from 'node:https';
 import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto';
 import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
@@ -10465,6 +10466,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'a settlement is asked for by a round id');
         const r8 = new Uint8Array(rid);
+        // THE REGTEST FAULT (test-named-offence.js `settle-hold`, off by default): silent - the ask is dropped unanswered, as a seat that does not answer
+        if (url.pathname !== '/settle-signature' && settleHoldOn(r8)) { req.socket.destroy(); return; }
         { const why = seriesRefusalOfRound(r8); if (why) return text(res, 409, `settlement refused: ${why}`); }
         // A LATE LOSER'S SECOND SETTLEMENT (C3b-1) is asked for by its entry as well: one per (round, entry).
         const lateHex = url.searchParams.get('entry');

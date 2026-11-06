@@ -61,7 +61,7 @@ import { askerOrder, eligibleAsker } from './payout.js';
 import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate, splitPlanTaken } from './plan-taken.js';
 import { askPeers, PEER_ASK_MS, PEER_READ_MS, PEER_GRACE_MS } from './peer-ask.js';
 import { namedClaims, namedClaimKeys, namedSignerSet, zKey } from '../../arena-protocol/src/arena-lock.js';
-import { offTableOn, offTablePayouts, swapRefundOn, swappedRefundPayouts } from './test-named-offence.js';
+import { offTableOn, offTablePayouts, swapRefundOn, swappedRefundPayouts, settleHoldOn } from './test-named-offence.js';
 import { lostForfeitAllowed } from './forfeit.js';
 import { namedSlots, NamedNonces, aggregateBatch, signerSetKey, encodeNamedCommitment, decodeNamedCommitment, encodeNamedList, decodeNamedList,
   encodeNamedPartials, decodeNamedPartials, encodeNamedBatch, decodeNamedBatch } from './named-settlement.js';
@@ -1565,6 +1565,24 @@ export class LockSettlement {
       ...(m.named ? { settlementBodyId: fromHex(m.txid) } : { settlementTxid: fromHex(m.txid) }), verify: verifyAck });
   }
 
+  /**
+   * A PEER'S ACK REFUSED OVER A GONE LOCK OR ANOTHER REBUILD (kanban #1044 hole 1, ruling #1146 A). Measured 2026-11-06 on s47a, round a0620247: three seats
+   * silent in the settlement (settle-hold) until the loser refunded its locks at expiry, then back. The three built afresh, met the gone lock and rebuilt
+   * on F′; the four that had built F during the stall reused that build (byPlan) - they never met the gone lock themselves, and each refused the other's
+   * bytes ("rebuilt settlement 260b6a9d…, not 2b769470…"), 3 against 4, neither 5. So a peer that refuses this seat's ack naming a lock the guardians do
+   * not hold, or bytes it rebuilt otherwise, drops this seat's build of the round: its next plan reads the losers' locks at the federation (one read; F′
+   * leaves out only a lock the federation really does not hold, so a peer saying so falsely costs that read and nothing else). Answers whether it did.
+   */
+  peerSaysGone(roundIdBytes, whys) {
+    if (!(whys || []).some((w) => NO_LOCK_HELD.test(String(w)) || /rebuilt settlement [0-9a-f]+, not [0-9a-f]+/.test(String(w)))) return false;
+    const k = toHex(roundIdBytes);
+    if (!this.#suspectGone.has(k)) console.log(`#1044 [settle] ${k.slice(0, 16)}: a peer refused the ack over a gone lock or another rebuild - its losers' locks are read at the federation next`);
+    this.#suspectGone.add(k);
+    this.built.delete(k);
+    this.byPlan.delete(k);
+    return true;
+  }
+
   /** THE ACK DOOR: this seat's word, only on the bytes it rebuilt itself. Signed before it joins the FROST signing. */
   async ack(roundIdBytes, { txid = null, entry = null, federation = null } = {}) {
     const m = await this.#askedMessage(roundIdBytes, { txid, entry, federation });
@@ -1596,6 +1614,7 @@ export class LockSettlement {
     const counted = this.#countAcks(roundIdBytes, m, acks);
     if (!counted.final) {
       if (scope !== null) this.#stoppedAt(roundIdBytes, m.contract, scope, 'ack', counted.kept.map((k) => splitSignedAck(k).nodePubkey), refusedBy);
+      this.peerSaysGone(roundIdBytes, refused);
       return { ...refuse(`${counted.agreed} of the ${counted.needed} signer nodes the settlement needs acked it: ${[...refused, ...counted.refused].join('; ')}`), refused };
     }
     return { ok: true, acks: joinAcks(counted.kept) };
@@ -2094,6 +2113,8 @@ export class LockSettlement {
   #cancelsCarried = new Map();   // round id hex -> when its cancels were last pulled (cancelCarryDue)
 
   async #settleOnce(roundIdBytes) {
+    // THE REGTEST FAULT (test-named-offence.js `settle-hold`, off by default): this seat is silent in this round's settlement
+    if (settleHoldOn(roundIdBytes)) return refuse('test switch: this seat holds the settlement of this round (settle-hold)', 503);
     { const row = this.round.get(roundIdBytes);
       if (row && takesAnyFederation(decodeRoundContract(new Uint8Array(row.contract)))) return this.#settleFederations(roundIdBytes); }
     const held = this.#attestedHold(roundIdBytes);

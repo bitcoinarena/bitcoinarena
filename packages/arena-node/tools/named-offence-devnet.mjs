@@ -19,6 +19,9 @@
 //                          lock is split 75% to the seats and 25% to the donation set by gateway sends (with a winner it goes to the winner: s29a round 578b9f87); the set's two LNURL recipients (127.0.0.1:18777, the signed regtest set - the devnet started with
 //                          DEVNET_DONATION_SET=lnurl) answer their first invoice with a hold invoice cancelled at once, so that send fails; this tool mines to
 //                          its expiration, the contract refunds to KeyAgg(S) and S re-sends it through the other gateway to a fresh invoice
+//   SCENARIO=stall3        nothing armed (kanban #1044 hole 1): three of the round's seats (the contract's last three) are stopped (SIGSTOP) once both
+//                          entries are published; the four left reach FINAL and cannot settle (5 of 7); after STALL_HOLD_S the loser takes its locks back
+//                          at their expiration (REFUND_AFTER_PLAY), then the three come back (SIGCONT) and the settlement is watched (ruling #1146 A: F')
 //   SCENARIO=stop-s        nothing armed: a member of S is stopped (SIGSTOP) as soon as a seat keeps the signed batch; the sends must still be paid
 //
 // The three last name a Lightning address for both players (PAYOUT_ADDRESS): an https LNURL door on base + 9 answering with lnd C's invoices, its
@@ -52,7 +55,7 @@ const PLAN = devnetPorts(Number(env.DEVNET_BASE_PORT || 24000));
 const SEATS = PLAN.nodes.map((p) => `http://127.0.0.1:${p}`);
 const SCENARIO = env.SCENARIO || 'honest';
 const LIMIT = Number(env.LIMIT_S || 1500);
-const SCENARIOS = ['off-table', 'forfeit-lost', 'honest', 'stock', 'swap-refund', 'send-refund', 'stop-s', 'nobody-won', 'donation-resend'];
+const SCENARIOS = ['off-table', 'forfeit-lost', 'honest', 'stock', 'swap-refund', 'send-refund', 'stop-s', 'nobody-won', 'donation-resend', 'stall3'];
 if (!SCENARIOS.includes(SCENARIO)) { console.error(`SCENARIO is ${SCENARIOS.join(', ')}`); process.exit(2); }
 // THE CLAIM SIGNED OFF THE CORRECT BODY BY FIVE ARMED SEATS, the honest ones stopped through the signing: (a) by a payout (off-table) or by a send's refund key
 const OFF = SCENARIO === 'off-table' || SCENARIO === 'swap-refund';
@@ -148,12 +151,13 @@ if (SCENARIO === 'send-refund') for (let k = 0; k < SEATS.length; k++) writeFile
 // chain by 15 and every seat refused the locks made then as "more than 12 blocks below the height it is verified at")
 await wait(Number(env.WAIT_AFTER_OPEN_S || 90) * 1000);
 const keysFile = join(D, `keys-${SCENARIO}-${ROUND.slice(0, 8)}.jsonl`);
+const goFile = join(D, `refund-go-${ROUND.slice(0, 8)}`);
 const players = [0, 1].map((i) => {
   const log = join(D, `player-${SCENARIO}-${ROUND.slice(0, 8)}-${i}.log`);
   const fd = openSync(log, 'a');
   const child = spawn(process.execPath, [join(HERE, 'tn4-live-run.mjs')], { detached: true, stdio: ['ignore', fd, fd],
     env: { ...env, ARENA_TN4_NETWORK: 'regtest', ARENA_REGTEST_CENSUS_KEY_0: join(D, 'census', 'key0.json'), ROUND, PORTS: PLAN.nodes.join(','), KEYS_FILE: keysFile, COLLECT_MS: String(env.COLLECT_MS || 900000),
-      ...(SCENARIO === 'nobody-won' ? { LOSE: '1', FORFEIT_RETRY_S: env.FORFEIT_RETRY_S || '600' } : SCENARIO === 'donation-resend' ? (i === 1 ? { NO_MARKS: '1' } : { LOSE: '1' }) : i === 0 ? { SEARCH: '1', QUALIFY: '1' } : SCENARIO === 'forfeit-lost' ? { LOSE: '1' } : {}), ...(SCENARIO === 'forfeit-lost' ? { EARLY_FORFEIT: '1' } : {}),
+      ...(SCENARIO === 'nobody-won' ? { LOSE: '1', FORFEIT_RETRY_S: env.FORFEIT_RETRY_S || '600' } : SCENARIO === 'donation-resend' ? (i === 1 ? { NO_MARKS: '1' } : { LOSE: '1' }) : i === 0 ? { SEARCH: '1', QUALIFY: '1' } : SCENARIO === 'forfeit-lost' ? { LOSE: '1' } : SCENARIO === 'stall3' ? { LOSE: '1', REFUND_AFTER_PLAY: '1', REFUND_GO_FILE: goFile } : {}), ...(SCENARIO === 'forfeit-lost' ? { EARLY_FORFEIT: '1' } : {}),
       ...(ADDRESS ? { PAYOUT_ADDRESS: ADDRESS } : {}), ...(SCENARIO === 'send-refund' ? { REFUND_C: '1' } : {}) } });
   return { i, log, child };
 });
@@ -166,6 +170,29 @@ for (const p of players) say({ step: 'player', i: p.i, published: said(p, 'publi
 if (!E.length) throw new Error('no entry was played');
 if (SCENARIO === 'forfeit-lost') for (const k of armed) writeFileSync(offenceFile(k), E.map((e) => `forfeit-lost ${e}`).join('\n') + '\n');
 say({ step: 'entries', entries: E, armedLines: SCENARIO === 'forfeit-lost' ? E.length : OFF ? 1 : 0 });
+// THREE SETTLEMENT SEATS SILENT (stall3): the contract's last three nodes' seat processes stopped; their guardians keep running
+const STALL = SCENARIO === 'stall3' ? order.slice(-3) : [];
+// STALL_AT=signed: the three are stopped only once every seat holds each entry's signed result (PROVISIONALLY_FINAL, the window running), so the
+// result goes FINAL on the four left and only the settlement (5 of 7) is missing - §23 hole 1 as written. Otherwise at once, before any result is signed
+const finalityAt = async (k) => Promise.all(E.map(async (e) => { try { return await (await get(`${SEATS[k]}/settlement?entry=${e}`, 20000)).json(); } catch (x) { return { error: x.message }; } }));
+// STALL_BY=hold (the default): the three are armed `settle-hold <round>` (test-named-offence.js) - silent in this round's settlement only, their results,
+// guardians and every other door as before. STALL_BY=stop: their seat processes SIGSTOPped - and with them the guardian door the clients use
+// (ws://<seat>/guardian), so a client reaches 4 of 7 guardians and cannot even join (measured on s47a try 1)
+const BY_STOP = env.STALL_BY === 'stop';
+let stallOn = false;
+const stopStall = async (why) => {
+  if (BY_STOP) for (const k of STALL) { process.kill(pidOf(k), 'SIGSTOP'); stopped.add(k); }
+  else for (const k of STALL) writeFileSync(offenceFile(k), `settle-hold ${ROUND}\n`);
+  stallOn = true;
+  say({ step: 'three seats stopped', by: BY_STOP ? 'SIGSTOP' : 'settle-hold', why, seats: STALL.map((k) => k + 1), height: await height() });
+};
+const releaseStall = () => {
+  if (BY_STOP) for (const k of [...stopped]) backIn(k);
+  else for (const k of STALL) { writeFileSync(offenceFile(k), ''); say({ step: 'seat back', seat: k + 1, by: 'settle-hold cleared', t: at() }); }
+  stallOn = false;
+};
+if (STALL.length && env.STALL_AT !== 'signed') await stopStall('both entries published');
+let stallGo = null, resumedAt = null;
 
 // THE OUTSIDER (send-refund): the stake-lock tool on a client of its own that no seat runs - joined here - submitting the presigned refund (c)
 const LOCK_BIN = join(env.FEDIMINT_BIN || '', 'arena-stake-lock');
@@ -210,6 +237,8 @@ const SHORT_OF = Number(env.SHORT_OF || 6);
 const honestSeats = SEATS.map((_, k) => k).filter((k) => !armed.includes(k));
 const stopAt = END + Number(env.STOP_AFTER_S || 60) * 1000;
 process.on('exit', () => { for (const k of [...stopped]) { try { process.kill(pidOf(k), 'SIGCONT'); } catch { /* gone */ } } });
+// A RUN STOPPED FROM OUTSIDE (SIGTERM, tools wrapping a retry): its stopped seats come back and its players end, as at a normal end
+process.on('SIGTERM', () => { for (const p of players) { try { process.kill(-p.child.pid, 'SIGTERM'); } catch { /* it ended */ } } process.exit(143); });
 const last = new Map();
 const seen = (key, value) => { if (last.get(key) === value) return; last.set(key, value); say({ t: at(), [key]: value }); };
 let filedAt = null;
@@ -244,6 +273,39 @@ for (;;) {
     // "TimeoutTooClose"). SHORT_OF (default 6) blocks of the clock give every seat's kept list time to read the federation's height after the jump
     if (exp.length && !mined && h < Math.max(...exp) - SHORT_OF) { const n = Math.max(...exp) - SHORT_OF - h; bcli('generatetoaddress', String(n), 'bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080'); mined = { from: h, to: h + n, expiration: Math.max(...exp), t: at() }; say({ step: 'mined to just short of the failed send\'s expiration', ...mined }); }
   }
+  if (SCENARIO === 'stall3') {
+    if (env.STALL_AT === 'signed' && !stallOn && !stallGo) {
+      const all = []; for (let k = 0; k < SEATS.length; k++) all.push(await finalityAt(k));
+      const states = all.map((f) => f.map((x) => x.finality || x.error || null));
+      seen('finality', JSON.stringify(states));
+      const closes = Math.min(...all.flat().map((x) => Number(x.windowClosesAtMs || Infinity)));
+      if (states.every((f) => f.every((x) => x === 'PROVISIONALLY_FINAL' || x === 'FINAL'))) {
+        const ls = await (await get(`${SEATS[0]}/lock-settlement?round=${ROUND}`)).json().catch(() => ({}));
+        await stopStall(`every seat holds both results signed; window closes ${Number.isFinite(closes) ? new Date(closes).toISOString() : '?'}; seat 1 settlement ${ls.state}`);
+      }
+    }
+    if (!stallGo && at() >= Number(env.STALL_HOLD_S || 900)) {
+      const live = [];
+      for (let k = 0; k < SEATS.length; k++) {
+        if (stopped.has(k)) continue;
+        let r = null, l = null;
+        try { const x = await get(`${SEATS[k]}/results?round=${ROUND}`, 20000); r = `${x.status} ${(await x.text()).slice(0, 400)}`; } catch (e) { r = e.message; }
+        try { l = await (await get(`${SEATS[k]}/lock-settlement?round=${ROUND}`, 20000)).json(); } catch (e) { l = { error: e.message }; }
+        live.push({ seat: k + 1, results: r, settlement: l, finality: (await finalityAt(k)).map((x) => `${x.finality || x.error}${x.finalityWhy ? ` (${String(x.finalityWhy).slice(0, 120)})` : ''}`) });
+      }
+      stallGo = { t: at(), height: await height(), live };
+      say({ step: 'stall watched', ...stallGo });
+      writeFileSync(goFile, `${new Date().toISOString()}\n`);
+    }
+    const refunded = said(players[1], 'refunded');
+    if (refunded.length && stallOn && !resumedAt) {
+      await wait(Number(env.RESUME_AFTER_S || 60) * 1000);
+      say({ step: 'loser refunded, seats come back', height: await height(), refunded: refunded[0].slice(0, 600) });
+      releaseStall();
+      resumedAt = Date.now();
+    }
+    if (resumedAt && Date.now() - resumedAt > Number(env.RESUME_WATCH_S || 1800) * 1000) break;
+  }
   if (SCENARIO === 'send-refund' && !outsider && [...last.entries()].some(([key, v]) => key.endsWith(' settlement') && /^ACCEPTED/.test(v || ''))) await outsiderSubmits();
   if (ADDRESSED) for (const [i, e] of E.entries()) {
     try { const w = await (await get(`${SEATS[SEATS.findIndex((_, k) => !stopped.has(k))]}/winnings?entry=${e}`)).json(); seen(`entry${i} send`, w.send ? `${w.send.state} ${String(w.send.why || '').slice(0, 120)}${w.send.preimage ? ' preimage' : ''}` : 'none'); } catch { /* next pass */ }
@@ -260,7 +322,7 @@ for (;;) {
     } catch { /* next pass */ }
     try { const r = await (await get(`${SEATS[k]}/slash-releases`)).json(); seen(`seat${k + 1} starts`, JSON.stringify((r.starts || []).map((x) => ({ s: x.state || x.status, txid: String(x.startTxid || x.txid || '').slice(0, 16), bond: String(x.bond || x.outpoint || '').slice(0, 20) }))).slice(0, 400)); } catch { /* not a holder */ }
   }
-  for (const p of players) for (const step of ['early forfeit', 'collected', 'stopped', 'settled', 'no early forfeit: the settlement came first']) if (said(p, step).length) seen(`player${p.i} ${step}`, said(p, step)[0].slice(0, 400));
+  for (const p of players) for (const step of ['early forfeit', 'collected', 'stopped', 'settled', 'no early forfeit: the settlement came first', 'refund go', 'refunded', 'waiting for expiry']) if (said(p, step).length) seen(`player${p.i} ${step}`, said(p, step)[0].slice(0, 400));
   if (at() >= LIMIT) break;
   if (filedAt && Date.now() - filedAt > Number(env.AFTER_FILED_S || 600) * 1000) break;
   // EVERY RECIPIENT'S SHARE PAID BY A RE-SEND at some seat - not only the first one paid
@@ -280,7 +342,8 @@ for (let k = 0; k < SEATS.length; k++) {
   try {
     const s = await (await get(`${SEATS[k]}/slashes`, 20000)).json();
     const r = await (await get(`${SEATS[k]}/slash-releases`, 20000)).json().catch(() => ({ starts: [] }));
-    say({ step: 'end', seat: k + 1, named: (s.namedSlashes || []).filter((x) => x.round === ROUND), starts: r.starts || [] });
+    const ls = await (await get(`${SEATS[k]}/lock-settlement?round=${ROUND}`, 20000)).json().catch((e) => ({ error: e.message }));
+    say({ step: 'end', seat: k + 1, named: (s.namedSlashes || []).filter((x) => x.round === ROUND), starts: r.starts || [], settlement: ls });
   } catch (e) { say({ step: 'end', seat: k + 1, noAnswer: e.message }); }
 }
 for (let k = 0; k < SEATS.length; k++) writeFileSync(offenceFile(k), '');
