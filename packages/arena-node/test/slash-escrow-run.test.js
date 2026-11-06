@@ -169,7 +169,7 @@ function world({ who, holders = [], hold, tip, ports = () => true, federationsNo
       portFor: async (fid) => (ports(p) ? portOf(fid) : null), scriptOf: scriptOfAddress, reserveKeyOf: async (fid) => reserveKey(fid), keepReserveRow: (row) => kept.push({ carrier: p.hex, row }), urlOf,
       heldKey: (k) => (shares && toHex(k) === census.hex ? shares : null), thresholdOf: (k) => (k === census.hex ? THRESHOLD : null), holdersOf: async (k) => (k === census.hex ? holderList : []),
       signer: () => s.signer, send: c.send, stepMs, fetchFn });
-    s.signer = createCensusSigner({ key: p.key, work: censusKeyWork, held: (k) => (shares && toHex(k) === census.hex ? shares : null), check: (request) => s.run.checkOther(request) });
+    s.signer = createCensusSigner({ key: p.key, work: censusKeyWork, held: (k) => (shares && toHex(k) === census.hex ? shares : null), rosterOf: () => ({ total: 8, threshold: THRESHOLD }), check: (request) => s.run.checkOther(request) });
     seats.set(p.hex, s);
   }
   c.claims = new Map();                           // address -> what its client claims there: what the output to it paid

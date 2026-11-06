@@ -20,12 +20,14 @@ const random = (n) => new Uint8Array(randomBytes(n));
  *   check    answers each bad deal's complaint and every dealer it refuses
  *   sign     this node's signature on the record of the deals handed in
  *   finish   this node's shares, once `statements` show the threshold on the record of those deals
- *   frostShare  one node's part of a signature (census-sign.js): { id, held, all, groupPublicKey, nonces, message, commitments }. A lambda over 683 shares is half a million products
+ *   frostShare  one node's part of a signature (census-sign.js): { id, held, groupPublicKey, nonces, message, commitments }, each commitment with its node's xs. A lambda over 683 shares is half a million products
  */
 export async function censusKeyWork(job) {
   if (job.kind === 'frostShare') {
-    const { id, held, all, groupPublicKey, nonces, message, commitments } = job;
-    return { ok: true, z: signNodeShare340({ id, held, lambda: lagrangeOf(all, [...held.keys()]), groupPublicKey, nonces, message, commitments, curve: feldmanGroup }) };
+    // THE COEFFICIENTS ARE OVER THE x THE LIST BINDS (kanban #1155): each commitment carries its node's xs and they are hashed with the nonces, so the set is the one R was made over
+    const { id, held, groupPublicKey, nonces, message, commitments } = job;
+    if (!commitments.every((c) => Array.isArray(c.xs))) return { ok: false, why: 'that commitment list does not name every signer\'s shares' };
+    return { ok: true, z: signNodeShare340({ id, held, lambda: lagrangeOf(commitments.flatMap((c) => c.xs), [...held.keys()]), groupPublicKey, nonces, message, commitments, curve: feldmanGroup }) };
   }
   const { kind, key, secret, run, part = null, deals = [], statements = [] } = job;
   const dkg = new CensusDkg({ key, secret, run, part, curve: feldmanGroup, random });

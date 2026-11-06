@@ -163,7 +163,7 @@ function world({ ledger, tip = START_HEIGHT + 1, walletv2 = false, recordsAt = (
       federations: async () => RECORDS, federationsAt: async (h) => recordsAt(h), portFor: async (fid) => portOf(fid), scriptOf: scriptOfAddress, reserveKeyOf: async (fid) => reserveKey(fid), urlOf,
       heldKey: (k) => (toHex(k) === census.hex ? shares : null), thresholdOf: (k) => (k === census.hex ? THRESHOLD : null), holdersOf: async (k) => (k === census.hex ? holderList : []),
       signer: () => s.signer, send: c.send, stepMs: 0, fetchFn, log: (l) => logs.push(l), claimsOf: async (fid) => (fid === fedL ? ledger() : null) });
-    s.signer = createCensusSigner({ key: p.key, work: censusKeyWork, held: (k) => (toHex(k) === census.hex ? shares : null), check: (request) => s.run.checkOther(request) });
+    s.signer = createCensusSigner({ key: p.key, work: censusKeyWork, held: (k) => (toHex(k) === census.hex ? shares : null), rosterOf: () => ({ total: 5, threshold: THRESHOLD }), check: (request) => s.run.checkOther(request) });
     seats.set(p.hex, s);
   }
   const passAll = async () => { const out = []; for (const [p] of holders) out.push(...(await seats.get(p.hex).run.pass()).map((x) => ({ by: p.hex, ...x }))); return out; };
