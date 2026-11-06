@@ -9411,7 +9411,9 @@ the correct direction.
 
 And a **repeal** runs on a short schedule - review 0, voting 720, cooldown
 2 (RULED 2026-11-06, kanban #1196: it was 0, which let a repeal decided 3 deep
-activate before its decision was final; regtest stays 0 / 6 / 0) - but *only* if its `config` is byte-identical to an ancestor that was
+activate before its decision was final; regtest stays 0 / 6 / 0; testnet4 votes
+one day, 144, as every testnet4 ballot does since kanban #785, with the same
+cooldown 2 - RULED 2026-11-06, kanban #1200) - but *only* if its `config` is byte-identical to an ancestor that was
 live before. It can go back, never forward. That cannot be abused into a
 fast path for new changes, because the only configurations it can reach are
 ones the network already ran.
