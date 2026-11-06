@@ -85,7 +85,10 @@ test('seven guardian seats make a 5-of-7 reserve key: five sign, four do not, al
     const [s1, r1] = await post('/reserve-payout/record', { proposal: 'ab'.repeat(32), state: 'PAID', planId: '00', plan: { federation: toHex(FED) } });
     assert.equal(r1.ok, false); assert.ok(s1 >= 400, String(s1));
     const [s2, r2] = await post('/reserve-payout/commit', { plan: { proposal: 'ab'.repeat(32), federation: toHex(FED) }, kind: 'tx' });
-    assert.equal(r2.ok, false); assert.match(r2.why, /no passed vote/); assert.ok(s2 >= 400);
+    // kanban #1159: an ask nobody signed opens nothing - refused before any plan is read
+    assert.equal(r2.ok, false); assert.match(r2.why, /signed by the guardian seat that asks it/); assert.equal(s2, 401);
+    // kanban #1156: an unsigned record moves nothing
+    assert.match(r1.why, /signed by the guardian seat that says it|plan is not its id/);
   } finally { await Promise.all(nodes.map((n) => n.close())); delete process.env.ARENA_RESERVE_DKG; }
 });
 
