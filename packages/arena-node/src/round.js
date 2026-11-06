@@ -3341,6 +3341,40 @@ export class Round {
     return row ? row.seen_ms : null;
   }
 
+  /** An objection being checked (kanban #1173): kept at its arrival, before its replay runs. */
+  putPendingObjection(roundIdBytes, entryIdBytes, arrivedMs) {
+    this.db.prepare('INSERT OR IGNORE INTO pending_objections (round_id, entry_id, arrived_ms) VALUES (?, ?, ?)')
+      .run(Buffer.from(roundIdBytes), Buffer.from(entryIdBytes), Number(arrivedMs));
+  }
+
+  /** Its check answered (taken or refused): the pending row goes. */
+  dropPendingObjection(roundIdBytes, entryIdBytes, arrivedMs) {
+    this.db.prepare('DELETE FROM pending_objections WHERE round_id = ? AND entry_id = ? AND arrived_ms = ?')
+      .run(Buffer.from(roundIdBytes), Buffer.from(entryIdBytes), Number(arrivedMs));
+  }
+
+  /** The earliest arrival of an objection still being checked, no older than `sinceMs` - or null. */
+  pendingObjectionAt(roundIdBytes, entryIdBytes, sinceMs = 0) {
+    const r = this.db.prepare('SELECT MIN(arrived_ms) AS at FROM pending_objections WHERE round_id = ? AND entry_id = ? AND arrived_ms >= ?')
+      .get(Buffer.from(roundIdBytes), Buffer.from(entryIdBytes), Number(sinceMs));
+    return r && r.at !== null && r.at !== undefined ? Number(r.at) : null;
+  }
+
+  /** A restarted seat's checks are gone with its process: their pending rows go too (kanban #1173). Answers how many. */
+  clearPendingObjections() { return this.db.prepare('DELETE FROM pending_objections').run().changes; }
+
+  /** The entry FINAL at this seat (kanban #1173): kept once, the first that stood; true when this call kept it. */
+  putEntryFinal({ roundId, entryId, runId, finalAfterMs, onRerun = false, atMs }) {
+    return this.db.prepare('INSERT OR IGNORE INTO entry_finals (round_id, entry_id, run_id, final_after_ms, on_rerun, at_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(roundId), Buffer.from(entryId), String(runId), Number(finalAfterMs), onRerun ? 1 : 0, Number(atMs)).changes === 1;
+  }
+
+  entryFinal(roundIdBytes, entryIdBytes) {
+    const r = this.db.prepare('SELECT run_id, final_after_ms, on_rerun, at_ms FROM entry_finals WHERE round_id = ? AND entry_id = ?')
+      .get(Buffer.from(roundIdBytes), Buffer.from(entryIdBytes));
+    return r ? { runId: r.run_id, finalAfterMs: Number(r.final_after_ms), onRerun: r.on_rerun === 1, atMs: Number(r.at_ms) } : null;
+  }
+
   /**
    * RECORD THE OBJECTION AGAINST AN AGREED RE-RUN (§13A, slice C2b), the same intake as `object` for the second
    * window: one per entry, when it arrived here. Whether it is in time and holds is `resultFinality`'s to say.
