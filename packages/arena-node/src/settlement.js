@@ -77,6 +77,21 @@ export const FEDERATIONS_TXID = 'federations';
 export const ACCEPTED = 'ACCEPTED';
 export const REFUSED = 'REFUSED';
 
+/**
+ * THE ROUND'S SETTLEMENT ROW, ONE TRANSITION FUNCTION (kanban #1171, the 2026-11-06 state-machine audit): none -> SUBMITTING -> ACCEPTED | REFUSED,
+ * REFUSED -> SUBMITTING (signed again) | ACCEPTED (found landed). ACCEPTED is final. ACCEPTED only on what the guardians hold (`verified`: the payouts
+ * stored and the claimed locks gone, or the federation found it in) - a submit the guardians pre-validated is not a landed one (two askers, F and F',
+ * both got Ok and only one landed). REFUSED only once every txid this seat signed or was handed was asked (`checkedAll`). Answers { ok, why }.
+ */
+const ROW_EDGES = Object.freeze({ none: [SUBMITTING], SUBMITTING: [SUBMITTING, ACCEPTED, REFUSED], REFUSED: [SUBMITTING, ACCEPTED, REFUSED], ACCEPTED: [] });
+export function settlementRowStep(held, next) {
+  const from = held && held.state ? held.state : 'none';
+  if (!(ROW_EDGES[from] || []).includes(next.state)) return { ok: false, why: `a settlement row goes ${from} -> ${(ROW_EDGES[from] || []).join(' | ') || 'nowhere (final)'}, not -> ${next.state}` };
+  if (next.state === ACCEPTED && !next.verified) return { ok: false, why: 'ACCEPTED only on what the guardians hold, not on a pre-validated submit' };
+  if (next.state === REFUSED && !next.checkedAll) return { ok: false, why: 'REFUSED only after every txid this seat signed or was handed was asked' };
+  return { ok: true };
+}
+
 /** Whether a round's stake is a federation stake lock (and so settled here). */
 export const locksStake = (contract) => contract.federationId instanceof Uint8Array
   && (contract.federationId.some((b) => b !== 0) || takesAnyFederation(contract)) && contract.stakeMsat > 0n;
@@ -1188,9 +1203,10 @@ export class LockSettlement {
     // re-signs only after the federation answered that the old settlement is not in (measured: after a fee-rule change
     // across a restart, the proposer held ACCEPTED on the new txid and this node SUBMITTING on the old one for good).
     const held = this.round.lockSettlement(roundIdBytes);
-    if (!held || (held.state === SUBMITTING && held.txid !== m.txid)) {
+    // A REFUSED ROW TAKES A HANDED SIGNATURE TOO (kanban #1171): the asker signed again after its first refusal; ACCEPTED never moves
+    if (!held || held.state === REFUSED || (held.state === SUBMITTING && held.txid !== m.txid)) {
       this.keepMoves(roundIdBytes, m);
-      this.round.putLockSettlement({ roundId: roundIdBytes, txid: m.txid, message: m.message, signature, state: SUBMITTING,
+      this.#putRow(roundIdBytes, { txid: m.txid, message: m.message, signature, state: SUBMITTING,
         why: 'signed by the signer nodes; submitted by the signer node that combined it' });
     }
     // AND IT ASKS THE FEDERATION SOON, not on the minute's sweep (measured: a non-proposer read NONE while the proposer
@@ -1214,8 +1230,9 @@ export class LockSettlement {
 
   /** What the signed settlement moves, kept with its intent (W6). */
   keepMoves(roundIdBytes, m) {
-    this.round.putLockSettlementMoves({ roundId: roundIdBytes, txid: m.txid,
-      claims: m.claims.map((c) => `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`), payouts: m.plan.payouts.length });
+    const claims = m.claims.map((c) => `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`);
+    this.round.putLockSettlementMoves({ roundId: roundIdBytes, txid: m.txid, claims, payouts: m.plan.payouts.length });
+    if (typeof this.round.putSettlementTxid === 'function') this.round.putSettlementTxid({ roundId: roundIdBytes, txid: m.txid, message: m.message, claims, payouts: m.plan.payouts.length });
     // AND WHAT IT PAID EACH WINNER, in the table's order: a late loser's second settlement is split by these (C3b-1).
     if (this.round.putLockSettlementShares) this.round.putLockSettlementShares(roundIdBytes, m.plan.stakeShares || []);
   }
@@ -1229,7 +1246,12 @@ export class LockSettlement {
    * can leave by its own refund after expiry, and a winner can collect its payout.
    */
   async federationSaw(roundIdBytes, kept) {
-    const moves = this.round.lockSettlementMoves(roundIdBytes);
+    let moves = this.round.lockSettlementMoves(roundIdBytes);
+    // ANY TXID THIS SEAT SIGNED OR WAS HANDED (kanban #1171): its moves from the history, not only the last one kept
+    if ((!moves || moves.txid !== kept.txid) && typeof this.round.settlementTxidsOf === 'function') {
+      const h = this.round.settlementTxidsOf(roundIdBytes).find((x) => x.txid === kept.txid);
+      moves = h ? { txid: h.txid, claims: h.claims, payouts: h.payouts } : null;
+    }
     if (!moves || moves.txid !== kept.txid) return { verdict: 'unknown', why: 'this signer node kept no record of what its settlement moves' };
     if (!this.port || typeof this.port.status !== 'function') return { verdict: 'unknown', why: 'this signer node reaches no federation to ask' };
     const held = async (o) => !!(await (await this.portFor(roundIdBytes)).status(o)).stored;
@@ -1253,12 +1275,79 @@ export class LockSettlement {
     return { verdict: 'mixed', why: seen };
   }
 
+  /** THE ONE WRITER OF THE ROUND'S SETTLEMENT ROW (kanban #1171): through settlementRowStep, the txid kept in the history. False when the step is refused. */
+  #putRow(roundIdBytes, next) {
+    const held = this.round.lockSettlement(roundIdBytes);
+    const st = settlementRowStep(held, next);
+    if (!st.ok) { console.log(`#1171 [settle] ${toHex(roundIdBytes).slice(0, 16)} row not moved: ${st.why} (${held ? `${held.state} ${String(held.txid).slice(0, 12)}` : 'none'} -> ${next.state} ${String(next.txid).slice(0, 12)})`); return false; }
+    this.round.putLockSettlement({ roundId: roundIdBytes, txid: next.txid, message: next.message, signature: next.signature, state: next.state, why: next.why });
+    if (typeof this.round.putSettlementTxid === 'function') this.round.putSettlementTxid({ roundId: roundIdBytes, txid: next.txid, message: next.message, signature: next.signature });
+    return true;
+  }
+
+  /**
+   * EVERY TXID THIS SEAT SIGNED OR WAS HANDED, ASKED (kanban #1171): the first the federation holds as in decides. Answers { verdict: 'in' | 'mixed' |
+   * 'out', txid, why } - 'mixed' when one of them is neither in nor out (its landing may be under way).
+   */
+  async #historyVerdict(roundIdBytes) {
+    const rows = typeof this.round.settlementTxidsOf === 'function' ? this.round.settlementTxidsOf(roundIdBytes) : [];
+    let mixed = null;
+    for (const h of rows) {
+      let saw;
+      try { saw = await this.federationSaw(roundIdBytes, { txid: h.txid }); } catch (e) { saw = { verdict: 'unknown', why: e.message }; }
+      if (saw.verdict === 'in') return { verdict: 'in', txid: h.txid, message: h.message, signature: h.signature, why: saw.why };
+      if (saw.verdict !== 'out' && !mixed) mixed = { verdict: 'mixed', txid: h.txid, why: saw.why };
+    }
+    return mixed || { verdict: 'out', why: `${rows.length} txid(s) this seat signed or was handed, none in` };
+  }
+
+  /**
+   * WHAT A SUBMIT DECIDES (kanban #1171): ACCEPTED only when the guardians hold its payouts stored and its claimed locks gone; a pre-validated submit
+   * stays SUBMITTING and the federation is asked again; a refused one is REFUSED only after every txid of the round was asked - one of them may have
+   * landed (the other asker's). Answers the state written.
+   */
+  async recordSubmit(roundIdBytes, m, signature, sent, whyAccepted) {
+    const stored = Array.isArray(sent.payoutsStored) && sent.payoutsStored.some(Boolean);
+    const gone = Array.isArray(sent.locksAfter) && sent.locksAfter.length > 0 && sent.locksAfter.every((x) => !x);
+    if (sent.accepted && stored && gone) {
+      this.#putRow(roundIdBytes, { txid: m.txid, message: m.message, signature, state: ACCEPTED, why: whyAccepted, verified: true });
+      return ACCEPTED;
+    }
+    if (sent.accepted) {
+      this.#putRow(roundIdBytes, { txid: m.txid, message: m.message, signature, state: SUBMITTING,
+        why: `the guardians took the submit; not yet seen in (payouts ${stored ? 'stored' : 'not stored'}, claimed locks ${gone ? 'gone' : 'still held'}) - asked again` });
+      this.confirmSoon(roundIdBytes);
+      return SUBMITTING;
+    }
+    const h = await this.#historyVerdict(roundIdBytes);
+    if (h.verdict === 'in') {
+      this.#putRow(roundIdBytes, { txid: h.txid, message: h.message, signature: h.signature, state: ACCEPTED, verified: true,
+        why: `this submit was refused (${sent.error}), and ${h.txid.slice(0, 12)} of the same round is in: ${h.why}` });
+      return ACCEPTED;
+    }
+    if (h.verdict === 'mixed') {
+      this.#putRow(roundIdBytes, { txid: m.txid, message: m.message, signature, state: SUBMITTING,
+        why: `the guardians refused it (${sent.error}); ${h.txid.slice(0, 12)} of the same round is neither in nor out: ${h.why}` });
+      this.confirmSoon(roundIdBytes);
+      return SUBMITTING;
+    }
+    this.#putRow(roundIdBytes, { txid: m.txid, message: m.message, signature, state: REFUSED, checkedAll: true, why: `the guardians refused it: ${sent.error}` });
+    return REFUSED;
+  }
+
   /**
    * A SIGNER NODE STARTED AGAIN ASKS ABOUT EVERY SETTLEMENT IT WAS INSIDE (W6): each round it holds as
-   * SUBMITTING goes through settle(), which asks the federation before anything else.
+   * SUBMITTING goes through settle(), which asks the federation before anything else. A REFUSED row is asked too (kanban #1171): the other asker's
+   * transaction of the same round may have landed - every txid this seat signed or was handed is asked, and one that is in makes the row ACCEPTED.
    */
   async recover() {
     const out = [];
+    for (const rid of (this.round.lockSettlementsIn(REFUSED) || [])) {
+      const h = await this.#historyVerdict(rid).catch((e) => ({ verdict: 'unknown', why: e.message }));
+      if (h.verdict !== 'in') continue;
+      this.#putRow(rid, { txid: h.txid, message: h.message, signature: h.signature, state: ACCEPTED, verified: true, why: `found in the federation after a REFUSED row: ${h.why}` });
+      out.push({ round: toHex(rid), ok: true, state: ACCEPTED, why: h.why });
+    }
     for (const rid of this.round.lockSettlementsIn(SUBMITTING)) {
       const got = await this.settle(rid).catch((e) => ({ ok: false, why: e.message }));
       out.push({ round: toHex(rid), ok: !!got.ok, state: got.state || (this.round.lockSettlement(rid) || {}).state, why: got.why });
@@ -1337,7 +1426,7 @@ export class LockSettlement {
       const saw = await this.federationSaw(roundIdBytes, kept);
       if (saw.verdict === 'in') {
         const why = `found in the federation after this signer node was inside it: ${saw.why}`;
-        this.round.putLockSettlement({ roundId: roundIdBytes, txid: kept.txid, message: kept.message, signature: kept.signature, state: ACCEPTED, why });
+        this.#putRow(roundIdBytes, { txid: kept.txid, message: kept.message, signature: kept.signature, state: ACCEPTED, why, verified: true });
         // ITS DONATION-KEY OUTPUTS, RESTART OR NOT: from the plan kept in memory, else rebuilt from the store
         // and indexed only when it is the plan that was signed
         await this.indexRecovered(roundIdBytes, kept.txid);
@@ -1345,7 +1434,7 @@ export class LockSettlement {
       }
       if (saw.verdict === 'mixed') {
         const why = `neither in nor out - not settled here, not submitted again: ${saw.why}`;
-        this.round.putLockSettlement({ roundId: roundIdBytes, txid: kept.txid, message: kept.message, signature: kept.signature, state: SUBMITTING, why });
+        this.#putRow(roundIdBytes, { txid: kept.txid, message: kept.message, signature: kept.signature, state: SUBMITTING, why });
         // A SIGNER NODE THAT ONLY ANSWERS asks again: it submits nothing, and "neither" is what it reads while the
         // proposer's submit is landing (measured: its one look fell between the claim and the payout).
         if (this.winnings && !(await this.turn(roundIdBytes)).mine) this.confirmSoon(roundIdBytes);
@@ -1402,10 +1491,9 @@ export class LockSettlement {
     // THE INTENT IS ON DISK BEFORE THE SUBMIT, as a hold's settle is: a signer node that
     // dies here comes back knowing it signed, and asks the federation.
     this.keepMoves(roundIdBytes, m);
-    this.round.putLockSettlement({ roundId: roundIdBytes, txid: m.txid, message: m.message, signature, state: SUBMITTING,
-      why: 'about to submit; if this signer node dies here, ask the federation for the claimed locks' });
+    if (!this.#putRow(roundIdBytes, { txid: m.txid, message: m.message, signature, state: SUBMITTING,
+      why: 'about to submit; if this signer node dies here, ask the federation for the claimed locks' })) return refuse('this round\'s settlement row is final here: nothing is submitted again', 409);
     const sent = await (await this.portFor(roundIdBytes)).settle({ claimPk: m.claimPk, claims: m.claims, payouts: m.plan.payouts, nonce: m.plan.nonce, signature });
-    const state = sent.accepted ? ACCEPTED : REFUSED;
     const stakeClaims = m.plan.claims.filter((c) => c.kind !== 'fee').length;
     const qualifiers = m.plan.payouts.filter((p) => p.kind === 'qualifier' || (p.kind === 'sent' && !p.donation)).length;
     const remainder = m.plan.remainder
@@ -1417,18 +1505,22 @@ export class LockSettlement {
     const why = sent.accepted
       ? `claimed ${stakeClaims} loser lock(s), ${m.plan.poolMsat} msat; paid ${qualifiers} qualifier(s) ${m.plan.paidMsat} msat${remainder}${feePart}`
       : `the guardians refused it: ${sent.error}`;
-    this.round.putLockSettlement({ roundId: roundIdBytes, txid: m.txid, message: m.message, signature, state, why });
+    const state = await this.recordSubmit(roundIdBytes, m, signature, sent, why);
     // SAID, AND NEVER LOST IN A THROW (2026.1.9.11 release check: no seat held a settlement row since 10-25 - the website share of
     // settlement ed86a2fa (800 msat) was listed under its key nowhere, so a referrer's wallet could never collect it)
-    if (sent.accepted) {
+    // ONLY ON A LANDED SETTLEMENT (kanban #1171): a pre-validated submit stays SUBMITTING and its sends wait for the federation's word (confirmSoon,
+    // then the kept-SUBMITTING path); one ACCEPTED on another txid of the round (the other asker's, found in) is indexed from what was kept of it
+    const row = this.round.lockSettlement(roundIdBytes);
+    if (state === ACCEPTED && row && row.txid !== m.txid) await this.indexRecovered(roundIdBytes, row.txid);
+    if (state === ACCEPTED && row && row.txid === m.txid) {
       try {
         const n = this.indexDonationKeys(roundIdBytes, m.txid, m.plan);
         const kinds = (m.plan.payouts || []).filter((p) => SETTLEMENT_ROW_KINDS.has(p.kind)).map((p) => p.kind);
         console.log(`[settle] ${toHex(roundIdBytes).slice(0, 16)} donation keys of the settlement: ${n} row(s) kept${kinds.length ? ` (${kinds.join(', ')})` : ''}`);
       } catch (e) { console.error(`[settle] ${toHex(roundIdBytes).slice(0, 16)} donation keys not indexed: ${e.message}`); }
     }
-    const winnings = sent.accepted ? await this.sendWinnings(roundIdBytes) : null;
-    return { ok: sent.accepted, state, why, txid: m.txid, signature, plan: m.plan, answer: sent, winnings };
+    const winnings = state === ACCEPTED ? await this.sendWinnings(roundIdBytes) : null;
+    return { ok: state === ACCEPTED, state, why: row ? row.why : why, txid: row ? row.txid : m.txid, signature, plan: m.plan, answer: sent, winnings };
   }
 
   /**
