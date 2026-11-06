@@ -110,4 +110,28 @@ export async function broadcast(chain, hex, { session = electrumSession, fetcher
   try { return await s.call('blockchain.transaction.broadcast', [hex]); } finally { s.close(); }
 }
 
+/**
+ * IS A TRANSACTION THERE (kanban #1165: an open on-chain action's bytes refused when sent again - a funding whose bond spent it in a block
+ * is "missing inputs" - are believed only when the chain has them): in the mempool or a block. Bitcoin Core without a txindex finds a
+ * mined one only in its block, so the blocks since `sinceTip` (at most `maxBlocks`) are read; Electrum finds any. Throws when the chain
+ * does not answer (unknown is never "not there").
+ */
+export async function txSeen(chain, txid, { sinceTip = null, maxBlocks = 300, session = electrumSession, fetcher = fetch } = {}) {
+  if (chain.kind === 'core') {
+    const rpc = coreRpc({ ...chain, fetcher, timeoutMs: 60000 });
+    try { if (await rpc('getrawtransaction', [txid, false])) return true; } catch (e) { if (!/no such mempool|no such transaction|not found/i.test(e.message)) throw e; }
+    if (!Number.isInteger(sinceTip)) return false;
+    const tip = await rpc('getblockcount');
+    for (let h = tip; h >= Math.max(sinceTip, tip - maxBlocks); h--) {
+      const b = await rpc('getblock', [await rpc('getblockhash', [h]), 1]);
+      if ((b.tx || []).includes(txid)) return true;
+    }
+    return false;
+  }
+  const s = await session({ ...chain, timeoutMs: 20000 });
+  try { await s.call('blockchain.transaction.get', [txid]); return true; }
+  catch (e) { if (/no such|not found|unknown|missing/i.test(String(e && e.message))) return false; throw e; }
+  finally { s.close(); }
+}
+
 export { fromHex };

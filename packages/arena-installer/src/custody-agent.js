@@ -13,7 +13,8 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { walletOf, payoutKeyOf, coinsOf, broadcast, addressScript } from './wallet.js';
+import { walletOf, payoutKeyOf, coinsOf, broadcast, addressScript, txSeen } from './wallet.js';
+import { onchainAction, resumeOpen } from './onchain-action.js';
 import { advertFor, buildAdvertUpdate, buildSend, EMERGENCY_IN_ADVERT } from './bond.js';
 import { emergencyOf } from './seed.js';
 import { joinFederation, testGateway, depositAddress } from './gateway.js';
@@ -53,7 +54,7 @@ export function guardianOfEntry(dir) {
   return { invite, federationId, guardianKey };
 }
 
-export function createCustodyAgent({ state, release, chainKit = { coinsOf, broadcast }, gw = { joinFederation, testGateway, depositAddress }, channels = lndChannels, lndInfo = testLnd, hubs = LIGHTNING_HUBS.testnet4,
+export function createCustodyAgent({ state, release, chainKit = { coinsOf, broadcast, seen: txSeen }, gw = { joinFederation, testGateway, depositAddress }, channels = lndChannels, lndInfo = testLnd, hubs = LIGHTNING_HUBS.testnet4,
   lnd = { funds: lndFunds, peers: lndPeers, connect: lndConnect, openTo: lndOpenTo, close: lndClose }, ringMembers = null, log = () => {}, nowMs = () => Date.now(),
   restartGateway = async () => (await import('./node-services.js')).control('restart', 'gateway', { home: state.home }),
   followTunnel = async () => (await import('./node-services.js')).followTunnelNow({ home: state.home }),
@@ -94,7 +95,22 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
     log(r.ok ? 'the gateway was Disconnected while LND answers: restarted' : `the gateway was Disconnected while LND answers; the restart failed: ${r.why}`);
     return r.ok ? { ok: true, did: 'gateway-restart' } : { ok: false, why: `the gateway restart failed: ${r.why}` };
   }
+  // EVERY PAYMENT FROM THE WALLET IS AN ON-CHAIN ACTION, ONCE (kanban #1165, onchain-action.js): its bytes and its record written before
+  // it is sent, so an agent killed between the broadcast and the save - or a tick that read the state before another process saved -
+  // sends the same transaction again at its next tick, never a second peg-in; the record merged into custody as it is then
+  const sendOnce = (kind, build) => onchainAction({ state, kind, once: true, chainKit, log, build });
+  const sendTx = async ({ chain, wallet, script, sats, record }) => {
+    const { tip, coins } = await chainKit.coinsOf(chain, wallet.spk);
+    let tx;
+    try { tx = buildSend({ wallet, coins, script, sats }); } catch (e) { return { ok: false, why: e.message }; }
+    const rec = record(tx.txid);
+    return { ok: true, tip, txs: [{ name: 'send', hex: tx.hex }], ops: [{ op: 'merge', key: 'custody', value: rec }], result: { txid: tx.txid } };
+  };
   async function tick() {
+    // an action of the wallet sent before and not recorded (this agent killed, the owner page's): finished first; while it is open nothing
+    // else is paid from the wallet
+    const open = await resumeOpen(state, { chainKit, log });
+    if (open.open) return { ok: false, why: open.why };
     const s = state.read();
     const watched = await gatewayWatch(s);
     if (watched) return watched;
@@ -122,15 +138,12 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
       else {
         const deposit = Number(LIQUIDITY_TERMS.testnet4.depositSats);
         const w0 = walletOf(fromHex(state.readSecret('seed.hex')));
-        const { coins } = await chainKit.coinsOf(s.chain, w0.spk);
-        let tx = null;
-        try { tx = buildSend({ wallet: w0, coins, script: addressScript(f.address), sats: deposit }); }
-        catch (e) { waits = `the liquidity deposit is not sent yet: ${e.message}`; }
-        if (tx) {
-          const txid = await chainKit.broadcast(s.chain, tx.hex);
-          state.merge('custody', { liquidityFund: { address: f.address, sats: deposit, txid, atMs: nowMs() } });
-          log(`liquidity deposit: ${deposit} sat to LND (${txid})`);
-          return { ok: true, did: 'liquidity-fund', txid };
+        const r = await sendOnce('liquidity-fund', (n) => sendTx({ chain: n.chain, wallet: w0, script: addressScript(f.address), sats: deposit,
+          record: (txid) => ({ liquidityFund: { address: f.address, sats: deposit, txid, atMs: nowMs() } }) }));
+        if (!r.ok) waits = `the liquidity deposit is not sent yet: ${r.why}`;
+        else {
+          log(`liquidity deposit: ${deposit} sat to LND (${r.result.txid})`);
+          return { ok: true, did: 'liquidity-fund', txid: r.result.txid };
         }
       }
       if (!custodyToo) return { ok: false, why: waits };
@@ -145,23 +158,26 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
     // 1. guardian_of[] in the node's advertisement
     if (!c.guardianOf || c.guardianOf.federationId !== g.federationId) {
       if (!s.bond || !s.bond.txid) return { ok: false, why: 'the node has no bond to update' };
-      const { coins } = await chainKit.coinsOf(s.chain, w.spk);
-      const nodeSecret = nodeSecretOf();
-      const { schnorr } = await import('@noble/curves/secp256k1.js');
-      const advert = { ...advertFor({ hostedGames: s.hostedGames, nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles, endpoint: s.reach.url,
-        payoutPubkey: payoutKeyOf(seed), maturity: s.bond.maturity, softwareHash: commitOf(), guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
-        // THE EMERGENCY KEY KEPT (§23A.5a): the census reads a node's newest advertisement, and an update without the key left a guardian
-        // unable to leave by its emergency code ("that node's advertisement names no emergency key") - the guardians it exists for
-        emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null }),
-        guardianOf: [{ federationId: fromHex(g.federationId), guardianKey: fromHex(g.guardianKey) }] };
-      let u;
-      try { u = buildAdvertUpdate({ wallet: w, nodeSecret, coins, bond: { txid: s.bond.txid, vout: s.bond.vout || 0 }, advert }); }
-      catch (e) { return { ok: false, why: `guardian_of not published yet: ${e.message}` }; }
-      await chainKit.broadcast(s.chain, u.funding.hex);
-      const txid = await chainKit.broadcast(s.chain, u.update.hex);
-      state.save({ custody: { ...c, guardianOf: { federationId: g.federationId, txid, advertId: u.advertId, atMs: Date.now() } } });
-      log(`guardian_of ${g.federationId.slice(0, 16)} published: ${txid}`);
-      return { ok: true, did: 'guardian_of', txid };
+      const r = await sendOnce(`guardian-of ${g.federationId}`, async (s) => {
+        const { tip, coins } = await chainKit.coinsOf(s.chain, w.spk);
+        const nodeSecret = nodeSecretOf();
+        const { schnorr } = await import('@noble/curves/secp256k1.js');
+        const advert = { ...advertFor({ hostedGames: s.hostedGames, nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles, endpoint: s.reach.url,
+          payoutPubkey: payoutKeyOf(seed), maturity: s.bond.maturity, softwareHash: commitOf(), guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
+          // THE EMERGENCY KEY KEPT (§23A.5a): the census reads a node's newest advertisement, and an update without the key left a guardian
+          // unable to leave by its emergency code ("that node's advertisement names no emergency key") - the guardians it exists for
+          emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null }),
+          guardianOf: [{ federationId: fromHex(g.federationId), guardianKey: fromHex(g.guardianKey) }] };
+        let u;
+        try { u = buildAdvertUpdate({ wallet: w, nodeSecret, coins, bond: { txid: s.bond.txid, vout: s.bond.vout || 0 }, advert }); }
+        catch (e) { return { ok: false, why: `guardian_of not published yet: ${e.message}` }; }
+        // the record merged into custody as it is when sent (it was `{ ...c }`, read before the broadcast: kanban #1165)
+        return { ok: true, tip, txs: [{ name: 'funding', hex: u.funding.hex }, { name: 'update', hex: u.update.hex }],
+          ops: [{ op: 'merge', key: 'custody', value: { guardianOf: { federationId: g.federationId, txid: u.update.txid, advertId: u.advertId, atMs: Date.now() } } }], result: { txid: u.update.txid } };
+      });
+      if (!r.ok) return r;
+      log(`guardian_of ${g.federationId.slice(0, 16)} published: ${r.result.txid}`);
+      return { ok: true, did: 'guardian_of', txid: r.result.txid };
     }
     // 2. the gateway joins its own federation
     if (s.gateway && !(s.gateway.federations || []).some((f) => f.federationId === g.federationId)) {
@@ -177,14 +193,11 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
     if (s.gateway && c.pegInSats && (!c.pegIn || c.pegIn.federationId !== g.federationId)) {
       const a = await gw.depositAddress({ ...s.gateway, federationId: g.federationId });
       if (!a.ok) return { ok: false, why: a.why };
-      const { coins } = await chainKit.coinsOf(s.chain, w.spk);
-      let tx;
-      try { tx = buildSend({ wallet: w, coins, script: addressScript(a.address), sats: c.pegInSats }); }
-      catch (e) { return { ok: false, why: `peg-in not sent yet: ${e.message}` }; }
-      const txid = await chainKit.broadcast(s.chain, tx.hex);
-      state.merge('custody', { pegIn: { federationId: g.federationId, address: a.address, sats: c.pegInSats, txid, atMs: Date.now() } });
-      log(`peg-in of ${c.pegInSats} sat to ${a.address}: ${txid}`);
-      return { ok: true, did: 'peg-in', txid };
+      const r = await sendOnce(`peg-in ${g.federationId}`, (n) => sendTx({ chain: n.chain, wallet: w, script: addressScript(a.address), sats: c.pegInSats,
+        record: (txid) => ({ pegIn: { federationId: g.federationId, address: a.address, sats: c.pegInSats, txid, atMs: Date.now() } }) }));
+      if (!r.ok) return r.pending ? r : { ok: false, why: `peg-in not sent yet: ${r.why}` };
+      log(`peg-in of ${c.pegInSats} sat to ${a.address}: ${r.result.txid}`);
+      return { ok: true, did: 'peg-in', txid: r.result.txid };
     }
     // 4. the gateway seat (§23A.9): the node stands for one with a claim its seat serves (GET /gateway-claim) - its gateway's public address,
     // its Lightning key, its public channel capacity and its peg-in - signed by the node key, renewed every hour
@@ -220,14 +233,11 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
         if (!f.ok) return { ok: false, why: `the outside channel waits for LND: ${f.why}` };
         if (f.onchainSats < OUTSIDE_SATS + 1000) {
           if (c.outsideFund) return { ok: true, idle: `the outside channel's ${OUTSIDE_RESERVE_SATS} sat are on their way to LND (${c.outsideFund.txid})` };
-          const { coins } = await chainKit.coinsOf(s.chain, w.spk);
-          let tx;
-          try { tx = buildSend({ wallet: w, coins, script: addressScript(f.address), sats: OUTSIDE_RESERVE_SATS }); }
-          catch (e) { return { ok: false, why: `the outside channel is not funded yet: ${e.message}` }; }
-          const txid = await chainKit.broadcast(s.chain, tx.hex);
-          state.merge('custody', { outsideFund: { address: f.address, sats: OUTSIDE_RESERVE_SATS, txid, atMs: nowMs() } });
-          log(`outside channel funds: ${OUTSIDE_RESERVE_SATS} sat to LND (${txid})`);
-          return { ok: true, did: 'outside-fund', txid };
+          const r = await sendOnce('outside-fund', (n) => sendTx({ chain: n.chain, wallet: w, script: addressScript(f.address), sats: OUTSIDE_RESERVE_SATS,
+            record: (txid) => ({ outsideFund: { address: f.address, sats: OUTSIDE_RESERVE_SATS, txid, atMs: nowMs() } }) }));
+          if (!r.ok) return r.pending ? r : { ok: false, why: `the outside channel is not funded yet: ${r.why}` };
+          log(`outside channel funds: ${OUTSIDE_RESERVE_SATS} sat to LND (${r.result.txid})`);
+          return { ok: true, did: 'outside-fund', txid: r.result.txid };
         }
         const [pubkey, host] = hubs[0].split('@');
         const k = await lnd.connect(s.lightning, { pubkey, host });
@@ -274,14 +284,11 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
         if (!f.ok) return { ok: false, why: `the ring waits for LND: ${f.why}` };
         if (f.onchainSats < RING_SATS + 1000) {
           if (c.ringFund) return { ok: true, idle: c.ring ? `the ring channel's coins are on their way back to LND (the old channel closing)` : `the ring channel's ${RING_RESERVE_SATS} sat are on their way to LND (${c.ringFund.txid})` };
-          const { coins } = await chainKit.coinsOf(s.chain, w.spk);
-          let tx;
-          try { tx = buildSend({ wallet: w, coins, script: addressScript(f.address), sats: RING_RESERVE_SATS }); }
-          catch (e) { return { ok: false, why: `the ring channel is not funded yet: ${e.message}` }; }
-          const txid = await chainKit.broadcast(s.chain, tx.hex);
-          state.merge('custody', { ringFund: { address: f.address, sats: RING_RESERVE_SATS, txid, atMs: nowMs() } });
-          log(`ring channel funds: ${RING_RESERVE_SATS} sat to LND (${txid})`);
-          return { ok: true, did: 'ring-fund', txid };
+          const r = await sendOnce('ring-fund', (n) => sendTx({ chain: n.chain, wallet: w, script: addressScript(f.address), sats: RING_RESERVE_SATS,
+            record: (txid) => ({ ringFund: { address: f.address, sats: RING_RESERVE_SATS, txid, atMs: nowMs() } }) }));
+          if (!r.ok) return r.pending ? r : { ok: false, why: `the ring channel is not funded yet: ${r.why}` };
+          log(`ring channel funds: ${RING_RESERVE_SATS} sat to LND (${r.result.txid})`);
+          return { ok: true, did: 'ring-fund', txid: r.result.txid };
         }
         const connected = peers.ok && peers.peers.includes(next.lightningPubkey);
         if (!connected) {
