@@ -34,6 +34,14 @@ const nameOf = (txidDisplay, vout) => `${txidDisplay}:${vout}`;
 const loadOf = (f) => { const cap = BigInt(f.exposureCapSats || 0); return cap > 0n ? Number((BigInt(f.reserveSats || 0) * 1000000n) / cap) : Number.MAX_SAFE_INTEGER; };
 
 /**
+ * A CLAIM'S CARRIER AS ONE HOLDER SEES IT, AND THE ONE WAY IT MOVES (kanban #1189). free -> held (by one start: this holder agreed to sign a spend of that start's escrow carrying the
+ * claim, written before its nonce is drawn) -> carried (a spend on the chain carries it; terminal) | free (the escrow output that spend named is spent on the chain without it).
+ * Held -> held again by the same start only. A holder signs no spend of another start carrying a claim held here, and builds none: so two escrows of a federation never both get a
+ * threshold of signatures for one claim, whatever each seat's walk says is "first" (the census key's threshold, floor(2n/3) + 1 of its shares, makes any two signing sets meet).
+ */
+export const CLAIM_LOCK = Object.freeze({ FREE: 'free', HELD: 'held', CARRIED: 'carried' });
+
+/**
  * Made by slash-release-run.js with its reads. `claimsOf(fid hex)` -> { accepted: [{ nonce, amountMsat, payoutPk, height }], coveredMsat: Map(nonce -> msat), afterWindow } or null:
  * the one claims ledger of a liquidating federation (the claims door's plan: what the arbitration set's escrow pays each, and whether the claim window has closed).
  * `federationsAt(height)` the reserves' view on the records in force there; `reserveKeyOf(fid)`; `portFor(fid)` a client { peginAddress, peginClaim, payouts, ecashBalance? } or null.
@@ -49,7 +57,9 @@ export function createLiquidationEscrow({ secret, me, networkId, clocks, db, twe
     CREATE TABLE IF NOT EXISTS liq_carried (escrow TEXT NOT NULL, out_index INTEGER NOT NULL, state TEXT NOT NULL, PRIMARY KEY (escrow, out_index));
     CREATE TABLE IF NOT EXISTS slash_carrier_pegins (table_id TEXT NOT NULL, escrow TEXT NOT NULL, federation TEXT NOT NULL, node TEXT NOT NULL, script BLOB NOT NULL, signature BLOB NOT NULL,
       PRIMARY KEY (table_id, escrow, federation, node));
-    CREATE TABLE IF NOT EXISTS slash_pegins (start TEXT NOT NULL, federation TEXT NOT NULL, use TEXT NOT NULL, address TEXT NOT NULL, script BLOB NOT NULL, PRIMARY KEY (start, federation, use))`);
+    CREATE TABLE IF NOT EXISTS slash_pegins (start TEXT NOT NULL, federation TEXT NOT NULL, use TEXT NOT NULL, address TEXT NOT NULL, script BLOB NOT NULL, PRIMARY KEY (start, federation, use));
+    CREATE TABLE IF NOT EXISTS liq_claim_locks (federation TEXT NOT NULL, nonce TEXT NOT NULL, state TEXT NOT NULL, start TEXT, escrow TEXT, outputs_id TEXT, load_height INTEGER, at_ms INTEGER NOT NULL,
+      PRIMARY KEY (federation, nonce))`);
 
   // ---- WHAT AN ESCROW IS: a confirmed roundless table's escrow output, its federation the proof's ----
   const contexts = new Map();
@@ -80,6 +90,34 @@ export function createLiquidationEscrow({ secret, me, networkId, clocks, db, twe
     for (const r of db.prepare('SELECT claims FROM liq_escrow_chain WHERE federation = ?').all(federation)) for (const c of decodeLiquidationClaims(new Uint8Array(r.claims))) m.set(c.nonce, (m.get(c.nonce) || 0n) + c.msat);
     return m;
   }
+
+  // ---- WHO CARRIES A CLAIM (kanban #1189) ----
+  const lockRow = (federation, nonce) => db.prepare('SELECT * FROM liq_claim_locks WHERE federation = ? AND nonce = ?').get(federation, nonce) || null;
+  const carriedOnChain = (federation, nonce) => db.prepare('SELECT claims FROM liq_escrow_chain WHERE federation = ?').all(federation)
+    .some((r) => decodeLiquidationClaims(new Uint8Array(r.claims)).some((c) => c.nonce === nonce));
+  /** THE ONE TRANSITION: compare and set on the row. False when `from` is not the claim's state now, or a hold names another start. */
+  function lockMove(federation, nonce, from, to, data = {}) {
+    const row = lockRow(federation, nonce), now_ = (row && row.state) || CLAIM_LOCK.FREE;
+    if (now_ !== from) return false;
+    const ok = { [CLAIM_LOCK.FREE]: [CLAIM_LOCK.HELD, CLAIM_LOCK.CARRIED], [CLAIM_LOCK.HELD]: [CLAIM_LOCK.HELD, CLAIM_LOCK.FREE, CLAIM_LOCK.CARRIED], [CLAIM_LOCK.CARRIED]: [] }[from];
+    if (!ok.includes(to)) return false;
+    if (from === CLAIM_LOCK.HELD && to === CLAIM_LOCK.HELD && row.start !== data.start) return false;
+    db.prepare(`INSERT INTO liq_claim_locks (federation, nonce, state, start, escrow, outputs_id, load_height, at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (federation, nonce) DO UPDATE SET state = excluded.state, start = excluded.start, escrow = excluded.escrow, outputs_id = excluded.outputs_id, load_height = excluded.load_height, at_ms = excluded.at_ms`)
+      .run(federation, nonce, to, data.start ?? null, data.escrow ?? null, data.outputsId ?? null, data.loadHeight ?? null, now());
+    return true;
+  }
+  /** A claim's state now, its row brought up to what this seat's walk of the chain holds: carried where a spend carries it, free where the held escrow output went without it. */
+  function claimState(federation, nonce) {
+    const row = lockRow(federation, nonce);
+    const st = (row && row.state) || CLAIM_LOCK.FREE;
+    if (st === CLAIM_LOCK.CARRIED) return { state: st };
+    if (carriedOnChain(federation, nonce)) { lockMove(federation, nonce, st, CLAIM_LOCK.CARRIED); return { state: CLAIM_LOCK.CARRIED }; }
+    if (st === CLAIM_LOCK.HELD && db.prepare('SELECT 1 FROM liq_escrow_chain WHERE escrow_in = ?').get(row.escrow)) { lockMove(federation, nonce, st, CLAIM_LOCK.FREE); return { state: CLAIM_LOCK.FREE }; }
+    return st === CLAIM_LOCK.HELD ? { state: st, start: row.start, escrow: row.escrow } : { state: st };
+  }
+  /** Whether another start than `start` holds that claim here. */
+  const heldByOther = (federation, nonce, start) => { const c = claimState(federation, nonce); return c.state === CLAIM_LOCK.HELD && c.start !== start; };
 
   /** A spend of `inName` the chain holds: this seat's own proposal, or one a holder serves, whose txid has a confirmed output. */
   async function findSpend(ctx, inName, value) {
@@ -222,7 +260,9 @@ export function createLiquidationEscrow({ secret, me, networkId, clocks, db, twe
   async function buildAt(ctx, w, loadHeight) {
     const ledger = await claimsOf(ctx.federation);
     if (!ledger) return { ok: false, due: false, why: `no claims ledger of federation ${ctx.federation.slice(0, 16)} is read here` };
-    const owed = claimsOwed({ accepted: (ledger.accepted || []).filter((c) => Number(c.height) <= loadHeight), coveredMsat: ledger.coveredMsat || new Map(), assigned: assignedOf(ctx.federation) });
+    // A CLAIM ANOTHER START'S SPEND HOLDS HERE IS NOT OWED BY THIS ONE (kanban #1189): that spend may still be mined, and two escrows would carry it
+    const owed = claimsOwed({ accepted: (ledger.accepted || []).filter((c) => Number(c.height) <= loadHeight), coveredMsat: ledger.coveredMsat || new Map(), assigned: assignedOf(ctx.federation) })
+      .filter((c) => !heldByOther(ctx.federation, c.nonce, ctx.start) && claimState(ctx.federation, c.nonce).state !== CLAIM_LOCK.CARRIED);
     // AFTER THE CLAIM WINDOW THE REST IS SPREAD OVER THE SAFE FEDERATIONS WITH A RESERVE KEY (§27A.9.2): one whose guardian seats stand and whose key this seat has not
     // read yet (reservePending, kanban #1129) would get no part in this seat's outputs and a part in those of a seat that read it. It waits, by name, as the slash table does
     if (ledger.afterWindow) {
@@ -242,8 +282,9 @@ export function createLiquidationEscrow({ secret, me, networkId, clocks, db, twe
     return propOf(w.cur.name, oid);
   }
   /**
-   * ONE ESCROW OF A FEDERATION AT A TIME: this one only when no older start's escrow of the same federation, read at the same height, has a spend due itself - so two escrows never
-   * carry one claim, and an older escrow whose change cannot pay the next claim does not hold back a younger one that can.
+   * ONE ESCROW OF A FEDERATION AT A TIME: this one only when no older start's escrow of the same federation, read at the same height, has a spend due itself, so an older escrow whose
+   * change cannot pay the next claim does not hold back a younger one that can. This is who tries first, by this seat's own walk, and two seats can read it apart (kanban #1189): that
+   * two escrows never carry one claim is the claim lock's (CLAIM_LOCK), which a holder writes before it signs.
    */
   async function firstOfFederation(ctx, loadHeight) {
     for (const r of db.prepare('SELECT start FROM slash_holds WHERE round_id IS NULL AND census_key IS NOT NULL ORDER BY height, start').all()) {
@@ -300,6 +341,14 @@ export function createLiquidationEscrow({ secret, me, networkId, clocks, db, twe
     const b = await buildAt(ctx, w, h);
     if (!b.ok) return b;
     if (toHex(b.outputsId) !== String(request.outputsId).toLowerCase()) return { ok: false, why: `this seat's own outputs at ${h} are ${toHex(b.outputsId).slice(0, 16)}, not ${String(request.outputsId).slice(0, 16)}` };
+    // THE CLAIMS ARE THIS START'S BEFORE ANY NONCE (kanban #1189): read again and written in one synchronous step, so a check of another start that built meanwhile cannot take them too
+    const taken = b.claims.filter((c) => heldByOther(ctx.federation, c.nonce, ctx.start));
+    if (taken.length) return { ok: false, why: `${taken.length} of those claims are carried or held by another escrow of that federation here` };
+    for (const c of b.claims) {
+      const from = claimState(ctx.federation, c.nonce).state;
+      if (!lockMove(ctx.federation, c.nonce, from, CLAIM_LOCK.HELD, { start: ctx.start, escrow: w.cur.name, outputsId: toHex(b.outputsId), loadHeight: h }))
+        return { ok: false, why: `the claim ${c.nonce.slice(0, 16)} moved while it was read` };
+    }
     keepProp(ctx, w, b, h);
     return { ok: true, digest: b.digest, publicKey: ctx.censusKey };
   }
@@ -398,5 +447,5 @@ export function createLiquidationEscrow({ secret, me, networkId, clocks, db, twe
     };
   }
 
-  return { pass, carry, checkLiquidationEscrow, takeCarrierPegIn, servedCarriers, served, contextOf, walk };
+  return { pass, carry, checkLiquidationEscrow, takeCarrierPegIn, servedCarriers, served, contextOf, walk, buildAt, claimState };
 }
