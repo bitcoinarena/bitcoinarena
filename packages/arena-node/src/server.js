@@ -675,6 +675,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE LIQUIDITY SEATINGS (§23A.10): the same, for the providers and their weights
   const liquiditySeatings = new Map(), ownLiquiditySeatings = new Map();
   const absences = createAbsences({ verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } },
+    // a departure notice is taken only from the node key the held record names for that guardian (kanban #1222)
+    nodeOf: (fidHex, peerHex) => { const k = fedRecords && typeof fedRecords.recordOf === 'function' ? fedRecords.recordOf(fidHex) : null;
+      const g = k && k.record ? k.record.guardians.find((x) => toHex(x.peerKey) === peerHex) : null; return g ? toHex(g.nodePubkey) : null; },
     store: absencesFile ? { read: () => JSON.parse(readFileSync(absencesFile, 'utf8')), write: (v) => writeFileSync(absencesFile, JSON.stringify(v)) } : null });
   let liquidations = null;                     // liquidations.js, over fedRecords
   let arbitrationEvents = null;                // arbitration-events.js: the set's liquidations and slashes (kanban #723)
