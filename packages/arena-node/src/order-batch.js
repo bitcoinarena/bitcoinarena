@@ -14,8 +14,9 @@
 //   cancels and sells, and every batch it signed that is not certified yet.
 //    1. Earlier batches first. A pending batch is CERTIFIED once at least the threshold of seats signed its id - the leader
 //       of that batch counts by its own signature on the record - and the certificate goes to every seat
-//       (POST /batch-certificate). Else the leader asks every seat (POST /batch-void-ask): a seat holding the record answers
-//       its signature; a seat that never signed DECLINES - it never signs that batch afterwards. Once enough have declined
+//       (POST /batch-certificate). Else the leader asks every seat (POST /batch-void-ask, its own signed ask naming the set k's
+//       leader signed, kanban #1167): a seat holding the record answers its signature; a seat that never signed DECLINES - only
+//       once k's signing window is over, so a decline never keeps a seat from signing a batch it still could. Once enough have declined
 //       that the threshold can no longer be reached, the batch is VOID everywhere (POST /batch-void) and its orders wait for
 //       the next one. Until then it is pending and the book does not move on: no seat can count a batch another dropped.
 //    2. The new set: the orders tradable at at least the threshold of seats (they verified the locks), every cancel and sell
@@ -28,7 +29,7 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
-import { bookBatchId, batchDeclineId, cancelId, sellId, BATCH_MS, PRICE_SCALE, TICK } from '../../arena-protocol/src/order-book.js';
+import { bookBatchId, batchDeclineId, batchVoidAskId, cancelId, sellId, BATCH_MS, PRICE_SCALE, TICK } from '../../arena-protocol/src/order-book.js';
 import { bookLedger, positionFilled } from '../../arena-protocol/src/book-ledger.js';
 import { entryFeeBpsOf, feeBpsOf, donationBpsOf, reserveBpsOf } from '../../arena-protocol/src/fee.js';
 import { marketBps } from '../../arena-protocol/src/fee-proposal.js';
@@ -62,7 +63,8 @@ export function marketRates(manifest, fees = null) {
 // without its own signature or certificate, a decline row - and each door moved them its own way). Read from the store by #state, moved
 // only by #move, inside one transaction that reads the state again, checks the move is one of BATCH_MOVES and its guard, and writes:
 //   ABSENT     nothing held for (round, k)
-//   DECLINED   this seat answered a void ask without having signed: it never signs k (a certificate of k signed by others is still taken)
+//   DECLINED   this seat answered a round seat's signed void ask without having signed, past k's signing window (kanban #1167): it never
+//              signs k (a certificate of k signed by others is still taken)
 //   SIGNED     this seat signed the set (its record and own signature held) and no certificate is held yet
 //   CERTIFIED  the threshold's certificate is held: in the book, for good
 //   VOID       enough seats declined that k can never be certified (POST /batch-void): its orders and events wait again, for good
@@ -434,17 +436,69 @@ export class OrderBook {
   }
 
   /**
-   * POST /batch-void-ask: this seat's signature if it signed batch k (or the certificate, if it holds k certified without having signed
-   * it), else its decline - ABSENT -> DECLINED, committed before the decline is handed out - and it never signs k after.
+   * The ids a batch record names - its orders, and its cancels' and sells' ids from their bodies (no check of them here): the list its
+   * id is the hash of (bookBatchId). Answers null for a record whose fields do not read.
    */
-  voidAsk(roundIdBytes, k) {
+  #idsOf(roundIdBytes, record) {
+    try {
+      return [...record.orders.map(String),
+        ...(record.cancels || []).map((c) => toHex(cancelId({ roundId: roundIdBytes, entryId: fromHex(c.entry) }))),
+        ...(record.sells || []).map((x) => toHex(sellId({ roundId: roundIdBytes, entryId: fromHex(x.entry), outcome: x.outcome, price: BigInt(x.price), sharesMsat: BigInt(x.sharesMsat), nonce: BigInt(x.nonce) })))];
+    } catch { return null; }
+  }
+
+  /**
+   * THIS SEAT'S VOID ASK FOR BATCH k (kanban #1167): the set k's leader signed (`record`), by the ids it hashes, and this seat's
+   * signature over (round, k, that set) - what the other seats answer, and nothing else.
+   */
+  voidAskFor(roundIdBytes, k, record) {
+    const ids = record && Array.isArray(record.orders) ? this.#idsOf(roundIdBytes, record) : null;
+    if (!ids || !isHex(String(record.leaderSig), 64)) return null;
+    let batchId;
+    try { batchId = bookBatchId({ roundId: roundIdBytes, k: BigInt(k), orderIds: ids }); } catch { return null; }
+    return { seat: toHex(this.round.pubkey), batchId: toHex(batchId), ids, leaderSig: String(record.leaderSig),
+      signature: toHex(schnorr.sign(batchVoidAskId({ roundId: roundIdBytes, k: BigInt(k), batchId }), this.round.identity.secret)) };
+  }
+
+  /**
+   * THE DOOR OF A VOID ASK (kanban #1167: anyone could post one for any k of any round, and every seat declined it for good): a seat of
+   * this market's round signed it over (round, k, set); the set hashes from the ids it names and k's leader signed it - so k is pending
+   * somewhere - and k is a batch of the round's life (its cutoff no earlier than the committee and no later than one interval after the
+   * close: a decline row only for a batch that can be).
+   */
+  #askStands(roundIdBytes, m, k, ask) {
+    if (!ask || !isHex(ask.seat, 32) || !isHex(ask.signature, 64) || !isHex(ask.batchId, 32) || !isHex(ask.leaderSig, 64) || !Array.isArray(ask.ids)
+      || ask.ids.length > 100000 || !ask.ids.every((x) => isHex(x, 32)))
+      return refuse('a void ask is { seat, batchId, ids, leaderSig, signature }: a seat of the round signs it over the set k\'s leader signed', 400);
+    if (!m.seats.includes(ask.seat)) return refuse('that void ask is not from a seat of this round', 403);
+    const cutoff = BigInt(this.cutoffOf(k));
+    if (cutoff < m.contract.committeeTimeMs || cutoff > m.contract.entryCloseMs + BigInt(this.intervalMs)) return refuse(`batch ${k} is outside this round's book: nothing to decline`);
+    let id;
+    try { id = bookBatchId({ roundId: roundIdBytes, k: BigInt(k), orderIds: ask.ids }); } catch (e) { return refuse(e.message, 400); }
+    if (toHex(id) !== ask.batchId) return refuse(`those ids are not the set ${ask.batchId.slice(0, 16)} of batch ${k}`, 400);
+    if (!verifySchnorr(fromHex(ask.leaderSig), id, this.leaderOf(m.contract, k))) return refuse(`batch ${k}'s leader did not sign that set: nothing of it is pending`, 403);
+    if (!verifySchnorr(fromHex(ask.signature), batchVoidAskId({ roundId: roundIdBytes, k: BigInt(k), batchId: id }), fromHex(ask.seat))) return refuse('that void ask is not signed by its seat', 403);
+    return { ok: true };
+  }
+
+  /**
+   * POST /batch-void-ask: this seat's signature if it signed batch k (or the certificate, if it holds k certified without having signed
+   * it), else its decline - ABSENT -> DECLINED, committed before the decline is handed out - and it never signs k after. Only a round
+   * seat's signed ask is answered (#askStands), and a seat declines only once k's signing window is over (kanban #1167): from maxLagMs
+   * after k's cutoff #check signs k no more, so a decline takes nothing from k that this seat could still give it.
+   */
+  voidAsk(roundIdBytes, k, ask = null) {
+    const m = this.market(roundIdBytes);
+    if (!m.ok) return m;
     const rid = Buffer.from(roundIdBytes), seat = toHex(this.round.pubkey);
     k = Number(k);
-    // nothing is declined ahead of its cutoff (a void ask for a far batch would have every seat decline it for good)
-    if (this.cutoffOf(k) > this.now() + this.intervalMs) return refuse(`batch ${k}'s cutoff has not come: no seat declines it yet`);
+    const stands = this.#askStands(roundIdBytes, m, k, ask);
+    if (!stands.ok) return stands;
     const declined = () => ({ ok: true, seat, declined: toHex(schnorr.sign(batchDeclineId({ roundId: roundIdBytes, k: BigInt(k) }), this.round.identity.secret)) });
     let state = this.#state(rid, k);
     if (state === BATCH.ABSENT) {
+      const late = this.now() - this.cutoffOf(k);
+      if (late <= this.maxLagMs) return refuse(`batch ${k}'s cutoff was ${late} ms ago and this seat may sign it until ${this.maxLagMs} ms after: it declines it only then`);
       const moved = this.#move(rid, k, BATCH.DECLINED, { write: () => this.db.prepare('INSERT OR IGNORE INTO market_batch_declines (round_id, k) VALUES (?, ?)').run(rid, k) });
       state = moved.ok ? BATCH.DECLINED : this.#state(rid, k);
     }
@@ -512,8 +566,11 @@ export class OrderBook {
     const rid = toHex(roundIdBytes);
     let counted = this.#counted(m, id, sigs);
     if (counted.length < m.needed) {
-      const answers = await Promise.all(peers.map((b) => this.#post(b, `/batch-void-ask?round=${rid}&k=${k}`, {})));
-      const own = this.voidAsk(roundIdBytes, k);
+      // this seat's own signed ask, naming the set k's leader signed (kanban #1167: the seats answer nothing else)
+      const ask = this.voidAskFor(roundIdBytes, k, record);
+      if (!ask) return { state: 'PENDING', why: `the set of batch ${k} does not read: no void ask for it` };
+      const answers = await Promise.all(peers.map((b) => this.#post(b, `/batch-void-ask?round=${rid}&k=${k}`, ask)));
+      const own = this.voidAsk(roundIdBytes, k, ask);
       const all = [own, ...answers.filter((a) => a.ok)];
       // a seat that holds the batch certified without having signed it answers the certificate (kanban #1150: it used to decline it)
       counted = this.#counted(m, id, [...counted, ...all.filter((a) => a.signed && a.batchId === id).map((a) => ({ seat: a.seat, signature: a.signed })),
