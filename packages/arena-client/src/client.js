@@ -610,6 +610,9 @@ export class Client {
    */
   async join(entry) {
     const mine = entryId(entry);
+    // THE ENTRY THE STAKE LOCK IS NAMED IN, KEPT BEFORE THE ENTRY GOES OUT (kanban #1162): a lock already named in another entry throws here,
+    // and this entry is not sent - the seats that took the first refuse the lock under any other
+    if (this.stakeLock && typeof this.stakeLock.onNamed === 'function') this.stakeLock.onNamed(mine);
     const r = await postEntry(`${this.base}/entry`, encodeEntryContract(entry));
 
     // WHO THIS CLIENT JOINED, kept for the ghost field. A reload keeps the

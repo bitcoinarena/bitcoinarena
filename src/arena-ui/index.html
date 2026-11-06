@@ -3613,7 +3613,21 @@
       const stageEl = document.getElementById('stage');
       let funding = null;
       if (pays && ARENACLIENT.roundLocks(named.round)) {
-        const keptEarly = ARENACLIENT.savedLock(vault(), { roundId: ARENACLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey });
+        let keptEarly = ARENACLIENT.savedLock(vault(), { roundId: ARENACLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey });
+        // A KEPT LOCK STILL SUBMITTED IS READ IN THE FEDERATION FIRST (kanban #1162): a refused one was reused on every reload and the round stayed
+        // unjoinable; stored - reused, stored nowhere - refused and locked anew; unreadable - the join stops, neither reused nor locked over
+        if (keptEarly && keptUseOf(keptEarly).use === 'check') {
+          try {
+            const wasmK = await window.ARENA_LOCK_WASM(); await wasmK.default();
+            const cK = await ARENACLIENT.playerWallet({ round: named.round, invite: named.federation, seed, LockClient: wasmK.LockClient, storage: vault() });
+            keptEarly = await ARENACLIENT.reconcileKeptLock(vault(), { roundId: ARENACLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey, client: cK });
+            console.log('[arena] #1162 the stake lock kept from before is ' + (keptEarly ? keptEarly.state : 'gone') + ' (read in the federation)');
+          } catch (e) {
+            window.ARENA_JOIN_REFUSED = 'the stake lock kept from before could not be read in the federation: ' + String(e && e.message || e).slice(0, 160) + '. Try PLAY again.';
+            console.error('[arena] join refused before any lock: ' + window.ARENA_JOIN_REFUSED);
+            return;
+          }
+        }
         if (keptUseOf(keptEarly).use === 'new') funding = (async () => {
           const wasm = await window.ARENA_LOCK_WASM();
           await wasm.default();
@@ -3824,6 +3838,12 @@
         // 980000 + 20000 msat. The join stops and says why; the collect runs from the
         // record the first join kept.
         const use = keptUseOf(kept);
+        // a submitted lock not read in the federation above (kanban #1162) is neither reused nor locked over
+        if (use.use === 'check') {
+          window.ARENA_JOIN_REFUSED = 'the stake lock kept from before is not confirmed by the guardians yet. Try PLAY again.';
+          console.error('[arena] join refused before any lock: ' + window.ARENA_JOIN_REFUSED);
+          return;
+        }
         if (use.resumed === true) console.log('[arena] the lock is committed to the entry this tab kept, and the round has not started: the same entry is sent again');
         // THE RUN ALREADY STARTED: the bridge takes it back from the seats (blwp.jslib net.opened, ARENA_RESUME) - the same
         // entry, lock and session key, its transcript replayed into the core, and it goes on from the tick the seats are owed.
@@ -3908,11 +3928,13 @@
             if (window.ARENA_ADMIN_REPORT) setTimeout(window.ARENA_ADMIN_REPORT, 2000);
             return ARENACLIENT.markLockCommitted(vault(), Object.assign({ entryId: eid }, whose));
           };
+          // THE ENTRY THE LOCK IS NAMED IN, KEPT BEFORE IT GOES OUT (kanban #1162): another entry with the same lock throws, and is not sent
+          const namedIn = (eid) => { if (ARENACLIENT.bindLockEntry) ARENACLIENT.bindLockEntry(vault(), Object.assign({ entryId: eid }, whose)); };
           if (reuse) {
             // A JOIN THAT HOLDS A LOCK IS NOT REPLACED BY ANOTHER PLAY (ARENA_JOIN_ANSWER busy): it is finished
             if (thisJoin) thisJoin.locking = true;
             stakeLock = { outpoint: reuse.lock.outpoint, fields: reuse.lock.fields, feeLock: reuse.lock.feeLock || null, donations: reuse.lock.donations || [],
-              needed: ARENACLIENT.sharesNeededFor(named.round), onCommitted: committedTo,
+              needed: ARENACLIENT.sharesNeededFor(named.round), onCommitted: committedTo, onNamed: namedIn,
               handUntilMs: ARENACLIENT.marketForRound && ARENACLIENT.marketForRound(named.round) ? Number(named.round.entryCloseMs) : 0 };
             window.ARENA_STAKE_LOCK = stakeLock;
             if (stageEl) window.ArenaText.say(stageEl, ARENACLIENT.lockLine(stakeLock));
@@ -3946,18 +3968,20 @@
             // names an accepted lock. A lock or an entry that fails refuses the join by name, as it did.
             if (typeof window.ARENA_JOIN_LOADED === 'function') window.ARENA_JOIN_LOADED();
             // THE STAKE, FROM THE PLAYER WALLET: it asks for no deposit.
+            // WRITTEN AHEAD AND KEPT BY lockStake ITSELF (kanban #1162, `keep`): the intent with room before the lock client is asked, the record
+            // the moment it answers - a full browser refuses the join before anything is spent, never after
             const made = await ARENACLIENT.lockStake(Object.assign({}, wallet, {
               roundId: ARENACLIENT.fromHex(named.roundIdHex), stake, claimKey, playerPubkey: player.pubkey,
+              keep: true, federationId: named.round.federationId,
             }));
             // AND ITS FEE LOCK, ONLY WHEN THE GATE SAID IT CAN PAY A SIGNER NODE (Pick b):
             // a 100 sat round makes none, so the player is charged no lock that expires unused.
             stakeLock = { outpoint: made.outpoint, fields: made.fields, feeLock: made.feeLock || null, donations: made.donations || [], accepted: made.accepted || null,
-              needed: ARENACLIENT.sharesNeededFor(named.round), onCommitted: committedTo,
+              needed: ARENACLIENT.sharesNeededFor(named.round), onCommitted: committedTo, onNamed: namedIn,
               handUntilMs: ARENACLIENT.marketForRound && ARENACLIENT.marketForRound(named.round) ? Number(named.round.entryCloseMs) : 0 };
             console.log('[arena] fee lock: ' + (made.feeLock ? 'minted, ' + String(made.feeLock.fields.amountMsat) + ' msat' : 'none - ' + made.feeGate.why));
-            // KEPT BEFORE ANYTHING ELSE CAN HAPPEN TO THE TAB: a reload from here
-            // on uses this lock, not a second deposit.
-            ARENACLIENT.saveLock(vault(), Object.assign({ stake, lock: made, federationId: named.round.federationId }, whose));
+            // KEPT BEFORE ANYTHING ELSE CAN HAPPEN TO THE TAB (lockStake, `keep`): a reload from here on uses this lock, not a second deposit
+            if (made.kept === false) console.error('[arena] #1162 the stake lock is made and not kept in this browser: the entry still names it');
             window.ARENA_STAKE_LOCK = stakeLock;
             if (depositEl) window.ArenaText.say(depositEl, '');
             if (stageEl) window.ArenaText.say(stageEl, ARENACLIENT.lockLine(stakeLock));
