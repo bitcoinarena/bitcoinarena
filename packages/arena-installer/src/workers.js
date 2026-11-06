@@ -94,7 +94,7 @@ export function createWorkersKeeper({ state, tunnelUrl, deploy = deployForwarder
     if (now === r.target) return { ok: true, idle: `forwarding to ${now}` };
     const d = await deploy({ token, accountId: r.accountId, name: r.workerName, target: now });
     if (!d.ok) return d;
-    state.save({ reach: { ...state.read().reach, target: now, targetAtMs: Date.now() } });
+    state.merge('reach', { target: now, targetAtMs: Date.now() });
     log(`${r.url} now forwards to ${now}`);
     return { ok: true, did: 'forward', target: now };
   }
