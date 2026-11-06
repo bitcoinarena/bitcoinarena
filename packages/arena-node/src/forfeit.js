@@ -23,8 +23,7 @@
 // commitment list: the same nonce over two lists is two signatures over two
 // messages, which publishes the share. A second asker with the same list gets
 // the same share back; with another list, nothing.
-import { outcomeFinality } from '../../arena-protocol/src/attested.js';
-import { heldOutcomes, marketVoidOf } from './game-market.js';
+import { marketStateOf } from './game-market.js';
 import { isScalar } from '../../arena-protocol/src/manifest.js';
 import { scalarOneSided } from '../../arena-protocol/src/scalar.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -250,8 +249,9 @@ export class Forfeit {
     if (book.inPending) return refuse('that order is in a batch not decided yet: its locks wait for it');
     if (book.filled) return refuse('that order filled: its locks are claimed at resolution and its unfilled rest paid back there');
     if (book.cancelled) return this.#signable(contract, lock);
-    const held = heldOutcomes(this.round, roundIdBytes);
-    const fin = outcomeFinality(held, { windowMs: contract.objectionWindowMs, nowMs: this.round.now ? this.round.now() : Date.now() });
+    // FINAL ON THE ROUND'S PERSISTED STATE (kanban #1151): nothing can fill it then
+    const f = pluginForRound(contract, this.round.plugins);
+    const fin = f.ok && f.attested ? marketStateOf(this.round, roundIdBytes, { contract, manifest: f.plugin.manifest, nowMs: this.round.now ? this.round.now() : Date.now() }) : { final: false };
     if (fin.final) return this.#signable(contract, lock);
     return refuse('that order stands unfilled: cancel it (at no cost) or wait for the market to resolve');
   }
@@ -260,14 +260,13 @@ export class Forfeit {
   #marketRefund(roundIdBytes, contract) {
     const f = pluginForRound(contract, this.round.plugins);
     if (!f.ok || !f.attested) return { ok: false };
-    // every standing outcome: the attestations and a market on a game's held source result (feature 6)
-    const held = heldOutcomes(this.round, roundIdBytes);
     const nowMs = this.round.now ? this.round.now() : Date.now();
-    // a template's round is VOID by its own resolution time's deadline (feature 5: roundTermsOf); a market on a game
-    // AT ONCE when its source result refunds it or its source can never fit it (feature 6: game-market.js marketVoidOf)
-    const voided = marketVoidOf(this.round, roundIdBytes, { contract, manifest: f.plugin.manifest, held, nowMs });
-    if (voided.voided) return { ok: true, why: voided.why };
-    const fin = outcomeFinality(held, { windowMs: contract.objectionWindowMs, nowMs });
+    // THE RETURN DOOR OPENS ONLY ON THE ROUND'S PERSISTED STATE (kanban #1151, game-market.js marketStateOf): VOID - by its
+    // deadline (a template's round by its own resolution time's, feature 5), a contradiction inside its objection window, or a market
+    // on a game's held VOID at once (feature 6) - is stored before a stake is handed back, and never changes after: an attestation
+    // handed in late cannot turn the round into one that claims the locks returned here. FINAL never turns VOID either.
+    const fin = marketStateOf(this.round, roundIdBytes, { contract, manifest: f.plugin.manifest, nowMs });
+    if (fin.voided) return { ok: true, why: fin.why };
     // A SCALAR MARKET (feature 8) HAS NO PICK THAT MISSES: every side is paid by where the value lies. It is refunded
     // only when one side had nobody (scalar.js scalarOneSided - the table's own rule, so it claims nothing either)
     if (isScalar(f.plugin.manifest)) {
