@@ -33188,6 +33188,20 @@ const PURCHASE_WINDOW_SLACK_MS = 3600000;
  * game version's id it was bought under (32 bytes) and the reserve key it paid (33 bytes): the 5-of-7 key of the payment's federation.
  */
 const PURCHASE_RESERVES_LAYOUT = 12;
+/**
+ * THE PAYMENT NAMES THE ITEM (kanban #1180): the image of every output's payout contract is this commitment - the buyer, the game (its
+ * developer and name), the item, its price and the served window - not the buyer's key alone. Each field is known before the payment
+ * and is in the record, so a seat rebuilds it. With the key alone one payment fitted any item of the same price: a record for item A
+ * sent to one seat and one for item B to another both stood, and the committee read two owners of one payment.
+ */
+const TAG_ITEM_PURCHASE_IMAGE = 'ARENA/v1/ItemPurchaseImage';
+function purchaseImage(p) {
+  if (!pIs32(p.playerPubkey) || !pIs32(p.gameDevPubkey)) throw new Error('a purchase\'s image names the buyer and the game\'s developer by 32 bytes each');
+  const w = new Writer();
+  w.bytes32(p.playerPubkey); w.bytes32(p.gameDevPubkey); w.str(p.gameName); w.str(p.itemId); w.u64(BigInt(p.priceSat));
+  w.u64(BigInt(p.servedFromMs)); w.u64(BigInt(p.servedToMs));
+  return taggedHash(TAG_ITEM_PURCHASE_IMAGE, w.finish());
+}
 const pIs32 = (b) => b instanceof Uint8Array && b.length === 32;
 const pIs33 = (b) => b instanceof Uint8Array && b.length === 33 && (b[0] === 2 || b[0] === 3);
 
@@ -33349,7 +33363,7 @@ function purchaseStands(p, { manifest, networkSet, gameSet, served, verify, rese
 //   1. WHO SERVED: every seat's signed FINALs of the 24 h before now (GET /served?finals=1), merged by round and each FINAL checked
 //      here (served-nodes.js) - the same list every seat rebuilds when it checks the purchase.
 //   2. THE SPLIT: purchaseOutputs over the item's price, those nodes and the two donation sets (purchase.js).
-//   3. THE PAYMENT: the lock client's paySubmit (one transaction of pre-expired payout contracts, the buyer's key as their image),
+//   3. THE PAYMENT: the lock client's paySubmit (one transaction of pre-expired payout contracts, purchaseImage as their image - kanban #1180),
 //      its acceptance read back output by output (lockAccepted).
 //   4. THE RECORD: the game, the item, the price, the buyer, the federation, the transaction, every output and the served list,
 //      signed with the player's key, handed to a seat (POST /item-purchase), which hands it on to every other.
@@ -33433,9 +33447,13 @@ async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federati
       ? purchaseOutputsReserves({ priceSat: item.priceSat, servedKeys: got.served.nodes.map((n) => n.key), networkSet, gameSet, devsPct: Number(devsPct), reserveKey })
       : purchaseOutputs({ priceSat: item.priceSat, servedKeys: got.served.nodes.map((n) => n.key), networkSet, gameSet, devsPct: Number(devsPct) });
   } catch (e) { return no('split', e.message); }
+  // THE PAYMENT NAMES THE ITEM (kanban #1180): every contract's image commits to the buyer, the game, the item, its price and the served
+  // window (purchaseImage), so this payment stands for this item's record alone
+  const image = toHex(purchaseImage({ playerPubkey: player.pubkey, gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat,
+    servedFromMs: got.served.fromMs, servedToMs: got.served.toMs }));
   let submitted, accepted;
   try {
-    submitted = JSON.parse(await wallet.paySubmit(JSON.stringify(built.outputs.map((o) => ({ pk: toHex(o.pk), msat: String(o.msat), image: toHex(player.pubkey) })))));
+    submitted = JSON.parse(await wallet.paySubmit(JSON.stringify(built.outputs.map((o) => ({ pk: toHex(o.pk), msat: String(o.msat), image })))));
     accepted = JSON.parse(await wallet.lockAccepted(JSON.stringify(submitted)));
   } catch (e) { return no('payment', String(e && e.message || e)); }
   const outs = accepted.donations || [];
