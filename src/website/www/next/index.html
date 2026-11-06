@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bitcoin Arena</title>
+<meta name="description" content="Games for bitcoin stakes. 5 of 7 nodes sign every result. Open beta on Bitcoin testnet4.">
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="/favicon.ico">
+<link rel="me" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0b0c; --bg2: #121214; --line: #26262a; --ink: #ececec; --ink2: #a3a3a8; --ink3: #6e6e74;
+    --orange: #f7931a; --green: #3fbf7f; --red: #e5534b;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 var(--sans); }
+  a { color: var(--ink); text-underline-offset: 3px; }
+  a:hover { color: var(--orange); }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+  .mono, table, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* the bar */
+  header.bar { position: absolute; top: 0; left: 0; right: 0; z-index: 3; }
+  header.bar .wrap { display: flex; align-items: center; justify-content: space-between; height: 56px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: -0.01em; text-decoration: none; }
+  .brand i { font-style: normal; display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 4px; background: var(--orange); color: #111; font-weight: 800; }
+  header.bar nav { display: flex; gap: 18px; font-size: 14px; }
+  header.bar nav a { text-decoration: none; color: var(--ink2); }
+  header.bar nav a:hover { color: var(--ink); }
+
+  /* 1. the game */
+  .hero { position: relative; min-height: 92svh; display: flex; align-items: flex-end; overflow: hidden; background: #000; }
+  .hero video, .hero img.poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, rgba(11,11,12,.96) 0%, rgba(11,11,12,.55) 38%, rgba(11,11,12,.15) 70%, rgba(11,11,12,.35) 100%); pointer-events: none; }
+  .hero.full::after { display: none; }
+  .hero .over { position: relative; z-index: 2; width: 100%; padding: 0 0 44px; }
+  .hero.full .over { display: none; }
+  .beta { font-family: var(--mono); font-size: 13px; color: var(--ink2); margin: 0 0 14px; }
+  .beta b { color: var(--ink); font-weight: 600; }
+  h1 { font-size: clamp(34px, 7vw, 68px); line-height: 1.02; letter-spacing: -0.03em; font-weight: 800; margin: 0 0 22px; max-width: 18ch; }
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 22px; }
+  .play { display: inline-block; background: var(--orange); color: #111; font-weight: 800; font-size: 17px; text-decoration: none; padding: 14px 22px; border-radius: 4px; }
+  .play:hover { color: #111; background: #ffa83d; }
+  .trailer { font-size: 15px; color: var(--ink); background: none; border: 0; padding: 0; cursor: pointer; font-family: var(--sans); text-decoration: underline; text-underline-offset: 3px; }
+  .trailer:hover { color: var(--orange); }
+  .close-trailer { position: absolute; z-index: 4; top: 64px; right: 16px; background: rgba(0,0,0,.6); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; font: 14px var(--sans); padding: 6px 10px; cursor: pointer; display: none; }
+  .hero.full .close-trailer { display: block; }
+
+  section { border-top: 1px solid var(--line); padding: 56px 0; }
+  h2 { font-size: clamp(24px, 3.4vw, 34px); letter-spacing: -0.02em; line-height: 1.1; margin: 0 0 10px; font-weight: 800; }
+  .lead { color: var(--ink2); max-width: 62ch; margin: 0 0 28px; }
+
+  /* 2. the games */
+  .games { display: grid; grid-template-columns: 1fr; gap: 28px; }
+  @media (min-width: 760px) { .games { grid-template-columns: repeat(3, 1fr); gap: 24px; } }
+  .game img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border: 1px solid var(--line); border-radius: 4px; background: var(--bg2); }
+  .game h3 { font-size: 20px; margin: 14px 0 4px; letter-spacing: -0.01em; }
+  .game p { margin: 0 0 10px; color: var(--ink2); }
+  .game .count { font-family: var(--mono); font-size: 13px; color: var(--ink3); margin-bottom: 10px; }
+  .game .count .num { color: var(--ink); }
+  .game a.go { font-weight: 600; }
+  .fees { margin-top: 30px; font-family: var(--mono); font-size: 14px; color: var(--ink2); }
+  .fees b { color: var(--ink); font-weight: 600; }
+
+  /* 3. the stake */
+  .stake { display: grid; gap: 28px; align-items: center; }
+  @media (min-width: 860px) { .stake { grid-template-columns: 1.15fr 1fr; } }
+  .stake svg { width: 100%; height: auto; display: block; }
+  .stake p { margin: 0 0 12px; max-width: 52ch; }
+
+  /* 4. replays */
+  .replays { list-style: none; padding: 0; margin: 0; font-family: var(--mono); font-size: 14px; }
+  .replays li { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .replays li:first-child { border-top: 1px solid var(--line); }
+  .replays .when { color: var(--ink3); min-width: 16ch; }
+  .won { color: var(--green); } .lost { color: var(--red); }
+
+  /* 5. the network */
+  .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--line); border-radius: 4px; margin-bottom: 26px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 520px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--ink3); font-weight: 400; background: var(--bg2); }
+  td.r, th.r { text-align: right; }
+  tr:last-child td { border-bottom: 0; }
+  td a { color: var(--ink2); }
+  .ok { color: var(--green); }
+  .more { font: 14px var(--sans); color: var(--ink); background: none; border: 1px solid var(--line); border-radius: 4px; padding: 7px 12px; cursor: pointer; margin: -14px 0 26px; }
+  .more:hover { border-color: var(--ink2); }
+  tr.hid { display: none; }
+  .note { font-family: var(--mono); font-size: 12px; color: var(--ink3); margin: -16px 0 26px; }
+  h3.t { font-size: 15px; font-family: var(--mono); font-weight: 600; margin: 0 0 10px; color: var(--ink2); }
+
+  /* 6. the developer */
+  .dev { max-width: 66ch; }
+  .dev .date { font-family: var(--mono); font-size: 13px; color: var(--ink3); margin: 0 0 10px; }
+  .dev p { margin: 0 0 14px; }
+
+  /* 7. testnet night */
+  .night { display: flex; flex-wrap: wrap; gap: 8px 28px; align-items: baseline; }
+  .night .when { font-family: var(--mono); font-size: clamp(18px, 2.6vw, 24px); font-weight: 600; }
+  .night .local { font-family: var(--mono); font-size: 13px; color: var(--ink3); }
+
+  /* 8. build, run, download */
+  .three { display: grid; gap: 28px; }
+  @media (min-width: 760px) { .three { grid-template-columns: repeat(3, 1fr); } }
+  .three h3 { margin: 0 0 6px; font-size: 18px; }
+  .three p { margin: 0 0 10px; color: var(--ink2); }
+
+  footer { border-top: 1px solid var(--line); padding: 28px 0 40px; font-size: 14px; color: var(--ink3); }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 22px; }
+  footer a { color: var(--ink2); text-decoration: none; }
+  footer a:hover { color: var(--ink); }
+
+  @media (max-width: 520px) { header.bar nav a.wide { display: none; } section { padding: 44px 0; } }
+  @media (prefers-reduced-motion: reduce) { .hero video.bg { display: none; } }
+</style>
+</head>
+<body>
+<header class="bar"><div class="wrap">
+  <a class="brand" href="/" aria-label="Bitcoin Arena"><i>₿</i>Bitcoin Arena</a>
+  <nav><a href="#games">Games</a><a class="wide" href="#stake">Your stake</a><a href="#network">Network</a><a class="wide" href="https://docs.bitcoinarena.io/">Docs</a></nav>
+</div></header>
+
+<!-- 1. THE GAME -->
+<div class="hero" id="hero">
+  <video class="bg" id="bgvideo" autoplay muted loop playsinline preload="metadata" poster="/next/media/poster.jpg" aria-hidden="true">
+    <source src="/next/media/hero.webm" type="video/webm">
+    <source src="/next/media/hero.mp4" type="video/mp4">
+  </video>
+  <button class="close-trailer" id="closetrailer" type="button">Close trailer</button>
+  <div class="over"><div class="wrap">
+    <p class="beta"><b>Testnet4, open beta.</b> Players welcome, bugs too.</p>
+    <h1>Bitcoin games where 5 of 7 nodes sign every result.</h1>
+    <div class="actions">
+      <a class="play" href="https://testnet.bitcoinarena.io/?game=nextblock">Play now (testnet4, free sats)</a>
+      <button class="trailer" id="watch" type="button">Watch the trailer (60 s)</button>
+    </div>
+  </div></div>
+</div>
+
+<!-- 2. THREE GAMES -->
+<section id="games"><div class="wrap">
+  <h2>Three games, one rule</h2>
+  <p class="lead">Every player stakes the same amount. The losers' stakes pay the winners. Nobody in between keeps the pot.</p>
+  <div class="games">
+    <div class="game">
+      <img src="/next/media/nextblock.jpg" alt="Tick Tock, Next Block: trucks and tanks on the road from the mempool to the miners" loading="lazy" width="960" height="540">
+      <h3>Tick Tock, Next Block</h3>
+      <p>Drive your truck from the mempool to the miners before the block. The best scores of the round share the stakes of the rest.</p>
+      <div class="count"><span class="num" data-total="nextblock">–</span> rounds settled since <span data-since></span></div>
+      <a class="go" href="https://testnet.bitcoinarena.io/?game=nextblock">Play Tick Tock</a>
+    </div>
+    <div class="game">
+      <img src="/next/media/updown.jpg" alt="Up or Down: the round open, the chance of up, the buy panel" loading="lazy" width="960" height="540">
+      <h3>Up or Down</h3>
+      <p>Will BTC be higher or lower in 15 minutes? The side that was right shares the stakes of the side that was wrong.</p>
+      <div class="count"><span class="num" data-total="btc-updown-15m">–</span> rounds settled since <span data-since></span></div>
+      <a class="go" href="https://testnet.bitcoinarena.io/?game=btc-updown-15m">Play Up or Down</a>
+    </div>
+    <div class="game">
+      <img src="/next/media/rps.jpg" alt="Rock Paper Scissors against the test bot: pick your move" loading="lazy" width="960" height="540">
+      <h3>Rock Paper Scissors</h3>
+      <p>One move each, sealed until both are in. The winner takes both stakes. On testnet you may meet our test bot; it says so.</p>
+      <div class="count"><span class="num" data-total="rock-paper-scissors">–</span> rounds settled since <span data-since></span></div>
+      <a class="go" href="https://testnet.bitcoinarena.io/?game=rock-paper-scissors">Play Rock Paper Scissors</a>
+    </div>
+  </div>
+  <p class="fees"><b>4 % fee</b> per entry: 2 % to the game's developers, 2 % to the protocol reserves. Fixed.</p>
+</div></section>
+
+<!-- 3. WHERE IS YOUR STAKE -->
+<section id="stake"><div class="wrap stake">
+  <svg viewBox="0 0 560 300" role="img" aria-labelledby="stakeT">
+    <title id="stakeT">Your stake is locked in a federation and leaves it one of two ways: 5 of 7 nodes sign the result, or the time runs out and it comes back to you.</title>
+    <g font-family="JetBrains Mono, monospace" font-size="13" fill="#ececec">
+      <rect x="10" y="118" width="110" height="64" rx="4" fill="none" stroke="#a3a3a8"/>
+      <text x="65" y="146" text-anchor="middle">you</text>
+      <text x="65" y="166" text-anchor="middle" fill="#a3a3a8" font-size="11">stake</text>
+      <line x1="120" y1="150" x2="196" y2="150" stroke="#a3a3a8"/><path d="M196 145 l8 5 -8 5z" fill="#a3a3a8"/>
+      <rect x="206" y="90" width="148" height="120" rx="4" fill="none" stroke="#f7931a"/>
+      <text x="280" y="122" text-anchor="middle">lock</text>
+      <text x="280" y="142" text-anchor="middle" fill="#a3a3a8" font-size="11">in the federation</text>
+      <g fill="#f7931a"><circle cx="232" cy="176" r="5"/><circle cx="250" cy="176" r="5"/><circle cx="268" cy="176" r="5"/><circle cx="286" cy="176" r="5"/><circle cx="304" cy="176" r="5"/></g>
+      <g fill="none" stroke="#6e6e74"><circle cx="322" cy="176" r="5"/><circle cx="340" cy="176" r="5"/></g>
+      <text x="280" y="200" text-anchor="middle" fill="#a3a3a8" font-size="11">7 guardians</text>
+      <path d="M354 120 C390 120 390 60 430 60" fill="none" stroke="#3fbf7f"/><path d="M428 55 l8 5 -8 5z" fill="#3fbf7f"/>
+      <path d="M354 180 C390 180 390 240 430 240" fill="none" stroke="#a3a3a8"/><path d="M428 235 l8 5 -8 5z" fill="#a3a3a8"/>
+      <text x="442" y="56">5 of 7 nodes</text><text x="442" y="74">sign the result</text>
+      <text x="442" y="94" fill="#3fbf7f" font-size="11">winners are paid</text>
+      <text x="442" y="236">time runs out</text>
+      <text x="442" y="256" fill="#a3a3a8" font-size="11">your stake comes</text><text x="442" y="272" fill="#a3a3a8" font-size="11">back to you</text>
+    </g>
+  </svg>
+  <div>
+    <h2>Where is your stake</h2>
+    <p>When you join a round, your stake goes into a lock held by a federation of seven guardians. Not by us, and not by the other player.</p>
+    <p>It leaves the lock one of two ways. Five of the seven nodes sign the same result, and the winners are paid from the losers' locks. Or the round's time runs out, and the lock pays you back.</p>
+    <p>Every result is a replay of every move, so any node, or you, can check it.</p>
+  </div>
+</div></section>
+
+<!-- 4. REPLAYS -->
+<section id="replays"><div class="wrap">
+  <h2>Check a round yourself</h2>
+  <p class="lead">Each settled round can be replayed from its moves, by anyone, whether or not anyone is playing right now. Three Tick Tock rounds:</p>
+  <ul class="replays">
+    <li><span class="when">2026-10-31 13:48 UTC</span><span class="won">won</span><a href="https://tn4.bitcoinarena.io/guardian-1/replay?round=000cc122cd254a085fe470354ede704de2279daf636189c21eead7b89a1597bf&amp;entry=6beb2d4e6b404161f8cd83ba330e00b0f7baf57c167e067ddc82e20bb3685a24">Replay round 000cc122</a></li>
+    <li><span class="when">2026-11-03 00:39 UTC</span><span class="lost">lost</span><a href="https://tn4.bitcoinarena.io/guardian-1/replay?round=73b44bdbd2d23ddf33162fd9655ec94c823af15e54ebcedafb8a07caa29e6bf8&amp;entry=341011b17f5ba6c5757d7916d25a89fab33b03696ad0f4a164b97e409fbba794">Replay round 73b44bdb</a></li>
+    <li><span class="when">2026-11-03 00:38 UTC</span><span class="lost">lost</span><a href="https://tn4.bitcoinarena.io/guardian-1/replay?round=a2b678b61296653062f407b63edeb3d72ed5afe4207c146878f2c6e9be891703&amp;entry=b7172b3acc7c186ab9e9001e19b9c835e8ef0ba5b5c7aa8c0591fc5dced23721">Replay round a2b678b6</a></li>
+  </ul>
+</div></section>
+
+<!-- 5. THE NETWORK -->
+<section id="network"><div class="wrap">
+  <h2>The network</h2>
+  <p class="lead">Read live: the nodes from their bonds on Bitcoin testnet4 (each bond checked in this page against its block), the federations from the nodes.</p>
+  <h3 class="t">Nodes</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>node key</th><th class="r">bond, sats</th><th>bond transaction</th><th class="r">since block</th></tr></thead>
+    <tbody id="nodes"><tr><td colspan="4">reading Bitcoin testnet4…</td></tr></tbody>
+  </table></div>
+  <button class="more" id="morenodes" type="button" hidden>Show all nodes</button>
+  <p class="note" id="nodesnote"></p>
+  <h3 class="t">Federations</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>federation</th><th class="r">guardians</th><th class="r">signatures needed</th></tr></thead>
+    <tbody id="feds"><tr><td colspan="3">asking the nodes…</td></tr></tbody>
+  </table></div>
+  <p class="note" id="fedsnote"></p>
+  <h3 class="t">Since launch</h3>
+  <div class="tablewrap"><table>
+    <tbody>
+      <tr><td>rounds settled</td><td class="r num" data-total="all">–</td><td>since <span data-since></span></td></tr>
+      <tr><td>entries</td><td class="r num" data-entries="all">–</td><td>since <span data-since></span></td></tr>
+      <tr><td>latest release</td><td class="r num"><a id="relv" href="https://github.com/bitcoinarena/bitcoinarena/releases/latest">–</a></td><td id="reld"></td></tr>
+    </tbody>
+  </table></div>
+</div></section>
+
+<!-- 6. FROM THE DEVELOPER -->
+<section id="dev"><div class="wrap dev">
+  <h2>From the developer</h2>
+  <p class="date">6 November 2026</p>
+  <p>What runs: three games on Bitcoin testnet4, with real nodes, real bonds and two federations holding the stakes. Every result is signed by five of seven nodes and can be replayed by anyone. What is missing: mainnet, games from other developers, and a lot of polish on the first minute of play.</p>
+  <p>What broke last: this week I went through every place in the code where a stake, a payout or a signature changes state, and found 47 where a crash, an unsigned request or one node's word could move money the wrong way. The critical ones are being fixed and tested first. Before that, a test showed that three silent nodes can hold a round until its locks run out: the loser gets the stake back and the winner goes unpaid. That one is open, and it needs a rule, not a patch.</p>
+  <p>If something breaks for you, tell me. That is what the beta is for.</p>
+</div></section>
+
+<!-- 7. TESTNET NIGHT -->
+<section id="night"><div class="wrap">
+  <h2>Next Testnet Night</h2>
+  <div class="night">
+    <span class="when">Wednesday 18 November 2026, 20:00 Zürich</span>
+    <span class="local" id="nightlocal">19:00 UTC</span>
+  </div>
+  <p class="lead" style="margin-top:12px">An evening of rounds with everyone who shows up. <a href="/night/">Details</a>.</p>
+</div></section>
+
+<!-- 8. BUILD, RUN, DOWNLOAD -->
+<section id="more"><div class="wrap three">
+  <div><h3>Build on it</h3><p>A game is a deterministic core the nodes replay. Write one, run it on a local devnet, publish it.</p><a href="https://docs.bitcoinarena.io/">Read the docs</a></div>
+  <div><h3>Run a node</h3><p>A node bonds sats on Bitcoin, signs results and holds a guardian seat. One installer, Windows, macOS or Linux.</p><a href="https://docs.bitcoinarena.io/">How to run a node</a></div>
+  <div><h3>Download</h3><p>The node, signed with the release key. <span class="mono" data-arena-release-version></span></p><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest">Latest release</a> · <a href="https://testnet.bitcoinarena.io/release-key.txt">Release key</a></div>
+</div></section>
+
+<footer><div class="wrap">
+  <a href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2">Nostr</a>
+  <a href="https://x.com/bitcoinarena_io">X</a>
+  <a href="https://github.com/bitcoinarena">GitHub</a>
+  <a href="https://discord.gg/9zZbASZyue">Discord</a>
+  <a href="https://t.me/+KihHE8JhcVM3NDVi">Telegram</a>
+  <a href="/security/">Security</a>
+  <a href="/privacy/">Privacy</a>
+</div></footer>
+
+<script src="/js/arena-curve.js" defer></script>
+<script src="/js/release-latest.js" defer></script>
+<script type="module" src="/next/next.js"></script>
+</body>
+</html>
