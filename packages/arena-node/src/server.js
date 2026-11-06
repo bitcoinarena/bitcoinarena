@@ -1945,7 +1945,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       for (const w of t.waiting) if (!movesWaitLogged.has(`${w.federation}:${w.why}`)) { movesWaitLogged.add(`${w.federation}:${w.why}`); console.log(`[move] ${w.federation.slice(0, 16)}: waits - ${w.why}`); }
       return t.moves;
     },
-    keepRow: (row) => round.putDonationOutputs([row]),
+    // kanban #1156: a payout's rows are kept once, never over a row with other fields; its records are signed by this seat's node key
+    keepRow: (row) => round.putDonationOutputsOnce([row]),
+    sign: (digest) => schnorr.sign(digest, round.identity.secret),
     broadcast: (rec) => { let seats = []; try { seats = networkSeats(); } catch { seats = []; }
       for (const base of seats) fetch(`${base}/reserve-payout/record`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(rec), signal: AbortSignal.timeout(15000) }).catch(() => {}); },
   }) : null;
@@ -11090,7 +11092,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           names: fundingBook && fundingBook.names ? fundingBook.names() : [] });   // every player's newest name (PIP, player-name.js)
       }
       // THE PAYOUT'S DOORS: a guardian seat's FROST commitment and share for a plan it rebuilt itself, and a
-      // payout record any seat keeps (a PAID one only with the invoice's preimage)
+      // payout record any seat keeps - signed by a guardian seat of the federation whose step it is, and only as the seat's own
+      // records and the federation say it (a PAID one only with the invoice's preimage; kanban #1156)
       if (req.method === 'POST' && (url.pathname === '/reserve-payout/commit' || url.pathname === '/reserve-payout/share' || url.pathname === '/reserve-payout/record')) {
         const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
         if (!reservePayouts) return ans(501, { ok: false, why: 'this node pays no reserves' });
