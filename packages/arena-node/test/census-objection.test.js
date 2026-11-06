@@ -20,7 +20,8 @@ import { HOSTED } from './plugins/hosted.js';
 
 test('a census objection is upheld only when this seat\'s own census block is not the explorer\'s; then no new entry, and the row says so', async () => {
   const slot = bondedChainSlot(lockPort());
-  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, stakeLocks: slot.port, ...opts, chainFor: slot.chainFor,
+  const allowed = []; // the operator's explorers (kanban #1209): filled once the test explorer listens
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, stakeLocks: slot.port, ...opts, chainFor: slot.chainFor, censusExplorers: allowed,
     randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
   let mode = 'agree';
   const explorer = createServer((req, res) => {
@@ -31,6 +32,10 @@ test('a census objection is upheld only when this seat\'s own census block is no
     res.writeHead(200); res.end(mode === 'agree' ? displayHash(blockHashOf(at.header)) : 'ee'.repeat(32));
   });
   await new Promise((r) => explorer.listen(0, '127.0.0.1', r));
+  // KANBAN #1209: an explorer the client names is never asked - a client's own explorer upheld any objection it liked
+  const evil = createServer((req, res) => { res.writeHead(200); res.end('ee'.repeat(32)); });
+  await new Promise((r) => evil.listen(0, '127.0.0.1', r));
+  let evilAsked = 0; evil.on('request', () => { evilAsked++; });
   let free;
   try {
     const base = `http://127.0.0.1:${d.port}`;
@@ -40,6 +45,13 @@ test('a census objection is upheld only when this seat\'s own census block is no
     free = { ...named, federationId: new Uint8Array(32), stakeMsat: 0n, configHash: TRUCK_V3_CONFIG_HASH, slashMinimumServed: 22 };
     assert.equal((await fetch(`${base}/round`, { method: 'POST', body: encodeRoundContract(free) })).status, 201);
     const rh = toHex(roundId(free));
+    const objectAt = async (ex) => { const r = await fetch(`${base}/census-objection`, { method: 'POST', body: JSON.stringify({ round: rh, explorer: ex }) }); return { status: r.status, text: await r.text() }; };
+    const none = await objectAt(`http://127.0.0.1:${explorer.address().port}`);
+    assert.equal(none.status, 409); assert.match(none.text, /names none/, 'no explorer named by the operator: nothing upheld');
+    allowed.push(`http://127.0.0.1:${explorer.address().port}`);
+    const other = await objectAt(`http://127.0.0.1:${evil.address().port}`);
+    assert.equal(other.status, 409); assert.match(other.text, /only against its operator's explorers/);
+    assert.equal(evilAsked, 0, 'the client\'s explorer is never asked');
     const object = async () => { const r = await fetch(`${base}/census-objection`, { method: 'POST', body: JSON.stringify({ round: rh, explorer: `http://127.0.0.1:${explorer.address().port}` }) }); return { status: r.status, text: await r.text() }; };
     const agree = await object();
     assert.equal(agree.status, 409); assert.match(agree.text, /not upheld: the explorer names the same block/);
@@ -53,5 +65,5 @@ test('a census objection is upheld only when this seat\'s own census block is no
     const entry = await fetch(`${base}/entry`, { method: 'POST', body: new Uint8Array(200) });
     assert.notEqual(entry.status, 200);
     assert.equal((await fetch(`${base}/census-objection`, { method: 'POST', body: JSON.stringify({ round: rh, explorer: 'ftp://x' }) })).status, 400);
-  } finally { await d.close(); await new Promise((r) => explorer.close(r)); }
+  } finally { await d.close(); await new Promise((r) => explorer.close(r)); await new Promise((r) => evil.close(r)); }
 });
