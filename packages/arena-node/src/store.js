@@ -750,6 +750,29 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, result_id)
     );
 
+    -- A MARKET ROUND'S STATE (kanban #1151; attested.js MARKET_STATE, marketTransition): no row is OPEN; ATTESTED (one standing
+    -- outcome inside its objection window, first_ms and final_at_ms fixed), then FINAL or VOID - TERMINAL, never changed
+    -- after: the triggers below refuse any update or delete of a terminal row, and the node moves a row only by compare-and-set
+    -- (round.js casMarketState). outcome is the outcome index, value a scalar market's signed value (decimal), reason a VOID's
+    -- ('deadline', 'dispute', 'game'), at_ms when the state was reached on this seat's clock. A store made before this table
+    -- has no rows: each round's state is derived once from its held evidence and persisted on its first read.
+    CREATE TABLE IF NOT EXISTS market_states (
+      round_id     BLOB PRIMARY KEY,
+      state        TEXT NOT NULL CHECK (state IN ('ATTESTED', 'FINAL', 'VOID')),
+      outcome      INTEGER,
+      value        TEXT,
+      observed_ms  INTEGER,
+      first_ms     INTEGER,
+      final_at_ms  INTEGER,
+      reason       TEXT,
+      why          TEXT,
+      at_ms        INTEGER NOT NULL
+    );
+    CREATE TRIGGER IF NOT EXISTS market_states_terminal_update BEFORE UPDATE ON market_states
+      WHEN OLD.state IN ('FINAL', 'VOID') BEGIN SELECT RAISE(ABORT, 'a terminal market state is never changed'); END;
+    CREATE TRIGGER IF NOT EXISTS market_states_terminal_delete BEFORE DELETE ON market_states
+      WHEN OLD.state IN ('FINAL', 'VOID') BEGIN SELECT RAISE(ABORT, 'a terminal market state is never deleted'); END;
+
     -- A HEAD-TO-HEAD ENTRY'S REVEALED MOVE: the (move, salt) that hashed to the commitment its entry named,
     -- taken by this seat's door inside the reveal window or pulled from a peer at the round's close. One per entry; never
     -- deleted - it is what the round's results were decided from.
