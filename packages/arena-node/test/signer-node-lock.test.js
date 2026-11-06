@@ -133,3 +133,29 @@ test('a round that names no federation takes no lock: its stake is not one', asy
   await assert.rejects(joinedWithLock(WITH_KEY, { custody: 'THRESHOLD_LN', federationId: new Uint8Array(32) }),
     /THRESHOLD_LN is not a custody this network has/);
 });
+
+// KANBAN #1214 (audit 3 #1210 CONC-1): the one-lock-one-entry check read the store BEFORE the federation was asked (3-5 awaits) and the
+// lock was written after them - two POST /lock for two entries of one player with the same lock, at the same moment, both passed the
+// check and both were staked by one lock. Now the check is made again, with no await between it and the write.
+test('#1214 two entries handing the same lock at the same moment: one is staked, the other refused - and in either order', async () => {
+  for (const order of ['first-then-second', 'second-then-first']) {
+    const s = await joinedWithLock(WITH_KEY);
+    try {
+      const second = { ...s.entry, worldSecret: b32(0x18), sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()) };
+      const joined = await fetch(`http://127.0.0.1:${s.d.port}/entry`, { method: 'POST', body: encodeEntryContract(second) });
+      assert.equal(joined.status, 201, await joined.text());
+      const eid2 = entryId(second);
+      // the federation answers slowly, so both asks are in flight together
+      const status = s.port.status.bind(s.port);
+      s.port.status = async (o) => { await new Promise((r) => setTimeout(r, 80)); return status(o); };
+      const hand = (eid) => fetch(`http://127.0.0.1:${s.d.port}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(s.fields)) })
+        .then(async (r) => ({ status: r.status, said: (await r.text()).trim() }));
+      const [a, b] = order === 'first-then-second' ? await Promise.all([hand(s.eid), hand(eid2)]) : (await Promise.all([hand(eid2), hand(s.eid)])).reverse();
+      // a kept lock (the second entry has no fee lock yet, so its stake waits for it: kept, not seen)
+      const staked = [s.d.round.stakeLock(s.eid), s.d.round.stakeLock(eid2)].filter(Boolean).length;
+      console.log(`  #1214 ${order}: ${a.status} / ${b.status} - ${[a, b].find((x) => x.status === 409)?.said || 'none refused'}`);
+      assert.deepEqual([a.status, b.status].sort(), [201, 409], `${order}: ${a.said} | ${b.said}`);
+      assert.equal(staked, 1, `${order}: one lock staked ${staked} entries`);
+    } finally { await s.close(); }
+  }
+});
