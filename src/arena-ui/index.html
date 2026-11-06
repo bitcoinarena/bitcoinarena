@@ -4528,11 +4528,30 @@
     async function claimLiquidations() {
       const lob = window.ARENA_LEDGER_LOBBY; const seed = walletSeed();
       if (!lob || !lob.nodes || !lob.nodes.length || !seed || !ARENACLIENT.presentNotes || !window.ARENA_CURVE) return;
-      let liq = null;
+      // THE ARBITRATION SET'S SIGNED EVENTS, NOT A SEAT'S LIST (kanban #1148): up to three seats asked and their events merged - a seat can withhold
+      // an event, never make one; presentNotes acts only on a liquidation k of the chain's arbitration keys signed, at the door that event names.
+      // A seat of this line lists no events, so nothing is handed over here until the arbitration set signs one - a seat's own list never was enough
+      const NETWORK = 'testnet4', verify = window.ARENA_CURVE.verify;
+      const byKey = new Map();
+      let asked = 0;
       for (const n of lob.nodes) {
-        try { const r = await fetch(String((n && n.url) || n).replace(/\/+$/, '') + '/liquidations', { cache: 'no-store' }); if (r.ok) { liq = (await r.json()).liquidations || []; break; } } catch { /* the next seat */ }
+        if (asked >= 3) break;
+        try {
+          const r = await fetch(String((n && n.url) || n).replace(/\/+$/, '') + '/liquidations', { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+          if (!r.ok) continue;
+          asked += 1;
+          for (const ev of (await r.json()).events || []) {
+            if (!ev || !ev.event || ev.event.kind !== 'liquidation') continue;
+            const k = String(ev.event.federation || '').toLowerCase(), had = byKey.get(k);
+            if (!had || Number(ev.event.atMs) > Number(had.event.atMs)) byKey.set(k, ev);
+          }
+        } catch { /* the next seat */ }
       }
-      if (!liq || !liq.length) return;
+      const events = [...byKey.values()];
+      if (!events.length) return;
+      const liq = events.map((ev) => ({ federation: String(ev.event.federation).toLowerCase() }));
+      // THE CHAIN TIP THE CLAIM WINDOW IS READ AGAINST: the federations' heights the page read, else the explorer's tip; none, and nothing is handed over
+      const tip = (() => { const hs = [...(window.ARENA_FED_LOADS instanceof Map ? window.ARENA_FED_LOADS.values() : [])].map((x) => Number(x && x.height) || 0); const m = Math.max(0, ...hs); return m > 0 ? m : (typeof pendingTip === 'function' ? (pendingTip().tipHeight || null) : null); })();
       const held = ARENACLIENT.ledgerFederations(vault());
       const statuses = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.size ? [...window.ARENA_FED_LOADS.values()] : [];
       const inviteOf = (fid) => { const st = statuses.find((f) => f && f.invite && String(f.federation).toLowerCase() === String(fid).toLowerCase()); return st ? st.invite : null; };
@@ -4544,11 +4563,11 @@
       };
       for (const l of liq.filter((x) => held.includes(String(x.federation).toLowerCase()))) {
         const key = ARENACLIENT.liquidationKeyFor(seed, l.federation, window.ARENA_CURVE);
-        const said = await ARENACLIENT.presentNotes({ liquidations: [l], held, walletFor, payoutPk: key.payoutPk, storage: vault() });
-        for (const x of said) console.log('[arena] liquidation of ' + x.federation.slice(0, 8) + ': ' + (x.ok ? x.accepted.length + ' note(s) presented' : x.why));
+        const said = await ARENACLIENT.presentNotes({ events, network: NETWORK, verify, held: [String(l.federation).toLowerCase()], walletFor, payoutPk: key.payoutPk, height: tip, storage: vault() });
+        for (const x of said) console.log('[arena] liquidation of ' + String(x.federation || '').slice(0, 8) + ': ' + (x.ok ? (x.nothing ? 'no note held' : (x.accepted || []).length + ' note(s) presented') : x.why));
       }
       // each arbitration set once, however a seat wrote its door
-      for (const a of [...new Set(liq.map((l) => l.claims).filter(Boolean).map((c) => String(c).replace(/\/+$/, '').replace(/\/liquidation-claims$/, '')))]) {
+      for (const a of ARENACLIENT.liquidationDoors({ events, network: NETWORK, verify })) {
         let listed;
         try { const r = await fetch(a + '/liquidation-payouts', { cache: 'no-store' }); if (!r.ok) continue; listed = await r.json(); } catch { continue; }
         const got = await ARENACLIENT.collectLiquidationPayouts({ listed, seed, curve: window.ARENA_CURVE, clientFor: walletFor, storage: vault() });
