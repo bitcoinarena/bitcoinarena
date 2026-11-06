@@ -17159,7 +17159,7 @@ function phraseWalletEntries(storage, seedHex, federationIdHex = null, { ancesto
   const keys = storageKeys(storage);
   // the federation asked about, when named (a wallet with money and no history row is still a wallet), and every one
   // this browser keeps a history for
-  const feds = keys.map((k) => /^arena\.ledger\.([0-9a-f]{64})$/i.exec(k)).filter(Boolean).map((m) => m[1].toLowerCase());
+  const feds = keys.map(ledgerFedOfKey).filter(Boolean);
   if (/^[0-9a-f]{64}$/i.test(String(federationIdHex || ''))) feds.push(String(federationIdHex).toLowerCase());
   let n = 0;
   for (const f of new Set(feds)) {
@@ -17182,7 +17182,7 @@ function forgetPhrase(storage, seedHex) {
   const seed = fromHex(String(seedHex).toLowerCase());
   const keys = storageKeys(storage);
   const ids = new Set();
-  for (const f of keys.map((k) => /^arena\.ledger\.([0-9a-f]{64})$/i.exec(k)).filter(Boolean).map((m) => m[1].toLowerCase()))
+  for (const f of keys.map(ledgerFedOfKey).filter(Boolean))
     for (const make of [walletSecretFor, ancestorWalletSecretFor]) {
       try { ids.add(`arena.walletdb.${f.slice(0, 16)}.${toHex(sha256(make(seed, fromHex(f)))).slice(0, 16)}.`); } catch { /* not this kind */ }
     }
@@ -17209,7 +17209,7 @@ function tidyStorage(storage, { seeds = [], current = null, federations = [], he
   if (!storage) return { removed: 0, bytes: 0, wallets: 0 };
   const keys = storageKeys(storage);
   const feds = new Set([...federations.map((f) => String(f).toLowerCase()),
-    ...keys.map((k) => /^arena\.ledger\.([0-9a-f]{64})$/i.exec(k)).filter(Boolean).map((m) => m[1].toLowerCase())].filter((f) => /^[0-9a-f]{64}$/.test(f)));
+    ...keys.map(ledgerFedOfKey).filter(Boolean)].filter((f) => /^[0-9a-f]{64}$/.test(f)));
   const phrases = [...new Set([...seeds, ...(current ? [current] : [])].map((h) => String(h).toLowerCase()).filter((h) => /^[0-9a-f]{64}$/.test(h)))];
   const cur = current ? String(current).toLowerCase() : null;
   // every database a kept phrase can open: prefix -> { hex, fed, ancestor }
@@ -17294,6 +17294,7 @@ function tidyStorage(storage, { seeds = [], current = null, federations = [], he
       // A DEPOSIT WAITING HOLDS ONLY THE WALLET THAT MADE IT (kanban #803: one unclaimed invoice in a federation held all 22 kept phrases' wallets there, so the
       // storage stayed full and the claim could not be written): that wallet's keys name its operation
       const waitingOps = [];
+      // (kanban #1179: the old list arena.deposit.pending.<fed> and one key per deposit, arena.deposit.pending.<fed>.<operation>, each a list)
       for (const k of storageKeys(storage)) if (k.startsWith(PENDING_PREFIX)) { try { for (const p of JSON.parse(storage.getItem(k))) waitingOps.push(String(p.operation).toLowerCase()); } catch { travelling.add(k.slice(PENDING_PREFIX.length, PENDING_PREFIX.length + 16)); } }
       for (const [prefix] of groups) {
         if (now_ <= pressureChars) break;
@@ -17846,8 +17847,7 @@ function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gat
       onInvoice: (n) => { byOp.set(n.operation, shown(n)); },
       onEnd: (x, final) => {
         const d = byOp.get(x.operation) || first;
-        if (final === 'Claimed') depositRowOnce(storage, federationId, d);
-        if (final === 'Claimed' || final === 'Expired' || final === 'Failure') pendingDrop(storage, federationId, x.operation);
+        depositEnded(storage, federationId, x.operation, final, d);
         said(d, final); if (final === 'Claimed' && !settled) { settled = true; settle(d); }
       } });
     return first;
@@ -17862,23 +17862,60 @@ function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gat
     watch: (fn) => { watchers.push(fn); },
     close: (why) => fail(new Error(why || 'the deposit was closed: nothing was paid')) };
 }
-// DEPOSITS NOT YET ENDED, per federation (arena.deposit.pending.<fed>): every invoice made, until its receive ends.
+// DEPOSITS NOT YET ENDED (arena.deposit.pending.<fed>.<operation>): every invoice made, until its receive ends.
+// ONE KEY PER DEPOSIT (kanban #1179, the 2026-11-06 state-machine audit): the list was one key per federation, read, changed and written back,
+// and two tabs on two phrases depositing in one federation share the browser's storage: a write of one tab could drop the other's entry,
+// and its deposit was never resumed - nor held its wallet against tidyStorage. Now each deposit is its own key, a one-entry list, written
+// once and removed once, so no tab ever writes another's. The list a page before this kept (arena.deposit.pending.<fed>) is still read,
+// and an entry of it leaves it only when its deposit ends.
+//   pending --(its receive ends: Claimed, the history row written first)--> gone
+//   pending --(Expired | Failure)--> gone
 const PENDING_PREFIX = 'arena.deposit.pending.';
+const DEPOSIT_STATE = Object.freeze({ PENDING: 'pending', CLAIMED: 'Claimed', EXPIRED: 'Expired', FAILED: 'Failure' });
+const pendingOpKey = (federationId, operation) => `${PENDING_PREFIX}${fedHexOf(federationId)}.${String(operation)}`;
+const readList = (raw) => { const l = raw ? JSON.parse(raw) : []; return Array.isArray(l) ? l : [l]; };
 function pendingDeposits(storage, federationId) {
-  try { const raw = storage && storage.getItem(PENDING_PREFIX + fedHexOf(federationId)); const l = raw ? JSON.parse(raw) : []; return Array.isArray(l) ? l : []; }
-  catch { return []; }
-}
-function pendingWrite(storage, federationId, list) {
-  try { if (list.length) storage.setItem(PENDING_PREFIX + fedHexOf(federationId), JSON.stringify(list)); else storage.removeItem(PENDING_PREFIX + fedHexOf(federationId)); }
-  catch { /* a tab that cannot write keeps no note; the money is not touched */ }
+  if (!storage || !fedHexOf(federationId)) return [];
+  const base = PENDING_PREFIX + fedHexOf(federationId), byOp = new Map();
+  try { for (const p of readList(storage.getItem(base))) if (p && p.operation) byOp.set(String(p.operation), p); } catch { /* unreadable: the keys below still count */ }
+  for (const k of storageKeys(storage)) {
+    if (!k.startsWith(`${base}.`)) continue;
+    try { for (const p of readList(storage.getItem(k))) if (p && p.operation) byOp.set(String(p.operation), p); } catch { /* that one unreadable */ }
+  }
+  return [...byOp.values()];
 }
 function pendingAdd(storage, federationId, p) {
-  if (!storage || !fedHexOf(federationId)) return;
-  pendingWrite(storage, federationId, [...pendingDeposits(storage, federationId).filter((x) => x.operation !== p.operation), { atMs: Date.now(), ...p }]);
+  if (!storage || !fedHexOf(federationId) || !p || !p.operation) return;
+  // A STORE THAT CANNOT LIST ITS KEYS keeps the one list, as before
+  if (typeof storage.key !== 'function') {
+    try { storage.setItem(PENDING_PREFIX + fedHexOf(federationId), JSON.stringify([...pendingDeposits(storage, federationId).filter((x) => x.operation !== p.operation), { atMs: Date.now(), ...p }])); } catch { /* not kept */ }
+    return;
+  }
+  try { storage.setItem(pendingOpKey(federationId, p.operation), JSON.stringify([{ atMs: Date.now(), ...p }])); }
+  catch { /* a tab that cannot write keeps no note; the money is not touched */ }
 }
 function pendingDrop(storage, federationId, operation) {
   if (!storage || !fedHexOf(federationId)) return;
-  pendingWrite(storage, federationId, pendingDeposits(storage, federationId).filter((x) => x.operation !== operation));
+  try { storage.removeItem(pendingOpKey(federationId, operation)); } catch { /* kept */ }
+  // AN ENTRY OF THE OLD LIST: that list only ever loses the one entry that ended
+  const base = PENDING_PREFIX + fedHexOf(federationId);
+  try {
+    const raw = storage.getItem(base);
+    if (raw === null) return;
+    const left = readList(raw).filter((x) => x && String(x.operation) !== String(operation));
+    if (left.length) storage.setItem(base, JSON.stringify(left)); else storage.removeItem(base);
+  } catch { /* kept as it was */ }
+}
+/**
+ * A DEPOSIT'S RECEIVE ENDED: THE ONE TRANSITION (kanban #1179). Claimed writes its history row before the entry goes, so a page closed between the two
+ * keeps the entry and its next resume finds the row there and writes no second; any final state removes the entry, and anything else leaves it. `d`
+ * { invoice, amountMsat }, or { operation, amountMsat } for a deposit found at the federation without its invoice. Answers whether a new row was written.
+ */
+function depositEnded(storage, federationId, operation, final, d) {
+  let added = false;
+  if (final === DEPOSIT_STATE.CLAIMED) added = depositRowOnce(storage, federationId, d);
+  if (final === DEPOSIT_STATE.CLAIMED || final === DEPOSIT_STATE.EXPIRED || final === DEPOSIT_STATE.FAILED) pendingDrop(storage, federationId, operation);
+  return added;
 }
 /** One history row per paid invoice, however many pages saw it claimed. */
 function depositRowOnce(storage, federationId, d) {
@@ -17886,8 +17923,9 @@ function depositRowOnce(storage, federationId, d) {
   let invoiceHash = null;
   try { invoiceHash = toHex(decodeBolt11(d.invoice).paymentHash); } catch { invoiceHash = null; }
   if (invoiceHash && ledgerRows(storage, federationId).some((r) => r.kind === 'deposit' && r.invoiceHash === invoiceHash)) return false;
-  ledgerAppend(storage, federationId, { kind: 'deposit', msat: String(d.amountMsat), invoiceHash });
-  return true;
+  // ITS ROW'S KEY IS THE INVOICE'S (kanban #1179), or the operation's for a deposit found without its invoice: two tabs that see one claim write one key
+  const id = invoiceHash ? `dep-${invoiceHash}` : d.operation ? `dep-op-${String(d.operation).toLowerCase()}` : null;
+  return ledgerAppend(storage, federationId, { kind: 'deposit', msat: String(d.amountMsat), invoiceHash }, id);
 }
 /**
  * THE DEPOSITS AN EARLIER PAGE LEFT (2026-09-30: a reload of the deposit page lands on the lobby, and a payment
@@ -17897,8 +17935,7 @@ function depositRowOnce(storage, federationId, d) {
 function resumeDeposits({ client, storage, federationId, onClaimed = () => {}, others = async () => [], onLost = () => {} } = {}) {
   const d0 = (p) => ({ invoice: p.invoice, amountMsat: BigInt(p.msat) });
   const ended = (p, final, from = null) => {
-    if (final === 'Claimed' && depositRowOnce(storage, federationId, d0(p))) onClaimed({ ...d0(p), ...(from ? { from } : {}) });
-    pendingDrop(storage, federationId, p.operation);
+    if (depositEnded(storage, federationId, p.operation, final, d0(p))) onClaimed({ ...d0(p), ...(from ? { from } : {}) });
     return from ? `${final} (in wallet ${from.label})` : final;
   };
   return Promise.all(pendingDeposits(storage, federationId).map((p) => client.awaitReceive(p.operation).then((final) => ended(p, final),
@@ -17930,21 +17967,23 @@ async function scanLostDeposits({ client, storage, federationId, lost = [], onCl
   while (!done) {
     let got;
     try { got = JSON.parse(await withinMs(client.scanDeposits(next), timeoutMs, 'the federation held the read')); }
-    catch { if (next === '0') return { read: false, msat: 0n, found: 0 }; break; }
-    next = got.next; done = got.done;
+    catch { break; }
+    next = got.next; done = !!got.done;
     for (const f of got.found) {
       foundN++;
       // BOUNDED, ONE BY ONE (kanban #883, the owner's iPhone: one wait that never ended held the whole scan, so its "done" never came and unpaid invoices stayed in the red line)
-      pendingDrop(storage, federationId, f.operation);
+      // AND ITS ENTRY GOES WHEN ITS RECEIVE ENDS, not before it (kanban #1179): a page closed meanwhile resumes it
       waits.push(withinMs(client.awaitReceive(f.operation), 60000, 'the claim did not end').then((final) => {
-        if (final !== 'Claimed') return;
+        if (!depositEnded(storage, federationId, f.operation, final, { operation: f.operation, amountMsat: BigInt(f.msat) })) return;
         msat += BigInt(f.msat);
-        ledgerAppend(storage, federationId, { kind: 'deposit', msat: String(f.msat), invoiceHash: null });
         onClaimed({ amountMsat: BigInt(f.msat), operation: f.operation });
       }, () => {}));
     }
   }
   await Promise.all(waits);
+  // THE INVOICES THAT MAY NEVER HAVE BEEN PAID GO ONLY AFTER A WHOLE READ (kanban #1179): before, a read that failed after its first page still dropped every
+  // one of them, and a paid one past that page was never looked for again. `read` is false then, and the next page reads again
+  if (!done) return { read: false, partial: next !== '0', msat, found: foundN };
   for (const p of lost) pendingDrop(storage, federationId, p.operation);
   return { read: true, msat, found: foundN };
 }
@@ -18376,10 +18415,28 @@ const LEDGER_PREFIX = 'arena.ledger.';
 const LEDGER_READ_PREFIX = 'arena.ledger.read.';
 const fedHexOf = (f) => (f instanceof Uint8Array ? toHex(f) : String(f || '')).toLowerCase();
 const ledgerKey = (federationId) => `${LEDGER_PREFIX}${fedHexOf(federationId)}`;
-/** This federation's rows, oldest first, as kept. */
+/**
+ * ONE KEY PER ROW (kanban #1179, the 2026-11-06 state-machine audit): the history was one list per federation, read, appended to and written back, and the
+ * tabs of a browser share it: two tabs appending at once kept one row of the two. Now a row is its own key, arena.ledger.<fed>.<id>, a one-row list written
+ * once; a row two tabs may both write (a deposit's, by its invoice) has a key of its own content, so it is one row. The list a page before this kept,
+ * arena.ledger.<fed>, is read first and still written by nobody but an older page.
+ */
+const LEDGER_ROW_RE = /^arena\.ledger\.([0-9a-f]{64})(?:\.([0-9a-z_-]+))?$/i;
+/** The federation (hex) a history key belongs to, the list or one row of it; null for any other key. */
+const ledgerFedOfKey = (k) => { const m = LEDGER_ROW_RE.exec(String(k || '')); return m ? m[1].toLowerCase() : null; };
+/** This federation's rows, oldest first, as kept: the old list as it was, then each row of its own key by its time. */
 function ledgerRows(storage, federationId) {
-  try { const raw = storage && storage.getItem(ledgerKey(federationId)); const rows = raw ? JSON.parse(raw) : []; return Array.isArray(rows) ? rows : []; }
-  catch { return []; }
+  if (!storage) return [];
+  const base = ledgerKey(federationId);
+  let rows = [];
+  try { const raw = storage.getItem(base); const l = raw ? JSON.parse(raw) : []; rows = Array.isArray(l) ? l : []; } catch { rows = []; }
+  const own = [];
+  for (const k of storageKeys(storage)) {
+    if (!k.startsWith(`${base}.`) || !LEDGER_ROW_RE.test(k)) continue;
+    try { const l = JSON.parse(storage.getItem(k)); for (const r of Array.isArray(l) ? l : [l]) if (r) own.push({ k, r }); } catch { /* that row unreadable */ }
+  }
+  own.sort((a, b) => (Number(a.r.atMs) || 0) - (Number(b.r.atMs) || 0) || (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
+  return [...rows, ...own.map((x) => x.r)];
 }
 /**
  * WHAT THE WALLET HISTORY DRAWS (2026-10-04 15:45: "One line: Stake round xxx -100 sat. The 100 is the
@@ -18402,13 +18459,26 @@ function ledgerHistory(rows) {
   }
   return out;
 }
-function ledgerAppend(storage, federationId, row) {
-  if (!storage || !fedHexOf(federationId)) return;
+let ledgerSeq = 0;
+const ledgerRowId = () => {
+  const r = new Uint8Array(6);
+  try { globalThis.crypto.getRandomValues(r); } catch { for (let i = 0; i < r.length; i++) r[i] = Math.floor(Math.random() * 256); }
+  ledgerSeq = (ledgerSeq + 1) % 1296;
+  return `${Date.now().toString(36)}-${ledgerSeq.toString(36).padStart(2, '0')}${toHex(r)}`;
+};
+/** One row, under its own key: `id` names it (a key of the row's content, written once by whoever writes it first), else a fresh one. Answers whether it was written. */
+function ledgerAppend(storage, federationId, row, id = null) {
+  if (!storage || !fedHexOf(federationId)) return false;
+  // A STORE THAT CANNOT LIST ITS KEYS could not read a row of its own key back: the one list, as before
+  if (typeof storage.key !== 'function') {
+    try { const rows = ledgerRows(storage, federationId); rows.push({ atMs: Date.now(), ...row }); storage.setItem(ledgerKey(federationId), JSON.stringify(rows)); return true; } catch { return false; }
+  }
+  const key = `${ledgerKey(federationId)}.${id ? String(id).toLowerCase().replace(/[^0-9a-z_-]/g, '') : ledgerRowId()}`;
   try {
-    const rows = ledgerRows(storage, federationId);
-    rows.push({ atMs: Date.now(), ...row });
-    storage.setItem(ledgerKey(federationId), JSON.stringify(rows));
-  } catch { /* a tab that cannot write keeps no history; the money is not touched */ }
+    if (id && storage.getItem(key) !== null) return false;
+    storage.setItem(key, JSON.stringify([{ atMs: Date.now(), ...row }]));
+    return true;
+  } catch { return false; /* a tab that cannot write keeps no history; the money is not touched */ }
 }
 const storageKeys = (storage) => {
   const out = [];
@@ -18432,10 +18502,10 @@ function ledgerReadSavedStakes(storage, federationId) {
     const m = /^arena\.lock\.saved\.([0-9a-f]{64})\.([0-9a-f]{16})$/.exec(k);
     if (!m || rows.some((r) => r.kind === 'stake' && r.round === m[1] && r.player === m[2])) continue;
     let j; try { j = JSON.parse(storage.getItem(k)); } catch { continue; }
-    rows.push({ atMs: null, kind: 'stake', round: m[1], player: m[2], entry: j.committedTo || null, msat: String(lockTotalMsat(j)), read: true });
-    added++;
+    // EACH ITS OWN ROW (kanban #1179), keyed by its round and player: two tabs reading at once write one
+    if (ledgerAppend(storage, federationId, { atMs: null, kind: 'stake', round: m[1], player: m[2], entry: j.committedTo || null, msat: String(lockTotalMsat(j)), read: true }, `read-${m[1]}-${m[2]}`)) added++;
   }
-  try { storage.setItem(ledgerKey(federationId), JSON.stringify(rows)); storage.setItem(flag, String(Date.now())); } catch { return 0; }
+  try { storage.setItem(flag, String(Date.now())); } catch { return 0; }
   return added;
 }
 
@@ -20066,8 +20136,9 @@ function ledgerFederations(storage) {
     // the gateway funded the incoming contract, but a deposit gets its ledger row only once claimed, and a page reloaded or
     // suspended before the claim opened wallets only where the ledger had rows: the pending deposit was never resumed, claimed or
     // summed). A federation this browser made a deposit invoice in is one it holds a wallet in.
-    const f = k.startsWith(PENDING_PREFIX) ? k.slice(PENDING_PREFIX.length)
-      : k.startsWith(LEDGER_PREFIX) && !k.startsWith(LEDGER_READ_PREFIX) ? k.slice(LEDGER_PREFIX.length) : null;
+    // (kanban #1179: a pending deposit's key and a history row's name the federation before a dot)
+    const f = k.startsWith(PENDING_PREFIX) ? k.slice(PENDING_PREFIX.length).split('.')[0]
+      : k.startsWith(LEDGER_PREFIX) && !k.startsWith(LEDGER_READ_PREFIX) ? ledgerFedOfKey(k) : null;
     if (f && /^[0-9a-f]{64}$/.test(f) && !out.includes(f)) out.push(f);
   }
   return out;
