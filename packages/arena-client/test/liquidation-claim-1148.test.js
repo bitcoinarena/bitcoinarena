@@ -144,3 +144,17 @@ test('the doors the payouts are read at: only the signed events\', never a seat\
   assert.deepEqual(liquidationDoors({ events: [signedBy(liquidation(), [0])], network: 'regtest', arbitration: SET, verify }), []);
   assert.deepEqual(liquidationDoors({ events: signed(), network: 'regtest', arbitration: SET }), [], 'no signature check, no door');
 });
+
+test('with no arbitration set given, the chain\'s own is read (BOND_TERMS arbitrationKeys / arbitrationK): measured live, UI 554 preview, it read none', async () => {
+  const { arbitrationOf } = await import('../src/liquidation-claim.js');
+  const { BOND_TERMS } = await import('../src/committee.js');
+  assert.deepEqual(arbitrationOf('testnet4'), { keys: BOND_TERMS.testnet4.arbitrationKeys, k: BOND_TERMS.testnet4.arbitrationK });
+  assert.equal(arbitrationOf('testnet4').k, 5);
+  assert.equal(arbitrationOf('nowhere'), null);
+  // our two test keys are not the chain's: refused for want of the chain's signatures - not for want of a threshold
+  const { calls, base } = rig();
+  const { arbitration, ...rest } = base; void arbitration;
+  const out = await presentNotes({ ...rest, events: signed() });
+  assert.deepEqual(calls, []);
+  assert.match(out[0].why, /0 valid signatures of the arbitration set, and an event needs 5/);
+});
