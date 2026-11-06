@@ -150,13 +150,14 @@ function world({ reserves = [20000000n, 20000000n] } = {}) {
   const state = { kept: [] };
   const due = [{ id: LB, federation: FED, amountSats: 3000n, paymentHeight: 600, decidableAt: 520 }];
   const seats = [];
+  const chain = { tip: null };
   for (let i = 0; i < 7; i++) {
     const s = { inbox: [] };
     // THE WINNERS (kanban #1153): each seat's winners book over the season's rounds as five seats of each round's draw signed them
     const db = openStore(':memory:');
     s.book = createWinnersBook({ db, paramsOf: async () => ({ ok: true, ...WIN, rounds: undefined }), collect: async () => answersOf(SIGNED),
       seatsOf: drawOf(new Map(), [1, 2, 3, 4, 5, 6, 7, 8, 9]), verify, now: () => WIN.toMs + FREEZE_GRACE_MS });
-    s.api = createReservePayouts({ db, me: NODE_KEYS[i], curve, random: rand, network: 'testnet4', passed: () => [], sign: (d) => schnorr.sign(d, SECRET_OF.get(NODE_KEYS[i])),
+    s.api = createReservePayouts({ db, me: NODE_KEYS[i], heightNow: () => chain.tip, curve, random: rand, network: 'testnet4', passed: () => [], sign: (d) => schnorr.sign(d, SECRET_OF.get(NODE_KEYS[i])),
       leaderboards: () => due, winners: s.book,
       reserveRows: () => [...reserveRows, ...state.kept.filter((k) => k.seat === i && k.row.recipientPk === toHex(KEY)).map((k) => ({ outpoint: k.row.outpoint, amountMsat: k.row.amountMsat, verifiedMs: 99 }))],
       portOf: async () => port, payRequest: async () => ({ ok: false }), invoiceFor: async () => ({ ok: false }),
@@ -165,6 +166,8 @@ function world({ reserves = [20000000n, 20000000n] } = {}) {
       broadcast: (rec) => { for (const o of seats) if (o !== s) o.inbox.push(rec); },
       guardians: () => new Map([[FED, { members: NODE_KEYS, key: KEY, needed: 5, signer: { id: i + 1, share: DEAL.shares[i].share },
         peers: seats.filter((o) => o !== s).map((o) => ({ commit: (b) => o.api.commit(b), share: (b) => o.api.share(b), winners: async (id) => o.book.recordOf(id) })) }]]) });
+    // ONE CHAIN (kanban #1159): every seat reads the height the last pass ran at, as a seat reads its tip
+    { const pass = s.api.round; s.api.round = (o = {}) => { chain.tip = o.height; return pass(o); }; }
     seats.push(s);
   }
   const deliver = async () => { for (const s of seats) { while (s.inbox.length) await s.api.learn(s.inbox.shift()); } };

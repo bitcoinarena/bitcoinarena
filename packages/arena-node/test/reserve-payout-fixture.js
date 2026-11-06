@@ -82,10 +82,11 @@ export function world({ rows = [60000000n, 40000000n, 50000000n], amountSats = 7
   };
   const state = { passed: [{ id: PROPOSAL, lnurl: LNURL, amountSats, decidableAt: 500 }], kept: [] };
   const seats = [];
+  const chain = { tip: null };
   for (let i = 0; i < 7; i++) {
     const me = NODE_KEYS[i];
     const s = { me, down: down.includes(i), inbox: [] };
-    s.api = create({ db: openStore(':memory:'), me, curve, random: rand, network: 'testnet4', sign: (d) => schnorr.sign(d, SECRET_OF.get(me)),
+    s.api = create({ db: openStore(':memory:'), me, heightNow: () => chain.tip, curve, random: rand, network: 'testnet4', sign: (d) => schnorr.sign(d, SECRET_OF.get(me)),
       passed: () => state.passed, reserveRows: () => [...reserveRows, ...state.kept.filter((k) => k.seat === i).map((k) => k.row)],
       portOf: async () => port, payRequest: lnurl.payRequest, invoiceFor: lnurl.invoiceFor,
       // as putDonationOutputs: one row per outpoint (INSERT OR REPLACE)
@@ -93,6 +94,8 @@ export function world({ rows = [60000000n, 40000000n, 50000000n], amountSats = 7
       broadcast: (rec) => { for (const o of seats) if (o !== s) o.inbox.push(rec); },
       guardians: () => new Map([[FED, { members: NODE_KEYS, key: KEY, needed: 5, signer: { id: i + 1, share: DEAL.shares[i].share },
         peers: seats.filter((o) => o !== s).map((o) => ({ commit: async (b) => (o.down ? { ok: false, why: 'down' } : o.api.commit(b)), share: async (b) => (o.down ? { ok: false, why: 'down' } : o.api.share(b)) })) }]]), ...more(i) });
+    // ONE CHAIN (kanban #1159): every seat reads the height the last pass ran at, as a seat reads its tip
+    { const pass = s.api.round; s.api.round = (o = {}) => { chain.tip = o.height; return pass(o); }; }
     seats.push(s);
   }
   const deliver = async () => { for (const s of seats) { while (s.inbox.length) await s.api.learn(s.inbox.shift()); } };

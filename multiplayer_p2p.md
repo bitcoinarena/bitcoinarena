@@ -7605,6 +7605,14 @@ carry no weight in any count.
     pay; the expired contract was spent back to the reserve key). SHORT: the reserves cannot cover it; nothing is paid, for
     good.
     - A silent LNURL or a wrong invoice signs nothing, and the next pass asks again.
+    - *(2026-11-06, kanban #1159)* A seat's own steps: SUBMITTING (the signed transaction kept before it goes in), REFUNDING
+      (the same for the refund), EXPIRED (a plan with no transaction 12 blocks after the seat first held it).
+    - After a stop, a SUBMITTING or REFUNDING seat hands in the same transaction again, or finds its output 0 held.
+    - A plan expires only when the seat's port shows every input unspent. Its inputs are then free, and the next attempt
+      is a new plan with its own nonce.
+    - Only the guardian whose turn it is opens a plan (one turn per 2 blocks, in key order, starting again after the last).
+      Every commit and share it asks for is signed by its node key. A plan a seat already holds goes on with any guardian.
+    - The invoice's, gateway's and expiration's window is checked once, at the seat's first commit.
   - **Records:** one record per proposal on every seat (`reserve_payouts`). A second plan for a proposal is refused, and a
     spent output is never planned again.
     - *(2026-11-06, kanban #1156)* A record handed to another seat is signed by the sender's node key. A seat keeps it only

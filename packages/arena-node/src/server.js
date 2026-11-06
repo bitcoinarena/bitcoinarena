@@ -1744,11 +1744,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const payoutNet = String(chain || '').replace(/^bitcoin-/, '') || 'testnet4';
   const lnurlAsk = lnurlClient({ network: payoutNet });
   const payoutPeer = (base) => ({
+    // kanban #1159: every ask carries the asking guardian seat's node key and its signature
     commit: async (b) => { const r = await fetch(`${base}/reserve-payout/commit`, { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ plan: b.plan, kind: b.kind, txid: b.txid || null }), signal: AbortSignal.timeout(60000) }); const j = await r.json();
+      body: JSON.stringify({ plan: b.plan, kind: b.kind, txid: b.txid || null, from: b.from, sig: b.sig }), signal: AbortSignal.timeout(60000) }); const j = await r.json();
       return j.ok ? { ok: true, commitment: { id: Number(j.commitment.id), hiding: fromHex(j.commitment.hiding), binding: fromHex(j.commitment.binding) } } : j; },
     share: async (b) => { const r = await fetch(`${base}/reserve-payout/share`, { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ planId: b.planId, kind: b.kind, commitments: b.commitments.map((c) => ({ id: c.id, hiding: toHex(c.hiding), binding: toHex(c.binding) })) }), signal: AbortSignal.timeout(60000) });
+      body: JSON.stringify({ planId: b.planId, kind: b.kind, commitments: b.commitments.map((c) => ({ id: c.id, hiding: toHex(c.hiding), binding: toHex(c.binding) })), from: b.from, sig: b.sig }), signal: AbortSignal.timeout(60000) });
       const j = await r.json(); return j.ok ? { ok: true, share: BigInt('0x' + j.share) } : j; },
     // ITS WINNERS OF A LEADERBOARD PAYOUT (kanban #1153): the list it planned for, else its frozen read, each with its signed evidence
     winners: async (id) => { const r = await fetch(`${base}/leaderboard-winners?proposal=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(30000) }); return r.ok ? r.json() : null; },
@@ -1795,7 +1796,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     passed: () => {
       if (!fundingBook) return [];
       const held = reserveHeldSats();
-      const recs = reservePayouts ? reservePayouts.list().filter((r) => r.plan && r.plan.kind !== 'move' && (r.state === 'SENT' || r.state === 'PAID')) : [];
+      // what went out: handed in (SUBMITTING), taken, paid, or being refunded (kanban #1159)
+      const recs = reservePayouts ? reservePayouts.list().filter((r) => r.plan && r.plan.kind !== 'move' && ['SUBMITTING', 'SENT', 'REFUNDING', 'PAID'].includes(r.state)) : [];
       const tip = fundingTipSeen;
       const out = [];
       for (const t of fundingBook.payments({ tip, reservesSatsOf: () => held })) {
@@ -1836,6 +1838,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // kanban #1156: a payout's rows are kept once, never over a row with other fields; its records are signed by this seat's node key
     keepRow: (row) => round.putDonationOutputsOnce([row]),
     sign: (digest) => schnorr.sign(digest, round.identity.secret),
+    // the chain height a plan's turn and expiry are read at (kanban #1159)
+    heightNow: () => fundingTipSeen,
     broadcast: (rec) => { let seats = []; try { seats = networkSeats(); } catch { seats = []; }
       for (const base of seats) fetch(`${base}/reserve-payout/record`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(rec), signal: AbortSignal.timeout(15000) }).catch(() => {}); },
   }) : null;
@@ -9792,10 +9796,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!reservePayouts) return ans(501, { ok: false, why: 'this node pays no reserves' });
         let b; try { b = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return ans(400, { ok: false, why: 'a JSON body' }); }
         try {
-          if (url.pathname.endsWith('/commit')) { const r = await reservePayouts.commit({ plan: b.plan, kind: String(b.kind), txid: b.txid || null });
+          if (url.pathname.endsWith('/commit')) { const r = await reservePayouts.commit({ plan: b.plan, kind: String(b.kind), txid: b.txid || null, from: b.from, sig: b.sig });
             return ans(r.ok ? 200 : (r.status || 400), r.ok ? { ok: true, commitment: { id: r.commitment.id, hiding: toHex(r.commitment.hiding), binding: toHex(r.commitment.binding) } } : r); }
           if (url.pathname.endsWith('/share')) { const r = await reservePayouts.share({ planId: String(b.planId), kind: String(b.kind),
-            commitments: (b.commitments || []).map((c) => ({ id: Number(c.id), hiding: fromHex(String(c.hiding)), binding: fromHex(String(c.binding)) })) });
+            commitments: (b.commitments || []).map((c) => ({ id: Number(c.id), hiding: fromHex(String(c.hiding)), binding: fromHex(String(c.binding)) })), from: b.from, sig: b.sig });
             return ans(r.ok ? 200 : (r.status || 400), r.ok ? { ok: true, share: r.share.toString(16).padStart(64, '0') } : r); }
           const r = await reservePayouts.learn(b); return ans(r.ok ? 200 : (r.status || 400), r);
         } catch (e) { return ans(400, { ok: false, why: e.message }); }
