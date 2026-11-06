@@ -23,7 +23,7 @@
 // A RECIPIENT THAT DOES NOT ANSWER (RULED 2026-09-30, hole 1 (a)) is planned HELD - a row with no invoice - and its
 // share is settled into a pre-expired contract under the committee claim key; the proposer's sweep retries that same
 // recipient, and once it answers, the held contract is spent (the re-send's refund) into the send to its invoice.
-import { schnorr } from '@noble/curves/secp256k1.js';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { lightningAddressEndpoint, payRequestStands, callbackFor, invoiceAnswersPayRequest } from '../../arena-protocol/src/lnurl-pay.js';
 import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpiration } from '../../arena-protocol/src/winnings-send.js';
 import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
@@ -33,6 +33,14 @@ import { encodeCommitments, decodeCommitments, decodeShare } from './pool-wire.j
 import { largestPayoutMsat, lnv2FeeMsat } from '../../arena-protocol/src/lock-settlement.js';
 import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { stateOf } from './settlement-state.js';
+import { invoicePayee } from '../../arena-protocol/src/bolt11.js';
+import { SEND } from './send-state.js';
+import { PLAN_ASK, sendPlanAskHeaders } from './send-plan-ask.js';
+
+/** WHO AN INVOICE PAYS (kanban #1154): the node key its BOLT11 signature recovers to, hex; throws if none. */
+export const payeeOf = (invoice) => invoicePayee(invoice, (sig64, bit, digest) =>
+  secp256k1.Signature.fromBytes(sig64, 'compact').addRecoveryBit(bit).recoverPublicKey(digest).toBytes(true));
+
 
 /** Where an address's pay request is: a Lightning address (LUD-16), or a donation recipient's LNURL (LUD-01). */
 function payRequestUrl(address) {
@@ -43,7 +51,7 @@ function payRequestUrl(address) {
 }
 
 const refuse = (why, status = 409) => ({ ok: false, status, why });
-const PAID = 'PAID';
+const PAID = SEND.PAID;
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).join('|');
 const plain = (row) => ({ entry: toHex(row.entryId), attempt: row.attempt || 0, address: row.address, invoice: row.invoice,
   paymentHash: row.paymentHash, invoiceMsat: String(row.invoiceMsat), payoutMsat: String(row.payoutMsat), owedMsat: String(row.owedMsat),
@@ -96,7 +104,9 @@ export class WinningsSend {
     catch (e) { return refuse(`the address's callback did not answer: ${e.message}`); }
     const inv = invoiceAnswersPayRequest({ invoice: said && said.pr, amountMsat, metadata: pr.metadata, network: this.network });
     if (!inv.ok) return refuse(inv.why);
-    return { ok: true, invoice: said.pr, paymentHash: toHex(inv.paymentHash), metadata: pr.metadata };
+    let payee;
+    try { payee = payeeOf(said.pr); } catch (e) { return refuse(`the address's own invoice names no payee: ${e.message}`); }
+    return { ok: true, invoice: said.pr, paymentHash: toHex(inv.paymentHash), metadata: pr.metadata, payee };
   }
 
   /**
@@ -133,22 +143,26 @@ export class WinningsSend {
     return { ok: true, rows: this.round.sendPlansOf(roundIdBytes) };
   }
 
-  /** A PEER'S CHECK of the coordinator's plans, each against this signer node's own payout, gateways, height and LNURL. */
-  async check(roundIdBytes, base, proposed) {
+  /**
+   * A PEER'S CHECK of the coordinator's plans, each against this signer node's own payout, gateways, height and LNURL - and its own invoice
+   * from the address, for the same amount, whose node key the plan's invoice must be signed by (kanban #1154). `from`: the hex node key of
+   * the seat of the round that signed this plan (server.js checked it), or null when no seat's signature came with it.
+   */
+  async check(roundIdBytes, base, proposed, { from = null } = {}) {
     // A PLAN ALREADY KEPT IS NOT REPLACED - the same plan again is taken, another is refused by name - with one
     // exception that makes two askers converge: while nothing of the round is settled or sent, a plan whose payment
     // hashes sort LOWER replaces the kept one. Measured on a 5-of-7 under M3.3-19's takeover: two askers each fetched
     // their own invoice, the peers split 4 and 2, and neither plan ever reached the five a signature needs.
     this.dropIfStale(roundIdBytes, base);
-    let kept = this.round.sendAttemptsOf(roundIdBytes).filter((x) => x.attempt === 0);
+    const kept = this.round.sendAttemptsOf(roundIdBytes).filter((x) => x.attempt === 0);
     if (kept.length) {
       const same = kept.length === proposed.length && kept.every((k) => proposed.some((p) => String(p.entry) === toHex(k.entryId)
         && String(p.paymentHash).toLowerCase() === k.paymentHash && Number(p.attempt || 0) === k.attempt));
       if (same) return { ok: true, rows: kept };
-      if (!(planKey(proposed) < planKey(kept) && this.replaceable(roundIdBytes)))
-        return refuse('this signer node keeps another send plan for that round, and does not replace it');
-      this.round.dropPlannedSends(roundIdBytes);
-      kept = [];
+      // A LOWER PLAN REPLACES THE KEPT ONE ONLY FROM A SEAT OF THE ROUND (kanban #1154): a planKey anyone can grind is no reason
+      // to drop what this seat checked and kept
+      if (!(from && planKey(proposed) < planKey(kept) && this.replaceable(roundIdBytes)))
+        return refuse(`this signer node keeps another send plan for that round, and does not replace it${from ? '' : ' with a plan no seat of the round signed'}`);
     }
     const wanting = new Map(this.wanting(base).map((w) => [toHex(w.entryId), w]));
     if (proposed.length !== wanting.size)
@@ -168,18 +182,29 @@ export class WinningsSend {
       }
       const gw = lowestLiveGateway(g.gateways);
       if (!gw) return refuse('this signer node sees no live gateway on the round\'s federation');
-      const pr = await this.payRequest(w.address, sendableInvoiceMsat(w.payout.msat, gw.sendFeeDefault));
+      // THIS SEAT'S OWN INVOICE FROM THE ADDRESS, FOR THE SAME AMOUNT (kanban #1154): its node key is who the address pays, and the
+      // plan's invoice must be signed by that key - the description hash and the amount are public, and anyone can mint those
+      const pr = await this.invoiceFor(w.address, sendableInvoiceMsat(w.payout.msat, gw.sendFeeDefault));
       // A DONATION RECIPIENT THIS SEAT CANNOT REACH is named, so the proposer can plan it HELD (hole 1 (a)): an invoice this
       // seat cannot check is not taken, and the walk-away's settlement is not left to stall into a refund.
       if (!pr.ok && w.donation) return refuse(`the donation recipient does not answer here: ${w.address} (${pr.why})`);
-      if (!pr.ok) return refuse(`this signer node could not read the address's pay request: ${pr.why}`);
-      const stands = sendPlanStands({ plan: p, payoutMsat: w.payout.msat, gateways: g.gateways, height: g.height, metadata: pr.metadata, network: this.network });
+      if (!pr.ok) return refuse(`this signer node could not read the address's own invoice: ${pr.why}`);
+      const stands = sendPlanStands({ plan: p, payoutMsat: w.payout.msat, gateways: g.gateways, height: g.height, metadata: pr.metadata, network: this.network,
+        payee: pr.payee, payeeOf });
       if (!stands.ok) return refuse(`the send plan does not stand here: ${stands.why}`);
       rows.push({ entryId: w.entryId, roundId: roundIdBytes, attempt: Number(p.attempt || 0), address: w.address, invoice: p.invoice,
         paymentHash: p.paymentHash, invoiceMsat: stands.invoiceMsat, payoutMsat: w.payout.msat, owedMsat: w.payout.owedMsat,
         gatewayUrl: p.gatewayUrl, gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration), donation: !!w.donation });
     }
-    for (const r of rows) this.round.putSendPlan({ ...r, why: 'checked by this signer node' });
+    // THE KEPT PLAN GIVES WAY ONLY ONCE EVERY ROW OF THE NEW ONE STOOD HERE - never dropped for a plan that is then refused
+    // (and while it was checked - the LNURL asks wait - the settlement may have been signed: replaceable is asked again)
+    if (kept.length && !(this.replaceable(roundIdBytes) && this.round.dropPlannedSends(roundIdBytes) > 0))
+      return refuse('this signer node\'s kept send plan moved on while that one was checked, and it is not replaced');
+    for (const r of rows) this.round.putSendPlan({ ...r, why: from ? `checked by this signer node, signed by seat ${String(from).slice(0, 16)}` : 'checked by this signer node' });
+    // THE ROWS THAT STAND ARE THE ANSWER (a compare-and-set): another plan kept here while this one was checked is not this one, and
+    // this seat signs no acceptance of a plan it does not keep
+    const now = this.round.sendAttemptsOf(roundIdBytes).filter((x) => x.attempt === 0);
+    if (planKey(now) !== planKey(rows)) return refuse('this signer node keeps another send plan for that round, kept while that one was checked');
     return { ok: true, rows: this.round.sendPlansOf(roundIdBytes) };
   }
 
@@ -362,17 +387,26 @@ export class WinningsSend {
    */
   async offerResend(roundIdBytes, row) {
     const refused = [];
+    const body = JSON.stringify(plain(row));
+    // SIGNED BY THIS SEAT'S NODE KEY (kanban #1154): a peer takes a re-send only from a seat of the round
+    const headers = sendPlanAskHeaders(this.round, { kind: PLAN_ASK.RESEND, roundId: roundIdBytes, lateEntryId: this.round.lateEntryId || null, body });
     for (const base of this.peersFor(roundIdBytes)) {
       try {
-        const r = await this.fetcher(`${base}/resend-sends?round=${toHex(roundIdBytes)}${this.scopeParam}`, { method: 'POST', body: JSON.stringify(plain(row)) });
+        const r = await this.fetcher(`${base}/resend-sends?round=${toHex(roundIdBytes)}${this.scopeParam}`, { method: 'POST', body, headers });
         if (!r.ok) refused.push(`${base}: ${(await r.text()).trim()}`);
       } catch (e) { refused.push(`${base}: ${e.message}`); }
     }
     return refused;
   }
 
-  /** A PEER'S CHECK of a re-send: the previous attempt expired here, the gateway is the next live key here, the invoice stands. */
-  async checkResend(roundIdBytes, built, p) {
+  /**
+   * A PEER'S CHECK of a re-send: the previous attempt expired here, the gateway is the next live key here, the invoice stands and pays
+   * the node the address's own callback answers this seat with. `from`: the hex node key of the seat of the round that signed it
+   * (server.js checked it) - a re-send from no seat is not taken (kanban #1154: attempt N+1 went to whoever posted first).
+   */
+  async checkResend(roundIdBytes, built, p, { from = null } = {}) {
+    if (!from) return refuse('a re-send is taken only from a seat of the round, signed by its node key', 403);
+    if (!p || typeof p !== 'object') return refuse('a re-send is a send plan', 400);
     const prev = this.rowOf(roundIdBytes, String(p.entry));
     if (!prev) return refuse('this signer node holds no send for that entry');
     if (Number(p.attempt) !== prev.attempt + 1) {
@@ -386,15 +420,20 @@ export class WinningsSend {
     if (!gw) return refuse('this signer node sees no other live gateway');
     const fees = await (await this.portFor(roundIdBytes)).fees();
     const out = largestPayoutMsat(fees, prev.payoutMsat - lnv2FeeMsat(fees, prev.payoutMsat));
-    const pr = await this.payRequest(prev.address, sendableInvoiceMsat(out, gw.sendFeeDefault));
-    if (!pr.ok) return refuse(`this signer node could not read the address's pay request: ${pr.why}`);
+    const pr = await this.invoiceFor(prev.address, sendableInvoiceMsat(out, gw.sendFeeDefault));
+    if (!pr.ok) return refuse(`this signer node could not read the address's own invoice: ${pr.why}`);
     const others = g.gateways.filter((x) => x.url !== prev.gatewayUrl);
     const stands = sendPlanStands({ plan: p, payoutMsat: out, gateways: others.filter((x) => !this.round.sendAttemptsOf(roundIdBytes)
-      .some((r) => toHex(r.entryId) === String(p.entry) && r.gatewayUrl === x.url)), height: g.height, metadata: pr.metadata, network: this.network });
+      .some((r) => toHex(r.entryId) === String(p.entry) && r.gatewayUrl === x.url)), height: g.height, metadata: pr.metadata, network: this.network,
+      payee: pr.payee, payeeOf });
     if (!stands.ok) return refuse(`the re-send does not stand here: ${stands.why}`);
     this.round.putSendPlan({ entryId: prev.entryId, roundId: roundIdBytes, attempt: prev.attempt + 1, address: prev.address, invoice: p.invoice,
       paymentHash: p.paymentHash, invoiceMsat: stands.invoiceMsat, payoutMsat: out, owedMsat: prev.owedMsat, gatewayUrl: p.gatewayUrl,
-      gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration), donation: !!prev.donation, why: `re-send checked here: attempt ${prev.attempt} expired` });
+      gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration), donation: !!prev.donation, why: `re-send checked here: attempt ${prev.attempt} expired (signed by seat ${String(from).slice(0, 16)})` });
+    // THE ROW THAT STANDS IS THE ANSWER: another seat's attempt N+1 kept a moment before is not this one, and this one is not taken
+    const kept = this.rowOf(roundIdBytes, String(p.entry), prev.attempt + 1);
+    if (!kept || kept.paymentHash !== String(p.paymentHash).toLowerCase())
+      return refuse(`this signer node keeps another attempt ${prev.attempt + 1} for that send, and does not replace it`);
     return { ok: true };
   }
 
@@ -511,7 +550,7 @@ export class WinningsSend {
       if (!row.invoice) {
         const at = await this.contractOf(roundIdBytes, row, built);
         if (!at) { out.push({ entry: entryHex, attempt: row.attempt, ok: false, why: 'no held contract for this share' }); continue; }
-        if (!row.txid) this.round.markSend({ entryId: row.entryId, attempt: 0, state: 'HELD', txid: toHex(at.txid), outIdx: Number(at.outIdx),
+        if (!row.txid) this.round.markSend({ entryId: row.entryId, attempt: 0, state: SEND.HELD, txid: toHex(at.txid), outIdx: Number(at.outIdx),
           why: 'the recipient did not answer: its share is held under the committee key for a retry to the same address' });
         const re = await this.proposeResend(roundIdBytes, this.rowOf(roundIdBytes, entryHex, 0), built);
         out.push({ entry: entryHex, attempt: row.attempt, ok: false, held: true, resend: re.ok ? re.row.attempt : re.why });
@@ -521,16 +560,25 @@ export class WinningsSend {
         await this.offerResend(roundIdBytes, row);
         const s = await this.sign(roundIdBytes, row, built, 'resend');
         if (!s.ok) { out.push({ entry: entryHex, attempt: row.attempt, ...s }); continue; }
+        // FUNDING IS ON DISK BEFORE THE GUARDIANS ARE HANDED THE RE-SEND (kanban #1154)
+        if (this.round.markSend({ entryId: row.entryId, attempt: row.attempt, state: SEND.FUNDING,
+          why: `the re-send is signed and handed to the guardians: attempt ${row.attempt - 1} refunded into a contract through ${row.gatewayUrl}` }) === false) {
+          out.push({ entry: entryHex, attempt: row.attempt, ok: false, why: `this send is ${row.state} here, not one a re-send is funded from` }); continue;
+        }
         const tx = await this.resendTx(roundIdBytes, row, built, s.signature);
         if (!tx.accepted) { out.push({ entry: entryHex, attempt: row.attempt, ok: false, why: `the guardians refused the re-send: ${tx.error}` }); continue; }
-        this.round.markSend({ entryId: row.entryId, attempt: row.attempt, state: 'SENDING', txid: tx.txid, outIdx: 0,
+        this.round.markSend({ entryId: row.entryId, attempt: row.attempt, state: SEND.SENDING, txid: tx.txid, outIdx: 0,
           why: `re-sent: the expired attempt refunded to the committee and funded into a contract through ${row.gatewayUrl}` });
+        row.state = SEND.SENDING;
       }
       const at = await this.contractOf(roundIdBytes, row, built);
       if (!at) { out.push({ entry: entryHex, attempt: row.attempt, ok: false, why: 'no contract for this attempt' }); continue; }
-      if (row.attempt === 0 && !row.txid)
-        this.round.markSend({ entryId: row.entryId, attempt: 0, state: 'SENDING', txid: toHex(at.txid), outIdx: Number(at.outIdx),
-          why: 'the settlement is accepted; the committee signs the invoice and the gateway is asked' });
+      // SENDING IS ON DISK BEFORE THE GATEWAY IS ASKED (kanban #1154): a row that does not move there (a final one) is not sent
+      if (row.state !== SEND.SENDING && this.round.markSend({ entryId: row.entryId, attempt: row.attempt, state: SEND.SENDING,
+        txid: row.txid ? null : toHex(at.txid), outIdx: row.txid ? null : Number(at.outIdx),
+        why: 'the settlement is accepted; the committee signs the invoice and the gateway is asked' }) === false) {
+        out.push({ entry: entryHex, attempt: row.attempt, ok: false, why: `this send is ${row.state} here, and the gateway is not asked` }); continue;
+      }
       const a = await this.sign(roundIdBytes, row, built, 'auth');
       if (!a.ok) { out.push({ entry: entryHex, attempt: row.attempt, ...a }); continue; }
       const said = await (await this.portFor(roundIdBytes)).send({ gateway: row.gatewayUrl, outpoint: at, paymentHash: row.paymentHash, amountMsat: row.payoutMsat,
@@ -543,7 +591,7 @@ export class WinningsSend {
         out.push({ entry: entryHex, attempt: row.attempt, ok: true, state: PAID, preimage: toHex(said.preimage), gateway: row.gatewayUrl });
         continue;
       }
-      this.round.markSend({ entryId: row.entryId, attempt: row.attempt, state: 'SENDING', why: `the gateway did not pay: ${said.why || 'no preimage'}` });
+      this.round.markSend({ entryId: row.entryId, attempt: row.attempt, state: SEND.SENDING, why: `the gateway did not pay: ${said.why || 'no preimage'}` });
       const ex = await this.expired(roundIdBytes, row, built);
       if (!ex.expired) { out.push({ entry: entryHex, attempt: row.attempt, ok: false, why: said.why, blocksLeft: ex.blocksLeft }); continue; }
       const re = await this.proposeResend(roundIdBytes, row, built);
