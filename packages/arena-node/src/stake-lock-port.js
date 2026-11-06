@@ -307,15 +307,29 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
       const j = await run(bin, ['--mode', 'balance', '--data-dir', dataDir], timeoutMs);
       return BigInt(j.msat);
     },
-    /** E-cash reissued into the seat's client here: { state: 'Success' | 'Rejected' | 'AlreadyReceived', msat } (kanban #614). */
+    /**
+     * E-cash reissued into the seat's client here: { state: 'Success' | 'Rejected' | 'AlreadyReceived', msat } (kanban #614). An
+     * AlreadyReceived from a tool of kanban #1160 also says how the earlier receive of that string ended (`earlier`) and what it carried
+     * (`carriedMsat`); an older tool says neither.
+     */
     async ecashReceive(ecash) {
       const j = await run(bin, ['--mode', 'ecash-receive', '--data-dir', dataDir, '--ecash', String(ecash)], timeoutMs);
-      return { state: String(j.state), msat: BigInt(j.msat || 0) };
+      return { state: String(j.state), msat: BigInt(j.msat || 0), earlier: j.earlier === undefined ? null : String(j.earlier),
+        carriedMsat: j.carried_msat === undefined || j.carried_msat === null ? null : BigInt(j.carried_msat) };
     },
-    /** Exactly `amountMsat` of the seat's notes here, as e-cash another wallet of this federation receives (kanban #614). */
-    async ecashSend(amountMsat) {
-      const j = await run(bin, ['--mode', 'ecash-send', '--data-dir', dataDir, '--amount-msat', String(amountMsat)], timeoutMs);
-      return { ecash: String(j.ecash), msat: BigInt(j.msat) };
+    /**
+     * Exactly `amountMsat` of the seat's notes here, as e-cash another wallet of this federation receives (kanban #614). With `key`
+     * (kanban #1160) the send is named in the client's operation log, and a send of that key made before is answered again, not repeated.
+     */
+    async ecashSend(amountMsat, { key = null } = {}) {
+      const j = await run(bin, ['--mode', 'ecash-send', '--data-dir', dataDir, '--amount-msat', String(amountMsat), ...(key ? ['--key', String(key)] : [])], timeoutMs);
+      return { ecash: String(j.ecash), msat: BigInt(j.msat), again: j.again === true };
+    },
+    /** THE KEYED SEND READ BACK (kanban #1160): { found, ecash, msat } - found false: this client never spent for `key`. A tool from before #1160 throws. */
+    async ecashSent(key) {
+      const j = await run(bin, ['--mode', 'ecash-sent', '--data-dir', dataDir, '--key', String(key)], timeoutMs);
+      if (j.mode !== 'ecash-sent' || typeof j.found !== 'boolean') throw new Error(`this stake-lock tool cannot read a keyed send back: ${j.error || JSON.stringify(j).slice(0, 120)}`);
+      return j.found ? { found: true, ecash: String(j.ecash), msat: BigInt(j.msat) } : { found: false };
     },
     async send({ gateway, outpoint = null, paymentHash, amountMsat, expiration, claimPk, refundPk, invoice, auth = null }) {
       const args = ['--mode', 'send', '--data-dir', dataDir, '--hash', String(paymentHash), '--amount-msat', String(amountMsat),
