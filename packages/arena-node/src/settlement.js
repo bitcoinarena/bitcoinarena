@@ -48,6 +48,7 @@ import { resultFinality } from './finality.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
 import { sendPlanToJson, planKey } from './winnings-send.js';
 import { askerOrder, eligibleAsker } from './payout.js';
+import { LOCK_FATE, lockFateStep, lockFateOf, markLockFate } from './forfeit.js';
 import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate } from './plan-taken.js';
 import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } from './send-plan-ask.js';
 // the payouts of an accepted settlement kept as rows (GET /donations, GET /reserves): a walk-away's donation keys and a market's reserve
@@ -1111,6 +1112,24 @@ export class LockSettlement {
     return { ok: true, commitment: pair.commitment };
   }
 
+  /**
+   * CLAIMING ON DISK BEFORE THIS SEAT'S WORD ON A SETTLEMENT LEAVES IT (kanban #1184): every lock the settlement claims is checked first - one this
+   * seat forfeited back to its player (RETURNING) refuses the share or take by name - then each is written CLAIMING (forfeit.js LOCK_FATE), so
+   * a later ENTRY_VOID or qualifier rule at this seat signs no forfeit of the same lock. { ok } or a refusal.
+   */
+  #claiming(roundIdBytes, m, step) {
+    const outpoints = (m.claims || []).map((c) => `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`);
+    for (const o of outpoints) {
+      const st = lockFateStep(lockFateOf(this.round, roundIdBytes, o), LOCK_FATE.CLAIMING);
+      if (!st.ok) return refuse(`lock ${o.slice(0, 16)}: ${st.why}`);
+    }
+    for (const o of outpoints) {
+      const w = markLockFate(this.round, { roundId: roundIdBytes, outpoint: o, state: LOCK_FATE.CLAIMING, txid: m.txid, why: step });
+      if (!w.ok) return refuse(`lock ${o.slice(0, 16)}: ${w.why}`);
+    }
+    return { ok: true };
+  }
+
   /** ROUND TWO: this signer node's signature share over the txid it rebuilt, for ONE commitment list. */
   async share(roundIdBytes, commitments, { entry = null, federation = null } = {}) {
     const m = federation ? await this.fedMessage(roundIdBytes, federation) : entry ? await this.lateMessage(roundIdBytes, entry) : await this.message(roundIdBytes);
@@ -1124,6 +1143,7 @@ export class LockSettlement {
     const key = listKey(commitments);
     if (pair.list && pair.list !== key) return refuse('this signer node signed that settlement over another list, and keeps no second pair');
     if (pair.share === null) {
+      { const c = this.#claiming(roundIdBytes, m, 'a settlement share given'); if (!c.ok) return c; }
       pair.share = signShare340({ id: pair.commitment.id, share: m.signerNode.share, groupPublicKey: m.claimPk,
         nonces: { hiding: pair.hiding, binding: pair.binding }, message: m.message, commitments, curve: this.curve });
       pair.list = key;
@@ -1136,6 +1156,7 @@ export class LockSettlement {
     const m = federation ? await this.fedMessage(roundIdBytes, federation) : entry ? await this.lateMessage(roundIdBytes, entry) : await this.message(roundIdBytes);
     if (!m.ok) return m;
     if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return refuse('that settlement signature does not verify under the round\'s claim key');
+    { const c = this.#claiming(roundIdBytes, m, 'a settlement handed and kept'); if (!c.ok) return c; }
     if (federation) {
       const held = this.round.fedLockSettlement(roundIdBytes, federation);
       if (!held || (held.state === SUBMITTING && held.txid !== m.txid))
