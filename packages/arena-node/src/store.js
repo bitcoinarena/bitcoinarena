@@ -1039,6 +1039,18 @@ export function openStore(path = ':memory:') {
       made_ms      INTEGER NOT NULL
     );
 
+    -- WHAT THIS SEAT COMMITTED A LOCK TO (kanban #1184): CLAIMING once it acked, shared, was handed or kept a settlement that claims the
+    -- outpoint; RETURNING once it gave a share of, took or kept a forfeit of it. Written once (compare-and-set: INSERT OR IGNORE, then read
+    -- back), before the ack, share or forfeit leaves this seat; a lock is never both - two valid spends of one lock, the faster wins.
+    CREATE TABLE IF NOT EXISTS lock_fates (
+      outpoint  TEXT PRIMARY KEY,
+      round_id  BLOB NOT NULL,
+      state     TEXT NOT NULL,
+      txid      TEXT,
+      why       TEXT NOT NULL,
+      made_ms   INTEGER NOT NULL
+    );
+
     -- AN ENTRY THIS SIGNER NODE HOLDS FORFEIT FOR A LATE START (§15, §13C): its first
     -- mark, signed by the player, names a tick after join_tick + the round's
     -- start deadline - the player's own act, not an outage and not a refund.

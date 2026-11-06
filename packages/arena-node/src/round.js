@@ -2796,6 +2796,33 @@ export class Round {
       .run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(message), Buffer.from(signature), Buffer.from(claimPk), this.now());
   }
 
+  /** What this seat committed a lock to (kanban #1184): { state, roundId, txid, why } or null. */
+  lockFate(outpoint) {
+    const r = this.db.prepare('SELECT round_id, state, txid, why FROM lock_fates WHERE outpoint = ?').get(String(outpoint));
+    return r ? { state: r.state, roundId: new Uint8Array(r.round_id), txid: r.txid, why: r.why } : null;
+  }
+
+  /** A lock's fate, written once (kanban #1184): true if this row is now the one held, i.e. it was written or it was already this state. */
+  putLockFate({ outpoint, roundId, state, txid = null, why }) {
+    this.db.prepare('INSERT OR IGNORE INTO lock_fates (outpoint, round_id, state, txid, why, made_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(String(outpoint), Buffer.from(roundId), String(state), txid === null ? null : String(txid), String(why), this.now());
+    const held = this.lockFate(outpoint);
+    return !!held && held.state === state;
+  }
+
+  /**
+   * EVERY OUTPOINT A SETTLEMENT OF THE ROUND CLAIMS, AS THIS SEAT KEPT IT (kanban #1184): the round's moves, every txid it signed or was handed
+   * (lock_settlement_txids). A Set of "txid:idx".
+   */
+  claimedOutpointsOf(roundIdBytes) {
+    const rid = Buffer.from(roundIdBytes);
+    const out = new Set();
+    const add = (claims) => { try { for (const c of JSON.parse(claims)) out.add(String(c)); } catch { /* a row with no claims list claims nothing */ } };
+    for (const r of this.db.prepare('SELECT claims FROM lock_settlement_moves WHERE round_id = ?').all(rid)) add(r.claims);
+    for (const r of this.db.prepare('SELECT claims FROM lock_settlement_txids WHERE round_id = ?').all(rid)) add(r.claims);
+    return out;
+  }
+
   forfeit(entryIdBytes) {
     const r = this.db.prepare('SELECT message, signature, claim_pk, made_ms FROM forfeits WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
     return r ? { message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claimPk: new Uint8Array(r.claim_pk), madeMs: Number(r.made_ms) } : null;
