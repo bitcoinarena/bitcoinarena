@@ -7,9 +7,9 @@
 //      orders of that batch did not trade - an outsider doing this each interval stops the book, every order goes back at close.
 //   B. ANY ROUND, ANY k: the same ask for a round id no seat holds, and for batch 5 (its cutoff in 1970). Before the fix each wrote a
 //      decline row - the table grew without bound.
-//   C. A ROUND SEAT WITH THE LEADER'S SET asks before the signing window is over: refused, so it cannot race the leader's set either.
-//   D. THE REAL VOID STILL WORKS: a leader's set signed by two seats only; once its signing window is over the next leader's lead()
-//      asks every seat (its own signed ask), five decline, the batch is VOID everywhere, and its order trades in the next batch.
+//   C. A ROUND SEAT WITH THE LEADER'S SET asks before the next batch's cutoff (the set still on its way): refused, so it cannot race it.
+//   D. THE REAL VOID STILL WORKS: a leader's set signed by two seats only; the next leader's lead(), at the next cutoff, asks every seat
+//      (its own signed ask), four decline, the batch is VOID everywhere, and its order trades in that next batch.
 // The facts are printed first (MEASURED), then checked - so the same file run on the old source prints what it did.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -100,17 +100,11 @@ test('kanban #1167: a seat declines a batch only on a round seat\'s signed ask, 
     })() : null;
     facts.C = { k: kD, earlyAsk: [...new Set(early)], forged, statesAfter: states(kD) };
 
-    // D. THE NEXT LEADER, at the next cutoff (inside the window): pending; once the window is over: VOID, and R, S trade in the next batch
+    // D. THE NEXT LEADER, at the next cutoff: VOID at once, and R, S trade in that very batch
     const next = leaderOf(kD + 1);
     await untilCutoff(kD + 1);
-    const inWindow = await next.orderBook.lead(w.rid, kD + 1);
-    const lag = next.orderBook.maxLagMs;
-    // the first batch whose cutoff is more than the signing window after kD's
-    const kAfter = kD + Math.floor(lag / B) + 1;
-    await untilCutoff(kAfter);
-    const after = await leaderOf(kAfter).orderBook.lead(w.rid, kAfter);
-    facts.D = { kD, lagMs: lag, leaderInWindow: inWindow.ok ? { decided: inWindow.decided } : inWindow.why.replace(/\d+ ms/g, 'N ms').replace(/batch \d+/g, 'batch K').slice(0, 120),
-      kAfter, decided: (after.decided || []).map((d) => ({ k: d.k, state: d.state, declined: d.declined })), certified: !!after.certified,
+    const after = await next.orderBook.lead(w.rid, kD + 1);
+    facts.D = { kD, kAfter: kD + 1, why: after.why || null, decided: (after.decided || []).map((d) => ({ k: d.k, state: d.state, declined: d.declined })), certified: !!after.certified,
       tradedR: (after.orderIds || []).includes(toHex(R.eid)), statesKD: states(kD) };
     console.log('  MEASURED #1167:', JSON.stringify(facts, null, 1));
 
@@ -123,12 +117,11 @@ test('kanban #1167: a seat declines a batch only on a round seat\'s signed ask, 
     assert.equal(facts.B.ghostRows, 0, 'a void ask for a round no seat holds wrote decline rows');
     assert.ok(facts.B.ghostRound.every((x) => /^404 /.test(x)), String(facts.B.ghostRound));
     assert.deepEqual(facts.B.batch5States, ['ABSENT']);
-    // C: inside the signing window a round seat's ask declines nothing; another set's ids are refused
-    assert.ok(facts.C.earlyAsk.every((x) => /^409 .*declines it only then/.test(x)), String(facts.C.earlyAsk));
+    // C: before the next cutoff a round seat's ask declines nothing; another set's ids are refused
+    assert.ok(facts.C.earlyAsk.every((x) => /^409 .*declines it only from the next cutoff/.test(x)), String(facts.C.earlyAsk));
     assert.match(String(facts.C.forged), /^400 those ids are not the set/);
     assert.deepEqual(facts.C.statesAfter.sort(), ['ABSENT', 'SIGNED']);
-    // D: void once the window is over, everywhere, and its orders trade after
-    assert.match(String(facts.D.leaderInWindow), /still undecided/);
+    // D: void at the next cutoff, everywhere, and its orders trade in that batch
     assert.deepEqual(facts.D.decided.map((d) => [Number(d.k), d.state]), [[kD, 'VOID']]);
     assert.ok(facts.D.decided[0].declined >= w.nodes.length - w.needed + 1);
     assert.deepEqual(facts.D.statesKD, ['VOID']);
