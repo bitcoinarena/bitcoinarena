@@ -48,7 +48,8 @@ function fedPort(fid, log) {
       if (!signature) return { message: toHex(msg), txid: toHex(msg) };
       const accepted = schnorr.verify(signature, msg, claimPk.subarray(1));
       log.push({ fid, claims: claims.map((c) => Number(c.outpoint.outIdx)), payouts: payouts.map((p) => [toHex(p.payoutPk).slice(0, 6), p.msat]), nonce: toHex(nonce), accepted });
-      return accepted ? { accepted: true } : { accepted: false, error: 'bad signature' };
+      // AS THE TOOL ANSWERS (kanban #1171, #1172): an accepted submit's payouts stored and its claimed locks gone
+      return accepted ? { accepted: true, payoutsStored: payouts.map(() => ({ stored: true })), locksAfter: claims.map(() => null) } : { accepted: false, error: 'bad signature' };
     },
   };
 }
