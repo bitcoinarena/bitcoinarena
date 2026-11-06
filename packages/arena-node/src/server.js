@@ -167,7 +167,7 @@ import { startsByCensusKey, isAbandonedProof } from '../../arena-protocol/src/ab
 import { slashedGuardianPays } from '../../arena-protocol/src/theft-slash.js';
 import { createHalts, wsSessionCount } from './halts.js';
 import { reserveMembersOf } from './reserve-members.js';
-import { stageDecision } from './update-stage.js';
+import { stageDecision, signReleaseAnswer, createStageBook } from './update-stage.js';
 import { createSettleBackoff, REFUSED_FOR_GOOD } from './settle-backoff.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
@@ -4802,6 +4802,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE RELEASE THIS NODE RUNS (kanban #674): the release's VERSION and COMMIT files (tools/release/build-release.sh writes them at its
   // root), read once; a node run from a checkout has neither
   let releaseHereKept = null;
+  let stageBook = null;   // this seat's clock per fellow guardian for a staged update (update-stage.js, kanban #1169)
   const SEAT_STARTED_AT_MS = Date.now();   // since when this seat runs the release it runs (GET /release, kanban #1093 part 3)
   const releaseHere = () => {
     if (releaseHereKept) return releaseHereKept;
@@ -7051,8 +7052,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try { await fetch(`http://127.0.0.1:${guardian.apiPort}/`, { signal: AbortSignal.timeout(3000) }); } catch { healthy = false; }
         }
         const r = releaseHere();
+        // SIGNED WITH THE NODE KEY OVER THE ASKER'S NONCE (kanban #1169): a fellow's seat counts this answer only as this node's own word to its ask
+        const nonce = String(url.searchParams.get('nonce') || '').toLowerCase();
+        const body = { node: toHex(round.pubkey), version: r.version, commit: r.commit, startedAtMs: SEAT_STARTED_AT_MS, guardian: !!guardian, healthy };
+        const said = /^[0-9a-f]{32,64}$/.test(nonce) ? signReleaseAnswer({ ...body, nonce, atMs: Date.now() }, (d) => schnorr.sign(d, round.identity.secret)) : body;
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), version: r.version, commit: r.commit, startedAtMs: SEAT_STARTED_AT_MS, guardian: !!guardian, healthy }));
+        return res.end(JSON.stringify(said));
       }
       // MAY THIS GUARDIAN TAKE RELEASE ?version= NOW (kanban #1093 part 3): its updater asks before it fetches. Its federation's guardians are the
       // ones the census names (reserveGuardians); each fellow's GET /release says what it runs; update-stage.js decides: at most f on trial.
@@ -7064,10 +7069,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!own) return answer({ go: true, why: 'this node guards no federation: nothing to stage' });
         const fed = reserveGuardians()[own.federation];
         if (!fed || !fed.members || !fed.members.length) return answer({ go: false, why: 'this guardian\'s federation names no guardians in the census yet: wait' });
-        const reads = await Promise.all((fed.peers || []).map((u) => fetch(`${u}/release`, { signal: AbortSignal.timeout(8000) }).then((r) => (r.ok ? r.json() : null), () => null)));
+        // A SILENT OR UNSIGNED FELLOW HOLDS ITS PLACE ON TRIAL, AND THE HEALTHY HOUR IS THIS SEAT'S OWN (kanban #1169): each fellow answers signed over
+        // this ask's nonce; this seat keeps "seen healthy on V since t" per fellow (update_stage_seen), written before it answers go
+        const nonce = randomBytes(16).toString('hex');
+        const reads = await Promise.all((fed.peers || []).map((u) => fetch(`${u}/release?nonce=${nonce}`, { signal: AbortSignal.timeout(8000) }).then((r) => (r.ok ? r.json() : null), () => null)));
         const answers = new Map(fed.members.map((k) => [toHex(k), null]));
         for (const a of reads) if (a && typeof a.node === 'string' && answers.has(a.node.toLowerCase())) answers.set(a.node.toLowerCase(), a);
-        return answer({ federation: own.federation, members: fed.members.length, answered: reads.filter(Boolean).length, ...stageDecision({ version, self: round.pubkey, members: fed.members, answers }) });
+        if (!stageBook) stageBook = createStageBook(round.db);
+        const d = stageDecision({ version, self: round.pubkey, members: fed.members, answers, nonce, verify: schnorrVerify, seen: stageBook.read(fed.members.map(toHex)) });
+        stageBook.write(d.rows);
+        const { fellows, rows, ...said } = d;
+        return answer({ federation: own.federation, members: fed.members.length, answered: reads.filter(Boolean).length, fellows: Object.fromEntries(fellows), ...said });
       }
       if (req.method === 'GET' && url.pathname === '/guardian') {
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
