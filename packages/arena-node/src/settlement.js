@@ -758,29 +758,18 @@ export class LockSettlement {
    */
   async settleLate(roundIdBytes, entryIdBytes) {
     if (this.#attestedOf(roundIdBytes)) return { ok: false, state: 'HELD', why: 'an attested round has no late entry: its picks are all in its one settlement' };
-    const kept = this.round.lateLockSettlement(roundIdBytes, entryIdBytes);
+    const where = { entry: entryIdBytes };
+    let kept = this.round.lateLockSettlement(roundIdBytes, entryIdBytes);
     if (kept && kept.state === ACCEPTED) return { ok: true, kept: true, ...kept, sent: await this.sendLate(roundIdBytes, entryIdBytes) };
-    const t = await this.turn(roundIdBytes);
-    if (!t.mine) {
-      if (kept && kept.state === SUBMITTING) {
-        const m = await this.lateMessage(roundIdBytes, entryIdBytes);
-        if (m.ok && m.txid === kept.txid && this.port && typeof this.port.status === 'function' && (await this.latePort(roundIdBytes, entryIdBytes))) {
-          const lp = await this.latePort(roundIdBytes, entryIdBytes);
-          const held = async (o) => !!(await lp.status(o)).stored;
-          let gone = 0;
-          for (const c of m.claims) if (!(await held(c.outpoint))) gone++;
-          let paid = 0;
-          for (let i = 0; i < m.plan.payouts.length; i++) if (await held({ txid: fromHex(kept.txid), outIdx: BigInt(i) })) paid++;
-          if (gone === m.claims.length && paid > 0) {
-            const why = `found in the federation: ${gone} claimed lock(s) gone, ${paid} payout contract(s) stored`;
-            this.round.putLateLockSettlement({ roundId: roundIdBytes, entryId: entryIdBytes, txid: kept.txid, message: kept.message,
-              signature: kept.signature, state: ACCEPTED, why });
-            return { ok: true, state: ACCEPTED, why, txid: kept.txid };
-          }
-        }
-      }
-      return refuse(`not this signer node's turn to combine: ${t.why}`, 409, t.code || REFUSAL.NOT_MY_TURN, Number.isInteger(t.takeoverAt) ? { takeoverAt: t.takeoverAt } : {});
+    // A ROW THIS SEAT WAS INSIDE, ASKED OF THE LATE LOSER'S FEDERATION FIRST (kanban #1172), by every seat: every txid it signed or was handed
+    if (kept && (kept.state === SUBMITTING || kept.state === REFUSED)) {
+      const c = await this.checkScoped(roundIdBytes, where);
+      if (c.state === ACCEPTED) return { ok: true, state: ACCEPTED, why: c.why, txid: c.txid, recovered: true, sent: await this.sendLate(roundIdBytes, entryIdBytes) };
+      if (kept.state === SUBMITTING && c.verdict === 'mixed') return refuse(`neither in nor out - not settled here, not submitted again: ${c.why}`, 409);
+      kept = this.round.lateLockSettlement(roundIdBytes, entryIdBytes);
     }
+    const t = await this.turn(roundIdBytes);
+    if (!t.mine) return refuse(`not this signer node's turn to combine: ${t.why}`, 409, t.code || REFUSAL.NOT_MY_TURN, Number.isInteger(t.takeoverAt) ? { takeoverAt: t.takeoverAt } : {});
     // THE LATE SEND PLANS FIRST, as for the round's own settlement: proposed here, checked by every peer, or nothing.
     if (this.winnings && !(kept && kept.state === SUBMITTING)) {
       const planned = await this.planLateSends(roundIdBytes, entryIdBytes);
@@ -802,19 +791,23 @@ export class LockSettlement {
       ({ signature } = combined);
       await this.#handSignature(roundIdBytes, q, signature, m);
     }
-    this.round.putLateLockSettlement({ roundId: roundIdBytes, entryId: entryIdBytes, txid: m.txid, message: m.message, signature, state: SUBMITTING,
-      why: 'about to submit; if this signer node dies here, ask the federation for the claimed lock' });
+    // THE INTENT ON DISK FIRST, WITH WHAT IT MOVES (kanban #1172), through the row's one transition function; submitted in the late loser's federation
+    this.keepScopedMoves(roundIdBytes, where, m);
+    if (!this.#putScoped(roundIdBytes, where, { txid: m.txid, message: m.message, signature, state: SUBMITTING,
+      why: 'about to submit; if this signer node dies here, ask the federation for the claimed lock' })) return refuse('this late settlement\'s row is final here: nothing is submitted again', 409);
     const latePort = await this.latePort(roundIdBytes, entryIdBytes);
     if (!latePort) return refuse('this signer node reaches no federation of that late loser\'s lock');
     const sent = await latePort.settle({ claimPk: m.claimPk, claims: m.claims, payouts: m.plan.payouts, nonce: m.plan.nonce, signature });
-    const state = sent.accepted ? ACCEPTED : REFUSED;
     const why = sent.accepted
       ? `claimed the late loser's lock, ${m.plan.poolMsat} msat; paid ${m.plan.payouts.filter((p) => p.kind !== 'signer node').length} winner(s) ${m.plan.paidMsat} msat`
         + `${m.plan.feeClaims && m.plan.feeClaims.length ? `; its fee lock ${m.plan.feePoolMsat} msat to ${m.plan.signerNodePayouts.length} signer node(s)` : ''}`
       : `the guardians refused it: ${sent.error}`;
-    this.round.putLateLockSettlement({ roundId: roundIdBytes, entryId: entryIdBytes, txid: m.txid, message: m.message, signature, state, why });
-    const winnings = sent.accepted ? await this.sendLate(roundIdBytes, entryIdBytes) : null;
-    return { ok: sent.accepted, state, why, txid: m.txid, signature, plan: m.plan, answer: sent, winnings };
+    // ACCEPTED ONLY LANDED, REFUSED ONLY AFTER EVERY TXID WAS ASKED (kanban #1172), as the round's row
+    const state = await this.recordScopedSubmit(roundIdBytes, where, m, signature, sent, why);
+    if (!sent.accepted) this.built.delete(`${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`);
+    const row = this.round.lateLockSettlement(roundIdBytes, entryIdBytes);
+    const winnings = state === ACCEPTED ? await this.sendLate(roundIdBytes, entryIdBytes) : null;
+    return { ok: state === ACCEPTED, state, why: row ? row.why : why, txid: row ? row.txid : m.txid, signature, plan: m.plan, answer: sent, winnings };
   }
 
   /** THE LATE SETTLEMENT'S OWN WINNINGS SENDER (slice C3b-2a): the round's sender, over that late (round, entry)'s rows. */
@@ -1234,18 +1227,16 @@ export class LockSettlement {
     if (!m.ok) return m;
     if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return refuse('that settlement signature does not verify under the round\'s claim key');
     { const c = this.#claiming(roundIdBytes, m, 'a settlement handed and kept'); if (!c.ok) return c; }
-    if (federation) {
-      const held = this.round.fedLockSettlement(roundIdBytes, federation);
-      if (!held || (held.state === SUBMITTING && held.txid !== m.txid))
-        this.round.putFedLockSettlement({ roundId: roundIdBytes, federation, txid: m.txid, message: m.message, signature, state: SUBMITTING,
+    if (federation || entry) {
+      // THE SAME RULE AS THE ROUND'S ROW (kanban #1172): a REFUSED row takes a handed signature (the asker signed again); ACCEPTED never moves; the
+      // txid kept with what it moves, and the federation asked soon
+      const where = federation ? { federation } : { entry };
+      const held = this.#scopeRow(roundIdBytes, where);
+      this.keepScopedMoves(roundIdBytes, where, m);
+      if (!held || held.state === REFUSED || (held.state === SUBMITTING && held.txid !== m.txid))
+        this.#putScoped(roundIdBytes, where, { txid: m.txid, message: m.message, signature, state: SUBMITTING,
           why: 'signed by the signer nodes; submitted by the signer node that combined it' });
-      return { ok: true };
-    }
-    if (entry) {
-      const held = this.round.lateLockSettlement(roundIdBytes, entry);
-      if (!held || (held.state === SUBMITTING && held.txid !== m.txid))
-        this.round.putLateLockSettlement({ roundId: roundIdBytes, entryId: entry, txid: m.txid, message: m.message, signature, state: SUBMITTING,
-          why: 'signed by the signer nodes; submitted by the signer node that combined it' });
+      if (federation) this.confirmSoon(roundIdBytes);
       return { ok: true };
     }
     // A SIGNATURE OVER THE BYTES THIS SIGNER NODE REBUILDS NOW replaces a SUBMITTING row of other bytes: the proposer
@@ -1395,6 +1386,134 @@ export class LockSettlement {
     return REFUSED;
   }
 
+  // ---- A FEDERATION'S AND A LATE ENTRY'S SETTLEMENT ROWS (kanban #1172): the round's row rule (#1171), per scope ----
+
+  /** The settlement row of a scope: the round's own, a late entry's, a federation's. */
+  #scopeRow(roundIdBytes, { entry = null, federation = null } = {}) {
+    if (federation) return this.round.fedLockSettlement ? this.round.fedLockSettlement(roundIdBytes, federation) : null;
+    if (entry) return this.round.lateLockSettlement ? this.round.lateLockSettlement(roundIdBytes, entry) : null;
+    return this.round.lockSettlement ? this.round.lockSettlement(roundIdBytes) : null;
+  }
+
+  /** A federation's or a late entry's row: its store key, its reads and writes, and the federation port its transaction is in. */
+  #rowScope(roundIdBytes, { entry = null, federation = null }) {
+    if (federation) {
+      const fid = String(federation).toLowerCase();
+      return { key: `fed:${fid}`, tag: `fed ${fid.slice(0, 8)}`, get: () => this.round.fedLockSettlement(roundIdBytes, fid),
+        put: (x) => this.round.putFedLockSettlement({ roundId: roundIdBytes, federation: fid, ...x }), port: () => this.portForFederation(fid) };
+    }
+    return { key: `late:${toHex(entry)}`, tag: `late ${toHex(entry).slice(0, 8)}`, get: () => this.round.lateLockSettlement(roundIdBytes, entry),
+      put: (x) => this.round.putLateLockSettlement({ roundId: roundIdBytes, entryId: entry, ...x }), port: () => this.latePort(roundIdBytes, entry) };
+  }
+
+  /** THE ONE WRITER OF A FEDERATION'S OR A LATE ENTRY'S ROW (kanban #1172): through settlementRowStep, as the round's own. False when the step is refused. */
+  #putScoped(roundIdBytes, where, next) {
+    const sc = this.#rowScope(roundIdBytes, where);
+    const held = sc.get();
+    const st = settlementRowStep(held, next);
+    if (!st.ok) { console.log(`#1172 [settle] ${toHex(roundIdBytes).slice(0, 16)} ${sc.tag} row not moved: ${st.why} (${held ? `${held.state} ${String(held.txid).slice(0, 12)}` : 'none'} -> ${next.state} ${String(next.txid).slice(0, 12)})`); return false; }
+    sc.put({ txid: next.txid, message: next.message, signature: next.signature, state: next.state, why: next.why });
+    if (this.round.putScopedSettlementTxid) this.round.putScopedSettlementTxid({ roundId: roundIdBytes, scope: sc.key, txid: next.txid, message: next.message, signature: next.signature });
+    return true;
+  }
+
+  /** What a federation's or a late entry's transaction moves, kept with its txid (kanban #1172) - before it is submitted, and when it is handed. */
+  keepScopedMoves(roundIdBytes, where, m) {
+    if (!this.round.putScopedSettlementTxid) return;
+    const claims = (m.claims || []).map((c) => `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`);
+    const payouts = (m.settlement ? m.settlement.payouts : m.plan.payouts).length;
+    this.round.putScopedSettlementTxid({ roundId: roundIdBytes, scope: this.#rowScope(roundIdBytes, where).key, txid: m.txid, message: m.message, claims, payouts });
+  }
+
+  /** DID THIS TXID OF THE SCOPE GO IN (kanban #1172), asked of the scope's own federation, as federationSaw asks for the round's: { verdict, why }. */
+  async #scopedSaw(roundIdBytes, where, txid) {
+    const sc = this.#rowScope(roundIdBytes, where);
+    const moves = (this.round.scopedSettlementTxidsOf ? this.round.scopedSettlementTxidsOf(roundIdBytes, sc.key) : []).find((x) => x.txid === txid);
+    if (!moves) return { verdict: 'unknown', why: 'this signer node kept no record of what that transaction moves' };
+    const port = await sc.port();
+    if (!port || typeof port.status !== 'function') return { verdict: 'unknown', why: `this signer node reaches no federation of ${sc.tag}` };
+    const held = async (o) => !!(await port.status(o)).stored;
+    let locksGone = 0, paid = 0;
+    for (const c of moves.claims) if (!(await held(outpointOf(c)))) locksGone++;
+    for (let i = 0; i < moves.payouts; i++) if (await held({ txid: fromHex(txid), outIdx: BigInt(i) })) paid++;
+    const seen = `${sc.tag}: ${paid} of ${moves.payouts} payout contract(s) of ${txid.slice(0, 12)} stored, ${locksGone} of ${moves.claims.length} claimed lock(s) gone`;
+    if (paid > 0 && locksGone === moves.claims.length) return { verdict: 'in', why: seen };
+    if (paid === 0 && locksGone === 0) return { verdict: 'out', why: seen };
+    return { verdict: 'mixed', why: seen };
+  }
+
+  /** Every txid of the scope this seat signed or was handed, asked (kanban #1172): 'in' (the first in decides), 'mixed', 'out', or 'unknown' (none kept). */
+  async #scopedHistoryVerdict(roundIdBytes, where) {
+    const sc = this.#rowScope(roundIdBytes, where);
+    const rows = this.round.scopedSettlementTxidsOf ? this.round.scopedSettlementTxidsOf(roundIdBytes, sc.key) : [];
+    let mixed = null;
+    for (const h of rows) {
+      let saw;
+      try { saw = await this.#scopedSaw(roundIdBytes, where, h.txid); } catch (e) { saw = { verdict: 'unknown', why: e.message }; }
+      if (saw.verdict === 'in') return { verdict: 'in', txid: h.txid, message: h.message, signature: h.signature, why: saw.why };
+      if (saw.verdict !== 'out' && !mixed) mixed = { verdict: 'mixed', txid: h.txid, why: saw.why };
+    }
+    return mixed || { verdict: rows.length ? 'out' : 'unknown', why: `${rows.length} txid(s) of ${sc.tag} this seat signed or was handed, none in` };
+  }
+
+  /**
+   * A FEDERATION'S OR A LATE ENTRY'S ROW, ASKED OF ITS FEDERATION (kanban #1172): a row not ACCEPTED whose txid - or any other this seat signed or was
+   * handed - is in becomes ACCEPTED on it. Answers { state, verdict, txid, why }.
+   */
+  async checkScoped(roundIdBytes, where) {
+    const sc = this.#rowScope(roundIdBytes, where);
+    const held = sc.get();
+    if (!held || held.state === ACCEPTED) return { state: held ? held.state : null, verdict: held ? 'in' : 'unknown', txid: held ? held.txid : null, why: held ? held.why : 'no row' };
+    // A ROW KEPT BEFORE ITS TXID HISTORY (written by the code before this one): what it moves is read from a rebuild of the same txid, as the late
+    // row's check did before
+    if (this.round.scopedSettlementTxidsOf && !this.round.scopedSettlementTxidsOf(roundIdBytes, sc.key).length) {
+      try {
+        const m = where.federation ? await this.fedMessage(roundIdBytes, where.federation) : await this.lateMessage(roundIdBytes, where.entry);
+        if (m && m.ok && m.txid === held.txid) this.keepScopedMoves(roundIdBytes, where, m);
+      } catch { /* asked again next pass */ }
+    }
+    const h = await this.#scopedHistoryVerdict(roundIdBytes, where);
+    if (h.verdict === 'in') {
+      const why = `found in the federation (${held.state} here before): ${h.why}`;
+      this.#putScoped(roundIdBytes, where, { txid: h.txid, message: h.message, signature: h.signature.length ? h.signature : held.signature, state: ACCEPTED, verified: true, why });
+      return { state: ACCEPTED, verdict: 'in', txid: h.txid, why };
+    }
+    return { state: held.state, verdict: h.verdict, txid: held.txid, why: h.why };
+  }
+
+  /**
+   * WHAT A FEDERATION'S OR A LATE ENTRY'S SUBMIT DECIDES (kanban #1172), as recordSubmit for the round's: ACCEPTED only landed (its payouts stored and its
+   * claimed locks gone), a pre-validated submit stays SUBMITTING, REFUSED only after every txid of the scope was asked. Answers the state written.
+   */
+  async recordScopedSubmit(roundIdBytes, where, m, signature, sent, whyAccepted) {
+    const stored = Array.isArray(sent.payoutsStored) && sent.payoutsStored.some(Boolean);
+    const gone = Array.isArray(sent.locksAfter) && sent.locksAfter.length > 0 && sent.locksAfter.every((x) => !x);
+    if (sent.accepted && stored && gone) {
+      this.#putScoped(roundIdBytes, where, { txid: m.txid, message: m.message, signature, state: ACCEPTED, why: whyAccepted, verified: true });
+      return ACCEPTED;
+    }
+    if (sent.accepted) {
+      this.#putScoped(roundIdBytes, where, { txid: m.txid, message: m.message, signature, state: SUBMITTING,
+        why: `the guardians took the submit; not yet seen in (payouts ${stored ? 'stored' : 'not stored'}, claimed locks ${gone ? 'gone' : 'still held'}) - asked again` });
+      if (where.federation) this.confirmSoon(roundIdBytes);
+      return SUBMITTING;
+    }
+    const h = await this.#scopedHistoryVerdict(roundIdBytes, where);
+    if (h.verdict === 'in') {
+      this.#putScoped(roundIdBytes, where, { txid: h.txid, message: h.message, signature: h.signature.length ? h.signature : signature, state: ACCEPTED, verified: true,
+        why: `this submit was refused (${sent.error}), and ${h.txid.slice(0, 12)} of the same scope is in: ${h.why}` });
+      return ACCEPTED;
+    }
+    if (h.verdict === 'mixed') {
+      this.#putScoped(roundIdBytes, where, { txid: m.txid, message: m.message, signature, state: SUBMITTING,
+        why: `the guardians refused it (${sent.error}); ${h.txid.slice(0, 12)} of the same scope is neither in nor out: ${h.why}` });
+      if (where.federation) this.confirmSoon(roundIdBytes);
+      return SUBMITTING;
+    }
+    this.#putScoped(roundIdBytes, where, { txid: m.txid, message: m.message, signature, state: REFUSED, checkedAll: true, why: `the guardians refused it: ${sent.error}` });
+    return REFUSED;
+  }
+
   /**
    * A SIGNER NODE STARTED AGAIN ASKS ABOUT EVERY SETTLEMENT IT WAS INSIDE (W6): each round it holds as
    * SUBMITTING goes through settle(), which asks the federation before anything else. A REFUSED row is asked too (kanban #1171): the other asker's
@@ -1407,6 +1526,18 @@ export class LockSettlement {
       if (h.verdict !== 'in') continue;
       this.#putRow(rid, { txid: h.txid, message: h.message, signature: h.signature, state: ACCEPTED, verified: true, why: `found in the federation after a REFUSED row: ${h.why}` });
       out.push({ round: toHex(rid), ok: true, state: ACCEPTED, why: h.why });
+    }
+    // AND EVERY FEDERATION'S AND LATE ENTRY'S ROW NOT ACCEPTED (kanban #1172, and #1186's gap on this line): asked of its own federation, every txid
+    // this seat signed or was handed. Nothing is submitted here: a row found in becomes ACCEPTED, one neither in nor out stays where it is
+    for (const state of [SUBMITTING, REFUSED]) {
+      for (const { roundId: rid, federation } of (this.round.fedLockSettlementsIn ? this.round.fedLockSettlementsIn(state) : [])) {
+        const c = await this.checkScoped(rid, { federation }).catch((e) => ({ state, verdict: 'unknown', why: e.message }));
+        if (c.state === ACCEPTED || state === SUBMITTING) out.push({ round: toHex(rid), federation, ok: c.state === ACCEPTED, state: c.state, why: c.why });
+      }
+      for (const { roundId: rid, entryId } of (this.round.lateLockSettlementsIn ? this.round.lateLockSettlementsIn(state) : [])) {
+        const c = await this.checkScoped(rid, { entry: entryId }).catch((e) => ({ state, verdict: 'unknown', why: e.message }));
+        if (c.state === ACCEPTED || state === SUBMITTING) out.push({ round: toHex(rid), entry: toHex(entryId), ok: c.state === ACCEPTED, state: c.state, why: c.why });
+      }
     }
     for (const rid of this.round.lockSettlementsIn(SUBMITTING)) {
       const got = await this.settle(rid).catch((e) => ({ ok: false, why: e.message }));
@@ -1621,19 +1752,32 @@ export class LockSettlement {
     // AN ATTESTED ROUND IS HELD, OR VOID, AS IN ONE FEDERATION (#attestedHold): nothing moves in any federation before its outcome
     const hold = this.#attestedHold(roundIdBytes);
     if (hold) return hold;
+    // EVERY FEDERATION'S ROW THIS SEAT WAS INSIDE, ASKED OF ITS FEDERATION FIRST (kanban #1172), by every seat and before anything is rebuilt: a
+    // SUBMITTING row was otherwise rebuilt and submitted again until the 24 h window ended, and never read as in
+    const asked = new Map();
+    for (const r of (this.round.fedLockSettlementsOf ? this.round.fedLockSettlementsOf(roundIdBytes) : [])) {
+      if (r.state === ACCEPTED) continue;
+      asked.set(r.federation, await this.checkScoped(roundIdBytes, { federation: r.federation }).catch((e) => ({ state: r.state, verdict: 'unknown', why: e.message })));
+    }
     const got = await this.planOf(roundIdBytes);
     if (!got.ok) return got;
     if (this.winnings) {
       const t = await this.turn(roundIdBytes);
       if (!t.mine) return refuse(`not this signer node's turn to combine: ${t.why}`, 409, t.code || REFUSAL.NOT_MY_TURN, Number.isInteger(t.takeoverAt) ? { takeoverAt: t.takeoverAt } : {});
     }
-    this.keepFederationMoves(roundIdBytes, got);
+    // WHAT THE ROUND MOVES OVER ALL ITS FEDERATIONS, NEVER REWRITTEN ONCE ONE FEDERATION'S IS IN (kanban #1172): each federation's own moves are kept
+    // with its txid (keepScopedMoves) at its first SUBMITTING
+    if (!(this.round.fedLockSettlementsOf ? this.round.fedLockSettlementsOf(roundIdBytes) : []).some((r) => r.state === ACCEPTED)) this.keepFederationMoves(roundIdBytes, got);
     const results = [];
     for (let i = 0; i < got.split.settlements.length; i++) {
       const s = got.split.settlements[i];
       const fid = s.federation;
+      const where = { federation: fid };
       const kept = this.round.fedLockSettlement(roundIdBytes, fid);
       if (kept && kept.state === ACCEPTED) { results.push({ federation: fid, state: ACCEPTED, txid: kept.txid, kept: true }); continue; }
+      // NEITHER IN NOR OUT: not submitted again (the round's row rule, W6)
+      const a = asked.get(fid);
+      if (kept && kept.state === SUBMITTING && a && a.verdict === 'mixed') { results.push({ federation: fid, ok: false, state: SUBMITTING, txid: kept.txid, why: `neither in nor out - not submitted again: ${a.why}` }); continue; }
       const m = await this.fedMessage(roundIdBytes, fid);
       if (!m.ok) { results.push({ federation: fid, ok: false, why: m.why }); continue; }
       let signature = kept && kept.signature && kept.txid === m.txid ? kept.signature : null;
@@ -1653,15 +1797,20 @@ export class LockSettlement {
         ({ signature } = combined);
         await this.#handSignature(roundIdBytes, q, signature, m);
       }
-      this.round.putFedLockSettlement({ roundId: roundIdBytes, federation: fid, txid: m.txid, message: m.message, signature, state: SUBMITTING,
-        why: 'about to submit; if this signer node dies here, ask the federation for the claimed locks' });
+      // THE INTENT ON DISK WITH WHAT IT MOVES, THROUGH THE ROW'S ONE TRANSITION FUNCTION (kanban #1172), then the submit
+      this.keepScopedMoves(roundIdBytes, where, m);
+      if (!this.#putScoped(roundIdBytes, where, { txid: m.txid, message: m.message, signature, state: SUBMITTING,
+        why: 'about to submit; if this signer node dies here, ask the federation for the claimed locks' })) { results.push({ federation: fid, ok: false, why: 'this federation\'s row is final here: nothing is submitted again' }); continue; }
       const port = await this.portForFederation(fid);
       const sent = await port.settle({ claimPk: m.claimPk, claims: m.claims, payouts: s.payouts, nonce: s.nonce, signature });
-      const state = sent.accepted ? ACCEPTED : REFUSED;
-      const why = sent.accepted ? `federation ${fid.slice(0, 16)}: claimed ${s.claims.length} lock(s), ${s.poolMsat + s.feePoolMsat} msat; paid ${s.payouts.length} payout(s)`
+      const whyIn = sent.accepted ? `federation ${fid.slice(0, 16)}: claimed ${s.claims.length} lock(s), ${s.poolMsat + s.feePoolMsat} msat; paid ${s.payouts.length} payout(s)`
         : `the guardians of federation ${fid.slice(0, 16)} refused it: ${sent.error}`;
-      this.round.putFedLockSettlement({ roundId: roundIdBytes, federation: fid, txid: m.txid, message: m.message, signature, state, why });
-      results.push({ federation: fid, ok: !!sent.accepted, state, txid: m.txid, why });
+      // ACCEPTED ONLY LANDED, REFUSED ONLY AFTER EVERY TXID OF THIS FEDERATION WAS ASKED (kanban #1172)
+      const state = await this.recordScopedSubmit(roundIdBytes, where, m, signature, sent, whyIn);
+      // A REFUSED SUBMIT'S BUILD IS NOT REUSED (kanban #1172, the part of #1146 A this line can take): the next pass builds that federation's bytes again
+      if (!sent.accepted) this.built.delete(`${toHex(roundIdBytes)}:fed:${fid}`);
+      const row = this.round.fedLockSettlement(roundIdBytes, fid);
+      results.push({ federation: fid, ok: state === ACCEPTED, state, txid: row ? row.txid : m.txid, why: row ? row.why : whyIn });
     }
     const all = results.length > 0 && results.every((r) => r.state === ACCEPTED);
     return { ok: all, state: all ? ACCEPTED : SUBMITTING, federations: results,
@@ -1985,7 +2134,9 @@ export class LockSettlement {
       this.retryTimers.delete(t);
       this.planRetries.delete(`${key}:pending`);
       const kept = this.round.lockSettlement(roundIdBytes);
-      if (!kept || kept.state !== SUBMITTING) return;
+      // A ROUND THAT TAKES ANY FEDERATION (kanban #1172): a SUBMITTING federation row is asked as the round's row is
+      const fedPending = !kept && this.round.fedLockSettlementsOf && this.round.fedLockSettlementsOf(roundIdBytes).some((r) => r.state === SUBMITTING);
+      if ((!kept || kept.state !== SUBMITTING) && !fedPending) return;
       this.settle(roundIdBytes)
         .then((got) => console.log(`[settle] ${toHex(roundIdBytes).slice(0, 16)} asked the federation (${n}): ${got.state || (got.ok ? 'ok' : 'not yet')} - ${String(got.why || '').slice(0, 140)}`))
         .catch(() => {});
