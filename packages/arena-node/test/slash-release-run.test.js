@@ -128,7 +128,7 @@ test('a fallback carries the same OP_RETURN fields and a table of the same forma
 
 // ---- THE RUN: eight panel members, each with its own store, reading each other at their doors ----
 function world({ lossesOk = true, federationsOf = async () => federations, tip = () => START_HEIGHT + 1, cut = () => false, serve = (k, body) => body, handles = undefined, logs = null,
-  portOf = null } = {}) {
+  portOf = null, hang = () => false } = {}) {
   let lossReads = 0;
   const members = [...A, ...B];
   const runs = new Map();
@@ -150,20 +150,23 @@ function world({ lossesOk = true, federationsOf = async () => federations, tip =
   ...members.map((p) => ({ pubkey: p.key, txid: b32(1), vout: 0, bondSats: String(BOND), advert: { bondScriptTemplateVersion: 3, censusKey: census.key, ownerPubkey: accused.key, bondMaturityHeight: MATURITY } }))];
   const feeFunding = serializeSpend({ version: 2, locktime: 0, inputs: [{ txid: b32(9), vout: 0, sequence: 0 }], outputs: [{ value: 700n, script: feeCoin.script }], witnesses: [[new Uint8Array(64)]] });
   const rawTx = async (txid) => (txid === startHex ? startRaw : txid === toHex([...feeCoin.txid].reverse()) ? feeFunding : null);
-  for (const p of members) {
+  // EACH SEAT'S STORE OUTLIVES ITS RUN: `restart(k)` makes seat k's run again on the same store, as a stopped seat comes back (kanban #1192)
+  const dbs = new Map(members.map((p) => [p.hex, new DatabaseSync(':memory:')]));
+  const make = (p) => {
     let made = 0;
     const port = { peginAddress: async () => `addr-${p.hex}-${made++}`, peginClaim: async () => ({ claimedMsat: 400_000_000n }),
       payouts: async (list) => { paid.push({ carrier: p.hex, list }); return { txid: 'cc'.repeat(32), payouts: list.map((x, i) => ({ refundPk: x.key, outIdx: i, contractId: `c${i}` })) }; } };
     // `portOf(p, port, paid)`: the carrier's client as a test makes it (kanban #1174: a tool whose answer is lost after it paid)
     if (portOf) Object.assign(port, portOf(p, port, paid));
-    runs.set(p.hex, createSlashRelease({ key: p.key, secret: p.secret, networkId: NETWORK_ID_REGTEST, clocks, db: new DatabaseSync(':memory:'), tweakPoint,
+    runs.set(p.hex, createSlashRelease({ key: p.key, secret: p.secret, networkId: NETWORK_ID_REGTEST, clocks, db: dbs.get(p.hex), tweakPoint,
       tipHeight: async () => tip(), entriesAtTip: async () => entries, rawTx, unspent: async () => true,
       fetchProof: async () => proofBytes, judge: Object.assign(async () => ({ verdict: true, held: { offence: 'X' } }), { read: () => ({ ok: true, roundId, contract }) }),
       panelsOf: () => ({ ok: true, ...panels }), ...(handles ? { handles } : {}), ...(logs ? { log: (l) => logs.push(l) } : {}), lossesFor: async () => (lossReads++, lossesOk ? { ok: true, losses: new Map([[player.hex, LOSS]]), entryIds: new Map([[player.hex, b32(0x31)]]) } : { ok: false, why: 'no seat answers' }),
       federations: federationsOf, portFor: async () => port, scriptOf: (address) => fromHex(`5120${toHex(taggedHash('ARENA/test/Address', new TextEncoder().encode(address)))}`),
-      reserveKeyOf: async (fid) => reserveKey(fid), keepReserveRow: (row) => kept.push({ carrier: p.hex, row }), urlOf, send: async (hex) => { sent.push({ by: p.hex, hex }); return toHex([...parseTransaction(fromHex(hex)).txid].reverse()); }, fetchFn: fetchOf(p.hex) }));
-  }
-  return { runs, members, sent, kept, paid, lossReads: () => lossReads };
+      reserveKeyOf: async (fid) => reserveKey(fid), keepReserveRow: (row) => kept.push({ carrier: p.hex, row }), urlOf, send: async (hex) => { sent.push({ by: p.hex, hex }); if (hang(p.hex)) return new Promise(() => {}); return toHex([...parseTransaction(fromHex(hex)).txid].reverse()); }, fetchFn: fetchOf(p.hex) }));
+  };
+  for (const p of members) make(p);
+  return { runs, members, sent, kept, paid, lossReads: () => lossReads, restart: (hex) => make(members.find((p) => p.hex === hex)), dbs };
 }
 
 test('eight panel members build one table, read each other\'s signatures, and the release goes out with exactly t of each', async () => {
@@ -360,4 +363,72 @@ test('kanban #1174: a carrier whose tool paid and whose answer was lost pays not
   assert.equal(facts.oldTool.playerPaidTimes, 1, 'an old tool paid the player twice');
   assert.equal(facts.oldTool.payoutsMade, 3);
   assert.ok(facts.oldTool.waits.some((x) => /held, never paid twice/.test(x)), JSON.stringify(facts.oldTool.waits));
+});
+
+// ---- kanban #1192: THE RELEASE'S STATE IS ON DISK, AND ONE MEMBER'S DOOR CANNOT MAKE A SEAT BUILD WITHOUT END ----
+test('kanban #1192: a member that sent the release and restarts builds, gathers and sends nothing again', async () => {
+  const w = world();
+  for (const p of w.members) await w.runs.get(p.hex).pass();
+  for (const p of w.members) await w.runs.get(p.hex).pass();
+  assert.ok(w.sent.length >= 1, 'a release was sent');
+  const senders = [...new Set(w.sent.map((s) => s.by))];
+  const reads = w.lossReads(), sends = w.sent.length;
+  for (const k of senders) { w.restart(k); await w.runs.get(k).pass(); await w.runs.get(k).pass(); }
+  const facts = { senders: senders.length, buildsAfterRestart: w.lossReads() - reads, sendsAfterRestart: w.sent.length - sends };
+  console.log('  MEASURED #1192 restart after the send:', JSON.stringify(facts));
+  assert.deepEqual([facts.buildsAfterRestart, facts.sendsAfterRestart], [0, 0], 'a restarted sender rebuilt or re-sent its release');
+  assert.ok(senders.every((k) => w.runs.get(k).served(startHex).release.sent), 'its door says sent');
+});
+
+test('kanban #1192: a member stopped while its release was being sent sends the very bytes again after the restart, with no build', async () => {
+  let hung = false;
+  const w = world({ hang: () => hung });
+  for (const p of w.members) await w.runs.get(p.hex).pass();
+  const early = w.sent.length;
+  // THE SECOND ROUND SENDS; EACH SEND REACHES THE CHAIN AND THE SEAT STOPS BEFORE IT ANSWERS
+  hung = true;
+  for (const p of w.members) {
+    let over = false;
+    w.runs.get(p.hex).pass().then(() => { over = true; }, () => { over = true; });
+    const stop = Date.now() + 30000;
+    while (!over && !w.sent.some((s) => s.by === p.hex) && Date.now() < stop) await new Promise((r) => setTimeout(r, 10));
+  }
+  const stopped = [...new Set(w.sent.slice(early).map((s) => s.by))];
+  assert.ok(stopped.length >= 1);
+  const first = new Map(stopped.map((k) => [k, w.sent.slice(early).find((s) => s.by === k).hex]));
+  hung = false;
+  const reads = w.lossReads(), at = w.sent.length;
+  for (const k of stopped) { w.restart(k); await w.runs.get(k).pass(); }
+  const again = w.sent.slice(at);
+  const facts = { stopped: stopped.length, buildsAfterRestart: w.lossReads() - reads, resent: again.length, sameBytes: again.every((s) => s.hex === first.get(s.by)),
+    sent: stopped.map((k) => !!w.runs.get(k).served(startHex).release.sent) };
+  console.log('  MEASURED #1192 stop during the send:', JSON.stringify(facts));
+  assert.equal(facts.buildsAfterRestart, 0, 'rebuilt instead of sending what was on disk');
+  assert.equal(facts.resent, stopped.length);
+  assert.equal(facts.sameBytes, true, 'the bytes sent again are the bytes sent before the stop');
+  assert.ok(facts.sent.every(Boolean));
+});
+
+test('kanban #1192: a member serving many proposals that check makes another seat build at most a few per pass', async () => {
+  const bad = A[3];
+  const pegOf = (script) => ({ node: bad.hex, federation: fedA, use: 'players', script: toHex(script),
+    signature: toHex(schnorr.sign(carrierPegInId({ networkId: NETWORK_ID_REGTEST, start: { txid: startTxid, vout: 0 }, federationId: fromHex(fedA), use: 'players', script }), bad.secret)) });
+  // 40 proposals naming a peg-in of its own under 40 scripts, each signed by it (so each checks), and 40 more naming the real peg-ins under made-up table ids
+  const extra = (real) => [
+    ...Array.from({ length: 40 }, (_, i) => ({ tableId: toHex(taggedHash('ARENA/test/Junk', Uint8Array.of(i))), table: '00',
+      pegins: [...real.filter((x) => !(x.node === bad.hex && x.use === 'players')), pegOf(fromHex(`5120${toHex(taggedHash('ARENA/test/BadPeg', Uint8Array.of(i)))}`))], signatures: [] })),
+    ...Array.from({ length: 40 }, (_, i) => ({ tableId: toHex(taggedHash('ARENA/test/Junk2', Uint8Array.of(i))), table: '00', pegins: real, signatures: [] }))];
+  let on = false;
+  const w = world({ serve: (k, body) => { if (on && k === bad.hex && body.release && body.release.pegins) body.release.proposals = [...(body.release.proposals || []), ...extra(body.release.pegins)]; return body; } });
+  for (const p of w.members) await w.runs.get(p.hex).pass();
+  on = true;
+  const victim = B[0].hex;
+  const reads = w.lossReads();
+  await w.runs.get(victim).pass();
+  const builds = w.lossReads() - reads;
+  console.log('  MEASURED #1192 one member serving 80 extra proposals:', JSON.stringify({ buildsInOnePass: builds }));
+  assert.ok(builds <= 1 + 2 * w.members.length, `${builds} builds in one pass`);
+  // AND THE RELEASE STILL GOES OUT
+  for (const p of w.members) await w.runs.get(p.hex).pass();
+  assert.ok(w.sent.length >= 1, 'the release went out');
 });
