@@ -148,6 +148,21 @@ async fetch(request, env, ctx) {
   if (url.pathname === '/__login') return Response.redirect(url.origin + '/', 303);
   if (url.searchParams.has('password')) { url.searchParams.delete('password'); return Response.redirect(url.toString(), 301); }
   if (url.pathname === '/api/chain-nodes') return chainNodes(env, ctx);
+  // THE HOMEPAGE'S VIDEOS IN BYTE RANGES (kanban #1197): the asset store answers a Range request with the whole file (200), and Safari on an
+  // iPhone plays an mp4 only from 206 partial answers - so the Worker cuts the asked range itself (the files are a few MB)
+  if (url.pathname.startsWith('/next/media/') && /\.(mp4|webm)$/.test(url.pathname) && request.method === 'GET') {
+    const whole = await env.ASSETS.fetch(new Request(url.toString(), { method: 'GET' }));
+    if (!whole.ok) return whole;
+    const buf = await whole.arrayBuffer(); const size = buf.byteLength;
+    const headers = new Headers({ 'Content-Type': whole.headers.get('content-type') || 'application/octet-stream', 'Accept-Ranges': 'bytes', 'Cache-Control': 'public, max-age=3600' });
+    const m = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get('range') || '');
+    if (!m) { headers.set('Content-Length', String(size)); return new Response(buf, { status: 200, headers }); }
+    let start = m[1] === '' ? Math.max(0, size - Number(m[2])) : Number(m[1]);
+    let end = m[1] === '' || m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
+    if (!(start <= end) || start >= size) { headers.set('Content-Range', `bytes */${size}`); return new Response(null, { status: 416, headers }); }
+    headers.set('Content-Range', `bytes ${start}-${end}/${size}`); headers.set('Content-Length', String(end - start + 1));
+    return new Response(buf.slice(start, end + 1), { status: 206, headers });
+  }
   const page = await env.ASSETS.fetch(request);
   // TESTNET NIGHT SWITCHED OFF: no page links to it
   if ((page.headers.get('content-type') || '').includes('text/html') && !(await nightOn(env))) return new HTMLRewriter().on('a[href="/night/"]', { element: (e) => e.remove() }).transform(page);
