@@ -536,29 +536,47 @@ export async function post(rpc, hex) {
  * coordinator with the bond's node key, its tree's tweak and the 32-byte sighash; each member draws its nonce pair here
  * and keeps its secret nonce, and signs once, only for the message the session was opened with. `allow(session)` is the
  * set's policy - which spends it agrees to (a release with no open proof against the node, a judged slash).
+ *
+ * ONE SESSION, ONE STATE (kanban #1194, the state machine audit of 2026-11-06): MUSIG_SESSION open (nonces drawn) -> signing (taken by one partial ask,
+ * before any signature) -> closed (signed, refused or failed; the session and its secret nonces are dropped). Moved by musigSessionStep only, compare and set.
+ * `allow` is asked at the nonce AND again at the partial, for the very spend the nonce was drawn for: a proof that arrives between the two calls stops the
+ * signature. The secret nonces live in this process alone and are never written: a restart loses every open session, so no nonce can sign twice across one.
  */
+export const MUSIG_SESSION = Object.freeze({ OPEN: 'open', SIGNING: 'signing', CLOSED: 'closed' });
+const MUSIG_MOVES = Object.freeze({ [MUSIG_SESSION.OPEN]: [MUSIG_SESSION.SIGNING, MUSIG_SESSION.CLOSED], [MUSIG_SESSION.SIGNING]: [MUSIG_SESSION.CLOSED], [MUSIG_SESSION.CLOSED]: [] });
+/** The session moved from `from` to `to`: false, nothing changed, unless it is in `from` now and MUSIG_MOVES allows it. */
+export function musigSessionStep(s, from, to) {
+  if (!s || s.state !== from || !MUSIG_MOVES[from].includes(to)) return false;
+  s.state = to;
+  return true;
+}
+
 export function musigParty({ set, allow = () => ({ ok: false, why: 'no spend is agreed to' }) }) {
   const sessions = new Map();
+  const ask = (s) => { try { const may = allow({ nodeKey: s.nodeKey, msg: s.msg, spend: s.spend }); return may && typeof may.ok === 'boolean' ? may : { ok: false, why: 'the policy gave no answer' }; } catch (e) { return { ok: false, why: `the policy could not be read: ${String(e.message || e).slice(0, 160)}` }; } };
+  const close = (sessionId, s) => { musigSessionStep(s, s.state, MUSIG_SESSION.CLOSED); for (const d of s.drawn) d.secnonce = null; sessions.delete(sessionId); };
   return {
     nonce({ sessionId, nodeKey, tweak, msg, spend }) {
       if (sessions.has(sessionId)) return { ok: false, why: 'that session is open already' };
-      const may = allow({ nodeKey, msg, spend });
+      const may = ask({ nodeKey, msg, spend });
       if (!may.ok) return may;
       const bctx = bondSigningContext({ nodeKey, arbitrationKeys: set.keys, tweak });
       const drawn = set.members.map((m) => ({ m, ...nonceGen({ pk: Uint8Array.from([2, ...m.key]), sk: m.secret, msg }) }));
-      sessions.set(sessionId, { bctx, msg, drawn, used: false });
+      sessions.set(sessionId, { state: MUSIG_SESSION.OPEN, nodeKey, spend: spend ?? null, bctx, msg, drawn });
       return { ok: true, outputKey: toHex(bctx.outputKey), pubnonces: drawn.map((d) => ({ member: toHex(d.m.key), pubnonce: toHex(d.pubnonce) })) };
     },
     partial({ sessionId, aggnonce }) {
       const s = sessions.get(sessionId);
       if (!s) return { ok: false, why: 'no such session' };
-      if (s.used) return { ok: false, why: 'that session signed already: a nonce is used once' };
-      s.used = true;
+      if (!musigSessionStep(s, MUSIG_SESSION.OPEN, MUSIG_SESSION.SIGNING)) return { ok: false, why: 'that session signed already: a nonce is used once' };
       try {
+        // THE POLICY AGAIN, NOW (kanban #1194): a proof against the node that arrived after the nonce refuses the signature
+        const may = ask(s);
+        if (!may.ok) return may;
         const psigs = s.drawn.map((d) => ({ member: toHex(d.m.key), psig: toHex(bondPartialSign(s.bctx, {
           who: s.bctx.inner.pks.findIndex((p) => toHex(p) === toHex(d.m.key)), sk: d.m.secret, secnonce: d.secnonce, aggnonce: fromHex(aggnonce), msg: s.msg })) }));
         return { ok: true, psigs };
-      } catch (e) { return { ok: false, why: e instanceof MusigError ? e.message : String(e.message || e) }; } finally { sessions.delete(sessionId); }
+      } catch (e) { return { ok: false, why: e instanceof MusigError ? e.message : String(e.message || e) }; } finally { close(sessionId, s); }
     },
   };
 }
