@@ -41,6 +41,21 @@ const same = (a, b) => toHex(a) === toHex(b);
 /** A send refused because the very transaction is already there: another signer sent it first. */
 const ALREADY = /already in (the )?(mempool|block ?chain)|txn-already-known|txn-already-in-mempool|already known/i;
 
+/**
+ * A START'S RELEASE AT ONE PANEL MEMBER (kanban #1192, the state machine audit of 2026-11-06): none -> proposed (its own proposal kept and signed) -> sending (the signed
+ * transaction and its txid on disk, before it is sent) -> sent (taken, or the chain already holds it; terminal) | proposed (refused). Before, "sent" was a Set in memory: a
+ * restarted seat rebuilt, re-gathered and re-sent every pass until the release was in a block. A start found SENDING after a stop is sent again, the same bytes.
+ */
+export const RELEASE = Object.freeze({ NONE: 'none', PROPOSED: 'proposed', SENDING: 'sending', SENT: 'sent' });
+const RELEASE_MOVES = Object.freeze({ [RELEASE.NONE]: [RELEASE.PROPOSED], [RELEASE.PROPOSED]: [RELEASE.PROPOSED, RELEASE.SENDING], [RELEASE.SENDING]: [RELEASE.SENT, RELEASE.PROPOSED], [RELEASE.SENT]: [] });
+/**
+ * WHAT ONE MEMBER'S DOOR CAN MAKE THIS SEAT BUILD (kanban #1192): a proposal costs a whole build (losses, federations, the table), and a panel-A member can sign any number of
+ * peg-ins of its own, so any number of proposals that check. Per pass, a member's proposals are rebuilt at most RELEASE_BUILDS_PER_MEMBER at a time (its own first), a peg-in set
+ * built once whatever table it claims; per start, this seat keeps and signs at most RELEASE_PROPOSALS_PER_MEMBER handed on by each member. Its own proposal is never capped.
+ */
+export const RELEASE_BUILDS_PER_MEMBER = 2;
+export const RELEASE_PROPOSALS_PER_MEMBER = 4;
+
 /** Which holder files a fallback first: a hash of the proof and the key, as a start's filer (slash-start-run.js filerRank), under its own tag. */
 export const fallbackRank = (proofId, keys, me) => [...keys].sort((a, b) => (toHex(taggedHash('ARENA/v1/SlashFallbackFiler', Uint8Array.from([...proofId, ...fromHex(a)])))
   < toHex(taggedHash('ARENA/v1/SlashFallbackFiler', Uint8Array.from([...proofId, ...fromHex(b)]))) ? -1 : 1)).indexOf(me);
@@ -79,6 +94,9 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
       PRIMARY KEY (start, table_id))`);
   // THE ESCROW READS THE START WITHOUT THE CENSUS: once the hold is spent the bond is gone from it, so its census key and fee rate are kept with the start (#1085)
   for (const col of ['census_key TEXT', 'rate INTEGER', 'hold_value INTEGER', 'hold_script BLOB', 'slash_height INTEGER']) { try { db.exec(`ALTER TABLE slash_holds ADD COLUMN ${col}`); } catch { /* there already */ } }
+  // WHO HANDED A PROPOSAL ON, FOR ITS QUOTA; THE RELEASE'S OWN STATE (kanban #1192)
+  try { db.exec('ALTER TABLE slash_release_props ADD COLUMN via TEXT'); } catch { /* there already */ }
+  db.exec('CREATE TABLE IF NOT EXISTS slash_release_sent (start TEXT PRIMARY KEY, state TEXT NOT NULL, table_id TEXT, raw TEXT, txid TEXT, at_ms INTEGER NOT NULL)');
   const spendOf = (start, path) => db.prepare('SELECT * FROM slash_spends WHERE start = ? AND path = ?').get(start, path) || null;
   const keepSpend = (start, path, b, signature) => {
     const txid = display(toHex(parseTransaction(serializeSpend({ ...b.spend.tx, witnesses: [[new Uint8Array(64)]] })).txid));
@@ -290,11 +308,44 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
     const own = r.table && Array.isArray(r.pegins) ? [{ tableId: r.tableId, table: r.table, pegins: r.pegins, signatures: [r.own, ...(r.signatures || [])].filter(Boolean) }] : [];
     return [...own, ...(Array.isArray(r.proposals) ? r.proposals : [])].filter((p) => p && typeof p.tableId === 'string' && typeof p.table === 'string' && Array.isArray(p.pegins));
   };
-  const keepProposal = (start, b, pegins, signature) => {
+  const keepProposal = (start, b, pegins, signature, via = me) => {
     db.prepare('INSERT OR IGNORE INTO slash_tables (table_id, bytes) VALUES (?, ?)').run(toHex(b.tableId), b.bytes);
-    db.prepare('INSERT OR IGNORE INTO slash_release_props (start, table_id, tbl, pegins, signature, made_ms) VALUES (?, ?, ?, ?, ?, ?)').run(start, toHex(b.tableId), b.bytes, JSON.stringify(pegins), signature, now());
+    db.prepare('INSERT OR IGNORE INTO slash_release_props (start, table_id, tbl, pegins, signature, made_ms, via) VALUES (?, ?, ?, ?, ?, ?, ?)').run(start, toHex(b.tableId), b.bytes, JSON.stringify(pegins), signature, now(), via);
   };
-  const relDone = new Set();
+  /** The proposals of a start kept here that `via` handed this seat (kanban #1192): each member has its own quota, so one member's many cannot crowd out another's. */
+  const keptVia = (start, via) => Number(db.prepare('SELECT COUNT(*) AS n FROM slash_release_props WHERE start = ? AND via = ?').get(start, via).n);
+  // A START'S RELEASE AS THIS SEAT SENDS IT (kanban #1192): one row per start in slash_release_sent, moved by relStep only (RELEASE, above)
+  const relRow = (start) => db.prepare('SELECT * FROM slash_release_sent WHERE start = ?').get(start) || null;
+  const relStateOf = (start) => {
+    const r = relRow(start);
+    if (r) return r.state;
+    // A RELEASE SENT BY A SEAT BEFORE THIS ROW EXISTED: its slash_spends row says so
+    const s = spendOf(start, 'release');
+    return s && s.sent ? RELEASE.SENT : RELEASE.NONE;
+  };
+  /** THE ONE TRANSITION: compare and set. False, nothing written, unless the start is in `from` now and RELEASE_MOVES has the move. */
+  function relStep(start, from, to, fields = {}) {
+    if (!RELEASE_MOVES[from].includes(to) || relStateOf(start) !== from) return false;
+    const had = relRow(start);
+    const r = had
+      ? db.prepare('UPDATE slash_release_sent SET state = ?, table_id = ?, raw = ?, txid = ?, at_ms = ? WHERE start = ? AND state = ?')
+        .run(to, fields.tableId ?? had.table_id, fields.raw ?? had.raw, fields.txid ?? had.txid, now(), start, from)
+      : db.prepare('INSERT OR IGNORE INTO slash_release_sent (start, state, table_id, raw, txid, at_ms) VALUES (?, ?, ?, ?, ?, ?)').run(start, to, fields.tableId ?? null, fields.raw ?? null, fields.txid ?? null, now());
+    return Number(r.changes) === 1;
+  }
+  /** The release on disk as SENDING, sent: SENT (with slash_spends.sent) when taken or already there, PROPOSED again when refused. */
+  async function sendRelease(start) {
+    const row = relRow(start);
+    let sent;
+    try { sent = String(await send(row.raw)); } catch (e2) {
+      // ANOTHER MEMBER SENT THE SAME TRANSACTION FIRST: the txid does not move with whose signatures it carries
+      if (!ALREADY.test(e2.message)) { relStep(start, RELEASE.SENDING, RELEASE.PROPOSED); return { ok: false, why: `the release was not taken: ${e2.message}`, tableId: row.table_id }; }
+      sent = row.txid;
+    }
+    relStep(start, RELEASE.SENDING, RELEASE.SENT, { txid: sent });
+    db.prepare('UPDATE slash_spends SET sent = ? WHERE start = ? AND path = ?').run(sent, start, 'release');
+    return { ok: true, txid: sent, tableId: row.table_id };
+  }
   /**
    * A PANEL MEMBER'S PASS. The carriers are what a proposal names, not what each signer happened to read: every signer of one proposal builds from the same peg-ins.
    *   1. It reads what the other members serve, and keeps every peg-in they hand on that checks: signed by a panel-A member, for this start, that federation and use.
@@ -305,7 +356,13 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
    *   5. A signer may sign every proposal that checks; they all spend the one hold, so one confirms. The first with t of each panel goes out.
    */
   async function release({ e, info, hold, panels, verdict, entries }) {
-    if (relDone.has(info.start)) return null;
+    // SENT IS ON DISK: nothing is built or gathered again, after a restart too (kanban #1192)
+    if (relStateOf(info.start) === RELEASE.SENT) return null;
+    // SENDING BEFORE A STOP: the very bytes, again
+    if (relStateOf(info.start) === RELEASE.SENDING) {
+      const r = await sendRelease(info.start);
+      if (r.ok) return { ...r, resumed: true };
+    }
     const bonds = bondsOf(entries);
     const panelA = panels.panelA.map(toHex);
     const carrierKeys = panelA.map((k) => ({ key: k, bondSats: bonds.get(k) || 0n }));
@@ -336,25 +393,39 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
     if (row.table_id !== toHex(b.tableId)) return { ok: false, why: 'the table moved' };
     if (!row.signature || !same(new Uint8Array(row.signature), signature)) db.prepare('UPDATE slash_spends SET signature = ? WHERE start = ? AND path = ?').run(signature, info.start, 'release');
     keepProposal(info.start, b, mine, signature);
+    relStep(info.start, relStateOf(info.start), RELEASE.PROPOSED, { tableId: toHex(b.tableId) });
     const builds = new Map([[toHex(b.tableId), b]]);
-    // 4. THE OTHERS' PROPOSALS, CHECKED AND REBUILT HERE
-    for (const s of served.values()) {
-      for (const p of proposalsServed(s)) {
-        const id = String(p.tableId).toLowerCase();
-        if (builds.has(id)) continue;
-        const pegs = pegsOf(p.pegins, info.start, panelA);
-        if (!pegs) continue;
-        const theirs = await build({ e, info, hold, panels, path: 'release', verdict, carrierKeys, pegs });
-        if (!theirs.ok || toHex(theirs.tableId) !== id || toHex(theirs.bytes) !== String(p.table).toLowerCase()) continue;
-        builds.set(id, theirs);
-        keepProposal(info.start, theirs, p.pegins.map((x) => pegRecord(checkPegIn(x, info.start, panelA))), schnorr.sign(theirs.digest, secret));
+    // ONE BUILD PER PEG-IN SET THIS PASS (kanban #1192): the table follows from the peg-ins and this seat's own reads, so a proposal that names a set built already costs nothing
+    const pegKey = (pegs) => [...pegs].map(([k, v]) => `${k}=${toHex(v)}`).sort().join('|');
+    const built = new Map([[pegKey(pegsOf(mine, info.start, panelA) || new Map()), b]]);
+    const buildOnce = async (pegs) => { const k = pegKey(pegs); if (!built.has(k)) built.set(k, await build({ e, info, hold, panels, path: 'release', verdict, carrierKeys, pegs })); return built.get(k); };
+    // 4. THE OTHERS' PROPOSALS, CHECKED AND REBUILT HERE: each member's own first, then the rest, at most RELEASE_BUILDS_PER_MEMBER new builds per member and pass
+    const queue = [];
+    for (const [k, s] of served) proposalsServed(s).forEach((p, i) => queue.push({ via: k, p, i }));
+    queue.sort((x, y) => x.i - y.i);
+    const spent = new Map();
+    for (const { via, p } of queue) {
+      const id = String(p.tableId).toLowerCase();
+      if (builds.has(id)) continue;
+      const pegs = pegsOf(p.pegins, info.start, panelA);
+      if (!pegs) continue;
+      const fresh = !built.has(pegKey(pegs));
+      if (fresh && (spent.get(via) || 0) >= RELEASE_BUILDS_PER_MEMBER) continue;
+      if (fresh) spent.set(via, (spent.get(via) || 0) + 1);
+      const theirs = await buildOnce(pegs);
+      if (!theirs.ok || toHex(theirs.tableId) !== id || toHex(theirs.bytes) !== String(p.table).toLowerCase()) continue;
+      // SIGNED AND KEPT ONCE, WITHIN THE QUOTA OF THE MEMBER THAT HANDED IT ON; past it, not signed here
+      if (!db.prepare('SELECT 1 FROM slash_release_props WHERE start = ? AND table_id = ?').get(info.start, id)) {
+        if (keptVia(info.start, via) >= RELEASE_PROPOSALS_PER_MEMBER) continue;
+        keepProposal(info.start, theirs, p.pegins.map((x) => pegRecord(checkPegIn(x, info.start, panelA))), schnorr.sign(theirs.digest, secret), via);
       }
+      builds.set(id, theirs);
     }
-    // ...AND THOSE SIGNED ON AN EARLIER PASS, REBUILT FROM THE PEG-INS THEY NAME
-    for (const r of db.prepare('SELECT table_id, pegins FROM slash_release_props WHERE start = ?').all(info.start)) {
+    // ...AND THOSE SIGNED ON AN EARLIER PASS, REBUILT FROM THE PEG-INS THEY NAME (at most RELEASE_PROPOSALS_PER_MEMBER per member and its own: the quota bounds this too)
+    for (const r of db.prepare('SELECT table_id, pegins FROM slash_release_props WHERE start = ? ORDER BY made_ms DESC').all(info.start)) {
       if (builds.has(r.table_id)) continue;
       const pegs = pegsOf(JSON.parse(r.pegins), info.start, panelA);
-      const again = pegs ? await build({ e, info, hold, panels, path: 'release', verdict, carrierKeys, pegs }) : null;
+      const again = pegs ? await buildOnce(pegs) : null;
       if (again && again.ok && toHex(again.tableId) === r.table_id) builds.set(r.table_id, again);
     }
     // 5. THE SIGNATURES OVER EACH, FROM EVERY MEMBER'S DOOR; ONE GOES OUT AT t OF EACH PANEL
@@ -379,17 +450,12 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
       if (!best || Math.min(a, z) > Math.min(best.a, best.z)) best = { id, got, sigs, a, z };
       if (a < t || z < t) continue;
       const { raw, txid } = signedHoldSpend({ spend: got.spend, witness: releaseWitness({ hold, panelA: panels.panelA, panelB: panels.panelB, signatures: sigs }) });
-      let sent;
-      try { sent = String(await send(toHex(raw))); } catch (e2) {
-        // ANOTHER MEMBER SENT THE SAME TRANSACTION FIRST: the txid does not move with whose signatures it carries
-        if (!ALREADY.test(e2.message)) return { ok: false, why: `the release was not taken: ${e2.message}`, tableId: id };
-        sent = display(toHex(txid));
-      }
-      relDone.add(info.start);
-      // THE ONE THAT WENT OUT is this seat's release, whoever proposed it
+      // THE ONE THAT GOES OUT is this seat's release, whoever proposed it; on disk with its bytes BEFORE it is sent (kanban #1192)
       if (id !== toHex(b.tableId)) keepSpend(info.start, 'release', got, new Uint8Array(own.signature));
-      db.prepare('UPDATE slash_spends SET sent = ? WHERE start = ? AND path = ?').run(sent, info.start, 'release');
-      return { ok: true, txid: sent, tableId: id, signers: { a, b: z, t }, feeSats: got.feeSats, vsize: got.vsize, proposals: builds.size };
+      if (!relStep(info.start, RELEASE.PROPOSED, RELEASE.SENDING, { tableId: id, raw: toHex(raw), txid: display(toHex(txid)) })) return { ok: false, why: 'the release moved while it was signed', tableId: id };
+      const r = await sendRelease(info.start);
+      if (!r.ok) return r;
+      return { ok: true, txid: r.txid, tableId: id, signers: { a, b: z, t }, feeSats: got.feeSats, vsize: got.vsize, proposals: builds.size };
     }
     return { ok: false, why: `${best.a} of panel A and ${best.z} of panel B have signed the best of ${builds.size} proposal(s), ${t} of each are needed`, tableId: best.id };
   }
