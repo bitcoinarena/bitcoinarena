@@ -709,7 +709,8 @@ export function bookLockSettlement({ roundId, table, entries, locks, feeLocks, f
   if (!(locks instanceof Map) || !(feeLocks instanceof Map)) return refuse('the verified locks are Maps by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint') return refuse('the guardians\' fee rule is BigInt ppm and base msat');
   if (!table || !Array.isArray(table.claimed)) return refuse('an order book is settled from its settlement table');
-  if (!table.claimed.length) return { ok: true, nothing: true, why: 'no order filled: nothing is claimed - every lock comes back whole' };
+  // `noFill` (kanban #1186): the seats' sweep reads this refusal as one that cannot change by this field, not by its text
+  if (!table.claimed.length) return { ok: true, nothing: true, noFill: true, why: 'no order filled: nothing is claimed - every lock comes back whole' };
   const byId = new Map(entries.map((e) => [typeof e.entryId === 'string' ? e.entryId : toHex(e.entryId), e]));
   const claims = [];
   const owed = [];

@@ -168,7 +168,7 @@ import { slashedGuardianPays } from '../../arena-protocol/src/theft-slash.js';
 import { createHalts, wsSessionCount } from './halts.js';
 import { reserveMembersOf } from './reserve-members.js';
 import { stageDecision, signReleaseAnswer, createStageBook } from './update-stage.js';
-import { createSettleBackoff, REFUSED_FOR_GOOD } from './settle-backoff.js';
+import { createSettleBackoff, refusedForGood, REFUSAL } from './settle-backoff.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
 import { DrawnAttestor } from './drawn-attestor.js';
@@ -880,9 +880,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // settlement silent - the sweep logged only answers with a state, and a plan's refusal carries none)
         if (got && !got.ok && !got.state && got.why) {
           // a round refused for good (a closed, attested round with no counted entry, or nothing to claim, or a seat that signs nothing for it): its long wait
-          attestedWait.refused(k, REFUSED_FOR_GOOD.test(got.why) ? { maxMs: NO_COUNTED_ENTRY_WAIT_MS } : undefined);
-          const takeover = /^not this signer node's turn to combine: .* may take over at height (\d+)/.exec(got.why);
-          if (takeover && st !== 'SUBMITTING') attestedTurnAt.set(k, Number(takeover[1]));
+          // BY THE REFUSAL'S CODE (kanban #1186), never its text
+          attestedWait.refused(k, refusedForGood(got) ? { maxMs: NO_COUNTED_ENTRY_WAIT_MS } : undefined);
+          if (got.code === REFUSAL.NOT_MY_TURN && Number.isInteger(got.takeoverAt) && st !== 'SUBMITTING') attestedTurnAt.set(k, got.takeoverAt);
           const was = attestedWhy.get(k);
           if (was !== got.why) { attestedWhy.set(k, got.why); console.log(`[outcome] ${k.slice(0, 16)} not settled yet: ${got.why}`); }
         } else attestedWait.clear(k);
