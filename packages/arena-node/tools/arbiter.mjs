@@ -333,10 +333,13 @@ const postedTo = new Map();            // seat -> Map(event key -> { hash, at })
 function arbiterEvents() {
   const out = [];
   const into = String(env.ARENA_LIQ_PAY_FEDERATION || '').toLowerCase() || null;
+  // THE SET'S OWN CLAIMS DOOR, said in the signed event (kanban #1148): ARENA_ARBITER_DOOR, the public URL its /liquidation-claims answers at.
+  // A page presents a player's notes only at a door the set signed - a seat's ARENA_LIQUIDATION_CLAIMS is its operator's word, not the set's
+  const door = String(env.ARENA_ARBITER_DOOR || '').trim().replace(/\/+$/, '') || null;
   state.events = state.events || {};
   let changed = false;
   for (const [fid, v] of Object.entries(state.liquidations || {})) {
-    const body = liquidationEvent({ network, fid, v, claims: claims ? claims.claimed(fid) : [], escrowAt: liqEscrows.get(fid) || null, into });
+    const body = liquidationEvent({ network, fid, v, claims: claims ? claims.claimed(fid) : [], escrowAt: liqEscrows.get(fid) || null, into, door });
     const kept = state.events[`liquidation:${fid}`] = state.events[`liquidation:${fid}`] || {};
     const s1 = stampEvent(body, kept); changed = changed || s1.changed; out.push(s1.event);
   }
