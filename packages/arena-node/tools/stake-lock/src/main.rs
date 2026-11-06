@@ -49,6 +49,7 @@
 //!     --expiration BLOCK [--witness cancel --forfeit-sig HEX | --witness refund] \
 //!     --signer-secret HEX
 //!   arena-stake-lock --mode status --data-dir D --outpoint TXID:IDX
+//!   arena-stake-lock --mode send-claimed --data-dir D --outpoint TXID:IDX [--wait-ms N]   did a gateway claim it (kanban #1185)
 //!   arena-stake-lock --mode settle --data-dir D --claim-pk HEX \
 //!     --locks TXID:IDX:PREIMAGE:MSAT[,...] --nonce HEX16 \
 //!     (--payouts PK:MSAT[,...] | --qualifier-pk HEX) [--signature HEX]
@@ -85,7 +86,7 @@ use fedimint_core::{Amount, NumPeersExt, OutPoint, TransactionId};
 use fedimint_lnv2_common::config::LightningClientConfig;
 use fedimint_lnv2_common::contracts::{OutgoingContract, PaymentImage};
 use fedimint_lnv2_common::endpoint_constants::{
-    CONSENSUS_BLOCK_COUNT_ENDPOINT, OUTGOING_CONTRACT_EXPIRATION_ENDPOINT,
+    AWAIT_PREIMAGE_ENDPOINT, CONSENSUS_BLOCK_COUNT_ENDPOINT, OUTGOING_CONTRACT_EXPIRATION_ENDPOINT,
 };
 use fedimint_lnv2_common::{
     ContractId, KIND, LightningInput, LightningInputV0, LightningOutput, LightningOutputV0,
@@ -264,6 +265,8 @@ async fn main() -> anyhow::Result<()> {
         "redeem" => redeem(&a, &client, lnv2, &api).await,
         "settle" => settle(&a, &client, lnv2, &api).await,
         "status" => { println!("{}", status(&a, &api).await?); Ok(()) }
+        // kanban #1185: whether a gateway claimed a settlement's outgoing contract - the proof a paid send landed
+        "send-claimed" => { println!("{}", send_claimed(&a, &api).await?); Ok(()) }
         "fees" => { println!("{}", fees(&client, lnv2).await?); Ok(()) }
         "guardians" => { println!("{}", guardians(&client).await?); Ok(()) }
         "gateways" => { println!("{}", gateways(&client, &api).await?); Ok(()) }
@@ -271,7 +274,7 @@ async fn main() -> anyhow::Result<()> {
         // RPS stack: a process per question opened the client's database and reached the guardians each time - dozens of
         // them at 60-80 % CPU each with 8 s paid rounds, the machine at load 50 and a paid tap past 1.5 s): this process
         // stays, the client open, and answers one JSON request per stdin line - { "id", "mode", "args": { name: value } } ->
-        // { "id", "ok", "result" | "error" }. Only status, fees, guardians, gateways and id: nothing that moves money.
+        // { "id", "ok", "result" | "error" }. Only status, send-claimed, fees, guardians, gateways and id: nothing that moves money.
         "serve" => serve(&client, lnv2, &api).await,
         "send" => send(&a, &client).await,
         // THE ARBITER'S PEG-IN (spec §5A.3: "the arbitration set pegs it into the round's federation"): an
@@ -297,7 +300,7 @@ async fn main() -> anyhow::Result<()> {
         // kanban #1160: the e-cash a keyed ecash-send made, read back from the client's operation log (never spent twice)
         "ecash-sent" => ecash_sent(&a, &client).await,
         "balance" => { println!("{}", serde_json::json!({ "mode": "balance", "msat": client.get_balance_for_btc().await?.msats })); Ok(()) }
-        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send, serve, pegin-address, pegin-claim, pay, pay-sent, receive-to-key, claim-incoming, ecash-send, ecash-receive, ecash-sent, balance or id"),
+        other => bail!("no mode {other}: lock, redeem, settle, status, send-claimed, fees, guardians, gateways, send, serve, pegin-address, pegin-claim, pay, pay-sent, receive-to-key, claim-incoming, ecash-send, ecash-receive, ecash-sent, balance or id"),
     }
 }
 
@@ -326,6 +329,7 @@ async fn serve(client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi
         }
         let got = match mode.as_str() {
             "status" => status(&a, api).await,
+            "send-claimed" => send_claimed(&a, api).await,
             "fees" => fees(client, lnv2).await,
             "guardians" => guardians(client).await,
             "gateways" => gateways(client, api).await,
@@ -333,7 +337,7 @@ async fn serve(client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi
                 Ok(exp) => stake_contract(&a, exp).map(|c| serde_json::json!({ "mode": "id", "contract_id": c.contract_id().0.to_string() })),
                 Err(e) => Err(e),
             },
-            other => Err(anyhow!("serve answers status, fees, guardians, gateways and id - not {other}")),
+            other => Err(anyhow!("serve answers status, send-claimed, fees, guardians, gateways and id - not {other}")),
         };
         let out = match got { Ok(v) => serde_json::json!({ "id": id, "ok": true, "result": v }),
             Err(e) => serde_json::json!({ "id": id, "ok": false, "error": format!("{e:#}") }) };
@@ -714,6 +718,43 @@ async fn status(a: &Args, api: &DynModuleApi) -> anyhow::Result<serde_json::Valu
     let count = block_count(api).await?;
     let stored = stored_at(api, op).await?;
     Ok(serde_json::json!({ "mode": "status", "block_count": count, "stored": stored_json(stored) }))
+}
+
+/// --mode send-claimed --data-dir D --outpoint TXID:IDX [--wait-ms N] (kanban #1185): did a gateway claim the outgoing contract
+/// at this outpoint? {"mode", "outpoint", "claimed", "state", "block_count", ...} with state
+///   "claimed"  the guardians hold the preimage the gateway's claim revealed ("preimage", "payment_hash"; stock LNv2
+///              await_preimage asked with expiration 0 - the guardians store it at the outpoint when a Claim(preimage)
+///              input spends the contract, lnv2-server lib.rs);
+///   "stored"   the contract is still held there, unspent: neither claimed nor refunded yet ("stored");
+///   "gone"     neither: the contract was refunded, or no accepted transaction ever made that outpoint - the guardians
+///              keep nothing that tells the two apart, and neither is a landed, paid send ("preimage_read").
+/// The guardians' await_preimage waits up to 10 s for a preimage before it looks at the expiration, so with none it would
+/// hold the caller 10 s; one that exists is answered at once. --wait-ms (default 2500) bounds that wait, under the seats'
+/// 10 s for a serve answer; "preimage_read" says whether the guardians answered none or did not answer in time.
+async fn send_claimed(a: &Args, api: &DynModuleApi) -> anyhow::Result<serde_json::Value> {
+    let op = outpoint(need(a, "outpoint")?)?;
+    let wait_ms: u64 = a.get("wait-ms").map_or(Ok(2500), |s| s.parse())?;
+    let count = block_count(api).await?;
+    let base = |state: &str, claimed: bool| serde_json::json!({ "mode": "send-claimed", "outpoint": format!("{}:{}", op.txid, op.out_idx),
+        "claimed": claimed, "state": state, "block_count": count });
+    if let Some(s) = stored_at(api, op).await? {
+        let mut j = base("stored", false);
+        j["stored"] = stored_json(Some(s));
+        return Ok(j);
+    }
+    let asked = tokio::time::timeout(Duration::from_millis(wait_ms), api.request_current_consensus::<Option<[u8; 32]>>(
+        AWAIT_PREIMAGE_ENDPOINT.to_string(), ApiRequestErased::new((op, 0u64)))).await;
+    Ok(match asked {
+        Ok(Ok(Some(preimage))) => {
+            let mut j = base("claimed", true);
+            j["preimage"] = hex(&preimage).into();
+            j["payment_hash"] = hex(&sha256::Hash::hash(&preimage).to_byte_array()).into();
+            j
+        }
+        Ok(Ok(None)) => { let mut j = base("gone", false); j["preimage_read"] = "none".into(); j }
+        Ok(Err(e)) => bail!("the guardians did not agree on a preimage at {}:{}: {e}", op.txid, op.out_idx),
+        Err(_) => { let mut j = base("gone", false); j["preimage_read"] = format!("no answer in {wait_ms} ms").into(); j }
+    })
 }
 
 /// THE GUARDIANS' OWN LNv2 FEE RULE, off the federation's config: `base +
