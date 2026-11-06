@@ -29,7 +29,8 @@ import { lockStake, fundPlayerWallet, earlyDepositOffer, walletSecretFor, markSe
   refundStake, redeemStake, redeemPayout, redeemSlashPayout, payoutLine, returnStake, collectOwed, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, collectIntoPlayerWallet, invoiceAmountMsat, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, restInvoiceMsat, ceilNote, NOTE_MSAT, roundsDepositMsat, locksForRound, settingsDepositOffer, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
 import { replayLinkFor } from '../src/replay-link.js';
 import { lockFieldsFromJson } from '../../arena-protocol/src/stake-lock.js';
-import { sha256 } from '../../arena-protocol/src/hash.js';
+import { sha256, taggedHash } from '../../arena-protocol/src/hash.js';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { entryFor, joinQuery, stakeFor, playerFor } from '../src/join.js';
 import { lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
 import { pageCurve } from '../src/page-curve.js';
@@ -535,12 +536,14 @@ test('after the settlement the winner\'s page redeems its own stake by the signe
   assert.equal(again.amountMsat, 980000n);
   assert.equal(asked.length + redeemed.length + joins, 0);
 
-  // A LOSER: every signer node refuses the forfeit as not a qualifier - final, nothing asked of the wallet.
+  // A LOSER: every signer node refuses the forfeit as not a qualifier - nothing asked of the wallet, and NOT FINAL on their words (kanban
+  // #1163): a stake the settlement claimed reads gone in the federation, one it did not comes back by the player's key at its expiry
   const lost = await returnStake({ ...ask, fetcher: signerNodes({ forfeit: 409 }) });
   console.log(`  loser: "${stakeBackLine(lost)}"; joins ${joins}, redeems ${redeemed.length}`);
   assert.equal(lost.ok, false);
-  assert.equal(lost.final, true);
-  assert.match(stakeBackLine(lost), /^No stake back: .*went into the round's pool/);
+  assert.equal(lost.final, false);
+  assert.equal(lost.lostSaid, true);
+  assert.match(stakeBackLine(lost), /^Stake: not back yet - .*went into the round's pool/);
   assert.equal(joins + redeemed.length, 0, 'a loser\'s page asked the lock client');
 
   // A STAKE LOCK ALREADY BACK (another tab took it): refused, and the guardians hold no contract
@@ -609,11 +612,13 @@ test('the page looks at what a seed is owed and spends nothing: a winner\'s payo
   assert.deepEqual(spent, [], 'looking at what is owed spent something');
   assert.match(owedLine(won), /^978000 msat payout and your 980000 msat stake - yours in the round's federation until you withdraw it/);
 
-  const lost = await lookOwed({ ...ask, fetcher: signerNodes({ payout: false, forfeit: 409 }), client: wallet(0), kept });
+  // A LOSER (kanban #1163): said lost, never final while its lock is held - and past the lock's expiry the player's key takes it back
+  const lost = await lookOwed({ ...ask, fetcher: signerNodes({ payout: false, forfeit: 409 }), client: wallet(140), kept });
   assert.equal(lost.owedMsat, 0n);
   assert.equal(lost.stakeLost, true);
-  assert.equal(lost.final, true);
-  assert.match(owedLine(lost), /^No payout · No stake back/);
+  assert.equal(lost.final, false);
+  const lostExpired = await lookOwed({ ...ask, fetcher: signerNodes({ payout: false, forfeit: 409 }), client: wallet(0), kept });
+  assert.equal(lostExpired.refundMsat, 980000n, 'a lost run\'s lock past its expiry was not owed back by the player\'s key');
 
   const early = await lookOwed({ ...ask, fetcher: signerNodes({ payout: false, known: false }), client: wallet(150), kept });
   assert.equal(early.owedMsat, 0n);
@@ -1394,6 +1399,18 @@ const ARENA_KEYS = ['79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f
   'f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9', 'e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13',
   '2f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4', 'fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556',
   '5cbdf0646e5db4eaa398f365f2ea7a0e3d419b7e0330e39ce92bddedcac4f9bc'];
+/** A BIP-327 aggregate signature by `secrets` (each key lifted to 02 || x, in order, no tweak) over `msg` - a named forfeit (kanban #1163). */
+function namedSign(msg, secrets) {
+  const n = secp256k1.Point.Fn.ORDER;
+  const even = (k) => (secp256k1.Point.BASE.multiply(k).toAffine().y & 1n ? n - k : k);
+  const be = (k) => fromHex(k.toString(16).padStart(64, '0'));
+  const pks = secrets.map((k) => Uint8Array.from([0x02, ...schnorr.getPublicKey(be(k))]));
+  const cat = (ps) => { const out = new Uint8Array(ps.reduce((t, x) => t + x.length, 0)); let at = 0; for (const x of ps) { out.set(x, at); at += x.length; } return out; };
+  const list = taggedHash('KeyAgg list', cat(pks));
+  const second = pks.find((x) => toHex(x) !== toHex(pks[0]));
+  const coef = (x) => (second && toHex(x) === toHex(second) ? 1n : BigInt('0x' + toHex(taggedHash('KeyAgg coefficient', cat([list, x])))) % n);
+  return schnorr.sign(msg, be(secrets.reduce((t, k, i) => (t + coef(pks[i]) * even(k)) % n, 0n)));
+}
 const arenaFieldsFor = (refundPk, amountMsat = 980000n) => lockFieldsFromJson({ paymentImage: { kind: 'point', bytes: toHex(POINT) }, amountMsat: String(amountMsat),
   expiration: 464, roundId: toHex(rid), claimKeys: ARENA_KEYS, threshold: 5, refundPk: toHex(refundPk) });
 class ArenaFake {
@@ -1430,11 +1447,14 @@ test('an Arena lock is refunded and redeemed by arenaRedeem with its witness, ne
   const r = await refundStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: ArenaFake, nodes: ['http://a.test'], fetcher: signerNodesSay({}) });
   assert.deepEqual(ArenaFake.calls, [{ arenaRedeem: { txid: 'cd'.repeat(32), outIdx: 0, witness: { kind: 'refund' }, key: toHex(p.secret) } }]);
   assert.deepEqual(r.refunds.map((x) => x.accepted), [true]);
-  // THE FORFEIT: a signer node whose forfeit names no signers is passed over; the next one's signers and signature are the witness
+  // THE FORFEIT: a signer node whose forfeit names no signers is passed over, and so is one whose signature does not verify here (kanban
+  // #1163: the aggregate of the named signers' keys over the lock's contract id); the next one's signers and signature are the witness
   ArenaFake.calls = [];
-  const d = await redeemStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: ArenaFake, nodes: ['http://a.test', 'http://b.test'],
-    fetcher: signerNodesSay({ 'a.test': { signature: SIG, contractId: 'c1', claimPk: '02'.repeat(33) }, 'b.test': { signature: SIG, contractId: 'c1', signers: [0, 1, 2, 4, 6] } }) });
-  assert.deepEqual(ArenaFake.calls, [{ arenaRedeem: { txid: 'cd'.repeat(32), outIdx: 0, witness: { kind: 'cancel', signers: [0, 1, 2, 4, 6], signature: SIG }, key: toHex(p.secret) } }]);
+  const NAMED = toHex(namedSign(arenaLockContractId(fields), [1n, 2n, 3n, 5n, 7n]));
+  const d = await redeemStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: ArenaFake, nodes: ['http://a.test', 'http://c.test', 'http://b.test'],
+    fetcher: signerNodesSay({ 'a.test': { signature: SIG, contractId: 'c1', claimPk: '02'.repeat(33) }, 'c.test': { signature: SIG, contractId: 'c1', signers: [0, 1, 2, 4, 6] },
+      'b.test': { signature: NAMED, contractId: 'c1', signers: [0, 1, 2, 4, 6] } }) });
+  assert.deepEqual(ArenaFake.calls, [{ arenaRedeem: { txid: 'cd'.repeat(32), outIdx: 0, witness: { kind: 'cancel', signers: [0, 1, 2, 4, 6], signature: NAMED }, key: toHex(p.secret) } }]);
   assert.deepEqual(d.redeems.map((x) => [x.accepted, x.forfeitFrom]), [[true, 'http://b.test']]);
   // signers out of order, or none, are no forfeit of an Arena lock
   ArenaFake.calls = [];
