@@ -121,3 +121,22 @@ test('a cancel takes the entry\'s resting sell out of the book; its filled share
   assert.equal(L.positions.get(id('a')).cancelled, true);
   assert.deepEqual(L.refused, []);
 });
+
+test('one signed sell is sold once: a later batch carrying the same sell again is refused, not set at its full size again (kanban #1150)', () => {
+  // BATCH 1: A buys Up 20 sat at 0.60, B buys Down 20 sat at 0.45 - A fills. BATCH 2: A's one signed sell of 5 sat Up at >= 0.70 to C.
+  // BATCH 3: the same signed sell again (an honest race after a missed certificate, or on purpose) with D buying Up at 0.75
+  const b1 = { k: 1, cutoffMs: 1000n, orders: [o('a', YES, 60, 20), o('b', NO, 45, 20)] };
+  const sell = { id: id('51'), entry: id('a'), outcome: YES, price: 70000n, sharesMsat: 5000n };
+  const b2 = { k: 2, cutoffMs: 2000n, orders: [o('c', YES, 75, 10)], sells: [sell] };
+  const b3 = { k: 3, cutoffMs: 3000n, orders: [o('d', YES, 75, 10)], sells: [sell] };
+  const L = bookLedger({ batches: [b1, b2, b3], feeBps: FEE });
+  const a = L.positions.get(id('a'));
+  console.log('  SELL ONCE:', JSON.stringify({ aDown: String(a.shares[NO]), aSellDebt: String(a.sellDebt), dUp: String(L.positions.get(id('d')).shares[YES]), refused: L.refused.map((r) => r.why) }));
+  assert.equal(a.shares[NO], 5000n, 'one signed sell of 5 sat sold more than 5 sat');
+  assert.deepEqual(L.refused.map((r) => r.id), [id('51')]);
+  assert.match(L.refused[0].why, /a signed sell is sold once/);
+  // D buys what B's resting Down still offers, as if batch 3 carried no sell at all
+  const without = bookLedger({ batches: [b1, b2, { ...b3, sells: [] }], feeBps: FEE });
+  assert.equal(L.positions.get(id('d')).shares[YES], without.positions.get(id('d')).shares[YES], 'D bought the sell a second time');
+  assert.equal(L.positions.get(id('a')).sellDebt, without.positions.get(id('a')).sellDebt);
+});
