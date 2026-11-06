@@ -32,6 +32,8 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
  * { read() -> [], write(list) }. `scheduleFor(net)` / `repealScheduleFor(net)`: the network's schedules (regtest's short ones);
  * `historyFor(net, height)` -> the live history at that height ([{ config }], liveConfig's), or null while it cannot be known yet;
  * none given: no proposal is read as a repeal (the first slice's behaviour). `exampleCheck(entry)` -> { ok, value, why }: the read of a new source's example.
+ * `depthHeightFor(net)` -> the network's BALLOT_DEPTH_HEIGHT (kanban #1196; none given: 0, every proposal under the rule) and
+ * `minDecideDepthFor(net)` -> the depth its seats decide at (none given: the schedule's, ballot.js minDecideDepthOf).
  */
 export const PROPOSAL_STATE = Object.freeze({ COUNTING: 'COUNTING', PASSED: 'PASSED', FAILED: 'FAILED', ORPHANED: 'ORPHANED' });
 const S = PROPOSAL_STATE;
@@ -42,7 +44,7 @@ const MOVES = Object.freeze({ [S.COUNTING]: [S.PASSED, S.FAILED, S.ORPHANED], [S
 export const stateOf = (r) => (r && S[r.state] ? r.state : r && r.orphaned ? S.ORPHANED : r && r.decided ? (r.decided.passed ? S.PASSED : S.FAILED) : S.COUNTING);
 
 export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsFor, verify, store, schedule = SCHEDULES.mainnet, scheduleFor = null,
-  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, exampleCheck = null }) {
+  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, exampleCheck = null, depthHeightFor = null, minDecideDepthFor = null }) {
   const held = new Map((store && store.read ? store.read() || [] : []).map((x) => [x.id, { ...x, state: stateOf(x) }]));
   /** WRITTEN FIRST: the store takes `next` (or throws), and only then this seat's memory. */
   const commit = (next) => {
@@ -99,7 +101,10 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       if (historyFor && !history)
         return { ok: false, status: 503, why: `this seat has not yet decided every proposal that activates by height ${dep.publishedAt}, so it cannot yet say whether this one is a repeal: ask again shortly` };
       const stands = proposalStands(p, { publishedAt: dep.publishedAt, depositSats: dep.depositSats, lowestBondMinSats: lowestBondMinSatsFor(net),
-        schedule: (scheduleFor && scheduleFor(net)) || schedule, repealSchedule: (repealScheduleFor && repealScheduleFor(net)) || repealSchedule, verify, history });
+        schedule: (scheduleFor && scheduleFor(net)) || schedule, repealSchedule: (repealScheduleFor && repealScheduleFor(net)) || repealSchedule, verify, history,
+        // THE #1196 RULE FROM THE NETWORK'S BALLOT_DEPTH_HEIGHT (§27A.7.4): before it the old rule; from it a repeal's cooldown 2 and an
+        // activation fewer than the network's decide depth after the last voting block refused here, so it is never counted
+        ...(depthHeightFor ? { depthHeight: depthHeightFor(net) } : {}), ...(minDecideDepthFor ? { minDecideDepth: minDecideDepthFor(net) } : {}) });
       if (!stands.ok) return { ok: false, status: 422, why: stands.why };
       const kept = { id, proposal: toHex(bytes), networkId: net, parent: toHex(p.parent), configHash: toHex(p.configHash), class: stands.class,
         proposer: toHex(p.proposer), publishedAt: dep.publishedAt, depositSats: String(dep.depositSats), votingFrom: stands.votingFrom,

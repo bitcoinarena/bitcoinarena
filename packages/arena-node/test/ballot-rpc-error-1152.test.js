@@ -164,14 +164,16 @@ test('#1152 an outcome is written no less than 3 deep (MIN_DECIDE_DEPTH), a repe
     const t = createBallotTally({ proposals, tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, blockHashAt: ch.blockHashAt, verify });
     const seen = [];
     for (ch.tip = 105; ch.tip <= 109; ch.tip++) { await t.pass(); seen.push(`${ch.tip}:${proposals.list()[0].state || (proposals.list()[0].decided ? 'decided' : 'COUNTING')}`); }
-    return { seen, decidedAt: proposals.list()[0].decided.decidedAt, activation: k.record.activationHeight };
+    return { seen, decidedAt: proposals.list()[0].decided ? proposals.list()[0].decided.decidedAt : null, activation: k.record.activationHeight };
   };
-  // COOLDOWN 0 (§27A.7.6 as written): before kanban #1152 decided at the last voting block itself - 1 deep; now 3 deep
+  // COOLDOWN 0 (§27A.7.6 before the #1196 ruling): before kanban #1152 decided at the last voting block itself - 1 deep; under the
+  // #1196 rule (the gate at 0 here) its activation leaves 1 block after its last voting block: invalid on its face, never decided
+  // (kanban #1199; below the gate it keeps depth 1, ballot-depth-1199.test.js)
   const zero = await run(0);
   // COOLDOWN 2 (the cooldown kanban #1152 gives a repeal): 3 deep at 108, the block before its activation at 109
   const two = await run(2);
   console.log('  #1152 DEPTH:', JSON.stringify({ cooldown0: zero, cooldown2: two }));
-  assert.equal(zero.decidedAt, 108, 'the last voting block (106) 3 deep, not 1');
+  assert.equal(zero.decidedAt, null, 'fewer than 3 blocks after the last voting block (106): never decided');
   assert.deepEqual([two.decidedAt, two.activation], [108, 109], 'decided the block before its activation');
 });
 
