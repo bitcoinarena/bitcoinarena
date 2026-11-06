@@ -10906,6 +10906,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           }
           if (t.startsWith('close ')) {
             const id = Buffer.from(t.slice(6).trim(), 'hex');
+            // A SEAT THAT CLOSES ITS ROUNDS BY ITS OWN CLOCK (closeAtEnd, every live seat) TAKES NO CLOSE FROM A SOCKET BEFORE THE END
+            // (kanban #1204 INSTALLER-DOORS-1): the play socket is open to anyone, and a close before endMs cut every run short,
+            // refused the rest of the round's entries and batches, and settled on the cut transcripts. A harness (closeAtEnd off)
+            // still closes its rounds when it says so.
+            if (closeAtEnd) {
+              // (an id the store does not hold is refused before heldOf, which would keep a `bad` entry for it)
+              const h = id.length === 32 && round.get(id) ? heldOf(id) : { bad: true };
+              if (h.bad || h.endMs === null || BigInt(round.now()) < h.endMs) return sock.send('error this seat closes its rounds itself, at their end');
+            }
             const shut = round.close(id);
             // A CLOSED ROUND IS REPLAYED, and by the daemon rather than by
             // whoever asked. The promises are deliberately not awaited here:
