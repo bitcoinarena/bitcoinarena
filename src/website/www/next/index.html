@@ -57,12 +57,15 @@
   h2 { font-size: clamp(24px, 3.4vw, 34px); letter-spacing: -0.02em; line-height: 1.1; margin: 0 0 10px; font-weight: 800; }
   .lead { color: var(--ink2); max-width: 62ch; margin: 0 0 28px; }
 
-  /* 2. the games */
-  .games { display: grid; grid-template-columns: 1fr; gap: 28px; }
-  @media (min-width: 760px) { .games { grid-template-columns: repeat(3, 1fr); gap: 24px; } }
-  .game img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border: 1px solid var(--line); border-radius: 4px; background: var(--bg2); }
+  /* 2. the apps */
+  .games { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
+  @media (min-width: 760px) { .games { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; } }
+  .games > *, .three > *, .stake > * { min-width: 0; }
+  .game img { display: block; width: 100%; max-width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: cover; border: 1px solid var(--line); border-radius: 4px; background: var(--bg2); }
   .game h3 { font-size: 20px; margin: 14px 0 4px; letter-spacing: -0.01em; }
   .game p { margin: 0 0 10px; color: var(--ink2); }
+  h3.group { font-family: var(--mono); font-size: 13px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); margin: 0 0 14px; }
+  .games + h3.group { margin-top: 40px; }
   .game .count { font-family: var(--mono); font-size: 13px; color: var(--ink3); margin-bottom: 10px; }
   .game .count .num { color: var(--ink); }
   .game a.go { font-weight: 600; }
@@ -97,11 +100,6 @@
   .note { font-family: var(--mono); font-size: 12px; color: var(--ink3); margin: -16px 0 26px; }
   h3.t { font-size: 15px; font-family: var(--mono); font-weight: 600; margin: 0 0 10px; color: var(--ink2); }
 
-  /* 6. the developer */
-  .dev > * { max-width: 66ch; }
-  .dev .date { font-family: var(--mono); font-size: 13px; color: var(--ink3); margin: 0 0 10px; }
-  .dev p { margin: 0 0 14px; }
-
   /* 7. testnet night */
   .night { display: flex; flex-wrap: wrap; gap: 8px 28px; align-items: baseline; }
   .night .when { font-family: var(--mono); font-size: clamp(18px, 2.6vw, 24px); font-weight: 600; }
@@ -117,22 +115,39 @@
   footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 22px; }
   footer a { color: var(--ink2); text-decoration: none; }
   footer a:hover { color: var(--ink); }
+  footer .wrap { justify-content: space-between; align-items: center; }
+  footer .os { margin: 0; }
+  footer .os b { color: var(--ink); font-weight: 600; }
+  footer .os a { text-decoration: underline; text-underline-offset: 3px; }
+  footer .social { display: flex; gap: 6px; }
+  footer .social a { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 6px; color: var(--ink2); }
+  footer .social a:hover, footer .social a:focus-visible { color: var(--orange); background: var(--bg2); }
+  footer .social svg { width: 20px; height: 20px; fill: currentColor; }
 
   @media (max-width: 520px) { header.bar nav a.wide { display: none; } section { padding: 44px 0; } }
+  /* A PHONE IN PORTRAIT (#1197): the wide gameplay at its own shape under the bar, the words below it on the page's dark */
+  @media (max-width: 700px) and (orientation: portrait) {
+    .hero { min-height: 0; display: block; padding-top: 56px; background: var(--bg); }
+    .hero video, .hero img.poster { position: relative; inset: auto; display: block; width: 100%; height: auto; aspect-ratio: 1280 / 532; }
+    .hero::after { display: none; }
+    .hero .over { padding: 22px 0 40px; }
+    .hero.full video { aspect-ratio: 16 / 9; }
+    .close-trailer { top: 8px; }
+  }
   @media (prefers-reduced-motion: reduce) { .hero video.bg { display: none; } }
 </style>
 </head>
 <body>
 <header class="bar"><div class="wrap">
   <a class="brand" href="/" aria-label="Bitcoin Arena"><i>₿</i>Bitcoin Arena</a>
-  <nav><a href="#games">Games</a><a class="wide" href="#stake">Your stake</a><a href="#network">Network</a><a class="wide" href="https://docs.bitcoinarena.io/">Docs</a></nav>
+  <nav><a href="#apps">Apps</a><a class="wide" href="#stake">Your stake</a><a href="#network">Network</a><a class="wide" href="https://docs.bitcoinarena.io/">Docs</a></nav>
 </div></header>
 
 <!-- 1. THE GAME -->
 <div class="hero" id="hero">
-  <video class="bg" id="bgvideo" autoplay muted loop playsinline preload="metadata" poster="/next/media/poster.jpg" aria-hidden="true">
-    <source src="/next/media/hero.webm" type="video/webm">
-    <source src="/next/media/hero.mp4" type="video/mp4">
+  <video class="bg" id="bgvideo" autoplay muted loop playsinline preload="metadata" poster="/next/media/poster-v2.jpg" aria-hidden="true">
+    <source src="/next/media/hero-v2.webm" type="video/webm">
+    <source src="/next/media/hero-v2.mp4" type="video/mp4">
   </video>
   <button class="close-trailer" id="closetrailer" type="button">Close trailer</button>
   <div class="over"><div class="wrap">
@@ -145,34 +160,38 @@
   </div></div>
 </div>
 
-<!-- 2. THREE GAMES -->
-<section id="games"><div class="wrap">
-  <h2>Three games, one rule</h2>
-  <p class="lead">Every player stakes the same amount. The losers' stakes pay the winners. Nobody in between keeps the pot.</p>
+<!-- 2. ALL APPS, as the lobby groups them -->
+<section id="apps"><div class="wrap">
+  <h2>All apps, one rule</h2>
+  <p class="lead">Every player stakes the same amount. The losers' stakes pay the winners. Nobody in between keeps the pot. These are all the apps the nodes run today.</p>
+  <h3 class="group">Games · 2</h3>
   <div class="games">
     <div class="game">
-      <img src="/next/media/nextblock.jpg" alt="Tick Tock, Next Block: trucks and tanks on the road from the mempool to the miners" loading="lazy" width="960" height="540">
+      <img src="/next/media/nextblock-v2.jpg" alt="Tick Tock, Next Block: trucks and tanks on the road from the mempool to the miners" loading="lazy" width="960" height="540">
       <h3>Tick Tock, Next Block</h3>
       <p>Drive your truck from the mempool to the miners before the block. The best scores of the round share the stakes of the rest.</p>
       <div class="count"><span class="num" data-total="nextblock">–</span> rounds settled since <span data-since></span></div>
       <a class="go" href="https://testnet.bitcoinarena.io/?game=nextblock">Play Tick Tock</a>
     </div>
     <div class="game">
-      <img src="/next/media/updown.jpg" alt="Up or Down: the round open, the chance of up, the buy panel" loading="lazy" width="960" height="540">
-      <h3>Up or Down</h3>
-      <p>Will BTC be higher or lower in 15 minutes? The side that was right shares the stakes of the side that was wrong.</p>
-      <div class="count"><span class="num" data-total="btc-updown-15m">–</span> rounds settled since <span data-since></span></div>
-      <a class="go" href="https://testnet.bitcoinarena.io/?game=btc-updown-15m">Play Up or Down</a>
-    </div>
-    <div class="game">
-      <img src="/next/media/rps.jpg" alt="Rock Paper Scissors against the test bot: pick your move" loading="lazy" width="960" height="540">
+      <img src="/next/media/rps-v2.jpg" alt="Rock Paper Scissors against the test bot: pick your move" loading="lazy" width="960" height="540">
       <h3>Rock Paper Scissors</h3>
       <p>One move each, sealed until both are in. The winner takes both stakes. On testnet you may meet our test bot; it says so.</p>
       <div class="count"><span class="num" data-total="rock-paper-scissors">–</span> rounds settled since <span data-since></span></div>
       <a class="go" href="https://testnet.bitcoinarena.io/?game=rock-paper-scissors">Play Rock Paper Scissors</a>
     </div>
   </div>
-  <p class="fees"><b>4 % fee</b> per entry: 2 % to the game's developers, 2 % to the protocol reserves. Fixed.</p>
+  <h3 class="group">Prediction markets · 1</h3>
+  <div class="games">
+    <div class="game">
+      <img src="/next/media/updown-v3.jpg" alt="Bitcoin Up or Down: 10-second candles around the price to beat, and the chance of up" loading="lazy" width="960" height="540">
+      <h3>Bitcoin Up or Down</h3>
+      <p>Will BTC be higher or lower in 15 minutes? The side that was right shares the stakes of the side that was wrong.</p>
+      <div class="count"><span class="num" data-total="btc-updown-15m">–</span> rounds settled since <span data-since></span></div>
+      <a class="go" href="https://testnet.bitcoinarena.io/?game=btc-updown-15m">Play Up or Down</a>
+    </div>
+  </div>
+  <p class="fees"><b>4 % fee</b> per entry: 2 % to the app's developers, 2 % to the protocol reserves. Fixed.</p>
 </div></section>
 
 <!-- 3. WHERE IS YOUR STAKE -->
@@ -244,20 +263,11 @@
   </table></div>
 </div></section>
 
-<!-- 6. FROM THE DEVELOPER -->
-<section id="dev"><div class="wrap dev">
-  <h2>From the developer</h2>
-  <p class="date">6 November 2026</p>
-  <p>What runs: three games on Bitcoin testnet4, with real nodes, real bonds and two federations holding the stakes. Every result is signed by five of seven nodes and can be replayed by anyone. What is missing: mainnet, games from other developers, and a lot of polish on the first minute of play.</p>
-  <p>What broke last: this week I went through every place in the code where a stake, a payout or a signature changes state, and found 47 where a crash, an unsigned request or one node's word could move money the wrong way. The critical ones are being fixed and tested first. Before that, a test showed that three silent nodes can hold a round until its locks run out: the loser gets the stake back and the winner goes unpaid. That one is open, and it needs a rule, not a patch.</p>
-  <p>If something breaks for you, tell me. That is what the beta is for.</p>
-</div></section>
-
 <!-- 7. TESTNET NIGHT -->
 <section id="night"><div class="wrap">
   <h2>Next Testnet Night</h2>
   <div class="night">
-    <span class="when">Wednesday 18 November 2026, 20:00 Zürich</span>
+    <span class="when">Wednesday 18 November 2026, 20:00 CET (UTC+1)</span>
     <span class="local" id="nightlocal">19:00 UTC</span>
   </div>
   <p class="lead" style="margin-top:12px">An evening of rounds with everyone who shows up. <a href="/night/">Details</a>.</p>
@@ -265,19 +275,14 @@
 
 <!-- 8. BUILD, RUN, DOWNLOAD -->
 <section id="more"><div class="wrap three">
-  <div><h3>Build on it</h3><p>A game is a deterministic core the nodes replay. Write one, run it on a local devnet, publish it.</p><a href="https://docs.bitcoinarena.io/">Read the docs</a></div>
+  <div><h3>Build on it</h3><p>An app is a deterministic core the nodes replay. Write one, run it on a local devnet, publish it.</p><a href="https://docs.bitcoinarena.io/">Read the docs</a></div>
   <div><h3>Run a node</h3><p>A node bonds sats on Bitcoin, signs results and holds a guardian seat. One installer, Windows, macOS or Linux.</p><a href="https://docs.bitcoinarena.io/">How to run a node</a></div>
   <div><h3>Download</h3><p>The node, signed with the release key. <span class="mono" data-arena-release-version></span></p><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest">Latest release</a> · <a href="https://testnet.bitcoinarena.io/release-key.txt">Release key</a></div>
 </div></section>
 
 <footer><div class="wrap">
-  <a href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2">Nostr</a>
-  <a href="https://x.com/bitcoinarena_io">X</a>
-  <a href="https://github.com/bitcoinarena">GitHub</a>
-  <a href="https://discord.gg/9zZbASZyue">Discord</a>
-  <a href="https://t.me/+KihHE8JhcVM3NDVi">Telegram</a>
-  <a href="/security/">Security</a>
-  <a href="/privacy/">Privacy</a>
+  <p class="os"><b>Open source.</b> Every line the nodes and the apps run is on <a href="https://github.com/bitcoinarena">GitHub</a>. <a href="/security/">Security</a> · <a href="/privacy/">Privacy</a></p>
+  <nav class="social" aria-label="Bitcoin Arena elsewhere"><a href="https://x.com/bitcoinarena_io" rel="noopener" aria-label="Bitcoin Arena on X" title="X"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"/></svg></a><a href="https://discord.gg/9zZbASZyue" rel="noopener" aria-label="Bitcoin Arena on Discord" title="Discord"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.211.375-.445.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 3.677 4.37a.07.07 0 0 0-.032.028C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.873-1.295 1.226-1.994a.076.076 0 0 0-.042-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .078-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.099.246.198.373.292a.077.077 0 0 1-.007.127 12.3 12.3 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.363 1.225 1.993a.076.076 0 0 0 .084.028 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03ZM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.956 2.418-2.157 2.418Zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.946 2.418-2.157 2.418Z"/></svg></a><a href="https://t.me/+KihHE8JhcVM3NDVi" rel="noopener" aria-label="Bitcoin Arena on Telegram" title="Telegram"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0Zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635Z"/></svg></a><a href="https://github.com/bitcoinarena" rel="noopener" aria-label="Bitcoin Arena on GitHub" title="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a><a href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" target="_blank" rel="me noopener noreferrer" aria-label="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)" title="Nostr: bitcoinarena.io &#10003;"><svg viewBox="48 44 167 167" aria-hidden="true" focusable="false"><path d="M210.8 199.4c0 3.1-2.5 5.7-5.7 5.7h-68c-3.1 0-5.7-2.5-5.7-5.7v-15.5c.3-19 2.3-37.2 6.5-45.5 2.5-5 6.7-7.7 11.5-9.1 9.1-2.7 24.9-.9 31.7-1.2 0 0 20.4.8 20.4-10.7s-9.1-8.6-9.1-8.6c-10 .3-17.7-.4-22.6-2.4-8.3-3.3-8.6-9.2-8.6-11.2-.4-23.1-34.5-25.9-64.5-20.1-32.8 6.2.4 53.3.4 116.1v8.4c0 3.1-2.6 5.6-5.7 5.6H57.7c-3.1 0-5.7-2.5-5.7-5.7v-144c0-3.1 2.5-5.7 5.7-5.7h31.7c3.1 0 5.7 2.5 5.7 5.7 0 4.7 5.2 7.2 9 4.5 11.4-8.2 26-12.5 42.4-12.5 36.6 0 64.4 21.4 64.4 68.7v83.2ZM150 99.3c0-6.7-5.4-12.1-12.1-12.1s-12.1 5.4-12.1 12.1 5.4 12.1 12.1 12.1S150 106 150 99.3Z"/></svg></a></nav>
 </div></footer>
 
 <script src="/js/arena-curve.js" defer></script>
