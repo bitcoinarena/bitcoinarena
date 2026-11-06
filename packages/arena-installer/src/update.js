@@ -23,7 +23,7 @@ import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHeal
 import { adhocSign } from './tor.js';
 import { INSTANCE, PORT_OFFSET } from './instance.js';
 import { envToConfValues, formatConf, renameKeys, renameValues, setInConf } from '../../arena-node/src/arena-conf.js';
-import { stakeLockSetupOf } from './state.js';
+import { stakeLockSetupOf, nodeState } from './state.js';
 import { ensureApps } from '../../arena-node/src/app-fetch.js';
 import { writeCommand } from './launchers.js';
 import { control } from './node-services.js';
@@ -440,6 +440,11 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
     if (!c.ok) return { ok: false, why: c.why };
   }
   if (!existsSync(join(home, 'state.json')) || !(existsSync(join(home, 'arena.conf')) || existsSync(join(home, 'node.env')))) return { ok: false, why: `no node is installed at ${home}` };
+  // THE STATE READ BEFORE ANYTHING STOPS (kanban #1178): a state.json that does not read refuses the update here, with the node running -
+  // it was read after the stop, and a parse error left the node stopped. Read through state.js: locked, atomic, its .bak if torn
+  const nodeSt = nodeState(home);
+  let state;
+  try { state = nodeSt.read(); } catch (e) { return { ok: false, why: e.message }; }
   const svc = servicesOf({ platform, env, sh, home, port, node });
   const oldSeat = svc.seatText();
   const from = svc.releaseOf(oldSeat);
@@ -505,7 +510,6 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
   say(32, 'Backing up your node');
   const backup = backupNode(home);
   step(`backed up ${backup.files.length} file(s) into ${backup.dir}: ${backup.files.join(', ')}`);
-  const state = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
   say(36, `Writing the settings for ${label}`);
   // THE SETTINGS: arena.conf, its paths into an older release moved to the new one. A node from before it ran from
   // node.env: its settings are moved into arena.conf here, once (node.env stays until the new release answers, then is kept as
@@ -602,8 +606,9 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
   if (leftAfterStart.length) step(`still running from an older release after the start, ended: ${leftAfterStart.map((x) => `${x.name} ${x.pid}`).join(', ')}${stillLeft.length ? `; would not end: ${stillLeft.map((x) => `${x.name} ${x.pid}`).join(', ')}` : ''}`);
   if (same) {
     say(92, 'Finishing up');
-    writeFileSync(join(home, 'state.json'), JSON.stringify({ ...state, ...(reachUrl ? { reach: { ...state.reach, url: reachUrl } } : {}),
-      release: { path: newRelease, from, atMs: nowMs() } }, null, 2) + '\n', { mode: 0o600 });
+    // THE STATE AS IT STANDS NOW, NOT AS IT WAS READ MINUTES AGO (kanban #1178): what the seat, the owner page or the custody agent saved
+    // while the update ran (an on-chain action, custody.pegIn) is kept; only the release and a quick tunnel's new name are set
+    nodeSt.update((n) => ({ ...(reachUrl ? { reach: { ...n.reach, url: reachUrl } } : {}), release: { path: newRelease, from, atMs: nowMs() } }));
     if (migrating && existsSync(envFile)) renameSync(envFile, `${envFile}.migrated`);
     // the peer ports on this machine only, for a node installed before that was the default; those services restarted to take it
     let local = [];
