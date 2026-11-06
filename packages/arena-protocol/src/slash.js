@@ -40,7 +40,8 @@ import {
 } from './constants.js';
 import { entryId, roundId as roundIdOf, encodeEntryContract, decodeEntryContract } from './contracts.js';
 import { decodePlayerResult, resultId, splitSignedResult, SIGNED_RESULT_BYTES, signedResultBytesOf } from './result.js';
-import { computePayoutTable, isRefund, isQualifier, netStakeMsat } from './payout.js';
+import { computePayoutTable, isRefund, isQualifier, netStakeMsat, withGoneStakes } from './payout.js';
+import { refundKeyOf } from './stake-lock.js';
 import { payoutRuleForRound, isAttested } from './manifest.js';
 import { windowsOf } from './window.js';
 import { splitSignedAck, settlementAckId, countAcks, decodeSettlementTable, settlementTableId, namesNoEntry, SIGNED_SETTLEMENT_ACK_BYTES } from './settlement-ack.js';
@@ -99,10 +100,19 @@ export const RELEASE_WITHOUT_PROOF = 'RELEASE_WITHOUT_PROOF';
 /** 5A.3, template 3: "Signing a release or an escrow payout that pays other than its payout_table", proof "the release or the payout + the table". slashHoldsOnReleaseTable and slashHoldsOnEscrowSpend. */
 export const RELEASE_OFF_TABLE = 'RELEASE_OFF_TABLE';
 
-// In 5A.3's own document order, which is the order they are being written in; §13A.1's AUDIT after them.
+/**
+ * §5A.3 rows (a) and (b) of the named claim (protocol 27, kanban #1044 B1): an off-table claim, and a forfeit of an entry the accused signed lost
+ * (named-claim-offence.js). THEIR LOSS RULE IS #976's (RULED 2026-11-06, kanban #1146 B): the whole bond of each named signer, each harmed player's real loss
+ * once, the rest to the reserves - `namedClaimLosses` below. The same words as named-claim-offence.js, written here so this list needs no import cycle.
+ */
+export const OFF_TABLE_CLAIM = 'OFF_TABLE_CLAIM';
+export const FORFEIT_OF_LOST_ENTRY = 'FORFEIT_OF_LOST_ENTRY';
+
+// In 5A.3's own document order, which is the order they are being written in; §13A.1's AUDIT after them; the named claim's two rows last (kanban #1146 B).
 export const OFFENCES = [
   TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, OPERATOR_PLAYED,
   RELEASE_WITHOUT_PROOF, RELEASE_OFF_TABLE, AUDIT_CONTRADICTED,
+  OFF_TABLE_CLAIM, FORFEIT_OF_LOST_ENTRY,
 ];
 
 /**
@@ -137,7 +147,7 @@ export function resultMoved({ signed, replayed } = {}) {
 export const NAMES_ONE_ENTRY = [TWO_RESULTS, REPLAY_CONTRADICTS, AUDIT_CONTRADICTED];
 // A RELEASE WITH NO VALID PROOF HARMED A NODE, NOT A PLAYER: it names no entry, and all of the signer's bond goes to the reserves (§5A.3).
 export const NAMES_NO_ENTRY = [RELEASE_WITHOUT_PROOF];
-export function affectedEntries({ offence, playerPubkey, entries = [], signed, replayed } = {}) {
+export function affectedEntries({ offence, playerPubkey, entries = [], signed, replayed, claimedKeys = null } = {}) {
   if (!OFFENCES.includes(offence)) return { ok: false, why: `${offence} is not one of the offences` };
   if (NAMES_NO_ENTRY.includes(offence)) return { ok: true, affected: [] };
   if (NAMES_ONE_ENTRY.includes(offence)) {
@@ -150,6 +160,10 @@ export function affectedEntries({ offence, playerPubkey, entries = [], signed, r
     return { ok: true, affected: moved === 'LOWERED' ? [one] : others, moved };
   }
   const paying = entries.filter((e) => e && e.activated);
+  // (b) A FORFEIT OF A LOST ENTRY HELPED THAT ENTRY (kanban #1146 B, as RAISED in #975): every other activated entry is harmed, the forfeited one gets nothing
+  if (offence === FORFEIT_OF_LOST_ENTRY) return { ok: true, affected: paying.filter((e) => hex(e.playerPubkey) !== hex(playerPubkey)) };
+  // (a) AN OFF-TABLE CLAIM HARMED THE ENTRIES WHOSE LOCKS IT CLAIMED: `claimedKeys` (player key hex) - none named, nobody is affected
+  if (offence === OFF_TABLE_CLAIM) return { ok: true, affected: paying.filter((e) => claimedKeys && claimedKeys.has(hex(e.playerPubkey))) };
   const affected = offence === OPERATOR_PLAYED ? paying.filter((e) => !e.operatorOwn) : paying;
   return { ok: true, affected };
 }
@@ -1589,6 +1603,98 @@ export function slashDistribution({ escrowSats, roundId, contract, losses = new 
   }
   const playersMsat = [...players.values()].reduce((a, b) => a + b, 0n);
   return { players, playersMsat, reservesMsat: haveMsat - playersMsat, shortMsat: owedMsat - playersMsat, burned: 0n };
+}
+
+/**
+ * THE REAL LOSS OF A NAMED CLAIM'S OFFENCE (RULED 2026-11-06, kanban #1146 B; #976's rule). Answers { ok: true, losses (Map player key hex -> msat, above
+ * zero only), level } or { ok: false, why }. Pure. `entries` the round's as they settled (arbiter.js settledEntries: an entry with no FINAL run has no
+ * outcome), `held` the judge's answer (arbiter.js judgeNamedClaimProof):
+ *
+ *   (b) FORFEIT_OF_LOST_ENTRY, `held.playerPubkey` the forfeited entry. Affected: every activated entry but it.
+ *       level 1, every entry settled: F(true) - F′ (payout.js withGoneStakes, the table the round settles on). `settled` false - the round's remaining
+ *         locks still unsettled at the cap (#1130's, start + slash_return_blocks / 2) - reads each unsettled lock as gone back to its player: its net stake.
+ *       level 2, an entry not settled: the forfeited net stake, owed to the round's proved qualifiers pro rata by their F′ payouts; none proved, no loss.
+ *   (a) OFF_TABLE_CLAIM, `held.spends` the accepted transaction's spends of the round's locks (the tool's read: each `lock` with its refund key and
+ *       amount, and the transaction's `outputs`). Affected: every activated entry whose lock it claimed.
+ *       level 1 (`held.truth`, the proof's FINAL rows, shown exactly F): F(true) - what the transaction paid them, a stake it did not claim counted as
+ *         gone back to its player.
+ *       level 2 (`held.leftMsat`, what left the round: paid to keys the round may not pay, and any excess over a cap - named-claim-payees.js
+ *         leftTheRound): owed to the entries whose locks it claimed, pro rata by the amounts it claimed of each.
+ * Shares are floored; the msat a split leaves goes one at a time in ascending H(round_id || pubkey), as §22A's remainder.
+ */
+export function namedClaimLosses({ held, entries = [], roundId, minScore = 0, payoutShares = null, settled = true } = {}) {
+  if (!held || !OFFENCES.includes(held.offence)) return { ok: false, why: 'not a named claim\'s offence' };
+  const losses = new Map();
+  if (held.offence === FORFEIT_OF_LOST_ENTRY) {
+    const forfeited = held.playerPubkey;
+    const harmed = affectedEntries({ offence: held.offence, playerPubkey: forfeited, entries });
+    if (!harmed.ok) return harmed;
+    const out = entries.find((e) => hex(e.playerPubkey) === hex(forfeited));
+    if (!out) return { ok: false, why: 'the round as it settled has no entry for the forfeited player' };
+    const gone = new Set([hex(forfeited)]);
+    const exact = entries.every((e) => !e.activated || e.outcome);
+    if (exact) {
+      const should = receivedBy({ roundId, rows: entries, minScore, payoutShares });
+      const did = settled ? receivedBy({ roundId, rows: withGoneStakes(entries, gone), minScore, payoutShares }) : new Map(entries.map((e) => [hex(e.playerPubkey), netStakeMsat(e)]));
+      for (const e of harmed.affected) { const k = hex(e.playerPubkey); const loss = (should.get(k) || 0n) - (did.get(k) || 0n); if (loss > 0n) losses.set(k, loss); }
+      return { ok: true, losses, level: 1 };
+    }
+    const proved = entries.filter((e) => e.outcome);
+    const fPrime = receivedBy({ roundId, rows: withGoneStakes(proved, gone), minScore, payoutShares });
+    const weights = new Map();
+    for (const e of harmed.affected) if (e.outcome && isQualifier(e, minScore)) { const w = fPrime.get(hex(e.playerPubkey)) || 0n; if (w > 0n) weights.set(hex(e.playerPubkey), w); }
+    for (const [k, v] of proRata(netStakeMsat(out), weights, roundId)) if (v > 0n) losses.set(k, v);
+    return { ok: true, losses, level: 2 };
+  }
+  // (a): WHOSE LOCKS THE TRANSACTION CLAIMED, by the lock's refund key - a stake lock's or a fee lock's
+  const spends = Array.isArray(held.spends) ? held.spends : [];
+  const low = (x) => String(x || '').toLowerCase();
+  const claimed = new Map();            // refund key hex -> { stake: bool, msat }
+  for (const sp of spends) {
+    if (!sp || !sp.lock || sp.kind !== 'claim') continue;
+    const k = low(sp.lock.refund_pk), c = claimed.get(k) || { stake: false, msat: 0n };
+    if (!(sp.lock.payment_image && sp.lock.payment_image.hash !== undefined)) c.stake = true;
+    c.msat += BigInt(sp.lock.amount_msat);
+    claimed.set(k, c);
+  }
+  const refundOf = (e) => hex(refundKeyOf(e.playerPubkey));
+  const claimedKeys = new Set(entries.filter((e) => claimed.has(refundOf(e))).map((e) => hex(e.playerPubkey)));
+  const harmed = affectedEntries({ offence: held.offence, entries, claimedKeys });
+  if (!harmed.ok) return harmed;
+  if (Array.isArray(held.truth) && held.truth.length) {
+    const paid = new Map();
+    for (const o of (spends[0] && spends[0].outputs) || []) if (o && o.amount_msat !== undefined) paid.set(low(o.refund_pk), (paid.get(low(o.refund_pk)) || 0n) + BigInt(o.amount_msat));
+    const truthByKey = new Map(held.truth.map((t) => [hex(t.pubkey), t]));
+    const rows = entries.map((e) => { const t = truthByKey.get(hex(e.playerPubkey)); return t ? { ...e, outcome: t.outcome, score: t.score } : e; }).filter((e) => e.outcome);
+    const should = receivedBy({ roundId, rows, minScore, payoutShares });
+    for (const e of harmed.affected) {
+      const k = hex(e.playerPubkey), c = claimed.get(refundOf(e));
+      const did = (paid.get(refundOf(e)) || 0n) + (c && c.stake ? 0n : netStakeMsat(e));
+      const loss = (should.get(k) || 0n) - did;
+      if (loss > 0n) losses.set(k, loss);
+    }
+    return { ok: true, losses, level: 1 };
+  }
+  const left = typeof held.leftMsat === 'bigint' ? held.leftMsat : 0n;
+  const weights = new Map();
+  for (const e of harmed.affected) { const c = claimed.get(refundOf(e)); if (c && c.msat > 0n) weights.set(hex(e.playerPubkey), c.msat); }
+  for (const [k, v] of proRata(left, weights, roundId)) if (v > 0n) losses.set(k, v);
+  return { ok: true, losses, level: 2 };
+}
+
+/** `totalMsat` split by `weights` (key hex -> BigInt), each share floored, the msat left one at a time in ascending H(round_id || pubkey). */
+function proRata(totalMsat, weights, roundId) {
+  const out = new Map();
+  const sum = [...weights.values()].reduce((a, b) => a + b, 0n);
+  if (totalMsat <= 0n || sum <= 0n) return out;
+  let left = totalMsat;
+  for (const [k, w] of weights) { const share = (totalMsat * w) / sum; out.set(k, share); left -= share; }
+  for (const k of remainderKeys(roundId, [...weights.keys()].map(fromHex))) {
+    if (left <= 0n) break;
+    out.set(hex(k), out.get(hex(k)) + 1n);
+    left -= 1n;
+  }
+  return out;
 }
 
 /** Ascending `H(roundId || pubkey)`, the order 22A names and payout.js uses. */

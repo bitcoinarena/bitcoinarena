@@ -21,7 +21,8 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { BOND_TEMPLATE_V3, holdOutputKey, panelThreshold } from '../../arena-protocol/src/bond-script.js';
 import { arbitrationCommitmentIn, holdSlashSpend } from '../../arena-protocol/src/arbitration-tx.js';
 import { CARRIER_PEG_IN_USES, carrierPegInId, fallbackCarriers } from '../../arena-protocol/src/census-key.js';
-import { decodeSlashPayoutTable, fraudProofHash, slashDistribution, slashPayoutTableId } from '../../arena-protocol/src/slash.js';
+import { decodeSlashPayoutTable, fraudProofHash, slashDistribution, slashPayoutTableId, OFF_TABLE_CLAIM, FORFEIT_OF_LOST_ENTRY } from '../../arena-protocol/src/slash.js';
+const NAMED_OFFENCES = [OFF_TABLE_CLAIM, FORFEIT_OF_LOST_ENTRY];
 import { carrierSlices, fallbackWitness, releaseWitness, signedHoldSpend, slashEscrowOutput, slashHoldSpend, startFeeRate } from '../../arena-protocol/src/slash-release.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { carrierMarginOf, carrierPayoutFeeOf } from '../../arena-protocol/src/slash-presig.js';
@@ -50,7 +51,7 @@ export const fallbackRank = (proofId, keys, me) => [...keys].sort((a, b) => (toH
  * `txOut(txid display, vout)` -> { sats, script hex, confirmations } of a confirmed unspent output, or null (gettxout without the mempool); by default read from `unspent`.
  * `federationsAt(height)` the reserves' view on the federation records in force at that height, as `federations()` answers it (an escrow spend's named height, #1085).
  * `fetchProof(id)` the bytes under a proof's hash or null; `judge(bytes, { startHeight })` -> { verdict, why, held } with `judge.read`; `panelsOf(contract, rid)`; `seatsOf(contract, rid)`
- * the round's drawn keys (hex); `handles(held)` whether a loss rule reads that judged offence at all (false: the start is dropped once, kanban #1044); `lossesFor({ contract, rid, held })` -> { ok, losses: Map key hex -> msat, entryIds: Map key hex -> bytes } or { ok: false, why }.
+ * the round's drawn keys (hex); `handles(held)` whether a loss rule reads that judged offence at all (false: the start is dropped once, kanban #1044); `lossesFor({ contract, rid, held, tip, capAt })` -> { ok, losses: Map key hex -> msat, entryIds: Map key hex -> bytes } or { ok: false, why }.
  * `federations()` the reserves' view, [{ federation, status, reserveKey, reserveSats, exposureCapSats, reservePending }] (`reservePending`: its guardian seats stand, so it has a key, and this seat has not read it yet); `retired` hex; `portFor(fid hex)` a stake-lock port or null; `scriptOf(address)`;
  * `reserveKeyOf(fid hex)` 33 bytes or null, or a promise of them (the seat's is async); `keepReserveRow(row)`.
  * `urlOf(key hex)`; `heldKey(publicKey)` CensusKeyStore's; `thresholdOf(key hex)`; `holdersOf(key hex, height)` -> [{ key, shares }]; `signer()` this node's census signer or null.
@@ -199,9 +200,14 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
 
   // ---- THE TABLE'S INPUTS ----
   /** What earlier slashes of the same round pay its players: their tables' entries, in chain order then proof id, for every one not returned. Undefined while one cannot be read. */
-  async function paidBefore(info) {
+  // A NAMED CLAIM'S BONDS PAY IN ASCENDING NODE KEY (RULED 2026-11-06, kanban #1146 B): the proof names five, all started at one height, and the first bond by node
+  // key pays each loss, the next only what is still owed. Every other offence keeps proof id order within a height.
+  async function paidBefore(info, byNode = false) {
     const rid = toHex(info.read.roundId), mine = toHex(info.proofId);
-    const earlier = db.prepare('SELECT start, height, proof_id FROM slash_holds WHERE round_id = ? AND (height < ? OR (height = ? AND proof_id < ?))').all(rid, info.height, info.height, mine);
+    const me = String(info.read.nodePubkey ? toHex(info.read.nodePubkey) : '').toLowerCase();
+    const earlier = byNode && me
+      ? db.prepare('SELECT start, height, proof_id FROM slash_holds WHERE round_id = ? AND (height < ? OR (height = ? AND (lower(node) < ? OR (lower(node) = ? AND proof_id < ?))))').all(rid, info.height, info.height, me, me, mine)
+      : db.prepare('SELECT start, height, proof_id FROM slash_holds WHERE round_id = ? AND (height < ? OR (height = ? AND proof_id < ?))').all(rid, info.height, info.height, mine);
     const paid = new Map();
     for (const r of earlier) {
       const kept = spendOf(r.start, 'release') || spendOf(r.start, 'fallback');
@@ -230,9 +236,11 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
    */
   async function build({ e, info, hold, panels, path, verdict, carrierKeys, pegs }) {
     const { contract, roundId } = info.read;
-    const owed = await lossesFor({ contract, rid: roundId, held: verdict.held });
+    // THE TABLE WAITS FOR THE ROUND (RULED 2026-11-06, kanban #1146 B): a named claim's loss is read once the round's remaining locks are settled or expired, and from
+    // #1130's cap on against what the federation shows then (`capAt`, `tip`: the loss reader's to apply)
+    const owed = await lossesFor({ contract, rid: roundId, held: verdict.held, tip: await tipHeight(), capAt: reserveCapOf(info) });
     if (!owed.ok) return { ok: false, why: `the losses cannot be read yet: ${owed.why}`, wait: true };
-    const paid = await paidBefore(info);
+    const paid = await paidBefore(info, NAMED_OFFENCES.includes(verdict.held && verdict.held.offence));
     if (!paid) return { ok: false, why: 'an earlier slash of that round has no table this node can read yet', wait: true };
     const playersFed = toHex(contract.federationId);
     const open = (await federations()).filter((f) => f && f.status === 'OPEN');

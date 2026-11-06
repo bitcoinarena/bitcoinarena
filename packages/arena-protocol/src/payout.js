@@ -38,6 +38,20 @@ export const REFUNDS = [VOID, ENTRY_VOID];
 export const isRefund = (outcome) => REFUNDS.includes(outcome);
 
 /**
+ * F′: F WITH THE STAKES THE FEDERATION NO LONGER HOLDS READ AS REFUNDED (RULED 2026-11-06, kanban #1146 A). A loser's stake lock that is gone before the
+ * settlement - spent by a forfeit, or run out and refunded to its player - cannot be claimed, so its entry leaves the pool as a refunded one does: the
+ * same table code then makes F′, and every seat that reads the same gone locks builds the same bytes. `gone` is a Set of player key hex (or a Map /
+ * array of them). THE ONE COPY: the settlement's table (lock-settlement.js through settlement.js planOf) and offence (b)'s real loss (slash.js
+ * namedClaimLosses) both read F′ from here. An entry already a refund stays as it is.
+ */
+export function withGoneStakes(entries, gone) {
+  const keys = gone instanceof Set ? gone : new Set(gone instanceof Map ? gone.keys() : (gone || []));
+  if (!keys.size) return entries;
+  const hexOf = (k) => (k instanceof Uint8Array ? [...k].map((b) => b.toString(16).padStart(2, '0')).join('') : String(k).toLowerCase());
+  return entries.map((e) => (e && !isRefund(e.outcome) && keys.has(hexOf(e.pubkey || e.playerPubkey)) ? { ...e, outcome: ENTRY_VOID, stakeGone: true } : e));
+}
+
+/**
  * WHAT OF AN ENTRY'S STAKE IS GAME MONEY, AND THIS IS THE ONLY PLACE THAT SAYS.
  *
  * 22A, "Collection: inclusive in the stake (changed)": wallet commitment 100

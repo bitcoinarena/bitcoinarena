@@ -25,13 +25,15 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { affectedEntries, realLosses, slashHolds, slashHoldsOnRerun, splitRerunSlashEvidence, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS, TWO_RESULTS,
-  splitAuditSlashEvidence, slashHoldsOnAudit, AUDIT_CONTRADICTED, splitDoubleSlashEvidence, slashHoldsOnDoubleSign, splitTableSlashEvidence, slashHoldsOnTable, splitReleaseSlashEvidence, slashHoldsOnRelease, slashHoldsOnReleaseTable } from '../../arena-protocol/src/slash.js';
+  splitAuditSlashEvidence, slashHoldsOnAudit, AUDIT_CONTRADICTED, splitDoubleSlashEvidence, slashHoldsOnDoubleSign, splitTableSlashEvidence, slashHoldsOnTable, splitReleaseSlashEvidence, slashHoldsOnRelease, slashHoldsOnReleaseTable,
+  namedClaimLosses, OFF_TABLE_CLAIM, FORFEIT_OF_LOST_ENTRY } from '../../arena-protocol/src/slash.js';
 import { abandonedSlashStands, abandonedProofId, decodeAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
 import { verifyFederationRecord } from '../../arena-protocol/src/federation-record.js';
 import { abandonedSlashPoint, networkOf } from '../../arena-protocol/src/constants.js';
 import { decodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
 import { tableBuild } from '../../arena-protocol/src/settlement-rebuild.js';
-import { splitNamedClaimEvidence, claimReadInput, slashHoldsOnNamedClaim, NAMED_ROW_OFF_TABLE } from '../../arena-protocol/src/named-claim-proof.js';
+import { splitNamedClaimEvidence, claimReadInput, slashHoldsOnNamedClaim, NAMED_ROW_OFF_TABLE, NAMED_ROW_PAYEE } from '../../arena-protocol/src/named-claim-proof.js';
+import { leftTheRound, entryPayeeKeys } from '../../arena-protocol/src/named-claim-payees.js';
 import { planEscrowSpend } from '../../arena-protocol/src/slash-reserves.js';
 import { finalSigned, splitSignedFinalSig, decodeFinalSig } from '../../arena-protocol/src/final-sig.js';
 import { splitSignedRerun, decodeRerunResult } from '../../arena-protocol/src/rerun.js';
@@ -247,7 +249,18 @@ export async function judgeNamedClaimProof({ evidence, roundIdBytes, contract, m
     advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
   if (held.slashed === undefined) return { slashed: undefined, why: held.why };
   if (!held.slashed) return no(held.why);
-  return { slashed: true, offence: held.offence, bond: held.bond, proof: got.proof, playerPubkey: got.proof.playerPubkey, why: held.why };
+  // AND WHAT ITS LOSS RULE READS (RULED 2026-11-06, kanban #1146 B; slash.js namedClaimLosses): the accepted transaction's spends of the round's locks, and
+  // for row (a) at level 1 the FINAL rows the proof showed exactly F, at level 2 what left the round
+  const txid = toHex(got.proof.signedResultId).toLowerCase(), rid = toHex(roundIdBytes).toLowerCase();
+  const spends = (read.spends || []).filter((s) => String(s.txid).toLowerCase() === txid && s.lock && String(s.lock.round_id).toLowerCase() === rid);
+  const extra = { row: got.row, spends };
+  if (got.row === NAMED_ROW_OFF_TABLE) {
+    extra.truth = [];
+    for (const f of got.finals || []) { try { const b = decodePlayerResult(splitSignedResult(f.signedResult).body); extra.truth.push({ pubkey: f.entry.playerPubkey, outcome: b.outcome, score: b.score }); } catch { /* not a result */ } }
+  } else if (got.row === NAMED_ROW_PAYEE && payees) {
+    extra.leftMsat = leftTheRound({ spends, entryKeys: entryPayeeKeys([...(ownEntries || []), ...got.entries]), payees }).msat;
+  }
+  return { slashed: true, offence: held.offence, bond: held.bond, proof: got.proof, playerPubkey: got.proof.playerPubkey, why: held.why, ...extra };
 }
 
 /**
@@ -323,7 +336,13 @@ export function buildSlash({ verdict, bond, advert, contract, roundId, slashHeig
  * settled on the false run. Shared by path B here and a template-3 release or fallback (slash-release-run.js), so both pay one loss the same way. Answers { ok, losses (Map key hex ->
  * msat), truth } or { ok: false, why }. Only a run proven FINAL can have cost anybody: after an objection in time the result was corrected before any money moved.
  */
-export function slashLosses({ verdict, entries, contract, roundId, signed = verdict.signed, truth = [], payoutShares = null }) {
+export function slashLosses({ verdict, entries, contract, roundId, signed = verdict.signed, truth = [], payoutShares = null, settled = true }) {
+  // THE NAMED CLAIM'S ROWS (a) AND (b) (RULED 2026-11-06, kanban #1146 B): #976's rule on what the judge read of the transaction - one function for path B,
+  // a template-3 release and its fallback. `settled` false: (b)'s round still has unsettled locks at the cap, each read as gone back to its player
+  if (verdict.offence === OFF_TABLE_CLAIM || verdict.offence === FORFEIT_OF_LOST_ENTRY) {
+    const got = namedClaimLosses({ held: verdict, entries, roundId, minScore: contract.minScore, payoutShares, settled });
+    return got.ok ? { ok: true, losses: got.losses, truth: [], level: got.level } : got;
+  }
   const harmed = affectedEntries({ offence: verdict.offence, playerPubkey: verdict.playerPubkey, entries, signed, replayed: verdict.replayed });
   if (!harmed.ok) return { ok: false, why: harmed.why };
   const named = entries.find((e) => toHex(e.playerPubkey) === toHex(verdict.playerPubkey));

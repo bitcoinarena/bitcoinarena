@@ -122,3 +122,53 @@ export function unpayableClaims({ spends, roundId, entries, payees, read = null 
   }
   return out;
 }
+
+/**
+ * WHAT LEFT THE ROUND IN ONE ACCEPTED CLAIM (level 2 of row (a)'s loss, RULED 2026-11-06, kanban #1146 B): the msat it paid to keys the round may not pay
+ * - an output no settlement makes, a send not refunding to the signer set's key, a key on no payee list - plus what it paid any row over its cap (the node
+ * row over the fee locks it claims and the remainder room, the donation set over a walk-away's 25 % or a market's share). The same reading as `claimPayees`,
+ * summed instead of stopped at the first. An output whose key is unread here is not counted (`unread` says which). Answers { msat, unread }.
+ */
+export function leftTheRound({ spends, entryKeys, payees }) {
+  const first = spends && spends[0];
+  if (!first) return { msat: 0n, unread: [] };
+  const agg = low(first.agg_key);
+  const node = setOf(payees.nodeKeys), donation = setOf(payees.donationKeys), reserve = setOf(payees.reserveKeys);
+  const game = payees.gameDonationKeys === undefined ? new Set() : setOf(payees.gameDonationKeys);
+  const allRead = node !== null && donation !== null && reserve !== null && game !== null;
+  const keys = entryKeys instanceof Set ? { players: entryKeys, sites: new Set() } : (entryKeys || { players: new Set(), sites: new Set() });
+  const qualifiers = new Set(keys.players || []);
+  const sites = new Set(keys.sites || []);
+  let feeClaimed = 0n, stakeClaimed = 0n, stakeFees = 0n;
+  for (const s of spends) {
+    if (!s.lock) continue;
+    if (s.lock.refund_pk) qualifiers.add(low(s.lock.refund_pk));
+    const msat = BigInt(s.lock.amount_msat);
+    if (s.lock.payment_image && s.lock.payment_image.hash !== undefined) feeClaimed += msat;
+    else { stakeClaimed += msat; if (payees.fees) stakeFees += lnv2FeeMsat(payees.fees, msat); }
+  }
+  const unread = [];
+  let left = 0n, nodeRow = 0n, donated = 0n, qualifierPaid = false;
+  for (const o of first.outputs || []) {
+    const msat = BigInt(o.amount_msat || 0);
+    if (o.kind !== 'outgoing') { left += msat; continue; }
+    const refund = low(o.refund_pk), claim = low(o.claim_pk);
+    if (agg && refund.slice(2) === agg) continue;
+    if (claim !== refund) { left += msat; continue; }
+    if (qualifiers.has(refund)) { qualifierPaid = true; continue; }
+    if (sites.has(refund) || (reserve && reserve.has(refund))) continue;
+    if ((donation && donation.has(refund)) || (game && game.has(refund))) { donated += msat; continue; }
+    if (node && node.has(refund)) { nodeRow += msat; continue; }
+    if (!allRead) { unread.push(`output ${o.out_idx} pays ${refund.slice(0, 18)}, which no payee read here names`); continue; }
+    left += msat;
+  }
+  const spendable = stakeClaimed - stakeFees;
+  const remainderNodes = qualifierPaid || spendable <= 0n ? 0n : (spendable * REMAINDER_NODES_PERCENT) / 100n;
+  if (node !== null && nodeRow > feeClaimed + remainderNodes) left += nodeRow - feeClaimed - remainderNodes;
+  if (payees.market) {
+    const total = BigInt(payees.market.nodeBps) + BigInt(payees.market.donationBps);
+    const cap = total > 0n ? ((feeClaimed + stakeClaimed) * BigInt(payees.market.donationBps)) / total : 0n;
+    if (donated > cap) left += donated - cap;
+  } else if (!qualifierPaid && remainderNodes > 0n && donated > spendable - remainderNodes) left += donated - (spendable - remainderNodes);
+  return { msat: left, unread };
+}

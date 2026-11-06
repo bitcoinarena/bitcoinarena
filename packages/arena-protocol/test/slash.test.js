@@ -66,8 +66,8 @@ const ask = (over = {}) => {
  */
 test('5A.3\'s rows are named in the table\'s own order, and §13A.1\'s contradicted AUDIT after them (kanban #724, #725)', () => {
   assert.deepEqual(OFFENCES,
-    [TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, OPERATOR_PLAYED, RELEASE_WITHOUT_PROOF, RELEASE_OFF_TABLE, AUDIT_CONTRADICTED],
-    'rows 4 and 5 went with the ruling of kanban #1035; §13A.1 adds the AUDIT');
+    [TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, OPERATOR_PLAYED, RELEASE_WITHOUT_PROOF, RELEASE_OFF_TABLE, AUDIT_CONTRADICTED, 'OFF_TABLE_CLAIM', 'FORFEIT_OF_LOST_ENTRY'],
+    'rows 4 and 5 went with the ruling of kanban #1035; §13A.1 adds the AUDIT; the named claim\'s rows (a) and (b) get #976\'s loss rule (kanban #1146 B)');
 });
 
 /**
