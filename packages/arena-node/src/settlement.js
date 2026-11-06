@@ -62,7 +62,7 @@ import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } 
 import { askPeers, PEER_ASK_MS, PEER_READ_MS, PEER_GRACE_MS } from './peer-ask.js';
 import { namedClaims, namedClaimKeys, namedSignerSet, zKey } from '../../arena-protocol/src/arena-lock.js';
 import { offTableOn, offTablePayouts, swapRefundOn, swappedRefundPayouts, settleHoldOn } from './test-named-offence.js';
-import { lostForfeitAllowed } from './forfeit.js';
+import { lostForfeitAllowed, LOCK_FATE, lockFateStep, lockFateOf, markLockFate } from './forfeit.js';
 import { namedSlots, NamedNonces, aggregateBatch, signerSetKey, encodeNamedCommitment, decodeNamedCommitment, encodeNamedList, decodeNamedList,
   encodeNamedPartials, decodeNamedPartials, encodeNamedBatch, decodeNamedBatch } from './named-settlement.js';
 // the payouts of an accepted settlement kept as rows (GET /donations, GET /reserves): a walk-away's donation keys and a market's reserve
@@ -1495,6 +1495,7 @@ export class LockSettlement {
     const built = await this.#namedMessages(roundIdBytes, m, signers, opts);
     if (!built.ok) return built;
     if (pair.list) return refuse('this signer node signed that settlement over another list meanwhile');
+    { const c = this.#claiming(roundIdBytes, m, 'a settlement share given'); if (!c.ok) return c; }
     pair.list = lk;
     let partials;
     try { partials = pair.nonces.sign({ claimKeys: seatKeys, threshold, signers, pubnoncesBySigner: list.map((x) => x.pubnonces), messages: built.messages }); }
@@ -1658,6 +1659,24 @@ export class LockSettlement {
   /** A seat asked about another transaction or another table than it rebuilt: the round is read again for a false table (fileTableProofs). */
   #suspect(roundIdBytes) { if (this.round.markSettlementSuspect) this.round.markSettlementSuspect(roundIdBytes); }
 
+  /**
+   * CLAIMING ON DISK BEFORE THIS SEAT'S WORD ON A SETTLEMENT LEAVES IT (kanban #1184): every lock the settlement claims is checked first - one this
+   * seat forfeited back to its player (RETURNING) refuses the ack, share or take by name - then each is written CLAIMING (forfeit.js LOCK_FATE), so
+   * a later ENTRY_VOID or qualifier rule at this seat signs no forfeit of the same lock. { ok } or a refusal.
+   */
+  #claiming(roundIdBytes, m, step) {
+    const outpoints = (m.claims || []).map((c) => `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`);
+    for (const o of outpoints) {
+      const st = lockFateStep(lockFateOf(this.round, roundIdBytes, o), LOCK_FATE.CLAIMING);
+      if (!st.ok) return refuse(`lock ${o.slice(0, 16)}: ${st.why}`);
+    }
+    for (const o of outpoints) {
+      const w = markLockFate(this.round, { roundId: roundIdBytes, outpoint: o, state: LOCK_FATE.CLAIMING, txid: m.txid, why: step });
+      if (!w.ok) return refuse(`lock ${o.slice(0, 16)}: ${w.why}`);
+    }
+    return { ok: true };
+  }
+
   /** This seat's SettlementAck over the table it computed and the transaction it rebuilt, signed by its node key (§5A.3, kanban #1035). */
   #ownAck(roundIdBytes, m) {
     return signSettlementAck({ roundId: roundIdBytes, payoutTableId: settlementTableId(m.ackTable), ...(m.named ? { settlementBodyId: fromHex(m.txid) } : { settlementTxid: fromHex(m.txid) }) },
@@ -1699,6 +1718,7 @@ export class LockSettlement {
     const m = await this.#askedMessage(roundIdBytes, { txid, entry, federation });
     if (!m.ok) return m;
     if (!acksSettlement(m.contract)) return refuse('that round settles with no acks: its version is older than the ack');
+    { const c = this.#claiming(roundIdBytes, m, 'acked at the door'); if (!c.ok) return c; }
     return { ok: true, bytes: this.#ownAck(roundIdBytes, m) };
   }
 
@@ -1709,6 +1729,7 @@ export class LockSettlement {
    */
   async #gatherAcks(roundIdBytes, m, query, scope = null) {
     if (!acksSettlement(m.contract)) return { ok: true };
+    { const c = this.#claiming(roundIdBytes, m, 'acked as the asker'); if (!c.ok) return c; }
     const acks = [this.#ownAck(roundIdBytes, m)];
     const refused = [], refusedBy = [];
     // EVERY PEER AT ONCE, AND A THRESHOLD GOES ON (kanban #1061): a hung seat costs the grace, and the acks carried on are whoever answered, in the peers' order
@@ -2056,6 +2077,7 @@ export class LockSettlement {
     const key = listKey(commitments);
     if (pair.list && pair.list !== key) return refuse('this signer node signed that settlement over another list, and keeps no second pair');
     if (pair.share === null) {
+      { const c = this.#claiming(roundIdBytes, m, 'a settlement share given'); if (!c.ok) return c; }
       pair.share = signShare340({ id: pair.commitment.id, share: m.signerNode.share, groupPublicKey: m.claimPk,
         nonces: { hiding: pair.hiding, binding: pair.binding }, message: m.message, commitments, curve: this.curve });
       pair.list = key;
@@ -2085,6 +2107,7 @@ export class LockSettlement {
         return refuse(`this seat's row is ${row.state} on ${String(row.txid).slice(0, 16)}: the batch of ${String(m.txid).slice(0, 16)} (S ${m.signers.join(',')}) is kept beside it, not in its place`, 409);
       }
     } else if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return refuse('that settlement signature does not verify under the round\'s claim key');
+    { const c = this.#claiming(roundIdBytes, m, 'a settlement handed and kept'); if (!c.ok) return c; }
     if (federation || entry) {
       // THE SAME RULE AS THE ROUND'S ROW (kanban #1172): a REFUSED row takes a handed signature (the asker signed again); ACCEPTED never moves; the
       // txid kept with what it moves, and the federation asked soon
