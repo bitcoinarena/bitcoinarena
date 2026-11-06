@@ -94,10 +94,10 @@ import { serviceSettings } from './service-settings.js';
 import { controlsOf, installerIdOf, INSIDE } from './service-control.js';
 import { connect as netConnect } from 'node:net';
 import { relayPost, relayMarks, relayTargets } from './relay.js';
-import { CHOICE, voteMessage, encodeVote, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
+import { CHOICE, voteMessage, encodeVote, SCHEDULES, REPEAL_SCHEDULES, BALLOT_DEPTH_HEIGHT, MIN_DECIDE_DEPTHS } from '../../arena-protocol/src/ballot.js';
 import { configServesRound } from '../../arena-protocol/src/ballot-chain.js';
 import { createProposals } from './proposals.js';
-import { createBallotTally, MIN_DECIDE_DEPTH } from './ballot-tally.js';
+import { createBallotTally } from './ballot-tally.js';
 import { CensusKeyStore } from './census-key-store.js';
 import { censusKeyDeadWarning, censusKeyFailingWarning } from '../../arena-protocol/src/census-key.js';
 import { createCensusKeyRun } from './census-key-run.js';
@@ -1448,6 +1448,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // no proposal is counted, so no config ever moves on such a seat.
   const counts = !!(ballot && typeof ballot.tipHeight === 'function' && typeof ballot.votesAt === 'function' && typeof ballot.censusAt === 'function');
   const isRegtestNet = (net) => { const k = donationKeysForNetworkId(fromHex(net)); return !!k && k.network === 'regtest'; };
+  // THE #1196 RULE PER NETWORK (§27A.7.4): its BALLOT_DEPTH_HEIGHT and its decide depth. Testnet4 by its donation keys, so an old
+  // testnet4 id is testnet4 too (its height not set yet: the old rule, as the 1.9 seats beside it); anything else as mainnet
+  const ballotNetKind = (net) => { const k = donationKeysForNetworkId(fromHex(net)); return k && (k.network === 'regtest' || k.network === 'testnet4') ? k.network : 'mainnet'; };
+  const ballotDepthHeightFor = (net) => BALLOT_DEPTH_HEIGHT[ballotNetKind(net)];
+  const ballotMinDepthFor = (net) => MIN_DECIDE_DEPTHS[ballotNetKind(net)];
   let ballotTally = null;
   const ballotRecipients = (net, height) => {
     const networkId = fromHex(net); const keys = donationKeysForNetworkId(networkId);
@@ -1464,6 +1469,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // AND ITS REPEAL SCHEDULE (27A.7.6), read against the history live at the proposal's publication - the tally's
     repealScheduleFor: (net) => (isRegtestNet(net) ? REPEAL_SCHEDULES.regtest : toHex(fromHex(net)) === toHex(NETWORK_ID_TESTNET4) ? REPEAL_SCHEDULES.testnet4 : REPEAL_SCHEDULES.mainnet),
     ...(counts ? { historyFor: (net, height, cls) => (ballotTally ? ballotTally.historyAt(net, height, cls) : null) } : {}),
+    depthHeightFor: ballotDepthHeightFor, minDecideDepthFor: ballotMinDepthFor,
     verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } },
     exampleCheck: (e) => tryExample(e),
     store: { read: () => { try { return round.db.prepare('SELECT json FROM ballot_proposals').all().map((r) => JSON.parse(r.json)); } catch { return []; } },
@@ -1480,7 +1486,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     ballotTally = createBallotTally({ proposals, tipHeight: ballot.tipHeight, votesAt: ballot.votesAt, censusAt: ballot.censusAt,
       ...(hashRead ? { blockHashAt: hashRead } : {}),
       verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } },
-      decideDepthFor: (net) => (isRegtestNet(net) ? 1 : 6), minDecideDepthFor: (net) => (isRegtestNet(net) ? 1 : MIN_DECIDE_DEPTH), log: (l) => console.log(l) });
+      decideDepthFor: (net) => (isRegtestNet(net) ? 1 : 6), minDecideDepthFor: ballotMinDepthFor, depthHeightFor: ballotDepthHeightFor, log: (l) => console.log(l) });
   }
   // THE PROPOSALS THIS SEAT DID NOT HEAR OF, PULLED FROM THE SEATS IT KNOWS (kanban #1152): a seat that was down when a proposal
   // was posted, or one posted to a single seat, still counts it - each one checked by proposals.add as if posted here (its

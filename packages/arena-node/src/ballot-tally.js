@@ -30,7 +30,7 @@
 // already learned outran its slice on the slower machine and held seven seats at 105-170 % of a core): a pass reads at most
 // `maxBlocksPerPass` blocks over all proposals, each proposal keeps how far it has read, nothing already read or decided is
 // asked again, and the vote cache drops every height below the lowest phase still open.
-import { tally, CLASS } from '../../arena-protocol/src/ballot.js';
+import { tally, CLASS, MIN_DECIDE_DEPTH as MIN_DEPTH, LEGACY_DECIDE_DEPTH, underDepthRule } from '../../arena-protocol/src/ballot.js';
 import { liveConfig, BALLOT_GENESIS, SOURCES_GENESIS, hostsLiveAt, entriesLiveAt } from '../../arena-protocol/src/ballot-chain.js';
 import { decodeHostList, decodeSourceList } from '../../arena-protocol/src/market-check.js';
 import { decodeConfigProposalBody } from '../../arena-protocol/src/ballot.js';
@@ -38,7 +38,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { stateOf, PROPOSAL_STATE as S } from './proposals.js';
 
 /** THE FEWEST CONFIRMATIONS AN OUTCOME IS WRITTEN AT (kanban #1152): a one- or two-block reorg never moves a decided proposal - a repeal's included. */
-export const MIN_DECIDE_DEPTH = 3;
+export const MIN_DECIDE_DEPTH = MIN_DEPTH;     // the protocol's (ballot.js), for a proposal published at or after BALLOT_DEPTH_HEIGHT (kanban #1196)
 
 /**
  * A BLOCK'S HASH AT A HEIGHT, WITH ITS THREE ANSWERS (kanban #1152), over a bitcoind `call(method, params)` (chain-rpc.js): the
@@ -66,10 +66,13 @@ const tallyJson = (t) => ({ totalSats: str(t.totalSats), yesSats: str(t.yesSats)
  * `censusAt(networkIdHex, height)` -> [{ pubkey, outpoint, bondSats }] or null (not readable yet); `verify(sig, msg, pubkey)`;
  * `genesisFor(net)` -> { configHash, config }; `decideDepthFor(net)` -> confirmations of the last voting block before the outcome
  * is written (a reorg below it is followed through the anchor: the outcome is taken back and counted again), held to at least
- * `minDecideDepthFor(net)` (MIN_DECIDE_DEPTH; regtest's seat passes 1).
+ * `minDecideDepthFor(net)` (MIN_DECIDE_DEPTH; regtest's seat passes 1) - for a proposal published at or after
+ * `depthHeightFor(net)`, the network's BALLOT_DEPTH_HEIGHT (kanban #1196; none given: 0). A proposal published before it keeps
+ * the old rule: decided at depth 1 at least (LEGACY_DECIDE_DEPTH). One under the rule whose activation leaves fewer than
+ * `minDecideDepthFor` blocks after its last voting block is invalid on its face: never counted, never decided.
  */
 export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, verify, blockHashAt = null, genesisFor = () => BALLOT_GENESIS,
-  decideDepthFor = () => 6, minDecideDepthFor = () => MIN_DECIDE_DEPTH, maxBlocksPerPass = 64, log = () => {} }) {
+  decideDepthFor = () => 6, minDecideDepthFor = () => MIN_DECIDE_DEPTH, depthHeightFor = () => 0, maxBlocksPerPass = 64, log = () => {} }) {
   const votesByHeight = new Map();          // height -> the vote outputs of that block (shared by every proposal voting there)
   const hashByHeight = new Map();           // height -> the hash of the block those votes were read from
   const open = new Map();                   // proposal id -> { readTo, readHash, census, votes: [], result } while undecided
@@ -80,6 +83,17 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
   let spansAll = new Map();                 // network hex -> liveConfig over every passed proposal (no height cut)
   let running = false;
 
+  /**
+   * THE RULE A PROPOSAL IS DECIDED UNDER (§27A.7.4, kanban #1196): `minDepth` the fewest confirmations of its last voting block,
+   * and `invalid` when under the rule its activation leaves fewer than that after the last voting block (refused at intake,
+   * proposals.js; a record kept before is still never counted).
+   */
+  const ruleOf = (p) => {
+    const ruled = underDepthRule(p.publishedAt, depthHeightFor(p.networkId));
+    const minDepth = ruled ? Math.max(LEGACY_DECIDE_DEPTH, minDecideDepthFor(p.networkId)) : LEGACY_DECIDE_DEPTH;
+    return { ruled, minDepth, invalid: ruled && p.activationHeight - (p.votingUntil - 1) < minDepth };
+  };
+  const invalidLogged = new Set();
   const bodyOf = (p) => {
     let b = bodies.get(p.id);
     if (!b) {
@@ -177,6 +191,12 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       if (reorged) refreshLive();
       for (const p of proposals.list().slice().sort((a, b) => a.votingFrom - b.votingFrom)) {
         if (stateOf(p) !== S.COUNTING) { open.delete(p.id); continue; }       // decided, or orphaned: not counted
+        const rule = ruleOf(p);
+        if (rule.invalid) {                                     // invalid on its face (kanban #1196): never counted
+          open.delete(p.id);
+          if (!invalidLogged.has(p.id)) { invalidLogged.add(p.id); log(`[ballot] proposal ${p.id.slice(0, 16)}: activation ${p.activationHeight} is fewer than ${rule.minDepth} blocks after its last voting block (${p.votingUntil - 1}): invalid on its face, not counted`); }
+          continue;
+        }
         if (tip < p.votingFrom) continue;                       // review: votes are not counted yet (27A.7.4)
         let o = open.get(p.id);
         if (!o) { o = { readTo: p.votingFrom - 1, readHash: null, census: null, votes: [], result: null, dirty: true }; open.set(p.id, o); }
@@ -209,8 +229,9 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         // DECIDED ONCE: the whole phase read, and its last block deep enough - no later than the block before its activation
         // (a round created at the activation height must already find the new config live here, or it would be taken under
         // the old one and refused later, mid-flight), and never less than `minDecideDepthFor` deep (kanban #1152: a one- or
-        // two-block reorg moves no outcome; a repeal's cooldown, 27A.7.6, leaves room for exactly that)
-        const depth = Math.max(1, minDecideDepthFor(p.networkId), Math.min(decideDepthFor(p.networkId), p.activationHeight - p.votingUntil + 1));
+        // two-block reorg moves no outcome; a repeal's cooldown, 27A.7.6, leaves room for exactly that) - for a proposal published
+        // at or after the network's BALLOT_DEPTH_HEIGHT; an older one keeps the old rule, depth 1 at least (kanban #1196)
+        const depth = Math.max(rule.minDepth, Math.min(decideDepthFor(p.networkId), p.activationHeight - p.votingUntil + 1));
         // a count held to the chain names the block it ends on (its anchor); without one nothing is written
         if (typeof blockHashAt === 'function' && !o.readHash) continue;
         if (o.readTo >= p.votingUntil - 1 && tip >= p.votingUntil - 2 + depth) {
@@ -236,6 +257,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
   /** The phase of a kept proposal at the tip (27A.7.4): review, voting, cooldown, activated, failed - or void (27A.7.2). */
   const phaseOf = (p) => {
     if (stateOf(p) === S.ORPHANED) return 'orphaned';
+    if (!p.decided && ruleOf(p).invalid) return 'invalid';
     if (!p.decided) return tip !== null && tip >= p.votingFrom ? 'voting' : 'review';
     if (!p.decided.passed) return 'failed';
     if (tip === null || tip < p.activationHeight) return 'cooldown';
@@ -282,7 +304,8 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
      */
     historyAt(net, height, cls = null) {
       const sources = cls === CLASS.SOURCES;
-      const pending = proposals.list().some((p) => p.networkId === net && stateOf(p) === S.COUNTING && p.activationHeight <= height && (bodyOf(p).class === CLASS.SOURCES) === sources);
+      // (one invalid on its face is never decided, so it holds nothing up)
+      const pending = proposals.list().some((p) => p.networkId === net && stateOf(p) === S.COUNTING && !ruleOf(p).invalid && p.activationHeight <= height && (bodyOf(p).class === CLASS.SOURCES) === sources);
       if (pending) return null;
       return sources ? liveConfig({ genesis: SOURCES_GENESIS, passed: passedSources(net), height }).history : liveConfig({ genesis: genesisFor(net), passed: passedOf(net), height }).history;
     },

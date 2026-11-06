@@ -160,7 +160,7 @@ test('a reorg inside an open phase reads its votes again; a reorg under its publ
   // IN REVIEW, ITS PUBLICATION BLOCK REPLACED: not published on this chain - orphaned, its bytes kept (kanban #1152)
   const late = kept({ configHash: H(0x24), config: Uint8Array.of(4), publishedAt: 110 });
   const p2 = reorgStore([{ ...late.record, blockHash: ch.blocks.get(110) }]);
-  const t2 = createBallotTally({ proposals: p2, tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, blockHashAt: ch.blockHashAt, verify });
+  const t2 = createBallotTally({ proposals: p2, tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, blockHashAt: ch.blockHashAt, verify, minDecideDepthFor: () => 1 });
   ch.tip = 110; await t2.pass();
   assert.equal(t2.list()[0].phase, 'review');
   ch.fork(110, new Map()); ch.tip = 111;
@@ -183,7 +183,7 @@ test('a DESIGN proposal under 30 % turnout fails, and the config stays the genes
 test('a pass reads at most maxBlocksPerPass blocks, and goes on from there the next pass', async () => {
   const { record } = kept({ voting: 40 });
   const ch = chain(new Map());
-  const t = createBallotTally({ proposals: store([record]), tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, verify, maxBlocksPerPass: 16 });
+  const t = createBallotTally({ proposals: store([record]), tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, verify, maxBlocksPerPass: 16, minDecideDepthFor: () => 1 });
   ch.tip = 200;
   assert.equal((await t.pass()).read, 16); assert.equal((await t.pass()).read, 16); assert.equal((await t.pass()).read, 8);
   assert.equal((await t.pass()).read, 0);

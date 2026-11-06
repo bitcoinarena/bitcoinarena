@@ -33,9 +33,10 @@ export const SCHEDULES = Object.freeze({
     [CLASS.UPGRADE]: { review: 144, voting: 144, cooldown: 4320 }, [CLASS.SOURCES]: { review: 144, voting: 144, cooldown: 36 } }),
 });
 /**
- * A REPEAL (§27A.7.6): "review 0, voting 720, cooldown 0 - but only if its config is byte-identical to an ancestor that was live
- * before. It can go back, never forward." Regtest's is 0 / 6 / 0 (a choice made here, named: its voting phase as for the others).
- * THE COOLDOWN IS 2 BLOCKS on mainnet and testnet4 (kanban #1152; a spec question - §27A.7.6 says 0): a seat writes an outcome
+ * A REPEAL (§27A.7.6): "review 0, voting 720, cooldown 2 - but only if its config is byte-identical to an ancestor that was live
+ * before. It can go back, never forward." Regtest's is 0 / 6 / 0 (§27A.7.6). Testnet4 votes a day (144, kanban #785).
+ * THE COOLDOWN IS 2 BLOCKS on mainnet and testnet4 (kanban #1152, RULED 2026-11-06 kanban #1196; for a proposal published at
+ * or after the network's BALLOT_DEPTH_HEIGHT - before it the old cooldown 0, LEGACY_REPEAL_COOLDOWN): a seat writes an outcome
  * only once the last voting block is 3 deep (arena-node ballot-tally.js MIN_DECIDE_DEPTH), and with no cooldown a repeal was
  * decided at depth 1 - a one-block reorg made it live, or took it back, after rounds were created. 2 = 3 - 1: the outcome
  * lands the block before the activation, as every other proposal's does. A host removal (§27A.7.6 for sources) the same.
@@ -45,6 +46,33 @@ export const REPEAL_SCHEDULES = Object.freeze({
   regtest: Object.freeze({ review: 0, voting: 6, cooldown: 0 }),
   testnet4: Object.freeze({ review: 0, voting: 144, cooldown: 2 }),   // a day (kanban #785)
 });
+/**
+ * THE FEWEST CONFIRMATIONS A SEAT DECIDES A BALLOT AT (§27A.7.4, RULED 2026-11-06, kanban #1196, #1152): its last voting block
+ * at least 3 deep, so a one- or two-block reorg never activates or undoes a config after rounds were made under it. Regtest keeps
+ * depth 1 ("two operators can drive a whole governance cycle through to activation in under a minute").
+ */
+export const MIN_DECIDE_DEPTH = 3;
+export const MIN_DECIDE_DEPTHS = Object.freeze({ mainnet: MIN_DECIDE_DEPTH, testnet4: MIN_DECIDE_DEPTH, regtest: 1 });
+/** The depth a schedule's network decides at: regtest's short schedule 1, every other MIN_DECIDE_DEPTH. */
+export const minDecideDepthOf = (schedule) => (schedule === SCHEDULES.regtest ? MIN_DECIDE_DEPTHS.regtest : MIN_DECIDE_DEPTH);
+/**
+ * THE HEIGHT THE #1196 RULE STARTS AT, PER NETWORK (§27A.7.4: "This applies to proposals published at or after the network's
+ * BALLOT_DEPTH_HEIGHT ... Older proposals keep the old rule, so seats on older releases never split over them"). A proposal
+ * published at or after it: decided no less than MIN_DECIDE_DEPTHS deep, a repeal's (and a host removal's) cooldown is
+ * REPEAL_SCHEDULES' (2), and an activation that leaves fewer than MIN_DECIDE_DEPTHS blocks after its last voting block is invalid
+ * on its face. A proposal published before it: THE OLD RULE - decided at depth 1 at least, a repeal's cooldown 0, no such check.
+ *   regtest   0          every proposal under the rule (with regtest's own depth 1)
+ *   mainnet   0          from its first block
+ *   testnet4  Infinity   NOT SET YET: "the height its seats roll to this rule" is not known. Until it is, every testnet4
+ *                        proposal keeps the old rule, so 2.0 seats decide exactly as the 1.9 seats beside them (1.9 stays at
+ *                        depth 1, cooldown 0). SET IT AT THE 2.0 ROLL to the first height the rolled seats count under.
+ */
+export const BALLOT_DEPTH_HEIGHT = Object.freeze({ mainnet: 0, regtest: 0, testnet4: Number.POSITIVE_INFINITY });
+/** The old rule's (before BALLOT_DEPTH_HEIGHT) repeal and host-removal cooldown, and its fewest confirmations. */
+export const LEGACY_REPEAL_COOLDOWN = 0;
+export const LEGACY_DECIDE_DEPTH = 1;
+/** Is a proposal published at `publishedAt` under the #1196 rule, on a network whose BALLOT_DEPTH_HEIGHT is `depthHeight`. */
+export const underDepthRule = (publishedAt, depthHeight = 0) => Number(publishedAt) >= Number(depthHeight);
 /** Is `p` a repeal: its config byte-identical to one in `history` - the configs that were live before, [{ config }] - other than the current. */
 export function isRepeal(p, history = []) {
   const mine = toHex(p.config);
@@ -124,7 +152,8 @@ export function proposalId(p) {
  * A PROPOSAL ON ITS FACE (§27A.7.2, §27A.7.4): signed by its proposer, activation at or after the end of cooldown counted from
  * the height it was published at, and its deposit within the cap - at most bond_min of the lowest bracket over 100.
  */
-export function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats, schedule = SCHEDULES.mainnet, verify, history = null, repealSchedule = REPEAL_SCHEDULES.mainnet }) {
+export function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats, schedule = SCHEDULES.mainnet, verify, history = null, repealSchedule = REPEAL_SCHEDULES.mainnet,
+  depthHeight = 0, minDecideDepth = minDecideDepthOf(schedule) }) {
   try { encodeConfigProposalBody(p); } catch (e) { return { ok: false, why: e.message }; }
   // THE HASH IT NAMES IS THE HASH OF THE CONFIG IT CARRIES (27A.7.1), or nobody voted on the config it would make live
   const named = toHex(p.configHash), carried = toHex(configHashOf(p.config));
@@ -137,12 +166,21 @@ export function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats,
   }
   const removal = !!history && isHostRemoval(p, history);
   const repeal = removal || (!!history && isRepeal(p, history));
-  const s = removal ? { review: 0, voting: Math.min(HOST_REMOVAL_VOTING, repealSchedule.voting), cooldown: repealSchedule.cooldown } : repeal ? repealSchedule : schedule[p.class];
+  // THE #1196 RULE (BALLOT_DEPTH_HEIGHT): a repeal's cooldown 2 from that height, 0 before it - an older proposal keeps the old rule
+  const ruled = underDepthRule(publishedAt, depthHeight);
+  const repealCooldown = ruled ? repealSchedule.cooldown : LEGACY_REPEAL_COOLDOWN;
+  const s = removal ? { review: 0, voting: Math.min(HOST_REMOVAL_VOTING, repealSchedule.voting), cooldown: repealCooldown }
+    : repeal ? { ...repealSchedule, cooldown: repealCooldown } : schedule[p.class];
   const earliest = publishedAt + s.review + s.voting + s.cooldown;
   if (p.activationHeight < earliest) return { ok: false, why: `activation_height ${p.activationHeight} is before the end of cooldown (${earliest}): invalid on its face` };
+  // FEWER THAN `minDecideDepth` BLOCKS AFTER ITS LAST VOTING BLOCK (§27A.7.4, kanban #1196): it could only be decided shallower than a
+  // seat decides, so a 1- or 2-block reorg could activate or undo it. Invalid on its face, under the rule only
+  const votingUntil = publishedAt + s.review + s.voting;
+  if (ruled && p.activationHeight - (votingUntil - 1) < minDecideDepth)
+    return { ok: false, why: `activation_height ${p.activationHeight} leaves ${p.activationHeight - (votingUntil - 1)} block(s) after its last voting block (${votingUntil - 1}), fewer than the ${minDecideDepth} a ballot is decided at: invalid on its face` };
   const cap = BigInt(lowestBondMinSats) / 100n;
   if (BigInt(depositSats) > cap) return { ok: false, why: `a deposit of ${depositSats} sat is over the cap of ${cap} (bond_min of the lowest bracket / 100)` };
-  return { ok: true, id: proposalId(p), class: className(p.class), repeal, votingFrom: publishedAt + s.review, votingUntil: publishedAt + s.review + s.voting, activationHeight: p.activationHeight };
+  return { ok: true, id: proposalId(p), class: className(p.class), repeal, votingFrom: publishedAt + s.review, votingUntil, activationHeight: p.activationHeight };
 }
 
 /** What a bond key signs to vote: H(proposal_id || choice). */
