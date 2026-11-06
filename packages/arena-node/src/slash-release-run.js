@@ -33,6 +33,7 @@ import { gatherCensusSignature } from './census-sign.js';
 import { createSlashEscrow } from './slash-escrow-run.js';
 import { createLiquidationEscrow } from './liquidation-escrow-run.js';
 import { roundlessTableInputs } from '../../arena-protocol/src/liquidation-escrow.js';
+import { keyedPay, payoutOf, PAYOUT } from './keyed-payout.js';
 
 const verifySig = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const display = (internalHex) => toHex(fromHex(internalHex).reverse());
@@ -572,10 +573,23 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
       const list = [...pays, ...(reserveKey && rest + owed > 0n ? [{ key: toHex(reserveKey), msat: rest + owed, reserves: true }] : [])].filter((x) => x.msat > 0n);
       // NO RESERVE KEY YET: what the peg-in allowance left stays on this client, owed on to the reserve key as unused margin is
       let unused = kept + (!reserveKey && rest > 0n ? rest : 0n), carried = 0n;
-      if (!list.length) { state.paidTxid = 'nothing'; } else {
-        const before = await balanceOf(port).catch(() => null);
-        const paid = await port.payouts(list.map((x) => ({ key: x.key, msat: x.msat })));
-        const after = await balanceOf(port).catch(() => null);
+      // THE PAYOUT ONCE (kanban #1174, keyed-payout.js): its record ASKED - key, list, the balance before - is written before the tool is called;
+      // after a stop the list is the one recorded (what is owed may have moved), read back under its key, never paid a second time
+      const asked = payoutOf(state.pay) === PAYOUT.ASKED;
+      if (asked) {
+        const byKey = new Map(state.pay.list.map((x) => [x.key, BigInt(x.msat)]));
+        for (const x of list) x.msat = byKey.get(x.key) ?? 0n;
+        for (const [k, m] of byKey) if (!list.some((x) => x.key === k)) list.push({ key: k, msat: m, ...(k === (reserveKey && toHex(reserveKey)) ? { reserves: true } : {}) });
+      }
+      if (!list.length && !asked) { state.paidTxid = 'nothing'; } else {
+        const before = asked ? (state.pay.balanceBeforeMsat !== undefined && state.pay.balanceBeforeMsat !== null ? BigInt(state.pay.balanceBeforeMsat) : null) : await balanceOf(port).catch(() => null);
+        if (!asked) state.pay = { balanceBeforeMsat: before === null ? null : String(before) };
+        const got = await keyedPay({ rec: state.pay, save: () => keepState(name, state), list: list.map((x) => ({ key: x.key, msat: x.msat })), key: `slash:${tag}`,
+          pay: (l, key) => port.payouts(l, { key }), paidBack: (l, key) => port.payoutsSent(l, key), now });
+        if (!got.ok) throw new Error(got.why);
+        const paid = { txid: got.txid, payouts: got.payouts };
+        // the balance after a pay read back is not this pay's alone: its fee is not known
+        const after = got.again ? null : await balanceOf(port).catch(() => null);
         const out = list.reduce((a, x) => a + x.msat, 0n);
         // WHAT THE PAYOUT'S FEE TOOK: the client's balance before less after less what went out; unknown, the whole margin counts as taken
         const fee = before !== null && after !== null ? before - after - out : null;

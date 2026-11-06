@@ -22,6 +22,7 @@ import { serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
 import { gatherCensusSignature } from './census-sign.js';
+import { keyedPay, payoutOf, PAYOUT } from './keyed-payout.js';
 
 const verifySig = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const display = (internalHex) => toHex(fromHex(internalHex).reverse());
@@ -365,8 +366,12 @@ export function createLiquidationEscrow({ secret, me, networkId, clocks, db, twe
           const margin = o.pays === 'claims_carrier' ? BigInt(d.marginMsat) : 0n, feeHold = margin < payoutFeeMsat ? margin : payoutFeeMsat;
           const rest = claimed - owedOut - feeHold;
           const list = [...pays.map(({ key, msat }) => ({ key, msat })), ...(reserveKey && rest > 0n ? [{ key: toHex(reserveKey), msat: rest }] : [])].filter((x) => x.msat > 0n);
-          if (!list.length) { state.paidTxid = 'nothing'; keep(); continue; }
-          const paid = await port.payouts(list);
+          if (!list.length && payoutOf(state.pay) !== PAYOUT.ASKED) { state.paidTxid = 'nothing'; keep(); continue; }
+          // THE PAYOUT ONCE (kanban #1174, keyed-payout.js): ASKED written before the tool, read back under its key after a stop
+          if (!state.pay) state.pay = {};
+          const got = await keyedPay({ rec: state.pay, save: keep, list, key: `liq:${tag}`, pay: (l, key) => port.payouts(l, { key }), paidBack: (l, key) => port.payoutsSent(l, key), now });
+          if (!got.ok) { done.push({ escrow: row.escrow_in, index: i, why: got.why, held: !!got.held }); log(`[liquidation] carrying ${row.escrow_in.slice(0, 16)} output ${i} waits: ${got.why}`); continue; }
+          const paid = { txid: got.txid, payouts: got.payouts };
           state.paidTxid = paid.txid;
           state.claims = pays.map((x) => ({ nonce: x.nonce, key: x.key, msat: String(x.msat), outIdx: ((paid.payouts || []).find((y) => y.refundPk === x.key) || {}).outIdx ?? null }));
           if (reserveKey && rest > 0n) state.reserves = { key: toHex(reserveKey), msat: String(rest) };
