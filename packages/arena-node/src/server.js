@@ -5715,7 +5715,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // replaced by its next state (the book's alarmStep guards every move); another seat's statement counts only from a node of the census
   reserveAlarms = reserveAlarmsBook || createReserveAlarms({ load: () => round.db.prepare('SELECT alarm FROM reserve_alarms').all().map((r) => JSON.parse(r.alarm)),
     save: (all) => { const put = round.db.prepare('INSERT INTO reserve_alarms (federation, alarm) VALUES (?, ?) ON CONFLICT(federation) DO UPDATE SET alarm = excluded.alarm');
-      round.db.transaction(() => { for (const a of all) put.run(a.federation, JSON.stringify(a)); })(); },
+      for (const a of all) put.run(a.federation, JSON.stringify(a)); },
     me: toHex(round.pubkey), verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } },
     isSeat: (hex) => { try { return (fedRecords && fedRecords.censusKeys ? fedRecords.censusKeys() : []).some((k) => toHex(k) === hex); } catch { return false; } },
     confirmSeats: Number(process.env.ARENA_ALARM_CONFIRM_SEATS) > 0 ? Number(process.env.ARENA_ALARM_CONFIRM_SEATS) : undefined });
