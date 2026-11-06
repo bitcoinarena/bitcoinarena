@@ -42,3 +42,23 @@ test('the shipped lock client has the Arena calls and hashes the Arena lock as t
   assert.deepEqual(stock, []);
   assert.equal(typeof LockClient.outgoingContractId, 'function');
 });
+
+// E-CASH IN FLIGHT (kanban #1149): the send is tagged with the page's record key and found again by it (sentEcash), the receive says the
+// face value it credited, and ecashInfo reads a string with the mint module's own decoder - the same answer as the page's ecashFaceValue
+test('the shipped lock client finds a send by its record (sentEcash), and its decoder reads e-cash as the page does', async () => {
+  const { LockClient } = await wasmModule();
+  const { encodeEcash } = await import('./ecash-1149-rig.js');
+  const { ecashFaceValue } = await import('../src/ecash-transfer.js');
+  const missing = ['sentEcash', 'sendEcash', 'sendAllEcash', 'receiveEcash'].filter((name) => typeof LockClient.prototype[name] !== 'function');
+  assert.deepEqual(missing, []);
+  assert.equal(LockClient.prototype.sendEcash.length, 2, 'sendEcash(amount, intent)');
+  assert.equal(LockClient.prototype.sendAllEcash.length, 1, 'sendAllEcash(intent)');
+  for (const [fed, msat, salt] of [['4d'.repeat(32), 123457n, 4], ['ab'.repeat(32), 1n, 1], ['33'.repeat(32), 2n ** 40n + 5n, 7]]) {
+    const ecash = encodeEcash(fed, msat, salt);
+    const rust = JSON.parse(LockClient.ecashInfo(ecash));
+    const page = ecashFaceValue(ecash);
+    assert.deepEqual({ msat: String(rust.msat), federation: rust.federation, notes: rust.notes }, { msat: String(page.msat), federation: page.federation, notes: page.notes });
+    assert.equal(String(rust.msat), String(msat));
+  }
+  assert.throws(() => LockClient.ecashInfo('fedimint0123'));
+});

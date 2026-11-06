@@ -80,6 +80,21 @@ fn donation_image(d: &serde_json::Value) -> Result<PaymentImage, JsError> {
 
 fn js(e: impl std::fmt::Display) -> JsError { JsError::new(&e.to_string()) }
 
+/// A send's custom meta (kanban #1149): the page's transfer record id, so the send's e-cash can be found again by it.
+fn intent_meta(intent: &Option<String>) -> serde_json::Value {
+    match intent.as_deref() {
+        Some(i) if !i.is_empty() => serde_json::json!({ "arena_intent": i }),
+        _ => serde_json::Value::Null,
+    }
+}
+
+/// An e-cash string's face value (msat) and federation (hex).
+fn ecash_info_of(ecash: &str) -> Result<(u64, Option<String>), JsError> {
+    let e: fedimint_mintv2_client::ECash =
+        fedimint_core::base32::decode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, ecash.trim()).map_err(js)?;
+    Ok((e.amount().msats, e.mint().map(|f| f.to_string())))
+}
+
 /// A deposit invoice's life in seconds: short, so a stalled payment returns to its payer within minutes.
 const DEPOSIT_INVOICE_SECS: u32 = 600;
 
@@ -806,15 +821,17 @@ impl LockClient {
     /// THE WHOLE BALANCE AS E-CASH (2026-10-02: "Can't we show all wallets we have and combine all of them when
     /// playing a round?"): the stock mint module's send of everything this wallet holds, as the prefixed base32 string
     /// another wallet of the same federation receives. Answers {"msat", "ecash"}; ecash null when the wallet is empty.
-    /// The caller keeps the string until it is received - spent here, it exists nowhere else.
+    /// The caller keeps the string until it is received. KEPT HERE TOO (kanban #1149): the stock send writes the string into this
+    /// wallet's operation log in the same commit that marks the notes spent, and `intent` (the page's transfer record, written before
+    /// the send) is kept with it as {"arena_intent": intent}, so `sentEcash(intent)` finds the string again after a closed tab.
     #[wasm_bindgen(js_name = sendAllEcash)]
-    pub async fn send_all_ecash(&self) -> Result<String, JsError> {
+    pub async fn send_all_ecash(&self, intent: Option<String>) -> Result<String, JsError> {
         let mint = self.client.get_first_module::<fedimint_mintv2_client::MintClientModule>().map_err(js)?;
         let balance = self.client.get_balance_for_btc().await.map_err(js)?;
         if balance.msats == 0 {
             return Ok(serde_json::json!({ "msat": 0, "ecash": serde_json::Value::Null }).to_string());
         }
-        let (_, ecash) = mint.send(balance, serde_json::Value::Null, false).await.map_err(js)?;
+        let (_, ecash) = mint.send(balance, intent_meta(&intent), false).await.map_err(js)?;
         Ok(serde_json::json!({
             "msat": balance.msats,
             "ecash": fedimint_core::base32::encode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, &ecash),
@@ -825,16 +842,48 @@ impl LockClient {
     /// AN AMOUNT AS E-CASH (kanban #614, 2026-10-24: "Kein Lightning swap, sondern übertragen in die andere federation"): the stock
     /// mint module's send of exactly `amount_msat`, as the prefixed base32 string a seat's exchange takes - the player's side of an e-cash
     /// exchange into another federation. Answers {"msat", "ecash"}; the caller keeps the string until the exchange answered.
+    /// `intent` as in sendAllEcash (kanban #1149).
     #[wasm_bindgen(js_name = sendEcash)]
-    pub async fn send_ecash(&self, amount_msat: String) -> Result<String, JsError> {
+    pub async fn send_ecash(&self, amount_msat: String, intent: Option<String>) -> Result<String, JsError> {
         let mint = self.client.get_first_module::<fedimint_mintv2_client::MintClientModule>().map_err(js)?;
         let amount = Amount::from_msats(amount_msat.parse().map_err(js)?);
-        let (_, ecash) = mint.send(amount, serde_json::Value::Null, false).await.map_err(js)?;
+        let (_, ecash) = mint.send(amount, intent_meta(&intent), false).await.map_err(js)?;
         Ok(serde_json::json!({
             "msat": amount.msats,
             "ecash": fedimint_core::base32::encode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, &ecash),
         })
         .to_string())
+    }
+
+    /// THE E-CASH A SEND OF `intent` MADE (kanban #1149): the string this wallet's operation log kept with the notes it marked spent,
+    /// for the send tagged {"arena_intent": intent}; "null" when no send of that intent was committed (the notes are still held).
+    /// Answers {"ecash", "msat", "federation"}. Read-only: the newest 1000 operations.
+    #[wasm_bindgen(js_name = sentEcash)]
+    pub async fn sent_ecash(&self, intent: String) -> Result<String, JsError> {
+        let mut last = None;
+        for _ in 0..20 {
+            let page = self.client.operation_log().paginate_operations_rev(50, last.clone()).await;
+            for (_, entry) in &page {
+                if !entry.operation_module_kind().starts_with("mint") { continue; }
+                let Ok(fedimint_mintv2_client::MintOperationMeta::Send { ecash, custom_meta }) =
+                    entry.try_meta::<fedimint_mintv2_client::MintOperationMeta>() else { continue };
+                if custom_meta.get("arena_intent").and_then(|v| v.as_str()) != Some(intent.as_str()) { continue; }
+                let (msat, federation) = ecash_info_of(&ecash)?;
+                return Ok(serde_json::json!({ "ecash": ecash, "msat": msat, "federation": federation }).to_string());
+            }
+            if page.len() < 50 { break; }
+            last = page.last().map(|(k, _)| k.clone());
+        }
+        Ok("null".to_owned())
+    }
+
+    /// WHAT AN E-CASH STRING CARRIES (kanban #1149), decoded by the mint module's own decoder: {"msat" (the notes' face value),
+    /// "federation" (hex, or null), "notes"}. No client needed; spends and checks nothing.
+    #[wasm_bindgen(js_name = ecashInfo)]
+    pub fn ecash_info(ecash: String) -> Result<String, JsError> {
+        let e: fedimint_mintv2_client::ECash =
+            fedimint_core::base32::decode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, ecash.trim()).map_err(js)?;
+        Ok(serde_json::json!({ "msat": e.amount().msats, "federation": e.mint().map(|f| f.to_string()), "notes": e.notes().len() }).to_string())
     }
 
     /// THE OUTPUTS STILL IN ISSUANCE (spec 23A.5 "Notes still in issuance at the halt"): everything issued to this
@@ -869,20 +918,23 @@ impl LockClient {
     }
 
     /// E-CASH IN: reissued into this wallet; answers once the federation has reissued it - {"state": "Success" |
-    /// "Rejected" (already spent) | "AlreadyReceived"}.
+    /// "Rejected" (already spent) | "AlreadyReceived", "msat": the notes' face value, "federation"} (kanban #1149: the page
+    /// drops its kept copy only when what was credited is at least what was agreed).
     #[wasm_bindgen(js_name = receiveEcash)]
     pub async fn receive_ecash(&self, ecash: String) -> Result<String, JsError> {
         let mint = self.client.get_first_module::<fedimint_mintv2_client::MintClientModule>().map_err(js)?;
-        let bytes = fedimint_core::base32::decode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, ecash.trim()).map_err(js)?;
+        let bytes: fedimint_mintv2_client::ECash =
+            fedimint_core::base32::decode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, ecash.trim()).map_err(js)?;
+        let (msat, federation) = (bytes.amount().msats, bytes.mint().map(|f| f.to_string()));
         let operation = match mint.receive(bytes, serde_json::Value::Null).await {
             Ok(op) => op,
             Err(fedimint_mintv2_client::ReceiveECashError::AlreadyReceived) => {
-                return Ok(serde_json::json!({ "state": "AlreadyReceived" }).to_string());
+                return Ok(serde_json::json!({ "state": "AlreadyReceived", "msat": msat, "federation": federation }).to_string());
             }
             Err(e) => return Err(js(e)),
         };
         let state = mint.await_final_receive_operation_state(operation).await.map_err(js)?;
-        Ok(serde_json::json!({ "state": format!("{state:?}") }).to_string())
+        Ok(serde_json::json!({ "state": format!("{state:?}"), "msat": msat, "federation": federation }).to_string())
     }
 
     /// THE STAKE LOCK: one stock OutgoingContract funded from this client's

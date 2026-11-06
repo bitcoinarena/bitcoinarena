@@ -198,14 +198,22 @@ impl TabTransaction<'_> {
         }
         // WRITTEN THROUGH BEFORE IT COUNTS: a key the tab could not keep is a
         // commit that did not happen, and the client is told so.
-        for op in &self.operations {
-            match op {
-                Op::Insert { key, value, .. } => {
-                    self.db.store.put(&to_hex(key), &to_hex(value)).map_err(|e| store_error("keep a key", &e))?;
-                }
-                Op::Delete { key, .. } => {
-                    self.db.store.remove(&to_hex(key)).map_err(|e| store_error("drop a key", &e))?;
-                }
+        // EVERY NEW KEY BEFORE ANY KEY IS DROPPED (kanban #1149): a send removes the notes it hands out and adds the
+        // operation that keeps their e-cash in one commit. Written in that order, a browser that refused the second key
+        // (storage full) had dropped the notes from the tab's storage with nothing kept in their place - lost at the next
+        // load, though the commit was refused. Now a refused key leaves at most an extra key behind, never a missing one.
+        // Each touched key is written as the commit leaves it (`copy`), so a key deleted and inserted again stays.
+        let touched: std::collections::BTreeSet<&Vec<u8>> = self.operations.iter().map(|op| match op {
+            Op::Insert { key, .. } | Op::Delete { key, .. } => key,
+        }).collect();
+        for key in &touched {
+            if let Some(value) = copy.get(*key) {
+                self.db.store.put(&to_hex(key), &to_hex(value)).map_err(|e| store_error("keep a key", &e))?;
+            }
+        }
+        for key in &touched {
+            if copy.get(*key).is_none() {
+                self.db.store.remove(&to_hex(key)).map_err(|e| store_error("drop a key", &e))?;
             }
         }
         *data = copy;
