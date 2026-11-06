@@ -3072,6 +3072,15 @@ export class Round {
       .run(Buffer.from(roundId), String(txid), JSON.stringify(claims), Number(payouts));
   }
 
+  /** A stake lock of the round read gone at the federation (kanban #1183): kept once, never removed. */
+  putGoneStake({ roundId, outpoint, why }) {
+    this.db.prepare('INSERT OR IGNORE INTO gone_stakes (round_id, outpoint, why, made_ms) VALUES (?, ?, ?, ?)').run(Buffer.from(roundId), String(outpoint), String(why), this.now());
+  }
+
+  goneStakesOf(roundIdBytes) {
+    return this.db.prepare('SELECT outpoint FROM gone_stakes WHERE round_id = ?').all(Buffer.from(roundIdBytes)).map((r) => r.outpoint);
+  }
+
   lockSettlementMoves(roundIdBytes) {
     const r = this.db.prepare('SELECT txid, claims, payouts FROM lock_settlement_moves WHERE round_id = ?').get(Buffer.from(roundIdBytes));
     return r ? { txid: r.txid, claims: JSON.parse(r.claims), payouts: Number(r.payouts) } : null;

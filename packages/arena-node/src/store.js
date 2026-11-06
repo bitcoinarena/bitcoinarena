@@ -1049,6 +1049,16 @@ export function openStore(path = ':memory:') {
       claims       TEXT NOT NULL,
       payouts      INTEGER NOT NULL
     );
+    -- A LOSER'S STAKE LOCK READ GONE AT THE FEDERATION (kanban #1183, ruling #1146 A): F' leaves its entry out as refunded. Kept, so a seat restarted
+    -- after the read builds F' again instead of F (it built F after every restart, its peers on F', neither reaching 5); one row per lock, never removed:
+    -- a spent lock does not come back
+    CREATE TABLE IF NOT EXISTS gone_stakes (
+      round_id     BLOB NOT NULL,
+      outpoint     TEXT NOT NULL,
+      why          TEXT NOT NULL,
+      made_ms      INTEGER NOT NULL,
+      PRIMARY KEY (round_id, outpoint)
+    );
     -- A LATE LOSER'S SECOND SETTLEMENT (§13A, RULED 2026-09-24, slice C3b-1): one per (round, entry), never a second
     -- row under the round's key - an entry the round's settlement left out while it was in its re-run window, which
     -- then ended FAILED or FORFEIT. The same intent and state as the round's own settlement row.
