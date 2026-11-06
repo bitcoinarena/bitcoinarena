@@ -10820,6 +10820,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (url.pathname === '/winnings-paid') {
           const pre = new Uint8Array(await read(req));
           if (pre.length !== 32) return text(res, 400, 'a preimage is 32 bytes');
+          // ONLY FROM A SEAT OF THE ROUND (kanban #1185): the payee holds its invoice's preimage from the start, so a preimage alone is no word of
+          // a payment; the seat that asked the gateway signs it (PLAN_ASK.PAID over this round, late entry and the preimage)
+          const ask = sendPlanAskOf(req, r8, PLAN_ASK.PAID, lateHex, pre);
+          if (!ask.ok) return text(res, ask.status || 403, ask.why);
           const got = sender.paid(r8, eHex, pre);
           return got.ok ? text(res, 201, 'the winning is kept as paid') : text(res, got.status || 409, got.why);
         }
