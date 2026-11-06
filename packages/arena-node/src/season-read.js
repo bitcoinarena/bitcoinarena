@@ -31,9 +31,26 @@ import { toHex } from '../../arena-protocol/src/hash.js';
 import { finalRerunResult } from './finality.js';
 import { verifiedFinal, runId } from './verdict.js';
 import { stateOf } from './settlement-state.js';
+import { seasonRoundsToJson, signSeasonAccount } from '../../arena-protocol/src/season.js';
 
 const ACCEPTED = 'ACCEPTED';
 const hex = (b) => toHex(new Uint8Array(b));
+
+/**
+ * THE ROUNDS AS GET /season-rounds HANDS THEM ON, SIGNED (kanban #1153): each round's wire JSON with its contract (hex, as this seat
+ * stores it) and this seat's signature over its account once every entry of it is settled here (protocol signSeasonAccount: round keys
+ * in, names out) - `sigs` empty while it is not. What a leaderboard payout and the weekly board badge count a round on: the threshold
+ * of the round's own draw signing the same account. `sign(digest)` -> 64 bytes under this seat's node key.
+ */
+export function signedSeasonRoundsJson(round, rounds, sign) {
+  const json = seasonRoundsToJson(rounds);
+  return json.map((j, i) => {
+    let row = null; try { row = round.get(Buffer.from(j.roundId, 'hex')); } catch { row = null; }
+    const contract = row && row.contract ? hex(row.contract) : null;
+    const sig = contract ? signSeasonAccount({ ...rounds[i], contract }, round.pubkey, sign) : null;
+    return { ...j, contract, sigs: sig ? [sig] : [] };
+  });
+}
 
 /**
  * The rounds of `games` (a Set of game id hex) this node holds with entries, started in [fromMs, toMs), read into the

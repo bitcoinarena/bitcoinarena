@@ -134,7 +134,9 @@ import { matchProofId, presenceId, PRESENCE_MS } from '../../arena-protocol/src/
 import { dashboardData, dashboardHtml } from './dashboard.js';
 import { season, seasonWindow, mergeSeasonAccounts, seasonRoundsToJson, seasonRoundsFromJson, SEASON_NETWORK_AGREE,
   SEASON_NETWORK_UNCHECKED, SEASON_DAYS_MAX, DAY_MS } from '../../arena-protocol/src/season.js';
-import { seasonRounds, seasonRoundOf } from './season-read.js';
+import { seasonRounds, seasonRoundOf, signedSeasonRoundsJson } from './season-read.js';
+import { createWinnersBook } from './leaderboard-freeze.js';
+import { slotsForRole } from '../../arena-protocol/src/sortition.js';
 import { createOwner } from './owner.js';
 import { donationReport } from './owner-donations.js';
 import { leaveStatus, takesRound } from './owner-leave.js';
@@ -1297,9 +1299,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // { bySeat: Map label -> rounds, asked }. With `keyed`, an answer counts only when it says it carries each entry's round
   // key (`roundKeys: true`): the board badge merges on the round keys too, and a seat on a build from before them hands in
   // no key at all - read as an account, it would disagree with every seat that sends them, so it is not asked to agree.
-  const seasonAccounts = async (ids, w, { days = w.days, keyed = false } = {}) => {
+  // With `signed` (kanban #1153: the leaderboard payout and the board badge) this seat's own rounds carry its own signatures, and each
+  // answer is kept under its address: what counts is the signatures (protocol mergeSignedSeasonAccounts), never the node an answer names.
+  const seasonAccounts = async (ids, w, { days = w.days, keyed = false, signed = false } = {}) => {
     const games = new Set(ids);
-    const own = seasonRounds(round, { games, fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) });
+    const read = seasonRounds(round, { games, fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) });
+    const own = signed ? seasonRoundsFromJson(signedSeasonRoundsJson(round, read, signSeason)) : read;
     const seats = networkSeats();
     const answers = new Array(seats.length).fill(null);
     let next = 0;
@@ -1320,10 +1325,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const me = toHex(round.pubkey);
     const bySeat = new Map([[me, own]]);
     for (const a of answers.filter(Boolean).sort((x, y) => (x.seat < y.seat ? -1 : x.seat > y.seat ? 1 : 0))) {
-      const label = a.node || a.seat;
+      const label = signed ? a.seat : a.node || a.seat;
       if (!bySeat.has(label)) bySeat.set(label, a.rounds);
     }
     return { bySeat, asked: seats.length };
+  };
+  // A SIGNED ACCOUNT'S SEATS (kanban #1153): the round's settlement draw as THIS seat computes it from the contract, its own census and
+  // the beacon (Roster.committeeFor, a contract it does not hold drawn as posted), and the signatures it takes - the seats' threshold.
+  // A draw the chain view is still being read for is pending, not refused.
+  const signSeason = (digest) => schnorr.sign(digest, round.identity.secret);
+  const seasonSeatsOf = (ridHex, contract) => {
+    let picked; try { picked = roster.committeeFor(fromHex(ridHex), 'settlement', { posted: contract }); } catch (e) { return { ok: false, why: e.message }; }
+    if (!picked || !picked.ok) return { ok: false, pending: /still reading/.test(String(picked && picked.why)), why: picked ? picked.why : 'no draw' };
+    let needed; try { needed = roundThreshold(slotsForRole(contract, 'settlement')); } catch (e) { return { ok: false, why: e.message }; }
+    return { ok: true, seats: (picked.drawn || picked.committee).map((e) => toHex(e.pubkey || e)), needed };
   };
   const seasonNetwork = async (ids, w) => {
     const { bySeat, asked: seats } = await seasonAccounts(ids, w);
@@ -1847,6 +1862,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     share: async (b) => { const r = await fetch(`${base}/reserve-payout/share`, { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ planId: b.planId, kind: b.kind, commitments: b.commitments.map((c) => ({ id: c.id, hiding: toHex(c.hiding), binding: toHex(c.binding) })) }), signal: AbortSignal.timeout(60000) });
       const j = await r.json(); return j.ok ? { ok: true, share: BigInt('0x' + j.share) } : j; },
+    // ITS WINNERS OF A LEADERBOARD PAYOUT (kanban #1153): the list it planned for, else its frozen read, each with its signed evidence
+    winners: async (id) => { const r = await fetch(`${base}/leaderboard-winners?proposal=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(30000) }); return r.ok ? r.json() : null; },
   });
   const reserveSpent = () => (reservePayouts ? reservePayouts.spent() : new Set());
   // the reserves this seat holds unspent, over every federation, in sat (rule 4's base); the chain tip the funding loop saw last
@@ -1860,12 +1877,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const payoutWhySaid = new Set();
   const capLogged = new Set();
   const movesWaitLogged = new Set();
-  // THE LEADERBOARD PAYOUTS WHOSE VOTE PASSED, and their winners as THIS seat reads the network season: the scope's games
-  // (all hosted, or one by name with all its versions), the window [payment time - period, payment time) on the chain's median time at
-  // the payment height, the seats' accounts merged by 3 that agree (keyed: every entry with its round key), the top N identities
+  // THE LEADERBOARD PAYOUTS WHOSE VOTE PASSED, and their season: the scope's games (all hosted, or one by name with all its versions),
+  // the window [payment time - period, payment time) on the chain's median time at the payment height. Its winners (kanban #1153) are
+  // the winners book's: the seats' SIGNED accounts (keyed: every entry with its round key), a round counted only when the threshold of
+  // its own draw signed it, frozen once per payout and persisted before this seat signs (leaderboard-freeze.js)
   const leaderboardsDue = () => (fundingBook ? fundingBook.leaderboardsPassed().map((x) => ({ id: x.id, federation: toHex(x.proposal.federationId),
     amountSats: x.proposal.amountSats, paymentHeight: x.proposal.paymentHeight, decidableAt: x.decidableAt })) : []);
-  const leaderboardWinnersOf = async (id) => {
+  const leaderboardSeasonOf = async (id) => {
     const lb = fundingBook ? fundingBook.leaderboardsPassed().find((x) => x.id === id) : null;
     if (!lb) return { ok: false, why: 'no passed leaderboard payout of that id here' };
     const p = lb.proposal;
@@ -1876,13 +1894,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let paymentMs; try { paymentMs = Number(await blockTimeAt(p.paymentHeight)); } catch (e) { return { ok: false, why: `the payment height's time: ${e.message}` }; }
     if (!Number.isSafeInteger(paymentMs) || paymentMs <= 0) return { ok: false, why: 'the payment height is not reached here' };
     const w = leaderboardWindow(p, paymentMs);
-    const { bySeat } = await seasonAccounts(ids, w, { keyed: true, days: Math.min(SEASON_DAYS_MAX, Math.ceil((Date.now() - w.fromMs) / DAY_MS) + 1) });
-    const m = mergeSeasonAccounts(bySeat, { agree: SEASON_NETWORK_AGREE, keys: true });
-    if (!m.ok) return { ok: false, why: m.why };
-    return leaderboardWinners({ rounds: m.rounds, games: ids, fromMs: w.fromMs, toMs: w.toMs, top: p.top, amountMsat: p.amountSats * 1000n, splitBps: p.splitBps });
+    return { ok: true, games: ids, fromMs: w.fromMs, toMs: w.toMs, days: w.days, top: p.top, amountMsat: p.amountSats * 1000n, splitBps: p.splitBps };
   };
+  const winnersBook = round.db ? createWinnersBook({ db: round.db, paramsOf: leaderboardSeasonOf, seatsOf: seasonSeatsOf, verify: (s, m, k) => schnorr.verify(s, m, k),
+    collect: async (id, p) => (await seasonAccounts(p.games, p, { keyed: true, signed: true, days: Math.min(SEASON_DAYS_MAX, Math.ceil((Date.now() - p.fromMs) / DAY_MS) + 1) })).bySeat,
+    log: (l) => console.log(l) }) : null;
   const reservePayouts = round.db ? createReservePayouts({ db: round.db, me: toHex(round.pubkey), curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
-    leaderboards: leaderboardsDue, winnersOf: leaderboardWinnersOf,
+    leaderboards: leaderboardsDue, winners: winnersBook,
     network: payoutNet, payRequest: lnurlAsk.payRequest, invoiceFor: lnurlAsk.invoiceFor, log: (l) => console.log(l),
     // THE PAYMENTS A PASSED VOTE ALLOWS NOW (§27A.9.5): its tranches past the delay whose re-count still passes (rule 5), each within the
     // caps (rule 4): the proposal at most 10 % of the reserves, the window's payments at most 25 % of what the reserves held at its start
@@ -4641,8 +4659,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const badges = nostrBadges({ db: round.db, secret: round.identity.secret, on: nostrBadgesOn, relays: nostrPublish, roundOf: badgeRoundOf,
     settled: (ridHex) => stateOf(round, fromHex(ridHex)) === 'ACCEPTED', apps: hostedApps, imageBase: badgeImageBase,
-    accountsOf: (g, w) => seasonAccounts(g.ids, w, { keyed: true,
+    accountsOf: (g, w) => seasonAccounts(g.ids, w, { keyed: true, signed: true,
       days: Math.min(SEASON_DAYS_MAX, Math.ceil((Date.now() - w.fromMs) / DAY_MS) + 1) }),
+    seatsOf: seasonSeatsOf, verify: (s, m, k) => schnorr.verify(s, m, k),   // the board badge counts signed accounts only (kanban #1153)
     perMinute: nostrPerMinute, tickMs: nostrBadgesTickMs });
   badges.start();
   if (nostrBadgesOn) console.log(`[badges] awarding NIP-58 badges as ${toHex(round.pubkey).slice(0, 16)}${nostrPublish.length ? `, published to ${nostrPublish.join(', ')}` : ', not published (no ARENA_NOSTR_PUBLISH)'}`);
@@ -8987,7 +9006,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!kept || Date.now() - kept.at > SEASON_KEEP_MS) {
           const read = seasonRounds(round, { games: new Set(ids), fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) });
           kept = { at: Date.now(), json: JSON.stringify({ node: toHex(round.pubkey), game: { ids }, days: w.days, fromMs: w.fromMs, toMs: w.toMs,
-            roundKeys: true, rounds: seasonRoundsToJson(read) }) };
+            // SIGNED (kanban #1153): each round's contract and this seat's signature over its settled account - what a payout and a badge count on
+            roundKeys: true, signed: true, rounds: signedSeasonRoundsJson(round, read, signSeason) }) };
           keepSeason(q, kept);
         }
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=30', ...CORS });
@@ -11083,6 +11103,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return ans(r.ok ? 200 : (r.status || 400), r.ok ? { ok: true, share: r.share.toString(16).padStart(64, '0') } : r); }
           const r = await reservePayouts.learn(b); return ans(r.ok ? 200 : (r.status || 400), r);
         } catch (e) { return ans(400, { ok: false, why: e.message }); }
+      }
+      // A LEADERBOARD PAYOUT'S WINNERS AT THIS SEAT (kanban #1153): its state (OPEN, FROZEN, PLANNED), the list and every signed account
+      // it stands on - what a coordinator merges and a co-signer checks a plan's rounds against. Public and read-only.
+      if (req.method === 'GET' && url.pathname === '/leaderboard-winners') {
+        const id = String(url.searchParams.get('proposal') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(id)) return text(res, 400, 'a leaderboard payout is asked for by its id: ?proposal=<64 hex>');
+        res.writeHead(winnersBook ? 200 : 501, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify(winnersBook ? winnersBook.recordOf(id) : { ok: false, why: 'this node pays no reserves' }));
       }
       if (req.method === 'GET' && url.pathname === '/reserve-payouts') {
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
