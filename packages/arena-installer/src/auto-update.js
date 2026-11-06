@@ -18,7 +18,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, renameSync,
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { checkAsset } from './release-verify.js';
-import { updateNode } from './update.js';
+import { updateNode, resumeUpdate, readJournal, openJournal, takeUpdateLock } from './update.js';
 import { nodeOf } from './node-services.js';
 import { QUIET } from '../../arena-node/src/log-level.js';
 import { within, mbOf, progressBar } from './update-progress.js';
@@ -141,9 +141,31 @@ async function updateOnce({ home, latest, fetcher = fetch, platform = process.pl
   const releases = join(home, 'releases');
   t0 = performance.now();
   say(53, `Unpacking ${v}`);
-  if (!existsSync(join(releases, base))) { unpack(file, releases); trace.verbose(`unpacked into ${join(releases, base)} (${trace.since(t0)})`); }
-  else trace.verbose(`${join(releases, base)} is there already: not unpacked again`);
   const newRelease = join(releases, base);
+  // UNPACKED WHOLE OR NOT AT ALL (kanban #1166): a tar killed half way into releases/<base> left a partial tree that every later check
+  // reused ("there already"), only the archive's hash ever checked. Now the archive goes into releases/.tmp-<base>-<pid> and is renamed
+  // into place whole, then marked (.unpacked-<base>: the archive's SHA-256). A folder there without its mark - a partial one, or one an
+  // older updater unpacked - is moved aside and unpacked again, unless it is the release this node runs.
+  const mark = join(releases, `.unpacked-${base}`);
+  const marked = () => { try { return readFileSync(mark, 'utf8').trim() === want; } catch { return false; } };
+  if (existsSync(newRelease) && !marked() && newRelease !== node.release) {
+    const aside = join(releases, `.stale-${base}-${Date.now()}`);
+    renameSync(newRelease, aside);
+    try { rmSync(aside, { recursive: true, force: true }); } catch { /* a file still open (Windows): the next check tries again */ }
+    trace.verbose(`${newRelease} was there without its mark (a partial unpack, or an older updater's): moved aside, unpacked again`);
+  }
+  if (!existsSync(newRelease)) {
+    const tmp = join(releases, `.tmp-${base}-${process.pid}`);
+    rmSync(tmp, { recursive: true, force: true });
+    mkdirSync(tmp, { recursive: true });
+    try {
+      unpack(file, tmp);
+      if (!existsSync(join(tmp, base))) return { ok: false, why: `${name} holds no ${base} folder: not used` };
+      renameSync(join(tmp, base), newRelease);
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
+    writeFileSync(mark, `${want}\n`);
+    trace.verbose(`unpacked into ${newRelease} (${trace.since(t0)})`);
+  } else trace.verbose(`${newRelease} is there already, whole (its mark names this archive): not unpacked again`);
   log(`${name} checked and unpacked: updating the node ${node.version} -> ${v}`);
   // the auto update service comes with the update where the node has none yet (a node updated by `bitcoinarena update` keeps updating itself)
   const installUpdaterFn = async (o) => {
@@ -160,13 +182,25 @@ async function updateOnce({ home, latest, fetcher = fetch, platform = process.pl
   return out;
 }
 
+/** The journal's unfinished update finished under the update lock (kanban #1166); null when none is open. */
+export async function resumeUnderLock({ home, log = () => {} }) {
+  if (!openJournal(readJournal(home))) return null;
+  const held = await takeUpdateLock(home);
+  try { return await resumeUpdate({ home, log }); } finally { held.release(); }
+}
+
 /**
  * The service: a check now (after `firstMs`) and every `everyMs`; after an update it ends with `exitAfterUpdate` (75) so its service
  * starts it again from the new release. `sleep` and `exit` injectable for the tests.
  */
 export async function runAutoUpdate({ home, latest, everyMs = 30 * 60_000, firstMs = 10 * 60_000, log = (l) => console.log(`${new Date().toISOString()} ${l}`),
-  sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), exit = (code) => process.exit(code), once = checkOnce, rounds = Infinity, trace = QUIET }) {
+  sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), exit = (code) => process.exit(code), once = checkOnce, rounds = Infinity, trace = QUIET,
+  resume = resumeUnderLock }) {
   log(`auto update: on for ${home}; first check in ${Math.round(firstMs / 60000)} min, then every ${Math.round(everyMs / 60000)} min`);
+  // AN UPDATE THAT DID NOT FINISH (kanban #1166): this service is started again when its updater died - the journal's update is finished
+  // now (kept or rolled back), not left on unverified units until the next release
+  try { const r = await resume({ home, log }); if (r) log(`#1166 the unfinished update ${r.from} -> ${r.to}: ${r.resumed} (${r.why})`); }
+  catch (e) { log(`#1166 the unfinished update could not be finished: ${e.message}`); }
   await sleep(firstMs);
   for (let i = 0; i < rounds; i++) {
     let r;
