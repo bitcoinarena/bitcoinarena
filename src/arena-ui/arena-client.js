@@ -18647,12 +18647,18 @@ function importSeed(text, { storage, key = 'arena.player.seed' } = {}) {
  * tab; a wrong word (by name); a seed another open tab holds (its heartbeat 'arena.seed.held.<id>' under 12 s old - the
  * keeper's lock would otherwise drop it after the reload). Returns { ok, hex, from, previous } or { ok: false, why }.
  */
-function restoreSeed({ text, session, kept, now = Date.now(), liveRun = false } = {}) {
+// `heldElsewhere(hex)` (kanban #1164): whether another tab holds that phrase's lock now, read from the browser's locks - a heartbeat's age
+// is a clock, and a hidden tab beats late; either refuses
+function restoreSeed({ text, session, kept, now = Date.now(), liveRun = false, heldElsewhere = null } = {}) {
   if (liveRun) return { ok: false, why: 'leave the round first: the seed cannot change during a run' };
   const got = seedHexFromInput(text);
   if (!got.ok) return { ok: false, why: got.why };
   const hex = got.hex;
   const previous = session ? session.getItem(TAB_SEED_KEY) : null;
+  if (typeof heldElsewhere === 'function' && hex !== previous) {
+    let held = false; try { held = !!heldElsewhere(hex); } catch { held = false; }
+    if (held) return { ok: false, why: 'that seed is open in another tab: close it there first' };
+  }
   if (kept) {
     let held = null;
     try { held = JSON.parse(kept.getItem('arena.seed.held.' + hex.slice(0, 16)) || 'null'); } catch { held = null; }
@@ -21365,6 +21371,9 @@ function paysIntoALock(round, invite, LockClient) {
 // the slowest step of a paying join - and the deposit, the lock and the withdraw use that same open client rather than
 // joining again on the same store. A join that failed is not kept.
 const openWallets = new WeakMap();
+// THE PAGE'S GATE ON A PHRASE'S WALLETS (kanban #1164): fn(seedHex) -> a promise that resolves once this tab may open that phrase's wallets
+let walletGate = null;
+function useWalletGate(fn) { walletGate = typeof fn === 'function' ? fn : null; }
 async function playerWallet({ round, invite, seed, LockClient, storage, onStep = () => {}, openWaitMs = 15000, joinWaitMs = 180000, ancestor = false } = {}) {
   paysIntoALock(round, invite, LockClient);
   return openPlayerWallet({ federationId: round.federationId, invite, seed, LockClient, storage, onStep, openWaitMs, joinWaitMs, ancestor });
@@ -21380,6 +21389,15 @@ async function openPlayerWallet({ federationId, invite, seed, LockClient, storag
   if (!(federationId instanceof Uint8Array) || federationId.length !== 32) throw new Error('a player wallet is opened for a 32-byte federation id');
   if (!invite || typeof invite !== 'string') throw new Error('a player wallet is opened from its federation\'s invite');
   if (!LockClient || typeof LockClient.join !== 'function') throw new Error('a player wallet is opened by the lock client, and none was loaded');
+  // NOT BEFORE THIS TAB HOLDS ITS PHRASE (kanban #1164): while another tab's collect holds the phrase's lock, a wallet of it opened here ran a
+  // second client on the same store - the open waits for the lock (the page's seed keeper, useWalletGate)
+  if (walletGate && seed instanceof Uint8Array) {
+    let waited = false;
+    const said = setTimeout(() => { waited = true; onStep('waiting for another tab of this browser to finish with this phrase'); }, 500);
+    if (said.unref) said.unref();
+    try { await walletGate(toHex(seed)); } finally { clearTimeout(said); }
+    if (waited) onStep('this tab holds its phrase now');
+  }
   const round = { federationId };
   if (!ancestor) rememberInvite(storage, federationId, invite);
   // `ancestor`: the seed's BLWP-era wallet (ancestorWalletSecretFor), opened only to be swept into this one
@@ -41050,7 +41068,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
-         reconcileKeptLock: reconcileKeptLock, bindLockEntry: bindLockEntry, lockRecordOf: lockRecordOf, collectState: collectState, forfeitCheck: forfeitCheck, settlementAgreement: settlementAgreement,
+         reconcileKeptLock: reconcileKeptLock, bindLockEntry: bindLockEntry, lockRecordOf: lockRecordOf, collectState: collectState, forfeitCheck: forfeitCheck, settlementAgreement: settlementAgreement, useWalletGate: useWalletGate,
          roundEndMs: roundEndMs,
          ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes, ledgerHistory: ledgerHistory,
          depositChoices: depositChoices, withdrawChoices: withdrawChoices, invoiceAmountMsat: invoiceAmountMsat, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, restOfFeesMsat: restOfFeesMsat, restInvoiceMsat: restInvoiceMsat, REST_FLOOR_MSAT: REST_FLOOR_MSAT, ceilNote: ceilNote, roundsDepositMsat: roundsDepositMsat, recordDonation: recordDonation, recordReceived: recordReceived, collectIntoPlayerWallet: collectIntoPlayerWallet, donationCostMsat: donationCostMsat, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, issuingMsat: issuingMsat, awaitIssued: awaitIssued, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,

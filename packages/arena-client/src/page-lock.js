@@ -516,6 +516,9 @@ function paysIntoALock(round, invite, LockClient) {
 // the slowest step of a paying join - and the deposit, the lock and the withdraw use that same open client rather than
 // joining again on the same store. A join that failed is not kept.
 const openWallets = new WeakMap();
+// THE PAGE'S GATE ON A PHRASE'S WALLETS (kanban #1164): fn(seedHex) -> a promise that resolves once this tab may open that phrase's wallets
+let walletGate = null;
+export function useWalletGate(fn) { walletGate = typeof fn === 'function' ? fn : null; }
 export async function playerWallet({ round, invite, seed, LockClient, storage, onStep = () => {}, openWaitMs = 15000, joinWaitMs = 180000, ancestor = false } = {}) {
   paysIntoALock(round, invite, LockClient);
   return openPlayerWallet({ federationId: round.federationId, invite, seed, LockClient, storage, onStep, openWaitMs, joinWaitMs, ancestor });
@@ -531,6 +534,15 @@ export async function openPlayerWallet({ federationId, invite, seed, LockClient,
   if (!(federationId instanceof Uint8Array) || federationId.length !== 32) throw new Error('a player wallet is opened for a 32-byte federation id');
   if (!invite || typeof invite !== 'string') throw new Error('a player wallet is opened from its federation\'s invite');
   if (!LockClient || typeof LockClient.join !== 'function') throw new Error('a player wallet is opened by the lock client, and none was loaded');
+  // NOT BEFORE THIS TAB HOLDS ITS PHRASE (kanban #1164): while another tab's collect holds the phrase's lock, a wallet of it opened here ran a
+  // second client on the same store - the open waits for the lock (the page's seed keeper, useWalletGate)
+  if (walletGate && seed instanceof Uint8Array) {
+    let waited = false;
+    const said = setTimeout(() => { waited = true; onStep('waiting for another tab of this browser to finish with this phrase'); }, 500);
+    if (said.unref) said.unref();
+    try { await walletGate(toHex(seed)); } finally { clearTimeout(said); }
+    if (waited) onStep('this tab holds its phrase now');
+  }
   const round = { federationId };
   if (!ancestor) rememberInvite(storage, federationId, invite);
   // `ancestor`: the seed's BLWP-era wallet (ancestorWalletSecretFor), opened only to be swept into this one
