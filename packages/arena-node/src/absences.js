@@ -49,7 +49,8 @@ export function dueDeparture(notices, { record, peerKey, departureNotice, height
   return best ? { ok: true, notice: best, sinceHeight: best.leaveAfterHeight, id: departureId(best) } : { ok: false, why };
 }
 
-export function createAbsences({ verify, max = 4096, store = null }) {
+// `nodeOf(fidHex, peerHex)`: the node key (hex) the federation record this seat holds names for that guardian, or null (kanban #1222)
+export function createAbsences({ verify, max = 4096, store = null, nodeOf = null }) {
   const notices = new Map();                 // `${fid}:${peer}` -> departure notice (one per guardian: the latest posted)
   const emergencies = new Map();             // node key -> the owner's emergency leave request (one per node: the EARLIEST posted)
   const held = new Map();                    // `${fid}:${peer}:${attester}` -> attestation (the newest height)
@@ -77,7 +78,12 @@ export function createAbsences({ verify, max = 4096, store = null }) {
   /** Takes a guardian's departure notice, signed by the node key it names (whether that is the peer's is the record's to say). */
   function offerDeparture(d) {
     if (!verify(d.signature, departureId(d), d.nodePubkey)) return { ok: false, why: 'the notice is not signed by the node key it names' };
-    const k = `${toHex(d.federationId)}:${toHex(d.peerKey)}`;
+    // ONE NOTICE PER GUARDIAN'S NODE KEY (kanban #1222, audit 2 #1204 FED-B1): keyed by (federation, peer) alone and the newest winning, a
+    // notice anyone signed with a key of their own and a later posted_at displaced the guardian's real one - and the leaver was recorded
+    // ABANDONED. Now a notice from another node key than the record names for that guardian is refused, and each node key keeps its own.
+    let named = null; try { named = typeof nodeOf === 'function' ? nodeOf(toHex(d.federationId), toHex(d.peerKey)) : null; } catch { named = null; }
+    if (named && String(named).toLowerCase() !== toHex(d.nodePubkey)) return { ok: false, why: 'the notice is signed by another node key than the federation record names for that guardian' };
+    const k = `${toHex(d.federationId)}:${toHex(d.peerKey)}:${toHex(d.nodePubkey)}`;
     const had = notices.get(k);
     if (had && had.postedAt >= d.postedAt) return { ok: true, kept: false };
     if (!had && notices.size >= max) return { ok: false, why: 'this seat holds as many notices as it keeps' };
@@ -101,7 +107,7 @@ export function createAbsences({ verify, max = 4096, store = null }) {
   }
   const emergencyFor = (nodeKey) => emergencies.get(typeof nodeKey === 'string' ? nodeKey.toLowerCase() : toHex(nodeKey)) || null;
   const listEmergencies = () => [...emergencies.values()].map(emergencyHex);
-  const departureFor = (record, peerKey, departureNotice, height) => dueDeparture([notices.get(`${toHex(record.federationId)}:${toHex(peerKey)}`)].filter(Boolean),
+  const departureFor = (record, peerKey, departureNotice, height) => dueDeparture([...notices.entries()].filter(([k]) => k.startsWith(`${toHex(record.federationId)}:${toHex(peerKey)}:`)).map(([, d]) => d),
     { record, peerKey, departureNotice, height, verify });
   const listDepartures = (fidHex) => [...notices.entries()].filter(([k]) => !fidHex || k.startsWith(`${fidHex}:`)).map(([, d]) => departureHex(d));
   const list = (fidHex) => [...held.entries()].filter(([k]) => !fidHex || k.startsWith(`${fidHex}:`)).map(([, a]) => absenceHex(a));
