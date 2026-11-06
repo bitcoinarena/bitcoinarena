@@ -7,7 +7,7 @@
 // this class component only draws the panes and calls them.
 import React from 'react';
 
-const QUESTIONS = 'https://armada.buzz/invite/naddr1qvzqqqyzz5pzpt3qdj9s02tf33v6t5epfuxgk90eklx42cg2ftatwmuzznkww6anqqqqf5522e#BAEU9DouYIxVptZrIZWPrgMF';
+// THE COMMUNITY LINK moved to the foot's icons (kanban #1206, the owner 2026-11-06: "Armada link entfernen wo er jetzt ist, und nach unten tun")
 
 export class WalletStart extends React.Component {
   constructor(props) {
@@ -120,7 +120,6 @@ export class WalletStart extends React.Component {
         <div id="ws-busy" className={`ws-note${wait ? ' on' : ''}`} style={busy ? undefined : { display: 'none' }}>
           {wait ? <><span className="ws-spin" aria-hidden="true" /><span className="ws-step">{busy}</span><span className="ws-secs">{secs ? `${secs} s` : ''}</span></> : busy}
         </div>
-        <p className="ws-note" style={{ textAlign: 'center', margin: '8px 0 0' }}>Questions? <a href={QUESTIONS} target="_blank" rel="noopener" style={{ color: '#c9a8ff' }}>Join the community on Armada</a></p>
       </div>);
   }
 }
