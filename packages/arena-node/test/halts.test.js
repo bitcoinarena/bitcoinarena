@@ -218,3 +218,33 @@ test('#1158 sessionReading and clockStep: the (f + 1)-th highest; a view of the 
   assert.equal(clockStep(null, { reading: null, peerSessions: Array(46).fill(783), need: 23, tip: 159000 }).session, 783);
   assert.equal(clockStep(null, { reading: null, peerSessions: [LIE], need: 5, tip: 159000 }).session, 0);
 });
+
+// KANBAN #1223 (audit 2 #1204 FED-A2): the "slow, not halted" void (#1158) applied only while EVERY kept observation was below the session
+// this seat saw - so one census seat's observation at a huge session switched it off, and a federation that had stalled and recovered was
+// proven HALTED again from its old halt height (liquidation listed, spent sets published). Now a proof at session S is void whenever this
+// seat itself saw the federation past S, whatever else is held.
+test('#1223 a recovered federation stays not halted when one seat posts an observation at a huge session', async () => {
+  const { haltObservationId } = await import('../../arena-protocol/src/halt-proof.js');
+  const world = { tip: 330, session: 40, down: new Set(), posted: [] };
+  const all = seats.map((s) => seatOf(s, world));
+  for (const h of all) await h.observe();
+  world.session = 41; world.tip = 341; world.down = new Set([2, 3]);
+  for (const h of all) await h.observe();
+  world.tip = 351;
+  for (const h of all.slice(0, 5)) await h.observe();
+  const me = all[0];
+  for (const o of world.posted.slice(1, 5)) me.take(o);
+  assert.ok(me.proofOf(fid), 'the stall at 41 is proven');
+  // the federation recovers: sessions move again, and this seat sees them
+  world.session = 45; world.down = new Set(); world.tip = 360;
+  await me.observe();
+  assert.equal(me.proofOf(fid), null, 'a later session seen here voids it (#1158)');
+  // one census seat posts an observation at a huge session, for both variants of the number
+  for (const session of [0x7fffffff, 46]) {
+    const liar = seats[8];
+    const o = { federationId: record.federationId, session, firstHeight: 0, height: 360, answering: [], observer: liar.pub };
+    const signed = { observation: toHex(encodeHaltObservation(o)), signature: toHex(schnorr.sign(haltObservationId(o), liar.secret)) };
+    me.take(signed);
+    assert.equal(me.proofOf(fid), null, `a recovered federation proven halted again by one observation at session ${session}`);
+  }
+});
