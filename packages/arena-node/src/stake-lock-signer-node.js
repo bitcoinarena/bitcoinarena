@@ -265,6 +265,15 @@ export function keepLockSessionFloor({ round, port, roundId, federationId, outpo
   return run;
 }
 
+/** Another entry of the same player key in this round holding a verified lock of `kind` ('stake' | 'fee') here (kanban #1215). */
+function otherStakedUnderKey(round, entry, entryIdBytes, kind) {
+  if (typeof round.entriesOf !== 'function') return false;
+  const lockOf = kind === 'fee' ? round.feeLock : round.stakeLock;
+  if (typeof lockOf !== 'function') return false;
+  const me = Buffer.from(entryIdBytes), key = Buffer.from(entry.playerPubkey);
+  return round.entriesOf(entry.roundId).some((x) => !Buffer.from(x.entryId).equals(me) && Buffer.from(x.entry.playerPubkey).equals(key) && !!lockOf.call(round, x.entryId));
+}
+
 // `timing` (kanban #605): an object the caller reads afterwards - ms spent asking the federation, checking gifts and reading the fee gate
 export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined, timing = {}, namedGate = null }) {
   const stored = round.entry(entryIdBytes);
@@ -285,6 +294,11 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   const taken = round.stakeLockAt ? round.stakeLockAt(outpoint) : null;
   if (taken && !Buffer.from(taken.entryId).equals(Buffer.from(entryIdBytes)))
     return { ok: false, why: 'that stake lock already stakes another entry in this round: one lock is one entry' };
+  // ONE STAKED ENTRY PER PLAYER KEY IN A ROUND (kanban #1215, audit 3 #1210 MONEY-1): the settlement keys every lock by its entry's player
+  // key, so a second staked entry under one key took the first one's place in the plan - a loser could make his own lock unclaimable,
+  // void the round's settlement and take a lost stake back, or have one lock claimed twice
+  if (otherStakedUnderKey(round, entry, entryIdBytes, 'stake'))
+    return { ok: false, why: 'another entry of that player key is already staked in this round: one player key stakes one entry' };
 
   let t = Date.now();
   // PROTOCOL 27: AN ARENA LOCK, checked as arenaLockStands says; null for a round on the stock contract
@@ -324,7 +338,9 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   // here, with no await between this read and the write below.
   { const now = round.stakeLockAt ? round.stakeLockAt(outpoint) : null;
     if (now && !Buffer.from(now.entryId).equals(Buffer.from(entryIdBytes)))
-      return { ok: false, why: 'that stake lock already stakes another entry in this round: one lock is one entry' }; }
+      return { ok: false, why: 'that stake lock already stakes another entry in this round: one lock is one entry' };
+    if (otherStakedUnderKey(round, entry, entryIdBytes, 'stake'))
+      return { ok: false, why: 'another entry of that player key is already staked in this round: one player key stakes one entry' }; }
   round.putStakeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
   // IN A ROUND WHOSE GATE MINTS, THE STAKE COUNTS ONLY WITH ITS FEE LOCK (pick a): kept,
   // verified, and not seen - no play, no place in the settlement - until the fee lock is.
@@ -362,6 +378,8 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   // ONE FEE LOCK IS ONE ENTRY TOO (kanban #1214): no fee lock was checked against another entry at all
   const feeTaken = () => { const t = round.feeLockAt ? round.feeLockAt(outpoint) : null; return t && !Buffer.from(t.entryId).equals(Buffer.from(entryIdBytes)); };
   if (feeTaken()) return { ok: false, why: 'that fee lock already pays the fee of another entry in this round: one lock is one entry' };
+  if (otherStakedUnderKey(round, entry, entryIdBytes, 'fee'))
+    return { ok: false, why: 'another entry of that player key already has a fee lock in this round: one player key, one fee lock (kanban #1215)' };
   const arena = await arenaLockStands({ contract, entry, kind: 'fee', fields, outpoint, port, gate: namedGate, federationId: fed.federationId });
   let st, id;
   if (arena) {
@@ -381,6 +399,8 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   if (!matches.ok) return matches;
   }
   if (feeTaken()) return { ok: false, why: 'that fee lock already pays the fee of another entry in this round: one lock is one entry' };
+  if (otherStakedUnderKey(round, entry, entryIdBytes, 'fee'))
+    return { ok: false, why: 'another entry of that player key already has a fee lock in this round: one player key, one fee lock (kanban #1215)' };
   round.putFeeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
   // AND A STAKE LOCK ALREADY VERIFIED AND WAITING FOR THIS ONE IS COUNTED NOW (pick a).
   const staked = round.stakeLock ? round.stakeLock(entryIdBytes) : null;
