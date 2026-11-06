@@ -135,3 +135,25 @@ test('#1163 a partial collect does not mark the record done, and its lock wallet
   PL.tidyStorage(storage, { seeds: [toHex(seed)], current: toHex(seed) });
   assert.equal(m.has(lockdb), false, 'a done round whose wallet read empty kept its wallet for good');
 });
+
+// KANBAN #1220 (audit 3 #1210 PAGE-1): the payout and stake notes were keyed by round and order only, so a second phrase of this browser in
+// the same round (two tabs are two players; both enter a game round as order 0) read the first phrase's note as its own: its payout and stake
+// "collected", its record closed while both stayed in their contracts. Now a note names the phrase's refund key; an old-shape note is not read.
+test('#1220 another phrase\'s note in the same round is not this phrase\'s: its payout stays owed (old: collected)', async () => {
+  const kept = new Map();
+  const storage = { getItem: (k) => (kept.has(k) ? kept.get(k) : null), setItem: (k, v) => kept.set(k, String(v)), removeItem: (k) => kept.delete(k) };
+  const seedQ = b32(0x52);
+  const mineQ = toHex(refundKeyOf(playerFor({ ...round, id: rid }, { seed: seedQ, curve: pageCurve }).pubkey));
+  const note = JSON.stringify({ ok: true, txid: 'ef'.repeat(32), outIdx: 0, amountMsat: '978000' });
+  kept.set(`arena.payout.${toHex(rid)}`, note);                          // phrase Q's note as the old page wrote it
+  kept.set(`arena.stakeback.${toHex(rid)}`, note);
+  kept.set(`arena.payout.${toHex(rid)}.${mineQ.slice(0, 16)}`, note);    // and as this page writes it
+  const say = { 'a.test': { payees: [mine, mineQ], forfeit: realForfeit }, 'b.test': { payees: [mine, mineQ], forfeit: realForfeit } };
+  const nodes = Object.keys(say).map((h) => `http://${h}`);
+  const p = await PL.lookOwed({ round, roundId: rid, seed, curve: pageCurve, nodes, fetcher: seats(say), client: wallet(100), storage });
+  const q = await PL.lookOwed({ round, roundId: rid, seed: seedQ, curve: pageCurve, nodes, fetcher: seats(say), client: wallet(100), storage });
+  console.log('  FACTS #1220:', JSON.stringify({ p: { payout: p.payout.state, stake: p.stake && p.stake.state }, q: { payout: q.payout.state } }));
+  assert.equal(p.payout.state, 'owed', 'phrase P read phrase Q\'s note as its own payout collected');
+  assert.notEqual(p.stake && p.stake.state, 'collected', 'phrase P read phrase Q\'s stake note as its own');
+  assert.equal(q.payout.state, 'collected', 'phrase Q still reads its own note');
+});
