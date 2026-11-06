@@ -16,7 +16,7 @@
 //       of that batch counts by its own signature on the record - and the certificate goes to every seat
 //       (POST /batch-certificate). Else the leader asks every seat (POST /batch-void-ask, its own signed ask naming the set k's
 //       leader signed, kanban #1167): a seat holding the record answers its signature; a seat that never signed DECLINES - only
-//       once k's signing window is over, so a decline never keeps a seat from signing a batch it still could. Once enough have declined
+//       once the next batch's cutoff has passed (k's leader had its interval to hand its set out), never while k's own set is on its way. Once enough have declined
 //       that the threshold can no longer be reached, the batch is VOID everywhere (POST /batch-void) and its orders wait for
 //       the next one. Until then it is pending and the book does not move on: no seat can count a batch another dropped.
 //    2. The new set: the orders tradable at at least the threshold of seats (they verified the locks), every cancel and sell
@@ -81,7 +81,7 @@ export class ReplayGate {
 // without its own signature or certificate, a decline row - and each door moved them its own way). Read from the store by #state, moved
 // only by #move, inside one transaction that reads the state again, checks the move is one of BATCH_MOVES and its guard, and writes:
 //   ABSENT     nothing held for (round, k)
-//   DECLINED   this seat answered a round seat's signed void ask without having signed, past k's signing window (kanban #1167): it never
+//   DECLINED   this seat answered a round seat's signed void ask without having signed, past the next batch's cutoff (kanban #1167): it never
 //              signs k (a certificate of k signed by others is still taken)
 //   SIGNED     this seat signed the set (its record and own signature held) and no certificate is held yet
 //   CERTIFIED  the threshold's certificate is held: in the book, for good
@@ -502,8 +502,9 @@ export class OrderBook {
   /**
    * POST /batch-void-ask: this seat's signature if it signed batch k (or the certificate, if it holds k certified without having signed
    * it), else its decline - ABSENT -> DECLINED, committed before the decline is handed out - and it never signs k after. Only a round
-   * seat's signed ask is answered (#askStands), and a seat declines only once k's signing window is over (kanban #1167): from maxLagMs
-   * after k's cutoff #check signs k no more, so a decline takes nothing from k that this seat could still give it.
+   * seat's signed ask is answered (#askStands), and a seat declines only once the next batch's cutoff has passed (kanban #1167): k's leader
+   * hands its set out in its own interval, and the void ask comes from a later batch's leader - so no ask raced to the seats while k's set is
+   * on its way voids it (the next leader decides it at once, as #1150's tests ask: a void at the very next batch, its orders in that one).
    */
   voidAsk(roundIdBytes, k, ask = null) {
     const m = this.market(roundIdBytes);
@@ -516,7 +517,7 @@ export class OrderBook {
     let state = this.#state(rid, k);
     if (state === BATCH.ABSENT) {
       const late = this.now() - this.cutoffOf(k);
-      if (late <= this.maxLagMs) return refuse(`batch ${k}'s cutoff was ${late} ms ago and this seat may sign it until ${this.maxLagMs} ms after: it declines it only then`);
+      if (late < this.intervalMs) return refuse(`batch ${k}'s cutoff was ${late} ms ago and its set may still be on its way: this seat declines it only from the next cutoff, ${this.intervalMs} ms after`);
       const moved = this.#move(rid, k, BATCH.DECLINED, { write: () => this.db.prepare('INSERT OR IGNORE INTO market_batch_declines (round_id, k) VALUES (?, ?)').run(rid, k) });
       state = moved.ok ? BATCH.DECLINED : this.#state(rid, k);
     }
