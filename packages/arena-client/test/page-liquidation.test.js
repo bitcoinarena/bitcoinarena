@@ -61,3 +61,43 @@ test('a seat\'s own list with a claims URL and no signed event (kanban #1148): n
   assert.deepEqual(calls.map((c) => (Array.isArray(c) ? c[0] : c)), ['fetch']);
   assert.ok(!calls.some((c) => Array.isArray(c) && String(c[1]).includes('attacker')));
 });
+
+// KANBAN #1234 (audit 3 #1210 FIXES-3): one seat's unsigned row of a larger atMs replaced the signed row before anything checked a signature
+const runSeats = async (bySeat) => {
+  const handed = [];
+  const window = { ARENA_LEDGER_LOBBY: { nodes: Object.keys(bySeat) }, ARENA_CURVE: { verify: () => true }, ARENA_FED_LOADS: new Map([[FED, { federation: FED, invite: 'inv-a', height: 120 }]]),
+    ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }) };
+  // the client's own rule, in short: the newest row that is signed stands
+  const stands = (events) => events.filter((e) => (e.signatures || []).includes('good')).sort((a, b) => Number(b.event.atMs) - Number(a.event.atMs))[0] || null;
+  const ARENACLIENT = { presentNotes: async (o) => { handed.push(['present', o.held[0], o.events.length, !!stands(o.events)]); return [{ federation: o.held[0], ok: !!stands(o.events), accepted: [] }]; },
+    liquidationDoors: (o) => { const st = stands(o.events); handed.push(['doors', st ? 1 : 0]); return st ? [st.event.door] : []; },
+    collectLiquidationPayouts: async () => { handed.push(['collect']); return []; },
+    liquidationKeyFor: () => ({ payoutPk: '02' + '11'.repeat(32) }), ledgerFederations: () => [FED],
+    openPlayerWallet: async (o) => ({ invite: o.invite }), fromHex: (h) => h };
+  const fetch = async (url) => {
+    const seat = Object.keys(bySeat).find((u) => url.startsWith(u));
+    if (seat && url.endsWith('/liquidations')) return { ok: true, json: async () => ({ events: bySeat[seat] }) };
+    if (url.endsWith('/liquidation-payouts')) { handed.push(['payouts', url]); return { ok: true, json: async () => ({ payouts: [] }) }; }
+    return { ok: false }; };
+  const fn = pageFunction(PAGE, ['window', 'ARENACLIENT', 'walletSeed', 'vault', 'fetch', 'console'], [slice], 'return claimLiquidations;');
+  await fn(window, ARENACLIENT, () => new Uint8Array(32), () => ({ getItem: () => null, setItem: () => {} }), fetch, { log: () => {}, warn: () => {} })();
+  return handed;
+};
+const signed = { ...ev(FED), signatures: ['good'] };
+const forged = (atMs) => ({ event: { ...ev(FED).event, door: 'https://forger.example', atMs }, signatures: [] });
+
+test('#1234 a seat\'s unsigned row of a larger atMs does not hide the signed liquidation: the signed row is presented, its door read', async () => {
+  for (const [name, bySeat] of [
+    ['the signed seat first', { 'https://seat-1': [signed], 'https://seat-2': [forged(1e15)] }],
+    ['the forging seat first, atMs "9e99"', { 'https://seat-1': [forged('9e99')], 'https://seat-2': [signed] }],
+    ['the forging seat floods 50 rows', { 'https://seat-1': Array.from({ length: 50 }, (_, i) => forged(1e15 + i)), 'https://seat-2': [signed] }],
+  ]) {
+    const h = await runSeats(bySeat);
+    console.log(`  MEASURED #1234 ${name}:`, JSON.stringify(h));
+    assert.deepEqual(h.filter((x) => x[0] === 'present').map((x) => [x[1], x[3]]), [[FED, true]], `${name}: presented once, with the signed row`);
+    assert.deepEqual(h.filter((x) => x[0] === 'payouts').map((x) => x[1]), ['https://arb.example/liquidation-payouts'], `${name}: the signed door read, never the forger's`);
+    assert.ok(h.find((x) => x[0] === 'present')[2] <= 5, `${name}: at most 4 rows a seat`);
+  }
+  const same = await runSeats({ 'https://seat-1': [signed], 'https://seat-2': [signed], 'https://seat-3': [signed] });
+  assert.equal(same.find((x) => x[0] === 'present')[2], 1, 'the same row from three seats is one row');
+});
