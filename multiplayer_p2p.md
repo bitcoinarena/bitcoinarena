@@ -9166,6 +9166,19 @@ committee's signed account) and of entries that carry one of his `site_keys` as 
 | T3 | mainnet, and in one `window_blocks` (12,960, a season) the gross stake of entries carrying his site keys is at least 20 % of the gross of all counted rounds |
 | T4 | in six consecutive windows of 4,320 blocks (30 days), the share of **new** identities whose first paid entry carried his site keys is at least 30 % |
 
+**Whose keys are his (2026-11-08, the owner: he runs the website and every social account).**
+The project's own site key, the `frontend_pk` of bitcoinarena.io, is never one of his
+`site_keys`: a player who comes to the site directly, or from someone else's link, counts for the
+project. His `site_keys` are the referral programs he makes for his campaigns, one per post,
+clip or series of posts, each a link of the form `bitcoinarena.io/r/<name>` that the page keeps
+and the client writes into the entry's `frontend_pk`. Social platforms pass no usable referrer
+(X wraps every link in t.co and most in-app browsers send none), so the link itself carries the
+name. What the node then measures is exactly what he influences: whether his posts bring
+players. Growth through the homepage, word of mouth or the developers' own threads stays the
+project's. Outside the node, before the agreement starts: the domain, the Cloudflare account,
+the social accounts, the Arena Nostr key and the site key are owned by the project with the
+recovery in the owner's hands; he has operator access that can be withdrawn.
+
 **The attribution floor.** A tranche vests only if, over its own window, new identities whose
 first paid entry carried his site keys are at least `attribution_floor_bps` of all new identities
 on the network. Growth that comes from elsewhere vests him nothing past the base: that is the
