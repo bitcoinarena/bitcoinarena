@@ -4612,7 +4612,10 @@
       // an event, never make one; presentNotes acts only on a liquidation k of the chain's arbitration keys signed, at the door that event names.
       // A seat of this line lists no events, so nothing is handed over here until the arbitration set signs one - a seat's own list never was enough
       const NETWORK = 'testnet4', verify = window.ARENA_CURVE.verify;
-      const byKey = new Map();
+      // EVERY ROW, NOT THE NEWEST ONE (kanban #1234, audit 3 FIXES-3): the rows were merged to the largest atMs with no signature check, so one
+      // seat's unsigned row of a larger atMs hid the signed one from every page. Every row goes on (standingLiquidation takes the newest that stands),
+      // one copy of each, at most 4 per seat and federation: a seat that floods rows cannot push another seat's out
+      const rows = new Map();
       let asked = 0;
       for (const n of lob.nodes) {
         if (asked >= 3) break;
@@ -4620,16 +4623,20 @@
           const r = await fetch(String((n && n.url) || n).replace(/\/+$/, '') + '/liquidations', { cache: 'no-store', signal: AbortSignal.timeout(15000) });
           if (!r.ok) continue;
           asked += 1;
+          const fromSeat = new Map();
           for (const ev of (await r.json()).events || []) {
             if (!ev || !ev.event || ev.event.kind !== 'liquidation') continue;
-            const k = String(ev.event.federation || '').toLowerCase(), had = byKey.get(k);
-            if (!had || Number(ev.event.atMs) > Number(had.event.atMs)) byKey.set(k, ev);
+            const k = String(ev.event.federation || '').toLowerCase(), n = fromSeat.get(k) || 0;
+            if (n >= 4) continue;
+            let id; try { id = JSON.stringify([ev.event, ev.signatures]); } catch { continue; }
+            fromSeat.set(k, n + 1);
+            if (!rows.has(id)) rows.set(id, ev);
           }
         } catch { /* the next seat */ }
       }
-      const events = [...byKey.values()];
+      const events = [...rows.values()];
       if (!events.length) return;
-      const liq = events.map((ev) => ({ federation: String(ev.event.federation).toLowerCase() }));
+      const liq = [...new Set(events.map((ev) => String(ev.event.federation).toLowerCase()))].map((federation) => ({ federation }));
       // THE CHAIN TIP THE CLAIM WINDOW IS READ AGAINST: the federations' heights the page read, else the explorer's tip; none, and nothing is handed over
       const tip = (() => { const hs = [...(window.ARENA_FED_LOADS instanceof Map ? window.ARENA_FED_LOADS.values() : [])].map((x) => Number(x && x.height) || 0); const m = Math.max(0, ...hs); return m > 0 ? m : (typeof pendingTip === 'function' ? (pendingTip().tipHeight || null) : null); })();
       const held = ARENACLIENT.ledgerFederations(vault());
