@@ -375,6 +375,26 @@ export function tidyStorage(storage, { seeds = [], current = null, federations =
   // arena.lock.saved.bd53423e; measured: each round a tab collects opens a lock wallet of its own, arena.lockdb.<round16>.<secret16>.*, 36 entries
   // and ~150 KB, and none was ever removed - a window every 15 min fills a phone's storage within a day): removed once the round's collect is
   // done and an hour old - its money is in the player wallet; a rescan that needs it again joins it anew (its key is the seed's and the round's)
+  // ONE WALLET'S RECORDS, NOT ONE ROUND'S (kanban #1265, audit 4 #1257 CLIENT-1): the lock wallet is the phrase's and the round's (every order of the
+  // phrase shares it), and it went once ANY record of the round was done - another order's e-cash, collected there and not withdrawn, went with it. A
+  // wallet goes only when every collect record that maps to it (its seed and round) is done with the wallet read empty (tabMsat '0'), an hour after it was
+  // kept; a round with a record that maps to no wallet here (no seed: an older page's) keeps every wallet of its round
+  const walletOfRecord = (r) => { try { return `arena.lockdb.${String(r.roundIdHex).toLowerCase().slice(0, 16)}.${toHex(sha256(lockSecretFor(fromHex(String(r.seed)), fromHex(String(r.roundIdHex))))).slice(0, 16)}.`; } catch { return null; } };
+  const recordsOfWallet = new Map(), unmapped = new Set();
+  for (const k of keys) {
+    if (!k.startsWith('arena.collect.')) continue;
+    let r; try { r = JSON.parse(storage.getItem(k)); } catch { continue; }
+    if (!r || !r.roundIdHex) continue;
+    const w = walletOfRecord(r);
+    if (!w) { unmapped.add(String(r.roundIdHex).toLowerCase().slice(0, 16)); continue; }
+    if (!recordsOfWallet.has(w)) recordsOfWallet.set(w, []);
+    recordsOfWallet.get(w).push(r);
+  }
+  const emptyWallet = (prefix, { ageMs = 3600000 } = {}) => {
+    const rs = recordsOfWallet.get(prefix);
+    if (!rs || !rs.length || unmapped.has(prefix.slice('arena.lockdb.'.length, 'arena.lockdb.'.length + 16))) return false;
+    return rs.every((r) => r.done && r.done.tabMsat === '0' && now() - Number(r.savedMs || 0) > ageMs);
+  };
   const doneRounds = new Set();
   for (const k of keys) {
     if (!k.startsWith('arena.collect.')) continue;
@@ -384,7 +404,7 @@ export function tidyStorage(storage, { seeds = [], current = null, federations =
   const lockGroups = new Map();
   for (const k of keys) {
     const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k);
-    if (m && doneRounds.has(m[2])) { if (!lockGroups.has(m[1])) lockGroups.set(m[1], []); lockGroups.get(m[1]).push(k); }
+    if (m && doneRounds.has(m[2]) && emptyWallet(m[1])) { if (!lockGroups.has(m[1])) lockGroups.set(m[1], []); lockGroups.get(m[1]).push(k); }
   }
   for (const [, ks] of lockGroups) { for (const k of ks) { bytes += (k.length + String(storage.getItem(k) || '').length) * 2; storage.removeItem(k); removed++; } wallets++; }
   for (const [prefix, ks] of groups) {
@@ -415,7 +435,7 @@ export function tidyStorage(storage, { seeds = [], current = null, federations =
         try { const r = JSON.parse(storage.getItem(k)); if (r && r.done && r.roundIdHex) done.add(String(r.roundIdHex).toLowerCase().slice(0, 16)); } catch { /* unreadable: kept */ }
       }
       const byDb = new Map();
-      for (const k of storageKeys(storage)) { const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k); if (m && done.has(m[2])) { if (!byDb.has(m[1])) byDb.set(m[1], []); byDb.get(m[1]).push(k); } }
+      for (const k of storageKeys(storage)) { const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k); if (m && done.has(m[2]) && emptyWallet(m[1], { ageMs: -1 })) { if (!byDb.has(m[1])) byDb.set(m[1], []); byDb.get(m[1]).push(k); } }   // kanban #1265
       for (const [, ks] of byDb) { if (now_ <= pressureChars) break; take(ks); }
     }
     // AND A LOCK WALLET OF A ROUND STILL OPEN, an hour after it was kept and with no client of this page on it: copied to `archive` (the page's IndexedDB) and
@@ -427,7 +447,7 @@ export function tidyStorage(storage, { seeds = [], current = null, federations =
         try { const r = JSON.parse(storage.getItem(k)); if (r && r.roundIdHex && now() - Number(r.savedMs || 0) <= 3600000) recent.add(String(r.roundIdHex).toLowerCase().slice(0, 16)); } catch { /* unreadable: its wallet goes as any other */ }
       }
       const byDb = new Map();
-      for (const k of storageKeys(storage)) { const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k); if (m && !recent.has(m[2]) && !liveLockDbs.has(m[1])) { if (!byDb.has(m[1])) byDb.set(m[1], []); byDb.get(m[1]).push(k); } }
+      for (const k of storageKeys(storage)) { const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k); if (m && !recent.has(m[2]) && !liveLockDbs.has(m[1]) && !(recordsOfWallet.get(m[1]) || []).some((r) => !(r.done && r.done.tabMsat === '0')) && !unmapped.has(m[2])) { if (!byDb.has(m[1])) byDb.set(m[1], []); byDb.get(m[1]).push(k); } }   // kanban #1265: no wallet with a record still open
       for (const [, ks] of byDb) {
         if (now_ <= pressureChars) break;
         archive(ks.map((k) => [k, storage.getItem(k)]));
@@ -2715,7 +2735,7 @@ export function collectState(look, co = null) {
   const payoutDone = PAYOUT_TERMINAL.has(look.payout.state) || (look.payout.state === 'owed' && ok(got.payout));
   const stakeDone = STAKE_TERMINAL.has(look.stake.state)
     || (look.stake.state === 'owed' && (look.stake.how === 'refund' ? ok(got.refund) : ok(got.stake)));
-  const tabEmpty = look.inTabMsat === undefined || look.inTabMsat === null || BigInt(look.inTabMsat) === 0n;
+  const tabEmpty = look.inTabMsat === undefined || (look.inTabMsat !== null && BigInt(look.inTabMsat) === 0n);   // null: not read (kanban #1265)
   if (payoutDone && stakeDone && tabEmpty) return { state: 'done' };
   return { state: 'open', why: [!payoutDone && `payout ${look.payout.state}`, !stakeDone && `stake ${look.stake.state}`, !tabEmpty && 'this tab\'s round wallet holds money'].filter(Boolean).join(', ') };
 }
@@ -3140,8 +3160,12 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
   const owed = (how) => (stake.state === 'owed' && stake.how === how ? stake.msat : 0n);
   const payoutMsat = payout.state === 'owed' ? payout.msat : 0n;
   // WHAT THIS TAB'S WALLET HOLDS - read, not spent (the stock client throws on an empty one).
-  let inTabMsat = 0n;
-  if (client) { try { inTabMsat = BigInt(await client.withdrawableMsat()); } catch { inTabMsat = 0n; } }
+  // A WALLET NOT READ IS NOT EMPTY (kanban #1265, audit 4 #1257 CLIENT-1 path e): a look with no client, or a client that cannot read its balance (a Rescan's
+  // `{ lockStatus }` wrapper for a round another tab holds), read 0 - and the record was marked done with the wallet's 0, so the tidy removed the wallet that
+  // held the round's collected e-cash. Unread is null now: collectState reads it as not empty
+  let inTabMsat = null;
+  // (the wallet's own "Balance is too low to send any amount after fees" is a read of an empty wallet: 0, as before)
+  if (client && typeof client.withdrawableMsat === 'function') { try { inTabMsat = BigInt(await client.withdrawableMsat()); } catch (e) { inTabMsat = /too low/i.test(String(e && e.message || e)) ? 0n : null; } }
   let tabBalanceMsat = null;
   if (client && typeof client.balanceMsat === 'function') { try { tabBalanceMsat = BigInt(await client.balanceMsat()); } catch { tabBalanceMsat = null; } }
   // FINAL: the federation holds nothing more of this seed's in this round. The tab's own balance is apart.
