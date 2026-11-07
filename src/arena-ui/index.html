@@ -172,7 +172,11 @@
     #arena-feedback .fb-shot { display: block; margin: 8px 0 0; color: #8b949e; font-size: 13px; } #arena-feedback .fb-shot input { max-width: 100%; color: #e6edf3; }
     #arena-feedback .fb-join p { margin: 6px 0; color: #e6edf3; } #arena-feedback .fb-join a { display: inline-block; padding: 7px 14px; border-radius: 8px; border: 1px solid #30363d; color: #f7931a; text-decoration: none; font-weight: 600; }
     #arena-feedback .fb-join .row { justify-content: flex-start; flex-wrap: wrap; }
-    #arena-feedback .say { min-height: 1.4em; margin: 8px 0; } #arena-feedback .row { display: flex; justify-content: flex-end; gap: 8px; }
+    #arena-feedback .say { min-height: 1.4em; margin: 8px 0; }
+    #arena-round-feedback { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 44px); transform: translateX(-50%); z-index: 2147483000; display: flex; gap: 6px; align-items: center;
+      padding: 6px; border-radius: 12px; background: #161b22; border: 1px solid #f7931a; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+    #arena-round-feedback .go { padding: 8px 14px; border-radius: 8px; border: 0; background: #f7931a; color: #1a1000; font: 700 14px system-ui, sans-serif; cursor: pointer; }
+    #arena-round-feedback .x { width: 32px; height: 32px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; font: 600 18px system-ui, sans-serif; cursor: pointer; } #arena-feedback .row { display: flex; justify-content: flex-end; gap: 8px; }
     #arena-feedback button { padding: 8px 14px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; font: 600 14px system-ui, sans-serif; cursor: pointer; } #arena-feedback .send { background: #f7931a; border-color: #f7931a; color: #1a1000; }
     /* NOTHING COVERED (kanban #926, 2026-11-01: "die notice verdeckt den Content"): on a wide screen in the empty middle of the top bar, on a narrow one at the foot of the screen */
     @media (min-width: 1100px) { #arena-money-stack { left: 240px; right: 460px; top: calc(6px + env(safe-area-inset-top, 0px)); } #arena-money-stack #arena-money-ok { padding-top: 6px; padding-bottom: 6px; font-size: 13px; } }
@@ -1750,7 +1754,7 @@
     // MONEY THAT DID NOT ARRIVE (kanban #883, 2026-10-31: "Fehlermeldung dass das Geld nicht abgeholt werden kann, Summe für alle"): the sum over every
     // federation of the deposits this browser could not collect, and whether its storage refused a wallet write. A kept deposit may never have been paid, hence "up to".
     // THE PLAYERS' FAUCET (kanban #926): testnet's page only, so a mainnet build never has it
-    window.ARENA_FAUCET_URL = /(^|\.)testnet\.bitcoin-?arena\.io$|\.bitcoin-arena-site\.pages\.dev$/.test(location.hostname) ? 'https://bitcoinarena.io/api/faucet/player' : '';
+    window.ARENA_FAUCET_URL = /(^|\.)testnet(-stage)?\.bitcoin-?arena\.io$|\.bitcoin-arena-site\.pages\.dev$/.test(location.hostname) ? 'https://bitcoinarena.io/api/faucet/player' : '';
     window.ARENA_SEASON_SNAPSHOT_URL = 'https://bitcoinarena.io/api/season';
     // FEEDBACK IN ONE CLICK (kanban #926 item 9), SIGNED AND KEPT FOR REVIEW (kanban #1342): the type, what happened, what was expected; the build,
     // the game and the round go with it, never a key or an amount. A tab with a wallet signs the report with its identity key (the key the season board
@@ -1762,6 +1766,9 @@
     // sets window.ARENA_BOUNTY_BUILD; everywhere else the box, the signed reports and My feedback's states stay, with no word of a reward. The
     // faucet holds the money paths to the private page's origin besides (FAUCET_BOUNTY_ORIGINS).
     window.ARENA_BOUNTY_ON = window.ARENA_BOUNTY_BUILD === true;
+    // THE BOUNTY'S RULES, SAID WHEREVER IT IS ON (Daniel 2026-11-07: "nach severity gezahlt ... nur fuer ernstgemeinte submissions ... Duplikate werden nicht gezaehlt ...
+    // das dev team sich jede submission erst ansieht")
+    const BOUNTY_RULES = 'The dev team reviews every submission first. Rewards are paid by severity, and only for serious submissions; duplicates do not count. Testnet sats, no value.';
     const feedbackUrl = () => (window.ARENA_FAUCET_URL ? window.ARENA_FAUCET_URL.replace(/\/player$/, '/feedback') : '');
     const identitySign = (t) => ARENACLIENT.identitySignEvent(t, { storage: window.sessionStorage, random: () => { throw new Error('this tab has no wallet yet'); }, curve: window.ARENA_CURVE });
     const hasIdentity = () => !!(window.ARENA_IDENTITY && typeof window.ARENA_IDENTITY.pubkey === 'string');
@@ -1784,7 +1791,7 @@
       const tick = el('label', { cls: 'badge' }, el('input', { type: 'checkbox' }), el('span', { text: ' Send my public key for the Founding Tester badge' }));
       if (!me) tick.hidden = true;
       const say = el('div', { cls: 'say', role: 'status', text: window.ARENA_BOUNTY_ON
-        ? (me ? 'Signed with your key: if it is accepted, a reward link appears in My feedback (testnet sats, no value).' : 'Open a wallet first to be rewarded: an unsigned report still reaches the team.')
+        ? (me ? 'Signed with your key. ' + BOUNTY_RULES + ' If yours is accepted, its reward link (an LNURL) appears in My feedback.' : 'Open a wallet first to be rewarded: an unsigned report still reaches the team. ' + BOUNTY_RULES)
         : (me ? 'Signed with your key: My feedback shows what the team decides.' : 'It reaches the team. Open a wallet to follow it in My feedback.') });
       const off = el('button', { type: 'button', cls: 'off', text: 'Cancel' }), send = el('button', { type: 'button', cls: 'send', text: 'Send' });
       d.append(el('div', { cls: 'card' }, el('h3', { text: 'Feedback' }), el('p', { text: 'Your words, the build and the game are sent. No amounts, and no private key.' }), type, t, count, x, shotRow, tick, say, el('div', { cls: 'row' }, off, send)));
@@ -1847,7 +1854,7 @@
       if (!feedbackUrl() || document.getElementById('arena-feedback')) return;
       const d = el('div', { id: 'arena-feedback', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'My feedback' });
       const list = el('div', { cls: 'say', role: 'status', text: 'Reading …' }), off = el('button', { type: 'button', cls: 'off', text: 'Close' });
-      d.append(el('div', { cls: 'card' }, el('h3', { text: 'My feedback' }), list, el('div', { cls: 'row' }, off)));
+      d.append(el('div', { cls: 'card' }, el('h3', { text: 'My feedback' }), window.ARENA_BOUNTY_ON ? el('p', { text: BOUNTY_RULES }) : null, list, el('div', { cls: 'row' }, off)));
       off.onclick = () => d.remove();
       document.body.appendChild(d);
       if (!hasIdentity()) { list.textContent = 'Open a wallet first: your reports are listed under your key.'; return; }
@@ -1879,7 +1886,7 @@
       b.addEventListener('click', () => window.ARENA_OPEN_FEEDBACK({}));
       const s1 = document.getElementById('arena-feedback-send'), s2 = document.getElementById('arena-feedback-mine');
       if (s1) s1.addEventListener('click', () => window.ARENA_OPEN_FEEDBACK({}));
-      if (window.ARENA_BOUNTY_ON) { const w = document.getElementById('arena-feedback-says'); if (w) w.textContent += '; accepted reports can earn a reward (testnet sats)'; }
+      if (window.ARENA_BOUNTY_ON) { const w = document.getElementById('arena-feedback-says'); if (w) w.textContent += '. ' + BOUNTY_RULES; }
       if (s2) s2.addEventListener('click', () => window.ARENA_MY_FEEDBACK());
       // ?feedback=1 (the footers of every other page, kanban #1342) opens the dialog once the page is up; ?feedback=mine opens My feedback
       try { const u = new URL(location.href), f = u.searchParams.get('feedback');
@@ -4592,10 +4599,13 @@
     function roundFeedbackOnce(rid) {
       const k = 'arena.feedback.asked.' + String(rid).slice(0, 16);
       try { if (!window.ARENA_OPEN_FEEDBACK || !window.ARENA_FAUCET_URL || sessionStorage.getItem(k)) return; sessionStorage.setItem(k, '1'); } catch { return; }
-      const at = document.getElementById('arena-settled'); if (!at || document.getElementById('arena-round-feedback')) return;
-      const b = document.createElement('button'); b.type = 'button'; b.id = 'arena-round-feedback'; b.className = 'linkish'; b.textContent = 'How was this round? Send feedback';
-      b.onclick = () => { window.ARENA_OPEN_FEEDBACK({ round: rid }); b.remove(); };
-      at.after(b);
+      // A NOTE AT THE BOTTOM OF THE SCREEN (Daniel 2026-11-07: "nach einer Runde"), over a game's own screens too; closed with x, gone after 30 s
+      if (document.getElementById('arena-round-feedback')) return;
+      const n = document.createElement('div'); n.id = 'arena-round-feedback'; n.setAttribute('role', 'status');
+      const go = document.createElement('button'); go.type = 'button'; go.className = 'go'; go.textContent = window.ARENA_BOUNTY_ON ? 'Round over: send feedback (bounty)' : 'Round over: send feedback';
+      const x = document.createElement('button'); x.type = 'button'; x.className = 'x'; x.setAttribute('aria-label', 'Close'); x.textContent = '\u00d7';
+      go.onclick = () => { window.ARENA_OPEN_FEEDBACK({ round: rid }); n.remove(); }; x.onclick = () => n.remove();
+      n.append(go, x); document.body.appendChild(n); setTimeout(() => n.remove(), 30000);
     }
     function newestKept(ownOnly) {
       const kept = keptRecords().collectable.filter((r) => ARENACLIENT.roundLocks(r.round) && (!ownOnly || r.own));
