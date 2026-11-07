@@ -81,6 +81,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     CREATE INDEX IF NOT EXISTS seat_presigs_bond ON seat_presigs (txid, vout, kept_ms);
     CREATE TABLE IF NOT EXISTS own_hold_panels (txid TEXT NOT NULL, vout INTEGER NOT NULL, script TEXT NOT NULL, panel_a TEXT NOT NULL, panel_b TEXT NOT NULL, PRIMARY KEY (txid, vout, script));
   `);
+  // when each PRESENT arrived (kanban #1248)
+  if (!db.prepare('PRAGMA table_info(seat_presents)').all().some((c) => c.name === 'received_ms')) db.exec('ALTER TABLE seat_presents ADD COLUMN received_ms INTEGER');
   // A SECOND SIGNATURE'S JUSTIFICATION (protocol 22, kanban #738): kept with it, here and at the peers that hold it
   for (const t of ['seat_signed', 'seat_sigs']) {
     if (!db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'justification')) db.exec(`ALTER TABLE ${t} ADD COLUMN justification BLOB`);
@@ -361,7 +363,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       && db.prepare('SELECT COUNT(*) AS n FROM seat_presents WHERE round_id = ? AND role = ?').get(roundId, role).n >= testHoldPresents
       && !db.prepare('SELECT 1 FROM seat_presents WHERE round_id = ? AND role = ? AND node = ?').get(roundId, role, toHex(nodePubkey)))
       return { ok: false, why: `test switch: this seat holds ${testHoldPresents} PRESENTs before the close (ARENA_TEST_SEATING_HOLD)` };
-    db.prepare('INSERT OR IGNORE INTO seat_presents (round_id, role, node, bytes) VALUES (?, ?, ?, ?)').run(roundId, role, toHex(nodePubkey), bytes);
+    // with when it arrived (kanban #1248): a late one is kept for the record, and presence-book counts it as seen only before the close
+    db.prepare('INSERT OR IGNORE INTO seat_presents (round_id, role, node, bytes, received_ms) VALUES (?, ?, ?, ?, ?)').run(roundId, role, toHex(nodePubkey), bytes, Number(nowMs()));
     return { ok: true };
   }
   const presentsOf = (rid) => db.prepare('SELECT role, node, bytes FROM seat_presents WHERE round_id = ?').all(rid)

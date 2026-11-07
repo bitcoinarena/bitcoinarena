@@ -99,6 +99,11 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
     CREATE TABLE IF NOT EXISTS hb_certs (round_id BLOB NOT NULL, slot INTEGER NOT NULL, close_ms INTEGER NOT NULL, cert BLOB NOT NULL,
       PRIMARY KEY (round_id, slot));
   `);
+  // WHEN EACH PRESENT ARRIVED (kanban #1248, audit 3 CONSENSUS-3): a PRESENT carries no time, and one signed after the fact - handed to some seats only -
+  // counted as "seen" there and refused, for good, a census root the others served. Only one this seat held before its seating's close counts as seen.
+  for (const t of ['presence_proofs', 'seat_presents'])
+    if (!db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'received_ms')) db.exec(`ALTER TABLE ${t} ADD COLUMN received_ms INTEGER`);
+  const nowMs = () => (typeof round.now === 'function' ? Number(round.now()) : Date.now());
 
   // EACH STORED ROUND'S SEATING CLOSE, read once: null for a round that seats nothing of its own (a table's later rounds)
   const closes = new Map();
@@ -266,8 +271,11 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
   /** The nodes this seat holds a window PRESENT of: its own store (the seating agent's) or a peer's proof. */
   function presentsIn(w) {
     const seen = new Set();
-    for (const rid of roundsIn(w)) for (const r of db.prepare('SELECT node FROM seat_presents WHERE round_id = ?').all(rid)) seen.add(r.node);
-    for (const r of db.prepare('SELECT node FROM presence_proofs WHERE close_ms > ? AND close_ms <= ?').all(Number(w.fromMs), Number(w.toMs))) seen.add(r.node);
+    // only a PRESENT held before its seating's close (kanban #1248); one kept before this rule has no time and reads as before
+    for (const rid of roundsIn(w)) { const close = closeOf(rid);
+      for (const r of db.prepare('SELECT node, received_ms FROM seat_presents WHERE round_id = ?').all(rid))
+        if (r.received_ms === null || close === null || Number(r.received_ms) <= Number(close)) seen.add(r.node); }
+    for (const r of db.prepare('SELECT node FROM presence_proofs WHERE close_ms > ? AND close_ms <= ? AND (received_ms IS NULL OR received_ms <= close_ms)').all(Number(w.fromMs), Number(w.toMs))) seen.add(r.node);
     // a HEARTBEAT this seat held as a member, in time for its slot (heartbeat-agent.js takes none after the close)
     for (const r of db.prepare('SELECT node FROM hb_beats WHERE close_ms > ? AND close_ms <= ?').all(Number(w.fromMs), Number(w.toMs))) seen.add(r.node);
     return seen;
@@ -313,8 +321,8 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
     const closeMs = closeOf(roundId);
     if (closeMs === null) return { ok: false, why: 'this seat holds no seating of that round' };
     if (w && !inWindow(w, closeMs)) return { ok: false, why: 'that PRESENT is for a seating outside the 24 h' };
-    db.prepare('INSERT OR IGNORE INTO presence_proofs (node, round_id, role, close_ms, bytes) VALUES (?, ?, ?, ?, ?)')
-      .run(toHex(nodePubkey), roundId, role, Number(closeMs), bytes);
+    db.prepare('INSERT OR IGNORE INTO presence_proofs (node, round_id, role, close_ms, bytes, received_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(toHex(nodePubkey), roundId, role, Number(closeMs), bytes, nowMs());
     return { ok: true, node: toHex(nodePubkey) };
   }
   /** A 22 SEATING CERTIFICATE handed over (GET /presence answers, an absent claim): kept when it stands against this seat's own draw. */
