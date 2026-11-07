@@ -93,7 +93,7 @@ test('#1163 a forfeit whose signature does not verify is not "owed": the next se
   // AN ARENA LOCK'S FORFEIT: the BIP-327 aggregate of the named signers' keys, checked here (forfeitCheck)
   const secrets = [1n, 2n, 3n, 5n, 7n];
   const keyOf = (k) => schnorr.getPublicKey(Uint8Array.from(Buffer.from(k.toString(16).padStart(64, '0'), 'hex')));
-  const arena = lockFieldsFromJson({ paymentImage: { kind: 'point', bytes: toHex(fields.paymentImage.bytes) }, amountMsat: '980000', expiration: 464, roundId: toHex(rid),
+  const arena = lockFieldsFromJson({ paymentImage: { kind: 'point', bytes: toHex(fields.paymentImage.bytes) }, amountMsat: '980000', expiration: 464, fallbackAfter: 323, roundId: toHex(rid),
     claimKeys: [1n, 2n, 3n, 4n, 5n, 6n, 7n].map((k) => toHex(keyOf(k))), threshold: 5, refundPk: toHex(fields.refundPk) });
   const sig = aggregateSign(arenaLockContractId(arena), secrets);
   const check = PL.forfeitCheck ? PL.forfeitCheck({ curve: pageCurve, fields: arena }) : null;

@@ -195,9 +195,10 @@ function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = nu
       const ds = JSON.parse(given);
       const exp = 1000 + delta;
       const lockOut = (j, role, out_idx) => {
-        const f = arenaLockFieldsFromJson({ ...JSON.parse(j), expiration: exp });
+        const said = JSON.parse(j);
+        const f = arenaLockFieldsFromJson({ ...said, expiration: exp, fallbackAfter: 1000 + said.stallBlocks });   // the count plus stallBlocks, as the wasm (kanban #1281)
         const id = toHex(arenaLockContractId(f));
-        return { out_idx, role, computed_contract_id: arena === 'lie' && role === 'stake' ? 'ff'.repeat(32) : id, computed_expiration: exp, amount_msat: Number(f.amountMsat), recipient_pk: null };
+        return { out_idx, role, computed_contract_id: arena === 'lie' && role === 'stake' ? 'ff'.repeat(32) : id, computed_expiration: exp, computed_fallback_after: f.fallbackAfter, amount_msat: Number(f.amountMsat), recipient_pk: null };
       };
       log.push({ arenaLockSubmit: { stake: JSON.parse(stakeJson), fee: feeJson ? JSON.parse(feeJson) : null, delta, donations: ds } });
       const outputs = [lockOut(stakeJson, 'stake', 0)];
@@ -1412,7 +1413,7 @@ function namedSign(msg, secrets) {
   return schnorr.sign(msg, be(secrets.reduce((t, k, i) => (t + coef(pks[i]) * even(k)) % n, 0n)));
 }
 const arenaFieldsFor = (refundPk, amountMsat = 980000n) => lockFieldsFromJson({ paymentImage: { kind: 'point', bytes: toHex(POINT) }, amountMsat: String(amountMsat),
-  expiration: 464, roundId: toHex(rid), claimKeys: ARENA_KEYS, threshold: 5, refundPk: toHex(refundPk) });
+  expiration: 464, fallbackAfter: 323, roundId: toHex(rid), claimKeys: ARENA_KEYS, threshold: 5, refundPk: toHex(refundPk) });
 class ArenaFake {
   constructor(calls, status = {}) { this.calls = calls; this.status = status; }
   static calls = [];

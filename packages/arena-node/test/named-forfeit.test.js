@@ -25,7 +25,7 @@ const base = (k) => `http://seat${k}`;
 const seatOf = (u) => Number(new URL(u).hostname.slice(4));
 
 function lockFor(seatKeys, { roundId = RID, threshold = 5, keys = seatKeys } = {}) {
-  const fields = { paymentImage: { kind: 'point', bytes: Uint8Array.from([0x02, ...b32(0x44)]) }, amountMsat: 95000n, expiration: 400, roundId,
+  const fields = { paymentImage: { kind: 'point', bytes: Uint8Array.from([0x02, ...b32(0x44)]) }, amountMsat: 95000n, expiration: 400, fallbackAfter: 259, roundId,
     claimKeys: keys.slice(), threshold, refundPk: Uint8Array.from([0x02, ...b32(0x55)]) };
   return { fields: arenaLockFieldsToJson(fields), contractId: toHex(arenaLockContractId(fields)), raw: fields };
 }

@@ -31,7 +31,8 @@ import { lockMatchesEntry, lockFieldsFromJson, lockFieldsToJson } from '../../ar
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { donationOutputsExpected } from '../../arena-protocol/src/donation.js';
 import { reservesEntryExpected, paysReserves } from '../../arena-protocol/src/reserves.js';
-import { namedClaims, namedClaimKeys, arenaLockContractId, arenaLockMatchesEntry } from '../../arena-protocol/src/arena-lock.js';
+import { namedClaims, namedClaimKeys, arenaLockContractId, arenaLockMatchesEntry, lockStallBlocks } from '../../arena-protocol/src/arena-lock.js';
+import { networkOf } from '../../arena-protocol/src/constants.js';
 import { toHex as hexOf } from '../../arena-protocol/src/hash.js';
 import { claimReadInput } from '../../arena-protocol/src/named-claim-proof.js';
 
@@ -170,7 +171,10 @@ export async function arenaLockStands({ contract, entry, kind, fields, outpoint,
   if (id !== String(st.stored.contractId)) return { ok: false, why: `the lock at that outpoint is not the ${kind} contract handed over: its id is another` };
   if (fields.expiration !== st.stored.expiration) return { ok: false, why: `that ${kind} contract's expiration is not the one the federation holds` };
   const { seatKeys, threshold } = namedClaimKeys(contract);
-  const m = arenaLockMatchesEntry({ lock: fields, entry, kind, roundId: entry.roundId, seatKeys, threshold, height: st.blockCount, expiryBlocks: contract.stakeExpiryBlocks });
+  if (fields.fallbackAfter !== st.stored.fallbackAfter) return { ok: false, why: `that ${kind} contract's fallback height is not the one the federation holds` };
+  // its fallback height: the lock's block count plus the round's network's stall_blocks (spec §23.2, kanban #1281)
+  let stallBlocks = null; try { stallBlocks = lockStallBlocks(networkOf(contract.networkId)); } catch { stallBlocks = null; }
+  const m = arenaLockMatchesEntry({ lock: fields, entry, kind, roundId: entry.roundId, seatKeys, threshold, height: st.blockCount, expiryBlocks: contract.stakeExpiryBlocks, stallBlocks });
   return m.ok ? { ok: true, contractId: id, height: st.blockCount } : m;
 }
 

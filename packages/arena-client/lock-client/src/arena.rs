@@ -41,6 +41,11 @@ use crate::{LockClient, block_count, consensus_with_retries, donation_image, js,
 static ARENA_YES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
 fn contract_from_fields(fields: &str, expiration: Option<u64>) -> Result<ArenaLockContract, JsError> {
+    contract_from_fields_at(fields, expiration, None)
+}
+
+/// The contract, with `base` the guardians' block count a lock is made at (its fallback height = base + stallBlocks).
+fn contract_from_fields_at(fields: &str, expiration: Option<u64>, base: Option<u64>) -> Result<ArenaLockContract, JsError> {
     let f: serde_json::Value = serde_json::from_str(fields).map_err(js)?;
     let text = |k: &str| f.get(k).and_then(|v| v.as_str()).map(str::to_owned).ok_or_else(|| js(format!("the lock names no {k}")));
     let image = f.get("paymentImage").ok_or_else(|| js("the lock names no payment image"))?;
@@ -60,10 +65,19 @@ fn contract_from_fields(fields: &str, expiration: Option<u64>) -> Result<ArenaLo
         Some(e) => e,
         None => f.get("expiration").and_then(|v| v.as_u64()).ok_or_else(|| js("the lock names no expiration"))?,
     };
+    // THE FALLBACK HEIGHT (spec §23.2, kanban #1281): `fallbackAfter` as named, or the lock's block count plus `stallBlocks`
+    let fallback_after = match f.get("fallbackAfter").and_then(|v| v.as_u64()) {
+        Some(b) => b,
+        None => {
+            let stall = f.get("stallBlocks").and_then(|v| v.as_u64()).ok_or_else(|| js("the lock names neither fallbackAfter nor stallBlocks"))?;
+            base.map(|c| c + stall).ok_or_else(|| js("stallBlocks needs the guardians' block count: name fallbackAfter"))?
+        }
+    };
     Ok(ArenaLockContract {
         payment_image,
         amount: Amount::from_msats(text("amountMsat")?.parse().map_err(js)?),
         expiration,
+        fallback_after,
         round_id,
         claim_keys,
         threshold: u8::try_from(threshold).map_err(js)?,
@@ -117,7 +131,7 @@ impl LockClient {
             return Err(js(format!("this federation runs LNv2 {}.{}, the Arena lock needs 1.100", v.major, v.minor)));
         }
         let count = block_count(&api).await.map_err(js)?;
-        let contract = contract_from_fields(&fields, Some(count + u64::from(expiry_delta)))?;
+        let contract = contract_from_fields_at(&fields, Some(count + u64::from(expiry_delta)), Some(count))?;
         contract.validate().map_err(js)?;
         let bundle = ClientOutputBundle::new_no_sm(vec![ClientOutput {
             output: LightningOutput::ArenaLock(contract.clone()),
@@ -171,10 +185,10 @@ impl LockClient {
         }
         let count = self.count_for_lock(&api).await.map_err(js)?;
         let expiration = count + u64::from(expiry_delta);
-        let mut locks: Vec<(ArenaLockContract, &str)> = vec![(contract_from_fields(&stake, Some(expiration))?, "stake")];
+        let mut locks: Vec<(ArenaLockContract, &str)> = vec![(contract_from_fields_at(&stake, Some(expiration), Some(count))?, "stake")];
         let with_fee = !fee.trim().is_empty();
         if with_fee {
-            locks.push((contract_from_fields(&fee, Some(expiration))?, "fee"));
+            locks.push((contract_from_fields_at(&fee, Some(expiration), Some(count))?, "fee"));
         }
         for (c, role) in &locks {
             c.validate().map_err(|e| js(format!("the {role} lock would be refused: {e}")))?;
@@ -217,12 +231,12 @@ impl LockClient {
             .enumerate()
             .map(|(i, (c, role))| {
                 serde_json::json!({ "out_idx": i, "role": role, "computed_contract_id": c.contract_id().0.to_string(),
-                    "computed_expiration": c.expiration, "amount_msat": c.amount.msats, "recipient_pk": serde_json::Value::Null })
+                    "computed_expiration": c.expiration, "computed_fallback_after": c.fallback_after, "amount_msat": c.amount.msats, "recipient_pk": serde_json::Value::Null })
             })
             .collect();
         built.extend(gifts.iter().enumerate().map(|(i, c)| {
             serde_json::json!({ "out_idx": locks.len() + i, "role": "donation", "computed_contract_id": c.contract_id().0.to_string(),
-                "computed_expiration": c.expiration, "amount_msat": c.amount.msats, "recipient_pk": c.refund_pk.to_string() })
+                "computed_expiration": c.expiration, "computed_fallback_after": c.fallback_after, "amount_msat": c.amount.msats, "recipient_pk": c.refund_pk.to_string() })
         }));
         Ok(serde_json::json!({
             "operation": operation.fmt_full().to_string(), "txid": txid.to_string(), "block_count_at_lock": count,

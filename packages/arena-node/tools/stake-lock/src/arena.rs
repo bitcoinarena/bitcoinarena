@@ -17,7 +17,8 @@
 //!   musig-aggregate     ... --aggnonce HEX --partials HEX,HEX,.. --message HEX32  -> the BIP-340 signature
 //! ONLINE (the client at --data-dir):
 //!   arena-version       the federation's LNv2 module consensus version; the Arena lock needs 1.100
-//!   arena-lock          the arena-id fields with --expiry-delta BLOCKS instead of --expiration: funds one lock
+//!   arena-lock          the arena-id fields with --expiry-delta BLOCKS instead of --expiration (and --stall-blocks N instead of
+//!                       --fallback-after B, kanban #1281): funds one lock
 //!   arena-status        --outpoint TXID:IDX
 //!   arena-redeem        --outpoint TXID:IDX --signer-secret HEX (--witness refund | --witness cancel --signers I,.. --forfeit-sig HEX)
 //!   arena-settle        --locks TXID:IDX:PREIMAGE[,...] --signers I,.. --nonce HEX16 --payouts ... [--signature HEX]
@@ -67,7 +68,20 @@ fn signers(a: &Args) -> anyhow::Result<Vec<u8>> {
 }
 
 /// The lock's fields, as `arena-id` and `arena-lock` name them.
+/// The fallback height (spec §23.2, kanban #1281): `--fallback-after B` as given, or, with `--stall-blocks N`, the lock's
+/// block count (`base`) plus N.
+fn fallback_after(a: &Args, base: Option<u64>) -> anyhow::Result<u64> {
+    if let Some(f) = a.get("fallback-after") { return Ok(f.parse()?); }
+    let stall: u64 = need(a, "stall-blocks")?.parse()?;
+    base.map(|b| b + stall).ok_or_else(|| anyhow!("--fallback-after B, or --stall-blocks N with --expiry-delta"))
+}
+
 pub fn contract(a: &Args, expiration: u64) -> anyhow::Result<ArenaLockContract> {
+    contract_with(a, expiration, None)
+}
+
+/// The contract, its fallback height from `--fallback-after` or the lock's block count `base` plus `--stall-blocks`.
+pub fn contract_with(a: &Args, expiration: u64, base: Option<u64>) -> anyhow::Result<ArenaLockContract> {
     let payment_image = match a.get("point") {
         Some(point) => PaymentImage::Point(PublicKey::from_str(point)?),
         None => PaymentImage::Hash(sha256::Hash::from_str(need(a, "hash")?)?),
@@ -76,6 +90,7 @@ pub fn contract(a: &Args, expiration: u64) -> anyhow::Result<ArenaLockContract> 
         payment_image,
         amount: Amount::from_msats(need(a, "amount-msat")?.parse()?),
         expiration,
+        fallback_after: fallback_after(a, base)?,
         round_id: bytes32(need(a, "round-id")?, "--round-id")?,
         claim_keys: claim_keys(a)?,
         threshold: threshold(a)?,
@@ -88,6 +103,7 @@ pub fn contract_json(c: &ArenaLockContract) -> serde_json::Value {
         "contract_id": c.contract_id().0.to_string(),
         "amount_msat": c.amount.msats,
         "expiration": c.expiration,
+        "fallback_after": c.fallback_after,
         "round_id": hex(&c.round_id),
         "claim_keys": c.claim_keys.iter().map(|k| k.to_string()).collect::<Vec<_>>(),
         "threshold": c.threshold,
@@ -211,7 +227,7 @@ pub async fn lock(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: 
     let version = require_module(api).await?;
     let delta: u64 = need(a, "expiry-delta")?.parse()?;
     let count = block_count(api).await?;
-    let c = contract(a, count + delta)?;
+    let c = contract_with(a, count + delta, Some(count))?;
     c.validate().map_err(|e| anyhow!("the guardians would refuse this lock: {e}"))?;
     let bundle = ClientOutputBundle::new_no_sm(vec![ClientOutput {
         output: LightningOutput::ArenaLock(c.clone()),
