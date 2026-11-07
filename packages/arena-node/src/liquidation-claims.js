@@ -248,3 +248,16 @@ export async function payOutLiquidation({ fid, v, claims, height, run, spendEscr
   say({ federation: fid.slice(0, 16), paidNotes: due.length, keys: byKey.size, txid: paid.txid });
   return { paid: due.length, notes: v.paidNonces.length, txid: paid.txid };
 }
+
+/**
+ * WHAT THE ARBITRATION SET HOLDS FOR A LIQUIDATION'S TABLE (kanban #1247, audit 3 MONEY-2): its escrow on chain until it is spent into the safe
+ * federation, then what that federation credited for it (`v.claimedMsat`, else the escrow's own amount). The spent output reads 0, and the door's
+ * plan then gave every claim 0 - so a census-key escrow carried every claim the set had already paid at face, paid twice.
+ */
+export function escrowCoverageMsat(v, onChainMsat) {
+  if (v && v.escrowTxid) {
+    if (v.claimedMsat !== undefined && v.claimedMsat !== null) return BigInt(v.claimedMsat);
+    if (v.escrowSats !== undefined && v.escrowSats !== null) return BigInt(v.escrowSats) * 1000n;
+  }
+  return BigInt(onChainMsat || 0n);
+}
