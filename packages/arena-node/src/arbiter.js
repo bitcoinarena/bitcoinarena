@@ -425,6 +425,12 @@ export async function payOutSlash({ proof, v, set, rpc, keep = () => {}, say = (
   const escrow = escrowOutput({ arbitrationKeys: set.keys, k: set.k }, { tweakPoint, combine });
   v.stages = v.stages || [];
   let stage = v.stages[v.stages.length - 1];
+  if (stage && stage.pending) {
+    const r = await resumeIntent(rpc, stage.pending, stage.pending.input);
+    if (!r.ok) { v.stages.pop(); keep(); return { why: `the recorded escrow spend is refused: ${r.why}` }; }
+    delete stage.pending; keep();
+    say({ proof: proof.slice(0, 16), escrowSpent: stage.txid, resumed: r.landed ? 'found' : r.inferred ? 'its input is spent' : 'sent again' });
+  }
   if (!stage || stage.done) {
     const first = !stage;
     const out = first ? { txid: v.posted, vout: 1, sats: v.escrowSats } : stage.kept;
@@ -449,11 +455,15 @@ export async function payOutSlash({ proof, v, set, rpc, keep = () => {}, say = (
     const slash = { built, sighash: arbitrationSighash(built, escrow.leaf), controlBlock: escrow.controlBlock };
     const signed = assemble({ slash, signatures: set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, slash.sighash) })), set });
     if (!signed.ok) return { why: signed.why };
+    // THE STAGE IS RECORDED BEFORE ITS BROADCAST (kanban #1232): a lost answer left the escrow spent, no stage kept, and every later
+    // pass "no unspent escrow" - the peg-ins never claimed. A pending stage is resumed by resumeIntent above.
+    const txid = await txidOf(rpc, signed.hex);
+    const stageOf = (t) => ({ txid: t, feeSats: String(feeSats), players: first, pegIns: pegIns.map(({ script, ...p }, i) => ({ ...p, vout: i })),
+      kept: plan.keptSats > 0n ? { txid: t, vout: pegIns.length, sats: String(plan.keptSats) } : null });
+    if (txid) { stage = { ...stageOf(txid), pending: { txid, hex: signed.hex, input: { txid: out.txid, vout: out.vout } } }; v.stages.push(stage); keep(); }
     const sent = await post(rpc, signed.hex);
-    if (!sent.ok) return { why: sent.why };
-    stage = { txid: sent.txid, feeSats: String(feeSats), players: first, pegIns: pegIns.map(({ script, ...p }, i) => ({ ...p, vout: i })),
-      kept: plan.keptSats > 0n ? { txid: sent.txid, vout: pegIns.length, sats: String(plan.keptSats) } : null };
-    v.stages.push(stage); keep();
+    if (!sent.ok) { if (txid) { v.stages.pop(); keep(); } return { why: sent.why }; }
+    if (txid) { delete stage.pending; keep(); } else { stage = stageOf(sent.txid); v.stages.push(stage); keep(); }
     say({ proof: proof.slice(0, 16), escrowSpent: sent.txid, pegIns: stage.pegIns.map((p) => ({ federation: p.federation.slice(0, 16), sats: p.sats })), keptSats: String(plan.keptSats) });
   }
   for (const p of stage.pegIns) {
@@ -541,6 +551,22 @@ export function writeJsonAtomic(path, value, { fs = null } = {}) {
 }
 
 /** TESTMEMPOOLACCEPT, THEN BROADCAST - never the other way: `rpc(method, params)` is the arbiter's own bitcoind. */
+/**
+ * A RECORDED SPEND RESUMED (kanban #1232): `intent` { txid, hex } was kept before its broadcast, spending `input` { txid, vout }, an
+ * output only this set signs. Found on the chain or in the mempool: posted. Its input spent: posted too (nobody else can spend it).
+ * Its input still unspent: the same bytes are sent again. Refused with the input unspent: { ok: false, drop: true } - built anew.
+ */
+export async function resumeIntent(rpc, intent, input) {
+  if (await intentLanded(rpc, intent.txid, 0)) return { ok: true, landed: true };
+  const still = await rpc('gettxout', [input.txid, input.vout, true]).catch(() => null);
+  if (!still) return { ok: true, inferred: true };
+  const sent = await post(rpc, intent.hex);
+  return sent.ok ? { ok: true, again: true } : { ok: false, drop: true, why: sent.why };
+}
+
+/** The display txid of a signed transaction's hex, or null (kanban #1232). */
+export async function txidOf(rpc, hex) { try { return String((await rpc('decoderawtransaction', [hex])).txid); } catch { return null; } }
+
 export async function post(rpc, hex) {
   const [r] = await rpc('testmempoolaccept', [[hex]]);
   // SENT BEFORE (kanban #1232): the same bytes already in the mempool are this transaction posted, its answer lost
