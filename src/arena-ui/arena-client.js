@@ -13618,6 +13618,9 @@ function trancheSchedule({ amountSats, reservesSats, last, schedule = FUNDING_SC
  */
 function capStands({ proposalSats, paymentSats, reservesSats, paidByProposalSats = 0n, paidInWindowSats = 0n }) {
   const held = BigInt(reservesSats), base = held + BigInt(paidByProposalSats);
+  // NEVER MORE THAN THE PROPOSAL ASKED (kanban #1235): what its other payments took plus this one stays within its amount
+  if (BigInt(paidByProposalSats) + BigInt(paymentSats) > BigInt(proposalSats))
+    return { ok: false, final: true, why: `${paidByProposalSats} sat already paid on the proposal and ${paymentSats} now is more than the ${proposalSats} sat it asked` };
   if (BigInt(proposalSats) * 100n > FUNDING_CAP_PCT * base) return { ok: false, final: true, why: `the proposal asks ${proposalSats} sat, more than ${FUNDING_CAP_PCT} % of the ${base} sat reserves` };
   const start = held + BigInt(paidInWindowSats);
   if ((BigInt(paidInWindowSats) + BigInt(paymentSats)) * 100n > FUNDING_CAP_WINDOW_PCT * start)
@@ -13766,7 +13769,7 @@ function feeProposalStands(p, { current = FEES_TODAY, schedule = FUNDING_SCHEDUL
 }
 
 /**
- * THE PROTOCOL DEVELOPERS' ANSWER: more than half of `devKeys` (32-byte hex) approve it, each counted once, by a signature
+ * THE PROTOCOL DEVELOPERS' ANSWER: more than half of `devKeys` (32-byte hex) approve it, each counted once (a no over a yes), by a signature
  * `verify(signature, id, key)` checks. `approvals` [{ approval: { proposalId, dev, approve }, signature }].
  */
 function devMajority({ proposalId, approvals = [], devKeys = [], verify }) {
@@ -13776,7 +13779,9 @@ function devMajority({ proposalId, approvals = [], devKeys = [], verify }) {
     const a = x.approval;
     if (!a || toHex(a.proposalId) !== toHex(proposalId) || !keys.has(toHex(a.dev))) continue;
     let good = false; try { good = verify(x.signature, feeApprovalId(a), a.dev) === true; } catch { good = false; }
-    if (good) said.set(toHex(a.dev), a.approve);
+    // A "NO" STANDS OVER A "YES" (ruled 2026-11-07 on #1245, kanban #1231): one answer per developer over every approval held, whatever the order
+    // they came in - the approval received last won, so two seats holding the same set could answer differently
+    if (good) { const k = toHex(a.dev); said.set(k, said.has(k) ? (said.get(k) && a.approve) : a.approve); }
   }
   const yes = [...said.values()].filter(Boolean).length;
   return { yes, no: said.size - yes, of: keys.size, majority: keys.size > 0 && yes * 2 > keys.size };
@@ -17968,7 +17973,9 @@ function resumeDeposits({ client, storage, federationId, onClaimed = () => {}, o
       if (/operation not found/i.test(why)) {
         let alts = []; try { alts = (await others()) || []; } catch { alts = []; }
         for (const o of alts) {
-          try { return ended(p, await o.client.awaitReceive(p.operation), o); } catch { /* not that wallet's either */ }
+          // A CLAIM LEFT TO THAT PHRASE'S OWN TAB (kanban #1285): the wallet holds the operation and its claim did not end while its phrase was held here -
+          // not lost; the entry stays
+          try { return ended(p, await o.client.awaitReceive(p.operation), o); } catch (e2) { if (e2 && e2.stillWaiting) return `waiting (in wallet ${o.label}: ${String(e2.message).slice(0, 120)})`; }
         }
       }
       // THE REASON A RESUME COULD NOT BE READ, said (17:4xZ: it printed only "unknown"); the entry stays, so the next page tries again

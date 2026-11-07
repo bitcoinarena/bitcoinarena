@@ -17968,7 +17968,9 @@ function resumeDeposits({ client, storage, federationId, onClaimed = () => {}, o
       if (/operation not found/i.test(why)) {
         let alts = []; try { alts = (await others()) || []; } catch { alts = []; }
         for (const o of alts) {
-          try { return ended(p, await o.client.awaitReceive(p.operation), o); } catch { /* not that wallet's either */ }
+          // A CLAIM LEFT TO THAT PHRASE'S OWN TAB (kanban #1285): the wallet holds the operation and its claim did not end while its phrase was held here -
+          // not lost; the entry stays
+          try { return ended(p, await o.client.awaitReceive(p.operation), o); } catch (e2) { if (e2 && e2.stillWaiting) return `waiting (in wallet ${o.label}: ${String(e2.message).slice(0, 120)})`; }
         }
       }
       // THE REASON A RESUME COULD NOT BE READ, said (17:4xZ: it printed only "unknown"); the entry stays, so the next page tries again
