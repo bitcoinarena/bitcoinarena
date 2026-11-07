@@ -2361,6 +2361,19 @@ export class Round {
   }
 
   /**
+   * A KEPT RE-SEND GIVES WAY TO A LOWER ONE (kanban #1241, audit 3 FIXES-9: attempt 0's rule for attempt N+1): two seats on turn each kept their
+   * own attempt N+1 and the peers split between them for good. A row still PLANNED (nothing signed on it, nothing funded) is replaced by a
+   * seat's re-send whose payment hash is lower; true if it was.
+   */
+  replaceSendPlan({ entryId, attempt, invoice, paymentHash, invoiceMsat, payoutMsat, gatewayUrl, gatewayPk, expiration, why, donation = false }) {
+    if (!(attempt > 0)) return false;
+    return this.db.prepare(`UPDATE ${donation ? 'donation_sends' : 'winnings_sends'} SET invoice = ?, payment_hash = ?, invoice_msat = ?, payout_msat = ?, gateway_url = ?, `
+      + "gateway_pk = ?, expiration = ?, why = ?, updated_ms = ? WHERE entry_id = ? AND attempt = ? AND state = 'PLANNED' AND payment_hash > ?")
+      .run(String(invoice), String(paymentHash).toLowerCase(), Number(invoiceMsat), Number(payoutMsat), String(gatewayUrl), String(gatewayPk).toLowerCase(),
+        Number(expiration), String(why), this.now(), Buffer.from(entryId), attempt, String(paymentHash).toLowerCase()).changes > 0;
+  }
+
+  /**
    * Where a send stands: its contract (txid, output), its preimage once the gateway paid, and its state - MOVED ONLY AS send-state.js
    * ALLOWS (kanban #1154): a compare-and-set on the row's state, so a final row never moves and nothing jumps a step. True if it moved.
    */
@@ -3048,6 +3061,13 @@ export class Round {
       .all(Buffer.from(roundIdBytes), late);
     return Object.assign(Object.create(base), {
       lateEntryId: new Uint8Array(late),
+      replaceSendPlan({ roundId, entryId, attempt, invoice, paymentHash, invoiceMsat, payoutMsat, gatewayUrl, gatewayPk, expiration, why }) {
+        if (!(attempt > 0)) return false;
+        return base.db.prepare('UPDATE late_winnings_sends SET invoice = ?, payment_hash = ?, invoice_msat = ?, payout_msat = ?, gateway_url = ?, gateway_pk = ?, '
+          + "expiration = ?, why = ?, updated_ms = ? WHERE round_id = ? AND late_entry_id = ? AND entry_id = ? AND attempt = ? AND state = 'PLANNED' AND payment_hash > ?")
+          .run(String(invoice), String(paymentHash).toLowerCase(), Number(invoiceMsat), Number(payoutMsat), String(gatewayUrl), String(gatewayPk).toLowerCase(),
+            Number(expiration), String(why), base.now(), Buffer.from(roundId), late, Buffer.from(entryId), attempt, String(paymentHash).toLowerCase()).changes > 0;
+      },
       putSendPlan({ entryId, roundId, attempt = 0, address, invoice, paymentHash, invoiceMsat, payoutMsat, owedMsat, gatewayUrl, gatewayPk,
         expiration, state = 'PLANNED', why }) {
         const now = base.now();
