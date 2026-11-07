@@ -4651,7 +4651,7 @@
       for (const l of liq.filter((x) => held.includes(String(x.federation).toLowerCase()))) {
         const key = ARENACLIENT.liquidationKeyFor(seed, l.federation, window.ARENA_CURVE);
         const said = await ARENACLIENT.presentNotes({ events, network: NETWORK, verify, held: [String(l.federation).toLowerCase()], walletFor, payoutPk: key.payoutPk, height: tip, storage: vault() });
-        for (const x of said) console.log('[arena] liquidation of ' + String(x.federation || '').slice(0, 8) + ': ' + (x.ok ? (x.nothing ? 'no note held' : (x.accepted || []).length + ' note(s) presented') : x.why));
+        for (const x of said) console.log('[arena] liquidation of ' + String(x.federation || '').slice(0, 8) + ': ' + (x.ok ? (x.nothing ? 'no note held' : (x.accepted || []).length + ' note(s) presented' + (x.waitsForSpentSet ? ', waiting for the federation\'s spent set' : '')) : x.why));
       }
       // each arbitration set once, however a seat wrote its door
       for (const a of ARENACLIENT.liquidationDoors({ events, network: NETWORK, verify })) {
