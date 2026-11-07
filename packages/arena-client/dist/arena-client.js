@@ -30148,8 +30148,11 @@ async function presentNotes({ events, network, arbitration = arbitrationOf(netwo
             const r = await fetcher(door, { method: 'POST', body: JSON.stringify({ federation: fid, ecash: rec.ecash, payoutPk: pk }), signal: AbortSignal.timeout(30000) });
             const j = await r.json().catch(() => ({}));
             if (r.ok && !rec.memoryOnly) rec = step(eKey, rec, 'posted', { door: st.door, postedAtMs: nowMs });
-            // the door answered it (kanban #1230): a refusal is an answer too - the notes reached it - a 5xx is not
-            else if (!r.ok && !(Number(r.status) >= 500) && !rec.memoryOnly && !rec.answered) { rec = { ...rec, answered: true }; try { writeClaim(storage, eKey, rec, put); } catch { /* kept in memory */ } }
+            // the door answered it (kanban #1230): a refusal is an answer too - the notes reached it - a 5xx is not. AND ONLY A REFUSAL OF THESE NOTES
+            // (kanban #1264, audit 4 #1257 fixesA-2): the door's own "not taken" answers - the claim window not open yet at its tip, no seat holding the
+            // federation HALTED yet, the notes not validated, a reissue refused, a tunnel's 4xx - took nothing, and counting them dropped the notes once
+            // another claim of the key was accepted. An answer counts when it names the notes it refused (`refused`), as "claimed before" does
+            else if (!r.ok && !(Number(r.status) >= 500) && Array.isArray(j.refused) && j.refused.length > 0 && !rec.memoryOnly && !rec.answered) { rec = { ...rec, answered: true }; try { writeClaim(storage, eKey, rec, put); } catch { /* kept in memory */ } }
             out.push({ federation: fid, ok: !!r.ok, accepted: j.accepted || [], refused: j.refused || [], inWindow: j.inWindow, why: j.why || null, kept: !rec.memoryOnly, door: st.door,
               // kanban #1237: taken, and it waits for the federation's spent set
               ...(j.spentSetPublished === false ? { waitsForSpentSet: true } : {}), ...(rec.memoryOnly ? { memoryOnly: true } : {}) });
