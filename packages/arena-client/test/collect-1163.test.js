@@ -215,3 +215,18 @@ test('#1250 no saved lock: one seat\'s empty answer while the others time out is
   assert.equal(one.final, false);
   assert.equal(both.stake.state, 'none');
 });
+
+// KANBAN #1251 (audit 3 #1210 FIXES-14): the collect record was a raw setItem; refused for quota, a saved stake lock had no collect record at all
+test('#1251 a collect record refused for quota is kept once the storage-full handler made room', () => {
+  const m = new Map(); let refuse = 1;
+  const storage = { get length() { return m.size; }, key: (i) => [...m.keys()][i] ?? null, getItem: (k) => (m.has(k) ? m.get(k) : null), removeItem: (k) => m.delete(k),
+    setItem: (k, v) => { if (k.startsWith('arena.collect.') && refuse > 0) { refuse--; const e = new Error('The quota has been exceeded.'); e.name = 'QuotaExceededError'; throw e; } m.set(k, String(v)); } };
+  let freed = 0;
+  PL.onStorageFull(() => { freed++; });
+  try {
+    const saved = PL.saveCollect(storage, { roundIdHex: toHex(rid), round, invite: 'fed11x', nodes: ['http://a.test'], seed, stakeLock: null });
+    const kept = PL.savedCollects(storage, { seed }).length;
+    console.log('  FACTS #1251:', JSON.stringify({ saved, freed, kept }));
+    assert.equal(saved, true); assert.equal(freed, 1); assert.equal(kept, 1, 'the collect record was lost to the quota');
+  } finally { PL.onStorageFull(null); }
+});
