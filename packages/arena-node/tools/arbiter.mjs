@@ -22,7 +22,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic } from '../src/arbiter.js';
+import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic, resumeIntent, txidOf } from '../src/arbiter.js';
 import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
 import { decodeSpentSet, spentNonceSet } from '../../arena-protocol/src/spent-set.js';
@@ -148,7 +148,7 @@ async function payLiquidations() {
   for (const [fid, at] of liqEscrows) {
     const v = state.liquidations[fid] = state.liquidations[fid] || {};
     const [txid, vout] = at.split(':');
-    const spendEscrow = async (address) => {
+    const spendEscrow = async (address, record = () => {}) => {
       const o = await rpc('gettxout', [txid, Number(vout), false]);
       if (!o) return { why: 'the escrow output is spent or unknown' };
       const toScript = fromHex((await rpc('validateaddress', [address])).scriptPubKey);
@@ -157,6 +157,8 @@ async function payLiquidations() {
       if (!spend.ok) return { why: spend.why };
       const signed = assemble({ slash: spend, signatures: set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, spend.sighash) })), set });
       if (!signed.ok) return { why: signed.why };
+      // kept before the broadcast (kanban #1232)
+      const t = await txidOf(rpc, signed.hex); if (t) record({ txid: t, hex: signed.hex, input: { txid, vout: Number(vout) } });
       return post(rpc, signed.hex);
     };
     // THE REMAINDER'S PAYEES at the tip: the census this set derives from its own chain (a seat's newest round as the template),
@@ -180,7 +182,7 @@ async function payLiquidations() {
       // a payout is a lock to a refund key (the tool's `pay`, as 's): the 33-byte form of each x-only key
       return got.payees.map((x) => ({ ...x, key: `02${x.key}` }));
     };
-    let r; try { r = await payOutLiquidation({ fid, v, claims, height: async () => Number(await rpc('getblockcount')), run, spendEscrow, remainderPayees, keep, say }); } catch (e) { r = { why: e.message }; }
+    let r; try { r = await payOutLiquidation({ fid, v, claims, height: async () => Number(await rpc('getblockcount')), run, spendEscrow, remainderPayees, keep, say, resume: (i) => resumeIntent(rpc, i, i.input) }); } catch (e) { r = { why: e.message }; }
     if (r.why) say({ liquidation: fid.slice(0, 16), waits: r.why });
   }
 }
