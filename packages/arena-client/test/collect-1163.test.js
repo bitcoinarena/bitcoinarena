@@ -303,3 +303,23 @@ test('#1265 a look that never read the round wallet says so (null), and that is 
   assert.notEqual(PL.collectState(lo, null).state, 'done');
   assert.equal(full.inTabMsat, 0n);
 });
+
+// KANBAN #1273 (audit 4 #1257 seats-5): findLock kept only the first seat's copy of each outpoint - one seat listed first answered the real lock's
+// outpoint with a field changed, the honest copies were dropped, and a restored seed's stake read not owed. Every version is kept now.
+test('#1273 a seat listed first that answers the real outpoint with a changed claim key does not hide the real lock: its stake is owed by forfeit', async () => {
+  const other = Uint8Array.from([0x02, ...schnorr.getPublicKey(b32(0x78))]);
+  const shadow = (say) => async (url) => {
+    const host = new URL(url).host;
+    if (url.includes('/stake-lock')) {
+      const f = host === 'liar.test' ? { ...fields, claimPk: other } : fields;
+      return new Response(JSON.stringify([{ entryId: 'ee'.repeat(32), outpoint: `${'cd'.repeat(32)}:0`, fields: lockFieldsToJson(f), contractId: STORED }]), { status: 200 });
+    }
+    return seats(say)(url);
+  };
+  const say = { 'liar.test': { payees: [mine], forfeit: realForfeit }, 'b.test': { payees: [mine], forfeit: realForfeit } };
+  const lo = await PL.lookOwed({ round, roundId: rid, seed, curve: pageCurve, nodes: Object.keys(say).map((h) => `http://${h}`), fetcher: shadow(say), client: wallet(100) });
+  const named = await PL.findLock({ roundId: rid, playerPubkey: player.pubkey, nodes: Object.keys(say).map((h) => `http://${h}`), fetcher: shadow(say) });
+  console.log('  FACTS #1273:', JSON.stringify({ versionsKept: named.length, stake: `${lo.stake.state}/${lo.stake.how || ''}` }));
+  assert.equal(named.length, 2, 'both seats\' versions of the outpoint are kept');
+  assert.deepEqual([lo.stake.state, lo.stake.how], ['owed', 'forfeit'], 'the shadowed real lock was not found');
+});
