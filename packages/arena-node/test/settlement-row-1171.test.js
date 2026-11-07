@@ -116,3 +116,32 @@ test('refused, and no txid of the round in: REFUSED; recover() then finds a land
   assert.deepEqual(out.filter((x) => x.state === ACCEPTED).map((x) => x.round), [toHex(RID)]);
   assert.deepEqual([round.lockSettlement(RID).state, round.lockSettlement(RID).txid], [ACCEPTED, T0]);
 });
+
+// KANBAN #1258 (audit 3 #1210 FIXES-18, the 1.9 port of 2.0's #1170 check): a row SUBMITTING on this seat's own txid asked only that txid on each pass.
+// Rebuilt onto T1 while the other asker's T0 was landing, it read T1 "mixed" for good and stayed SUBMITTING - the round never settled here, a restart
+// did not help. Now the kept-SUBMITTING path asks every txid of the round's history and goes ACCEPTED on the one that is in.
+test('#1258 a row SUBMITTING on its own txid is ACCEPTED on the round\'s other txid that landed (the other asker\'s), not left SUBMITTING', async () => {
+  // T0 (handed, the other asker's) landed: its claimed lock gone, its payout stored; T1 (this seat's rebuild) claims a lock still held - mixed
+  const { ls, round } = seat({ goneAt: new Set([outpointOf(L1)]) });
+  ls.confirmSoon = () => {};
+  ls.sendWinnings = async () => ({ ok: true, sent: [] });
+  round.putSettlementTxid({ roundId: RID, txid: T0, message: new Uint8Array(32).fill(7), signature: new Uint8Array(64).fill(7), claims: [outpointOf(L1)], payouts: 1 });
+  round.putSettlementTxid({ roundId: RID, txid: T1, message: new Uint8Array(32), signature: new Uint8Array(64), claims: [outpointOf(L2)], payouts: 1 });
+  round.putLockSettlement({ roundId: RID, txid: T1, message: new Uint8Array(32), signature: new Uint8Array(64), state: SUBMITTING, why: 'rebuilt onto T1' });
+  const own = await ls.federationSaw(RID, { txid: T1 });
+  const got = await ls.settle(RID);
+  const row = round.lockSettlement(RID);
+  const again = await ls.settle(RID);
+  console.log('  FACTS #1258:', JSON.stringify({ ownTxid: own.verdict, answer: [got.state, (got.txid || '').slice(0, 4)], row: [row.state, row.txid.slice(0, 4)], second: [again.state || (again.kept ? 'kept' : null)] }));
+  assert.equal(own.verdict, 'mixed', 'the fixture: the row\'s own txid reads mixed');
+  assert.deepEqual([row.state, row.txid], [ACCEPTED, T0]);
+  assert.equal(got.state, ACCEPTED);
+  // variant: no txid of the round in - still SUBMITTING on its own txid, nothing invented
+  const b = seat();
+  b.ls.confirmSoon = () => {};
+  b.round.putSettlementTxid({ roundId: RID, txid: T0, message: new Uint8Array(32).fill(7), signature: new Uint8Array(64).fill(7), claims: [outpointOf(L1)], payouts: 1 });
+  b.round.putSettlementTxid({ roundId: RID, txid: T1, message: new Uint8Array(32), signature: new Uint8Array(64), claims: [outpointOf(L2)], payouts: 1 });
+  b.round.putLockSettlement({ roundId: RID, txid: T1, message: new Uint8Array(32), signature: new Uint8Array(64), state: SUBMITTING, why: 'rebuilt onto T1' });
+  await b.ls.settle(RID).catch(() => null);
+  assert.deepEqual([b.round.lockSettlement(RID).state, b.round.lockSettlement(RID).txid], [SUBMITTING, T1]);
+});
