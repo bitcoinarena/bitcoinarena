@@ -4509,6 +4509,29 @@ is.
 | ≥ 25 | ≥ 100 × max_round_pool | 1,000 sat |
 | ≥ 50 | ≥ 200 × max_round_pool | contract-defined |
 
+**The income term (RULED 2026-11-07, kanban #1280).** The table above prices
+theft, which is paid for with bonds. A stall is paid for with nothing but
+future fee income: a bribe to three quiet seats is cash, paid once, and the
+bench (§5A.3, "Stalled in its rounds") costs them fee income over months. A
+bond is a one-time number too, so it cannot price that. So a round's pot is
+bounded a second time, by what one seat earns in a season:
+
+```text
+income_seat   = nodes' fee of every round that counted for the season
+                (§27A.9.6's board, the rounds of kanban #1218, over the
+                last `season` = 12,960 blocks) ÷ the census size at the
+                round's census height
+max_round_pool <= income_seat        (the lower of this and the table wins)
+```
+
+Three quiet seats then forgo at least three pots when the bench takes
+them out of the draw for a season, so the losing side's whole budget, the
+refund, cannot pay them. Read the same at every seat: both inputs are the
+deterministic ones the leaderboard reads. A network with no season behind
+it has `income_seat = 0` and plays the table's lowest bracket. The term
+matters where the fallback claim (§23.2) does not reach: stock-lock rounds
+before `NAMED_CLAIM_HEIGHT`, and a round with no agreed result at all.
+
 Rationale: at 100 × max_round_pool, an attacker reaching the ~17% control
 probability of §5A.6 must bond ≈ 50 × the pool he could steal, and forfeits
 five bonds when caught. The ceiling exists so that the arithmetic stays that
@@ -6212,8 +6235,14 @@ so a stalled settlement returns nothing to the loser. What the exchange that
 led there established: the per-round draw is no defence, since the committee
 is public from the beacon and a losing player reads it after the draw;
 silence cannot be priced, since it has no bytes and a liveness slash would
-slash a dropped relay; and a haircut on the refund does not help, since any
-refund beats losing the stake. Only a stall that returns nothing has no buyer.
+slash a dropped relay; and a haircut on the refund does not help. The
+arithmetic (kanban #1280): four honest signers would split the haircut, so
+three quiet seats forgo three quarters of it, while the losing side's budget
+is the whole refund; the bribe stops paying only when the refund falls under
+3/7 of the pot, a 57 % haircut on an honest player on a bad relay day, the
+case the refund exists for. Only a stall that returns nothing has no buyer.
+A bribe is cash once and the bench is income over months, which is why the
+bench cannot price a stall and §5A.10 bounds the pot by a seat's income too.
 
 **The re-run window's delay is not a new power.** A round with a no-quorum entry
 waits for it (§13A), so 3 seats can delay a whole round's payout by 20 to 30
@@ -6761,6 +6790,14 @@ refund     the player's key                                   from expiration
   lower claim threshold after a while (three named seats could then claim
   wrongly, which the bonds would have to cover); a liveness slash (a dropped
   relay would be slashed).
+- **The triangle (kanban #1280).** Three things are wanted of a stake lock:
+  the player cannot walk off with it, the refund needs no committee, and
+  the refund pays the player. A stock lock gives two of the three: taking
+  the player's key away is what makes the refund need a threshold at all,
+  and a threshold is what three quiet seats can stall. The fallback claim
+  keeps all three, because the refund stays committee-free and pays the
+  player; it is only reachable if the bigger key did not act first. It
+  also invents no new authority: the census key already starts slashes.
 - **Until `NAMED_CLAIM_HEIGHT`** a round's locks are stock LNv2 with two
   paths, and P6 stays the residual §22 names for them.
 
