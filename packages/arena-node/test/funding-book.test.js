@@ -59,6 +59,8 @@ test('decided once the 1008 blocks are over: 14 of 100 active nodes fail, 15 pas
     state.tip = 157807;
     assert.deepEqual(await b.decide(), [], 'block 1007: still signalling');
     state.tip = 157808;
+    assert.deepEqual(await b.decide(), [], 'the period\'s end: decided once it is decideDepth deep, after the pull (kanban #1279)');
+    state.tip = 157808 + 5;
     const [d] = await b.decide();
     assert.deepEqual([d.state, d.supporters, d.active, d.needed, d.activeFrom, d.activeTo], [want, n, 100, 15, 157376, 157808], `${n} signals`);
     state.active = NODES.slice(0, 10);
@@ -66,4 +68,33 @@ test('decided once the 1008 blocks are over: 14 of 100 active nodes fail, 15 pas
     assert.equal(b.list(157900)[0].signal.state, want);
     assert.equal(state.asked, 1);
   }
+});
+
+// KANBAN #1279 (RULED #1277 A, the interim; audit 4 #1257 seats-4): each seat decided a signal at the period's end from its own rows, so one seat posting an
+// in-period signal to some seats only, just before the end, made the seats decide differently. Now each decides once the end is decideDepth deep, after
+// pulling the others' signals, and counts a signal only when some seat held it before the end.
+test('#1279 a signal one seat held just before the end is counted at every seat after the pull; one that arrived after the end at none', async () => {
+  const clock = { now: 1_000_000 };
+  const state = { tip: 157807 };
+  const books = {};
+  const make = (name, other) => createFundingBook({ db: openStore(':memory:'), verify, tip: async () => state.tip, now: () => clock.now,
+    isBonded: (hex) => NODES.some((n) => toHex(pk(n)) === hex),
+    activeAt: async (end) => ({ ok: true, nodes: NODES.map((n) => toHex(pk(n))), fromHeight: end - 432 }),
+    pull: async (pid) => books[other].itemsOf(pid) });
+  books.A = make('A', 'B'); books.B = make('B', 'A');
+  for (const b of [books.A, books.B]) { await b.add('proposal', proposalHex()); for (let i = 1; i <= 14; i++) await b.add('signal', signalHex(i + 1)); }
+  clock.now += 60_000;
+  await books.B.add('signal', signalHex(16));                         // the 15th, at seat B only, a second before the end
+  clock.now += 1_000;
+  state.tip = 157808;                                                  // the end: each seat notes when it saw it
+  const atEnd = { A: await books.A.decide(), B: await books.B.decide() };
+  clock.now += 1_000;
+  await books.B.add('signal', signalHex(17));                         // after the end, at seat B only
+  state.tip = 157808 + 5;                                              // decideDepth deep (spec schedule: 6)
+  const [a] = await books.A.decide(); const [b] = await books.B.decide();
+  const facts = { atEnd: [atEnd.A.length, atEnd.B.length], A: [a.state, a.supporters], B: [b.state, b.supporters] };
+  console.log('  FACTS #1279:', JSON.stringify(facts));
+  assert.deepEqual(facts.atEnd, [0, 0], 'decided at the end, before the pull');
+  assert.deepEqual([a.state, a.supporters], ['passed', 15], 'seat A did not count the signal seat B held before the end');
+  assert.deepEqual([b.state, b.supporters], ['passed', 15], 'seat B counted a signal that came after the end');
 });
