@@ -37,7 +37,7 @@ test('#1342 the faucet keeps a signed report, still posts every report to the ch
     for (let i = 0; i < 50; i++) { try { await fetch(`${base}/feedback/mine`); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
     const post = async (body) => (await fetch(`${base}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-ip': '10.0.0.1' }, body: JSON.stringify(body) })).json();
     const alice = key(1), bob = key(2);
-    const report = signed(alice, FEEDBACK_KIND, [['t', 'bug'], ['game', 'rock-paper-scissors'], ['build', 'UI 577']], JSON.stringify({ happened: 'The reveal never came back', expected: 'the result' }));
+    const report = signed(alice, FEEDBACK_KIND, [['t', 'bug'], ['game', 'rock-paper-scissors'], ['build', 'UI 577']], JSON.stringify({ happened: 'The reveal never came back after the countdown reached zero in the lobby', expected: 'the result' }));
     const unsigned = await post({ text: 'an old-style report, no key', build: 'UI 577' });
     const kept = await post({ event: report });
     const forged = await post({ event: { ...report, content: JSON.stringify({ happened: 'swapped words' }) } });
@@ -54,7 +54,7 @@ test('#1342 the faucet keeps a signed report, still posts every report to the ch
     assert.ok(forged.why, 'a forged report was taken');
     assert.equal(chat.length, 2, 'the unsigned and the signed report reach the chat; the forged one does not');
     assert.ok(facts.chatHasSignedWords);
-    assert.deepEqual(facts.aliceSees, [['bug', 'new', 'The reveal never came back']]);
+    assert.deepEqual(facts.aliceSees, [['bug', 'new', 'The reveal never came back after the countdown reached zero in the lobby']]);
     assert.equal(facts.bobSees, 0, 'another key sees none of hers');
     assert.equal(wrongUrl.status, 401);
     assert.equal(none.status, 401);
@@ -90,7 +90,7 @@ esac
   try {
     for (let i = 0; i < 50; i++) { try { await fetch(`${base}/feedback/mine`); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
     const alice = key(1);
-    const ev = signed(alice, FEEDBACK_KIND, [['t', 'bug']], JSON.stringify({ happened: 'The withdraw spinner never stops' }));
+    const ev = signed(alice, FEEDBACK_KIND, [['t', 'bug']], JSON.stringify({ happened: 'The withdraw spinner never stops, even after waiting five minutes' }));
     await (await fetch(`${base}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ event: ev }) })).json();
     // the admin approves it and makes the link (slice 4's buttons), on the same file
     const { openFeedbackStore } = await import('../src/feedback-store.js');
@@ -144,7 +144,7 @@ test('#1342 the review list behind the admin code: who played and who is ours, a
     for (let i = 0; i < 50; i++) { try { await fetch(`${base}/feedback/mine`); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
     const ids = {};
     for (const [name, k] of [['alice', alice], ['bob', bob], ['carol', carol]]) {
-      const ev = signed(k, FEEDBACK_KIND, [['t', 'bug'], ['game', 'rock-paper-scissors']], JSON.stringify({ happened: `${name}: the lobby froze` }));
+      const ev = signed(k, FEEDBACK_KIND, [['t', 'bug'], ['game', 'rock-paper-scissors']], JSON.stringify({ happened: `${name}: the lobby froze after the join and never came back` }));
       await fetch(`${base}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-ip': `10.0.0.${ids[name] ? 9 : Object.keys(ids).length + 1}` }, body: JSON.stringify({ event: ev }) });
       ids[name] = ev.id;
     }
@@ -194,7 +194,7 @@ test('#1342 the bounty is off until the owner turns it on: no private origin set
   try {
     for (let i = 0; i < 50; i++) { try { await fetch(`${base}/feedback/mine`); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
     const alice = key(1);
-    const ev = signed(alice, FEEDBACK_KIND, [['t', 'bug']], JSON.stringify({ happened: 'something broke while the bounty is off' }));
+    const ev = signed(alice, FEEDBACK_KIND, [['t', 'bug']], JSON.stringify({ happened: 'something broke while the bounty is off: the lobby froze on join' }));
     const sent = await (await fetch(`${base}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ event: ev }) })).json();
     const act = async (b) => { const r = await fetch(`${base}/feedback/admin/act`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-admin': CODE }, body: JSON.stringify(b) }); return { status: r.status, ...(await r.json()) }; };
     const approve = await act({ id: ev.id, action: 'approve', amountSats: 1000 });
@@ -210,5 +210,76 @@ test('#1342 the bounty is off until the owner turns it on: no private origin set
     assert.equal(facts.reject, true, 'a rejection with its reason still works');
     assert.deepEqual(facts.lnurlw, [503, 'rewards are off']);
     assert.deepEqual(facts.mine, [['rejected', null, 'cannot reproduce, please add the steps']]);
+  } finally { faucet.kill(); chat.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('#1342 a screenshot goes up before the report, by its bytes; the report names it; only the admin code sees it', async () => {
+  const { createHash } = await import('node:crypto');
+  const dir = mkdtempSync(join(tmpdir(), 'faucet-shot-1342-'));
+  const chat = createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(200); res.end('{}'); }); });
+  await new Promise((r) => chat.listen(0, '127.0.0.1', r));
+  writeFileSync(join(dir, 'token'), 'x');
+  const CODE = 'the-owners-code', port = 20000 + Math.floor(Math.random() * 9000);
+  const faucet = spawn(process.execPath, [fileURLToPath(new URL('../tools/faucet.mjs', import.meta.url))], { stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, FAUCET_PORT: String(port), FAUCET_CHAT_URL: `http://127.0.0.1:${chat.address().port}`, FAUCET_CHAT_CHANNEL: '6', FAUCET_CHAT_TOKEN_FILE: join(dir, 'token'),
+      FAUCET_FEEDBACK_DB: join(dir, 'feedback.db'), FAUCET_FEEDBACK_MINE_URLS: MINE, FAUCET_FOUNDING_FILE: join(dir, 'founding.jsonl'), FAUCET_BOOK: join(dir, 'book.json'),
+      FAUCET_ADMIN_SHA256: createHash('sha256').update(CODE).digest('hex') } });
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    for (let i = 0; i < 50; i++) { try { await fetch(`${base}/feedback/mine`); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+    const up = async (bytes, type = 'image/png') => { const r = await fetch(`${base}/feedback/screenshot`, { method: 'POST', headers: { 'content-type': type, 'x-arena-ip': '10.0.0.7' }, body: bytes }); return { status: r.status, ...(await r.json()) }; };
+    const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(200, 7)]);
+    const good = await up(png);
+    const notImage = await up(Buffer.from('<svg onload=alert(1)></svg>'), 'image/png');
+    const tooBig = await up(Buffer.concat([png, Buffer.alloc(1_600_000)]));
+    const alice = key(1);
+    const ev = signed(alice, FEEDBACK_KIND, [['t', 'improvement'], ['source', 'frontend'], ['screenshot', good.sha256]], JSON.stringify({ happened: 'The settings button is hard to find on a phone, it hides behind the bar' }));
+    const unknownShot = signed(alice, FEEDBACK_KIND, [['t', 'bug'], ['screenshot', 'ab'.repeat(32)]], JSON.stringify({ happened: 'A report that names an image nobody uploaded to this faucet at all' }));
+    const post = async (e) => (await fetch(`${base}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ event: e }) })).json();
+    const kept = await post(ev), refused = await post(unknownShot);
+    const img = async (c) => { const r = await fetch(`${base}/feedback/admin/screenshot/${good.sha256}`, { headers: c ? { 'x-arena-admin': c } : {} }); return { status: r.status, type: r.headers.get('content-type'), len: (await r.arrayBuffer()).byteLength }; };
+    const asAdmin = await img(CODE), noCode = await img(null);
+    const list = await (await fetch(`${base}/feedback/admin/list`, { headers: { 'x-arena-admin': CODE } })).json();
+    const facts = { good: [good.status, good.sha256 === createHash('sha256').update(png).digest('hex')], notImage: [notImage.status, notImage.why], tooBig: tooBig.status,
+      kept: kept.kept, refused: refused.why, asAdmin, noCode: noCode.status, listed: list.reports.map((r) => [r.type, r.source, !!r.screenshot]) };
+    console.log('  FACTS #1342 screenshot:', JSON.stringify(facts));
+    assert.deepEqual(facts.good, [200, true]);
+    assert.deepEqual(facts.notImage, [415, 'a screenshot is a PNG, JPEG or WebP image']);
+    assert.equal(facts.tooBig, 413);
+    assert.equal(facts.kept, true);
+    assert.match(facts.refused, /not uploaded here/);
+    assert.deepEqual([asAdmin.status, asAdmin.type, asAdmin.len], [200, 'image/png', png.length]);
+    assert.equal(facts.noCode, 403);
+    assert.deepEqual(facts.listed, [['improvement', 'frontend', true]]);
+  } finally { faucet.kill(); chat.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('#1342 node feedback from a node\'s own owner page: any origin may write a report, it is listed as node with its key; My feedback stays the Arena hosts\'', async () => {
+  const { createHash } = await import('node:crypto');
+  const dir = mkdtempSync(join(tmpdir(), 'faucet-node-1342-'));
+  const chat = createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(200); res.end('{}'); }); });
+  await new Promise((r) => chat.listen(0, '127.0.0.1', r));
+  writeFileSync(join(dir, 'token'), 'x');
+  const CODE = 'the-owners-code', port = 20000 + Math.floor(Math.random() * 9000), NODE = '7c'.repeat(32), NODE_ORIGIN = 'https://node-17.example.org';
+  const faucet = spawn(process.execPath, [fileURLToPath(new URL('../tools/faucet.mjs', import.meta.url))], { stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, FAUCET_PORT: String(port), FAUCET_CHAT_URL: `http://127.0.0.1:${chat.address().port}`, FAUCET_CHAT_CHANNEL: '6', FAUCET_CHAT_TOKEN_FILE: join(dir, 'token'),
+      FAUCET_FEEDBACK_DB: join(dir, 'feedback.db'), FAUCET_FEEDBACK_MINE_URLS: MINE, FAUCET_FOUNDING_FILE: join(dir, 'founding.jsonl'), FAUCET_BOOK: join(dir, 'book.json'),
+      FAUCET_ADMIN_SHA256: createHash('sha256').update(CODE).digest('hex') } });
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    for (let i = 0; i < 50; i++) { try { await fetch(`${base}/feedback/mine`); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+    const owner = key(5);
+    const ev = signed(owner, FEEDBACK_KIND, [['t', 'bug'], ['source', 'node'], ['node', NODE], ['build', '2026.1.9.25']], JSON.stringify({ happened: 'The services panel says the gateway is down but the gateway answers fine', expected: '' }));
+    const r = await fetch(`${base}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json', origin: NODE_ORIGIN }, body: JSON.stringify({ event: ev }) });
+    const posted = { status: r.status, cors: r.headers.get('access-control-allow-origin'), ...(await r.json()) };
+    const mineCors = (await fetch(`${base}/feedback/mine`, { headers: { origin: NODE_ORIGIN } })).headers.get('access-control-allow-origin');
+    const list = await (await fetch(`${base}/feedback/admin/list?source=node`, { headers: { 'x-arena-admin': CODE } })).json();
+    const front = await (await fetch(`${base}/feedback/admin/list?source=frontend`, { headers: { 'x-arena-admin': CODE } })).json();
+    const facts = { posted: [posted.status, posted.cors, posted.kept], mineCors, nodeRows: list.reports.map((x) => [x.source, x.node && x.node.slice(0, 6), x.build]), frontendRows: front.reports.length };
+    console.log('  FACTS #1342 node:', JSON.stringify(facts));
+    assert.deepEqual(facts.posted, [200, NODE_ORIGIN, true]);
+    assert.equal(facts.mineCors, null, 'My feedback answers no foreign origin');
+    assert.deepEqual(facts.nodeRows, [['node', '7c7c7c', '2026.1.9.25']]);
+    assert.equal(facts.frontendRows, 0);
   } finally { faucet.kill(); chat.close(); rmSync(dir, { recursive: true, force: true }); }
 });
