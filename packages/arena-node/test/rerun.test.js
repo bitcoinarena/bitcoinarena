@@ -724,3 +724,33 @@ test('re-runs from keys that are not assigned, about another contradicted run, o
     assert.match(after.why, /3 of 5 committee signer nodes have re-run/);
   } finally { await w.close(); }
 });
+
+// KANBAN #1256 (audit 3 #1210 FIXES-17, a #1173 regression): the intake runs inside withPendingObjection, and its own pending row turned the re-run
+// SUSPENDED once the seat's clock passed the re-run's final_after - a second objection that ARRIVED in time, whose check ended after the window,
+// was refused 409 here and nothing was stored, while seats whose check ended sooner took it (VOID there, FINAL here). Its arrival decides.
+test('#1256 a second objection that arrived inside the re-run\'s window is taken even when its check ends after the window closed', async () => {
+  const w = await seven();
+  try {
+    const s = await agreedWithoutTheHolder(w);
+    const arrived = s.own - 1000;                                       // one second before the re-run's window closes here
+    const checkEnds = at(w, s.own + 2000);                              // the replay answers two seconds after it
+    const taken = await serverModule.withPendingObjection(checkEnds, w.rid, s.eid, arrived, async () => objectionIntake(checkEnds, w.rid, s.eid, null, null, arrived));
+    const filed = w.holder.round.rerunObjectedAt(w.rid, s.eid);
+    const after = resultFinality(at(w, s.own + 3000), w.rid, s.eid);
+    // and one that arrived at the close is still refused, its pending row or not
+    const w2 = await seven();
+    let late;
+    try {
+      const s2 = await agreedWithoutTheHolder(w2);
+      const c2 = at(w2, s2.own + 2000);
+      late = await serverModule.withPendingObjection(c2, w2.rid, s2.eid, s2.own, async () => objectionIntake(c2, w2.rid, s2.eid, null, null, s2.own));
+      late.filed = w2.holder.round.rerunObjectedAt(w2.rid, s2.eid);
+    } finally { await w2.close(); }
+    console.log('  FACTS #1256:', JSON.stringify({ arrivedBeforeClose: s.own - arrived, checkEndedAfterClose: 2000, taken, filedAtArrival: filed === arrived, after: after.state,
+      atClose: { status: late.status, filed: late.filed } }));
+    assert.equal(taken.status, 201, `${taken.status} ${taken.text}`);
+    assert.equal(filed, arrived, 'stored as of its arrival');
+    assert.equal(after.state, 'VOID', after.why);
+    assert.equal(late.status, 409); assert.equal(late.filed, null);
+  } finally { await w.close(); }
+});

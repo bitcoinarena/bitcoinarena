@@ -425,7 +425,7 @@ export function objectionIntake(round, rid, eid, blockHash = null, bundle = null
     // A block it names is kept and decides nothing.
     if (blockHash !== null && (!(blockHash instanceof Uint8Array) || blockHash.length !== 32)) return { status: 400, text: 'a block an objection names is a 32-byte hash' };
     // A NO-QUORUM ENTRY'S AGREED RE-RUN HAS ITS ONE OBJECTION WINDOW (§13A, RULED 2026-11-02, kanban #1047), and no first objection was ever filed: this one goes on the re-run
-    const nq = resultFinality(round, rid, eid);
+    const nq = resultFinality(round, rid, eid, { ignorePending: true });
     if (nq.noQuorumRerun && nq.rerun && nq.rerun.runId) {
       if (round.rerunObjectedAt(rid, eid) !== null) return { status: 200, text: 'already objected' };
       if (nq.state !== PROVISIONALLY_FINAL || BigInt(arrivedMs ?? round.now()) >= BigInt(nq.finalAfterMs)) return { status: 409, text: 'the re-run\'s objection window has closed' };
@@ -433,7 +433,10 @@ export function objectionIntake(round, rid, eid, blockHash = null, bundle = null
     }
     if (round.object(rid, eid, blockHash, bundle, arrivedMs)) return { status: 201, text: 'objected' };
     if (round.rerunObjectedAt(rid, eid) !== null) return { status: 200, text: 'already objected' };
-    const f = resultFinality(round, rid, eid);
+    // ITS OWN PENDING ROW IS NOT HELD AGAINST IT (kanban #1256, audit 3 FIXES-17): the intake runs inside withPendingObjection, and a check that ended
+    // past the re-run's final_after read the re-run SUSPENDED by that row - an objection that arrived in time was refused 409 here while the seats whose
+    // check ended sooner took it (VOID there, FINAL here). Whether it is in time is its arrival's to say, below
+    const f = resultFinality(round, rid, eid, { ignorePending: true });
     const agreedRerun = !!(f.rerun && f.rerun.runId);
     // THE RE-RUN'S OWN WINDOW IS OVER FOR THIS SEAT at the round's end + 1805 s on its clock (§13A, WINDOW-10-SPEC).
     if (agreedRerun && f.finalAfterMs !== undefined && BigInt(arrivedMs ?? round.now()) >= BigInt(f.finalAfterMs))
