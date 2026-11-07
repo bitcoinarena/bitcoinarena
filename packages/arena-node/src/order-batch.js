@@ -148,7 +148,8 @@ export class OrderBook {
   /** Whether that round is an order book at this seat: a market whose entries are orders. */
   isBook(roundIdBytes) {
     const m = this.market(roundIdBytes);
-    return m.ok && this.round.entriesOf(roundIdBytes).some((x) => isOrder(x.entry));
+    // an order this seat has seen the stake of (kanban #1270): a lockless order posted to a pool does not make it a book here
+    return m.ok && this.round.entriesOf(roundIdBytes).some((x) => isOrder(x.entry) && (x.entry.stakeMsat === 0n || typeof this.round.stakeSeen !== 'function' || !!this.round.stakeSeen(x.entryId)));
   }
 
   leaderOf(contract, k) { return contract.nodes[Number(BigInt(k) % BigInt(contract.nodes.length))]; }
