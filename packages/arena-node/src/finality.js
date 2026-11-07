@@ -54,7 +54,9 @@ export const PENDING_OBJECTION_MS = 120000;
  *    holds the entry SUSPENDED (`pendingObjection`): no FINAL, no `signable`, so no FINAL signature, no P, no ack - until its check answered.
  * Every other state passes as computed. Kept only when asked at this seat's own clock: a look ahead (a caller's `now` past it) writes nothing.
  */
-export function finalityStep(round, roundIdBytes, entryIdBytes, computed, { now = round.now() } = {}) {
+// `ignorePending` (kanban #1256, audit 3 #1210 FIXES-17): the objection intake's own read, made while its own pending row stands - that row is not
+// held against the objection it was written for, and nothing is kept (no FINAL written) on such a read
+export function finalityStep(round, roundIdBytes, entryIdBytes, computed, { now = round.now(), ignorePending = false } = {}) {
   const kept = typeof round.entryFinal === 'function' ? round.entryFinal(roundIdBytes, entryIdBytes) : null;
   if (kept) {
     if (computed && computed.state === FINAL && String(computed.runId) === kept.runId) return computed;
@@ -64,13 +66,13 @@ export function finalityStep(round, roundIdBytes, entryIdBytes, computed, { now 
   const finalAfter = computed.finalAfterMs !== undefined && computed.finalAfterMs !== null ? BigInt(computed.finalAfterMs) : null;
   // a check of it still queued or running in this process holds it whatever the row's age (kanban #1225); otherwise PENDING_OBJECTION_MS
   const checking = round.objectionChecks instanceof Map && (round.objectionChecks.get(hex(entryIdBytes)) || 0) > 0;
-  const pending = typeof round.pendingObjectionAt === 'function' ? round.pendingObjectionAt(roundIdBytes, entryIdBytes, checking ? 0 : Number(now) - PENDING_OBJECTION_MS) : null;
+  const pending = ignorePending ? null : typeof round.pendingObjectionAt === 'function' ? round.pendingObjectionAt(roundIdBytes, entryIdBytes, checking ? 0 : Number(now) - PENDING_OBJECTION_MS) : null;
   if (pending !== null && (computed.state === FINAL || computed.signable) && (finalAfter === null || BigInt(pending) < finalAfter)) {
     const { signable: _signable, ...rest } = computed;
     return { ...rest, state: SUSPENDED, pendingObjection: true, pendingObjectionAtMs: pending, computedState: computed.state,
       why: `an objection reached this seat at ${utc(pending)}${finalAfter !== null ? `, before ${utc(finalAfter)}` : ''}, and its check has not answered: no FINAL signature, no P, no ack until it has (kanban #1173); the evidence alone reads ${computed.state}: ${computed.why}` };
   }
-  if (computed.state === FINAL && computed.runId && BigInt(now) <= BigInt(round.now()) && typeof round.putEntryFinal === 'function' && finalAfter !== null) {
+  if (!ignorePending && computed.state === FINAL && computed.runId && BigInt(now) <= BigInt(round.now()) && typeof round.putEntryFinal === 'function' && finalAfter !== null) {
     try {
       if (round.putEntryFinal({ roundId: roundIdBytes, entryId: entryIdBytes, runId: String(computed.runId), finalAfterMs: finalAfter, onRerun: !!(computed.rerun && computed.rerun.runId), atMs: now }))
         console.log(`#1173 [finality] ${hex(entryIdBytes).slice(0, 16)} FINAL on ${String(computed.runId).slice(0, 16)} kept: it is never undone here`);
@@ -99,8 +101,8 @@ function keptFinal(round, roundIdBytes, entryIdBytes, kept, computed) {
  * ({ runId, finalAfterMs }). `nextAtMs`: the next instant at which the clock alone changes the answer, if any. Through
  * finalityStep (kanban #1173): FINAL kept once reached, and an objection being checked holds it SUSPENDED.
  */
-export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.now() } = {}) {
-  return finalityStep(round, roundIdBytes, entryIdBytes, computeFinality(round, roundIdBytes, entryIdBytes, { now }), { now });
+export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.now(), ignorePending = false } = {}) {
+  return finalityStep(round, roundIdBytes, entryIdBytes, computeFinality(round, roundIdBytes, entryIdBytes, { now }), { now, ignorePending });
 }
 
 function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now() } = {}) {
