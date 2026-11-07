@@ -43,6 +43,13 @@ test('the same two players round after round: 1:0, 1:1, a draw keeps 1:1; both s
     const sa = new Uint8Array(randomBytes(32)), sb = new Uint8Array(randomBytes(32));
     const a = await lockAndPlay(r, player(), { hidden: { move: moveA, salt: sa }, noMarks: true });
     const b = await lockAndPlay(r, player(), { hidden: { move: moveB, salt: sb }, noMarks: true });
+    // EACH NAMED BEFORE THE CLOSE, as the page posts its name record at the join (kanban #1263: a reveal's identity is kept only when it is the
+    // one the record held names)
+    const { encodeLobbyName } = await import('../../arena-protocol/src/lobby-name.js');
+    for (const d of r.nodes) for (const [played, who] of [[a, ALICE], [b, BOB]]) {
+      const pk = d.round.entriesOf(r.rid).find((x) => toHex(x.entryId) === toHex(played.eid)).entry.playerPubkey;
+      d.round.putLobbyName({ roundId: r.rid, playerPubkey: pk, record: encodeLobbyName({ roundId: r.rid, playerPubkey: pk, identityPubkey: who.key, atMs: 1n }), signature: new Uint8Array(64), atMs: 1n });
+    }
     skipTo(Number(r.c.entryCloseMs) + 500);
     const bad = forged ? await reveal(r, a, moveA, sa, proof(BOB, r.rid, a.eid) && { key: toHex(ALICE.key), sig: proof(BOB, r.rid, a.eid).sig }) : null;
     await reveal(r, a, moveA, sa, proof(ALICE, r.rid, a.eid));
