@@ -3063,7 +3063,18 @@ export class Round {
     // A SUBMITTING ROW IS ON THE DISK BEFORE ITS SUBMIT (kanban #1243)
     const write = () => this.db.prepare('INSERT OR REPLACE INTO lock_settlements (round_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(roundId), String(txid), Buffer.from(message), Buffer.from(signature), state, why, this.now());
-    return state === 'SUBMITTING' ? durably(this.db, write) : write();
+    const done = state === 'SUBMITTING' ? durably(this.db, write) : write();
+    // ACCEPTED ON A TXID OF THE HISTORY CARRIES THAT TXID'S MOVES (kanban #1249, audit 2 SETTLEMENT-1): a row made ACCEPTED on another seat's landed
+    // transaction (recordSubmit, the kept pass, recover) kept the moves of this seat's own txid - its claims, its payouts - so the own-claim guard,
+    // the sends, the index of the landed outputs and the late splits all read a transaction that never landed
+    if (state === 'ACCEPTED') {
+      const m = this.lockSettlementMoves(roundId);
+      if (!m || m.txid !== String(txid)) {
+        const h = typeof this.settlementTxidsOf === 'function' ? this.settlementTxidsOf(roundId).find((x) => x.txid === String(txid)) : null;
+        if (h && Array.isArray(h.claims)) this.putLockSettlementMoves({ roundId, txid: String(txid), claims: h.claims, payouts: h.payouts });
+      }
+    }
+    return done;
   }
 
   lockSettlement(roundIdBytes) {
