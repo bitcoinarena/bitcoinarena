@@ -4068,7 +4068,7 @@ paid or refunded for a gap, because no stake was taken in it.
 before the round runs, from the hour its beacon is deep - time to approach its members. That is the same exposure as any
 known committee: a member that signs a false settlement loses its bond
 (§5A.3), and the per-round stake ceiling (§5A.10) keeps what one round can
-win below what five slashed bonds cost. The lead changes when a briber can
+win below what five slashed bonds cost (named-claim rounds, from `NAMED_CLAIM_HEIGHT`, kanban #1131; a stock-lock round's settlement signature names nobody, so there only the bracket and §5A.10's income term bound it - kanban #1338). The lead changes when a briber can
 start, not what a capture pays.
 
 **Who runs the rounds.** Every round draws its own committees: §5A.6 run
@@ -4547,7 +4547,7 @@ before `NAMED_CLAIM_HEIGHT`, and a round with no agreed result at all.
 
 Rationale: at 100 × max_round_pool, an attacker reaching the ~17% control
 probability of §5A.6 must bond ≈ 50 × the pool he could steal, and forfeits
-five bonds when caught. The ceiling exists so that the arithmetic stays that
+five bonds when caught (from `NAMED_CLAIM_HEIGHT`; before it a stock-lock settlement is a FROST signature that names nobody, so the theft costs no bond and only the bracket and the income term bound it - kanban #1338). The ceiling exists so that the arithmetic stays that
 way as the network grows rather than being asserted once.
 
 Both quantities are computable by anyone from `census_root` and the chain,
@@ -10199,7 +10199,7 @@ with PIP. Users can sign in with their ingame key and their custom name or their
 | Lightning payout route fails | Retry within the claim window |
 | Website compromised | Wallet approval still required; hashes/mirrors; donation cap limits the damage |
 | 5 game/verify nodes collude **and** the victim's transcript is unavailable | Residual result-integrity failure; five bonds slashable afterwards |
-| 5 settlement nodes collude | Residual settlement failure on in-transit funds; five bonds slashable |
+| 5 settlement nodes collude | Residual settlement failure on in-transit funds; five bonds slashable from `NAMED_CLAIM_HEIGHT` (the claim names its signers, kanban #1131); before it the FROST signature names nobody and no bond is at risk |
 | A passed config makes rounds unplayable | Nodes decline to serve it; those rounds find no committee and never start. Repeal runs on the short schedule (§27A.7.6). No pause exists and none is needed |
 | Config activates mid-round | Cannot happen: a round is bound to the `config_hash` it was created under (§27A.7.5) |
 | Operator API token stolen | At worst a wrong vote. No token can spend a bond or reach player funds (§27A.7.7) |
@@ -10391,7 +10391,8 @@ committee nor outcome).
 | **Lying client sets the refund or payout key** | Compromised web host | Refund went to the paying wallet by construction | Key from the player's seed with a visible fingerprint; known-good client hash for paying rounds; NWC budget (§24) |
 | **A seat serves its own key as `claim_pk`** | One settlement seat | Not considered | `claim_pk` valid only with ≥5 seats' signatures (§23.1 step 0) |
 | **Player builds a lock with a short expiry or wrong fields** | Any player | Not considered | STAKE_COMMITTED only after ≥5 seats verified every field via the contract id (§23.1 step 5) |
-| **Three seats stall settlement** so losers are refunded | 3 settlement seats | Listed as delay only | Not slashable: silence is not signed bytes (§5A.3). Open: the stall rule's settlement stage is off until its height is named (#1044, #1069) |
+| **Three seats stall settlement** so losers are refunded | 3 settlement seats | Listed as delay only | Not slashable: silence is not signed bytes (§5A.3). **Closed from `NAMED_CLAIM_HEIGHT`:** after `stall_blocks` four named seats pay the FINAL's settlement (§23.2, kanban #1268, #1290), so three quiet seats return nothing; four quiet seats are the priced residual of §5A.3. Open only for stock-lock rounds before that height (§22 P6) |
+| **Five seats sign a settlement with no ack behind it** (an off-table claim) | 5 settlement seats | Not considered | Before `NAMED_CLAIM_HEIGHT` the FROST signature names nobody, so no bond is at risk (§5A.3, "only bytes the accused signed"). From the height the claim names its five signers and offence (a) of kanban #1131 takes their bonds; measured on regtest (s48a): all seven seats filed against exactly the five, five slash starts, the round settled on F′ (kanban #1146) |
 | Compromised web host sets a huge donation | Serve a lying client | Uncapped | Capped at 100%, second confirmation above 5% (§22A) |
 | Round with a backdoored simulation core | Publish a round | Player trusts the hash blindly | Client refuses unknown `sim_wasm_hash` for real money (§5) |
 | **Census divergence** — participants disagree on who is eligible | Selective gossip, withheld advertisements | Committee disputes, ungrounded rounds | Census is chain state at `census_height`; subjective criteria removed; outpoint ordering is unmineable (§5A.2–5A.4) |
