@@ -7186,7 +7186,11 @@
       // one version of a game - the newest when none is being played - and the lobby listed that version's rounds alone. Tick
       // Tock's open rounds named its first manifest (495516ae) while the tile showed the second (c693585b): six open rounds, none
       // listed. Unity plays any version's round (the round's own contract names its core), so its lobby lists all of them.
-      window.ARENA_GAME_IDS = game.name === 'nextblock' && Array.isArray(game.versions) && game.versions.length ? game.versions : [game.id];
+      // ROCK PAPER SCISSORS THE SAME (kanban #951, measured 2026-11-07 19:2xZ on UI 579: the seats hosting version 6 before any v6 table
+      // was posted made the tile open v6, and the lobby read v6's rounds alone - gotRaw 0 while the seats listed 118 v5 rounds). Its client
+      // plays any version's round: each round's contract names its own core.
+      const everyVersion = game.name === 'nextblock' || game.name === 'rock-paper-scissors';
+      window.ARENA_GAME_IDS = everyVersion && Array.isArray(game.versions) && game.versions.length ? game.versions : [game.id];
       // A TABLE WAITS (2026-10-11, path B): a head-to-head game with no round of it open asks the seats for
       // one - POST /h2h-want, every 30 s while none is open; their operator publishes the next 30 min of rounds in one
       // transaction, the first about an hour later. window.ARENA_H2H_WANT keeps the last ask for a probe.
