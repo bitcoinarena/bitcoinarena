@@ -19,6 +19,8 @@ import { decodeInputBatch, batchTicks, batchId } from '../../arena-protocol/src/
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { checkBatchPrices } from '../../arena-protocol/src/price-sample.js';
 import { LATE_JOIN_LAST_ENTRY_MS, entryItemDigest } from '../../arena-protocol/src/contracts.js';
+/** How long after a round's entry close an entry new to a seat is still taken (kanban #1216). */
+export const ENTRY_CLOSE_GRACE_MS = 15000n;
 import { LATE_JOIN_MS } from '../../arena-protocol/src/series.js';
 import { ticksForMs } from '../../arena-protocol/src/tick.js';
 import { worldSecretFits } from '../../arena-protocol/src/seed.js';
@@ -602,6 +604,15 @@ export class Round {
             + `a late entry joins at tick ${gone} or later, and its run ends with the round's`);
       }
     }
+
+    // NO ENTRY NEW TO THIS SEAT AFTER ITS ROUND'S ENTRY CLOSE, FOR EVERY GAME (kanban #1216, audit 3 #1210 CONSENSUS-1): a replayed game's grid round
+    // took an entry new to a seat until the round closed, so a player could post an entry and its lock to 4 seats only, play there, and post it to a
+    // 5th once the run had won (paid), or not (VOID: the stake back) - a free option in every paid round. ENTRY_CLOSE_GRACE_MS lets a join held to
+    // the start land (measured over 7 days at the 7 fed A seats: of 7,608 paid entries the latest reached its seat 5 s after the entry close).
+    // A late-join series has its own door above; an entry the round accepted (entry-relay) and the same entry posted again are still taken.
+    const grace = this.entryCloseGraceMs === undefined ? null : this.entryCloseGraceMs;   // set by serve (main.js gives every seat ENTRY_CLOSE_GRACE_MS)
+    if (grace !== null && !lateJoin && !accepted && now > asks.entryCloseMs + grace && !this.db.prepare('SELECT 1 FROM entries WHERE entry_id = ?').get(Buffer.from(entryId(contract))))
+      throw new Error(`that round's entry closed at ${asks.entryCloseMs} (and ${grace} ms for a join on its way) and it is ${now}: an entry new to this seat is not taken`);
 
     // AND NO WORLD OF THE PLAYER'S OWN ON A SHARED-WORLD ROUND (2026-10-04: "the player chooses nothing about
     // the world"): under a config that makes one world per round (config v4) the entry's world secret must be 32 zero

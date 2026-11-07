@@ -536,6 +536,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // its own clock once it is over (protocol roundEndMs). `true`, or
   // `{ everyMs }`. Off by default: a harness closes its rounds when it says so.
   closeAtEnd = false,
+  // how long after a round's entry close an entry new to this seat is still taken (kanban #1216): main.js sets it on every seat; null (a harness, whose
+  // rounds are dated in the past): no bound
+  entryCloseGraceMs = null,
   // THE MARKET ORDER BOOK'S BATCHES: the interval - 0.5 s, measured to hold (order-book.js BATCH_MS) -
   // and whether this seat leads its batches on its own clock: on by default; a test that drives `orderBook.lead` turns it off
   orderBatchMs = Number(BATCH_MS), orderBatchTimer = true,
@@ -935,6 +938,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     } catch (e) { console.error(`[replay] cannot keep this node's core in ${replayCores}: ${e.message}`); }
   }
   const round = new Round(db, undefined, { plugins: hosted });
+  round.entryCloseGraceMs = entryCloseGraceMs === null || entryCloseGraceMs === undefined ? null : BigInt(entryCloseGraceMs);
   // AN OBJECTION'S CHECK DOES NOT OUTLIVE ITS PROCESS (kanban #1173): its pending row held the entry SUSPENDED while the replay ran; the replay is gone
   { const n = round.clearPendingObjections(); if (n) console.log(`#1173 [objection] ${n} check(s) cut short by the restart dropped: those objections are taken again when sent again`); }
   const addressBook = createAddressBook({ db, verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } } });
@@ -4013,7 +4017,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHICH ROUND IS HEAD-TO-HEAD (kanban #1068, #1071): declared here, filled in below. A close sweep can fire while the server is still being set up
   // (measured 2026-11-03 on a restarted seat: "Cannot access 'headToHeadRound' before initialization" from afterClose, and the seat exited); until then a round is
   // closed as before #1071, without first learning who is in it.
-  let headToHeadRound = () => null, headToHeadReady = false;
+  let headToHeadRound = () => null, headToHeadReady = false, relayedRound = () => null;
   function afterClose(roundIdBytes) {
     // §16 AT THE CLOSE: an entry whose on-time first mark is still short of the
     // threshold, the signer nodes it is short of offered it and silent, is ENTRY_VOID
@@ -5124,6 +5128,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
     try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid) }); }
     catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
+  };
+  // A ROUND WHOSE ENTRIES AND LOCKS A SEAT HANDS ON (kanban #1216): every round it holds that is a game's - head-to-head (kanban #1068) or replayed;
+  // a market's orders have their own way (order-batch.js replayOrder)
+  relayedRound = (rid) => {
+    const row = round.get(rid);
+    if (!row) return null;
+    let c; try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
+    const g = pluginForRound(c, hosted);
+    return g.ok && (g.headToHead || !g.attested) ? c : null;   // an attested round's (a market's) orders are replayed by the order book
   };
   // WHAT A SEAT HANDS ON OF A HEAD-TO-HEAD ENTRY (kanban #1068, entry-relay.js)
   headToHeadRound = (rid) => {
@@ -9551,7 +9564,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const joined = round.enter(contract);
         steps.named(toHex(joined)).at('stored');
         // A CLIENT'S COPY GOES ON TO THE SEATS IT DID NOT REACH (kanban #1068, entry-relay.js)
-        if (!req.headers[RELAY_HEADER]) { const c = headToHeadRound(contract.roundId); if (c) entryRelay.entryTaken(contract.roundId, toHex(joined), c.entryCloseMs); }
+        // EVERY ROUND'S ENTRY REACHES EVERY SEAT, NOT ONLY A HEAD-TO-HEAD ONE'S (kanban #1216, audit 3 CONSENSUS-1): an entry a player posted to some seats only
+        // is handed on to the rest, each door checking it as a client's copy - so withholding it from seats reveals nothing and buys no VOID
+        if (!req.headers[RELAY_HEADER]) { const c = relayedRound(contract.roundId); if (c) entryRelay.entryTaken(contract.roundId, toHex(joined), c.entryCloseMs); }
         // NO HOLD IS ISSUED HERE ANY MORE. This door used to ask the signer node's Lightning for a hold
         // invoice on the entry's payment hash, and said how that went in `x-hold`. That was the withdrawn Lightning custody's
         // stake-in, which does not exist (§23.6, RULED 2026-09-22 22:59); a lock round's stake is locked by
@@ -10519,7 +10534,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = await takeStakeLock(eid, fields, timing);
         lockTimed(got.ok ? 'verified' : got.why.slice(0, 60));
         if (!got.ok) return text(res, 409, got.why);
-        if (!req.headers[RELAY_HEADER] && headToHeadRound(decodeEntryContract(stored).roundId)) entryRelay.lockTaken(decodeEntryContract(stored).roundId, toHex(eid));
+        if (!req.headers[RELAY_HEADER] && relayedRound(decodeEntryContract(stored).roundId)) entryRelay.lockTaken(decodeEntryContract(stored).roundId, toHex(eid));   // every round's (kanban #1216)
         // AN ORDER (comment 1127): tradable here once both its locks are verified - and only before its market's entry close
         const lateOrder = orderLockAfterClose(stored);
         if (decodeEntryContract(stored).limitPrice !== undefined && !lateOrder) orderBook.noteTradable(decodeEntryContract(stored).roundId);
