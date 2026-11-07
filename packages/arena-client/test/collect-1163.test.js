@@ -157,3 +157,43 @@ test('#1220 another phrase\'s note in the same round is not this phrase\'s: its 
   assert.notEqual(p.stake && p.stake.state, 'collected', 'phrase P read phrase Q\'s stake note as its own');
   assert.equal(q.payout.state, 'collected', 'phrase Q still reads its own note');
 });
+
+// KANBAN #1238 (audit 2 #1204 CLIENT-1): one seat lists an invented lock first (its own claim key, a made-up outpoint) and signs its forfeit;
+// the guardians hold only the real lock. The look forfeited locks[0] and read the stake "owed by forfeit" for good; the expiry refund was never asked.
+const LIAR_SECRET = b32(0x66);
+const fakeFields = { ...fields, claimPk: Uint8Array.from([0x02, ...schnorr.getPublicKey(LIAR_SECRET)]) };
+const REAL_AT = `${'cd'.repeat(32)}:0`, FAKE_AT = `${'aa'.repeat(32)}:0`;
+const liarSeats = ({ honestAnswers = true } = {}) => async (url) => {
+  const host = new URL(url).host;
+  if (url.includes('/lock-settlement')) return new Response(JSON.stringify({ state: 'ACCEPTED', txid: 'ef'.repeat(32), moved: { payouts: [] } }), { status: 200 });
+  if (url.includes('/stake-lock')) {
+    if (host === 'liar.test') return new Response(JSON.stringify([{ entryId: 'ff'.repeat(32), outpoint: FAKE_AT, fields: lockFieldsToJson(fakeFields), contractId: 'f0'.repeat(32) }]), { status: 200 });
+    if (!honestAnswers) throw new Error('timed out');
+    return new Response(JSON.stringify([{ entryId: 'ee'.repeat(32), outpoint: REAL_AT, fields: lockFieldsToJson(fields), contractId: STORED }]), { status: 200 });
+  }
+  if (url.includes('/forfeit')) {
+    // the liar signs a forfeit of its own lock; nobody forfeits the real one (the player lost)
+    if (host === 'liar.test' && url.includes(`entry=${'ff'.repeat(32)}`)) return new Response(JSON.stringify({ signature: toHex(schnorr.sign(fromHex('f0'.repeat(32)), LIAR_SECRET)), contractId: 'f0'.repeat(32), claimPk: toHex(fakeFields.claimPk) }), { status: 200 });
+    return new Response('that run is FAILED with score 0 and this round\'s minimum is 1: not a qualifier', { status: 409 });
+  }
+  return new Response('no', { status: 404 });
+};
+// the guardians hold the real lock only, `blocksLeft` before its expiry
+const realOnly = (blocksLeft) => ({
+  async lockStatus(txid, outIdx) { return JSON.stringify({ block_count: 464 - blocksLeft, stored: `${txid}:${outIdx}` === REAL_AT ? { contract_id: STORED, blocks_left: blocksLeft } : null }); },
+  async withdrawableMsat() { return '0'; }, async balanceMsat() { return '0'; },
+});
+
+test('#1238 an invented lock listed first is not forfeited in place of the real one: past the expiry the refund is owed; the liar alone is not "gone" while the real lock is held', async () => {
+  const lookWith = (fetcher, blocksLeft, extra = {}) => PL.lookOwed({ round, roundId: rid, seed, curve: pageCurve, nodes: ['http://liar.test', 'http://honest.test'], fetcher, client: realOnly(blocksLeft), ...extra });
+  const expired = await lookWith(liarSeats(), 0);
+  const held = await lookWith(liarSeats(), 100);
+  const alone = await lookWith(liarSeats({ honestAnswers: false }), 0, { kept: { lock: { outpoint: { txid: fromHex('cd'.repeat(32)), outIdx: 0n }, fields } } });
+  const facts = { expired: `${expired.stake.state}/${expired.stake.how || ''}`, held: `${held.stake.state}/${held.stake.how || ''} final=${held.final}`, liarAlone: `${alone.stake.state}/${alone.stake.how || ''} final=${alone.final}` };
+  console.log('  FACTS #1238:', JSON.stringify(facts));
+  assert.deepEqual([expired.stake.state, expired.stake.how], ['owed', 'refund'], 'the liar\'s forfeit of its own lock stood in for the real one');
+  assert.notEqual(held.stake.how, 'forfeit', 'inside the expiry the stake waits, it is not owed by the liar\'s forfeit');
+  assert.equal(held.final, false);
+  assert.notEqual(alone.stake.state, 'gone', 'the liar alone made a held stake read gone');
+  assert.equal(alone.final, false);
+});
