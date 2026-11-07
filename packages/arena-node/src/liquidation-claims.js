@@ -26,7 +26,7 @@ export const REMAINDER_FEE_MARGIN_MSAT = 10_000n;
 // PENDING OUTPUTS (spec §23A.5 "Notes still in issuance at the halt", RULED 2026-10-14): `checkPending(federationHex, requestHex)`
 // recomputes an issuance request's note nonce, the hash160 of its blinded message and its amount (the fork's `mintv2 check-pending`)
 // and answers { ok, nonce, nonceHash, amountMsat } or why not; `liquidationOf(fid).issuedHashes` is the issued set's nonce hashes.
-export function createLiquidationClaims({ validate, liquidationOf, height, escrowMsatOf, clocks, checkPending = null, load = () => [], save = () => {} }) {
+export function createLiquidationClaims({ validate, liquidationOf, height, escrowMsatOf, clocks, checkPending = null, load = () => [], save = () => {}, take = null }) {
   const claims = new Map();                  // federation hex -> Map(nonce hex -> { nonce, amountMsat, height, payoutPk })
   for (const c of load() || []) {
     if (!claims.has(c.federation)) claims.set(c.federation, new Map());
@@ -50,6 +50,18 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
     if (!v || !v.ok) return { ok: false, status: 422, why: `those notes do not stand: ${v && v.why ? v.why : 'not validated'}` };
     const mine = claims.get(fid) || new Map(); claims.set(fid, mine);
     const spent = new Set((liq.spentNonces || []).map((n) => String(n).toLowerCase()));
+    // A CLAIM TAKES ITS NOTES (kanban #1253, audit 3 MONEY-3): a claim kept only the notes' nonces, so in a federation that still runs (a theft-alarm halt)
+    // or comes back, the holder could redeem the same notes after the escrow paid them. Notes not claimed before are reissued into this set's own client
+    // of the federation first (`take`); a federation that answers no reissue takes the claim offline only when its halt is stopped consensus (a record
+    // or a halt proof) - a mark of theft alone leaves a federation that may still run, and the holder presents the notes again
+    const fresh = (v.notes || []).some((n) => !mine.has(String(n.nonce).toLowerCase()) && !spent.has(String(n.nonce).toLowerCase()));
+    if (fresh && typeof take === 'function') {
+      let t; try { t = await take(fid, body.ecash); } catch (e) { t = { ok: false, offline: true, why: e.message }; }
+      if (!t || !t.ok) {
+        if (!(t && t.offline)) return { ok: false, status: 409, why: `the federation refused to reissue those notes into the arbitration set's client: ${(t && t.why) || 'no answer'}` };
+        if (liq.alarm) return { ok: false, status: 503, why: `the federation answers no reissue (${t.why}), and its halt is a mark of theft, not stopped consensus: the notes are claimed once they are taken - present them again` };
+      }
+    }
     const accepted = []; const refused = [];
     for (const n of v.notes || []) {
       const nonce = String(n.nonce).toLowerCase();
