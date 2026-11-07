@@ -16,6 +16,7 @@
 // One process, one player, no verification. There is no bond here, no quota
 // and no committee; those are M2.1 steps 4 and later, and each is refused
 // rather than half-built.
+import { seasonRoundStands } from './season-stands.js';
 import { gzipSync } from 'node:zlib';
 import { tableAnchorOf, feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
 import { takesNewRounds } from '../../arena-protocol/src/known-federations.js';
@@ -1277,6 +1278,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A draw the chain view is still being read for is pending, not refused.
   const signSeason = (digest) => schnorr.sign(digest, round.identity.secret);
   const seasonSeatsOf = (ridHex, contract) => {
+    // A ROUND THAT MAY COUNT AT ALL (ruling #1218, kanban #1242): a held series' derived slot, paid (its series publication is checked below its
+    // beacon by committeeFor's chain check), with the standard 7/7 committees
+    const past = (() => { try { return pastSeries; } catch { return null; } })();   // declared further down this function
+    const stands = seasonRoundStands(contract, { series, pastSeries: past });
+    if (!stands.ok) return { ok: false, why: stands.why };
     let picked; try { picked = roster.committeeFor(fromHex(ridHex), 'settlement', { posted: contract }); } catch (e) { return { ok: false, why: e.message }; }
     if (!picked || !picked.ok) return { ok: false, pending: /still reading/.test(String(picked && picked.why)), why: picked ? picked.why : 'no draw' };
     let needed; try { needed = roundThreshold(slotsForRole(contract, 'settlement')); } catch (e) { return { ok: false, why: e.message }; }
