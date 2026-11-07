@@ -1955,7 +1955,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const recs = reservePayouts ? reservePayouts.list().filter((r) => r.plan && r.plan.kind !== 'move' && ['SUBMITTING', 'SENT', 'REFUNDING', 'PAID'].includes(r.state)) : [];
       const tip = fundingTipSeen;
       const out = [];
-      for (const t of fundingBook.payments({ tip })) {
+      // every payout record, any state: a refix never moves a proposal one of whose ids is recorded (kanban #1235)
+      const anyRecord = new Set(reservePayouts ? reservePayouts.list().map((r) => r.proposal) : []);
+      for (const t of fundingBook.payments({ tip, recorded: (id) => anyRecord.has(id) })) {
         // every id the proposal can have paid under, one part or four (kanban #1175: a row fixed by the old rule)
         const mine = new Set(paymentIdsOf(t.proposal));
         const others = recs.filter((r) => r.proposal !== t.id);
