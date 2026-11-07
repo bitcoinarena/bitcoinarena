@@ -16,6 +16,9 @@ export const FEEDBACK_TYPES = Object.freeze(['bug', 'confusing', 'idea']);
 export const STATES = Object.freeze({ NEW: 'new', ACCEPTED: 'accepted', REJECTED: 'rejected', DUPLICATE: 'duplicate', PAID: 'paid' });
 const NEXT = Object.freeze({ new: ['accepted', 'rejected', 'duplicate'], accepted: ['paid', 'rejected'], rejected: [], duplicate: [], paid: [] });
 export const TEXT_MOST = 4000;
+// THE REWARD RULES (kanban #1342 section 2): settings the owner can change; testnet sats in phase 1
+export const REWARD_DEFAULTS = Object.freeze({ perKeyPerWeek: 3, weeklyBudgetSats: 50000, mostSats: 20000, leastSats: 100 });
+const WEEK_MS = 7 * 24 * 3600 * 1000;
 export const REPORT_AGE_MOST_S = 24 * 3600;     // a report signed more than a day ago is not taken (a replayed one)
 export const AUTH_AGE_MOST_S = 60;
 
@@ -87,6 +90,7 @@ export function openFeedbackStore(path = ':memory:') {
     const r = get.get(String(id));
     if (!r) return { ok: false, why: 'no such report' };
     if (!(NEXT[r.state] || []).includes(to)) return { ok: false, why: `a ${r.state} report does not become ${to}` };
+    if (to === STATES.ACCEPTED) return { ok: false, why: 'a report is accepted by approve(), with its amount and the reward rules' };
     if (to === STATES.REJECTED && !(reason && String(reason).trim().length >= 3)) return { ok: false, why: 'a rejection says why: the player reads it' };
     if (to === STATES.DUPLICATE) {
       const of = duplicateOf ? get.get(String(duplicateOf)) : null;
@@ -100,6 +104,34 @@ export function openFeedbackStore(path = ':memory:') {
     return { ok: true, report: row(get.get(r.id)) };
   }
 
+  /**
+   * APPROVE FOR MONEY (kanban #1342 section 2): only a new report, by a human, with an amount - and only when every rule holds:
+   *   a real player   `played(pubkey)` says the key finished a round (the network season's rows, networkPlayers below)
+   *   not ours        the key is not in `excluded` (team, admin and bot keys)
+   *   not a duplicate a duplicate is never new; the first report of a bug keeps its place
+   *   limits          at most `perKeyPerWeek` approvals per key in 7 days, and the week's approved sum within `weeklyBudgetSats`
+   *   an amount       between `leastSats` and `mostSats` (a critical bug above that is the owner's own call: a higher `mostSats` for that one approval)
+   * Answers { ok, report } or { ok: false, why } naming the rule.
+   */
+  function approve(id, amountSats, { played, excluded = new Set(), rules = REWARD_DEFAULTS, severity = null, by = null, nowMs = Date.now() } = {}) {
+    const r = get.get(String(id));
+    if (!r) return { ok: false, why: 'no such report' };
+    if (r.state !== STATES.NEW) return { ok: false, why: `${/^[aeiou]/.test(r.state) ? 'an' : 'a'} ${r.state} report is not approved for money${r.state === STATES.DUPLICATE ? ': the first report of it is' : ''}` };
+    const sats = Number(amountSats);
+    const R = { ...REWARD_DEFAULTS, ...(rules || {}) };
+    if (!Number.isInteger(sats) || sats < R.leastSats || sats > R.mostSats) return { ok: false, why: `an amount is ${R.leastSats} to ${R.mostSats} sat` };
+    if (excluded.has(r.pubkey)) return { ok: false, why: 'that key is ours (team, admin or bot): never paid' };
+    if (typeof played !== 'function' || played(r.pubkey) !== true) return { ok: false, why: 'that key has not finished a round on the network: only players are rewarded' };
+    const since = nowMs - WEEK_MS;
+    const mine = db.prepare(`SELECT COUNT(*) AS n FROM reports WHERE pubkey = ? AND state IN ('accepted', 'paid') AND changed_ms >= ?`).get(r.pubkey, since).n;
+    if (mine >= R.perKeyPerWeek) return { ok: false, why: `that key has ${mine} rewards this week: at most ${R.perKeyPerWeek}` };
+    const week = db.prepare(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ?`).get(since).s;
+    if (week + sats > R.weeklyBudgetSats) return { ok: false, why: `this week's budget: ${week} of ${R.weeklyBudgetSats} sat approved, ${sats} more does not fit` };
+    db.prepare('UPDATE reports SET state = ?, amount_sats = ?, severity = ?, changed_ms = ? WHERE id = ? AND state = ?').run(STATES.ACCEPTED, sats, severity, nowMs, r.id, STATES.NEW);
+    db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, STATES.ACCEPTED, nowMs, by, `${sats} sat${severity ? `, ${severity}` : ''}`);
+    return { ok: true, report: row(get.get(r.id)) };
+  }
+
   /** The admin list (slice 4 builds on it): every report, newest first, filtered by state, type, game or key. */
   function list({ state = null, type = null, game = null, pubkey = null, limit = 500 } = {}) {
     const where = [], args = [];
@@ -107,5 +139,35 @@ export function openFeedbackStore(path = ':memory:') {
     return db.prepare(`SELECT * FROM reports ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY received_ms DESC LIMIT ?`).all(...args, Math.min(Number(limit) || 500, 5000)).map(row);
   }
 
-  return { take, mine, move, list, report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
+  return { take, mine, move, approve, list, report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
+}
+
+/**
+ * WHO FINISHED A ROUND ON THE NETWORK (kanban #1342, the reading tools/weekly-testers.mjs and founding-badges.mjs make): each game's
+ * GET /season?scope=network over `days`, a key with rounds > 0 on any board. Read from the first seat that answers, kept `keepMs`.
+ * `fetcher` and `seats` injected; answers played(pubkeyHex) -> true | false, and refresh() to read now.
+ */
+export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 1000, fetcher = fetch } = {}) {
+  let keys = new Set(), at = 0, reading = null;
+  async function refresh() {
+    const next = new Set();
+    for (const g of games) {
+      for (const seat of seats) {
+        try {
+          const r = await fetcher(`${String(seat).replace(/\/$/, '')}/season?scope=network&game=${encodeURIComponent(g)}&days=${days}`, { signal: AbortSignal.timeout(20000) });
+          if (!r.ok) continue;
+          const b = await r.json();
+          for (const row of b.rows || []) if (Number(row.rounds) > 0 && /^[0-9a-f]{64}$/i.test(String(row.player || ''))) next.add(String(row.player).toLowerCase());
+          break;
+        } catch { /* the next seat */ }
+      }
+    }
+    keys = next; at = Date.now();
+    return keys.size;
+  }
+  return {
+    refresh,
+    played: (pubkey) => keys.has(String(pubkey || '').toLowerCase()),
+    async fresh() { if (Date.now() - at > keepMs) { reading = reading || refresh().finally(() => { reading = null; }); await reading; } return keys.size; },
+  };
 }

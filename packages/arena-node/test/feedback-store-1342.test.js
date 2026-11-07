@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { openFeedbackStore, FEEDBACK_KIND, HTTP_AUTH_KIND, STATES } from '../src/feedback-store.js';
+import { openFeedbackStore, networkPlayers, FEEDBACK_KIND, HTTP_AUTH_KIND, STATES } from '../src/feedback-store.js';
 import { eventId } from '../src/nostr-relay.js';
 
 const hex = (b) => Buffer.from(b).toString('hex');
@@ -77,10 +77,11 @@ test('#1342 a human moves the state by the table: a rejection says why, a duplic
     newToPaid: s.move(a.id, STATES.PAID).why,
     dup: s.move(b.id, STATES.DUPLICATE, { duplicateOf: a.id, by: 'admin' }).ok,
     dupAgain: s.move(b.id, STATES.ACCEPTED).why,
-    accept: s.move(a.id, STATES.ACCEPTED, { by: 'admin' }).ok,
+    acceptByMove: s.move(a.id, STATES.ACCEPTED).why,
+    accept: s.approve(a.id, 1000, { played: () => true, by: 'admin' }).ok,
   };
   console.log('  FACTS #1342 moves:', JSON.stringify(steps));
-  assert.ok(steps.rejectNoReason && steps.dupOfLater && steps.dupOfSelf && steps.newToPaid && steps.dupAgain);
+  assert.ok(steps.rejectNoReason && steps.dupOfLater && steps.dupOfSelf && steps.newToPaid && steps.dupAgain && steps.acceptByMove);
   assert.deepEqual([steps.dup, steps.accept], [true, true]);
   assert.deepEqual([s.report(a.id).state, s.report(b.id).state, s.report(b.id).duplicateOf], [STATES.ACCEPTED, STATES.DUPLICATE, a.id]);
   assert.deepEqual(s.list({ state: 'accepted' }).map((r) => r.id), [a.id]);
@@ -92,11 +93,56 @@ test('#1342 the reports outlive a restart: the same file reopened holds them wit
     const path = join(dir, 'feedback.db');
     const alice = key(1);
     const e = report(alice, 'kept across a restart');
-    const s1 = openFeedbackStore(path); s1.take(e); s1.move(e.id, STATES.ACCEPTED, { by: 'admin' }); s1.close();
+    const s1 = openFeedbackStore(path); s1.take(e); s1.approve(e.id, 1000, { played: () => true, by: 'admin' }); s1.close();
     const s2 = openFeedbackStore(path);
     const r = s2.report(e.id);
     console.log('  FACTS #1342 restart:', JSON.stringify({ kept: !!r, state: r && r.state }));
     assert.deepEqual([r.happened, r.state], ['kept across a restart', STATES.ACCEPTED]);
     s2.close();
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---- slice 2: only real feedback from real players gets money ----
+test('#1342 approval for money: a player who finished a round, not ours, not a duplicate, within the per-key and weekly caps and the amount range', () => {
+  const s = openFeedbackStore();
+  const player = key(1), stranger = key(2), bot = key(3), second = key(4);
+  const played = (k) => [player.pubkey, bot.pubkey, second.pubkey].includes(k);
+  const excluded = new Set([bot.pubkey]);
+  const rules = { perKeyPerWeek: 3, weeklyBudgetSats: 11000, mostSats: 5000, leastSats: 100 };
+  const take = (k, w) => { const e = report(k, w); s.take(e); return e.id; };
+  const ids = { p1: take(player, 'bug one in the lobby'), p2: take(player, 'bug two in the lobby'), p3: take(player, 'bug three'), p4: take(player, 'bug four'),
+    st: take(stranger, 'never played, wants sats'), bt: take(bot, 'our own bot reports'), s1: take(second, 'the same lobby bug'), s2: take(second, 'another real bug') };
+  s.move(ids.s1, STATES.DUPLICATE, { duplicateOf: ids.p1 });
+  const ask = (id, sats) => { const r = s.approve(id, sats, { played, excluded, rules }); return r.ok ? `ok ${r.report.amountSats}` : r.why; };
+  const steps = {
+    stranger: ask(ids.st, 1000), bot: ask(ids.bt, 1000), duplicate: ask(ids.s1, 1000), tooMuch: ask(ids.p1, 6000), tooLittle: ask(ids.p1, 10),
+    p1: ask(ids.p1, 5000), p2: ask(ids.p2, 1000), p3: ask(ids.p3, 1000), p4: ask(ids.p4, 1000), again: ask(ids.p1, 1000),
+    budget: ask(ids.s2, 5000), withinBudget: ask(ids.s2, 4000),
+  };
+  console.log('  FACTS #1342 approve:', JSON.stringify(steps));
+  assert.match(steps.stranger, /not finished a round/);
+  assert.match(steps.bot, /ours/);
+  assert.match(steps.duplicate, /duplicate/);
+  assert.match(steps.tooMuch, /100 to 5000 sat/);
+  assert.match(steps.tooLittle, /100 to 5000 sat/);
+  assert.deepEqual([steps.p1, steps.p2, steps.p3], ['ok 5000', 'ok 1000', 'ok 1000']);
+  assert.match(steps.p4, /3 rewards this week: at most 3/);
+  assert.match(steps.again, /an accepted report is not approved/);
+  assert.match(steps.budget, /this week's budget: 7000 of 11000 sat approved, 5000 more does not fit/);
+  assert.equal(steps.withinBudget, 'ok 4000', 'what fits the budget exactly is approved');
+  assert.equal(s.report(ids.st).state, STATES.NEW, 'a refused approval moves nothing');
+});
+
+test('#1342 networkPlayers reads each game\'s network board from the first seat that answers: a key with rounds counts, one with 0 does not', async () => {
+  const A = 'a1'.repeat(32), B = 'b2'.repeat(32), C = 'c3'.repeat(32);
+  const asked = [];
+  const fetcher = async (url) => { asked.push(url); if (url.startsWith('https://down')) throw new Error('down');
+    const game = new URL(url).searchParams.get('game');
+    return new Response(JSON.stringify({ rows: game === 'rock-paper-scissors' ? [{ player: A, rounds: 3 }, { player: C, rounds: 0 }] : [{ player: B.toUpperCase(), rounds: 1 }] }), { status: 200 }); };
+  const np = networkPlayers({ seats: ['https://down.example', 'https://seat.example/'], games: ['rock-paper-scissors', 'nextblock'], fetcher });
+  const n = await np.fresh();
+  console.log('  FACTS #1342 players:', JSON.stringify({ n, A: np.played(A), B: np.played(B), C: np.played(C), asked: asked.length }));
+  assert.equal(n, 2);
+  assert.deepEqual([np.played(A), np.played(B), np.played(C)], [true, true, false]);
+  assert.match(asked[1], /scope=network&game=rock-paper-scissors&days=90/);
 });
