@@ -61,3 +61,63 @@ test('#1342 the faucet keeps a signed report, still posts every report to the ch
     faucet.kill(); chatServer.close(); rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('#1342 the faucet\'s LNURL-withdraw: the request for exactly the reward, one payment through the bounty wallet, the report paid, "My feedback" shows the link until then', async () => {
+  const { chmodSync, readFileSync } = await import('node:fs');
+  const dir = mkdtempSync(join(tmpdir(), 'faucet-lnurlw-1342-'));
+  // A STAND-IN lncli: decodepayreq reads the amount from the invoice's text, payinvoice succeeds once per invoice and logs it
+  const lncli = join(dir, 'lncli');
+  writeFileSync(lncli, `#!/bin/bash
+cmd=""; for a in "$@"; do case "$a" in decodepayreq|payinvoice|listpayments) cmd="$a";; esac; done
+inv="\${@: -1}"
+case "$cmd" in
+  decodepayreq) sats=$(echo "$inv" | sed -E 's/^lntb([0-9]+)x.*/\\1/'); echo "{\\"num_satoshis\\":\\"$sats\\",\\"payment_hash\\":\\"$(echo -n "$inv" | sha256sum | cut -c1-64)\\"}";;
+  payinvoice) echo "$inv" >> "${join(dir, 'paid.log')}"; echo "Payment hash: $(echo -n "$inv" | sha256sum | cut -c1-64)"; echo "Payment status: SUCCEEDED";;
+  listpayments) echo '{"payments":[]}';;
+esac
+`);
+  chmodSync(lncli, 0o755);
+  writeFileSync(join(dir, 'token'), 'x');
+  const chatServer = createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(200); res.end('{}'); }); });
+  await new Promise((r) => chatServer.listen(0, '127.0.0.1', r));
+  const port = 20000 + Math.floor(Math.random() * 9000), db = join(dir, 'feedback.db');
+  const faucet = spawn(process.execPath, [fileURLToPath(new URL('../tools/faucet.mjs', import.meta.url))], { stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, FAUCET_PORT: String(port), FAUCET_CHAT_URL: `http://127.0.0.1:${chatServer.address().port}`, FAUCET_CHAT_CHANNEL: '6', FAUCET_CHAT_TOKEN_FILE: join(dir, 'token'),
+      FAUCET_FEEDBACK_DB: db, FAUCET_FEEDBACK_MINE_URLS: MINE, FAUCET_FOUNDING_FILE: join(dir, 'founding.jsonl'), FAUCET_BOOK: join(dir, 'book.json'),
+      FAUCET_LNCLI: lncli, FAUCET_BOUNTY_PAYER: `${dir}|127.0.0.1:1`, FAUCET_PUBLIC_BASE: 'https://testnet.example/api/faucet' } });
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    for (let i = 0; i < 50; i++) { try { await fetch(`${base}/feedback/mine`); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+    const alice = key(1);
+    const ev = signed(alice, FEEDBACK_KIND, [['t', 'bug']], JSON.stringify({ happened: 'The withdraw spinner never stops' }));
+    await (await fetch(`${base}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ event: ev }) })).json();
+    // the admin approves it and makes the link (slice 4's buttons), on the same file
+    const { openFeedbackStore } = await import('../src/feedback-store.js');
+    const admin = openFeedbackStore(db);
+    admin.approve(ev.id, 2500, { played: () => true, by: 'admin' });
+    const k1 = admin.createReward(ev.id).reward.k1;
+    admin.close();
+    const mineNow = async () => (await fetch(`${base}/feedback/mine`, { headers: { authorization: `Nostr ${Buffer.from(JSON.stringify(signed(alice, HTTP_AUTH_KIND, [['u', MINE], ['method', 'GET']]))).toString('base64')}` } })).json();
+    const before = await mineNow();
+    const req = await (await fetch(`${base}/lnurlw/${k1}`)).json();
+    const cb = (pr, k = k1) => fetch(`${base}/lnurlw/${k1}/callback?k1=${k}&pr=${pr}`).then((r) => r.json());
+    const wrongK1 = await cb('lntb2500x1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'ff'.repeat(32));
+    const wrongAmount = await cb('lntb2400x1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    const [one, two] = await Promise.all([cb('lntb2500x1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'), cb('lntb2500x1ccccccccccccccccccccccccccccccc')]);
+    const after = await mineNow();
+    const reqAfter = await (await fetch(`${base}/lnurlw/${k1}`)).json();
+    let paidLines = []; try { paidLines = readFileSync(join(dir, 'paid.log'), 'utf8').trim().split('\n'); } catch { paidLines = []; }
+    const facts = { before: before.reports.map((r) => [r.state, r.reward && r.reward.sats, r.reward && r.reward.lnurl && r.reward.lnurl.slice(0, 8)]), req: [req.tag, req.maxWithdrawable, req.callback],
+      wrongK1: wrongK1.reason, wrongAmount: wrongAmount.reason, claims: [one.status, two.status], paidOnce: paidLines.length,
+      after: after.reports.map((r) => [r.state, r.reward && r.reward.state, r.reward && r.reward.lnurl]), reqAfter: reqAfter.reason };
+    console.log('  FACTS #1342 lnurlw:', JSON.stringify(facts));
+    assert.deepEqual(facts.before, [['accepted', 2500, 'lnurl1dp']]);
+    assert.deepEqual([req.tag, req.maxWithdrawable, req.callback], ['withdrawRequest', 2500000, `https://testnet.example/api/faucet/lnurlw/${k1}/callback`]);
+    assert.match(facts.wrongK1, /k1 does not match/);
+    assert.match(facts.wrongAmount, /exactly 2500 sat/);
+    assert.deepEqual(facts.claims.sort(), ['ERROR', 'OK']);
+    assert.equal(facts.paidOnce, 1, 'the bounty wallet paid more than once');
+    assert.deepEqual(facts.after, [['paid', 'paid', null]], 'paid: the report and the reward, and no link left to claim');
+    assert.match(facts.reqAfter, /claimed/);
+  } finally { faucet.kill(); chatServer.close(); rmSync(dir, { recursive: true, force: true }); }
+});

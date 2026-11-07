@@ -6,6 +6,8 @@
 // nothing moves on its own. "My feedback" is asked with a NIP-98 HTTP-auth event by the same key: a report's reward link is a bearer secret, so the
 // list is never read by its pubkey alone.
 import { DatabaseSync } from 'node:sqlite';
+import { randomBytes } from 'node:crypto';
+import { lnurlFor } from '../../arena-protocol/src/bech32.js';
 import { eventId, eventRefusal } from './nostr-relay.js';
 
 /** The report's kind: ephemeral (20000-29999), so no relay keeps it - it goes to the faucet only. */
@@ -34,7 +36,9 @@ export function openFeedbackStore(path = ':memory:') {
       happened TEXT NOT NULL, expected TEXT NOT NULL, game TEXT, round TEXT, build TEXT, event TEXT NOT NULL,
       state TEXT NOT NULL DEFAULT 'new', reason TEXT, duplicate_of TEXT, severity TEXT, amount_sats INTEGER, ticket TEXT, changed_ms INTEGER);
     CREATE INDEX IF NOT EXISTS reports_by_key ON reports (pubkey, received_ms);
-    CREATE TABLE IF NOT EXISTS report_moves (id TEXT NOT NULL, from_state TEXT NOT NULL, to_state TEXT NOT NULL, at_ms INTEGER NOT NULL, by TEXT, note TEXT);`);
+    CREATE TABLE IF NOT EXISTS report_moves (id TEXT NOT NULL, from_state TEXT NOT NULL, to_state TEXT NOT NULL, at_ms INTEGER NOT NULL, by TEXT, note TEXT);
+    CREATE TABLE IF NOT EXISTS rewards (k1 TEXT PRIMARY KEY, report TEXT NOT NULL UNIQUE, pubkey TEXT NOT NULL, amount_sats INTEGER NOT NULL, network TEXT NOT NULL,
+      created_ms INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'open', invoice TEXT, payment_hash TEXT, tried_ms INTEGER, paid_ms INTEGER, why TEXT);`);
   const get = db.prepare('SELECT * FROM reports WHERE id = ?');
   const row = (r) => (r ? { id: r.id, pubkey: r.pubkey, type: r.type, signedAt: r.signed_at, receivedMs: r.received_ms, happened: r.happened, expected: r.expected,
     game: r.game || null, round: r.round || null, build: r.build || null, state: r.state, reason: r.reason || null, duplicateOf: r.duplicate_of || null,
@@ -132,6 +136,86 @@ export function openFeedbackStore(path = ':memory:') {
     return { ok: true, report: row(get.get(r.id)) };
   }
 
+  // ---- THE REWARD (kanban #1342 section 3): one LNURL-withdraw per approved report, for exactly its amount, single use, never expiring ----
+  const rewardRow = (w) => (w ? { k1: w.k1, report: w.report, pubkey: w.pubkey, amountSats: w.amount_sats, network: w.network, createdMs: w.created_ms, state: w.state,
+    paymentHash: w.payment_hash || null, paidMs: w.paid_ms ?? null, why: w.why || null } : null);
+  const rewardOf = db.prepare('SELECT * FROM rewards WHERE k1 = ?');
+
+  /** THE LINK FOR AN ACCEPTED REPORT: made once (asked again, the same k1). `network` the payout network ('testnet4' in phase 1). */
+  function createReward(id, { network = 'testnet4', nowMs = Date.now(), by = null } = {}) {
+    const r = get.get(String(id));
+    if (!r) return { ok: false, why: 'no such report' };
+    const had = db.prepare('SELECT * FROM rewards WHERE report = ?').get(r.id);
+    if (had) return { ok: true, reward: rewardRow(had), made: false };
+    if (r.state !== STATES.ACCEPTED || !(r.amount_sats > 0)) return { ok: false, why: 'only an approved report with its amount gets a reward link' };
+    const k1 = randomBytes(32).toString('hex');
+    db.prepare('INSERT INTO rewards (k1, report, pubkey, amount_sats, network, created_ms) VALUES (?, ?, ?, ?, ?, ?)').run(k1, r.id, r.pubkey, r.amount_sats, String(network), nowMs);
+    db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by, `reward link made, ${r.amount_sats} sat on ${network}`);
+    return { ok: true, reward: rewardRow(rewardOf.get(k1)), made: true };
+  }
+
+  /** LUD-03's first answer, at `<base>/lnurlw/<k1>`: the request a wallet reads; an ERROR for a paid or unknown link. */
+  function withdrawRequest(k1, { base }) {
+    const w = rewardOf.get(String(k1));
+    if (!w) return { status: 'ERROR', reason: 'no such reward' };
+    if (w.state === 'paid') return { status: 'ERROR', reason: 'this reward was claimed' };
+    if (w.state === 'paying') return { status: 'ERROR', reason: 'this reward is being paid: try again in a minute' };
+    const msat = w.amount_sats * 1000;
+    return { tag: 'withdrawRequest', callback: `${base}/lnurlw/${w.k1}/callback`, k1: w.k1, minWithdrawable: msat, maxWithdrawable: msat,
+      defaultDescription: `Bitcoin Arena feedback reward, ${w.amount_sats} sat${w.network === 'mainnet' ? '' : ' (testnet sats, no value)'}` };
+  }
+  /** The link a wallet scans: LUD-01 bech32 of `<base>/lnurlw/<k1>`. */
+  const lnurlOf = (k1, { base }) => lnurlFor(`${base}/lnurlw/${k1}`);
+
+  /**
+   * LUD-03's callback: pay `invoice` for exactly the reward's amount, once. The row moves open -> paying with a compare-and-set before anything is
+   * paid, so two claims never both pay. `decode(invoice)` -> { ok, amountSats, paymentHash } and `pay(invoice)` -> { ok, paymentHash } | { ok: false,
+   * failed: true } (a payment that surely did not go) | { ok: false } (not known): only a sure failure opens the link again; an unknown stays
+   * paying, for settle() to read. Answers LUD-03's { status: 'OK' } or { status: 'ERROR', reason }.
+   */
+  async function claim(k1, invoice, { decode, pay, nowMs = Date.now() } = {}) {
+    const w = rewardOf.get(String(k1));
+    if (!w) return { status: 'ERROR', reason: 'no such reward' };
+    if (w.state !== 'open') return { status: 'ERROR', reason: w.state === 'paid' ? 'this reward was claimed' : 'this reward is being paid' };
+    let d;
+    try { d = await decode(String(invoice || '')); } catch { d = { ok: false }; }
+    if (!d || !d.ok) return { status: 'ERROR', reason: 'that invoice could not be read' };
+    if (Number(d.amountSats) !== w.amount_sats) return { status: 'ERROR', reason: `the invoice must be for exactly ${w.amount_sats} sat` };
+    const took = db.prepare("UPDATE rewards SET state = 'paying', invoice = ?, payment_hash = ?, tried_ms = ? WHERE k1 = ? AND state = 'open'").run(String(invoice), d.paymentHash || null, nowMs, w.k1);
+    if (took.changes !== 1) return { status: 'ERROR', reason: 'this reward is being paid' };
+    let p;
+    try { p = await pay(String(invoice)); } catch (e) { p = { ok: false, why: e.message }; }
+    if (p && p.ok) { paidNow(w, p.paymentHash || d.paymentHash, nowMs); return { status: 'OK' }; }
+    if (p && p.failed) { db.prepare("UPDATE rewards SET state = 'open', why = ? WHERE k1 = ? AND state = 'paying'").run(String(p.why || 'the payment failed'), w.k1); return { status: 'ERROR', reason: 'the payment failed: try again' }; }
+    db.prepare("UPDATE rewards SET why = ? WHERE k1 = ?").run(String((p && p.why) || 'the payment\'s outcome is not known yet'), w.k1);
+    return { status: 'ERROR', reason: 'the payment is not settled yet: it is checked again, do not claim twice' };
+  }
+  function paidNow(w, paymentHash, nowMs) {
+    db.prepare("UPDATE rewards SET state = 'paid', payment_hash = COALESCE(?, payment_hash), paid_ms = ?, why = NULL WHERE k1 = ?").run(paymentHash || null, nowMs, w.k1);
+    const r = get.get(w.report);
+    if (r && r.state === STATES.ACCEPTED) {
+      db.prepare('UPDATE reports SET state = ?, changed_ms = ? WHERE id = ?').run(STATES.PAID, nowMs, r.id);
+      db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, STATES.PAID, nowMs, 'lnurlw', paymentHash || null);
+    }
+  }
+  /**
+   * A PAYMENT WHOSE OUTCOME WAS NOT KNOWN (a restart mid-pay, a timeout): `status(paymentHash)` -> 'paid' | 'failed' | 'unknown', the payer's own
+   * record. Paid: the reward and the report are paid. Failed: the link opens again. Unknown: it stays paying.
+   */
+  async function settle({ status, nowMs = Date.now() } = {}) {
+    const out = [];
+    for (const w of db.prepare("SELECT * FROM rewards WHERE state = 'paying'").all()) {
+      let st = 'unknown';
+      try { st = w.payment_hash ? await status(w.payment_hash) : 'unknown'; } catch { st = 'unknown'; }
+      if (st === 'paid') paidNow(w, w.payment_hash, nowMs);
+      else if (st === 'failed') db.prepare("UPDATE rewards SET state = 'open', why = 'the payment failed' WHERE k1 = ? AND state = 'paying'").run(w.k1);
+      out.push({ k1: w.k1, status: st });
+    }
+    return out;
+  }
+  const rewards = ({ pubkey = null } = {}) => (pubkey ? db.prepare('SELECT * FROM rewards WHERE pubkey = ? ORDER BY created_ms DESC').all(String(pubkey))
+    : db.prepare('SELECT * FROM rewards ORDER BY created_ms DESC').all()).map(rewardRow);
+
   /** The admin list (slice 4 builds on it): every report, newest first, filtered by state, type, game or key. */
   function list({ state = null, type = null, game = null, pubkey = null, limit = 500 } = {}) {
     const where = [], args = [];
@@ -139,7 +223,7 @@ export function openFeedbackStore(path = ':memory:') {
     return db.prepare(`SELECT * FROM reports ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY received_ms DESC LIMIT ?`).all(...args, Math.min(Number(limit) || 500, 5000)).map(row);
   }
 
-  return { take, mine, move, approve, list, report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
+  return { take, mine, move, approve, list, createReward, withdrawRequest, lnurlOf, claim, settle, rewards, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
 }
 
 /**

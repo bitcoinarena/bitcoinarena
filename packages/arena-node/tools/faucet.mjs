@@ -12,6 +12,9 @@
 //   POST /feedback { event? , text?, build?, game?, round?, player? } -> a report: posted to Arena Chat; a signed `event` (kind 27842) is also kept for review (kanban #1342)
 //   GET  /feedback/mine  (Authorization: Nostr <base64 NIP-98 event>) -> the signed-in key's own reports and their states (kanban #1342)
 //                                   FAUCET_FEEDBACK_DB (the store), FAUCET_FEEDBACK_MINE_URLS (the public URLs a sign-in may name, comma separated)
+//   GET  /lnurlw/<k1>               -> LUD-03 withdrawRequest of an approved report's reward (kanban #1342); /lnurlw/<k1>/callback?k1=&pr= pays it once
+//                                   FAUCET_BOUNTY_PAYER=<lnddir>|<rpc host:port> (the bounty wallet, its own), FAUCET_PUBLIC_BASE (the public /api/faucet URL),
+//                                   FAUCET_BOUNTY_NETWORK (testnet4: phase 1 is testnet only)
 //                                   FAUCET_LNCLI, FAUCET_PAYERS=<lnddir>|<rpc host:port>,... : the second pays when an invoice's gateway is on the first
 //
 // Each payment's txid is appended to FAUCET_PENDING, which the the test host's miner-C feeder (ops/pending-to-minerc.sh) lists for mining.
@@ -64,6 +67,31 @@ async function pay(ask) {
 const PAYERS = String(env.FAUCET_PAYERS || '').split(',').filter(Boolean).map((p) => { const [dir, rpcserver] = p.split('|'); return { dir, rpcserver }; });
 const lncli = (payer, args, timeoutMs = 20000) => new Promise((res) => execFile(env.FAUCET_LNCLI, [`--lnddir=${payer.dir}`, '--network=testnet4', `--rpcserver=${payer.rpcserver}`, ...args],
   { timeout: timeoutMs }, (e, out, err) => res({ ok: !e, timedOut: !!(e && e.killed), out: String(out), err: String(err) })));
+
+// THE BOUNTY WALLET (kanban #1342 section 3): its own payer, never the faucet's; the payout network one setting (testnet4 in phase 1)
+const BOUNTY_PAYER = env.FAUCET_BOUNTY_PAYER ? (([dir, rpcserver]) => ({ dir, rpcserver }))(env.FAUCET_BOUNTY_PAYER.split('|')) : null;
+const BOUNTY_NETWORK = env.FAUCET_BOUNTY_NETWORK || 'testnet4';
+const PUBLIC_BASE = String(env.FAUCET_PUBLIC_BASE || 'https://testnet.bitcoinarena.io/api/faucet').replace(/\/$/, '');
+const bountyDecode = async (invoice) => {
+  if (!/^lntb[0-9a-z]{20,1500}$/.test(invoice)) return { ok: false };
+  const r = await lncli(BOUNTY_PAYER, ['decodepayreq', invoice]);
+  if (!r.ok) return { ok: false };
+  const j = JSON.parse(r.out);
+  return { ok: true, amountSats: Number(j.num_satoshis), paymentHash: j.payment_hash };
+};
+const bountyPay = async (invoice) => {
+  const r = await lncli(BOUNTY_PAYER, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', invoice], 75000);
+  if (/Payment status: SUCCEEDED/.test(r.out)) { const h = /Payment hash: ([0-9a-f]{64})/.exec(r.out); return { ok: true, paymentHash: h ? h[1] : null }; }
+  if (/Payment status: FAILED/.test(r.out) && !r.timedOut) return { ok: false, failed: true, why: (r.out.split('\n').find((l) => /reason/i.test(l)) || 'failed').trim().slice(0, 160) };
+  return { ok: false, why: r.timedOut ? 'the payment timed out' : 'in flight' };
+};
+const bountyStatus = async (hash) => {
+  const r = await lncli(BOUNTY_PAYER, ['listpayments', '--include_incomplete', '--max_payments=500', '--paginate_forwards=false'], 20000);
+  if (!r.ok) return 'unknown';
+  const p = (JSON.parse(r.out).payments || []).find((x) => x.payment_hash === hash);
+  return !p ? 'failed' : p.status === 'SUCCEEDED' ? 'paid' : p.status === 'FAILED' ? 'failed' : 'unknown';
+};
+if (FEEDBACK && BOUNTY_PAYER) setInterval(() => FEEDBACK.settle({ status: bountyStatus }).catch(() => {}), 60000).unref();
 
 /** A player's grant: read the invoice, decide, keep it in the book BEFORE paying (a crash pays nobody twice), and take it out again if no payer could pay. */
 async function grant(ask) {
@@ -138,6 +166,15 @@ createServer((req, res) => {
     });
     return undefined;
   }
+  // A REWARD'S LNURL-WITHDRAW (kanban #1342, LUD-03): the request, then the callback that pays the wallet's invoice once - one at a time (one())
+  { const m = /^\/lnurlw\/([0-9a-f]{64})(\/callback)?$/.exec(path);
+    if (m) {
+      if (!FEEDBACK || !BOUNTY_PAYER) return send(503, { status: 'ERROR', reason: 'rewards are not paid here' });
+      if (!m[2]) return send(200, FEEDBACK.withdrawRequest(m[1], { base: PUBLIC_BASE }));
+      const q = new URL(req.url, 'http://x').searchParams;
+      if (q.get('k1') !== m[1]) return send(200, { status: 'ERROR', reason: 'k1 does not match the link' });
+      return one(() => FEEDBACK.claim(m[1], q.get('pr') || '', { decode: bountyDecode, pay: bountyPay })).then((r) => send(200, r), () => send(200, { status: 'ERROR', reason: 'try again in a minute' }));
+    } }
   // "MY FEEDBACK" (kanban #1342): a NIP-98 sign-in by the reporter's key; the reports' reward links are bearer secrets, so never by pubkey alone
   if (path === '/feedback/mine') {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'GET', 'access-control-allow-headers': 'authorization', 'access-control-max-age': '86400' }); return res.end(); }
@@ -146,7 +183,12 @@ createServer((req, res) => {
     try { const h = String(req.headers.authorization || ''); if (h.startsWith('Nostr ')) ev = JSON.parse(Buffer.from(h.slice(6), 'base64').toString('utf8')); } catch { ev = null; }
     if (!ev) return send(401, { ok: false, why: 'sign in with your key (NIP-98)' });
     let last = null;
-    for (const url of MINE_URLS) { const m = FEEDBACK.mine(ev, { url, method: 'GET' }); if (m.ok) return send(200, m); last = m; }
+    // EACH REPORT WITH ITS REWARD, IF ANY: its state and the link to claim it (lnurl + the stable /reward page)
+    for (const url of MINE_URLS) { const m = FEEDBACK.mine(ev, { url, method: 'GET' });
+      if (m.ok) { const byReport = new Map(FEEDBACK.rewards({ pubkey: m.pubkey }).map((w) => [w.report, w]));
+        return send(200, { ...m, reports: m.reports.map((r) => { const w = byReport.get(r.id);
+          return { ...r, reward: w ? { sats: w.amountSats, network: w.network, state: w.state, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }) } : null }; }) }); }
+      last = m; }
     return send(401, { ok: false, why: last ? last.why : 'that sign-in does not stand' });
   }
   if (path === '/feedback') {
