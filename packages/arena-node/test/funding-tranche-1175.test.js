@@ -83,3 +83,26 @@ test('#1175: the payment row has one transition function; a cancellation is term
   assert.equal(book.trancheCountOf(3n), 1, 'too small to split');
   assert.equal(book.trancheCountOf(4n), 4);
 });
+
+test('#1235 (audit 3 FIXES-11): no refix on an unknown tip, none once a payment id of the proposal is recorded; the cap never pays past the amount', async () => {
+  const { capStands } = await import('../../arena-protocol/src/funding.js');
+  const partsOf = (w) => w.db.prepare('SELECT tranches FROM funding_payments WHERE proposal = ?').get(IDH).tranches;
+  const w = seat(); await passed(w);
+  await roundTo(w, 111);
+  w.db.prepare('INSERT INTO funding_payments (proposal, tranches, cancelled) VALUES (?, 1, NULL)').run(IDH);   // fixed by the old rule, and paid
+  w.b.payments({ tip: null });
+  const afterNull = partsOf(w);
+  w.b.payments({ tip: 111, recorded: (id) => id === IDH });
+  const afterRecorded = partsOf(w);
+  const fresh = seat(); await passed(fresh); await roundTo(fresh, 111);
+  fresh.db.prepare('INSERT INTO funding_payments (proposal, tranches, cancelled) VALUES (?, 1, NULL)').run(IDH);
+  fresh.b.payments({ tip: 111, recorded: () => false });
+  const cap = (paid, now) => capStands({ proposalSats: 1000n, paymentSats: now, reservesSats: 1_000_000n, paidByProposalSats: paid });
+  const caps = { paidThenPart: cap(1000n, 250n), lastPart: cap(750n, 250n) };
+  console.log('  MEASURED #1235:', JSON.stringify({ afterNull, afterRecorded, freshRefix: partsOf(fresh), paidThenPart: caps.paidThenPart.ok, lastPart: caps.lastPart.ok }));
+  assert.equal(afterNull, 1, 'an unknown tip never refixes');
+  assert.equal(afterRecorded, 1, 'a recorded payment id keeps the row as fixed');
+  assert.equal(partsOf(fresh), 4, 'nothing recorded, a known tip, nothing payable: set right as before');
+  assert.equal(caps.paidThenPart.ok, false); assert.equal(caps.paidThenPart.final, true); assert.match(caps.paidThenPart.why, /more than the 1000 sat it asked/);
+  assert.equal(caps.lastPart.ok, true, 'the last part of four still fits');
+});
