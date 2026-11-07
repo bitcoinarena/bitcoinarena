@@ -643,3 +643,24 @@ test('§23A.9 from protocol 22: no eligible guardian - each gateway seat one out
   assert.equal(rt.pools.gameVerify + rt.pools.settlement, 2n * FEE - table.pools.liquidity, 'the committees hold the rest');
   assert.equal(r.signerNodePayouts.reduce((a, p) => a + p.owedMsat, 0n), 2n * FEE, 'the whole fee');
 });
+
+// THE FALLBACK CLAIM'S FEE (spec §23.2, kanban #1281): the fee locks claimed without F; a quiet seat's share to the reserves, never the other seats'
+test('a fallback pays the seats with a timely signed result their share, a quiet seat\'s share to the reserves, and claims the fee locks without F', () => {
+  const W = entry(1, DELIVERED, 3);
+  const L = entry(2, FAILED, 0);
+  const signerNodes = [SIGNER_NODE(1), SIGNER_NODE(2)];
+  const reserveKey = Uint8Array.from([0x02, ...b32(0x5e)]);
+  const args = { roundId: RID, entries: [W, L], minScore: 1, fees: NO_FEES, contract: contractOf(signerNodes),
+    signerNodes: { gameVerify: signerNodes, settlement: signerNodes }, addressed: named(W),
+    locks: new Map([lockFor(W, 1), lockFor(L, 2)]), feeLocks: new Map([feeLockFor(W, 1), feeLockFor(L, 2)].map(([k, f]) => [k, { ...f, preimage: null }])) };
+  const normal = lockSettlement(args);
+  assert.equal(normal.ok, false, 'without the fallback a fee lock with no F is refused');
+  const s = lockSettlement({ ...args, fallback: { eligible: new Set([toHex(signerNodes[0])]), reserveKey } });
+  assert.equal(s.ok, true, s.why);
+  assert.ok(s.feeClaims.every((c) => c.preimage === undefined), 'no F named');
+  const each = (2n * FEE) / 2n;
+  assert.deepEqual(s.signerNodePayouts.filter((p) => p.kind === 'signer node').map((p) => [toHex(p.payoutPk), p.msat]), [[toHex(refundKeyOf(signerNodes[0])), each]], 'only the timely seat');
+  const reserve = s.payouts.filter((p) => p.kind === 'reserve');
+  assert.equal(reserve.length, 1); assert.equal(toHex(reserve[0].payoutPk), toHex(reserveKey)); assert.equal(reserve[0].msat, each, 'the quiet seat\'s share, whole');
+  assert.match(lockSettlement({ ...args, fallback: { eligible: new Set(), reserveKey: null } }).why, /no reserve key/);
+});
