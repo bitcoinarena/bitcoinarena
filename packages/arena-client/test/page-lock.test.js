@@ -1454,7 +1454,9 @@ test('an Arena lock is refunded and redeemed by arenaRedeem with its witness, ne
   const d = await redeemStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: ArenaFake, nodes: ['http://a.test', 'http://c.test', 'http://b.test'],
     fetcher: signerNodesSay({ 'a.test': { signature: SIG, contractId: 'c1', claimPk: '02'.repeat(33) }, 'c.test': { signature: SIG, contractId: 'c1', signers: [0, 1, 2, 4, 6] },
       'b.test': { signature: NAMED, contractId: 'c1', signers: [0, 1, 2, 4, 6] } }) });
-  assert.deepEqual(ArenaFake.calls, [{ arenaRedeem: { txid: 'cd'.repeat(32), outIdx: 0, witness: { kind: 'cancel', signers: [0, 1, 2, 4, 6], signature: NAMED }, key: toHex(p.secret) } }]);
+  // kanban #1238: the federation is asked whether it holds the lock before it is redeemed
+  assert.ok(ArenaFake.calls.some((c) => c.arenaLockStatus), 'the lock was redeemed without asking the federation whether it holds it');
+  assert.deepEqual(ArenaFake.calls.filter((c) => !c.arenaLockStatus), [{ arenaRedeem: { txid: 'cd'.repeat(32), outIdx: 0, witness: { kind: 'cancel', signers: [0, 1, 2, 4, 6], signature: NAMED }, key: toHex(p.secret) } }]);
   assert.deepEqual(d.redeems.map((x) => [x.accepted, x.forfeitFrom]), [[true, 'http://b.test']]);
   // signers out of order, or none, are no forfeit of an Arena lock
   ArenaFake.calls = [];
