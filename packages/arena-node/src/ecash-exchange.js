@@ -102,12 +102,6 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
   const note = (id, state, why) => db.prepare('UPDATE ecash_exchanges SET why = ? WHERE id = ? AND state = ?').run(String(why).slice(0, 300), id, state);
 
   async function exchange({ from, to, ecash, amountMsat }) {
-    // NO EXCHANGE OUT OF OR INTO A FEDERATION BEING LIQUIDATED (kanban #1244, audit 3 MONEY-3): its notes are claimed at the arbitration set,
-    // and notes claimed there and exchanged here too would be paid twice - by the escrow and by this seat. Asked before anything is written.
-    for (const fid of [from, to]) {
-      let h = null; try { h = halted(String(fid || '').toLowerCase()); } catch { h = null; }
-      if (h) return refuse(409, `federation ${String(fid).slice(0, 16)} is being liquidated${Number.isInteger(h.height) ? ` (halted at ${h.height})` : ''}: its notes are claimed at the arbitration set, not exchanged here`);
-    }
     from = String(from || '').toLowerCase(); to = String(to || '').toLowerCase();
     if (!hex64.test(from) || !hex64.test(to)) return refuse(400, 'from and to are federation ids, 32 bytes hex');
     if (from === to) return refuse(400, 'from and to are the same federation: nothing to exchange');
@@ -130,6 +124,16 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
     if (r && r.state === EXCHANGE.PAID) return paidAnswer(r, true);
     if (r && r.state === EXCHANGE.REFUSED) return refuse(409, `federation ${r.from_fed.slice(0, 8)} did not reissue that e-cash: ${r.why || 'refused'}`);
     if (r && (r.from_fed !== from || r.to_fed !== to)) return refuse(409, 'that e-cash is in an exchange between two other federations here');
+    // NO NEW EXCHANGE OUT OF OR INTO A FEDERATION BEING LIQUIDATED (kanban #1244, audit 3 MONEY-3): its notes are claimed at the arbitration set,
+    // and notes claimed there and exchanged here too would be paid twice. Asked before anything is written - and only for an exchange whose notes
+    // this seat has not taken yet (kanban #1272, audit 4 #1257 fixesB-1): one taken before the halt (TAKEN, SENDING) is paid out, a PAID one is
+    // answered again (above); refused, they stayed with the seat for good and the player was never paid
+    if (!r || r.state === EXCHANGE.RECEIVING) {
+      for (const fid of [from, to]) {
+        let h = null; try { h = halted(String(fid || '').toLowerCase()); } catch { h = null; }
+        if (h) return refuse(409, `federation ${String(fid).slice(0, 16)} is being liquidated${Number.isInteger(h.height) ? ` (halted at ${h.height})` : ''}: its notes are claimed at the arbitration set, not exchanged here`);
+      }
+    }
     const [pin, pout] = await Promise.all([portOf(from), portOf(to)]);
     if (!pin || !pout || typeof pin.ecashReceive !== 'function' || typeof pout.ecashSend !== 'function')
       return refuse(409, 'this seat holds no client of one of the two federations, or its tool cannot move e-cash');
