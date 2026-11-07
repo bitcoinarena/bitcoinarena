@@ -223,3 +223,30 @@ test('#1172 a late loser of a round that takes any federation is a candidate onc
   // and its submit through the late port, refused but in: ACCEPTED, not REFUSED
   assert.equal(ports[A].spent.size, 0, 'nothing moved in A');
 });
+
+// KANBAN #1240 (audit 3 #1210 FIXES-6): only the seat that combined the federations' transactions kept the winners' shares; a seat that took
+// the handed signatures kept none, refused every late loser ("kept no shares"), and fewer than a threshold ever committed
+test('#1240 a seat that kept no shares of an any-federation round derives them from its plan and builds the late loser\'s settlement', async () => {
+  const { ls, round, built } = lateSeat();
+  round.db.prepare('DELETE FROM lock_settlement_shares WHERE round_id = ?').run(Buffer.from(RID));
+  round.putFedLockSettlement({ roundId: RID, federation: A, txid: 'a1'.repeat(32), message: new Uint8Array(32), signature: new Uint8Array(64), state: 'ACCEPTED', why: 'test' });
+  const WINNER = [{ pubkey: W1.pubkey, msat: STAKE - FEE }];
+  let planned = 0;
+  // this seat's own plan of the settled round: one payout over its federations, as the kept moves say
+  ls.planOf = async () => { planned++; return { ok: true, anyFed: true, plan: { ...PLAN.plan, stakeShares: WINNER }, split: { settlements: [{ payouts: [{}] }] } }; };
+  const before = round.lockSettlementShares(RID);
+  const m = await ls.lateMessage(RID, LATE.entryId);
+  const kept = round.lockSettlementShares(RID);
+  console.log(`  MEASURED #1240: shares kept before ${JSON.stringify(before)}, planned ${planned}x, late message ${m.ok ? `built in ${built.map((f) => f.slice(0, 2)).join(',')}` : `refused: ${m.why}`}, shares kept after ${kept ? kept.length : null}`);
+  assert.equal(before, null);
+  assert.equal(m.ok, true, m.why);
+  assert.deepEqual(built, [B]);
+  assert.equal(kept.length, 1, 'the derived shares are kept for the next ask');
+  // a plan that pays another number of outputs than the kept moves is not taken
+  const other = lateSeat();
+  other.round.db.prepare('DELETE FROM lock_settlement_shares WHERE round_id = ?').run(Buffer.from(RID));
+  other.round.putFedLockSettlement({ roundId: RID, federation: A, txid: 'a1'.repeat(32), message: new Uint8Array(32), signature: new Uint8Array(64), state: 'ACCEPTED', why: 'test' });
+  other.ls.planOf = async () => ({ ok: true, anyFed: true, plan: { ...PLAN.plan, stakeShares: WINNER }, split: { settlements: [{ payouts: [{}, {}] }] } });
+  const no = await other.ls.lateMessage(RID, LATE.entryId);
+  assert.equal(no.ok, false); assert.match(no.why, /kept no shares/);
+});
