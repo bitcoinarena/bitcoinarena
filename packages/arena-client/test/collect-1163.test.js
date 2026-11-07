@@ -16,7 +16,7 @@ import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js'
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../arena-protocol/src/constants.js';
 import { roundId } from '../../arena-protocol/src/contracts.js';
-import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex, taggedHash, sha256 } from '../../arena-protocol/src/hash.js';
 import { refundKeyOf, lockFieldsToJson, lockFieldsFromJson } from '../../arena-protocol/src/stake-lock.js';
 import { arenaLockContractId } from '../../arena-protocol/src/arena-lock.js';
 import { keyAgg, xonlyOf } from '../../arena-node/src/musig2.js';
@@ -123,7 +123,7 @@ test('#1163 a partial collect does not mark the record done, and its lock wallet
   const storage = { get length() { return m.size; }, key: (i) => [...m.keys()][i] ?? null, getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) };
   const ridHex = toHex(rid);
   PL.saveCollect(storage, { roundIdHex: ridHex, round, invite: 'fed11x', nodes: ['http://a.test'], seed, stakeLock: null });
-  const lockdb = `arena.lockdb.${ridHex.slice(0, 16)}.${'12'.repeat(8)}.k`;
+  const lockdb = `arena.lockdb.${ridHex.slice(0, 16)}.${toHex(sha256(PL.lockSecretFor(seed, rid))).slice(0, 16)}.k`;   // the wallet lockStoreFor names (kanban #1265)
   m.set(lockdb, 'notes');
   // THE LOOK: payout owed, stake still waiting; THE COLLECT: the payout came in
   const lo = { payout: { state: 'owed', msat: 978000n }, stake: { state: 'waiting', msat: 980000n, why: 'inside its window' }, payoutMsat: 978000n, stakeMsat: 0n, refundMsat: 0n, owedMsat: 978000n, inTabMsat: 0n, final: false };
@@ -288,4 +288,18 @@ test('#1255 a done written by an older page (no tabMsat) is opened once and its 
   assert.deepEqual([lo.stake.state, lo.stake.how], ['owed', 'forfeit'], 'the stake of the reopened record is owed');
   assert.equal(again, 0); assert.equal(third, 0, 'a record was opened more than once');
   assert.equal(facts.newStillDone, true, 'a done read by collectState was opened');
+});
+
+// KANBAN #1265 (audit 4 #1257 CLIENT-1 path e): a look whose client cannot read the round wallet's balance (a Rescan's `{ lockStatus }` wrapper for a round
+// another tab holds) read inTabMsat 0, and the record was marked done with the wallet's 0 - the tidy then removed a wallet that held e-cash.
+test('#1265 a look that never read the round wallet says so (null), and that is not "done"', async () => {
+  const say = { 'a.test': { payees: [], forfeit: 'not a qualifier' }, 'b.test': { payees: [], forfeit: 'not a qualifier' } };
+  const wrapper = { lockStatus: wallet(0).lockStatus };
+  const lo = await PL.lookOwed({ round, roundId: rid, seed, curve: pageCurve, nodes: Object.keys(say).map((h) => `http://${h}`), fetcher: seats(say), client: wrapper });
+  const full = await PL.lookOwed({ round, roundId: rid, seed, curve: pageCurve, nodes: Object.keys(say).map((h) => `http://${h}`), fetcher: seats(say), client: wallet(0) });
+  const facts = { wrapper: { inTabMsat: lo.inTabMsat === null ? null : String(lo.inTabMsat), state: PL.collectState(lo, null).state }, fullClient: { inTabMsat: String(full.inTabMsat), state: PL.collectState(full, null).state } };
+  console.log('  FACTS #1265 look:', JSON.stringify(facts));
+  assert.equal(lo.inTabMsat, null, 'a wallet never read was read empty');
+  assert.notEqual(PL.collectState(lo, null).state, 'done');
+  assert.equal(full.inTabMsat, 0n);
 });
