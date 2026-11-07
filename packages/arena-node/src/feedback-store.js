@@ -216,6 +216,41 @@ export function openFeedbackStore(path = ':memory:') {
   const rewards = ({ pubkey = null } = {}) => (pubkey ? db.prepare('SELECT * FROM rewards WHERE pubkey = ? ORDER BY created_ms DESC').all(String(pubkey))
     : db.prepare('SELECT * FROM rewards ORDER BY created_ms DESC').all()).map(rewardRow);
 
+  // ---- THE ADMIN'S OTHER TOOLS (kanban #1342 section 4) ----
+  /** A link to a Kanban ticket, and the spec role's severity: notes on the report, no state move. */
+  function note(id, { ticket = undefined, severity = undefined, by = null, nowMs = Date.now() } = {}) {
+    const r = get.get(String(id));
+    if (!r) return { ok: false, why: 'no such report' };
+    if (ticket !== undefined && ticket !== null && !/^#?\d{1,6}$/.test(String(ticket))) return { ok: false, why: 'a ticket is its number, like #1342' };
+    if (severity !== undefined && severity !== null && !['low', 'medium', 'high', 'critical', 'useful'].includes(String(severity))) return { ok: false, why: 'severity is low, medium, high, critical or useful' };
+    db.prepare('UPDATE reports SET ticket = COALESCE(?, ticket), severity = COALESCE(?, severity) WHERE id = ?')
+      .run(ticket === undefined || ticket === null ? null : `#${String(ticket).replace(/^#/, '')}`, severity === undefined || severity === null ? null : String(severity), r.id);
+    db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by, `note: ${ticket ? `ticket ${ticket}` : ''}${severity ? ` severity ${severity}` : ''}`.trim());
+    return { ok: true, report: row(get.get(r.id)) };
+  }
+  /** Who did what to a report, oldest first. */
+  const moves = (id) => db.prepare('SELECT * FROM report_moves WHERE id = ? ORDER BY at_ms').all(String(id)).map((m) => ({ from: m.from_state, to: m.to_state, atMs: m.at_ms, by: m.by, note: m.note }));
+  /** THE BUDGET BAR: approved this week and in all, paid, and links not yet claimed. */
+  function budget({ rules = REWARD_DEFAULTS, nowMs = Date.now() } = {}) {
+    const R = { ...REWARD_DEFAULTS, ...(rules || {}) };
+    const sum = (sql, ...a) => db.prepare(sql).get(...a).s;
+    return { weekApprovedSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ?`, nowMs - WEEK_MS),
+      weeklyBudgetSats: R.weeklyBudgetSats, allApprovedSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid')`),
+      paidSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state = 'paid'`),
+      openRewards: db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state <> 'paid'`).get(),
+      counts: Object.fromEntries(db.prepare('SELECT state, COUNT(*) AS n FROM reports GROUP BY state').all().map((x) => [x.state, x.n])) };
+  }
+  /** THE CSV (the Monday scoreboard, #922): one line per report, with its reward if any. Text cells quoted; a leading =, +, - or @ neutralised. */
+  function csv() {
+    const cell = (v) => { let t = v === null || v === undefined ? '' : String(v); if (/^[=+\-@]/.test(t)) t = `'${t}`; return `"${t.replace(/"/g, '""')}"`; };
+    const head = ['report', 'received', 'pubkey', 'type', 'game', 'state', 'severity', 'amount_sats', 'ticket', 'reason', 'duplicate_of', 'reward_state', 'paid_at', 'payment_hash', 'network', 'happened'];
+    const lines = [head.join(',')];
+    for (const r of db.prepare('SELECT r.*, w.state AS w_state, w.paid_ms, w.payment_hash AS w_hash, w.network FROM reports r LEFT JOIN rewards w ON w.report = r.id ORDER BY r.received_ms').all())
+      lines.push([r.id, new Date(r.received_ms).toISOString(), r.pubkey, r.type, r.game, r.state, r.severity, r.amount_sats, r.ticket, r.reason, r.duplicate_of, r.w_state,
+        r.paid_ms ? new Date(r.paid_ms).toISOString() : '', r.w_hash, r.network, r.happened].map(cell).join(','));
+    return `${lines.join('\n')}\n`;
+  }
+
   /** The admin list (slice 4 builds on it): every report, newest first, filtered by state, type, game or key. */
   function list({ state = null, type = null, game = null, pubkey = null, limit = 500 } = {}) {
     const where = [], args = [];
@@ -223,7 +258,7 @@ export function openFeedbackStore(path = ':memory:') {
     return db.prepare(`SELECT * FROM reports ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY received_ms DESC LIMIT ?`).all(...args, Math.min(Number(limit) || 500, 5000)).map(row);
   }
 
-  return { take, mine, move, approve, list, createReward, withdrawRequest, lnurlOf, claim, settle, rewards, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
+  return { take, mine, move, approve, list, note, moves, budget, csv, createReward, withdrawRequest, lnurlOf, claim, settle, rewards, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
 }
 
 /**

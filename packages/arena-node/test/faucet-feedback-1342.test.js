@@ -121,3 +121,57 @@ esac
     assert.match(facts.reqAfter, /claimed/);
   } finally { faucet.kill(); chatServer.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('#1342 the review list behind the admin code: who played and who is ours, approval refused by the rules, the link made, the CSV', async () => {
+  const { createHash } = await import('node:crypto');
+  const dir = mkdtempSync(join(tmpdir(), 'faucet-admin-1342-'));
+  const alice = key(1), bob = key(2), carol = key(3);
+  const seat = createServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ rows: [{ player: alice.pubkey, rounds: 2 }, { player: carol.pubkey, rounds: 5 }] })); });
+  const chat = createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(200); res.end('{}'); }); });
+  await new Promise((r) => seat.listen(0, '127.0.0.1', r)); await new Promise((r) => chat.listen(0, '127.0.0.1', r));
+  writeFileSync(join(dir, 'token'), 'x'); writeFileSync(join(dir, 'ours.txt'), `${carol.pubkey}\n`);
+  const CODE = 'the-owners-code', port = 20000 + Math.floor(Math.random() * 9000);
+  const faucet = spawn(process.execPath, [fileURLToPath(new URL('../tools/faucet.mjs', import.meta.url))], { stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, FAUCET_PORT: String(port), FAUCET_CHAT_URL: `http://127.0.0.1:${chat.address().port}`, FAUCET_CHAT_CHANNEL: '6', FAUCET_CHAT_TOKEN_FILE: join(dir, 'token'),
+      FAUCET_FEEDBACK_DB: join(dir, 'feedback.db'), FAUCET_FEEDBACK_MINE_URLS: MINE, FAUCET_FOUNDING_FILE: join(dir, 'founding.jsonl'), FAUCET_BOOK: join(dir, 'book.json'),
+      FAUCET_ADMIN_SHA256: createHash('sha256').update(CODE).digest('hex'), FAUCET_FEEDBACK_EXCLUDED: join(dir, 'ours.txt'), FAUCET_SEASON_SEATS: `http://127.0.0.1:${seat.address().port}`,
+      FAUCET_SEASON_GAMES: 'rock-paper-scissors', FAUCET_REWARD_RULES: JSON.stringify({ weeklyBudgetSats: 10000, mostSats: 5000 }), FAUCET_BOUNTY_PAYER: `${dir}|127.0.0.1:1`, FAUCET_PUBLIC_BASE: 'https://testnet.example/api/faucet' } });
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    for (let i = 0; i < 50; i++) { try { await fetch(`${base}/feedback/mine`); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+    const ids = {};
+    for (const [name, k] of [['alice', alice], ['bob', bob], ['carol', carol]]) {
+      const ev = signed(k, FEEDBACK_KIND, [['t', 'bug'], ['game', 'rock-paper-scissors']], JSON.stringify({ happened: `${name}: the lobby froze` }));
+      await fetch(`${base}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-ip': `10.0.0.${ids[name] ? 9 : Object.keys(ids).length + 1}` }, body: JSON.stringify({ event: ev }) });
+      ids[name] = ev.id;
+    }
+    const get = async (p, c = CODE) => { const r = await fetch(`${base}/feedback/admin/${p}`, { headers: c ? { 'x-arena-admin': c } : {} }); return { status: r.status, body: r.headers.get('content-type').includes('json') ? await r.json() : await r.text() }; };
+    const act = async (b) => (await fetch(`${base}/feedback/admin/act`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-admin': CODE }, body: JSON.stringify(b) })).json();
+    const noCode = await get('list', null), wrongCode = await get('list', 'guess');
+    const list = await get('list');
+    const flags = Object.fromEntries(list.body.reports.map((r) => [r.happened.split(':')[0], { played: r.played, ours: r.ours }]));
+    const bobApproval = await act({ id: ids.bob, action: 'approve', amountSats: 1000 });
+    const carolApproval = await act({ id: ids.carol, action: 'approve', amountSats: 1000 });
+    const aliceApproval = await act({ id: ids.alice, action: 'approve', amountSats: 2000, severity: 'medium' });
+    const reward = await act({ id: ids.alice, action: 'reward' });
+    const bobReject = await act({ id: ids.bob, action: 'reject', reason: 'no round finished yet: play one and send it again' });
+    const detail = await get(`report/${ids.alice}`);
+    const after = await get('list');
+    const csv = await get('export.csv');
+    const facts = { noCode: noCode.status, wrongCode: wrongCode.status, flags, bob: bobApproval.why, carol: carolApproval.why, alice: aliceApproval.ok, reward: reward.ok && reward.lnurl.slice(0, 8),
+      bobRejected: bobReject.ok, moves: detail.body.moves.map((m) => `${m.from}>${m.to}`), budget: after.body.budget.weekApprovedSats, open: after.body.budget.openRewards, csvLines: csv.body.trim().split('\n').length,
+      csvHasAlice: csv.body.includes(ids.alice) && csv.body.includes('"accepted"') && csv.body.includes('"2000"') };
+    console.log('  FACTS #1342 admin:', JSON.stringify(facts));
+    assert.deepEqual([noCode.status, wrongCode.status], [403, 403]);
+    assert.deepEqual(flags, { alice: { played: true, ours: false }, bob: { played: false, ours: false }, carol: { played: true, ours: true } });
+    assert.match(facts.bob, /not finished a round/);
+    assert.match(facts.carol, /ours/);
+    assert.equal(facts.alice, true);
+    assert.equal(facts.reward, 'lnurl1dp');
+    assert.equal(facts.bobRejected, true);
+    assert.deepEqual(facts.moves, ['new>accepted', 'accepted>accepted']);
+    assert.deepEqual([facts.budget, facts.open.n, facts.open.s], [2000, 1, 2000]);
+    assert.equal(facts.csvLines, 4);
+    assert.ok(facts.csvHasAlice);
+  } finally { faucet.kill(); seat.close(); chat.close(); rmSync(dir, { recursive: true, force: true }); }
+});

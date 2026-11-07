@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Feedback review</title>
+<!-- kanban #1342 section 4: the owner's review list of player feedback. Every call carries the admin code (x-arena-admin), checked by the faucet
+     against its hash; the code is kept in this browser only. A player's words are a stranger's text: only ever set with textContent. -->
+<style>
+  :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --dim: #8b949e; --btc: #f7931a; --ok: #3fb950; --bad: #f85149; --warn: #d29922; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, sans-serif; padding: 24px 16px 56px; }
+  main { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 24px; margin: 0 0 4px; } h2 { font-size: 17px; margin: 18px 0 8px; }
+  .sub { color: var(--dim); margin: 0 0 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  input, select, textarea, button { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+  button { cursor: pointer; background: #21262d; font-weight: 600; } button.go { background: var(--btc); color: #1a1000; border-color: var(--btc); }
+  button:disabled { opacity: .5; cursor: default; }
+  .bar { height: 10px; background: var(--bg); border-radius: 6px; overflow: hidden; margin: 6px 0; } .bar > i { display: block; height: 100%; background: var(--btc); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .stat b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; } .stat span { color: var(--dim); font-size: 13px; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; } th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-size: 13px; font-weight: 600; } tr.pick { cursor: pointer; } tr.pick:hover { background: #1c2330; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); }
+  .s-new { color: var(--btc); } .s-accepted { color: var(--ok); } .s-paid { color: var(--ok); } .s-rejected { color: var(--bad); } .s-duplicate { color: var(--dim); }
+  .warn { color: var(--warn); } .bad { color: var(--bad); } .dim { color: var(--dim); }
+  pre { white-space: pre-wrap; word-break: break-word; margin: 6px 0; font: inherit; }
+  code { font-size: 12px; word-break: break-all; }
+  #say { min-height: 1.4em; margin: 8px 0; }
+  @media (max-width: 640px) { .hide-s { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Feedback review</h1>
+  <p class="sub">Player reports, the reward rules and the testnet payouts (kanban #1342). Nothing is paid without an approval here.</p>
+
+  <div class="panel" id="login">
+    <div class="row"><input id="code" type="password" placeholder="Admin code" autocomplete="off" aria-label="Admin code">
+      <button class="go" id="enter">Open</button><span class="dim">kept in this browser only</span></div>
+  </div>
+
+  <div id="app" hidden>
+    <div class="panel">
+      <div class="stats" id="stats"></div>
+      <div class="bar" aria-hidden="true"><i id="weekbar" style="width:0"></i></div>
+      <div class="dim" id="weektext"></div>
+    </div>
+    <div class="panel">
+      <div class="row">
+        <select id="f-state"><option value="">every state</option><option>new</option><option>accepted</option><option>rejected</option><option>duplicate</option><option>paid</option></select>
+        <select id="f-type"><option value="">every type</option><option>bug</option><option>confusing</option><option>idea</option></select>
+        <input id="f-game" placeholder="game" size="14"><input id="f-key" placeholder="player key (hex)" size="20">
+        <button id="reload">Show</button><button id="csv">Export CSV</button><button id="logout">Forget code</button>
+      </div>
+      <div id="say" role="status"></div>
+      <div class="scroll"><table><thead><tr><th>Received</th><th>Type</th><th>State</th><th class="hide-s">Game</th><th>What happened</th><th>Player</th><th>Reward</th></tr></thead><tbody id="rows"></tbody></table></div>
+    </div>
+    <div class="panel" id="detail" hidden></div>
+  </div>
+</main>
+<script>
+(() => {
+  const API = '/api/faucet/feedback/admin';
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (k === 'text') e.textContent = v; else if (k === 'cls') e.className = v; else e.setAttribute(k, v); } for (const c of kids) if (c) e.append(c); return e; };
+  const sats = (n) => `${Number(n || 0).toLocaleString('en')} sat`;
+  const when = (ms) => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') : '');
+  let code = ''; try { code = localStorage.getItem('arena.feedback.admin') || ''; } catch { code = ''; }
+  const say = (t, bad = false) => { $('say').textContent = t; $('say').className = bad ? 'bad' : 'dim'; };
+  async function call(path, body) {
+    const r = await fetch(`${API}/${path}`, body ? { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-admin': code }, body: JSON.stringify(body) } : { headers: { 'x-arena-admin': code } });
+    if (r.status === 403) { show(false); throw new Error('not the admin code'); }
+    return r.json();
+  }
+  function show(on) { $('login').hidden = on; $('app').hidden = !on; }
+  function budget(b) {
+    const s = $('stats'); s.replaceChildren();
+    const stat = (label, v) => el('div', { cls: 'stat' }, el('b', { text: v }), el('span', { text: label }));
+    s.append(stat('approved this week', `${sats(b.weekApprovedSats)} of ${sats(b.weeklyBudgetSats)}`), stat('approved in all', sats(b.allApprovedSats)), stat('paid', sats(b.paidSats)),
+      stat('links not yet claimed', `${b.openRewards.n} · ${sats(b.openRewards.s)}`), stat('new reports', String((b.counts && b.counts.new) || 0)));
+    $('weekbar').style.width = `${Math.min(100, (100 * b.weekApprovedSats) / Math.max(1, b.weeklyBudgetSats))}%`;
+    $('weektext').textContent = 'Testnet sats, no value. The weekly budget and the per-player limit are the faucet\'s reward rules.';
+  }
+  async function load() {
+    const q = new URLSearchParams(); for (const [k, id] of [['state', 'f-state'], ['type', 'f-type'], ['game', 'f-game'], ['pubkey', 'f-key']]) if ($(id).value.trim()) q.set(k, $(id).value.trim());
+    say('Reading…');
+    let j; try { j = await call(`list?${q}`); } catch (e) { return say(e.message, true); }
+    if (!j.ok) return say(j.why || 'not read', true);
+    show(true); budget(j.budget);
+    const tb = $('rows'); tb.replaceChildren();
+    for (const r of j.reports) {
+      const who = el('td', {}, el('code', { text: `${r.pubkey.slice(0, 12)}…` }), el('div', { cls: r.ours ? 'warn' : r.played ? 'dim' : 'bad', text: r.ours ? 'ours' : r.played ? 'played' : 'no finished round' }));
+      const tr = el('tr', { cls: 'pick' }, el('td', { text: when(r.receivedMs) }), el('td', { text: r.type }), el('td', {}, el('span', { cls: `tag s-${r.state}`, text: r.state })),
+        el('td', { cls: 'hide-s', text: r.game || '' }), el('td', { text: r.happened.length > 140 ? `${r.happened.slice(0, 140)}…` : r.happened }), who,
+        el('td', { text: r.reward ? `${sats(r.reward.amountSats)} · ${r.reward.state}` : r.amountSats ? `${sats(r.amountSats)} approved` : '' }));
+      tr.addEventListener('click', () => open(r.id));
+      tb.append(tr);
+    }
+    say(`${j.reports.length} report${j.reports.length === 1 ? '' : 's'}`);
+  }
+  async function open(id) {
+    let j; try { j = await call(`report/${id}`); } catch (e) { return say(e.message, true); }
+    if (!j.ok) return say(j.why, true);
+    const r = j.report, d = $('detail'); d.hidden = false; d.replaceChildren();
+    d.append(el('h2', { text: `${r.type} · ${r.state}${r.severity ? ` · ${r.severity}` : ''}${r.ticket ? ` · ${r.ticket}` : ''}` }),
+      el('div', { cls: 'dim', text: `Received ${when(r.receivedMs)} · game ${r.game || 'none'} · round ${r.round || 'none'} · build ${r.build || 'none'}` }),
+      el('div', { cls: 'dim' }, el('span', { text: 'Player ' }), el('code', { text: r.pubkey }), el('span', { cls: r.ours ? 'warn' : r.played ? '' : 'bad', text: r.ours ? ' · ours, never paid' : r.played ? ' · finished a round' : ' · no finished round on the network' })),
+      el('h2', { text: 'What happened' }), el('pre', { text: r.happened }), r.expected ? el('h2', { text: 'Expected' }) : null, r.expected ? el('pre', { text: r.expected }) : null);
+    if (r.reason) d.append(el('div', { cls: 'bad', text: `Rejected: ${r.reason}` }));
+    if (r.duplicateOf) d.append(el('div', { cls: 'dim', text: `Duplicate of ${r.duplicateOf.slice(0, 16)}…` }));
+    if (r.reward) d.append(el('div', {}, el('b', { text: `Reward ${sats(r.reward.amountSats)} (${r.reward.network}) · ${r.reward.state}` }), r.reward.lnurl ? el('div', {}, el('code', { text: r.reward.lnurl })) : null));
+    const act = async (body, ok) => { let a; try { a = await call('act', { id: r.id, ...body }); } catch (e) { return say(e.message, true); } if (!a.ok) return say(a.why, true); say(ok); await load(); await open(r.id); };
+    const amount = el('input', { type: 'number', min: '100', step: '100', placeholder: 'sat', size: '8' });
+    const sev = el('select', {}, ...['useful', 'low', 'medium', 'high', 'critical'].map((x) => el('option', { text: x })));
+    const crit = el('input', { type: 'checkbox' });
+    const reason = el('input', { placeholder: 'reason the player reads', size: '30' });
+    const dupOf = el('input', { placeholder: 'earlier report id', size: '24' });
+    const ticket = el('input', { placeholder: '#ticket', size: '8' });
+    const btn = (label, fn, go = false) => { const b = el('button', { text: label, ...(go ? { cls: 'go' } : {}) }); b.addEventListener('click', fn); return b; };
+    if (r.state === 'new') {
+      d.append(el('h2', { text: 'Decide' }),
+        el('div', { cls: 'row' }, amount, sev, el('label', {}, crit, el('span', { text: ' critical, above the bands' })), btn('Approve', () => act({ action: 'approve', amountSats: Number(amount.value), severity: sev.value, critical: crit.checked }, 'Approved'), true)),
+        el('div', { cls: 'row' }, reason, btn('Reject', () => act({ action: 'reject', reason: reason.value }, 'Rejected'))),
+        el('div', { cls: 'row' }, dupOf, btn('Duplicate of', () => act({ action: 'duplicate', of: dupOf.value.trim() }, 'Marked duplicate'))));
+    }
+    if (r.state === 'accepted' && !r.reward) d.append(el('div', { cls: 'row' }, btn('Make the reward link', () => act({ action: 'reward' }, 'Reward link made'), true)));
+    if (r.state === 'accepted') d.append(el('div', { cls: 'row' }, el('input', { placeholder: 'reason the player reads', size: '30', id: 'rej2' }), btn('Reject', () => act({ action: 'reject', reason: document.getElementById('rej2').value }, 'Rejected'))));
+    d.append(el('div', { cls: 'row' }, ticket, btn('Link ticket', () => act({ action: 'note', ticket: ticket.value.trim() }, 'Ticket linked'))));
+    d.append(el('h2', { text: 'History' }), ...j.moves.map((m) => el('div', { cls: 'dim', text: `${when(m.atMs)} · ${m.from} → ${m.to}${m.by ? ` · ${m.by}` : ''}${m.note ? ` · ${m.note}` : ''}` })));
+    if (j.earlier.length) d.append(el('h2', { text: `Earlier reports by this player (${j.earlier.length})` }), ...j.earlier.map((x) => el('div', { cls: 'dim', text: `${when(x.receivedMs)} · ${x.state} · ${x.happened.slice(0, 100)}` })));
+    d.scrollIntoView({ behavior: 'smooth' });
+  }
+  $('enter').addEventListener('click', () => { code = $('code').value.trim(); try { localStorage.setItem('arena.feedback.admin', code); } catch { /* this tab only */ } load(); });
+  $('reload').addEventListener('click', load);
+  $('logout').addEventListener('click', () => { code = ''; try { localStorage.removeItem('arena.feedback.admin'); } catch { /* none */ } show(false); });
+  $('csv').addEventListener('click', async () => { const r = await fetch(`${API}/export.csv`, { headers: { 'x-arena-admin': code } }); if (!r.ok) return say('not read', true);
+    const a = el('a', { href: URL.createObjectURL(await r.blob()), download: 'arena-feedback.csv' }); document.body.append(a); a.click(); a.remove(); });
+  if (code) load();
+})();
+</script>
+</body>
+</html>
