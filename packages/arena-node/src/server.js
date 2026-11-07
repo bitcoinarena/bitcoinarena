@@ -8848,7 +8848,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // won, after they settled, and the leaderboard payout from the reserves went by results picked afterwards. After the entry close (and
         // a minute's grace for a join's own record on its way) no record is taken; the lobby shows the name held then.
         { let close = null; try { close = Number(decodeRoundContract(new Uint8Array(round.get(rec.roundId).contract)).entryCloseMs); } catch { close = null; }
-          if (close !== null && Number.isFinite(close) && Number(round.now()) > close + lobbyNameGraceMs)
+          // A HEAD-TO-HEAD ROUND HAS NO GRACE (kanban #1263): it is decided seconds after its close, from reveals anyone can read
+          let h2h = false; try { const pg = pluginForRound(decodeRoundContract(new Uint8Array(round.get(rec.roundId).contract)), hosted); h2h = !!(pg.ok && pg.headToHead); } catch { h2h = false; }
+          if (close !== null && Number.isFinite(close) && Number(round.now()) > close + (h2h ? 0 : lobbyNameGraceMs))
             return answer(409, { why: 'that round\'s entry closed: the identity its entries are booked to is fixed (kanban #1213)' }); }
         if (!round.entriesOf(rec.roundId).some((e) => toHex(e.entry.playerPubkey) === toHex(rec.playerPubkey)))
           return answer(409, { why: 'this signer node holds no player with that key in that round' });
@@ -10320,8 +10322,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // board, the badges and the leaderboard. Where the player's name record (signed by the entry's round key) is held, the reveal's
           // identity must be the one it names.
           { const named = typeof round.namedIdentityOf === 'function' ? round.namedIdentityOf(entry.roundId, entry.playerPubkey) : null;
-            if (named && named !== toHex(key)) return text(res, 403, 'that identity is not the one the player\'s name record names for this round'); }
-          round.putIdentity({ roundId: entry.roundId, entryId: new Uint8Array(eid), identity: key, sig });
+            if (named && named !== toHex(key)) return text(res, 403, 'that identity is not the one the player\'s name record names for this round');
+            // AND ONLY THE ONE NAMED BEFORE THE CLOSE (kanban #1263, audit 4 #1257 PLAYER-2): a reveal comes after the entry close, the opponent's is
+            // public, and the identity was taken whenever the reveal stood - a player posted his reveal again with his identity only when he had won,
+            // and his losses stayed on a bare round key (season board, badges, the leaderboard payout). A name record is taken only before the close:
+            // with none held, the reveal is kept and its identity is not
+            if (named) round.putIdentity({ roundId: entry.roundId, entryId: new Uint8Array(eid), identity: key, sig }); }
         }
         const fresh = round.putReveal({ roundId: entry.roundId, entryId: eid, move: body.move, salt, receivedMs: round.now() });
         console.log(`[reveal] ${toHex(entry.roundId).slice(0, 16)} ${toHex(eid).slice(0, 16)}: move ${body.move}${fresh ? '' : ' (held already)'}`);
