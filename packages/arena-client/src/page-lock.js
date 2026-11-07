@@ -2935,7 +2935,13 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
       // asked of the federation without spending - owed back by the player's key after expiry.
       const held = kept || savedLock(storage, { roundId, playerPubkey: player.pubkey });
       const ls = held && held.lock ? [held.lock, held.lock.feeLock].filter(Boolean) : [];
-      if (!ls.length) stake = { state: s.ok ? 'none' : 'waiting', why: 'this tab keeps no lock for this round' };
+      // "NONE" IS FINAL ONLY ON ENOUGH SEATS' WORD (kanban #1250, audit 3 FIXES-16): one seat that never sat on the round answering [] while its own
+      // seats timed out closed the record with a winner's stake still in its lock; it is waiting until the round's settlement threshold answered
+      if (!ls.length) {
+        const enough = Number(locks.answered || 0) >= settlementAgreement(round, nodes);
+        stake = { state: s.ok && enough ? 'none' : 'waiting', why: enough ? 'this tab keeps no lock for this round'
+          : `this tab keeps no lock for this round, and only ${Number(locks.answered || 0)} of the ${settlementAgreement(round, nodes)} seats needed answered where its lock is` };
+      }
       else if (!client) stake = { state: 'waiting', why: 'the federation was not asked yet' };
       else {
         // §23.2 REFUSED (2026-10-06 08:57: "A round the seats refuse gets an immediate refund"): a lock
