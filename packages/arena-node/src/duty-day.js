@@ -27,7 +27,8 @@
 import { join } from 'node:path';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { daySlotOf, targetDay, anchorHeight, dutyOrder, dutyMarkerOutput, dayMarkersOf, postedSeriesOf, itemTag, DUTY_DAY_MS, DUTY_COMMITTEE_LEAD_MS,
-  backupMarkerOutput, backupPostDue, DUTY_BACKUP_COMMITTEE_LEAD_MS, DUTY_BACKUP_CENSUS_DEPTH, DUTY_BACKUP_RANK_CAP } from '../../arena-protocol/src/duty.js';
+  backupMarkerOutput, backupPostDue, DUTY_BACKUP_COMMITTEE_LEAD_MS, DUTY_BACKUP_CENSUS_DEPTH, DUTY_BACKUP_RANK_CAP,
+  dayStartMs, DUTY_BACKUP_AFTER_MS, DUTY_FALLBACK_MS } from '../../arena-protocol/src/duty.js';
 import { medianTimePast } from '../../arena-protocol/src/beacon.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -61,6 +62,8 @@ const keptFor = (ms, read, now = Date.now, empty = () => false) => { let at = 0,
  * Every other marker is UNREAD (no line of its series held here, or no order for its day yet) or FOREIGN (a creator outside both): said in
  * the status, counted for nothing.
  */
+/** How much earlier than its creator's hour a marker may be first seen and still count: clocks, and testnet4's block times (kanban #1219). */
+export const MARKER_EARLY_SLACK_MS = 30 * 60000;
 export const MARKER = Object.freeze({ OWN: 'OWN', DUTY: 'DUTY', TRUSTED: 'TRUSTED', UNREAD: 'UNREAD', FOREIGN: 'FOREIGN' });
 export const markerCounts = (standing) => standing === MARKER.OWN || standing === MARKER.DUTY || standing === MARKER.TRUSTED;
 /** One marker's standing (MARKER): `own` its txid is one of this duty's postings, `creator` hex of its series' line or null, `order` the day's duty order (keys) or null. */
@@ -260,6 +263,10 @@ export function createDayDuty(o) {
     }
     return null;
   };
+  // WHEN THIS NODE FIRST SAW EACH MARKER'S TRANSACTION (kanban #1219): the mempool read's time, else its block's time
+  const seenAt = new Map();
+  const noteSeen = (txid, ms) => { if (!txid || seenAt.has(txid)) return; seenAt.set(txid, ms); if (seenAt.size > 20000) seenAt.delete(seenAt.keys().next().value); };
+  const emergencyTagOf = () => emergencyTag;
   /** The markers with their standing (MARKER) and whether they count, by the duty order of each one's day (`orders`: { slot: { order } }). */
   const standingOf = async (markers, orders) => {
     const own = new Map();
@@ -268,7 +275,20 @@ export function createDayDuty(o) {
       if (!own.has(m.slot)) own.set(m.slot, ownTxids(m.slot));
       const isOwn = own.get(m.slot).has(m.txid);
       const creator = isOwn ? null : await creatorOfMarker(m);
-      const standing = markerStanding({ own: isOwn, creator, order: orders && orders[m.slot] ? orders[m.slot].order : null, trusted });
+      const order = orders && orders[m.slot] ? orders[m.slot].order : null;
+      let standing = markerStanding({ own: isOwn, creator, order, trusted });
+      // A DUTY POSTER COUNTS ONLY FROM ITS OWN HOUR (kanban #1219, audit 3 #1210 FIXES-12): any census node is in the duty order, so a node of
+      // rank 9 posting its own grid of the day at 00:00Z, before the nodes whose hour it is, read as the day posted at every node. A primary
+      // marker counts from the hour its creator's rank is due (dayDueFromMs), a backup's from the backup's due time for that rank, both as
+      // this node first saw it (the mempool, else its block's time) with MARKER_EARLY_SLACK_MS for clocks; an emergency marker is not bound here
+      if (standing === MARKER.DUTY && order && m.tag !== emergencyTagOf(m)) {
+        const rank = order.findIndex((k) => toHex(k) === String(creator).toLowerCase());
+        const backupMarker = String(m.tag).startsWith('B:');
+        const dueMs = backupMarker ? (rank >= 1 ? dayStartMs(m.slot) + DUTY_BACKUP_AFTER_MS + (Math.min(rank, DUTY_BACKUP_RANK_CAP) - 1) * DUTY_FALLBACK_MS : Infinity)
+          : guard.dayDueFromMs(m.slot, rank, rankCap);
+        const seen = seenAt.get(m.txid);
+        if (seen !== undefined && seen < dueMs - MARKER_EARLY_SLACK_MS) standing = MARKER.FOREIGN;
+      }
       out.push({ ...m, creator, standing, counts: markerCounts(standing) });
     }
     return out;
@@ -322,7 +342,9 @@ export function createDayDuty(o) {
       let txid = null;
       try { txid = toHex(Uint8Array.from(parseTransaction(raw).txid).reverse()); at.set(txid, view.firstHeight + i); } catch { /* not one */ }   // display order, as sendrawtransaction names it
       const ms = markersOf(raw);
-      if (ms.length) { const series = postedSeriesOf(raw); for (const m of ms) markers.push({ ...m, height: view.firstHeight + i, txid, series }); }
+      if (ms.length) { const series = postedSeriesOf(raw); for (const m of ms) markers.push({ ...m, height: view.firstHeight + i, txid, series });
+        // the block's time, for a marker this node never saw in the mempool (kanban #1219)
+        try { const h = view.blocks[i].header; noteSeen(txid, new DataView(h.buffer, h.byteOffset, h.byteLength).getUint32(68, true) * 1000); } catch { /* no header */ } }
     }
     return { tip, at, markers };
   };
@@ -341,6 +363,7 @@ export function createDayDuty(o) {
     for (const txid of txids) {
       if (poolSeen.has(txid)) continue;
       try { const raw = fromHex(await chainCall('getrawtransaction', [txid])); const ms = markersOf(raw); const series = ms.length ? postedSeriesOf(raw) : [];
+        if (ms.length) noteSeen(txid, now());
         poolSeen.set(txid, ms.map((m) => ({ ...m, height: null, txid, series }))); } catch { /* gone meanwhile */ }
     }
     return [...poolSeen.values()].flat();
