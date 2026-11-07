@@ -27,6 +27,7 @@
 // decodes (noteKey, Fedimint's base32 exactly), and (2) an AlreadyReceived is this exchange's own only when THIS row asked for the
 // reissue before (`receive_asked`, written before each ask): a row's first ask that answers AlreadyReceived was received under another
 // exchange or outside the seat, and is refused for good.
+import { durably } from './store.js';
 import { createHash } from 'node:crypto';
 
 // Fedimint's base32 (fedimint-core base32.rs decode_prefixed_bytes): lowercased, the "fedimint" prefix, RFC 4648 lower-case alphabet,
@@ -87,6 +88,8 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
     if (!(EXCHANGE_NEXT[from || 'NONE'] || []).includes(to)) return refuse(409, `an exchange does not go from ${from || 'nothing'} to ${to}`);
     const cols = Object.keys(fields);
     let c;
+    // EVERY STEP ON THE DISK BEFORE THE NEXT EFFECT (kanban #1243): the receive and the send follow these writes
+    return durably(db, () => {
     if (!from) {
       c = db.prepare(`INSERT OR IGNORE INTO ecash_exchanges (id, state, made_ms${cols.map((k) => `, ${k}`).join('')}) VALUES (@id, @state, @made_ms${cols.map((k) => `, @${k}`).join('')})`)
         .run({ ...fields, id, state: to, made_ms: now() });
@@ -94,6 +97,7 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
       c = db.prepare(`UPDATE ecash_exchanges SET state = @state${cols.map((k) => `, ${k} = @${k}`).join('')} WHERE id = @id AND state = @from`).run({ ...fields, id, state: to, from });
     }
     return c.changes === 1 ? { ok: true, state: to } : refuse(409, `that exchange is no longer ${from || 'new'} here: not moved to ${to}`);
+    });
   }
   const note = (id, state, why) => db.prepare('UPDATE ecash_exchanges SET why = ? WHERE id = ? AND state = ?').run(String(why).slice(0, 300), id, state);
 
@@ -138,7 +142,7 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
     if (r.state === EXCHANGE.RECEIVING) {
       // kanban #1204 RES-3: did THIS row ask before? Written before the ask, so a stop after it still counts the ask
       const askedBefore = r.receive_asked === null || r.receive_asked === undefined || Number(r.receive_asked) === 1;
-      if (!askedBefore) markAsked.run(id);
+      if (!askedBefore) durably(db, () => markAsked.run(id));   // on the disk before the ask (kanban #1243)
       let got;
       try { got = await pin.ecashReceive(ecash); }
       catch (e) { note(id, EXCHANGE.RECEIVING, `the receive did not answer: ${e.message}`); return refuse(503, `federation ${from.slice(0, 8)} did not answer the reissue (${String(e.message).slice(0, 120)}); ask again with the same e-cash`); }
