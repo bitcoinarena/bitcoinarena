@@ -179,3 +179,25 @@ test('a release folder left half unpacked is unpacked again, never used as it is
   assert.equal(unpacked, 0);
   rmSync(root, { recursive: true, force: true });
 });
+
+// KANBAN #1227 (audit 3 #1210 FIXES-37): `served` was noted only once the new release answered within the updater's wait - an updater that died
+// in that wait left it unnoted while the release ran on (for days, until a reboot), and the next run rolled the backup back over everything that
+// release wrote: nonces, entries, locks. Now the backup records the database as it took it, and a database that changed since is kept.
+test('#1227 a release that ran after the updater died, and wrote its database, keeps that database when the next run rolls it back', async () => {
+  const n = linuxNode();
+  const v1 = n.release('0.1.0'), v2 = n.release('0.1.1', { broken: true });
+  n.install(v1);
+  n.hangStartOf = v2;
+  n.update(v2).catch(() => {});
+  await new Promise((ok) => setTimeout(ok, 300));
+  updaterDied(n);
+  n.hangStartOf = null;
+  // the release ran on after the updater died and wrote its database (here: one row more), then stopped answering
+  appendFileSync(join(n.home, 'node.db'), 'entry e9 locked by 0.1.1 after the backup\n');
+  const r = await n.update(v2).catch((e) => ({ ok: false, why: e.message }));
+  const db = readFileSync(join(n.home, 'node.db'), 'utf8');
+  console.log(`  #1227 the next run: "${r.why}"; node.db ${db.includes('entry e9') ? 'keeps' : 'LOST'} what the release wrote after the backup; the seat runs ${n.running ? n.running.split('-').at(-3) : 'NOTHING'}`);
+  assert.ok(db.includes('entry e9 locked by 0.1.1'), 'the backup was put back over what the release wrote since');
+  assert.equal(n.running, v1, 'and the old release runs again');
+  rmSync(n.root, { recursive: true, force: true });
+});
