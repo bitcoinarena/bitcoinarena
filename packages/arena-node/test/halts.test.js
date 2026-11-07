@@ -7,8 +7,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { taggedHash, toHex } from '../../arena-protocol/src/hash.js';
-import { createHalts, wsSessionCount, sessionReading, clockStep } from '../src/halts.js';
-import { signHaltObservation, encodeHaltObservation, decodeHaltObservation } from '../../arena-protocol/src/halt-proof.js';
+import { createHalts, createGuardianHaltSigner, wsSessionCount, sessionReading, clockStep } from '../src/halts.js';
+import { signHaltObservation, encodeHaltObservation, decodeHaltObservation, encodeGuardianHaltObservation } from '../../arena-protocol/src/halt-proof.js';
 import { createLiquidations } from '../src/liquidations.js';
 
 const key = (s) => { const secret = taggedHash('TEST/halt', new TextEncoder().encode(s)); return { secret, pub: schnorr.getPublicKey(secret) }; };
@@ -16,7 +16,17 @@ const verify = (sig, msg, pub) => { try { return schnorr.verify(sig, msg, pub); 
 const seats = Array.from({ length: 9 }, (_, i) => key(`seat${i}`));
 const peer = (i) => Uint8Array.from([2, ...taggedHash('TEST/peer', Uint8Array.of(i))]);
 const fid = toHex(taggedHash('TEST/fed', Uint8Array.of(1)));
-const record = { federationId: taggedHash('TEST/fed', Uint8Array.of(1)), guardians: [0, 1, 2, 3].map((i) => ({ peerKey: peer(i), endpoint: `wss://g${i}` })) };
+const gnodes = [0, 1, 2, 3].map((i) => key(`gnode${i}`));      // each guardian's node key, as the record binds it (kanban #1319)
+const record = { federationId: taggedHash('TEST/fed', Uint8Array.of(1)), guardians: [0, 1, 2, 3].map((i) => ({ peerKey: peer(i), nodePubkey: gnodes[i].pub, endpoint: `wss://g${i}` })) };
+// a guardian's node signing its own view: `connected` the peer ids its guardian is connected to in P2P
+const guardianView = async (i, connected, world) => {
+  const signer = createGuardianHaltSigner({ federationId: fid, peerKeyOf: (id) => peer(id), ownPeerId: i, abandonBlocks: clocks.abandonBlocks,
+    sign: (h) => schnorr.sign(h, gnodes[i].secret), height: async () => world.tip, load: () => ({ session: 41, firstHeight: 341 }),
+    status: async () => ({ federation: { session_count: 41, status_by_peer: Object.fromEntries([0, 1, 2, 3].filter((x) => x !== i)
+      .map((x) => [String(x), { connection_status: connected.includes(x) ? 'connected' : 'disconnected', last_contribution: 40 }])) } }) });
+  const r = await signer.pass();
+  return { observation: toHex(encodeGuardianHaltObservation(r.signed)), signature: toHex(r.signed.signature) };
+};
 const records = { list: () => [{ federation: fid }], recordOf: (f) => (f === fid ? { record, status: 'CRITICAL', height: 1, bytes: Uint8Array.of(0xcd, 0xef) } : null),
   haltOf: () => null, haltedFederations: () => [] };
 const clocks = { abandonBlocks: 10, claimBlocks: 10, drainBlocks: 100 };
@@ -42,6 +52,8 @@ test('each seat signs once the last session has not moved for abandon_blocks; fi
   // seat 0 takes the four others' observations as its peers post them
   const me = all[0];
   for (const o of world.posted.slice(1, 5)) assert.equal(me.take(o).ok, true);
+  // g0 and g1 sign their own views, each connected to the other (kanban #1319: who is slashed is who signed, not who the seats reached)
+  for (const i of [0, 1]) assert.equal(me.takeGuardian(await guardianView(i, [1 - i], world)).status, 201);
   const p = me.proofOf(fid);
   assert.ok(p, 'five of nine at session 41 for abandon_blocks: the halt stands');
   assert.deepEqual([p.session, p.haltHeight, p.observers, p.abandoned.length, p.answered.length], [41, 341, 5, 2, 2]);
