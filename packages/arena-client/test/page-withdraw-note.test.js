@@ -28,7 +28,7 @@ function load(store, roundWalletState, { collect } = {}) {
   const joins = []; const collects = [];
   const roundClient = { lockStatus: async () => '{"stored":null}', withdrawableMsat: async () => String(roundWalletState.ecash) };
   const player = { lockStatus: async () => '{"stored":null}', withdrawableMsat: async () => '5000000' };
-  const window = { ARENA_WALLET_WARM: Promise.resolve(player), ARENA_WALLET_FEDERATION: FED, ARENA_LOCK_WASM: async () => ({ LockClient: 'LC' }) };
+  const window = { ARENA_WALLET_WARM: Promise.resolve(player), ARENA_WALLET_FEDERATION: FED, ARENA_LOCK_WASM: async () => ({ LockClient: 'LC' }), ARENA_TRACK: () => {} };
   const lookOwed = async ({ client }) => ({ payout: { state: 'waiting' }, stake: { state: 'waiting' }, payoutMsat: 0n, stakeMsat: 0n, refundMsat: 0n,
     owedMsat: 0n, final: false, settled: false,
     inTabMsat: client !== player && typeof client.withdrawableMsat === 'function' ? BigInt(await client.withdrawableMsat()) : 0n });
@@ -46,7 +46,7 @@ const failedPay = (st) => { st.ecash = 98000n; return { withdraw: { ok: false, f
 
 test('a failed pay leaves no empty note: the next load joins the round\'s wallet and the warning says what is in it', async () => {
   const store = new Map([['arena.tabempty.' + RID, '1']]);   // an earlier load read the round's wallet empty
-  const st = { ecash: 0n };
+  const st = { ecash: 98000n };   // e-cash an older build collected into the round's wallet (since #1266 a Withdraw collects into the player wallet)
   const first = load(store, st, { collect: failedPay });
   const said = await first.withdraw('lnbc1pasted');
   assert.equal(said.ok, false);
@@ -72,7 +72,7 @@ test('the hole it closes: with the note left set, the look through the player wa
 
 test('a pay that throws before the last look: the note was dropped before the collect, so the next load still finds the ecash', async () => {
   const store = new Map([['arena.tabempty.' + RID, '1']]);
-  const st = { ecash: 0n };
+  const st = { ecash: 98000n };   // e-cash an older build collected into the round's wallet (since #1266 a Withdraw collects into the player wallet)
   const first = load(store, st, { collect: (s) => { s.ecash = 98000n; throw new Error('the gateway hung up'); } });
   await assert.rejects(first.withdraw('lnbc1pasted'), /the gateway hung up/);
   assert.equal(store.has('arena.tabempty.' + RID), false);
@@ -82,7 +82,7 @@ test('a pay that throws before the last look: the note was dropped before the co
 
 test('the money is not lost: a later Withdraw collects from the round\'s wallet holding it', async () => {
   const store = new Map();
-  const st = { ecash: 0n };
+  const st = { ecash: 98000n };   // e-cash an older build collected into the round's wallet (since #1266 a Withdraw collects into the player wallet)
   await load(store, st, { collect: failedPay }).withdraw('lnbc1pasted');
   const later = load(store, st, { collect: (s) => { s.ecash = 0n; return { withdraw: { ok: true, final: true } }; } });
   const said = await later.withdraw('lnbc1second');
