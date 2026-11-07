@@ -1999,6 +1999,25 @@ export function bindLockEntry(storage, { roundId, playerPubkey, entryId: eid }) 
   return true;
 }
 
+/**
+ * AN ENTRY NO SEAT TOOK DOES NOT HOLD THE LOCK FOR GOOD (kanban #1254, audit 3 FIXES-13): bindLockEntry names the entry before it is posted, and a post that
+ * failed (a seat 503, the round full, offline) left the lock "staked" in an entry no seat holds - a new tab, which has no copy of that entry, could never
+ * use it again. `locks` is findLock's answer for this seed in the round: when every seat asked answered and none names the kept lock under the entry,
+ * the entry is let go of (never one a seat committed to). Answers true when it was.
+ */
+export function releaseUntakenEntry(storage, { roundId, playerPubkey, locks }) {
+  const now = lockRecordOf(storage, { roundId, playerPubkey });
+  if (now.state === 'none' || now.state === 'intent' || now.record.committedTo || !now.record.entry) return false;
+  if (!locks || !(locks.asked > 0) || locks.answered !== locks.asked) return false;
+  const at = now.record.outpoint ? `${String(now.record.outpoint.txid)}:${String(now.record.outpoint.outIdx)}` : null;
+  const named = (locks || []).some((l) => String(l.entryId || '').toLowerCase() === String(now.record.entry).toLowerCase()
+    || (at && l.outpoint && `${toHex(l.outpoint.txid)}:${String(l.outpoint.outIdx)}` === at));
+  if (named) return false;
+  const { entry: _gone, ...rest } = now.record;
+  putRoomy(storage, now.key, JSON.stringify(rest));
+  return true;
+}
+
 /** A signer node committed the kept lock to `entryId`: from now on it is that entry's stake, not one to reuse. Final: never another entry. */
 export function markLockCommitted(storage, { roundId, playerPubkey, entryId }) {
   const who = { roundId, playerPubkey };

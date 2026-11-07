@@ -3673,6 +3673,17 @@
             return;
           }
         }
+        // AN ENTRY NO SEAT TOOK DOES NOT HOLD THE LOCK FOR GOOD (kanban #1254, audit 3 FIXES-13): a lock named in an entry whose post failed was "staked" for
+        // good in a new tab; the round's seats are asked, and when every one answered and none names the lock under that entry, the entry is let go of
+        if (keptEarly && !keptEarly.committedTo && keptUseOf(keptEarly).use === 'staked' && ARENACLIENT.releaseUntakenEntry) {
+          try {
+            const locksNow = await ARENACLIENT.findLock({ roundId: ARENACLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey, nodes: named.nodes });
+            if (ARENACLIENT.releaseUntakenEntry(vault(), { roundId: ARENACLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey, locks: locksNow })) {
+              keptEarly = ARENACLIENT.savedLock(vault(), { roundId: ARENACLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey });
+              console.log('[arena] #1254 the stake lock was named in an entry no seat took (' + locksNow.answered + ' of ' + locksNow.asked + ' seats answered): it is used again');
+            }
+          } catch (e) { console.log('[arena] #1254 the seats were not asked where the lock is: ' + String(e && e.message || e).slice(0, 120)); }
+        }
         if (keptUseOf(keptEarly).use === 'new') funding = (async () => {
           const wasm = await window.ARENA_LOCK_WASM();
           await wasm.default();

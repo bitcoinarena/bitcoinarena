@@ -252,3 +252,29 @@ test('#1162 the transition function: terminal states never change, a step not in
   for (const [from, to] of [['committed', 'accepted'], ['committed', 'intent'], ['refused', 'accepted'], ['accepted', 'refused'], ['none', 'submitted'], ['accepted', 'intent']])
     assert.throws(() => PL.lockRecordStep(from, to), /a stake lock goes/);
 });
+
+// KANBAN #1254 (audit 3 #1210 FIXES-13): the entry is named before it is posted; a post no seat took left the lock "staked" for good in a new tab
+test('#1254 a lock named in an entry no seat took is let go of when every seat answered without it; a seat naming it, or one silent seat, keeps it', async () => {
+  const stake = await dealt();
+  const storage = browser();
+  const made = await pageLocks(storage, lockClient().LockClient, stake);
+  await made.accepted;
+  const entryA = b32(0xa1);
+  PL.bindLockEntry(storage, { ...who, entryId: entryA });
+  const answered = (list, asked = 2, n = 2) => Object.assign(list, { asked, answered: n, said: [] });
+  const outpoint = PL.savedLock(storage, who).lock.outpoint;
+  // a seat names the lock under entry A: it is that entry's, kept
+  const named = PL.releaseUntakenEntry(storage, { ...who, locks: answered([{ entryId: toHex(entryA), outpoint, fields: {} }]) });
+  // one seat did not answer: nothing can be ruled out, kept
+  const silent = PL.releaseUntakenEntry(storage, { ...who, locks: answered([], 2, 1) });
+  const before = PL.keptLockUse(PL.savedLock(storage, who), { entry: null, beforeStart: true, beforeClose: true }).use;
+  // every seat answered, none holds it: let go of, and the new tab uses the lock
+  const released = PL.releaseUntakenEntry(storage, { ...who, locks: answered([]) });
+  const after = PL.keptLockUse(PL.savedLock(storage, who), { entry: null, beforeStart: true, beforeClose: true }).use;
+  console.log('  FACTS #1254:', JSON.stringify({ namedBySeat: named, oneSilent: silent, useBefore: before, released, useAfter: after }));
+  assert.equal(named, false); assert.equal(silent, false); assert.equal(before, 'staked');
+  assert.equal(released, true); assert.equal(after, 'reuse');
+  // a committed lock is never let go of
+  PL.bindLockEntry(storage, { ...who, entryId: entryA }); PL.markLockCommitted(storage, { ...who, entryId: entryA });
+  assert.equal(PL.releaseUntakenEntry(storage, { ...who, locks: answered([]) }), false);
+});
