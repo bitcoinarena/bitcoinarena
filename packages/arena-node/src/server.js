@@ -4179,6 +4179,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // A ROUND WHOSE ENTRIES AND LOCKS A SEAT HANDS ON (kanban #1216): every round it holds that is a game's - head-to-head (kanban #1068) or replayed;
   // a market's orders have their own way (order-batch.js replayOrder)
+  // NO LOCK NEW TO THIS SEAT AFTER ITS ROUND'S ENTRY CLOSE (kanban #1260, audit 4 #1257 PLAYER-1, seats-2): #1216 closed the entry door only. A lock still
+  // came at any time, so a player held his locks back from three seats, played, and posted them there only once the run had won (FINAL, paid) - a
+  // losing run was VOID there (the stake back). A replayed or head-to-head round (the relayed ones) takes a lock new to this seat only until the entry
+  // close plus the grace a join on its way has (ENTRY_CLOSE_GRACE_MS); one already held is answered as before. An order keeps its own rule (orderLockAfterClose).
+  const lockAfterCloseRefusal = (storedEntry, eid, kind) => {
+    const grace = round.entryCloseGraceMs;
+    if (grace === null || grace === undefined) return null;
+    let e; try { e = decodeEntryContract(new Uint8Array(storedEntry)); } catch { return null; }
+    if (e.limitPrice !== undefined) return null;
+    const c = relayedRound(e.roundId);
+    if (!c || typeof c.entryCloseMs !== 'bigint') return null;
+    const now = BigInt(Math.floor(Number(round.now())));
+    if (now <= c.entryCloseMs + BigInt(grace)) return null;
+    const held = kind === 'fee' ? (round.feeLock ? round.feeLock(eid) : null) : round.stakeLock(eid);
+    if (held) return null;
+    return `that round's entry closed at ${c.entryCloseMs} (and ${grace} ms for a join on its way) and it is ${now}: a ${kind === 'fee' ? 'fee' : 'stake'} lock new to this seat is not taken (kanban #1260)`;
+  };
   relayedRound = (rid) => {
     const row = round.get(rid);
     if (!row) return null;
@@ -8282,7 +8299,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // A CLIENT'S COPY GOES ON TO THE SEATS IT DID NOT REACH (kanban #1068, entry-relay.js)
         // EVERY ROUND'S ENTRY REACHES EVERY SEAT, NOT ONLY A HEAD-TO-HEAD ONE'S (kanban #1216, audit 3 CONSENSUS-1): an entry a player posted to some seats only
         // is handed on to the rest, each door checking it as a client's copy - so withholding it from seats reveals nothing and buys no VOID
-        if (!req.headers[RELAY_HEADER]) { const c = relayedRound(contract.roundId); if (c) entryRelay.entryTaken(contract.roundId, toHex(joined), c.entryCloseMs); }
+        { const c = relayedRound(contract.roundId);   // EVERY COPY IS HANDED ON, the header or not (kanban #1260, audit 4 PLAYER-1): a client sent it itself and nothing went on
+          if (c) entryRelay.entryTaken(contract.roundId, toHex(joined), c.entryCloseMs); }
         // NO HOLD IS ISSUED HERE ANY MORE. This door used to ask the signer node's Lightning for a hold
         // invoice on the entry's payment hash, and said how that went in `x-hold`. That was the withdrawn Lightning custody's
         // stake-in, which does not exist (§23.6, RULED 2026-09-22 22:59); a lock round's stake is locked by
@@ -9235,6 +9253,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
         { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
+        { const why = lockAfterCloseRefusal(stored, eid, 'stake'); if (why) return text(res, 409, `lock refused: ${why}`); }
         // WHERE A SLOW LOCK'S TIME WENT (kanban #605: POST /lock took up to 107 s on the test host seats, 0 ms on the loop)
         // AND EVERY LOCK'S STEPS, NOT ONLY A SLOW ONE'S (kanban #618, step-log.js): the federation's own steps (verifyStakeLock's timing) with them
         const steps = stepLog('lock', toHex(eid), { keep: txRecord.keep }).on(res); steps.at('entry');
@@ -9242,7 +9261,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = await takeStakeLock(eid, fields, timing);
         lockTimed(got.ok ? 'verified' : got.why.slice(0, 60));
         if (!got.ok) return text(res, 409, got.why);
-        if (!req.headers[RELAY_HEADER] && relayedRound(decodeEntryContract(stored).roundId)) entryRelay.lockTaken(decodeEntryContract(stored).roundId, toHex(eid));   // every round's (kanban #1216)
+        if (relayedRound(decodeEntryContract(stored).roundId)) entryRelay.lockTaken(decodeEntryContract(stored).roundId, toHex(eid));   // every round's (kanban #1216)
         // AN ORDER (comment 1127): tradable here once both its locks are verified - and only before its market's entry close
         const lateOrder = orderLockAfterClose(stored);
         if (decodeEntryContract(stored).limitPrice !== undefined && !lateOrder) orderBook.noteTradable(decodeEntryContract(stored).roundId);
@@ -9263,6 +9282,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
         { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
+        { const why = lockAfterCloseRefusal(stored, eid, 'fee'); if (why) return text(res, 409, `lock refused: ${why}`); }
         const got = await takeFeeLock(eid, fields);
         steps.at(got.ok ? 'verified' : 'refused');
         if (!got.ok) return text(res, 409, got.why);
