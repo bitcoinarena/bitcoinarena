@@ -148,6 +148,8 @@ export class Round {
     // could not sign would have to answer a checkpoint with something other
     // than a receipt, and there is no such answer.
     this.identity = nodeIdentity(db);
+    // the moves of rows made ACCEPTED on a history txid before #1249, put right once at open (kanban #1275)
+    try { const fixed = this.repairAcceptedMoves(); if (fixed) console.log(`#1275 [settlement] ${fixed} ACCEPTED row(s) had another txid's moves: rewritten from the history`); } catch { /* a store without those tables */ }
   }
 
   /**
@@ -3025,6 +3027,24 @@ export class Round {
     } else if (signature && signature.length) {
       this.db.prepare('UPDATE lock_settlement_txids SET signature = ? WHERE round_id = ? AND txid = ? AND length(signature) = 0').run(Buffer.from(signature), Buffer.from(roundId), String(txid));
     }
+  }
+
+  /**
+   * ROWS MADE ACCEPTED ON A HISTORY TXID BEFORE #1249 KEEP ANOTHER TXID'S MOVES (kanban #1275, audit 4 fixesB-4): once, at open, each ACCEPTED row whose
+   * moves name another txid and whose own txid the history holds gets that txid's moves. Answers how many were repaired.
+   */
+  repairAcceptedMoves() {
+    let n = 0;
+    let rows = [];
+    try {
+      rows = this.db.prepare(`SELECT ls.round_id AS round_id, ls.txid AS txid FROM lock_settlements ls JOIN lock_settlement_moves mv ON mv.round_id = ls.round_id
+        WHERE ls.state = 'ACCEPTED' AND mv.txid != ls.txid`).all();
+    } catch { return 0; }
+    for (const r of rows) {
+      const h = this.settlementTxidsOf(r.round_id).find((x) => x.txid === String(r.txid));
+      if (h && Array.isArray(h.claims)) { this.putLockSettlementMoves({ roundId: new Uint8Array(r.round_id), txid: String(r.txid), claims: h.claims, payouts: h.payouts }); n++; }
+    }
+    return n;
   }
 
   settlementTxidsOf(roundIdBytes) {
