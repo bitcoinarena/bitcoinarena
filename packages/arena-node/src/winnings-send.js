@@ -436,7 +436,11 @@ export class WinningsSend {
       expiration: proposedExpiration(g.height, gw), donation: !!prev.donation };
     this.round.putSendPlan({ ...row, why: prev.invoice ? `re-send proposed: attempt ${prev.attempt} expired unpaid through ${prev.gatewayUrl}`
       : 'a held donation share re-sent: the recipient answers' });
-    const refused = await this.offerResend(roundIdBytes, row);
+    // THE ROW THIS SEAT KEEPS IS THE ONE OFFERED (kanban #1241): another seat's attempt kept here first stands (or a lower one replaced it), and
+    // offering this seat's fresh invoice beside it split the peers for good
+    const kept = this.rowOf(roundIdBytes, entryHex, row.attempt);
+    const offer = kept && kept.paymentHash !== String(row.paymentHash).toLowerCase() ? { ...kept, roundId: roundIdBytes, donation: !!prev.donation } : row;
+    const refused = await this.offerResend(roundIdBytes, offer);
     return refused.length ? refuse(`a signer node did not take the re-send: ${refused.join('; ')}`) : { ok: true, row: this.rowOf(roundIdBytes, entryHex) };
   }
 
@@ -465,8 +469,12 @@ export class WinningsSend {
   async checkResend(roundIdBytes, built, p, { from = null } = {}) {
     if (!from) return refuse('a re-send is taken only from a seat of the round, signed by its node key', 403);
     if (!p || typeof p !== 'object') return refuse('a re-send is a send plan', 400);
-    const prev = this.rowOf(roundIdBytes, String(p.entry));
+    let prev = this.rowOf(roundIdBytes, String(p.entry));
     if (!prev) return refuse('this signer node holds no send for that entry');
+    // ANOTHER SEAT'S ATTEMPT N+1 KEPT HERE ALREADY, still PLANNED (kanban #1241): this one is checked against the attempt before it, and replaces
+    // the kept one below when its hash is lower
+    if (Number(p.attempt) === prev.attempt && prev.attempt > 0 && prev.state === 'PLANNED' && prev.paymentHash !== String(p.paymentHash).toLowerCase())
+      prev = this.rowOf(roundIdBytes, String(p.entry), prev.attempt - 1) || prev;
     if (Number(p.attempt) !== prev.attempt + 1) {
       const same = this.rowOf(roundIdBytes, String(p.entry), Number(p.attempt));
       return same && same.paymentHash === String(p.paymentHash).toLowerCase() ? { ok: true } : refuse(`that is not the next attempt after ${prev.attempt}`);
@@ -489,7 +497,16 @@ export class WinningsSend {
       paymentHash: p.paymentHash, invoiceMsat: stands.invoiceMsat, payoutMsat: out, owedMsat: prev.owedMsat, gatewayUrl: p.gatewayUrl,
       gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration), donation: !!prev.donation, why: `re-send checked here: attempt ${prev.attempt} expired (signed by seat ${String(from).slice(0, 16)})` });
     // THE ROW THAT STANDS IS THE ANSWER: another seat's attempt N+1 kept a moment before is not this one, and this one is not taken
-    const kept = this.rowOf(roundIdBytes, String(p.entry), prev.attempt + 1);
+    let kept = this.rowOf(roundIdBytes, String(p.entry), prev.attempt + 1);
+    // A LOWER RE-SEND REPLACES A KEPT ONE NOTHING WAS SIGNED ON YET (kanban #1241): the peers meet on the lowest hash any seat offered
+    if (kept && kept.paymentHash !== String(p.paymentHash).toLowerCase() && kept.state === 'PLANNED' && typeof this.round.replaceSendPlan === 'function'
+      && String(p.paymentHash).toLowerCase() < kept.paymentHash) {
+      this.pairs.delete(`resend:${toHex(roundIdBytes)}:${String(p.entry)}:${prev.attempt + 1}`);
+      this.round.replaceSendPlan({ roundId: roundIdBytes, entryId: prev.entryId, attempt: prev.attempt + 1, invoice: p.invoice, paymentHash: p.paymentHash,
+        invoiceMsat: stands.invoiceMsat, payoutMsat: out, gatewayUrl: p.gatewayUrl, gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration), donation: !!prev.donation,
+        why: `re-send checked here: a lower attempt ${prev.attempt + 1} than the one kept (signed by seat ${String(from).slice(0, 16)})` });
+      kept = this.rowOf(roundIdBytes, String(p.entry), prev.attempt + 1);
+    }
     if (!kept || kept.paymentHash !== String(p.paymentHash).toLowerCase())
       return refuse(`this signer node keeps another attempt ${prev.attempt + 1} for that send, and does not replace it`);
     return { ok: true };
