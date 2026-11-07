@@ -105,14 +105,15 @@ export function settlementNonce(roundId) {
 // table the locks are claimed and paid by is `lockActions`' over it, so a split round settles by the split and nothing
 // else here changes: the payouts are the table's rows, scaled to the claimed locks as any table's are.
 export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null,
-  sends = new Map(), addressed = null, requireSends = false, donationSet = null, payoutShares = null, feeBps = undefined, websitePct = undefined }) {
+  sends = new Map(), addressed = null, requireSends = false, donationSet = null, payoutShares = null, feeBps = undefined, websitePct = undefined, fallback = null }) {
   // `feeBps` / `websitePct`: the fees in force at the round (fee-proposal.js) - a version-11 round's node fee and the
   // website's share of it; unset, today's (4 % and 20 %)
   if (!(locks instanceof Map)) return refuse('the verified stake locks are a Map by player key');
   if (!(feeLocks instanceof Map)) return refuse('the verified fee locks are a Map by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
     return refuse('the guardians\' fee rule is BigInt ppm and base msat, 0 or more');
-  const feePart = feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps, websitePct });
+  // `fallback` (spec §23.2, kanban #1281): the fallback claim's fee - see feeSettlement
+  const feePart = feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps, websitePct, fallback });
   if (!feePart.ok) return feePart;
   // THE STAKE PART'S VERDICT IS `lockActions`'. A round with losers and nobody to
   // pay is refused there ("the operator would keep ..."), and so its stakes are not
@@ -548,7 +549,11 @@ export function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, f
 // `donation`: { recipients } - a market's donation target (two sets: the protocol devs' and the game dev's, key sets), whose
 // donation rides in its fee locks (fee.js entryFeeBpsOf): what the fee locks hold above the node table is that
 // donation, split by `splitDonation` and paid to each key by a pre-expired payout contract, as a walk-away's 25 % is.
-function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps = undefined, donation = null, websitePct = undefined }) {
+// THE FALLBACK CLAIM'S FEE (spec §23.2, kanban #1281): `fallback` { eligible: Set(seat hex), reserveKey: 33 bytes } - the fee locks are claimed
+// without their F (the lock's Fallback witness names none), and the share of a round seat (the game/verify and settlement pools) outside
+// `eligible` - no signed result or FINAL on the relays by final_after + 60 s - is paid to the reserves, never to the other seats. Guardians,
+// gateways and liquidity providers are paid as ever. Without `fallback`, unchanged.
+function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps = undefined, donation = null, websitePct = undefined, fallback = null }) {
   const none = { ok: true, claims: [], payouts: [], unpaid: [], poolMsat: 0n, inputFeesMsat: 0n, paidMsat: 0n, outputFeesMsat: 0n, unspentMsat: 0n, unallocatedMsat: 0n };
   if (!feeLocks.size) return none;
   if (!contract || !signerNodes || !Array.isArray(signerNodes[GAME_VERIFY]) || !Array.isArray(signerNodes[SETTLEMENT]))
@@ -559,8 +564,8 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
     const f = feeLocks.get(toHex(e.pubkey));
     if (!f) return refuse(`an entry's fee lock was never verified, so the fee cannot be claimed: ${toHex(e.pubkey).slice(0, 16)}`);
     if (f.amountMsat !== e.feeMsat) return refuse(`a fee lock holds ${f.amountMsat} msat and its entry's fee is ${e.feeMsat}`);
-    if (!(f.preimage instanceof Uint8Array) || f.preimage.length !== 32) return refuse('a fee lock is claimed with its F, and that is 32 bytes');
-    claims.push({ pubkey: e.pubkey, outpoint: f.outpoint, amountMsat: f.amountMsat, preimage: f.preimage, kind: 'fee' });
+    if (!fallback && (!(f.preimage instanceof Uint8Array) || f.preimage.length !== 32)) return refuse('a fee lock is claimed with its F, and that is 32 bytes');
+    claims.push({ pubkey: e.pubkey, outpoint: f.outpoint, amountMsat: f.amountMsat, ...(fallback ? {} : { preimage: f.preimage }), kind: 'fee' });
   }
   const eligible = new Set([...signerNodes[GAME_VERIFY], ...signerNodes[SETTLEMENT], ...(Array.isArray(signerNodes[GUARDIAN]) ? signerNodes[GUARDIAN] : []),
     ...(Array.isArray(signerNodes[GATEWAY]) ? signerNodes[GATEWAY] : []), ...(Array.isArray(signerNodes[LIQUIDITY]) ? signerNodes[LIQUIDITY] : [])].map(toHex));
@@ -597,8 +602,14 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   // key, guardian-payout.js): its own output, apart from that node's committee shares.
   const payoutOf = signerNodes.guardianPayout instanceof Map ? signerNodes.guardianPayout : null;
   const owed = new Map();
+  if (fallback && !(fallback.reserveKey instanceof Uint8Array && fallback.reserveKey.length === 33)) return refuse('a fallback claim pays the quiet seats\' share to the reserves, and no reserve key is known for the round\'s federation');
   for (const [k, msat] of table.signerNodes) {
     const node = k.slice(k.indexOf(':') + 1);
+    if (fallback && (k.startsWith(`${GAME_VERIFY}:`) || k.startsWith(`${SETTLEMENT}:`)) && !fallback.eligible.has(node)) {
+      const rk = `reserve:${toHex(fallback.reserveKey)}`;
+      owed.set(rk, (owed.get(rk) || 0n) + msat);
+      continue;
+    }
     // a gateway seat's share (2026.0.15, §23A.9) goes where its guardian share goes: its advert's payout key
     // a liquidity provider's share (2026.0.16, §23A.10) too
     const pk = payoutOf && (k.startsWith(`${GUARDIAN}:`) || k.startsWith(`${GATEWAY}:`) || k.startsWith(`${LIQUIDITY}:`)) ? payoutOf.get(node) : null;
@@ -655,14 +666,16 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   }
   const nodesSpendable = nodePartMsat - publisherGross - frontendGross - auditorGross;
   for (const [key, msat] of owed) {
-    const guardianPk = key.startsWith('payout:') ? fromHex(key.slice(7)) : null;
+    const reservePk = key.startsWith('reserve:') ? fromHex(key.slice(8)) : null;
+    const guardianPk = key.startsWith('payout:') ? fromHex(key.slice(7)) : reservePk;
     const pubkey = guardianPk ? guardianPk.subarray(1) : fromHex(key);
     // what this node is owed once the websites' 20% is taken from the nodes' fee (its table share, scaled down by their total)
     const afterSites = sites.totalMsat ? (msat * (table.fee - sites.totalMsat)) / table.fee : msat;
     const owedMsat = auditorBps ? (afterSites * (10000n - auditorBps)) / 10000n : afterSites;
     const got = largestPayoutMsat(fees, publisherGross || frontendGross || auditorGross ? (msat * nodesSpendable) / table.fee : (msat * spendable) / poolMsat);
     if (got === 0n) { unpaid.push({ pubkey, owedMsat, why: 'its fee share does not pay its own output fee' }); continue; }
-    payouts.push({ pubkey, payoutPk: guardianPk || refundKeyOf(pubkey), owedMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: guardianPk ? 'guardian payout key' : 'signer node' });
+    payouts.push({ pubkey, payoutPk: guardianPk || refundKeyOf(pubkey), owedMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got),
+      kind: reservePk ? 'reserve' : guardianPk ? 'guardian payout key' : 'signer node', ...(reservePk ? { reserve: true, fallback: true } : {}) });
   }
   // THE DONATION'S SHARES, scaled to what the claimed locks pay as the nodes' are, each to its own key
   for (const d of donated) {
