@@ -154,3 +154,25 @@ test('kanban #1154 on the reserves: a plan whose invoice another node signed is 
   assert.equal(r.state, PAYOUT.PAID, r.why);
   assert.ok(ok.fed.payeeAsks >= 4, `${ok.fed.payeeAsks} payee reads`);
 });
+
+// KANBAN #1259 (audit 3 #1210 FIXES-21): payerFor skipped a federation with no key, no port or no live gateway, and the round then wrote SHORT - terminal
+// and broadcast - so a passing read (both gateways live:false for a block) ended a payment the reserves could make. Now a federation not read this pass
+// is no shortfall: nothing is written, and the next pass pays.
+test('#1259 no live gateway for one pass, or a read that fails, is no SHORT: nothing written, and the next pass pays', async () => {
+  for (const [name, outage] of [['no live gateway', (p) => { p.gateways = async () => ({ gateways: [{ ...GW, live: false }], height: 1000 }); }],
+                                ['a failed read', (p) => { p.fees = async () => { throw new Error('connection reset'); }; }]]) {
+    const w = world();
+    const keep = { gateways: w.port.gateways, fees: w.port.fees };
+    outage(w.port);
+    const first = await w.seats[0].api.round({ height: 500 });
+    await w.deliver();
+    const during = w.seats.map((s) => (s.api.stateOf(PROPOSAL) || {}).state || null);
+    Object.assign(w.port, keep);
+    const [r] = await w.seats[0].api.round({ height: 500 });
+    await w.deliver();
+    console.log(`  FACTS #1259 ${name}:`, JSON.stringify({ firstPass: first.map((x) => x.state || (x.ok === false ? 'asked again' : '?')), heldDuring: [...new Set(during)], nextPass: r && r.state, payments: w.fed.payments.length }));
+    assert.ok(during.every((x) => x === null), `${name}: a record was written on a passing read: ${during}`);
+    assert.equal(r.state, PAYOUT.PAID, r.why);
+    assert.equal(w.fed.payments.length, 1);
+  }
+});

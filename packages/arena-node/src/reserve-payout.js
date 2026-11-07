@@ -692,21 +692,24 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     return { ok: true, fed };
   }
   // WHICH FEDERATION PAYS A PASSED PROPOSAL, as this seat holds the reserves: the lowest federation id whose unspent reserves cover X
-  // plus fees, or none (`needs` what each one holds and needs)
+  // plus fees, or none (`needs` what each one holds and needs). `unread` (kanban #1259, audit 3 #1210 FIXES-21): the federations this pass could
+  // not read - no reserve key (between epochs), no port, no live gateway, or a read that failed. Not one of them is "the reserves cannot cover it":
+  // a SHORT is written only when `unread` is empty
   async function payerFor(v, feds) {
-    const needs = {};
+    const needs = {}, unread = [];
     for (const fed of [...feds.keys()].sort()) {
-      const g = feds.get(fed); if (!g.key) continue;
-      const port = await portOf(fed); if (!port) continue;
-      const [fees, gws] = await Promise.all([port.fees(), port.gateways()]);
-      const gw = lowestLiveGateway(gws.gateways || []); if (!gw) continue;
+      const g = feds.get(fed); if (!g.key) { unread.push(`${fed.slice(0, 8)} has no reserve key here now`); continue; }
+      const port = await portOf(fed); if (!port) { unread.push(`${fed.slice(0, 8)}: no port into it`); continue; }
+      let fees, gws;
+      try { [fees, gws] = await Promise.all([port.fees(), port.gateways()]); } catch (e) { unread.push(`${fed.slice(0, 8)} did not answer: ${String(e && e.message || e).slice(0, 80)}`); continue; }
+      const gw = lowestLiveGateway((gws && gws.gateways) || []); if (!gw) { unread.push(`${fed.slice(0, 8)} has no live gateway now`); continue; }
       const contractMsat = contractForInvoice(BigInt(v.amountSats) * 1000n, gw.sendFeeDefault);
       const have = unspent(fed);
       const held = have.reduce((t, x) => t + BigInt(x.amountMsat), 0n);
       needs[fed] = { held: String(held), need: String(contractMsat + lnv2FeeMsat(fees, contractMsat)) };
-      if (payAmountsCover(have, contractMsat, fees)) return { payer: fed, needs };
+      if (payAmountsCover(have, contractMsat, fees)) return { payer: fed, needs, unread };
     }
-    return { payer: null, needs };
+    return { payer: null, needs, unread };
   }
   /**
    * A SHORTFALL ANOTHER SEAT SAID (kanban #1156): a seat that holds a share of a reserve key - one that would pay - keeps it only when
@@ -733,7 +736,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     }
     const v = (passed() || []).find((p) => p.id === rec.proposal);
     if (!v) return refuse('this seat has no passed vote for that proposal: it keeps no shortfall of it', 409);
-    const { payer } = await payerFor(v, feds);
+    const { payer, unread } = await payerFor(v, feds);
+    // a shortfall this seat cannot recompute now (a federation it could not read) is not kept as said (kanban #1259)
+    if (!payer && unread.length) return refuse(`this seat cannot read every federation now, so it keeps no shortfall: ${unread.join('; ')}`, 503);
     return payer ? refuse(`this seat's reserves in ${payer.slice(0, 8)} cover that payout: no shortfall here`, 409) : { ok: true };
   }
   // THE TRANSACTION A PLAN MAKES, rebuilt here without signing (the stake-lock tool's dry run): its id, or null
@@ -888,9 +893,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       if (r && r.state === PAYOUT.PLANNED) { await expireIfDue(r); r = rowOf(v.id); if (DONE.has(r.state)) continue; }
       const live = !!(r && r.state !== PAYOUT.EXPIRED);
       // which federation pays: the lowest federation id whose unspent reserves (as this seat holds them) cover X plus fees
-      let payer = null, needs = {};
+      let payer = null, needs = {}, unread = [];
       if (live) payer = r.federation;
-      else ({ payer, needs } = await payerFor(v, feds));
+      else ({ payer, needs, unread } = await payerFor(v, feds));
       const coordFed = payer || [...feds.keys()].filter((f) => feds.get(f).key).sort()[0];
       const g = coordFed && feds.get(coordFed);
       if (!g || !g.signer) continue;                                      // not a guardian of the paying federation: it only records
@@ -899,6 +904,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       // a plan is opened (or found short) only by the guardian seat whose turn it is now (kanban #1159); a plan held goes on with any
       if (!live && turnOf(g.members, Number(v.decidableAt), height) !== me) continue;
       if (r && !live && !payer) { out.push({ id: v.id, ok: false, why: 'its plan expired, and the reserves cannot pay it now' }); continue; }
+      // A FEDERATION NOT READ THIS PASS IS NO SHORTFALL (kanban #1259, audit 3 FIXES-21): SHORT is terminal and broadcast, and was written on a passing
+      // read (both gateways live:false for a block, the reserve key between epochs) - a payment the reserves could make, never made. Asked again next pass
+      if (!payer && unread.length) { out.push({ id: v.id, ok: false, why: `not decided this pass, asked again: ${unread.join('; ')}` }); continue; }
       if (!r && !payer) {
         const why = `the reserves cannot pay ${v.amountSats} sat: ${Object.entries(needs).map(([f, n]) => `${f.slice(0, 8)} holds ${n.held} msat, needs ${n.need}`).join('; ') || 'no federation can be read'} (a payout over several federations is not built)`;
         const t = transition(v.id, null, PAYOUT.SHORT, { why, federation: coordFed });
