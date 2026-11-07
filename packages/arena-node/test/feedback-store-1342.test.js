@@ -146,3 +146,73 @@ test('#1342 networkPlayers reads each game\'s network board from the first seat 
   assert.deepEqual([np.played(A), np.played(B), np.played(C)], [true, true, false]);
   assert.match(asked[1], /scope=network&game=rock-paper-scissors&days=90/);
 });
+
+// ---- slice 3: one LNURL-withdraw per approved report, exact amount, single use, never expiring ----
+const BASE = 'https://testnet.example/api/faucet';
+const approved = (s, k, words, sats) => { const e = report(k, words); s.take(e); assert.equal(s.approve(e.id, sats, { played: () => true }).ok, true); return e.id; };
+
+test('#1342 a reward link is made once, for an approved report only, and asks a wallet for exactly its amount (testnet sats, no value)', () => {
+  const s = openFeedbackStore();
+  const alice = key(1);
+  const fresh = report(alice, 'not approved yet'); s.take(fresh);
+  const early = s.createReward(fresh.id);
+  const id = approved(s, alice, 'the reveal hangs', 2000);
+  const a = s.createReward(id), b = s.createReward(id);
+  const req = s.withdrawRequest(a.reward.k1, { base: BASE });
+  const link = s.lnurlOf(a.reward.k1, { base: BASE });
+  console.log('  FACTS #1342 link:', JSON.stringify({ early: early.why, made: a.made, again: b.made, sameK1: a.reward.k1 === b.reward.k1, req, link: link.slice(0, 20) + '…' }));
+  assert.ok(early.why);
+  assert.deepEqual([a.made, b.made, a.reward.k1 === b.reward.k1], [true, false, true]);
+  assert.deepEqual([req.tag, req.minWithdrawable, req.maxWithdrawable, req.callback], ['withdrawRequest', 2000000, 2000000, `${BASE}/lnurlw/${a.reward.k1}/callback`]);
+  assert.match(req.defaultDescription, /testnet sats, no value/);
+  assert.match(link, /^lnurl1/);
+  assert.equal(s.withdrawRequest('ff'.repeat(32), { base: BASE }).status, 'ERROR');
+});
+
+test('#1342 a claim pays once: wrong amounts refused, two claims at once pay one, a sure failure opens the link again, an unknown waits for settle()', async () => {
+  const s = openFeedbackStore();
+  const alice = key(1);
+  const decode = async (inv) => ({ ok: true, amountSats: Number(inv.split(':')[1]), paymentHash: `h-${inv}` });
+  let pays = 0;
+  const slowPay = () => new Promise((r) => { pays++; setTimeout(() => r({ ok: true, paymentHash: 'paid-hash' }), 50); });
+  const k1 = s.createReward(approved(s, alice, 'bug for the double claim', 1500)).reward.k1;
+  const wrong = await s.claim(k1, 'inv:1400', { decode, pay: slowPay });
+  const [c1, c2] = await Promise.all([s.claim(k1, 'inv:1500', { decode, pay: slowPay }), s.claim(k1, 'inv:1500', { decode, pay: slowPay })]);
+  const after = s.reward(k1);
+  const third = await s.claim(k1, 'inv:1500', { decode, pay: slowPay });
+  // a failing payer: the link opens again; an unknown one: it stays paying until settle reads the payer
+  const k2 = s.createReward(approved(s, alice, 'bug for the failure', 1000)).reward.k1;
+  const failed = await s.claim(k2, 'inv:1000', { decode, pay: async () => ({ ok: false, failed: true, why: 'no route' }) });
+  const reopened = s.reward(k2).state;
+  const unknown = await s.claim(k2, 'inv:1000', { decode, pay: async () => ({ ok: false, why: 'timeout' }) });
+  const stuck = s.reward(k2).state;
+  const blocked = await s.claim(k2, 'inv:1000', { decode, pay: slowPay });
+  const settled = await s.settle({ status: async () => 'paid' });
+  const facts = { wrong: wrong.reason, claims: [c1.status, c2.status], pays, after: [after.state, after.paymentHash], third: third.reason, report: s.report(after.report).state,
+    failed: failed.reason, reopened, unknown: unknown.reason, stuck, blocked: blocked.reason, settled, k2: s.reward(k2).state };
+  console.log('  FACTS #1342 claim:', JSON.stringify(facts));
+  assert.match(wrong.reason, /exactly 1500 sat/);
+  assert.deepEqual([c1.status, c2.status].sort(), ['ERROR', 'OK']);
+  assert.equal(pays, 1, 'two claims at once paid twice');
+  assert.deepEqual([after.state, after.paymentHash, facts.report], ['paid', 'paid-hash', 'paid']);
+  assert.match(third.reason, /claimed/);
+  assert.deepEqual([reopened, stuck, s.reward(k2).state], ['open', 'paying', 'paid']);
+  assert.match(blocked.reason, /being paid/);
+});
+
+test('#1342 the link outlives a restart and a week: the same file reopened answers the same k1 and pays it', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'reward-1342-'));
+  try {
+    const path = join(dir, 'feedback.db');
+    const s1 = openFeedbackStore(path);
+    const k1 = s1.createReward(approved(s1, key(1), 'kept for a week', 3000)).reward.k1;
+    s1.close();
+    const s2 = openFeedbackStore(path);
+    const weekLater = Date.now() + 8 * 24 * 3600 * 1000;
+    const req = s2.withdrawRequest(k1, { base: BASE });
+    const paid = await s2.claim(k1, 'inv:3000', { decode: async () => ({ ok: true, amountSats: 3000, paymentHash: 'h' }), pay: async () => ({ ok: true, paymentHash: 'h' }), nowMs: weekLater });
+    console.log('  FACTS #1342 week:', JSON.stringify({ tag: req.tag, max: req.maxWithdrawable, claimed: paid.status, state: s2.reward(k1).state }));
+    assert.deepEqual([req.tag, req.maxWithdrawable, paid.status, s2.reward(k1).state], ['withdrawRequest', 3000000, 'OK', 'paid']);
+    s2.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

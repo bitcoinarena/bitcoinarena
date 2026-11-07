@@ -106,7 +106,7 @@ async fetch(request, env, ctx) {
   { const path = url.pathname.replace(/\/$/, ''); const utm = CHANNEL_LINKS[path];
     if (utm && !url.searchParams.has('utm_source')) return Response.redirect(`${url.origin}${path === '/night' ? '/night/' : '/'}?${utm}`, 302); }
   // THE PLAYERS' FAUCET AND THE TABLE WANTS (kanban #926): passed on to the faucet service, whose address is a secret of this Worker (FAUCET_ORIGIN), with the caller's address for its limits
-  if (url.pathname === '/api/faucet/player' || url.pathname === '/api/faucet/opponent' || url.pathname === '/api/faucet/feedback' || url.pathname === '/api/faucet/feedback/mine' || url.pathname === '/api/faucet/founding' || url.pathname === '/api/faucet/refill') {
+  if (url.pathname === '/api/faucet/player' || url.pathname === '/api/faucet/opponent' || url.pathname === '/api/faucet/feedback' || url.pathname === '/api/faucet/feedback/mine' || /^\/api\/faucet\/lnurlw\/[0-9a-f]{64}(\/callback)?$/.test(url.pathname) || url.pathname === '/api/faucet/founding' || url.pathname === '/api/faucet/refill') {
     if (!env.FAUCET_ORIGIN) return new Response('{"ok":false,"why":"the faucet is off"}', { status: 503, headers: { 'content-type': 'application/json' } });
     const headers = new Headers({ 'content-type': 'application/json', 'x-arena-ip': request.headers.get('cf-connecting-ip') || '' });
     // "MY FEEDBACK" IS ASKED WITH THE PLAYER'S NIP-98 SIGN-IN (kanban #1342): that header, and only on that path
