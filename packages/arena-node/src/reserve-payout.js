@@ -88,7 +88,7 @@ export const PAYOUT_SAID = Object.freeze([PAYOUT.PLANNED, PAYOUT.SENT, PAYOUT.PA
 export const PAYOUT_NEXT = Object.freeze({
   NONE: [PAYOUT.PLANNED, PAYOUT.SENT, PAYOUT.PAID, PAYOUT.REFUNDED, PAYOUT.SHORT, PAYOUT.CLAIMED],
   [PAYOUT.PLANNED]: [PAYOUT.SUBMITTING, PAYOUT.SENT, PAYOUT.PAID, PAYOUT.REFUNDED, PAYOUT.CLAIMED, PAYOUT.EXPIRED],
-  [PAYOUT.SUBMITTING]: [PAYOUT.SENT, PAYOUT.PAID, PAYOUT.REFUNDED, PAYOUT.CLAIMED],
+  [PAYOUT.SUBMITTING]: [PAYOUT.SENT, PAYOUT.PAID, PAYOUT.REFUNDED, PAYOUT.CLAIMED, PAYOUT.EXPIRED],
   [PAYOUT.SENT]: [PAYOUT.REFUNDING, PAYOUT.PAID, PAYOUT.REFUNDED, PAYOUT.CLAIMED],
   [PAYOUT.REFUNDING]: [PAYOUT.REFUNDED, PAYOUT.PAID],
   [PAYOUT.PAID]: [PAYOUT.CLAIMED],
@@ -97,6 +97,8 @@ export const PAYOUT_NEXT = Object.freeze({
 });
 /** A PLAN THAT WENT NOWHERE (kanban #1159): no transaction this many blocks after this seat first held it - its inputs are freed. */
 export const PLAN_EXPIRY_BLOCKS = 12;
+/** A SIGNED ATTEMPT IS HANDED IN ONLY THIS MANY BLOCKS BEFORE ITS PLAN IS DUE TO EXPIRE (kanban #1229): after that the co-signers may have expired it. */
+export const SUBMIT_CUTOFF_BLOCKS = 2;
 export const canMove = (from, to) => (PAYOUT_NEXT[from || 'NONE'] || []).includes(to);
 /** WHAT A PAYOUT RECORD'S SIGNATURE COVERS (kanban #1156): every field it carries, the seat that says it last. */
 const RECORD_FIELDS = ['proposal', 'planId', 'federation', 'state', 'plan', 'txid', 'preimage', 'refundTxid', 'why', 'claimTxid', 'claimMsat', 'from'];
@@ -1095,6 +1097,25 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       r = rowOf(pid);
     }
     if (r.state !== PAYOUT.SUBMITTING) return { ok: true, state: r.state };
+    // NOT HANDED IN ONCE ITS PLAN IS DUE TO EXPIRE (kanban #1229, audit 3 #1210 FIXES-10): a coordinator that stopped came back and handed in a
+    // signed attempt after its co-signers had expired it and a later attempt had paid from other inputs - a second contract nobody can
+    // authorise or refund, or a leaderboard paid twice. Past PLAN_EXPIRY_BLOCKS - SUBMIT_CUTOFF_BLOCKS, with its output 0 not in the
+    // federation, the attempt is EXPIRED and its signature dropped; one the federation took moves on as below.
+    { const h = tipNow();
+      if (Number.isInteger(h) && r.planned_at !== null && r.planned_at !== undefined && h >= Number(r.planned_at) + PLAN_EXPIRY_BLOCKS - SUBMIT_CUTOFF_BLOCKS) {
+        let s0 = null; try { s0 = await port.status({ txid: fromHex(r.txid), outIdx: 0n }); } catch (e) { s0 = { error: e.message }; }
+        if (s0 && s0.error) { note(pid, PAYOUT.SUBMITTING, `due to expire, and the federation could not be read: ${s0.error}`); return refuse('the federation could not be read: not handed in so late', 503); }
+        if (!(s0 && s0.stored)) {
+          // its output 0 gone may be a transaction taken and already paid out: an input spent by anything waits for the record, as expireIfDue
+          for (const x of plan.refunds || []) {
+            let si = null; try { si = await port.status(outpointOf(x.outpoint)); } catch (e) { si = { error: e.message }; }
+            if (!si || si.error || !si.stored) { note(pid, PAYOUT.SUBMITTING, si && si.error ? `due to expire, and the federation could not be read: ${si.error}` : `due to expire, and ${String(x.outpoint).slice(0, 16)}… is spent: waits for the record`); return refuse('due to expire with an input spent: not handed in, waits for the record', 409); }
+          }
+          const t = transition(pid, PAYOUT.SUBMITTING, PAYOUT.EXPIRED, { submit_sig: null, why: `signed at height ${r.planned_at}, not taken, and due to expire at ${h}: not handed in` });
+          if (t.ok) log(`[payout] ${pid.slice(0, 16)}: EXPIRED - attempt ${attemptOf(plan)} signed but not taken before its plan was due to expire`);
+          return t.ok ? { ok: true, state: PAYOUT.EXPIRED } : t;
+        }
+      } }
     let tx; try {
       tx = await port.settle({ claimPk: fromHex(plan.reserveKey), claims: [], refunds: plan.refunds.map((x) => ({ outpoint: outpointOf(x.outpoint), amountMsat: BigInt(x.amountMsat) })),
         payouts: payoutsOf(r), nonce: fromHex(plan.nonce), signature: fromHex(r.submit_sig) });
