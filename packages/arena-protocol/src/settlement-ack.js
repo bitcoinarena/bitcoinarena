@@ -188,8 +188,8 @@ export function checkSettlementAsk(bytes, { seats, ask, verify }) {
  * THE THRESHOLD OF ACKS: distinct seats, each verified, over one (round, table, txid), against `receiptsNeeded(slots)`: 2 of 2, 5 of 7.
  * Answers the count, the need, the acks that counted and every one that did not, named.
  */
-export function countAcks({ acks, seats, slots = seats.length, roundId, payoutTableId, settlementTxid, settlementBodyId, verify }) {
-  const needed = receiptsNeeded(slots);
+// `needed`: the threshold the acks must reach - the slots' (5 of 7) by default; t - 1 for the fallback claim (spec §23.2, kanban #1281)
+export function countAcks({ acks, seats, slots = seats.length, roundId, payoutTableId, settlementTxid, settlementBodyId, verify, needed = receiptsNeeded(slots) }) {
   const seen = new Set();
   const kept = [];
   const refused = [];
