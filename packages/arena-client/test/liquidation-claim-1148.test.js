@@ -158,3 +158,23 @@ test('with no arbitration set given, the chain\'s own is read (BOND_TERMS arbitr
   assert.deepEqual(calls, []);
   assert.match(out[0].why, /0 valid signatures of the arbitration set, and an event needs 5/);
 });
+
+// KANBAN #1230 (audit 3 #1210 FIXES-2): `taken` is read per payout key, and a notes record whose POST got no answer (kept, never presented) was
+// dropped when the set accepted another claim of that key - its pending outputs' record, posted the same pass - and the notes were lost.
+test('#1230 notes the door never answered are presented again when the set lists another claim of the key; answered ones are taken', async () => {
+  const { store, base } = rig();
+  const down = async () => { throw new Error('the request timed out'); };
+  await presentNotes({ ...base, events: signed(), fetcher: down });
+  assert.equal(JSON.parse(store.get(pendingClaimKey(FED))).state, 'kept');
+  // the set now accepts another claim under this key (the pending outputs'), and the door answers again
+  const seen = [];
+  const ok = async (url, o) => { seen.push(JSON.parse(o.body).ecash || null); return { ok: true, json: async () => ({ accepted: [1] }) }; };
+  const out = await presentNotes({ ...base, events: signed({ atMs: 3, claims: { accepted: [{ nonce: 'pending-1', amountMsat: '1000', height: 1012, payoutPk: PK }], refused: [], msat: '1000' } }), fetcher: ok });
+  assert.deepEqual(seen, ['notes-1'], 'the notes never presented were dropped instead of presented');
+  assert.ok(!out.some((x) => x.taken));
+  // a 5xx is no answer either
+  const { store: s2, base: b2 } = rig();
+  await presentNotes({ ...b2, events: signed(), fetcher: async () => ({ ok: false, status: 503, json: async () => ({}) }) });
+  await presentNotes({ ...b2, events: signed({ atMs: 3, claims: { accepted: [{ nonce: 'pending-1', amountMsat: '1000', height: 1012, payoutPk: PK }], refused: [], msat: '1000' } }), fetcher: ok });
+  assert.equal(JSON.parse(s2.get(pendingClaimKey(FED))).state, 'posted', 'a record the door answered 503 was taken unpresented');
+});
