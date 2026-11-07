@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { statusFor, buildFederationRecord, encodeFederationRecord, decodeFederationRecord, federationRecordId, joinSignedRecord,
-  splitSignedRecord, verifyFederationRecord, FEDERATION_STATUS, CAPACITY_BAND } from '../../arena-protocol/src/federation-record.js';
+  splitSignedRecord, verifyFederationRecord, FEDERATION_STATUS, CAPACITY_BAND, GONE } from '../../arena-protocol/src/federation-record.js';
 import { federationRecords, guardiansOf, MIRROR_PEERS } from '../src/federation-records.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { readFileSync } from 'node:fs';
@@ -255,13 +255,13 @@ function outsider(census, guardianSeats, nodes) {
 
 // A BOND SPENT WHILE SEATED (§23A.5, kanban #1054): the census drops the guardian, and a record used to shrink its nominal around him with nobody gone
 const SPEND = 'cd'.repeat(32), H0 = 156036;
-function spentAway({ who = 3, spendAt = H0 + 3, absencesOf = null, departureNotice = null, closed = false, keepOutput = false } = {}) {
+function spentAway({ who = 3, spendAt = H0 + 3, absencesOf = null, departureNotice = null, closed = false, keepOutput = false, maturities = null, bondLock = null } = {}) {
   let h = H0, spends = null;
-  const s = seven({ absencesOf, departureNotice, abandonBlocks: absencesOf ? 288 : null, retiring: closed ? [0, 1, 2, 3, 4, 5, 6] : [], heightOf: () => h, censusNow: (c) => {
+  const s = seven({ maturities, bondLock, absencesOf, departureNotice, abandonBlocks: absencesOf ? 288 : null, retiring: closed ? [0, 1, 2, 3, 4, 5, 6] : [], heightOf: () => h, censusNow: (c) => {
     if (!spends) return c;
     const n = s.nodes[who];
     return { ok: true, entries: keepOutput ? c.entries.map((e) => (e.pubkey === n.pubkey ? { ...e, bondSats: 40000n } : e)) : c.entries.filter((e) => e.pubkey !== n.pubkey),
-      excluded: spends.length ? [{ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xa0 + who), vout: 0, why: 'spent', spentBy: { txid: SPEND, height: spendAt } }] : [] };
+      excluded: spends.length ? [{ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xa0 + who), vout: 0, why: 'spent', spentBy: { txid: SPEND, height: spendAt }, ...(maturities ? { advert: { bondMaturityHeight: maturities[who] } } : {}) }] : [] };
   } });
   const everyone = async () => { let got = null; for (const seat of s.seats) got = await seat.gather(FED, inviteFederationId); return got; };
   const read = () => splitSignedRecord(fromHex(s.seats[0].list()[0].record)).record;
@@ -924,4 +924,43 @@ test('#1157 recordStep: older refused, CLOSED final, a mirror never worse at one
   assert.equal(recordStep({ height: 5, status: 'HALTED' }, { height: 5, status: 'OPEN' }, 'mirror').take, true);
   assert.equal(recordStep({ height: 5, status: 'OPEN' }, { height: 5, status: 'DRAINING' }, 'gather').take, true);
   assert.equal(recordStep({ height: 5, status: 'OPEN' }, { height: 6, status: 'HALTED' }, 'mirror').take, true);
+});
+
+// ---- KANBAN #1318 (RULED #1288, line #1343): A BOND'S MATURITY IS A STANDING NOTICE. A guardian absent, or whose bond is spent, from its bond's
+// maturity on departed on schedule: DEPARTED, no offence. Before this both read as ABANDONED, and a bond spent by path A at its maturity was an
+// offence in the same transaction as the spend. While the guardian bond lock is on (#1104's line, BOND_LOCK_HEIGHT); one block early, nothing changes.
+const LOCK_1318 = { from: 0, drainBlocks: 144, bondMinGuardian: 1n };
+test('#1318 a guardian absent from his bond\'s maturity on departed on schedule: DEPARTED in the record all seven sign; absent from a block before it, ABANDONED', async () => {
+  const { createAbsences } = await import('../src/absences.js');
+  const { signAbsence } = await import('../../arena-protocol/src/absence.js');
+  const run = async (maturity6) => {
+    const held = createAbsences({ verify });
+    const s = seven({ absencesOf: (i) => (i === 0 ? held : createAbsences({ verify })), abandonBlocks: 288, departureNotice: 432, bondLock: LOCK_1318,
+      maturities: [900000, 900000, 900000, 900000, 900000, 900000, maturity6] });
+    for (const n of s.nodes.slice(0, 5)) assert.equal(held.offer(signAbsence({ federationId: FED, peerKey: s.nodes[6].guardianKey, lastSeenHeight: 1000, height: 1300, attester: n.pubkey }, (m) => schnorr.sign(m, n.secret))).kept, true);
+    const got = await s.seats[0].gather(FED, inviteFederationId);
+    const v = verifyFederationRecord(fromHex(s.seats[0].list()[0].record), { census: s.census.entries, verify, inviteFederationId });
+    return { got, gone: v.record ? v.record.gone : [] };
+  };
+  const onTime = await run(1000), early = await run(1001);
+  const kinds = { 1: 'DEPARTED', 2: 'ABANDONED' };
+  console.log('  FACTS #1318 absence:', JSON.stringify({ maturity1000: { signers: onTime.got.signers, gone: onTime.gone.map((g) => [kinds[g.kind], g.sinceHeight]) },
+    maturity1001: { signers: early.got.signers, gone: early.gone.map((g) => [kinds[g.kind], g.sinceHeight]) } }));
+  assert.deepEqual([onTime.got.ok, onTime.got.signers, onTime.gone.length, onTime.gone[0].kind, onTime.gone[0].sinceHeight], [true, 7, 1, GONE.DEPARTED, 1000], onTime.got.why);
+  assert.deepEqual([early.got.ok, early.got.signers, early.gone[0].kind], [true, 7, GONE.ABANDONED], 'a block before the maturity it is still abandonment');
+});
+
+test('#1318 a guardian whose bond is spent at its maturity left on schedule: no ABANDONED row; spent a block before it, ABANDONED as before', async () => {
+  const run = async (maturity) => {
+    const t = spentAway({ maturities: [900000, 900000, 900000, maturity, 900000, 900000, 900000], bondLock: LOCK_1318 });
+    await t.everyone(); t.next(H0 + 6, t.spent);
+    const got = await t.everyone();
+    return { got, r: t.read() };
+  };
+  const onTime = await run(H0 + 3), early = await run(H0 + 4);
+  console.log('  FACTS #1318 spend:', JSON.stringify({ spentAtMaturity: { ok: onTime.got.ok, gone: onTime.r.gone.map((g) => g.kind), nominal: onTime.r.nominal }, spentBeforeMaturity: { ok: early.got.ok, gone: early.r.gone.map((g) => g.kind), nominal: early.r.nominal } }));
+  assert.equal(onTime.got.ok, true, onTime.got.why);
+  assert.ok(!onTime.r.gone.some((g) => g.kind === GONE.ABANDONED), 'a path-A spend at the bond\'s maturity was filed as abandonment');
+  assert.equal(early.got.ok, true, early.got.why);
+  assert.deepEqual(early.r.gone.map((g) => [g.kind, g.sinceHeight]), [[GONE.ABANDONED, H0 + 3]], 'spent before maturity: abandonment, as before');
 });

@@ -7838,16 +7838,20 @@ function lockedExposureCap({ guardians, f, height, drainBlocks, bondMinGuardian 
  * at m* - drain_blocks, m* the maturity at which the latest outputs first reach the floor. Answers { qualifying, lapsesAt, blocksLeft, warn }:
  * `warn` from drain_blocks before the lapse; lapsesAt null when no outputs reach the floor at all.
  */
-function bondLapseOf({ outputs, drainBlocks, bondMinGuardian, tip }) {
+// `warnBlocks` (#1318, RULED #1288: "the owner page says so a season ahead"): warn this far ahead when it is longer than drain_blocks; `departsAt` the latest
+// output's maturity - the guardian departs on schedule there (scheduledDeparture)
+function bondLapseOf({ outputs, drainBlocks, bondMinGuardian, tip, warnBlocks = 0 }) {
   const floor = BigInt(bondMinGuardian || 0);
   const outs = (outputs || []).filter((o) => o && Number.isInteger(Number(o.maturity)) && o.maturity !== null)
     .map((o) => ({ sats: BigInt(o.bondSats ?? o.sats ?? 0), maturity: Number(o.maturity) })).sort((a, b) => b.maturity - a.maturity);
   let sum = 0n, mStar = null;
   for (const o of outs) { sum += o.sats; if (sum >= floor && sum > 0n) { mStar = o.maturity; break; } }
-  if (mStar === null) return { qualifying: false, lapsesAt: null, blocksLeft: 0, warn: true };
+  const departsAt = outs.length ? outs[0].maturity : null;
+  if (mStar === null) return { qualifying: false, lapsesAt: null, blocksLeft: 0, warn: true, departsAt };
   const lapsesAt = mStar - drainBlocks;
   const blocksLeft = Math.max(0, lapsesAt - Number(tip));
-  return { qualifying: Number(tip) < lapsesAt, lapsesAt, blocksLeft, warn: blocksLeft <= drainBlocks };
+  const ahead = Math.max(drainBlocks, Number.isInteger(warnBlocks) ? warnBlocks : 0);
+  return { qualifying: Number(tip) < lapsesAt, lapsesAt, blocksLeft, warn: blocksLeft <= ahead, warnBlocks: ahead, departsAt };
 }
 
 /** Is a reserve within what the bonds actually cover? */
@@ -8026,7 +8030,21 @@ const hexKey = (k) => (k instanceof Uint8Array ? Array.from(k, (b) => b.toString
  * untouched. "A departure that stops serving before its leave_after" is abandonment, and so is an absence with no notice.
  * Answers { ok, slash, kind: 'ABANDONED' | 'DEPARTED', why }.
  */
-function guardianSlashStands({ proof, departure = null, emergency = null, abandonBlocks = null }) {
+/**
+ * A BOND'S MATURITY IS A STANDING NOTICE (RULED 2026-11-07, kanban #1288 / #1343, built by #1318): a guardian reads as having given notice at
+ * bond_maturity - departure_notice, so it leaves at its bond's maturity as DEPARTED on schedule, no offence. Before this the bond spent by path A at
+ * its maturity read as ABANDONED, and the offence and the spend were one transaction. `outputs` [{ maturity }] (or one { maturity }): the leave_after is
+ * the latest maturity; null when none is known.
+ */
+function scheduledDeparture({ outputs, maturity = null, departureNotice = null } = {}) {
+  const list = Array.isArray(outputs) && outputs.length ? outputs.map((o) => o && o.maturity) : [maturity];
+  const known = list.map(Number).filter((m) => Number.isInteger(m) && m > 0);
+  if (!known.length) return null;
+  const leaveAfterHeight = Math.max(...known);
+  return { leaveAfterHeight, postedAt: Number.isInteger(departureNotice) ? leaveAfterHeight - departureNotice : null };
+}
+
+function guardianSlashStands({ proof, departure = null, emergency = null, abandonBlocks = null, scheduled = null }) {
   if (!proof || !proof.ok) return { ok: false, slash: false, why: `no abandonment proof stands${proof && proof.why ? `: ${proof.why}` : ''}` };
   // THE OWNER'S EMERGENCY DEPARTURE (§23A.5a, protocol 17): `emergency` emergencyDepartureStands' answer for this guardian's node.
   // Posted before abandon_blocks from the height he was last seen: DEPARTED, the bond untouched. Later: abandonment, as without it.
@@ -8041,6 +8059,9 @@ function guardianSlashStands({ proof, departure = null, emergency = null, abando
       return { ok: true, slash: false, kind: 'DEPARTED', why: `gone since ${proof.sinceHeight}, at or after the notice's leave_after ${departure.leaveAfterHeight}: departed with notice, the bond untouched (§23A.5)` };
     return { ok: true, slash: true, kind: 'ABANDONED', why: `stopped at ${proof.sinceHeight}, before the notice's leave_after ${departure.leaveAfterHeight}: a departure that stops serving early is abandonment (§23A.5)` };
   }
+  // ON SCHEDULE (#1318): gone, or the bond spent, at or after the bond's maturity - the standing notice its maturity gives
+  if (scheduled && Number.isInteger(scheduled.leaveAfterHeight) && proof.sinceHeight >= scheduled.leaveAfterHeight)
+    return { ok: true, slash: false, kind: 'DEPARTED', onSchedule: true, why: `${proof.bondSpent ? 'his bond was spent' : 'gone'} at ${proof.sinceHeight}, at or after his bond's maturity ${scheduled.leaveAfterHeight}: departed on schedule, no offence (§23A.3, kanban #1288)` };
   if (proof.bondSpent) return { ok: true, slash: true, kind: 'ABANDONED', why: `his bond was spent at ${proof.sinceHeight} while seated: abandonment (§23A.5)` };
   return { ok: true, slash: true, kind: 'ABANDONED', why: `absent since ${proof.sinceHeight}, attested by ${proof.signers}: abandonment (§23A.4)` };
 }

@@ -156,3 +156,12 @@ test('a guardian is warned drain_blocks before its bond stops covering; nothing 
   assert.match(guardianLockSays({ warn: true, qualifying: false, lapsesAt: null, bondMinGuardianSats: '50000', drainBlocks: 144 }), /below the guardian minimum of 50,000 sat/);
   assert.equal(guardianLockSays(null), '');
 });
+
+// KANBAN #1318 (RULED #1288): warned a season ahead, and the owner reads where the guardian seat ends - at the bond's maturity, on schedule
+test('#1318 the guardian lock warning names the block where the seat ends on schedule', () => {
+  const t = guardianLockSays({ warn: true, qualifying: true, lapsesAt: 195968, blocksLeft: 12960, drainBlocks: 4032, warnBlocks: 12960, departsAt: 200000, bondMinGuardianSats: '50000' });
+  console.log('  FACTS #1318 owner text:', JSON.stringify(t));
+  assert.match(t, /stops covering your federation at block 195,968, in 12,960 blocks/);
+  assert.match(t, /At block 200,000, when your bond matures, you leave the federation as a guardian on schedule, unless you add a bond output with a later lock\./);
+  assert.doesNotMatch(guardianLockSays({ warn: true, qualifying: true, lapsesAt: 195968, blocksLeft: 100, drainBlocks: 4032 }), /on schedule/, 'no maturity known: no such line');
+});

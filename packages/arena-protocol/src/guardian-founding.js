@@ -90,7 +90,9 @@ export function guardianTicket(seed, entry, height) {
  * `candidateVersion`: from the point (foundingCandidateVersion), a node whose advertisement does not list it is no candidate - it would
  * compute another draw, miss the ceremony and burn an alternate. Null leaves everyone in.
  */
-export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [], pressureBond = null, candidateVersion = null }) {
+// `firstSeasonEnds` (#1318, RULED #1288): a height - an output that matures at or before it counts for nothing in the draw, so a federation is never
+// founded on a bond that leaves inside its first season. Null: every output counts, the draw byte for byte as before.
+export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [], pressureBond = null, candidateVersion = null, firstSeasonEnds = null }) {
   if (!(seed instanceof Uint8Array) || seed.length !== 32) return { ok: false, why: 'a founding is drawn on the beacon after its trigger height' };
   if (typeof bondMinGuardian !== 'bigint' || bondMinGuardian <= 0n) return { ok: false, why: 'bond_min_guardian is a positive floor' };
   if (pressureBond !== null && (typeof pressureBond !== 'bigint' || pressureBond <= 0n)) return { ok: false, why: 'B*_net under pressure is a positive amount, or null when the network is not under pressure' };
@@ -105,6 +107,7 @@ export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian,
     const a = e && e.advert;
     if (!a || a.guardianCapable !== true || !a.guardianEndpoint) continue;
     if (candidateVersion !== null && !(a.protocolVersions || []).includes(candidateVersion)) continue;
+    if (firstSeasonEnds !== null && !(Number.isInteger(a.bondMaturityHeight) && a.bondMaturityHeight > firstSeasonEnds)) continue;
     const op = String(a.operatorId || toHex(e.pubkey));
     if (guardingOpen.has(op) || firstOps.has(op) || firstNodes.has(toHex(e.pubkey))) continue;
     nodeSats.set(nodeKey(op, e), (nodeSats.get(nodeKey(op, e)) || 0n) + BigInt(e.bondSats));

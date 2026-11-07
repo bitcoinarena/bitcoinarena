@@ -16,7 +16,7 @@
 // reading of its own. Pure: the chain, the curve and the record's signatures are the caller's.
 import { GONE } from './federation-record.js';
 import { bondSpentProof } from './absence.js';
-import { guardianSlashStands } from './federation-slash.js';
+import { guardianSlashStands, scheduledDeparture } from './federation-slash.js';
 import { BOND_TEMPLATE_V3 } from './bond-script.js';
 import { taggedHash, toHex } from './hash.js';
 import { Writer, Reader } from './encode.js';
@@ -73,7 +73,8 @@ export function abandonedSlashStands({ record, nodePubkey, proofRef, bonds, txid
   const node = toHex(row.nodePubkey);
   const spend = (bonds || []).find((b) => b.spentBy && hexOf(b.pubkey) === node && b.spentBy.txid === toHex(row.proofRef) && b.spentBy.height === row.sinceHeight);
   const proof = spend ? bondSpentProof({ peerKey: row.peerKey, spent: spend.spentBy }) : { ok: true, peerKey: row.peerKey, sinceHeight: row.sinceHeight, signers: record.threshold, id: row.proofRef };
-  const stands = guardianSlashStands({ proof });
+  // A SPEND AT OR AFTER THE OUTPUT'S MATURITY WAS A DEPARTURE ON SCHEDULE (#1318), not abandonment
+  const stands = guardianSlashStands({ proof, scheduled: spend ? scheduledDeparture({ maturity: spend.advert && Number.isInteger(spend.advert.bondMaturityHeight) ? spend.advert.bondMaturityHeight : spend.maturity }) : null });
   if (!stands.ok || !stands.slash) return { ok: false, slash: false, why: stands.why };
   const output = outputsLeft(bonds, row.nodePubkey, row.sinceHeight).find((o) => o.txid === hexOf(txid) && o.vout === vout);
   if (!output) return { ok: false, slash: false, why: `${String(txid).slice(0, 16)}:${vout} is no output of that node left from before ${row.sinceHeight}` };

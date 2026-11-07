@@ -242,7 +242,7 @@ export function cliSetup({ run, apiPort, password, guardianName, freshSetup = nu
  */
 export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = null, pressureBondAt = null, candidateVersionAt = () => null, redrawFrom = null, notices = () => [], emergencies = () => [], next = null, nominal,
   bondMinGuardian, clocks, ownKey, sign, verify, post = async () => {}, postTo = null, peers = () => [], fetchJson = null, endpointOf = (e) => e.advert.endpoint, say = () => {}, keep = 4096,
-  freshTried = null }) {
+  freshTried = null, firstSeason = null }) {
   let current = null;                        // { key, founding }
   // HOW FAR BACK A SEAT'S FIRST TICK READS THE RUN OF FREE OPERATORS: a cohort draws at the newest multiple of founding_window + 1 below
   // the tip once its run began at or before it, so two steps and one block decide the same height on every seat (kanban #577, measured
@@ -382,7 +382,7 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       let freshWait = false;
       if (!use && setup && typeof setup.freshSetup === 'function' && !tried.has(key)) {
         const probe = createFounding({ seed, triggerHeight: t.height, entries, nominal: Number.isInteger(t.nominal) && t.nominal > 0 ? t.nominal : nominal, bondMinGuardian,
-          guardingOpen: out, seatedFirst, pressureBond, candidateVersion, foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: null });
+          guardingOpen: out, seatedFirst, pressureBond, candidateVersion, foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: null, firstSeason });
         const ps = probe.state(), me = toHex(ownKey);
         const named = (ps.seated || []).some((x) => String(x.node || x).toLowerCase() === me) || (ps.alternates || []).some((x) => String(x).toLowerCase() === me);
         let reading = GUARDIAN.UNKNOWN;
@@ -402,7 +402,7 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       // is 4 on testnet4 and regtest, and B's successor drawn at 4 would seat four of B and draw nobody
       const size = Number.isInteger(t.nominal) && t.nominal > 0 ? t.nominal : nominal;
       current = { key, trigger: t, via, freshWait, entries, founding: createFounding({ seed, triggerHeight: t.height, entries, nominal: size, bondMinGuardian, guardingOpen: out, seatedFirst, pressureBond, candidateVersion,
-        foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: use, post, say }) };
+        foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: use, post, say, firstSeason }) };
       say({ founding: current.founding.id.slice(0, 16), trigger: t.kind, height: t.height, why: t.why, nominal: size, seatedFirst: seatedFirst.length,
         leftOut: [...out], takesPart: !!use, via });
     }

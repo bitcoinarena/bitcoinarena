@@ -19,7 +19,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { nodeBonds } from '../../arena-protocol/src/census.js';
 import { abandonmentProof, bondSpentProof } from '../../arena-protocol/src/absence.js';
-import { guardianSlashStands } from '../../arena-protocol/src/federation-slash.js';
+import { guardianSlashStands, scheduledDeparture } from '../../arena-protocol/src/federation-slash.js';
 import { judgeAbandoned } from './arbiter.js';
 import { abandonedRows, outputsLeft, encodeAbandonedProof, decodeAbandonedProof, abandonedProofId } from '../../arena-protocol/src/abandoned-slash.js';
 import { abandonedSlashPoint, networkOf } from '../../arena-protocol/src/constants.js';
@@ -157,6 +157,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // THE CHECKER'S OWN VERIFIER OF THOSE BYTES: async (theft-slash.js theftVerifyInput) -> the tool's `theft-verify` line, or undefined where this seat runs none;
   // and its chain: async (txid display hex) -> confirmations | null
   verifySessions = async () => undefined, txConfirmations = async () => null }) {
+  // THE GUARDIAN BOND LOCK IS ON AT THIS BODY'S HEIGHT (#1104's line; #1318's departure on schedule rides on it)
+  const lockOn = (b) => !!(bondLock && Number.isInteger(bondLock.from) && b.height >= bondLock.from);
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
   // THE HALT A LIQUIDATION COUNTS FROM (§23A.5): the lowest-height signed HALTED record of the run of HALTED records
@@ -403,7 +405,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       if (!mine) continue;
       const proof = bondSpentProof({ peerKey: g.peerKey, spent: mine.spentBy });
       const d = absences && Number.isInteger(departureNotice) ? absences.departureFor(held, g.peerKey, departureNotice, b.height) : { ok: false };
-      const stands = guardianSlashStands({ proof, departure: d.ok ? { ok: true, peerKey: g.peerKey, leaveAfterHeight: d.notice.leaveAfterHeight } : null });
+      // A SPEND AT THE BOND'S MATURITY IS A DEPARTURE ON SCHEDULE (#1318), while the guardian bond lock is on (#1104's line, BOND_LOCK_HEIGHT)
+      const scheduled = lockOn(b) ? scheduledDeparture({ maturity: mine.advert && Number.isInteger(mine.advert.bondMaturityHeight) ? mine.advert.bondMaturityHeight : mine.maturity, departureNotice }) : null;
+      const stands = guardianSlashStands({ proof, departure: d.ok ? { ok: true, peerKey: g.peerKey, leaveAfterHeight: d.notice.leaveAfterHeight } : null, scheduled });
       if (stands.ok && stands.slash) out.push({ row, gone: { peerKey: g.peerKey, sinceHeight: proof.sinceHeight, kind: GONE.ABANDONED, proofRef: proof.id } });
     }
     return out;
@@ -584,7 +588,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const succ = successorOf(fid);
     const spent = spentGuardians(b, federationId);
     const rows = [...guardians, ...spent.map((x) => x.row)];
-    const lock = bondLock && Number.isInteger(bondLock.from) && b.height >= bondLock.from ? { drainBlocks: bondLock.drainBlocks, bondMinGuardian: bondLock.bondMinGuardian } : null;
+    const lock = lockOn(b) ? { drainBlocks: bondLock.drainBlocks, bondMinGuardian: bondLock.bondMinGuardian } : null;
     const r = buildFederationRecord({ federationId, networkId: b.networkId || networkId, invite, nominal: rows.length, guardians: rows, gone: [...gone, ...spent.map((x) => x.gone)], height: b.height, reserveSats, bondLock: lock,
       ...(succ ? { successorId: fromHex(succ), closed: !!closedOf(fid) } : retiringOf(fid) ? { closed: true } : {}) });   // retiringOf: federation-retire.js
     if (was !== null) r.capacityBand = recordBand({ reserveSats, exposureCapSats: r.exposureCapSats, was });
@@ -670,9 +674,12 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       const em = absences.emergencyFor ? absences.emergencyFor(g.nodePubkey) : null;
       const out = emergencyDeparted(b, g, em, p);
       if (out) { gone.push(out); emergent.push(em); continue; }
-      const stands = p.ok ? guardianSlashStands({ proof: p, departure: d.ok ? { ok: true, peerKey: g.peerKey, leaveAfterHeight: d.sinceHeight } : null }) : null;
+      // THE BOND'S MATURITY IS A STANDING NOTICE (#1318): absent from its maturity on, the guardian departed on schedule (while the bond lock is on)
+      const scheduled = lockOn(b) ? scheduledDeparture({ outputs: g.outputs, departureNotice }) : null;
+      const stands = p.ok ? guardianSlashStands({ proof: p, departure: d.ok ? { ok: true, peerKey: g.peerKey, leaveAfterHeight: d.sinceHeight } : null, scheduled }) : null;
       if (stands && stands.ok && stands.slash) { gone.push({ peerKey: g.peerKey, sinceHeight: p.sinceHeight, kind: GONE.ABANDONED, proofRef: p.id }); absent.push(...p.attestations); }
       else if (d.ok) { gone.push({ peerKey: g.peerKey, sinceHeight: d.sinceHeight, kind: GONE.DEPARTED, proofRef: d.id }); departed.push(d.notice); }
+      else if (stands && stands.ok && stands.onSchedule) { gone.push({ peerKey: g.peerKey, sinceHeight: p.sinceHeight, kind: GONE.DEPARTED, proofRef: p.id }); absent.push(...p.attestations); }
     }
     // THE BODY WITH THEM GONE, and the signatures over exactly it: a guardian's signature counts for the body it signed,
     // so with anyone gone every seat signs again - the leave statements move the body, and the seat asks once more
@@ -866,7 +873,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       if (!Number.isInteger(abandonBlocks)) return { ok: false, why: 'this seat runs no abandon_blocks clock' };
       const p = abandonmentProof(about, { record: plain.record, peerKey: g.peerKey, abandonBlocks, verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } } });
       if (!p.ok) return { ok: false, why: `that abandonment does not stand here: ${p.why}` };
-      gone.push({ peerKey: g.peerKey, sinceHeight: p.sinceHeight, kind: GONE.ABANDONED, proofRef: p.id });
+      // AN ABSENCE FROM THE BOND'S MATURITY ON IS A DEPARTURE ON SCHEDULE (#1318), judged here as the gatherer judged it
+      const onTime = lockOn(b) ? guardianSlashStands({ proof: p, scheduled: scheduledDeparture({ outputs: g.outputs, departureNotice }) }) : null;
+      gone.push({ peerKey: g.peerKey, sinceHeight: p.sinceHeight, kind: onTime && onTime.onSchedule ? GONE.DEPARTED : GONE.ABANDONED, proofRef: p.id });
     }
     return signBody(bodyFor(b, fromHex(federationIdHex), gone, res.reserveSats, eps, was).record);
   }
