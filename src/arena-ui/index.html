@@ -8123,7 +8123,11 @@
         // THE ONES THE WALLET LOST ARE LOOKED FOR AT THE FEDERATION (kanban #883), not after the resume: on the owner's iPhone one waiting deposit held federation A's resume for good, and its 3,464 sat were never looked for
         const lostHere = []; let scanTimer = null;
         const scanLost = () => { if (!ARENACLIENT.scanLostDeposits) return;
+          // THIS TAB'S PHRASE (kanban #1233): only its own lost deposits can be found with its key; one that names no phrase goes only in a browser
+          // that keeps one phrase
+          const keptSeeds = (() => { try { return JSON.parse(vault().getItem('arena.seeds') || '[]').length; } catch { return 2; } })();
           ARENACLIENT.scanLostDeposits({ client, storage: vault(), federationId: ARENACLIENT.fromHex(k), lost: lostHere.slice(),
+            phrase16: String((window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '').slice(0, 16) || null, dropUnnamed: keptSeeds <= 1,
             onClaimed: (d) => { console.log('[arena] a lost deposit found at the federation and claimed: ' + d.amountMsat + ' msat'); window.ARENA_MONEY_ALERT.credited(d.amountMsat); } })
             .then((r) => { console.log('[arena] lost deposits, federation ' + k.slice(0, 8) + ': ' + (r.read ? r.found + ' found, ' + r.msat + ' msat claimed' : 'the federation could not be read'));
               if (r.read) window.ARENA_MONEY_ALERT.settled(lostHere.map((p) => p.operation)); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); },
