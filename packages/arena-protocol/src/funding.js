@@ -281,6 +281,9 @@ export function trancheSchedule({ amountSats, reservesSats, last, schedule = FUN
  */
 export function capStands({ proposalSats, paymentSats, reservesSats, paidByProposalSats = 0n, paidInWindowSats = 0n }) {
   const held = BigInt(reservesSats), base = held + BigInt(paidByProposalSats);
+  // NEVER MORE THAN THE PROPOSAL ASKED (kanban #1235): what its other payments took plus this one stays within its amount
+  if (BigInt(paidByProposalSats) + BigInt(paymentSats) > BigInt(proposalSats))
+    return { ok: false, final: true, why: `${paidByProposalSats} sat already paid on the proposal and ${paymentSats} now is more than the ${proposalSats} sat it asked` };
   if (BigInt(proposalSats) * 100n > FUNDING_CAP_PCT * base) return { ok: false, final: true, why: `the proposal asks ${proposalSats} sat, more than ${FUNDING_CAP_PCT} % of the ${base} sat reserves` };
   const start = held + BigInt(paidInWindowSats);
   if ((BigInt(paidInWindowSats) + BigInt(paymentSats)) * 100n > FUNDING_CAP_WINDOW_PCT * start)

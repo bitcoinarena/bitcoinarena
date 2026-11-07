@@ -200,7 +200,9 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         .run(r.tranches, r.cancelled, r.cancelled_k, pid, was.tranches, was.cancelled, was.cancelled_k).changes;
     return ch === 1 ? { ok: true, row: r } : { ok: false, why: 'the row moved meanwhile', row: paymentRow(pid) };
   }
-  function payments({ tip } = {}) {
+  // `recorded(id)`: whether a reserve payout record exists under that payment id (any state) - a refix never moves a proposal
+  // one of whose ids has gone out, or may have (kanban #1235, audit 3 FIXES-11)
+  function payments({ tip, recorded = null } = {}) {
     const out = [];
     for (const row of rows('proposal')) {
       const decided = voteOutcome(row.id); if (!decided || !decided.passed) continue;
@@ -210,7 +212,10 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       const scheduleOf = (parts) => trancheSchedule({ amountSats: p.obj.amountSats, reservesSats: parts === 1 ? 0n : p.obj.amountSats, last: period.last, schedule });
       let fixed = paymentRow(row.id);
       if (!fixed) fixed = stepPayment(row.id, { kind: 'fix', tranches: n }).row;
-      else if (fixed.tranches !== n && fundingPaymentStateOf(fixed) === FUNDING_PAYMENT_STATE.FIXED) {
+      // A REFIX ONLY ON A KNOWN TIP AND WITH NOTHING RECORDED (kanban #1235): with the tip unknown (a seat's first 120 s, a failed chain read)
+      // "no part is payable yet" was read as true, and a row fixed at 1 part and paid was refixed to 4 new ids and paid again
+      else if (fixed.tranches !== n && fundingPaymentStateOf(fixed) === FUNDING_PAYMENT_STATE.FIXED && Number.isInteger(tip)
+        && !(typeof recorded === 'function' && paymentIdsOf(row.id).some((id) => recorded(id)))) {
         // a row the old reserve rule fixed: set right while no part of either count is payable yet, else it stands (a part may have gone)
         const payable = [scheduleOf(fixed.tranches)[0], scheduleOf(n)[0]].some((t) => Number.isInteger(tip) && tip >= t.payableAt);
         const s = stepPayment(row.id, { kind: 'refix', tranches: n, payable });
