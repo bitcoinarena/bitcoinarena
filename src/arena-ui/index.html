@@ -8120,7 +8120,39 @@
         RESUMED.add(k);
         // THE OTHER PHRASES THIS BROWSER KEEPS with a wallet in this federation: a deposit one of them made is claimed there (resumeDeposits), then
         // swept into this tab's wallet as e-cash - kept in the browser before it is received, as combineWallets does
-        const others = async () => {
+        // EACH ONE'S LOCK HELD FROM THE OPEN TO THE END OF ITS SWEEP (kanban #1285, audit 4 #1257 CLIENT-3): #1228 read the lock list once and then
+        // opened, claimed (minutes) and swept with no lock held - a tab that took the phrase meanwhile ran its own client on the same wallet. Now
+        // each phrase is taken with the lock its own tab takes (arena.phrase.<16>, as withRecordPhrase does), its collecting mark kept fresh so that
+        // tab waits rather than dropping the phrase, and let go only when this resume's claims and sweeps have ended
+        const phraseHolds = [];
+        const sweeps = [];
+        const holdPhrase = (hex) => new Promise((resolve) => {
+          const h16 = String(hex).toLowerCase().slice(0, 16);
+          if (!navigator.locks || typeof navigator.locks.request !== 'function') { resolve(() => {}); return; }
+          navigator.locks.request('arena.phrase.' + h16, { ifAvailable: true }, (lock) => {
+            if (!lock) { resolve(null); return undefined; }
+            const mark = 'arena.seed.collecting.' + h16;
+            const say = () => { try { vault().setItem(mark, JSON.stringify({ at: Date.now() })); } catch { /* the lock is held all the same */ } };
+            say(); const beat = setInterval(say, 10000);
+            const here = window.ARENA_PHRASES_HELD_HERE || new Set(); here.add(h16);
+            return new Promise((letGo) => resolve(() => { clearInterval(beat); here.delete(h16); try { vault().removeItem(mark); } catch { /* stale in 30 s */ } letGo(); }));
+          }).catch((e) => {
+            if (e && e.name === 'AbortError') { console.error('[arena] #1285 the lock on phrase ' + h16.slice(0, 8) + ' was taken from this tab\'s deposit resume: the tab reloads'); location.reload(); }
+            resolve(null);
+          });
+        });
+        const letGoPhrases = () => { for (const f of phraseHolds.splice(0)) { try { f(); } catch { /* let go */ } } };
+        // HELD FOR A BOUNDED TIME (kanban #1285): a claim on an invoice never paid could wait for hours, and the phrase's own tab waits on its lock all
+        // that time - past 3 min the claim is left to that tab or the next page (the entry stays; resumeDeposits says "waiting", not lost)
+        const HOLD_CLAIM_MS = Number(window.ARENA_HOLD_CLAIM_MS) || 180000;
+        const boundedClaims = (c, label) => new Proxy(c, { get(t, name) {
+          if (name === 'awaitReceive') return (op) => new Promise((ok, no) => {
+            const timer = setTimeout(() => { const e = new Error('the claim in wallet ' + label + ' did not end in ' + Math.round(HOLD_CLAIM_MS / 1000) + ' s while its phrase was held here'); e.stillWaiting = true; no(e); }, HOLD_CLAIM_MS);
+            Promise.resolve().then(() => t.awaitReceive(op)).then((v) => { clearTimeout(timer); ok(v); }, (e) => { clearTimeout(timer); no(e); });
+          });
+          const v = t[name]; return typeof v === 'function' ? v.bind(t) : v; } });
+        let othersOnce = null;
+        const others = () => othersOnce || (othersOnce = (async () => {
           const L = vault(); const cur = (window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '';
           let kept = []; try { kept = JSON.parse(L.getItem('arena.seeds') || '[]'); } catch { kept = []; }
           const inv = ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(L, k) : null;
@@ -8135,11 +8167,14 @@
           const heldHere = window.ARENA_PHRASES_HELD_HERE || new Set();
           const free = (hex) => !lockedNow.has('arena.phrase.' + hex.slice(0, 16)) && !heldHere.has(hex.slice(0, 16));
           for (const x of kept.filter((y) => /^[0-9a-f]{64}$/i.test(y.hex) && y.hex !== cur && ARENACLIENT.phraseWalletEntries(L, y.hex, k) > 0 && free(String(y.hex).toLowerCase()))) {
-            try { out.push({ label: x.hex.slice(0, 8), hex: x.hex, client: await ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(k), invite: inv, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L }) }); }
+            const letGo = await holdPhrase(x.hex);
+            if (!letGo) { console.log('[arena] #1285 wallet ' + x.hex.slice(0, 8) + ' in federation ' + k.slice(0, 8) + ': its phrase is held by another tab - that tab resumes its deposit'); continue; }
+            phraseHolds.push(letGo);
+            try { out.push({ label: x.hex.slice(0, 8), hex: x.hex, client: boundedClaims(await ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(k), invite: inv, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L }), x.hex.slice(0, 8)) }); }
             catch (e) { console.log('[arena] wallet ' + x.hex.slice(0, 8) + ' in federation ' + k.slice(0, 8) + ' did not open: ' + (e && e.message ? e.message : e)); }
           }
           return out;
-        };
+        })());
         const sweep = async (from) => {
           if (!from || typeof from.client.sendAllEcash !== 'function' || typeof client.receiveEcash !== 'function') return;
           const L = vault();
@@ -8176,12 +8211,14 @@
           onLost: (p) => { lostHere.push(p); window.ARENA_MONEY_ALERT.lost(k, p); clearTimeout(scanTimer); scanTimer = setTimeout(scanLost, 2000); },
           onClaimed: (d) => { console.log('[arena] a deposit an earlier page made is claimed: ' + d.amountMsat + ' msat' + (d.from ? ' (in wallet ' + d.from.label + ')' : ''));
             window.ARENA_MONEY_ALERT.credited(d.amountMsat);
-            Promise.resolve(d.from ? sweep(d.from) : null).catch((e) => console.log('[arena] the claimed deposit stays in wallet ' + d.from.label + ': ' + (e && e.message ? e.message : e)))
-              .then(() => { if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); if (typeof paintHistory === 'function') paintHistory(); }); } })
+            sweeps.push(Promise.resolve(d.from ? sweep(d.from) : null).catch((e) => console.log('[arena] the claimed deposit stays in wallet ' + d.from.label + ': ' + (e && e.message ? e.message : e)))
+              .then(() => { if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); if (typeof paintHistory === 'function') paintHistory(); })); } })
           .then((finals = []) => { finals = finals || []; window.ARENA_DEPOSITS_RESUMED = (window.ARENA_DEPOSITS_RESUMED || []).concat(finals.map((f) => k.slice(0, 8) + ' ' + f));
             if (finals.length) console.log('[arena] deposits an earlier page left, federation ' + k.slice(0, 8) + ': ' + finals.join(', '));
           },
-          () => { RESUMED.delete(k); });
+          () => { RESUMED.delete(k); })
+          // THE OTHER PHRASES' LOCKS GO ONLY WHEN EVERY CLAIM AND SWEEP OF THIS RESUME HAS ENDED (kanban #1285)
+          .then(() => Promise.allSettled(sweeps)).then(letGoPhrases, letGoPhrases);
         mergeHere();
       };
       let summing = null;
