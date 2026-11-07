@@ -27,6 +27,8 @@ const T0 = dayStartMs(DAY);
 const KEYS = [1, 2, 3, 4, 5].map((n) => new Uint8Array(32).fill(n));
 const ORDER = dutyOrder({ networkId: NETWORK_ID_TESTNET4, slot: DAY, nodeKeys: KEYS });
 const ORDER_Y = dutyOrder({ networkId: NETWORK_ID_TESTNET4, slot: DAY - 1, nodeKeys: KEYS });
+// kanban #1219: a marker counts only from its creator's own hour - these worlds' markers are the day's duty node's (rank 0, due at once)
+const RANK0 = async () => toHex(ORDER[0]);
 const GID = 'c4'.repeat(32);
 const DEV = 'ab'.repeat(32);
 const FED = '33'.repeat(32);
@@ -128,10 +130,10 @@ test('a missed day falls to the next node: rank 2 posts it an hour into the day 
 
 test('no double posting: the day marker in the mempool, or in a block, stops the duty node', async () => {
   const marked = txOf([dutyMarkerOutput(DAY, 'nextblock-day'), seriesPublicationOutput(new Uint8Array(32).fill(9))]);
-  const inPool = world({ local: [ORDER[0]], nowMs: T0 + 70 * MIN, mempool: [marked] });
+  const inPool = world({ creatorOf: RANK0, local: [ORDER[0]], nowMs: T0 + 70 * MIN, mempool: [marked] });
   await createDayDuty(inPool.opts).look();
   assert.equal(inPool.did.published.length, 0);
-  const inChain = world({ local: [ORDER[0]], nowMs: T0 + 70 * MIN, inBlocks: [{ atMs: T0 + 20 * MIN, raw: marked.raw }] });
+  const inChain = world({ creatorOf: RANK0, local: [ORDER[0]], nowMs: T0 + 70 * MIN, inBlocks: [{ atMs: T0 + 20 * MIN, raw: marked.raw }] });
   const st = await createDayDuty(inChain.opts).look();
   assert.equal(inChain.did.published.length, 0);
   assert.equal(st.posted, true);
@@ -311,7 +313,7 @@ test('seat 4: no emergency grid on the word of seats that did not answer, nor be
   // today's grid posted by another node, its rounds drawn - but no seat answers yet: no emergency grid, and the next pass asks again
   const pub = txOf([dutyMarkerOutput(DAY - 1, 'nextblock-day'), seriesPublicationOutput(new Uint8Array(32).fill(8))]);
   let answering = false, asked = 0;
-  const w = world({ local: [ORDER[0]], nowMs: T0 + 30 * MIN, inBlocks: [{ atMs: T0 - 20 * H, raw: pub.raw }], seats: ['http://s1', 'http://s2', 'http://s3'],
+  const w = world({ creatorOf: RANK0, local: [ORDER[0]], nowMs: T0 + 30 * MIN, inBlocks: [{ atMs: T0 - 20 * H, raw: pub.raw }], seats: ['http://s1', 'http://s2', 'http://s3'],
     seatRounds: () => { asked++; if (!answering) throw new Error('fetch failed'); return { rounds: [0, 1, 2].map((i) => ({ game: { id: GID }, startTime: new Date(T0 + H + i * 90000).toISOString(),
       committee: { drawn: { game: ['k'], settlement: ['k'] } } })) }; } });
   // tomorrow's posted too, so the only thing a pass could post is an emergency grid
@@ -328,7 +330,7 @@ test('seat 4: no emergency grid on the word of seats that did not answer, nor be
   assert.equal(st2.ready.ok, true);
   assert.equal(st2.days[new Date(T0).toISOString().slice(0, 10)].state, 'drawable');
   // a pass that cannot read the mempool posts no day
-  const m = world({ local: [ORDER[0]], mempoolFails: true });
+  const m = world({ creatorOf: RANK0, local: [ORDER[0]], mempoolFails: true });
   const sm = await createDayDuty(m.opts).look();
   assert.equal(m.did.published.length, 0);
   assert.match(sm.wouldPost[0].why, /mempool could not be read/);
@@ -415,16 +417,16 @@ test('the node\'s poster: off says so on GET /duty and runs nothing; auto on an 
 // kanban #791: the chain index is made once per chain view and shared by every day duty; a view grown in place is indexed anew
 test('one chain view, two day duties: both see the posted marker; a block appended to the same view in place is indexed again', async () => {
   const marked = txOf([dutyMarkerOutput(DAY, 'nextblock-day'), seriesPublicationOutput(new Uint8Array(32).fill(9))]);
-  const base = world({ local: [ORDER[0]], nowMs: T0 + 70 * MIN });
+  const base = world({ creatorOf: RANK0, local: [ORDER[0]], nowMs: T0 + 70 * MIN });
   const shared = { blocks: base.blocks, firstHeight: base.firstHeight };       // one object, as the duty poster's chainView hands out
-  const a = world({ local: [ORDER[0]], nowMs: T0 + 70 * MIN, view: async () => shared });
+  const a = world({ creatorOf: RANK0, local: [ORDER[0]], nowMs: T0 + 70 * MIN, view: async () => shared });
   const st0 = await createDayDuty(a.opts).look();
   assert.equal(a.did.published.length, 1, 'no marker yet: the duty node posts');
   assert.equal(st0.markers.filter((m) => m.slot === DAY && m.txid === marked.txid).length, 0);
   // the marker arrives in a new block, appended to the same view object
   shared.blocks.push({ header: header(Math.floor((T0 + 71 * MIN) / 1000), shared.blocks.length), transactions: [marked.raw], t: T0 + 71 * MIN });
-  const b = world({ local: [ORDER[0]], nowMs: T0 + 72 * MIN, view: async () => shared });
-  const c = world({ local: [ORDER[1]], nowMs: T0 + 72 * MIN, view: async () => shared });
+  const b = world({ creatorOf: RANK0, local: [ORDER[0]], nowMs: T0 + 72 * MIN, view: async () => shared });
+  const c = world({ creatorOf: RANK0, local: [ORDER[1]], nowMs: T0 + 72 * MIN, view: async () => shared });
   const sb = await createDayDuty(b.opts).look(), sc = await createDayDuty(c.opts).look();
   for (const [s, who] of [[sb, 'rank 0'], [sc, 'rank 1']]) {
     assert.equal(s.posted, true, `${who} sees the day posted`);
