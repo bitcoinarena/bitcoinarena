@@ -168,13 +168,14 @@ ask('release, 7 + 7 (a third signature counts over the threshold)', false, relea
 
 const fallbackBy = (signer) => spendHold(bond1, hold1A, start1, 'fallback', { sequence: clocks.fallbackBlocks, sign: signer });
 ask('fallback before its clock, census key', false, fallbackBy((d) => [censusSign(d)]));
-mine(clocks.returnBlocks - clocks.holdBlocks);
-ask('return, immature bond, at its clock', false, spendHold(bond1, hold1A, start1, 'return', { sequence: clocks.returnBlocks, locktime: tip(), sign: (d) => [schnorr.sign(d, node1.secret)] }));
-mine(clocks.fallbackBlocks - clocks.returnBlocks - 1);
+// THE FALLBACK OPENS FIRST (kanban #1317, RULED #1287): fallback 288, return 432
+mine(clocks.fallbackBlocks - clocks.holdBlocks - 1);
 ask('fallback one block early, census key', false, fallbackBy((d) => [censusSign(d)]));
 mine(1);
 ask('fallback at its clock, another key', false, fallbackBy((d) => [schnorr.sign(d, node1.secret)]));
 const fallback = ask('fallback at its clock, FROST census key, immature bond', true, fallbackBy((d) => [censusSign(d)]));
+mine(clocks.returnBlocks - clocks.fallbackBlocks);
+ask('return, immature bond, at its clock', false, spendHold(bond1, hold1A, start1, 'return', { sequence: clocks.returnBlocks, locktime: tip(), sign: (d) => [schnorr.sign(d, node1.owner.secret)] }));
 
 // ---- bond 2, matures early: the node leaves
 const node2 = person();
@@ -227,11 +228,13 @@ const hold4 = holdOf(bond4, none);
 console.log(`#972 no panels: leaves ${Object.keys(hold4.leaves).sort().join(', ')}`);
 const fee4 = fundFee();
 const start4 = sent(fee4, bond4, hold4);
-mine(clocks.returnBlocks);
-ask('no panels: return at its clock, the owner key', true, spendHold(bond4, hold4, start4, 'return', { sequence: clocks.returnBlocks, locktime: tip(), sign: (d) => [schnorr.sign(d, node4.owner.secret)] }));
+mine(clocks.fallbackBlocks - 1);
 ask('no panels: fallback before its clock', false, spendHold(bond4, hold4, start4, 'fallback', { sequence: clocks.fallbackBlocks, sign: (d) => [censusSign(d)] }));
-mine(clocks.fallbackBlocks - clocks.returnBlocks);
+mine(1);
 const none4 = ask('no panels: fallback at its clock, FROST census key', true, spendHold(bond4, hold4, start4, 'fallback', { sequence: clocks.fallbackBlocks, sign: (d) => [censusSign(d)] }));
+ask('no panels: the return at the fallback\'s clock, the owner key (it opens later, #1317)', false, spendHold(bond4, hold4, start4, 'return', { sequence: clocks.returnBlocks, locktime: tip(), sign: (d) => [schnorr.sign(d, node4.owner.secret)] }));
+mine(clocks.returnBlocks - clocks.fallbackBlocks);
+ask('no panels: return at its clock, the owner key', true, spendHold(bond4, hold4, start4, 'return', { sequence: clocks.returnBlocks, locktime: tip(), sign: (d) => [schnorr.sign(d, node4.owner.secret)] }));
 
 // ---- the table: a release and a fallback carry the same OP_RETURN and the same outputs
 const node5 = person();
@@ -286,6 +289,68 @@ mine(1);
 const confirmed = JSON.parse(cli('gettransaction', JSON.parse(cli('decoderawtransaction', signedHex)).txid)).confirmations;
 asked++; if (!(onChain && confirmed === 1)) wrong++;
 console.log(`#972 ${onChain && confirmed === 1 ? 'as expected' : 'WRONG      '} the owner signed the return the node prepared at its clock: ${lastPass.why}; mined, ${confirmed} confirmation`);
+
+// ---- kanban #1317 (RULED #1287): ON A MATURE BOND THE CENSUS KEY GETS ITS TURN BEFORE THE RETURN OPENS, on mainnet's clocks and on regtest's; the bonding presig the same
+const RC = SLASH_CLOCKS.regtest, rclocks = { holdBlocks: RC.slashHoldBlocks, returnBlocks: RC.slashReturnBlocks, fallbackBlocks: RC.slashFallbackBlocks };
+const mature = [];
+for (const [net, C] of [['mainnet', clocks], ['regtest', rclocks]]) {
+  for (const shape of ['a round\'s hold, panel B silent', 'the bonding presig\'s hold (no panels)']) {
+    const round = shape.startsWith('a round') ? { a: panel(), b: panel() } : { a: [], b: [] };
+    const who = person();
+    const bond = fundBond(who, tip() + 2);
+    mine(3);
+    const isMature = tip() >= bond.bondMaturity;
+    const hold = holdOutputKey({ ownerKey: who.owner.key, censusKey, panelA: keys(round.a), panelB: keys(round.b), bondMaturity: bond.bondMaturity, ...C }, { tweakPoint });
+    if (!hold.ok) throw new Error(hold.why);
+    const s = sent(fundFee(), bond, hold);
+    mine(1);
+    const startAt = tip();
+    const L = `#1317 ${net} ${C.holdBlocks}/${C.fallbackBlocks}/${C.returnBlocks}, mature bond, ${shape}:`;
+    const ownerReturn = () => spendHold(bond, hold, s, 'return', { sequence: C.returnBlocks, locktime: tip(), sign: (d) => [schnorr.sign(d, who.owner.secret)] });
+    const censusFallback = () => spendHold(bond, hold, s, 'fallback', { sequence: C.fallbackBlocks, sign: (d) => [censusSign(d)] });
+    if (round.a.length) { mine(C.holdBlocks - 1); ask(`${L} release with panel A only (5 + 0), at the hold's clock`, false, release(bond, hold, s, round, 5, 0, C.holdBlocks)); }
+    // a CSV leaf of X blocks can be in the next block once tip = start + X - 1; so one block early is tip = start + X - 2
+    mine(startAt + C.fallbackBlocks - 2 - tip());
+    ask(`${L} fallback one block early`, false, censusFallback());
+    ask(`${L} the owner's return then`, false, ownerReturn());
+    mine(1);
+    ask(`${L} the owner's return at the fallback's clock`, false, ownerReturn());
+    const fb = ask(`${L} fallback at its clock, FROST census key`, true, censusFallback());
+    const fbHex = censusFallback();
+    const fbTxid = cli('sendrawtransaction', fbHex); mine(1);
+    const fbMinedAt = JSON.parse(cli('getrawtransaction', fbTxid, 'true', cli('getbestblockhash'))).confirmations ? tip() : null;
+    mine(startAt + C.returnBlocks - 1 - tip());
+    ask(`${L} the owner's return at its own clock, after the census key's spend`, false, ownerReturn());
+    mature.push({ net, shape, isMature, startAt, fallbackOpens: startAt + C.fallbackBlocks, fallbackMined: fbMinedAt, returnOpens: startAt + C.returnBlocks, fallbackVsize: fb.vsize });
+  }
+}
+// fallbackOpens / returnOpens: the first block each spend can be in
+for (const m of mature) console.log(`#1317 ${m.net}, ${m.shape}: bond mature ${m.isMature}; start ${m.startAt}; the census key's fallback opened at ${m.fallbackOpens} and was mined at ${m.fallbackMined}, the return would open at ${m.returnOpens} (${m.returnOpens - m.fallbackMined} blocks later)`);
+// AND A FALSE START ON A MATURE BOND: the node prepares the return at regtest's 36, only the owner's signature sends it, mined
+{
+  const who = person();
+  const bond = fundBond(who, tip() + 2); mine(3);
+  const hold = holdOutputKey({ ownerKey: who.owner.key, censusKey, panelA: keys(roundA.a), panelB: keys(roundA.b), bondMaturity: bond.bondMaturity, ...rclocks }, { tweakPoint });
+  const s = sent(fundFee(), bond, hold); mine(1);
+  const startHeight = tip();
+  const seenR = readSlashStart(fromHex(s), bond, new Map([[toHex(hold.script), hold]]));
+  const passR = () => prepareReturnIfOwed({ start: seenR, startHeight, bondMaturity: bond.bondMaturity, returnBlocks: rclocks.returnBlocks, tip: tip(), fetchProof: async () => Uint8Array.of(7),
+    proofChecks: async () => false, toScript: walletScript(), feeSats: 2000n });
+  mine(rclocks.returnBlocks - 2);
+  const early = await passR();
+  asked++; if (early.action !== 'wait') wrong++;
+  console.log(`#1317 ${early.action === 'wait' ? 'as expected' : 'WRONG      '} regtest, a false start on a mature bond, ${tip() - startHeight + 1} confirmations: ${early.action}, ${early.why}`);
+  mine(1);
+  const owed = await passR();
+  let sentR = false, conf = 0;
+  if (owed.action === 'return' && owed.prepared) {
+    const hex = withOwnerSignature(owed.prepared, toHex(schnorr.sign(fromHex(owed.prepared.digest), who.owner.secret)), who.owner.key);
+    const txid = cli('sendrawtransaction', hex); sentR = true; mine(1);
+    conf = JSON.parse(cli('gettransaction', txid)).confirmations;
+  }
+  asked++; if (!(sentR && conf === 1 && tip() - 1 - startHeight + 1 === rclocks.returnBlocks)) wrong++;
+  console.log(`#1317 ${sentR && conf === 1 ? 'as expected' : 'WRONG      '} regtest, a false start on a mature bond: the return prepared and sent at ${tip() - 1 - startHeight + 1} confirmations (slash_return_blocks ${rclocks.returnBlocks}), the owner's signature, mined, ${conf} confirmation`);
+}
 
 console.log(`#972 ${asked - wrong} of ${asked} as expected; tip ${tip()}; fallback ${fallback.vsize} vB; no panels fallback ${none4.vsize} vB; table release ${tableRelease.vsize} vB, table fallback ${tableFallback.vsize} vB`);
 process.exit(wrong ? 1 : 0);

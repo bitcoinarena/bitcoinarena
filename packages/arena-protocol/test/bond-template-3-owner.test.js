@@ -41,7 +41,7 @@ test('another owner key is another output: a reader rebuilds the bond only with 
 test('the hold\'s return is the owner key\'s, never the node key\'s', () => {
   const leaf = returnLeaf({ ownerKey: OWNER, bondMaturity: 900, returnBlocks: 36 });
   assert.ok(has(leaf, OWNER)); assert.ok(!has(leaf, NODE));
-  const hold = holdTapTree({ ownerKey: OWNER, censusKey: CENSUS, panelA: [], panelB: [], bondMaturity: 900, holdBlocks: 1, returnBlocks: 36, fallbackBlocks: 72 });
+  const hold = holdTapTree({ ownerKey: OWNER, censusKey: CENSUS, panelA: [], panelB: [], bondMaturity: 900, holdBlocks: 1, returnBlocks: 108, fallbackBlocks: 72 });   // testnet4's clocks since #1317
   assert.ok(has(hold.scripts.return, OWNER)); assert.ok(!has(hold.scripts.return, NODE)); assert.ok(!has(hold.scripts.fallback, NODE));
   assert.throws(() => returnLeaf({ nodeKey: NODE, bondMaturity: 900, returnBlocks: 36 }), /owner key/);
 });

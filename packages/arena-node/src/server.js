@@ -7570,7 +7570,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               // A KEY THIS NODE'S BONDS NAME, UNDER ITS THRESHOLD (5A.3B: "The owner page says so")
               ...(() => { if (!censusKey) return []; const f = ownBondNow(), w = censusKeyDeadWarning(censusKey.scan.dead(), f ? (f.all ? f.all.outputs : [f.bond]) : []); return w ? [w] : []; })(),
               // A SLASH STARTED ON THIS NODE'S BOND (5A.3B): the money is in a hold output, and it still counts until something ends that
-              ...(await ownHoldsNow(ownBondNow())).map((h) => ({ kind: 'slash started', urgent: true, says: h.known ? `A slash was started on your bond of ${h.sats} sat at block ${h.startHeight}. It still counts. The return opens at block ${h.returnOpensAt}, and the census key can take it from block ${h.fallbackOpensAt}.`
+              ...(await ownHoldsNow(ownBondNow())).map((h) => ({ kind: 'slash started', urgent: true, says: h.known ? `A slash was started on your bond of ${h.sats} sat at block ${h.startHeight}. It still counts. The census key can take it from block ${h.fallbackOpensAt}; your return opens later, at block ${h.returnOpensAt}.`
                 : `A slash was started on your bond of ${h.sats} sat at block ${h.startHeight}, into a hold output this node did not sign for.` }))], address });
         }
         // THE STORE'S VIEW OF THIS SEAT (step 5): what it hosts and what is installed, waiting for its next start

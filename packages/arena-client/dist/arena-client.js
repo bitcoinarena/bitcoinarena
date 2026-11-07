@@ -6585,11 +6585,12 @@ function fallbackLeaf({ censusKey, fallbackBlocks }) {
  * down, because it is the spend the design expects, and the two leaves that should never run share the deeper branch. A round
  * with no panels (both empty) has no release leaf, and the tree is those two alone.
  *
- * 5A.3B: "a mature node leaves at slash_return_blocks, before the fallback opens". That is only true with hold < return < fallback.
+ * 5A.3B (RULED 2026-11-07, kanban #1287, withdrawing #1021's "a mature node can leave first"): the fallback opens before the return, so the
+ * census key gets its turn on every bond, mature or not: hold < fallback < return.
  */
 function holdTapTree({ ownerKey, censusKey, panelA, panelB, bondMaturity, holdBlocks, returnBlocks, fallbackBlocks }) {
-  if (!(holdBlocks < returnBlocks && returnBlocks < fallbackBlocks))
-    throw new RangeError(`the clocks ${holdBlocks} / ${returnBlocks} / ${fallbackBlocks} do not run hold, then return, then fallback`);
+  if (!(holdBlocks < fallbackBlocks && fallbackBlocks < returnBlocks))
+    throw new RangeError(`the clocks ${holdBlocks} / ${fallbackBlocks} / ${returnBlocks} do not run hold, then fallback, then return (kanban #1287)`);
   const noPanels = (panelA || []).length === 0 && (panelB || []).length === 0;
   const scripts = {
     ...(noPanels ? {} : { release: releaseLeaf({ panelA, panelB, holdBlocks }) }),
@@ -8110,10 +8111,13 @@ const RANDOMNESS_SOURCE = 'bitcoin-block-hash';
  * read from genesis and NOT hashed: their ids are fixed and a moved id is a new network, the same reason as BOND_MATURITY_OFFSET
  * (bond-script.js) and the ruling of 2026-10-14 below. A network founded on these clocks hashes them.
  */
+// THE FALLBACK OPENS BEFORE THE RETURN (RULED 2026-11-07, kanban #1287 / #1317): return 432 / 108 / 36 after fallback 288 / 72 / 24. With the
+// return first (144 / 36 / 12) a slash on a mature bond landed only if both panels signed within a day, and the bonding presig (no panel leaf)
+// made a mature guardian, auditor or panel member unslashable; now the census key always gets its turn
 const SLASH_CLOCKS = Object.freeze({
-  mainnet: Object.freeze({ slashHoldBlocks: 6, slashReturnBlocks: 144, slashFallbackBlocks: 288 }),
-  testnet4: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 36, slashFallbackBlocks: 72 }),
-  regtest: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 12, slashFallbackBlocks: 24 }),
+  mainnet: Object.freeze({ slashHoldBlocks: 6, slashReturnBlocks: 432, slashFallbackBlocks: 288 }),
+  testnet4: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 108, slashFallbackBlocks: 72 }),
+  regtest: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 36, slashFallbackBlocks: 24 }),
 });
 
 /**
@@ -8273,8 +8277,8 @@ function encodeGenesisParameters(p) {
     // TEMPLATE 3'S CLOCKS (§27A.6, §5A.3B), in this block for the reason the block exists: the test networks' bytes do not move.
     if (![p.slashHoldBlocks, p.slashReturnBlocks, p.slashFallbackBlocks].every((n) => Number.isInteger(n) && n >= 1 && n <= 0xffff))
       throw new Error('genesis names the slash clocks: hold, return and fallback blocks, each one CHECKSEQUENCEVERIFY can wait for');
-    if (!(p.slashHoldBlocks < p.slashReturnBlocks && p.slashReturnBlocks < p.slashFallbackBlocks))
-      throw new Error('the slash clocks run hold, then return, then fallback: a mature node leaves before the fallback opens (§5A.3B)');
+    if (!(p.slashHoldBlocks < p.slashFallbackBlocks && p.slashFallbackBlocks < p.slashReturnBlocks))
+      throw new Error('the slash clocks run hold, then fallback, then return: the census key gets its turn before a mature node can leave (§5A.3B, kanban #1287)');
     w.u32(p.slashHoldBlocks);
     w.u32(p.slashReturnBlocks);
     w.u32(p.slashFallbackBlocks);

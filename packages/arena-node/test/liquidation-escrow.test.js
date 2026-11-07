@@ -40,7 +40,7 @@ const census = { key: dealt.publicKey, hex: toHex(dealt.publicKey) };
 const person = (n) => { const secret = tag(100 + n); return { secret, key: schnorr.getPublicKey(secret), hex: toHex(schnorr.getPublicKey(secret)) }; };
 const b32 = (n) => new Uint8Array(32).fill(n);
 const display = (internal) => toHex([...internal].reverse());
-const clocks = { holdBlocks: 1, returnBlocks: 12, fallbackBlocks: 24 };
+const clocks = { holdBlocks: 1, returnBlocks: 36, fallbackBlocks: 24 };
 const MARGIN = CARRIER_PAYOUT_MARGIN_MSAT.regtest;
 const FEE_HOLD = CARRIER_PAYOUT_FEE_MSAT.regtest;          // what a carrier keeps back for its payout's fee (kanban #1093)
 const PEGIN_FEE_MSAT = 416_000n;                         // the safe federation's walletv2 peg-in fee in the real-Fedimint liquidation run (kanban #1093)

@@ -41,7 +41,7 @@ const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { re
 const b32 = (n) => new Uint8Array(32).fill(n);
 const display = (internal) => toHex([...internal].reverse());
 
-const clocks = { holdBlocks: 1, returnBlocks: 12, fallbackBlocks: 24 };
+const clocks = { holdBlocks: 1, returnBlocks: 36, fallbackBlocks: 24 };
 const A = [1, 2, 3, 4].map(person), B = [5, 6, 7, 8].map(person);
 const panels = { panelA: A.map((p) => p.key), panelB: B.map((p) => p.key) };
 const accused = person(40), seat = person(41), others = [person(50), person(51), person(52), person(53)];

@@ -38,24 +38,28 @@ test('mainnet genesis: the table\'s values, federation_min, bond_min_guardian an
   assert.ok(encodeGenesisParameters(genesis).length > encodeGenesisParameters(genesisFor('testnet4')).length);
 });
 
-test('template 3\'s clocks, by the table of §27A.6: 6 / 144 / 288, 1 / 36 / 72, 1 / 12 / 24 (kanban #972)', () => {
+// KANBAN #1317 (RULED #1287): the fallback opens before the return - hold / return / fallback 6 / 432 / 288, 1 / 108 / 72, 1 / 36 / 24
+test('template 3\'s clocks, by the table of §27A.6: 6 / 432 / 288, 1 / 108 / 72, 1 / 36 / 24 (kanban #972, #1317)', () => {
   const clocks = (g) => [g.slashHoldBlocks, g.slashReturnBlocks, g.slashFallbackBlocks];
-  assert.deepEqual(clocks(mainnetGenesis(parts()).genesis), [6, 144, 288]);
-  assert.deepEqual(clocks(genesisFor('testnet4')), [1, 36, 72]);
-  assert.deepEqual(clocks(genesisFor('regtest')), [1, 12, 24]);
-  assert.deepEqual(clocks(SLASH_CLOCKS.mainnet), [6, 144, 288]);
+  assert.deepEqual(clocks(mainnetGenesis(parts()).genesis), [6, 432, 288]);
+  assert.deepEqual(clocks(genesisFor('testnet4')), [1, 108, 72]);
+  assert.deepEqual(clocks(genesisFor('regtest')), [1, 36, 24]);
+  assert.deepEqual(clocks(SLASH_CLOCKS.mainnet), [6, 432, 288]);
+  for (const net of ['mainnet', 'testnet4', 'regtest']) assert.ok(SLASH_CLOCKS[net].slashFallbackBlocks < SLASH_CLOCKS[net].slashReturnBlocks, `${net}: the fallback opens before the return`);
 });
 
 test('the clocks are in mainnet\'s id, are not in the test networks\', and a wrong order is refused (kanban #972)', () => {
   const { genesis, networkId } = mainnetGenesis(parts());
-  for (const change of [{ slashHoldBlocks: 7 }, { slashReturnBlocks: 145 }, { slashFallbackBlocks: 289 }])
+  for (const change of [{ slashHoldBlocks: 7 }, { slashReturnBlocks: 433 }, { slashFallbackBlocks: 289 }])
     assert.notEqual(hex(computeNetworkId({ genesis: { ...genesis, ...change }, authorityPubkey: b32(9), recoveryPubkey: b32(10) })), hex(networkId), JSON.stringify(change));
   for (const net of ['testnet4', 'regtest']) {
     const g = genesisFor(net);
     assert.equal(hex(encodeGenesisParameters({ ...g, slashHoldBlocks: 99, slashReturnBlocks: 98, slashFallbackBlocks: 97 })), hex(encodeGenesisParameters(g)), `${net}: its bytes do not read the clocks`);
   }
-  assert.throws(() => encodeGenesisParameters({ ...genesis, slashReturnBlocks: 288 }), /hold, then return, then fallback/);
-  assert.throws(() => encodeGenesisParameters({ ...genesis, slashHoldBlocks: 144 }), /hold, then return, then fallback/);
+  // the old order (return before fallback) is refused now, and a hold past the fallback too
+  assert.throws(() => encodeGenesisParameters({ ...genesis, slashReturnBlocks: 144 }), /hold, then fallback, then return/);
+  assert.throws(() => encodeGenesisParameters({ ...genesis, slashReturnBlocks: 288 }), /hold, then fallback, then return/);
+  assert.throws(() => encodeGenesisParameters({ ...genesis, slashHoldBlocks: 288 }), /hold, then fallback, then return/);
   assert.throws(() => encodeGenesisParameters({ ...genesis, slashFallbackBlocks: 65536 }), /slash clocks/);
   assert.throws(() => encodeGenesisParameters({ ...genesis, slashHoldBlocks: undefined }), /slash clocks/);
 });

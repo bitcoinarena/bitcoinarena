@@ -36,7 +36,7 @@ const panelA = Array.from({ length: 7 }, (_, i) => person(10 + i));
 const panelB = Array.from({ length: 7 }, (_, i) => person(30 + i));
 const { arbitrationKeys } = genesisFor('regtest');
 const internalKey = bondInternalKey({ nodeKey, arbitrationKeys }, { combine }).internalKey;
-const clocks = { holdBlocks: 6, returnBlocks: 144, fallbackBlocks: 288 };
+const clocks = { holdBlocks: 6, returnBlocks: 432, fallbackBlocks: 288 };
 const hold = { ownerKey, censusKey, panelA, panelB, bondMaturity: 160000, ...clocks };
 
 test('templates 1 and 2 are the bytes they were: output keys pinned off the tree before template 3 was written (aefaff835)', () => {
@@ -128,7 +128,7 @@ test('the hold output: anyone rebuilds it from the bond and the round, each leaf
   }
   assert.deepEqual(sizes, { release: 65, return: 97, fallback: 97 });
   assert.equal(holdControlBlock('elsewhere', h).ok, false);
-  for (const change of [{ panelA: panelB, panelB: panelA }, { censusKey: person(2) }, { bondMaturity: 160001 }, { returnBlocks: 145 }])
+  for (const change of [{ panelA: panelB, panelB: panelA }, { censusKey: person(2) }, { bondMaturity: 160001 }, { returnBlocks: 433 }])
     assert.notEqual(hexOf(holdOutputKey({ ...hold, ...change }, { tweakPoint }).outputKey), hexOf(h.outputKey), Object.keys(change).join());
 });
 
@@ -169,10 +169,11 @@ test('what cannot be a hold output is refused by name', () => {
   assert.match(why({ panelA: [] }), /a panel is 3 to 7 keys/);
   assert.match(why({ panelB: [panelA[0], ...panelB.slice(1)] }), /sits twice/);
   assert.match(why({ panelA: [panelA[0], panelA[0], ...panelA.slice(2)] }), /sits twice/);
-  assert.match(why({ returnBlocks: 288 }), /hold, then return, then fallback/);
-  assert.match(why({ holdBlocks: 144 }), /hold, then return, then fallback/);
+  assert.match(why({ returnBlocks: 288 }), /hold, then fallback, then return/);
+  assert.match(why({ returnBlocks: 144 }), /hold, then fallback, then return/, "the old order, return before fallback, is refused (kanban #1317)");
+  assert.match(why({ holdBlocks: 288 }), /hold, then fallback, then return/);
   assert.match(why({ holdBlocks: 0 }), /CHECKSEQUENCEVERIFY can wait/);
-  assert.match(why({ fallbackBlocks: 65536 }), /CHECKSEQUENCEVERIFY can wait/);
+  assert.match(why({ returnBlocks: 65536 }), /CHECKSEQUENCEVERIFY can wait/);   // the return is the longest clock since #1317
   assert.match(why({ bondMaturity: 500000000 }), /not a block height/);
   assert.equal(holdOutputKey(hold).ok, false, 'no curve');
 });
