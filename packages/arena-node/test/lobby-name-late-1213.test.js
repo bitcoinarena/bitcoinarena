@@ -57,3 +57,48 @@ test('#1213 a name record before the entry close is kept; after it (and its grac
     assert.deepEqual(await bookedTo(), [toHex(b32(7))], 'still booked to the identity named at the join');
   } finally { await d.close(); }
 });
+
+// KANBAN #1267 (audit 4 #1257 fixesA-4): a replayed game's record was taken until entry close + 60 s - in a late-join round after every run had ended -
+// so a player named his identity once he had seen his score. Now a record that sets or changes the identity comes within 15 s of the player's join here.
+test('#1267 a record that names an identity comes with the join: 20 s after it, a first record or another identity is refused; a rename keeping it is taken', async () => {
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, lobbyNameGraceMs: 60000 });
+  const base = `http://127.0.0.1:${d.port}`;
+  try {
+    const now = BigInt(Date.now());
+    const c = { ...contractFor([d.round.pubkey, b32(0x33)], 3000n, [base]),
+      committeeTimeMs: now - 1000n, startTimeMs: now + 59000n, entryCloseMs: now + 179000n, stakeMsat: 0n };
+    assert.equal((await fetch(`${base}/round`, { method: 'POST', body: encodeRoundContract(c) })).status, 201);
+    const rid = roundId(c);
+    assumeAssigned(d.round, rid, c.nodes);
+    const join = async () => {
+      const player = schnorr.utils.randomSecretKey();
+      const entry = { roundId: rid, playerPubkey: schnorr.getPublicKey(player), sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
+        stakeCommitment: rand(32), stakeMsat: 0n, feeMsat: 0n, donationMsat: 0n, joinTick: 0, worldSecret: rand(32), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33),
+        feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32) };
+      const r = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+      assert.equal(r.status, 201, await r.text());
+      return { player, pub: entry.playerPubkey };
+    };
+    const post = async (p, identity, name, atMs) => { const r = { roundId: rid, playerPubkey: p.pub, identityPubkey: identity, name, atMs };
+      const x = await fetch(`${base}/name`, { method: 'POST', body: JSON.stringify({ record: toHex(encodeLobbyName(r)), sig: toHex(schnorr.sign(lobbyNameId(r), p.player)) }) }); return x.status; };
+    const realNow = d.round.now;
+    const t0 = Number(realNow());
+    const alice = await join(), bob = await join();
+    d.round.now = () => t0 + 5000;
+    const aliceAtJoin = await post(alice, b32(7), 'Road Owl 42', 1000n);
+    d.round.now = () => t0 + 20000;                                       // 20 s after the join: the run may be well under way
+    const bobFirstLate = await post(bob, b32(8), 'Late Bob', 2000n);
+    const aliceOtherIdentity = await post(alice, b32(9), 'Road Owl 42', 3000n);
+    const aliceRename = await post(alice, b32(7), 'Road Owl 43', 4000n);
+    d.round.now = realNow;
+    const named = (p) => d.round.namedIdentityOf(rid, p.pub);
+    console.log('  FACTS #1267:', JSON.stringify({ aliceAtJoin, bobFirstRecord20sLate: bobFirstLate, aliceOtherIdentity20sLate: aliceOtherIdentity, aliceRenameSameIdentity: aliceRename,
+      aliceBookedTo: (named(alice) || '').slice(0, 8), bobBookedTo: named(bob) }));
+    assert.equal(aliceAtJoin, 201);
+    assert.equal(bobFirstLate, 409, 'a first record 20 s after the join was taken');
+    assert.equal(aliceOtherIdentity, 409, 'another identity 20 s after the join was taken');
+    assert.equal(aliceRename, 201, 'a rename keeping the identity is taken as before');
+    assert.equal(named(alice), toHex(b32(7)));
+    assert.equal(named(bob), null);
+  } finally { await d.close(); }
+});

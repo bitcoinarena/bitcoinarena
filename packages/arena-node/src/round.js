@@ -3535,6 +3535,17 @@ export class Round {
    * THE IDENTITY A PLAYER'S NAME RECORD NAMES IN A ROUND (kanban #1224): the record is signed by the entry's own round key and, since #1213,
    * fixed at the entry close - so a head-to-head reveal's identity is the player's only when it is this one. Hex, or null with no record held.
    */
+  /** When this seat first took an entry of that player in that round (entries.joined_ms, this seat's clock), or null (kanban #1267). */
+  joinedMsOfPlayer(roundIdBytes, playerPubkeyBytes) {
+    const want = Buffer.from(playerPubkeyBytes).toString('hex');
+    let at = null;
+    for (const r of this.db.prepare('SELECT contract, joined_ms FROM entries WHERE round_id = ?').iterate(Buffer.from(roundIdBytes))) {
+      let e; try { e = decodeEntryContract(new Uint8Array(r.contract)); } catch { continue; }
+      if (Buffer.from(e.playerPubkey).toString('hex') === want && (at === null || Number(r.joined_ms) < at)) at = Number(r.joined_ms);
+    }
+    return at;
+  }
+
   namedIdentityOf(roundIdBytes, playerPubkeyBytes) {
     const r = this.db.prepare('SELECT record FROM lobby_names WHERE round_id = ? AND player_pubkey = ?').get(Buffer.from(roundIdBytes), Buffer.from(playerPubkeyBytes));
     if (!r) return null;
