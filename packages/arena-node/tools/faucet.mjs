@@ -45,7 +45,7 @@ const rpc = async (method, params = []) => {
 const REPORTS = [];   // this day's reports: their count and address, in memory
 // THE REPORTS KEPT FOR REVIEW (kanban #1342): one SQLite file beside the book; none when FAUCET_FEEDBACK_DB is not set
 const FEEDBACK = env.FAUCET_FEEDBACK_DB ? openFeedbackStore(env.FAUCET_FEEDBACK_DB) : null;
-const MINE_URLS = String(env.FAUCET_FEEDBACK_MINE_URLS || 'https://testnet.bitcoinarena.io/api/faucet/feedback/mine').split(',').map((x) => x.trim()).filter(Boolean);
+const MINE_URLS = String(env.FAUCET_FEEDBACK_MINE_URLS || 'https://bitcoinarena.io/api/faucet/feedback/mine').split(',').map((x) => x.trim()).filter(Boolean);
 const readBook = () => { try { return JSON.parse(readFileSync(env.FAUCET_BOOK, 'utf8')); } catch { return { paid: [] }; } };
 const saveBook = (b) => { writeFileSync(`${env.FAUCET_BOOK}.new`, JSON.stringify(b, null, 1)); renameSync(`${env.FAUCET_BOOK}.new`, env.FAUCET_BOOK); };
 const balanceSats = async () => Math.round(Number((await rpc('getbalances')).mine.trusted) * 1e8);
@@ -74,7 +74,7 @@ const lncli = (payer, args, timeoutMs = 20000) => new Promise((res) => execFile(
 // THE BOUNTY WALLET (kanban #1342 section 3): its own payer, never the faucet's; the payout network one setting (testnet4 in phase 1)
 const BOUNTY_PAYER = env.FAUCET_BOUNTY_PAYER ? (([dir, rpcserver]) => ({ dir, rpcserver }))(env.FAUCET_BOUNTY_PAYER.split('|')) : null;
 const BOUNTY_NETWORK = env.FAUCET_BOUNTY_NETWORK || 'testnet4';
-const PUBLIC_BASE = String(env.FAUCET_PUBLIC_BASE || 'https://testnet.bitcoinarena.io/api/faucet').replace(/\/$/, '');
+const PUBLIC_BASE = String(env.FAUCET_PUBLIC_BASE || 'https://bitcoinarena.io/api/faucet').replace(/\/$/, '');
 const bountyDecode = async (invoice) => {
   if (!/^lntb[0-9a-z]{20,1500}$/.test(invoice)) return { ok: false };
   const r = await lncli(BOUNTY_PAYER, ['decodepayreq', invoice]);
