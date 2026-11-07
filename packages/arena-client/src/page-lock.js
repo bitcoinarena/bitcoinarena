@@ -2005,8 +2005,12 @@ export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch }
   for (const { got } of answers) {
     for (const l of got) {
       const [txid, outIdx] = String(l.outpoint).split(':');
-      if (!found.has(l.outpoint))
-        found.set(l.outpoint, { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId });
+      // EVERY SEAT'S VERSION OF AN OUTPOINT, NOT ONLY THE FIRST (kanban #1273, audit 4 #1257 seats-5): one seat listed first answered the real
+      // outpoint with a field changed (or a made-up entry id), and the honest copies were dropped - the stake read "gone" for good, or waited for
+      // its expiry. Each distinct version is kept; the federation's stored contract (heldByGuardians) and the forfeit check pick the real one
+      const key = `${l.outpoint}|${JSON.stringify(l.fields)}|${String(l.entryId || '').toLowerCase()}`;
+      if (!found.has(key))
+        found.set(key, { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId });
     }
   }
   const out = [...found.values()];
@@ -2067,8 +2071,13 @@ export async function refundStake({ round, roundId, invite, seed, curve, LockCli
   const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
   onStep('joining the federation');
   const client = await LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+  // ONLY THE VERSIONS THE FEDERATION HOLDS (kanban #1273): findLock keeps every seat's version of an outpoint; a changed one is not refunded
+  // (asked only when two seats named one outpoint differently: one version per outpoint is refunded as before, no status read added)
+  let held = locks;
+  const at = (l) => `${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}`;
+  if (new Set(locks.map(at)).size < locks.length) { try { const h = await heldByGuardians(client, locks, contractIdVia(LockClient)); if (h.length) held = h; } catch { held = locks; } }
   const refunds = [];
-  for (const l of locks) {
+  for (const l of held) {
     onStep('refunding the lock');
     const said = JSON.parse(await client.refund(toHex(l.outpoint.txid), Number(l.outpoint.outIdx),
       JSON.stringify(lockFieldsToJson(l.fields)), toHex(player.secret)));
@@ -2916,11 +2925,17 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
   const msat = still.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
   const at = (l) => `${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}`;
   const named = await findLock({ roundId, playerPubkey, nodes, fetcher });
-  const found = still.map((l) => named.find((n) => at(n) === at(l))).filter(Boolean);
+  // every version the seats name for each outpoint (kanban #1273): a changed one listed first does not stand in for the real one
+  const versions = still.map((l) => named.filter((n) => at(n) === at(l))).filter((v) => v.length);
+  const found = versions.map((v) => v[0]);
   if (!found.length) return (await expiredBack(client, still)) || { state: 'waiting', how: 'forfeit', refused: true, msat, why: 'handed to the signer nodes, and none names it yet' };
-  for (const l of found) {
-    const f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher,
-      check: forfeitCheck({ curve, fields: l.fields, storedId: await storedIdAt(client, l), contractIdOf }) });
+  for (const v of versions) {
+    let f = null;
+    for (const l of v) {
+      f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher,
+        check: forfeitCheck({ curve, fields: l.fields, storedId: await storedIdAt(client, l), contractIdOf }) });
+      if (f.ok) break;
+    }
     if (!f.ok) return (await expiredBack(client, still)) || { state: 'waiting', how: 'forfeit', refused: true, msat, why: f.why };
   }
   const owed = found.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
@@ -2975,15 +2990,21 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
     if (!named.length && s.ok && locks.asked > 0 && locks.answered === 0)
       stake = { state: 'waiting', why: `no signer node answered where this seed's lock is (${locks.said.join('; ')})` };
     else if (named.length && (real.length || !(await ownHeld()))) {
-      const whole = named.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
+      const whole = [...new Map(named.map((l) => [`${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}`, l])).values()].reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);   // each outpoint once (kanban #1273)
       if (!real.length) stake = { state: 'gone', how: 'forfeit', msat: whole };
       else {
-        const msat = real.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
+        // ONE OUTPOINT, ITS AMOUNT ONCE, AND ONE GOOD FORFEIT FROM ANY OF ITS VERSIONS (kanban #1273): findLock keeps every seat's version of an outpoint
+        const byOutpoint = new Map();
+        for (const l of real) { const k = `${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}`; if (!byOutpoint.has(k)) byOutpoint.set(k, []); byOutpoint.get(k).push(l); }
+        const msat = [...byOutpoint.values()].reduce((t, v) => t + BigInt(v[0].fields.amountMsat), 0n);
         // A FORFEIT FOR EVERY LOCK HELD, never the first one named alone (kanban #1238)
         let f = { ok: true };
-        for (const l of real) {
-          f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher,
-            check: forfeitCheck({ curve, fields: l.fields, storedId: await storedIdAt(client, l), contractIdOf }) });
+        for (const v of byOutpoint.values()) {
+          for (const l of v) {
+            f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher,
+              check: forfeitCheck({ curve, fields: l.fields, storedId: await storedIdAt(client, l), contractIdOf }) });
+            if (f.ok) break;
+          }
           if (!f.ok) break;
         }
         if (f.ok) stake = { state: 'owed', msat, how: 'forfeit' };
