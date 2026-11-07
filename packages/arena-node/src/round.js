@@ -117,6 +117,10 @@ export const TRANSCRIPT_BATCH_MAX_BYTES = 65535;
 const namedBatchRow = (r) => ({ bodyId: r.body_id, txid: r.txid, signers: JSON.parse(r.signers), signatures: JSON.parse(r.signatures).map((x) => new Uint8Array(Buffer.from(x, 'hex'))),
   slots: JSON.parse(r.slots), madeMs: Number(r.made_ms) });
 
+/** Foreign receipts kept (kanban #1274): at most this many, none older than a day. */
+export const FOREIGN_RECEIPTS_KEPT = 4096;
+export const FOREIGN_RECEIPTS_MAX_AGE_MS = 24 * 3600000;
+
 export class Round {
   /** How long openHeld trusts its last count of the open rows when this store wrote none (kanban #786). */
   static OPEN_HELD_MS = 250;
@@ -286,6 +290,12 @@ export class Round {
         'INSERT OR IGNORE INTO foreign_receipts '
         + '(checkpoint_id, node_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?)')
         .run(r.checkpointId, r.nodePubkey, bytes, this.now());
+      // AND NOT FOREVER, NOT WITHOUT BOUND (kanban #1274, audit 4 #1257 outsider-2): the receipt's key is any key that signs it, and its checkpoint
+      // id any 32 bytes, so a /play client wrote a row per frame for as long as it liked - never pruned, every row served at GET /foreign-receipts.
+      // At most FOREIGN_RECEIPTS_KEPT are kept, none older than a day; the oldest go first (measured live: 224 rows on seat A1)
+      this.db.prepare('DELETE FROM foreign_receipts WHERE seen_ms < ?').run(Number(this.now()) - FOREIGN_RECEIPTS_MAX_AGE_MS);
+      const over = this.db.prepare('SELECT COUNT(*) AS n FROM foreign_receipts').get().n - FOREIGN_RECEIPTS_KEPT;
+      if (over > 0) this.db.prepare('DELETE FROM foreign_receipts WHERE rowid IN (SELECT rowid FROM foreign_receipts ORDER BY seen_ms LIMIT ?)').run(over);
       throw new Error('a receipt for a mark this node has not got');
     }
 
