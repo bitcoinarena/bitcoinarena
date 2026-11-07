@@ -178,3 +178,32 @@ test('#1230 notes the door never answered are presented again when the set lists
   await presentNotes({ ...b2, events: signed({ atMs: 3, claims: { accepted: [{ nonce: 'pending-1', amountMsat: '1000', height: 1012, payoutPk: PK }], refused: [], msat: '1000' } }), fetcher: ok });
   assert.equal(JSON.parse(s2.get(pendingClaimKey(FED))).state, 'posted', 'a record the door answered 503 was taken unpresented');
 });
+
+// KANBAN #1264 (audit 4 #1257 fixesA-2): #1230 counted any non-5xx answer as "the door answered" - also the door's own refusals that take nothing
+// (the claim window not open at its tip, not HALTED at any seat yet, not validated, a reissue refused) and a tunnel's 4xx. Once another claim of the key
+// was accepted, those notes were dropped unpresented. Only an answer that names the notes it refused counts now.
+test('#1264 a refusal that took nothing (window, validation, a tunnel\'s 429) is no answer: the notes are presented again, never dropped', async () => {
+  const otherClaim = signed({ atMs: 3, claims: { accepted: [{ nonce: 'pending-1', amountMsat: '1000', height: 1012, payoutPk: PK }], refused: [], msat: '1000' } });
+  const facts = {};
+  for (const [name, status, body] of [['window', 409, { why: 'the claim window opens at 1013 (halted at 1000 + abandon_blocks); the tip is 1012' }],
+                                      ['not validated', 422, { why: 'those notes do not stand: not validated' }], ['tunnel', 429, {}]]) {
+    const { store, base } = rig();
+    await presentNotes({ ...base, events: signed(), fetcher: async () => ({ ok: false, status, json: async () => body }) });
+    const seen = [];
+    const ok = async (url, o) => { seen.push(JSON.parse(o.body).ecash || null); return { ok: true, json: async () => ({ accepted: [1] }) }; };
+    const out = await presentNotes({ ...base, events: otherClaim, fetcher: ok });
+    facts[name] = { firstAnswer: status, presentedAgain: seen.includes('notes-1'), dropped: out.some((x) => x.taken), state: JSON.parse(store.get(pendingClaimKey(FED)) || '{"state":"gone"}').state };
+  }
+  // and "claimed before" (the notes named as refused) is an answer as before: taken by the set's word
+  const { store: s4, base: b4 } = rig();
+  await presentNotes({ ...b4, events: signed(), fetcher: async () => ({ ok: false, status: 409, json: async () => ({ refused: [{ nonce: 'n1', why: 'that note was claimed before' }], why: 'none of those notes can be claimed' }) }) });
+  const out4 = await presentNotes({ ...b4, events: otherClaim, fetcher: async () => ({ ok: true, json: async () => ({ accepted: [1] }) }) });
+  facts.claimedBefore = { taken: out4.some((x) => x.taken), left: s4.has(pendingClaimKey(FED)) };
+  console.log('  FACTS #1264:', JSON.stringify(facts));
+  for (const name of ['window', 'not validated', 'tunnel']) {
+    assert.equal(facts[name].presentedAgain, true, `${name}: the notes were not presented again`);
+    assert.equal(facts[name].dropped, false, `${name}: the notes were dropped unpresented`);
+    assert.equal(facts[name].state, 'posted');
+  }
+  assert.deepEqual(facts.claimedBefore, { taken: true, left: false });
+});
