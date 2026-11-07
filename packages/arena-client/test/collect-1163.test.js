@@ -258,3 +258,34 @@ test('#1251 a collect record refused for quota is kept once the storage-full han
     assert.equal(saved, true); assert.equal(freed, 1); assert.equal(kept, 1, 'the collect record was lost to the quota');
   } finally { PL.onStorageFull(null); }
 });
+
+// KANBAN #1255 (audit 3 #1210 FIXES-15): a record the pre-#1163 page marked done (the payout redeemed, the stake's forfeit not signed yet) was
+// skipped by every pass and never looked at again - its stake stayed in its lock until a manual Rescan. Now such a done (no tabMsat) is opened
+// once, the next pass looks at it, and it is written done again only when collectState says so.
+test('#1255 a done written by an older page (no tabMsat) is opened once and its stake is found owed; a done read by collectState stays done', async () => {
+  const m = new Map();
+  const storage = { get length() { return m.size; }, key: (i) => [...m.keys()][i] ?? null, getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) };
+  const ridHex = toHex(rid);
+  PL.saveCollect(storage, { roundIdHex: ridHex, round, invite: 'fed11x', nodes: ['http://a.test'], seed, stakeLock: null });
+  PL.saveCollect(storage, { roundIdHex: ridHex, round, invite: 'fed11x', nodes: ['http://a.test'], seed, stakeLock: null, order: 1 });
+  const [legacyKey, newKey] = [...m.keys()].filter((k) => k.startsWith('arena.collect.')).sort();
+  m.set(legacyKey, JSON.stringify({ ...JSON.parse(m.get(legacyKey)), done: { payout: '978 sat collected', stake: null } }));
+  m.set(newKey, JSON.stringify({ ...JSON.parse(m.get(newKey)), done: { payout: 'all', stake: 'all', tabMsat: '0' } }));
+  const skippedBefore = PL.savedCollects(storage, { seed }).filter((r) => !r.done).length;
+  const opened = PL.reopenUncheckedDone(storage);
+  const openAfter = PL.savedCollects(storage, { seed }).filter((r) => !r.done).map((r) => r.order);
+  // the pass's look of the reopened record: the payout already in, the stake's forfeit signed now - owed
+  const lo = await look({ 'a.test': { payees: [mine], forfeit: realForfeit }, 'b.test': { payees: [mine], forfeit: realForfeit } });
+  // once per record: a second open (another tab, a reload) leaves it, and a done written again without tabMsat is not opened a third time
+  const again = PL.reopenUncheckedDone(storage);
+  m.set(legacyKey, JSON.stringify({ ...JSON.parse(m.get(legacyKey)), done: { payout: 'x', stake: null } }));
+  const third = PL.reopenUncheckedDone(storage);
+  const facts = { skippedBefore, opened, openAfter, stake: `${lo.stake.state}/${lo.stake.how}`, again, third, newStillDone: !!JSON.parse(m.get(newKey)).done };
+  console.log('  FACTS #1255:', JSON.stringify(facts));
+  assert.equal(skippedBefore, 0, 'both records start done');
+  assert.equal(opened, 1, 'the older page\'s done was not opened again');
+  assert.deepEqual(openAfter, [0], 'only the done without tabMsat is open');
+  assert.deepEqual([lo.stake.state, lo.stake.how], ['owed', 'forfeit'], 'the stake of the reopened record is owed');
+  assert.equal(again, 0); assert.equal(third, 0, 'a record was opened more than once');
+  assert.equal(facts.newStillDone, true, 'a done read by collectState was opened');
+});

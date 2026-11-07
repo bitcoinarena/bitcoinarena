@@ -4690,6 +4690,12 @@
         return;
       }
       if (typeof ARENACLIENT === 'undefined' || !ARENACLIENT.savedCollects) return;
+      // A DONE AN OLDER PAGE WROTE IS LOOKED AT ONCE MORE (kanban #1255, audit 3 FIXES-15): its stake may still be in its lock; once per tab, each record once
+      if (!window.ARENA_DONE_RECHECKED && ARENACLIENT.reopenUncheckedDone) {
+        window.ARENA_DONE_RECHECKED = true;
+        try { const n = ARENACLIENT.reopenUncheckedDone(vault()); if (n) collectNote('records', n + ' record(s) marked done by an older page opened again: looked at once more (#1255)'); }
+        catch (e) { console.log('[arena] #1255 the done records were not looked at again: ' + String(e && e.message || e).slice(0, 120)); }
+      }
       {
         const k = keptRecords(); const mine = k.collectable.filter((r) => r.own); const others = k.collectable.filter((r) => !r.own);
         const said = (l) => l.map((r) => r.roundIdHex.slice(0, 8) + (r.done ? ' done' : ' open')).join(', ') || 'none';
