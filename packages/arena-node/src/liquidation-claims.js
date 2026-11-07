@@ -56,8 +56,9 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
       accepted.push({ nonce, amountMsat: String(n.amountMsat) });
     }
     if (accepted.length) persist();
+    // WAITING FOR THE SPENT SET (ruled 2026-11-07, kanban #1237): a claim is always taken; whether a verified spent set stands yet is said
     return { ok: accepted.length > 0, status: accepted.length ? 200 : 409, accepted, refused, height: at, inWindow: at <= liq.claimWindowCloses,
-      ...(accepted.length ? {} : { why: 'none of those notes can be claimed' }) };
+      spentSetPublished: Array.isArray(liq.spentNonces), ...(accepted.length ? {} : { why: 'none of those notes can be claimed' }) };
   }
 
   /**
