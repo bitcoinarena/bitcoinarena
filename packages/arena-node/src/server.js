@@ -12468,6 +12468,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (p2pTunnels && svcSettings.atBoot('p2p-tunnel')) ownToggles['p2p-tunnel'].start();
   if (guardianControl) ownToggles.guardian = { has: guardianControl.has, why: 'this node runs no guardian', running: guardianControl.running, start: guardianControl.start, stop: guardianControl.stop };
   http.on('upgrade', (req, socket, head) => {
+    // AN UPGRADED SOCKET HAS NO ERROR LISTENER OF NODE'S (kanban #1252, measured 2026-11-07 on the old Mac's fed B seats: "throw er; // Unhandled 'error' event
+    // ... read ECONNRESET ... on Socket instance" ended the node, once at seat 3's audit15 start and 8 times on seats 5-7 before): a peer's reset on one, before a
+    // branch below (or the websocket handshake) listened to it, threw - it is listened to first, and a reset closes that socket, not the seat
+    socket.on('error', () => { try { socket.destroy(); } catch { /* gone */ } });
     const at = new URL(req.url, 'http://node').pathname;
     if (at === '/play') { wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req)); return; }
     const p2pOf = at === P2P_TUNNEL_PATHS.guardian ? guardian : at === P2P_TUNNEL_PATHS.next ? guardianNext : null;
