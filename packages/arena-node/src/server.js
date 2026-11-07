@@ -6050,6 +6050,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const up = httpRequest({ host: '127.0.0.1', port: gwPort, method: req.method, path: (url.pathname.slice('/gateway'.length) || '/') + url.search,
           headers: { ...req.headers, host: `127.0.0.1:${gwPort}` } }, (r) => { res.writeHead(r.statusCode, r.headers); r.pipe(res); });
         up.on('error', (e) => { if (!res.headersSent) text(res, 502, `the node's gateway does not answer (${e.code || e.message})`); else res.destroy(); });
+        // THE CLIENT'S SIDE IS LISTENED TO AS WELL (kanban #1261, audit 4 outsider-1): a reset mid-body, or while the answer streams back, ends that request only
+        req.on('error', () => { try { up.destroy(); } catch { /* gone */ } });
+        res.on('error', () => { try { up.destroy(); } catch { /* gone */ } });
         req.pipe(up);
         return;
       }
@@ -10781,7 +10784,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // ... read ECONNRESET ... on Socket instance" ended the node, once at seat 3's audit15 start and 8 times on seats 5-7 before): a peer's reset on one, before a
     // branch below (or the websocket handshake) listened to it, threw - it is listened to first, and a reset closes that socket, not the seat
     socket.on('error', () => { try { socket.destroy(); } catch { /* gone */ } });
-    const at = new URL(req.url, 'http://node').pathname;
+    // A PATH THAT IS NO URL (kanban #1261, audit 4 fixesB-5): `//` or an absolute form like `http://[x` threw here, in the socket's data handler - uncaught,
+    // the seat ended. Such a request is closed, nothing else
+    let at;
+    try { at = new URL(req.url, 'http://node').pathname; } catch { try { socket.destroy(); } catch { /* gone */ } return; }
     if (at === '/play') { wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req)); return; }
     const p2pOf = at === P2P_TUNNEL_PATHS.guardian ? guardian : at === P2P_TUNNEL_PATHS.next ? guardianNext : null;
     if (p2pOf && p2pOf.p2pPort) { p2pWss.handleUpgrade(req, socket, head, (ws) => { carryP2p(ws, p2pOf.p2pPort); }); return; }
