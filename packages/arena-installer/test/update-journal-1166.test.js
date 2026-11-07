@@ -122,14 +122,62 @@ test('a rollback after the new release answered as this node keeps the database 
   assert.equal(r.rolledBack, true);
   assert.ok(db.includes('nonce 7 used by 0.1.1'), 'the nonce the new release used is not forgotten');
   assert.equal(n.running, v1);
-  // a release that never answers: the database from before, and the WAL it left beside it dropped (it belongs to the newer file)
-  const v3 = n.release('0.1.2', { broken: true, wal: true });
+  // a release that never answers and wrote nothing: the database from before (kanban #1286: one that wrote its database keeps it - below)
+  const v3 = n.release('0.1.2', { broken: true });
   const before = readFileSync(join(n.home, 'node.db'), 'utf8');
   const r3 = await n.update(v3);
   console.log(`  #1166 rolled back, never answered: node.db ${readFileSync(join(n.home, 'node.db'), 'utf8') === before ? 'as before' : 'changed'}; its WAL ${existsSync(join(n.home, 'node.db-wal')) ? 'LEFT beside the old database' : 'dropped'}`);
   assert.equal(r3.rolledBack, true);
   assert.equal(readFileSync(join(n.home, 'node.db'), 'utf8'), before);
   assert.ok(!existsSync(join(n.home, 'node.db-wal')), 'no WAL of the new release beside the old database');
+  rmSync(n.root, { recursive: true, force: true });
+});
+
+// KANBAN #1286 (audit 4 #1257 CLIENT-4): #1227 kept a database written since the backup on the resume only. moveNode's own rollback - the new
+// release did not answer within the wait - still put the backup back, also over a release that reached serve() as the wait ran out and wrote
+// (nonces, entries, locks) without ever answering here. And a journal an updater from before #1227 wrote has a backup with no print: restored too.
+test('#1286 the updater\'s own rollback keeps a database the new release wrote, though it never answered; one that wrote nothing gets the backup', async () => {
+  const n = linuxNode();
+  const v1 = n.release('0.1.0');
+  n.install(v1);
+  // never answers here, but ran and wrote: a used nonce in the database and a WAL beside it
+  const v2 = n.release('0.1.1', { broken: true, signs: '0.1.1', wal: true });
+  const r = await n.update(v2);
+  const db = readFileSync(join(n.home, 'node.db'), 'utf8');
+  const wal = existsSync(join(n.home, 'node.db-wal'));
+  console.log(`  #1286 rolled back by the updater, the new release never answered but wrote: ${r.rolledBack ? 'rolled back' : 'not rolled back'}; node.db ${db.includes('nonce 7') ? 'keeps' : 'FORGOT'} the nonce it used; its WAL ${wal ? 'kept' : 'DROPPED'}; dbKept ${r.dbKept}`);
+  assert.equal(r.rolledBack, true);
+  assert.equal(n.running, v1, 'the old release runs again');
+  assert.ok(db.includes('nonce 7 used by 0.1.1'), 'the backup was put back over the nonce the new release used');
+  assert.ok(wal, 'the WAL the new release wrote was dropped');
+  assert.equal(r.dbKept, true);
+  rmSync(n.root, { recursive: true, force: true });
+});
+
+test('#1286 an open journal from an updater before #1227 (its backup has no print): a database written after the backup is kept by the resume', async () => {
+  const n = linuxNode();
+  const v1 = n.release('0.1.0'), v2 = n.release('0.1.1', { broken: true });
+  n.install(v1);
+  n.hangStartOf = v2;
+  n.update(v2).catch(() => {});
+  await new Promise((ok) => setTimeout(ok, 300));
+  updaterDied(n);
+  n.hangStartOf = null;
+  // the journal as an older updater wrote it: no print in its backup
+  const { readdirSync, statSync, utimesSync } = await import('node:fs');
+  const jf = readdirSync(n.home).find((f) => /journal/i.test(f) && f.endsWith('.json'));
+  assert.ok(jf, `the fixture: an update journal in the home (${readdirSync(n.home).join(', ')})`);
+  const j = JSON.parse(readFileSync(join(n.home, jf), 'utf8'));
+  const strip = (o) => { if (o && typeof o === 'object') { if (o.backup && o.backup.print) delete o.backup.print; for (const v of Object.values(o)) strip(v); } };
+  strip(j); writeFileSync(join(n.home, jf), JSON.stringify(j));
+  // the release ran on and wrote its database, after the backup's copy
+  const copy = (function find(o) { if (o && typeof o === 'object') { if (o.backup && o.backup.dir) return join(o.backup.dir, 'node.db'); for (const v of Object.values(o)) { const x = find(v); if (x) return x; } } return null; })(j);
+  appendFileSync(join(n.home, 'node.db'), 'entry e9 locked by 0.1.1 after the backup\n');
+  const later = statSync(copy).mtimeMs / 1000 + 5; utimesSync(join(n.home, 'node.db'), later, later);
+  const r = await n.update(v2).catch((e) => ({ ok: false, why: e.message }));
+  const db = readFileSync(join(n.home, 'node.db'), 'utf8');
+  console.log(`  #1286 an old journal, no print: the next run "${r.why}"; node.db ${db.includes('entry e9') ? 'keeps' : 'LOST'} what the release wrote after the backup`);
+  assert.ok(db.includes('entry e9 locked by 0.1.1'), 'the backup of an old journal was put back over what the release wrote since');
   rmSync(n.root, { recursive: true, force: true });
 });
 
