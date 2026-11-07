@@ -35,7 +35,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
 import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, judgeTableProof, judgeAbandoned, buildAbandonedSlash, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic, resumeIntent, txidOf, spentSetFromSeats } from '../src/arbiter.js';
-import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
+import { createLiquidationClaims, payOutLiquidation, escrowCoverageMsat } from '../src/liquidation-claims.js';
 import { liquidationEvent, slashEvent, stampEvent, signEvent, eventKey } from '../src/arbitration-events.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
 import { decodeSpentSet, spentNonceSet } from '../../arena-protocol/src/spent-set.js';
@@ -470,7 +470,10 @@ if (liqClients.size) {
       return { ...listings[0], record: record.haltRecord || record.record || null, spentNonces: ss.spentNonces, spentSetSession: ss.session ?? null };
     },
     height: async () => Number(await rpc('getblockcount')),
+    // ONCE SPENT, WHAT THIS SET HOLDS FOR THE TABLE (kanban #1247): the claimed amount, not the spent output's 0
     escrowMsatOf: async (fid) => {
+      const v = state.liquidations && state.liquidations[fid];
+      if (v && v.escrowTxid) return escrowCoverageMsat(v, 0n);
       const at = liqEscrows.get(fid); if (!at) return 0n;
       const [txid, vout] = at.split(':');
       const o = await rpc('gettxout', [txid, Number(vout), false]);

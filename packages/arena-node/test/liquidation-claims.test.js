@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { secp256k1, schnorr } from '@noble/curves/secp256k1.js';
 import { eventMessage } from '../../arena-protocol/src/arbitration-event.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
+import { createLiquidationClaims, payOutLiquidation, escrowCoverageMsat } from '../src/liquidation-claims.js';
 import { notesOfDecoded, fedimintNoteValidator } from '../src/note-validate.js';
 import { serveArbiter } from '../src/arbiter.js';
 import { presentNotes, pendingClaimKey } from '../../arena-client/src/liquidation-claim.js';
@@ -402,4 +402,27 @@ test('kanban #1237: the client is told a taken claim waits for the federation\'s
   console.log('  MEASURED #1237 client:', JSON.stringify({ noSet: waits[0].waitsForSpentSet || false, withSet: stands[0].waitsForSpentSet || false }));
   assert.equal(waits[0].ok, true); assert.equal(waits[0].waitsForSpentSet, true);
   assert.equal(stands[0].waitsForSpentSet, undefined);
+});
+
+test('kanban #1247 (audit 3 MONEY-2): once the arbitration set\'s escrow is spent, the door still says what it pays - a census-key escrow carries no claim twice', async () => {
+  let tip = 1012; const v = {};
+  const liq = { ...LIQ };
+  const escrowOnChain = { msat: 10_000_000n };
+  const claims = createLiquidationClaims({ validate: async (_fid, e) => ({ ok: true, notes: NOTES[e], amountMsat: NOTES[e].reduce((a, n) => a + n.amountMsat, 0n) }),
+    liquidationOf: async (fid) => (fid === FED ? liq : null), height: async () => tip,
+    escrowMsatOf: async () => escrowCoverageMsat(v, escrowOnChain.msat), clocks: REGTEST_CLOCKS, save: () => {} });
+  await claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+  const before = await claims.plan(FED);
+  // the arbiter spends its escrow into the safe federation and claims 9,000,000 msat there: the output is gone from the chain
+  Object.assign(v, { escrowTxid: 'escrow-into-safe', claimedMsat: '9000000' }); escrowOnChain.msat = 0n;
+  const after = await claims.plan(FED);
+  const oldWay = await (createLiquidationClaims({ validate: async (_fid, e) => ({ ok: true, notes: NOTES[e], amountMsat: NOTES[e].reduce((a, n) => a + n.amountMsat, 0n) }),
+    liquidationOf: async (fid) => (fid === FED ? liq : null), height: async () => tip, escrowMsatOf: async () => 0n, clocks: REGTEST_CLOCKS, save: () => {} })).plan(FED);
+  const sum = (p) => p.paidNotes.reduce((a, n) => a + BigInt(n.msat), 0n);
+  console.log('  MEASURED #1247:', JSON.stringify({ before: String(sum(before)), afterSpend: String(sum(after)), spentOutputRead: String(sum(oldWay)), escrowMsat: after.escrowMsat }));
+  assert.equal(sum(before), 768000n);
+  assert.equal(sum(after), 768000n, 'after the spend the door said the claims were paid nothing');
+  assert.equal(after.escrowMsat, '9000000');
+  assert.equal(escrowCoverageMsat({ escrowTxid: 't', escrowSats: '9500' }, 0n), 9500000n, 'not claimed yet: the escrow\'s own amount');
+  assert.equal(escrowCoverageMsat({}, 1234n), 1234n);
 });
