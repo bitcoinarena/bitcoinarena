@@ -10700,7 +10700,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let list = null;
     try { if (ballot && typeof ballot.censusEntriesAt === 'function' && chainNetworkId()) list = await ballot.censusEntriesAt(chainNetworkId(), Number(await chainTip())); } catch { list = null; }
     if (!list) { try { const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null; list = cn ? cn.entries : null; } catch { list = null; } }
-    if (list) p2pTunnels.sync(list.map((e) => (e && e.advert ? { ...e, advert: { ...e.advert, endpoint: addressBook.endpointOf(e) } } : e)));
+    // the guardians the federation records this seat holds name keep their ports on a collision (kanban #1226)
+    const guardianKeys = new Set();
+    try { for (const f of (fedRecords && fedRecords.list ? fedRecords.list() : [])) { const k = fedRecords.recordOf(f.federation); for (const g of (k && k.record ? k.record.guardians : [])) guardianKeys.add(toHex(g.nodePubkey)); } } catch { /* none known */ }
+    if (list) p2pTunnels.sync(list.map((e) => (e && e.advert ? { ...e, advert: { ...e.advert, endpoint: addressBook.endpointOf(e) } } : e)), { prefer: (k) => guardianKeys.has(String(k).toLowerCase()) });
   };
   let p2pTunnelTimer = null;
   ownToggles['p2p-tunnel'] = {
