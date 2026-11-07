@@ -303,3 +303,17 @@ test('kanban #1232: an escrow spend whose answer was lost is recorded first and 
   console.log('  MEASURED #1232 liquidation:', JSON.stringify({ spent, resumed, escrowTxid: v.escrowTxid, intentLeft: !!v.escrowIntent, paid: second.paid, claimedMsat: v.claimedMsat }));
   assert.deepEqual([spent, resumed, v.escrowTxid, v.pegInAddress, v.escrowIntent, v.claimedMsat], [1, ['escrow-into-safe'], 'escrow-into-safe', 'tb1qsafe', undefined, '9000000']);
 });
+
+test('kanban #1237: the client is told a taken claim waits for the federation\'s spent set', async () => {
+  const store = new Map(); const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
+  const walletFor = async () => ({ sendAllEcash: async () => JSON.stringify({ msat: 768000, ecash: 'e1' }) });
+  const answer = (spentSetPublished) => async () => ({ ok: true, json: async () => ({ accepted: [1, 2], inWindow: true, spentSetPublished }) });
+  const events = [SET.sign({ kind: 'liquidation', network: 'regtest', federation: FED, status: 'claims open', halt: { height: 1000, proof: null }, door: 'http://arb.example', firstMs: 1, atMs: 1 })];
+  const o = { network: 'regtest', arbitration: SET.terms, verify: SET.verify, held: [FED], walletFor, payoutPk: P1, height: 1012, storage, events };
+  const waits = await presentNotes({ ...o, fetcher: answer(false) });
+  store.clear();
+  const stands = await presentNotes({ ...o, fetcher: answer(true) });
+  console.log('  MEASURED #1237 client:', JSON.stringify({ noSet: waits[0].waitsForSpentSet || false, withSet: stands[0].waitsForSpentSet || false }));
+  assert.equal(waits[0].ok, true); assert.equal(waits[0].waitsForSpentSet, true);
+  assert.equal(stands[0].waitsForSpentSet, undefined);
+});
