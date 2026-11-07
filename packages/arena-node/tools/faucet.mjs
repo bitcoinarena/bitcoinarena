@@ -148,7 +148,7 @@ async function grant(ask) {
 }
 
 const WANTS = new Map();
-const ORIGIN_OK = /^https:\/\/([a-z0-9-]+\.)?(testnet\.bitcoin-?arena\.io|bitcoin-arena-site\.pages\.dev)$/;
+const ORIGIN_OK = /^https:\/\/([a-z0-9-]+\.)?(testnet(-stage)?\.bitcoin-?arena\.io|bitcoin-arena-site\.pages\.dev)$/;   // testnet-stage: the bounty's stage (kanban #1342)
 createServer((req, res) => {
   const origin = String(req.headers.origin || '');
   // THE TWO DOORS A NODE'S OWN OWNER PAGE WRITES TO (kanban #1342 node feedback): signed, rate-limited reports and their screenshots, from any origin;
