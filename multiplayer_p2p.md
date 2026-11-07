@@ -9124,6 +9124,75 @@ a new network id:
   proportions. A newcomer starts at share_bps 0; an existing developer's share can vest upward the
   same way. A later approved proposal ends any vesting by replacing the set.
 
+### 27A.4.2 Contribution agreements: a share earned by results the chain can read *(RULED 2026-11-08, kanban #1346)*
+
+A person who markets the Arena is paid from the protocol developers' donation set, and the
+whole agreement lives in the node: every target, every percentage, every date is a record the
+seats read, and his share is whatever the chain says he has earned. No initial investment, no
+commission, no spreadsheet, no trust in a report. What stays outside the node is only what no
+protocol can judge: cause for a termination, a non-compete, the law.
+
+**The record.** A `ContributionAgreement` is an entry of a donation set (§27A.4.1: proposed and
+approved like any set change, and signed by the contributor's own recipient key too):
+
+```text
+ContributionAgreement {
+  recipient_pk      his key in the set
+  site_keys[]       his referral programs (the website payout keys his pages name as
+                    frontend_pk, §22A; each a ReferralName he signed)
+  start_height
+  base              { target_bps 250, cliff_blocks 26,280 (~6 months), days 730 }
+  tranches[]        { bps 250, milestone, window_blocks, expires_height }   four of them
+  attribution_floor_bps  3000
+  tail_blocks       52,560 (~12 months)
+}
+```
+
+Target 12.5 % of the set: 2.5 % for time, 10 % for results.
+
+**The base (2.5 %).** Nothing vests before `start_height + cliff_blocks`; at the cliff the
+days that passed vest at once, then `target_bps / days` per day (144 blocks), as §27A.4.1's
+vesting does. The base is the trust he is given for showing up, no more.
+
+**The tranches (4 × 2.5 %).** Each vests, whole, at the first height at which every seat reads
+its milestone as met, and never after `expires_height` or after he has left. A milestone is a
+function of rounds that **count** (kanban #1218: a derived contract, standard committees, the
+committee's signed account) and of entries that carry one of his `site_keys` as `frontend_pk`:
+
+| | milestone, read from counted rounds since `start_height` |
+|---|---|
+| T1 | 1,000 distinct identities (kanban #1276's proof) whose **first** paid entry on the network carried one of his site keys |
+| T2 | 300 of T1's identities with a paid entry at least 4,032 blocks (4 weeks) after their first |
+| T3 | mainnet, and in one `window_blocks` (12,960, a season) the gross stake of entries carrying his site keys is at least 20 % of the gross of all counted rounds |
+| T4 | in six consecutive windows of 4,320 blocks (30 days), the share of **new** identities whose first paid entry carried his site keys is at least 30 % |
+
+**The attribution floor.** A tranche vests only if, over its own window, new identities whose
+first paid entry carried his site keys are at least `attribution_floor_bps` of all new identities
+on the network. Growth that comes from elsewhere vests him nothing past the base: that is the
+whole point, and the reason the base is small.
+
+**Reading it the same everywhere.** Every input is a seat-readable fact that already exists:
+counted rounds (#1218), identity proofs (#1276), the `frontend_pk` of each Entry Contract, block
+heights. A seat computes his vested `share_bps` at a round's census height and pays the set
+accordingly; two seats holding the same counted rounds pay the same. Rounds a seat cannot check
+do not count, for him as for the leaderboard.
+
+**Leaving.** There is no buyback in cash and no valuation to argue about; the stream itself is
+the price.
+- **He leaves (signs `ContributionLeave`):** the unvested part lapses; the vested part keeps
+  paying for `tail_blocks` and then ends.
+- **He is removed for cause (the cold admin key signs `ContributionTermination { cause }`):**
+  the unvested part lapses and the vested part ends at once. Whether the cause holds is a matter
+  for the law, not the node; the node only records who signed what.
+- **Expiry:** a tranche not met by its `expires_height` (reference: `start_height + 157,680`,
+  three years) lapses.
+
+**Why it is this way.** Time-vesting a large share pays a person for the network's luck;
+vesting it on results the chain can attribute to his pages pays him for his work and nobody
+else's. A commission would make him sell rounds; a share of the developers' set makes him grow
+the network. And every number being public means the agreement cannot drift, be misremembered,
+or be renegotiated downward in private: a change is a new set, approved like any other.
+
 ## 27A.5 Discrete changes: rough consensus
  *(changes that break replay are §27A.8.)*
 
