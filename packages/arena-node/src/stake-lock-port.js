@@ -116,6 +116,8 @@ export const laneDepth = (dir) => { const l = lanes.get(dir); return l ? l.queue
 const outpointArg = (o) => `${toHex(o.txid)}:${o.outIdx}`;
 // A PROTOCOL-27 SETTLEMENT'S LOCKS AND PAYOUTS as arena-settle and arena-body both read them, so both build one body from one build
 const locksArg = (claims) => claims.map((c) => `${outpointArg(c.outpoint)}:${toHex(c.preimage)}`).join(',');
+// THE FALLBACK CLAIM'S LOCKS (spec §23.2, kanban #1281): by outpoint alone - no preimage is named, none is checked
+const fallbackLocksArg = (claims) => claims.map((c) => outpointArg(c.outpoint)).join(',');
 const payoutsArg = (payouts) => payouts.map((p) => (p.sent
   ? `invoice:${p.sent.paymentHash}:${p.sent.gatewayPk}:${toHex(p.payoutPk)}:${p.sent.expiration}:${p.msat}`
   : `${toHex(p.payoutPk)}:${p.msat}`)).join(',');
@@ -451,16 +453,18 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
      * (arena-lock.js zKey) standing for the signer set's key. Without `signers`: the BODY and its id, what the seats ack and commit over. With
      * `signers` (S, ascending seat indices): the real transaction, its txid (`message` the 32 bytes MuSig2 signs) and KeyAgg(S) (`aggKey`, x-only
      * hex); the tool refuses a real transaction that strips to another body. With `signature`: submitted.
+     * `fallback` (spec §23.2, kanban #1281): the fallback claim - every lock in as Fallback by outpoint alone, t - 1 signers, refused by the tool
+     * before each lock's fallback_after and from its expiration.
      */
-    async arenaSettle({ claims, payouts, nonce, signers = null, signature = null }) {
+    async arenaSettle({ claims, payouts, nonce, signers = null, signature = null, fallback = false }) {
       const args = ['--mode', 'arena-settle', '--data-dir', dataDir,
-        '--locks', locksArg(claims),
+        '--locks', fallback ? fallbackLocksArg(claims) : locksArg(claims), ...(fallback ? ['--fallback', '1'] : []),
         '--payouts', payoutsArg(payouts),
         '--nonce', toHex(nonce), ...(signers ? ['--signers', signers.join(',')] : []), ...(signature ? ['--signature', toHex(signature)] : [])];
       const j = await run(bin, args, settleTimeoutMs);
       return { bodyId: String(j.body_id), zSlots: j.z_slots || [], txid: j.txid ? String(j.txid) : null, message: j.message_hex ? String(j.message_hex) : null,
         aggKey: j.agg_key ? String(j.agg_key) : null, payouts: j.payouts || [], accepted: j.accepted === true, error: j.error || null,
-        verifies: j.signature_verifies_under_agg_key === true, locksSpent: j.locks_spent === true };
+        verifies: j.signature_verifies_under_agg_key === true, locksSpent: j.locks_spent === true, fallback: j.fallback === true };
     },
     /**
      * THE PRESIGNED REFUND (c) OF A GATEWAY SEND (stake-lock arena-send-refund, rulings #1134 2, #1135 2, #1136): the send contract at `send`

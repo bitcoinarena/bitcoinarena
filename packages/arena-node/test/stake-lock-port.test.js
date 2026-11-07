@@ -127,3 +127,21 @@ test('a node with no stake settings takes the release\'s tool; its own settings 
   const win = {}; stakeLockDefaults(win, { ...at, platform: 'win32' }); assert.match(win.ARENA_STAKE_LOCK_BIN, /arena-stake-lock\.exe$/);
 });
 
+
+test('arena-settle: a claim names each lock with its preimage; the fallback (kanban #1281) by outpoint alone, with --fallback 1', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'stake-lock-port-'));
+  try {
+    const t = fakeTool(dir, { 'arena-settle': { mode: 'arena-settle', fallback: true, body_id: 'ee'.repeat(32), z_slots: [0] } });
+    const port = stakeLockPort({ serve: false, bin: t.bin, dataDir: '/d' });
+    const claims = [{ outpoint: { txid: b(0x21), outIdx: 1n }, preimage: b(0x07) }];
+    const payouts = [{ payoutPk: b(0x02, 33), msat: 5000n }];
+    await port.arenaSettle({ claims, payouts, nonce: b(5, 8) });
+    const fb = await port.arenaSettle({ claims, payouts, nonce: b(5, 8), fallback: true });
+    assert.equal(fb.fallback, true); assert.equal(fb.bodyId, 'ee'.repeat(32));
+    const [claim, fallback] = t.argv();
+    assert.equal(claim[claim.indexOf('--locks') + 1], `${'21'.repeat(32)}:1:${'07'.repeat(32)}`);
+    assert.equal(claim.includes('--fallback'), false);
+    assert.equal(fallback[fallback.indexOf('--locks') + 1], `${'21'.repeat(32)}:1`, 'no preimage named');
+    assert.equal(fallback[fallback.indexOf('--fallback') + 1], '1');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
