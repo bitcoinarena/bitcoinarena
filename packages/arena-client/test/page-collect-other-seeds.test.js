@@ -23,7 +23,7 @@ const Keeper = pageFunction(PAGE, [], html.slice(kFrom, kTo), '; return arenaSee
 const slice = (start, end) => { const a = html.indexOf(start), b = html.indexOf(end, a); assert.ok(a > 0 && b > a, `no slice ${start}`); return html.slice(a, b); };
 const readers = pageFunction(PAGE, ['ARENACLIENT', 'vault', 'collectSeed', 'sessionStorage', 'navigator', 'window'], [
   slice('    function withMarketTerms(round) {', '    // ONE TAB AT A TIME USES A KEPT ROUND'),   // roundAsk calls withMarketTerms
-  slice('    function keptRecords() {', '    function newestKept() {'),
+  slice('    function keptRecords() {', '    function newestKept('),
 ], '; return { roundAsk, keptRecords, withRecordPhrase };');
 
 // a real contract: the federation the wallets are kept for - in the Arena layout since: the live bytes with

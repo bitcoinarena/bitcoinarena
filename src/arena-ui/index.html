@@ -4475,8 +4475,9 @@
         throw e;
       });
     }
-    function newestKept() {
-      const kept = keptRecords().collectable.filter((r) => ARENACLIENT.roundLocks(r.round));
+    // `ownOnly`: the tab's own phrase's records alone (kanban #1284, audit 4 #1257 CLIENT-2) - the round Withdraw pays to this tab's invoice
+    function newestKept(ownOnly) {
+      const kept = keptRecords().collectable.filter((r) => ARENACLIENT.roundLocks(r.round) && (!ownOnly || r.own));
       const open = kept.filter((r) => !r.done);
       return open.length ? open[open.length - 1] : (kept.length ? kept[kept.length - 1] : null);
     }
@@ -4771,7 +4772,7 @@
         window.ARENA_ELSEWHERE = held ? null : newest.roundIdHex;
         if (!held) collectNote(newest.roundIdHex.slice(0, 8), 'newest round: its wallet is held by another tab of this browser');
         if (look) collectNote(newest.roundIdHex.slice(0, 8), 'newest round: ' + lookSaid(look));
-        if (look) { window.ARENA_OWED = look; window.ARENA_WITHDRAWABLE = look.inTabMsat; noteStakeBack(newest, look); }
+        if (look) { window.ARENA_OWED = look; window.ARENA_WITHDRAWABLE = look.inTabMsat; window.ARENA_OWED_OTHER_PHRASE = !newest.own; noteStakeBack(newest, look); }
         // WINNINGS-AUTO (RULED 2026-10-01): what is owed goes into the player's federation wallet by itself, the
         // moment it exists - redeemed only, never sent out; the pending line clears as the balance takes it
         if (look) {   // collectIntoPlayerWallet collects only what is owed (payout, stake back, refund)
@@ -4882,8 +4883,13 @@
     // wallet is (the live harness hands its lnd's) - or a pasted invoice, which pays only what is
     // already in the tab (collectAndWithdraw), or the connected wallet.
     window.ARENA_WITHDRAW = async function (invoice) {
-      const r = newestKept();
-      if (!r) return { ok: false, why: 'this tab holds no round to withdraw from' };
+      // ONLY THIS TAB'S OWN PHRASE (kanban #1284, audit 4 #1257 CLIENT-2): the newest kept record could be another phrase's - its round wallet and its
+      // player wallet were opened here with no lock on that phrase (the wallet gate lets another phrase through: the collect and the merge hold its
+      // lock themselves), a second client beside that phrase's own tab, and its whole balance paid to this tab's invoice. Another phrase's money is
+      // collected into that phrase's own wallet (ruled 2026-10-07) and withdrawn from a tab that plays it
+      const r = newestKept(true);
+      if (!r) return { ok: false, why: newestKept() ? 'this round is another kept phrase\'s: what it owes goes into that phrase\'s own wallet - withdraw it in a tab that plays that phrase'
+        : 'this tab holds no round to withdraw from' };
       // ONE WITHDRAW AT A TIME: a second press while the first collects would collect twice.
       if (window.ARENA_WITHDRAWING) return { ok: false, why: 'a withdraw is already running in this tab' };
       const maker = typeof invoice === 'function' ? invoice : null;
@@ -6298,7 +6304,8 @@
         // AND THE WITHDRAW: what is owed or already in the tab's wallet, what went, or why not;
         // the field and the button only while there is something to withdraw.
         const inTab = window.ARENA_WITHDRAWABLE !== undefined && window.ARENA_WITHDRAWABLE !== null && window.ARENA_WITHDRAWABLE > 0n;
-        const canWithdraw = inTab || !!(window.ARENA_OWED && window.ARENA_OWED.owedMsat > 0n);
+        // NOT ANOTHER PHRASE'S ROUND (kanban #1284): the Withdraw pays only this tab's own phrase
+        const canWithdraw = !window.ARENA_OWED_OTHER_PHRASE && (inTab || !!(window.ARENA_OWED && window.ARENA_OWED.owedMsat > 0n));
         window.ArenaText.say(document.getElementById('arena-wallet-withdraw'), window.ARENA_WITHDRAWING
           ? `Withdrawing - do not close this tab until it says Withdrawn (what is collected is kept in this tab): ${window.ARENA_WITHDRAW_STEP || ''}`
           : window.ARENA_ELSEWHERE ? 'This round\'s withdrawal is open in another tab of this browser - withdraw it there, or close that tab'
