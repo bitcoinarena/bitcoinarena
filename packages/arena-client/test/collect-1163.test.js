@@ -197,3 +197,21 @@ test('#1238 an invented lock listed first is not forfeited in place of the real 
   assert.notEqual(alone.stake.state, 'gone', 'the liar alone made a held stake read gone');
   assert.equal(alone.final, false);
 });
+
+// KANBAN #1250 (audit 3 #1210 FIXES-16): with no saved lock in this browser, one seat answering [] made the stake "none" - final - while the round's own
+// seats timed out and the lock was still held
+test('#1250 no saved lock: one seat\'s empty answer while the others time out is "waiting", not the final "none"; the threshold of answers is "none"', async () => {
+  const fetcherOf = (emptyHosts) => async (url) => {
+    const host = new URL(url).host;
+    if (url.includes('/lock-settlement')) return new Response(JSON.stringify({ state: 'ACCEPTED', txid: 'ef'.repeat(32), moved: { payouts: [] } }), { status: 200 });
+    if (url.includes('/stake-lock')) { if (emptyHosts.includes(host)) return new Response('[]', { status: 200 }); throw new Error('timed out'); }
+    return new Response('no', { status: 404 });
+  };
+  const lookWith = (emptyHosts) => PL.lookOwed({ round, roundId: rid, seed, curve: pageCurve, nodes: ['http://a.test', 'http://b.test'], fetcher: fetcherOf(emptyHosts), client: wallet(100) });
+  const one = await lookWith(['a.test']);
+  const both = await lookWith(['a.test', 'b.test']);
+  console.log('  FACTS #1250:', JSON.stringify({ oneAnswered: `${one.stake.state} final=${one.final}`, bothAnswered: `${both.stake.state} final=${both.final}` }));
+  assert.equal(one.stake.state, 'waiting', 'one seat\'s [] closed the stake as none');
+  assert.equal(one.final, false);
+  assert.equal(both.stake.state, 'none');
+});
