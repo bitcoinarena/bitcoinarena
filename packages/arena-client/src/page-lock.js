@@ -2604,6 +2604,30 @@ export function collectState(look, co = null) {
  * A round whose payout and stake answers are both final: the lines kept, and it is not asked again. `look` (and `co`, what its collect got):
  * written only when collectState says done (kanban #1163), with the round wallet's balance read 0 (`tabMsat`), which tidyStorage asks for.
  */
+/**
+ * A DONE WRITTEN BEFORE #1163 IS LOOKED AT ONCE MORE (kanban #1255, audit 3 #1210 FIXES-15): the older page wrote a record done when its collect
+ * redeemed the payout while the stake's forfeit was not signed yet, and the passes skip a done record - that stake stayed in its lock until a
+ * manual Rescan. A done without `tabMsat` (which only a done read by collectState carries) is opened again, once per record (`doneRechecked`):
+ * the next pass looks at it, and markCollectDone writes it done again only when collectState says so. Answers how many were opened.
+ */
+export function reopenUncheckedDone(storage, { now = () => Date.now() } = {}) {
+  let opened = 0;
+  try {
+    const keys = [];
+    for (let i = 0; i < storage.length; i++) { const k = storage.key(i); if (k && k.startsWith(COLLECT_NOTE)) keys.push(k); }
+    for (const k of keys) {
+      try {
+        const r = JSON.parse(storage.getItem(k));
+        if (!r || !r.done || r.doneRechecked) continue;
+        if (typeof r.done === 'object' && r.done.tabMsat !== undefined) continue;
+        storage.setItem(k, JSON.stringify({ ...r, done: null, doneRechecked: now() }));
+        opened++;
+      } catch { /* a record that does not read is left as it is */ }
+    }
+  } catch { /* storage refused */ }
+  return opened;
+}
+
 export function markCollectDone(storage, roundIdHex, done, seed = null, order = 0, { look = null, co = null } = {}) {
   if (look && collectState(look, co).state !== 'done') return false;
   if (look && done && typeof done === 'object') done = { ...done, tabMsat: '0' };
