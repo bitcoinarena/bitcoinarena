@@ -34,7 +34,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, judgeTableProof, judgeAbandoned, buildAbandonedSlash, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin } from '../src/arbiter.js';
+import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, judgeTableProof, judgeAbandoned, buildAbandonedSlash, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic } from '../src/arbiter.js';
 import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
 import { liquidationEvent, slashEvent, stampEvent, signEvent, eventKey } from '../src/arbitration-events.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
@@ -72,7 +72,10 @@ const seats = String(env.ARENA_ARBITER_SEATS || '').split(',').map((s) => s.trim
 const rpc = bitcoindRpc({ url: env.ARENA_BITCOIND_URL, cookiePath: env.ARENA_BITCOIND_COOKIE });
 const statePath = env.ARENA_ARBITER_STATE || null;
 const state = statePath && existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : { handled: {} };
-const keep = () => { if (statePath) writeFileSync(statePath, JSON.stringify(state, null, 1)); };
+// WRITTEN WHOLE OR NOT AT ALL (kanban #1232, audit 3 #1210 CRASH-1): a temp file, synced, renamed over the state - a stop mid-write leaves the
+// last good state, never a truncated one the arbiter cannot start from
+const keep = () => { if (statePath) writeJsonAtomic(statePath, state); };
+if (!state.intents) state.intents = {};
 const say = (o) => console.log(`[arbiter] ${JSON.stringify(o)}`);
 const cache = blockCache();
 // THE AUDITORS' VRF (§13A.1): a proof against a contradicted AUDIT is judged on the AUDIT's own VRF proof (kanban #724, #725)
@@ -226,14 +229,20 @@ async function handle(seat, s) {
   const signatures = set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, slash.sighash) }));
   const tx = assemble({ slash, signatures, set });
   if (!tx.ok) return { done: false, why: tx.why };
-  const sent = await post(rpc, tx.hex);
   // WHAT THE ESCROW OWES, kept with the slash: the step after (payOut) pays it through the federations
   const byKey = new Map(entries.map((e) => [toHex(e.playerPubkey), e]));
   const players = [...slash.distribution.players].map(([key, msat]) => ({ key, msat: String(msat), entry: byKey.get(key).entryId, federation: byKey.get(key).federation }));
-  return sent.ok ? { done: true, offence: verdict.offence, posted: sent.txid, slashHeight: census.tip, signers: tx.signers, node: s.node, round: s.round, entry: s.entry,
+  // THE SLASH IS RECORDED BEFORE IT IS BROADCAST (kanban #1232, audit 3 #1210 CRASH-1): a lost answer (bitcoind restarted, the unit stopped)
+  // left nothing kept, and once the slash confirmed the next pass read the spent bond as "nothing to do" - its escrow never paid out. The
+  // intent names its txid; a pass that finds that transaction on the chain or in the mempool takes it as posted.
+  const kept = { offence: verdict.offence, slashHeight: census.tip, signers: tx.signers, node: s.node, round: s.round, entry: s.entry,
     bondSats: String(bond.value), escrowSats: String(slash.built.amounts.escrow), players,
     playersMsat: String(slash.distribution.playersMsat), reservesMsat: String(slash.distribution.reservesMsat), shortMsat: String(slash.distribution.shortMsat),
-    truth: slash.truth.map((t) => ({ key: toHex(t.pubkey), outcome: t.outcome, score: t.score })) } : { done: false, why: sent.why };
+    truth: slash.truth.map((t) => ({ key: toHex(t.pubkey), outcome: t.outcome, score: t.score })) };
+  let intentTxid = null; try { intentTxid = (await rpc('decoderawtransaction', [tx.hex])).txid; } catch { intentTxid = null; }
+  if (intentTxid) { state.intents[s.proof] = { txid: intentTxid, ...kept, atMs: Date.now() }; keep(); }
+  const sent = await post(rpc, tx.hex);
+  return sent.ok ? { done: true, posted: sent.txid, ...kept } : { done: false, why: sent.why };
 }
 
 // WHERE A SLASH'S RESERVES MAY GO (§27A.9.2), as the seats say it: only what more than half of those that answered name alike, so no single seat can
@@ -390,10 +399,19 @@ async function pass() {
     if (r.done) { state.handled[s.proof] = { at: Date.now(), ...r }; keep(); }
   }
   for (const { seat, s } of [...found.values()].sort((a, b) => (a.s.proof < b.s.proof ? -1 : 1))) {
+    // A SLASH RECORDED BEFORE ITS BROADCAST AND FOUND ON THE CHAIN OR IN THE MEMPOOL IS POSTED (kanban #1232)
+    const intent = state.intents[s.proof];
+    if (intent && await intentLanded(rpc, intent.txid, 1)) {
+      const { atMs: _a, txid: _t, ...rest } = intent;
+      state.handled[s.proof] = { at: Date.now(), done: true, posted: intent.txid, ...rest };
+      delete state.intents[s.proof]; keep();
+      say({ seat, proof: s.proof.slice(0, 16), node: s.node.slice(0, 16), posted: intent.txid, why: 'its recorded slash is on the chain' });
+      continue;
+    }
     let r; try { r = await handle(seat, s); } catch (e) { r = { done: false, why: e.message }; }
     say({ seat, proof: s.proof.slice(0, 16), node: s.node.slice(0, 16), ...r });
     // the offence the published event names (kanban #1000, #986): what the judgement found, in `r`, never read off the list a proof came from
-    if (r.done) { state.handled[s.proof] = { at: Date.now(), ...r }; keep(); }
+    if (r.done) { state.handled[s.proof] = { at: Date.now(), ...r }; delete state.intents[s.proof]; keep(); }
   }
   for (const [proof, v] of Object.entries(state.handled)) {
     if (!v.posted || !v.escrowSats || v.settled || v.heldFor) continue;
