@@ -4149,6 +4149,15 @@
         const all = ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, onEntries: (x) => entriesIn(x) });
         all.then((x) => entriesIn(x), (e) => entriesIn({ entries: [], why: e.message }));
         const sent = await tookEntries;
+        // THIS TAB'S NAME RECORD AT ONCE (kanban #1263, audit 4 PLAYER-2): a head-to-head round is booked to the identity a record named before its entry
+        // close - the seats keep a reveal's identity only when it is the one named - so the record goes to the seats as soon as they took the entry
+        if (sent.entries.some((x) => x.status === 201) && ARENACLIENT.nameRecordFor && ARENACLIENT.postName) {
+          try {
+            const signedName = ARENACLIENT.nameRecordFor(roundWithId, { storage: window.sessionStorage, random, curve: window.ARENA_CURVE, order: player.order || 0 });
+            ARENACLIENT.postName(signedName, named.nodes).then((said) => console.log('[arena] #1263 name record for ' + named.roundIdHex.slice(0, 16) + ': ' + said.map((x) => x.status).join(' ')),
+              (e) => console.log('[arena] #1263 the name record was not posted: ' + e.message));
+          } catch (e) { console.log('[arena] #1263 no name record: ' + String(e && e.message || e).slice(0, 120)); }
+        }
         all.then((done) => { if (done && done.lock) console.log('[arena] hidden move ' + named.roundIdHex.slice(0, 16) + ': locks with ' + done.lock.committed + ' of ' + done.lock.needed + ' signer nodes'
           + (done.why ? ' - ' + done.why : '')); }, (e) => console.error('[arena] hidden move ' + named.roundIdHex.slice(0, 16) + ': the locks were not handed: ' + e.message));
         console.log('[arena] hidden move in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
