@@ -164,6 +164,10 @@
     #arena-feedback label.badge { display: block; margin: 8px 0 0; color: #8b949e; font-size: 13px; } #arena-feedback label.badge[hidden] { display: none; }
     #arena-feedback h3 { margin: 0 0 6px; font-size: 17px; } #arena-feedback p { margin: 0 0 10px; color: #8b949e; }
     #arena-feedback textarea { width: 100%; box-sizing: border-box; padding: 8px; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; font: inherit; resize: vertical; }
+    #arena-feedback select { width: 100%; margin: 0 0 8px; padding: 7px; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; font: inherit; }
+    #arena-feedback textarea + textarea { margin-top: 8px; }
+    #arena-feedback .fb-row { padding: 8px 0; border-bottom: 1px solid #30363d; } #arena-feedback .fb-head { color: #8b949e; font-size: 13px; } #arena-feedback .fb-why { color: #f85149; font-size: 13px; }
+    #arena-feedback .fb-reward { margin-top: 4px; color: #3fb950; } #arena-feedback .fb-reward a { color: #f7931a; } #arena-feedback .card { max-height: 86vh; overflow-y: auto; }
     #arena-feedback .say { min-height: 1.4em; margin: 8px 0; } #arena-feedback .row { display: flex; justify-content: flex-end; gap: 8px; }
     #arena-feedback button { padding: 8px 14px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; font: 600 14px system-ui, sans-serif; cursor: pointer; } #arena-feedback .send { background: #f7931a; border-color: #f7931a; color: #1a1000; }
     /* NOTHING COVERED (kanban #926, 2026-11-01: "die notice verdeckt den Content"): on a wide screen in the empty middle of the top bar, on a narrow one at the foot of the screen */
@@ -1648,6 +1652,7 @@
       <h3>Graphics</h3>
       <div id="arena-fps-host"></div>
     </section>
+    <section class="settings-card" id="arena-set-feedback"><h3>Feedback</h3><div class="name-row"><div class="muted" style="flex:1">Tell the team what broke or confused you; accepted reports can earn a reward</div><button id="arena-feedback-send" type="button">Send feedback</button><button id="arena-feedback-mine" type="button">My feedback</button></div></section>
     <section class="settings-card" id="arena-set-logs"></section>
     <!-- MISSING MONEY? (kanban #595): every order and stake this browser made looked at again, with its progress -->
     <section class="settings-card" id="arena-set-rescan"></section>
@@ -1743,32 +1748,93 @@
     // THE PLAYERS' FAUCET (kanban #926): testnet's page only, so a mainnet build never has it
     window.ARENA_FAUCET_URL = /(^|\.)testnet\.bitcoin-?arena\.io$|\.bitcoin-arena-site\.pages\.dev$/.test(location.hostname) ? 'https://bitcoinarena.io/api/faucet/player' : '';
     window.ARENA_SEASON_SNAPSHOT_URL = 'https://bitcoinarena.io/api/season';
-    // FEEDBACK IN ONE CLICK (kanban #926 item 9): a box, the build and the game go with it, no key ever
+    // FEEDBACK IN ONE CLICK (kanban #926 item 9), SIGNED AND KEPT FOR REVIEW (kanban #1342): the type, what happened, what was expected; the build,
+    // the game and the round go with it, never a key or an amount. A tab with a wallet signs the report with its identity key (the key the season board
+    // and the badges name), so only its author can ever be rewarded for it; a tab without one sends it unsigned, as before, and is told so.
+    // ARENA_OPEN_FEEDBACK({ type, error, round }) opens it from the footer, Settings, an error line or a finished round; ARENA_MY_FEEDBACK() shows
+    // this key's reports, their states and any reward link (asked with a NIP-98 sign-in, since a reward link is a secret).
+    const FEEDBACK_KIND = 27842, HTTP_AUTH_KIND = 27235;
+    const feedbackUrl = () => (window.ARENA_FAUCET_URL ? window.ARENA_FAUCET_URL.replace(/\/player$/, '/feedback') : '');
+    const identitySign = (t) => ARENACLIENT.identitySignEvent(t, { storage: window.sessionStorage, random: () => { throw new Error('this tab has no wallet yet'); }, curve: window.ARENA_CURVE });
+    const hasIdentity = () => !!(window.ARENA_IDENTITY && typeof window.ARENA_IDENTITY.pubkey === 'string');
+    const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (k === 'text') e.textContent = v; else if (k === 'cls') e.className = v; else e.setAttribute(k, v); } for (const c of kids) if (c) e.append(c); return e; };
+    window.ARENA_OPEN_FEEDBACK = (ctx = {}) => {
+      if (!feedbackUrl() || document.getElementById('arena-feedback')) return;
+      const d = el('div', { id: 'arena-feedback', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Feedback' });
+      const type = el('select', { 'aria-label': 'Kind of feedback' }, el('option', { value: 'bug', text: 'Something broke' }), el('option', { value: 'confusing', text: 'Something was confusing' }), el('option', { value: 'idea', text: 'An idea' }));
+      if (ctx.type) type.value = ctx.type;
+      const t = el('textarea', { rows: '4', maxlength: '4000', placeholder: 'What happened?' });
+      const x = el('textarea', { rows: '2', maxlength: '4000', placeholder: 'What did you expect? (optional)' });
+      if (ctx.error) t.value = 'The page said: ' + String(ctx.error).slice(0, 600) + '\n';
+      const me = hasIdentity() ? window.ARENA_IDENTITY.pubkey : null;
+      const tick = el('label', { cls: 'badge' }, el('input', { type: 'checkbox' }), el('span', { text: ' Send my public key for the Founding Tester badge' }));
+      if (!me) tick.hidden = true;
+      const say = el('div', { cls: 'say', role: 'status', text: me ? 'Signed with your key: if it is accepted, a reward link appears in My feedback (testnet sats, no value).' : 'Open a wallet first to be rewarded: an unsigned report still reaches the team.' });
+      const off = el('button', { type: 'button', cls: 'off', text: 'Cancel' }), send = el('button', { type: 'button', cls: 'send', text: 'Send' });
+      d.append(el('div', { cls: 'card' }, el('h3', { text: 'Feedback' }), el('p', { text: 'Your words, the build and the game are sent. No amounts, and no private key.' }), type, t, x, tick, say, el('div', { cls: 'row' }, off, send)));
+      off.onclick = () => d.remove();
+      send.onclick = async () => {
+        send.disabled = true; say.textContent = 'Sending …';
+        const build = ((document.getElementById('arena-build') || {}).textContent || '').replace(/\s*·.*$/, '').trim();
+        const game = window.ARENA_SITE_GAME || '', round = ctx.round || (window.ARENA_JOIN && window.ARENA_JOIN.round) || '';
+        const badge = me && tick.querySelector('input').checked ? me : undefined;
+        try {
+          let body = { text: t.value + (x.value.trim() ? '\nExpected: ' + x.value : ''), player: badge, build, game, round };
+          if (me) {
+            try {
+              const tags = [['t', type.value], ['build', build]];
+              if (/^[a-z0-9-]{1,48}$/.test(game)) tags.push(['game', game]);
+              if (/^[0-9a-f]{8,64}$/.test(String(round))) tags.push(['round', String(round)]);
+              body = { event: await identitySign({ kind: FEEDBACK_KIND, tags, content: JSON.stringify({ happened: t.value, expected: x.value }) }), player: badge };
+            } catch (e) { console.warn('[arena] #1342 feedback sent unsigned: ' + (e && e.message ? e.message : e)); }
+          }
+          const r = await fetch(feedbackUrl(), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+          const j = await r.json();
+          if (!j.ok) throw new Error(j.why || 'not sent');
+          if (window.ARENA_TRACK) window.ARENA_TRACK('feedback-sent');
+          say.textContent = body.event ? 'Thank you. It is in My feedback, where you see what the team decides.' : 'Thank you, it reached the team.';
+          t.value = ''; x.value = ''; setTimeout(() => d.remove(), 2200);
+        } catch (e) { say.textContent = (e && e.message) || 'not sent'; send.disabled = false; }
+      };
+      document.body.appendChild(d); t.focus();
+    };
+    window.ARENA_MY_FEEDBACK = async () => {
+      if (!feedbackUrl() || document.getElementById('arena-feedback')) return;
+      const d = el('div', { id: 'arena-feedback', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'My feedback' });
+      const list = el('div', { cls: 'say', role: 'status', text: 'Reading …' }), off = el('button', { type: 'button', cls: 'off', text: 'Close' });
+      d.append(el('div', { cls: 'card' }, el('h3', { text: 'My feedback' }), list, el('div', { cls: 'row' }, off)));
+      off.onclick = () => d.remove();
+      document.body.appendChild(d);
+      if (!hasIdentity()) { list.textContent = 'Open a wallet first: your reports are listed under your key.'; return; }
+      try {
+        const url = feedbackUrl() + '/mine';
+        const auth = await identitySign({ kind: HTTP_AUTH_KIND, tags: [['u', url], ['method', 'GET']], content: '' });
+        const r = await fetch(url, { headers: { authorization: 'Nostr ' + btoa(JSON.stringify(auth)) } });
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.why || 'not read');
+        list.replaceChildren();
+        if (!j.reports.length) { list.textContent = 'No signed reports yet. Send one from Feedback.'; return; }
+        const said = { new: 'waiting for the team', accepted: 'accepted', rejected: 'not accepted', duplicate: 'already reported by someone', paid: 'paid' };
+        for (const rp of j.reports) {
+          const row = el('div', { cls: 'fb-row' }, el('div', { cls: 'fb-head', text: new Date(rp.receivedMs).toISOString().slice(0, 10) + ' · ' + rp.type + ' · ' + (said[rp.state] || rp.state) }),
+            el('div', { cls: 'fb-text', text: rp.happened.length > 160 ? rp.happened.slice(0, 160) + '…' : rp.happened }));
+          if (rp.reason) row.append(el('div', { cls: 'fb-why', text: 'Why: ' + rp.reason }));
+          if (rp.reward && rp.reward.lnurl) {
+            const copy = el('button', { type: 'button', text: 'Copy' }); copy.onclick = () => { navigator.clipboard.writeText(rp.reward.lnurl).then(() => { copy.textContent = 'Copied'; }, () => {}); };
+            row.append(el('div', { cls: 'fb-reward' }, el('span', { text: 'Reward ' + Number(rp.reward.sats).toLocaleString('en-US') + ' sat' + (rp.reward.network === 'mainnet' ? '' : ' (testnet sats, no value)') + ': ' }),
+              el('a', { href: 'lightning:' + rp.reward.lnurl, text: 'claim with your Lightning wallet' }), el('span', { text: ' ' }), copy));
+          } else if (rp.reward && rp.reward.state === 'paid') row.append(el('div', { cls: 'fb-reward', text: 'Reward ' + Number(rp.reward.sats).toLocaleString('en-US') + ' sat: claimed' }));
+          list.append(row);
+        }
+      } catch (e) { list.textContent = (e && e.message) || 'not read'; }
+    };
     window.addEventListener('DOMContentLoaded', () => {
       const b = document.getElementById('arena-foot-feedback'); if (!b) return;
-      if (!window.ARENA_FAUCET_URL) { b.hidden = true; return; }
-      b.addEventListener('click', () => {
-        if (document.getElementById('arena-feedback')) return;
-        const d = document.createElement('div'); d.id = 'arena-feedback'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-modal', 'true'); d.setAttribute('aria-label', 'Feedback');
-        d.innerHTML = '<div class="card"><h3>Feedback</h3><p>What happened, or what would you change? Your words, the build and the game are sent. No amounts, and no private key.</p><textarea rows="5" maxlength="4000"></textarea><label class="badge" hidden><input type="checkbox"> Send my public key too, for the Founding Tester badge (you need a finished round).</label><p class="say" role="status"></p><div class="row"><button type="button" class="off">Close</button><button type="button" class="send">Send</button></div></div>';
-        const t = d.querySelector('textarea'), say = d.querySelector('.say'), send = d.querySelector('.send');
-        // THE FOUNDING TESTER BADGE (kanban #926 item 8): the public key goes only when the box is ticked
-        const me = window.ARENA_IDENTITY && typeof window.ARENA_IDENTITY.pubkey === 'string' ? window.ARENA_IDENTITY.pubkey : null, tick = d.querySelector('.badge');
-        if (me) tick.hidden = false;
-        d.querySelector('.off').onclick = () => d.remove();
-        send.onclick = async () => {
-          send.disabled = true; say.textContent = 'Sending \u2026';
-          const ui = (document.getElementById('arena-build') || {}).textContent || '';
-          try {
-            const r = await fetch(window.ARENA_FAUCET_URL.replace(/\/player$/, '/feedback'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: t.value, player: me && tick.querySelector('input').checked ? me : undefined, build: ui.trim(), game: window.ARENA_SITE_GAME || '', round: (window.ARENA_JOIN && window.ARENA_JOIN.round) || '' }) });
-            const j = await r.json();
-            if (!j.ok) throw new Error(j.why || 'not sent');
-            if (window.ARENA_TRACK) window.ARENA_TRACK('feedback-sent');
-            say.textContent = 'Thank you, it reached the team.'; t.value = ''; setTimeout(() => d.remove(), 1500);
-          } catch (e) { say.textContent = (e && e.message) || 'not sent'; send.disabled = false; }
-        };
-        document.body.appendChild(d); t.focus();
-      });
+      if (!window.ARENA_FAUCET_URL) { b.hidden = true; const s = document.getElementById('arena-set-feedback'); if (s) s.hidden = true; return; }
+      b.addEventListener('click', () => window.ARENA_OPEN_FEEDBACK({}));
+      const s1 = document.getElementById('arena-feedback-send'), s2 = document.getElementById('arena-feedback-mine');
+      if (s1) s1.addEventListener('click', () => window.ARENA_OPEN_FEEDBACK({}));
+      if (s2) s2.addEventListener('click', () => window.ARENA_MY_FEEDBACK());
     });
     window.ARENA_OPPONENT_URL = window.ARENA_FAUCET_URL ? window.ARENA_FAUCET_URL.replace(/\/player$/, '/opponent') : '';
     // LET BOTS JOIN THE GAMES (kanban #926): on unless a player turned it off, kept in this browser; off, the page names no table to the test opponent
@@ -1850,6 +1916,8 @@
         const money = msat > 0n ? 'Up to ' + sats + ' sat you deposited could not be collected into your wallet. ' : '';
         el.textContent = money + (full ? (msat > 0n ? 'This browser\u2019s storage is full.' : 'This browser\u2019s storage is full: a deposit cannot be collected now.') : '');
         el.classList.toggle('show', !!el.textContent);
+        // REPORT THIS (kanban #1342): an error line opens the feedback with its words
+        if (el.textContent && window.ARENA_OPEN_FEEDBACK && window.ARENA_FAUCET_URL) { const said = el.textContent; const r = document.createElement('button'); r.type = 'button'; r.textContent = 'Report this'; r.onclick = () => window.ARENA_OPEN_FEEDBACK({ type: 'bug', error: said }); el.appendChild(document.createTextNode(' ')); el.appendChild(r); }
         // FIX IT (2026-10-31): room made on the spot and the page read again, which collects what can still be collected. Nothing with money in it goes.
         if (tight && !full) { el.textContent = 'This browser\u2019s storage is nearly full. It has to be compressed before a deposit, or the deposit could not be collected.'; el.classList.add('show'); }
         if (full || tight) { const b = document.createElement('button'); b.type = 'button'; b.textContent = tight && !full ? 'Compress' : 'Fix it'; b.onclick = fix; el.appendChild(document.createTextNode(' ')); el.appendChild(b); }
@@ -4469,6 +4537,15 @@
       });
     }
     // `ownOnly`: the tab's own phrase's records alone (kanban #1284, audit 4 #1257 CLIENT-2) - the round Withdraw pays to this tab's invoice
+    // ONE FEEDBACK LINE PER FINISHED ROUND (kanban #1342), under what was settled; asked once per round in this tab
+    function roundFeedbackOnce(rid) {
+      const k = 'arena.feedback.asked.' + String(rid).slice(0, 16);
+      try { if (!window.ARENA_OPEN_FEEDBACK || !window.ARENA_FAUCET_URL || sessionStorage.getItem(k)) return; sessionStorage.setItem(k, '1'); } catch { return; }
+      const at = document.getElementById('arena-settled'); if (!at || document.getElementById('arena-round-feedback')) return;
+      const b = document.createElement('button'); b.type = 'button'; b.id = 'arena-round-feedback'; b.className = 'linkish'; b.textContent = 'How was this round? Send feedback';
+      b.onclick = () => { window.ARENA_OPEN_FEEDBACK({ round: rid }); b.remove(); };
+      at.after(b);
+    }
     function newestKept(ownOnly) {
       const kept = keptRecords().collectable.filter((r) => ARENACLIENT.roundLocks(r.round) && (!ownOnly || r.own));
       const open = kept.filter((r) => !r.done);
@@ -4766,6 +4843,8 @@
         if (!held) collectNote(newest.roundIdHex.slice(0, 8), 'newest round: its wallet is held by another tab of this browser');
         if (look) collectNote(newest.roundIdHex.slice(0, 8), 'newest round: ' + lookSaid(look));
         if (look) { window.ARENA_OWED = look; window.ARENA_WITHDRAWABLE = look.inTabMsat; window.ARENA_OWED_OTHER_PHRASE = !newest.own; noteStakeBack(newest, look); }
+        // AFTER A FINISHED ROUND (kanban #1342): once per round, a line that opens the feedback for it
+        if (look && look.final && newest.own) roundFeedbackOnce(newest.roundIdHex);
         // WINNINGS-AUTO (RULED 2026-10-01): what is owed goes into the player's federation wallet by itself, the
         // moment it exists - redeemed only, never sent out; the pending line clears as the balance takes it
         if (look) {   // collectIntoPlayerWallet collects only what is owed (payout, stake back, refund)
