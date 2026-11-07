@@ -236,7 +236,7 @@ impl LockClient {
             .collect();
         built.extend(gifts.iter().enumerate().map(|(i, c)| {
             serde_json::json!({ "out_idx": locks.len() + i, "role": "donation", "computed_contract_id": c.contract_id().0.to_string(),
-                "computed_expiration": c.expiration, "computed_fallback_after": c.fallback_after, "amount_msat": c.amount.msats, "recipient_pk": c.refund_pk.to_string() })
+                "computed_expiration": c.expiration, "amount_msat": c.amount.msats, "recipient_pk": c.refund_pk.to_string() })
         }));
         Ok(serde_json::json!({
             "operation": operation.fmt_full().to_string(), "txid": txid.to_string(), "block_count_at_lock": count,
