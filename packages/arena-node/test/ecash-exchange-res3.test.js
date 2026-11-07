@@ -122,3 +122,33 @@ test('#1244 an exchange out of or into a federation this seat lists as liquidati
   assert.equal(rows, 0, 'a row was written for a refused exchange');
   assert.equal(after.ok, true, 'a federation no longer listed is exchanged as before');
 });
+
+// KANBAN #1272 (audit 4 #1257 fixesB-1, a #1244 regression): the liquidation refusal ran before the row was looked up, so an exchange whose notes this
+// seat had taken before the federation was listed - PAID with its answer lost, or SENDING - was refused for good: the player's notes stayed with the seat.
+test('#1272 an exchange taken before its federation was listed is finished after it: PAID answered again, SENDING paid; a new one is refused', async () => {
+  const run = async ({ sendFailsOnce }) => {
+    let failed = !sendFailsOnce, sends = 0;
+    const ports = {
+      [A]: { ecashBalance: async () => 0n, ecashReceive: async () => ({ state: 'Success', msat: 100_000n }) },
+      [B]: { ecashBalance: async () => 10_000_000n, ecashSend: async (m) => { if (!failed) { failed = true; throw new Error('the tool timed out'); } sends++; return { ecash: `fedimintb-${sends}`, msat: m }; },
+        ecashSent: async () => ({ found: false }) },
+    };
+    const listed = new Set();
+    const x = ex.createEcashExchange({ db: new DatabaseSync(':memory:'), portOf: async (f) => ports[f] || null, perHourMsat: 1_000_000_000n, halted: (f) => (listed.has(f) ? { height: 1000 } : null) });
+    const first = await x.exchange({ from: A, to: B, ecash: NOTES, amountMsat: '100000' });
+    listed.add(A);
+    const again = await x.exchange({ from: A, to: B, ecash: NOTES, amountMsat: '100000' });
+    const fresh = await x.exchange({ from: A, to: B, ecash: encode(Uint8Array.from({ length: 41 }, (_, i) => (i * 13 + 5) & 0xff)), amountMsat: '100000' });
+    return { first: first.ok, again: { ok: again.ok, again: !!again.again, ecash: again.ecash || null, why: again.why || null }, newAfterListing: fresh.status, sends };
+  };
+  const paid = await run({ sendFailsOnce: false });
+  const sending = await run({ sendFailsOnce: true });
+  console.log('  FACTS #1272:', JSON.stringify({ paidThenListed: paid, sendingThenListed: sending }));
+  assert.equal(paid.first, true);
+  assert.equal(paid.again.ok, true, `a PAID exchange was refused once its federation was listed: ${paid.again.why}`);
+  assert.equal(paid.again.again, true); assert.equal(paid.again.ecash, 'fedimintb-1'); assert.equal(paid.sends, 1);
+  assert.equal(sending.first, false, 'the fixture: the first send fails, the row stays in its send');
+  assert.equal(sending.again.ok, true, `an exchange whose notes were taken was refused once listed: ${sending.again.why}`);
+  assert.equal(sending.sends, 1);
+  assert.equal(paid.newAfterListing, 409, 'a new exchange out of a listed federation is still refused');
+});
