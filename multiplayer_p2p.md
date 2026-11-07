@@ -6205,6 +6205,16 @@ named (#1069). There is one set of 7 since protocol 2 (§5A.9), so the re-run
 window of §13C does nothing against it: it helps honestly overloaded seats, not
 collusion.
 
+**Closed for named-claim rounds (RULED 2026-11-07, kanban #1268).** From
+`NAMED_CLAIM_HEIGHT` a lock has a third path: after `stall_blocks` the census
+key pays the settlement the FINAL results make (§23.2, "The fallback claim"),
+so a stalled settlement returns nothing to the loser. What the exchange that
+led there established: the per-round draw is no defence, since the committee
+is public from the beacon and a losing player reads it after the draw;
+silence cannot be priced, since it has no bytes and a liveness slash would
+slash a dropped relay; and a haircut on the refund does not help, since any
+refund beats losing the stake. Only a stall that returns nothing has no buyer.
+
 **The re-run window's delay is not a new power.** A round with a no-quorum entry
 waits for it (§13A), so 3 seats can delay a whole round's payout by 20 to 30
 minutes. They could already stall a whole round until its locks expire,
@@ -6693,6 +6703,66 @@ transaction it rebuilt.
 The default path — nobody acting — is always the refund. That is what makes
 infrastructure failure safe. It holds while the federation runs; a halted
 federation is §22's residual, not a refund path.
+
+**The fallback claim: a stalled settlement returns nothing (RULED 2026-11-07,
+kanban #1268; closes §22 P6 for named-claim rounds).** A stake lock and a fee
+lock of a named-claim round (the ArenaLockContract of kanban #1131, from
+`NAMED_CLAIM_HEIGHT`) have three ways out, not two:
+
+```text
+claim      t of the n named seats, with the preimage          at any time
+fallback   census_key(e), no preimage                         from lock height + stall_blocks
+refund     the player's key                                   from expiration
+```
+
+- **`fallback_key`** is the census key live at the round's census height
+  (§5A.3B, the key that starts slashes and releases holds), named in the
+  contract at lock time; a seat refuses a lock naming another (§23.1 step 5).
+  **`stall_blocks`** is 36 on mainnet and testnet4 (about six hours: the
+  round, the objection window, the re-run window and the committee's own
+  attempts all fit in it many times), 3 on regtest. `expiration` stays
+  `stake_expiry_blocks`, so the fallback has the rest of the day.
+- **What it pays:** the settlement the round's rules make - F, or F′ with a
+  gone lock (kanban #1146), a late table, a market's book - rebuilt from the
+  entries' FINAL results and read by the same rules every table is read by
+  (§5A.3 table row, the payees of kanban #1138-#1143): payout contracts to the
+  qualifiers' keys, the fee locks to the node row, the reserves and the
+  donation set as the settlement would have paid them. It claims every lock
+  of the round the federation still holds; what a landed claim took is read as
+  #1146 reads it.
+- **An entry with no FINAL** by then is replayed by the holders themselves,
+  from its canonical transcript (§13A: signed marks, receipts, inputs), as an
+  objection is replayed; the replay's result is that entry's. An entry no
+  seat holds a transcript for is read as its rules say (§16: ENTRY_VOID, the
+  stake back). A holder signs only a table it rebuilt from its own reading,
+  so a replay the holders do not agree on gets no fallback and the lock
+  refunds at expiry: with no agreed result nobody can say who won, and the
+  refund is the right answer there.
+- **Who files:** any seat of the round or any holder, in a turn by a hash of
+  the round id and its key, through `POST /census-sign/commit` with kind
+  `lockFallback`. Every holder checks for itself: the Round Contract, each
+  FINAL (5 of 7 of the round's committee) or its own replay, the table byte
+  for byte, and that the federation still holds the locks at the height the
+  request names. The census key's one BIP-340 signature over the transaction
+  stands for every input; the module hands core `fallback_key` as the input
+  key once `stall_blocks` have passed.
+- **Why this closes P6.** Before it, a settlement needed 5 of 7 and a refund
+  needed 3 to stay quiet, and the committee is public from the beacon, so a
+  losing player could buy three quiet seats after the draw and get the stake
+  back: a free option, and the cheapest coalition in the design. A stall now
+  needs the census key to stay quiet, the same bar every slash rests on, and
+  the loser's stake goes where the result sends it. Silence is still not
+  slashed, because it still has no bytes; it no longer has to be priced. The
+  stall rule (§5A.3, "Stalled in its rounds") stays for hygiene; its
+  settlement stage (#1069) is no longer needed for the money.
+- **Not this:** a haircut on the refund (a refund minus a haircut still
+  beats losing the stake, so the loser keeps paying for the stall, and a
+  full one punishes an honest player on every bad day of the network); a
+  lower claim threshold after a while (three named seats could then claim
+  wrongly, which the bonds would have to cover); a liveness slash (a dropped
+  relay would be slashed).
+- **Until `NAMED_CLAIM_HEIGHT`** a round's locks are stock LNv2 with two
+  paths, and P6 stays the residual §22 names for them.
 
 ## 23.3 Why a loser cannot escape
 
@@ -10252,7 +10322,7 @@ committee nor outcome).
 | **Creator names his own federation** | Round creator | Not considered | A federation is valid only if its threshold of guardians are bonded census nodes, config hash matches, known-good list (§23.6, P3) |
 | **Forged chain view** | Whoever feeds the client its headers/census | "Never funds" — false | Corrected: it is the stake; ≥2 independent header sources mandatory for paying rounds (§5A.4, §25.1, P4) |
 | **Fork selection by a player-run quorum** | 5 game/verify slots | Claimed caught by replay — false, the fork is genuine | Stated residual, priced by capital; publication makes the chosen fork public (§22, P5) |
-| **Withholding** receipts or signatures, to stop an entry or a whole round | 3 of the 7 seats | Not considered | Griefing, and a free bet for a losing friend: the stake comes back out of the winners' pool. Unpunishable: silence leaves no artifact. 14.8 % at 20 % of capital, 35.3 % at 30 %, and committees are known hours ahead, so a player can choose those rounds. Stated residual (§22, P6). Repeated, it leaves the draw (§5A.3, protocol 26) |
+| **Withholding** receipts or signatures, to stop an entry or a whole round | 3 of the 7 seats | Not considered | Griefing, and a free bet for a losing friend: the stake comes back out of the winners' pool. Unpunishable: silence leaves no artifact. 14.8 % at 20 % of capital, 35.3 % at 30 %, and committees are known hours ahead, so a player can choose those rounds. Stated residual (§22, P6) for stock-lock rounds; from `NAMED_CLAIM_HEIGHT` the census key's fallback claim pays the FINAL's settlement after `stall_blocks`, so a stall returns nothing (§23.2, kanban #1268). Repeated, it leaves the draw (§5A.3, protocol 26) |
 
 ---
 
