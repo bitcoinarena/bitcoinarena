@@ -24,7 +24,7 @@ import { createSlashRelease } from '../src/slash-release-run.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const person = (n) => { const secret = taggedHash('ARENA/test/ReleaseRun', Uint8Array.from([n])); return { secret, key: schnorr.getPublicKey(secret), hex: toHex(schnorr.getPublicKey(secret)) }; };
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
-const clocks = { holdBlocks: 1, returnBlocks: 12, fallbackBlocks: 24 };
+const clocks = { holdBlocks: 1, returnBlocks: 36, fallbackBlocks: 24 };
 const A = [1, 2, 3, 4].map(person), B = [5, 6, 7, 8].map(person);
 const panels = { panelA: A.map((p) => p.key), panelB: B.map((p) => p.key) };
 const accused = person(40), census = person(41);
@@ -284,9 +284,9 @@ test('#1130: a peg-in signed for another federation or use is refused, and no pr
   }
 });
 
-test('#1130: a reserve key still unread at the start\'s confirmation + slash_return_blocks / 2 puts the whole reserves\' part in the escrow, from exactly that height', async () => {
+test('#1130: a reserve key still unread at the start\'s confirmation + slash_fallback_blocks / 4 (formula #1340) puts the whole reserves\' part in the escrow, from exactly that height', async () => {
   let tip = START_HEIGHT + 1;
-  const cap = START_HEIGHT + clocks.returnBlocks / 2;
+  const cap = START_HEIGHT + clocks.fallbackBlocks / 4;
   const w = world({ tip: () => tip, federationsOf: async () => federations.map((f) => (f.federation === fedB ? { ...f, reserveKey: null, reservePending: true } : f)) });
   tip = cap - 1;
   const said = [];

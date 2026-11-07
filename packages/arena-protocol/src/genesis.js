@@ -37,10 +37,13 @@ export const RANDOMNESS_SOURCE = 'bitcoin-block-hash';
  * read from genesis and NOT hashed: their ids are fixed and a moved id is a new network, the same reason as BOND_MATURITY_OFFSET
  * (bond-script.js) and the ruling of 2026-10-14 below. A network founded on these clocks hashes them.
  */
+// THE FALLBACK OPENS BEFORE THE RETURN (RULED 2026-11-07, kanban #1287 / #1317): return 432 / 108 / 36 after fallback 288 / 72 / 24. With the
+// return first (144 / 36 / 12) a slash on a mature bond landed only if both panels signed within a day, and the bonding presig (no panel leaf)
+// made a mature guardian, auditor or panel member unslashable; now the census key always gets its turn
 export const SLASH_CLOCKS = Object.freeze({
-  mainnet: Object.freeze({ slashHoldBlocks: 6, slashReturnBlocks: 144, slashFallbackBlocks: 288 }),
-  testnet4: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 36, slashFallbackBlocks: 72 }),
-  regtest: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 12, slashFallbackBlocks: 24 }),
+  mainnet: Object.freeze({ slashHoldBlocks: 6, slashReturnBlocks: 432, slashFallbackBlocks: 288 }),
+  testnet4: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 108, slashFallbackBlocks: 72 }),
+  regtest: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 36, slashFallbackBlocks: 24 }),
 });
 
 /**
@@ -200,8 +203,8 @@ export function encodeGenesisParameters(p) {
     // TEMPLATE 3'S CLOCKS (§27A.6, §5A.3B), in this block for the reason the block exists: the test networks' bytes do not move.
     if (![p.slashHoldBlocks, p.slashReturnBlocks, p.slashFallbackBlocks].every((n) => Number.isInteger(n) && n >= 1 && n <= 0xffff))
       throw new Error('genesis names the slash clocks: hold, return and fallback blocks, each one CHECKSEQUENCEVERIFY can wait for');
-    if (!(p.slashHoldBlocks < p.slashReturnBlocks && p.slashReturnBlocks < p.slashFallbackBlocks))
-      throw new Error('the slash clocks run hold, then return, then fallback: a mature node leaves before the fallback opens (§5A.3B)');
+    if (!(p.slashHoldBlocks < p.slashFallbackBlocks && p.slashFallbackBlocks < p.slashReturnBlocks))
+      throw new Error('the slash clocks run hold, then fallback, then return: the census key gets its turn before a mature node can leave (§5A.3B, kanban #1287)');
     w.u32(p.slashHoldBlocks);
     w.u32(p.slashReturnBlocks);
     w.u32(p.slashFallbackBlocks);

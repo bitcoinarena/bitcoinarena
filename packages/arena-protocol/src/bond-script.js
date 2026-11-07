@@ -690,11 +690,12 @@ export function fallbackLeaf({ censusKey, fallbackBlocks }) {
  * down, because it is the spend the design expects, and the two leaves that should never run share the deeper branch. A round
  * with no panels (both empty) has no release leaf, and the tree is those two alone.
  *
- * 5A.3B: "a mature node leaves at slash_return_blocks, before the fallback opens". That is only true with hold < return < fallback.
+ * 5A.3B (RULED 2026-11-07, kanban #1287, withdrawing #1021's "a mature node can leave first"): the fallback opens before the return, so the
+ * census key gets its turn on every bond, mature or not: hold < fallback < return.
  */
 export function holdTapTree({ ownerKey, censusKey, panelA, panelB, bondMaturity, holdBlocks, returnBlocks, fallbackBlocks }) {
-  if (!(holdBlocks < returnBlocks && returnBlocks < fallbackBlocks))
-    throw new RangeError(`the clocks ${holdBlocks} / ${returnBlocks} / ${fallbackBlocks} do not run hold, then return, then fallback`);
+  if (!(holdBlocks < fallbackBlocks && fallbackBlocks < returnBlocks))
+    throw new RangeError(`the clocks ${holdBlocks} / ${fallbackBlocks} / ${returnBlocks} do not run hold, then fallback, then return (kanban #1287)`);
   const noPanels = (panelA || []).length === 0 && (panelB || []).length === 0;
   const scripts = {
     ...(noPanels ? {} : { release: releaseLeaf({ panelA, panelB, holdBlocks }) }),

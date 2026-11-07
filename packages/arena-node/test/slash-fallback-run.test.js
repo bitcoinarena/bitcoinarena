@@ -37,7 +37,7 @@ const person = (n) => { const secret = tag(100 + n); return { secret, key: schno
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const b32 = (n) => new Uint8Array(32).fill(n);
 
-const clocks = { holdBlocks: 1, returnBlocks: 12, fallbackBlocks: 24 };
+const clocks = { holdBlocks: 1, returnBlocks: 36, fallbackBlocks: 24 };
 const A = [1, 2, 3, 4].map(person), B = [5, 6, 7, 8].map(person);
 const panels = { panelA: A.map((p) => p.key), panelB: B.map((p) => p.key) };
 // THE HOLDERS: the accused and a seat of the round hold the most shares, so a carrier list that did not leave them out would start with them

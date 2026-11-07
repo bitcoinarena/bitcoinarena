@@ -36,7 +36,7 @@ const census = { key: dealt.publicKey, hex: toHex(dealt.publicKey) };
 const person = (n) => { const secret = tag(100 + n); return { secret, key: schnorr.getPublicKey(secret), hex: toHex(schnorr.getPublicKey(secret)) }; };
 const b32 = (n) => new Uint8Array(32).fill(n);
 const display = (internal) => toHex([...internal].reverse());
-const clocks = { holdBlocks: 1, returnBlocks: 12, fallbackBlocks: 24 };
+const clocks = { holdBlocks: 1, returnBlocks: 36, fallbackBlocks: 24 };
 const BOND = 1_000_000n, MATURITY = 600, START_HEIGHT = 400, SLASH_HEIGHT = 399;
 const holders = [[person(50), [1, 2]], [person(51), [3]], [person(52), [4]], [person(53), [5]]];
 const feeCoin = { txid: b32(0x92), vout: 0, value: 700n, script: fromHex(`5120${'93'.repeat(32)}`) };

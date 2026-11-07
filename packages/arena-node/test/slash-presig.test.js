@@ -155,5 +155,5 @@ test('through the agent: each seated node hands its presig with its signature, t
 });
 
 test('holdClocksOf reads the network', () => {
-  assert.deepEqual(holdClocksOf(NETWORK_ID_REGTEST), { holdBlocks: 1, returnBlocks: 12, fallbackBlocks: 24 });
+  assert.deepEqual(holdClocksOf(NETWORK_ID_REGTEST), { holdBlocks: 1, returnBlocks: 36, fallbackBlocks: 24 });
 });

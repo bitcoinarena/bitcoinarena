@@ -15,7 +15,7 @@
 //
 // What a signer reads, it reads from the chain, the proof and the seats a round names: its own census for the panels, the holders and the bonds; the round's seats for how the
 // round settled (GET /audit-run, every signature checked); the carriers for their peg-ins, each signed by its node key over the start, federation and use, and handed on from
-// seat to seat; its own federation records for the reserves' load, with a reserve key not read yet waited for until the start's confirmation + slash_return_blocks / 2, and
+// seat to seat; its own federation records for the reserves' load, with a reserve key not read yet waited for until the start's confirmation + slash_fallback_blocks / 4 (#1340), and
 // from then on the whole reserves' part in the escrow (#1130). Two signers that read the same build the same bytes; where they do not, the fallback is the way out.
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { BOND_TEMPLATE_V3, holdOutputKey, panelThreshold } from '../../arena-protocol/src/bond-script.js';
@@ -245,8 +245,9 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
   /** The bonds by node, at the tip: a carrier carries no more than its own. */
   const bondsOf = (entries) => { const m = new Map(); for (const e of entries) m.set(toHex(e.pubkey), (m.get(toHex(e.pubkey)) || 0n) + BigInt(e.bondSats)); return m; };
 
-  /** THE CAP ON A WAIT FOR A RESERVE KEY (RULED 2026-11-04, kanban #1130): the start's confirmation plus slash_return_blocks / 2 (72 mainnet, 18 testnet4, 6 regtest). */
-  const reserveCapOf = (info) => info.height + Math.floor(clocks.returnBlocks / 2);
+  /** THE CAP ON A WAIT FOR A RESERVE KEY (RULED 2026-11-04, kanban #1130; formula RULED 2026-11-07, #1340): the start's confirmation plus slash_fallback_blocks / 4 -
+   *  72 mainnet, 18 testnet4, 6 regtest, the numbers as before, now read against the fallback, the next spend since #1287's clocks (#1317). */
+  const reserveCapOf = (info) => info.height + Math.floor(clocks.fallbackBlocks / 4);
 
   /**
    * THE SPEND AND ITS TABLE, from the peg-ins `pegs` names (Map node:federation:use -> script, pegsOf) and what this node reads itself. `carrierKeys` [{ key, bondSats }] in carrying
@@ -266,7 +267,7 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
     // A RESERVE KEY THIS SEAT HAS NOT READ YET IS NOT "NO RESERVE KEY" (kanban #1129, measured 11-04 on the slash-release regtest): a federation whose guardian seats
     // stand (`reservePending`) has a key its seats name; a signer that has not read it yet would build its table with no reserves' row for it, and sign bytes no
     // signer that read the key builds. It waits, by name; a federation with no guardian seats has no key and takes no part (§27A.9.2).
-    // THE WAIT HAS A CAP (RULED 2026-11-04, kanban #1130): from the start's confirmation + slash_return_blocks / 2 on, every signer puts the WHOLE reserves' part in the escrow,
+    // THE WAIT HAS A CAP (RULED 2026-11-04, kanban #1130): from the start's confirmation + slash_fallback_blocks / 4 on (formula #1340), every signer puts the WHOLE reserves' part in the escrow,
     // whatever keys it has read, so the bytes stay equal; the escrow's next spend places it by load (#1085). Players' outputs and the filer do not change.
     const capAt = reserveCapOf(info);
     let view = [];

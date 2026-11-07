@@ -1612,7 +1612,7 @@ export function slashDistribution({ escrowSats, roundId, contract, losses = new 
  *
  *   (b) FORFEIT_OF_LOST_ENTRY, `held.playerPubkey` the forfeited entry. Affected: every activated entry but it.
  *       level 1, every entry settled: F(true) - F′ (payout.js withGoneStakes, the table the round settles on). `settled` false - the round's remaining
- *         locks still unsettled at the cap (#1130's, start + slash_return_blocks / 2) - reads each unsettled lock as gone back to its player: its net stake.
+ *         locks still unsettled at the cap (#1130's, start + slash_fallback_blocks / 4 since #1340) - reads each unsettled lock as gone back to its player: its net stake.
  *       level 2, an entry not settled: the forfeited net stake, owed to the round's proved qualifiers pro rata by their F′ payouts; none proved, no loss.
  *   (a) OFF_TABLE_CLAIM, `held.spends` the accepted transaction's spends of the round's locks (the tool's read: each `lock` with its refund key and
  *       amount, and the transaction's `outputs`). Affected: every activated entry whose lock it claimed.

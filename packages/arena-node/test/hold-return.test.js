@@ -21,47 +21,47 @@ const censusKey = schnorr.getPublicKey(taggedHash('ARENA/test/Return', Uint8Arra
 const ownerSigns = (prepared) => toHex(schnorr.sign(fromHex(prepared.digest), ownerSecret));
 const nodeSigns = (prepared) => toHex(schnorr.sign(fromHex(prepared.digest), secret));
 const b32 = (n) => new Uint8Array(32).fill(n);
-const hold = holdOutputKey({ ownerKey, censusKey, panelA: [], panelB: [], bondMaturity: 1000, holdBlocks: 6, returnBlocks: 144, fallbackBlocks: 288 }, { tweakPoint });
+const hold = holdOutputKey({ ownerKey, censusKey, panelA: [], panelB: [], bondMaturity: 1000, holdBlocks: 6, returnBlocks: 432, fallbackBlocks: 288 }, { tweakPoint });
 const proof = Uint8Array.of(1, 2, 3);
 const proofId = taggedHash('ARENA/v1/SlashProof', proof);
 const start = { txid: b32(0x66), value: 100000000n, hold, proofId };
-const at = { startHeight: 900, bondMaturity: 1000, returnBlocks: 144 };
+const at = { startHeight: 900, bondMaturity: 1000, returnBlocks: 432 };
 const script = fromHex(`5120${'77'.repeat(32)}`);
 const decide = (tip, over = {}) => decideReturn({ start, ...at, tip, fetchProof: async () => proof, proofChecks: async () => false, ...over });
 
 test('the leaf opens when both its clocks read true on the next block', () => {
-  assert.equal(returnOpensAt(at), 1043);
+  assert.equal(returnOpensAt(at), 1331);
   assert.equal(returnOpensAt({ ...at, bondMaturity: 2000 }), 2000, 'an immature bond waits for maturity too');
 });
 
 test('a proof that fails this node\'s replay: wait for the clock, nothing fetched, then the return', async () => {
   let fetched = 0;
-  const early = await decide(1042, { fetchProof: async () => { fetched++; return proof; } });
+  const early = await decide(1330, { fetchProof: async () => { fetched++; return proof; } });
   assert.deepEqual([early.action, fetched], ['wait', 0]);
-  assert.equal((await decide(1043)).action, 'return');
+  assert.equal((await decide(1331)).action, 'return');
 });
 
 test('a true proof is left alone: this is no way out of a slash', async () => {
-  const r = await decide(1043, { proofChecks: async () => true });
+  const r = await decide(1331, { proofChecks: async () => true });
   assert.equal(r.action, 'keep');
 });
 
 test('no answer from the replay waits; no proof, or bytes nobody can produce, has nothing that checks', async () => {
-  assert.equal((await decide(1043, { proofChecks: async () => undefined })).action, 'wait');
-  assert.equal((await decide(1043, { start: { ...start, proofId: null } })).action, 'return');
-  assert.equal((await decide(1043, { fetchProof: async () => null })).action, 'return');
-  assert.equal((await decide(1043, { fetchProof: async () => Uint8Array.of(9) })).action, 'return', 'bytes that do not hash to it are not the proof');
+  assert.equal((await decide(1331, { proofChecks: async () => undefined })).action, 'wait');
+  assert.equal((await decide(1331, { start: { ...start, proofId: null } })).action, 'return');
+  assert.equal((await decide(1331, { fetchProof: async () => null })).action, 'return');
+  assert.equal((await decide(1331, { fetchProof: async () => Uint8Array.of(9) })).action, 'return', 'bytes that do not hash to it are not the proof');
 });
 
 test('one pass prepares the return once it is owed, and never before; the owner key signs it, the node key cannot', async () => {
   const pass = (tip, over = {}) => prepareReturnIfOwed({ start, ...at, tip, fetchProof: async () => proof, proofChecks: async () => false, toScript: script, feeSats: 500n, ...over });
   assert.equal((await pass(1000)).prepared, undefined);
-  assert.equal((await pass(1043, { proofChecks: async () => true })).prepared, undefined);
-  const r = await pass(1043);
+  assert.equal((await pass(1331, { proofChecks: async () => true })).prepared, undefined);
+  const r = await pass(1331);
   assert.equal(r.action, 'return');
   assert.throws(() => withOwnerSignature(r.prepared, nodeSigns(r.prepared), ownerKey), /not the owner key/, 'a hacked node cannot sign its own return');
   const tx = parseTransaction(fromHex(withOwnerSignature(r.prepared, ownerSigns(r.prepared), ownerKey)));
-  assert.deepEqual([tx.locktime, tx.inputs[0].sequence, tx.outputs[0].value], [1000, 144, 99999500n]);
+  assert.deepEqual([tx.locktime, tx.inputs[0].sequence, tx.outputs[0].value], [1000, 432, 99999500n]);
   assert.equal(tx.witnesses[0].length, 3);
   assert.equal(toHex(tx.witnesses[0][1]), toHex(hold.scripts.return));
   assert.throws(() => returnToSign({ start, ...at, toScript: script, feeSats: 99999999n }), /below dust/);
@@ -81,8 +81,8 @@ test('a start is read off the raw transaction: it spends the bond into a known h
 
 // THE NODE READS ITS OWN STARTED BOND (kanban #972)
 const panelA = [3, 4, 5].map((n) => schnorr.getPublicKey(taggedHash('ARENA/test/Return', Uint8Array.of(n)))), panelB = [6, 7, 8].map((n) => schnorr.getPublicKey(taggedHash('ARENA/test/Return', Uint8Array.of(n))));
-const clocks = { holdBlocks: 1, returnBlocks: 12, fallbackBlocks: 24 };
-const bondTx = b32(0x44), bond = { txid: toHex(Uint8Array.from(bondTx).reverse()), vout: 0, sats: '100000', maturity: 500, censusKey: toHex(censusKey), ownerKey, hold: { txid: 'ab'.repeat(32), vout: 0, height: 480 } };
+const clocks = { holdBlocks: 1, returnBlocks: 36, fallbackBlocks: 24 };
+const bondTx = b32(0x44), bond = { txid: toHex(Uint8Array.from(bondTx).reverse()), vout: 0, sats: '100000', maturity: 500, censusKey: toHex(censusKey), ownerKey, hold: { txid: 'ab'.repeat(32), vout: 0, height: 465 } };   // #1317: the return opens at 500 (maturity), the fallback before it at 488
 const holdsFor = (b, panels = [{ a: panelA, b: panelB }]) => holdsOfOwnBond({ ownerKey: b.ownerKey, censusKey: fromHex(b.censusKey), bondMaturity: b.maturity, clocks, tweakPoint, panels });
 const startPaying = (script2) => serializeSpend({ version: 2, locktime: 0, inputs: [{ txid: bondTx, vout: 0, sequence: 0xfffffffd }], outputs: [{ value: 100000n, script: script2 }, arbitrationCommitment(proofId, 479, new Uint8Array(0))], witnesses: [[new Uint8Array(64)]] });
 const watch = (raw, over = {}) => createHoldWatch({ clocks, holdsFor, rawTxAt: async () => raw, tipHeight: async () => 499, broadcast: async () => 'sent', ...over });
@@ -94,8 +94,8 @@ test('a bond can be in its bonding presig\'s hold or in one a round\'s panels na
   assert.deepEqual(shapes, [false, true], 'one with a release leaf, the bonding one with none');
   const [plain, panelled] = [...holds.values()].sort((a, b) => Number(!!a.leaves.release) - Number(!!b.leaves.release));
   const a = await watch(startPaying(plain.script)).read(bond);
-  assert.deepEqual([a.known, a.startHeight, a.returnOpensAt, a.fallbackOpensAt, a.proofId, a.releaseOpensAt], [true, 480, 500, 503, toHex(proofId), undefined], 'a clock is read from the next block; maturity holds the return');
-  assert.equal((await watch(startPaying(panelled.script)).read(bond)).releaseOpensAt, 480);
+  assert.deepEqual([a.known, a.startHeight, a.returnOpensAt, a.fallbackOpensAt, a.proofId, a.releaseOpensAt], [true, 465, 500, 488, toHex(proofId), undefined], 'a clock is read from the next block; the fallback opens before the return (kanban #1317)');
+  assert.equal((await watch(startPaying(panelled.script)).read(bond)).releaseOpensAt, 465);
   assert.equal((await watch(startPaying(script)).read(bond)).known, false, 'a hold it never signed');
 });
 
@@ -105,7 +105,7 @@ test('an owner\'s return: only once its clocks read true, to the address asked',
   assert.match((await watch(raw).returnTo(bond, script)).why, /opens at block 500, 1 from now/);
   const r = await watch(raw, { tipHeight: async () => 500 }).returnTo(bond, script);
   const spend = parseTransaction(fromHex(withOwnerSignature(r.prepared, ownerSigns(r.prepared), ownerKey)));
-  assert.deepEqual([spend.locktime, spend.inputs[0].sequence, spend.inputs[0].previousVout], [500, 12, 0]);
+  assert.deepEqual([spend.locktime, spend.inputs[0].sequence, spend.inputs[0].previousVout], [500, 36, 0]);
   assert.equal(toHex(spend.outputs[0].script), toHex(script));
   assert.equal(spend.outputs[0].value, 99000n);
   assert.match((await watch(startPaying(script), { tipHeight: async () => 500 }).returnTo(bond, script)).why, /no hold output this node signed/);
@@ -176,7 +176,7 @@ test('kanban #1193: the owed return survives a restart, and a reorg that moves t
   const w = (over = {}) => watch(raw, { db, tipHeight: async () => 520, fetchProof: async () => proof, proofChecks: checks, returnScript: async () => script, ...over });
   await w().pass([bond]);
   const restarted = (await w().read(bond)).returnOwed;
-  // ONE RUN THROUGH THE REORG: it prepared the return at 480, then reads the start at 483
+  // ONE RUN THROUGH THE REORG: it prepared the return at 465, then reads the start at 483
   const one = w();
   await one.pass([bond]);
   const moved = { ...bond, hold: { ...bond.hold, height: 483 } };
