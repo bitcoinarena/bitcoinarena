@@ -1856,6 +1856,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return mergeServedRounds(held).rounds;
   };
   const fundingBook = round.db ? createFundingBook({ db: round.db, schedule: fundingSchedule, log: (l) => console.log(l),
+    // BEFORE A FEE DECISION, EVERY SEAT'S APPROVALS AND SIGNALS (ruled on #1245, kanban #1231): GET /funding-items of each network seat this seat reaches
+    pull: async (pid) => {
+      let seats = []; try { seats = networkSeats(); } catch { seats = []; }
+      const got = await Promise.all(seats.map(async (base) => { try { const r = await fetch(`${base}/funding-items?proposal=${pid}`, { signal: AbortSignal.timeout(8000) }); return r.ok ? ((await r.json()).items || []) : []; } catch { return []; } }));
+      return got.flat().filter((x) => x && (x.kind === 'signal' || x.kind === 'fee-approval') && /^[0-9a-f]+$/i.test(String(x.hex || ''))).slice(0, 4096);
+    },
     // THE PROTOCOL DEVELOPERS OF A NETWORK: the keys of the network's donation set in force at this seat's tip - their
     // majority answers a fee proposal that changes a donation; a set of LNURLs names no key, and none can approve
     devKeysOf: async (networkHex) => {
@@ -11238,6 +11244,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       // PROJECT FUNDING PROPOSALS (§27A.9.3): every proposal with its signal, comments and signals; a new
       // proposal, comment or signal is checked, kept and handed on to every seat once (a forwarded one is not forwarded again)
+      // A PROPOSAL'S SIGNALS AND FEE APPROVALS AS THIS SEAT HOLDS THEM (kanban #1231): a peer pulls them before it decides a fee proposal
+      if (req.method === 'GET' && url.pathname === '/funding-items') {
+        const pid = String(url.searchParams.get('proposal') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(pid)) return text(res, 400, 'a proposal id, 64 hex');
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ proposal: pid, items: fundingBook && typeof fundingBook.itemsOf === 'function' ? fundingBook.itemsOf(pid) : [] }));
+      }
       if (req.method === 'GET' && url.pathname === '/funding') {
         const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
         let height = null; try { if (typeof chainTip === 'function') height = Number(await chainTip()); } catch { height = null; }
