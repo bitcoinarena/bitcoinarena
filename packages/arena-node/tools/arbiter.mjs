@@ -452,7 +452,20 @@ const liqClients = pairs(env.ARENA_LIQ_CLIENTS); const liqEscrows = pairs(env.AR
 let claims = null;
 if (liqClients.size) {
   const claimsFile = env.ARENA_LIQ_CLAIMS_FILE || null;
+  // A CLAIM TAKES ITS NOTES (kanban #1253): reissued into this set's client of the federation (ARENA_LIQ_REISSUE=1 until measured on a federation);
+  // a CLI that cannot reach the federation is "offline", a refusal is the federation's own answer
+  const reissueInto = env.ARENA_LIQ_REISSUE === '1' ? async (fid, ecash) => {
+    const dir = liqClients.get(fid); if (!dir) return { ok: false, offline: true, why: 'this set holds no client of that federation' };
+    const { execFile } = await import('node:child_process');
+    return new Promise((done) => execFile(env.ARENA_FEDIMINT_CLI || 'fedimint-cli', ['--data-dir', dir, 'reissue', ecash], { timeout: 120000, maxBuffer: 1 << 24 },
+      (err, out, errOut) => {
+        if (!err) return done({ ok: true });
+        const text = `${(errOut && String(errOut)) || ''} ${err.message || ''}`;
+        done({ ok: false, offline: !!err.killed || /timed out|connect|unreachable|ECONNREFUSED|no peer/i.test(text), why: text.trim().slice(-200) });
+      }));
+  } : null;
   claims = createLiquidationClaims({
+    take: reissueInto,
     validate: fedimintNoteValidator({ cli: env.ARENA_FEDIMINT_CLI || 'fedimint-cli', dataDirFor: (fid) => liqClients.get(fid) || null, home: env.ARENA_FEDIMINT_HOME || env.HOME }),
     // THE FIRST SEAT THAT LISTS IT, with the spent set and the record from any seat that has them (kanban #326 rehearsal 17, 2026-10-26:
     // the test host seats list T2 with its record and no spent set, the one T2 seat still up with the spent set; the first answer

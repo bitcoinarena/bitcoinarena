@@ -426,3 +426,20 @@ test('kanban #1247 (audit 3 MONEY-2): once the arbitration set\'s escrow is spen
   assert.equal(escrowCoverageMsat({ escrowTxid: 't', escrowSats: '9500' }, 0n), 9500000n, 'not claimed yet: the escrow\'s own amount');
   assert.equal(escrowCoverageMsat({}, 1234n), 1234n);
 });
+
+test('kanban #1253 (audit 3 MONEY-3): a claim takes its notes - reissued into the set\'s client first; refused, or offline under a mark of theft, nothing is claimed', async () => {
+  const bookWith = (take, liq = LIQ) => createLiquidationClaims({ validate: async (_fid, e) => ({ ok: true, notes: NOTES[e], amountMsat: NOTES[e].reduce((a, n) => a + n.amountMsat, 0n) }),
+    liquidationOf: async (fid) => (fid === FED ? liq : null), height: async () => 1012, escrowMsatOf: async () => 10_000_000n, clocks: REGTEST_CLOCKS, save: () => {}, take });
+  const asked = [];
+  const taken = await bookWith(async (fid, e) => { asked.push(e); return { ok: true }; }).offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+  const refusedBook = bookWith(async () => ({ ok: false, why: 'the notes were already spent' }));
+  const refused = await refusedBook.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+  const alarmBook = bookWith(async () => ({ ok: false, offline: true, why: 'timed out' }), { ...LIQ, alarm: { kind: 'inflation', session: 9 } });
+  const alarmed = await alarmBook.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+  const stopped = await bookWith(async () => ({ ok: false, offline: true, why: 'timed out' })).offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+  console.log('  MEASURED #1253:', JSON.stringify({ taken: [taken.status, taken.accepted.length, asked.length], refused: refused.status, alarmOffline: alarmed.status, stoppedOffline: [stopped.status, stopped.accepted.length] }));
+  assert.equal(taken.ok, true); assert.equal(taken.accepted.length, 2); assert.deepEqual(asked, ['e1']);
+  assert.equal(refused.status, 409); assert.equal(refusedBook.claimed(FED).length, 0, 'notes the federation refused were claimed');
+  assert.equal(alarmed.status, 503); assert.equal(alarmBook.claimed(FED).length, 0, 'a still-running federation\'s notes were claimed without taking them');
+  assert.equal(stopped.ok, true, 'a federation whose consensus stopped is claimed offline, as before');
+});
