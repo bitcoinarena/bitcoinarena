@@ -10776,9 +10776,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // ONE FEDERATION'S SETTLEMENT of a round that takes any federation (2026.0.3) is asked for by that federation's id
         const federation = url.searchParams.get('federation');
         if (federation !== null && !/^[0-9a-f]{64}$/.test(federation)) return text(res, 400, 'a federation\'s settlement is asked for by its 64-hex id');
+        // THE FALLBACK CLAIM (spec §23.2, kanban #1281): `fallback=1` asks for the round's fallback settlement - its own body, acks and nonces
+        const fallback = url.searchParams.get('fallback') === '1';
         // A SEAT'S ACK, SIGNED BEFORE IT JOINS (§5A.3, kanban #1040): over the table it computed and the txid it rebuilt
         if (url.pathname === '/settle-ack') {
-          const got = await settlements.ack(r8, { txid: url.searchParams.get('txid'), entry, federation });
+          const got = await settlements.ack(r8, { txid: url.searchParams.get('txid'), entry, federation, fallback });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(got.bytes));
@@ -10787,7 +10789,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let ask = null;
         try { const h = req.headers['x-settlement-ask']; if (h) ask = new Uint8Array(Buffer.from(String(h), 'hex')); } catch { ask = null; }
         if (url.pathname === '/settle-commit') {
-          const got = await settlements.commit(r8, { txid: url.searchParams.get('txid'), entry, federation, acks: new Uint8Array(await read(req)), door: true, ask });
+          const got = await settlements.commit(r8, { txid: url.searchParams.get('txid'), entry, federation, acks: new Uint8Array(await read(req)), door: true, ask, fallback });
           if (!got.ok) return text(res, got.status || 409, got.why);
           // from protocol 26 the commit comes with the seat's signed word, which the asker's StallNote reads to clear it (§5A.3, kanban #1077); below 26 the same bytes and headers as before
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS, ...(got.word ? { 'x-settlement-commit': toHex(got.word) } : {}) });
@@ -10800,14 +10802,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           let list;
           if (named) list = new Uint8Array(await read(req));
           else try { list = decodeCommitments(new Uint8Array(await read(req))); } catch (e) { return text(res, 400, e.message); }
-          const got = await settlements.share(r8, list, { entry, federation, door: true, ask, named });
+          const got = await settlements.share(r8, list, { entry, federation, door: true, ask, named, fallback });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(got.wire || encodeShare(got.share)));
         }
         const signature = new Uint8Array(await read(req));
         if (!named && signature.length !== 64) return text(res, 400, 'a settlement signature is 64 bytes');
-        const got = await settlements.take(r8, signature, { entry, federation, named });
+        const got = await settlements.take(r8, signature, { entry, federation, named, fallback });
         return got.ok ? text(res, 201, 'settlement signature kept') : text(res, got.status || 409, got.why);
       }
 
