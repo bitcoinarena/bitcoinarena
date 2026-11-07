@@ -17438,6 +17438,9 @@ function trancheSchedule({ amountSats, reservesSats, last, schedule = FUNDING_SC
  */
 function capStands({ proposalSats, paymentSats, reservesSats, paidByProposalSats = 0n, paidInWindowSats = 0n }) {
   const held = BigInt(reservesSats), base = held + BigInt(paidByProposalSats);
+  // NEVER MORE THAN THE PROPOSAL ASKED (kanban #1235): what its other payments took plus this one stays within its amount
+  if (BigInt(paidByProposalSats) + BigInt(paymentSats) > BigInt(proposalSats))
+    return { ok: false, final: true, why: `${paidByProposalSats} sat already paid on the proposal and ${paymentSats} now is more than the ${proposalSats} sat it asked` };
   if (BigInt(proposalSats) * 100n > FUNDING_CAP_PCT * base) return { ok: false, final: true, why: `the proposal asks ${proposalSats} sat, more than ${FUNDING_CAP_PCT} % of the ${base} sat reserves` };
   const start = held + BigInt(paidInWindowSats);
   if ((BigInt(paidInWindowSats) + BigInt(paymentSats)) * 100n > FUNDING_CAP_WINDOW_PCT * start)
@@ -17586,7 +17589,7 @@ function feeProposalStands(p, { current = FEES_TODAY, schedule = FUNDING_SCHEDUL
 }
 
 /**
- * THE PROTOCOL DEVELOPERS' ANSWER: more than half of `devKeys` (32-byte hex) approve it, each counted once, by a signature
+ * THE PROTOCOL DEVELOPERS' ANSWER: more than half of `devKeys` (32-byte hex) approve it, each counted once (a no over a yes), by a signature
  * `verify(signature, id, key)` checks. `approvals` [{ approval: { proposalId, dev, approve }, signature }].
  */
 function devMajority({ proposalId, approvals = [], devKeys = [], verify }) {
@@ -17596,7 +17599,9 @@ function devMajority({ proposalId, approvals = [], devKeys = [], verify }) {
     const a = x.approval;
     if (!a || toHex(a.proposalId) !== toHex(proposalId) || !keys.has(toHex(a.dev))) continue;
     let good = false; try { good = verify(x.signature, feeApprovalId(a), a.dev) === true; } catch { good = false; }
-    if (good) said.set(toHex(a.dev), a.approve);
+    // A "NO" STANDS OVER A "YES" (ruled 2026-11-07 on #1245, kanban #1231): one answer per developer over every approval held, whatever the order
+    // they came in - the approval received last won, so two seats holding the same set could answer differently
+    if (good) { const k = toHex(a.dev); said.set(k, said.has(k) ? (said.get(k) && a.approve) : a.approve); }
   }
   const yes = [...said.values()].filter(Boolean).length;
   return { yes, no: said.size - yes, of: keys.size, majority: keys.size > 0 && yes * 2 > keys.size };
@@ -22893,6 +22898,25 @@ function bindLockEntry(storage, { roundId, playerPubkey, entryId: eid }) {
   return true;
 }
 
+/**
+ * AN ENTRY NO SEAT TOOK DOES NOT HOLD THE LOCK FOR GOOD (kanban #1254, audit 3 FIXES-13): bindLockEntry names the entry before it is posted, and a post that
+ * failed (a seat 503, the round full, offline) left the lock "staked" in an entry no seat holds - a new tab, which has no copy of that entry, could never
+ * use it again. `locks` is findLock's answer for this seed in the round: when every seat asked answered and none names the kept lock under the entry,
+ * the entry is let go of (never one a seat committed to). Answers true when it was.
+ */
+function releaseUntakenEntry(storage, { roundId, playerPubkey, locks }) {
+  const now = lockRecordOf(storage, { roundId, playerPubkey });
+  if (now.state === 'none' || now.state === 'intent' || now.record.committedTo || !now.record.entry) return false;
+  if (!locks || !(locks.asked > 0) || locks.answered !== locks.asked) return false;
+  const at = now.record.outpoint ? `${String(now.record.outpoint.txid)}:${String(now.record.outpoint.outIdx)}` : null;
+  const named = (locks || []).some((l) => String(l.entryId || '').toLowerCase() === String(now.record.entry).toLowerCase()
+    || (at && l.outpoint && `${toHex(l.outpoint.txid)}:${String(l.outpoint.outIdx)}` === at));
+  if (named) return false;
+  const { entry: _gone, ...rest } = now.record;
+  putRoomy(storage, now.key, JSON.stringify(rest));
+  return true;
+}
+
 /** A signer node committed the kept lock to `entryId`: from now on it is that entry's stake, not one to reuse. Final: never another entry. */
 function markLockCommitted(storage, { roundId, playerPubkey, entryId }) {
   const who = { roundId, playerPubkey };
@@ -22975,6 +22999,28 @@ async function storedIdAt(client, l) {
 // a stock lock's contract id computed by the lock client's own code (its static outgoingContractId), when the lock client has it
 const contractIdVia = (LockClient) => (LockClient && typeof LockClient.outgoingContractId === 'function'
   ? (f) => LockClient.outgoingContractId(JSON.stringify(lockFieldsToJson(f))) : null);
+// THE LOCKS THE GUARDIANS HOLD, OF THE ONES THE SEATS NAME (kanban #1238, audit 2 CLIENT-1): findLock is the union of every seat's answer,
+// and one seat's invented lock (its own claim key, a made-up outpoint) was forfeited in place of the real one - the stake read "owed by
+// forfeit" for good and its expiry refund was never asked. A named lock counts only when the federation holds it at its outpoint under the
+// id its fields compute (a stock lock, when the lock client can compute one). Without a wallet nothing can be asked: the list stands as named.
+async function heldByGuardians(client, locks, contractIdOf = null) {
+  if (!client) return [...(locks || [])];
+  const out = [];
+  for (const l of locks || []) {
+    if (!l || !l.outpoint || !l.fields) continue;
+    // a wallet with no read of a lock's status cannot be asked: the lock stands as named, as with no wallet
+    if (typeof (isArenaLock(l.fields) ? client.arenaLockStatus : client.lockStatus) !== 'function') { out.push(l); continue; }
+    let st; try { st = JSON.parse(await lockStatusOf(client, l.fields, toHex(l.outpoint.txid), Number(l.outpoint.outIdx))); } catch { continue; }
+    if (!st || !st.stored) continue;
+    if (typeof contractIdOf === 'function' && !isArenaLock(l.fields)) {
+      let c = null; try { c = String(contractIdOf(l.fields) || '').toLowerCase(); } catch { c = null; }
+      const stored = String(st.stored.contract_id || '').toLowerCase();
+      if (/^[0-9a-f]{64}$/.test(c) && /^[0-9a-f]{64}$/.test(stored) && c !== stored) continue;
+    }
+    out.push(l);
+  }
+  return out;
+}
 
 /**
  * THE PLAYER'S REFUND, FROM THE SEED ALONE (§23.2: the default path - nobody
@@ -23054,15 +23100,33 @@ async function redeemStake({ round, roundId, invite, seed, curve, LockClient, st
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
   const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
   onStep('asking the signer nodes where this seed\'s lock is');
-  const locks = await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher });
-  if (!locks.length) throw new Error('no signer node knows a stake lock that refunds to this seed\'s key in this round');
+  const named = await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher });
+  if (!named.length) throw new Error('no signer node knows a stake lock that refunds to this seed\'s key in this round');
+  // EVERY NAMED LOCK'S FORFEIT FIRST, nothing asked of the lock client when none is given (a loser's page); then only the locks the federation
+  // holds are redeemed, each with its forfeit checked again against the id stored at its outpoint (kanban #1238: one seat's invented lock,
+  // listed first and forfeited by that seat, stood in for the real one and the real one's refused forfeit threw for ever)
+  const asked = [];
+  for (const l of named) {
+    onStep('asking the signer nodes for the forfeit of the lock');
+    asked.push({ lock: l, forfeit: await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher, named: isArenaLock(l.fields),
+      check: forfeitCheck({ curve, fields: l.fields, contractIdOf: contractIdVia(LockClient) }) }) });
+  }
+  if (!asked.some((a) => a.forfeit.ok)) throw new Error(asked[0].forfeit.why);
+  const secret = lockSecretFor(seed, roundId);
+  const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
+  // THE WALLET THE PAYOUT WAS JUST COLLECTED INTO, when there is one (6d): one client over the tab's store, not a second opened beside it
+  if (!given) onStep('joining the federation');
+  const client = given || await LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+  const cid = contractIdVia(LockClient || (client && client.constructor));
+  const locks = await heldByGuardians(client, named, cid);
+  if (!locks.length) throw new Error('the federation holds none of the locks the signer nodes name for this seed in this round');
   const forfeits = [];
   for (const l of locks) {
-    onStep('asking the signer nodes for the forfeit of the lock');
-    const f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher, named: isArenaLock(l.fields),
-      check: forfeitCheck({ curve, fields: l.fields, contractIdOf: contractIdVia(LockClient) }) });
-    if (!f.ok) throw new Error(f.why);
-    forfeits.push({ lock: l, forfeit: f });
+    const a = asked.find((x) => x.lock === l);
+    if (!a.forfeit.ok) throw new Error(a.forfeit.why);
+    const check = forfeitCheck({ curve, fields: l.fields, storedId: await storedIdAt(client, l), contractIdOf: cid });
+    if (check && check(a.forfeit) === false) throw new Error('the forfeit given for this lock does not verify against the contract the federation holds at its outpoint');
+    forfeits.push({ lock: l, forfeit: a.forfeit });
   }
   // AND THE ORDER'S FEE LOCK (measured 2026-10-11 by the bots on the regtest Up/Down market: an order the book
   // never filled came back without its 1 % - 54,450 of 55,000 msat, 55,440 of 56,000 - because only stake locks were ever
@@ -23078,12 +23142,7 @@ async function redeemStake({ round, roundId, invite, seed, curve, LockClient, st
       check: forfeitCheck({ curve, fields: fee.fields, contractIdOf: contractIdVia(LockClient) }) });
     if (f.ok) forfeits.push({ lock: { outpoint: fee.outpoint, fields: fee.fields, entryId: feeEntry.entryId, fee: true }, forfeit: f });
   }
-  const secret = lockSecretFor(seed, roundId);
-  const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
-  // THE WALLET THE PAYOUT WAS JUST COLLECTED INTO, when there is one (6d): one
-  // client over the tab's store, not a second opened beside it.
-  if (!given) onStep('joining the federation');
-  const client = given || await LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+  // (the wallet the payout was just collected into, when there is one (6d): one client over the tab's store, not a second opened beside it)
   const redeems = [];
   for (const { lock: l, forfeit: f } of forfeits) {
     onStep('redeeming the lock');
@@ -23447,7 +23506,9 @@ function saveCollect(storage, { roundIdHex, round, invite, nodes, seed, stakeLoc
     try {
       if (stakeLock) lock = { outpoint: `${toHex(stakeLock.outpoint.txid)}:${String(stakeLock.outpoint.outIdx)}`, fields: lockFieldsToJson(stakeLock.fields) };
     } catch { lock = null; }
-    storage.setItem(key, JSON.stringify({ roundIdHex, round: toHex(encodeRoundContract(round)), invite, nodes, seed: toHex(seed),
+    // THROUGH putRoomy, AS THE LOCK BESIDE IT (kanban #1251, audit 3 FIXES-14): a raw setItem refused for quota left a saved stake lock with no collect
+    // record - no expiry refund and no forfeit redeem ran on its own; the storage-full handler frees room and the write is tried again
+    putRoomy(storage, key, JSON.stringify({ roundIdHex, round: toHex(encodeRoundContract(round)), invite, nodes, seed: toHex(seed),
       stakeLock: lock, done, savedMs: Date.now(), ...(order ? { order: Number(order) } : {}) }));
     return true;
   } catch { return false; }
@@ -23879,23 +23940,36 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
     // NOBODY ANSWERED IS NOT "NO LOCK" (playtest 2026-10-04: a DELIVERED player's 96 sat stake was never
     // asked back - the page's record of the round ended as if nothing were owed): with no signer node answering where
     // the lock is, the stake is still waiting and the round is looked at again.
-    if (!locks.length && s.ok && locks.asked > 0 && locks.answered === 0)
+    // ONLY THE NAMED LOCKS THE FEDERATION HOLDS (kanban #1238; the seats already answer by this seed's refund key, the guardians check it at the spend)
+    const named = [...locks];
+    const real = await heldByGuardians(client, named, contractIdOf);
+    // none of the named locks is held while this tab's own lock still is: the seats named a lock that is not this stake's
+    const ownHeld = async () => {
+      if (!client) return false;
+      let k = null; try { k = kept || savedLock(storage, { roundId, playerPubkey: player.pubkey }); } catch { k = null; }
+      return !!(k && k.lock) && (await heldByGuardians(client, [k.lock], contractIdOf)).length > 0;
+    };
+    if (!named.length && s.ok && locks.asked > 0 && locks.answered === 0)
       stake = { state: 'waiting', why: `no signer node answered where this seed's lock is (${locks.said.join('; ')})` };
-    else if (locks.length) {
-      let msat = 0n;
-      for (const l of locks) if (await held(toHex(l.outpoint.txid), l.outpoint.outIdx, l.fields)) msat += BigInt(l.fields.amountMsat);
-      const whole = locks.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
-      if (msat === 0n) stake = { state: 'gone', how: 'forfeit', msat: whole };
+    else if (named.length && (real.length || !(await ownHeld()))) {
+      const whole = named.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
+      if (!real.length) stake = { state: 'gone', how: 'forfeit', msat: whole };
       else {
-        const f = await forfeitOf({ roundId, entryId: locks[0].entryId, nodes, fetcher, named: isArenaLock(locks[0].fields),
-          check: forfeitCheck({ curve, fields: locks[0].fields, storedId: await storedIdAt(client, locks[0]), contractIdOf }) });
+        const msat = real.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
+        // A FORFEIT FOR EVERY LOCK HELD, never the first one named alone (kanban #1238)
+        let f = { ok: true };
+        for (const l of real) {
+          f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher, named: isArenaLock(l.fields),
+            check: forfeitCheck({ curve, fields: l.fields, storedId: await storedIdAt(client, l), contractIdOf }) });
+          if (!f.ok) break;
+        }
         if (f.ok) stake = { state: 'owed', msat, how: 'forfeit' };
         // NOBODY WON (2026-10-03) - SAID, NEVER FINAL (kanban #1163: "lost" was decided by a regex over the seats' error text and closed the
         // record with the stake still in its lock): a stake the settlement claimed reads gone above; one still held comes back at its expiry
         else {
           const lostSaid = /that run is \S+ with score/.test(f.why)
             && !/not ACCEPTED at this signer node|still inside its window|keeps no record of what its settlement moved/.test(f.why);
-          stake = (await expiredBack(client, locks)) || { state: 'waiting', msat, why: f.why, ...(lostSaid ? { lostSaid: true } : {}) };
+          stake = (await expiredBack(client, real)) || { state: 'waiting', msat, why: f.why, ...(lostSaid ? { lostSaid: true } : {}) };
         }
       }
     } else {
@@ -23903,7 +23977,13 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
       // asked of the federation without spending - owed back by the player's key after expiry.
       const held = kept || savedLock(storage, { roundId, playerPubkey: player.pubkey });
       const ls = held && held.lock ? [held.lock, held.lock.feeLock].filter(Boolean) : [];
-      if (!ls.length) stake = { state: s.ok ? 'none' : 'waiting', why: 'this tab keeps no lock for this round' };
+      // "NONE" IS FINAL ONLY ON ENOUGH SEATS' WORD (kanban #1250, audit 3 FIXES-16): one seat that never sat on the round answering [] while its own
+      // seats timed out closed the record with a winner's stake still in its lock; it is waiting until the round's settlement threshold answered
+      if (!ls.length) {
+        const enough = Number(locks.answered || 0) >= settlementAgreement(round, nodes);
+        stake = { state: s.ok && enough ? 'none' : 'waiting', why: enough ? 'this tab keeps no lock for this round'
+          : `this tab keeps no lock for this round, and only ${Number(locks.answered || 0)} of the ${settlementAgreement(round, nodes)} seats needed answered where its lock is` };
+      }
       else if (!client) stake = { state: 'waiting', why: 'the federation was not asked yet' };
       else {
         // §23.2 REFUSED (2026-10-06 08:57: "A round the seats refuse gets an immediate refund"): a lock
@@ -34825,7 +34905,9 @@ async function presentNotes({ events, network, arbitration = arbitrationOf(netwo
             if (r.ok && !rec.memoryOnly) rec = step(eKey, rec, 'posted', { door: st.door, postedAtMs: nowMs });
             // the door answered it (kanban #1230): a refusal is an answer too - the notes reached it - a 5xx is not
             else if (!r.ok && !(Number(r.status) >= 500) && !rec.memoryOnly && !rec.answered) { rec = { ...rec, answered: true }; try { writeClaim(storage, eKey, rec, put); } catch { /* kept in memory */ } }
-            out.push({ federation: fid, ok: !!r.ok, accepted: j.accepted || [], refused: j.refused || [], inWindow: j.inWindow, why: j.why || null, kept: !rec.memoryOnly, door: st.door, ...(rec.memoryOnly ? { memoryOnly: true } : {}) });
+            out.push({ federation: fid, ok: !!r.ok, accepted: j.accepted || [], refused: j.refused || [], inWindow: j.inWindow, why: j.why || null, kept: !rec.memoryOnly, door: st.door,
+              // kanban #1237: taken, and it waits for the federation's spent set
+              ...(j.spentSetPublished === false ? { waitsForSpentSet: true } : {}), ...(rec.memoryOnly ? { memoryOnly: true } : {}) });
           } catch (e) { out.push({ federation: fid, ok: false, why: e.message, kept: !rec.memoryOnly, door: st.door }); }
         } else if (rec && rec.state === 'posted') out.push({ federation: fid, ok: true, posted: true, kept: true, why: 'presented; waiting for the arbitration set to list it', door: st.door });
       }
@@ -41222,7 +41304,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, referralOf: referralOf, referralNameFor: referralNameFor, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
          playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
-         onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
+         onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, releaseUntakenEntry: releaseUntakenEntry, keptLockUse: keptLockUse,
          reconcileKeptLock: reconcileKeptLock, bindLockEntry: bindLockEntry, lockRecordOf: lockRecordOf, collectState: collectState, forfeitCheck: forfeitCheck, settlementAgreement: settlementAgreement, useWalletGate: useWalletGate,
          roundEndMs: roundEndMs,
          ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes, ledgerHistory: ledgerHistory,
