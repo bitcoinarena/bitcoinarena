@@ -128,9 +128,14 @@ async function handleAbandoned(seat, s) {
   if (!tx.ok) return { done: false, why: tx.why };
   const handed = await Promise.all(seats.map((u) => fetch(`${u}/slash/${s.proof}`, { method: 'PUT', body: proofBytes, signal: AbortSignal.timeout(20000) }).then((r) => r.ok, () => false)));
   if (!handed.some(Boolean)) return { done: false, why: 'no seat took the proof, so nothing commits to it' };
+  // RECORDED BEFORE THE BROADCAST (kanban #1232), as handle() below: a lost answer left the bond spent and this pass's "nothing left to
+  // slash" kept without the escrow it holds
+  const kept = { offence: verdict.offence, slashHeight: now.tip, signers: tx.signers, node: verdict.node, heldFor: verdict.federation, proofRef: verdict.proofRef,
+    bondSpent: verdict.bondSpent, outpoint: `${verdict.output.txid}:${verdict.output.vout}`, bondSats: String(bond.value), escrowSats: String(slash.built.amounts.escrow), proofHeldBy: handed.filter(Boolean).length };
+  let intentTxid = null; try { intentTxid = (await rpc('decoderawtransaction', [tx.hex])).txid; } catch { intentTxid = null; }
+  if (intentTxid) { state.intents[s.proof] = { txid: intentTxid, ...kept, atMs: Date.now() }; keep(); }
   const sent = await post(rpc, tx.hex);
-  return sent.ok ? { done: true, offence: verdict.offence, posted: sent.txid, slashHeight: now.tip, signers: tx.signers, node: verdict.node, heldFor: verdict.federation, proofRef: verdict.proofRef,
-    bondSpent: verdict.bondSpent, outpoint: `${verdict.output.txid}:${verdict.output.vout}`, bondSats: String(bond.value), escrowSats: String(slash.built.amounts.escrow), proofHeldBy: handed.filter(Boolean).length } : { done: false, why: sent.why };
+  return sent.ok ? { done: true, posted: sent.txid, ...kept } : { done: false, why: sent.why };
 }
 
 async function handle(seat, s) {
@@ -394,9 +399,17 @@ async function pass() {
   }
   for (const { seat, s } of abandoned.sort((a, b) => (a.s.proof < b.s.proof ? -1 : 1))) {
     if (state.handled[s.proof]) continue;
+    const intent = state.intents[s.proof];
+    if (intent && await intentLanded(rpc, intent.txid, 1)) {
+      const { atMs: _a, txid: _t, ...rest } = intent;
+      state.handled[s.proof] = { at: Date.now(), done: true, posted: intent.txid, ...rest };
+      delete state.intents[s.proof]; keep();
+      say({ seat, abandoned: s.proof.slice(0, 16), posted: intent.txid, why: 'its recorded slash is on the chain' });
+      continue;
+    }
     let r; try { r = await handleAbandoned(seat, s); } catch (e) { r = { done: false, why: e.message }; }
     say({ seat, proof: s.proof.slice(0, 16), node: s.node.slice(0, 16), abandoned: s.proofRef.slice(0, 16), ...r });
-    if (r.done) { state.handled[s.proof] = { at: Date.now(), ...r }; keep(); }
+    if (r.done) { state.handled[s.proof] = { at: Date.now(), ...r }; delete state.intents[s.proof]; keep(); }
   }
   for (const { seat, s } of [...found.values()].sort((a, b) => (a.s.proof < b.s.proof ? -1 : 1))) {
     // A SLASH RECORDED BEFORE ITS BROADCAST AND FOUND ON THE CHAIN OR IN THE MEMPOOL IS POSTED (kanban #1232)
