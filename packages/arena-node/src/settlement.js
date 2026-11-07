@@ -213,6 +213,27 @@ export function planOutOfReach({ agreed, needed, refused = [] }) {
   return gone > 0 && agreed + refused.length - gone < needed;
 }
 
+/**
+ * THE LOCKS A ROUND'S OWN SETTLEMENT CLAIMS (kanban #1183): spent because that settlement landed, never read as refunded. A round in one
+ * federation: its signed settlement's claims, unless REFUSED. A ROUND THAT TAKES ANY FEDERATION (kanban #1239, audit 3 FIXES-8) has no round
+ * row - its moves are kept under "federations" - so the set was always empty there, and once a refused federation made the round suspect,
+ * a landed federation's paid losers were written to gone_stakes as refunded: each federation row that is not REFUSED, with the claims of its
+ * own transaction (scope fed:<fid>, at the row's txid).
+ */
+export function ownClaimsOf(round, roundIdBytes) {
+  const m = typeof round.lockSettlementMoves === 'function' ? round.lockSettlementMoves(roundIdBytes) : null;
+  const row = typeof round.lockSettlement === 'function' ? round.lockSettlement(roundIdBytes) : null;
+  if (row) return m && row.txid === m.txid && row.state !== 'REFUSED' ? new Set((m.claims || []).map(String)) : new Set();
+  const out = new Set();
+  if (typeof round.fedLockSettlementsOf !== 'function' || typeof round.scopedSettlementTxidsOf !== 'function') return out;
+  for (const r of round.fedLockSettlementsOf(roundIdBytes)) {
+    if (r.state === 'REFUSED') continue;
+    const moves = round.scopedSettlementTxidsOf(roundIdBytes, `fed:${String(r.federation).toLowerCase()}`).find((x) => x.txid === r.txid);
+    for (const c of (moves && moves.claims) || []) out.add(String(c));
+  }
+  return out;
+}
+
 export class LockSettlement {
   /**
    * `dkg` holds this signer node's share of the round's claim key; `port` is the
@@ -1412,9 +1433,7 @@ export class LockSettlement {
     const kept = new Set(typeof this.round.goneStakesOf === 'function' ? this.round.goneStakesOf(roundIdBytes) : []);
     // THIS ROUND'S OWN CLAIM IS NO REFUND (kanban #1183): a lock this round's signed settlement claims is gone because that settlement landed, not because
     // its player took it back - read it as refunded and the seat would rebuild a table without the loser it was paid by
-    const own = (() => { const m = typeof this.round.lockSettlementMoves === 'function' ? this.round.lockSettlementMoves(roundIdBytes) : null;
-      const row = typeof this.round.lockSettlement === 'function' ? this.round.lockSettlement(roundIdBytes) : null;
-      return m && row && row.txid === m.txid && row.state !== 'REFUSED' ? new Set((m.claims || []).map(String)) : new Set(); })();
+    const own = ownClaimsOf(this.round, roundIdBytes);
     for (const a of h.actions) {
       if (a.action !== CLAIM) continue;
       const k = toHex(a.entry.pubkey), lock = locks.get(k);
