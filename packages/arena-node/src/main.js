@@ -37,6 +37,7 @@
 // sends a pool payout: that was the withdrawn custody's, §23.6, RULED 2026-09-25.)
 //
 // HOW FAR BACK A CENSUS IS READ: census.js censusFirstBlock (kanban #820).
+import { ENTRY_CLOSE_GRACE_MS } from './round.js';
 import { TESTNET4_DONATION_SET } from '../../arena-protocol/src/testnet4-donation-set.js';
 import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
 import { openStore } from './store.js';
@@ -201,6 +202,8 @@ if (process.env.ARENA_SERIES_FILE) {
 }
 // THE GRID SERIES POSTED TO THIS SEAT (POST /series), kept beside its store so a restart holds them again
 options.gridSeriesFile = process.env.ARENA_GRID_SERIES_FILE || `${path}.grid-series`;
+// AN ENTRY NEW TO THIS SEAT IS TAKEN UNTIL ITS ROUND'S ENTRY CLOSE + 15 s (kanban #1216, round.js ENTRY_CLOSE_GRACE_MS), every game
+options.entryCloseGraceMs = process.env.ARENA_ENTRY_CLOSE_GRACE_MS !== undefined ? Number(process.env.ARENA_ENTRY_CLOSE_GRACE_MS) : Number(ENTRY_CLOSE_GRACE_MS);
 // WHERE THE OTHER SIGNER NODES ANSWER, as the operator knows it (serve's `peers`; ORDER-2116, measured on the free pair):
 // with none named, a node finds its peers off the round's census - the bond adverts at its census height - and a seat
 // whose address moved since answers there no more. The free pair's nodes run as their own units (2026-10-01) and
