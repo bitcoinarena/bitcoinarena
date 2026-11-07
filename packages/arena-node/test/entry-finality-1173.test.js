@@ -105,3 +105,18 @@ test('#1173 the intake: an objection that reaches an entry FINAL here is dated p
   assert.equal(got.status, 201);
   assert.ok(BigInt(stored[0]) >= FINAL_AFTER, 'stored as in time: it would suspend an entry this seat already acted on');
 });
+
+// KANBAN #1225 (audit 2 #1204 SETTLEMENT-3): checks of one entry run one at a time, and the pending row held the entry for 120 s only - a valid
+// objection queued behind enough junk (or on a loaded seat) waited past that, the seat signed FINAL and the objection was re-dated late. Now a
+// check still queued or running in this process holds the entry whatever the row's age; with none in flight the 120 s rule stands.
+test('#1225 an objection whose check is still queued past PENDING_OBJECTION_MS keeps the entry SUSPENDED; once it answered, the age rule again', () => {
+  const { finalityStep } = finality;
+  const s = store(Number(FINAL_AFTER) + finality.PENDING_OBJECTION_MS + 60000);   // three minutes on: the row is "old"
+  s.round.putPendingObjection(RID, EID, Number(FINAL_AFTER) - 5);
+  s.round.objectionChecks = new Map([[toHex(EID), 3]]);                          // three checks of that entry still queued here
+  const held = finalityStep(s.round, RID, EID, finalAt());
+  assert.equal(held.state, SUSPENDED, 'a queued check of an objection in time was dropped for its age');
+  assert.equal(held.pendingObjection, true);
+  s.round.objectionChecks.delete(toHex(EID));                                     // the queue drained (the check never removed its row)
+  assert.equal(finalityStep(s.round, RID, EID, finalAt()).state, FINAL, 'with no check in flight the 120 s rule frees it');
+});

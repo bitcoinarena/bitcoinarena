@@ -1446,6 +1446,13 @@ export class Verifier {
     //     replayed, kept in flight and after, so copies of one bundle share one answer;
     //   - AND IN THE ORDINARY CLASS: a check is not yet an objection, so it does not go ahead of a close. The re-run a held
     //     objection starts is still first (rerun, objected: true).
+    // A CHECK QUEUED OR RUNNING HERE HOLDS ITS ENTRY (kanban #1225, audit 2 #1204 SETTLEMENT-3): a pending objection held the entry SUSPENDED
+    // for 120 s only, but checks of one entry run one at a time - a valid objection behind enough junk bundles (or on a loaded seat) waited past
+    // that, the seat signed FINAL, released P and acked, and the objection was re-dated late. finality.js reads this count: while it is above 0
+    // the pending row holds whatever its age (a restart clears both).
+    const live = this.round.objectionChecks || (this.round.objectionChecks = new Map());
+    const liveKey = hex(entryIdBytes);
+    live.set(liveKey, (live.get(liveKey) || 0) + 1);
     const tail = this.objectionTurns.get(hex(entryIdBytes)) || Promise.resolve();
     let release;
     const turn = new Promise((r) => { release = r; });
@@ -1477,6 +1484,7 @@ export class Verifier {
     } finally {
       release();
       if (this.objectionTurns.get(hex(entryIdBytes)) === mine) this.objectionTurns.delete(hex(entryIdBytes));
+      { const n = (live.get(liveKey) || 1) - 1; if (n > 0) live.set(liveKey, n); else live.delete(liveKey); }
     }
   }
 
