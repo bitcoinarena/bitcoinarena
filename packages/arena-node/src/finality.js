@@ -185,7 +185,9 @@ export function finalityStep(round, roundIdBytes, entryIdBytes, computed, { now 
   }
   if (!computed) return computed;
   const finalAfter = computed.finalAfterMs !== undefined && computed.finalAfterMs !== null ? BigInt(computed.finalAfterMs) : null;
-  const pending = typeof round.pendingObjectionAt === 'function' ? round.pendingObjectionAt(roundIdBytes, entryIdBytes, Number(now) - PENDING_OBJECTION_MS) : null;
+  // a check of it still queued or running in this process holds it whatever the row's age (kanban #1225); otherwise PENDING_OBJECTION_MS
+  const checking = round.objectionChecks instanceof Map && (round.objectionChecks.get(hex(entryIdBytes)) || 0) > 0;
+  const pending = typeof round.pendingObjectionAt === 'function' ? round.pendingObjectionAt(roundIdBytes, entryIdBytes, checking ? 0 : Number(now) - PENDING_OBJECTION_MS) : null;
   if (pending !== null && (computed.state === FINAL || computed.signable) && (finalAfter === null || BigInt(pending) < finalAfter)) {
     const { signable: _signable, ...rest } = computed;
     return { ...rest, state: SUSPENDED, pendingObjection: true, pendingObjectionAtMs: pending, computedState: computed.state,
