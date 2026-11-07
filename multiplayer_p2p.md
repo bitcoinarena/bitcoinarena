@@ -3172,8 +3172,10 @@ one by one, except where a ruling is named.*
 - **The load** is each federation's newest signed record this seat holds and the reserve key its guardian seats
   name, read when the table is built. A federation whose guardian seats stand has a key: a seat that has not read
   it yet waits and builds no table (kanban #1129), until the cap.
-- **The reserve key's cap (RULED 2026-11-04, kanban #1130).** From the start's confirmation + `slash_return_blocks / 2`
-  on (72 blocks mainnet, 18 testnet4, 6 regtest: well before a mature node's return leaf), every signer builds the
+- **The reserve key's cap (RULED 2026-11-04, kanban #1130; formula rebased 2026-11-07, kanban #1340).** From the start's
+  confirmation + `slash_fallback_blocks / 4` on (72 blocks mainnet, 18 testnet4, 6 regtest, the same numbers as before:
+  the fallback is now the next spend after the release, so the cap is read against it, not against the return leaf,
+  which opens after the fallback since #1287), every signer builds the
   release or fallback with the **whole** reserves' part in the escrow, whatever keys it has read; the filer and the
   players' outputs do not change. The escrow's next spend places it by load (#1085), and a federation whose key is
   still unread is paid nothing by that spend. An escrow spend and a liquidation escrow spend still wait for an
@@ -3419,15 +3421,20 @@ release and refill itself from the peg-in; nothing depends on it.
 | a node buys a slash start to get out before maturity | nothing: the return leaf waits for `bond_maturity` too |
 | 2/3 of the bonded capital on an exact key; on a drawn one about 60 % held together before `h`, about a third for a buyer who picks holders after it | can still take a bond that has not matured, and only among the bonds naming that one key. At 2/3 it holds the committees anyway |
 
-**The fallback is meant (RULED 2026-11-02, kanban #1021).** A mature node can
-leave at `slash_return_blocks`, before the fallback opens. If it does not, the
-census key can take its bond at `slash_fallback_blocks`. Script cannot say "only
-before maturity", and a mature node that does nothing should not be safer than one
-that reacts.
+**The fallback is meant (RULED 2026-11-02, kanban #1021; REWRITTEN 2026-11-07,
+kanban #1287, #1340).** A started bond, mature or not, cannot leave before the
+census key has had its turn: the fallback opens at `slash_fallback_blocks` (288)
+and the return leaf only at `slash_return_blocks` (432). The return is what a
+falsely started bond gets when neither the panels released nor the census key
+fell back by then. #1021's "a mature node can leave at `slash_return_blocks`,
+before the fallback opens" is withdrawn: it made every bond past maturity
+unslashable whenever three panel members stayed quiet. Script still cannot say
+"only before maturity", and a mature node that does nothing is now no safer than
+one that reacts, because neither can act before the key.
 
 The reference node takes the return leaf itself, as soon as it opens, when a start
 names a proof that does not check on its own replay. An owner does not have to
-watch.
+watch; the wait is three days instead of one.
 
 A start does not show a hold output's leaves, and only the panels rebuild them, so a node
 keeps the panels of every hold it signs a presig to, past the round's prune. Without them
