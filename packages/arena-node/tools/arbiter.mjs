@@ -34,7 +34,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, judgeTableProof, judgeAbandoned, buildAbandonedSlash, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic, resumeIntent, txidOf } from '../src/arbiter.js';
+import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, judgeTableProof, judgeAbandoned, buildAbandonedSlash, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic, resumeIntent, txidOf, spentSetFromSeats } from '../src/arbiter.js';
 import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
 import { liquidationEvent, slashEvent, stampEvent, signEvent, eventKey } from '../src/arbitration-events.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
@@ -457,21 +457,17 @@ if (liqClients.size) {
     // THE FIRST SEAT THAT LISTS IT, with the spent set and the record from any seat that has them (kanban #326 rehearsal 17, 2026-10-26:
     // the test host seats list T2 with its record and no spent set, the one T2 seat still up with the spent set; the first answer
     // alone left the remainder with no record to read the guardians from)
+    // EVERY SEAT, EVERY COPY CHECKED (kanban #1236, audit 2 RES-4): the first copy any seat listed was taken unchecked; the record
+    // from any seat that has one (rehearsal 17: the test host seats list T2 with its record and no spent set)
     liquidationOf: async (fid) => {
-      let first = null, copy = null, record = null;
-      for (const s of seats) {
-        try {
-          const j = await (await fetch(`${s}/liquidations`, { signal: AbortSignal.timeout(15000) })).json();
-          const l = (j.liquidations || []).find((x) => x.federation === fid);
-          if (!l) continue;
-          first = first || l;
-          copy = copy || (l.spentSet && l.spentSet.copies && l.spentSet.copies[0]) || null;
-          record = record || l.haltRecord || l.record || null;
-          if (copy && record) break;
-        } catch { /* the next seat */ }
-      }
-      if (!first) return null;
-      return { ...first, record, spentNonces: copy ? spentNonceSet(decodeSpentSet(fromHex(copy.spentSet))) : null };
+      const listings = (await Promise.all(seats.map(async (s) => {
+        try { const j = await (await fetch(`${s}/liquidations`, { signal: AbortSignal.timeout(15000) })).json(); return (j.liquidations || []).find((x) => x.federation === fid) || null; } catch { return null; }
+      }))).filter(Boolean);
+      if (!listings.length) return null;
+      const record = (listings.find((l) => l.haltRecord || l.record) || {});
+      const ss = spentSetFromSeats(listings, { verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } } });
+      if (ss.spentNonces === null) say({ liquidation: fid.slice(0, 16), spentSet: ss.why });
+      return { ...listings[0], record: record.haltRecord || record.record || null, spentNonces: ss.spentNonces, spentSetSession: ss.session ?? null };
     },
     height: async () => Number(await rpc('getblockcount')),
     escrowMsatOf: async (fid) => {
