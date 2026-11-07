@@ -19322,7 +19322,9 @@ function saveCollect(storage, { roundIdHex, round, invite, nodes, seed, stakeLoc
     try {
       if (stakeLock) lock = { outpoint: `${toHex(stakeLock.outpoint.txid)}:${String(stakeLock.outpoint.outIdx)}`, fields: lockFieldsToJson(stakeLock.fields) };
     } catch { lock = null; }
-    storage.setItem(key, JSON.stringify({ roundIdHex, round: toHex(encodeRoundContract(round)), invite, nodes, seed: toHex(seed),
+    // THROUGH putRoomy, AS THE LOCK BESIDE IT (kanban #1251, audit 3 FIXES-14): a raw setItem refused for quota left a saved stake lock with no collect
+    // record - no expiry refund and no forfeit redeem ran on its own; the storage-full handler frees room and the write is tried again
+    putRoomy(storage, key, JSON.stringify({ roundIdHex, round: toHex(encodeRoundContract(round)), invite, nodes, seed: toHex(seed),
       stakeLock: lock, done, savedMs: Date.now(), ...(order ? { order: Number(order) } : {}) }));
     return true;
   } catch { return false; }
