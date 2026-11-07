@@ -410,19 +410,23 @@ async function identity() {
   if (me) return me;
   const seed = readSeed();
   const plain = (secret) => (action, args) => C.signOwnerRequest({ node: state.node, action, args, secret, sign: C.sign, pubkeyOf: C.pubkeyOf });
-  if (seed) { const secret = C.ownerSecretFromSeed(seed); return (me = { how: 'words', pubkey: C.toHex(C.pubkeyOf(secret)), sign: plain(secret), devSeed: C.devSeedFromSeed(seed), words: true }); }
+  // A NOSTR EVENT BY THE OWNER KEY (kanban #1342: node feedback): its NIP-01 id signed with the owner secret, or by the extension / remote signer
+  const plainEvent = (secret) => async (t) => { const e = { pubkey: C.toHex(C.pubkeyOf(secret)), created_at: Math.floor(Date.now() / 1000), kind: t.kind, tags: t.tags || [], content: String(t.content || '') };
+    const id = C.toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([0, e.pubkey, e.created_at, e.kind, e.tags, e.content])))));
+    return { ...e, id, sig: C.toHex(C.sign(C.fromHex(id), secret)) }; };
+  if (seed) { const secret = C.ownerSecretFromSeed(seed); return (me = { how: 'words', pubkey: C.toHex(C.pubkeyOf(secret)), sign: plain(secret), signEvent: plainEvent(secret), devSeed: C.devSeedFromSeed(seed), words: true }); }
   const n = readNostr();
   if (!n) return null;
-  if (n.how === 'nsec') { const secret = C.fromHex(n.secret); return (me = { how: 'nsec', pubkey: C.toHex(C.pubkeyOf(secret)), sign: plain(secret), devSeed: C.devSeedFromSeed(secret) }); }
+  if (n.how === 'nsec') { const secret = C.fromHex(n.secret); return (me = { how: 'nsec', pubkey: C.toHex(C.pubkeyOf(secret)), sign: plain(secret), signEvent: plainEvent(secret), devSeed: C.devSeedFromSeed(secret) }); }
   const viaEvent = (signEvent) => (action, args) => C.signOwnerEvent({ node: state.node, action, args, signEvent });
   if (n.how === 'extension') {
     const x = await C.extensionSigner(window.nostr);
     if (n.pubkey && x.pubkey !== n.pubkey) throw new Error('your Nostr extension now holds another key than the one this browser signed in with');
-    return (me = { how: 'extension', pubkey: x.pubkey, sign: viaEvent((t) => x.signEvent(t)) });
+    return (me = { how: 'extension', pubkey: x.pubkey, sign: viaEvent((t) => x.signEvent(t)), signEvent: (t) => x.signEvent({ ...t, created_at: Math.floor(Date.now() / 1000) }) });
   }
   if (n.how === 'bunker') {
     const b = await C.bunkerSigner(n.bunker, { clientSecret: C.fromHex(n.client), onauth: (u) => window.open(u, '_blank') });
-    return (me = { how: 'bunker', pubkey: b.pubkey, sign: viaEvent((t) => b.signEvent(t)) });
+    return (me = { how: 'bunker', pubkey: b.pubkey, sign: viaEvent((t) => b.signEvent(t)), signEvent: (t) => b.signEvent({ ...t, created_at: Math.floor(Date.now() / 1000) }) });
   }
   return null;
 }
@@ -534,6 +538,48 @@ async function area() {
   leavePanel();
   storePanel();
   networkPanel();
+  nodeFeedbackPanel();
+}
+// NODE FEEDBACK (kanban #1342, Daniel 2026-11-07): what broke or could be better on this node, signed by the owner key, tagged source=node and this
+// node's key, to the Arena's testnet faucet; a screenshot optional; at least 50 characters; then the community. Testnet nodes only (phase 1).
+const FEEDBACK_URL = 'https://bitcoinarena.io/api/faucet/feedback';
+async function nodeFeedbackPanel() {
+  const box = $('node-feedback'); if (!box) return;
+  let net = ''; try { net = String(((await (await fetch(at('/owner/bond'), { cache: 'no-store' })).json()) || {}).network || ''); } catch { net = ''; }
+  box.innerHTML = '';
+  const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (k === 'text') e.textContent = v; else if (k === 'cls') e.className = v; else e.setAttribute(k, v); } for (const c of kids) if (c) e.append(c); return e; };
+  if (!/testnet/.test(net)) { box.append(el('p', { cls: 'sub', text: 'Node feedback goes to the Arena team from testnet nodes.' })); return; }
+  const type = el('select', { 'aria-label': 'Category' }, el('option', { value: 'bug', text: 'Bug: something broke on this node' }), el('option', { value: 'improvement', text: 'Improvement: something could be better' }));
+  const t = el('textarea', { rows: '5', maxlength: '4000', placeholder: 'What happened on this node? (at least 50 characters)', style: 'width:100%' });
+  const count = el('div', { cls: 'sub' }), shot = el('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp' });
+  const say = el('p', { cls: 'sub', role: 'status' }), send = el('button', { type: 'button', cls: 'primary', text: 'Send node feedback' });
+  const recount = () => { const n = t.value.trim().length; count.textContent = n < 50 ? (50 - n) + ' more characters' : n + ' characters'; send.disabled = n < 50; };
+  t.addEventListener('input', recount); recount();
+  box.append(el('p', { cls: 'sub', text: 'Your words, this node’s key and the release go to the Arena team, signed with your owner key. No amounts, no secrets.' }),
+    type, t, count, el('label', { cls: 'sub' }, el('span', { text: 'Screenshot (optional) ' }), shot), say, send);
+  send.onclick = async () => {
+    send.disabled = true; say.textContent = 'Sending …';
+    try {
+      const who = await identity(); if (!who || !who.signEvent) throw new Error('sign in first');
+      let hash = null;
+      if (shot.files && shot.files[0]) {
+        const f = shot.files[0]; if (f.size > 1500000) throw new Error('a screenshot is at most 1.5 MB here');
+        const up = await (await fetch(FEEDBACK_URL + '/screenshot', { method: 'POST', headers: { 'content-type': f.type || 'image/png' }, body: f })).json();
+        if (!up.ok) throw new Error(up.why || 'the screenshot did not go'); hash = up.sha256;
+      }
+      const build = String((state && (state.release || state.version)) || '').slice(0, 24).replace(/[^0-9a-zA-Z. -]/g, '');
+      const tags = [['t', type.value], ['source', 'node'], ['node', String(state.node)], ...(build ? [['build', build]] : []), ...(hash ? [['screenshot', hash]] : [])];
+      const event = await who.signEvent({ kind: 27842, tags, content: JSON.stringify({ happened: t.value, expected: '' }) });
+      const r = await (await fetch(FEEDBACK_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ event }) })).json();
+      if (!r.ok) throw new Error(r.why || 'not sent');
+      counted('node-feedback-sent');
+      box.innerHTML = '';
+      box.append(el('p', { text: 'Thank you, the team has it.' }), el('p', { cls: 'sub', text: 'Join the community, talk to the team and other node owners:' }),
+        el('p', {}, el('a', { href: 'https://x.com/bitcoinarena_io', target: '_blank', rel: 'noopener noreferrer', text: 'X' }), el('span', { text: ' · ' }),
+          el('a', { href: 'https://discord.gg/9zZbASZyue', target: '_blank', rel: 'noopener noreferrer', text: 'Discord' }), el('span', { text: ' · ' }),
+          el('a', { href: 'https://t.me/+KihHE8JhcVM3NDVi', target: '_blank', rel: 'noopener noreferrer', text: 'Telegram' })));
+    } catch (e) { say.textContent = (e && e.message) || 'not sent'; send.disabled = false; }
+  };
 }
 // THE PORTED PANELS, EACH ONLY ITS REACT SCREEN (kanban #564, 2026-10-21: "no fall backs"): the page hands each the doors it
 // reads, its signed-request helpers and, where it reports to the Overview, the need() line

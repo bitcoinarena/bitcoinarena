@@ -19,8 +19,10 @@ const signed = (k, { kind = FEEDBACK_KIND, tags = [], content = '', created_at =
   e.sig = hex(schnorr.sign(Buffer.from(e.id, 'hex'), k.secret));
   return e;
 };
-const report = (k, happened, more = {}) => signed(k, { tags: [['t', more.type || 'bug'], ['game', 'rock-paper-scissors'], ['round', 'ab'.repeat(32)], ['build', 'UI 577']],
-  content: JSON.stringify({ happened, expected: more.expected || 'it to work' }), ...(more.created_at ? { created_at: more.created_at } : {}) });
+// A REPORT SAYS ENOUGH (at least 50 characters, Daniel 2026-11-07): every test text gets its steps; an empty one stays empty
+const STEPS = ' Steps: opened the lobby, joined a round, watched the screen.';
+const report = (k, happened, more = {}) => signed(k, { tags: [['t', more.type || 'bug'], ['game', 'rock-paper-scissors'], ['round', 'ab'.repeat(32)], ['build', 'UI 577'], ...(more.tags || [])],
+  content: JSON.stringify({ happened: happened.trim() ? happened + STEPS : happened, expected: more.expected || 'it to work' }), ...(more.created_at ? { created_at: more.created_at } : {}) });
 const URL_MINE = 'https://faucet.example/feedback/mine';
 const auth = (k, over = {}) => signed(k, { kind: HTTP_AUTH_KIND, tags: [['u', over.u || URL_MINE], ['method', over.method || 'GET']], created_at: over.created_at || Math.floor(Date.now() / 1000) });
 
@@ -97,7 +99,7 @@ test('#1342 the reports outlive a restart: the same file reopened holds them wit
     const s2 = openFeedbackStore(path);
     const r = s2.report(e.id);
     console.log('  FACTS #1342 restart:', JSON.stringify({ kept: !!r, state: r && r.state }));
-    assert.deepEqual([r.happened, r.state], ['kept across a restart', STATES.ACCEPTED]);
+    assert.deepEqual([r.happened.startsWith('kept across a restart'), r.state], [true, STATES.ACCEPTED]);
     s2.close();
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -215,4 +217,35 @@ test('#1342 the link outlives a restart and a week: the same file reopened answe
     assert.deepEqual([req.tag, req.maxWithdrawable, paid.status, s2.reward(k1).state], ['withdrawRequest', 3000000, 'OK', 'paid']);
     s2.close();
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---- Daniel 2026-11-07: categories bug / improvement, at least 50 characters, frontend or node, a screenshot ----
+test('#1342 a report: bug or improvement, at least 50 characters, from the frontend or a named node, with a screenshot only if it was uploaded', () => {
+  const s = openFeedbackStore();
+  const alice = key(1), NODE = 'cd'.repeat(32), SHOT = 'ef'.repeat(32);
+  const raw = (text, tags) => signed(alice, { tags, content: JSON.stringify({ happened: text }) });
+  const long = 'The deposit window closed before the invoice was paid, twice now.';
+  const tries = {
+    short: s.take(raw('Too short to say anything useful.', [['t', 'bug']])).why,
+    oldType: s.take(raw(long, [['t', 'idea']])).why,
+    improvement: s.take(raw(long + ' A', [['t', 'improvement']])).ok,
+    nodeNoKey: s.take(raw(long + ' B', [['t', 'bug'], ['source', 'node']])).why,
+    node: s.take(raw(long + ' C', [['t', 'bug'], ['source', 'node'], ['node', NODE]])).ok,
+    otherSource: s.take(raw(long + ' D', [['t', 'bug'], ['source', 'phone']])).why,
+    shotNotHere: s.take(raw(long + ' E', [['t', 'bug'], ['screenshot', SHOT]]), { hasShot: () => false }).why,
+    shotHere: s.take(raw(long + ' F', [['t', 'bug'], ['screenshot', SHOT]]), { hasShot: (h) => h === SHOT }).ok,
+  };
+  const rows = s.list();
+  console.log('  FACTS #1342 rules:', JSON.stringify({ tries, kept: rows.map((r) => [r.type, r.source, r.node && r.node.slice(0, 4), r.screenshot && r.screenshot.slice(0, 4)]) }));
+  assert.match(tries.short, /at least 50 characters \(33 so far\)/);
+  assert.match(tries.oldType, /bug, improvement/);
+  assert.equal(tries.improvement, true);
+  assert.match(tries.nodeNoKey, /names the node/);
+  assert.equal(tries.node, true);
+  assert.match(tries.otherSource, /frontend or node/);
+  assert.match(tries.shotNotHere, /not uploaded here/);
+  assert.equal(tries.shotHere, true);
+  assert.deepEqual(rows.map((r) => r.source).sort(), ['frontend', 'frontend', 'node']);
+  assert.ok(s.csv().split('\n')[0].includes('source,node'), 'the CSV says where each came from');
+  assert.deepEqual([...s.shotsInUse()], [SHOT]);
 });

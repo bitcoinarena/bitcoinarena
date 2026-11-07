@@ -106,7 +106,7 @@ async fetch(request, env, ctx) {
   { const path = url.pathname.replace(/\/$/, ''); const utm = CHANNEL_LINKS[path];
     if (utm && !url.searchParams.has('utm_source')) return Response.redirect(`${url.origin}${path === '/night' ? '/night/' : '/'}?${utm}`, 302); }
   // THE PLAYERS' FAUCET AND THE TABLE WANTS (kanban #926): passed on to the faucet service, whose address is a secret of this Worker (FAUCET_ORIGIN), with the caller's address for its limits
-  if (url.pathname === '/api/faucet/player' || url.pathname === '/api/faucet/opponent' || url.pathname === '/api/faucet/feedback' || url.pathname === '/api/faucet/feedback/mine' || /^\/api\/faucet\/feedback\/admin\/(list|act|export\.csv|report\/[0-9a-f]{64})$/.test(url.pathname) || /^\/api\/faucet\/lnurlw\/[0-9a-f]{64}(\/callback)?$/.test(url.pathname) || url.pathname === '/api/faucet/founding' || url.pathname === '/api/faucet/refill') {
+  if (url.pathname === '/api/faucet/player' || url.pathname === '/api/faucet/opponent' || url.pathname === '/api/faucet/feedback' || url.pathname === '/api/faucet/feedback/mine' || url.pathname === '/api/faucet/feedback/screenshot' || /^\/api\/faucet\/feedback\/admin\/(list|act|export\.csv|report\/[0-9a-f]{64}|screenshot\/[0-9a-f]{64})$/.test(url.pathname) || /^\/api\/faucet\/lnurlw\/[0-9a-f]{64}(\/callback)?$/.test(url.pathname) || url.pathname === '/api/faucet/founding' || url.pathname === '/api/faucet/refill') {
     if (!env.FAUCET_ORIGIN) return new Response('{"ok":false,"why":"the faucet is off"}', { status: 503, headers: { 'content-type': 'application/json' } });
     const headers = new Headers({ 'content-type': 'application/json', 'x-arena-ip': request.headers.get('cf-connecting-ip') || '' });
     // "MY FEEDBACK" IS ASKED WITH THE PLAYER'S NIP-98 SIGN-IN (kanban #1342): that header, and only on that path
@@ -114,7 +114,10 @@ async fetch(request, env, ctx) {
     // THE REVIEW LIST'S ADMIN CODE (kanban #1342 section 4): that header, only on the admin paths
     if (url.pathname.startsWith('/api/faucet/feedback/admin/') && request.headers.get('x-arena-admin')) headers.set('x-arena-admin', request.headers.get('x-arena-admin'));
     const origin = request.headers.get('origin'); if (origin) headers.set('origin', origin);
-    return fetch(`${env.FAUCET_ORIGIN}${url.pathname.slice('/api/faucet'.length)}${url.search}`, { method: request.method, headers, body: request.method === 'POST' ? await request.text() : undefined });
+    // A SCREENSHOT IS BYTES (kanban #1342): passed on as they came, with their own type; every other body is text
+    if (url.pathname === '/api/faucet/feedback/screenshot') headers.set('content-type', request.headers.get('content-type') || 'application/octet-stream');
+    return fetch(`${env.FAUCET_ORIGIN}${url.pathname.slice('/api/faucet'.length)}${url.search}`, { method: request.method, headers,
+      body: request.method === 'POST' ? (url.pathname === '/api/faucet/feedback/screenshot' ? await request.arrayBuffer() : await request.text()) : undefined });
   }
   // A PHONE'S BENCHMARK LINES (the page's ?bench=1): logged for wrangler tail, nothing stored, nothing served back
   if (url.pathname === '/__bench' && request.method === 'POST') {

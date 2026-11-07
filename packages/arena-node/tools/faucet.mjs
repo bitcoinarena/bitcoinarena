@@ -26,7 +26,9 @@ import { createServer } from 'node:http';
 import { timingSafeEqual, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
-import { openFeedbackStore, networkPlayers } from '../src/feedback-store.js';
+import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS } from '../src/feedback-store.js';
+import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { join as pathJoin } from 'node:path';
 import { refillDecide, feedbackDecide, faucetDecide, playerGrantDecide, playerGrantTotals, opponentWant, opponentWants, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
 
 const env = process.env;
@@ -45,6 +47,14 @@ const rpc = async (method, params = []) => {
 const REPORTS = [];   // this day's reports: their count and address, in memory
 // THE REPORTS KEPT FOR REVIEW (kanban #1342): one SQLite file beside the book; none when FAUCET_FEEDBACK_DB is not set
 const FEEDBACK = env.FAUCET_FEEDBACK_DB ? openFeedbackStore(env.FAUCET_FEEDBACK_DB) : null;
+// THE SCREENSHOTS (Daniel 2026-11-07): a folder beside the store, one file per image under its SHA-256
+const SHOTS = env.FAUCET_FEEDBACK_SHOTS || (env.FAUCET_FEEDBACK_DB ? `${env.FAUCET_FEEDBACK_DB}.shots` : null);
+if (SHOTS) mkdirSync(SHOTS, { recursive: true });
+const shotFile = (h) => { if (!SHOTS || !/^[0-9a-f]{64}$/.test(h)) return null; for (const ext of ['png', 'jpg', 'webp']) { const f = pathJoin(SHOTS, `${h}.${ext}`); if (existsSync(f)) return f; } return null; };
+const SHOT_UPLOADS = [];   // { ip, atMs } of today
+const SHOTS_PER_IP_PER_DAY = 10;
+if (SHOTS && FEEDBACK) setInterval(() => { try { const used = FEEDBACK.shotsInUse(); for (const f of readdirSync(SHOTS)) { const h = f.split('.')[0];
+  if (!used.has(h) && Date.now() - statSync(pathJoin(SHOTS, f)).mtimeMs > SHOT_UNCLAIMED_MS) unlinkSync(pathJoin(SHOTS, f)); } } catch { /* next hour */ } }, 3600000).unref();
 const MINE_URLS = String(env.FAUCET_FEEDBACK_MINE_URLS || 'https://bitcoinarena.io/api/faucet/feedback/mine').split(',').map((x) => x.trim()).filter(Boolean);
 const readBook = () => { try { return JSON.parse(readFileSync(env.FAUCET_BOOK, 'utf8')); } catch { return { paid: [] }; } };
 const saveBook = (b) => { writeFileSync(`${env.FAUCET_BOOK}.new`, JSON.stringify(b, null, 1)); renameSync(`${env.FAUCET_BOOK}.new`, env.FAUCET_BOOK); };
@@ -141,7 +151,11 @@ const WANTS = new Map();
 const ORIGIN_OK = /^https:\/\/([a-z0-9-]+\.)?(testnet\.bitcoin-?arena\.io|bitcoin-arena-site\.pages\.dev)$/;
 createServer((req, res) => {
   const origin = String(req.headers.origin || '');
-  const cors = ORIGIN_OK.test(origin) ? { 'access-control-allow-origin': origin, vary: 'Origin' } : {};
+  // THE TWO DOORS A NODE'S OWN OWNER PAGE WRITES TO (kanban #1342 node feedback): signed, rate-limited reports and their screenshots, from any origin;
+  // every other door only from the Arena's own hosts
+  const writePath = new URL(req.url, 'http://x').pathname.replace(/\/+$/, '');
+  const anyOrigin = (writePath === '/feedback' || writePath === '/feedback/screenshot') && origin;
+  const cors = ORIGIN_OK.test(origin) || anyOrigin ? { 'access-control-allow-origin': origin, vary: 'Origin' } : {};
   const send = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...cors }); res.end(JSON.stringify(body)); };
   const path = new URL(req.url, 'http://x').pathname.replace(/\/+$/, '');
   // A TABLE WITH SOMEBODY AT IT (kanban #926): said by the page, read by the test opponent
@@ -190,7 +204,7 @@ createServer((req, res) => {
       return { ...r, ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
     if (path === '/feedback/admin/list' && req.method === 'GET') {
       PLAYED.fresh().catch(() => 0).then(() => { const ours = ourKeys();
-        send(200, { ok: true, reports: FEEDBACK.list({ state: q.get('state'), type: q.get('type'), game: q.get('game'), pubkey: q.get('pubkey') }).map((r) => withReward(r, ours)), budget: FEEDBACK.budget({ rules: RULES }) }); });
+        send(200, { ok: true, reports: FEEDBACK.list({ state: q.get('state'), type: q.get('type'), game: q.get('game'), pubkey: q.get('pubkey'), source: q.get('source') }).map((r) => withReward(r, ours)), budget: FEEDBACK.budget({ rules: RULES }) }); });
       return undefined;
     }
     { const m = /^\/feedback\/admin\/report\/([0-9a-f]{64})$/.exec(path);
@@ -200,6 +214,10 @@ createServer((req, res) => {
           send(200, { ok: true, report: withReward(r, ours), moves: FEEDBACK.moves(r.id), earlier: FEEDBACK.list({ pubkey: r.pubkey }).filter((x) => x.id !== r.id) }); });
         return undefined;
       } }
+    { const m = /^\/feedback\/admin\/screenshot\/([0-9a-f]{64})$/.exec(path);
+      if (m && req.method === 'GET') { const f = shotFile(m[1]); if (!f) return send(404, { ok: false, why: 'no such screenshot' });
+        res.writeHead(200, { 'content-type': f.endsWith('.png') ? 'image/png' : f.endsWith('.webp') ? 'image/webp' : 'image/jpeg', 'cache-control': 'private, no-store', ...cors });
+        return res.end(readFileSync(f)); } }
     if (path === '/feedback/admin/export.csv' && req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="arena-feedback.csv"', 'cache-control': 'no-store', ...cors });
       return res.end(FEEDBACK.csv());
@@ -237,6 +255,28 @@ createServer((req, res) => {
       if (q.get('k1') !== m[1]) return send(200, { status: 'ERROR', reason: 'k1 does not match the link' });
       return one(() => FEEDBACK.claim(m[1], q.get('pr') || '', { decode: bountyDecode, pay: bountyPay })).then((r) => send(200, r), () => send(200, { status: 'ERROR', reason: 'try again in a minute' }));
     } }
+  // A SCREENSHOT FOR A REPORT (Daniel 2026-11-07): the raw image, before the report is signed; answers its SHA-256, which the report then names
+  if (path === '/feedback/screenshot') {
+    if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '86400' }); return res.end(); }
+    if (req.method !== 'POST') return send(405, { ok: false, why: 'POST' });
+    if (!FEEDBACK || !SHOTS) return send(503, { ok: false, why: 'screenshots are not kept here' });
+    const ip = req.headers['x-arena-ip'] || null, day = Math.floor(Date.now() / DAY_MS);
+    while (SHOT_UPLOADS.length && Math.floor(SHOT_UPLOADS[0].atMs / DAY_MS) !== day) SHOT_UPLOADS.shift();
+    if (ip && SHOT_UPLOADS.filter((x) => x.ip === ip).length >= SHOTS_PER_IP_PER_DAY) return send(429, { ok: false, why: 'this address sent all the screenshots it can today' });
+    const parts = []; let size = 0, over = false;
+    // TOO BIG: read on and keep nothing, answered 413 at its end; cut only past four times the cap
+    req.on('data', (c) => { size += c.length; if (size > SHOT_MOST) { over = true; parts.length = 0; if (size > 4 * SHOT_MOST) req.destroy(); return; } parts.push(c); });
+    req.on('end', () => {
+      if (over) return send(413, { ok: false, why: `a screenshot is at most ${SHOT_MOST / 1e6} MB` });
+      const bytes = Buffer.concat(parts), kind = imageKind(bytes);
+      if (!kind) return send(415, { ok: false, why: 'a screenshot is a PNG, JPEG or WebP image' });
+      const h = createHash('sha256').update(bytes).digest('hex');
+      if (!shotFile(h)) writeFileSync(pathJoin(SHOTS, `${h}.${kind}`), bytes);
+      SHOT_UPLOADS.push({ ip, atMs: Date.now() });
+      return send(200, { ok: true, sha256: h });
+    });
+    return undefined;
+  }
   // "MY FEEDBACK" (kanban #1342): a NIP-98 sign-in by the reporter's key; the reports' reward links are bearer secrets, so never by pubkey alone
   if (path === '/feedback/mine') {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'GET', 'access-control-allow-headers': 'authorization', 'access-control-max-age': '86400' }); return res.end(); }
@@ -275,7 +315,7 @@ createServer((req, res) => {
           b = { ...b0, text: `${String(words.happened || '')}${words.expected ? `\nExpected: ${String(words.expected)}` : ''}`, build: tagOf('build'), game: tagOf('game'), round: tagOf('round') };
           const pre = feedbackDecide({ ...b, ip }, REPORTS);
           if (!pre.ok) return send(200, pre);
-          kept = FEEDBACK.take(e);
+          kept = FEEDBACK.take(e, { hasShot: (h) => !!shotFile(h) });
           if (!kept.ok) return send(200, kept);
         }
         const d = feedbackDecide({ ...b, ip }, REPORTS);

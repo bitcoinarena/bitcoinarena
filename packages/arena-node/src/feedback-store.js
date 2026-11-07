@@ -14,7 +14,10 @@ import { eventId, eventRefusal } from './nostr-relay.js';
 export const FEEDBACK_KIND = 27842;
 /** NIP-98 HTTP auth. */
 export const HTTP_AUTH_KIND = 27235;
-export const FEEDBACK_TYPES = Object.freeze(['bug', 'confusing', 'idea']);
+// THE CATEGORIES (Daniel 2026-11-07: "eine Kategorie bug / improvement"), and where a report came from: the game page or a node's owner page
+export const FEEDBACK_TYPES = Object.freeze(['bug', 'improvement']);
+export const FEEDBACK_SOURCES = Object.freeze(['frontend', 'node']);
+export const TEXT_LEAST = 50;   // Daniel 2026-11-07: "minimum von 50 Zeichen"
 export const STATES = Object.freeze({ NEW: 'new', ACCEPTED: 'accepted', REJECTED: 'rejected', DUPLICATE: 'duplicate', PAID: 'paid' });
 const NEXT = Object.freeze({ new: ['accepted', 'rejected', 'duplicate'], accepted: ['paid', 'rejected'], rejected: [], duplicate: [], paid: [] });
 export const TEXT_MOST = 4000;
@@ -39,16 +42,20 @@ export function openFeedbackStore(path = ':memory:') {
     CREATE TABLE IF NOT EXISTS report_moves (id TEXT NOT NULL, from_state TEXT NOT NULL, to_state TEXT NOT NULL, at_ms INTEGER NOT NULL, by TEXT, note TEXT);
     CREATE TABLE IF NOT EXISTS rewards (k1 TEXT PRIMARY KEY, report TEXT NOT NULL UNIQUE, pubkey TEXT NOT NULL, amount_sats INTEGER NOT NULL, network TEXT NOT NULL,
       created_ms INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'open', invoice TEXT, payment_hash TEXT, tried_ms INTEGER, paid_ms INTEGER, why TEXT);`);
+  // COLUMNS ADDED AFTER THE FIRST FILE (kanban #1342 follow-up): a file from before gains them, null for its old rows
+  for (const [col, ddl] of [['source', 'TEXT'], ['node', 'TEXT'], ['screenshot', 'TEXT']])
+    if (!db.prepare('PRAGMA table_info(reports)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE reports ADD COLUMN ${col} ${ddl}`);
   const get = db.prepare('SELECT * FROM reports WHERE id = ?');
   const row = (r) => (r ? { id: r.id, pubkey: r.pubkey, type: r.type, signedAt: r.signed_at, receivedMs: r.received_ms, happened: r.happened, expected: r.expected,
     game: r.game || null, round: r.round || null, build: r.build || null, state: r.state, reason: r.reason || null, duplicateOf: r.duplicate_of || null,
-    severity: r.severity || null, amountSats: r.amount_sats ?? null, ticket: r.ticket || null, changedMs: r.changed_ms ?? null } : null);
+    severity: r.severity || null, amountSats: r.amount_sats ?? null, ticket: r.ticket || null, changedMs: r.changed_ms ?? null,
+    source: r.source || 'frontend', node: r.node || null, screenshot: r.screenshot || null } : null);
 
   /**
    * A REPORT IN: the signed event, checked as a relay checks one (id, signature), of the report kind, signed within a day. Kept once per event id
    * (a second post of the same event answers the first). Answers { ok, id, kept } or { ok: false, why }.
    */
-  function take(e, { nowMs = Date.now() } = {}) {
+  function take(e, { nowMs = Date.now(), hasShot = () => true } = {}) {
     const nowS = Math.floor(nowMs / 1000);
     const refused = eventRefusal(e, { kinds: [FEEDBACK_KIND], nowS });
     if (refused) return { ok: false, why: refused.startsWith('blocked:') ? 'that is not a feedback report' : refused };
@@ -59,11 +66,17 @@ export function openFeedbackStore(path = ':memory:') {
     try { body = JSON.parse(e.content); } catch { return { ok: false, why: 'a report\'s content is { happened, expected }' }; }
     const happened = scrubKeys(String((body && body.happened) || '').trim()).slice(0, TEXT_MOST);
     const expected = scrubKeys(String((body && body.expected) || '').trim()).slice(0, TEXT_MOST);
-    if (happened.length < 3) return { ok: false, why: 'say what happened' };
+    if (happened.length < TEXT_LEAST) return { ok: false, why: `say what happened in at least ${TEXT_LEAST} characters (${happened.length} so far)` };
+    const source = tag(e, 'source') || 'frontend';
+    if (!FEEDBACK_SOURCES.includes(source)) return { ok: false, why: `a report comes from ${FEEDBACK_SOURCES.join(' or ')}` };
+    const node = source === 'node' ? said(tag(e, 'node'), /^[0-9a-f]{64}$/) : '';
+    if (source === 'node' && !node) return { ok: false, why: 'node feedback names the node (its key, 64 hex)' };
+    const shot = tag(e, 'screenshot');
+    if (shot && (!/^[0-9a-f]{64}$/.test(shot) || !hasShot(shot))) return { ok: false, why: 'that screenshot was not uploaded here' };
     if (get.get(e.id)) return { ok: true, id: e.id, kept: false };
-    db.prepare(`INSERT INTO reports (id, pubkey, type, signed_at, received_ms, happened, expected, game, round, build, event) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    db.prepare(`INSERT INTO reports (id, pubkey, type, signed_at, received_ms, happened, expected, game, round, build, event, source, node, screenshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(e.id, e.pubkey, type, e.created_at, nowMs, happened, expected, said(tag(e, 'game'), /^[a-z0-9-]{1,48}$/) || null,
-        said(tag(e, 'round'), /^[0-9a-f]{8,64}$/) || null, said(tag(e, 'build'), /^[0-9a-zA-Z. -]{1,24}$/) || null, JSON.stringify(e));
+        said(tag(e, 'round'), /^[0-9a-f]{8,64}$/) || null, said(tag(e, 'build'), /^[0-9a-zA-Z. -]{1,24}$/) || null, JSON.stringify(e), source, node || null, shot || null);
     return { ok: true, id: e.id, kept: true };
   }
 
@@ -243,22 +256,23 @@ export function openFeedbackStore(path = ':memory:') {
   /** THE CSV (the Monday scoreboard, #922): one line per report, with its reward if any. Text cells quoted; a leading =, +, - or @ neutralised. */
   function csv() {
     const cell = (v) => { let t = v === null || v === undefined ? '' : String(v); if (/^[=+\-@]/.test(t)) t = `'${t}`; return `"${t.replace(/"/g, '""')}"`; };
-    const head = ['report', 'received', 'pubkey', 'type', 'game', 'state', 'severity', 'amount_sats', 'ticket', 'reason', 'duplicate_of', 'reward_state', 'paid_at', 'payment_hash', 'network', 'happened'];
+    const head = ['report', 'received', 'pubkey', 'source', 'node', 'type', 'game', 'state', 'severity', 'amount_sats', 'ticket', 'reason', 'duplicate_of', 'reward_state', 'paid_at', 'payment_hash', 'network', 'happened'];
     const lines = [head.join(',')];
     for (const r of db.prepare('SELECT r.*, w.state AS w_state, w.paid_ms, w.payment_hash AS w_hash, w.network FROM reports r LEFT JOIN rewards w ON w.report = r.id ORDER BY r.received_ms').all())
-      lines.push([r.id, new Date(r.received_ms).toISOString(), r.pubkey, r.type, r.game, r.state, r.severity, r.amount_sats, r.ticket, r.reason, r.duplicate_of, r.w_state,
+      lines.push([r.id, new Date(r.received_ms).toISOString(), r.pubkey, r.source || 'frontend', r.node, r.type, r.game, r.state, r.severity, r.amount_sats, r.ticket, r.reason, r.duplicate_of, r.w_state,
         r.paid_ms ? new Date(r.paid_ms).toISOString() : '', r.w_hash, r.network, r.happened].map(cell).join(','));
     return `${lines.join('\n')}\n`;
   }
 
   /** The admin list (slice 4 builds on it): every report, newest first, filtered by state, type, game or key. */
-  function list({ state = null, type = null, game = null, pubkey = null, limit = 500 } = {}) {
+  function list({ state = null, type = null, game = null, pubkey = null, source = null, limit = 500 } = {}) {
     const where = [], args = [];
-    for (const [col, v] of [['state', state], ['type', type], ['game', game], ['pubkey', pubkey]]) if (v) { where.push(`${col} = ?`); args.push(String(v)); }
+    for (const [col, v] of [['state', state], ['type', type], ['game', game], ['pubkey', pubkey], ['source', source]]) if (v) { where.push(`${col} = ?`); args.push(String(v)); }
     return db.prepare(`SELECT * FROM reports ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY received_ms DESC LIMIT ?`).all(...args, Math.min(Number(limit) || 500, 5000)).map(row);
   }
 
-  return { take, mine, move, approve, list, note, moves, budget, csv, createReward, withdrawRequest, lnurlOf, claim, settle, rewards, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
+  const shotsInUse = () => new Set(db.prepare('SELECT screenshot FROM reports WHERE screenshot IS NOT NULL').all().map((x) => x.screenshot));
+  return { take, mine, move, approve, list, shotsInUse, note, moves, budget, csv, createReward, withdrawRequest, lnurlOf, claim, settle, rewards, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
 }
 
 /**
@@ -289,4 +303,18 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
     played: (pubkey) => keys.has(String(pubkey || '').toLowerCase()),
     async fresh() { if (Date.now() - at > keepMs) { reading = reading || refresh().finally(() => { reading = null; }); await reading; } return keys.size; },
   };
+}
+
+// ---- SCREENSHOTS (Daniel 2026-11-07: "braucht einen Screenshot upload") ----
+// Uploaded before the report is signed, kept in a folder under their SHA-256; the report names that hash in a 'screenshot' tag, so the signature
+// covers which image goes with it. PNG, JPEG or WebP only (read by their first bytes, not a header someone sends), at most SHOT_MOST bytes.
+// A file no report names after SHOT_UNCLAIMED_MS is removed (sweepShots).
+export const SHOT_MOST = 1_500_000;
+export const SHOT_UNCLAIMED_MS = 24 * 3600 * 1000;
+export function imageKind(bytes) {
+  const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  if (b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'png';
+  if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'jpg';
+  if (b.length > 12 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return 'webp';
+  return null;
 }
