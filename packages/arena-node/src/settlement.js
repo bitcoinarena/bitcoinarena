@@ -42,6 +42,7 @@ import { pluginForRound, payoutRuleOfRound } from './plugins.js';
 import { heldOutcomes, marketFinalityOf, attestedTable } from './game-market.js';
 import { lockSettlement, lateLockSettlement, attestedLockSettlement, bookLockSettlement, RESERVE_LATER_PK } from '../../arena-protocol/src/lock-settlement.js';
 import { fallbackInputs } from './fallback-inputs.js';
+import { fallbackFiler } from '../../arena-protocol/src/fallback-claim.js';
 import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
 import { paysReserves } from '../../arena-protocol/src/reserves.js';
 import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
@@ -2599,6 +2600,43 @@ export class LockSettlement {
     const p = this.#settleOnce(roundIdBytes).finally(() => this.#settling.delete(k));
     this.#settling.set(k, p);
     return p;
+  }
+
+  /**
+   * WHICH ROUNDS' FALLBACK THIS SEAT FILES NOW (spec §23.2, kanban #1281): every round with Arena stake locks whose settlement row is not ACCEPTED,
+   * once the federation's count (read through one of its locks) is past every lock's fallback_after and before the first expiration, and only on
+   * this seat's turn (fallback-claim.js fallbackFiler: the seats by a hash of the round id and their key, one block each). `limit` rounds a pass.
+   * Answers [{ round, filed, why }] for the rounds it looked at past their fallback height.
+   */
+  async fallbackPass({ limit = 50 } = {}) {
+    if (!this.round.db) return [];
+    const rows = this.round.db.prepare(`SELECT s.round_id, s.outpoint, s.fields FROM stake_locks s LEFT JOIN lock_settlements l ON l.round_id = s.round_id
+      WHERE l.state IS NULL OR l.state <> 'ACCEPTED'`).all();
+    const byRound = new Map();
+    for (const r of rows) {
+      let f; try { f = JSON.parse(r.fields); } catch { continue; }
+      if (!Array.isArray(f.claimKeys) || !Number.isInteger(Number(f.fallbackAfter))) continue;       // an Arena lock only
+      const k = toHex(new Uint8Array(r.round_id));
+      const g = byRound.get(k) || { rid: new Uint8Array(r.round_id), fallbackAfter: 0, expiration: Infinity, outpoint: r.outpoint };
+      g.fallbackAfter = Math.max(g.fallbackAfter, Number(f.fallbackAfter)); g.expiration = Math.min(g.expiration, Number(f.expiration));
+      byRound.set(k, g);
+    }
+    const out = [];
+    for (const g of [...byRound.values()].slice(0, limit)) {
+      const row = this.round.get(g.rid);
+      if (!row) continue;
+      const contract = decodeRoundContract(new Uint8Array(row.contract));
+      if (!namedClaims(contract)) continue;
+      let count = null;
+      try { const port = await this.portFor(g.rid); const st = port && port.arenaStatus ? await port.arenaStatus(outpointOf(g.outpoint)) : null; count = st ? Number(st.blockCount) : null; } catch { count = null; }
+      if (!Number.isInteger(count) || count < g.fallbackAfter || count >= g.expiration) continue;
+      const me = (contract.nodes || []).findIndex((k) => toHex(k) === toHex(this.round.pubkey));
+      const filer = fallbackFiler({ roundId: g.rid, seatKeys: contract.nodes || [], fallbackAfter: g.fallbackAfter, height: count });
+      if (me < 0 || filer !== me) { out.push({ round: toHex(g.rid), filed: false, why: `seat ${filer}'s turn at ${count}` }); continue; }
+      const got = await this.settleFallback(g.rid).catch((e) => ({ ok: false, why: e.message }));
+      out.push({ round: toHex(g.rid), filed: !!got.ok, why: got.why || got.state || '' });
+    }
+    return out;
   }
 
   /**

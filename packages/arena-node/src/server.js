@@ -2564,6 +2564,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         ...(Number(contract.protocolVersion) >= AUDITOR_VERSION ? { auditors: auditDesk.held(rid) } : {}) };
     },
   });
+  // THE FALLBACK CLAIM'S SWEEP (spec §23.2, kanban #1281): once a minute, every round with Arena stake locks and no ACCEPTED settlement whose locks
+  // are past their fallback_after at the federation's count, filed on this seat's turn (settlement.js fallbackPass); a round settled by its claim
+  // is never looked at. ARENA_FALLBACK_EVERY_MS 0 switches it off.
+  { const every = Number(process.env.ARENA_FALLBACK_EVERY_MS ?? 60000);
+    if (every > 0) {
+      let busy = false;
+      const ft = setInterval(async () => {
+        if (busy) return; busy = true;
+        try { for (const r of await settlements.fallbackPass()) if (r.filed || !/turn at/.test(r.why)) console.log(`[fallback] ${r.round.slice(0, 16)}: ${r.filed ? 'filed' : 'not filed'} - ${r.why}`); }
+        catch (e) { console.log(`[fallback] pass: ${e.message}`); } finally { busy = false; }
+      }, every);
+      if (ft.unref) ft.unref();
+    } }
   // WHO A PROTOCOL-27 ROUND MAY PAY (level 2 of proof (a), rulings #1138 2, #1139 A, #1140 A-C), from this seat's own bytes; the filer and the judge read the
   // same. A set this seat cannot read is null, and an output it could hold is then unread, never held against a seat (named-claim-payees.js).
   //   node row: refundKeyOf of every seat of the game and settlement pools and the Round Contract's nodes (the remainder), of each node the census at the
