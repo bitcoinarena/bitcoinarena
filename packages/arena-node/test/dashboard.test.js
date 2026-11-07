@@ -160,7 +160,7 @@ test('api/round-result names every player: the custom name, else the lobby\'s ge
     };
     const NAMED = b32(0x11), GENERATED = b32(0x22), NONE = b32(0x33), IDENTITY = b32(0x44);
     for (const p of [NAMED, GENERATED, NONE]) await join(p);
-    const put = (player, name) => node.round.putLobbyName({ roundId: rid, playerPubkey: player, signature: new Uint8Array(64), atMs: 1n,
+    const put = (player, name) => node.round.putLobbyName({ roundId: rid, playerPubkey: player, signature: new Uint8Array(64), identitySig: new Uint8Array(64), atMs: 1n,
       record: encodeLobbyName({ roundId: rid, playerPubkey: player, identityPubkey: IDENTITY, name, atMs: 1n }) });
     put(NAMED, 'Sophia');
     put(GENERATED, '');

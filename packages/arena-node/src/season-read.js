@@ -98,14 +98,18 @@ function entriesOf(round, rid, contract, { paid, market }) {
   // THE ROUND KEYS' SIGNED NAME RECORDS: the identity each names, and the name the player chose
   const named = new Map();
   for (const n of round.lobbyNames(rid)) {
-    try { const r = decodeLobbyName(n.record); named.set(hex(r.playerPubkey), { identity: hex(r.identityPubkey), name: r.name || null }); } catch { /* not a record */ }
+    // its identity counts only with that identity's own consent, checked at the door (kanban #1278, RULED #1276); the name is shown either way
+    try { const r = decodeLobbyName(n.record); named.set(hex(r.playerPubkey), { identity: hex(r.identityPubkey), consented: !!n.identitySig, name: r.name || null }); } catch { /* not a record */ }
   }
 
   return round.entriesOf(rid).map(({ entryId, entry }) => {
     const key = hex(entry.playerPubkey);
     const proven = typeof round.identityOf === 'function' ? round.identityOf(entryId) : null;
     const record = named.get(key) || null;
-    const player = proven ? hex(proven.identity) : record ? record.identity : key;
+    // A ROUND BOOKS TO AN IDENTITY ONLY WITH ITS CONSENT (kanban #1278, RULED #1276): the record's identity with its proof, or a head-to-head reveal's
+    // proof (the identity key over round and entry); two different identities proven over one round key book it to neither; else the bare round key
+    const consented = record && record.consented ? record.identity : null;
+    const player = proven && consented && hex(proven.identity) !== consented ? key : proven ? hex(proven.identity) : consented || key;
     // `roundKey` beside the player: the key the entry joined under, so a reader can tell an identity from a bare round key
     // (the badges award only an identity, protocol badges.js). season() reads no such field; /season-rounds sends it, for the
     // weekly board badge, which merges the seats' accounts on it (mergeSeasonAccounts `keys`).

@@ -393,7 +393,7 @@ test('a real node: /badges and /badge-definitions serve the events it signed; /b
       }
       for (let s = 0; s < 2; s++) db.prepare('INSERT INTO final_sigs (round_id, entry_id, run_id, signer_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)').run(rid, eid, run, SEATS[s], new Uint8Array(1), 3);
       round.putStakeLock({ entryId: eid, roundId: rid, outpoint: { txid: b32(0xa0 + i), outIdx: 0 }, fields: { amountMsat: '96000' }, contractId: 'c' });
-      if (identity) round.putLobbyName({ roundId: rid, playerPubkey: key, signature: new Uint8Array(64), atMs: 5,
+      if (identity) round.putLobbyName({ roundId: rid, playerPubkey: key, signature: new Uint8Array(64), identitySig: new Uint8Array(64), atMs: 5,
         record: encodeLobbyName({ roundId: rid, playerPubkey: key, identityPubkey: identity, name: 'alice', atMs: 5 }) });
     });
     const ask = (q) => fetch(`http://127.0.0.1:${d.port}${q}`);

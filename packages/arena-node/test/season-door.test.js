@@ -57,7 +57,7 @@ function writeRound(round, n, players, { stakeMsat = STAKE, startMs, gameId = NE
       db.prepare('INSERT INTO final_sigs (round_id, entry_id, run_id, signer_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)')
         .run(rid, eid, run, SEATS[s], new Uint8Array(1), 3);
     if (p.lock) round.putStakeLock({ entryId: eid, roundId: rid, outpoint: { txid: b32(0xa0 + i), outIdx: 0 }, fields: { amountMsat: String(NET) }, contractId: 'c' });
-    if (p.record) round.putLobbyName({ roundId: rid, playerPubkey: p.key, signature: new Uint8Array(64), atMs: 5,
+    if (p.record) round.putLobbyName({ roundId: rid, playerPubkey: p.key, signature: new Uint8Array(64), identitySig: new Uint8Array(64), atMs: 5,
       record: encodeLobbyName({ roundId: rid, playerPubkey: p.key, identityPubkey: p.record.identity, name: p.record.name || '', atMs: 5 }) });
   });
   if (settlement) {
