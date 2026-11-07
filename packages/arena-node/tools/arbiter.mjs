@@ -22,7 +22,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin } from '../src/arbiter.js';
+import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic } from '../src/arbiter.js';
 import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
 import { decodeSpentSet, spentNonceSet } from '../../arena-protocol/src/spent-set.js';
@@ -48,7 +48,10 @@ const seats = String(env.ARENA_ARBITER_SEATS || '').split(',').map((s) => s.trim
 const rpc = bitcoindRpc({ url: env.ARENA_BITCOIND_URL, cookiePath: env.ARENA_BITCOIND_COOKIE });
 const statePath = env.ARENA_ARBITER_STATE || null;
 const state = statePath && existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : { handled: {} };
-const keep = () => { if (statePath) writeFileSync(statePath, JSON.stringify(state, null, 1)); };
+// WRITTEN WHOLE OR NOT AT ALL (kanban #1232, audit 3 #1210 CRASH-1): a temp file, synced, renamed over the state - a stop mid-write leaves the
+// last good state, never a truncated one the arbiter cannot start from
+const keep = () => { if (statePath) writeJsonAtomic(statePath, state); };
+if (!state.intents) state.intents = {};
 const say = (o) => console.log(`[arbiter] ${JSON.stringify(o)}`);
 const cache = blockCache();
 const LOOKBACK = Number(env.ARENA_ARBITER_LOOKBACK || 2100);
@@ -107,9 +110,15 @@ async function handle(seat, s) {
   const signatures = set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, slash.sighash) }));
   const tx = assemble({ slash, signatures, set });
   if (!tx.ok) return { done: false, why: tx.why };
-  const sent = await post(rpc, tx.hex);
   // WHO THE PLAYERS' ESCROW IS FOR, kept with the slash: the step after (payOut) pays each from the federation
   const players = [...slash.distribution.playerShares].map(([key, sats]) => ({ key, sats: String(sats) }));
+  // THE SLASH IS RECORDED BEFORE IT IS BROADCAST (kanban #1232, audit 3 #1210 CRASH-1): a lost answer (bitcoind restarted, the unit stopped)
+  // left nothing kept, and once the slash confirmed the next pass read the spent bond as "nothing to do" - its escrow never paid out. The
+  // intent names its txid; a pass that finds that transaction on the chain or in the mempool takes it as posted.
+  let intentTxid = null; try { intentTxid = (await rpc('decoderawtransaction', [tx.hex])).txid; } catch { intentTxid = null; }
+  if (intentTxid) { state.intents[s.proof] = { txid: intentTxid, slashHeight: census.tip, signers: tx.signers, node: s.node, round: s.round, entry: s.entry,
+    playersSats: String(slash.built.amounts.players), players, atMs: Date.now() }; keep(); }
+  const sent = await post(rpc, tx.hex);
   return sent.ok ? { done: true, posted: sent.txid, slashHeight: census.tip, signers: tx.signers, node: s.node, round: s.round, entry: s.entry,
     playersSats: String(slash.built.amounts.players), players } : { done: false, why: sent.why };
 }
@@ -182,9 +191,20 @@ async function pass() {
     let list; try { list = await get(`${seat}/slashes`); } catch (e) { say({ seat, refused: e.message }); continue; }
     for (const s of list.slashes || []) {
       if (state.handled[s.proof]) continue;
+      // A SLASH RECORDED BEFORE ITS BROADCAST AND FOUND ON THE CHAIN OR IN THE MEMPOOL IS POSTED (kanban #1232)
+      const intent = state.intents[s.proof];
+      if (intent) {
+        if (await intentLanded(rpc, intent.txid, 1)) {
+          const { atMs: _a, ...rest } = intent;
+          state.handled[s.proof] = { at: Date.now(), done: true, posted: intent.txid, ...rest };
+          delete state.intents[s.proof]; keep();
+          say({ seat, proof: s.proof.slice(0, 16), node: s.node.slice(0, 16), posted: intent.txid, why: 'its recorded slash is on the chain' });
+          continue;
+        }
+      }
       let r; try { r = await handle(seat, s); } catch (e) { r = { done: false, why: e.message }; }
       say({ seat, proof: s.proof.slice(0, 16), node: s.node.slice(0, 16), ...r });
-      if (r.done) { state.handled[s.proof] = { at: Date.now(), ...r }; keep(); }
+      if (r.done) { state.handled[s.proof] = { at: Date.now(), ...r }; delete state.intents[s.proof]; keep(); }
     }
   }
   for (const [proof, v] of Object.entries(state.handled)) {
