@@ -364,6 +364,8 @@ code that handles `REPLAY`.
 
 ## 0A.7a Non-replay plugins: attested results *(RULED 2026-10-07, board)*
 
+**RULED 2026-11-07 (spec review, kanban #1292).** A manifest's `attest_threshold` must be more than half of its attestor keys (`k > n/2`), so two standing outcomes always share a key and the contradiction names it; a manifest under that is invalid. An attested round's gross is capped at a quarter of the attestors' posted bonds (`gross ≤ Σ attestor_bond / 4`, as §5A.10 caps a game round against its committee), and a manifest may name a backup attestor set the seats consult after `resolve_at + deadline/2` when the first set is silent. Before this, one attestor who signed Up could sign Down for the price of a bond unrelated to the pool, a k-minority could VOID at no cost, and silence was a VOID button; VOID is a transfer from the in-the-money side to the out-of-the-money side.
+
 **Result source.** A round of an `ATTESTED` game has no core, no config and
 no run: its manifest lists no cores, `run_ticks_max` 0, no rank curve and no
 `min_score`, and a round of it names 32 zero bytes as its `sim_wasm_hash`
@@ -470,6 +472,8 @@ is no core.
    of it.
 
 ## 0A.7b The market we build first: "Bitcoin Up or Down - 15 minutes" *(2026-10-09: "match this polymarket market", board /#278)*
+
+**RULED 2026-11-07 (spec review, kanban #1293).** A market round's **gross** is under §5A.10's ceiling: a seat refuses an order once the round's filled volume plus the order would exceed `max_round_pool` of its census, and a market on a game (§0A.7d) is capped at the source round's `max_round_pool` and its gross counts into the source committee's exposure. Before this a book round could hold a thousand 100,000-sat orders under a committee bonded for a 1,000-sat bracket.
 
 The model is Polymarket's series **BTC Up or Down 15m**
 (polymarket.com/event/btc-updown-15m-1791598500, read 2026-10-09 from its
@@ -594,7 +598,7 @@ rotates: a seat that is down only moves its batches' orders into the next
 leader's batch, which takes everything before its own cutoff.
 1. A little after the cutoff (100 ms grace, so an order posted just before it
    has landed), the leader asks every seat for its unbatched orders
-   (`GET /batch-proposal`) and takes their union, checking each order again.
+   (`GET /batch-proposal`) and takes their union, checking each order again. Each seat signs its answer, and refuses a batch that leaves out an order it reported before the cutoff; a leader that then cannot reach the threshold voids and the next leader takes the union (RULED 2026-11-07, kanban #1313: omission by the leader was silence, and a free look at the uniform price).
 2. It hands the set and its signature over `batchId` (round, k, the order ids)
    to every seat (`POST /batch`).
 3. Each seat checks the leader is the round's seat k mod n, every order, that
@@ -1714,6 +1718,8 @@ census objective. It is paid **once**.
 
 ## 5A.3 Eligibility — objective criteria only
 
+**RULED 2026-11-07 (spec review, kanban #1291).** Two limits on the absence machinery. (1) **A weight cap on the absence claim:** the census a duty node posts may leave out at most 20 % of the chain census's bonded weight per day, oldest-missed first; the rest stays in whatever the certificates say, and a client refuses a committed census whose weight is under 75 % of the chain census it can see itself. Before this, three heartbeat certificates (5 of 9 drawn, ~10 % per slot at 30 % of capital) could evict the whole honest census for a day and run every round, panel and auditor of the day on the attacker's seats. (2) **The duty order is not grindable:** rank by `H(duty tag || network_id || d || bond outpoint)` drawn bond-weighted as every committee is, never by the node key (§5A.4 already says a key hash is grindable). The emergency grids of a creator whose primary was conflicted by its own coins do not count for proofs.
+
 Every eligibility criterion must be decidable from chain state plus the
 committed advertisement body. Nothing else may enter, or the census stops
 being canonical.
@@ -2223,7 +2229,7 @@ cap         nodes out by this rule hold at most 10 % of the census's weight past
   with 403 and the pass went through the first time. An honest round below the
   height sends the same requests as before and no ask; at the height it sends the
   same requests with an ask on each commit and share, and signs the same bytes.
-- **4 silent seats leave 3 honest, so no note stands. Accepted.** A round with 4
+- **4 silent seats leave 3 honest, so no note stands. Accepted, and priced as rate × payoff (RULED 2026-11-07, kanban #1305):** a player-operator with 20 % of capital holds 4 of 7 in about 32 of a grid's 960 rounds a day (121 at 30 %), each a free option worth about pot/4 against a two-player opponent, up to ~0.4× his capital a day with the capital returned; for named-claim rounds the fallback claim (§23.2) needs the same four quiet seats, so this is the one stall left there. A round with 4
   or more colluders goes unrecorded: 3.3 % of rounds at 20 % of capital, 12.6 %
   at 30 %.
 - **A frame is bounded, not stopped.** 4 colluders can name 3 honest seats. A
@@ -2251,7 +2257,8 @@ cap         nodes out by this rule hold at most 10 % of the census's weight past
   weight from the census of its seating. A duty node gathers the window's notes
   from every seat first (`GET /stall-notes`); seats hand their notes on as they
   sign them (`POST /stall-notes`).
-- **Out for as long as 3 proofs lie in the window.** There is no timer and no
+- **Out for a season from the third note (RULED 2026-11-07, kanban #1304; it was "as long as 3 proofs lie in the window", at most 70 h, which §5A.10's income term had assumed to be a season).** A node named by three proofs leaves the draw for `season` (12,960 blocks) from the third; an honest node framed by four colluders over three failed rounds loses 90 days of fees, bounded by the 10 % cap, the re-priced residual. The old text follows for the record:
+- ~~**Out for as long as 3 proofs lie in the window.**~~ There is no timer and no
   sentence to serve: a node is back by itself once fewer than 3 proofs lie in the
   last 72 h, and nobody decides anything, so nobody can be asked. It is drawn for
   nothing while it is out, so nothing new names it.
@@ -2528,6 +2535,10 @@ document has a recipient: the protocol reserves. The Round Contract's
 `slashRemainder` has one valid value, this rule; `BURN` is withdrawn.
 
 ## 5A.3B Bond construction and how a fraud proof becomes a slash
+
+**RULED 2026-11-07 (spec review, kanban #1303).** A holder judges a proof whether or not it hosts the game: it fetches the core by the proof's `sim_wasm_hash` and replays in its sandbox, and builds a read-only federation client from the public `FederationRecord` for the table row. "Does not host the game" is no longer a reason to sign nothing. **Residual, at its price:** a third of the shares that stays silent voids every slash start and every fallback, unprovably; the only answer is the reshare rule (shares follow bonds) and the census health line.
+
+**RULED 2026-11-07 (spec review, kanban #1287).** The fallback leaf opens before the return leaf: `slash_fallback_blocks` 288 < `slash_return_blocks` 432 (testnet4 72 / 108, regtest 24 / 36). Before this the return opened at 144 and the fallback at 288, so for any bond past `bond_maturity` a slash landed only if both panels signed within a day, three quiet panel members cost nothing, and the bonding presig (no panel leaf) made a mature guardian, auditor or panel member unslashable. Now the census key always gets its turn; an honest mature node falsely started waits three days instead of one, bearing the false-fallback exposure every immature bond already bears. #1021's "a mature node can leave first" is withdrawn.
 
 An earlier draft said "slashable" without saying where the bond sits or who can move it.
 This section makes it implementable and then states plainly what cannot be
@@ -3387,7 +3398,7 @@ is corrected inside the 30 minutes of §13A.
 | | mainnet | testnet4 | regtest |
 |---|---|---|---|
 | `slash_hold_blocks` | 6 (~1 h) | 1 | 1 |
-| `slash_return_blocks` | 144 (~1 day) | 36 | 12 |
+| `slash_return_blocks` | 432 (~3 days) | 108 | 36 |
 | `slash_fallback_blocks` | 288 (~2 days) | 72 | 24 |
 
 `slash_hold_blocks` is the depth a chain event needs anyway, and long enough to
@@ -3404,7 +3415,7 @@ release and refill itself from the peg-in; nothing depends on it.
 | the census key sends a bond anywhere but a hold output its node signed | refused by Bitcoin: `slash_presig` no longer verifies |
 | the census key starts a slash with no valid proof | no money moves: the panels do not sign, and the hold output stays the bond (below) |
 | a round's panels, both captured | they cannot start without the census key, and a panel reaches only that round's seats, not every bond |
-| one panel blocks a true slash (3 of 7 refuse) | the census key releases at `slash_fallback_blocks`; a mature node can leave first, at `slash_return_blocks`, as under path A |
+| one panel blocks a true slash (3 of 7 refuse) | the census key releases at `slash_fallback_blocks`, which opens before the return leaf (RULED 2026-11-07, kanban #1287) |
 | a node buys a slash start to get out before maturity | nothing: the return leaf waits for `bond_maturity` too |
 | 2/3 of the bonded capital on an exact key; on a drawn one about 60 % held together before `h`, about a third for a buyer who picks holders after it | can still take a bond that has not matured, and only among the bonds naming that one key. At 2/3 it holds the committees anyway |
 
@@ -4206,6 +4217,8 @@ branch per bond. A client that cannot complete it - no headers, a missing
 proof - does not join; it says why, the way a refused entry does.
 
 ## 5A.7 Committee size and thresholds
+
+**RULED 2026-11-07 (spec review, kanban #1314).** A drawn node that answers PRESENT and then signs no SEATING does not hold the round: a seating that drops a member of S with no signature by `seating_close + Δ` (Δ = 20 s) counts as coming after S for the ordered rule, with the missing signature, attested by the signers' own SEEN record, as the justification, so the honest signers may move to it. A slow honest node loses its seat to a reserve, which the text already accepts.
 
 Mainnet:
 
@@ -5401,6 +5414,8 @@ objects carry their own verification.
 
 ## 13A.1 Three auditors replay every round *(RULED 2026-10-27, kanban #725; protocol 22)*
 
+**RULED 2026-11-07 (spec review, kanban #1306).** Four changes so the auditor layer has an equilibrium. (1) The unpaid remainder of the auditors' 10 % goes to the protocol reserves, never back into the nodes' pools. (2) An AUDIT counts when it is on the round's `publication_relays[]` by the cutoff (that path is built), not only when a seat says it holds it. (3) An AUDIT carries `H(state at tick t)` with `t = beta mod T_run` from the auditor's own VRF output, a tick that is not a checkpoint tick, so only a replayer can produce it; seats verify it from the replay they already did. (4) The transcript is posted by `window_open + 120 s`, relay-timestamped, or the result cannot reach FINAL. Before this the seats paid the auditors out of their own fee and kept what they did not pay, an AUDIT needed no replay, and the committee controlled the clock the auditors raced.
+
 Every seat of a round's committees replays its runs (§34), and anyone may
 object (above). But nobody outside the committee is obliged to look, so five
 colluding seats are caught only if somebody happens to replay. From protocol
@@ -6179,7 +6194,10 @@ trustless. The honest statement:
 > eligible. No single node decides a result or moves funds. A 5-of-7
 > game/verify quorum determines final results; a separate 5-of-7 settlement
 > quorum authorizes Lightning settlement; and a public objection window lets
-> anyone overturn a fabricated result by replay.
+> anyone overturn a fabricated result by replay (blocked with at least 3 honest
+> seats; against 5 colluders the payment goes out at FINAL and is repaid from
+> their bonds through §5A.3B, whose players' share the panels can release from
+> the hold at `slash_hold_blocks` - RULED 2026-11-07, kanban #1308).
 
 Residual assumptions:
 
@@ -6228,10 +6246,11 @@ named (#1069). There is one set of 7 since protocol 2 (§5A.9), so the re-run
 window of §13C does nothing against it: it helps honestly overloaded seats, not
 collusion.
 
-**Closed for named-claim rounds (RULED 2026-11-07, kanban #1268).** From
-`NAMED_CLAIM_HEIGHT` a lock has a third path: after `stall_blocks` the census
-key pays the settlement the FINAL results make (§23.2, "The fallback claim"),
-so a stalled settlement returns nothing to the loser. What the exchange that
+**Closed for named-claim rounds (RULED 2026-11-07, kanban #1268, revised by
+#1290).** From `NAMED_CLAIM_HEIGHT` a lock has a third path: after
+`stall_blocks` four of the seven named seats pay the settlement the FINAL
+results make (§23.2, "The fallback claim"), so a stalled settlement returns
+nothing to the loser unless four seats stay quiet. What the exchange that
 led there established: the per-round draw is no defence, since the committee
 is public from the beacon and a losing player reads it after the draw;
 silence cannot be priced, since it has no bytes and a liveness slash would
@@ -6734,70 +6753,69 @@ infrastructure failure safe. It holds while the federation runs; a halted
 federation is §22's residual, not a refund path.
 
 **The fallback claim: a stalled settlement returns nothing (RULED 2026-11-07,
-kanban #1268; closes §22 P6 for named-claim rounds).** A stake lock and a fee
-lock of a named-claim round (the ArenaLockContract of kanban #1131, from
-`NAMED_CLAIM_HEIGHT`) have three ways out, not two:
+kanban #1268; REVISED the same day, kanban #1290, #1315: the four named seats
+in place of the census key).** A stake lock and a fee lock of a named-claim
+round (the ArenaLockContract of kanban #1131, from `NAMED_CLAIM_HEIGHT`) have
+three ways out, not two:
 
 ```text
 claim      t of the n named seats, with the preimage          at any time
-fallback   census_key(e), no preimage                         from lock height + stall_blocks
+fallback   t − 1 of the n named seats, no preimage            from lock height + stall_blocks
 refund     the player's key                                   from expiration
 ```
 
-- **`fallback_key`** is the census key live at the round's census height
-  (§5A.3B, the key that starts slashes and releases holds), named in the
-  contract at lock time; a seat refuses a lock naming another (§23.1 step 5).
-  **`stall_blocks`** is 36 on mainnet and testnet4 (about six hours: the
-  round, the objection window, the re-run window and the committee's own
-  attempts all fit in it many times), 3 on regtest. `expiration` stays
-  `stake_expiry_blocks`, so the fallback has the rest of the day.
+- **Why the seats and not the census key.** The first ruling named
+  `census_key(e)`. That gave one key, with no hold, no panel and no notice,
+  a spend over every lock of a stalled round: three quiet seats plus a
+  buyer with a third of the capital's shares (§5A.3B measured 33.5 %) could
+  take the whole round, a FROST signature names nobody, holders are not
+  benched, and 342 silent shares blocked the fallback for free. The four
+  named seats are the authority the round already has: three quiet seats
+  cannot stall four, four seats on a false table are named and slashable
+  (§5A.3 offence (a) of kanban #1131), and the key's liveness is no longer
+  a condition. **`stall_blocks`** is 36 on mainnet and testnet4, 3 on
+  regtest; `expiration` stays `stake_expiry_blocks`.
 - **What it pays:** the settlement the round's rules make - F, or F′ with a
   gone lock (kanban #1146), a late table, a market's book - rebuilt from the
   entries' FINAL results and read by the same rules every table is read by
-  (§5A.3 table row, the payees of kanban #1138-#1143): payout contracts to the
-  qualifiers' keys, the fee locks to the node row, the reserves and the
-  donation set as the settlement would have paid them. It claims every lock
-  of the round the federation still holds; what a landed claim took is read as
-  #1146 reads it.
-- **An entry with no FINAL** by then is replayed by the holders themselves,
-  from its canonical transcript (§13A: signed marks, receipts, inputs), as an
-  objection is replayed; the replay's result is that entry's. An entry no
-  seat holds a transcript for is read as its rules say (§16: ENTRY_VOID, the
-  stake back). A holder signs only a table it rebuilt from its own reading,
-  so a replay the holders do not agree on gets no fallback and the lock
-  refunds at expiry: with no agreed result nobody can say who won, and the
-  refund is the right answer there.
-- **Who files:** any seat of the round or any holder, in a turn by a hash of
-  the round id and its key, through `POST /census-sign/commit` with kind
-  `lockFallback`. Every holder checks for itself: the Round Contract, each
-  FINAL (5 of 7 of the round's committee) or its own replay, the table byte
-  for byte, and that the federation still holds the locks at the height the
-  request names. The census key's one BIP-340 signature over the transaction
-  stands for every input; the module hands core `fallback_key` as the input
-  key once `stall_blocks` have passed.
-- **Why this closes P6.** Before it, a settlement needed 5 of 7 and a refund
-  needed 3 to stay quiet, and the committee is public from the beacon, so a
-  losing player could buy three quiet seats after the draw and get the stake
-  back: a free option, and the cheapest coalition in the design. A stall now
-  needs the census key to stay quiet, the same bar every slash rests on, and
-  the loser's stake goes where the result sends it. Silence is still not
-  slashed, because it still has no bytes; it no longer has to be priced. The
-  stall rule (§5A.3, "Stalled in its rounds") stays for hygiene; its
-  settlement stage (#1069) is no longer needed for the money.
-- **Not this:** a haircut on the refund (a refund minus a haircut still
-  beats losing the stake, so the loser keeps paying for the stall, and a
-  full one punishes an honest player on every bad day of the network); a
-  lower claim threshold after a while (three named seats could then claim
-  wrongly, which the bonds would have to cover); a liveness slash (a dropped
-  relay would be slashed).
+  (§5A.3 table row, the payees of kanban #1138-#1143). It claims every lock
+  of the round the federation still holds.
+- **An entry with no FINAL** by then is paid by its result only when four
+  of the seven seats signed one `PlayerResult` for it (each attributable
+  and slashable by replay under §13C); below four, the entry is what the
+  seats wrote (`VOID`, `ENTRY_VOID`: the stake back). Nobody replays at the
+  fallback: with no four signatures nobody can say who won, and the refund
+  is the right answer there.
+- **The node row** of a fallback pays only the seats whose signed result or
+  FINAL for the round is on the relays by `final_after + 60 s` (public
+  inputs, so the table stays byte-equal); the rest of the fee goes to the
+  reserves. A stall pays the quiet seats nothing.
+- **Who files:** any of the four, in a turn by a hash of the round id and
+  its key, through the same MuSig2 batch the claim uses (kanban #1135:
+  body id, commits, the lowest four committed sign). The module hands core
+  `KeyAgg` of the four named signers as the input key once `stall_blocks`
+  have passed.
+- **The bonds cover it:** `bond_min(settlement) >= max_round_volume`
+  (§5A.3), so four named bonds cover four rounds' volume.
+- **Why this closes P6.** A settlement needed 5 of 7 and a refund needed 3
+  to stay quiet, and the committee is public from the beacon, so a losing
+  player could buy three quiet seats after the draw. A stall now needs four
+  quiet seats, which is also the number at which the stall note cannot
+  form; that case is priced in §5A.3 as rate × payoff. Silence is still not
+  slashed, because it still has no bytes; it no longer has to be priced for
+  three seats. The stall rule stays for hygiene.
+- **Not this:** the census key (above); a haircut on the refund (a refund
+  minus a haircut still beats losing the stake); a lower threshold than
+  four (three named seats could claim wrongly and the bonds would have to
+  cover it); a liveness slash (a dropped relay would be slashed).
 - **The triangle (kanban #1280).** Three things are wanted of a stake lock:
   the player cannot walk off with it, the refund needs no committee, and
   the refund pays the player. A stock lock gives two of the three: taking
   the player's key away is what makes the refund need a threshold at all,
   and a threshold is what three quiet seats can stall. The fallback claim
   keeps all three, because the refund stays committee-free and pays the
-  player; it is only reachable if the bigger key did not act first. It
-  also invents no new authority: the census key already starts slashes.
+  player; it is only reachable if the four seats did not act first. It
+  also invents no new authority: the four are the round's own seats.
 - **Until `NAMED_CLAIM_HEIGHT`** a round's locks are stock LNv2 with two
   paths, and P6 stays the residual §22 names for them.
 
@@ -7038,6 +7056,8 @@ the owner: much shorter) and regtest in tens of blocks; both in §27A.6.
 
 ## 23A.2 Who the guardians are: founding
 
+**RULED 2026-11-07 (spec review, kanban #1297).** A cohort or succession founding seats at least `f + 1` guardians drawn from the seated guardians of existing OPEN federations (an operator may guard at most two OPEN federations), and only the rest from the free pool; and no federation younger than `drain_blocks` receives first deposits by default. Before this, ten self-declared operators bonded at `bond_min` while the free pool was empty were the whole draw, and the first-deposit rule sent every new player to them.
+
 A guardian is a **bonded census node** (§5A.2), nothing else was ever
 allowed (§23.6, 2026-09-15: every guardian has his own bond). To be
 drawn it must also:
@@ -7138,6 +7158,8 @@ census nodes at `census_height`).
 
 ## 23A.3 Several federations, and which one a player is in
 
+**RULED 2026-11-07 (spec review, kanban #1288).** A guardian's bond counts toward `exposure_cap` only while `bond_maturity > height + abandon_blocks + slash_fallback_blocks`, so an abandonment can always be slashed before path A opens (kanban #1093's "bonds locked while guarding", written down). A guardian whose bond is nearer reads as having given notice at `bond_maturity − departure_notice` (DEPARTED on schedule, no offence) and the cap drops the moment its bond stops counting; the owner page says so a season ahead. A guardian keeps counting by bonding a second output (§5A.3B "Multiple bond outputs") or by bonding a long maturity at founding. Before this the cap counted bonds any mature guardian could spend at will, and the offence and the spend were one transaction.
+
 **Yes, several** - and for two reasons that have nothing to do with
 balance. Succession (§23A.6) needs a second federation to exist while the
 first drains, and the exposure cap (§22, F9) only means something if a
@@ -7155,7 +7177,7 @@ which anyone can read from the chain (Fedimint's wallet module, stock). Its
 collateral is public too: the bonds of its guardians. So:
 
 ```text
-exposure_cap = (f + 1) × the smallest bond among its seated guardians
+exposure_cap = (seated − 2f) × the smallest bond among its seated guardians   (RULED 2026-11-07, kanban #1295: it was (f + 1), which holds only at full seating; 4, 3, 2 at 10, 9, 8 seated)
 load         = on-chain reserve / exposure_cap
 ```
 
@@ -7194,6 +7216,8 @@ federation is founded (§23A.2); the seats show `load` beside every round.
   another has the client show why.
 
 ## 23A.3a Capacity pressure: paying for bigger bonds and bigger peg-ins *(2026-10-19)*
+
+**RULED 2026-11-07 (spec review, kanban #1296).** `load` is read against the players' money, not the gateways': the federation record carries `player_reserve = reserve − Σ proved gateway e-cash` (each gateway's held proof, the threshold-signed read this section already defines), and load, the bands, the founding trigger and the health line are computed from it. A federation opens only if `2 × peg_in_min ≤ exposure_cap / 4`. Before this, load measured the gateways' peg-ins (the two mandatory mainnet peg-ins alone put a floor-bonded federation at load 1.25) and paid a guardian-gateway for pressure it created.
 
 > Owner, 2026-10-19 ~22:05Z: "when the network is approaching capacity and deposits are likely to be halted due to bonds not being big
 > enough there needs to be incentive to increase a nodes bond by receiving a far larger fee share when other nodes are not doing it.
@@ -7529,6 +7553,8 @@ Bitcoin cannot check liveness either.
 
 ## 23A.5 A guardian leaves, and what his bond then does
 
+**RULED 2026-11-07 (spec review, kanban #1289).** "Answering" in a halt proof means signing, not reachability. In the halt window every live guardian signs its own observation `{ federation, session S, first_height, height, peers_seen[] }`, naming the guardians it sees in P2P consensus; the slashed set is every guardian outside the largest mutually attesting subset, and a guardian that signs nothing is gone. A stub that answers `session_count` and signs nothing is ABANDONED. One signature per guardian, nothing on chain. The honest-but-partitioned residual stays as §5A.3B names it.
+
 | Case | What it is | What happens |
 |---|---|---|
 | **Down** for less than `abandon_blocks` | an outage | nothing; Fedimint absorbs up to `f`; not recorded |
@@ -7776,6 +7802,8 @@ bond here.
 
 ### 23A.5a The owner's emergency key: leaving while the node is offline (protocol 17)
 
+**RULED 2026-11-07 (spec review, kanban #1294).** An emergency departure is free only while the federation stays OPEN after it. A request that takes the federation to CRITICAL or below, and any DEPARTED row whose `since_height` lies inside `abandon_blocks` before a halt height, reads as ABANDONED whatever key signed it: the bond pays. A genuinely broken third machine inside one 48 h window loses its bond, the residual the halt proof already carries.
+
 *(RULED 2026-10-19: "owner emergency key when node is offline ... derived von den 24 words, und erlaubt es bei jeder anderen Node sich
 da einzuloggen und einen leave request abzusetzen"; "einloggen mit einem Emergency key. Es ist fishy sich mit den 24 Wörtern
 einzuloggen"; the two cases below: "It works the way you proposed. Keep the bond.")*
@@ -7805,6 +7833,10 @@ to the abandonment rule. The owner takes it out instead, from anywhere, with a k
 - **Leaked, the code can only take the node out** - no money, no settings, nothing signed in the node's name.
 
 ## 23A.6 Succession: back to nominal size
+
+**RULED 2026-11-07 (spec review, kanban #1298).** A bond counts once across the records that name it: while the predecessor is not CLOSED, the successor's `exposure_cap` is `(seated − 2f) × smallest shared bond − reserve_old`, both figures from the records. Before this the same operators stood behind two reserves for up to 28 days.
+
+**RULED 2026-11-07 (spec review, kanban #1309).** Drain shares are paid only for rounds with `census_height < draining_height + drain_blocks`; after that the predecessor reads as CLOSED for pay. A guardian-called succession names its reason (a `federation_nominal` change or a listed upgrade) or pays no drain shares.
 
 Stock Fedimint 0.12 cannot, as far as this project has measured, add a
 guardian to a running federation or hand a gone guardian's key share to a
@@ -7966,6 +7998,8 @@ the screen that shows the words, in those words.
 ---
 
 ## 23A.9 Gateway seats: who hosts the federation's Lightning *(2026-10-18)*
+
+**RULED 2026-11-07 (spec review, kanban #1310).** A migration (§23A.6 step 3) or a swap (§23A.3) goes only through a gateway whose published send and receive fees are at or under `gateway_fee_max` in the federation record (reference 0.1 % + 10 sat); else any registered gateway under it; else the client waits and says so. The gateway seating names the fee a seat was seated at, and a seat above it is below the minimums (unpaid).
 
 > "We need 2 guardians per federation and there is currently no process who
 > will host the guardian. Modify the spec for it and come up with additional
@@ -8572,6 +8606,8 @@ state, and §25.1 says exactly how.
 
 ## 25.1 Discovery is chain state *(new)*
 
+**RULED 2026-11-07 (spec review, kanban #1312).** Omission is the attack, so the second source is normative: a client that pays takes bond lists from at least two independent providers and uses the union, and checks completeness over the recent window from BIP158 filters since a compiled-in census checkpoint (every bond pays `BOND_MARKER`; a few MB a month). A list that one provider serves alone is enough to look, not to lock.
+
 Playable M2 on regtest/testnet4 uses this section, not a later milestone:
 bond outputs, census, committee_time, and the advertisement in the funding
 transaction. Lightning settlement is M3. Committee size is genesis: 2-of-2
@@ -9056,6 +9092,8 @@ The damage is bounded in every row: donations are voluntary, capped by
 
 ### 27A.4.1 The developers' own ballot (2026-10-16)
 
+**RULED 2026-11-07 (spec review, kanban #1302).** A change of the set needs the authority key **and** approvals by more than half of the recipients' `share_bps`, so the authority key alone moves nothing; a recipient's share can be cut only with its own signature or by the cold admin key; a frozen set keeps paying its recipients' own keys, never one address. Whether the protocol developers' 2 % stays mandatory (§27A.9.1) or returns to §0A.8's player choice is the owner's decision, open on kanban #1302; the single-key risk is closed either way.
+
 The developers paid by a donation set may replace it themselves, without the admin key and without
 a new network id:
 
@@ -9170,7 +9208,7 @@ a state whose origin nobody can check.
 | census lead = `series_start - census cutoff` (TN24-POST-1409) | **72 h** | **36 h** (testnet4; 12 h publication window) | regtest's own blocks |
 | writer horizon (rounds generated ahead, TN24-1405) | 72 h | **72 h** | 72 h |
 | `bond_maturity` | ~30 days | ~1 day | **100 blocks** |
-| `slash_hold_blocks` / `slash_return_blocks` / `slash_fallback_blocks` | 6 / 144 / 288 | 1 / 36 / 72 | **1 / 12 / 24** |
+| `slash_hold_blocks` / `slash_return_blocks` / `slash_fallback_blocks` | 6 / 432 / 288 | 1 / 108 / 72 | **1 / 36 / 24** |
 | `census_key_shares_max` | 1024 | 1024 | **1024** |
 | `census_key_bond_min` | the lowest bracket's value, in genesis | 50,000 sat (its live floor) | **50,000 sat** |
 | `notice_period` | ~30 days | ~1 day | **10 blocks** |
@@ -9450,6 +9488,8 @@ dies of quiet. ABSTAIN lets someone say *I am here and I do not care.*
 
 ### 27A.7.4 Timings
 
+**RULED 2026-11-07 (spec review, kanban #1300).** The turnout floor is replaced by a floor on YES over everyone eligible, so a NO can never cause a pass (the old pair, turnout 40 % and approval 66 %, let 30 % YES pass only when 10 % honest NO showed up): DESIGN passes with YES > 50 % of non-abstaining weight **and** YES ≥ 15 % of all eligible capital; MONEY with ≥ 66 % **and** YES ≥ 26 % of all eligible capital; an UPGRADE keeps §27A.8's 34 %. A MONEY vote counts only bonds that meet §27A.9.5 rule 1's age, so rented 31-day capital does not set the fee. `node_fee_bps_max` is a genesis parameter: raising it is an UPGRADE the clients must choose to follow.
+
 In block heights, because that is the only clock the network agrees on -
 the same clock the census already uses.
 
@@ -9520,7 +9560,12 @@ And a **repeal** runs on a short schedule - review 0, voting 720, cooldown
 2 (RULED 2026-11-06, kanban #1196: it was 0, which let a repeal decided 3 deep
 activate before its decision was final; regtest stays 0 / 6 / 0; testnet4 votes
 one day, 144, as every testnet4 ballot does since kanban #785, with the same
-cooldown 2 - RULED 2026-11-06, kanban #1200) - but *only* if its `config` is byte-identical to an ancestor that was
+cooldown 2 - RULED 2026-11-06, kanban #1200) - but *only* if it names the
+config in force's **direct parent**, within one normal cycle (4,464 blocks) of
+the activation it undoes, at its class's thresholds (RULED 2026-11-07, kanban
+#1307: "any ancestor that was live before" let a fee config repealed years ago
+come back in five days with no exit window); anything else is a proposal. And
+*only* if its `config` is byte-identical to an ancestor that was
 live before. It can go back, never forward. That cannot be abused into a
 fast path for new changes, because the only configurations it can reach are
 ones the network already ran.
@@ -9762,6 +9807,8 @@ A client MAY refuse to follow automatically and ask the player. It MUST NOT
 follow a chain whose root it does not recognise.
 
 ### 27A.8.5 What a hard fork still cannot do
+
+**RULED 2026-11-07 (spec review, kanban #1301).** This section predates the reserves (§27A.9) and is corrected: reserves follow the guardians, so a reserve output carries the `network_id` it was paid under, and guardian code releases it only for a proposal ratified by that network's census; the ancestor never stops, so both sides run the same rule. A client **MUST** ask (never follow automatically) when the certificate's re-affirmed weight is under 66 % of the ancestor census, a figure that is on chain.
 
 A winning supermajority holds unlimited power over the *rules*. It holds
 none over *funds*, and the difference is where the safety of the whole
@@ -10074,11 +10121,11 @@ capital for all of the reserves.
 
 | # | Rule | Numbers (blocks) |
 |---|---|---|
-| 1 | **Who votes:** a bond at least **3 months old** when the proposal is published, that stays **locked** (CLTV `bond_maturity`) at least **3 months after the vote's last block**. A bond past its lock date still serves rounds but no longer votes. | `season` 12,960; `lockAfterVote` 12,960 |
+| 1 | **Who votes:** a bond at least **3 months old** when the proposal is published, **not spent before `last + lockAfterVote`**: a bond spent earlier has its vote voided after the fact (chain state, every seat computes it), and the denominator of rule 3 is **every** seasoned bond, not the long-locked ones *(RULED 2026-11-07, kanban #1299: the old "stays locked" rule made the electorate whoever chose a multi-year lock, so an attacker's long bonds could be 100 % of rule 1's weight)*. | `season` 12,960; `lockAfterVote` 12,960 |
 | 2 | **How much it counts:** bond sats × **age factor** at publication: **1×** under a year, **2×** from one year, **3×** from two. Old nodes outweigh new money up to 3 : 1. | `year` 52,560 |
 | 3 | **When it passes:** **60 %** of the votes cast (YES of YES + NO; ABSTAIN counts for neither) say YES, **and** YES is at least **20 % of everyone who could vote** (the total weight of rule 1's bonds). | |
 | 4 | **How much it can take:** one proposal at most **10 %** of the paying reserves; all payments in **3 months** at most **25 %** of what the reserves held at the window's start. Over its own cap a proposal is never paid; a payment over the window cap waits. | `capWindow` 12,960 |
-| 5 | **Time to say no:** nothing is paid for **2 weeks** after the vote's last block. Every payout goes in **4 monthly parts** of a quarter each, the odd sats in the last; a proposal under 4 sat is one part *(RULED 2026-11-06, kanban #1198: it was "above 1 % of the reserves", but no reserve figure is read the same by every seat, so two seats named different tranche ids for one proposal; the count now follows the proposal's amount alone)*. Each payment is due at `last + delay + k × trancheEvery` and is paid only when that block is 6 deep **and a re-count of every vote up to it still passes rule 3**: a new NO, or a YES turned NO, stops that payment and every later one, for good. | `delay` 2,016; `trancheEvery` 4,320 |
+| 5 | **Time to say no:** nothing is paid for **2 weeks** after the vote's last block. A stop needs the floor a pass needs: the NO weight up to that payment is at least **20 % of rule 1's weight**, so a revolt stops a payout and one late NO does not *(RULED 2026-11-07, kanban #1311)*. Rule 4's caps are read against the federation record's threshold-signed reserve figure, the one read every seat shares. Every payout goes in **4 monthly parts** of a quarter each, the odd sats in the last; a proposal under 4 sat is one part *(RULED 2026-11-06, kanban #1198: it was "above 1 % of the reserves", but no reserve figure is read the same by every seat, so two seats named different tranche ids for one proposal; the count now follows the proposal's amount alone)*. Each payment is due at `last + delay + k × trancheEvery` and is paid only when that block is 6 deep **and a re-count of every vote up to it still passes rule 3**: a new NO, or a YES turned NO, stops that payment and every later one, for good. | `delay` 2,016; `trancheEvery` 4,320 |
 
 **The signal** counts only active nodes: a bond 3 months old (rule 1's age) and rounds served in **3 of the last 4 weeks**
 (`week` 1,008).
