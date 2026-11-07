@@ -8075,7 +8075,14 @@
           if (!inv || !ARENACLIENT.openPlayerWallet) return [];
           const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
           const out = [];
-          for (const x of kept.filter((y) => /^[0-9a-f]{64}$/i.test(y.hex) && y.hex !== cur && ARENACLIENT.phraseWalletEntries(L, y.hex, k) > 0)) {
+          // NOT A PHRASE ANOTHER TAB HOLDS (kanban #1228, audit 2 #1204 CLIENT-2): this opened a second wallet client on a phrase whose own tab was
+          // live, and the sweep moved its notes out from under that tab's client (the state #1164 ended for the collect). A phrase whose lock any
+          // tab holds or waits for, or this tab holds for a collect, is skipped - its own tab resumes its deposit
+          const lockedNow = new Set();
+          try { if (navigator.locks && typeof navigator.locks.query === 'function') { const q = await navigator.locks.query(); for (const l of [...(q.held || []), ...(q.pending || [])]) lockedNow.add(l.name); } } catch { /* no lock list: the held-here set still counts */ }
+          const heldHere = window.ARENA_PHRASES_HELD_HERE || new Set();
+          const free = (hex) => !lockedNow.has('arena.phrase.' + hex.slice(0, 16)) && !heldHere.has(hex.slice(0, 16));
+          for (const x of kept.filter((y) => /^[0-9a-f]{64}$/i.test(y.hex) && y.hex !== cur && ARENACLIENT.phraseWalletEntries(L, y.hex, k) > 0 && free(String(y.hex).toLowerCase()))) {
             try { out.push({ label: x.hex.slice(0, 8), hex: x.hex, client: await ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(k), invite: inv, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L }) }); }
             catch (e) { console.log('[arena] wallet ' + x.hex.slice(0, 8) + ' in federation ' + k.slice(0, 8) + ' did not open: ' + (e && e.message ? e.message : e)); }
           }
