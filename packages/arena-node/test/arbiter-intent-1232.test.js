@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { intentLanded, writeJsonAtomic, post } from '../src/arbiter.js';
+import { intentLanded, writeJsonAtomic, post, resumeIntent, payOutSlash } from '../src/arbiter.js';
 
 test('#1232 a recorded slash is found in the mempool, in a block without txindex (its escrow output), or not at all', async () => {
   const TX = 'ab'.repeat(32);
@@ -48,4 +48,43 @@ test('#1232 the state is written whole or not at all: a write that dies before t
   assert.throws(() => writeJsonAtomic(path, { handled: { a: 1, b: 2 } }, { fs: dying }));
   assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), { handled: { a: 1 } }, 'the state is the last good one, not a truncated file');
   assert.ok(existsSync(`${path}.tmp`), 'the unfinished write is beside it, never over it');
+});
+
+// the escrow spend after path B (payOutSlash) had the same order: broadcast, then the record
+const ESC = 'cd'.repeat(32), PATHB = 'ef'.repeat(32);
+const escrowChain = ({ landed = false, inputSpent = false, refuse = null } = {}) => {
+  const sent = [];
+  const rpc = async (m, p) => {
+    if (m === 'getrawtransaction') { if (landed && p[0] === ESC) return '0200'; throw new Error('No such mempool or blockchain transaction'); }
+    if (m === 'gettxout') return p[0] === PATHB && !inputSpent ? { value: 0.001 } : null;
+    if (m === 'testmempoolaccept') return [refuse ? { txid: ESC, allowed: false, 'reject-reason': refuse } : { txid: ESC, allowed: true }];
+    if (m === 'sendrawtransaction') { sent.push(p[0]); return ESC; }
+    throw new Error(`no ${m}`);
+  };
+  return { rpc, sent };
+};
+
+test('#1232 resumeIntent: found, its input spent (only the set signs it), sent again, or refused and dropped', async () => {
+  const intent = { txid: ESC, hex: '02abcd' }, input = { txid: PATHB, vout: 1 };
+  assert.deepEqual(await resumeIntent(escrowChain({ landed: true }).rpc, intent, input), { ok: true, landed: true });
+  assert.deepEqual(await resumeIntent(escrowChain({ inputSpent: true }).rpc, intent, input), { ok: true, inferred: true });
+  const again = escrowChain();
+  assert.deepEqual(await resumeIntent(again.rpc, intent, input), { ok: true, again: true });
+  assert.deepEqual(again.sent, ['02abcd'], 'the same bytes, not a new transaction');
+  const refused = await resumeIntent(escrowChain({ refuse: 'min relay fee not met' }).rpc, intent, input);
+  assert.equal(refused.ok, false); assert.equal(refused.drop, true);
+});
+
+test('#1232 payOutSlash resumes its recorded escrow spend: a lost answer no longer strands the peg-in', async () => {
+  const intent = { txid: ESC, hex: '02abcd', vout: 1, pegInAddress: 'tb1qpegin', pegInSats: '99000' };
+  const v = { posted: PATHB, playersSats: '100000', escrowIntent: { ...intent } };
+  let kept = 0;
+  const r = await payOutSlash({ proof: 'aa'.repeat(32), v, set: {}, rpc: escrowChain({ inputSpent: true }).rpc, keep: () => { kept++; }, bin: '/bin/false', dir: '/nonexistent' });
+  console.log('  MEASURED #1232 escrow resume:', JSON.stringify({ escrowTxid: v.escrowTxid.slice(0, 8), intentLeft: !!v.escrowIntent, kept, next: r.why.slice(0, 40) }));
+  assert.equal(v.escrowTxid, ESC); assert.equal(v.pegInAddress, 'tb1qpegin'); assert.equal(v.pegInSats, '99000');
+  assert.equal(v.escrowIntent, undefined);
+  assert.match(r.why, /not claimed/, 'on to the claim, not "no unspent escrow"');
+  const w = { posted: PATHB, playersSats: '100000', escrowIntent: { ...intent } };
+  const refused = await payOutSlash({ proof: 'aa'.repeat(32), v: w, set: {}, rpc: escrowChain({ refuse: 'min relay fee not met' }).rpc, bin: '/bin/false', dir: '/nonexistent' });
+  assert.match(refused.why, /refused/); assert.equal(w.escrowIntent, undefined, 'dropped: the next pass builds it anew'); assert.equal(w.escrowTxid, undefined);
 });

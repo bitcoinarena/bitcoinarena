@@ -155,6 +155,13 @@ export async function payOutSlash({ proof, v, set, rpc, keep = () => {}, say = (
   const run = (args, timeoutMs = 120000) => new Promise((done) => execFile(bin, args, { timeout: timeoutMs, maxBuffer: 1 << 24, env: runEnv },
     (err, out) => { const line = String(out || '').split('\n').find((l) => l.startsWith('{')); done(line ? JSON.parse(line) : { error: String((err && err.message) || 'no answer').slice(0, 200) }); }));
   const dir = ['--data-dir', dataDir];
+  if (!v.escrowTxid && v.escrowIntent) {
+    const i = v.escrowIntent;
+    const r = await resumeIntent(rpc, i, { txid: v.posted, vout: i.vout });
+    if (!r.ok) { delete v.escrowIntent; keep(); return { why: `the recorded escrow spend is refused: ${r.why}` }; }
+    Object.assign(v, { escrowTxid: i.txid, pegInAddress: i.pegInAddress, pegInSats: i.pegInSats }); delete v.escrowIntent; keep();
+    say({ proof: proof.slice(0, 16), escrowIntoFederation: i.txid, sats: i.pegInSats, resumed: r.landed ? 'found' : r.inferred ? 'its input is spent' : 'sent again' });
+  }
   if (!v.escrowTxid) {
     // THE ESCROW OUTPUT FROM THE UTXO SET (gettxout: no transaction index needed): path B carries at most four outputs
     const escrow = escrowOutput({ arbitrationKeys: set.keys, k: set.k }, { tweakPoint, combine });
@@ -173,9 +180,12 @@ export async function payOutSlash({ proof, v, set, rpc, keep = () => {}, say = (
     if (!spend.ok) return { why: spend.why };
     const signed = assemble({ slash: spend, signatures: set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, spend.sighash) })), set });
     if (!signed.ok) return { why: signed.why };
+    // RECORDED BEFORE ITS BROADCAST (kanban #1232): a lost answer left the escrow spent and every later pass "no unspent escrow"
+    const txid = await txidOf(rpc, signed.hex);
+    if (txid) { v.escrowIntent = { txid, hex: signed.hex, vout: o.n, pegInAddress: addr.address, pegInSats: String(spend.built.amounts.pegIn) }; keep(); }
     const sent = await post(rpc, signed.hex);
-    if (!sent.ok) return { why: sent.why };
-    Object.assign(v, { escrowTxid: sent.txid, pegInAddress: addr.address, pegInSats: String(spend.built.amounts.pegIn) }); keep();
+    if (!sent.ok) { delete v.escrowIntent; keep(); return { why: sent.why }; }
+    Object.assign(v, { escrowTxid: sent.txid, pegInAddress: addr.address, pegInSats: String(spend.built.amounts.pegIn) }); delete v.escrowIntent; keep();
     say({ proof: proof.slice(0, 16), escrowIntoFederation: sent.txid, sats: String(spend.built.amounts.pegIn) });
   }
   if (!v.claimedMsat) {
@@ -244,6 +254,22 @@ export function writeJsonAtomic(path, value, { fs = null } = {}) {
 }
 
 /** TESTMEMPOOLACCEPT, THEN BROADCAST - never the other way: `rpc(method, params)` is the arbiter's own bitcoind. */
+/**
+ * A RECORDED SPEND RESUMED (kanban #1232): `intent` { txid, hex } was kept before its broadcast, spending `input` { txid, vout }, an
+ * output only this set signs. Found on the chain or in the mempool: posted. Its input spent: posted too (nobody else can spend it).
+ * Its input still unspent: the same bytes are sent again. Refused with the input unspent: { ok: false, drop: true } - built anew.
+ */
+export async function resumeIntent(rpc, intent, input) {
+  if (await intentLanded(rpc, intent.txid, 0)) return { ok: true, landed: true };
+  const still = await rpc('gettxout', [input.txid, input.vout, true]).catch(() => null);
+  if (!still) return { ok: true, inferred: true };
+  const sent = await post(rpc, intent.hex);
+  return sent.ok ? { ok: true, again: true } : { ok: false, drop: true, why: sent.why };
+}
+
+/** The display txid of a signed transaction's hex, or null (kanban #1232). */
+export async function txidOf(rpc, hex) { try { return String((await rpc('decoderawtransaction', [hex])).txid); } catch { return null; } }
+
 export async function post(rpc, hex) {
   const [r] = await rpc('testmempoolaccept', [[hex]]);
   // SENT BEFORE (kanban #1232): the same bytes already in the mempool are this transaction posted, its answer lost
