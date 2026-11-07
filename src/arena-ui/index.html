@@ -4653,7 +4653,7 @@
       for (const l of liq.filter((x) => held.includes(String(x.federation).toLowerCase()))) {
         const key = ARENACLIENT.liquidationKeyFor(seed, l.federation, window.ARENA_CURVE);
         const said = await ARENACLIENT.presentNotes({ events, network: NETWORK, verify, held: [String(l.federation).toLowerCase()].filter((f) => held.includes(f)), walletFor, payoutPk: key.payoutPk, height: tip, storage: vault() });
-        for (const x of said) console.log('[arena] liquidation of ' + x.federation.slice(0, 8) + ': ' + (x.ok ? (x.nothing ? 'no note held' : (x.accepted || []).length + ' note(s) presented') : x.why));
+        for (const x of said) console.log('[arena] liquidation of ' + x.federation.slice(0, 8) + ': ' + (x.ok ? (x.nothing ? 'no note held' : (x.accepted || []).length + ' note(s) presented' + (x.waitsForSpentSet ? ', waiting for the federation\'s spent set' : '')) : x.why));
         // a federation this seed held nothing in, and never kept a ledger row in, is not opened again
         if (!ledger.includes(String(l.federation).toLowerCase()) && said.some((x) => x.nothing) && !said.some((x) => !x.ok || x.kept)) { try { vault().setItem(checkedKey(l.federation), String(Date.now())); } catch { /* read again next time */ } }
       }

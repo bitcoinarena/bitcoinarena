@@ -59,8 +59,9 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
       accepted.push({ nonce, amountMsat: String(n.amountMsat) });
     }
     if (accepted.length) persist();
+    // WAITING FOR THE SPENT SET (ruled 2026-11-07, kanban #1237): a claim is always taken; whether it is paid now or waits for the set is said
     return { ok: accepted.length > 0, status: accepted.length ? 200 : 409, accepted, refused, height: at, inWindow: at <= liq.claimWindowCloses,
-      ...(accepted.length ? {} : { why: 'none of those notes can be claimed' }) };
+      spentSetPublished: Array.isArray(liq.spentNonces), ...(accepted.length ? {} : { why: 'none of those notes can be claimed' }) };
   }
 
   /**
@@ -190,6 +191,11 @@ export async function payOutLiquidation({ fid, v, claims, height, run, spendEscr
   const done = new Set(v.paidNonces || []);
   // A NOTE BATCH ASKED BEFORE A STOP (kanban #1174) is the batch: its notes, its list, read back under its key - not the notes due now
   const asked = v.notesPay && payoutOf(v.notesPay) === PAYOUT.ASKED ? v.notesPay : null;
+  // PAID AT ONCE ONLY AGAINST A VERIFIED SPENT SET (ruled 2026-11-07, kanban #1237, audit 2 RES-4): without one nothing per note is paid, and no
+  // remainder, until the claim window closes - then against the empty set, pro rata if the escrow is short (§23A.5 rule 3). A set that arrives
+  // first pays every waiting claim at once, against it. A batch asked before a stop is finished whatever (kanban #1174).
+  if (!asked && p.spentSetPublished === false && Number.isInteger(p.claimWindowCloses) && (await height()) <= p.claimWindowCloses)
+    return { why: `no verified spent set of the federation yet: the claims wait for one, or for the claim window to close at ${p.claimWindowCloses}` };
   const due = asked ? asked.notes.map((n) => ({ ...n })) : p.paidNotes.filter((n) => !done.has(n.nonce) && BigInt(n.msat) > 0n);
   if (!due.length) {
     // THE REMAINDER, once: only after the claim window (settleClaims names a split only then), every note's payout made first
