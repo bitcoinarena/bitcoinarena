@@ -6,29 +6,33 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { taggedHash } from '../src/hash.js';
-import { signHaltObservation, decodeHaltObservation, encodeHaltObservation, haltProof, haltQuorum } from '../src/halt-proof.js';
+import { signHaltObservation, decodeHaltObservation, encodeHaltObservation, haltProof, haltQuorum, signGuardianHaltObservation } from '../src/halt-proof.js';
 
 const key = (s) => { const secret = taggedHash('TEST/halt', new TextEncoder().encode(s)); return { secret, pub: schnorr.getPublicKey(secret) }; };
 const verify = (sig, msg, pub) => { try { return schnorr.verify(sig, msg, pub); } catch { return false; } };
 const seats = Array.from({ length: 9 }, (_, i) => key(`seat${i}`));
 const peer = (i) => Uint8Array.from([2, ...taggedHash('TEST/peer', Uint8Array.of(i))]);
 const federationId = taggedHash('TEST/fed', Uint8Array.of(1));
-const record = { federationId, guardians: [0, 1, 2, 3].map((i) => ({ peerKey: peer(i) })) };
+const nodes = [0, 1, 2, 3].map((i) => key(`node${i}`));
+const record = { federationId, guardians: [0, 1, 2, 3].map((i) => ({ peerKey: peer(i), nodePubkey: nodes[i].pub })) };
+// g0 and g1 sign their own view in the halt window, each seeing the other (kanban #1289: answering is signing)
+const gview = (i, seen) => signGuardianHaltObservation({ federationId, session: 41, firstHeight: 341, height: 352, peersSeen: seen.map(peer), guardian: peer(i) },
+  (h) => schnorr.sign(h, nodes[i].secret));
 const observe = (seat, over = {}) => signHaltObservation({ federationId, session: 41, firstHeight: 341, height: 351, answering: [peer(0), peer(1)],
   observer: seat.pub, ...over }, (h) => schnorr.sign(h, seat.secret));
 const census = seats.map((s) => s.pub);
-const opts = { record, censusSeats: census, abandonBlocks: 10, verify };
+const opts = { record, censusSeats: census, abandonBlocks: 10, verify, guardianObservations: [gview(0, [1]), gview(1, [0])] };
 
-test('a majority of the census seats observing one session for abandon_blocks proves the halt; the guardians that answered are not slashed', () => {
+test('a majority of the census seats observing one session for abandon_blocks proves the halt; the guardians that signed and see each other are not slashed', () => {
   assert.equal(haltQuorum(9), 5); assert.equal(haltQuorum(4), 5); assert.equal(haltQuorum(14), 8);
   const four = haltProof(seats.slice(0, 4).map((s) => observe(s)), opts);
   assert.equal(four.ok, false); assert.match(four.why, /4 seat\(s\) observe the halt at one session, and 9 active seats need 5/);
-  const p = haltProof(seats.slice(0, 5).map((s, i) => observe(s, { firstHeight: 340 + i, height: 351 + i })), opts);
+  const p = haltProof(seats.slice(0, 5).map((s, i) => observe(s, { firstHeight: 340 + i, height: 351 + i })), { ...opts, guardianObservations: [gview(0, [1]), gview(1, [0])].map((o) => ({ ...o })) });
   assert.equal(p.ok, true, p.why);
   assert.equal(p.session, 41); assert.equal(p.observers, 5);
   assert.equal(p.haltHeight, 344, 'the latest first_height: no seat is believed to have seen it before the others');
   assert.deepEqual(p.abandoned.map((k) => k[1]), [peer(2)[1], peer(3)[1]], 'g2 and g3 are abandoned by the halt itself');
-  assert.equal(p.answered.length, 2, 'g0 and g1 answered through the halt: not slashed');
+  assert.equal(p.answered.length, 2, 'g0 and g1 signed through the halt, each seeing the other: not slashed');
 });
 
 test('it is not a proof: a short span, a stranger, a forged signature, two sessions split, or a session after S', () => {

@@ -11,10 +11,20 @@
 //                     first_height among them. Every guardian of the record that a majority did not see answering is ABANDONED
 //                     by the proof itself; one that answered through the halt is not slashed.
 //
+// "ANSWERING" MEANS SIGNING, NOT REACHABILITY (RULED 2026-11-07, kanban #1289): in the halt window every live guardian signs its own
+//   GUARDIAN HALT OBSERVATION  (federation_id, S, first_height, height, peers_seen[], guardian) with its node key (the record's
+//                     node_pubkey for its peer key): the guardians it sees in P2P consensus.
+//   The seats' observations still prove THAT the federation halted (the quorum, S, the halt height, the voids); WHO is slashed is
+//   read from the guardians' own signatures: every seated guardian outside the largest mutually attesting subset of the signers
+//   (a and b attest each other when each names the other) is ABANDONED, and a guardian that signs nothing is gone. A stub that
+//   answers session_count and signs nothing is ABANDONED; an honest guardian the seats cannot reach, that signs, is not.
+//   TWO SUBSETS OF THE SAME LARGEST SIZE: no member of either is slashed (the proof cannot tell which is the federation's rest).
+//   One signature per guardian, nothing on chain.
+//
 // NO CURVE: `sign(digest)` and `verify(signature, digest, nodePubkey)` are injected (BIP-340 over the seats' node keys).
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { TAG, PROTOCOL_VERSION, TYPE_HALT_OBSERVATION } from './constants.js';
+import { TAG, PROTOCOL_VERSION, TYPE_HALT_OBSERVATION, TYPE_GUARDIAN_HALT_OBSERVATION } from './constants.js';
 
 const is32 = (b) => b instanceof Uint8Array && b.length === 32;
 const is33 = (b) => b instanceof Uint8Array && b.length === 33;
@@ -45,6 +55,74 @@ export function decodeHaltObservation(bytes) {
 export const haltObservationId = (o) => taggedHash(TAG.haltObservation, encodeHaltObservation(o));
 export const signHaltObservation = (o, sign) => ({ ...o, answering: [...(o.answering || [])].sort(cmp), signature: sign(haltObservationId(o)) });
 
+// ---- A GUARDIAN'S OWN OBSERVATION (kanban #1289 / #1319) ----
+export function encodeGuardianHaltObservation(o) {
+  if (!is32(o.federationId) || !is33(o.guardian)) throw new Error('a guardian\'s observation names its federation (32) and its own peer key (33)');
+  u32(o.session, 'the last session'); u32(o.firstHeight, 'first_height'); u32(o.height, 'height');
+  if (o.firstHeight > o.height) throw new Error('a halt cannot be first seen after the observation');
+  const seen = o.peersSeen || [];
+  if (!seen.every(is33)) throw new Error('a peer seen is named by its 33-byte peer key');
+  const w = new Writer();
+  w.u8(TYPE_GUARDIAN_HALT_OBSERVATION); w.u16(PROTOCOL_VERSION);
+  w.bytes32(o.federationId); w.u32(o.session); w.u32(o.firstHeight); w.u32(o.height);
+  w.vec([...seen].sort(cmp), (k, ww) => ww.bytes(k, 33), { sortedBy: cmp });
+  w.bytes(o.guardian, 33);
+  return w.finish();
+}
+export function decodeGuardianHaltObservation(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_GUARDIAN_HALT_OBSERVATION) throw new Error('not a guardian halt observation');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const o = { federationId: r.bytes32(), session: r.u32(), firstHeight: r.u32(), height: r.u32(), peersSeen: r.vec((rr) => rr.bytes(33)), guardian: r.bytes(33) };
+  r.end(); encodeGuardianHaltObservation(o); return o;
+}
+export const guardianHaltObservationId = (o) => taggedHash(TAG.guardianHaltObservation, encodeGuardianHaltObservation(o));
+export const signGuardianHaltObservation = (o, sign) => ({ ...o, peersSeen: [...(o.peersSeen || [])].sort(cmp), signature: sign(guardianHaltObservationId(o)) });
+
+/**
+ * THE LARGEST MUTUALLY ATTESTING SUBSETS. `views`: Map(peer hex -> Set(peer hex it sees)), the signers only. Two signers attest each
+ * other when each names the other (a signer always counts itself). Answers { size, members: Set } - members of EVERY subset of the
+ * largest size (no member of a tied subset is slashed). Bron-Kerbosch over at most a federation's guardians.
+ */
+export function largestMutualSubsets(views) {
+  const ids = [...views.keys()];
+  const adj = new Map(ids.map((a) => [a, new Set(ids.filter((b) => b !== a && views.get(a).has(b) && views.get(b).has(a)))]));
+  let size = 0; const members = new Set();
+  const grow = (r, p, x) => {
+    if (!p.length && !x.length) {
+      if (r.length > size) { size = r.length; members.clear(); }
+      if (r.length === size) for (const m of r) members.add(m);
+      return;
+    }
+    for (const v of [...p]) {
+      grow([...r, v], p.filter((u) => adj.get(v).has(u)), x.filter((u) => adj.get(v).has(u)));
+      p = p.filter((u) => u !== v); x = [...x, v];
+    }
+  };
+  if (ids.length) grow([], ids, []);
+  return { size, members };
+}
+
+/**
+ * The guardians' observations that count in a proof at session S from haltHeight: of the record's seated guardians, signed with the node
+ * key the record binds to that peer key, naming S, signed in the halt window (height >= haltHeight); the newest per guardian.
+ */
+export function countedGuardianObservations(observations, { record, session, haltHeight, verify }) {
+  const gone = new Set((record.gone || []).map((g) => toHex(g.peerKey)));
+  const nodeOf = new Map((record.guardians || []).filter((g) => !gone.has(toHex(g.peerKey))).map((g) => [toHex(g.peerKey), g.nodePubkey]));
+  const fid = toHex(record.federationId);
+  const by = new Map();
+  for (const o of observations || []) {
+    try { encodeGuardianHaltObservation(o); } catch { continue; }
+    const g = toHex(o.guardian);
+    if (toHex(o.federationId) !== fid || !nodeOf.has(g) || o.session !== session || o.height < haltHeight) continue;
+    if (!verify(o.signature, guardianHaltObservationId(o), nodeOf.get(g))) continue;
+    const had = by.get(g);
+    if (!had || o.height > had.height) by.set(g, o);
+  }
+  return by;
+}
+
 /** How many of `seats` active census seats a halt proof needs: a majority, never fewer than HALT_MIN_OBSERVERS. */
 export const haltQuorum = (seats) => Math.max(HALT_MIN_OBSERVERS, Math.floor(seats / 2) + 1);
 
@@ -54,7 +132,7 @@ export const haltQuorum = (seats) => Math.max(HALT_MIN_OBSERVERS, Math.floor(sea
  * the highest session any verified record or signed attestation names (null if none) - a session after S voids the proof.
  * Answers { ok, session, haltHeight, observers, abandoned: [peer key], answered: [peer key] } or { ok: false, why }.
  */
-export function haltProof(observations, { record, censusSeats, abandonBlocks, verify, laterSession = null }) {
+export function haltProof(observations, { record, censusSeats, abandonBlocks, verify, laterSession = null, guardianObservations = [] }) {
   const seats = new Set((censusSeats || []).map(toHex));
   const need = haltQuorum(seats.size);
   const bySession = new Map();
@@ -77,11 +155,13 @@ export function haltProof(observations, { record, censusSeats, abandonBlocks, ve
     return { ok: false, why: `session ${laterSession} is after the halted session ${best.session}: the federation is slow, not halted` };
   const set = [...best.m.values()];
   const haltHeight = Math.max(...set.map((o) => o.firstHeight));
-  const seen = new Map();
-  for (const o of set) for (const k of o.answering) seen.set(toHex(k), (seen.get(toHex(k)) || 0) + 1);
-  const majority = Math.floor(set.length / 2) + 1;
+  // WHO IS SLASHED: the guardians' own signatures (kanban #1289), not who the seats could reach
+  const counted = countedGuardianObservations(guardianObservations, { record, session: best.session, haltHeight, verify });
+  const views = new Map([...counted].map(([g, o]) => [g, new Set([g, ...o.peersSeen.map(toHex)])]));
+  const largest = largestMutualSubsets(views);
+  // (a guardian the record already lists as gone signs nothing that counts, and reads ABANDONED here as it did before)
   const abandoned = []; const answered = [];
-  for (const g of record.guardians || []) ((seen.get(toHex(g.peerKey)) || 0) >= majority ? answered : abandoned).push(g.peerKey);
-  return { ok: true, session: best.session, haltHeight, observers: set.length, abandoned, answered,
+  for (const g of record.guardians || []) (largest.members.has(toHex(g.peerKey)) ? answered : abandoned).push(g.peerKey);
+  return { ok: true, session: best.session, haltHeight, observers: set.length, abandoned, answered, signers: counted.size, largestSubset: largest.size,
     id: taggedHash(TAG.haltObservation, Uint8Array.from(set.sort((a, b) => cmp(a.observer, b.observer)).flatMap((o) => [...haltObservationId(o)]))) };
 }

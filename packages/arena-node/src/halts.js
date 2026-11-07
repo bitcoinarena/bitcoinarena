@@ -27,7 +27,13 @@
 //            A seat that never heard a guardian takes its peers' session only when need - 1 of their signed observations name it or
 //            higher (need: the halt quorum), never one peer's word. And a proof at S is void at a seat whose own reading, this pass,
 //            is below S: f + 1 guardians answer that they never reached it. The clock's one transition is clockStep.
-import { signHaltObservation, decodeHaltObservation, encodeHaltObservation, haltProof, haltObservationId, haltQuorum } from '../../arena-protocol/src/halt-proof.js';
+//   SIGNING, NOT REACHABILITY (RULED 2026-11-07, kanban #1289 / #1319): WHO a proven halt slashes is read from the guardians' own signed
+//            observations (POST /guardian-halt-observations, takeGuardian - each checked against the node key the held record binds to
+//            that guardian), not from which guardians answered this seat's probe: the largest mutually attesting subset is spared. A
+//            guardian's node signs its own (createGuardianHaltSigner) from its guardian's admin status once its session has not moved
+//            for abandon_blocks, naming the peers its guardian is connected to in P2P.
+import { signHaltObservation, decodeHaltObservation, encodeHaltObservation, haltProof, haltObservationId, haltQuorum,
+  signGuardianHaltObservation, decodeGuardianHaltObservation, encodeGuardianHaltObservation, guardianHaltObservationId } from '../../arena-protocol/src/halt-proof.js';
 import { faultsOf } from '../../arena-protocol/src/federation-record.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
@@ -67,15 +73,27 @@ export function clockStep(was, { reading, peerSessions = [], need = 1, tip }) {
 export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey, height, ask, post = async () => {}, load = () => [], save = () => {}, say = () => {} }) {
   const seen = new Map();                    // federation hex -> { session, firstHeight, answering: [peer key], at }
   const kept = new Map();                    // federation hex -> Map(observer hex -> observation)
+  const keptG = new Map();                   // federation hex -> Map(guardian peer key hex -> its signed observation) (kanban #1319)
   const stored = (() => { try { return load(); } catch { return null; } })();
   const storedObs = Array.isArray(stored) ? stored : (stored && stored.observations) || [];
   for (const o of storedObs) { try { keep(decodeWithSig(o)); } catch { /* a stored observation that no longer reads */ } }
+  for (const o of (stored && !Array.isArray(stored) && stored.guardianObservations) || []) { try { keepG(decodeGWithSig(o)); } catch { /* no longer reads */ } }
   for (const [fid, w] of Object.entries((stored && !Array.isArray(stored) && stored.seen) || {})) {
     if (Number.isInteger(w.session) && Number.isInteger(w.firstHeight)) seen.set(fid, { session: w.session, firstHeight: w.firstHeight, heard: w.heard === undefined ? w.session > 0 : !!w.heard, ...(w.rule === CLOCK_RULE ? { rule: CLOCK_RULE } : {}), answering: [], at: Number(w.at) || 0, reading: null });
   }
 
   function decodeWithSig(o) { return { ...decodeHaltObservation(fromHex(String(o.observation))), signature: fromHex(String(o.signature)) }; }
   const asJson = (o) => ({ observation: toHex(encodeHaltObservation(o)), signature: toHex(o.signature) });
+  function decodeGWithSig(o) { return { ...decodeGuardianHaltObservation(fromHex(String(o.observation))), signature: fromHex(String(o.signature)) }; }
+  const asJsonG = (o) => ({ observation: toHex(encodeGuardianHaltObservation(o)), signature: toHex(o.signature) });
+  function keepG(o) {
+    const fid = toHex(o.federationId);
+    const m = keptG.get(fid) || new Map(); keptG.set(fid, m);
+    const had = m.get(toHex(o.guardian));
+    if (had && had.height >= o.height) return false;
+    m.set(toHex(o.guardian), o);
+    return true;
+  }
   function keep(o) {
     const fid = toHex(o.federationId);
     const m = kept.get(fid) || new Map(); kept.set(fid, m);
@@ -85,6 +103,7 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
     return true;
   }
   const persist = () => save({ observations: [...kept.values()].flatMap((m) => [...m.values()].map(asJson)),
+    guardianObservations: [...keptG.values()].flatMap((m) => [...m.values()].map(asJsonG)),
     seen: Object.fromEntries([...seen].map(([fid, w]) => [fid, { session: w.session, firstHeight: w.firstHeight, heard: !!w.heard, ...(w.rule ? { rule: w.rule } : {}), at: w.at }])) });
 
   /** One pass over every federation this seat holds a record of; answers what it saw and signed. */
@@ -134,6 +153,20 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
     return { ok: true, status: fresh ? 201 : 200, kept: fresh };
   }
 
+  /** POST /guardian-halt-observations: a guardian's own signed view { observation: hex, signature: hex } (kanban #1319). */
+  function takeGuardian(said) {
+    let o; try { o = decodeGWithSig(said || {}); } catch (e) { return { ok: false, status: 400, why: `not a guardian halt observation: ${e.message}` }; }
+    const held = records.recordOf(toHex(o.federationId));
+    if (!held) return { ok: false, status: 409, why: 'this seat holds no record of that federation' };
+    const gone = new Set((held.record.gone || []).map((g) => toHex(g.peerKey)));
+    const g = (held.record.guardians || []).find((x) => toHex(x.peerKey) === toHex(o.guardian));
+    if (!g || gone.has(toHex(o.guardian))) return { ok: false, status: 409, why: 'that guardian is not seated in the record this seat holds' };
+    if (!verify(o.signature, guardianHaltObservationId(o), g.nodePubkey)) return { ok: false, status: 409, why: 'that observation is not signed by the guardian\'s node key' };
+    const fresh = keepG(o);
+    if (fresh) persist();
+    return { ok: true, status: fresh ? 201 : 200, kept: fresh };
+  }
+
   /** The halt proof of a federation, against the newest record held; null when none stands. */
   function proofOf(fid) {
     const held = records.recordOf(fid);
@@ -143,6 +176,7 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
     const mine = seen.get(fid);
     const laterSession = mine ? mine.session : null;       // a session this seat saw after S voids a proof at S
     const p = haltProof(all, { record: held.record, censusSeats: censusSeats(), abandonBlocks: clocks.abandonBlocks, verify,
+      guardianObservations: [...(keptG.get(fid) || new Map()).values()],
       laterSession: laterSession !== null && all.every((o) => o.session < laterSession) ? laterSession : null });
     if (!p.ok) return null;
     // A SESSION THIS SEAT SAW PAST THE PROOF'S VOIDS IT, WHATEVER ELSE IS HELD (kanban #1223, audit 2 #1204 FED-A2): the void above is passed
@@ -157,7 +191,39 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
   /** The halt a liquidation counts from: { height, proof } or null. */
   const haltOf = (fid) => { const p = proofOf(fid); return p ? { height: p.haltHeight, proof: p } : null; };
   const list = (fid) => [...(kept.get(String(fid).toLowerCase()) || new Map()).values()].map(asJson);
-  return { observe, take, proofOf, haltOf, haltedFederations, list, seen: (fid) => seen.get(fid) || null, CLOCK_RULE };
+  const listGuardian = (fid) => [...(keptG.get(String(fid).toLowerCase()) || new Map()).values()].map(asJsonG);
+  return { observe, take, takeGuardian, proofOf, haltOf, haltedFederations, list, listGuardian, seen: (fid) => seen.get(fid) || null, CLOCK_RULE };
+}
+
+/**
+ * A GUARDIAN'S OWN HALT OBSERVATION (RULED 2026-11-07, kanban #1289 / #1319), signed by the node that runs the guardian. Each pass reads the
+ * guardian's admin `status` (session_count; per peer id its P2P `connection_status`): the session's clock starts at the tip when the session
+ * moves, and once it has not moved for `abandonBlocks` the node signs (federation, S, first_height, tip, peers_seen, its own peer key) with
+ * its node key - peers_seen the peers its guardian is connected to. `peerKeyOf(id)` maps a peer id to the record's peer key (the
+ * federation config's broadcast keys, as absence-producer.js). The clock is kept across restarts by `load` / `save`.
+ * Answers { ok, session, firstHeight, height, peersSeen, signed? } or { ok: false, why }.
+ */
+export function createGuardianHaltSigner({ federationId, peerKeyOf, ownPeerId, status, height, sign, abandonBlocks, load = () => null, save = () => {} }) {
+  let clock = null;
+  try { const w = load(); if (w && Number.isInteger(w.session) && Number.isInteger(w.firstHeight)) clock = { session: w.session, firstHeight: w.firstHeight }; } catch { /* none kept */ }
+  async function pass() {
+    const st = await status();
+    const fed = st && st.federation;
+    if (!fed || !Number.isInteger(fed.session_count)) return { ok: false, why: 'the guardian runs no consensus to read' };
+    const tip = await height();
+    const session = fed.session_count;
+    if (!clock || session > clock.session) { clock = { session, firstHeight: tip }; save(clock); }
+    const own = peerKeyOf(ownPeerId);
+    if (!own) return { ok: false, why: 'this guardian\'s own peer key is not in its federation config' };
+    const peersSeen = Object.entries(fed.status_by_peer || {})
+      .filter(([id, p]) => Number(id) !== ownPeerId && p && p.connection_status === 'connected')
+      .map(([id]) => peerKeyOf(Number(id))).filter(Boolean);
+    const row = { ok: true, session: clock.session, firstHeight: clock.firstHeight, height: tip, peersSeen: peersSeen.length };
+    if (tip - clock.firstHeight < abandonBlocks) return row;
+    return { ...row, signed: signGuardianHaltObservation({ federationId: fromHex(federationId), session: clock.session, firstHeight: clock.firstHeight,
+      height: tip, peersSeen, guardian: own }, sign) };
+  }
+  return { pass };
 }
 
 /**

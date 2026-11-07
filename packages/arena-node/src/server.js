@@ -166,7 +166,8 @@ import { createLiquidations } from './liquidations.js';
 import { createArbitrationEvents } from './arbitration-events.js';
 import { startsByCensusKey, isAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
 import { slashedGuardianPays } from '../../arena-protocol/src/theft-slash.js';
-import { createHalts, wsSessionCount } from './halts.js';
+import { createHalts, createGuardianHaltSigner, wsSessionCount } from './halts.js';
+import { encodeGuardianHaltObservation } from '../../arena-protocol/src/halt-proof.js';
 import { reserveMembersOf } from './reserve-members.js';
 import { stageDecision, signReleaseAnswer, createStageBook } from './update-stage.js';
 import { createSettleBackoff, refusedForGood, REFUSAL } from './settle-backoff.js';
@@ -6426,6 +6427,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (guardian && guardian.dataDir && guardian.apiPort && typeof chainTip === 'function') {
     guardianWiring.absences = true;
     const producers = new Map();               // federation hex -> absence-producer.js
+    const haltSigners = new Map();             // federation hex -> its guardian's own halt observation signer (kanban #1319)
     const stateFile = `${String(guardian.dataDir).replace(/\.guardian$/, '')}.absences.json`;
     let state = {}; try { state = JSON.parse(readFileSync(stateFile, 'utf8')); } catch { state = {}; }
     const attest = async () => {
@@ -6444,6 +6446,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           sign: (h) => schnorr.sign(h, round.identity.secret), load: () => state[fid],
           save: (v) => { state[fid] = v; try { writeFileSync(stateFile, JSON.stringify(state)); } catch { /* kept in memory */ } } }));
       }
+      // AND, IN A HALT, ITS GUARDIAN'S OWN SIGNED VIEW (RULED 2026-11-07, kanban #1289 / #1319): who it sees in P2P consensus, kept here and
+      // posted to every seat - a proven halt spares the largest mutually attesting subset of these, whoever the seats could reach
+      if (!haltSigners.has(fid)) {
+        const cfg = guardianConfigOf(guardian.dataDir, (f) => readFileSync(f, 'utf8'));
+        const password = readFileSync(`${guardian.dataDir}/admin-password`, 'utf8').trim();
+        haltSigners.set(fid, createGuardianHaltSigner({ federationId: fid, ...cfg, abandonBlocks: fedClocks.abandonBlocks,
+          status: () => wsAdminStatus(guardian.apiPort, password), height: async () => Number(await chainTip()),
+          sign: (h) => schnorr.sign(h, round.identity.secret), load: () => state[`halt:${fid}`],
+          save: (v) => { state[`halt:${fid}`] = v; try { writeFileSync(stateFile, JSON.stringify(state)); } catch { /* kept in memory */ } } }));
+      }
+      try {
+        const h = await haltSigners.get(fid).pass();
+        if (h.ok && h.signed) {
+          const body = JSON.stringify({ observation: toHex(encodeGuardianHaltObservation(h.signed)), signature: toHex(h.signed.signature) });
+          if (halts) halts.takeGuardian(JSON.parse(body));
+          await Promise.all(networkSeats().map((u) => fetch(`${u}/guardian-halt-observations`, { method: 'POST', body, signal: AbortSignal.timeout(15000) }).catch(() => null)));
+          console.log(`[halt] ${fid.slice(0, 16)}: signed this guardian's view at session ${h.session} (${h.firstHeight}..${h.height}), ${h.peersSeen} peer(s) seen`);
+        }
+      } catch (e) { console.log(`[halt] guardian view: ${e.message}`); }
       const r = await producers.get(fid).pass();
       if (!r.ok) { console.log(`[absence] ${fid.slice(0, 16)}: ${r.why}`); return; }
       for (const a of r.signed) {
@@ -11948,12 +11969,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const r = halts.take(said);
         return r.ok ? json(res, r.status, r) : text(res, r.status, r.why);
       }
+      // A GUARDIAN'S OWN SIGNED VIEW IN A HALT (kanban #1319): taken when the held record binds its signer to that guardian
+      if (req.method === 'POST' && url.pathname === '/guardian-halt-observations') {
+        if (!halts) return text(res, 503, 'this seat reads no chain, so it keeps no halt observations');
+        let said; try { said = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a guardian halt observation is { observation, signature } as hex'); }
+        const r = halts.takeGuardian(said);
+        return r.ok ? json(res, r.status, r) : text(res, r.status, r.why);
+      }
       if (req.method === 'GET' && url.pathname === '/halt-observations') {
         const fid = String(url.searchParams.get('federation') || '').toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(fid)) return text(res, 400, 'name a federation: ?federation=<64 hex>');
         const p = halts ? halts.proofOf(fid) : null;
         return json(res, 200, { node: toHex(round.pubkey), federation: fid, observations: halts ? halts.list(fid) : [], seen: halts ? halts.seen(fid) : null,
-          proof: p ? { session: p.session, haltHeight: p.haltHeight, observers: p.observers, abandoned: p.abandoned.map(toHex), answered: p.answered.map(toHex) } : null });
+          guardianObservations: halts ? halts.listGuardian(fid) : [],
+          proof: p ? { session: p.session, haltHeight: p.haltHeight, observers: p.observers, signers: p.signers, largestSubset: p.largestSubset,
+            abandoned: p.abandoned.map(toHex), answered: p.answered.map(toHex) } : null });
       }
       if (req.method === 'GET' && url.pathname === '/liquidations') {
         // with the arbitration set's events (kanban #723): every liquidation and slash it published, each with its signatures; ?events=0 leaves them out
