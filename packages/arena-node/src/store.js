@@ -1277,6 +1277,10 @@ export function openStore(path = ':memory:') {
   // made before it gets the column; a row there carries none, and replays at the 0.7 every run had.
   if (!db.prepare('PRAGMA table_info(loads)').all().some((c) => c.name === 'room'))
     db.exec('ALTER TABLE loads ADD COLUMN room INTEGER');
+  // THE IDENTITY'S CONSENT BESIDE A NAME RECORD (kanban #1278, RULED #1276): the identity key over (round id, round key), checked at the door; a row from
+  // before carries none, and books its round to nobody
+  if (!db.prepare('PRAGMA table_info(lobby_names)').all().some((c) => c.name === 'identity_sig'))
+    db.exec('ALTER TABLE lobby_names ADD COLUMN identity_sig BLOB');
   for (const t of ['objections', 'rerun_objections'])
     if (!db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'block_hash'))
       db.exec(`ALTER TABLE ${t} ADD COLUMN block_hash BLOB`);

@@ -2742,17 +2742,28 @@ export class Round {
   }
 
   /** A joined player's signed name record for a round (M3.3-34). A newer one replaces it; an older one does not. */
-  putLobbyName({ roundId, playerPubkey, record, signature, atMs }) {
-    return this.db.prepare('INSERT INTO lobby_names (round_id, player_pubkey, record, signature, at_ms) VALUES (?, ?, ?, ?, ?) '
+  // `identitySig` (kanban #1278, RULED #1276): the identity's own consent, checked at the door. A newer record naming the same identity keeps the proof held;
+  // a proof for the record held (not newer) is still taken
+  putLobbyName({ roundId, playerPubkey, record, signature, atMs, identitySig = null }) {
+    const had = this.db.prepare('SELECT record, identity_sig, at_ms FROM lobby_names WHERE round_id = ? AND player_pubkey = ?').get(Buffer.from(roundId), Buffer.from(playerPubkey));
+    const idOf = (b) => Buffer.from(b).subarray(64, 96).toString('hex');
+    const sig = identitySig ? Buffer.from(identitySig) : null;
+    if (had && !(Number(atMs) > Number(had.at_ms))) {
+      if (sig && !had.identity_sig && idOf(had.record) === idOf(record))
+        return this.db.prepare('UPDATE lobby_names SET identity_sig = ? WHERE round_id = ? AND player_pubkey = ?').run(sig, Buffer.from(roundId), Buffer.from(playerPubkey)).changes > 0;
+      return false;
+    }
+    const keep = sig || (had && had.identity_sig && idOf(had.record) === idOf(record) ? had.identity_sig : null);
+    return this.db.prepare('INSERT INTO lobby_names (round_id, player_pubkey, record, signature, at_ms, identity_sig) VALUES (?, ?, ?, ?, ?, ?) '
       + 'ON CONFLICT (round_id, player_pubkey) DO UPDATE SET record = excluded.record, signature = excluded.signature, '
-      + 'at_ms = excluded.at_ms WHERE excluded.at_ms > lobby_names.at_ms')
-      .run(roundId, playerPubkey, record, signature, Number(atMs)).changes > 0;
+      + 'at_ms = excluded.at_ms, identity_sig = excluded.identity_sig WHERE excluded.at_ms > lobby_names.at_ms')
+      .run(roundId, playerPubkey, record, signature, Number(atMs), keep).changes > 0;
   }
 
   /** Every name record this signer node keeps for a round, as the players signed them. */
   lobbyNames(roundIdBytes) {
-    return this.db.prepare('SELECT record, signature FROM lobby_names WHERE round_id = ? ORDER BY player_pubkey')
-      .all(roundIdBytes).map((r) => ({ record: new Uint8Array(r.record), signature: new Uint8Array(r.signature) }));
+    return this.db.prepare('SELECT record, signature, identity_sig FROM lobby_names WHERE round_id = ? ORDER BY player_pubkey')
+      .all(roundIdBytes).map((r) => ({ record: new Uint8Array(r.record), signature: new Uint8Array(r.signature), ...(r.identity_sig ? { identitySig: new Uint8Array(r.identity_sig) } : {}) }));
   }
 
   /** The entry's first mark as this signer node stores it (the chain's first link), or null. */
