@@ -22,7 +22,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic, resumeIntent, txidOf } from '../src/arbiter.js';
+import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic, resumeIntent, txidOf, spentSetFromSeats } from '../src/arbiter.js';
 import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
 import { decodeSpentSet, spentNonceSet } from '../../arena-protocol/src/spent-set.js';
@@ -233,17 +233,15 @@ if (liqClients.size) {
   const claimsFile = env.ARENA_LIQ_CLAIMS_FILE || null;
   claims = createLiquidationClaims({
     validate: fedimintNoteValidator({ cli: env.ARENA_FEDIMINT_CLI || 'fedimint-cli', dataDirFor: (fid) => liqClients.get(fid) || null, home: env.ARENA_FEDIMINT_HOME || env.HOME }),
+    // EVERY SEAT, EVERY COPY CHECKED (kanban #1236): the first seat's first copy was taken unchecked
     liquidationOf: async (fid) => {
-      for (const s of seats) {
-        try {
-          const j = await (await fetch(`${s}/liquidations`, { signal: AbortSignal.timeout(15000) })).json();
-          const l = (j.liquidations || []).find((x) => x.federation === fid);
-          if (!l) continue;
-          const copy = l.spentSet && l.spentSet.copies && l.spentSet.copies[0];
-          return { ...l, spentNonces: copy ? spentNonceSet(decodeSpentSet(fromHex(copy.spentSet))) : null };
-        } catch { /* the next seat */ }
-      }
-      return null;
+      const listings = (await Promise.all(seats.map(async (s) => {
+        try { const j = await (await fetch(`${s}/liquidations`, { signal: AbortSignal.timeout(15000) })).json(); return (j.liquidations || []).find((x) => x.federation === fid) || null; } catch { return null; }
+      }))).filter(Boolean);
+      if (!listings.length) return null;
+      const ss = spentSetFromSeats(listings, { verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } } });
+      if (ss.spentNonces === null) say({ liquidation: fid.slice(0, 16), spentSet: ss.why });
+      return { ...listings[0], spentNonces: ss.spentNonces, spentSetSession: ss.session ?? null };
     },
     height: async () => Number(await rpc('getblockcount')),
     escrowMsatOf: async (fid) => {
