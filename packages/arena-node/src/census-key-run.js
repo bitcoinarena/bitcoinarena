@@ -281,7 +281,7 @@ export function createCensusKeyRun({ store, network, networkId, key, secret, fir
     const made = await job(r, 'deal');
     if (!made.ok) throw new Error(made.why);
     const wire = joinSignedCensusDeal(made.bytes, schnorr.sign(censusDealId(decodeCensusDeal(made.bytes)), secret));
-    store.keepDeal(r.run.runId, key, wire);        // written before it leaves: a node deals once, and a restart never deals again
+    store.keepDeal(r.run.runId, key, wire, { durable: true });        // written - and synced (kanban #1243) - before it leaves: a node deals once, and a restart never deals again
     setState(r, { dealt: true });
     log(`[census-key] epoch ${r.run.epoch}: dealt, ${wire.length} bytes, to ${r.peers.length} holders`);
     await push(r, '/census-dkg/deal', wire);

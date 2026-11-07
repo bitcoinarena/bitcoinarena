@@ -3,6 +3,7 @@
 // WHAT A NODE KEEPS OF THE CENSUS KEY (5A.3B, kanban #972): one run's deals, complaints and statements, its shares of a key that stands, and what the chain scan found.
 // The tables are in store.js; this is their only reader. A deal is deleted once its run is over, because a run at 1000 nodes holds about 37 MB of them; the shares never are.
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { durably } from './store.js';
 
 const buf = (b) => Buffer.from(b);
 const u8 = (b) => new Uint8Array(b);
@@ -24,8 +25,10 @@ export class CensusKeyStore {
   }
 
   /** The first signed deal per dealer stands: a second deal by one dealer writes nothing. */
-  keepDeal(runId, dealer, wire) {
-    return this.db.prepare('INSERT OR IGNORE INTO census_key_deals (run_id, dealer, wire, accepted_ms) VALUES (?, ?, ?, ?)').run(buf(runId), buf(dealer), buf(wire), this.now()).changes > 0;
+  keepDeal(runId, dealer, wire, { durable = false } = {}) {
+    const write = () => this.db.prepare('INSERT OR IGNORE INTO census_key_deals (run_id, dealer, wire, accepted_ms) VALUES (?, ?, ?, ?)').run(buf(runId), buf(dealer), buf(wire), this.now()).changes > 0;
+    // THIS NODE'S OWN DEAL IS ON THE DISK BEFORE IT LEAVES (kanban #1243): a lost one made the node deal a second, different deal after a power loss
+    return durable ? durably(this.db, write) : write();
   }
 
   dealOf(runId, dealer) {

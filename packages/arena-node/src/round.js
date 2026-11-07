@@ -10,6 +10,7 @@
 // It does not step the core. There is no `step` in this package and no import
 // of one; a round is a list of inputs until something verifies it, and that
 // something is the checkpoints in step 3.
+import { durably } from './store.js';
 import { createInterner } from './intern.js';
 import {
   encodeRoundContract, roundId, encodeEntryContract, entryId, decodeEntryContract,
@@ -2032,7 +2033,8 @@ export class Round {
       .get(Buffer.from(epochId));
     const flat = new Uint8Array(signerNodes.length * 32);
     signerNodes.forEach((k, i) => flat.set(k, i * 32));
-    this.db.prepare(
+    // AN EPOCH'S OWN CONTRIBUTION IS ON THE DISK BEFORE IT IS HANDED OUT (kanban #1243)
+    durably(this.db, () => this.db.prepare(
       'INSERT OR REPLACE INTO dkg_epochs (epoch_id, signer_nodes, mine, share, signer_node_no, '
       + 'group_pubkey, negated, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(epochId), Buffer.from(flat),
@@ -2041,7 +2043,7 @@ export class Round {
         signerNodeNo === null ? (had ? had.signer_node_no : null) : signerNodeNo,
         groupPubkey ? Buffer.from(groupPubkey) : (had && had.group_pubkey) || null,
         negated === null ? (had ? had.negated : 0) : (negated ? 1 : 0),
-        this.now());
+        this.now()));
     return true;
   }
 
@@ -2491,7 +2493,12 @@ export class Round {
    * Where a send stands: its contract (txid, output), its preimage once the gateway paid, and its state - MOVED ONLY AS send-state.js
    * ALLOWS (kanban #1154): a compare-and-set on the row's state, so a final row never moves and nothing jumps a step. True if it moved.
    */
-  markSend({ entryId, attempt = 0, state, why, txid = null, outIdx = null, preimage = null }) {
+  markSend(args) {
+    // A SEND MARKED FUNDING IS ON THE DISK BEFORE ITS FUNDING (kanban #1243): a lost FUNDING row funded the send a second time
+    return args && args.state === 'FUNDING' ? durably(this.db, () => this.#markSendRow(args)) : this.#markSendRow(args);
+  }
+
+  #markSendRow({ entryId, attempt = 0, state, why, txid = null, outIdx = null, preimage = null }) {
     const from = statesBefore(state);
     if (!from.length) return false;
     let moved = 0;
@@ -3042,8 +3049,10 @@ export class Round {
 
   /** The round's one settlement of its losers' locks (W4): its intent, then where it stands. */
   putLockSettlement({ roundId, txid, message, signature, state, why }) {
-    this.db.prepare('INSERT OR REPLACE INTO lock_settlements (round_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    // A SUBMITTING ROW IS ON THE DISK BEFORE ITS SUBMIT (kanban #1243)
+    const write = () => this.db.prepare('INSERT OR REPLACE INTO lock_settlements (round_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(roundId), String(txid), Buffer.from(message), Buffer.from(signature), state, why, this.now());
+    return state === 'SUBMITTING' ? durably(this.db, write) : write();
   }
 
   lockSettlement(roundIdBytes) {
@@ -3078,8 +3087,10 @@ export class Round {
 
   /** One federation's settlement of a round that takes any federation (2026.0.3): the same row as a round's own. */
   putFedLockSettlement({ roundId, federation, txid, message, signature, state, why }) {
-    this.db.prepare('INSERT OR REPLACE INTO fed_lock_settlements (round_id, federation_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    // A SUBMITTING ROW IS ON THE DISK BEFORE ITS SUBMIT (kanban #1243)
+    const write = () => this.db.prepare('INSERT OR REPLACE INTO fed_lock_settlements (round_id, federation_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(roundId), String(federation).toLowerCase(), String(txid), Buffer.from(message), Buffer.from(signature), state, why, this.now());
+    return state === 'SUBMITTING' ? durably(this.db, write) : write();
   }
 
   fedLockSettlement(roundIdBytes, federation) {
@@ -3270,8 +3281,10 @@ export class Round {
 
   /** A late loser's second settlement (slice C3b-1): its intent, then where it stands. One per (round, entry). */
   putLateLockSettlement({ roundId, entryId, txid, message, signature, state, why }) {
-    this.db.prepare('INSERT OR REPLACE INTO late_lock_settlements (round_id, entry_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    // A SUBMITTING ROW IS ON THE DISK BEFORE ITS SUBMIT (kanban #1243)
+    const write = () => this.db.prepare('INSERT OR REPLACE INTO late_lock_settlements (round_id, entry_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(roundId), Buffer.from(entryId), String(txid), Buffer.from(message), Buffer.from(signature), state, why, this.now());
+    return state === 'SUBMITTING' ? durably(this.db, write) : write();
   }
 
   lateLockSettlement(roundIdBytes, entryIdBytes) {
@@ -3317,9 +3330,11 @@ export class Round {
       markSend({ entryId, attempt = 0, state, why, txid = null, outIdx = null, preimage = null }) {
         const from = statesBefore(state);
         if (!from.length) return false;
-        return base.db.prepare('UPDATE late_winnings_sends SET state = ?, why = ?, txid = COALESCE(?, txid), out_idx = COALESCE(?, out_idx), '
+        // FUNDING on the disk before its funding (kanban #1243)
+        const write = () => base.db.prepare('UPDATE late_winnings_sends SET state = ?, why = ?, txid = COALESCE(?, txid), out_idx = COALESCE(?, out_idx), '
           + `preimage = COALESCE(?, preimage), updated_ms = ? WHERE late_entry_id = ? AND entry_id = ? AND attempt = ? AND state IN (${from.map(() => '?').join(', ')})`)
           .run(state, String(why), txid, outIdx === null ? null : Number(outIdx), preimage, base.now(), late, Buffer.from(entryId), attempt, ...from).changes > 0;
+        return state === 'FUNDING' ? durably(base.db, write) : write();
       },
       sendAttemptsOf(roundIdBytes) { return all(roundIdBytes).map(rowOf); },
       sendPlansOf(roundIdBytes) {

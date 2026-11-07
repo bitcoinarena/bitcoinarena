@@ -47,6 +47,7 @@
 //   THE ENDS. The readings of sample 0 and of the closing sample are written to the database as they come; at the end a seat
 //         that holds fewer than the whole committee's asks the others (GET /price-samples?ks=) and takes every reading that
 //         verifies, so the seats sign the result over the same readings (round-result.js roundResultFromReadings).
+import { durably } from './store.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { priceSampleId, priceTapeId, priceAttestationStands, sampleTick, PRICE_SAMPLE_EVERY_MS, PRICE_TAPE_LENGTH,
@@ -175,7 +176,8 @@ export class PriceFeed {
       round.db.exec('CREATE TABLE IF NOT EXISTS price_signed (round TEXT NOT NULL, slot TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (round, slot))');
       this.signedDb = {
         get: round.db.prepare('SELECT value FROM price_signed WHERE round = ? AND slot = ?'),
-        put: round.db.prepare('INSERT OR IGNORE INTO price_signed (round, slot, value) VALUES (?, ?, ?)'),
+        // what this seat signed is on the disk before the signature leaves it (kanban #1243)
+        put: (() => { const st = round.db.prepare('INSERT OR IGNORE INTO price_signed (round, slot, value) VALUES (?, ?, ?)'); return { run: (...a) => durably(round.db, () => st.run(...a)) }; })(),
         drop: round.db.prepare('DELETE FROM price_signed WHERE round = ?'),
       };
     } catch { this.ends = null; this.signedDb = null; }   // a stand-in store without SQL: the ends live in memory only
