@@ -7569,6 +7569,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return answer(409, { why: 'that round\'s entry closed: the identity its entries are booked to is fixed (kanban #1213)' }); }
         if (!round.entriesOf(rec.roundId).some((e) => toHex(e.entry.playerPubkey) === toHex(rec.playerPubkey)))
           return answer(409, { why: 'this signer node holds no player with that key in that round' });
+        // THE IDENTITY COMES WITH THE JOIN (kanban #1267, audit 4 #1257 fixesA-4): a replayed game's record was taken until the entry close plus a minute -
+        // in a late-join series round (entry close at start + 45 s, runs ending at start + 82 s) after every run had ended, in a grid round 60 s into an 82 s
+        // run - so a player named his identity only once he had seen his score. A record that sets or changes the identity is taken only within the entry
+        // grace (15 s) of this player's entry reaching this seat, as the page posts it at the join; a rename that keeps the identity held is taken as before
+        { const held = typeof round.namedIdentityOf === 'function' ? round.namedIdentityOf(rec.roundId, rec.playerPubkey) : null;
+          const joinedAt = typeof round.joinedMsOfPlayer === 'function' ? round.joinedMsOfPlayer(rec.roundId, rec.playerPubkey) : null;
+          const joinGrace = round.entryCloseGraceMs === null || round.entryCloseGraceMs === undefined ? 15000 : Number(round.entryCloseGraceMs);
+          // a replayed game's only: a market's outcome is attested long after an order (its page names orders every 30 s), a head-to-head round has no grace (#1263)
+          let replayed = false; try { const pg = pluginForRound(decodeRoundContract(new Uint8Array(round.get(rec.roundId).contract)), hosted); replayed = !!(pg.ok && !pg.attested && !pg.headToHead); } catch { replayed = false; }
+          if (replayed && held !== toHex(rec.identityPubkey) && joinedAt !== null && Number(round.now()) > joinedAt + joinGrace)
+            return answer(409, { why: `that player joined this round at ${joinedAt} on this seat's clock: the identity its entry is booked to is named with the join (within ${joinGrace} ms), not later (kanban #1267)` }); }
         const kept = round.putLobbyName({ roundId: rec.roundId, playerPubkey: rec.playerPubkey, record: bytes, signature: sig, atMs: rec.atMs });
         // A NEW NAME IS LISTED AT ONCE: the small listings kept 5 s (GET /rounds) are dropped, so a player's rename shows on
         // the next poll - measured: lobby-names served the old name for up to 5 s after the new one was taken (red since
