@@ -352,3 +352,54 @@ test('kanban #1232: an escrow spend whose answer was lost is recorded first and 
   console.log('  MEASURED #1232 liquidation:', JSON.stringify({ spent, resumed, escrowTxid: v.escrowTxid, intentLeft: !!v.escrowIntent, paid: second.paid, claimedMsat: v.claimedMsat }));
   assert.deepEqual([spent, resumed, v.escrowTxid, v.pegInAddress, v.escrowIntent, v.claimedMsat], [1, ['escrow-into-safe'], 'escrow-into-safe', 'tb1qsafe', undefined, '9000000']);
 });
+
+test('kanban #1237 (ruled 2026-11-07, RES-4 part 2): no verified spent set - claims taken and told they wait, nothing paid inside the window; at its close paid against the empty set; a set that arrives pays at once', async () => {
+  let tip = 1012, liq = { ...LIQ, spentNonces: null };
+  const claims = createLiquidationClaims({ validate: async (_fid, e) => ({ ok: true, notes: NOTES[e], amountMsat: NOTES[e].reduce((a, n) => a + n.amountMsat, 0n) }),
+    liquidationOf: async (fid) => (fid === FED ? liq : null), height: async () => tip, escrowMsatOf: async () => 10_000_000n, clocks: REGTEST_CLOCKS, save: () => {} });
+  const offered = await claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+  const runs = [];
+  const run = async (args) => { runs.push(args[1]);
+    if (args[1] === 'pegin-address') return { address: 'tb1qsafe' };
+    if (args[1] === 'pegin-claim') return { balance_before_msat: 0, balance_after_msat: 9_000_000 };
+    if (args[1] === 'pay') return { txid: `pay${runs.length}`, payouts: args[3].split(',').map((x, i) => ({ refund_pk: x.split(':')[0], amount_msat: Number(x.split(':')[1]), out_idx: i })) };
+    return {}; };
+  const v = {};
+  const pass = () => payOutLiquidation({ fid: FED, v, claims, height: async () => tip, run, spendEscrow: async () => ({ txid: 'escrow-into-safe', sats: '10000' }) });
+  const inWindow = await pass();
+  const paysInWindow = runs.filter((r) => r === 'pay').length;
+  // the window closes with no set at all: paid against the empty set
+  tip = 1101;
+  const atClose = await pass();
+  // a second federation-like case: the set arrives inside the window - paid at once, a nonce in it refused
+  let tip2 = 1012; const liq2 = { ...LIQ, spentNonces: null };
+  const claims2 = createLiquidationClaims({ validate: async (_fid, e) => ({ ok: true, notes: NOTES[e], amountMsat: NOTES[e].reduce((a, n) => a + n.amountMsat, 0n) }),
+    liquidationOf: async (fid) => (fid === FED ? liq2 : null), height: async () => tip2, escrowMsatOf: async () => 10_000_000n, clocks: REGTEST_CLOCKS, save: () => {} });
+  await claims2.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+  const v2 = {}; const pass2 = () => payOutLiquidation({ fid: FED, v: v2, claims: claims2, height: async () => tip2, run, spendEscrow: async () => ({ txid: 'escrow-2', sats: '10000' }) });
+  const waits2 = await pass2();
+  liq2.spentNonces = ['02' + 'a2'.repeat(32)];
+  const arrived = await pass2();
+  console.log('  MEASURED #1237:', JSON.stringify({ offered: { ok: offered.ok, spentSetPublished: offered.spentSetPublished }, inWindow: inWindow.why, paysInWindow,
+    atClose: { paid: atClose.paid, payouts: (v.payouts || []).map((x) => x.msat) }, withSet: { waited: !!waits2.why, paid: arrived.paid, payouts: (v2.payouts || []).map((x) => x.msat) } }));
+  assert.equal(offered.ok, true); assert.equal(offered.spentSetPublished, false, 'the holder is told the claim waits for the spent set');
+  assert.match(inWindow.why, /no verified spent set/); assert.equal(paysInWindow, 0, 'a note was paid with no verified spent set inside the window');
+  assert.equal(atClose.paid, 2, 'at the close with no set, both notes are paid against the empty set');
+  assert.match(waits2.why, /no verified spent set/);
+  assert.equal(arrived.paid, 1, 'the set arrived: paid at once, the note spent in it refused');
+  assert.deepEqual(v2.payouts.map((x) => x.msat), ['512000']);
+});
+
+test('kanban #1237: the client is told a taken claim waits for the federation\'s spent set', async () => {
+  const store = new Map(); const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
+  const walletFor = async () => ({ sendAllEcash: async () => JSON.stringify({ msat: 768000, ecash: 'e1' }) });
+  const answer = (spentSetPublished) => async () => ({ ok: true, json: async () => ({ accepted: [1, 2], inWindow: true, spentSetPublished }) });
+  const events = [SET.sign({ kind: 'liquidation', network: 'regtest', federation: FED, status: 'claims open', halt: { height: 1000, proof: null }, door: 'http://arb.example', firstMs: 1, atMs: 1 })];
+  const o = { network: 'regtest', arbitration: SET.terms, verify: SET.verify, held: [FED], walletFor, payoutPk: P1, height: 1012, storage, events };
+  const waits = await presentNotes({ ...o, fetcher: answer(false) });
+  store.clear();
+  const stands = await presentNotes({ ...o, fetcher: answer(true) });
+  console.log('  MEASURED #1237 client:', JSON.stringify({ noSet: waits[0].waitsForSpentSet || false, withSet: stands[0].waitsForSpentSet || false }));
+  assert.equal(waits[0].ok, true); assert.equal(waits[0].waitsForSpentSet, true);
+  assert.equal(stands[0].waitsForSpentSet, undefined);
+});
