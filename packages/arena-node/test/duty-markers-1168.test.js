@@ -123,7 +123,8 @@ test('kanban #1168: a day marker counts only from a duty poster, and a fee raise
 
   // D. REAL POSTINGS: a duty-order node's, held as a line; the runner's, named by the operator
   const real = txOf([dutyMarkerOutput(DAY, 'nextblock-day'), seriesPublicationOutput(sid(0x51))]);
-  const d1 = world({ local: [ORDER[0]], mempool: [real], lines: { [toHex(sid(0x51))]: toHex(ORDER[3]) } });
+  // (the day's duty node: rank 0, due at 00:00 - kanban #1219 counts a duty poster only from its own hour)
+  const d1 = world({ local: [ORDER[0]], mempool: [real], lines: { [toHex(sid(0x51))]: toHex(ORDER[0]) } });
   const sd1 = await createDayDuty(d1.opts).look();
   const byRunner = txOf([dutyMarkerOutput(DAY, 'nextblock-day'), seriesPublicationOutput(sid(0x52))]);
   const d2 = world({ local: [ORDER[0]], mempool: [byRunner], lines: { [toHex(sid(0x52))]: RUNNER } });
@@ -192,9 +193,9 @@ test('#1204 FED-C1: a day marker beside a copied real series id (yesterday\'s, a
   const TOMORROW = dayStartMs(DAY + 1), TODAY = T0;
   const yesterday = toHex(sid(0x61)), otherApp = toHex(sid(0x62)), own = toHex(sid(0x63));
   const infos = {
-    [yesterday]: { creator: toHex(ORDER[3]), gameId: GID, firstCloseMs: TODAY + 60000 },          // the posting of the day before: plays today
-    [otherApp]: { creator: toHex(ORDER[3]), gameId: 'd5'.repeat(32), firstCloseMs: TOMORROW + 60000 },   // tomorrow, but another app
-    [own]: { creator: toHex(ORDER[3]), gameId: GID, firstCloseMs: TOMORROW + 60000 },               // tomorrow's own posting
+    [yesterday]: { creator: toHex(ORDER[0]), gameId: GID, firstCloseMs: TODAY + 60000 },          // the posting of the day before: plays today
+    [otherApp]: { creator: toHex(ORDER[0]), gameId: 'd5'.repeat(32), firstCloseMs: TOMORROW + 60000 },   // tomorrow, but another app
+    [own]: { creator: toHex(ORDER[0]), gameId: GID, firstCloseMs: TOMORROW + 60000 },               // tomorrow's own posting
   };
   const lines = Object.fromEntries(Object.entries(infos).map(([k, v]) => [k, v.creator]));
   const copiedY = txOf([dutyMarkerOutput(DAY, 'nextblock-day'), seriesPublicationOutput(sid(0x61))]);
@@ -214,4 +215,25 @@ test('#1204 FED-C1: a day marker beside a copied real series id (yesterday\'s, a
   assert.equal(f2.did.published.length, 0, 'the day\'s own posting is still seen');
   assert.deepEqual((s2.markers || []).map((m) => m.standing), ['DUTY']);
   assert.equal(f3.did.published.length, 1, 'rank 2 posts too when nothing real is there');
+});
+
+// KANBAN #1219 (audit 3 #1210 FIXES-12): every census node is in the duty order, so a node far down it posting its OWN valid grid of the
+// day at 00:00Z (or announcing it at /expected), before the nodes whose hour it is, read as the day posted at every node. A duty poster's
+// marker counts only from its creator's own hour (dayDueFromMs), as this node first saw it.
+test('#1219 a duty marker of a low rank seen before its hour counts for nothing; the same rank in its hour, and rank 0 at once, count', async () => {
+  const TOMORROW = dayStartMs(DAY + 1);
+  const g = toHex(sid(0x71));
+  const infosOf = (creator) => ({ [g]: { creator: toHex(creator), gameId: GID, firstCloseMs: TOMORROW + 60000 } });
+  const tx = txOf([dutyMarkerOutput(DAY, 'nextblock-day'), seriesPublicationOutput(sid(0x71))]);
+  const look = async (creator, nowMs, local = ORDER[0]) => { const w = world({ local: [local], nowMs, mempool: [tx], lines: { [g]: toHex(creator) }, infos: infosOf(creator) });
+    const st = await createDayDuty(w.opts).look(); return { published: w.did.published.length, standing: [...(st.markers || []), ...(st.ignored || [])].map((m) => m.standing) }; };
+  const early = await look(ORDER[4], T0 + 5 * MIN);                 // rank 4 at 00:05: its hour is 02:00 + 2 steps
+  const rank0 = await look(ORDER[0], T0 + 5 * MIN, ORDER[1]);        // the day's duty node at 00:05, seen by rank 1
+  const inHour = await look(ORDER[4], T0 + 2 * H + 10 * MIN);        // rank 4 in its own step of the cap's hour (02:06)
+  console.log('  MEASURED #1219:', JSON.stringify({ early, rank0, inHour }));
+  assert.equal(early.published, 1, 'a rank-4 marker at 00:05 held the duty node back');
+  assert.deepEqual(early.standing, ['FOREIGN']);
+  assert.deepEqual(rank0.standing, ['DUTY'], 'the duty node\'s own posting counts at once');
+  assert.deepEqual(inHour.standing, ['DUTY'], 'a lower rank in its own hour counts');
+  assert.equal(inHour.published, 0);
 });
