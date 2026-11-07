@@ -647,7 +647,10 @@ export class Round {
         // at least 5 shares at its limit out of its stake less its fee, an expiry not past. A round is a book or a pool: it
         // takes orders or plain picks, never both, so its settlement is one or the other.
         const order = contract.limitPrice !== undefined && contract.limitPrice !== null;
-        const others = this.entriesOf(contract.roundId).filter((x) => !same(x.entry.sessionPubkey, contract.sessionPubkey));
+        // ONLY ENTRIES BACKED BY A LOCK DECIDE IT (kanban #1270, audit 4 #1257 PLAYER-4): the door takes an entry before any lock is verified, so one
+        // free plain pick with no lock behind it made a seat refuse every order of an Up/Down round - anyone could stop a market trading at no cost
+        // (and a lockless order a pool's picks). An entry counts here once this seat has seen its stake
+        const others = this.entriesOf(contract.roundId).filter((x) => !same(x.entry.sessionPubkey, contract.sessionPubkey) && (contract.stakeMsat === 0n || !!this.stakeSeen(x.entryId)));
         if (others.some((x) => (x.entry.limitPrice !== undefined && x.entry.limitPrice !== null) !== order))
           throw new Error(order ? 'that round takes plain picks (pari-mutuel): it takes no order' : 'that round is an order book: it takes orders, not a plain pick');
         if (order) {
