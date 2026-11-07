@@ -106,3 +106,39 @@ test('without the protocol developers\' majority the seat refuses it whole; refu
   const stray = { proposalId: new Uint8Array(32).fill(9), dev: pk(30), approve: true };
   assert.equal((await w.b.add('fee-approval', hexOf(encodeFeeApproval(stray), feeApprovalId(stray), 30))).status, 404);
 });
+
+// KANBAN #1231 (ruling #1245, audit 3 #1210 CONSENSUS-4): the approval a seat received last won per developer and the outcome was fixed at whatever each seat held
+test('#1231 one developer\'s yes and no in either order decide the same at every seat: a no stands over a yes', async () => {
+  const A = world(), B = world();
+  const [a] = await throughTheVote(A, [approval(31), approval(30, true), approval(30, false)]);
+  const [b] = await throughTheVote(B, [approval(31), approval(30, false), approval(30, true)]);
+  console.log('  MEASURED #1231 order:', JSON.stringify({ A: a.accepted, B: b.accepted, whyA: a.why, whyB: b.why }));
+  assert.equal(a.accepted, b.accepted, 'two seats holding the same approvals decided differently');
+  assert.equal(a.accepted, false, 'developer 30 said no: 1 of 3 approve');
+});
+
+test('#1231 before deciding a seat pulls its peers\' approvals; a no that arrives after the decision changes nothing; a reorg of the last voting block decides again', async () => {
+  // this seat holds two yes; a peer holds developer 31's no as well
+  const peerHas = [{ kind: 'fee-approval', hex: approval(31, false) }];
+  const C = world();
+  const pulled = []; C.b = createFundingBook({ db: openStore(':memory:'), verify, schedule: S, tip: async () => C.chain.tip, isBonded: () => true,
+    activeAt: async (end) => ({ ok: true, nodes: [toHex(pk(2))], fromHeight: end - 432 }),
+    voteChain: { tipHeight: async () => C.chain.tip, blockHashAt: async (h) => (h <= C.chain.tip ? C.at(h).hash : null), votesAt: async (h) => C.at(h).votes.map((v) => ({ ...v, height: h })), censusAt: async () => C.chain.bonds.map((x) => ({ ...x })) },
+    devKeysOf: async () => DEVS.map((n) => toHex(pk(n))), pull: async (pid) => { pulled.push(pid); return peerHas; } });
+  const [c] = await throughTheVote(C, [approval(30), approval(31)]);
+  const D = world();
+  const [d] = await throughTheVote(D, [approval(30), approval(31)]);            // no pull: decides on its two yes
+  const lateNo = (await D.b.add('fee-approval', approval(30, false))).ok;
+  const again = await D.b.decideFees();
+  const stillAt = D.b.feesAt(ACTIVATION).roundNodeBps;
+  // a reorg replaces the counted last voting block: the vote and the fee outcome are decided again, from the set held then
+  const last = 101 + S.vote - 1;
+  D.at(last).hash = 'ee'.repeat(32);
+  await D.b.voteRound();
+  const [re] = await D.b.decideFees();
+  console.log('  MEASURED #1231 pull/late/reorg:', JSON.stringify({ pulled: pulled.length, withPull: c.accepted, withoutPull: d.accepted, lateNo, decidedAgainBeforeReorg: again.length, nodeBpsAfterLateNo: stillAt, afterReorg: re ? re.accepted : null }));
+  assert.equal(pulled.length, 1); assert.equal(c.accepted, false, 'the peer\'s no was not read before deciding');
+  assert.equal(d.accepted, true);
+  assert.equal(lateNo, true); assert.equal(again.length, 0, 'a decided fee proposal was decided again with no reorg'); assert.equal(stillAt, 350, 'a late no flipped a decided outcome');
+  assert.ok(re, 'the reorg did not reopen the fee outcome'); assert.equal(re.accepted, false, 'decided again from the set held then, the late no among it');
+});

@@ -139,7 +139,7 @@ export function feeProposalStands(p, { current = FEES_TODAY, schedule = FUNDING_
 }
 
 /**
- * THE PROTOCOL DEVELOPERS' ANSWER: more than half of `devKeys` (32-byte hex) approve it, each counted once, by a signature
+ * THE PROTOCOL DEVELOPERS' ANSWER: more than half of `devKeys` (32-byte hex) approve it, each counted once (a no over a yes), by a signature
  * `verify(signature, id, key)` checks. `approvals` [{ approval: { proposalId, dev, approve }, signature }].
  */
 export function devMajority({ proposalId, approvals = [], devKeys = [], verify }) {
@@ -149,7 +149,9 @@ export function devMajority({ proposalId, approvals = [], devKeys = [], verify }
     const a = x.approval;
     if (!a || toHex(a.proposalId) !== toHex(proposalId) || !keys.has(toHex(a.dev))) continue;
     let good = false; try { good = verify(x.signature, feeApprovalId(a), a.dev) === true; } catch { good = false; }
-    if (good) said.set(toHex(a.dev), a.approve);
+    // A "NO" STANDS OVER A "YES" (ruled 2026-11-07 on #1245, kanban #1231): one answer per developer over every approval held, whatever the order
+    // they came in - the approval received last won, so two seats holding the same set could answer differently
+    if (good) { const k = toHex(a.dev); said.set(k, said.has(k) ? (said.get(k) && a.approve) : a.approve); }
   }
   const yes = [...said.values()].filter(Boolean).length;
   return { yes, no: said.size - yes, of: keys.size, majority: keys.size > 0 && yes * 2 > keys.size };
