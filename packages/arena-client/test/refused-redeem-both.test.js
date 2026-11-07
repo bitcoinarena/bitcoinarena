@@ -57,7 +57,9 @@ test('redeemStake over a refused round\'s two rows redeems the stake and the nod
   };
   // THE PLAYER WALLET: each redeem builds its contract with the real lock client's builder, as the wasm redeem does
   const redeemed = [];
-  const client = { async redeem(txid, idx, fieldsJson) {
+  // the federation holds both locks at their outpoints (kanban #1238: only a held lock is redeemed; no id read here, so the placeholder forfeit is not checked)
+  const client = { async lockStatus(txid, idx) { const r = rows.find((x) => x.outpoint.split(':')[1] === String(idx)); return JSON.stringify({ stored: r ? { blocks_left: 100 } : null }); },
+    async redeem(txid, idx, fieldsJson) {
     const id = w.LockClient.outgoingContractId(fieldsJson);
     redeemed.push({ at: `${txid.slice(0, 8)}:${idx}`, id, msat: JSON.parse(fieldsJson).amountMsat });
     return JSON.stringify({ forfeit_verifies: true, accepted: true, amount_msat: Number(JSON.parse(fieldsJson).amountMsat) });
