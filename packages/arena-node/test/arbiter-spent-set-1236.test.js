@@ -24,14 +24,14 @@ const listing = (record, copies) => ({ federation: toHex(FED), record, spentSet:
 
 test('#1236 the newest session any seat lists wins, not the first seat\'s copy', () => {
   // seat 1 still holds session 40 (notes 1, 2 spent); seat 2 has session 41, where note 3 was spent too
-  const got = spentSetFromSeats([listing('good', [said(guardians[0], 40, [1, 2])]), listing('good', [said(guardians[1], 41, [1, 2, 3]), said(guardians[2], 41, [1, 2, 3])])], { verify, readRecord });
+  const got = spentSetFromSeats([listing('good', [said(guardians[0], 40, [1, 2])]), listing('good', [said(guardians[1], 41, [1, 2, 3]), said(guardians[2], 41, [1, 2, 3]), said(guardians[3], 41, [1, 2, 3])])], { verify, readRecord });
   console.log('  MEASURED #1236 newest:', JSON.stringify({ session: got.session, signers: got.signers, nonces: got.spentNonces.length }));
-  assert.equal(got.session, 41); assert.equal(got.signers, 2);
+  assert.equal(got.session, 41); assert.equal(got.signers, 3);   // n - t + 1 = 3 of 7 (kanban #1262)
   assert.ok(got.spentNonces.includes(toHex(nonce(3))), 'the note spent in session 41 cannot be claimed');
 });
 
 test('#1236 a copy no guardian of the federation signed is refused, even as the only and newest one', () => {
-  const got = spentSetFromSeats([listing('good', [said(stranger, 99, [])]), listing('good', [said(guardians[0], 41, [1, 2, 3])])], { verify, readRecord });
+  const got = spentSetFromSeats([listing('good', [said(stranger, 99, [])]), listing('good', [said(guardians[0], 41, [1, 2, 3]), said(guardians[1], 41, [1, 2, 3]), said(guardians[2], 41, [1, 2, 3])])], { verify, readRecord });
   assert.equal(got.session, 41);
   const alone = spentSetFromSeats([listing('good', [said(stranger, 99, [])])], { verify, readRecord });
   assert.equal(alone.spentNonces, null); assert.match(alone.why, /no copy stands/);
@@ -42,9 +42,20 @@ test('#1236 a copy no guardian of the federation signed is refused, even as the 
 });
 
 test('#1236 one seat listing another record does not outvote the rest; no record, no copy: null with the reason', () => {
-  const copies = [said(guardians[0], 41, [1, 2, 3])];
+  const copies = [said(guardians[0], 41, [1, 2, 3]), said(guardians[1], 41, [1, 2, 3]), said(guardians[2], 41, [1, 2, 3])];
   const got = spentSetFromSeats([listing('forged', [said(stranger, 50, [])]), listing('good', copies), listing('good', copies)], { verify, readRecord });
   assert.equal(got.session, 41, 'the record most seats list: the stranger\'s copy does not stand on it');
   assert.match(spentSetFromSeats([{ federation: toHex(FED), spentSet: null }], { verify, readRecord }).why, /no seat lists the federation's record/);
   assert.match(spentSetFromSeats([listing('good', [])], { verify, readRecord }).why, /no guardian published/);
+});
+
+// KANBAN #1262 (audit 4 #1257 seats-1, RULED option A): one guardian's copy at 0xffffffff listed by one seat made the arbiter pay its redeemed notes.
+test('#1262 the arbiter reads the newest session n - t + 1 guardians signed, at or below the halt the seats list + 1', () => {
+  const honest = [0, 1, 2, 3].map((i) => said(guardians[i], 40, [9]));
+  const halted = (copies) => ({ ...listing('good', copies), haltProof: { session: 40 } });
+  const oneLiar = spentSetFromSeats([halted(honest), halted([said(guardians[6], 0xffffffff, [])])], { verify, readRecord });
+  const threeForged = spentSetFromSeats([halted(honest), halted([4, 5, 6].map((i) => said(guardians[i], 0xfffffff0, [])))], { verify, readRecord });
+  console.log('  FACTS #1262 arbiter:', JSON.stringify({ oneLiar: [oneLiar.session, oneLiar.spentNonces], threeForgedAboveHalt: [threeForged.session, threeForged.spentNonces && threeForged.spentNonces.length] }));
+  assert.equal(oneLiar.session, 40); assert.deepEqual(oneLiar.spentNonces, [toHex(nonce(9))]);
+  assert.equal(threeForged.session, 40); assert.deepEqual(threeForged.spentNonces, [toHex(nonce(9))]);
 });

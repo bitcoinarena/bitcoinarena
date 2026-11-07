@@ -25,10 +25,12 @@ test('a halted federation is listed with its halt, its clocks and the newest spe
   assert.deepEqual(l.list()[0].spentSet, null);
   assert.match(l.list()[0].why, /no guardian published/);
   assert.deepEqual([l.offer(said(guardians[0], 40, [1, 2])).kept, l.offer(said(guardians[1], 41, [1, 2, 3])).kept, l.offer(said(guardians[2], 41, [1, 2, 3])).kept], [true, true, true]);
+  // a third guardian at 41: n - t + 1 = 3 of 7 reached it (kanban #1262)
+  assert.equal(l.offer(said(guardians[3], 41, [1, 2, 3])).kept, true);
   assert.equal(l.offer(said(guardians[1], 40, [1])).kept, false, 'a guardian\'s older session is not taken over its newer one');
   const [x] = l.list();
   assert.deepEqual([x.federation, x.haltHeight, x.haltRecord, x.liquidatesAt, x.claimWindowCloses, x.lateClaimsUntil], [FID, 880, 'ab', 892, 901, 1024]);
-  assert.deepEqual([x.spentSet.session, x.spentSet.signers, x.spentSet.nonces, x.spentSet.copies.length], [41, 2, 3, 2]);
+  assert.deepEqual([x.spentSet.session, x.spentSet.signers, x.spentSet.nonces, x.spentSet.copies.length], [41, 3, 3, 3]);
 });
 
 test('a copy for a federation that is not HALTED here, by a stranger, or forged is refused by name', () => {
