@@ -23623,6 +23623,30 @@ function collectState(look, co = null) {
  * A round whose payout and stake answers are both final: the lines kept, and it is not asked again. `look` (and `co`, what its collect got):
  * written only when collectState says done (kanban #1163), with the round wallet's balance read 0 (`tabMsat`), which tidyStorage asks for.
  */
+/**
+ * A DONE WRITTEN BEFORE #1163 IS LOOKED AT ONCE MORE (kanban #1255, audit 3 #1210 FIXES-15): the older page wrote a record done when its collect
+ * redeemed the payout while the stake's forfeit was not signed yet, and the passes skip a done record - that stake stayed in its lock until a
+ * manual Rescan. A done without `tabMsat` (which only a done read by collectState carries) is opened again, once per record (`doneRechecked`):
+ * the next pass looks at it, and markCollectDone writes it done again only when collectState says so. Answers how many were opened.
+ */
+function reopenUncheckedDone(storage, { now = () => Date.now() } = {}) {
+  let opened = 0;
+  try {
+    const keys = [];
+    for (let i = 0; i < storage.length; i++) { const k = storage.key(i); if (k && k.startsWith(COLLECT_NOTE)) keys.push(k); }
+    for (const k of keys) {
+      try {
+        const r = JSON.parse(storage.getItem(k));
+        if (!r || !r.done || r.doneRechecked) continue;
+        if (typeof r.done === 'object' && r.done.tabMsat !== undefined) continue;
+        storage.setItem(k, JSON.stringify({ ...r, done: null, doneRechecked: now() }));
+        opened++;
+      } catch { /* a record that does not read is left as it is */ }
+    }
+  } catch { /* storage refused */ }
+  return opened;
+}
+
 function markCollectDone(storage, roundIdHex, done, seed = null, order = 0, { look = null, co = null } = {}) {
   if (look && collectState(look, co).state !== 'done') return false;
   if (look && done && typeof done === 'object') done = { ...done, tabMsat: '0' };
@@ -41304,7 +41328,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, referralOf: referralOf, referralNameFor: referralNameFor, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
          playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
-         onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, releaseUntakenEntry: releaseUntakenEntry, keptLockUse: keptLockUse,
+         onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, reopenUncheckedDone: reopenUncheckedDone, releaseUntakenEntry: releaseUntakenEntry, keptLockUse: keptLockUse,
          reconcileKeptLock: reconcileKeptLock, bindLockEntry: bindLockEntry, lockRecordOf: lockRecordOf, collectState: collectState, forfeitCheck: forfeitCheck, settlementAgreement: settlementAgreement, useWalletGate: useWalletGate,
          roundEndMs: roundEndMs,
          ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes, ledgerHistory: ledgerHistory,
