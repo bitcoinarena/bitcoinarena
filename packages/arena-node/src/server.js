@@ -245,7 +245,7 @@ import { thresholdOf as thresholdOfFederation, recordStatusName } from '../../ar
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY, findSeriesPublication as findSeriesPublicationIndexed } from './roster.js';
 import { createSeriesPull, PULL_EVERY_MS } from './series-pull.js';
 import { createEntryRelay, RELAY_HEADER, lookAtMembers, seatView } from './entry-relay.js';
-import { seatingAgent } from './seating-agent.js';
+import { seatingAgent, MAX_PRESENTS_PER_BATCH, PRESENT_BYTES } from './seating-agent.js';
 import { heartbeatAgent } from './heartbeat-agent.js';
 import { HEARTBEAT_SLOTS_PER_ROUND } from '../../arena-protocol/src/heartbeat.js';
 import { presenceBook } from './presence-book.js';
@@ -321,9 +321,10 @@ import { keptRead } from './kept-read.js';
 const presenceByRound = new WeakMap();
 const presenceTables = (round) => { let t = presenceByRound.get(round); if (!t) { t = new Map(); presenceByRound.set(round, t); } return t; };
 
-const read = (req) => new Promise((resolve, reject) => {
-  const parts = [];
-  req.on('data', (c) => parts.push(c));
+const read = (req, max = Infinity) => new Promise((resolve, reject) => {
+  const parts = []; let size = 0;
+  // A DOOR'S OWN LIMIT (kanban #1271): past `max` bytes the body is not kept, the request ends, and the door answers 413
+  req.on('data', (c) => { size += c.length; if (size > max) { parts.length = 0; const e = new Error(`a body of more than ${max} bytes`); e.tooLarge = true; reject(e); try { req.destroy(); } catch { /* gone */ } return; } parts.push(c); });
   req.on('end', () => resolve(new Uint8Array(Buffer.concat(parts))));
   req.on('error', reject);
 });
@@ -11810,8 +11811,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return cert ? json(res, 200, { cert }) : text(res, 404, 'no heartbeat certificate for that slot here');
       }
       if (seating && req.method === 'POST' && url.pathname === '/presents') {
-        const r = seating.takePresents(new Uint8Array(await read(req)));
-        return r.ok ? json(res, 201, r) : text(res, 400, r.why);
+        let body; try { body = new Uint8Array(await read(req, MAX_PRESENTS_PER_BATCH * PRESENT_BYTES)); } catch (e) { return text(res, e && e.tooLarge ? 413 : 400, e && e.message || 'no body'); }
+        const r = seating.takePresents(body);
+        return r.ok ? json(res, 201, r) : text(res, r.status || 400, r.why);
       }
       // THE ROUND'S SEATED SIGNER NODES' ADDRESSES, AS KEPT AT SEATING (kanban #735): per role, each seated node's key and the endpoint
       // off its census advert then - what this seat reads when its roster has no chain view for the round, and what a peer that lost
