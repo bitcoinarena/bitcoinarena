@@ -173,7 +173,16 @@ export function dbPrintOf(home) {
   for (const f of ['node.db', 'node.db-wal']) { try { const st = statSync(join(home, f)); out[f] = `${st.size}:${Math.floor(st.mtimeMs)}`; } catch { out[f] = null; } }
   return out;
 }
-export const dbChangedSince = (home, backup) => !!(backup && backup.print) && JSON.stringify(dbPrintOf(home)) !== JSON.stringify(backup.print);
+// A BACKUP WITH NO PRINT (kanban #1286, audit 4 #1257 CLIENT-4: a journal an updater from before #1227 wrote): the backup's own copy of node.db
+// was made after the seat stopped, so a node.db or WAL newer than that copy was written since
+export function dbChangedSince(home, backup) {
+  if (!backup) return false;
+  if (backup.print) return JSON.stringify(dbPrintOf(home)) !== JSON.stringify(backup.print);
+  let copied = null;
+  try { copied = statSync(join(backup.dir, 'node.db')).mtimeMs; } catch { return false; }
+  for (const f of ['node.db', 'node.db-wal']) { try { if (statSync(join(home, f)).mtimeMs > copied) return true; } catch { /* not there */ } }
+  return false;
+}
 /** Copy the node's files into backups/<stamp>/: { dir, files, print }. */
 export function backupNode(home, stamp = new Date().toISOString().replace(/[:.]/g, '-')) {
   const dir = join(home, 'backups', stamp);
@@ -813,10 +822,14 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
   if (seatLog.length) trace.debug(`the new release's last log lines:\n  ${seatLog.join('\n  ')}`);
   // ROLLED BACK: the old services, the backup, the old release started (rollBack) - the database kept when the new release answered as
   // this node (kanban #1166: it may have signed since)
-  journal = journalStep(home, journal.id, U.ROLLING_BACK, { served: sameKey });
-  const { put, back, dbKept } = await rollBack({ svc, home, moving, oldTexts: Object.fromEntries(oldTexts), migrating, confFile, backup, keepDb: sameKey, to: newRelease, port, fetcher, waitMs, sleep });
+  // AND WHEN IT WROTE ITS DATABASE (kanban #1286, audit 4 #1257 CLIENT-4: #1227 kept a changed database on the resume only): a release that reached
+  // serve() as the wait ran out answered peers and wrote nonces, entries and locks without ever answering here - the backup over them would
+  // lose them, and a nonce put back after its use could sign twice
+  const written = !sameKey && dbChangedSince(home, backup);
+  journal = journalStep(home, journal.id, U.ROLLING_BACK, { served: sameKey || written });
+  const { put, back, dbKept } = await rollBack({ svc, home, moving, oldTexts: Object.fromEntries(oldTexts), migrating, confFile, backup, keepDb: sameKey || written, to: newRelease, port, fetcher, waitMs, sleep });
   journalStep(home, journal.id, U.ROLLED_BACK, { restored: back.ok, dbKept });
-  step(`rolled back: the backup ${put.ok ? 'put back' : `not all put back (${put.failed.join(', ')})`}${dbKept ? ' (its database kept: the new release had answered as this node)' : ''}; the old release ${back.ok ? 'answers' : `does not answer (${back.why})`}`);
+  step(`rolled back: the backup ${put.ok ? 'put back' : `not all put back (${put.failed.join(', ')})`}${dbKept ? (sameKey ? ' (its database kept: the new release had answered as this node)' : ' (its database kept: the new release wrote it since the backup)') : ''}; the old release ${back.ok ? 'answers' : `does not answer (${back.why})`}`);
   return { ok: false, rolledBack: true, from, to: newRelease, backup: backup.dir, failedAt: failedStep, dbKept,
     why: !after.ok ? `the new release did not come up: ${after.why}${seatLog.length ? `. Its last log lines: ${seatLog.join(' | ')}` : ''}`
       : !sameKey ? `the new release answered as another node (${after.identity.slice(0, 16)}), not ${before.identity.slice(0, 16)}`
