@@ -4910,24 +4910,36 @@
       paintWallet();
       let done;
       try {
-        done = await ARENACLIENT.collectAndWithdraw(Object.assign({}, ask, { client: own.client, invoiceFor, pasted,
+        // WHAT IS OWED GOES INTO THE PLAYER WALLET, NOT THIS ROUND'S (kanban #1266, audit 4 #1257 CLIENT-1 follow-up): the Withdraw collected into
+        // the round's lock wallet and paid from there, so a Lightning pay that failed left the payout and stake as e-cash in a wallet the page tidies
+        // away (#1265 stops the tidy; this stops the money going there). As every other collect does, it is redeemed into the player wallet first,
+        // and the player wallet is what is paid out below
+        const lookNow = await ARENACLIENT.lookOwed(Object.assign({}, ask, { client: own.client }));
+        if (lookNow && (lookNow.payoutMsat > 0n || lookNow.stakeMsat > 0n || lookNow.refundMsat > 0n)) {
+          window.ARENA_WITHDRAW_STEP = 'collecting into the player wallet'; paintWallet();
+          const into = await ARENACLIENT.collectIntoPlayerWallet(Object.assign({ look: lookNow }, ask));
+          console.log('[arena] #1266 withdraw: collected into the player wallet: ' + String(into && into.creditedMsat) + ' msat');
+        }
+        // E-CASH AN OLDER BUILD LEFT IN THE ROUND'S WALLET is paid out from there, as before; nothing owed is left to collect into it
+        const roundHolds = lookNow && typeof lookNow.inTabMsat === 'bigint' && lookNow.inTabMsat > 0n;
+        done = roundHolds ? await ARENACLIENT.collectAndWithdraw(Object.assign({}, ask, { client: own.client, invoiceFor, pasted,
           canInvoice: !!(maker || pasted || (conn && conn.ok)),
-          onStep: (step) => { console.log('[arena] withdraw: ' + step); window.ARENA_WITHDRAW_STEP = step; paintWallet(); } }));
-        window.ARENA_WITHDRAWN = done.withdraw;
+          onStep: (step) => { console.log('[arena] withdraw: ' + step); window.ARENA_WITHDRAW_STEP = step; paintWallet(); } })) : { withdraw: null };
         // AND THE PLAYER WALLET (§24A.1, RULED 2026-09-25): the one wallet per seed and federation the stakes are
         // spent from - its whole withdrawable balance to the player's own invoice, in this press and nowhere else.
         window.ARENA_WITHDRAWN_WALLET = await ARENACLIENT.withdrawPlayerWallet({ round: r.round, invite: r.invite, seed: r.seed,
           LockClient: own.LockClient, storage: vault(), invoiceFor,
           onStep: (step) => { console.log('[arena] withdraw, player wallet: ' + step); window.ARENA_WITHDRAW_STEP = step; paintWallet(); } });
+        window.ARENA_WITHDRAWN = done.withdraw || window.ARENA_WITHDRAWN_WALLET;
         window.ARENA_OWED = await ARENACLIENT.lookOwed(Object.assign({}, ask, { client: own.client }));
         window.ARENA_WITHDRAWABLE = window.ARENA_OWED.inTabMsat;
         // STILL ECASH IN THE ROUND'S WALLET AFTER THE PAY (it failed): no empty note for it - the warning stays
         if (window.ARENA_WITHDRAWABLE > 0n) dropTabEmpty(r.roundIdHex);
       } finally { payoutAsking = false; window.ARENA_WITHDRAWING = false; }
-      console.log('[arena] withdraw: ' + ARENACLIENT.withdrawLine(done.withdraw, window.ARENA_WITHDRAWABLE));
+      console.log('[arena] withdraw: ' + ARENACLIENT.withdrawLine(window.ARENA_WITHDRAWN, window.ARENA_WITHDRAWABLE));
       window.ARENA_TRACK('withdraw-sent', { from: 'round' });
       paintWallet();
-      return done.withdraw;
+      return window.ARENA_WITHDRAWN;
     };
     // WHERE WINNINGS GO WHEN THERE IS NO WALLET TO MINT WITH (2026-09-21 13:54). Named once and
     // kept for this tab, like the wallet is: nothing is pressed after the round, and nothing is pasted
