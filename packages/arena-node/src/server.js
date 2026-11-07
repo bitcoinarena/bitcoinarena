@@ -2210,7 +2210,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // AND OF AN ENTRY_VOID LOCK (§16, §23.2), at once: the evidence is shown to
   // the other signer nodes first, so a signer node that was down can record the same Void.
   // THE NAMES THIS SIGNER NODE KEEPS FOR A ROUND, as the players signed them (M3.3-34).
-  const namesHeld = (rid) => round.lobbyNames(rid).map((n) => ({ record: toHex(n.record), sig: toHex(n.signature) }));
+  const namesHeld = (rid) => round.lobbyNames(rid).map((n) => ({ record: toHex(n.record), sig: toHex(n.signature), ...(n.identitySig ? { identitySig: toHex(n.identitySig) } : {}) }));
 
   const forfeits = new Forfeit(round, {
     bookStanding: (rid, eid) => orderBook.standing(rid, eid),
@@ -7549,11 +7549,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let bytes;
         let sig;
         let rec;
+        let identityProof = null;
         try {
           const got = JSON.parse(Buffer.from(await read(req)).toString('utf8'));
           bytes = fromHex(String(got.record));
           sig = fromHex(String(got.sig));
           rec = decodeLobbyName(bytes);
+          identityProof = got.identitySig === undefined || got.identitySig === null ? null : fromHex(String(got.identitySig));
         } catch (e) { return answer(400, { why: `that is not a signed name record: ${e.message}` }); }
         let signed = false;
         try { signed = sig.length === 64 && schnorr.verify(sig, lobbyNameId(rec), rec.playerPubkey); } catch { signed = false; }
@@ -7581,7 +7583,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           let replayed = false; try { const pg = pluginForRound(decodeRoundContract(new Uint8Array(round.get(rec.roundId).contract)), hosted); replayed = !!(pg.ok && !pg.attested && !pg.headToHead); } catch { replayed = false; }
           if (replayed && held !== toHex(rec.identityPubkey) && joinedAt !== null && Number(round.now()) > joinedAt + joinGrace)
             return answer(409, { why: `that player joined this round at ${joinedAt} on this seat's clock: the identity its entry is booked to is named with the join (within ${joinGrace} ms), not later (kanban #1267)` }); }
-        const kept = round.putLobbyName({ roundId: rec.roundId, playerPubkey: rec.playerPubkey, record: bytes, signature: sig, atMs: rec.atMs });
+        // THE IDENTITY'S OWN CONSENT, if sent (kanban #1278, RULED #1276): its key over (round id, round key); one that does not verify is refused
+        let identitySig = null;
+        if (identityProof !== null) {
+          let good = false;
+          try { good = identityProof.length === 64 && schnorr.verify(identityProof, matchProofId({ roundId: rec.roundId, entryId: rec.playerPubkey, identityKey: rec.identityPubkey }), rec.identityPubkey); } catch { good = false; }
+          if (!good) return answer(400, { why: 'that identity proof is not the named identity\'s signature over this round and round key' });
+          identitySig = identityProof;
+        }
+        const kept = round.putLobbyName({ roundId: rec.roundId, playerPubkey: rec.playerPubkey, record: bytes, signature: sig, atMs: rec.atMs, identitySig });
         // A NEW NAME IS LISTED AT ONCE: the small listings kept 5 s (GET /rounds) are dropped, so a player's rename shows on
         // the next poll - measured: lobby-names served the old name for up to 5 s after the new one was taken (red since
         // 669b39be). The large series listing is not touched; it names no players.
