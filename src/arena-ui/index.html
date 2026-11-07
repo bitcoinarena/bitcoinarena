@@ -1652,7 +1652,7 @@
       <h3>Graphics</h3>
       <div id="arena-fps-host"></div>
     </section>
-    <section class="settings-card" id="arena-set-feedback"><h3>Feedback</h3><div class="name-row"><div class="muted" style="flex:1">Tell the team what broke or confused you; accepted reports can earn a reward</div><button id="arena-feedback-send" type="button">Send feedback</button><button id="arena-feedback-mine" type="button">My feedback</button></div></section>
+    <section class="settings-card" id="arena-set-feedback"><h3>Feedback</h3><div class="name-row"><div class="muted" style="flex:1" id="arena-feedback-says">Tell the team what broke or confused you</div><button id="arena-feedback-send" type="button">Send feedback</button><button id="arena-feedback-mine" type="button">My feedback</button></div></section>
     <section class="settings-card" id="arena-set-logs"></section>
     <!-- MISSING MONEY? (kanban #595): every order and stake this browser made looked at again, with its progress -->
     <section class="settings-card" id="arena-set-rescan"></section>
@@ -1754,6 +1754,10 @@
     // ARENA_OPEN_FEEDBACK({ type, error, round }) opens it from the footer, Settings, an error line or a finished round; ARENA_MY_FEEDBACK() shows
     // this key's reports, their states and any reward link (asked with a NIP-98 sign-in, since a reward link is a secret).
     const FEEDBACK_KIND = 27842, HTTP_AUTH_KIND = 27235;
+    // THE BOUNTY IS OFF UNTIL THE OWNER SAYS SO (Daniel 2026-11-07): only the private build (deployed to an unlisted preview, never the public host)
+    // sets window.ARENA_BOUNTY_BUILD; everywhere else the box, the signed reports and My feedback's states stay, with no word of a reward. The
+    // faucet holds the money paths to the private page's origin besides (FAUCET_BOUNTY_ORIGINS).
+    window.ARENA_BOUNTY_ON = window.ARENA_BOUNTY_BUILD === true;
     const feedbackUrl = () => (window.ARENA_FAUCET_URL ? window.ARENA_FAUCET_URL.replace(/\/player$/, '/feedback') : '');
     const identitySign = (t) => ARENACLIENT.identitySignEvent(t, { storage: window.sessionStorage, random: () => { throw new Error('this tab has no wallet yet'); }, curve: window.ARENA_CURVE });
     const hasIdentity = () => !!(window.ARENA_IDENTITY && typeof window.ARENA_IDENTITY.pubkey === 'string');
@@ -1769,7 +1773,9 @@
       const me = hasIdentity() ? window.ARENA_IDENTITY.pubkey : null;
       const tick = el('label', { cls: 'badge' }, el('input', { type: 'checkbox' }), el('span', { text: ' Send my public key for the Founding Tester badge' }));
       if (!me) tick.hidden = true;
-      const say = el('div', { cls: 'say', role: 'status', text: me ? 'Signed with your key: if it is accepted, a reward link appears in My feedback (testnet sats, no value).' : 'Open a wallet first to be rewarded: an unsigned report still reaches the team.' });
+      const say = el('div', { cls: 'say', role: 'status', text: window.ARENA_BOUNTY_ON
+        ? (me ? 'Signed with your key: if it is accepted, a reward link appears in My feedback (testnet sats, no value).' : 'Open a wallet first to be rewarded: an unsigned report still reaches the team.')
+        : (me ? 'Signed with your key: My feedback shows what the team decides.' : 'It reaches the team. Open a wallet to follow it in My feedback.') });
       const off = el('button', { type: 'button', cls: 'off', text: 'Cancel' }), send = el('button', { type: 'button', cls: 'send', text: 'Send' });
       d.append(el('div', { cls: 'card' }, el('h3', { text: 'Feedback' }), el('p', { text: 'Your words, the build and the game are sent. No amounts, and no private key.' }), type, t, x, tick, say, el('div', { cls: 'row' }, off, send)));
       off.onclick = () => d.remove();
@@ -1819,11 +1825,11 @@
           const row = el('div', { cls: 'fb-row' }, el('div', { cls: 'fb-head', text: new Date(rp.receivedMs).toISOString().slice(0, 10) + ' · ' + rp.type + ' · ' + (said[rp.state] || rp.state) }),
             el('div', { cls: 'fb-text', text: rp.happened.length > 160 ? rp.happened.slice(0, 160) + '…' : rp.happened }));
           if (rp.reason) row.append(el('div', { cls: 'fb-why', text: 'Why: ' + rp.reason }));
-          if (rp.reward && rp.reward.lnurl) {
+          if (window.ARENA_BOUNTY_ON && rp.reward && rp.reward.lnurl) {
             const copy = el('button', { type: 'button', text: 'Copy' }); copy.onclick = () => { navigator.clipboard.writeText(rp.reward.lnurl).then(() => { copy.textContent = 'Copied'; }, () => {}); };
             row.append(el('div', { cls: 'fb-reward' }, el('span', { text: 'Reward ' + Number(rp.reward.sats).toLocaleString('en-US') + ' sat' + (rp.reward.network === 'mainnet' ? '' : ' (testnet sats, no value)') + ': ' }),
               el('a', { href: 'lightning:' + rp.reward.lnurl, text: 'claim with your Lightning wallet' }), el('span', { text: ' ' }), copy));
-          } else if (rp.reward && rp.reward.state === 'paid') row.append(el('div', { cls: 'fb-reward', text: 'Reward ' + Number(rp.reward.sats).toLocaleString('en-US') + ' sat: claimed' }));
+          } else if (window.ARENA_BOUNTY_ON && rp.reward && rp.reward.state === 'paid') row.append(el('div', { cls: 'fb-reward', text: 'Reward ' + Number(rp.reward.sats).toLocaleString('en-US') + ' sat: claimed' }));
           list.append(row);
         }
       } catch (e) { list.textContent = (e && e.message) || 'not read'; }
@@ -1834,6 +1840,7 @@
       b.addEventListener('click', () => window.ARENA_OPEN_FEEDBACK({}));
       const s1 = document.getElementById('arena-feedback-send'), s2 = document.getElementById('arena-feedback-mine');
       if (s1) s1.addEventListener('click', () => window.ARENA_OPEN_FEEDBACK({}));
+      if (window.ARENA_BOUNTY_ON) { const w = document.getElementById('arena-feedback-says'); if (w) w.textContent += '; accepted reports can earn a reward (testnet sats)'; }
       if (s2) s2.addEventListener('click', () => window.ARENA_MY_FEEDBACK());
     });
     window.ARENA_OPPONENT_URL = window.ARENA_FAUCET_URL ? window.ARENA_FAUCET_URL.replace(/\/player$/, '/opponent') : '';

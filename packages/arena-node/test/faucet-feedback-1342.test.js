@@ -20,6 +20,7 @@ const key = (n) => { const secret = new Uint8Array(32).fill(n); return { secret,
 const signed = (k, kind, tags, content = '') => { const e = { pubkey: k.pubkey, created_at: Math.floor(Date.now() / 1000), kind, tags, content };
   e.id = eventId(e); e.sig = hex(schnorr.sign(Buffer.from(e.id, 'hex'), k.secret)); return e; };
 const MINE = 'https://testnet.example/api/faucet/feedback/mine';
+const PRIVATE = 'https://arena-fb-private.example';
 
 test('#1342 the faucet keeps a signed report, still posts every report to the chat, and answers "My feedback" to its reporter only', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'faucet-1342-'));
@@ -84,7 +85,7 @@ esac
   const faucet = spawn(process.execPath, [fileURLToPath(new URL('../tools/faucet.mjs', import.meta.url))], { stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, FAUCET_PORT: String(port), FAUCET_CHAT_URL: `http://127.0.0.1:${chatServer.address().port}`, FAUCET_CHAT_CHANNEL: '6', FAUCET_CHAT_TOKEN_FILE: join(dir, 'token'),
       FAUCET_FEEDBACK_DB: db, FAUCET_FEEDBACK_MINE_URLS: MINE, FAUCET_FOUNDING_FILE: join(dir, 'founding.jsonl'), FAUCET_BOOK: join(dir, 'book.json'),
-      FAUCET_LNCLI: lncli, FAUCET_BOUNTY_PAYER: `${dir}|127.0.0.1:1`, FAUCET_PUBLIC_BASE: 'https://testnet.example/api/faucet' } });
+      FAUCET_LNCLI: lncli, FAUCET_BOUNTY_PAYER: `${dir}|127.0.0.1:1`, FAUCET_PUBLIC_BASE: 'https://testnet.example/api/faucet', FAUCET_BOUNTY_ORIGINS: PRIVATE } });
   const base = `http://127.0.0.1:${port}`;
   try {
     for (let i = 0; i < 50; i++) { try { await fetch(`${base}/feedback/mine`); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
@@ -97,7 +98,7 @@ esac
     admin.approve(ev.id, 2500, { played: () => true, by: 'admin' });
     const k1 = admin.createReward(ev.id).reward.k1;
     admin.close();
-    const mineNow = async () => (await fetch(`${base}/feedback/mine`, { headers: { authorization: `Nostr ${Buffer.from(JSON.stringify(signed(alice, HTTP_AUTH_KIND, [['u', MINE], ['method', 'GET']]))).toString('base64')}` } })).json();
+    const mineNow = async (origin = PRIVATE) => (await fetch(`${base}/feedback/mine`, { headers: { origin, authorization: `Nostr ${Buffer.from(JSON.stringify(signed(alice, HTTP_AUTH_KIND, [['u', MINE], ['method', 'GET']]))).toString('base64')}` } })).json();
     const before = await mineNow();
     const req = await (await fetch(`${base}/lnurlw/${k1}`)).json();
     const cb = (pr, k = k1) => fetch(`${base}/lnurlw/${k1}/callback?k1=${k}&pr=${pr}`).then((r) => r.json());
@@ -105,6 +106,7 @@ esac
     const wrongAmount = await cb('lntb2400x1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
     const [one, two] = await Promise.all([cb('lntb2500x1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'), cb('lntb2500x1ccccccccccccccccccccccccccccccc')]);
     const after = await mineNow();
+    const publicView = await mineNow('https://testnet.bitcoinarena.io');
     const reqAfter = await (await fetch(`${base}/lnurlw/${k1}`)).json();
     let paidLines = []; try { paidLines = readFileSync(join(dir, 'paid.log'), 'utf8').trim().split('\n'); } catch { paidLines = []; }
     const facts = { before: before.reports.map((r) => [r.state, r.reward && r.reward.sats, r.reward && r.reward.lnurl && r.reward.lnurl.slice(0, 8)]), req: [req.tag, req.maxWithdrawable, req.callback],
@@ -118,6 +120,7 @@ esac
     assert.deepEqual(facts.claims.sort(), ['ERROR', 'OK']);
     assert.equal(facts.paidOnce, 1, 'the bounty wallet paid more than once');
     assert.deepEqual(facts.after, [['paid', 'paid', null]], 'paid: the report and the reward, and no link left to claim');
+    assert.deepEqual(publicView.reports.map((r) => [r.state, r.reward]), [['paid', null]], 'the public page is shown no reward (the owner\'s switch)');
     assert.match(facts.reqAfter, /claimed/);
   } finally { faucet.kill(); chatServer.close(); rmSync(dir, { recursive: true, force: true }); }
 });
@@ -135,7 +138,7 @@ test('#1342 the review list behind the admin code: who played and who is ours, a
     env: { ...process.env, FAUCET_PORT: String(port), FAUCET_CHAT_URL: `http://127.0.0.1:${chat.address().port}`, FAUCET_CHAT_CHANNEL: '6', FAUCET_CHAT_TOKEN_FILE: join(dir, 'token'),
       FAUCET_FEEDBACK_DB: join(dir, 'feedback.db'), FAUCET_FEEDBACK_MINE_URLS: MINE, FAUCET_FOUNDING_FILE: join(dir, 'founding.jsonl'), FAUCET_BOOK: join(dir, 'book.json'),
       FAUCET_ADMIN_SHA256: createHash('sha256').update(CODE).digest('hex'), FAUCET_FEEDBACK_EXCLUDED: join(dir, 'ours.txt'), FAUCET_SEASON_SEATS: `http://127.0.0.1:${seat.address().port}`,
-      FAUCET_SEASON_GAMES: 'rock-paper-scissors', FAUCET_REWARD_RULES: JSON.stringify({ weeklyBudgetSats: 10000, mostSats: 5000 }), FAUCET_BOUNTY_PAYER: `${dir}|127.0.0.1:1`, FAUCET_PUBLIC_BASE: 'https://testnet.example/api/faucet' } });
+      FAUCET_SEASON_GAMES: 'rock-paper-scissors', FAUCET_REWARD_RULES: JSON.stringify({ weeklyBudgetSats: 10000, mostSats: 5000 }), FAUCET_BOUNTY_PAYER: `${dir}|127.0.0.1:1`, FAUCET_PUBLIC_BASE: 'https://testnet.example/api/faucet', FAUCET_BOUNTY_ORIGINS: PRIVATE } });
   const base = `http://127.0.0.1:${port}`;
   try {
     for (let i = 0; i < 50; i++) { try { await fetch(`${base}/feedback/mine`); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
@@ -174,4 +177,38 @@ test('#1342 the review list behind the admin code: who played and who is ours, a
     assert.equal(facts.csvLines, 4);
     assert.ok(facts.csvHasAlice);
   } finally { faucet.kill(); seat.close(); chat.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('#1342 the bounty is off until the owner turns it on: no private origin set, no approval for money, no link, no /lnurlw, no reward in My feedback', async () => {
+  const { createHash } = await import('node:crypto');
+  const dir = mkdtempSync(join(tmpdir(), 'faucet-off-1342-'));
+  const chat = createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(200); res.end('{}'); }); });
+  await new Promise((r) => chat.listen(0, '127.0.0.1', r));
+  writeFileSync(join(dir, 'token'), 'x');
+  const CODE = 'the-owners-code', port = 20000 + Math.floor(Math.random() * 9000);
+  const faucet = spawn(process.execPath, [fileURLToPath(new URL('../tools/faucet.mjs', import.meta.url))], { stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, FAUCET_PORT: String(port), FAUCET_CHAT_URL: `http://127.0.0.1:${chat.address().port}`, FAUCET_CHAT_CHANNEL: '6', FAUCET_CHAT_TOKEN_FILE: join(dir, 'token'),
+      FAUCET_FEEDBACK_DB: join(dir, 'feedback.db'), FAUCET_FEEDBACK_MINE_URLS: MINE, FAUCET_FOUNDING_FILE: join(dir, 'founding.jsonl'), FAUCET_BOOK: join(dir, 'book.json'),
+      FAUCET_ADMIN_SHA256: createHash('sha256').update(CODE).digest('hex'), FAUCET_BOUNTY_PAYER: `${dir}|127.0.0.1:1` } });
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    for (let i = 0; i < 50; i++) { try { await fetch(`${base}/feedback/mine`); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+    const alice = key(1);
+    const ev = signed(alice, FEEDBACK_KIND, [['t', 'bug']], JSON.stringify({ happened: 'something broke while the bounty is off' }));
+    const sent = await (await fetch(`${base}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ event: ev }) })).json();
+    const act = async (b) => { const r = await fetch(`${base}/feedback/admin/act`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-admin': CODE }, body: JSON.stringify(b) }); return { status: r.status, ...(await r.json()) }; };
+    const approve = await act({ id: ev.id, action: 'approve', amountSats: 1000 });
+    const reward = await act({ id: ev.id, action: 'reward' });
+    const reject = await act({ id: ev.id, action: 'reject', reason: 'cannot reproduce, please add the steps' });
+    const lnurlw = await fetch(`${base}/lnurlw/${'ab'.repeat(32)}`);
+    const mine = await (await fetch(`${base}/feedback/mine`, { headers: { origin: 'https://arena-fb-private.example', authorization: `Nostr ${Buffer.from(JSON.stringify(signed(alice, HTTP_AUTH_KIND, [['u', MINE], ['method', 'GET']]))).toString('base64')}` } })).json();
+    const facts = { sent: sent.kept, approve: [approve.status, approve.why], reward: reward.status, reject: reject.ok, lnurlw: [lnurlw.status, (await lnurlw.json()).reason], mine: mine.reports.map((r) => [r.state, r.reward, r.reason]) };
+    console.log('  FACTS #1342 off:', JSON.stringify(facts));
+    assert.equal(facts.sent, true, 'reports are still kept');
+    assert.equal(approve.status, 403); assert.match(approve.why, /rewards are off/);
+    assert.equal(reward.status, 403);
+    assert.equal(facts.reject, true, 'a rejection with its reason still works');
+    assert.deepEqual(facts.lnurlw, [503, 'rewards are off']);
+    assert.deepEqual(facts.mine, [['rejected', null, 'cannot reproduce, please add the steps']]);
+  } finally { faucet.kill(); chat.close(); rmSync(dir, { recursive: true, force: true }); }
 });

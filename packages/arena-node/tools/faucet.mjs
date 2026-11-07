@@ -74,6 +74,10 @@ const lncli = (payer, args, timeoutMs = 20000) => new Promise((res) => execFile(
 // THE BOUNTY WALLET (kanban #1342 section 3): its own payer, never the faucet's; the payout network one setting (testnet4 in phase 1)
 const BOUNTY_PAYER = env.FAUCET_BOUNTY_PAYER ? (([dir, rpcserver]) => ({ dir, rpcserver }))(env.FAUCET_BOUNTY_PAYER.split('|')) : null;
 const BOUNTY_NETWORK = env.FAUCET_BOUNTY_NETWORK || 'testnet4';
+// THE BOUNTY IS OFF UNTIL THE OWNER SAYS SO (Daniel 2026-11-07: "ausmachen bis ich es sage und nur auf einer privaten URL aktivieren"): every money path
+// answers only while FAUCET_BOUNTY_ORIGINS names the private page's origin(s), and a report's reward is shown only to a request from one of them
+const BOUNTY_ORIGINS = String(env.FAUCET_BOUNTY_ORIGINS || '').split(',').map((x) => x.trim()).filter(Boolean);
+const bountyOn = () => BOUNTY_ORIGINS.length > 0;
 const PUBLIC_BASE = String(env.FAUCET_PUBLIC_BASE || 'https://bitcoinarena.io/api/faucet').replace(/\/$/, '');
 const bountyDecode = async (invoice) => {
   if (!/^lntb[0-9a-z]{20,1500}$/.test(invoice)) return { ok: false };
@@ -206,6 +210,7 @@ createServer((req, res) => {
       req.on('end', () => one(async () => {
         let b; try { b = JSON.parse(raw || '{}'); } catch { return send(400, { ok: false, why: 'not JSON' }); }
         const by = 'admin';
+        if ((b.action === 'approve' || b.action === 'reward') && !bountyOn()) return send(403, { ok: false, why: 'rewards are off until the owner turns them on: reject, duplicate and notes still work' });
         if (b.action === 'approve') {
           await PLAYED.fresh().catch(() => 0);
           // A CRITICAL BUG ABOVE THE BANDS IS THE OWNER'S OWN CALL: critical: true lifts mostSats to the amount for this one approval
@@ -226,7 +231,7 @@ createServer((req, res) => {
   // A REWARD'S LNURL-WITHDRAW (kanban #1342, LUD-03): the request, then the callback that pays the wallet's invoice once - one at a time (one())
   { const m = /^\/lnurlw\/([0-9a-f]{64})(\/callback)?$/.exec(path);
     if (m) {
-      if (!FEEDBACK || !BOUNTY_PAYER) return send(503, { status: 'ERROR', reason: 'rewards are not paid here' });
+      if (!FEEDBACK || !BOUNTY_PAYER || !bountyOn()) return send(503, { status: 'ERROR', reason: 'rewards are off' });
       if (!m[2]) return send(200, FEEDBACK.withdrawRequest(m[1], { base: PUBLIC_BASE }));
       const q = new URL(req.url, 'http://x').searchParams;
       if (q.get('k1') !== m[1]) return send(200, { status: 'ERROR', reason: 'k1 does not match the link' });
@@ -242,6 +247,8 @@ createServer((req, res) => {
     let last = null;
     // EACH REPORT WITH ITS REWARD, IF ANY: its state and the link to claim it (lnurl + the stable /reward page)
     for (const url of MINE_URLS) { const m = FEEDBACK.mine(ev, { url, method: 'GET' });
+      // REWARDS ONLY TOWARD THE PRIVATE PAGE (the owner's switch): anywhere else the reports come with their states and no reward
+      if (m.ok && !(bountyOn() && BOUNTY_ORIGINS.includes(String(req.headers.origin || '')))) return send(200, { ...m, reports: m.reports.map((r) => ({ ...r, amountSats: null, reward: null })) });
       if (m.ok) { const byReport = new Map(FEEDBACK.rewards({ pubkey: m.pubkey }).map((w) => [w.report, w]));
         return send(200, { ...m, reports: m.reports.map((r) => { const w = byReport.get(r.id);
           return { ...r, reward: w ? { sats: w.amountSats, network: w.network, state: w.state, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }) } : null }; }) }); }
