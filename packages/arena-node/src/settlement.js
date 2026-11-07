@@ -1287,8 +1287,13 @@ export class LockSettlement {
   /** What the signed settlement moves, kept with its intent (W6). */
   keepMoves(roundIdBytes, m) {
     const claims = m.claims.map((c) => `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`);
-    this.round.putLockSettlementMoves({ roundId: roundIdBytes, txid: m.txid, claims, payouts: m.plan.payouts.length });
+    // THE TXID IS KEPT IN THE HISTORY ALWAYS; THE ROW'S MOVES ONLY WHILE THE ROW IS NOT FINAL ON ANOTHER (kanban #1275, audit 4 #1257 fixesB-4): a
+    // settle pass that gathered for seconds wrote its own txid's moves after recover() had made the row ACCEPTED on the other asker's landed one -
+    // #1249's rewrite had run and was undone, and the claims, payouts and shares read were those of a transaction that never landed
     if (typeof this.round.putSettlementTxid === 'function') this.round.putSettlementTxid({ roundId: roundIdBytes, txid: m.txid, message: m.message, claims, payouts: m.plan.payouts.length });
+    const row = typeof this.round.lockSettlement === 'function' ? this.round.lockSettlement(roundIdBytes) : null;
+    if (row && row.state === ACCEPTED && row.txid !== m.txid) return;
+    this.round.putLockSettlementMoves({ roundId: roundIdBytes, txid: m.txid, claims, payouts: m.plan.payouts.length });
     // AND WHAT IT PAID EACH WINNER, in the table's order: a late loser's second settlement is split by these (C3b-1).
     if (this.round.putLockSettlementShares) this.round.putLockSettlementShares(roundIdBytes, m.plan.stakeShares || []);
   }
