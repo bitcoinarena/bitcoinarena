@@ -14,7 +14,7 @@
 //      the old release started, and the update said refused, with why.
 // A data migration is the seat's own: openStore migrates its database on start (store.js), and the backup is what a failed one
 // is rolled back from.
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, uptime } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -163,13 +163,25 @@ export function lndWaitsForTor(home, { env = process.env } = {}) {
   return changed;
 }
 
-/** Copy the node's files into backups/<stamp>/: { dir, files }. */
+/**
+ * THE DATABASE AS THE BACKUP TOOK IT (kanban #1227, audit 3 #1210 FIXES-37): node.db and its WAL, size and mtime. A rollback puts the backup back
+ * only while the database is still this one - a release that ran since (its updater died before it noted `served`, or the old units were
+ * started by hand after a failed move) wrote nonces, entries and locks there, and the backup over it would lose them.
+ */
+export function dbPrintOf(home) {
+  const out = {};
+  for (const f of ['node.db', 'node.db-wal']) { try { const st = statSync(join(home, f)); out[f] = `${st.size}:${Math.floor(st.mtimeMs)}`; } catch { out[f] = null; } }
+  return out;
+}
+export const dbChangedSince = (home, backup) => !!(backup && backup.print) && JSON.stringify(dbPrintOf(home)) !== JSON.stringify(backup.print);
+/** Copy the node's files into backups/<stamp>/: { dir, files, print }. */
 export function backupNode(home, stamp = new Date().toISOString().replace(/[:.]/g, '-')) {
   const dir = join(home, 'backups', stamp);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const files = [];
+  const print = dbPrintOf(home);
   for (const f of NODE_FILES) if (existsSync(join(home, f))) { copyFileSync(join(home, f), join(dir, f)); files.push(f); }
-  return { dir, files };
+  return { dir, files, print };
 }
 /** Put a backup's files back (the database first). A file Windows still holds (EBUSY / EPERM / EACCES: the stopped seat's handle not
  *  closed yet) is tried again each second for a while; one that never frees is named, and the others still go back. { ok, failed } */
@@ -287,6 +299,8 @@ export async function resumeUpdate({ home, env = process.env, sh = run, fetcher 
     journalStep(home, j.id, U.KEPT);
     return { resumed: 'kept', from: j.from, to: j.to, why };
   }
+  // a database written since the backup is kept whatever `served` says (kanban #1227)
+  if (!served && dbChangedSince(home, j.backup)) { served = true; why += '; node.db changed since the backup: kept'; }
   if (j.phase !== U.ROLLING_BACK) journalStep(home, j.id, U.ROLLING_BACK, { served, why });
   const r = await rollBack({ svc, home, moving, oldTexts: j.oldTexts || {}, migrating: j.migrating, confFile: join(home, 'arena.conf'), backup: j.backup, keepDb: served,
     to: j.to, port: j.port, fetcher, waitMs, sleep });
