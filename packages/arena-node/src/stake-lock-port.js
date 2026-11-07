@@ -293,11 +293,12 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
      * (module_consensus_version through request_current_consensus), { major, minor, arenaLock }. A federation on stock LNv2 answers no
      * such endpoint: that is an error here, and the gate reads it as "not running".
      */
-    /** What the guardians hold at an outpoint as an Arena lock (stake-lock arena-status): { blockCount, stored: { contractId, blocksLeft, expiration } | null }. */
+    /** What the guardians hold at an outpoint as an Arena lock (stake-lock arena-status): { blockCount, stored: { contractId, blocksLeft, expiration, fallbackAfter } | null }. */
     async arenaStatus(outpoint) {
       const j = await read(['--mode', 'arena-status', '--data-dir', readDataDir, '--outpoint', outpointArg(outpoint)]);
       return { blockCount: Number(j.block_count),
-        stored: j.stored ? { contractId: String(j.stored.contract_id), blocksLeft: Number(j.stored.blocks_left), expiration: Number(j.stored.expiration) } : null };
+        stored: j.stored ? { contractId: String(j.stored.contract_id), blocksLeft: Number(j.stored.blocks_left), expiration: Number(j.stored.expiration),
+          fallbackAfter: Number(j.stored.fallback_after) } : null };
     },
     async moduleVersion() {
       const j = await read(['--mode', 'arena-version', '--data-dir', readDataDir]);

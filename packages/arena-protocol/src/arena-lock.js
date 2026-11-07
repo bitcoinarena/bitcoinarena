@@ -7,6 +7,8 @@
 //   payment_image  Hash | Point, as LNv2
 //   amount         msat
 //   expiration     LNv2's consensus block count
+//   fallback_after LNv2's consensus block count from which t - 1 of the named seats claim without the preimage (spec §23.2, kanban #1268 /
+//                  #1290 / #1281): the lock's block count plus stall_blocks (LOCK_STALL_BLOCKS), so expiration - stake_expiry_blocks + stall_blocks
 //   round_id       32 bytes: a lock is self-describing, a proof needs no lookup
 //   claim_keys     the round's settlement seats' node keys (BIP-340 x-only, the keys their bonds name), in seat order, at most 7
 //   threshold      t (5 of 7)
@@ -96,6 +98,19 @@ export function namedClaimRefusal({ network, censusHeight, version, pointOf = na
   return `this round locks to an Arena lock (protocol ${NAMED_CLAIM_VERSION}) and its federation does not run it: LNv2 module version ${v}, needs 1.100 from a threshold of its guardians`;
 }
 
+/**
+ * STALL_BLOCKS (spec §23.2, RULED 2026-11-07 kanban #1268): the blocks after a lock from which its fallback claim opens - 36 on mainnet and
+ * testnet4, 3 on regtest (and a devnet).
+ */
+export const LOCK_STALL_BLOCKS = Object.freeze({ mainnet: 36, testnet4: 36, regtest: 3, devnet: 3 });
+/** stall_blocks of `network` ('testnet' is testnet4); null on a network that names none. */
+export const lockStallBlocks = (network) => {
+  const n = network === 'testnet' ? 'testnet4' : String(network || '');
+  return Object.prototype.hasOwnProperty.call(LOCK_STALL_BLOCKS, n) ? LOCK_STALL_BLOCKS[n] : null;
+};
+/** A lock's fallback height from its expiration: the lock's block count (expiration - expiryBlocks) plus stall_blocks. */
+export const fallbackAfterFor = (expiration, stallBlocks, expiryBlocks = STAKE_EXPIRY_BLOCKS) => expiration - expiryBlocks + stallBlocks;
+
 export const ARENA_LOCK_CONTRACT_TAG = 'ARENA/v1/LockContract';
 export const ARENA_LOCK_MAX_KEYS = 7;
 
@@ -115,7 +130,8 @@ const lockSized = (b, n, what) => { if (!(b instanceof Uint8Array) || b.length !
 
 /**
  * THE CONTRACT'S CONSENSUS ENCODING, byte for byte as the fork's derive writes it: the payment image an enum (variant BigSize, then its bytes
- * length-prefixed), amount and expiration BigSize, round_id raw, claim_keys a BigSize count then 32 bytes each, threshold one byte, refund_pk 33.
+ * length-prefixed), amount, expiration and fallback_after BigSize, round_id raw, claim_keys a BigSize count then 32 bytes each, threshold one
+ * byte, refund_pk 33.
  */
 export function encodeArenaLockContract(f) {
   const img = f.paymentImage || {};
@@ -124,13 +140,14 @@ export function encodeArenaLockContract(f) {
       : (() => { throw new Error('a payment image is a point or a hash'); })();
   if (!Array.isArray(f.claimKeys)) throw new Error('a lock names its claim keys');
   if (!Number.isInteger(f.threshold) || f.threshold < 0 || f.threshold > 255) throw new Error('a threshold is one byte');
-  return lockCat(image, lockBigsize(f.amountMsat), lockBigsize(f.expiration), lockSized(f.roundId, 32, 'a round id'), lockBigsize(f.claimKeys.length),
+  if (!Number.isSafeInteger(f.fallbackAfter) || f.fallbackAfter < 0) throw new Error('a lock names its fallback height');
+  return lockCat(image, lockBigsize(f.amountMsat), lockBigsize(f.expiration), lockBigsize(f.fallbackAfter), lockSized(f.roundId, 32, 'a round id'), lockBigsize(f.claimKeys.length),
     ...f.claimKeys.map((k) => lockSized(k, 32, 'a claim key')), Uint8Array.of(f.threshold), lockSized(f.refundPk, 33, 'a refund key'));
 }
 /** The contract id the guardians store the lock under (and its forfeit message). */
 export const arenaLockContractId = (f) => taggedHash(ARENA_LOCK_CONTRACT_TAG, encodeArenaLockContract(f));
 
-/** The module's output rule: 1..7 distinct keys, 1 <= t <= n. { ok } or { ok: false, why }. */
+/** The module's output rule: 1..7 distinct keys, 1 <= t <= n, the fallback before the expiration. { ok } or { ok: false, why }. */
 export function arenaLockValid(f) {
   const n = Array.isArray(f.claimKeys) ? f.claimKeys.length : 0;
   if (n === 0) return { ok: false, why: 'the lock names no claim keys' };
@@ -138,6 +155,7 @@ export function arenaLockValid(f) {
   if (new Set(f.claimKeys.map(toHex)).size !== n) return { ok: false, why: 'the lock names a claim key twice' };
   if (!Number.isInteger(f.threshold) || f.threshold < 1) return { ok: false, why: 'the lock\'s threshold is zero' };
   if (f.threshold > n) return { ok: false, why: `the lock's threshold ${f.threshold} is above its ${n} claim keys` };
+  if (!(Number(f.fallbackAfter) < Number(f.expiration))) return { ok: false, why: `the lock's fallback ${f.fallbackAfter} is not before its expiration ${f.expiration}` };
   return { ok: true };
 }
 
@@ -150,20 +168,25 @@ export function arenaLockFieldsFromJson(j) {
     paymentImage: { kind: img.kind, bytes: fromHex(String(img.bytes || '')) },
     amountMsat: BigInt(String(j.amountMsat)),
     expiration: Number(j.expiration),
+    fallbackAfter: Number(j.fallbackAfter),
     roundId: fromHex(String(j.roundId || '')),
     claimKeys: (Array.isArray(j.claimKeys) ? j.claimKeys : []).map((k) => fromHex(String(k))),
     threshold: Number(j.threshold),
     refundPk: fromHex(String(j.refundPk || '')),
   };
   if (!Number.isSafeInteger(f.expiration) || f.expiration < 0) throw new Error('an expiration is a block height');
+  if (!Number.isSafeInteger(f.fallbackAfter) || f.fallbackAfter < 0) throw new Error('a fallback height is a block height');
   return f;
 }
 export const arenaLockFieldsToJson = (f) => ({
   paymentImage: { kind: f.paymentImage.kind, bytes: toHex(f.paymentImage.bytes) }, amountMsat: String(f.amountMsat), expiration: f.expiration,
-  roundId: toHex(f.roundId), claimKeys: f.claimKeys.map(toHex), threshold: f.threshold, refundPk: toHex(f.refundPk),
+  fallbackAfter: f.fallbackAfter, roundId: toHex(f.roundId), claimKeys: f.claimKeys.map(toHex), threshold: f.threshold, refundPk: toHex(f.refundPk),
 });
 
-/** The lock a client builds for an entry of a protocol-27 round: everything but its expiration, which the guardians' count gives. */
+/**
+ * The lock a client builds for an entry of a protocol-27 round: everything but its expiration and fallback height, which the guardians' count
+ * gives (the wasm lock client adds expiry_delta and `stallBlocks` to it).
+ */
 export function arenaLockFor({ kind, entry, roundId, seatKeys, threshold, amountMsat, imageBytes }) {
   return {
     paymentImage: { kind: kind === 'stake' ? 'point' : 'hash', bytes: imageBytes },
@@ -176,7 +199,7 @@ export function arenaLockFor({ kind, entry, roundId, seatKeys, threshold, amount
  * of the attested claim_pk: claim_keys equal to the round's settlement seats' node keys in seat order, the round's threshold, and the round's id.
  * A client checks the same against the round's published, verified seating. { ok } or { ok: false, why }.
  */
-export function arenaLockMatchesEntry({ lock, entry, kind, roundId, seatKeys, threshold, height, expiryBlocks = STAKE_EXPIRY_BLOCKS } = {}) {
+export function arenaLockMatchesEntry({ lock, entry, kind, roundId, seatKeys, threshold, height, expiryBlocks = STAKE_EXPIRY_BLOCKS, stallBlocks } = {}) {
   if (!lock) return { ok: false, why: 'there is no lock to compare' };
   const valid = arenaLockValid(lock);
   if (!valid.ok) return valid;
@@ -185,6 +208,10 @@ export function arenaLockMatchesEntry({ lock, entry, kind, roundId, seatKeys, th
   if (!Array.isArray(seatKeys) || lock.claimKeys.length !== seatKeys.length || lock.claimKeys.some((k, i) => toHex(k) !== toHex(seatKeys[i])))
     return { ok: false, why: `that ${kind} lock's claim keys are not this round's settlement seats in seat order` };
   if (lock.threshold !== threshold) return { ok: false, why: `that ${kind} lock's threshold ${lock.threshold} is not the round's ${threshold}` };
+  // THE FALLBACK HEIGHT (spec §23.1 step 5, kanban #1281): the lock's own block count plus the network's stall_blocks, nothing else
+  if (!Number.isInteger(stallBlocks)) return { ok: false, why: 'no stall_blocks to check the lock\'s fallback height against' };
+  if (lock.fallbackAfter !== fallbackAfterFor(lock.expiration, stallBlocks, expiryBlocks))
+    return { ok: false, why: `that ${kind} lock's fallback height ${lock.fallbackAfter} is not its block count plus stall_blocks ${stallBlocks} (${fallbackAfterFor(lock.expiration, stallBlocks, expiryBlocks)})` };
   // the stock checks, with the claim key out of the comparison (the named keys above stand in for it)
   const none = new Uint8Array(33);
   return lockMatchesEntry({ lock: { ...lock, claimPk: none }, entry, kind, claimPk: none, height, expiryBlocks });
@@ -196,6 +223,7 @@ export function arenaLockMatchesEntry({ lock, entry, kind, roundId, seatKeys, th
  * commit, `dropped` those that failed this txid's earlier sessions. Answers the ascending set, or null when fewer than t are left.
  */
 export function namedSignerSet({ committed, threshold, dropped = [] }) {
+  // (the fallback claim takes threshold - 1: namedSignerSet({ committed, threshold: threshold - 1, dropped }), spec §23.2)
   const out = new Set(dropped.map(Number));
   const left = [...new Set([...committed].map(Number))].filter((i) => Number.isInteger(i) && i >= 0 && !out.has(i)).sort((a, b) => a - b);
   return left.length >= threshold ? left.slice(0, threshold) : null;

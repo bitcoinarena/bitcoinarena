@@ -20,7 +20,7 @@
 import { ANCESTOR_TAG } from '../../arena-protocol/src/ancestor.js';
 import { noteInvite, wholeInvite } from './guardian-invites.js';
 import { taggedHash, toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
-import { TAG } from '../../arena-protocol/src/constants.js';
+import { TAG, networkOf } from '../../arena-protocol/src/constants.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { feeBpsForRound, stakeOf } from './join.js';
@@ -33,7 +33,7 @@ import { encodeRoundContract, decodeRoundContract, roundId as roundIdOf, custody
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 import { takesDeposits } from '../../arena-protocol/src/known-federations.js';
 import { splitDonation, donationSetPaysKeys } from '../../arena-protocol/src/donation.js';
-import { namedClaims, namedClaimKeys, arenaLockFor, arenaLockContractId, arenaLockValid, arenaLockFieldsToJson } from '../../arena-protocol/src/arena-lock.js';
+import { namedClaims, namedClaimKeys, arenaLockFor, arenaLockContractId, arenaLockValid, arenaLockFieldsToJson, lockStallBlocks, fallbackAfterFor } from '../../arena-protocol/src/arena-lock.js';
 
 const namesNothing = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
 
@@ -1610,12 +1610,15 @@ export async function lockArenaStake({ round, roundId, invite, seed, stake, play
   const entry = { playerPubkey };
   const stakeFields = { ...arenaLockFor({ kind: 'stake', entry, roundId, seatKeys, threshold, amountMsat: amount, imageBytes: stake.stakePoint }), refundPk };
   const feeFields = feeGate.pays ? { ...arenaLockFor({ kind: 'fee', entry, roundId, seatKeys, threshold, amountMsat: feeMsat, imageBytes: image }), refundPk } : null;
+  // THE FALLBACK HEIGHT (spec §23.2, kanban #1281): the guardians' count at the lock plus the round's network's stall_blocks - the lock client adds it
+  let stallBlocks = null; try { stallBlocks = lockStallBlocks(networkOf(round.networkId)); } catch { stallBlocks = null; }
+  if (!Number.isInteger(stallBlocks)) throw new Error('this round\'s network names no stall_blocks: no Arena lock is made for it');
   for (const [what, f] of [['stake', stakeFields], ['fee', feeFields]]) {
     if (!f) continue;
-    const v = arenaLockValid(f);
+    const v = arenaLockValid({ ...f, expiration: delta, fallbackAfter: stallBlocks });   // as from a count of 0: the fallback opens before the refund
     if (!v.ok) throw new Error(`no ${what} lock is made for this round: ${v.why}`);
   }
-  const asJson = (f) => { const j = arenaLockFieldsToJson({ ...f, expiration: 0 }); delete j.expiration; return JSON.stringify(j); };
+  const asJson = (f) => { const j = arenaLockFieldsToJson({ ...f, expiration: 0, fallbackAfter: 0 }); delete j.expiration; delete j.fallbackAfter; j.stallBlocks = stallBlocks; return JSON.stringify(j); };
   onStep(`locking the stake${feeGate.pays ? ', the node fee' : ''}${donationShares.length ? ' and the donation' : ''} to the round's ${seatKeys.length} settlement seats, ${threshold} named signers (submitted, accepted behind)`);
   const submitted = JSON.parse(await client.arenaLockSubmit(asJson(stakeFields), feeFields ? asJson(feeFields) : '', delta,
     JSON.stringify(donationShares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat), image: toHex(playerPubkey) })))));
@@ -1624,7 +1627,8 @@ export async function lockArenaStake({ round, roundId, invite, seed, stake, play
   const outs = submitted.outputs || [];
   const built = (o, fields) => {
     if (!o) return null;
-    const f = { ...fields, expiration: Number(o.computed_expiration), arena: true };
+    const f = { ...fields, expiration: Number(o.computed_expiration), fallbackAfter: Number(o.computed_fallback_after), arena: true };
+    if (f.fallbackAfter !== fallbackAfterFor(f.expiration, stallBlocks, delta)) throw new Error('the lock client built another fallback height than the lock\'s count plus stall_blocks');
     if (BigInt(o.amount_msat) !== f.amountMsat) throw new Error(`the lock client built ${o.amount_msat} msat, and this lock holds ${f.amountMsat}`);
     if (!Number.isSafeInteger(f.expiration) || f.expiration < 1) throw new Error('the lock client built no expiration');
     const id = toHex(arenaLockContractId(f));

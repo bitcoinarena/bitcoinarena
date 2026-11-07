@@ -16,8 +16,8 @@ const entry = { roundId: b32(0x11), playerPubkey: b32(0x05), stakeCommitment: b3
   stakePoint: Uint8Array.from([0x03, ...b32(0x21)]), feePreimage: b32(0x07) };
 const contract = (over = {}) => ({ protocolVersion: 27, networkId: NETWORK_ID_REGTEST, censusHeight: 10, nodes: KEYS, settlementSlots: 7, stakeExpiryBlocks: 144, ...over });
 const lock = (over = {}) => ({ ...arenaLockFor({ kind: 'stake', entry, roundId: entry.roundId, seatKeys: KEYS, threshold: 5, amountMsat: netStakeMsat(entry), imageBytes: entry.stakePoint }),
-  expiration: HEIGHT + 144, arena: true, ...over });
-const portHolding = (held) => ({ arenaStatus: async () => ({ blockCount: HEIGHT, stored: held ? { contractId: toHex(arenaLockContractId(held)), blocksLeft: 144, expiration: held.expiration } : null }) });
+  expiration: HEIGHT + 144, fallbackAfter: HEIGHT + 3, arena: true, ...over });
+const portHolding = (held) => ({ arenaStatus: async () => ({ blockCount: HEIGHT, stored: held ? { contractId: toHex(arenaLockContractId(held)), blocksLeft: 144, expiration: held.expiration, fallbackAfter: held.fallbackAfter } : null }) });
 const take = (over) => arenaLockStands({ contract: contract(), entry, kind: 'stake', fields: lock(), outpoint: { txid: b32(9), outIdx: 0 }, port: portHolding(lock()), federationId: b32(0xfe), ...over });
 
 test('the lock JSON is the Arena lock\'s when it names claim keys, and round-trips', () => {
@@ -34,6 +34,9 @@ test('a protocol-27 round takes its Arena lock; every way of being another lock 
   assert.match((await take({ port: portHolding(lock({ amountMsat: 1n })) })).why, /its id is another/);
   assert.match((await take({ fields: lock({ expiration: HEIGHT + 145 }), port: portHolding(lock({ expiration: HEIGHT + 145 })) , contract: contract({ nodes: [KEYS[1], KEYS[0], ...KEYS.slice(2)] }) })).why, /seat order/);
   assert.match((await take({ fields: lock({ roundId: b32(0x12) }), port: portHolding(lock({ roundId: b32(0x12) })) })).why, /another round/);
+  // the fallback height (kanban #1281): the lock's count plus regtest's stall_blocks 3, and the one the federation holds
+  assert.match((await take({ fields: lock({ fallbackAfter: HEIGHT + 4 }), port: portHolding(lock({ fallbackAfter: HEIGHT + 4 })) })).why, /fallback height 304 is not its block count plus stall_blocks 3/);
+  assert.match((await take({ port: { arenaStatus: async () => ({ blockCount: HEIGHT, stored: { contractId: toHex(arenaLockContractId(lock())), blocksLeft: 144, expiration: HEIGHT + 144, fallbackAfter: HEIGHT + 9 } }) } })).why, /fallback height is not the one the federation holds/);
   const stock = { paymentImage: { kind: 'point', bytes: entry.stakePoint }, amountMsat: netStakeMsat(entry), claimPk: new Uint8Array(33), refundPk: new Uint8Array(33), expiration: 444 };
   assert.match((await take({ fields: stock })).why, /stock contract to one claim key/);
   assert.match((await take({ gate: async () => 'not running' })).why, /not running/);

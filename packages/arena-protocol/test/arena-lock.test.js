@@ -18,12 +18,12 @@ const KEYS = '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798,c
 const REFUND = fromHex('022f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01');
 const b32 = (v) => new Uint8Array(32).fill(v);
 // the reference lock of the fork's own unit test (fedimint-lnv2-common arena_lock/tests.rs): seats are secrets 1..7, refund secret 8
-const reference = () => ({ paymentImage: { kind: 'hash', bytes: sha256(b32(0x42)) }, amountMsat: 1000000n, expiration: 500, roundId: b32(0x11),
+const reference = () => ({ paymentImage: { kind: 'hash', bytes: sha256(b32(0x42)) }, amountMsat: 1000000n, expiration: 500, fallbackAfter: 400, roundId: b32(0x11),
   claimKeys: KEYS.slice(), threshold: 5, refundPk: REFUND });
 
-test('the contract id is the fork module\'s: tagged hash of the consensus encoding (vector 16aaa68a)', () => {
-  assert.equal(toHex(arenaLockContractId(reference())), '16aaa68ae146d84f176914b083dfbba9166f0e93ec493a5442cfcbe47e0d10ce');
-  assert.equal(encodeArenaLockContract(reference()).length, 2 + 32 + 5 + 3 + 32 + 1 + 7 * 32 + 1 + 33);
+test('the contract id is the fork module\'s: tagged hash of the consensus encoding (vector 47842301, with fallback_after since #1281)', () => {
+  assert.equal(toHex(arenaLockContractId(reference())), '47842301d8d872a4a6d9a08c5721d4d8ff32c0568ea5dc0fe31ca4f075b3b2c0');
+  assert.equal(encodeArenaLockContract(reference()).length, 2 + 32 + 5 + 3 + 3 + 32 + 1 + 7 * 32 + 1 + 33);   // fallback_after 400: BigSize 3 bytes
   const other = { ...reference(), roundId: b32(0x12) };
   assert.notEqual(toHex(arenaLockContractId(other)), toHex(arenaLockContractId(reference())));
   // the JSON the wasm client takes round-trips to the same id
@@ -70,10 +70,10 @@ const HEIGHT = 300;
 const entry = { playerPubkey: b32(0x05), stakeCommitment: b32(0x04), stakeMsat: 100000n, feeMsat: 2000n, donationMsat: 0n,
   stakePoint: Uint8Array.from([0x03, ...b32(0x21)]), feePreimage: b32(0x07) };
 const stakeLock = () => ({ ...arenaLockFor({ kind: 'stake', entry, roundId: b32(0x11), seatKeys: KEYS, threshold: 5, amountMsat: netStakeMsat(entry), imageBytes: entry.stakePoint }),
-  expiration: HEIGHT + 144 });
+  expiration: HEIGHT + 144, fallbackAfter: HEIGHT + 3 });
 
 test('§23.1 step 5 for an Arena lock: the round, its seats in seat order, its threshold, and every stock field', () => {
-  const ok = (lock, over = {}) => arenaLockMatchesEntry({ lock, entry, kind: 'stake', roundId: b32(0x11), seatKeys: KEYS, threshold: 5, height: HEIGHT, ...over });
+  const ok = (lock, over = {}) => arenaLockMatchesEntry({ lock, entry, kind: 'stake', roundId: b32(0x11), seatKeys: KEYS, threshold: 5, height: HEIGHT, stallBlocks: 3, ...over });
   assert.deepEqual(ok(stakeLock()), { ok: true });
   assert.equal(toHex(stakeLock().refundPk), toHex(refundKeyOf(entry.playerPubkey)));
   assert.match(ok({ ...stakeLock(), roundId: b32(0x12) }).why, /another round/);
@@ -82,9 +82,12 @@ test('§23.1 step 5 for an Arena lock: the round, its seats in seat order, its t
   assert.match(ok({ ...stakeLock(), threshold: 4 }).why, /threshold 4 is not the round's 5/);
   assert.match(ok({ ...stakeLock(), amountMsat: 1n }).why, /holds 1 msat/);
   assert.match(ok({ ...stakeLock(), refundPk: REFUND }).why, /refund_pk/);
-  assert.match(ok({ ...stakeLock(), expiration: HEIGHT + 144 - 13 }).why, /a loser could refund before settlement/);
+  assert.match(ok({ ...stakeLock(), expiration: HEIGHT + 144 - 13, fallbackAfter: HEIGHT + 3 - 13 }).why, /a loser could refund before settlement/);
+  // the fallback height is the lock's count plus stall_blocks, nothing else (kanban #1281)
+  assert.match(ok({ ...stakeLock(), fallbackAfter: HEIGHT + 2 }).why, /fallback height .* is not its block count plus stall_blocks 3/);
+  assert.match(ok(stakeLock(), { stallBlocks: undefined }).why, /no stall_blocks/);
   assert.match(ok({ ...stakeLock(), claimKeys: [KEYS[0], KEYS[0], ...KEYS.slice(2)] }).why, /twice/);
-  const fee = { ...arenaLockFor({ kind: 'fee', entry, roundId: b32(0x11), seatKeys: KEYS, threshold: 5, amountMsat: entry.feeMsat, imageBytes: sha256(entry.feePreimage) }), expiration: HEIGHT + 144 };
+  const fee = { ...arenaLockFor({ kind: 'fee', entry, roundId: b32(0x11), seatKeys: KEYS, threshold: 5, amountMsat: entry.feeMsat, imageBytes: sha256(entry.feePreimage) }), expiration: HEIGHT + 144, fallbackAfter: HEIGHT + 3 };
   assert.deepEqual(ok(fee, { kind: 'fee' }), { ok: true });
 });
 
