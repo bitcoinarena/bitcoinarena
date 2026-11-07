@@ -15,15 +15,18 @@
 //   GET  /lnurlw/<k1>               -> LUD-03 withdrawRequest of an approved report's reward (kanban #1342); /lnurlw/<k1>/callback?k1=&pr= pays it once
 //                                   FAUCET_BOUNTY_PAYER=<lnddir>|<rpc host:port> (the bounty wallet, its own), FAUCET_PUBLIC_BASE (the public /api/faucet URL),
 //                                   FAUCET_BOUNTY_NETWORK (testnet4: phase 1 is testnet only)
+//   /feedback/admin/list | /report/<id> | /act | /export.csv  (x-arena-admin: the admin code) -> the review list (kanban #1342 section 4)
+//                                   FAUCET_ADMIN_SHA256 (the code's hash, never the code), FAUCET_REWARD_RULES (JSON), FAUCET_FEEDBACK_EXCLUDED (a file of
+//                                   our keys, hex, one per line), FAUCET_SEASON_SEATS / FAUCET_SEASON_GAMES (where "finished a round" is read)
 //                                   FAUCET_LNCLI, FAUCET_PAYERS=<lnddir>|<rpc host:port>,... : the second pays when an invoice's gateway is on the first
 //
 // Each payment's txid is appended to FAUCET_PENDING, which the the test host's miner-C feeder (ops/pending-to-minerc.sh) lists for mining.
 //   FAUCET_PORT  FAUCET_RPC_URL (with /wallet/<name>)  FAUCET_COOKIE  FAUCET_BOOK  FAUCET_PENDING  [FAUCET_FEE_RATE sat/vB, 2]
 import { createServer } from 'node:http';
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
-import { openFeedbackStore } from '../src/feedback-store.js';
+import { openFeedbackStore, networkPlayers } from '../src/feedback-store.js';
 import { refillDecide, feedbackDecide, faucetDecide, playerGrantDecide, playerGrantTotals, opponentWant, opponentWants, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
 
 const env = process.env;
@@ -91,6 +94,13 @@ const bountyStatus = async (hash) => {
   const p = (JSON.parse(r.out).payments || []).find((x) => x.payment_hash === hash);
   return !p ? 'failed' : p.status === 'SUCCEEDED' ? 'paid' : p.status === 'FAILED' ? 'failed' : 'unknown';
 };
+// THE ADMIN (kanban #1342 section 4): the owner's code, held to its hash as the explorer holds it (#1092); the rules, our keys, who played
+const ADMIN_SHA = String(env.FAUCET_ADMIN_SHA256 || '').trim().toLowerCase();
+const isAdmin = (req) => { const code = String(req.headers['x-arena-admin'] || '').trim(); if (!/^[0-9a-f]{64}$/.test(ADMIN_SHA) || !code) return false;
+  return timingSafeEqual(Buffer.from(createHash('sha256').update(code).digest('hex')), Buffer.from(ADMIN_SHA)); };
+const RULES = (() => { try { return JSON.parse(env.FAUCET_REWARD_RULES || '{}'); } catch { return {}; } })();
+const ourKeys = () => { try { return new Set(readFileSync(env.FAUCET_FEEDBACK_EXCLUDED, 'utf8').split(/\s+/).map((x) => x.toLowerCase()).filter((x) => /^[0-9a-f]{64}$/.test(x))); } catch { return new Set(); } };
+const PLAYED = networkPlayers({ seats: String(env.FAUCET_SEASON_SEATS || '').split(',').filter(Boolean), games: String(env.FAUCET_SEASON_GAMES || 'rock-paper-scissors,nextblock,btc-updown').split(',').filter(Boolean) });
 if (FEEDBACK && BOUNTY_PAYER) setInterval(() => FEEDBACK.settle({ status: bountyStatus }).catch(() => {}), 60000).unref();
 
 /** A player's grant: read the invoice, decide, keep it in the book BEFORE paying (a crash pays nobody twice), and take it out again if no payer could pay. */
@@ -165,6 +175,53 @@ createServer((req, res) => {
       } catch { send(400, { ok: false, why: 'not JSON' }); }
     });
     return undefined;
+  }
+  // THE REVIEW LIST (kanban #1342 section 4): the admin code on every ask; reads and one action at a time
+  if (path.startsWith('/feedback/admin/')) {
+    if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'GET, POST', 'access-control-allow-headers': 'content-type, x-arena-admin', 'access-control-max-age': '86400' }); return res.end(); }
+    if (!FEEDBACK) return send(503, { ok: false, why: 'reports are not kept here' });
+    if (!isAdmin(req)) return send(403, { ok: false, why: 'not the admin code' });
+    const q = new URL(req.url, 'http://x').searchParams;
+    const withReward = (r, ours) => { const w = FEEDBACK.rewards({ pubkey: r.pubkey }).find((x) => x.report === r.id);
+      return { ...r, ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
+    if (path === '/feedback/admin/list' && req.method === 'GET') {
+      PLAYED.fresh().catch(() => 0).then(() => { const ours = ourKeys();
+        send(200, { ok: true, reports: FEEDBACK.list({ state: q.get('state'), type: q.get('type'), game: q.get('game'), pubkey: q.get('pubkey') }).map((r) => withReward(r, ours)), budget: FEEDBACK.budget({ rules: RULES }) }); });
+      return undefined;
+    }
+    { const m = /^\/feedback\/admin\/report\/([0-9a-f]{64})$/.exec(path);
+      if (m && req.method === 'GET') {
+        const r = FEEDBACK.report(m[1]); if (!r) return send(404, { ok: false, why: 'no such report' });
+        PLAYED.fresh().catch(() => 0).then(() => { const ours = ourKeys();
+          send(200, { ok: true, report: withReward(r, ours), moves: FEEDBACK.moves(r.id), earlier: FEEDBACK.list({ pubkey: r.pubkey }).filter((x) => x.id !== r.id) }); });
+        return undefined;
+      } }
+    if (path === '/feedback/admin/export.csv' && req.method === 'GET') {
+      res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="arena-feedback.csv"', 'cache-control': 'no-store', ...cors });
+      return res.end(FEEDBACK.csv());
+    }
+    if (path === '/feedback/admin/act' && req.method === 'POST') {
+      let raw = ''; req.setEncoding('utf8');
+      req.on('data', (c) => { raw += c; if (raw.length > 8192) req.destroy(); });
+      req.on('end', () => one(async () => {
+        let b; try { b = JSON.parse(raw || '{}'); } catch { return send(400, { ok: false, why: 'not JSON' }); }
+        const by = 'admin';
+        if (b.action === 'approve') {
+          await PLAYED.fresh().catch(() => 0);
+          // A CRITICAL BUG ABOVE THE BANDS IS THE OWNER'S OWN CALL: critical: true lifts mostSats to the amount for this one approval
+          const rules = b.critical === true ? { ...RULES, mostSats: Math.max(Number(b.amountSats) || 0, RULES.mostSats || 0) } : RULES;
+          return send(200, FEEDBACK.approve(b.id, b.amountSats, { played: PLAYED.played, excluded: ourKeys(), rules, severity: b.severity || null, by }));
+        }
+        if (b.action === 'reject') return send(200, FEEDBACK.move(b.id, 'rejected', { reason: b.reason, by }));
+        if (b.action === 'duplicate') return send(200, FEEDBACK.move(b.id, 'duplicate', { duplicateOf: b.of, by }));
+        if (b.action === 'reward') { const w = FEEDBACK.createReward(b.id, { network: BOUNTY_NETWORK, by });
+          return send(200, w.ok ? { ...w, lnurl: FEEDBACK.lnurlOf(w.reward.k1, { base: PUBLIC_BASE }) } : w); }
+        if (b.action === 'note') return send(200, FEEDBACK.note(b.id, { ticket: b.ticket, severity: b.severity, by }));
+        return send(400, { ok: false, why: 'an action is approve, reject, duplicate, reward or note' });
+      }).catch(() => send(500, { ok: false, why: 'try again' })));
+      return undefined;
+    }
+    return send(404, { ok: false, why: 'no such admin door' });
   }
   // A REWARD'S LNURL-WITHDRAW (kanban #1342, LUD-03): the request, then the callback that pays the wallet's invoice once - one at a time (one())
   { const m = /^\/lnurlw\/([0-9a-f]{64})(\/callback)?$/.exec(path);
