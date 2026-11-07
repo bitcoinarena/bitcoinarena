@@ -106,3 +106,24 @@ test('#1159 a stop after the refund went in: REFUNDING was kept first, the next 
   assert.ok(w.state.kept.some((k) => k.seat === 0 && k.row.outpoint === `${rec.refundTxid}:0`), 'the refunded contract is a reserve row again');
   assert.equal(w.fed.submits.length, 2, 'the payout and one refund');
 });
+
+// KANBAN #1229 (audit 3 #1210 FIXES-10): a SUBMITTING row's kept signature was handed in on every pass, at any height - a coordinator that
+// stopped for 12 blocks came back and handed in attempt 0 after the co-signers had expired it and paid a later attempt from other inputs: a
+// second contract nobody can authorise or refund, or a leaderboard paid twice. Now a SUBMITTING attempt is handed in only before
+// PLAN_EXPIRY_BLOCKS - SUBMIT_CUTOFF_BLOCKS; past that, its output 0 not in the federation, it goes EXPIRED and its signature is dropped.
+test('#1229 a signed attempt not taken is handed in again inside its window, never once its plan is due to expire', async () => {
+  for (const at of [505, 510]) {
+    const w = world();
+    const { settle } = w.port;
+    let fail = true;
+    w.port.settle = async (a) => { if (a.signature && fail) { fail = false; throw new Error('the tool timed out before the federation took it'); } return settle(a); };
+    try { await w.seats[0].api.round({ height: 500 }); } catch { /* the hand-in failed */ }
+    assert.equal(w.seats[0].api.stateOf(PROPOSAL).state, PAYOUT.SUBMITTING);
+    assert.equal(w.fed.submits.length, 0);
+    let b; try { [b] = await w.seats[0].api.round({ height: at }); } catch (e) { b = { state: 'threw', why: e.message }; }
+    const kept = w.seats[0].api.stateOf(PROPOSAL);
+    console.log(`  #1229 the coordinator back at ${at}: ${kept.state}, ${w.fed.submits.length} handed in`);
+    if (at === 505) assert.equal(w.fed.submits.length, 1, 'inside its window the signed attempt is handed in again');
+    else { assert.equal(w.fed.submits.length, 0, 'a signed attempt handed in when its plan was due to expire'); assert.equal(kept.state, PAYOUT.EXPIRED); }
+  }
+});
