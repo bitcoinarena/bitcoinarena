@@ -2906,6 +2906,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE E-CASH EXCHANGE (kanban #614): on a seat with stake-lock ports; ARENA_EXCHANGE=0 turns it off, ARENA_EXCHANGE_MAX_SAT and
   // ARENA_EXCHANGE_HOUR_SAT set its limits (1,000 sat an exchange, 20,000 sat an hour)
   const ecashExchange = stakeLocks && process.env.ARENA_EXCHANGE !== '0' ? createEcashExchange({ db: round.db,
+    // a federation this seat lists as liquidating is exchanged neither out of nor into (kanban #1244)
+    halted: (f) => { try { return liquidations ? liquidations.haltOf(String(f).toLowerCase()) : null; } catch { return null; } },
     portOf: (f) => portOfFederation(fromHex(f)), maxMsat: BigInt(process.env.ARENA_EXCHANGE_MAX_SAT || 1000) * 1000n,
     perHourMsat: BigInt(process.env.ARENA_EXCHANGE_HOUR_SAT || 20000) * 1000n, log: (m) => console.log(m) }) : null;
   async function portOfFederation(fid) {

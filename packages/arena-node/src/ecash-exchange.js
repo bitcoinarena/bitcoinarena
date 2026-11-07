@@ -59,7 +59,7 @@ export const EXCHANGE_NEXT = Object.freeze({
   [EXCHANGE.PAID]: [], [EXCHANGE.REFUSED]: [],
 });
 
-export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourMsat = 20_000_000n, now = () => Date.now(), log = () => {} }) {
+export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourMsat = 20_000_000n, now = () => Date.now(), log = () => {}, halted = () => null }) {
   db.exec(`CREATE TABLE IF NOT EXISTS ecash_exchanges (
     id        TEXT PRIMARY KEY,
     from_fed  TEXT NOT NULL,
@@ -102,6 +102,12 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
   const note = (id, state, why) => db.prepare('UPDATE ecash_exchanges SET why = ? WHERE id = ? AND state = ?').run(String(why).slice(0, 300), id, state);
 
   async function exchange({ from, to, ecash, amountMsat }) {
+    // NO EXCHANGE OUT OF OR INTO A FEDERATION BEING LIQUIDATED (kanban #1244, audit 3 MONEY-3): its notes are claimed at the arbitration set,
+    // and notes claimed there and exchanged here too would be paid twice - by the escrow and by this seat. Asked before anything is written.
+    for (const fid of [from, to]) {
+      let h = null; try { h = halted(String(fid || '').toLowerCase()); } catch { h = null; }
+      if (h) return refuse(409, `federation ${String(fid).slice(0, 16)} is being liquidated${Number.isInteger(h.height) ? ` (halted at ${h.height})` : ''}: its notes are claimed at the arbitration set, not exchanged here`);
+    }
     from = String(from || '').toLowerCase(); to = String(to || '').toLowerCase();
     if (!hex64.test(from) || !hex64.test(to)) return refuse(400, 'from and to are federation ids, 32 bytes hex');
     if (from === to) return refuse(400, 'from and to are the same federation: nothing to exchange');
