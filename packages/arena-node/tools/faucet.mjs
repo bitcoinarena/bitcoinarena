@@ -9,6 +9,9 @@
 //   POST /player { kind: welcome | topup, account, invoice } -> { ok, sats } or { ok: false, why } (kanban #926: a player's test sats over Lightning)
 //   POST /opponent { round }  GET /opponent : a table with somebody at it (kanban #926), said by the page, read by tools/rps-opponent.mjs
 //   GET  /player                    -> what was given, new accounts and returning apart (no account, no address)
+//   POST /feedback { event? , text?, build?, game?, round?, player? } -> a report: posted to Arena Chat; a signed `event` (kind 27842) is also kept for review (kanban #1342)
+//   GET  /feedback/mine  (Authorization: Nostr <base64 NIP-98 event>) -> the signed-in key's own reports and their states (kanban #1342)
+//                                   FAUCET_FEEDBACK_DB (the store), FAUCET_FEEDBACK_MINE_URLS (the public URLs a sign-in may name, comma separated)
 //                                   FAUCET_LNCLI, FAUCET_PAYERS=<lnddir>|<rpc host:port>,... : the second pays when an invoice's gateway is on the first
 //
 // Each payment's txid is appended to FAUCET_PENDING, which the the test host's miner-C feeder (ops/pending-to-minerc.sh) lists for mining.
@@ -17,6 +20,7 @@ import { createServer } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
+import { openFeedbackStore } from '../src/feedback-store.js';
 import { refillDecide, feedbackDecide, faucetDecide, playerGrantDecide, playerGrantTotals, opponentWant, opponentWants, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
 
 const env = process.env;
@@ -33,6 +37,9 @@ const rpc = async (method, params = []) => {
   return j.result;
 };
 const REPORTS = [];   // this day's reports: their count and address, in memory
+// THE REPORTS KEPT FOR REVIEW (kanban #1342): one SQLite file beside the book; none when FAUCET_FEEDBACK_DB is not set
+const FEEDBACK = env.FAUCET_FEEDBACK_DB ? openFeedbackStore(env.FAUCET_FEEDBACK_DB) : null;
+const MINE_URLS = String(env.FAUCET_FEEDBACK_MINE_URLS || 'https://testnet.bitcoinarena.io/api/faucet/feedback/mine').split(',').map((x) => x.trim()).filter(Boolean);
 const readBook = () => { try { return JSON.parse(readFileSync(env.FAUCET_BOOK, 'utf8')); } catch { return { paid: [] }; } };
 const saveBook = (b) => { writeFileSync(`${env.FAUCET_BOOK}.new`, JSON.stringify(b, null, 1)); renameSync(`${env.FAUCET_BOOK}.new`, env.FAUCET_BOOK); };
 const balanceSats = async () => Math.round(Number((await rpc('getbalances')).mine.trusted) * 1e8);
@@ -131,23 +138,48 @@ createServer((req, res) => {
     });
     return undefined;
   }
+  // "MY FEEDBACK" (kanban #1342): a NIP-98 sign-in by the reporter's key; the reports' reward links are bearer secrets, so never by pubkey alone
+  if (path === '/feedback/mine') {
+    if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'GET', 'access-control-allow-headers': 'authorization', 'access-control-max-age': '86400' }); return res.end(); }
+    if (!FEEDBACK) return send(503, { ok: false, why: 'reports are not kept here' });
+    let ev = null;
+    try { const h = String(req.headers.authorization || ''); if (h.startsWith('Nostr ')) ev = JSON.parse(Buffer.from(h.slice(6), 'base64').toString('utf8')); } catch { ev = null; }
+    if (!ev) return send(401, { ok: false, why: 'sign in with your key (NIP-98)' });
+    let last = null;
+    for (const url of MINE_URLS) { const m = FEEDBACK.mine(ev, { url, method: 'GET' }); if (m.ok) return send(200, m); last = m; }
+    return send(401, { ok: false, why: last ? last.why : 'that sign-in does not stand' });
+  }
   if (path === '/feedback') {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '86400' }); return res.end(); }
     if (req.method !== 'POST') return send(405, { ok: false, why: 'POST' });
     if (!env.FAUCET_CHAT_URL) return send(503, { ok: false, why: 'reports are off' });
     let raw = '';
     req.setEncoding('utf8');
-    req.on('data', (c) => { raw += c; if (raw.length > 8192) req.destroy(); });
+    req.on('data', (c) => { raw += c; if (raw.length > 24576) req.destroy(); });
     req.on('end', async () => {
       try {
-        const b = JSON.parse(raw || '{}'), ip = req.headers['x-arena-ip'] || null, d = feedbackDecide({ ...b, ip }, REPORTS);
+        const b0 = JSON.parse(raw || '{}'), ip = req.headers['x-arena-ip'] || null;
+        // A SIGNED REPORT (kanban #1342): its own words go to the chat, and it is kept for review - only if it stands
+        let b = b0, kept = null;
+        if (b0.event) {
+          if (!FEEDBACK) return send(503, { ok: false, why: 'signed reports are not kept here' });
+          const e = b0.event;
+          const tagOf = (k) => { const t = Array.isArray(e.tags) ? e.tags.find((x) => Array.isArray(x) && x[0] === k) : null; return t ? String(t[1] ?? '') : ''; };
+          let words = {}; try { words = JSON.parse(e.content); } catch { words = {}; }
+          b = { ...b0, text: `${String(words.happened || '')}${words.expected ? `\nExpected: ${String(words.expected)}` : ''}`, build: tagOf('build'), game: tagOf('game'), round: tagOf('round') };
+          const pre = feedbackDecide({ ...b, ip }, REPORTS);
+          if (!pre.ok) return send(200, pre);
+          kept = FEEDBACK.take(e);
+          if (!kept.ok) return send(200, kept);
+        }
+        const d = feedbackDecide({ ...b, ip }, REPORTS);
         if (!d.ok) return send(200, d);
         const key = readFileSync(env.FAUCET_CHAT_TOKEN_FILE, 'utf8').trim();
         const r = await fetch(`${env.FAUCET_CHAT_URL}/api/channels/${env.FAUCET_CHAT_CHANNEL}/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` }, body: JSON.stringify({ text: d.text }), signal: AbortSignal.timeout(10000) });
         if (!r.ok) return send(502, { ok: false, why: 'the report could not be kept just now' });
         REPORTS.push({ ip, atMs: Date.now() });
         if (d.player) appendFileSync(FOUNDING_FILE, `${JSON.stringify({ player: d.player, atMs: Date.now() })}\n`);
-        send(200, { ok: true });
+        send(200, { ok: true, ...(kept ? { id: kept.id, kept: kept.kept } : {}) });
       } catch { send(400, { ok: false, why: 'not JSON' }); }
     });
     return undefined;
