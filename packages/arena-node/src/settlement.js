@@ -1658,7 +1658,20 @@ export class LockSettlement {
     // restarted inside one never asked again - its row stayed SUBMITTING whether the money had
     // moved or not.
     if (kept && kept.state === SUBMITTING) {
-      const saw = await this.federationSaw(roundIdBytes, kept);
+      let saw = await this.federationSaw(roundIdBytes, kept);
+      // ANOTHER TXID OF THE ROUND MAY BE THE ONE THAT LANDED (kanban #1258, audit 3 #1210 FIXES-18; 2.0 #1170): the other asker's transaction, kept beside
+      // the row's own in the history - read as in, the row is ACCEPTED on it. Before, only the row's own txid was asked here, and a row rebuilt onto a
+      // second txid while the first was landing read "mixed" on every pass: SUBMITTING for good, the round never settled at this seat
+      if (saw.verdict !== 'in' && typeof this.round.settlementTxidsOf === 'function' && this.round.settlementTxidsOf(roundIdBytes).some((x) => x.txid !== kept.txid)) {
+        const h = await this.#historyVerdict(roundIdBytes);
+        if (h.verdict === 'in' && h.txid !== kept.txid) {
+          const why = `found in the federation on ${h.txid.slice(0, 12)}, not this row's ${kept.txid.slice(0, 12)}: ${h.why}`;
+          this.#putRow(roundIdBytes, { txid: h.txid, message: h.message, signature: h.signature, state: ACCEPTED, why, verified: true });
+          await this.indexRecovered(roundIdBytes, h.txid);
+          return { ok: true, state: ACCEPTED, why, txid: h.txid, signature: h.signature, recovered: true };
+        }
+        if (h.verdict === 'mixed' && saw.verdict === 'out') saw = { verdict: 'mixed', why: h.why };
+      }
       if (saw.verdict === 'in') {
         const why = `found in the federation after this signer node was inside it: ${saw.why}`;
         this.#putRow(roundIdBytes, { txid: kept.txid, message: kept.message, signature: kept.signature, state: ACCEPTED, why, verified: true });
