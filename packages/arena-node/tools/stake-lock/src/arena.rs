@@ -381,6 +381,9 @@ pub fn body_id(inputs: &[fedimint_core::core::DynInput], outputs: &[fedimint_cor
     let ins: Vec<_> = inputs.iter().map(|i| match (i.module_instance_id() == lnv2).then(|| i.as_any().downcast_ref::<LightningInput>()).flatten() {
         Some(LightningInput::ArenaLock(op, ArenaLockWitness::Claim { preimage, .. })) =>
             LightningInput::ArenaLock(*op, ArenaLockWitness::Claim { preimage: *preimage, signers: vec![] }).into_dyn(lnv2),
+        // the fallback claim's signers are written as the empty list too (kanban #1281): seats commit before its S is known
+        Some(LightningInput::ArenaLock(op, ArenaLockWitness::Fallback { .. })) =>
+            LightningInput::ArenaLock(*op, ArenaLockWitness::Fallback { signers: vec![] }).into_dyn(lnv2),
         _ => i.clone(),
     }).collect();
     let outs: Vec<_> = outputs.iter().map(|o| match ((i_is(o.module_instance_id(), lnv2)).then(|| o.as_any().downcast_ref::<LightningOutput>()).flatten(), agg) {
@@ -410,12 +413,26 @@ pub struct Body {
     pub contracts: Vec<OutgoingContract>,
     pub body: [u8; 32],
     pub report: serde_json::Value,
+    /// The fallback claim (spec §23.2, kanban #1281): every lock in as Fallback naming t - 1 seats, no preimage.
+    pub fallback: bool,
 }
+
+/// How a settlement spends its locks: the claim (each with its preimage), or the fallback claim (spec §23.2, kanban #1281) - no preimage,
+/// t - 1 named seats, from each lock's fallback_after; `count` the guardians' block count when read (arena-settle), None offline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Path { Claim, Fallback { count: Option<u64> } }
 
 /// The inputs and outputs of a settlement: every lock in as Claim naming `set`, every payout out, Z written as `swap.1` where `swap` is given.
 fn settlement_parts(claims: &[(OutPoint, [u8; 32])], contracts: &[OutgoingContract], set: &[u8], swap: Option<(PublicKey, PublicKey)>, lnv2: ModuleInstanceId)
     -> (Vec<fedimint_core::core::DynInput>, Vec<fedimint_core::core::DynOutput>) {
-    let ins = claims.iter().map(|(op, pre)| LightningInput::ArenaLock(*op, ArenaLockWitness::Claim { preimage: *pre, signers: set.to_vec() }).into_dyn(lnv2)).collect();
+    settlement_parts_as(claims, contracts, set, swap, lnv2, false)
+}
+
+/// The same, every lock in as Fallback naming `set` when `fallback` (kanban #1281).
+fn settlement_parts_as(claims: &[(OutPoint, [u8; 32])], contracts: &[OutgoingContract], set: &[u8], swap: Option<(PublicKey, PublicKey)>, lnv2: ModuleInstanceId,
+    fallback: bool) -> (Vec<fedimint_core::core::DynInput>, Vec<fedimint_core::core::DynOutput>) {
+    let ins = claims.iter().map(|(op, pre)| LightningInput::ArenaLock(*op, if fallback { ArenaLockWitness::Fallback { signers: set.to_vec() } }
+        else { ArenaLockWitness::Claim { preimage: *pre, signers: set.to_vec() } }).into_dyn(lnv2)).collect();
     let outs = contracts.iter().map(|c| {
         let o = LightningOutput::V0(LightningOutputV0::Outgoing(c.clone()));
         match swap { Some((z, k)) => swap_output(&o, &z, &k), None => o }.into_dyn(lnv2)
@@ -428,11 +445,24 @@ fn settlement_parts(claims: &[(OutPoint, [u8; 32])], contracts: &[OutgoingContra
 /// signer set, and the payouts and their fees within what the locks pay; so both modes answer the same body id for the same claims, payouts and nonce.
 pub fn settlement_body(given: Vec<(OutPoint, [u8; 32], ArenaLockContract)>, payout_list: &str, nonce: [u8; 8], fee: &fedimint_lnv2_common::config::FeeConsensus,
     lnv2: ModuleInstanceId) -> anyhow::Result<Body> {
+    settlement_body_as(given, payout_list, nonce, fee, lnv2, Path::Claim)
+}
+
+/// The body by `path`: a claim checks every preimage; the fallback (kanban #1281) checks no preimage and, with the guardians' count, that every
+/// lock's fallback_after has passed and its expiration has not.
+pub fn settlement_body_as(given: Vec<(OutPoint, [u8; 32], ArenaLockContract)>, payout_list: &str, nonce: [u8; 8], fee: &fedimint_lnv2_common::config::FeeConsensus,
+    lnv2: ModuleInstanceId, path: Path) -> anyhow::Result<Body> {
     let mut claims = Vec::new();
     let mut locks: Vec<(OutPoint, ArenaLockContract)> = Vec::new();
     let (mut input_msats, mut input_fee_msats) = (0u64, 0u64);
     for (op, preimage, c) in given {
-        if !c.verify_preimage(&preimage) { bail!("that preimage does not open the lock at {}:{}", op.txid, op.out_idx) }
+        match path {
+            Path::Claim => if !c.verify_preimage(&preimage) { bail!("that preimage does not open the lock at {}:{}", op.txid, op.out_idx) },
+            Path::Fallback { count } => if let Some(n) = count {
+                if n < c.fallback_after { bail!("the lock at {}:{} opens its fallback at {}, the guardians count {n}", op.txid, op.out_idx, c.fallback_after) }
+                if n >= c.expiration { bail!("the lock at {}:{} has expired (at {}): only its refund is left", op.txid, op.out_idx, c.expiration) }
+            },
+        }
         if let Some((_, first)) = locks.first() {
             if first.claim_keys != c.claim_keys || first.threshold != c.threshold { bail!("the locks name different claim keys or thresholds: one transaction is one signer set") }
         }
@@ -450,17 +480,18 @@ pub fn settlement_body(given: Vec<(OutPoint, [u8; 32], ArenaLockContract)>, payo
     if out + out_fee > spendable {
         bail!("the payouts ({out} msat, {out_fee} msat in fees) are more than the locks pay for ({spendable} msat after their own fees)");
     }
-    let (ins, outs) = settlement_parts(&claims, &contracts, &[], None, lnv2);
+    let fallback = matches!(path, Path::Fallback { .. });
+    let (ins, outs) = settlement_parts_as(&claims, &contracts, &[], None, lnv2, fallback);
     let body = body_id(&ins, &outs, nonce, lnv2, None);
     let z_slots = contracts.iter().enumerate().filter(|(_, c)| c.claim_pk == z || c.refund_pk == z || c.ephemeral_pk == z).map(|(i, _)| i).collect::<Vec<_>>();
     let report = serde_json::json!({
-        "mode": "arena-settle", "body_id": hex(&body), "z_key": z.to_string(), "z_slots": z_slots,
+        "mode": "arena-settle", "fallback": fallback, "body_id": hex(&body), "z_key": z.to_string(), "z_slots": z_slots,
         "inputs": locks.iter().map(|(o, c)| serde_json::json!({ "outpoint": format!("{}:{}", o.txid, o.out_idx),
             "contract_id": c.contract_id().0.to_string(), "round_id": hex(&c.round_id), "msat": c.amount.msats })).collect::<Vec<_>>(),
         "input_msat": input_msats, "input_fees_msat": input_fee_msats, "payout_msat": out, "output_fee_msat": out_fee,
         "unspent_msat": spendable - out - out_fee,
     });
-    Ok(Body { claims, locks, contracts, body, report })
+    Ok(Body { claims, locks, contracts, body, report, fallback })
 }
 
 /// `arena-settle`: the settlement's one transaction, as ruling #1135 orders it. Every given Arena lock in as Claim, the payouts out; a payout key
@@ -473,18 +504,21 @@ pub async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api
     let nonce: [u8; 8] = hex_bytes(need(a, "nonce")?)?.try_into().map_err(|_| anyhow!("--nonce is 8 bytes"))?;
     let fee = fee_rule(&client.config().await, lnv2)?;
     let mut given = Vec::new();
+    // THE FALLBACK CLAIM (spec §23.2, kanban #1281): --fallback 1 - the locks named TXID:IDX (no preimage), t - 1 signers, each lock past its fallback_after
+    let fallback = a.get("fallback").is_some_and(|v| v == "1");
     for spec in need(a, "locks")?.split(',') {
-        let (op, preimage) = lock_spec(spec)?;
+        let (op, preimage) = if fallback { (outpoint(spec)?, [0u8; 32]) } else { lock_spec(spec)? };
         let Some((c, _)) = stored(api, op).await? else { bail!("the guardians hold no Arena lock at {}:{}", op.txid, op.out_idx) };
         given.push((op, preimage, c));
     }
-    let Body { claims, locks, contracts, body, mut report } = settlement_body(given, need(a, "payouts")?, nonce, &fee, lnv2)?;
+    let path = if fallback { Path::Fallback { count: Some(block_count(api).await?) } } else { Path::Claim };
+    let Body { claims, locks, contracts, body, mut report, .. } = settlement_body_as(given, need(a, "payouts")?, nonce, &fee, lnv2, path)?;
     let (_, first) = locks.first().cloned().context("a settlement claims at least one lock")?;
     let z = z_key();
-    let build = |set: &[u8], agg: Option<PublicKey>| settlement_parts(&claims, &contracts, set, agg.map(|k| (z, k)), lnv2);
+    let build = |set: &[u8], agg: Option<PublicKey>| settlement_parts_as(&claims, &contracts, set, agg.map(|k| (z, k)), lnv2, fallback);
     let Some(set) = a.get("signers") else { println!("{report}"); return Ok(()) };
     let set: Vec<u8> = set.split(',').map(|i| Ok(i.parse()?)).collect::<anyhow::Result<_>>()?;
-    let key = first.signer_key(&set).map_err(|e| anyhow!("{e}"))?;
+    let key = if fallback { first.fallback_key(&set) } else { first.signer_key(&set) }.map_err(|e| anyhow!("{e}"))?;
     let (inputs, outputs) = build(&set, Some(key));
     let txid = Transaction::tx_hash_from_parts(&inputs, &outputs, nonce);
     let again = body_id(&inputs, &outputs, nonce, lnv2, Some(key));
@@ -621,9 +655,12 @@ pub fn claim_read() -> anyhow::Result<serde_json::Value> {
             // PROOF (a), ruling #1135 2: S read from the transaction's claims (all must name the same S), KeyAgg(S) from the lock's keys, the body id
             let named: Vec<(Vec<u8>, Option<ArenaLockContract>)> = tx.inputs.iter().filter(|i| i.module_instance_id() == lnv2).filter_map(|i| match i.as_any().downcast_ref::<LightningInput>() {
                 Some(LightningInput::ArenaLock(op, ArenaLockWitness::Claim { signers, .. })) => Some((signers.clone(), funded.get(&format!("{}:{}", op.txid, op.out_idx)).cloned())),
+                // a fallback claim names its t - 1 signers the same way, and they answer for its table as a claim's do (spec §23.2, kanban #1281)
+                Some(LightningInput::ArenaLock(op, ArenaLockWitness::Fallback { signers })) => Some((signers.clone(), funded.get(&format!("{}:{}", op.txid, op.out_idx)).cloned())),
                 _ => None }).collect();
             let one_set = named.windows(2).all(|w| w[0].0 == w[1].0);
-            let agg = named.first().and_then(|(set, c)| c.as_ref().and_then(|c| c.signer_key(set).ok()));
+            let fallback_tx = tx.inputs.iter().any(|i| matches!(i.as_any().downcast_ref::<LightningInput>(), Some(LightningInput::ArenaLock(_, ArenaLockWitness::Fallback { .. }))));
+            let agg = named.first().and_then(|(set, c)| c.as_ref().and_then(|c| if fallback_tx { c.fallback_key(set).ok() } else { c.signer_key(set).ok() }));
             let tx_body = (!named.is_empty() && one_set).then(|| agg.map(|k| hex(&body_id(&tx.inputs, &tx.outputs, tx.nonce, lnv2, Some(k))))).flatten();
             for input in &tx.inputs {
                 if input.module_instance_id() != lnv2 { continue }
@@ -634,6 +671,7 @@ pub fn claim_read() -> anyhow::Result<serde_json::Value> {
                     ArenaLockWitness::Claim { preimage, signers } => ("claim", signers.clone(), Some(hex(preimage)), None),
                     ArenaLockWitness::Cancel { signers, signature } => ("cancel", signers.clone(), None, Some(hex(&signature.serialize()))),
                     ArenaLockWitness::Refund => ("refund", vec![], None, None),
+                    ArenaLockWitness::Fallback { signers } => ("fallback", signers.clone(), None, None),
                 };
                 spends.push(serde_json::json!({
                     "session": idx, "txid": txid.to_string(), "outpoint": format!("{}:{}", op.txid, op.out_idx), "kind": kind,
@@ -727,7 +765,7 @@ mod tests {
         use fedimint_core::secp256k1::{SECP256K1, SecretKey};
         fedimint_lnv2_common::arena_lock::ArenaLockContract {
             payment_image: fedimint_lnv2_common::contracts::PaymentImage::Hash(fedimint_core::bitcoin::hashes::sha256::Hash::hash(&preimage)),
-            amount: fedimint_core::Amount::from_msats(amount), expiration: 1000, round_id: [9; 32],
+            amount: fedimint_core::Amount::from_msats(amount), expiration: 1000, fallback_after: 900, round_id: [9; 32],
             claim_keys: keys.iter().map(|&k| SecretKey::from_slice(&[k; 32]).expect("a key").x_only_public_key(SECP256K1).0).collect(),
             threshold: 2, refund_pk: SecretKey::from_slice(&[0x77; 32]).expect("a key").public_key(SECP256K1),
         }
@@ -766,6 +804,32 @@ mod tests {
         let over = super::settlement_body(vec![(op(1, 0), [1; 32], lock([1; 32], 600_000, &[11, 12, 13]))], "Z:600001", [5; 8], &fee, 1);
         assert!(over.err().expect("refused").to_string().contains("more than the locks pay for"));
         assert!(super::settlement_body(vec![], "Z:1", [5; 8], &fee, 1).is_err());
+    }
+
+    /// The fallback claim's body (spec §23.2, kanban #1281): no preimage, t - 1 signers, written empty in the body as a claim's are.
+    #[test]
+    fn the_fallback_body_needs_no_preimage_and_every_t_minus_one_set_strips_to_it() {
+        let lnv2 = 1;
+        let fee = fedimint_lnv2_common::config::FeeConsensus::new(0).expect("a fee rule");
+        // no preimage: the zero bytes stand in, and are not checked
+        let given = vec![(op(1, 0), [0; 32], lock([1; 32], 600_000, &[11, 12, 13])), (op(2, 3), [0; 32], lock([2; 32], 400_000, &[11, 12, 13]))];
+        let fb = |count| super::settlement_body_as(given.clone(), PAYOUT, [5; 8], &fee, lnv2, super::Path::Fallback { count });
+        let built = fb(Some(950)).expect("a fallback body");
+        assert!(built.fallback);
+        assert_eq!(built.report["fallback"], serde_json::json!(true));
+        for set in [vec![0u8], vec![2]] {
+            let key = built.locks[0].1.fallback_key(&set).expect("t - 1 = one named seat");
+            let (ins, outs) = super::settlement_parts_as(&built.claims, &built.contracts, &set, Some((z_key(), key)), lnv2, true);
+            assert_eq!(super::body_id(&ins, &outs, [5; 8], lnv2, Some(key)), built.body);
+        }
+        assert!(built.locks[0].1.fallback_key(&[0, 1]).is_err(), "t names are the claim's, not the fallback's");
+        // offline (no count) it builds the same body; the claim of the same locks is another body
+        assert_eq!(fb(None).expect("offline").body, built.body);
+        let with_preimages = vec![(op(1, 0), [1; 32], lock([1; 32], 600_000, &[11, 12, 13])), (op(2, 3), [2; 32], lock([2; 32], 400_000, &[11, 12, 13]))];
+        assert_ne!(super::settlement_body(with_preimages, PAYOUT, [5; 8], &fee, lnv2).expect("a claim body").body, built.body);
+        // before fallback_after (900), and from the expiration (1000): refused by name
+        assert!(fb(Some(899)).err().expect("too early").to_string().contains("opens its fallback at 900"));
+        assert!(fb(Some(1000)).err().expect("expired").to_string().contains("has expired"));
     }
 
     #[test]
