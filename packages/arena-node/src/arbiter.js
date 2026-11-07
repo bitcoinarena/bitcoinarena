@@ -25,11 +25,12 @@ import * as nodeFs from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { decodeSpentSet, spentNonceSet, newestSpentSet } from '../../arena-protocol/src/spent-set.js';
 import { affectedEntries, realLosses, slashHolds, slashHoldsOnRerun, splitRerunSlashEvidence, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS, TWO_RESULTS,
   splitAuditSlashEvidence, slashHoldsOnAudit, AUDIT_CONTRADICTED, splitDoubleSlashEvidence, slashHoldsOnDoubleSign, splitTableSlashEvidence, slashHoldsOnTable, splitReleaseSlashEvidence, slashHoldsOnRelease, slashHoldsOnReleaseTable,
   namedClaimLosses, OFF_TABLE_CLAIM, FORFEIT_OF_LOST_ENTRY } from '../../arena-protocol/src/slash.js';
 import { abandonedSlashStands, abandonedProofId, decodeAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
-import { verifyFederationRecord } from '../../arena-protocol/src/federation-record.js';
+import { verifyFederationRecord, splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
 import { abandonedSlashPoint, networkOf } from '../../arena-protocol/src/constants.js';
 import { decodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
 import { tableBuild } from '../../arena-protocol/src/settlement-rebuild.js';
@@ -551,6 +552,32 @@ export function writeJsonAtomic(path, value, { fs = null } = {}) {
 }
 
 /** TESTMEMPOOLACCEPT, THEN BROADCAST - never the other way: `rpc(method, params)` is the arbiter's own bitcoind. */
+/**
+ * THE SPENT SET A LIQUIDATION IS PAID AGAINST, FROM EVERY SEAT (kanban #1236, audit 2 #1204 RES-4): the arbiter took the first copy the
+ * first seat listed, unchecked - a seat holding an older session (or none after a restart, or one serving an old signed copy) let notes
+ * already redeemed in the federation be claimed and paid from the escrow. `listings` are the seats' GET /liquidations rows of one
+ * federation. The record is the one most seats list (a seat can list a wrong one, not outvote the rest); every copy any seat lists is
+ * checked against it (spentSetStands: of that federation, signed by one of its guardians) and the newest session signed wins
+ * (newestSpentSet). Answers { spentNonces, session, signers } or { spentNonces: null, why }.
+ */
+export function spentSetFromSeats(listings, { verify, readRecord = (hex) => splitSignedRecord(fromHex(hex)).record }) {
+  const votes = new Map();
+  for (const l of listings || []) { const r = l && (l.record || l.haltRecord); if (typeof r === 'string' && r) votes.set(r, (votes.get(r) || 0) + 1); }
+  const recHex = [...votes.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map((e) => e[0])[0] || null;
+  if (!recHex) return { spentNonces: null, why: 'no seat lists the federation\'s record: no spent set can be checked' };
+  let record; try { record = readRecord(recHex); } catch (e) { return { spentNonces: null, why: `the record the seats list does not read: ${e.message}` }; }
+  if (!record) return { spentNonces: null, why: 'the record the seats list does not read' };
+  const copies = []; const seen = new Set();
+  for (const l of listings || []) {
+    for (const c of (l && l.spentSet && l.spentSet.copies) || []) {
+      const k = `${c && c.spentSet}:${c && c.signature}`; if (seen.has(k)) continue; seen.add(k);
+      try { copies.push({ ...decodeSpentSet(fromHex(String(c.spentSet))), signature: fromHex(String(c.signature)) }); } catch { /* not a copy */ }
+    }
+  }
+  const pick = newestSpentSet(copies, { record, verify });
+  return pick.copy ? { spentNonces: spentNonceSet(pick.copy), session: pick.session, signers: pick.signers } : { spentNonces: null, why: pick.why };
+}
+
 /**
  * A RECORDED SPEND RESUMED (kanban #1232): `intent` { txid, hex } was kept before its broadcast, spending `input` { txid, vout }, an
  * output only this set signs. Found on the chain or in the mempool: posted. Its input spent: posted too (nobody else can spend it).
