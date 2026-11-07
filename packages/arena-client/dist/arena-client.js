@@ -35842,10 +35842,14 @@ async function identitySignEvent(template, { storage, random, curve, now } = {})
 function nameRecordFor(round, { storage, random, curve, nowMs = Date.now(), order = 0 } = {}) {
   if (!curve || typeof curve.signSchnorr !== 'function') throw new Error('a name is signed with the round key, and no signer was injected');
   const me = tabIdentity({ storage, random, curve });
-  const player = playerFor(round, { seed: tabSeed({ storage, random }), curve, order });
+  const seed = tabSeed({ storage, random });
+  const player = playerFor(round, { seed, curve, order });
   const record = { roundId: player.roundId, playerPubkey: player.pubkey, identityPubkey: me.pubkey,
     name: me.custom ? me.name : '', atMs: BigInt(Math.floor(nowMs)) };
-  return { record: toHex(encodeLobbyName(record)), sig: toHex(curve.signSchnorr(lobbyNameId(record), player.secret)) };
+  // AND THE IDENTITY'S OWN CONSENT (kanban #1278, RULED #1276): the identity key over (round id, round key) - matchProofId with the round key in place of
+  // the entry id. A round books to an identity on the season only with it; a record alone (signed by the round key) no longer books a round to anyone
+  const identitySig = toHex(curve.signSchnorr(matchProofId({ roundId: player.roundId, entryId: player.pubkey, identityKey: me.pubkey }), identitySecretFor(seed)));
+  return { record: toHex(encodeLobbyName(record)), sig: toHex(curve.signSchnorr(lobbyNameId(record), player.secret)), identitySig };
 }
 
 /** The signed record, handed to every signer node (POST /name); what each answered. */
