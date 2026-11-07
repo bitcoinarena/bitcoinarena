@@ -21,6 +21,7 @@
 //   its: it waits there for the federation's end.
 //   6. THE ESCROW SPENT (payOutSlash): one peg-in per federation, each loss a payout contract to its player, the rest a payout
 //      contract to that federation's reserve key (§27A.9.2); what does not fit stays in the escrow until a federation has room.
+import * as nodeFs from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -521,9 +522,29 @@ export function assemble({ slash, signatures, set }) {
   return { ok: true, hex: toHex(bytes), signers: byKey.size };
 }
 
+/**
+ * A TRANSACTION THE ARBITER RECORDED BEFORE IT BROADCAST IT, FOUND (kanban #1232): in the mempool or a block (getrawtransaction), or its output
+ * `vout` unspent in either (gettxout) - then it was posted, whatever answer its broadcast got. False when neither knows it.
+ */
+export async function intentLanded(rpc, txid, vout = 1) {
+  try { if (await rpc('getrawtransaction', [txid])) return true; } catch { /* no txindex, or not there */ }
+  try { if (await rpc('gettxout', [txid, vout, true])) return true; } catch { /* not there */ }
+  return false;
+}
+/** WRITTEN WHOLE OR NOT AT ALL (kanban #1232): a temp file, synced, renamed over `path` - a stop mid-write leaves the last good file. */
+export function writeJsonAtomic(path, value, { fs = null } = {}) {
+  const f = fs || nodeFs;
+  const tmp = `${path}.tmp`;
+  f.writeFileSync(tmp, JSON.stringify(value, null, 1));
+  try { const fd = f.openSync(tmp, 'r'); f.fsyncSync(fd); f.closeSync(fd); } catch { /* synced as the file system allows */ }
+  f.renameSync(tmp, path);
+}
+
 /** TESTMEMPOOLACCEPT, THEN BROADCAST - never the other way: `rpc(method, params)` is the arbiter's own bitcoind. */
 export async function post(rpc, hex) {
   const [r] = await rpc('testmempoolaccept', [[hex]]);
+  // SENT BEFORE (kanban #1232): the same bytes already in the mempool are this transaction posted, its answer lost
+  if (r && !r.allowed && /txn-already-in-mempool|txn-already-known/.test(String(r['reject-reason'] || ''))) return { ok: true, txid: r.txid, tested: r, again: true };
   if (!r || !r.allowed) return { ok: false, why: `the mempool refuses it: ${r && r['reject-reason']}`, tested: r };
   const txid = await rpc('sendrawtransaction', [hex]);
   return { ok: true, txid, tested: r };
