@@ -36,7 +36,7 @@ async function passed(w) {
   await w.b.add('proposal', hexOf(encodeFundingProposal(P), ID, 42));
   const s = { proposalId: ID, node: pk(2), atHeight: 100 };
   await w.b.add('signal', hexOf(encodeFundingSignal(s), fundingSignalId(s), 2));
-  w.chain.tip = 101; await w.b.decide();
+  w.chain.tip = 101; await w.b.decide(); w.chain.tip = 101 + FUNDING_SCHEDULES.short.decideDepth - 1; await w.b.decide();   // decided decideDepth deep (kanban #1279)
   w.at(101).votes.push(vote(10, CHOICE.YES), vote(11, CHOICE.YES));
 }
 const roundTo = async (w, tip) => { w.chain.tip = tip; for (let i = 0; i < 4; i++) await w.b.voteRound(); };

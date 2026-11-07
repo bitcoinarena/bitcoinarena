@@ -51,7 +51,8 @@ async function throughTheVote(w, approvals = []) {
   for (const h of approvals) assert.equal((await w.b.add('fee-approval', h)).ok, true);
   const s = { proposalId: ID, node: pk(2), atHeight: 100 };
   assert.equal((await w.b.add('signal', hexOf(encodeFundingSignal(s), fundingSignalId(s), 2))).ok, true);
-  w.chain.tip = 101;
+  w.chain.tip = 101; await w.b.decide();                               // the end seen (kanban #1279: decided decideDepth deep)
+  w.chain.tip = 101 + S.decideDepth - 1;
   assert.deepEqual((await w.b.decide()).map((x) => x.state), ['passed']);
   w.at(101).votes.push(vote(10), vote(11));
   w.chain.tip = 101 + S.vote + S.decideDepth - 1;
@@ -137,7 +138,7 @@ test('#1231 before deciding a seat pulls its peers\' approvals; a no that arrive
   await D.b.voteRound();
   const [re] = await D.b.decideFees();
   console.log('  MEASURED #1231 pull/late/reorg:', JSON.stringify({ pulled: pulled.length, withPull: c.accepted, withoutPull: d.accepted, lateNo, decidedAgainBeforeReorg: again.length, nodeBpsAfterLateNo: stillAt, afterReorg: re ? re.accepted : null }));
-  assert.equal(pulled.length, 1); assert.equal(c.accepted, false, 'the peer\'s no was not read before deciding');
+  assert.equal(pulled.length, 2);   // before the signal's decision (kanban #1279) and before the fee decision (#1231) assert.equal(c.accepted, false, 'the peer\'s no was not read before deciding');
   assert.equal(d.accepted, true);
   assert.equal(lateNo, true); assert.equal(again.length, 0, 'a decided fee proposal was decided again with no reorg'); assert.equal(stillAt, 350, 'a late no flipped a decided outcome');
   assert.ok(re, 'the reorg did not reopen the fee outcome'); assert.equal(re.accepted, false, 'decided again from the set held then, the late no among it');

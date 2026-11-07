@@ -38,7 +38,8 @@ async function signalled({ b, chain }) {
   await b.add('proposal', hexOf(encodeFundingProposal(P2), fundingProposalId(P2), 1));
   const s = { proposalId: ID1, node: pk(2), atHeight: 100 };
   await b.add('signal', hexOf(encodeFundingSignal(s), fundingSignalId(s), 2));
-  chain.tip = 101;
+  chain.tip = 101; await b.decide();                                    // the end seen (kanban #1279: decided decideDepth deep)
+  chain.tip = 101 + FUNDING_SCHEDULES.short.decideDepth - 1;
   const d = await b.decide();
   assert.deepEqual(d.map((x) => x.state).sort(), ['failed', 'passed']);
 }

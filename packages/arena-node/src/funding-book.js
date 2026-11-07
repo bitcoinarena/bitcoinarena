@@ -19,6 +19,7 @@ import { feeProposalStands, feeProposalOutcome, feesAt as feesAtOf, FEES, FEES_T
 import { leaderboardVotePeriod, leaderboardPasses } from '../../arena-protocol/src/leaderboard-payout.js';
 
 export const FUNDING_SQL = `CREATE TABLE IF NOT EXISTS funding_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL, proposal TEXT NOT NULL, hex TEXT NOT NULL, at_ms INTEGER NOT NULL);
+  CREATE TABLE IF NOT EXISTS funding_signal_ends (proposal TEXT PRIMARY KEY, seen_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_outcomes (proposal TEXT PRIMARY KEY, outcome TEXT NOT NULL, decided_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_vote_census (proposal TEXT PRIMARY KEY, height INTEGER NOT NULL, census TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_vote_blocks (proposal TEXT NOT NULL, height INTEGER NOT NULL, hash TEXT, votes TEXT NOT NULL, PRIMARY KEY (proposal, height));
@@ -92,7 +93,9 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   const ruleOf = (kind, count) => (kind === 'leaderboard' && count ? leaderboardPasses(count) : count);
   const read = (kind, hex) => readSignedFunding(kind, fromHex(hex), verify);
   const outcomeOf = (pid) => { const r = db.prepare('SELECT outcome FROM funding_outcomes WHERE proposal = ?').get(pid); return r ? JSON.parse(r.outcome) : null; };
-  const signalsOf = (pid) => db.prepare("SELECT hex FROM funding_items WHERE kind = 'signal' AND proposal = ?").all(pid)
+  // `beforeMs` (kanban #1279, RULED #1277 A): only the signals some seat held before the signal period ended (at_ms is the earliest time a seat held it)
+  const signalsOf = (pid, beforeMs = null) => db.prepare("SELECT hex, at_ms FROM funding_items WHERE kind = 'signal' AND proposal = ?").all(pid)
+    .filter((r) => beforeMs === null || Number(r.at_ms) <= Number(beforeMs))
     .map((r) => read('signal', r.hex)).filter((x) => x.ok).map((x) => ({ node: toHex(x.obj.node), atHeight: x.obj.atHeight }));
   // THE VOTE (§27A.9.3 stage 2): opened only by a signal this seat decided passed; the census taken ONCE at the
   // vote's start (signalEnd); each voting block read once for this proposal's votes, held to by its hash; the outcome written once
@@ -277,7 +280,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       // every one that verifies is taken, so seats decide from the same set; what arrives after the decision is kept and not read
       if (typeof pull === 'function') {
         let got = []; try { got = await pull(pid); } catch { got = []; }
-        let took = 0; for (const it of Array.isArray(got) ? got : []) { try { const r = await book.add(it.kind, it.hex); if (r && r.ok && r.fresh) took++; } catch { /* the next */ } }
+        let took = 0; for (const it of Array.isArray(got) ? got : []) { try { const r = await book.add(it.kind, it.hex, { heldAtMs: it.atMs === undefined ? null : Number(it.atMs) }); if (r && r.ok && r.fresh) took++; } catch { /* the next */ } }
         if (took) log(`[fees] ${pid.slice(0, 16)}: ${took} approval(s) or signal(s) pulled from the peers before deciding`);
       }
       const out = feeProposalOutcome({ proposal: o, current: feesAt(o.activationHeight - 1), signal, tally: vote, approvals: approvalsOf(pid), devKeys, verify, schedule });
@@ -328,11 +331,17 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     devMajorityOf: (pid, devKeys) => devMajority({ proposalId: fromHex(pid), approvals: approvalsOf(pid), devKeys, verify }),
     payments,
     cancelledOf,
-    async add(kind, hex) {
+    // `heldAtMs` (kanban #1279): when a peer says it first held the object (GET /funding-items' atMs) - a signal or an approval is kept as of the
+    // earliest time any seat held it, never later than now
+    async add(kind, hex, { heldAtMs = null } = {}) {
       const r = (() => { try { return read(kind, String(hex || '').toLowerCase()); } catch (e) { return { ok: false, why: e.message }; } })();
       if (!r.ok) return { ok: false, status: 400, why: r.why };
       const id = toHex(r.id);
-      if (db.prepare('SELECT 1 FROM funding_items WHERE id = ?').get(id)) return { ok: true, fresh: false, id };
+      const atMs = Number.isFinite(Number(heldAtMs)) && heldAtMs !== null ? Math.min(now(), Number(heldAtMs)) : now();
+      if (db.prepare('SELECT 1 FROM funding_items WHERE id = ?').get(id)) {
+        if ((kind === 'signal' || kind === 'fee-approval') && heldAtMs !== null) db.prepare('UPDATE funding_items SET at_ms = ? WHERE id = ? AND at_ms > ?').run(atMs, id, atMs);
+        return { ok: true, fresh: false, id };
+      }
       const height = await Promise.resolve(tip()).catch(() => null);
       // A PLAYER'S NAME (PIP, player-name.js): the newest per player is kept, the one it replaces dropped; one dated
       // more than the skew ahead of this seat's clock is refused, so nobody pins a name by dating it in the future
@@ -371,7 +380,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       if (kind === 'fee-approval') {
         proposal = toHex(r.obj.proposalId);
         if (!db.prepare("SELECT 1 FROM funding_items WHERE kind = 'fee' AND id = ?").get(proposal)) return { ok: false, status: 404, why: 'this seat holds no such fee proposal: send the proposal first' };
-        db.prepare('INSERT OR IGNORE INTO funding_items (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, proposal, String(hex).toLowerCase(), now());
+        db.prepare('INSERT OR IGNORE INTO funding_items (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, proposal, String(hex).toLowerCase(), atMs);
         return { ok: true, fresh: true, id, proposal };
       }
       if (kind === 'proposal') {
@@ -388,7 +397,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
           if (bonded === false) return { ok: false, status: 422, why: 'a signal is given by a bonded node' };
         }
       }
-      db.prepare('INSERT OR IGNORE INTO funding_items (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, proposal, String(hex).toLowerCase(), now());
+      db.prepare('INSERT OR IGNORE INTO funding_items (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, proposal, String(hex).toLowerCase(), kind === 'signal' ? atMs : now());
       return { ok: true, fresh: true, id, proposal };
     },
     list(height = null) {
@@ -422,6 +431,18 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         const p = read(row.kind, row.hex); if (!p.ok) continue;
         const end = p.obj.publishedHeight + schedule.signal;
         if (height < end) continue;
+        // THE SIGNAL DECIDED AFTER A PULL, ON WHAT SOME SEAT HELD BEFORE THE END (kanban #1279, RULED #1277 A, the interim until signals are read from
+        // the chain; audit 4 #1257 seats-4): each seat decided at the period's end from its own rows, so a signal posted to three seats just before the
+        // end passed there and failed elsewhere - two fee sets from activation. When this seat first saw the end is kept; it decides once the end is
+        // `decideDepth` deep, after asking the seats it reaches, and counts a signal only when some seat held it before then
+        db.prepare('INSERT OR IGNORE INTO funding_signal_ends (proposal, seen_ms) VALUES (?, ?)').run(row.id, now());
+        if (height < end + Math.max(1, Number(schedule.decideDepth) || 1) - 1) continue;
+        if (typeof pull === 'function') {
+          let got = []; try { got = await pull(row.id); } catch { got = []; }
+          let took = 0; for (const it of Array.isArray(got) ? got : []) { try { const x = await book.add(it.kind, it.hex, { heldAtMs: it.atMs === undefined ? null : Number(it.atMs) }); if (x && x.ok && x.fresh) took++; } catch { /* the next */ } }
+          if (took) log(`[funding] ${row.id.slice(0, 16)}: ${took} signal(s) or approval(s) pulled from the peers before deciding the signal`);
+        }
+        const endSeen = db.prepare('SELECT seen_ms FROM funding_signal_ends WHERE proposal = ?').get(row.id).seen_ms;
         const a = await activeAt(end).catch((e) => ({ ok: false, why: e.message }));
         if (!a || !a.ok) { log(`[funding] ${row.id.slice(0, 16)}: the signal ended at ${end}, its active nodes not read yet: ${a ? a.why : '?'}`); continue; }
         // THE SIGNAL RULE: only nodes with a bond 3 months old count, among the active and among the signals
@@ -431,7 +452,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
           const s = new Set(seasoned.map((k) => String(k).toLowerCase()));
           a.nodes = a.nodes.filter((k) => s.has(String(k).toLowerCase()));
         }
-        const out = { ...signalOutcome({ proposal: p.obj, signals: signalsOf(row.id), active: a.nodes, tip: height, schedule }), activeFrom: a.fromHeight ?? null, activeTo: end };
+        const out = { ...signalOutcome({ proposal: p.obj, signals: signalsOf(row.id, endSeen), active: a.nodes, tip: height, schedule }), activeFrom: a.fromHeight ?? null, activeTo: end };
         db.prepare('INSERT OR IGNORE INTO funding_outcomes (proposal, outcome, decided_ms) VALUES (?, ?, ?)').run(row.id, JSON.stringify(out), now());
         log(`[funding] ${row.id.slice(0, 16)}: signal ${out.state} - ${out.supporters} of ${out.active} active nodes (${out.pct} %, ${out.needed} needed)`);
         done.push({ id: row.id, ...out });
@@ -440,8 +461,8 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     },
     /** The signals and fee approvals this seat holds for a proposal, as signed (GET /funding-items, a peer's pull before it decides; kanban #1231). */
     itemsOf(pid) {
-      return db.prepare("SELECT kind, hex FROM funding_items WHERE kind IN ('signal', 'fee-approval') AND proposal = ? ORDER BY id").all(String(pid).toLowerCase())
-        .map((r) => ({ kind: r.kind, hex: r.hex }));
+      return db.prepare("SELECT kind, hex, at_ms FROM funding_items WHERE kind IN ('signal', 'fee-approval') AND proposal = ? ORDER BY id").all(String(pid).toLowerCase())
+        .map((r) => ({ kind: r.kind, hex: r.hex, atMs: String(r.at_ms) }));   // when this seat first held it (kanban #1279)
     },
   };
   return book;
