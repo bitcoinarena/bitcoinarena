@@ -81,7 +81,7 @@ export function fundingPaymentStep(row, ev) {
 // proposal is decided whole (feeProposalOutcome) against the fees in force before its activation; feesAt(height) answers the set
 // in force at a height - what a round of that census height settles with.
 export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedule = FUNDING_SCHEDULES.spec, log = () => {}, now = () => Date.now(),
-  voteChain = null, maxBlocksPerPass = 64, seasonedNodes = null, devKeysOf = null }) {
+  voteChain = null, maxBlocksPerPass = 64, seasonedNodes = null, devKeysOf = null, pull = null }) {
   db.exec(FUNDING_SQL);
   const rows = (kind) => db.prepare('SELECT id, proposal, hex, kind FROM funding_items WHERE kind = ? ORDER BY at_ms, id').all(kind);
   // the proposals the signal and the vote run over: funding proposals and fee proposals
@@ -137,6 +137,8 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         const onChain = await hashAt(period.last);
         if (onChain && decided.lastHash && onChain !== decided.lastHash) {
           db.prepare('DELETE FROM funding_vote_outcomes WHERE proposal = ?').run(row.id);
+          // AND A FEE PROPOSAL'S OUTCOME WITH IT (ruled on #1245, kanban #1231): decided again from the set held then
+          db.prepare('DELETE FROM fee_outcomes WHERE proposal = ?').run(row.id);
           // the blocks read past the counted one (a passed vote's veto window) hang on the old branch: read again
           db.prepare('DELETE FROM funding_vote_blocks WHERE proposal = ? AND height >= ?').run(row.id, period.last);
           log(`[funding] ${row.id.slice(0, 16)}: the counted last voting block ${period.last} was reorged away - the vote is counted again`);
@@ -271,6 +273,13 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         devKeys = typeof devKeysOf === 'function' ? await Promise.resolve(devKeysOf(toHex(o.networkId))).catch(() => null) : null;
         if (!Array.isArray(devKeys)) { log(`[fees] ${pid.slice(0, 16)}: the protocol developers' keys not read yet`); continue; }
       }
+      // THE PEERS' APPROVALS AND SIGNALS FIRST (ruled 2026-11-07 on #1245, kanban #1231): the census seats this seat reaches are asked for theirs and
+      // every one that verifies is taken, so seats decide from the same set; what arrives after the decision is kept and not read
+      if (typeof pull === 'function') {
+        let got = []; try { got = await pull(pid); } catch { got = []; }
+        let took = 0; for (const it of Array.isArray(got) ? got : []) { try { const r = await book.add(it.kind, it.hex); if (r && r.ok && r.fresh) took++; } catch { /* the next */ } }
+        if (took) log(`[fees] ${pid.slice(0, 16)}: ${took} approval(s) or signal(s) pulled from the peers before deciding`);
+      }
       const out = feeProposalOutcome({ proposal: o, current: feesAt(o.activationHeight - 1), signal, tally: vote, approvals: approvalsOf(pid), devKeys, verify, schedule });
       db.prepare('INSERT OR IGNORE INTO fee_outcomes (proposal, outcome, activation, decided_ms) VALUES (?, ?, ?, ?)').run(pid, JSON.stringify(out), o.activationHeight, now());
       log(`[fees] ${pid.slice(0, 16)}: ${out.accepted ? `accepted - in force from ${o.activationHeight}` : `refused - ${out.why}`}`);
@@ -308,7 +317,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     }).filter(Boolean).sort((a, b) => b.publishedHeight - a.publishedHeight);
   }
   const cancelledOf = (pid) => { const r = db.prepare('SELECT cancelled FROM funding_payments WHERE proposal = ?').get(pid); return r ? r.cancelled : null; };
-  return {
+  const book = {
     schedule,
     voteRound,
     decideFees,
@@ -429,5 +438,11 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       }
       return done;
     },
+    /** The signals and fee approvals this seat holds for a proposal, as signed (GET /funding-items, a peer's pull before it decides; kanban #1231). */
+    itemsOf(pid) {
+      return db.prepare("SELECT kind, hex FROM funding_items WHERE kind IN ('signal', 'fee-approval') AND proposal = ? ORDER BY id").all(String(pid).toLowerCase())
+        .map((r) => ({ kind: r.kind, hex: r.hex }));
+    },
   };
+  return book;
 }
