@@ -34,7 +34,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, judgeTableProof, judgeAbandoned, buildAbandonedSlash, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic } from '../src/arbiter.js';
+import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, judgeTableProof, judgeAbandoned, buildAbandonedSlash, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic, resumeIntent, txidOf } from '../src/arbiter.js';
 import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
 import { liquidationEvent, slashEvent, stampEvent, signEvent, eventKey } from '../src/arbitration-events.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
@@ -308,7 +308,7 @@ async function payLiquidations() {
   for (const [fid, at] of liqEscrows) {
     const v = state.liquidations[fid] = state.liquidations[fid] || {};
     const [txid, vout] = at.split(':');
-    const spendEscrow = async (address) => {
+    const spendEscrow = async (address, record = () => {}) => {
       const o = await rpc('gettxout', [txid, Number(vout), false]);
       if (!o) return { why: 'the escrow output is spent or unknown' };
       const toScript = fromHex((await rpc('validateaddress', [address])).scriptPubKey);
@@ -317,8 +317,11 @@ async function payLiquidations() {
       if (!spend.ok) return { why: spend.why };
       const signed = assemble({ slash: spend, signatures: set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, spend.sighash) })), set });
       if (!signed.ok) return { why: signed.why };
+      const sats = String(BigInt(Math.round(Number(o.value) * 1e8)));
+      // kept before the broadcast (kanban #1232)
+      const t = await txidOf(rpc, signed.hex); if (t) record({ txid: t, hex: signed.hex, input: { txid, vout: Number(vout) }, sats });
       // with the escrow's amount (kanban #723: the liquidation's event names it), read before it is spent
-      return { ...(await post(rpc, signed.hex)), sats: String(BigInt(Math.round(Number(o.value) * 1e8))) };
+      return { ...(await post(rpc, signed.hex)), sats };
     };
     // THE REMAINDER GOES TO THE PROTOCOL RESERVES (§5A.3, §23A.5): it is e-cash in the safe federation by now, so that federation's reserve key
     const remainderPayees = async (fidHex, msat) => {
@@ -329,7 +332,7 @@ async function payLiquidations() {
     };
     // THE HALT AS THE SEATS LISTED IT, kept once (kanban #723): the liquidation's event says it after the seats forget the federation
     if (!v.halt) { try { const l = await claims.liquidation(fid); if (l) { v.halt = haltOfListing(l); keep(); } } catch { /* next pass */ } }
-    let r; try { r = await payOutLiquidation({ fid, v, claims, height: async () => Number(await rpc('getblockcount')), run, spendEscrow, remainderPayees, keep, say }); } catch (e) { r = { why: e.message }; }
+    let r; try { r = await payOutLiquidation({ fid, v, claims, height: async () => Number(await rpc('getblockcount')), run, spendEscrow, remainderPayees, keep, say, resume: (i) => resumeIntent(rpc, i, i.input) }); } catch (e) { r = { why: e.message }; }
     if (r.why) say({ liquidation: fid.slice(0, 16), waits: r.why });
   }
 }

@@ -329,3 +329,26 @@ test('kanban #1174: a note batch and the remainder whose tool paid and whose ans
   assert.ok(facts.notesOldTool.said.some((x) => /held, never paid twice/.test(x)), JSON.stringify(facts.notesOldTool.said));
   assert.deepEqual([facts.remainderLost.remainderPays, !!facts.remainderLost.remainderTxid], [1, true], 'a lost answer paid the remainder again');
 });
+
+test('kanban #1232: an escrow spend whose answer was lost is recorded first and taken by the next pass - the escrow spent once, the peg-in still claimed', async () => {
+  const b = book(); b.at(1012);
+  await b.claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+  const runs = []; let v = {}; let spent = 0; let disk = '{}';
+  const run = async (args) => { runs.push(args[1]);
+    if (args[1] === 'pegin-address') return { address: 'tb1qsafe' };
+    if (args[1] === 'pegin-claim') return { balance_before_msat: 0, balance_after_msat: 9_000_000 };
+    if (args[1] === 'pay') return { txid: `pay${runs.length}`, payouts: args[3].split(',').map((x, i) => ({ refund_pk: x.split(':')[0], amount_msat: Number(x.split(':')[1]), out_idx: i })) };
+    return {}; };
+  // the broadcast went out and its answer was lost (bitcoind restarted, the unit stopped): only what was kept before it is on disk
+  const lost = async (addr, record) => { spent++; record({ txid: 'escrow-into-safe', hex: '02ab', input: { txid: 'cd'.repeat(32), vout: 1 }, sats: '10000' }); throw new Error('socket hang up'); };
+  const again = async () => { spent++; return { why: 'the escrow output is spent or unknown' }; };
+  const resumed = [];
+  const keep = () => { disk = JSON.stringify(v); };
+  const pass = (spendEscrow) => { v = JSON.parse(disk); return payOutLiquidation({ fid: FED, v, claims: b.claims, height: async () => 1012, run, spendEscrow, keep,
+    resume: async (i) => { resumed.push(i.txid); return { ok: true, inferred: true }; } }); };
+  await assert.rejects(pass(lost), /socket hang up/);
+  assert.equal(JSON.parse(disk).escrowIntent.txid, 'escrow-into-safe', 'kept before the broadcast');
+  const second = await pass(again);
+  console.log('  MEASURED #1232 liquidation:', JSON.stringify({ spent, resumed, escrowTxid: v.escrowTxid, intentLeft: !!v.escrowIntent, paid: second.paid, claimedMsat: v.claimedMsat }));
+  assert.deepEqual([spent, resumed, v.escrowTxid, v.pegInAddress, v.escrowIntent, v.claimedMsat], [1, ['escrow-into-safe'], 'escrow-into-safe', 'tb1qsafe', undefined, '9000000']);
+});

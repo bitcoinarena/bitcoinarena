@@ -141,7 +141,7 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
  *      `remainderPayees(fid, msat)` names them ([{ key, msat }]: the reserve key of the federation it was paid into).
  * `spendEscrow(toScript)` builds, signs and posts the escrow's spend (buildEscrowPegin + assemble + post) and answers { txid } or why.
  */
-export async function payOutLiquidation({ fid, v, claims, height, run, spendEscrow, remainderPayees = null, keep = () => {}, say = () => {} }) {
+export async function payOutLiquidation({ fid, v, claims, height, run, spendEscrow, remainderPayees = null, keep = () => {}, say = () => {}, resume = null }) {
   const p0 = await claims.plan(fid);
   if (!p0.ok) return { why: p0.why };
   if (Number.isInteger(p0.claimWindowOpens) && (await height()) < p0.claimWindowOpens) return { why: `the claim window opens at ${p0.claimWindowOpens}` };
@@ -153,14 +153,23 @@ export async function payOutLiquidation({ fid, v, claims, height, run, spendEscr
     const b = await run(['--mode', 'balance']);
     if (b && b.msat !== undefined) { v.balanceBeforeClaimMsat = String(b.msat); keep(); }
   };
+  // A SPEND RECORDED BEFORE ITS BROADCAST (kanban #1232): a lost answer left the escrow spent, nothing kept, and every later pass "the
+  // escrow output is spent or unknown" - the safe federation's peg-in never claimed. `resume` finishes it (arbiter.js resumeIntent).
+  if (!v.escrowTxid && v.escrowIntent && resume) {
+    const i = v.escrowIntent;
+    const r = await resume(i);
+    if (!r.ok) { delete v.escrowIntent; keep(); return { why: `the recorded escrow spend is refused: ${r.why}` }; }
+    Object.assign(v, { escrowTxid: i.txid, pegInAddress: i.pegInAddress, escrowAtMs: Date.now(), ...(i.sats !== undefined ? { escrowSats: String(i.sats) } : {}) }); delete v.escrowIntent; keep();
+    say({ federation: fid.slice(0, 16), escrowIntoSafeFederation: i.txid, resumed: r.landed ? 'found' : r.inferred ? 'its input is spent' : 'sent again' });
+  }
   if (!v.escrowTxid) {
     await markBalance();
     const addr = await run(['--mode', 'pegin-address']);
     if (!addr.address) return { why: `no peg-in address: ${addr.error || JSON.stringify(addr)}` };
-    const sent = await spendEscrow(addr.address);
-    if (!sent || !sent.txid) return { why: sent && sent.why ? sent.why : 'the escrow was not spent' };
+    const sent = await spendEscrow(addr.address, (intent) => { v.escrowIntent = { ...intent, pegInAddress: addr.address }; keep(); });
+    if (!sent || !sent.txid) { if (v.escrowIntent) { delete v.escrowIntent; keep(); } return { why: sent && sent.why ? sent.why : 'the escrow was not spent' }; }
     // with when and how much (kanban #723: the explorer names every step of a liquidation with its amount and its transaction)
-    Object.assign(v, { escrowTxid: sent.txid, pegInAddress: addr.address, escrowAtMs: Date.now(), ...(sent.sats !== undefined ? { escrowSats: String(sent.sats) } : {}) }); keep();
+    Object.assign(v, { escrowTxid: sent.txid, pegInAddress: addr.address, escrowAtMs: Date.now(), ...(sent.sats !== undefined ? { escrowSats: String(sent.sats) } : {}) }); delete v.escrowIntent; keep();
     say({ federation: fid.slice(0, 16), escrowIntoSafeFederation: sent.txid });
   }
   if (!v.claimedMsat) {
