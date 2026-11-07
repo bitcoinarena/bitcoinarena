@@ -420,3 +420,38 @@ test('kanban #1119: a seat that alone failed to reach a seated node re-signs the
   for (const role of ['game', 'settlement']) for (const i of upTo(9).filter((k) => k !== dead)) assert.deepEqual(net.seatedOf(i, role), seven, `${role}: node ${i} holds the certificate`);
   console.log(net.logs.get(lone).filter((l) => /^\[seating\] [0-9a-f]{16} game/.test(l)).join('\n')); console.log(net.logs.get(0).filter((l) => /game/.test(l)).join('\n')); assert.ok(net.logs.get(lone).some((l) => /game: re-signed the seating of 7/.test(l)), 'the lone seat moved, once');
 });
+
+// KANBAN #1271 (audit 4 #1257 outsider-3): takePresent checked a PRESENT's signature before asking whether this seat holds its round or whether its node is
+// drawn, and a batch had no cap: one POST /presents of made-up PRESENTs ran a schnorr verify per 132 bytes on the event loop. Now an unknown round or a
+// node not drawn is refused before the verify, and a batch holds at most MAX_PRESENTS_PER_BATCH.
+test('#1271 PRESENTs of rounds this seat does not hold, or of nodes not drawn, cost no signature check; a batch past the cap is refused', async () => {
+  const { MAX_PRESENTS_PER_BATCH } = await import('../src/seating-agent.js');
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE rounds (round_id BLOB, contract BLOB)');
+  const c = { ...contractFor(nodes.slice(0, 7).map((n) => n.pubkey)), startTimeMs: START };
+  const bytes = encodeRoundContract(c), rid = roundIdOf(c);
+  db.prepare('INSERT INTO rounds (round_id, contract) VALUES (?, ?)').run(rid, bytes);
+  const round = { db, pubkey: nodes[0].pubkey, get: (id) => (toHex(id) === toHex(rid) ? { contract: bytes } : null) };
+  const drawn = nodes.slice(0, 7).map((n) => ({ pubkey: n.pubkey, advert: { endpoint: n.endpoint } }));
+  const roster = { committeeFor: (id) => (toHex(id) === toHex(rid) ? { ok: true, drawn } : { ok: false, why: 'this seat holds no such round' }) };
+  let verifies = 0;
+  const verify = (s, m, k) => { verifies++; try { return schnorr.verify(s, m, k); } catch { return false; } };
+  const agent = seatingAgent({ round, roster, sign: signer(nodes[0]), verify, fetcher: async () => new Response('{}'), nowMs: () => NOW, leftNode: () => false });
+  const junkSig = () => crypto.getRandomValues(new Uint8Array(64));
+  const made = (roundId, pubkey) => signPresent({ roundId, role: 'game', nodePubkey: pubkey }, junkSig);
+  const cat = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let o = 0; for (const x of list) { out.set(x, o); o += x.length; } return out; };
+  const unknown = cat(Array.from({ length: 1000 }, () => made(crypto.getRandomValues(new Uint8Array(32)), nodes[1].pubkey)));
+  const a = agent.takePresents(unknown); const vUnknown = verifies;
+  const notDrawn = cat(Array.from({ length: 100 }, () => made(rid, schnorr.getPublicKey(crypto.getRandomValues(new Uint8Array(32))))));
+  const b = agent.takePresents(notDrawn); const vNotDrawn = verifies - vUnknown;
+  const tooMany = agent.takePresents(cat(Array.from({ length: MAX_PRESENTS_PER_BATCH + 1 }, () => made(rid, nodes[1].pubkey))));
+  const before = verifies;
+  const good = agent.takePresents(signPresent({ roundId: rid, role: 'game', nodePubkey: nodes[2].pubkey }, signer(nodes[2])));
+  const facts = { unknownRounds: { presents: 1000, taken: a.taken, verifies: vUnknown }, notDrawn: { presents: 100, taken: b.taken, verifies: vNotDrawn },
+    overCap: { ok: tooMany.ok, status: tooMany.status }, drawnHeld: { taken: good.taken, verifies: verifies - before } };
+  console.log('  FACTS #1271:', JSON.stringify(facts));
+  assert.equal(vUnknown, 0, 'PRESENTs of rounds this seat does not hold were verified');
+  assert.equal(vNotDrawn, 0, 'PRESENTs of nodes not drawn were verified');
+  assert.deepEqual([tooMany.ok, tooMany.status], [false, 413]);
+  assert.deepEqual([good.taken, verifies - before], [1, 1], 'a drawn node\'s PRESENT for a held round is verified and kept as before');
+});

@@ -25,6 +25,9 @@ import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 
 /** How far ahead of its start a round is looked at: PRESENT is signed in the last minute before seating_close. */
+/** The most PRESENTs one POST /presents batch is read for (kanban #1271): as POST /presence's 4096 lines. */
+export const MAX_PRESENTS_PER_BATCH = 4096;
+
 export const PRESENT_WINDOW_MS = 60000n;
 /** A PRESENT's length: type, version, round id, role, node key, signature (seating.js presentBody + 64). */
 export const PRESENT_BYTES = 1 + 2 + 32 + 1 + 32 + 64;
@@ -279,6 +282,13 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       // check and so never kept, checked again on every tick from every peer that sent them)
       const t = starts.get(toHex(d.roundId));
       if (t && !afterClose && BigInt(nowMs()) >= t.close) return { ok: false, why: 'that round\'s seating has closed' };
+      // AND A ROUND OR A NODE THIS SEAT HAS NOTHING FOR is refused before the signature is checked (kanban #1271, audit 4 #1257 outsider-3): an unknown
+      // round's PRESENT was verified first, so one POST /presents of random PRESENTs ran a signature check per 132 bytes on the event loop. The same
+      // checks run after the verify below; here they only save it
+      if (leftNode(toHex(d.nodePubkey))) return { ok: false, why: 'that node\'s owner took it out of the seating (emergency departure, §23A.5a)' };
+      const c0 = roster.committeeFor(d.roundId, d.role);
+      if (!c0.ok) return { ok: false, why: c0.why };
+      if (!c0.drawn.some((e) => toHex(e.pubkey) === toHex(d.nodePubkey))) return { ok: false, why: 'that node is not drawn for that round and role' };
     } catch { /* not decodable: verifyPresent says why */ }
     const v = verifyPresent(bytes, { verify });
     if (!v.ok) return v;
@@ -690,6 +700,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   /** THE BATCH DOORS' SIDE. POST /presents: the PRESENTs of one body, each taken as POST /present takes it. */
   function takePresents(bytes) {
     if (!bytes.length || bytes.length % PRESENT_BYTES !== 0) return { ok: false, why: `a batch of PRESENTs is a whole number of ${PRESENT_BYTES}-byte PRESENTs` };
+    // AT MOST AS MANY AS POST /presence takes (kanban #1271): a batch is a round's seating, never more than a few hundred
+    if (bytes.length / PRESENT_BYTES > MAX_PRESENTS_PER_BATCH) return { ok: false, status: 413, why: `a batch holds at most ${MAX_PRESENTS_PER_BATCH} PRESENTs` };
     let taken = 0; const refused = [];
     for (let i = 0; i < bytes.length; i += PRESENT_BYTES) { const r = takePresent(bytes.subarray(i, i + PRESENT_BYTES)); if (r.ok) taken++; else refused.push(r.why); }
     return { ok: true, taken, refused: refused.slice(0, 8) };
