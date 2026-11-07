@@ -89,7 +89,7 @@ import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX }
 import { WebSocketServer } from 'ws';
 import { createP2pTunnels, carryP2p, carryApi, P2P_TUNNEL_PATHS, GUARDIAN_NEXT_PATH, GUARDIAN_API_RELAY_PATH } from './p2p-tunnel.js';
 import { createAddressBook, announceOwn, pullAnnouncements } from './address-book.js';
-import { reserveKeyCache } from './reserve-key-cache.js';
+import { reserveKeyCache, payeeReserveKeys } from './reserve-key-cache.js';
 import { ownServices } from './own-services.js';
 import { serviceSettings } from './service-settings.js';
 import { controlsOf, installerIdOf, INSIDE } from './service-control.js';
@@ -1709,7 +1709,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A FEDERATION'S RESERVE KEY, FOR AN ENTRY TO PAY: this seat's own when it guards the federation; else
   // the key its guardian seats serve at GET /reserves, taken only when at least the threshold of them name the same one. Kept.
   // KEPT WITH ITS EPOCH (kanban #803, reserve-key-cache.js): a key kept for an earlier set of guardian seats is not the federation's key now
-  const reserveKeys = reserveKeyCache();
+  const reserveKeys = reserveKeyCache({ db: round.db || null });
+  const reserveKeyHistory = (fed) => reserveKeys.historyOf(fed);   // (namedPayeesFor has a reserveKeys of its own)
   const reserveEpochOf = (fedHex, g = reserveGuardians()[fedHex]) => (g ? toHex(reserveEpochId(fromHex(fedHex), sortedKeys(g.members))) : null);
   const reserveKeyFor = async (fedHex) => {
     const g = reserveGuardians()[fedHex];
@@ -2578,8 +2579,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let reserveKeys = null;
     try {
       const fids = takesAnyFederation(contract) ? round.entriesOf(rid).map((x) => toHex(x.entry.federationId || new Uint8Array(32))) : [toHex(contract.federationId)];
-      const keys = await Promise.all([...new Set(fids)].map((f) => reserveKeyFor(f).catch(() => null)));
-      reserveKeys = new Set(keys.map(hex33).filter(Boolean));
+      // EVERY KEY HELD FOR THE ROUND'S FEDERATIONS, AND UNREAD WHEN ONE IS UNKNOWN (kanban #1246, audit 3 CONSENSUS-2): the key now (null during key
+      // generation, or an epoch later than the settlement's plan) judged an honest settlement's reserve row as unpayable - a slash on honest bonds
+      const feds = [...new Set(fids)];
+      const keys = await Promise.all(feds.map((f) => reserveKeyFor(f).catch(() => null)));
+      reserveKeys = payeeReserveKeys(feds, keys.map(hex33), reserveKeyHistory);
     } catch { reserveKeys = null; }
     // A MARKET'S GAME DONATION SET AND ITS RATES (#1143 2): the hosted registration's set (the manifest the round's game id names), the book's own rates
     let gameDonationKeys, market;
