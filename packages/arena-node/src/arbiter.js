@@ -574,7 +574,11 @@ export function spentSetFromSeats(listings, { verify, readRecord = (hex) => spli
       try { copies.push({ ...decodeSpentSet(fromHex(String(c.spentSet))), signature: fromHex(String(c.signature)) }); } catch { /* not a copy */ }
     }
   }
-  const pick = newestSpentSet(copies, { record, verify });
+  // THE HALT'S BOUND (kanban #1262): the halt proof's session as most seats list it, + 1
+  const halts = new Map();
+  for (const l of listings || []) { const hs = l && l.haltProof && l.haltProof.session; if (Number.isInteger(hs)) halts.set(hs, (halts.get(hs) || 0) + 1); }
+  const haltSession = [...halts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]).map((e) => e[0])[0];
+  const pick = newestSpentSet(copies, { record, verify, maxSession: Number.isInteger(haltSession) ? haltSession + 1 : null });
   return pick.copy ? { spentNonces: spentNonceSet(pick.copy), session: pick.session, signers: pick.signers } : { spentNonces: null, why: pick.why };
 }
 
