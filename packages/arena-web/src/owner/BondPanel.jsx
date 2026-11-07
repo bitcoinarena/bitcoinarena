@@ -43,7 +43,9 @@ export function guardianLockSays(l) {
   if (!l.qualifying) return l.lapsesAt === null
     ? `Your bond is below the guardian minimum of ${n(l.bondMinGuardianSats)} sat: it covers nothing for your federation, and the federation takes fewer deposits. Add to your bond.`
     : `Your bond is no longer locked long enough to cover your federation (it must stay locked ${n(l.drainBlocks)} blocks ahead). You are still a guardian, but your federation takes fewer deposits until you add to your bond.`;
-  return `Your bond stops covering your federation at block ${n(l.lapsesAt)}, in ${n(l.blocksLeft)} blocks: a guardian's bond must stay locked ${n(l.drainBlocks)} blocks ahead. Add to your bond with a later lock before then, or your federation takes fewer deposits.`;
+  // AND WHERE THE SEAT ENDS (#1318, RULED #1288): at the bond's maturity the guardian departs on schedule, with no offence
+  const departs = Number.isInteger(l.departsAt) ? ` At block ${n(l.departsAt)}, when your bond matures, you leave the federation as a guardian on schedule, unless you add a bond output with a later lock.` : '';
+  return `Your bond stops covering your federation at block ${n(l.lapsesAt)}, in ${n(l.blocksLeft)} blocks: a guardian's bond must stay locked ${n(l.drainBlocks)} blocks ahead. Add to your bond with a later lock before then, or your federation takes fewer deposits.${departs}`;
 }
 const GuardianLock = ({ lock }) => { const t = guardianLockSays(lock); return t ? <p className="warn" id="guardian-lock-warn">{t}</p> : null; };
 /** The coloured line at the top of the Bond section. */

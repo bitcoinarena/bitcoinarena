@@ -5981,6 +5981,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const pressurePoint = foundingPressurePoint(netName === 'test' ? 'testnet4' : netName);
     const foundingBondMin = guardianFloor();
     foundingSeat = createFoundingSeat({
+      // NO BOND THAT LEAVES INSIDE THE FIRST SEASON (#1318, RULED #1288): from the guardian bond lock's height, the network's season
+      firstSeason: (() => { const net = chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null; const env = process.env.ARENA_BOND_LOCK_HEIGHT;
+        const from = env !== undefined && env !== '' && (net === 'regtest' || net === 'devnet') ? Number(env) : bondLockPoint(net);
+        return Number.isInteger(from) ? { blocks: fundingSchedule.season, from } : null; })(),
       pressureBondAt: foundingPressureReader({ point: pressurePoint, bondMinGuardian: foundingBondMin, censusAt: foundingEntriesAt, fetcher: fetch, seats: () => everySeat(),
         held: (fid, h) => { const r = fedRecords.recordAt(fid, h); return r ? r.__hex : null; },
         inviteFederationId: (inv) => inviteFedId(inv), networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, verify: schnorrVerify }),
@@ -7505,7 +7509,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               if (tip === null || !(ownAdvert && Array.isArray(ownAdvert.guardianOf) && ownAdvert.guardianOf.length)) return {};
               const net = String(found.network || chain || '').replace(/^bitcoin-/, ''); const clocks = FEDERATION_CLOCKS[net === 'test' ? 'testnet4' : net] || FEDERATION_CLOCKS.mainnet;
               const outs = (found.all ? found.all.outputs : [found.bond]).map((o) => ({ bondSats: o.sats, maturity: o.maturity }));
-              return { guardianLock: { drainBlocks: clocks.drainBlocks, bondMinGuardianSats: String(guardianFloor()), ...bondLapseOf({ outputs: outs, drainBlocks: clocks.drainBlocks, bondMinGuardian: guardianFloor(), tip }) } };
+              // A SEASON AHEAD (#1318, RULED #1288): the network's season (testnet4 a day), never less than drain_blocks
+              return { guardianLock: { drainBlocks: clocks.drainBlocks, bondMinGuardianSats: String(guardianFloor()), ...bondLapseOf({ outputs: outs, drainBlocks: clocks.drainBlocks, bondMinGuardian: guardianFloor(), tip, warnBlocks: fundingSchedule.season }) } };
             } catch { return {}; } })()),
             ...(await (async () => { if (process.env.ARENA_HOME || !process.env.ARENA_BOND_CLI) return {};
               try { const { bondCliFrom, walletOf, ADD_OVERHEAD_SATS } = await import('./add-bond-wallet.js'); const w = walletOf(bondCliFrom().cli);

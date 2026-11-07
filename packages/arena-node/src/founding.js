@@ -60,9 +60,11 @@ export function setupDigest(id, node, code, tag = TAG_PAIRS.foundingSetup[0]) {
   return taggedHash(tag, Uint8Array.from([...w.finish(), ...c]));
 }
 
+// `firstSeason` { blocks, from } (#1318): from `from` on, a bond maturing within `blocks` of the trigger height is no candidate
 export function createFounding({ seed, triggerHeight, entries, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [], pressureBond = null, candidateVersion = null, foundingWindow,
-  ownKey, sign, verify, setup = null, post = async () => {}, name = 'arena', say = () => {} }) {
-  const draw = drawGuardians({ entries, seed, height: triggerHeight, nominal, bondMinGuardian, guardingOpen, seatedFirst, pressureBond, candidateVersion });
+  ownKey, sign, verify, setup = null, post = async () => {}, name = 'arena', say = () => {}, firstSeason = null }) {
+  const firstSeasonEnds = firstSeason && Number.isInteger(firstSeason.blocks) && Number.isInteger(firstSeason.from) && triggerHeight >= firstSeason.from ? triggerHeight + firstSeason.blocks : null;
+  const draw = drawGuardians({ entries, seed, height: triggerHeight, nominal, bondMinGuardian, guardingOpen, seatedFirst, pressureBond, candidateVersion, firstSeasonEnds });
   const id = foundingId(seed, triggerHeight, draw.ok ? pressureBond : null);
   const own = toHex(ownKey);
   const codes = new Map();                   // node hex -> { code, signature }
