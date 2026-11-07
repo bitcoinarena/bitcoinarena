@@ -390,6 +390,18 @@ export class LockSettlement {
     });
   }
 
+  /** The winners' shares this seat's plan names for a settled round, kept when the plan pays as many as the kept moves do (kanban #1240); null when not. */
+  async #sharesFromPlan(roundIdBytes) {
+    if (typeof this.round.putLockSettlementShares !== 'function') return null;
+    let got; try { got = await this.planOf(roundIdBytes, { withSends: true }); } catch { return null; }
+    if (!got || !got.ok || !got.plan || !Array.isArray(got.plan.stakeShares)) return null;
+    const paid = got.split && Array.isArray(got.split.settlements) ? got.split.settlements.reduce((t, x) => t + x.payouts.length, 0) : got.plan.payouts.length;
+    const moves = this.round.lockSettlementMoves(roundIdBytes);
+    if (moves && Number.isInteger(moves.payouts) && moves.payouts !== paid) return null;
+    this.round.putLockSettlementShares(roundIdBytes, got.plan.stakeShares);
+    return got.plan.stakeShares;
+  }
+
   async lateMessage(roundIdBytes, entryIdBytes, { onlyBase = false } = {}) {
     if (this.#attestedOf(roundIdBytes)) return refuse('an attested round has no late entry: its picks are all in its one settlement');
     const key = `${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`;
@@ -403,7 +415,11 @@ export class LockSettlement {
     // A ROUND THAT TAKES ANY FEDERATION HAS NO ROW OF ITS OWN (kanban #1172): its settlement is ACCEPTED once every federation's row is
     const first = this.round.settlementState ? this.round.settlementState(roundIdBytes) : (this.round.lockSettlement(roundIdBytes) || {}).state;
     if (first !== ACCEPTED) return refuse('the round\'s own settlement is not accepted here yet, so no entry is late');
-    const shares = this.round.lockSettlementShares ? this.round.lockSettlementShares(roundIdBytes) : null;
+    let shares = this.round.lockSettlementShares ? this.round.lockSettlementShares(roundIdBytes) : null;
+    // A SEAT THAT ONLY TOOK THE HANDED FEDERATION SIGNATURES (kanban #1240, audit 3 FIXES-6): an any-federation round's shares were kept only by
+    // the seat that combined its transactions, so every other seat refused every late loser and fewer than a threshold ever committed - the
+    // late stake went back to the loser at its expiry. The shares are derived from this seat's own plan (as backfillShares does) and kept.
+    if (!shares && takesAnyFederation(contract)) shares = await this.#sharesFromPlan(roundIdBytes);
     if (!shares) return refuse('this signer node kept no shares of the round\'s settlement, so it cannot split a late stake');
     const lockRow = this.round.stakeLock(entryIdBytes);
     if (!lockRow) return refuse('this signer node verified no stake lock for that entry');
