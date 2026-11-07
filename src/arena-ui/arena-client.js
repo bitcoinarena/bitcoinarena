@@ -34773,7 +34773,11 @@ async function presentNotes({ events, network, arbitration = arbitrationOf(netwo
     // THE NOTES
     const eKey = pendingClaimKey(fid);
     let rec = readClaim(storage, eKey);
-    if (rec && rec.state !== 'intent' && taken) { step(eKey, rec, 'none'); out.push({ federation: fid, ok: true, taken: true, why: 'the arbitration set lists this claim as accepted' }); rec = undefined; }
+    // TAKEN ONLY WHEN IT WAS PRESENTED (kanban #1230, audit 3 #1210 FIXES-2): `taken` is read per payout key, and a notes record whose POST had
+    // failed (kept, never presented) was dropped when the set accepted another claim of that key - the pending outputs', or an earlier one -
+    // and the notes that had left the wallet were lost. A record the door never answered (no answer, or a 5xx) is presented again, whatever the
+    // set lists for its key; one the door answered (taken, or refused as claimed before) is taken by the set's word
+    if (rec && (rec.state === 'posted' || rec.answered) && taken) { step(eKey, rec, 'none'); out.push({ federation: fid, ok: true, taken: true, why: 'the arbitration set lists this claim as accepted' }); rec = undefined; }
     if (rec !== undefined) {
       const inWindow = Number.isInteger(height) && height >= st.window.opens && height <= st.window.closes;
       if (!Number.isInteger(height)) out.push({ federation: fid, ok: false, why: 'the chain tip is not known: nothing is handed over', kept: !!rec });
@@ -34807,6 +34811,8 @@ async function presentNotes({ events, network, arbitration = arbitrationOf(netwo
             const r = await fetcher(door, { method: 'POST', body: JSON.stringify({ federation: fid, ecash: rec.ecash, payoutPk: pk }), signal: AbortSignal.timeout(30000) });
             const j = await r.json().catch(() => ({}));
             if (r.ok && !rec.memoryOnly) rec = step(eKey, rec, 'posted', { door: st.door, postedAtMs: nowMs });
+            // the door answered it (kanban #1230): a refusal is an answer too - the notes reached it - a 5xx is not
+            else if (!r.ok && !(Number(r.status) >= 500) && !rec.memoryOnly && !rec.answered) { rec = { ...rec, answered: true }; try { writeClaim(storage, eKey, rec, put); } catch { /* kept in memory */ } }
             out.push({ federation: fid, ok: !!r.ok, accepted: j.accepted || [], refused: j.refused || [], inWindow: j.inWindow, why: j.why || null, kept: !rec.memoryOnly, door: st.door, ...(rec.memoryOnly ? { memoryOnly: true } : {}) });
           } catch (e) { out.push({ federation: fid, ok: false, why: e.message, kept: !rec.memoryOnly, door: st.door }); }
         } else if (rec && rec.state === 'posted') out.push({ federation: fid, ok: true, posted: true, kept: true, why: 'presented; waiting for the arbitration set to list it', door: st.door });
@@ -34820,7 +34826,7 @@ async function presentNotes({ events, network, arbitration = arbitrationOf(netwo
       let prec = null;
       const raw = storage.getItem(movedKey(storage, pKey));
       if (raw) { try { const j = JSON.parse(raw); prec = Array.isArray(j) ? { v: 2, state: 'kept', reqs: j } : (j && j.v === 2 ? j : null); } catch { prec = null; } }
-      if (prec && taken) { step(pKey, prec, 'none'); prec = undefined; }
+      if (prec && (prec.state === 'posted' || prec.answered) && taken) { step(pKey, prec, 'none'); prec = undefined; }
       if (prec !== undefined && Number.isInteger(height) && height >= st.window.opens && height <= st.window.closes) {
         if (!prec) {
           const w = await walletFor(fid);
