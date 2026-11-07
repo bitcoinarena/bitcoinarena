@@ -150,14 +150,27 @@ export function createP2pTunnels({ ownKey, host = '127.0.0.1', say = () => {}, o
     });
     server.listen(port, host, () => { row.state = 'listening'; say(`[p2p-tunnel] ${port} carries ${row.slot} ${row.key.slice(0, 8)} to ${row.root}`); });
   }
-  function sync(entries) {
+  // `prefer(keyHex)`: true for a node a federation record this seat holds names as a guardian (kanban #1226)
+  function sync(entries, { prefer = null } = {}) {
     const want = new Map();
+    const preferred = (k) => { try { return typeof prefer === 'function' && !!prefer(k); } catch { return false; } };
     for (const e of entries || []) {
       const a = e && e.advert;
       if (!(a && a.guardianCapable === true && a.endpoint)) continue;
       const key = hexOf(e.pubkey);
       if (key === own) continue;
-      for (const slot of Object.keys(P2P_TUNNEL_PATHS)) want.set(p2pTunnelPort(key, slot), { key, slot, root: tunnelRoot(a.endpoint) });
+      for (const slot of Object.keys(P2P_TUNNEL_PATHS)) {
+        const port = p2pTunnelPort(key, slot);
+        // A GUARDIAN KEEPS ITS PORT (kanban #1226, audit 2 #1204 INSTALLER-DOORS-7): ports are a hash of the node key mod 10,000 and the last
+        // census entry on a port won - a key ground to another guardian's port, bonded, cut that guardian off from its federation's peers on
+        // every seat. A node a held federation record names as a guardian keeps the port against one no record names.
+        const had = want.get(port);
+        if (had && had.key !== key) {
+          say(`[p2p-tunnel] ${port}: ${had.key.slice(0, 8)} and ${key.slice(0, 8)} map to one port`);
+          if (preferred(had.key) && !preferred(key)) continue;
+        }
+        want.set(port, { key, slot, root: tunnelRoot(a.endpoint) });
+      }
     }
     for (const [port, row] of ports) {
       const w = want.get(port);
