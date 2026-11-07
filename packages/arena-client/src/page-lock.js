@@ -951,8 +951,9 @@ export async function playerWithdrawable({ round, invite, seed, LockClient, stor
  * every tab switch); `claimed` resolves with whichever invoice was paid first, `close()` rejects it. Every invoice made
  * stays payable: one paid after another was claimed is credited to the same wallet.
  */
+// `phrase16`: the depositing phrase's first 16 hex, kept on each pending entry so a scan with another phrase's key never drops it (kanban #1233)
 export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gateways = [], onDeposit = () => {},
-  storage = null, federationId = null, restMsat = null, sizeOf = null, choices = null } = {}) {
+  storage = null, federationId = null, restMsat = null, sizeOf = null, choices = null, phrase16 = null } = {}) {
   // THE LAST WORD ON WHERE NEW MONEY GOES (kanban #807): whichever path asked, no invoice is made for a federation that takes no new deposits
   if (federationId && !takesDeposits(federationId)) throw new Error('this federation takes no new deposits');
   let settle; let fail;
@@ -981,7 +982,7 @@ export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = nu
       made.push(d);
       // KEPT UNTIL IT ENDS: a reload between the payment and the claim leaves this page, and the next page's wallet
       // (resumeDeposits) waits on the same operation and writes its history row
-      pendingAdd(storage, federationId, { invoice: d.invoice, operation: x.operation, msat: String(amount) });
+      pendingAdd(storage, federationId, { invoice: d.invoice, operation: x.operation, msat: String(amount), ...(phrase16 ? { phrase16: String(phrase16).toLowerCase() } : {}) });
       onDeposit(d);
       return d;
     };
@@ -1029,6 +1030,7 @@ export function pendingDeposits(storage, federationId) {
   }
   return [...byOp.values()];
 }
+const phraseOfSeed = (seed) => (seed instanceof Uint8Array && seed.length ? toHex(seed).slice(0, 16) : (typeof seed === 'string' && /^[0-9a-f]{16,}$/i.test(seed) ? seed.slice(0, 16).toLowerCase() : null));
 function pendingAdd(storage, federationId, p) {
   if (!storage || !fedHexOf(federationId) || !p || !p.operation) return;
   // A STORE THAT CANNOT LIST ITS KEYS keeps the one list, as before
@@ -1105,10 +1107,12 @@ export function resumeDeposits({ client, storage, federationId, onClaimed = () =
  * federation's incoming contracts are read from the start and each is tried against this wallet's key: only a deposit really paid has one, so what this credits is
  * what arrived, and `lost` - invoices that may never have been paid - is dropped once the whole stream was read. The federation holds a read at the stream's end: `timeoutMs` ends it.
  */
-export async function scanLostDeposits({ client, storage, federationId, lost = [], onClaimed = () => {}, timeoutMs = 15000 } = {}) {
+// `phrase16`: the scanning wallet's phrase; `dropUnnamed`: an entry that names no phrase may go (the browser keeps one phrase only) - kanban #1233
+export async function scanLostDeposits({ client, storage, federationId, lost = [], onClaimed = () => {}, timeoutMs = 15000, phrase16 = null, dropUnnamed = true } = {}) {
   if (typeof client.scanDeposits !== 'function') return { read: false, msat: 0n, found: 0 };
   let next = '0', done = false, msat = 0n, foundN = 0;
   const waits = [];
+  const unresolved = new Set();
   while (!done) {
     let got;
     try { got = JSON.parse(await withinMs(client.scanDeposits(next), timeoutMs, 'the federation held the read')); }
@@ -1122,21 +1126,29 @@ export async function scanLostDeposits({ client, storage, federationId, lost = [
         if (!depositEnded(storage, federationId, f.operation, final, { operation: f.operation, amountMsat: BigInt(f.msat) })) return;
         msat += BigInt(f.msat);
         onClaimed({ amountMsat: BigInt(f.msat), operation: f.operation });
-      }, () => {}));
+      }, () => { unresolved.add(String(f.operation)); }));
     }
   }
   await Promise.all(waits);
   // THE INVOICES THAT MAY NEVER HAVE BEEN PAID GO ONLY AFTER A WHOLE READ (kanban #1179): before, a read that failed after its first page still dropped every
   // one of them, and a paid one past that page was never looked for again. `read` is false then, and the next page reads again
   if (!done) return { read: false, partial: next !== '0', msat, found: foundN };
-  for (const p of lost) pendingDrop(storage, federationId, p.operation);
-  return { read: true, msat, found: foundN };
+  // ONLY WHAT THIS SCAN COULD HAVE FOUND (kanban #1233, audit 3 #1210 FIXES-4): the stream is read with this wallet's key, so another phrase's paid
+  // deposit is never found here - its entry stays for its own phrase's scan; and an entry whose claim was found but did not end stays too
+  const mine = phrase16 ? String(phrase16).toLowerCase() : null;
+  let kept = 0;
+  for (const p of lost) {
+    const ours = p.phrase16 ? (mine !== null && String(p.phrase16).toLowerCase() === mine) : dropUnnamed;
+    if (!ours || unresolved.has(String(p.operation))) { kept++; continue; }
+    pendingDrop(storage, federationId, p.operation);
+  }
+  return { read: true, msat, found: foundN, kept };
 }
 /** A deposit into the player wallet from Settings: the same tabs, this round's stake, no round to fund. */
 export async function settingsDepositOffer({ round, invite, seed, LockClient, storage, gateways = [], donationMsat = 0n, donationRecipients = null, onDeposit = () => {}, onClaimed = () => {} } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
   const locks = await locksFor(round, client, donationMsat, donationRecipients);
-  const offer = depositOffer({ client, stakeMsat: stakeOf(round), haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit,
+  const offer = depositOffer({ phrase16: phraseOfSeed(typeof seed !== 'undefined' ? seed : null), client, stakeMsat: stakeOf(round), haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit,
     storage, federationId: round.federationId, sizeOf: (n) => roundsDepositMsat(n, locks, LockClient) });
   offer.claimed.then((d) => { depositRow(storage, round, d); onClaimed(d); offer.decided({ funded: true }); }, () => {});
   return offer;
@@ -1153,7 +1165,7 @@ export const walletDepositChoices = () => [...WALLET_DEPOSIT_SATS.map((sat) => (
 export async function walletDepositOffer({ federationId, invite, seed, LockClient, storage, gateways = [], onDeposit = () => {}, onClaimed = () => {} } = {}) {
   if (federationId && !takesDeposits(federationId)) throw new Error('this federation takes no new deposits');   // before a wallet is opened in it (kanban #807)
   const client = await openPlayerWallet({ federationId, invite, seed, LockClient, storage });
-  const offer = depositOffer({ client, stakeMsat: 0n, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit, storage, federationId,
+  const offer = depositOffer({ phrase16: phraseOfSeed(typeof seed !== 'undefined' ? seed : null), client, stakeMsat: 0n, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit, storage, federationId,
     choices: walletDepositChoices() });
   offer.claimed.then((d) => { depositRowOnce(storage, federationId, d); onClaimed(d); offer.decided({ funded: true }); }, () => {});
   offer.client = client;   // the page keeps it with its other wallets: summed, and its pending deposits waited on (2026-10-20)
@@ -1249,7 +1261,7 @@ export async function earlyDepositOffer({ round, invite, seed, LockClient, stora
   const issuing = await issuingMsat(client);
   if (have + issuing >= stakeOf(round)) return null;
   onStep(`the player wallet holds ${have} msat, less than this round's stake of ${stakeOf(round)} msat: a deposit is asked at once`);
-  return depositOffer({ client, stakeMsat: stakeOf(round), haveMsat: have, needMsat: null, gateways, onDeposit, storage, federationId: round.federationId });
+  return depositOffer({ phrase16: phraseOfSeed(typeof seed !== 'undefined' ? seed : null), client, stakeMsat: stakeOf(round), haveMsat: have, needMsat: null, gateways, onDeposit, storage, federationId: round.federationId });
 }
 
 export async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n, donationRecipients = null, gateways = [],
@@ -1287,7 +1299,7 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
       // while the round's other steps ran - that offer is this one; it is waited for, not made or asked again
       const adopt = !prev && early && !early.adopted && restMsat === null;
       if (adopt) early.adopted = true;
-      const offer = adopt ? early : depositOffer({ client, stakeMsat: stakeOf(round), haveMsat: have, needMsat: n.need, gateways, onDeposit,
+      const offer = adopt ? early : depositOffer({ phrase16: phraseOfSeed(typeof seed !== 'undefined' ? seed : null), client, stakeMsat: stakeOf(round), haveMsat: have, needMsat: n.need, gateways, onDeposit,
         storage, federationId: round.federationId, restMsat, sizeOf: (k) => roundsDepositMsat(k, locks, LockClient) });
       if (adopt) { /* already on the screen */ } else if (prev) prev.decided({ funded: false, rest: offer }); else askDeposit(offer);
       onStep(restMsat === null ? 'waiting for the deposit into the player wallet' : `waiting for the rest of this round's fees: ${restMsat} msat`);

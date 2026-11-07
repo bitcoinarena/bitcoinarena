@@ -96,3 +96,26 @@ test('#1179 the lists a page before this kept are read: a pending entry is resum
   assert.deepEqual(ledgerRows(L, FED).map((r) => r.msat), ['500', '700'], 'the old list\'s rows, then the new');
   assert.deepEqual(ledgerFederations(L), [FED]);
 });
+
+// KANBAN #1233 (audit 3 #1210 FIXES-4): the scan reads the federation with its own wallet's key, but dropped every lost entry after a whole
+// read - another phrase's paid deposit too (never found with this key) - and an entry whose claim it found but whose wait failed.
+test('#1233 a whole scan by phrase Q keeps phrase P\'s lost entry and one whose claim did not end; it drops only its own unfound ones', async () => {
+  const L = store();
+  const add = (op, phrase16) => L.setItem(`arena.deposit.pending.${FED}.${op}`, JSON.stringify([{ atMs: 1, invoice: 'lnbc', operation: op, msat: '1000', ...(phrase16 ? { phrase16 } : {}) }]));
+  // P's deposit, Q's own unpaid invoice, an old entry naming no phrase, and Q's deposit whose claim is found but never ends
+  add('op-p', PA.slice(0, 16)); add('op-q', PB.slice(0, 16)); add('op-old', null); add('op-slow', PB.slice(0, 16));
+  const lost = pendingDeposits(L, FED);
+  const client = { scanDeposits: async () => JSON.stringify({ found: [{ operation: 'op-slow', msat: '1000' }], next: '1', done: true }),
+    awaitReceive: () => Promise.reject(new Error('the claim did not end')) };
+  const r = await scanLostDeposits({ client, storage: L, federationId: fromHex(FED), lost, phrase16: PB.slice(0, 16), dropUnnamed: false, timeoutMs: 1000 });
+  const left = pendingDeposits(L, FED).map((p) => p.operation).sort();
+  console.log(`  #1233 a whole read by Q: ${r.read}; left ${JSON.stringify(left)}`);
+  assert.equal(r.read, true);
+  assert.deepEqual(left, ['op-old', 'op-p', 'op-slow'], 'only Q\'s own unfound invoice goes');
+  // and a deposit offer names the phrase that made it
+  const L2 = store();
+  const offer = depositOffer({ client: waiting('op-n', 'lnbc-n'), stakeMsat: 1000n, haveMsat: 0n, storage: L2, federationId: fromHex(FED), phrase16: PA.slice(0, 16) });
+  await offer.invoice(1000000n).catch(() => {});
+  const named = pendingDeposits(L2, FED).find((p) => p.operation === 'op-n');
+  assert.equal(named && named.phrase16, PA.slice(0, 16), 'the pending entry names its phrase');
+});
