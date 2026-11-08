@@ -173,10 +173,10 @@
     #arena-feedback .fb-join p { margin: 6px 0; color: #e6edf3; } #arena-feedback .fb-join a { display: inline-block; padding: 7px 14px; border-radius: 8px; border: 1px solid #30363d; color: #f7931a; text-decoration: none; font-weight: 600; }
     #arena-feedback .fb-join .row { justify-content: flex-start; flex-wrap: wrap; }
     #arena-feedback .say { min-height: 1.4em; margin: 8px 0; }
-    #arena-round-feedback { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 44px); transform: translateX(-50%); z-index: 2147483000; display: flex; gap: 6px; align-items: center;
+    #arena-round-feedback, #arena-error-feedback { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 44px); transform: translateX(-50%); z-index: 2147483000; display: flex; gap: 6px; align-items: center;
       padding: 6px; border-radius: 12px; background: #161b22; border: 1px solid #f7931a; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
-    #arena-round-feedback .go { padding: 8px 14px; border-radius: 8px; border: 0; background: #f7931a; color: #1a1000; font: 700 14px system-ui, sans-serif; cursor: pointer; }
-    #arena-round-feedback .x { width: 32px; height: 32px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; font: 600 18px system-ui, sans-serif; cursor: pointer; } #arena-feedback .row { display: flex; justify-content: flex-end; gap: 8px; }
+    #arena-round-feedback .go , #arena-error-feedback .go { padding: 8px 14px; border-radius: 8px; border: 0; background: #f7931a; color: #1a1000; font: 700 14px system-ui, sans-serif; cursor: pointer; }
+    #arena-round-feedback .x , #arena-error-feedback .x { width: 32px; height: 32px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; font: 600 18px system-ui, sans-serif; cursor: pointer; } #arena-feedback .row { display: flex; justify-content: flex-end; gap: 8px; }
     #arena-feedback button { padding: 8px 14px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; font: 600 14px system-ui, sans-serif; cursor: pointer; } #arena-feedback .send { background: #f7931a; border-color: #f7931a; color: #1a1000; }
     /* NOTHING COVERED (kanban #926, 2026-11-01: "die notice verdeckt den Content"): on a wide screen in the empty middle of the top bar, on a narrow one at the foot of the screen */
     @media (min-width: 1100px) { #arena-money-stack { left: 240px; right: 460px; top: calc(6px + env(safe-area-inset-top, 0px)); } #arena-money-stack #arena-money-ok { padding-top: 6px; padding-bottom: 6px; font-size: 13px; } }
@@ -1787,6 +1787,12 @@
       const shotRow = el('label', { cls: 'fb-shot' }, el('span', { text: 'Screenshot (optional) ' }), shot);
       const x = el('textarea', { rows: '2', maxlength: '4000', placeholder: 'What did you expect? (optional)' });
       if (ctx.error) t.value = 'The page said: ' + String(ctx.error).slice(0, 600) + '\n';
+      // THE BOUNTY'S LIGHTNING ADDRESS (the owner 2026-11-08, kanban #1363: "Es fehlt die bounty ln addresse"): where a reward for this report is paid,
+      // optional, remembered in this browser for the next report
+      const ln = el('input', { type: 'text', maxlength: '200', autocomplete: 'off', placeholder: 'Lightning address for a bounty (optional), e.g. you@walletofsatoshi.com', 'aria-label': 'Bounty Lightning address' });
+      ln.className = 'fb-ln';
+      try { ln.value = localStorage.getItem('arena.feedback.ln') || ''; } catch { /* this visit only */ }
+      const lnOk = (v) => !v || /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(v) || /^lnurl1[02-9ac-hj-np-z]+$/i.test(v);
       const me = hasIdentity() ? window.ARENA_IDENTITY.pubkey : null;
       const tick = el('label', { cls: 'badge' }, el('input', { type: 'checkbox' }), el('span', { text: ' Send my public key for the Founding Tester badge' }));
       if (!me) tick.hidden = true;
@@ -1794,7 +1800,7 @@
         ? (me ? 'Signed with your key. ' + BOUNTY_RULES + ' If yours is accepted, its reward link (an LNURL) appears in My feedback.' : 'Open a wallet first to be rewarded: an unsigned report still reaches the team. ' + BOUNTY_RULES)
         : (me ? 'Signed with your key: My feedback shows what the team decides.' : 'It reaches the team. Open a wallet to follow it in My feedback.') });
       const off = el('button', { type: 'button', cls: 'off', text: 'Cancel' }), send = el('button', { type: 'button', cls: 'send', text: 'Send' });
-      d.append(el('div', { cls: 'card' }, el('h3', { text: 'Feedback' }), el('p', { text: 'Your words, the build and the game are sent. No amounts, and no private key.' }), type, t, count, x, shotRow, tick, say, el('div', { cls: 'row' }, off, send)));
+      d.append(el('div', { cls: 'card' }, el('h3', { text: 'Feedback' }), el('p', { text: 'Your words, the build and the game are sent. No amounts, and no private key.' }), type, t, count, x, ln, shotRow, tick, say, el('div', { cls: 'row' }, off, send)));
       const LEAST = 50;
       const recount = () => { const n = t.value.trim().length; count.textContent = n < LEAST ? (LEAST - n) + ' more characters' : n + ' characters'; count.className = 'fb-count' + (n < LEAST ? ' short' : ''); send.disabled = n < LEAST; };
       t.addEventListener('input', recount); recount();
@@ -1813,12 +1819,15 @@
       off.onclick = () => d.remove();
       send.onclick = async () => {
         if (t.value.trim().length < 50) { recount(); return; }
+        const lnAddress = ln.value.trim();
+        if (!lnOk(lnAddress)) { say.textContent = 'That is not a Lightning address (name@wallet.com) or an LNURL.'; ln.focus(); return; }
+        try { if (lnAddress) localStorage.setItem('arena.feedback.ln', lnAddress); } catch { /* not remembered */ }
         send.disabled = true; say.textContent = 'Sending …';
         const build = ((document.getElementById('arena-build') || {}).textContent || '').replace(/\s*·.*$/, '').trim();
         const game = window.ARENA_SITE_GAME || '', round = ctx.round || (window.ARENA_JOIN && window.ARENA_JOIN.round) || '';
         const badge = me && tick.querySelector('input').checked ? me : undefined;
         try {
-          let body = { text: '[' + type.value + '] ' + t.value + (x.value.trim() ? '\nExpected: ' + x.value : ''), player: badge, build, game, round };
+          let body = { text: '[' + type.value + '] ' + t.value + (x.value.trim() ? '\nExpected: ' + x.value : '') + (lnAddress ? '\nBounty address: ' + lnAddress : ''), player: badge, build, game, round };
           // THE SCREENSHOT FIRST: its hash goes into the signed report
           let shotHash = null;
           if (me && shot.files && shot.files[0]) {
@@ -1832,9 +1841,10 @@
             try {
               const tags = [['t', type.value], ['source', 'frontend'], ['build', build]];
               if (shotHash) tags.push(['screenshot', shotHash]);
+              if (lnAddress) tags.push(['lud16', lnAddress]);
               if (/^[a-z0-9-]{1,48}$/.test(game)) tags.push(['game', game]);
               if (/^[0-9a-f]{8,64}$/.test(String(round))) tags.push(['round', String(round)]);
-              body = { event: await identitySign({ kind: FEEDBACK_KIND, tags, content: JSON.stringify({ happened: t.value, expected: x.value }) }), player: badge };
+              body = { event: await identitySign({ kind: FEEDBACK_KIND, tags, content: JSON.stringify({ happened: t.value, expected: x.value, ...(lnAddress ? { lnAddress } : {}) }) }), player: badge };
             } catch (e) { console.warn('[arena] #1342 feedback sent unsigned: ' + (e && e.message ? e.message : e)); }
           }
           const r = await fetch(feedbackUrl(), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -1844,12 +1854,43 @@
           say.textContent = body.event ? 'Thank you. It is in My feedback, where you see what the team decides.' : 'Thank you, it reached the team.';
           t.value = ''; x.value = ''; shot.value = '';
           // THE INVITATION IN PLACE OF THE FORM; Close stays
-          for (const n of [type, t, count, x, shotRow, tick, send]) n.remove();
+          for (const n of [type, t, count, x, ln, shotRow, tick, send]) n.remove();
           off.textContent = 'Close'; say.after(community());
         } catch (e) { say.textContent = (e && e.message) || 'not sent'; send.disabled = false; }
       };
       document.body.appendChild(d); t.focus();
     };
+    // FEEDBACK WITH EVERY ERROR MESSAGE (the owner 2026-11-08, kanban #1363: "bei jeder Fehlermeldung"): a note at the bottom of the screen that opens
+    // the feedback with the error's own words; each message once per 10 minutes in this tab, gone after 30 s. Fed by a refused join and by a game's
+    // own error toasts (its frame is watched below)
+    const errorsAsked = new Map();
+    window.ARENA_ERROR_FEEDBACK = (text) => {
+      const said = String(text || '').trim().slice(0, 600);
+      if (!said || !feedbackUrl() || document.getElementById('arena-feedback')) return;
+      const at = errorsAsked.get(said); if (at && Date.now() - at < 600000) return; errorsAsked.set(said, Date.now());
+      const old = document.getElementById('arena-error-feedback'); if (old) old.remove();
+      const n = document.createElement('div'); n.id = 'arena-error-feedback'; n.setAttribute('role', 'status');
+      const go = document.createElement('button'); go.type = 'button'; go.className = 'go'; go.textContent = 'Something went wrong: report it' + (window.ARENA_BOUNTY_ON ? ' (bounty)' : '');
+      const x = document.createElement('button'); x.type = 'button'; x.className = 'x'; x.setAttribute('aria-label', 'Close'); x.textContent = '\u00d7';
+      go.onclick = () => { window.ARENA_OPEN_FEEDBACK({ type: 'bug', error: said, round: (window.ARENA_JOIN && window.ARENA_JOIN.round) || '' }); n.remove(); }; x.onclick = () => n.remove();
+      n.append(go, x); document.body.appendChild(n); setTimeout(() => n.remove(), 30000);
+    };
+    // the sources: a join the page refused, and an error toast a game's frame shows (its overlay's .toast nodes; a game of this origin only)
+    { let lastRefused = '';
+      setInterval(() => {
+        const j = window.ARENA_JOIN;
+        if (j && j.state === 'refused' && j.why && j.why !== lastRefused) { lastRefused = j.why; window.ARENA_ERROR_FEEDBACK('Joining a round failed: ' + j.why); }
+        for (const f of document.querySelectorAll('iframe')) {
+          let doc = null; try { doc = f.contentDocument; } catch { doc = null; }
+          if (!doc || !doc.body || doc.__arenaErrorWatch) continue;
+          doc.__arenaErrorWatch = true;
+          new MutationObserver((list) => { for (const m of list) for (const node of m.addedNodes) {
+            const e = node.nodeType === 1 ? node : null; if (!e) continue;
+            const hits = [e, ...e.querySelectorAll('.toast, [role="alert"]')].filter((x) => x.matches && x.matches('.toast, [role="alert"]'));
+            for (const h of hits) { const words = (h.textContent || '').trim(); if (words && /not|fail|error|refus|could|lost|wrong|cannot|can't|did not/i.test(words)) window.ARENA_ERROR_FEEDBACK(words); }
+          } }).observe(doc.body, { childList: true, subtree: true });
+        }
+      }, 1000); }
     window.ARENA_MY_FEEDBACK = async () => {
       if (!feedbackUrl() || document.getElementById('arena-feedback')) return;
       const d = el('div', { id: 'arena-feedback', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'My feedback' });
@@ -4600,6 +4641,7 @@
     }
     // `ownOnly`: the tab's own phrase's records alone (kanban #1284, audit 4 #1257 CLIENT-2) - the round Withdraw pays to this tab's invoice
     // ONE FEEDBACK LINE PER FINISHED ROUND (kanban #1342), under what was settled; asked once per round in this tab
+    window.ARENA_ROUND_FEEDBACK = (rid) => roundFeedbackOnce(rid);
     function roundFeedbackOnce(rid) {
       const k = 'arena.feedback.asked.' + String(rid).slice(0, 16);
       try { if (!window.ARENA_OPEN_FEEDBACK || !window.ARENA_FAUCET_URL || sessionStorage.getItem(k)) return; sessionStorage.setItem(k, '1'); } catch { return; }
@@ -7390,6 +7432,9 @@
           }
           if (best && needs === 2 && best.entries.length === 2) { resultsSeen.set(id, best); if (resultsSeen.size > 32) resultsSeen.delete(resultsSeen.keys().next().value); }
           if (best && needs === 2 && best.entries.length === 2 && !best.entries.some((e) => e.outcome && e.signedBy > 0)) return provisional(best, revealsSeen.get(id) || {});
+          // AFTER EVERY FINISHED ROUND (the owner 2026-11-08, kanban #1363: "es muss nach jeder fertigen Runde kommen"): this tab's entry signed by the
+          // seats - every game the page reads a result for, not only a paid round's collect; a few seconds on, after the game shows its result
+          if (best && h && best.entries.some((e) => e.entry === h.entryIdHex && e.outcome && e.signedBy > 0) && window.ARENA_ROUND_FEEDBACK) setTimeout(() => window.ARENA_ROUND_FEEDBACK(id), 4000);
           return best || none;
         },
         // A MARKET'S CLIENT: place an order (the pick at most this price of the scale) through the same join and
