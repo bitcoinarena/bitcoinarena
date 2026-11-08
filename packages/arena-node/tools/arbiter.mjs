@@ -34,7 +34,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, judgeTableProof, judgeAbandoned, buildAbandonedSlash, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic, resumeIntent, txidOf, spentSetFromSeats } from '../src/arbiter.js';
+import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, judgeTableProof, judgeAbandoned, buildAbandonedSlash, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic, resumeIntent, resumeSlashIntent, txidOf, spentSetFromSeats } from '../src/arbiter.js';
 import { createLiquidationClaims, payOutLiquidation, escrowCoverageMsat } from '../src/liquidation-claims.js';
 import { liquidationEvent, slashEvent, stampEvent, signEvent, eventKey } from '../src/arbitration-events.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
@@ -133,7 +133,8 @@ async function handleAbandoned(seat, s) {
   const kept = { offence: verdict.offence, slashHeight: now.tip, signers: tx.signers, node: verdict.node, heldFor: verdict.federation, proofRef: verdict.proofRef,
     bondSpent: verdict.bondSpent, outpoint: `${verdict.output.txid}:${verdict.output.vout}`, bondSats: String(bond.value), escrowSats: String(slash.built.amounts.escrow), proofHeldBy: handed.filter(Boolean).length };
   let intentTxid = null; try { intentTxid = (await rpc('decoderawtransaction', [tx.hex])).txid; } catch { intentTxid = null; }
-  if (intentTxid) { state.intents[s.proof] = { txid: intentTxid, ...kept, atMs: Date.now() }; keep(); }
+  // its bytes and the output it spends kept too (kanban #1357): a node that lost it sends them again, never a rebuild at another locktime
+  if (intentTxid) { state.intents[s.proof] = { txid: intentTxid, hex: tx.hex, bond: { txid: displayTxid, vout: verdict.output.vout }, ...kept, atMs: Date.now() }; keep(); }
   const sent = await post(rpc, tx.hex);
   return sent.ok ? { done: true, posted: sent.txid, ...kept } : { done: false, why: sent.why };
 }
@@ -245,7 +246,9 @@ async function handle(seat, s) {
     playersMsat: String(slash.distribution.playersMsat), reservesMsat: String(slash.distribution.reservesMsat), shortMsat: String(slash.distribution.shortMsat),
     truth: slash.truth.map((t) => ({ key: toHex(t.pubkey), outcome: t.outcome, score: t.score })) };
   let intentTxid = null; try { intentTxid = (await rpc('decoderawtransaction', [tx.hex])).txid; } catch { intentTxid = null; }
-  if (intentTxid) { state.intents[s.proof] = { txid: intentTxid, ...kept, atMs: Date.now() }; keep(); }
+  // ITS BYTES AND THE BOND IT SPENDS KEPT TOO (kanban #1357, audit 4 fixesA-3): a pass whose node lost the slash sends these bytes again - built
+  // anew at a later tip it had another locktime and txid, the first one confirmed from the peers' mempools, and its escrow was never paid out
+  if (intentTxid) { state.intents[s.proof] = { txid: intentTxid, hex: tx.hex, bond: { txid: toHex([...accused.txid].reverse()), vout: accused.vout }, ...kept, atMs: Date.now() }; keep(); }
   const sent = await post(rpc, tx.hex);
   return sent.ok ? { done: true, posted: sent.txid, ...kept } : { done: false, why: sent.why };
 }
@@ -389,6 +392,30 @@ async function publishEvents() {
   if (sent) say({ eventsPublished: sent, events: signed.length, seats: publishTo.length });
 }
 
+/** A kept slash intent refused with its bond unspent is built anew only this many blocks after its slash height (kanban #1357). */
+const INTENT_REBUILD_BLOCKS = 6;
+/**
+ * A SLASH RECORDED BEFORE ITS BROADCAST (kanban #1232), RESUMED (kanban #1357): true when the pass is done with it for now - posted (on the
+ * chain, in the mempool, its bond spent, or its bytes sent again) or waiting (refused, younger than INTENT_REBUILD_BLOCKS). false: built anew.
+ * An intent an older arbiter kept (a txid alone) is read as before.
+ */
+async function resumeKept(seat, s, kind) {
+  const intent = state.intents[s.proof];
+  if (!intent) return false;
+  const posted = (why) => {
+    const { atMs: _a, txid: _t, hex: _h, bond: _b, ...rest } = intent;
+    state.handled[s.proof] = { at: Date.now(), done: true, posted: intent.txid, ...rest };
+    delete state.intents[s.proof]; keep();
+    say({ seat, [kind === 'abandoned' ? 'abandoned' : 'proof']: s.proof.slice(0, 16), node: String(s.node || '').slice(0, 16), posted: intent.txid, why });
+    return true;
+  };
+  if (!(intent.hex && intent.bond)) return (await intentLanded(rpc, intent.txid, 1)) ? posted('its recorded slash is on the chain') : false;
+  const r = await resumeSlashIntent(rpc, intent, { rebuildBlocks: INTENT_REBUILD_BLOCKS });
+  if (r.step === 'posted') return posted(r.why);
+  if (r.step === 'wait') { say({ seat, proof: s.proof.slice(0, 16), waiting: `its recorded slash ${intent.txid.slice(0, 16)} is not taken (${r.why}): sent again next pass` }); return true; }
+  delete state.intents[s.proof]; keep();
+  return false;
+}
 async function pass() {
   await payLiquidations().catch((e) => say({ liquidationsError: e.message }));
   // THE PROOFS OF A ROUND IN ASCENDING PROOF ID (§5A.3): the first pays each loss, a later one only what is still owed
@@ -402,28 +429,14 @@ async function pass() {
   }
   for (const { seat, s } of abandoned.sort((a, b) => (a.s.proof < b.s.proof ? -1 : 1))) {
     if (state.handled[s.proof]) continue;
-    const intent = state.intents[s.proof];
-    if (intent && await intentLanded(rpc, intent.txid, 1)) {
-      const { atMs: _a, txid: _t, ...rest } = intent;
-      state.handled[s.proof] = { at: Date.now(), done: true, posted: intent.txid, ...rest };
-      delete state.intents[s.proof]; keep();
-      say({ seat, abandoned: s.proof.slice(0, 16), posted: intent.txid, why: 'its recorded slash is on the chain' });
-      continue;
-    }
+    if (await resumeKept(seat, s, 'abandoned')) continue;
     let r; try { r = await handleAbandoned(seat, s); } catch (e) { r = { done: false, why: e.message }; }
     say({ seat, proof: s.proof.slice(0, 16), node: s.node.slice(0, 16), abandoned: s.proofRef.slice(0, 16), ...r });
     if (r.done) { state.handled[s.proof] = { at: Date.now(), ...r }; delete state.intents[s.proof]; keep(); }
   }
   for (const { seat, s } of [...found.values()].sort((a, b) => (a.s.proof < b.s.proof ? -1 : 1))) {
     // A SLASH RECORDED BEFORE ITS BROADCAST AND FOUND ON THE CHAIN OR IN THE MEMPOOL IS POSTED (kanban #1232)
-    const intent = state.intents[s.proof];
-    if (intent && await intentLanded(rpc, intent.txid, 1)) {
-      const { atMs: _a, txid: _t, ...rest } = intent;
-      state.handled[s.proof] = { at: Date.now(), done: true, posted: intent.txid, ...rest };
-      delete state.intents[s.proof]; keep();
-      say({ seat, proof: s.proof.slice(0, 16), node: s.node.slice(0, 16), posted: intent.txid, why: 'its recorded slash is on the chain' });
-      continue;
-    }
+    if (await resumeKept(seat, s, 'slash')) continue;
     let r; try { r = await handle(seat, s); } catch (e) { r = { done: false, why: e.message }; }
     say({ seat, proof: s.proof.slice(0, 16), node: s.node.slice(0, 16), ...r });
     // the offence the published event names (kanban #1000, #986): what the judgement found, in `r`, never read off the list a proof came from

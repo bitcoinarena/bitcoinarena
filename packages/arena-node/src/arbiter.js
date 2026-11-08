@@ -595,6 +595,22 @@ export async function resumeIntent(rpc, intent, input) {
   return sent.ok ? { ok: true, again: true } : { ok: false, drop: true, why: sent.why };
 }
 
+/**
+ * A KEPT SLASH INTENT, RESUMED (kanban #1357, audit 4 fixesA-3): `intent` { txid, hex, bond: { txid, vout }, slashHeight }. Answers
+ *   { step: 'posted', why }   on the chain or in the mempool, its bond spent (only this set signs it), or its bytes sent again
+ *   { step: 'wait', why }     refused, and younger than `rebuildBlocks` past its slash height: a node that lost it while its peers hold it
+ *   { step: 'rebuild', why }  refused with its bond unspent, `rebuildBlocks` past its slash height: built anew
+ * Never a new build while the first one may still confirm - a later tip gives another locktime and txid, and the escrow of the one that
+ * confirmed was never paid out.
+ */
+export async function resumeSlashIntent(rpc, intent, { rebuildBlocks = 6 } = {}) {
+  const r = await resumeIntent(rpc, intent, intent.bond).catch((e) => ({ ok: false, why: e.message }));
+  if (r.ok) return { step: 'posted', why: r.landed ? 'its recorded slash is on the chain' : r.again ? 'its recorded slash sent again' : 'its bond is spent: the recorded slash' };
+  const tip = await rpc('getblockcount').then(Number).catch(() => null);
+  if (r.drop && tip !== null && tip >= Number(intent.slashHeight) + rebuildBlocks) return { step: 'rebuild', why: r.why };
+  return { step: 'wait', why: r.why || 'no answer' };
+}
+
 /** The display txid of a signed transaction's hex, or null (kanban #1232). */
 export async function txidOf(rpc, hex) { try { return String((await rpc('decoderawtransaction', [hex])).txid); } catch { return null; } }
 
