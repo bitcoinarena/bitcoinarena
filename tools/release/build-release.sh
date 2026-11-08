@@ -39,9 +39,11 @@ STAGE="$OUT/$NAME"
 [ -e "$STAGE" ] && { echo "$STAGE exists: a release is built once" >&2; exit 1; }
 mkdir -p "$STAGE/runtime"
 CACHE="${ARENA_RELEASE_CACHE:-$OUT/.downloads}"; mkdir -p "$CACHE"
-fetch() { # url sha file
+fetch() { # url sha file [fallback url]
   [ -f "$CACHE/$3" ] && echo "$2  $CACHE/$3" | sha256sum -c --status && return 0
-  curl -fsSL --retry 3 -o "$CACHE/$3.part" "$1"
+  # A PINNED FILE ITS FIRST HOST NO LONGER SERVES (kanban #1345, measured 2026-11-08: dist.torproject.org keeps only current Tor versions,
+  # so 2026.1.9.26 could not be built again from its own commit): the archive URL, the same bytes by the same pinned checksum
+  curl -fsSL --retry 3 -o "$CACHE/$3.part" "$1" || { [ -n "${4:-}" ] && curl -fsSL --retry 3 -o "$CACHE/$3.part" "$4"; } || { echo "$3: not served at $1${4:+ nor $4}" >&2; exit 1; }
   echo "$2  $CACHE/$3.part" | sha256sum -c --status || { echo "$3: checksum mismatch" >&2; rm -f "$CACHE/$3.part"; exit 1; }
   mv "$CACHE/$3.part" "$CACHE/$3"
 }
@@ -75,7 +77,7 @@ echo "$VER" > "$STAGE/VERSION"
 
 # 2. the runtime, checked
 NF="${NODE_FILE[$KEY]}"; CF="${CF_FILE[$KEY]}"
-fetch "https://nodejs.org/dist/v$NODE_VER/$NF" "${NODE_SHA[$KEY]}" "$NF"
+fetch "https://nodejs.org/dist/v$NODE_VER/$NF" "${NODE_SHA[$KEY]}" "$NF" "https://nodejs.org/download/release/v$NODE_VER/$NF"
 fetch "https://github.com/cloudflare/cloudflared/releases/download/$CF_VER/$CF" "${CF_SHA[$KEY]}" "$CF_VER-$CF"
 case "$OS" in
   linux)
@@ -101,7 +103,7 @@ declare -A TOR_SHA=([linux-x64]=19cf18726eecb362e0f21d27afa9ea9efe5da928bfdfbb1c
   [darwin-x64]=e1ae4d4a734d28bb590839188511deb3cebc26fcbce9df66d01b2c452060fe95 [windows-x64]=c1988c701de2f24f7d098d1d6d7f507b58f27740d097f29c246e0524d639b252)
 TF="${TOR_FILE[$KEY]:-}"
 if [ -n "$TF" ]; then
-  fetch "https://dist.torproject.org/torbrowser/$TOR_VER/$TF" "${TOR_SHA[$KEY]}" "$TF"
+  fetch "https://dist.torproject.org/torbrowser/$TOR_VER/$TF" "${TOR_SHA[$KEY]}" "$TF" "https://archive.torproject.org/tor-package-archive/torbrowser/$TOR_VER/$TF"
   tar -xzf "$CACHE/$TF" -C "$STAGE/runtime" tor
   if [ "$OS" = windows ]; then ls "$STAGE/runtime/tor/tor.exe" > /dev/null; else ls "$STAGE/runtime/tor/tor" > /dev/null; fi
 fi
