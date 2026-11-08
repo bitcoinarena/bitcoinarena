@@ -98,6 +98,7 @@ export class OwnerArea extends React.Component {
             <Place id="devs" className={null} />
             <Place id="dons" className={null} />
             <h3 className="sh">Developer split</h3><Place id="ballots" className={null} />
+            <h3 className="sh">Contribution agreements</h3><Place id="contributions" className={null} />
             <Place id="gamedevs" className={null} /></>)}
           {sec('emergency', <><h2>Emergency code</h2><div className="card" id="emergency">
             <p>Going offline for more than two days (12 blocks on testnet4)? Take your node out first with this code and you keep your bond.

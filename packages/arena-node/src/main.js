@@ -198,6 +198,13 @@ if (process.env.ARENA_PRICE_FEED === '1') options.priceFeed = true;
 if (net) options.chain = net === 'regtest' ? 'bitcoin-regtest' : 'bitcoin-testnet4';
 if (process.env.ARENA_FEDERATION_INVITE) options.federationInvite = process.env.ARENA_FEDERATION_INVITE.trim();
 if (net) options.donationSets = net === 'regtest' ? (process.env.ARENA_REGTEST_DONATION_SET === 'keys' ? [TEST_DONATION_SET_KEYS_REGTEST] : [TEST_DONATION_SET_REGTEST]) : [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS];
+// ON REGTEST A SET THE TEST SIGNED ITSELF (kanban #1346): ARENA_REGTEST_EXTRA_DONATION_SET=<file of hex body || 64-byte signature> - a set the regtest
+// donation authority signed (a contribution agreement's set), beside the one above; the in-force rule (serial, valid_from) picks between them
+if (net === 'regtest' && process.env.ARENA_REGTEST_EXTRA_DONATION_SET) {
+  const { decodeDonationSetBody } = await import('../../arena-protocol/src/authority.js');
+  const b = fromHex(readFileSync(process.env.ARENA_REGTEST_EXTRA_DONATION_SET, 'utf8').trim());
+  options.donationSets = [...(options.donationSets || []), { ...decodeDonationSetBody(b.slice(0, -64)), signature: b.slice(-64) }];
+}
 }
 // ONE SERIES A LINE (series-line.js): its template, hex; then count=N, cut=N, and for a grid series grid and period=N.
 const readSeriesFile = (path) => readSeriesLines(readFileSync(path, 'utf8'));

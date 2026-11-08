@@ -24,6 +24,7 @@ import { BondAnswer, CapacityPlea } from './BondOffer.jsx';
 import { LeavePanel } from './LeavePanel.jsx';
 import { WaitingDonations, DevClients } from './DonationsPanels.jsx';
 import { BallotsPanel } from './BallotsPanel.jsx';
+import { ContributionsPanel } from './ContributionsPanel.jsx';
 import { GameDevsPanel } from './GameDevsPanel.jsx';
 import { ReferrerPanel } from './ReferrerPanel.jsx';
 import { RoundsPanel } from './RoundsPanel.jsx';
@@ -35,6 +36,8 @@ export function mountRoles(element, { api, node, initial } = {}) {
   return root;
 }
 // THE NODE KEY FROM THE 24 WORDS (kanban #650): optional, asked only on the owner's Check
+// CONTRIBUTION AGREEMENTS (§27A.4.2, kanban #1346): each agreement of the set in force, as this node's book of counted rounds reads it
+export function mountContributions(element, { api } = {}) { const root = createRoot(element); root.render(<ContributionsPanel api={api} />); return root; }
 export function mountRounds(element, { api, initial } = {}) { const root = createRoot(element); root.render(<RoundsPanel api={api} initial={initial} />); return root; }
 export function mountKeySwitch(element, { api, initial } = {}) { const root = createRoot(element); root.render(<KeySwitchPanel api={api} initial={initial} />); return root; }
 // AND ITS ROWS HANDED ON (the 2026.1.9.11 install test: the Overview's Custody chip never turned green - onServices, which owner.html
@@ -100,4 +103,4 @@ export function drawInto(element, kind, props) {
 }
 // mountRounds too (kanban #728, found by owner-react-door.test: #715 left it out, so owner.html's roundsPanel() threw and every panel
 // mounted after it - the Bond section among them - stayed empty)
-if (typeof window !== 'undefined') window.ArenaOwner = { areaInto, drawInto, mountKeySwitch, mountRounds, mountBondAnswer, mountPlea, mountLeave, mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountSetup, mountBond, mountCustody, mountLiquidity, mountStanding, mountUptime, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };
+if (typeof window !== 'undefined') window.ArenaOwner = { areaInto, drawInto, mountKeySwitch, mountRounds, mountContributions, mountBondAnswer, mountPlea, mountLeave, mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountSetup, mountBond, mountCustody, mountLiquidity, mountStanding, mountUptime, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };

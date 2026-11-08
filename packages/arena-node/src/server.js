@@ -11491,21 +11491,39 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // EACH CONTRIBUTION AGREEMENT'S SHARE FOR A ROUND (§27A.4.2, kanban #1346): at its census height, from this seat's book of counted
       // rounds - the page cannot read the network's rounds itself and takes a share only where a majority of the round's seats agree on it
       if (req.method === 'GET' && url.pathname === '/contribution-shares') {
-        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
-        if (rid.length !== 32) return text(res, 400, 'that is not a round id');
-        const row = round.get(rid);
-        if (!row) return text(res, 404, 'this node holds no such round');
-        const c = decodeRoundContract(new Uint8Array(row.contract));
-        const served = donationSetFor(c);
-        if (!served.ok) return text(res, 404, served.why);
+        let c, served;
+        if (url.searchParams.get('height') !== null && !url.searchParams.get('round')) {
+          // AT A HEIGHT (the explorer, a test): the set in force there on this seat's network - the network of the sets it holds, or `network` (hex)
+          const h = Number(url.searchParams.get('height'));
+          if (!Number.isInteger(h) || h < 0) return text(res, 400, 'height is a block height');
+          const nid = url.searchParams.get('network') ? fromHex(url.searchParams.get('network')) : (donationSets[0] && donationSets[0].networkId);
+          const keys = nid ? donationKeysForNetworkId(nid) : null;
+          if (!keys) return text(res, 404, 'no donation authority for that network here');
+          const forced = donationSetInForce({ networkId: nid, authority: keys.authority, recovery: keys.recovery, sets: donationSets, rotations: donationRotations, height: h, verify: verifyDonation, approved: approvedSets() });
+          if (!forced.ok) return text(res, 404, forced.why);
+          c = { networkId: nid, censusHeight: h };
+          served = { ok: true, set: { recipients: forced.recipients } };
+        } else {
+          const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+          if (rid.length !== 32) return text(res, 400, 'that is not a round id');
+          const row = round.get(rid);
+          if (!row) return text(res, 404, 'this node holds no such round');
+          c = decodeRoundContract(new Uint8Array(row.contract));
+          served = donationSetFor(c);
+          if (!served.ok) return text(res, 404, served.why);
+        }
+        const rid = { toString: () => (url.searchParams.get('round') || '') };
         const shareOf = contributionShareOf(c);
         const shares = (served.set.recipients || []).filter((r) => r && r.contribution).map((r) => {
           const s = contributionBook ? contributionBook.shareAt(r.contribution.agreement, Number(c.censusHeight), contributionNetOf(c), null, { main: contributionMain(c) }) : null;
           return { recipient: toHex(r.recipientPk), agreementId: s ? s.agreementId : null, shareBps: shareOf(r), state: s ? s.state : null,
-            tranches: s ? s.tranches.map((x) => ({ milestone: x.milestone, bps: x.bps, metAt: x.metAt, vestedAt: x.vestedAt })) : [] };
+            tranches: s ? s.tranches.map((x) => ({ milestone: x.milestone, bps: x.bps, metAt: x.metAt, vestedAt: x.vestedAt })) : [],
+            label: r.label || null, vestedBps: s ? s.vestedBps : null, ends: s ? s.ends : null, progress: s ? s.progress : null,
+            agreement: { startHeight: r.contribution.agreement.startHeight, siteKeys: r.contribution.agreement.siteKeys.map(toHex), base: r.contribution.agreement.base,
+              tranches: r.contribution.agreement.tranches, attributionFloorBps: r.contribution.agreement.attributionFloorBps, tailBlocks: r.contribution.agreement.tailBlocks } };
         });
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ round: rid.toString('hex'), height: Number(c.censusHeight), shares, book: contributionBook ? contributionBook.held() : null }));
+        return res.end(JSON.stringify({ round: rid.toString() || null, height: Number(c.censusHeight), shares, book: contributionBook ? contributionBook.held() : null }));
       }
 
       // A CONTRIBUTOR'S LEAVE, OR HIS TERMINATION BY THE COLD ADMIN KEY (§27A.4.2, kanban #1346): hex body || 64-byte signature. A leave is signed by

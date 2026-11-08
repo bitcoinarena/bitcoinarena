@@ -253,8 +253,32 @@ async function readMetrics(env) {
     reserve: { msat: String(sum(feds.values())), federations: [...feds].map(([federation, msat]) => ({ federation, msat: String(msat) })) },
     referral: { msat: String(sum([...sites.values()].map((x) => x.msat))), sites: [...sites].map(([site, x]) => ({ site, name: names.has(site) ? names.get(site).name : null, msat: String(x.msat), payouts: x.payouts }))
       .sort((a, b) => (BigInt(b.msat) > BigInt(a.msat) ? 1 : BigInt(b.msat) < BigInt(a.msat) ? -1 : 0)) } };
+  // CONTRIBUTION AGREEMENTS (§27A.4.2, kanban #1346): each seat's GET /contribution-shares at its tip; an agreement is shown with the share most
+  // seats name and how many of the answering seats name it (a seat before 2.0 answers 404 and counts for nothing)
+  try { m.contributions = await readContributions(); } catch (e) { m.contributions = { why: e.message, agreements: [] }; }
   await statePut(env, 'metrics', JSON.stringify(m));
   return m;
+}
+async function readContributions() {
+  const got = await Promise.all(SEATS.map(async (seat) => {
+    const t = await ask(`${seat}/chain-tip`, READ_MS);
+    if (!t.body || !Number.isInteger(t.body.height)) return null;
+    const a = await ask(`${seat}/contribution-shares?height=${t.body.height + 1}`, READ_MS);
+    return a.body && Array.isArray(a.body.shares) ? a.body : null;
+  }));
+  const answered = got.filter(Boolean);
+  const by = new Map();
+  for (const a of answered) for (const x of a.shares) {
+    const per = by.get(x.recipient) || new Map();
+    const k = String(x.shareBps);
+    per.set(k, [...(per.get(k) || []), { ...x, height: a.height }]);
+    by.set(x.recipient, per);
+  }
+  const agreements = [...by].map(([recipient, per]) => {
+    const [, rows] = [...per].sort((p, q) => q[1].length - p[1].length)[0];
+    return { ...rows[0], recipient, agreeing: rows.length, answered: answered.length };
+  });
+  return { agreements, answered: answered.length, of: SEATS.length };
 }
 
 const DAY_MS = 86400000, VOLUME_DAYS = 30;
