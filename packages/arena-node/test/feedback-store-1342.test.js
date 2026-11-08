@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { openFeedbackStore, networkPlayers, FEEDBACK_KIND, HTTP_AUTH_KIND, STATES } from '../src/feedback-store.js';
+import { openFeedbackStore, networkPlayers, FEEDBACK_KIND, HTTP_AUTH_KIND, STATES, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS } from '../src/feedback-store.js';
 import { eventId } from '../src/nostr-relay.js';
 
 const hex = (b) => Buffer.from(b).toString('hex');
@@ -248,4 +248,21 @@ test('#1342 a report: bug or improvement, at least 50 characters, from the front
   assert.deepEqual(rows.map((r) => r.source).sort(), ['frontend', 'frontend', 'node']);
   assert.ok(s.csv().split('\n')[0].includes('source,node'), 'the CSV says where each came from');
   assert.deepEqual([...s.shotsInUse()], [SHOT]);
+});
+
+// THE REWARD LEVELS (Daniel 2026-11-08, final): one table the form shows and approve pays from
+test('#1342 levels 500 / 1,000 / 2,000 / 5,000 / 20,000: an approval by level pays its amount; a critical one is outside the weekly budget', () => {
+  assert.deepEqual(REWARD_LEVELS.map((l) => [l.level, l.sats]), [['useful', 500], ['low', 1000], ['medium', 2000], ['high', 5000], ['critical', 20000]]);
+  assert.equal(NODE_BOUNTY_BASE_SATS, 20000);
+  const s = openFeedbackStore();
+  const rules = { perKeyPerWeek: 3, weeklyBudgetSats: 3000, mostSats: 20000, leastSats: 100 };
+  const one = (n, sev) => { const e = report(key(n), `Report ${n} about the ${sev} level of a bug in the lobby.`); s.take(e); return s.approve(e.id, null, { played: () => true, rules, severity: sev }); };
+  const medium = one(11, 'medium'), critical = one(12, 'critical'), low = one(13, 'low'), more = one(14, 'low');
+  const bar = s.budget ? s.budget({ rules }) : null;
+  console.log('  MEASURED #1342 levels:', JSON.stringify({ medium: medium.ok && medium.report.amountSats, critical: critical.ok && critical.report.amountSats, low: low.ok && low.report.amountSats, more: more.ok ? 'ok' : more.why, week: bar && bar.weekApprovedSats }));
+  assert.equal(medium.report.amountSats, 2000);
+  assert.equal(critical.ok, true, 'critical: 20,000 though the week\'s budget is 3,000');
+  assert.equal(critical.report.amountSats, 20000);
+  assert.equal(low.report.amountSats, 1000, '2,000 + 1,000 fill the 3,000 budget; the critical one is not in it');
+  assert.match(more.why, /this week's budget: 3000 of 3000/);
 });

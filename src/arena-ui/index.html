@@ -166,8 +166,17 @@
     #arena-feedback textarea { width: 100%; box-sizing: border-box; padding: 8px; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; font: inherit; resize: vertical; }
     #arena-feedback select { width: 100%; margin: 0 0 8px; padding: 7px; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; font: inherit; }
     #arena-feedback textarea + textarea { margin-top: 8px; }
+    /* the bounty Lightning address (kanban #1363) as wide and dark as the other fields (#1342: it showed narrow and pale) */
+    /* fb-row-sticky (#1342): with the reward table the card scrolls; Cancel and Send stay at its bottom edge */
+    #arena-feedback .card > .row:last-child { position: sticky; bottom: -18px; margin: 10px -18px -18px; padding: 10px 18px 18px; background: #161b22; border-top: 1px solid #30363d; }
+    #arena-feedback input.fb-ln { display: block; width: 100%; box-sizing: border-box; margin: 8px 0 0; padding: 7px; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; font: inherit; }
     #arena-feedback .fb-row { padding: 8px 0; border-bottom: 1px solid #30363d; } #arena-feedback .fb-head { color: #8b949e; font-size: 13px; } #arena-feedback .fb-why { color: #f85149; font-size: 13px; }
     #arena-feedback .fb-reward { margin-top: 4px; color: #3fb950; } #arena-feedback .fb-reward a { color: #f7931a; } #arena-feedback .card { max-height: 86vh; overflow-y: auto; }
+    #arena-feedback .fb-levels-table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0 4px; }
+    #arena-feedback .fb-levels-table td { padding: 2px 6px 2px 0; vertical-align: top; }
+    #arena-feedback .fb-levels-table td.n { white-space: nowrap; font-weight: 700; }
+    #arena-feedback .fb-levels-table td.ex { opacity: .75; }
+    #arena-feedback .fb-rule { font-size: 12px; margin: 0 0 6px; }
     #arena-feedback .fb-count { font-size: 12px; color: #8b949e; margin: 2px 0 0; text-align: right; } #arena-feedback .fb-count.short { color: #d29922; }
     #arena-feedback .fb-shot { display: block; margin: 8px 0 0; color: #8b949e; font-size: 13px; } #arena-feedback .fb-shot input { max-width: 100%; color: #e6edf3; }
     #arena-feedback .fb-join p { margin: 6px 0; color: #e6edf3; } #arena-feedback .fb-join a { display: inline-block; padding: 7px 14px; border-radius: 8px; border: 1px solid #30363d; color: #f7931a; text-decoration: none; font-weight: 600; }
@@ -1800,7 +1809,19 @@
         ? (me ? 'Signed with your key. ' + BOUNTY_RULES + ' If yours is accepted, its reward link (an LNURL) appears in My feedback.' : 'Open a wallet first to be rewarded: an unsigned report still reaches the team. ' + BOUNTY_RULES)
         : (me ? 'Signed with your key: My feedback shows what the team decides.' : 'It reaches the team. Open a wallet to follow it in My feedback.') });
       const off = el('button', { type: 'button', cls: 'off', text: 'Cancel' }), send = el('button', { type: 'button', cls: 'send', text: 'Send' });
-      d.append(el('div', { cls: 'card' }, el('h3', { text: 'Feedback' }), el('p', { text: 'Your words, the build and the game are sent. No amounts, and no private key.' }), type, t, count, x, ln, shotRow, tick, say, el('div', { cls: 'row' }, off, send)));
+      // THE REWARD TABLE IN THE FORM (kanban #1342, Daniel 2026-11-08): the amounts the payout uses, read from the faucet's one table
+      // (GET /feedback/rewards), with one example per level and the rule in one sentence - only in the bounty build
+      const levels = el('div', { cls: 'fb-levels' });
+      if (window.ARENA_BOUNTY_ON && feedbackUrl()) {
+        fetch(feedbackUrl() + '/rewards').then((r) => r.json()).then((j) => {
+          if (!j || !Array.isArray(j.levels)) return;
+          const unit = j.network === 'mainnet' ? 'sats' : 'testnet sats';
+          const tbl = el('table', { cls: 'fb-levels-table' }, ...j.levels.map((l) => el('tr', {},
+            el('td', { text: l.label }), el('td', { cls: 'n', text: Number(l.sats).toLocaleString('en-US') + ' ' + unit }), el('td', { cls: 'ex', text: l.example || '' }))));
+          levels.append(tbl, el('p', { cls: 'fb-rule', text: j.rule + (j.network === 'mainnet' ? '' : ' Testnet sats, no value.') }));
+        }).catch(() => {});
+      }
+      d.append(el('div', { cls: 'card' }, el('h3', { text: 'Feedback' }), el('p', { text: 'Your words, the build and the game are sent. No amounts, and no private key.' }), type, t, count, x, ln, shotRow, tick, say, levels, el('div', { cls: 'row' }, off, send)));
       const LEAST = 50;
       const recount = () => { const n = t.value.trim().length; count.textContent = n < LEAST ? (LEAST - n) + ' more characters' : n + ' characters'; count.className = 'fb-count' + (n < LEAST ? ' short' : ''); send.disabled = n < LEAST; };
       t.addEventListener('input', recount); recount();

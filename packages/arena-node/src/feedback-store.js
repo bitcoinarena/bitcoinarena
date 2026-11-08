@@ -23,6 +23,19 @@ const NEXT = Object.freeze({ new: ['accepted', 'rejected', 'duplicate'], accepte
 export const TEXT_MOST = 4000;
 // THE REWARD RULES (kanban #1342 section 2): settings the owner can change; testnet sats in phase 1
 export const REWARD_DEFAULTS = Object.freeze({ perKeyPerWeek: 3, weeklyBudgetSats: 50000, mostSats: 20000, leastSats: 100 });
+/**
+ * THE REWARD LEVELS (Daniel 2026-11-08, final: "500 / 1,000 / 2,000 / 5,000 / 20,000"): one table the feedback form shows and the approval pays from,
+ * so form and payout never differ. A critical bug is outside the weekly budget. A node bounty's base is its own pot (#1342 node bounty).
+ */
+export const REWARD_LEVELS = Object.freeze([
+  Object.freeze({ level: 'useful', label: 'Useful feedback', sats: 500, example: 'A clear note on what confused you, with the screen and the step.' }),
+  Object.freeze({ level: 'low', label: 'Bug, low', sats: 1000, example: 'A wrong text or a layout glitch that does not stop play.' }),
+  Object.freeze({ level: 'medium', label: 'Bug, medium', sats: 2000, example: 'A round or a deposit that needs a retry to go through.' }),
+  Object.freeze({ level: 'high', label: 'Bug, high', sats: 5000, example: 'Play or a payout stops and only a reload or a restart helps.' }),
+  Object.freeze({ level: 'critical', label: 'Bug, critical', sats: 20000, outsideBudget: true, example: 'Money can be lost or taken, or the result is wrong.' }),
+]);
+export const NODE_BOUNTY_BASE_SATS = 20000;
+export const levelOf = (name) => REWARD_LEVELS.find((x) => x.level === String(name || '').toLowerCase()) || null;
 const WEEK_MS = 7 * 24 * 3600 * 1000;
 export const REPORT_AGE_MOST_S = 24 * 3600;     // a report signed more than a day ago is not taken (a replayed one)
 export const AUTH_AGE_MOST_S = 60;
@@ -134,7 +147,9 @@ export function openFeedbackStore(path = ':memory:') {
     const r = get.get(String(id));
     if (!r) return { ok: false, why: 'no such report' };
     if (r.state !== STATES.NEW) return { ok: false, why: `${/^[aeiou]/.test(r.state) ? 'an' : 'a'} ${r.state} report is not approved for money${r.state === STATES.DUPLICATE ? ': the first report of it is' : ''}` };
-    const sats = Number(amountSats);
+    // NO AMOUNT GIVEN: the level's (REWARD_LEVELS); a critical one is outside the weekly budget
+    const lv = levelOf(severity);
+    const sats = amountSats === undefined || amountSats === null || amountSats === '' ? (lv ? lv.sats : NaN) : Number(amountSats);
     const R = { ...REWARD_DEFAULTS, ...(rules || {}) };
     if (!Number.isInteger(sats) || sats < R.leastSats || sats > R.mostSats) return { ok: false, why: `an amount is ${R.leastSats} to ${R.mostSats} sat` };
     if (excluded.has(r.pubkey)) return { ok: false, why: 'that key is ours (team, admin or bot): never paid' };
@@ -142,8 +157,8 @@ export function openFeedbackStore(path = ':memory:') {
     const since = nowMs - WEEK_MS;
     const mine = db.prepare(`SELECT COUNT(*) AS n FROM reports WHERE pubkey = ? AND state IN ('accepted', 'paid') AND changed_ms >= ?`).get(r.pubkey, since).n;
     if (mine >= R.perKeyPerWeek) return { ok: false, why: `that key has ${mine} rewards this week: at most ${R.perKeyPerWeek}` };
-    const week = db.prepare(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ?`).get(since).s;
-    if (week + sats > R.weeklyBudgetSats) return { ok: false, why: `this week's budget: ${week} of ${R.weeklyBudgetSats} sat approved, ${sats} more does not fit` };
+    const week = db.prepare(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ? AND COALESCE(severity, '') <> 'critical'`).get(since).s;   // a critical one is outside the budget
+    if (!(lv && lv.outsideBudget) && week + sats > R.weeklyBudgetSats) return { ok: false, why: `this week's budget: ${week} of ${R.weeklyBudgetSats} sat approved, ${sats} more does not fit` };
     db.prepare('UPDATE reports SET state = ?, amount_sats = ?, severity = ?, changed_ms = ? WHERE id = ? AND state = ?').run(STATES.ACCEPTED, sats, severity, nowMs, r.id, STATES.NEW);
     db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, STATES.ACCEPTED, nowMs, by, `${sats} sat${severity ? `, ${severity}` : ''}`);
     return { ok: true, report: row(get.get(r.id)) };
@@ -247,7 +262,7 @@ export function openFeedbackStore(path = ':memory:') {
   function budget({ rules = REWARD_DEFAULTS, nowMs = Date.now() } = {}) {
     const R = { ...REWARD_DEFAULTS, ...(rules || {}) };
     const sum = (sql, ...a) => db.prepare(sql).get(...a).s;
-    return { weekApprovedSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ?`, nowMs - WEEK_MS),
+    return { weekApprovedSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ? AND COALESCE(severity, '') <> 'critical'`, nowMs - WEEK_MS),
       weeklyBudgetSats: R.weeklyBudgetSats, allApprovedSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid')`),
       paidSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state = 'paid'`),
       openRewards: db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state <> 'paid'`).get(),

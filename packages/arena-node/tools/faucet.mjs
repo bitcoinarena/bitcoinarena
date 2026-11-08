@@ -26,7 +26,7 @@ import { createServer } from 'node:http';
 import { timingSafeEqual, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
-import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS } from '../src/feedback-store.js';
+import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS } from '../src/feedback-store.js';
 import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
 import { refillDecide, feedbackDecide, faucetDecide, playerGrantDecide, playerGrantTotals, opponentWant, opponentWants, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
@@ -278,6 +278,12 @@ createServer((req, res) => {
     return undefined;
   }
   // "MY FEEDBACK" (kanban #1342): a NIP-98 sign-in by the reporter's key; the reports' reward links are bearer secrets, so never by pubkey alone
+  // THE REWARD TABLE (kanban #1342, Daniel 2026-11-08): the levels the form shows are the ones approve pays from - one source; public, no amounts
+  // are promised while the bounty is off (the page shows the table only in its bounty build)
+  if (path === '/feedback/rewards' && req.method === 'GET') {
+    return send(200, { ok: true, on: bountyOn(), network: BOUNTY_NETWORK, levels: REWARD_LEVELS, nodeBaseSats: NODE_BOUNTY_BASE_SATS, perKeyPerWeek: RULES.perKeyPerWeek,
+      rule: 'A person reviews every report. Only the first report of a bug is paid. Nothing is paid for game results.' });
+  }
   if (path === '/feedback/mine') {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'GET', 'access-control-allow-headers': 'authorization', 'access-control-max-age': '86400' }); return res.end(); }
     if (!FEEDBACK) return send(503, { ok: false, why: 'reports are not kept here' });
