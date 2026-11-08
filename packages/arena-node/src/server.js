@@ -12682,6 +12682,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // the guardians the federation records this seat holds name keep their ports on a collision (kanban #1226)
     const guardianKeys = new Set();
     try { for (const f of (fedRecords && fedRecords.list ? fedRecords.list() : [])) { const k = fedRecords.recordOf(f.federation); for (const g of (k && k.record ? k.record.guardians : [])) guardianKeys.add(toHex(g.nodePubkey)); } } catch { /* none known */ }
+    // and the guardians a founding in progress seats, which no record names yet (kanban #1358)
+    try { for (const k of (foundingSeat && foundingSeat.seatedKeys ? foundingSeat.seatedKeys() : [])) guardianKeys.add(String(k).toLowerCase()); } catch { /* none */ }
     if (list) p2pTunnels.sync(list.map((e) => (e && e.advert ? { ...e, advert: { ...e.advert, endpoint: addressBook.endpointOf(e) } } : e)), { prefer: (k) => guardianKeys.has(String(k).toLowerCase()) });
   };
   let p2pTunnelTimer = null;

@@ -150,7 +150,7 @@ export function createP2pTunnels({ ownKey, host = '127.0.0.1', say = () => {}, o
     });
     server.listen(port, host, () => { row.state = 'listening'; say(`[p2p-tunnel] ${port} carries ${row.slot} ${row.key.slice(0, 8)} to ${row.root}`); });
   }
-  // `prefer(keyHex)`: true for a node a federation record this seat holds names as a guardian (kanban #1226)
+  // `prefer(keyHex)`: true for a node a federation record this seat holds names as a guardian (kanban #1226), or one a founding in progress seats (#1358)
   function sync(entries, { prefer = null } = {}) {
     const want = new Map();
     const preferred = (k) => { try { return typeof prefer === 'function' && !!prefer(k); } catch { return false; } };
@@ -165,11 +165,17 @@ export function createP2pTunnels({ ownKey, host = '127.0.0.1', say = () => {}, o
         // census entry on a port won - a key ground to another guardian's port, bonded, cut that guardian off from its federation's peers on
         // every seat. A node a held federation record names as a guardian keeps the port against one no record names.
         const had = want.get(port);
+        // AND THE OLDER BOND KEEPS IT (kanban #1358, audit 4 fixesA-7): during a founding no record names its guardians yet, so a later bonded key
+        // ground onto a founding guardian's port took it and the DKG hung at "Exchanging raw bytes". A guardian the founding seats is preferred
+        // too; between two keys equally preferred the lower bond height keeps the port, never the entry listed last.
+        const height = Number.isInteger(e.height) ? e.height : Number.MAX_SAFE_INTEGER;
         if (had && had.key !== key) {
           say(`[p2p-tunnel] ${port}: ${had.key.slice(0, 8)} and ${key.slice(0, 8)} map to one port`);
-          if (preferred(had.key) && !preferred(key)) continue;
+          const pa = preferred(had.key), pb = preferred(key);
+          if (pa && !pb) continue;
+          if (pa === pb && (had.height < height || (had.height === height && had.key < key))) continue;
         }
-        want.set(port, { key, slot, root: tunnelRoot(a.endpoint) });
+        want.set(port, { key, slot, root: tunnelRoot(a.endpoint), height });
       }
     }
     for (const [port, row] of ports) {
