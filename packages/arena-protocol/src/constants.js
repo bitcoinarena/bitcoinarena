@@ -585,6 +585,8 @@ export const TYPE_GUARDIAN_HALT_OBSERVATION = 0x48;
 export const TYPE_CONTRIBUTION_AGREEMENT = 0x49;
 export const TYPE_CONTRIBUTION_LEAVE = 0x4a;
 export const TYPE_CONTRIBUTION_TERMINATION = 0x4b;
+// A GUARDIAN THAT SIGNED A SPENT-SET COPY ABOVE THE HALT'S BOUND (kanban #1269, §5A.3 offence row, RULED #1262): the copy and the halt proof (bound-slash.js)
+export const TYPE_BOUND_PROOF = 0x4c;
 // AN ATTESTED VALUE (feature 8, protocol 2026.0.7): a scalar market's attestors' word on the number it asked for - its
 // own type, so an outcome attestation's bytes (0x1d) never decode as one, nor the other way round
 export const TYPE_VALUE_ATTESTATION = 0x2a;
