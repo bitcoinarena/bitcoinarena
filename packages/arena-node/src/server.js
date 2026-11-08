@@ -255,7 +255,7 @@ import { createFundingBook } from './funding-book.js';
 import { LB_SCOPE } from '../../arena-protocol/src/leaderboard-payout.js';
 import { leaderboardWindow, leaderboardWinners } from '../../arena-protocol/src/leaderboard-winners.js';
 import { FEES, FEES_TODAY, roundSplitBps, ROUND_TOTAL_MAX_BPS, MARKET_TOTAL_MAX_BPS, ITEM_TOTAL_PCT, encodeFeeApproval, feeApprovalId } from '../../arena-protocol/src/fee-proposal.js';
-import { createReservePayouts, lnurlClient, heldBeforeOwnPayment } from './reserve-payout.js';
+import { createReservePayouts, lnurlClient, heldBeforeOwnPayment, reserveRowsOfNetwork } from './reserve-payout.js';
 import { askerOrder } from './payout.js';
 import { paymentIdsOf } from './funding-book.js';
 import { moveTargets } from './reserve-move.js';
@@ -1881,7 +1881,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return [fed, { members: nodes.map(toHex), key, needed, signer: held.ok ? { id: held.signerNode.id, share: held.signerNode.share } : null, peers: (g.peers || []).map(payoutPeer) }];
     })),
     reserveRows: (fed) => { const k = reserveKeys.get(fed) || (() => { const g = reserveGuardians()[fed]; if (!g) return null; const h = reserveDkgOf(fed).signerNodeFor(sortedKeys(g.members)); return h.ok ? h.pool.groupPublicKey : null; })();
-      return k ? round.donationsFor(toHex(k)).filter((r) => r.federationId === fed).map((r) => ({ outpoint: r.outpoint, amountMsat: r.amountMsat, verifiedMs: r.verifiedMs })) : []; },
+      // only the rows paid under this seat's network, whose census ratifies its funding votes (kanban #1336, §27A.8.5)
+      const netOfRound = (rid) => { try { const c = round.contractOf(fromHex(rid)); return c && c.networkId instanceof Uint8Array ? toHex(c.networkId) : null; } catch { return null; } };
+      return k ? reserveRowsOfNetwork(round.donationsFor(toHex(k)).filter((r) => r.federationId === fed), chainNetworkId(), netOfRound)
+        .map((r) => ({ outpoint: r.outpoint, amountMsat: r.amountMsat, verifiedMs: r.verifiedMs })) : []; },
     portOf: (fed) => portOfFederation(fromHex(fed)),
     // THE DRAINED-FEDERATION MOVES (decision A): from this seat's own verified federation records - status, the record's
     // height, the successor - and the reserves it holds unspent there (reserve-move.js moveTargets)

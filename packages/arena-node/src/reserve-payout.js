@@ -199,6 +199,24 @@ const NO_WINNERS = { freeze: async () => ({ ok: false, why: 'this seat keeps no 
 // `sign(digest)` this seat's node-key signature (BIP-340) over a 32-byte digest: every record it hands on is signed (kanban #1156); a seat
 // without it hands on records nobody keeps. `keepRow` must keep a row once and throw on an outpoint kept with other fields: it runs inside
 // the record's transition, and a throw undoes the whole step.
+/**
+ * RESERVES FOLLOW THE NETWORK THEY WERE PAID UNDER (§27A.8.5 RULED 2026-11-07, kanban #1336): "a reserve output carries the network_id it was paid
+ * under, and guardian code releases it only for a proposal ratified by that network's census". A seat's funding votes are counted on its own
+ * chain's census, so its payouts spend only rows whose round names this seat's network. `networkOfRound(roundHex)` -> the round's network id
+ * (hex) or null. A row with no round (a payout's change, a move's claim: zero round id) was made by this network's own payout and stays; a row
+ * whose round this seat cannot read is not spent - after a fork the ancestor's reserves are not the successor's to pay.
+ */
+export function reserveRowsOfNetwork(rows, networkHex, networkOfRound) {
+  const want = String(networkHex || '').toLowerCase();
+  if (!want) return [];
+  return (rows || []).filter((r) => {
+    const rid = String(r.roundId || '').toLowerCase();
+    if (!rid || /^0+$/.test(rid)) return true;
+    let n = null; try { n = networkOfRound(rid); } catch { n = null; }
+    return typeof n === 'string' && n.toLowerCase() === want;
+  });
+}
+
 export function createReservePayouts({ db, me, curve, random, passed, guardians, reserveRows, portOf, payRequest, invoiceFor, network = 'testnet',
   keepRow = () => {}, broadcast = () => {}, log = () => {}, now = () => Date.now(), moves = () => [], leaderboards = () => [], winners: winnersBook = NO_WINNERS,
   sign: signNode = null, heightNow = () => null, payeeFor = null }) {
