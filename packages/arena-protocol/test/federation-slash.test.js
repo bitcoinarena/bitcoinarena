@@ -171,3 +171,26 @@ test('a bond spent while seated: the chain\'s proof, no attestation, and guardia
   const served = guardianSlashStands({ proof, departure: { ok: true, peerKey, leaveAfterHeight: 500 } });
   assert.deepEqual([served.slash, served.kind], [false, 'DEPARTED'], 'spent from leave_after on');
 });
+
+// KANBAN #1321 (§23A.6 RULED 2026-11-07, #1298): "while the predecessor is not CLOSED, the successor's exposure_cap is (seated - 2f) x smallest shared bond - reserve_old"
+test('#1321 a successor\'s cap counts a shared bond once: less reserve_old while its predecessor is not CLOSED', async () => {
+  const { buildFederationRecord } = await import('../src/federation-record.js');
+  const { toHex } = await import('../src/hash.js');
+  const b = (n) => new Uint8Array(32).fill(n);
+  const guardians = [1, 2, 3, 4].map((n) => ({ peerKey: new Uint8Array(33).fill(n), nodePubkey: b(n), operatorId: `op${n}`, bondTxid: b(0x40 + n), bondVout: 0, endpoint: `wss://g${n}`, bondSats: n === 4 ? 2000000n : 1000000n }));
+  const rec = (predecessor) => buildFederationRecord({ federationId: b(9), networkId: b(2), invite: 'fed:y', nominal: 4, guardians, height: 500, reserveSats: 0n, predecessor });
+  const shared = [b(1), b(2), b(3)].map(toHex);                 // three of the four were the predecessor's guardians
+  const got = {
+    alone: rec(null).exposureCapSats,
+    draining: rec({ reserveSats: 300000n, closed: false, nodeKeys: shared }).exposureCapSats,
+    closed: rec({ reserveSats: 300000n, closed: true, nodeKeys: shared }).exposureCapSats,
+    noneShared: rec({ reserveSats: 300000n, closed: false, nodeKeys: [toHex(b(7))] }).exposureCapSats,
+    overdrawn: rec({ reserveSats: 5000000n, closed: false, nodeKeys: shared }).exposureCapSats,
+  };
+  console.log('  MEASURED #1321 successor:', JSON.stringify(Object.fromEntries(Object.entries(got).map(([k, v]) => [k, String(v)]))));
+  assert.equal(got.alone, 2000000n);                            // 4 seated, f 1, threshold 3: 2 places x 1,000,000
+  assert.equal(got.draining, 2000000n - 300000n);               // 2 x the smallest shared (1,000,000) - reserve_old
+  assert.equal(got.closed, 2000000n);
+  assert.equal(got.noneShared, 2000000n);
+  assert.equal(got.overdrawn, 0n);
+});

@@ -589,7 +589,17 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const spent = spentGuardians(b, federationId);
     const rows = [...guardians, ...spent.map((x) => x.row)];
     const lock = lockOn(b) ? { drainBlocks: bondLock.drainBlocks, bondMinGuardian: bondLock.bondMinGuardian } : null;
-    const r = buildFederationRecord({ federationId, networkId: b.networkId || networkId, invite, nominal: rows.length, guardians: rows, gone: [...gone, ...spent.map((x) => x.gone)], height: b.height, reserveSats, bondLock: lock,
+    // ITS PREDECESSOR, WHILE NOT CLOSED (§23A.6 RULED 2026-11-07, kanban #1298/#1321): the kept record naming this federation its successor - its
+    // reserve and its seated guardians, so a bond both name counts once in this cap
+    let predecessor = null;
+    // (its record in force below this record's height, so every signer reads the same figures)
+    for (const [predFid, k] of kept) {
+      if (!k.record || !k.record.successorId || toHex(k.record.successorId) !== String(fid).toLowerCase()) continue;
+      const rec = recordAt(predFid, b.height - 1) || k.record;
+      predecessor = { reserveSats: rec.reserveSats, closed: recordStatusName(rec) === 'CLOSED', nodeKeys: seatedOf(rec).map((key) => toHex(key)) };
+      break;
+    }
+    const r = buildFederationRecord({ federationId, networkId: b.networkId || networkId, invite, nominal: rows.length, guardians: rows, gone: [...gone, ...spent.map((x) => x.gone)], height: b.height, reserveSats, bondLock: lock, predecessor,
       ...(succ ? { successorId: fromHex(succ), closed: !!closedOf(fid) } : retiringOf(fid) ? { closed: true } : {}) });   // retiringOf: federation-retire.js
     if (was !== null) r.capacityBand = recordBand({ reserveSats, exposureCapSats: r.exposureCapSats, was });
     return { ok: true, record: r, guardians };

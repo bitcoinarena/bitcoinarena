@@ -150,7 +150,9 @@ export const federationRecordId = (r) => taggedHash(TAG.federationRecord, encode
  */
 // `bondLock` { drainBlocks, bondMinGuardian }: from BOND_LOCK_HEIGHT on, the cap counts only bonds locked past the drain (lockedExposureCap);
 // each guardian row then carries its `outputs` [{ bondSats, maturity }]
-export function buildFederationRecord({ federationId, networkId, invite, nominal, guardians, gone = [], successorId = null, closed = false, reserveSats = 0n, height, bondLock = null }) {
+// `predecessor` { reserveSats, closed, nodeKeys: [hex] } - the federation this one succeeds, from its record (kanban #1298/#1321): while it is not CLOSED,
+// a bond both name counts once - this cap is (seated - 2f) x the smallest SHARED bond, less its reserve_old
+export function buildFederationRecord({ federationId, networkId, invite, nominal, guardians, gone = [], successorId = null, closed = false, reserveSats = 0n, height, bondLock = null, predecessor = null }) {
   const goneKeys = new Set(gone.map((g) => toHex(g.peerKey)));
   const seatedGuardians = guardians.filter((g) => !goneKeys.has(toHex(g.peerKey)));
   const band = statusFor({ nominal, seated: Math.min(nominal, seatedGuardians.length), closed });
@@ -165,9 +167,25 @@ export function buildFederationRecord({ federationId, networkId, invite, nominal
     // successor_id"): OPEN becomes DRAINING; a worse band (CRITICAL, HALTED) and CLOSED stay what they are
     status: FEDERATION_STATUS[!closed && successorId && successorId.some((x) => x) && band.status === 'OPEN' ? 'DRAINING' : band.status],
     successorId: successorId || new Uint8Array(32), gone: [...gone].sort((a, b) => cmp(a.peerKey, b.peerKey)),
-    exposureCapSats: cap.ok ? cap.cap : 0n, reserveSats, height,
+    exposureCapSats: cap.ok ? successorCap({ cap, seatedGuardians, predecessor }) : 0n, reserveSats, height,
     seated: seatedGuardians.length, band,
   };
+}
+
+/**
+ * A SUCCESSOR'S CAP WHILE ITS PREDECESSOR IS NOT CLOSED (§23A.6 RULED 2026-11-07, kanban #1298/#1321): "A bond counts once across the records that
+ * name it: ... the successor's exposure_cap is (seated - 2f) x smallest shared bond - reserve_old, both figures from the records." The places
+ * are the cap's own (`cap.halts`); the smallest bond among the seated guardians the predecessor also names (by node key); never below 0. No
+ * predecessor, a CLOSED one, or no guardian shared: the cap as it is.
+ */
+export function successorCap({ cap, seatedGuardians, predecessor }) {
+  if (!predecessor || predecessor.closed) return cap.cap;
+  const theirs = new Set((predecessor.nodeKeys || []).map((k) => String(k).toLowerCase()));
+  const shared = seatedGuardians.filter((g) => theirs.has(toHex(g.nodePubkey))).map((g) => BigInt(g.bondSats ?? 0n)).filter((b) => b > 0n);
+  if (!shared.length) return cap.cap;
+  const smallest = shared.reduce((a, b) => (b < a ? b : a));
+  const gross = BigInt(cap.halts ?? cap.places ?? 0) * smallest, old = BigInt(predecessor.reserveSats ?? 0n);
+  return gross > old ? gross - old : 0n;
 }
 
 /** Signed bytes: the body, then (u8 count) of (node key 32 || signature 64), sorted by key. */
