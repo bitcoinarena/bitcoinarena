@@ -303,8 +303,12 @@ export class LockSettlement {
     this.fees = new Map();           // round id hex -> the guardians' fee rule, read once
   }
 
-  /** EVERY ENTRY OF THE ROUND, AS THIS SIGNER NODE HOLDS IT - or why the round still waits. */
-  entriesOnRecord(roundIdBytes, contract) {
+  /**
+   * EVERY ENTRY OF THE ROUND, AS THIS SIGNER NODE HOLDS IT - or why the round still waits. `fallback` (spec §23.2, kanban #1347): the fallback
+   * claim waits for no FINAL - an entry without one (no quorum being decided, in a re-run window, or no final result) is taken as the seats
+   * wrote it, VOID (`noFinal`), and fallback-claim.js fallbackEntries pays it by one result four seats signed where there is one.
+   */
+  entriesOnRecord(roundIdBytes, contract, { fallback = false } = {}) {
     const entries = [];
     const leftOut = [];
     for (const { entryId, entry } of this.round.entriesOf(roundIdBytes)) {
@@ -323,6 +327,8 @@ export class LockSettlement {
       const standing = this.finalityOf(this.round, roundIdBytes, entryId);
       // AN ENTRY WITH NO QUORUM HOLDS THE ROUND (§13A, RULED 2026-11-02, kanban #1047): F depends on every result, so left out, a rescued winner is paid nothing. Bounded: the
       // re-run window's end, or the end of a quorum's one objection window, and past it the entry is left out as below. An entry suspended by an objection does not hold it.
+      const noFinal = () => entries.push({ ...base, outcome: VOID, score: 0, noFinal: true });
+      if (standing.holdsRound && fallback) { noFinal(); continue; }
       if (standing.holdsRound) return refuse(`no lock is claimed while an entry with no quorum is being decided: ${toHex(entryId).slice(0, 16)} (${standing.why})`);
       if (standing.state === VOID) { entries.push({ ...base, outcome: VOID, score: 0 }); continue; }
       // A RE-RUN WINDOW THAT CLOSED ON PROVEN EQUIVOCATION (§13A, §13C, RULED 2026-09-24): FORFEIT on the finality
@@ -332,9 +338,11 @@ export class LockSettlement {
       // slice C3a): SUSPENDED, or PROVISIONALLY_FINAL on a re-run. It is not in the payout table, and its lock is neither
       // claimed nor forfeited here; what becomes of it after is `lockAfterSettlement`'s to say.
       if (standing.state === SUSPENDED || (standing.state === PROVISIONALLY_FINAL && standing.rerun)) {
+        if (fallback) { noFinal(); continue; }
         leftOut.push({ entryId, why: 'left out of the round\'s settlement: still in its re-run window' });
         continue;
       }
+      if (standing.state !== FINAL && fallback) { noFinal(); continue; }
       if (standing.state !== FINAL)
         return refuse(`nothing is claimed while a run is not final with its window closed: ${toHex(entryId).slice(0, 16)} is `
           + `${standing.state || 'without a result'}${standing.why ? ` (${standing.why})` : ''}`);
@@ -1093,7 +1101,7 @@ export class LockSettlement {
         return this.#attestedPlan(roundIdBytes, a, claimPk, held);
       } }
 
-    const onRecord = this.entriesOnRecord(roundIdBytes, contract);
+    const onRecord = this.entriesOnRecord(roundIdBytes, contract, { fallback: !!fallback });
     if (!onRecord.ok) return onRecord;
     // THE GAME'S PAYOUT RULE: §18A's curve or its manifest's top split - the table every seat settles by
     const rule = payoutRuleOfRound(contract, this.round.plugins);
