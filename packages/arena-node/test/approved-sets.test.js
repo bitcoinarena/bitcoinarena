@@ -28,7 +28,9 @@ test('the runner\'s tally: an approved split is in force for its census heights 
   const fetcher = async () => { if (!up) throw new Error('down'); return new Response(JSON.stringify({ ballots: [{ hex: pHex, approvals: [aHex] }] })); };
   const a = createApprovedSets({ seatUrl: 'http://seat', known: [ROOT], verifySecp256k1, fetcher });
   assert.deepEqual(await a.refresh(), { ok: true, sets: 1, ballots: 1 });
-  const at = (height) => donationSetInForce({ networkId: NET, authority: new Uint8Array(32), recovery: new Uint8Array(32).fill(1), sets: [ROOT], height,
+  // the authority's signature over the same serial and recipients: a change needs both (kanban #1337)
+  const ADMIN4 = { networkId: NET, serial: 4n, validFrom: 100, recipients: NEW, signature: new Uint8Array(64) };
+  const at = (height) => donationSetInForce({ networkId: NET, authority: new Uint8Array(32), recovery: new Uint8Array(32).fill(1), sets: [ROOT, ADMIN4], height,
     verify: (sig) => true, approved: a.sets() });
   assert.equal(toHex(donationSetId(at(500).recipients)), toHex(donationSetId(ROOT.recipients)), 'before the approval\'s block: the admin key\'s set');
   assert.equal(toHex(donationSetId(at(501).recipients)), toHex(donationSetId(NEW)), 'from block 501: the approved split');

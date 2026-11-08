@@ -64,6 +64,9 @@ const rotationOf = ({ serial, newAuthority, validFrom = 200, key = RECOVERY,
 const inForce = (opts) => donationSetInForce({
   networkId: NETWORK, authority: AUTHORITY, recovery: RECOVERY, verify, ...opts,
 });
+// THE RECIPIENTS' APPROVAL OF A SET (kanban #1337: a change needs the authority key AND the recipients' majority) - what
+// donation-vote.js approvedDonationSets answers for an approved ballot naming the same serial and recipients
+const approvedAs = (set) => ({ networkId: set.networkId, serial: set.serial, validFrom: set.validFrom, recipients: set.recipients, approvedBy: new Uint8Array(32).fill(9) });
 
 test('a donation set carries the four fields 27A.4 names, and survives the wire', () => {
   const body = { networkId: NETWORK, serial: 7n, validFrom: 900123, recipients: RECIPIENTS };
@@ -136,14 +139,14 @@ test('the highest validly signed serial wins, and an older one published later c
     { lnurl: 'lnurl1new', shareBps: 10000 },
   ] });
 
-  const now = inForce({ sets: [first, second], height: 1000 });
+  const now = inForce({ sets: [first, second], height: 1000, approved: [approvedAs(second)] });
   assert.equal(now.serial, 9n);
   assert.deepEqual(now.recipients.map((r) => r.lnurl), ['lnurl1new']);
 
   // THE ROLLBACK, which is what publication on a chain anybody can append to
   // makes possible: an old set re-published after a new one. Order of arrival
   // is not order of authority.
-  const rolled = inForce({ sets: [second, first, first], height: 1000 });
+  const rolled = inForce({ sets: [second, first, first], height: 1000, approved: [approvedAs(second)] });
   assert.equal(rolled.serial, 9n);
   assert.deepEqual(rolled.recipients.map((r) => r.lnurl), ['lnurl1new']);
 });
@@ -170,7 +173,7 @@ test('two different sets at one serial lose that serial and the older one stays 
   const a = setOf({ serial: 5n, validFrom: 20 });
   const b = setOf({ serial: 5n, validFrom: 20, recipients: THEIRS });
 
-  const answer = inForce({ sets: [old, a, b], height: 1000 });
+  const answer = inForce({ sets: [old, a, b], height: 1000, approved: [approvedAs(a), approvedAs(b)] });
   assert.equal(answer.ok, true, answer.why);
   assert.equal(answer.serial, 4n, 'a contested serial must not be picked by its bytes');
   assert.deepEqual(answer.recipients, RECIPIENTS);
@@ -313,4 +316,27 @@ test('no money moves here: nothing in the donation code pays anybody', async () 
     for (const word of ['payInvoice', 'pay_invoice', 'lnbc', 'fetch(', 'WebSocket'])
       assert.equal(code.includes(word), false, `${f} reaches for ${word}`);
   }
+});
+
+// KANBAN #1337 (§27A.4.1 RULED 2026-11-07): "A change of the set needs the authority key and approvals by more than half of the recipients'
+// share_bps, so the authority key alone moves nothing". Measured: the authority key's higher serial alone, the recipients' approval alone, and both.
+test('#1337 the authority key alone cannot change the set; the recipients alone cannot either; both together do', () => {
+  const key = (v) => { const k = new Uint8Array(33).fill(v); k[0] = 2; return k; };
+  const first = setOf({ serial: 3n, validFrom: 10, recipients: [{ recipientPk: key(0x11), shareBps: 6000, label: 'a' }, { recipientPk: key(0x22), shareBps: 4000, label: 'b' }] });
+  const next = setOf({ serial: 9n, validFrom: 20, recipients: [{ recipientPk: key(0x33), shareBps: 10000, label: 'c' }] });
+  const authorityAlone = inForce({ sets: [first, next], height: 1000 });
+  // a set whose recipients hold no keys (LNURL) cannot vote: the authority alone replaces it, as testnet4's key set replaced its LNURL set
+  const lnurlParent = inForce({ sets: [setOf({ serial: 2n, validFrom: 5 }), first], height: 1000 });
+  const recipientsAlone = inForce({ sets: [first], height: 1000, approved: [approvedAs(next)] });
+  const bothLate = inForce({ sets: [first, next], height: 1000, approved: [{ ...approvedAs(next), validFrom: 500 }] });
+  const before = inForce({ sets: [first, next], height: 499, approved: [{ ...approvedAs(next), validFrom: 500 }] });
+  console.log('  MEASURED #1337 set in force:', JSON.stringify({ authorityAlone: Number(authorityAlone.serial), recipientsAlone: Number(recipientsAlone.serial),
+    both: [Number(bothLate.serial), bothLate.validFrom], before: Number(before.serial), overLnurlSet: Number(lnurlParent.serial) }));
+  assert.equal(lnurlParent.serial, 3n, 'a set no key can vote on could never be replaced');
+  assert.equal(authorityAlone.serial, 3n, 'the authority key alone moved the set');
+  assert.match(authorityAlone.refused.join(' '), /authority key alone/);
+  assert.equal(recipientsAlone.serial, 3n, 'the recipients alone moved the set');
+  assert.match(recipientsAlone.refused.join(' '), /not signed by the authority key/);
+  assert.equal(bothLate.serial, 9n); assert.equal(bothLate.validFrom, 500, 'in force from the later of the two');
+  assert.equal(before.serial, 3n);
 });
