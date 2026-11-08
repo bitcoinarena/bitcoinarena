@@ -384,10 +384,12 @@ export function absenceFromChain({ contract, claim, evidenceOf, headers, firstHe
     const roundOf = (ridHex) => { drawOf(ridHex, 'settlement'); const d = drawn.get(ridHex); return d ? d.contract : null; };
     const weightOf = (node) => {
       const c = stalled.find((x) => String(x.node).toLowerCase() === node);
-      const d = c && c.proofs && c.proofs[0] ? drawn.get(String(c.proofs[0].seatRound).toLowerCase()) : null;
+      // a carried entry (kanban #1350): the weight the earlier census's round gives it, that round drawn here as any proof's
+      if (c && c.carried) drawOf(String(c.carried.roundId).toLowerCase(), 'settlement');
+      const d = c && c.carried ? drawn.get(String(c.carried.roundId).toLowerCase()) : c && c.proofs && c.proofs[0] ? drawn.get(String(c.proofs[0].seatRound).toLowerCase()) : null;
       return (d ? d.entries : []).reduce((s, e) => (toHex(e.pubkey) === node ? s + BigInt(e.bondSats || 0) : s), 0n);
     };
-    const s = checkStallProof(stalled, { window: stallWindow(BigInt(t) * 1000n), verify, roundOf, drawOf, dutyOf, weightOf,
+    const s = checkStallProof(stalled, { window: stallWindow(BigInt(t) * 1000n), verify, roundOf, drawOf, dutyOf, weightOf, censusHeight: Number(contract.censusHeight),
       keptWeight: entries && entries.length ? entries.reduce((n, e) => n + BigInt(e.bondSats || 0), 0n) : null,
       certOf: (ridHex, role) => { const h = claim.certs && claim.certs[`${ridHex}:${role}`]; return h ? fromHex(h) : null; } });
     if (!s.ok) return { ok: false, node: s.node, why: s.notYet ? `${s.why}: its contract or census was not handed over` : s.why };
