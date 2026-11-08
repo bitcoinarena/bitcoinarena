@@ -63,13 +63,14 @@ test('a stolen authority is revoked by the cold key, and the theft ends at a hei
     networkId: NETWORK, ...keys, sets: [honest, stolen], rotations, height, verify,
   });
 
-  // THE THEFT WORKS, and saying so is the point: the higher serial wins and
-  // the thief is paid until somebody notices. A test that could not show the
-  // damage could not show that the remedy removes it.
+  // THE THEFT NO LONGER WORKS (kanban #1337, §27A.4.1 RULED 2026-11-07: "the authority key alone moves nothing"). Before the ruling the
+  // higher serial won and the thief was paid until somebody noticed; now a change needs the recipients' approval too, which the thief
+  // does not have, so the honest set stays in force and the stolen serial is refused by name.
   const during = at(200);
   assert.equal(during.ok, true, during.why);
-  assert.equal(during.serial, 500n);
-  assert.deepEqual(during.recipients, THEIRS);
+  assert.equal(during.serial, 2n, 'the stolen key alone moved the set');
+  assert.deepEqual(during.recipients, OURS);
+  assert.match(during.refused.join(' '), /serial 500: signed by the authority key alone/);
 
   // THE REMEDY. One object signed by a key that has done nothing until now.
   const rotation = rotate(RECOVERY, {
@@ -77,7 +78,7 @@ test('a stolen authority is revoked by the cold key, and the theft ends at a hei
   });
 
   const stillStolen = at(299, [rotation]);
-  assert.equal(stillStolen.serial, 500n, 'a rotation applies from its own height, not on arrival');
+  assert.equal(stillStolen.serial, 2n, 'a rotation applies from its own height, not on arrival');
 
   // AND A ROTATION BLANKS THE LIST, which is the reading 27A.4 forces and not
   // a strictness of taste: "from `valid_from`, sets signed by the old
