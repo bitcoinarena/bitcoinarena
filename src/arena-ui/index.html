@@ -4319,16 +4319,37 @@
         const tookEntries = new Promise((res) => { entriesIn = res; });
         const all = ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, onEntries: (x) => entriesIn(x) });
         all.then((x) => entriesIn(x), (e) => entriesIn({ entries: [], why: e.message }));
-        const sent = await tookEntries;
-        // THIS TAB'S NAME RECORD AT ONCE (kanban #1263, audit 4 PLAYER-2): a head-to-head round is booked to the identity a record named before its entry
-        // close - the seats keep a reveal's identity only when it is the one named - so the record goes to the seats as soon as they took the entry
-        if (sent.entries.some((x) => x.status === 201) && ARENACLIENT.nameRecordFor && ARENACLIENT.postName) {
+        // THIS TAB'S NAME RECORD, FROM THE TAP UNTIL THE CLOSE (kanban #1263; #1364, measured on UI 590: a move tapped 1.5 s before the close had its entry
+        // taken, but the record went out only once every seat had answered the entry - after the close, where a head-to-head round takes none - so the
+        // reveal's identity was not kept and the round counted no match score). Each seat is asked every 300 ms until it took the record (it refuses one
+        // before it holds the entry), up to the entry close
+        if (ARENACLIENT.nameRecordFor && ARENACLIENT.postName) {
           try {
             const signedName = ARENACLIENT.nameRecordFor(roundWithId, { storage: window.sessionStorage, random, curve: window.ARENA_CURVE, order: player.order || 0 });
-            ARENACLIENT.postName(signedName, named.nodes).then((said) => console.log('[arena] #1263 name record for ' + named.roundIdHex.slice(0, 16) + ': ' + said.map((x) => x.status).join(' ')),
-              (e) => console.log('[arena] #1263 the name record was not posted: ' + e.message));
+            const closeAt = Number(named.round.entryCloseMs);
+            // each seat its own loop, all at once (#1364 on page 921: one pass over 14 seats one after another took ~3 s and ended after the close)
+            // a seat that refused the entry itself (not in this round) never takes the record: its loop ends when the entry answers are in
+            const notIn = new Set();
+            tookEntries.then((sent) => { (sent.entries || []).forEach((x, i) => { if (x && x.status !== 201 && x.status !== 200) notIn.add(x.node || named.nodes[i]); }); }, () => {});
+            const one = async (node) => {
+              let last = 0;
+              for (let tries = 1; tries <= 60 && Date.now() <= closeAt; tries++) {
+                if (notIn.has(node)) return { node, took: false, last: 'not in the round' };
+                let said = []; try { said = await ARENACLIENT.postName(signedName, [node]); } catch { said = []; }
+                last = (said[0] && said[0].status) || 0;
+                if (last === 201 || last === 200) return { node, took: true, tries };
+                await new Promise((r) => setTimeout(r, 300));
+              }
+              return { node, took: false, last };
+            };
+            Promise.all(named.nodes.map(one)).then((got) => {
+              const took = got.filter((g) => g.took), inRound = got.filter((g) => g.last !== 'not in the round');
+              console.log('[arena] #1364 name record for ' + named.roundIdHex.slice(0, 16) + ': ' + took.length + ' of ' + inRound.length + ' seats in the round took it, tries '
+                + JSON.stringify(took.map((g) => g.tries)) + ', last answers of the rest ' + JSON.stringify(inRound.filter((g) => !g.took).map((g) => g.last)));
+            });
           } catch (e) { console.log('[arena] #1263 no name record: ' + String(e && e.message || e).slice(0, 120)); }
         }
+        const sent = await tookEntries;
         all.then((done) => { if (done && done.lock) console.log('[arena] hidden move ' + named.roundIdHex.slice(0, 16) + ': locks with ' + done.lock.committed + ' of ' + done.lock.needed + ' signer nodes'
           + (done.why ? ' - ' + done.why : '')); }, (e) => console.error('[arena] hidden move ' + named.roundIdHex.slice(0, 16) + ': the locks were not handed: ' + e.message));
         console.log('[arena] hidden move in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
