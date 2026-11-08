@@ -9179,6 +9179,13 @@ project's. Outside the node, before the agreement starts: the domain, the Cloudf
 the social accounts, the Arena Nostr key and the site key are owned by the project with the
 recovery in the owner's hands; he has operator access that can be withdrawn.
 
+**Per network (RULED 2026-11-08, kanban #1349).** Mainnet and testnet4 run the numbers above.
+Regtest and a devnet run the same rules at test scale, as a genesis table like the lock's
+`stall_blocks`: T1 3 identities, T2 2 of them back after 6 blocks, T3 20 % over a 12-block
+window with the network's "mainnet" condition read as the genesis `main` flag so a devnet can
+test it, T4 30 % in 3 windows of 6 blocks, and a read lag of 6 blocks in place of 288. The
+counts are not fields of the agreement: every agreement on a network reads the same scale.
+
 **The attribution floor.** A tranche vests only if, over its own window, new identities whose
 first paid entry carried his site keys are at least `attribution_floor_bps` of all new identities
 on the network. Growth that comes from elsewhere vests him nothing past the base: that is the
