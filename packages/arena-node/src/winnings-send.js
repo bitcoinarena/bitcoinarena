@@ -225,7 +225,11 @@ export class WinningsSend {
   dropIfStale(roundIdBytes, base) {
     const kept = this.round.sendAttemptsOf(roundIdBytes).filter((x) => x.attempt === 0);
     if (!kept.length) return false;
-    if (stateOf(this.round, roundIdBytes) === 'ACCEPTED') return false;
+    // SIGNED IS SETTLED HERE TOO (kanban #1368, audit 2 #1204 SETTLEMENT-4): a SUBMITTING row's transaction may still land and pay this plan's
+    // send contracts, so the plan stands as `replaceable` says. A round whose fee rule changed is no longer stuck by it: once every signed
+    // txid was refused the row goes REFUSED, and there the plan drops as before.
+    const state = stateOf(this.round, roundIdBytes);
+    if (state === 'ACCEPTED' || state === 'SUBMITTING') return false;
     const wanting = new Map(this.wanting(base).map((w) => [toHex(w.entryId), w.payout.msat]));
     const same = kept.length === wanting.size && kept.every((k) => wanting.get(toHex(k.entryId)) === k.payoutMsat);
     if (same) return false;
