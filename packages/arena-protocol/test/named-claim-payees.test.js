@@ -223,3 +223,28 @@ test('gate: every honest settlement the planners build reads clean at level 2', 
   assert.ok(built.length >= 60, `${built.length} built: ${plans.filter((x) => !x.plan.ok).map((x) => `${x.what}: ${x.plan.why}`).slice(0, 3).join(' | ')}`);
   assert.deepEqual(falseOnes, []);
 });
+
+// KANBAN #1331 (1), §13A.1 RULED 2026-11-07 (#1306): "The unpaid remainder of the auditors' 10 % goes to the protocol reserves, never back into
+// the nodes' pools." With the round's reserve key handed in (signerNodes.auditReserveKey): no AUDIT -> the whole 10 % to the reserves; one AUDIT
+// paid -> the rest of the 10 % to the reserves. Without a key the old rule stands.
+test('#1331 the auditors\' unpaid remainder goes to the reserves, not back to the seats', () => {
+  const W = entry(1, DELIVERED, 3), L = entry(2, FAILED, 0);
+  const RK = Uint8Array.from([0x02, ...b32(0x5a)]);
+  const run = (signerNodes) => lockSettlement({ roundId: RID, entries: [W, L], minScore: 1, fees: NO_FEES, feeBps: 500, contract: ROUND, signerNodes,
+    locks: new Map([lockFor(W, 1), lockFor(L, 2)]), feeLocks: new Map([feeLockFor(W, 1), feeLockFor(L, 2)]) });
+  const sum = (plan, kind) => plan.payouts.filter((p) => p.kind === kind).reduce((a, p) => a + p.msat, 0n);
+  const old = run({ gameVerify: SEATS, settlement: SEATS, auditors: [] });
+  const none = run({ gameVerify: SEATS, settlement: SEATS, auditors: [], auditReserveKey: RK });
+  const one = run({ gameVerify: SEATS, settlement: SEATS, auditors: [toHex(pk(0x90))], auditReserveKey: RK });
+  const seatsOld = sum(old, 'signer node'), seatsNone = sum(none, 'signer node');
+  const toReserve = (plan) => plan.payouts.filter((p) => p.auditRemainder).reduce((a, p) => a + p.msat, 0n);
+  console.log('  MEASURED #1331 (1):', JSON.stringify({ seatsWithoutKey: String(seatsOld), seatsNoAudit: String(seatsNone), reserveNoAudit: String(toReserve(none)),
+    auditorOne: String(sum(one, 'auditor')), reserveOneAudit: String(toReserve(one)) }));
+  assert.equal(old.ok && none.ok && one.ok, true);
+  assert.equal(toReserve(old), 0n, 'without a reserve key the old rule stands');
+  assert.ok(toReserve(none) > 0n, 'with no AUDIT the auditors\' 10 % stayed with the seats');
+  assert.ok(seatsNone < seatsOld, 'the seats kept the auditors\' share');
+  assert.ok(sum(one, 'auditor') > 0n);
+  assert.ok(toReserve(one) < toReserve(none), 'a paid auditor\'s share also went to the reserves');
+  assert.ok(none.payouts.find((p) => p.auditRemainder).payoutPk === RK);
+});

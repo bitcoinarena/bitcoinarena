@@ -36,7 +36,7 @@
 // never to the donation recipients, and no split invented here. A VOID or
 // ENTRY_VOID entry's fee lock is not claimed: §22A's fee base leaves it out.
 import { paysReserves, RESERVES_NODE_FEE_BPS } from './reserves.js';
-import { auditorShares } from './auditor.js';
+import { auditorShares, AUDIT_SHARE_BPS } from './auditor.js';
 import { netStakeMsat, isRefund, FAILED, FORFEIT, VOID, DELIVERED } from './payout.js';
 import { lockActions, CLAIM, RETURN } from './lock-action.js';
 import { winnings } from './payout-spend.js';
@@ -652,15 +652,29 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   // the seats hold (`signerNodes.auditors`, node keys hex, the same set on every seat by §13A.1's rule) - one line each, before the seats'.
   // None held: nothing taken, the seats share all of it as before.
   let auditorGross = 0n, auditorBps = 0n;
-  const auditors = Number(contract.protocolVersion) >= AUDITOR_VERSION && Array.isArray(signerNodes.auditors) ? signerNodes.auditors : [];
-  if (auditors.length) {
-    const shares = auditorShares({ nodesMsat: nodePartMsat - publisherGross - frontendGross, auditors });
+  const audited = Number(contract.protocolVersion) >= AUDITOR_VERSION;
+  const auditors = audited && Array.isArray(signerNodes.auditors) ? signerNodes.auditors : [];
+  // THE UNPAID REMAINDER TO THE RESERVES (§13A.1 RULED 2026-11-07, kanban #1306/#1331 (1)): "The unpaid remainder of the auditors' 10 % goes to the
+  // protocol reserves, never back into the nodes' pools" - with no AUDIT, all of it. Paid to `signerNodes.auditReserveKey` (the round's federation's
+  // reserve key, 33 bytes); a seat that hands none keeps the old rule (the remainder stays in the pools) until it does.
+  const auditReserveKey = audited && signerNodes.auditReserveKey instanceof Uint8Array && signerNodes.auditReserveKey.length === 33 ? signerNodes.auditReserveKey : null;
+  if (auditors.length || auditReserveKey) {
+    const base = nodePartMsat - publisherGross - frontendGross;
+    const shares = auditorShares({ nodesMsat: base, auditors });
     for (const { key, msat } of shares.each) {
       const pubkey = fromHex(key);
       const got = largestPayoutMsat(fees, msat);
       if (got === 0n) { unpaid.push({ pubkey, owedMsat: msat, why: 'the auditor\'s share does not pay its own output fee' }); continue; }
       auditorGross += got + lnv2FeeMsat(fees, got);
       payouts.push({ pubkey, payoutPk: refundKeyOf(pubkey), owedMsat: msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'auditor' });
+    }
+    if (auditReserveKey) {
+      const rest = (base * AUDIT_SHARE_BPS) / 10000n - auditorGross;
+      const got = rest > 0n ? largestPayoutMsat(fees, rest) : 0n;
+      if (got > 0n) {
+        auditorGross += got + lnv2FeeMsat(fees, got);
+        payouts.push({ pubkey: auditReserveKey.subarray(1), payoutPk: auditReserveKey, owedMsat: rest, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'reserve', reserve: true, auditRemainder: true });
+      } else if (rest > 0n) unpaid.push({ pubkey: auditReserveKey.subarray(1), owedMsat: rest, why: 'the auditors\' unpaid remainder does not pay its own output fee' });
     }
     auditorBps = 1000n;
   }
