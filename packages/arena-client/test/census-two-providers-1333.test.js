@@ -30,3 +30,13 @@ test('#1333 one provider serving a subset is enough to look, not to lock; two pr
   assert.deepEqual([sameHost.ok, sameHost.lookOnly], [false, true], 'one node asked twice counted as two providers');
   assert.equal(unionOfEntries([SUBSET, FULL, FULL]).length, 3);
 });
+
+test('#1333 the union keys a seat\'s evidence entries (transaction, position, branch) by their transaction, not by an absent txid:vout', async () => {
+  const { unionOfEntries } = await import('../src/committee.js');
+  const ev = (n) => ({ transaction: `02000000${n}`, position: String(n), branch: [], update: null });   // the evidence shape GET /census answers
+  const a = [ev(1), ev(2), ev(3)], b = [ev(1), ev(3)];
+  const u = unionOfEntries([b, a]);
+  console.log('  MEASURED #1333 evidence shape:', JSON.stringify({ a: a.length, b: b.length, union: u.length }));
+  assert.equal(u.length, 3);
+  assert.equal(unionOfEntries([a, a]).length, 3);
+});
