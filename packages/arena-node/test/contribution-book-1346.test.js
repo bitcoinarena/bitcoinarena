@@ -29,15 +29,15 @@ test('two seats with the same counted rounds answer the same share at every heig
   assert.equal(b.keep(merged(rounds.slice(0, 500))), 0, 'a kept round is kept once');
   const t1 = START + 999;   // the 1,000th identity's round
   for (const h of [t1, t1 + CONTRIBUTION_LAG_BLOCKS - 1, t1 + CONTRIBUTION_LAG_BLOCKS, t1 + 10000]) {
-    assert.deepEqual(a.shareAt(agreement, h, 'regtest'), b.shareAt(agreement, h, 'regtest'), `height ${h}`);
+    assert.deepEqual(a.shareAt(agreement, h, 'testnet4'), b.shareAt(agreement, h, 'testnet4'), `height ${h}`);
   }
-  assert.equal(a.shareAt(agreement, t1 + CONTRIBUTION_LAG_BLOCKS - 1, 'regtest').shareBps, 0, 'the 1,000th round is not read before the lag');
-  assert.equal(a.shareAt(agreement, t1 + CONTRIBUTION_LAG_BLOCKS, 'regtest').shareBps, 250, 'T1 at its round\'s height plus the lag');
+  assert.equal(a.shareAt(agreement, t1 + CONTRIBUTION_LAG_BLOCKS - 1, 'testnet4').shareBps, 0, 'the 1,000th round is not read before the lag');
+  assert.equal(a.shareAt(agreement, t1 + CONTRIBUTION_LAG_BLOCKS, 'testnet4').shareBps, 250, 'T1 at its round\'s height plus the lag');
   // entries through the project's own key count for the project, never for him
   const theirs = rounds.map((r) => ({ ...r, entries: r.entries.map((e) => ({ ...e, frontendPk: PROJECT })) }));
   const c = createContributionBook({ db: new DatabaseSync(':memory:'), accountsFor: async () => merged(theirs), heightOf });
   await c.refresh({});
-  assert.equal(c.shareAt(agreement, t1 + 5000, 'regtest').shareBps, 0);
+  assert.equal(c.shareAt(agreement, t1 + 5000, 'testnet4').shareBps, 0);
 });
 
 test('a leave and a termination held in the book change the share; the first of each kind stands', async () => {
@@ -46,14 +46,23 @@ test('a leave and a termination held in the book change the share; the first of 
   await a.refresh({});
   const id = contributionAgreementId(agreement);
   const vested = START + 999 + CONTRIBUTION_LAG_BLOCKS;
-  assert.equal(a.shareAt(agreement, vested + 10, 'regtest').shareBps, 250);
+  assert.equal(a.shareAt(agreement, vested + 10, 'testnet4').shareBps, 250);
   assert.equal(a.addEnd('leave', { agreementId: id, atHeight: vested + 5 }, 'aa').fresh, true);
   assert.equal(a.addEnd('leave', { agreementId: id, atHeight: vested + 1 }, 'bb').fresh, false, 'a second leave changes nothing');
   assert.deepEqual(a.endsOf(toHex(id)), { leftAt: vested + 5, terminatedAt: null });
-  assert.equal(a.shareAt(agreement, vested + 10, 'regtest').state, 'tail');
-  assert.equal(a.shareAt(agreement, vested + 10, 'regtest').shareBps, 250, 'the tail pays what he had vested');
-  assert.equal(a.shareAt(agreement, vested + 5 + 52560, 'regtest').shareBps, 0, 'and ends');
+  assert.equal(a.shareAt(agreement, vested + 10, 'testnet4').state, 'tail');
+  assert.equal(a.shareAt(agreement, vested + 10, 'testnet4').shareBps, 250, 'the tail pays what he had vested');
+  assert.equal(a.shareAt(agreement, vested + 5 + 52560, 'testnet4').shareBps, 0, 'and ends');
   a.addEnd('termination', { agreementId: id, atHeight: vested + 8 }, 'cc');
-  assert.equal(a.shareAt(agreement, vested + 10, 'regtest').shareBps, 0, 'a termination ends it at once');
+  assert.equal(a.shareAt(agreement, vested + 10, 'testnet4').shareBps, 0, 'a termination ends it at once');
   assert.equal(a.ends().length, 2);
+});
+
+test('kanban #1349: regtest reads the test scale - T1 at 3 identities and a 6-block lag', async () => {
+  const few = rounds.slice(0, 3);
+  const a = createContributionBook({ db: new DatabaseSync(':memory:'), accountsFor: async () => merged(few), heightOf });
+  await a.refresh({});
+  assert.equal(a.shareAt(agreement, START + 2 + 5, 'regtest').shareBps, 0, 'the third round is not read before the 6-block lag');
+  assert.equal(a.shareAt(agreement, START + 2 + 6, 'regtest').shareBps, 250, 'T1 at the third identity\'s round plus 6');
+  assert.equal(a.shareAt(agreement, START + 10000, 'testnet4').shareBps, 0, 'testnet4 keeps 1,000 identities');
 });

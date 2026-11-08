@@ -1566,9 +1566,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return mergeSignedSeasonAccounts(got.bySeat, { seatsOf: seasonSeatsOf, verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } } });
     },
     heightOf: (cHex) => { try { return Number(decodeRoundContract(fromHex(String(cHex))).censusHeight); } catch { return null; } } }) : null;
+  // THE SCALE'S NETWORK (kanban #1349): regtest's id reads the test scale; T3's `main` flag is mainnet's, set on a devnet by ARENA_CONTRIBUTION_MAIN=1
+  const contributionNetOf = (contract) => ballotNetKind(toHex(contract.networkId));
+  const contributionMain = (contract) => contributionNetOf(contract) === 'mainnet' || process.env.ARENA_CONTRIBUTION_MAIN === '1';
   const contributionShareOf = (contract) => (entry) => {
     if (!contributionBook || !entry || !entry.contribution) return 0;
-    try { return contributionBook.shareAt(entry.contribution.agreement, Number(contract.censusHeight), ballotNetKind(toHex(contract.networkId))).shareBps; } catch { return 0; }
+    try { return contributionBook.shareAt(entry.contribution.agreement, Number(contract.censusHeight), contributionNetOf(contract), null, { main: contributionMain(contract) }).shareBps; } catch { return 0; }
   };
   const anyAgreement = () => [...donationSets, ...approvedSets()].some((st) => (st.recipients || []).some((r) => r && r.contribution));
   const CONTRIBUTION_READ_MS = Number(process.env.ARENA_CONTRIBUTION_READ_MS || 30 * 60000);
@@ -11497,7 +11500,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!served.ok) return text(res, 404, served.why);
         const shareOf = contributionShareOf(c);
         const shares = (served.set.recipients || []).filter((r) => r && r.contribution).map((r) => {
-          const s = contributionBook ? contributionBook.shareAt(r.contribution.agreement, Number(c.censusHeight), ballotNetKind(toHex(c.networkId))) : null;
+          const s = contributionBook ? contributionBook.shareAt(r.contribution.agreement, Number(c.censusHeight), contributionNetOf(c), null, { main: contributionMain(c) }) : null;
           return { recipient: toHex(r.recipientPk), agreementId: s ? s.agreementId : null, shareBps: shareOf(r), state: s ? s.state : null,
             tranches: s ? s.tranches.map((x) => ({ milestone: x.milestone, bps: x.bps, metAt: x.metAt, vestedAt: x.vestedAt })) : [] };
         });
