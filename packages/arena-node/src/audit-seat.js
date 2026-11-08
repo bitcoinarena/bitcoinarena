@@ -48,8 +48,9 @@ export function createAuditDesk({ db, now = () => Date.now(), contextFor, vrf, v
   const mark = db.prepare('UPDATE audits SET contradicted = ? WHERE round_id = ? AND contradicted IS NULL');
 
   /** An AUDIT as posted: its bytes and the node's 64-byte signature after them. Answers { ok, kept, round, node } or { ok: false, why }. */
-  async function take(body, { forwarded = false } = {}) {
-    const arrived = now();
+  async function take(body, { forwarded = false, relayedAtMs = null } = {}) {
+    // AN AUDIT A RELAY HELD (kanban #1331 (2)): its time is the relay's own arrival time, and it counts when that is before the window's close
+    const arrived = relayedAtMs !== null ? Number(relayedAtMs) : now();
     if (!(body instanceof Uint8Array) || body.length <= 64) return { ok: false, status: 400, why: 'an AUDIT is posted as its bytes and its 64-byte signature' };
     const bytes = body.subarray(0, body.length - 64), signature = body.subarray(body.length - 64);
     let a;
@@ -57,7 +58,8 @@ export function createAuditDesk({ db, now = () => Date.now(), contextFor, vrf, v
     const ctx = await contextFor(a.roundId);
     if (!ctx || !ctx.ok) return { ok: false, status: 409, why: (ctx && ctx.why) || 'this seat holds nothing to check that AUDIT against' };
     if (BigInt(arrived) > BigInt(ctx.closeMs)) return { ok: false, status: 409, why: 'the round\'s window has closed: an AUDIT counts only before it' };
-    if (!forwarded) {
+    // signed within the tolerance of when it was held: here, or at the relay that held it
+    if (!forwarded || relayedAtMs !== null) {
       const d = a.atMs - BigInt(arrived);
       if ((d < 0n ? -d : d) > BigInt(AUDIT_TOLERANCE_MS)) return { ok: false, status: 409, why: `an AUDIT's signed time is within ${AUDIT_TOLERANCE_MS / 1000} s of the seat's clock (§13A rule 3)` };
     }
@@ -69,10 +71,31 @@ export function createAuditDesk({ db, now = () => Date.now(), contextFor, vrf, v
 
   /** The auditors of a round whose AUDIT this seat holds and no valid objection contradicted, node keys hex in order - its payout's lines. */
   const held = (roundId) => rows.all(roundId).filter((r) => r.contradicted === null).map((r) => toHex(new Uint8Array(r.node)));
-  /** What GET /audits answers: every AUDIT held, a contradicted one with why and its bytes and signature (the fraud proof's evidence). */
-  const list = (roundId) => rows.all(roundId).map((r) => ({ node: toHex(new Uint8Array(r.node)), atMs: Number(r.at_ms), arrivedMs: Number(r.arrived_ms),
+  /** What GET /audits answers: every AUDIT held, a contradicted one with why and its bytes and signature (the fraud proof's evidence); `full` every one's. */
+  const list = (roundId, { full = false } = {}) => rows.all(roundId).map((r) => ({ node: toHex(new Uint8Array(r.node)), atMs: Number(r.at_ms), arrivedMs: Number(r.arrived_ms),
     forwarded: !!r.forwarded, contradicted: r.contradicted,
-    ...(r.contradicted !== null ? { audit: toHex(new Uint8Array(r.bytes)) + toHex(new Uint8Array(r.signature)) } : {}) }));
+    ...(full || r.contradicted !== null ? { audit: toHex(new Uint8Array(r.bytes)) + toHex(new Uint8Array(r.signature)) } : {}) }));
+  /**
+   * THE AUDITS ON THE ROUND'S RELAYS (§13A.1 RULED 2026-11-07, kanban #1306/#1331 (2)): "An AUDIT counts when it is on the round's
+   * publication_relays[] by the cutoff, not only when a seat says it holds it." Every relay is a seat door: GET /audits?round=&full=1 at each one,
+   * and every AUDIT a relay held directly (not forwarded) before the window's close is taken here at the relay's arrival time - checked as any
+   * AUDIT is. Answers { asked, taken }.
+   */
+  async function fromRelays(roundId, relays, { fetcher = fetch, timeoutMs = 8000 } = {}) {
+    let taken = 0, asked = 0;
+    for (const relay of relays || []) {
+      let j = null;
+      try { const r = await fetcher(`${String(relay).replace(/\/+$/, '')}/audits?round=${toHex(roundId)}&full=1`, { signal: AbortSignal.timeout(timeoutMs) }); if (r.ok) j = await r.json(); } catch { j = null; }
+      if (!j || !Array.isArray(j.audits)) continue;
+      asked += 1;
+      for (const x of j.audits) {
+        if (!x || x.forwarded || typeof x.audit !== 'string' || !/^[0-9a-f]+$/.test(x.audit) || !Number.isFinite(Number(x.arrivedMs))) continue;
+        const got = await take(fromHex(x.audit), { forwarded: true, relayedAtMs: Number(x.arrivedMs) });
+        if (got.ok && got.kept) taken += 1;
+      }
+    }
+    return { asked, taken };
+  }
   /** A valid objection against one of the round's results: every AUDIT held for it is contradicted. Answers the node keys newly marked. */
   const contradict = (roundId, why) => {
     const open = rows.all(roundId).filter((r) => r.contradicted === null).map((r) => toHex(new Uint8Array(r.node)));
@@ -90,5 +113,5 @@ export function createAuditDesk({ db, now = () => Date.now(), contextFor, vrf, v
     objections: Number(db.prepare('SELECT COUNT(*) n FROM audit_objections').get().n),
   });
   const noteObjection = (roundId, entryId, taken) => db.prepare('INSERT OR IGNORE INTO audit_objections (round_id, entry_id, taken, at_ms) VALUES (?, ?, ?, ?)').run(roundId, entryId, taken ? 1 : 0, now());
-  return { take, held, list, contradict, contradicted, ownWork, noteObjection };
+  return { take, held, list, contradict, contradicted, ownWork, noteObjection, fromRelays };
 }
