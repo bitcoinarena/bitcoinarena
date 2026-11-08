@@ -273,9 +273,12 @@ export function dutyPostingsOf(marked) {
 /**
  * DOES THIS ROUND STAND AS A DUTY ROUND: `contract` names its creator and starts in the day the marker's slot posts (targetDay), and
  * the creator is within the first DUTY_PROOF_RANKS of the day's duty order over `orderEntries` (the entries of the round's census as its
- * root commits it: the order is drawn by bond, kanban #1325), `sw` the network's tag switch. { ok, rank, marker } or { ok: false, why }.
+ * root commits it: the order is drawn by bond, kanban #1325), `sw` the network's tag switch, `primaryConfirmed` whether the day's primary of the
+ * marker's app is confirmed (read for an emergency marker; kanban #1348). { ok, rank, marker } or { ok: false, why }.
  */
-export function dutyRoundStands({ contract, marker, orderEntries, sw = undefined }) {
+/** IS `m` THE DAY'S PRIMARY OF THE SAME APP AS THE EMERGENCY MARKER `of`: the same day (slot), the app's plain day item, kind 'D' (kanban #1348). */
+export const isPrimaryOf = (m, of) => !!m && !!of && m.kind === 'D' && !m.emergency && m.app === of.app && m.slot === of.slot;
+export function dutyRoundStands({ contract, marker, orderEntries, sw = undefined, primaryConfirmed = null }) {
   if (!marker) return { ok: false, why: 'its publication carries no duty marker: not a duty posting, so no proof' };
   if (!contract || !(contract.creatorPubkey instanceof Uint8Array)) return { ok: false, why: 'it names no creator, so it is nobody\'s duty posting' };
   if (!(contract.networkId instanceof Uint8Array) || typeof contract.startTimeMs !== 'bigint') return { ok: false, why: 'it names no network or no start' };
@@ -288,5 +291,11 @@ export function dutyRoundStands({ contract, marker, orderEntries, sw = undefined
   const rank = order.findIndex((k) => toHex(k) === creator);
   if (rank < 0) return { ok: false, why: `its creator ${creator.slice(0, 16)} is not in the round's census, so not in its day's duty order` };
   if (rank >= DUTY_PROOF_RANKS) return { ok: false, why: `its creator ${creator.slice(0, 16)} is rank ${rank + 1} of its day's duty order; a duty posting is by one of the first ${DUTY_PROOF_RANKS}` };
+  // A CONFLICTED PRIMARY'S CREATOR PROVES NOTHING BY ITS EMERGENCY GRIDS (§5A.3, RULED 2026-11-08 kanban #1348, chain-only): on a day with no confirmed
+  // primary of the item, the emergency grids of the day's rank-1 node count for no proofs - it could have killed its own primary with its own coins
+  // to run the day's proof rounds alone. Its rounds are still played; ranks 2 and 3's grids still count. `primaryConfirmed`: the checker's read of
+  // its chain (a seat) or of the primary's publication proven into its headers (the client); not known counts as none.
+  if (marker.emergency && rank === 0 && primaryConfirmed !== true)
+    return { ok: false, why: `its creator is rank 1 of its day's duty order and posted an emergency grid on a day with no confirmed ${marker.app}-day primary: that grid proves nothing (§5A.3)` };
   return { ok: true, rank: rank + 1, marker };
 }

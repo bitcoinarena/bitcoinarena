@@ -11815,7 +11815,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!held) return text(res, 404, 'no absent claim is held here for that root');
         // and, per named round, its publication with a merkle branch and its creator's signature: the client checks it is a duty
         // posting's round (kanban #727, client-committee.js absenceFromChain)
-        const contracts = {}, publications = {}, creators = {};
+        const contracts = {}, publications = {}, creators = {}, primaries = {};
         // the rounds a stalled node's notes name too, beside the seatings that seat them (§5A.3, protocol 26, kanban #1052)
         const stalled = Array.isArray(held.stalled) ? held.stalled : [];
         for (const rid of [...Object.keys(held.certs || {}).map((k) => k.split(':')[0]), ...stalled.flatMap((c) => c.proofs.map((p) => p.roundId))]) {
@@ -11824,8 +11824,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           contracts[rid] = toHex(new Uint8Array(row.contract));
           const pub = presence.publicationProofOf(rid); if (pub) publications[rid] = pub;
           const cr = presence.creatorSignatureOf(rid); if (cr) creators[rid] = cr;
+          // AN EMERGENCY ROUND'S DAY PRIMARY (kanban #1348): the client counts a rank-1 creator's emergency grid only beside it
+          const pr = presence.primaryProofOf ? presence.primaryProofOf(rid) : null; if (pr) primaries[rid] = pr;
         }
-        return json(res, 200, { root, claims: held.claims, certs: held.certs || {}, ...(stalled.length ? { stalled } : {}), contracts, publications, creators });
+        return json(res, 200, { root, claims: held.claims, certs: held.certs || {}, ...(stalled.length ? { stalled } : {}), contracts, publications, creators, primaries });
       }
       if (req.method === 'POST' && url.pathname === '/absent') {
         let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a JSON body { root, claims }'); }

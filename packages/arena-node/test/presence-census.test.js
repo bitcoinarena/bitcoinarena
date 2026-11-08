@@ -60,6 +60,8 @@ const rankOf = (c) => dutyOrderOf(c).findIndex((k) => toHex(k) === toHex(c.creat
  * marker - the primary's ('D') by the day's first in order, a backup's ('B') by another rank - and one plain publication per round of
  * nobody's duty. (A grid is one series published by one transaction; here each round has its own publication output in that transaction.)
  */
+// kanban #1348: the rank-1 posting as an emergency grid ('no-primary': the day has no confirmed primary; 'with-primary': a primary is confirmed beside it)
+let EMERGENCY = null;
 function publicationsOf(contracts) {
   const byPosting = new Map();
   const out = [];
@@ -70,7 +72,9 @@ function publicationsOf(contracts) {
     byPosting.get(key).push(c);
   }
   for (const [key, list] of byPosting) {
-    const marker = key.endsWith(':D') ? dutyMarkerOutput(dutySlotOf(list[0]), DUTY_ITEM) : backupMarkerOutput(dutySlotOf(list[0]), DUTY_ITEM);
+    const marker = key.endsWith(':D') ? dutyMarkerOutput(dutySlotOf(list[0]), EMERGENCY ? `${DUTY_ITEM}-emergency` : DUTY_ITEM) : backupMarkerOutput(dutySlotOf(list[0]), DUTY_ITEM);
+    if (EMERGENCY === 'with-primary' && key.endsWith(':D'))
+      out.push(serializeSpend({ inputs: [{ txid: b32(0x77), vout: dutySlotOf(list[0]) & 0xffff, sequence: 0xffffffff }], outputs: [dutyMarkerOutput(dutySlotOf(list[0]), DUTY_ITEM)], witnesses: [[new Uint8Array(64)]] }));
     out.push(serializeSpend({ inputs: [{ txid: roundId(list[0]), vout: 0, sequence: 0xffffffff }], outputs: [...list.map((c) => publicationOutput(roundId(c))), marker], witnesses: [[new Uint8Array(64)]] }));
   }
   return out;
@@ -181,7 +185,9 @@ function world({ over = {}, absent = [STOPPED], rounds = 8, selfPosted = 0, wron
   const contracts = Object.fromEntries(named.map((s) => [s.roundId, toHex(new Uint8Array(round.get(fromHex(s.roundId)).contract))]));
   // what GET /absent hands a client beside the contracts: each named round's publication with its branch, and its creator's signature
   const publications = Object.fromEntries(named.map((s) => [s.roundId, book.publicationProofOf(s.roundId)]));
-  return { round, roster, book, rid, contract, view, seatings, other, w, contracts, publications, creators, bonds, less };
+  // and an emergency round's day primary, as GET /absent hands it (kanban #1348)
+  const primaries = Object.fromEntries(named.map((s) => [s.roundId, book.primaryProofOf(s.roundId)]).filter(([, p]) => p));
+  return { round, roster, book, rid, contract, view, seatings, other, w, contracts, publications, primaries, creators, bonds, less };
 }
 const proofsOf = (list) => list.map((s) => ({ roundId: s.roundId, role: s.role }));
 /** A claim of `node` at `list` seatings, with `certs` (default: each signed honestly). */
@@ -192,7 +198,7 @@ const client = (W, claim) => {
   const ev = W.roster.censusEvidenceFor(W.rid);
   const own = ev.ok ? committeeFromChain({ contract: W.contract, roundId: W.rid, headers: W.view.blocks.map((b) => b.header), firstHeight: W.view.firstHeight,
     evidence: ev.entries, bond: bondSetFor('regtest'), verify }) : null;
-  return absenceFromChain({ contract: W.contract, claim: { ...claim, contracts: W.contracts, publications: W.publications, creators: W.creators }, headers: W.view.blocks.map((b) => b.header),
+  return absenceFromChain({ contract: W.contract, claim: { ...claim, contracts: W.contracts, publications: W.publications, primaries: W.primaries, creators: W.creators }, headers: W.view.blocks.map((b) => b.header),
     firstHeight: W.view.firstHeight, evidenceOf: (r) => W.roster.censusEvidenceFor(fromHex(r)).entries, bond: bondSetFor('regtest'), verify, entries: own && own.ok ? own.checkedCensus.entries : [] });
 };
 const keys = (list) => list.map((k) => toHex(k)).sort();
@@ -433,4 +439,27 @@ test('kanban #1325: the client refuses a committed census under 75 % of the chai
   const short = check(own.checkedCensus.entries.slice(2));
   assert.equal(short.ok, false);
   assert.match(short.why, /under 75 % of the \d+ this client sees on the chain itself/);
+});
+
+test('kanban #1348: the claim\'s proof seatings are emergency grids of the day\'s rank 1 - with no confirmed primary they prove nothing at the seat and at the client; beside a confirmed primary they stand', () => {
+  for (const mode of ['no-primary', 'with-primary']) {
+    EMERGENCY = mode;
+    try {
+      const W = world({ least: 3 });
+      const claim = claimOf(STOPPED, W.seatings.slice(0, 3));
+      W.book.keepClaim(toHex(W.contract.censusRoot), claim);
+      const c = W.roster.censusFor(W.rid);
+      const got = client(W, claim);
+      if (mode === 'no-primary') {
+        assert.equal(c.ok, false, 'the seat refuses');
+        assert.match(c.why, /no confirmed .*primary: that grid proves nothing/);
+        assert.equal(got.ok, false, 'the client refuses');
+        assert.match(got.why, /no confirmed .*primary: that grid proves nothing/);
+      } else {
+        assert.equal(c.ok, true, c.why);
+        assert.equal(got.ok, true, got.why);
+        assert.deepEqual(got.absent, [STOPPED]);
+      }
+    } finally { EMERGENCY = null; }
+  }
 });

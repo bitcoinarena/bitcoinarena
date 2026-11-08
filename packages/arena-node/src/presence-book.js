@@ -27,7 +27,7 @@ import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { absentFrom, weightsOf, checkAbsenceProof, provenProof, presentAt, missedAt, inWindow, ABSENCE_PROOF_SEATINGS } from '../../arena-protocol/src/presence.js';
 import { heartbeatSlotOf, decodeHeartbeatCertificate, HEARTBEAT_ROLES, HEARTBEAT_SLOTS_PER_ROUND, HEARTBEAT_SPACING_MS } from '../../arena-protocol/src/heartbeat.js';
 import { TYPE_HEARTBEAT_HEARD, networkOf } from '../../arena-protocol/src/constants.js';
-import { dutyMarkerOf, dutyRoundStands, dutyPostingsOf, DUTY_EMERGENCY_CAP } from '../../arena-protocol/src/duty.js';
+import { dutyMarkerOf, dutyRoundStands, dutyPostingsOf, isPrimaryOf, DUTY_EMERGENCY_CAP } from '../../arena-protocol/src/duty.js';
 import { TAG_SWITCH } from '../../arena-protocol/src/tag-switch.js';
 import { parseTransaction, commitmentsOf } from '../../arena-protocol/src/tx.js';
 import { seriesPublicationPayload } from '../../arena-protocol/src/series.js';
@@ -63,6 +63,12 @@ function postingsIn(view) {
   got = dutyPostingsOf(marked);
   postingsKept.set(view, got);
   return got;
+}
+
+/** THE DAY'S PRIMARY OF AN EMERGENCY MARKER'S APP in a view's blocks (kanban #1348): { block, m } of the first confirmed, or null. */
+function primaryIn(view, marker) {
+  for (const block of view.blocks) { const m = blockIndexOf(block).marked.find((x) => isPrimaryOf(x.marker, marker)); if (m) return { block, m }; }
+  return null;
 }
 
 /** What a proof names: a seating's role, or a heartbeat slot's. */
@@ -202,7 +208,8 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
     } else {
       const census = roster.censusFor(rid, null, { asCommitted: true });
       if (!census || !census.ok) return null;
-      answer = dutyRoundStands({ contract: c, marker: pub.marker, orderEntries: census.entries, sw: TAG_SWITCH[networkOf(c.networkId)] || null });
+      answer = dutyRoundStands({ contract: c, marker: pub.marker, orderEntries: census.entries, sw: TAG_SWITCH[networkOf(c.networkId)] || null,
+        primaryConfirmed: pub.marker.emergency ? !!primaryIn(view, pub.marker) : null });
     }
     dutyKept.set(ridHex, answer);
     if (dutyKept.size > 20000) dutyKept.delete(dutyKept.keys().next().value);
@@ -226,6 +233,24 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
       return { transaction: toHex(block.transactions[i]), position: positionIn(block, i), branch: branchIn(block, i, ix.txids).map(toHex) };
     }
     return null;
+  };
+  /** AN EMERGENCY ROUND'S DAY PRIMARY, for a client to prove (kanban #1348): { transaction, branch, position } of the first confirmed primary of the
+   * day and app its publication marks, or null - no such primary in this seat's view, or not an emergency round. */
+  const primaryProofOf = (ridHex) => {
+    let rid; try { rid = fromHex(ridHex); } catch { return null; }
+    const c = contractOf(rid);
+    if (!c) return null;
+    const view = viewOf(rid, c);
+    if (!view) return null;
+    const want = publicationPayloadOf(rid, c);
+    let pub = null;
+    for (const block of view.blocks) { const m = blockIndexOf(block).marked.find((x) => x.payloads.has(want)); if (m) { pub = m; break; } }
+    if (!pub || !pub.marker.emergency) return null;
+    const got = primaryIn(view, pub.marker);
+    if (!got) return null;
+    const ix = blockIndexOf(got.block);
+    if (!ix.txids) return null;
+    return { transaction: toHex(got.block.transactions[got.m.i]), position: positionIn(got.block, got.m.i), branch: branchIn(got.block, got.m.i, ix.txids).map(toHex) };
   };
   /** The creator's signature this seat holds of a round, hex - or null. */
   const creatorSignatureOf = (ridHex) => {
@@ -451,5 +476,5 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
   }
 
   return { seatingsIn, seenIn, presentsIn, proofsOf, certsOf, takeProof, takeCert, absentForPosting, claimFor, keepClaim, check, drawOf, dutyOf, heldCert,
-    publicationProofOf, creatorSignatureOf, roundsToReturn };
+    publicationProofOf, primaryProofOf, creatorSignatureOf, roundsToReturn };
 }
