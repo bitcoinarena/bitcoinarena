@@ -72,7 +72,7 @@ function play(round, who_) {
 const stepOf = (p, step) => { try { return readFileSync(p.log, 'utf8').split('\n').filter((l) => l.includes(`"step":"${step}"`)); } catch { return []; } };
 
 async function sharesAt(seat, h) {
-  const j = await getJson(`${seat}/contribution-shares?height=${h}`, 20000);
+  const j = await getJson(`${seat}/contribution-shares?height=${h}`, 60000);
   const s = (j.shares || []).find((x) => x.recipient === who.recipientPk) || null;
   return { height: j.height, shareBps: s ? s.shareBps : null, state: s ? s.state : null, tranches: s ? s.tranches : [], book: j.book };
 }
@@ -100,7 +100,9 @@ try {
   let vested = null;
   while (timeLeft() > 0) {
     const h = (await tip()) + 1;
-    const [a, b] = await Promise.all([sharesAt(SEATS[0], h), sharesAt(SEATS[3], h)]);
+    // a slow seat is asked again, never the end of the run (c46e, 2026-11-08: one 10 s timeout at MacBook load ~100 ended it 4 min before
+    // the round's settlement window closed - the books fill only after it, 10 min after the round's close)
+    let a, b; try { [a, b] = await Promise.all([sharesAt(SEATS[0], h), sharesAt(SEATS[3], h)]); } catch (e) { say({ step: 'shares not read', height: h, why: e.message }); await wait(30000); continue; }
     const t = (x) => x.tranches.map((y) => `${y.milestone}:${y.vestedAt}`).join(' ');
     say({ step: 'shares', height: h, seat1: { share: a.shareBps, tranches: t(a), book: a.book }, seat4: { share: b.shareBps, tranches: t(b), book: b.book } });
     if (a.tranches[0] && a.tranches[0].vestedAt !== null && a.tranches[1] && a.tranches[1].vestedAt !== null && a.shareBps === b.shareBps && JSON.stringify(a.tranches) === JSON.stringify(b.tranches)) { vested = { h, a }; break; }
