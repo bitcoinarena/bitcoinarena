@@ -463,3 +463,41 @@ test('kanban #1348: the claim\'s proof seatings are emergency grids of the day\'
     } finally { EMERGENCY = null; }
   }
 });
+
+// kanban #1367 (audit 2 #1204 INSTALLER-DOORS-4 / FED-B3): anyone may POST /absent, so a posted claim is an offer beside the others and never
+// replaces one; the census takes the first that stands and keeps it. Before: last writer wins, and the refusal it caused was kept per block.
+test('kanban #1367: a junk absent claim posted after or before the real one does not refuse the census', () => {
+  for (const order of ['real-first', 'junk-first', 'junk-alone-then-real']) {
+    const W = world();
+    W.roster.absence = { claimFor: W.book.claimFor, claimsFor: W.book.claimsFor, check: W.book.check, stand: W.book.standClaim };
+    const root = toHex(W.contract.censusRoot);
+    const real = claimOf(STOPPED, W.seatings.slice(0, 3));
+    const junk = [{ claims: [], certs: {} }, { claims: [{ node: LIVE_ONE, proofs: [] }], certs: {} }];
+    if (order === 'real-first') { assert.equal(W.book.keepClaim(root, real).ok, true); for (const j of junk) assert.equal(W.book.keepClaim(root, j).ok, true); }
+    if (order === 'junk-first') { for (const j of junk) W.book.keepClaim(root, j); W.book.keepClaim(root, real); }
+    if (order === 'junk-alone-then-real') {
+      for (const j of junk) W.book.keepClaim(root, j);
+      const before = W.roster.censusFor(W.rid);
+      assert.equal(before.ok, false, 'only junk held: refused');
+      W.book.keepClaim(root, real);
+    }
+    const c = W.roster.censusFor(W.rid);
+    assert.equal(c.ok, true, `${order}: ${c.why}`);
+    assert.deepEqual(c.absent.map((x) => x.node), [STOPPED]);
+    assert.equal(W.book.stoodFor(root), true, `${order}: the real claim is kept as the root's`);
+    assert.deepEqual(W.book.claimFor(root).claims.map((x) => x.node), [STOPPED], `${order}: GET /absent hands over the one that stood`);
+    // junk posted after it stood changes nothing
+    W.book.keepClaim(root, junk[1]);
+    assert.equal(W.roster.censusFor(W.rid).ok, true);
+    assert.equal(W.book.claimsFor(root)[0].claims[0].node, STOPPED);
+  }
+  // the offers for one root are capped: the 17th pushes out the oldest, never the one that stood
+  const W = world();
+  W.roster.absence = { claimFor: W.book.claimFor, claimsFor: W.book.claimsFor, check: W.book.check, stand: W.book.standClaim };
+  const root = toHex(W.contract.censusRoot);
+  W.book.keepClaim(root, claimOf(STOPPED, W.seatings.slice(0, 3)));
+  assert.equal(W.roster.censusFor(W.rid).ok, true);
+  for (let i = 0; i < 40; i++) W.book.keepClaim(root, { claims: [{ node: (i + 0x10).toString(16).padStart(2, '0').repeat(32), proofs: [] }], certs: {} });
+  assert.ok(W.book.claimsFor(root).length <= 17);
+  assert.equal(W.roster.censusFor(W.rid).ok, true);
+});

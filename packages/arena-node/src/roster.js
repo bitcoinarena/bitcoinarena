@@ -469,8 +469,24 @@ export class Roster {
    */
   absentCensus(contract, census, view, { asCommitted = false } = {}) {
     if (!dropsAbsent(contract) || !this.absence) return null;
-    const held = this.absence.claimFor(toHex(contract.censusRoot));
-    if (!held || !Array.isArray(held.claims)) return { ok: false, notYet: true, why: 'no absent claim is held here for that root' };
+    // EVERY CLAIM HELD FOR THE ROOT, the one that stood first (kanban #1367, audit 2 INSTALLER-DOORS-4 / FED-B3): anyone may post one, so a
+    // wrong one never decides alone. The first that stands is the census's, and is kept as the root's claim; with none, a claim not yet
+    // checkable answers not yet, else the first refusal
+    const rootHex = toHex(contract.censusRoot);
+    const helds = (typeof this.absence.claimsFor === 'function' ? this.absence.claimsFor(rootHex) : [this.absence.claimFor(rootHex)])
+      .filter((h) => h && Array.isArray(h.claims));
+    if (!helds.length) return { ok: false, notYet: true, why: 'no absent claim is held here for that root' };
+    let first = null, notYet = null;
+    for (const held of helds) {
+      const got = this.#lessClaim(contract, census, view, held, { asCommitted });
+      if (got.ok) { if (typeof this.absence.stand === 'function') try { this.absence.stand(rootHex, held); } catch { /* kept next time */ } return got; }
+      if (got.notYet && !notYet) notYet = got;
+      if (!first) first = got;
+    }
+    return notYet || first;
+  }
+
+  #lessClaim(contract, census, view, held, { asCommitted = false } = {}) {
     const claims = held.claims;
     // AND THE STALLED, AFTER THE ABSENT (§5A.3 "Stalled in its rounds", protocol 26, kanban #1052): the claim's other list, checked with it. Only the census's draw changes
     const stalled = Array.isArray(held.stalled) ? held.stalled : [];
@@ -610,7 +626,8 @@ export class Roster {
       // kept per series (or census key), so a series' other rounds naming the same root are answered from it
       // NOT KEPT WHILE ITS ABSENT CLAIM IS ONLY NOT HERE YET (kanban #727): the claim arrives by POST /absent or is fetched, and the
       // next ask must see it
-      if (atBlock && !(lessAbsent && lessAbsent.notYet)) {
+      // a refusal through an absent claim is never kept per block (kanban #1367): another claim for the root may stand when it arrives
+      if (atBlock && !lessAbsent) {
         if (!REFUSED_AT_BLOCK.has(atBlock)) REFUSED_AT_BLOCK.set(atBlock, new Map());
         REFUSED_AT_BLOCK.get(atBlock).set(`${kept}:${toHex(contract.censusRoot)}`, answer);
       }

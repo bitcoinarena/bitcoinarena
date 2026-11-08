@@ -19,6 +19,7 @@
 // slot's certificate (hb_certs, made by heartbeat-agent.js or gathered) names every census node it did not hear missed, and a HEARTBEAT
 // this seat held as a member (hb_beats) is evidence it refuses a census with, as a PRESENT is. A proof's role is a seating's (game,
 // settlement) or a slot's (heartbeat-0).
+import { createHash } from 'node:crypto';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { seatingCloseMs, verifyPresent, decodeSeatingCertificate, SEATING_ROLES } from '../../arena-protocol/src/seating.js';
@@ -95,6 +96,8 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
     CREATE TABLE IF NOT EXISTS presence_certs (round_id BLOB NOT NULL, role TEXT NOT NULL, close_ms INTEGER NOT NULL, cert BLOB NOT NULL,
       PRIMARY KEY (round_id, role));
     CREATE TABLE IF NOT EXISTS absent_claims (root TEXT PRIMARY KEY, claim TEXT NOT NULL, kept_ms INTEGER NOT NULL);
+    -- kanban #1367: what anyone posted for a root, kept beside the one that stood (absent_claims) - never in its place
+    CREATE TABLE IF NOT EXISTS absent_offers (root TEXT NOT NULL, digest TEXT NOT NULL, claim TEXT NOT NULL, kept_ms INTEGER NOT NULL, PRIMARY KEY (root, digest));
   `);
   // the seating agent's tables, so a seat with seating off reads empty ones
   db.exec(`
@@ -427,12 +430,36 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
   /** THE CLAIMS HELD, newest kept first (kanban #1350: the stalled an earlier census listed are carried forward from them): [{ root, claim }]. */
   const claimsHeld = (most = 200) => db.prepare('SELECT root, claim FROM absent_claims ORDER BY kept_ms DESC LIMIT ?').all(most)
     .map((r) => { try { return { root: r.root, claim: JSON.parse(r.claim) }; } catch { return null; } }).filter(Boolean);
-  /** The claim kept for a census root (hex): { claims, certs } - or null. */
+  const parsed = (r) => { try { return JSON.parse(r.claim); } catch { return null; } };
+  /** The claim for a census root (hex): the one that stood here, else the newest offered - { claims, certs } - or null. */
   const claimFor = (rootHex) => {
-    const r = db.prepare('SELECT claim FROM absent_claims WHERE root = ?').get(String(rootHex).toLowerCase());
-    if (!r) return null;
-    try { return JSON.parse(r.claim); } catch { return null; }
+    const root = String(rootHex).toLowerCase();
+    const r = db.prepare('SELECT claim FROM absent_claims WHERE root = ?').get(root)
+      || db.prepare('SELECT claim FROM absent_offers WHERE root = ? ORDER BY kept_ms DESC, digest LIMIT 1').get(root);
+    return r ? parsed(r) : null;
   };
+  /**
+   * EVERY CLAIM HELD FOR A ROOT (kanban #1367, audit 2 INSTALLER-DOORS-4 / FED-B3): the one that stood here first, then the offers newest first.
+   * A posted claim never replaces another, so a junk claim cannot push the duty node's real one out; the census tries each (roster.js absentCensus).
+   */
+  const claimsFor = (rootHex) => {
+    const root = String(rootHex).toLowerCase();
+    const stood = db.prepare('SELECT claim FROM absent_claims WHERE root = ?').get(root);
+    const offers = db.prepare('SELECT claim FROM absent_offers WHERE root = ? ORDER BY kept_ms DESC, digest').all(root);
+    const seen = new Set(), out = [];
+    for (const r of [...(stood ? [stood] : []), ...offers]) { if (seen.has(r.claim)) continue; seen.add(r.claim); const c = parsed(r); if (c) out.push(c); }
+    return out;
+  };
+  /** Whether a claim stood here for the root (the census derived with it). */
+  const stoodFor = (rootHex) => !!db.prepare('SELECT 1 FROM absent_claims WHERE root = ?').get(String(rootHex).toLowerCase());
+  /** THE CLAIM THAT STOOD: the census less it hashed to the root and every proof held (roster.js), or this seat's own posting's. Kept for good. */
+  const standClaim = (rootHex, claim) => {
+    const root = String(rootHex).toLowerCase();
+    if (!HEX64.test(root) || !claim || !Array.isArray(claim.claims)) return false;
+    db.prepare('INSERT OR REPLACE INTO absent_claims (root, claim, kept_ms) VALUES (?, ?, ?)').run(root, JSON.stringify(claim), Date.now());
+    return true;
+  };
+  const OFFERS_PER_ROOT = 16;
   /** Keep a claim for a root: well formed (the root decides whether it is the census's; the check decides whether it stands). */
   function keepClaim(rootHex, claim) {
     const root = String(rootHex || '').toLowerCase();
@@ -473,8 +500,14 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
         return { ok: false, why: 'a stalled proof names a round, its seating and the notes, hex' };
       stalled.push({ node, proofs });
     }
-    db.prepare('INSERT OR REPLACE INTO absent_claims (root, claim, kept_ms) VALUES (?, ?, ?)').run(root, JSON.stringify(stalled.length ? { claims: clean, certs, stalled } : { claims: clean, certs }), Date.now());
-    return { ok: true, root, nodes: clean.length, certs: Object.keys(certs).length, ...(stalled.length ? { stalled: stalled.length } : {}) };
+    // AN OFFER, NEVER A REPLACEMENT (kanban #1367): kept by its bytes' digest beside every other offer for the root; past OFFERS_PER_ROOT the
+    // oldest goes. Which one is the census's the census decides (roster.js absentCensus), and the first that stands is kept for good.
+    const kept = stalled.length ? { claims: clean, certs, stalled } : { claims: clean, certs };
+    const text = JSON.stringify(kept);
+    const digest = createHash('sha256').update(text).digest('hex');
+    db.prepare('INSERT OR IGNORE INTO absent_offers (root, digest, claim, kept_ms) VALUES (?, ?, ?, ?)').run(root, digest, text, Date.now());
+    db.prepare(`DELETE FROM absent_offers WHERE root = ? AND digest NOT IN (SELECT digest FROM absent_offers WHERE root = ? ORDER BY kept_ms DESC, digest LIMIT ${OFFERS_PER_ROOT})`).run(root, root);
+    return { ok: true, root, digest, kept, nodes: clean.length, certs: Object.keys(certs).length, ...(stalled.length ? { stalled: stalled.length } : {}) };
   }
 
   /** A SEAT'S CHECK of a claim ({ claims, certs }): every proof (presence.js checkAbsenceProof), and nothing it holds against it. */
@@ -498,6 +531,6 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
     return out;
   }
 
-  return { seatingsIn, seenIn, presentsIn, proofsOf, certsOf, takeProof, takeCert, absentForPosting, claimFor, keepClaim, check, drawOf, dutyOf, heldCert,
+  return { seatingsIn, seenIn, presentsIn, proofsOf, certsOf, takeProof, takeCert, absentForPosting, claimFor, claimsFor, stoodFor, standClaim, keepClaim, check, drawOf, dutyOf, heldCert,
     publicationProofOf, primaryProofOf, creatorSignatureOf, roundsToReturn, claimsHeld };
 }

@@ -2850,18 +2850,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return t && t.creatorSignature instanceof Uint8Array ? t.creatorSignature : null;
     } });
   const claimAsked = new Map();
+  // EVERY SEAT'S CLAIM FOR THE ROOT, each kept as an offer (kanban #1367): the first seat to answer may hold a wrong one
   const fetchClaim = async (rootHex) => {
-    for (const u of networkSeats()) {
+    await Promise.all(networkSeats().map(async (u) => {
       let got; try { const r = await fetch(`${u}/absent?root=${rootHex}`, { signal: AbortSignal.timeout(8000) }); got = r.ok ? await r.json() : null; } catch { got = null; }
-      if (got && Array.isArray(got.claims) && presence.keepClaim(rootHex, got).ok) { console.log(`[presence] absent claim of census ${rootHex.slice(0, 16)} taken from ${u}: ${got.claims.length} node(s)`); return; }
-    }
+      if (got && Array.isArray(got.claims) && presence.keepClaim(rootHex, got).ok) console.log(`[presence] absent claim of census ${rootHex.slice(0, 16)} offered by ${u}: ${got.claims.length} node(s)`);
+    }));
+  };
+  // asked again at most once a minute while no claim has stood here for the root
+  const askClaims = (rootHex) => {
+    if (presence.stoodFor(rootHex) || Date.now() - (claimAsked.get(rootHex) || 0) < 60000) return;
+    claimAsked.set(rootHex, Date.now()); fetchClaim(rootHex).catch(() => {});
   };
   roster.absence = {
-    claimFor: (rootHex) => {
-      const c = presence.claimFor(rootHex);
-      if (!c && !(Date.now() - (claimAsked.get(rootHex) || 0) < 60000)) { claimAsked.set(rootHex, Date.now()); fetchClaim(rootHex).catch(() => {}); }
-      return c;
-    },
+    claimFor: (rootHex) => { askClaims(rootHex); return presence.claimFor(rootHex); },
+    claimsFor: (rootHex) => { askClaims(rootHex); return presence.claimsFor(rootHex); },
+    stand: (rootHex, claim) => presence.standClaim(rootHex, claim),
     // THE ABSENT, THEN THE STALLED (§5A.3 "Stalled in its rounds", protocol 26, kanban #1052)
     check: (claim, ctx) => { const a = presence.check(claim, ctx); return a.ok ? stall.check(claim, ctx) : a; },
   };
@@ -2940,7 +2944,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!claim.claims.length && !out.stalled.length) return null;
     const kept = censusRootOf(withoutAbsent(census.entries, [...claim.claims, ...out.stalled]), { censusHeight: Number(contract.censusHeight), censusConfirmations: contract.censusConfirmations });
     const certs = { ...claim.certs, ...out.certs };
-    presence.keepClaim(toHex(kept.root), { ...claim, certs, ...(out.stalled.length ? { stalled: out.stalled } : {}) });
+    // this seat's own posting's claim: the root is made from it, so it stands here (kanban #1367)
+    { const own = { ...claim, certs, ...(out.stalled.length ? { stalled: out.stalled } : {}) };
+      const k = presence.keepClaim(toHex(kept.root), own);
+      if (k.ok) presence.standClaim(k.root, k.kept); }
     return { ...census, root: kept.root, entries: kept.entries, claims: claim.claims, certs, ...(out.stalled.length ? { stalled: out.stalled } : {}) };
   };
   // THIS SEAT AS A DRAWN ATTESTOR (kanban #630, protocol 21): only where it hosts a game whose attestors are drawn. Every 10 s it reads
@@ -12096,7 +12103,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'POST' && url.pathname === '/absent') {
         let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a JSON body { root, claims }'); }
         const k = presence.keepClaim(body && body.root, body);
-        return k.ok ? json(res, 201, k) : text(res, 400, k.why);
+        if (!k.ok) return text(res, 400, k.why);
+        const { kept: _claim, ...said } = k;   // offered, not yet the census's (kanban #1367)
+        return json(res, 201, { ...said, offered: true });
       }
       // THE STALL DOORS (§5A.3 "Stalled in its rounds", protocol 26, kanban #1052). GET /stall-notes?from=<ms>&to=<ms>: the StallNotes of rounds whose final_after lies in (from, to],
       // and the seating certificates of those rounds this seat holds, hex. POST /stall-notes: StallNotes, hex, one a line, each kept when it stands and this seat holds its round.
