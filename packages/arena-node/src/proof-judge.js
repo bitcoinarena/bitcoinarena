@@ -22,7 +22,7 @@ import { takesAnyFederation } from '../../arena-protocol/src/constants.js';
  * null where this seat does not host it; `beaconOf(contract, rid, entry, eid)` -> { ok, hash } or { ok: false, why }; `replayRunOf(rid, eid, core)` this seat's replay in its worker pool; `auditSetOf(contract, rid)` { eligible, total } who could audit the round, or null; `vrf` the secp256k1 ECVRF; `manifestOf(contract)` the round's game's manifest, or null; `clientOf(fid hex)` -> { fees(), txid(build) } this seat's own client of a federation, or null; `panelsOf(contract, rid)` -> { ok, panelA, panelB } of keys or { ok: false, why }; `holdBlocksOf(contract)`; `abandoned(bytes, beforeHeight)` -> { verdict, why } this seat's word on an abandonment's proof (federation-records.js abandonedVerdict); `theft(bytes, beforeHeight)` the same on a theft's proof (theftVerdict, kanban #1093 part 2); `claimRead(input)` the stake-lock tool's arena-claim-read over a named claim's sessions (offline), or null where none runs here (kanban #1044 B1); `lostForfeitOf(contract, rid, eid)` -> { allowed: true | false | null, why } whether a forfeit of that entry is one the protocol allows, by this seat's own record (forfeit.js lostForfeitAllowed, kanban #1044 row (b)); `bodyOf(input, build)` its arena-body, a level-1 proof (a)'s correct body rebuilt offline from the same sessions (stake-lock-port.js readBody), or null where none runs here; `payeesOf(contract, rid)` -> { nodeKeys, donationKeys, reserveKeys } who the round may pay (named-claim-payees.js), or null; `entriesOf(rid)` the round's Entry Contracts this seat holds, or null.
  * Answers `judge(bytes)` -> { verdict, why }, and `judge.read(bytes)`, the cheap part, with no replay: { ok, kind, bond: { txid, vout }, roundId, contract, floorHeight, nodePubkey } or { ok: false, why }.
  */
-export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, replayRunOf, auditSetOf = () => null, vrf = null, manifestOf = () => null, clientOf = async () => null, panelsOf = () => ({ ok: false, why: 'no panels here' }), holdBlocksOf = () => null, abandoned = async () => ({ verdict: undefined, why: 'this seat reads no federation records' }), theft = async () => ({ verdict: undefined, why: 'this seat audits no federation' }), claimRead = async () => null, bodyOf = async () => null, lostForfeitOf = () => ({ allowed: null, why: 'this seat reads no forfeit record' }), payeesOf = async () => null, entriesOf = () => null, waiting = 32, kept = 256 }) {
+export function createProofJudge({ committeeOf, censusOf, coreOf, coreFetch = async () => null, manifestFetch = async () => null, recordClientOf = async () => null, beaconOf, replayRunOf, auditSetOf = () => null, vrf = null, manifestOf = () => null, clientOf = async () => null, panelsOf = () => ({ ok: false, why: 'no panels here' }), holdBlocksOf = () => null, abandoned = async () => ({ verdict: undefined, why: 'this seat reads no federation records' }), theft = async () => ({ verdict: undefined, why: 'this seat audits no federation' }), claimRead = async () => null, bodyOf = async () => null, lostForfeitOf = () => ({ allowed: null, why: 'this seat reads no forfeit record' }), payeesOf = async () => null, entriesOf = () => null, waiting = 32, kept = 256 }) {
   /** Everything that needs no chain: the bytes read as a proof, and the contract in them is the round the proof names. */
   function read(bytes) {
     if (isAbandonedProof(bytes)) {
@@ -42,16 +42,23 @@ export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, repl
   }
 
   /** A replay's or an AUDIT's: the entry in the proof, and the core and the beacon it runs under. */
-  function replayInputs(r) {
+  // A HOLDER JUDGES WHETHER OR NOT IT HOSTS THE GAME (§5A.3B RULED 2026-11-07, kanban #1303/#1326): the core by the proof's sim_wasm_hash, fetched
+  // from a seat that hosts it and checked (`coreFetch`), and a read-only federation client from the public FederationRecord (`recordClientOf`);
+  // "does not host the game" is no reason to sign nothing
+  async function replayInputs(r) {
     let entry;
     try { entry = decodeEntryContract(r.complete.entry); } catch (e) { return { verdict: false, why: `the proof holds no entry: ${e.message}` }; }
-    const eid = entryIdOf(entry), core = coreOf(r.contract, r.roundId);
-    if (!core) return { verdict: undefined, why: 'this seat does not host that round\'s game' };
+    const eid = entryIdOf(entry);
+    let core = coreOf(r.contract, r.roundId);
+    if (!core) { try { core = await coreFetch(r.contract, r.roundId); } catch { core = null; } }
+    if (!core) return { verdict: undefined, why: 'this seat could not fetch that round\'s core by its sim_wasm_hash from any seat that hosts it' };
     const beacon = beaconOf(r.contract, r.roundId, entry, eid);
     if (!beacon.ok) return { verdict: undefined, why: `no beacon to replay under: ${beacon.why}` };
     return { entry, eid, core, roundRandomness: beacon.hash, replayRun: replayRunOf(r.roundId, eid, core) };
   }
 
+  const manifestFor = async (contract) => { const m = manifestOf(contract); if (m) return m; try { return (await manifestFetch(contract)) || null; } catch { return null; } };
+  const clientFor = async (fid) => { const c = await clientOf(fid); if (c) return c; try { return (await recordClientOf(fid)) || null; } catch { return null; } };
   async function fresh(bytes, depth = 0) {
     const r = read(bytes);
     if (!r.ok) return { verdict: false, why: r.why };
@@ -66,12 +73,12 @@ export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, repl
     let held;
     if (r.kind === 'double') held = judgeDoubleProof({ evidence, roundIdBytes: r.roundId, ...on });
     else if (r.kind === 'result' || r.kind === 'rerun') {
-      const inputs = replayInputs(r);
+      const inputs = await replayInputs(r);
       if (inputs.verdict !== undefined || !inputs.entry) return inputs;
       const given = { evidence, bundle, entry: inputs.entry, entryId: inputs.eid, contract: r.contract, core: inputs.core, roundRandomness: inputs.roundRandomness, replayRun: inputs.replayRun, ...on };
       held = await (r.kind === 'rerun' ? judgeRerunProof(given) : judgeProof(given));
     } else if (r.kind === 'audit') {
-      const inputs = replayInputs(r);
+      const inputs = await replayInputs(r);
       if (inputs.verdict !== undefined || !inputs.entry) return inputs;
       if (toHex(inputs.eid) !== toHex(r.got.proof.entryId)) return { verdict: false, why: 'the entry in that proof is not the one it names' };
       const set = auditSetOf(r.contract, r.roundId);
@@ -79,25 +86,25 @@ export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, repl
       held = await judgeAuditProof({ evidence, bundle, entry: inputs.entry, contract: r.contract, core: inputs.core, roundRandomness: inputs.roundRandomness, replayRun: inputs.replayRun, eligible: set.eligible, total: set.total, vrf, ...on });
     } else if (r.kind === 'table') {
       // ITS OWN CLIENT, ITS OWN FEE RULE AND ITS OWN HASH: no seat's word enters, and a seat with no client of a federation the table names cannot say
-      const manifest = manifestOf(r.contract);
-      if (!manifest) return { verdict: undefined, why: 'this seat does not host that round\'s game' };
+      const manifest = await manifestFor(r.contract);
+      if (!manifest) return { verdict: undefined, why: 'this seat could not fetch that round\'s game manifest from any seat that hosts it' };
       let table; try { table = decodeSettlementTable(r.got.table); } catch (e) { return { verdict: false, why: `not a proof of a false table: ${e.message}` }; }
       const any = takesAnyFederation(r.contract);
       const named = any ? [...r.got.entries, ...r.got.finals.map((f) => f.entry)].map((x) => toHex(x.federationId || new Uint8Array(32))) : [toHex(r.contract.federationId)];
       const home = any ? toHex(table.federationId) : toHex(r.contract.federationId), fees = new Map();
       for (const fid of new Set([...named, home])) {
-        const client = await clientOf(fid);
-        if (!client) return { verdict: undefined, why: `this seat holds no client of federation ${fid.slice(0, 16)}` };
+        const client = await clientFor(fid);
+        if (!client) return { verdict: undefined, why: `this seat holds no client of federation ${fid.slice(0, 16)} and could not read one from its record` };
         fees.set(fid, await client.fees());
       }
-      const hashing = await clientOf(home);
+      const hashing = await clientFor(home);
       held = await judgeTableProof({ evidence, roundIdBytes: r.roundId, contract: r.contract, manifest, feesOf: (fid) => fees.get(fid) || null, txidOf: (_t, build) => (namedClaims(r.contract) ? hashing.bodyId(build) : hashing.txid(build)), ...on });
     } else if (r.kind === 'named') {
       // A NAMED CLAIM (§5A.3 rows (a), (b), kanban #1044 B1): the sessions replayed offline by this seat's own tool; row (a)'s correct body rebuilt by the same tool, offline and without signers
-      const manifest = manifestOf(r.contract);
+      const manifest = await manifestFor(r.contract);
       // ROW (a) AT LEVEL 1 (measured 2026-11-05, round a8e68cb6): a proof exists only once its claim spent the round's locks, so its correct body is not
       // rebuilt through the guardians ("the guardians hold no Arena lock") but offline by `bodyOf`, from the lock contracts the proof's own sessions funded
-      if (r.got.row === NAMED_ROW_OFF_TABLE && !manifest) return { verdict: undefined, why: 'this seat does not host that round\'s game' };
+      if (r.got.row === NAMED_ROW_OFF_TABLE && !manifest) return { verdict: undefined, why: 'this seat could not fetch that round\'s game manifest from any seat that hosts it' };
       let table = null;
       if (r.got.row === NAMED_ROW_OFF_TABLE) { try { table = decodeSettlementTable(r.got.table); } catch (e) { return { verdict: false, why: `not a proof of a named claim: ${e.message}` }; } }
       const fees = new Map();

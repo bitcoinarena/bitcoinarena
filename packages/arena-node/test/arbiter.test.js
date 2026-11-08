@@ -187,7 +187,16 @@ test('a filed proof, re-judged by the arbiter from the seat\'s doors, is signed 
     assert.match((await seat(rebuilt({ contract: new Uint8Array(0) }))).why, /no contract/);
     assert.match((await seat(rebuilt({ evidence: joinSlashEvidence(x.evidence.subarray(0, x.evidence.length - signedResult.length), forgedSig) }))).why, /not signed by the node it names/);
     assert.match((await seat(rebuilt({ evidence: joinSlashEvidence(x.evidence.subarray(0, x.evidence.length - signedResult.length), honestRecord.bytes) }))).why, /another run/);
-    assert.equal((await judgeOf({ coreOf: () => null })(complete)).verdict, undefined, 'a seat that does not host the game cannot say, and signs nothing');
+    // A SEAT THAT HOSTS NO GAME JUDGES ANYWAY (§5A.3B RULED 2026-11-07, kanban #1303/#1326): the core fetched by the proof's sim_wasm_hash
+    const fetched = [];
+    const noGame = await judgeOf({ coreOf: () => null, coreFetch: async (c, r) => { fetched.push(toHex(c.simCoreHash)); return coreForRound(c, r, HOSTED); } })(complete);
+    console.log('  MEASURED #1326:', JSON.stringify({ hostsGame: false, fetchedCore: fetched.map((h) => h.slice(0, 16)), verdict: noGame.verdict }));
+    assert.equal(noGame.verdict, true, noGame.why);
+    assert.deepEqual(fetched, [toHex(decodeRoundContract(parts.contract).simCoreHash)]);
+    // and with no seat to fetch it from it still cannot say - never a false verdict
+    const none = await judgeOf({ coreOf: () => null })(complete);
+    assert.equal(none.verdict, undefined);
+    assert.match(none.why, /could not fetch that round's core by its sim_wasm_hash/);
     assert.equal((await judgeOf({ beaconOf: () => ({ ok: false, why: 'no block' }) })(complete)).verdict, undefined);
     assert.equal((await judgeOf({ censusOf: () => ({ ok: false, why: 'not read' }) })(complete)).verdict, undefined);
   } finally { await w.close(); }
