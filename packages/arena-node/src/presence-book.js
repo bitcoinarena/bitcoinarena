@@ -24,7 +24,7 @@ import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { seatingCloseMs, verifyPresent, decodeSeatingCertificate, SEATING_ROLES } from '../../arena-protocol/src/seating.js';
 import { slotsForRole } from '../../arena-protocol/src/sortition.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
-import { absentFrom, checkAbsenceProof, provenProof, presentAt, missedAt, inWindow, ABSENCE_PROOF_SEATINGS } from '../../arena-protocol/src/presence.js';
+import { absentFrom, weightsOf, checkAbsenceProof, provenProof, presentAt, missedAt, inWindow, ABSENCE_PROOF_SEATINGS } from '../../arena-protocol/src/presence.js';
 import { heartbeatSlotOf, decodeHeartbeatCertificate, HEARTBEAT_ROLES, HEARTBEAT_SLOTS_PER_ROUND, HEARTBEAT_SPACING_MS } from '../../arena-protocol/src/heartbeat.js';
 import { TYPE_HEARTBEAT_HEARD, networkOf } from '../../arena-protocol/src/constants.js';
 import { dutyMarkerOf, dutyRoundStands, dutyPostingsOf, DUTY_EMERGENCY_CAP } from '../../arena-protocol/src/duty.js';
@@ -362,9 +362,11 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
    * answers { presents, certs } (hex) from other seats - each taken - before the claim is made. Answers { claims, certs }: the claims
    * (presence.js absentFrom) and, by `${roundId}:${role}`, the certificate of every seating they name, hex.
    */
-  async function absentForPosting({ census, w, ask = null }) {
+  async function absentForPosting({ census, w, ask = null, entries = null }) {
+    // THE CAP (kanban #1291): with the chain census's entries, the claim leaves out at most 20 % of its bonded weight, oldest-missed first
+    const weights = entries ? weightsOf(entries) : null;
     // only the duty postings' rounds are named as proofs (dutyOf); every certificate still keeps the nodes it lists in
-    let claims = absentFrom({ seatings: seatingsIn(w), census, window: w, seen: presentsIn(w), dutyOf });
+    let claims = absentFrom({ seatings: seatingsIn(w), census, window: w, seen: presentsIn(w), dutyOf, weights });
     // THE CANDIDATES: every node of the census this seat saw nowhere - the certificates it holds are only of seatings it was drawn for
     const seen = seenIn(w);
     const unseen = [...new Set([...census].map((k) => String(k).toLowerCase()))].filter((n) => !seen.has(n));
@@ -373,7 +375,7 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
       try { got = await ask(unseen, w); } catch { got = null; }
       for (const b of (got && got.presents) || []) { try { takeProof(b instanceof Uint8Array ? b : fromHex(b), w); } catch { /* not one */ } }
       for (const b of (got && got.certs) || []) { try { takeCert(b instanceof Uint8Array ? b : fromHex(b)); } catch { /* not one */ } }
-      claims = absentFrom({ seatings: seatingsIn(w), census, window: w, seen: presentsIn(w), dutyOf });
+      claims = absentFrom({ seatings: seatingsIn(w), census, window: w, seen: presentsIn(w), dutyOf, weights });
     }
     const certs = {};
     for (const c of claims) for (const p of c.proofs) {

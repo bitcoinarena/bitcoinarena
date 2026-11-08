@@ -2804,7 +2804,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       return { presents: presents.slice(0, 4096), certs: [...new Set(certs)].slice(0, 8192) };
     };
-    const claim = await presence.absentForPosting({ census: census.entries.map((e) => toHex(e.pubkey)), w, ask });
+    const claim = await presence.absentForPosting({ census: census.entries.map((e) => toHex(e.pubkey)), w, ask, entries: census.entries });
     // AND THE STALLED, PAST THE ABSENT (§5A.3 "Stalled in its rounds", protocol 26, kanban #1052): every seat's notes of the 72 h, the 10 % read on what absence left
     const out = stallsOut(contract) ? await stall.forPosting({ entries: withoutAbsent(census.entries, claim.claims), t, ask: async (sw) => {
       const notes = [], certs = [];

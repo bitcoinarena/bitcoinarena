@@ -395,3 +395,23 @@ test('the page joins a 22 round only after it checked the absent claim the seats
     else { assert.equal(got.ok, false); assert.match(got.why, /leaves out a node without proof: .*it takes 3/); }
   }
 });
+
+test('kanban #1325: a claim leaving out more than 20 % of the chain census is refused by the seat whatever its proofs, and no census commits to it', () => {
+  const W = world();
+  const proofs = W.seatings.slice(0, 3);
+  const two = { claims: [{ node: STOPPED, proofs: proofsOf(proofs) }, { node: LIVE_ONE, proofs: proofsOf(proofs) }],
+    certs: Object.fromEntries(proofs.map((s) => [`${s.roundId}:${s.role}`, certOf(s)])) };
+  assert.equal(W.book.keepClaim(toHex(W.contract.censusRoot), two).ok, true, 'kept: the seat decides when it reads it');
+  const c = W.roster.censusFor(W.rid);
+  assert.equal(c.ok, false);
+  assert.match(c.why, /above the 20 % a census may leave out/);
+  // and the derivation itself refuses a census less those two (2 of 6 bonds)
+  const contract = decodeRoundContract(encodeRoundContract(contractFor({})));
+  const view = chainWith(W.bonds);
+  const byTxid = new Map();
+  for (const block of view.blocks) for (const raw of block.transactions) byTxid.set(toHex(parseTransaction(raw).txid), raw);
+  const d = deriveCensus(view, { contract, bond: bondSetFor('regtest'), absent: [{ node: STOPPED }, { node: LIVE_ONE }],
+    resolve: (e) => { const raw = byTxid.get(toHex(e.txid)); return raw ? { transaction: raw } : null; } });
+  assert.equal(d.ok, false);
+  assert.match(d.why, /above the 20 %/);
+});

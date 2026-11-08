@@ -42,7 +42,7 @@ import { bondPresigStands } from './slash-presig.js';
 import { bondNamesStandingKey } from './census-key.js';
 import { poolOfRole, GAME_VERIFY } from './fee.js';
 import { genesisFor } from './genesis.js';
-import { dropsAbsent, withoutAbsent, ABSENT_WHY } from './presence.js';
+import { dropsAbsent, withoutAbsent, absenceWithinCap, ABSENT_WHY } from './presence.js';
 import { isPartialBlock, markPartial } from './partial-view.js';
 export { isPartialBlock, positionIn, txCountOf, branchIn, partialViewOf } from './partial-view.js';
 
@@ -1684,6 +1684,9 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
   // commits to the set the claim names. Below 22, or with no claim, nothing.
   const absentOut = [];
   if (Array.isArray(absent) && absent.length && dropsAbsent(contract)) {
+    // THE CAP (kanban #1291): the absent weigh at most 20 % of the census they leave - a claim over it is refused, not trimmed here
+    const cap = absenceWithinCap(eligible, absent);
+    if (!cap.ok) return { ok: false, why: cap.why };
     const kept = withoutAbsent(eligible, absent);
     const keptSet = new Set(kept);
     for (const e of eligible) if (!keptSet.has(e)) absentOut.push({ ...e, absent: true, why: ABSENT_WHY });

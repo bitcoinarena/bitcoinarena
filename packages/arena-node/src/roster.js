@@ -20,7 +20,7 @@ import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { deriveCensus, censusRootOf } from '../../arena-protocol/src/census.js';
 import { presignedBond, roundPresigPlan } from '../../arena-protocol/src/slash-presig.js';
 import { standingKeysName } from '../../arena-protocol/src/census-key.js';
-import { dropsAbsent, withoutAbsent, presenceWindow, censusTimeMs, ABSENT_WHY } from '../../arena-protocol/src/presence.js';
+import { dropsAbsent, withoutAbsent, absenceWithinCap, presenceWindow, censusTimeMs, ABSENT_WHY } from '../../arena-protocol/src/presence.js';
 import { stallsOut, STALLED_WHY } from '../../arena-protocol/src/stall.js';
 import { selectCommittee, drawCommittee, drawPanels, slotsForRole, drawAttestors } from '../../arena-protocol/src/sortition.js';
 import { drawHeartbeat, hasHeartbeats, heartbeatCloseMs } from '../../arena-protocol/src/heartbeat.js';
@@ -475,6 +475,9 @@ export class Roster {
     // AND THE STALLED, AFTER THE ABSENT (§5A.3 "Stalled in its rounds", protocol 26, kanban #1052): the claim's other list, checked with it. Only the census's draw changes
     const stalled = Array.isArray(held.stalled) ? held.stalled : [];
     if (stalled.length && !stallsOut(contract)) return { ok: false, why: 'that claim leaves out stalled nodes and that round is not under the rule' };
+    // THE ABSENCE CAP (§5A.3, kanban #1291): the absent weigh at most 20 % of the chain census - a claim over it is refused whatever its proofs
+    const cap = absenceWithinCap(census.entries, claims);
+    if (!cap.ok) return { ok: false, why: cap.why, refuted: { node: null, proof: 'cap' } };
     const kept = censusRootOf(withoutAbsent(census.entries, [...claims, ...stalled]), { censusHeight: contract.censusHeight, censusConfirmations: contract.censusConfirmations });
     if (!kept.root.every((b, i) => b === contract.censusRoot[i]))
       return { ok: false, why: `less the ${claims.length} absent node(s) of its claim the chain gives ${toHex(kept.root).slice(0, 16)}` };
