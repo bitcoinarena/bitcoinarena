@@ -99,6 +99,24 @@ export function auditResultsHash(results) {
   return taggedHash(TAG.auditResults, w.finish());
 }
 
+/**
+ * THE REPLAYED TICK (§13A.1 RULED 2026-11-07, kanban #1306/#1331 (3)): "An AUDIT carries H(state at tick t) with t = beta mod T_run from the auditor's
+ * own VRF output, a tick that is not a checkpoint tick, so only a replayer can produce it; seats verify it from the replay they already did." From
+ * AUDIT_TICK_VERSION an AUDIT without it is refused. `beta` the auditor's VRF output, `runTicks` T_run, `checkpointEvery` the checkpoint interval:
+ * t = int(beta[0..8]) mod T_run, moved one tick on (mod T_run) when it lands on a checkpoint tick.
+ */
+export const AUDIT_TICK_VERSION = 28;
+export function auditTick({ beta, runTicks, checkpointEvery = 0 }) {
+  if (!(beta instanceof Uint8Array) || beta.length < 8) throw new Error('a VRF output of at least 8 bytes');
+  const n = BigInt(runTicks); if (n <= 0n) throw new Error('a run has ticks');
+  let x = 0n; for (let i = 0; i < 8; i++) x = (x << 8n) | BigInt(beta[i]);
+  let t = x % n;
+  const every = BigInt(checkpointEvery || 0);
+  if (every > 0n && t % every === 0n) t = (t + 1n) % n;
+  if (every > 0n && t % every === 0n) t = (t + 1n) % n;   // a run of one tick between checkpoints: the next
+  return Number(t);
+}
+
 export function encodeAudit(a) {
   if (!is32Audit(a.roundId) || !is32Audit(a.resultsHash) || !is32Audit(a.nodePubkey)) throw new Error('an AUDIT names a round, its results and its node (32 bytes each)');
   if (!(a.vrfProof instanceof Uint8Array) || a.vrfProof.length !== AUDIT_PROOF_BYTES) throw new Error(`an AUDIT carries its ${AUDIT_PROOF_BYTES}-byte VRF proof`);
@@ -106,6 +124,8 @@ export function encodeAudit(a) {
   w.u8(TYPE_AUDIT); w.u16(PROTOCOL_VERSION);
   if (typeof a.atMs !== 'bigint' || a.atMs < 0n) throw new Error('an AUDIT carries the time it was signed (BigInt ms)');
   w.bytes32(a.roundId); w.bytes32(a.resultsHash); w.bytes32(a.nodePubkey); w.u64(a.atMs); w.bytes(a.vrfProof, AUDIT_PROOF_BYTES);
+  // AND THE REPLAYED TICK'S STATE HASH (kanban #1331), when it carries one: 32 bytes at the end - an AUDIT without them is byte for byte as before
+  if (a.tickHash !== undefined && a.tickHash !== null) { if (!is32Audit(a.tickHash)) throw new Error('an AUDIT\'s tick hash is 32 bytes'); w.bytes32(a.tickHash); }
   return w.finish();
 }
 
@@ -114,6 +134,7 @@ export function decodeAudit(bytes) {
   if (r.u8() !== TYPE_AUDIT) throw new Error('not an AUDIT');
   r.u16();
   const a = { roundId: r.bytes32(), resultsHash: r.bytes32(), nodePubkey: r.bytes32(), atMs: r.u64(), vrfProof: r.bytes(AUDIT_PROOF_BYTES) };
+  if (r.at < bytes.length) a.tickHash = r.bytes32();
   r.end();
   return a;
 }
@@ -126,7 +147,7 @@ export const auditId = (a) => taggedHash(TAG.audit, encodeAudit(a));
  * round under that node's key, the node eligible and drawn, and its results hash the one being settled. The arrival time is the
  * seat's to check (signed times, §13A rule 3). Answers { ok, beta } or { ok: false, why }.
  */
-export function auditStands(a, { signature, vrf, verify, eligible, total, resultsHash, windowCloseMs = null }) {
+export function auditStands(a, { signature, vrf, verify, eligible, total, resultsHash, windowCloseMs = null, protocolVersion = 0, runTicks = null, checkpointEvery = 0, stateHashAt = null }) {
   if (windowCloseMs !== null && a.atMs > BigInt(windowCloseMs) - BigInt(AUDIT_LEAD_MS)) return { ok: false, why: `an AUDIT is signed at least ${AUDIT_LEAD_MS / 1000} s before the window closes` };
   if (!(signature instanceof Uint8Array) || signature.length !== 64) return { ok: false, why: 'an AUDIT is signed (64 bytes)' };
   if (!verify(signature, auditId(a), a.nodePubkey)) return { ok: false, why: 'the AUDIT is not signed by the node it names' };
@@ -137,6 +158,16 @@ export function auditStands(a, { signature, vrf, verify, eligible, total, result
   if (!beta) return { ok: false, why: 'the VRF proof does not verify for that node and round' };
   if (!isAuditor({ beta, weight, total })) return { ok: false, why: 'that node was not drawn to audit this round' };
   if (resultsHash && toHex(resultsHash) !== toHex(a.resultsHash)) return { ok: false, why: 'the AUDIT vouches for other results than these' };
+  // THE REPLAYED TICK (kanban #1331 (3)): from AUDIT_TICK_VERSION the AUDIT carries H(state at its tick), and it counts only where this seat's own replay
+  // gives the same hash - a seat with no replay of that tick does not count it
+  if (Number(protocolVersion) >= AUDIT_TICK_VERSION) {
+    if (!is32Audit(a.tickHash)) return { ok: false, why: 'an AUDIT carries H(state at its VRF tick) - only a replayer can produce it' };
+    if (!Number.isInteger(Number(runTicks)) || typeof stateHashAt !== 'function') return { ok: false, why: 'this seat holds no replay to check the AUDIT\'s tick against' };
+    const t = auditTick({ beta, runTicks, checkpointEvery });
+    let mine = null; try { mine = stateHashAt(t); } catch { mine = null; }
+    if (!is32Audit(mine)) return { ok: false, why: `this seat's replay has no state at tick ${t}` };
+    if (toHex(mine) !== toHex(a.tickHash)) return { ok: false, why: `the AUDIT's state at tick ${t} is not the replay's` };
+  }
   return { ok: true, beta };
 }
 
