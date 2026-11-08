@@ -39,12 +39,12 @@
 // any other series proves nothing; its certificate still keeps the nodes it lists in. Every seat and the client decide it the same way
 // (`dutyOf` below: presence-book.js at a seat, client-committee.js at the client).
 import { toHex } from './hash.js';
-import { PRESENCE_VERSION, ABSENCE_PROOF_SEATINGS, ABSENCE_PROOF_SPACING_MS } from './constants.js';
+import { PRESENCE_VERSION, ABSENCE_PROOF_SEATINGS, ABSENCE_PROOF_SPACING_MS, ABSENCE_CAP_BPS } from './constants.js';
 import { medianTimePast } from './beacon.js';
 import { verifySeating } from './seating.js';
 import { provenHeartbeat, heartbeatSlotOf } from './heartbeat.js';
 
-export { ABSENCE_PROOF_SEATINGS, ABSENCE_PROOF_SPACING_MS };
+export { ABSENCE_PROOF_SEATINGS, ABSENCE_PROOF_SPACING_MS, ABSENCE_CAP_BPS };
 /**
  * HOW MANY OF THESE CLOSES COUNT: the most that lie pairwise at least ABSENCE_PROOF_SPACING_MS apart (newest first, each the next
  * one at least 1 h older - the greedy pick is the largest such set on a line).
@@ -120,7 +120,7 @@ export function provenProof(bytes, { roundId, role, d, verify }) {
  * day, { ok: false } for any other (or null: not known yet - treated as no proof). A certificate of any round keeps the nodes it lists
  * in (it is evidence of presence); only a duty round's certificate is named as proof of a miss.
  */
-export function absentFrom({ seatings, census, window, seen = [], dutyOf = null }) {
+export function absentFrom({ seatings, census, window, seen = [], dutyOf = null, weights = null }) {
   const inCensus = [...new Set([...census].map(hexOfPresence))].sort();
   const sawIt = new Set([...seen].map(hexOfPresence));
   const evidence = (seatings || []).filter((s) => inWindow(window, s.closeMs))
@@ -140,9 +140,52 @@ export function absentFrom({ seatings, census, window, seen = [], dutyOf = null 
       last = s.closeMs;
       proofs.push({ roundId: s.roundId, role: s.role });
     }
-    if (proofs.length >= ABSENCE_PROOF_SEATINGS) claims.push({ node, proofs });
+    if (proofs.length >= ABSENCE_PROOF_SEATINGS) claims.push({ node, proofs, sinceMs: BigInt(last) });
   }
-  return claims;
+  // THE CAP (kanban #1291): with the census's weights, at most ABSENCE_CAP_BPS of it, those whose oldest named miss is oldest first
+  const kept = weights ? absenceCapKept(claims, weights) : claims;
+  return kept.map(({ node, proofs }) => ({ node, proofs }));
+}
+
+/** The census's bonded weight by node (hex key -> bigint sats): every output of a node counts to it. */
+export function weightsOf(entries) {
+  const w = new Map();
+  for (const e of entries || []) { const k = hexOfPresence(e.pubkey); w.set(k, (w.get(k) || 0n) + BigInt(e.bondSats)); }
+  return w;
+}
+const totalOf = (weights) => { let t = 0n; for (const v of weights.values()) t += v; return t; };
+
+/**
+ * THE ABSENCE CAP, IN ORDER (§5A.3, kanban #1291): `claims` [{ node, sinceMs (its oldest named miss) }], `weights` weightsOf(the chain
+ * census). Kept: oldest miss first (then key), up to the first that would take the kept at most ABSENCE_CAP_BPS past ABSENCE_CAP_BPS of the census - it and every newer one stay in. No exception for the first: a
+ * node above the cap alone stays in. Answers the kept claims, by node.
+ */
+export function absenceCapKept(claims, weights) {
+  const total = totalOf(weights);
+  const order = [...claims].sort((a, b) => (BigInt(a.sinceMs) === BigInt(b.sinceMs) ? (a.node < b.node ? -1 : 1) : (BigInt(a.sinceMs) < BigInt(b.sinceMs) ? -1 : 1)));
+  const kept = [];
+  let out = 0n;
+  for (const c of order) {
+    const w = weights.get(hexOfPresence(c.node)) || 0n;
+    if ((out + w) * 10000n > total * ABSENCE_CAP_BPS) break;
+    kept.push(c); out += w;
+  }
+  return kept.sort((a, b) => (a.node < b.node ? -1 : 1));
+}
+
+/**
+ * IS THE ABSENT SET WITHIN THE CAP: the weight of `chainEntries` whose node `absent` names, against ABSENCE_CAP_BPS of all of them. What
+ * every seat and the client check of a committed census (deriveCensus refuses one over it). Answers { ok, outSats, totalSats } or { ok: false, why, ... }.
+ */
+export function absenceWithinCap(chainEntries, absent) {
+  const weights = weightsOf(chainEntries);
+  const total = totalOf(weights);
+  let outSats = 0n;
+  for (const k of new Set((absent || []).map((a) => hexOfPresence(a.node || a)))) outSats += weights.get(k) || 0n;
+  if (outSats * 10000n > total * ABSENCE_CAP_BPS) {
+    return { ok: false, outSats, totalSats: total, why: `that claim leaves out ${outSats} of ${total} bonded sats as absent, above the ${Number(ABSENCE_CAP_BPS) / 100} % a census may leave out (§5A.3)` };
+  }
+  return { ok: true, outSats, totalSats: total };
 }
 
 /** The census less every output of an absent node (a node is its key: all its bonds go with it). */

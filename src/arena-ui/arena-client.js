@@ -636,6 +636,11 @@ const STALL_PROOF_ROUNDS = 3;
 const STALL_WINDOW_MS = 72n * 3600n * 1000n;
 /** Nodes out by this rule hold at most this share of the census's weight, in basis points, over and above absence: past it those named longest ago are out and the rest stay in. */
 const STALL_CAP_BPS = 1000n;
+/**
+ * THE ABSENCE CAP (§5A.3, RULED 2026-11-07 kanban #1291): the census a duty node posts leaves out as absent at most this share of the chain
+ * census's bonded weight, in basis points - oldest-missed first, the rest stay in. A claim over it is refused by every seat and the client.
+ */
+const ABSENCE_CAP_BPS = 2000n;
 /** A settlement that has not landed this long after the round's final_after is a stalled one. */
 const STALL_SETTLEMENT_WAIT_MS = 7200000n;
 /** EVERY BONDED NODE HOSTS A MARKET WITH A SOURCE (kanban #920): its rounds say so in their question (`event.allBonded`), so no node's advertisement has to name each new market. */
@@ -11864,7 +11869,7 @@ function provenProof(bytes, { roundId, role, d, verify }) {
  * day, { ok: false } for any other (or null: not known yet - treated as no proof). A certificate of any round keeps the nodes it lists
  * in (it is evidence of presence); only a duty round's certificate is named as proof of a miss.
  */
-function absentFrom({ seatings, census, window, seen = [], dutyOf = null }) {
+function absentFrom({ seatings, census, window, seen = [], dutyOf = null, weights = null }) {
   const inCensus = [...new Set([...census].map(hexOfPresence))].sort();
   const sawIt = new Set([...seen].map(hexOfPresence));
   const evidence = (seatings || []).filter((s) => inWindow(window, s.closeMs))
@@ -11884,9 +11889,52 @@ function absentFrom({ seatings, census, window, seen = [], dutyOf = null }) {
       last = s.closeMs;
       proofs.push({ roundId: s.roundId, role: s.role });
     }
-    if (proofs.length >= ABSENCE_PROOF_SEATINGS) claims.push({ node, proofs });
+    if (proofs.length >= ABSENCE_PROOF_SEATINGS) claims.push({ node, proofs, sinceMs: BigInt(last) });
   }
-  return claims;
+  // THE CAP (kanban #1291): with the census's weights, at most ABSENCE_CAP_BPS of it, those whose oldest named miss is oldest first
+  const kept = weights ? absenceCapKept(claims, weights) : claims;
+  return kept.map(({ node, proofs }) => ({ node, proofs }));
+}
+
+/** The census's bonded weight by node (hex key -> bigint sats): every output of a node counts to it. */
+function weightsOf(entries) {
+  const w = new Map();
+  for (const e of entries || []) { const k = hexOfPresence(e.pubkey); w.set(k, (w.get(k) || 0n) + BigInt(e.bondSats)); }
+  return w;
+}
+const totalOf = (weights) => { let t = 0n; for (const v of weights.values()) t += v; return t; };
+
+/**
+ * THE ABSENCE CAP, IN ORDER (§5A.3, kanban #1291): `claims` [{ node, sinceMs (its oldest named miss) }], `weights` weightsOf(the chain
+ * census). Kept: oldest miss first (then key), up to the first that would take the kept at most ABSENCE_CAP_BPS past ABSENCE_CAP_BPS of the census - it and every newer one stay in. No exception for the first: a
+ * node above the cap alone stays in. Answers the kept claims, by node.
+ */
+function absenceCapKept(claims, weights) {
+  const total = totalOf(weights);
+  const order = [...claims].sort((a, b) => (BigInt(a.sinceMs) === BigInt(b.sinceMs) ? (a.node < b.node ? -1 : 1) : (BigInt(a.sinceMs) < BigInt(b.sinceMs) ? -1 : 1)));
+  const kept = [];
+  let out = 0n;
+  for (const c of order) {
+    const w = weights.get(hexOfPresence(c.node)) || 0n;
+    if ((out + w) * 10000n > total * ABSENCE_CAP_BPS) break;
+    kept.push(c); out += w;
+  }
+  return kept.sort((a, b) => (a.node < b.node ? -1 : 1));
+}
+
+/**
+ * IS THE ABSENT SET WITHIN THE CAP: the weight of `chainEntries` whose node `absent` names, against ABSENCE_CAP_BPS of all of them. What
+ * every seat and the client check of a committed census (deriveCensus refuses one over it). Answers { ok, outSats, totalSats } or { ok: false, why, ... }.
+ */
+function absenceWithinCap(chainEntries, absent) {
+  const weights = weightsOf(chainEntries);
+  const total = totalOf(weights);
+  let outSats = 0n;
+  for (const k of new Set((absent || []).map((a) => hexOfPresence(a.node || a)))) outSats += weights.get(k) || 0n;
+  if (outSats * 10000n > total * ABSENCE_CAP_BPS) {
+    return { ok: false, outSats, totalSats: total, why: `that claim leaves out ${outSats} of ${total} bonded sats as absent, above the ${Number(ABSENCE_CAP_BPS) / 100} % a census may leave out (§5A.3)` };
+  }
+  return { ok: true, outSats, totalSats: total };
 }
 
 /** The census less every output of an absent node (a node is its key: all its bonds go with it). */
@@ -13644,6 +13692,9 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
   // commits to the set the claim names. Below 22, or with no claim, nothing.
   const absentOut = [];
   if (Array.isArray(absent) && absent.length && dropsAbsent(contract)) {
+    // THE CAP (kanban #1291): the absent weigh at most 20 % of the census they leave - a claim over it is refused, not trimmed here
+    const cap = absenceWithinCap(eligible, absent);
+    if (!cap.ok) return { ok: false, why: cap.why };
     const kept = withoutAbsent(eligible, absent);
     const keptSet = new Set(kept);
     for (const e of eligible) if (!keptSet.has(e)) absentOut.push({ ...e, absent: true, why: ABSENT_WHY });

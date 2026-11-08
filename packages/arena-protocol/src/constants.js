@@ -47,6 +47,11 @@ export const STALL_PROOF_ROUNDS = 3;
 export const STALL_WINDOW_MS = 72n * 3600n * 1000n;
 /** Nodes out by this rule hold at most this share of the census's weight, in basis points, over and above absence: past it those named longest ago are out and the rest stay in. */
 export const STALL_CAP_BPS = 1000n;
+/**
+ * THE ABSENCE CAP (§5A.3, RULED 2026-11-07 kanban #1291): the census a duty node posts leaves out as absent at most this share of the chain
+ * census's bonded weight, in basis points - oldest-missed first, the rest stay in. A claim over it is refused by every seat and the client.
+ */
+export const ABSENCE_CAP_BPS = 2000n;
 /** A settlement that has not landed this long after the round's final_after is a stalled one. */
 export const STALL_SETTLEMENT_WAIT_MS = 7200000n;
 /** EVERY BONDED NODE HOSTS A MARKET WITH A SOURCE (kanban #920): its rounds say so in their question (`event.allBonded`), so no node's advertisement has to name each new market. */
