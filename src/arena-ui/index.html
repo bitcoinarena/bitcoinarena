@@ -7193,9 +7193,10 @@
       // ROCK PAPER SCISSORS THE SAME (kanban #951, measured 2026-11-07 19:2xZ on UI 579: the seats hosting version 6 before any v6 table
       // was posted made the tile open v6, and the lobby read v6's rounds alone - gotRaw 0 while the seats listed 118 v5 rounds). Its client
       // plays any version's round: each round's contract names its own core.
-      // ONLY THE NEWEST ROCK PAPER SCISSORS (the owner 2026-11-08, kanban #1361: "Immer nur die letzte rps Version spielen"): its tile's version alone,
-      // the newest the seats host - a v6 round after a v5 one started the match score at 0:0, and the two versions' clients differ
-      const everyVersion = game.name === 'nextblock';
+      // THE NEWEST ROCK PAPER SCISSORS THAT HAS A ROUND (the owner 2026-11-08, kanban #1361: "Immer nur die letzte rps Version spielen"): every
+      // version is read, and each slot offers only its newest version's rounds (sameVersionPerSlot) - the seats' daily duty posts the tables a day
+      // ahead, so on the day a version is first hosted its tables are not out yet, and the tile showed no round at all (measured on UI 586)
+      const everyVersion = game.name === 'nextblock' || game.name === 'rock-paper-scissors';
       window.ARENA_GAME_IDS = everyVersion && Array.isArray(game.versions) && game.versions.length ? game.versions : [game.id];
       // A TABLE WAITS (2026-10-11, path B): a head-to-head game with no round of it open asks the seats for
       // one - POST /h2h-want, every 30 s while none is open; their operator publishes the next 30 min of rounds in one
@@ -7241,8 +7242,11 @@
       if (!Array.isArray(window.ARENA_GAME_IDS) || window.ARENA_GAME_IDS.length < 2) return rows;
       const gid = (r) => { const c = r.contract || (r.raw && r.raw.contract); return c && c.gameId instanceof Uint8Array ? ARENACLIENT.toHex(c.gameId) : null; };
       const slotOf = (r) => String(r.entryCloseMs ?? (r.raw && r.raw.entryCloseMs) ?? '');
-      const hasOwn = new Set(rows.filter((r) => gid(r) === own).map(slotOf));
-      return rows.filter((r) => !hasOwn.has(slotOf(r)) || gid(r) === own);
+      // the NEWEST version a slot has (ARENA_GAME_IDS is newest first): one version per slot, and the newest one there is
+      const rank = (r) => { const i = window.ARENA_GAME_IDS.indexOf(gid(r)); return i < 0 ? 1e9 : i; };
+      const best = new Map();
+      for (const r of rows) { const k = slotOf(r), x = rank(r); if (!best.has(k) || x < best.get(k)) best.set(k, x); }
+      return rows.filter((r) => rank(r) === best.get(slotOf(r)));
     }
     function moneyFirst(rows, onlyOurs = false) {
       const parts = (window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || [];
@@ -7291,10 +7295,10 @@
           stakeSats: r.stakeSats, entryCloseMs: r.raw ? Number(r.raw.entryCloseMs) : null, startTimeMs: r.raw ? Number(r.raw.startTimeMs) : null })),
         // EVERY LISTED ROUND OF THIS GAME: rows() is the lobby's one per kind (the free one with the most entry
         // left); a game of short rounds - Rock Paper Scissors' 15 s - picks its own among all of them, e.g. the soonest to close
-        // ONE VERSION PER SLOT (kanban #1361, the owner 2026-11-08: "Damit resetted sich der score gegen den bot und faengt wieder bei 0:0 an"):
-        // every close slot lists Rock Paper Scissors' version 5 and version 6 rounds (#951 lists every version), and a seat continues a match only
-        // from the previous round of the same game id - a v6 round, then a v5 one, started the score at 0:0. A slot that holds rounds of the
-        // tile's own version offers only those; a slot with none of them offers what it has.
+        // ONE VERSION PER SLOT, THE NEWEST (kanban #1361, the owner 2026-11-08: "Damit resetted sich der score gegen den bot und faengt wieder bei
+        // 0:0 an", "Immer nur die letzte rps Version spielen"): every close slot lists several Rock Paper Scissors versions, and a seat continues a
+        // match only from the previous round of the same game id - a v6 round, then a v5 one, started the score at 0:0. Each slot offers its
+        // newest version's rounds alone.
         allRows: () => sameVersionPerSlot(moneyFirst(window.ARENA_LOBBY_ROWS || [], true), game.id).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
           stakeSats: r.stakeSats, entryCloseMs: r.entryCloseMs !== undefined && r.entryCloseMs !== null ? Number(r.entryCloseMs) : null,
           startTimeMs: r.contract ? Number(r.contract.startTimeMs) : null })),
