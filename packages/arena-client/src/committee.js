@@ -116,12 +116,24 @@ async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, expl
   return got;
 }
 
-async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Set() }) {
+/** How many independent providers a bond list must come from before the client pays (§25.1 RULED 2026-11-07, kanban #1312/#1333). */
+export const CENSUS_PROVIDERS_TO_LOCK = 2;
+/**
+ * THE BOND LIST FROM TWO PROVIDERS, AS THEIR UNION (§25.1 RULED 2026-11-07, kanban #1312/#1333): "Omission is the attack, so the second source is
+ * normative: a client that pays takes bond lists from at least two independent providers and uses the union ... A list that one provider serves
+ * alone is enough to look, not to lock." Each provider is a distinct node (its endpoint root); the entries are joined by bond outpoint, so a bond
+ * one of them left out is back in the union - and a union that no longer matches the round's census_root is then refused by the root check.
+ * One provider alone answers { ok: false, lookOnly: true }. Not yet here: §25.1's completeness from BIP158 filters since a census checkpoint
+ * (no filter source in the browser yet).
+ */
+async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Set(), providers = CENSUS_PROVIDERS_TO_LOCK }) {
   const key = toHex(contract.censusRoot);
   if (keptCensus.has(key) && !skip.size) return { ok: true, entries: keptCensus.get(key), from: 'kept' };
-  const refused = [];
+  const refused = [], got = [], roots = new Set();
   for (const u of nodes) {
-    if (skip.has(u)) continue;
+    if (skip.has(u) || got.length >= providers) continue;
+    const root = String(baseOf(u)).toLowerCase();
+    if (roots.has(root)) continue;
     try {
       const r = await readWithOneRetry(fetcher, `${baseOf(u)}/census?round=${roundIdHex}`);
       if (!r.ok) { refused.push(`${u}: ${r.status}`); continue; }
@@ -129,11 +141,24 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
       if (!j || !Array.isArray(j.entries)) { refused.push(`${u}: no entries`); continue; }
       // the nodes this seat left out for their protocol version: shown, never counted
       if (Array.isArray(j.tooOld)) keptTooOld.set(key, j.tooOld.filter((x) => x && /^[0-9a-f]{64}$/.test(String(x.node))));
-      return { ok: true, entries: j.entries, from: u, refused };
+      roots.add(root); got.push({ from: u, entries: j.entries });
     } catch (e) { refused.push(`${u}: ${e.message}`); }
   }
-  return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
+  if (!got.length) return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
+  if (got.length < providers) return { ok: false, lookOnly: true, from: got[0].from, entries: got[0].entries, refused,
+    why: `only ${got.length} provider handed over the census - a bond list one provider serves alone is enough to look, not to lock (${refused.join('; ') || 'no other answered'})` };
+  return { ok: true, entries: unionOfEntries(got.map((g) => g.entries)), from: got.map((g) => g.from).join(' + '), refused };
 }
+/** Census entries from several providers, joined by bond outpoint (txid:vout); the first copy of each bond is kept. */
+export function unionOfEntries(lists) {
+  const byBond = new Map();
+  for (const list of lists) for (const e of list || []) {
+    const k = `${Array.isArray(e.txid) || e.txid instanceof Uint8Array ? toHex(Uint8Array.from(e.txid)) : String(e.txid)}:${e.vout}`;
+    if (!byBond.has(k)) byBond.set(k, e);
+  }
+  return [...byBond.values()];
+}
+export { evidenceFor as censusEvidenceFor };
 
 /**
  * THIS ROUND'S COMMITTEES, AS THIS CLIENT DERIVES THEM. `curve`: the page's (ARENA_CURVE: bondTweakPoint, bondCombine, verify).
