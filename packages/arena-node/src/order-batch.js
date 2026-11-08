@@ -237,6 +237,17 @@ export class OrderBook {
     }
   }
 
+  /** THE VOLUME A MARKET ROUND HOLDS AS ORDERS (kanban #1329): the stakes of its orders in the book, in sat - what counts into its source committee's exposure. */
+  filledSats(roundIdBytes) {
+    let msat = 0n;
+    for (const r of this.db.prepare('SELECT order_id FROM market_orders WHERE round_id = ?').all(Buffer.from(roundIdBytes))) {
+      try { msat += BigInt(decodeEntryContract(new Uint8Array(this.round.entry(fromHex(r.order_id)))).stakeMsat || 0n); } catch { /* not read: not counted */ }
+    }
+    return msat / 1000n;
+  }
+  /** Every round this book holds orders of (round ids, bytes). */
+  marketRoundIds() { return this.db.prepare('SELECT DISTINCT round_id FROM market_orders').all().map((r) => new Uint8Array(r.round_id)); }
+
   /** The entry an order, cancel or sell names - an order of that round this seat holds - or why not. */
   #orderEntry(roundIdBytes, entryHex) {
     if (!isHex(entryHex, 32)) return refuse('an entry id is 32 hex bytes', 400);
