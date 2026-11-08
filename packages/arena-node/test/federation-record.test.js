@@ -278,7 +278,8 @@ test('a guardian who spends his bond while seated is ABANDONED from that spend, 
   const r = t.read();
   assert.deepEqual([r.nominal, r.threshold, r.guardians.length, r.height], [7, 5, 7, H0 + 6]);
   assert.deepEqual(r.gone.map((g) => [toHex(g.peerKey), g.sinceHeight, g.kind, toHex(g.proofRef)]), [[toHex(t.s.nodes[3].guardianKey), H0 + 3, 2, SPEND]]);
-  assert.equal(r.exposureCapSats, 3n * 50000n, 'the cap counts him gone at once: (f + 1) of the seated bonds');
+  // (seated - 2f) of the seated bonds (RULED 2026-11-07, kanban #1295/#1321): six seated of seven, threshold 5 -> 2; it was (f + 1) = 3
+  assert.equal(r.exposureCapSats, 2n * 50000n, 'the cap counts him gone at once: (seated - 2f) of the seated bonds');
   // the spend leaves the census's window, and his row stays as it was
   t.next(H0 + 12, []);
   const later = await t.everyone();

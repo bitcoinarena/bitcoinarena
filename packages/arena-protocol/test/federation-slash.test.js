@@ -9,7 +9,7 @@
 // longer has. Each of these fails loudly if the old rule comes back.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { exposureCap, reserveFits, slashSplit, abandonmentProofNeeds, haltsAt,
+import { exposureCap, lockedExposureCap, reserveFits, slashSplit, abandonmentProofNeeds, haltsAt,
   MAINNET_CLOCKS, TESTNET_CLOCKS, REGTEST_CLOCKS, clocksFor, lifecycleBlocks,
   liquidationSchedule, remainderMaySplit } from '../src/federation-slash.js';
 
@@ -90,8 +90,18 @@ test('a halt proof asks for whoever is left plus the halt, never for 2f + 1', ()
 
 test('testnet at 2 of 2: f is 0, one leaver halts it, and his one bond pays every note', () => {
   assert.equal(haltsAt(0), 1);
-  const two = exposureCap({ bonds: [50000n * SAT, 50000n * SAT], f: 0 });
+  const two = exposureCap({ bonds: [50000n * SAT, 50000n * SAT], f: 0, threshold: 2 });   // its threshold, as the record names it
   assert.equal(two.cap, 50000n * SAT, 'at 2 of 2 the cap is one bond');
+});
+
+// KANBAN #1321 (§23A.3 RULED 2026-11-07, #1295): exposure_cap = (seated - 2f) x the smallest seated bond - it was (f + 1), right only at full seating
+test('#1321 a ten (f = 3, threshold 7): 10, 9, 8, 7 seated -> 4, 3, 2, 1 x the smallest bond; a locked cap the same less the lapsing', () => {
+  const caps = [10, 9, 8, 7].map((n) => exposureCap({ bonds: Array(n).fill(1000000n), f: 3, threshold: 7 }).cap);
+  console.log('  MEASURED #1321:', JSON.stringify({ seated: [10, 9, 8, 7], cap: caps.map(String) }));
+  assert.deepEqual(caps, [4000000n, 3000000n, 2000000n, 1000000n]);
+  const g = (n, maturity) => Array.from({ length: n }, () => ({ bondSats: 1000000n, maturity }));
+  const locked = lockedExposureCap({ guardians: [...g(8, 99999), ...g(1, 10)], f: 3, threshold: 7, height: 100, drainBlocks: 4032, bondMinGuardian: 50000n });
+  assert.deepEqual([locked.places, locked.lapsing, String(locked.cap)], [2, 1, '2000000'], '9 seated, one lapsing: 3 - 1');
 });
 
 test('the clocks are the ruled ones, in blocks', () => {
