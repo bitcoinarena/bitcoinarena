@@ -216,6 +216,26 @@ test('#1250 no saved lock: one seat\'s empty answer while the others time out is
   assert.equal(both.stake.state, 'none');
 });
 
+// KANBAN #1355 (audit 4 #1257 fixesB-6 / CLIENT-5): the threshold counted any seat of the lobby's list - seats that never sat on the round answer [] at
+// once while the round's own seats time out, and the stake read "none", final, with the winner's stake still in its lock
+test('#1355 only the round\'s own seats\' answers make a stake "none": lobby seats that never sat on the round answering [] leave it waiting', async () => {
+  const own = ['a.test', 'b.test'], lobby = ['c.test', 'd.test', 'e.test', 'f.test'];
+  const fetcherOf = ({ ownStake }) => async (url) => {
+    const host = new URL(url).host;
+    if (url.includes('/lock-settlement')) return own.includes(host) ? new Response(JSON.stringify({ state: 'ACCEPTED', txid: 'ef'.repeat(32), moved: { payouts: [] } }), { status: 200 })
+      : new Response(JSON.stringify({ state: 'NONE' }), { status: 200 });
+    if (url.includes('/stake-lock')) { if (lobby.includes(host) || ownStake) return new Response('[]', { status: 200 }); throw new Error('timed out'); }
+    return new Response('no', { status: 404 });
+  };
+  const nodes = [...own, ...lobby].map((h) => `http://${h}`);
+  const timedOut = await PL.lookOwed({ round, roundId: rid, seed, curve: pageCurve, nodes, fetcher: fetcherOf({ ownStake: false }), client: wallet(100) });
+  const ownSaid = await PL.lookOwed({ round, roundId: rid, seed, curve: pageCurve, nodes, fetcher: fetcherOf({ ownStake: true }), client: wallet(100) });
+  console.log('  FACTS #1355:', JSON.stringify({ ownTimedOut: `${timedOut.stake.state} final=${timedOut.final}`, ownAnswered: `${ownSaid.stake.state} final=${ownSaid.final}` }));
+  assert.equal(timedOut.stake.state, 'waiting', 'four lobby seats\' [] closed the stake as none');
+  assert.equal(timedOut.final, false);
+  assert.equal(ownSaid.stake.state, 'none', 'the round\'s own seats answering [] is none');
+});
+
 // KANBAN #1251 (audit 3 #1210 FIXES-14): the collect record was a raw setItem; refused for quota, a saved stake lock had no collect record at all
 test('#1251 a collect record refused for quota is kept once the storage-full handler made room', () => {
   const m = new Map(); let refuse = 1;
