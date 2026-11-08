@@ -646,7 +646,7 @@ export class Roster {
     // AND THE DRAINING PREDECESSOR'S SEATED GUARDIANS (§23A.6 step 5,: "one share per seat across both
     // federations, so a guardian seated in both ... earns two shares"), until its record is CLOSED - a key listed twice
     // is paid twice by the fee table. `predecessorGuardians(fid)` is the seat's record store (federation-records.js).
-    const drain = typeof this.predecessorGuardians === 'function' ? (this.predecessorGuardians(fid) || []) : [];
+    const drain = typeof this.predecessorGuardians === 'function' ? (this.predecessorGuardians(fid, Number(contract.censusHeight)) || []) : [];   // census height: drain shares end at drain_blocks (#1309)
     const seated = typeof this.seatedGuardians === 'function' ? this.seatedGuardians(fid) : null;
     return { ok: true, guardians: guardianPoolOf({ contract, census, seated, drain }) };
   }
