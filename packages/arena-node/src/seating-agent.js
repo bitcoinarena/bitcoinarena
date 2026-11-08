@@ -27,7 +27,7 @@ import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { slotsForRole } from '../../arena-protocol/src/sortition.js';
 import { signPresent, verifyPresent, decodePresent, seatedFrom, signSeating, seatingId, encodeSeatingCertificate, verifySeating,
   seatingEquivocation, seatingCloseMs, decodeSeatingCertificate, SEATING_ROLES, signSeen, seenId, seatingListsPresent, seatingBefore as comesBefore,
-  encodeJustification, decodeJustification, verifyJustification, justificationChain, justificationSteps, JUSTIFICATION_DEPTH,
+  encodeJustification, decodeJustification, verifyJustification, justificationChain, justificationSteps, JUSTIFICATION_DEPTH, SILENT_AFTER_MS,
   signSeatingBound, seatingSignedId, justificationHash, checkSeatingPresigs } from '../../arena-protocol/src/seating.js';
 import { signSlashPresig, slashPresigVerifies } from '../../arena-protocol/src/slash-presig.js';
 import { endpointsOf } from './roster.js';
@@ -765,6 +765,14 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       const other = seatings.get(`${w.ridHex}:${w.role}:${r.seating}`);
       if (other && !seatingBefore(w, other, signed.seated)) return { node: r.node, seating: r.seating, seated: other };
     }
+    // A SILENT MEMBER (§5A.7 RULED 2026-11-07, kanban #1314/#1332): a member of this node's seating that signed nothing for it by seating_close + Δ
+    // (20 s) does not hold the round - in a 22 round, where this node's own signed SEEN of that seating attests the member was present
+    let close = null; try { close = Number(seatingCloseMs(w.t.contract)); } catch { close = null; }
+    if (seatingListsPresent(w.t.contract) && signed.seen && Number.isFinite(close) && nowMs() >= close + SILENT_AFTER_MS) {
+      const silent = signed.seated.filter((k) => k !== me && !db.prepare('SELECT 1 FROM seat_sigs WHERE round_id = ? AND role = ? AND seating = ? AND node = ?').get(w.t.rid, w.role, id, k)
+        && (signed.seen.present || []).includes(k));
+      if (silent.length) return { node: silent[0], silent, seating: id, seated: signed.seated };
+    }
     return null;
   }
   /** This node's second seating, when its first can never stand (kanban #738): the rule above. */
@@ -775,6 +783,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const member = never.node;
     const signed = mySignature(w.t.rid, w.role);
     const held = db.prepare('SELECT node FROM seat_presents WHERE round_id = ? AND role = ?').all(w.t.rid, w.role).map((r) => r.node);
+    if (never.silent) return resignPastSilent(w, signed, held, never);
     // THE SEATING TO GO TO (kanban #1119, measured on the live seats' stores for Up/Down b3f22953, 2026-11-04 10:28Z): six seats signed the seating of the
     // PRESENTs held less the dead node b36828 (#979); seat 438af56f had also failed to reach c6d5d34b and signed without both. Its re-sign took the seating of
     // all the PRESENTs it held - the dead node in again - which nobody signed, so it never moved and no certificate formed. Now the seating of the PRESENTs
@@ -821,6 +830,25 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     }
     if (!signSeatingOf(w, seated, held, justification)) return;
     log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: re-signed the seating of ${list.length} (member ${member.slice(0, 8)} signed another; the seating of ${signed.seated.length} can never stand)`);
+  }
+
+  /**
+   * PAST A SILENT MEMBER (kanban #1332): the seating of the PRESENTs this node holds, less the members that signed nothing for its seating by
+   * seating_close + Δ - it counts as coming after the seating left (§5A.7), so no other node need have signed it first: every honest signer
+   * computes the same one. Its justification is the silent step: this node's own signed SEEN of the seating left, which holds the member present.
+   */
+  function resignPastSilent(w, signed, held, never) {
+    const gone = new Set(never.silent);
+    const list = seatedFrom({ drawn: w.drawnKeys, present: held.filter((k) => !gone.has(k)), slots: w.slots }).map(toHex);
+    if (!list.includes(me) || list.some((k) => gone.has(k)) || list.join(',') === signed.seated.join(',')) return;
+    let before = null;
+    try { before = signed.justification ? decodeJustification(fromHex(signed.justification)) : null; } catch { return; }
+    const j = { silent: true, of: signed.seated.map(fromHex), present: signed.seen.present.map(fromHex), leftOut: (signed.seen.leftOut || []).map(fromHex),
+      member: fromHex(never.node), signature: fromHex(signed.seen.signature),
+      ...(before ? { prior: { signature: fromHex(signed.signature), justification: before } } : {}) };
+    if (justificationSteps(j) > JUSTIFICATION_DEPTH) { log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: no second signature - its justification would carry ${justificationSteps(j)} steps`); return; }
+    if (!signSeatingOf(w, list.map(fromHex), held, encodeJustification(j))) return;
+    log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: re-signed the seating of ${list.length} past ${never.silent.length} silent member(s) ${never.silent.map((k) => k.slice(0, 8)).join(', ')} (nothing signed by close + ${SILENT_AFTER_MS / 1000} s)`);
   }
 
   /**

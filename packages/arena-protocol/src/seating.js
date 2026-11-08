@@ -195,6 +195,13 @@ export const signSeen = (s, sign) => sign(seenId(s));
 // AT MOST JUSTIFICATION_DEPTH STEPS IN ALL - the step and the signer's steps before - so a justification is finite and small. An
 // honest seat refuses to sign a seating whose justification would carry more (arena-node seating-agent.js resign).
 export const JUSTIFICATION_DEPTH = 8;
+// A SILENT MEMBER (§5A.7 RULED 2026-11-07, kanban #1314/#1332): "A drawn node that answers PRESENT and then signs no SEATING does not hold the round:
+// a seating that drops a member of S with no signature by seating_close + Δ (Δ = 20 s) counts as coming after S for the ordered rule, with the
+// missing signature, attested by the signers' own SEEN record, as the justification". A silent step is flag bit 1: `seated` carries the signer's
+// SEEN `present` list (the member among them), `signature` the signer's own SEEN signature over S, `bound` 32 zero bytes, and after the flags
+// vec(leftOut) - the SEEN's other list. What it shows is the signer's word that the member was there and did not sign; a slow honest node loses its
+// seat to a reserve, which the text accepts.
+export const SILENT_AFTER_MS = 20000;
 /** How many steps a justification carries in all: itself and the signer's steps before (prior). */
 export const justificationSteps = (j) => (j ? 1 + (j.prior ? justificationSteps(j.prior.justification) : 0) : 0);
 /** Does seating `a` come before seating `b` (node keys hex, both in score order) in a draw (`rank`: node key hex -> draw index)? */
@@ -206,6 +213,17 @@ const listOf = (keys) => keys.map(toHex).join(',');
 /** The steps of a justification's own chain, last first: it, then the signer's step before (prior), and so on. */
 export function justificationChain(j) { const out = []; for (let at = j; at; at = at.prior ? at.prior.justification : null) out.push(at); return out; }
 function writeSteps(j, w) {
+  if (j && j.silent) {
+    if (!Array.isArray(j.of) || !j.of.every(is32Seat) || !Array.isArray(j.present) || !j.present.every(is32Seat) || !Array.isArray(j.leftOut) || !j.leftOut.every(is32Seat)
+      || !is32Seat(j.member) || !(j.signature instanceof Uint8Array) || j.signature.length !== 64) throw new Error('a silent step names the seating left, the SEEN lists, the member and the signer\'s SEEN signature');
+    if (j.prior && !(j.prior.signature instanceof Uint8Array && j.prior.signature.length === 64 && j.prior.justification)) throw new Error('a justification\'s step before is the signer\'s signature over the seating left and its justification');
+    w.vec(j.of, (k, ww) => ww.bytes32(k)); w.vec(j.present, (k, ww) => ww.bytes32(k));
+    w.bytes32(j.member); w.bytes(j.signature, 64); w.bytes32(new Uint8Array(32));
+    w.u8((j.prior ? 1 : 0) | 2);
+    w.vec(j.leftOut, (k, ww) => ww.bytes32(k));
+    if (j.prior) { w.bytes(j.prior.signature, 64); writeSteps(j.prior.justification, w); }
+    return;
+  }
   if (!j || !Array.isArray(j.of) || !Array.isArray(j.seated) || !j.of.every(is32Seat) || !j.seated.every(is32Seat) || !is32Seat(j.member)
     || !(j.signature instanceof Uint8Array) || j.signature.length !== 64 || !is32Seat(j.bound)) throw new Error('a justification names the seating left, the member\'s seating, the member, its signature and the hash it binds');
   if (j.prior && !(j.prior.signature instanceof Uint8Array && j.prior.signature.length === 64 && j.prior.justification)) throw new Error('a justification\'s step before is the signer\'s signature over the seating left and its justification');
@@ -225,10 +243,12 @@ function readJustification(r, budget = { left: JUSTIFICATION_DEPTH }) {
   const of = r.vec((x) => x.bytes32()); const seated = r.vec((x) => x.bytes32());
   const member = r.bytes32(); const signature = r.bytes(64); const bound = r.bytes32();
   const flags = r.u8();
-  if (flags > 1) throw new Error('a justification\'s flags are bit 0 alone');
-  if (!flags) return { of, seated, member, signature, bound };
+  if (flags > 3) throw new Error('a justification\'s flags are bits 0 and 1 alone');
+  // a silent step (bit 1): `seated` is the signer's SEEN present list, `signature` its SEEN signature, then its leftOut list
+  const head = flags & 2 ? { silent: true, of, present: seated, member, signature, leftOut: r.vec((x) => x.bytes32()) } : { of, seated, member, signature, bound };
+  if (!(flags & 1)) return head;
   const prior = { signature: r.bytes(64), justification: readJustification(r, budget) };
-  return { of, seated, member, signature, bound, prior };
+  return { ...head, prior };
 }
 /** A justification's bytes (GET /seating-sig and GET /seating-batch carry them as hex, `justification`). */
 export function encodeJustification(j) { const w = new Writer(); writeJustification(j, w); return w.finish(); }
@@ -253,6 +273,28 @@ export function verifyJustification(j, ctx) {
 function verifyStep(j, { roundId, role, drawn, slots, verify, signer, onto }) {
   const rank = new Map(drawn.map((k, i) => [toHex(k), i]));
   const shaped = (list) => list.length >= 1 && list.length <= slots && list.every((k, i) => rank.has(toHex(k)) && (i === 0 || rank.get(toHex(list[i - 1])) < rank.get(toHex(k))));
+  if (j.silent) {
+    // A SILENT MEMBER (kanban #1332): the member is in S and was PRESENT by the signer's own signed SEEN of S; the seating signed onto seats the
+    // signer and drops the member - it counts as coming after S
+    if (!shaped(j.of) || (onto && !shaped(onto))) return { ok: false, why: 'a silent step names a seating that is not of drawn nodes in score order within the seats' };
+    const of = j.of.map(toHex), s = toHex(signer), m = toHex(j.member), on = onto ? onto.map(toHex) : null;
+    if (!of.includes(s) || (on && !on.includes(s))) return { ok: false, why: 'a silent step for a node not in the seating it left or not in the one it signed' };
+    if (m === s) return { ok: false, why: 'a silent step that names the signer itself' };
+    if (!of.includes(m)) return { ok: false, why: `the silent member ${m.slice(0, 16)} is not in the seating left` };
+    if (!j.present.map(toHex).includes(m)) return { ok: false, why: `the signer's SEEN does not hold the silent member ${m.slice(0, 16)} present` };
+    if (on && on.includes(m)) return { ok: false, why: 'the seating signed still seats the silent member' };
+    let seen = false;
+    try { seen = verify(j.signature, seenId({ roundId, role, seating: seatingId({ roundId, role, seated: j.of }), present: j.present, leftOut: j.leftOut }), signer); } catch { seen = false; }
+    if (!seen) return { ok: false, why: `the silent step's SEEN is not ${s.slice(0, 16)}'s signature over the seating left` };
+    if (j.prior) {
+      let mine = false;
+      try { mine = verify(j.prior.signature, seatingSignedId({ roundId, role, seated: j.of }, justificationHash(encodeJustification(j.prior.justification))), signer); } catch { mine = false; }
+      if (!mine) return { ok: false, why: `the signer ${s.slice(0, 16)}'s signature over the seating it left does not verify, binding the justification with it` };
+      const p = verifyStep(j.prior.justification, { roundId, role, drawn, slots, verify, signer, onto: j.of });
+      if (!p.ok) return { ok: false, why: `the signer's step before: ${p.why}` };
+    }
+    return { ok: true };
+  }
   if (!shaped(j.of) || !shaped(j.seated) || (onto && !shaped(onto))) return { ok: false, why: 'a justification names a seating that is not of drawn nodes in score order within the seats' };
   const of = j.of.map(toHex), seated = j.seated.map(toHex), s = toHex(signer), m = toHex(j.member);
   const on = onto ? onto.map(toHex) : null;
@@ -456,7 +498,8 @@ function judgeOf(certs, check, presented) {
     if (!j) return;
     lasts.push({ node: toHex(node), to: sid(seated), j });
     pool.push({ signer: toHex(node), j });
-    record(j.member, j.seated, j.bound, j.signature);
+    // a silent step carries no signature of the member's (kanban #1332): only the signer's own SEEN, nothing to record as a seating signature
+    if (!j.silent) record(j.member, j.seated, j.bound, j.signature);
     if (j.prior) addBound(node, j.of, j.prior.justification, j.prior.signature);
   };
   // the certificates' signatures, each binding the justification the certificate carries for it (verifySeating checked them)
