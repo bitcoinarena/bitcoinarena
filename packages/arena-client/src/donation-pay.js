@@ -360,7 +360,47 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
     GAME_SETS_FETCHED.set(wantGame, gameSet);
   }
   if (keepBySet && !kept) DONATION_SETS_FETCHED.set(setKey, answers);
+  // A SET WITH CONTRIBUTION AGREEMENTS (§27A.4.2, kanban #1346): each pays the share the round's seats read from the counted rounds at its
+  // census height - a page cannot read those rounds, so it takes each share only where more than half of the round's nodes name the same one
+  let shareOf;
+  if ((set.recipients || []).some((r) => r && r.contribution)) {
+    const agreed = await contributionSharesAgreed({ rid, nodes, fetcher });
+    if (!agreed.ok) return { ok: false, why: agreed.why };
+    shareOf = (r) => agreed.shares.get(toHex(r.recipientPk)) ?? 0;
+  }
   // A SET THAT VESTS (§27A.4.1) pays its shares at the round's census height, as the seats split it
-  return { ok: true, set, gameSet, target: { network: vestedShares(set.recipients, round.censusHeight), game: gameSet }, signerNodes: answers.length, rotated: inForce.rotated,
+  return { ok: true, set, gameSet, target: { network: vestedShares(set.recipients, round.censusHeight, shareOf), game: gameSet }, signerNodes: answers.length, rotated: inForce.rotated,
     why: `${answers.length} signer node(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
+}
+
+/**
+ * THE CONTRIBUTION SHARES OF A ROUND AS ITS SEATS AGREE THEM (kanban #1346): every node's GET /contribution-shares, each within
+ * DONATION_ANSWER_MS; a recipient's share stands when more than half of the nodes asked name it. Answers { ok, shares: Map(recipient hex ->
+ * share_bps) } or { ok: false, why }.
+ */
+export async function contributionSharesAgreed({ rid, nodes, fetcher = (u) => fetch(u) }) {
+  const asked = (nodes || []).length;
+  if (!asked) return { ok: false, why: 'the round names no nodes to ask for its contribution shares' };
+  const answers = await Promise.all(nodes.map(async (node) => {
+    try {
+      const r = await donationWithinMs(fetcher(`${String(node).replace(/\/+$/, '')}/contribution-shares?round=${rid}`), DONATION_ANSWER_MS);
+      if (r.status !== 200) return null;
+      const j = await r.json();
+      return j && Array.isArray(j.shares) ? j.shares : null;
+    } catch { return null; }
+  }));
+  const votes = new Map();   // recipient -> share -> count
+  for (const a of answers) for (const x of a || []) {
+    if (!x || typeof x.recipient !== 'string' || !Number.isInteger(x.shareBps)) continue;
+    const per = votes.get(x.recipient.toLowerCase()) || new Map();
+    per.set(x.shareBps, (per.get(x.shareBps) || 0) + 1);
+    votes.set(x.recipient.toLowerCase(), per);
+  }
+  const shares = new Map();
+  for (const [recipient, per] of votes) {
+    const [best, n] = [...per.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+    if (n * 2 <= asked) return { ok: false, why: `the round's nodes do not agree on ${recipient.slice(0, 16)}'s contribution share (${n} of ${asked} name ${best} bps)` };
+    shares.set(recipient, best);
+  }
+  return { ok: true, shares };
 }
