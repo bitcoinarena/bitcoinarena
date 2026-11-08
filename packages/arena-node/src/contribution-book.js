@@ -20,6 +20,8 @@ export const CONTRIBUTION_LAG_BLOCKS = 288;
 
 export const CONTRIBUTION_BOOK_SQL = `CREATE TABLE IF NOT EXISTS contribution_rounds (round_id TEXT PRIMARY KEY, census_height INTEGER NOT NULL,
   round TEXT NOT NULL, kept_ms INTEGER NOT NULL);
+  CREATE TABLE IF NOT EXISTS contribution_ends (agreement_id TEXT NOT NULL, kind TEXT NOT NULL, at_height INTEGER NOT NULL, hex TEXT NOT NULL,
+    PRIMARY KEY (agreement_id, kind));
   CREATE INDEX IF NOT EXISTS contribution_rounds_h ON contribution_rounds (census_height)`;
 
 const big = (_k, v) => (typeof v === 'bigint' ? { big: String(v) } : v);
@@ -62,12 +64,31 @@ export function createContributionBook({ db, accountsFor, heightOf, now = () => 
     return factsFromSeasonRounds(rows.map((x) => JSON.parse(x.round, unbig)), (rid) => heights.get(rid) ?? null);
   }
 
-  /** His share at `height` (protocol contributionShare), and the agreement's id. */
-  function shareAt(agreement, height, network, { leftAt = null, terminatedAt = null } = {}) {
+  /**
+   * A LEAVE OR A TERMINATION, its signature already checked by the caller (his key; the cold admin key): kept once per agreement and kind, the
+   * first one standing - a later one of the same kind changes nothing. Answers { ok, fresh }.
+   */
+  function addEnd(kind, { agreementId, atHeight }, hex) {
+    if (kind !== 'leave' && kind !== 'termination') return { ok: false, why: 'a leave or a termination' };
+    const got = db.prepare('INSERT OR IGNORE INTO contribution_ends (agreement_id, kind, at_height, hex) VALUES (?, ?, ?, ?)').run(toHex(agreementId), kind, Number(atHeight), String(hex));
+    return { ok: true, fresh: got.changes > 0 };
+  }
+  /** The agreement's leave and termination heights held here: { leftAt, terminatedAt } (null: none). */
+  function endsOf(agreementIdHex) {
+    const out = { leftAt: null, terminatedAt: null };
+    for (const r of db.prepare('SELECT kind, at_height FROM contribution_ends WHERE agreement_id = ?').all(String(agreementIdHex).toLowerCase()))
+      out[r.kind === 'leave' ? 'leftAt' : 'terminatedAt'] = Number(r.at_height);
+    return out;
+  }
+
+  /** His share at `height` (protocol contributionShare), and the agreement's id; his leave and termination as held here unless given. */
+  function shareAt(agreement, height, network, ends = null) {
+    const { leftAt, terminatedAt } = ends || endsOf(toHex(contributionAgreementId(agreement)));
     const s = contributionShare(agreement, { facts: factsAt(height), height, network, leftAt, terminatedAt });
     return { agreementId: toHex(contributionAgreementId(agreement)), height: Number(height), ...s };
   }
 
   const held = () => db.prepare('SELECT COUNT(*) n, MAX(census_height) top FROM contribution_rounds').get();
-  return { keep, refresh, factsAt, shareAt, held };
+  const ends = () => db.prepare('SELECT agreement_id, kind, at_height, hex FROM contribution_ends ORDER BY agreement_id, kind').all();
+  return { keep, refresh, factsAt, shareAt, held, addEnd, endsOf, ends };
 }

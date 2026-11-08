@@ -39,3 +39,21 @@ test('two seats with the same counted rounds answer the same share at every heig
   await c.refresh({});
   assert.equal(c.shareAt(agreement, t1 + 5000, 'regtest').shareBps, 0);
 });
+
+test('a leave and a termination held in the book change the share; the first of each kind stands', async () => {
+  const { contributionAgreementId } = await import('../../arena-protocol/src/contribution.js');
+  const a = createContributionBook({ db: new DatabaseSync(':memory:'), accountsFor: async () => merged(rounds), heightOf });
+  await a.refresh({});
+  const id = contributionAgreementId(agreement);
+  const vested = START + 999 + CONTRIBUTION_LAG_BLOCKS;
+  assert.equal(a.shareAt(agreement, vested + 10, 'regtest').shareBps, 250);
+  assert.equal(a.addEnd('leave', { agreementId: id, atHeight: vested + 5 }, 'aa').fresh, true);
+  assert.equal(a.addEnd('leave', { agreementId: id, atHeight: vested + 1 }, 'bb').fresh, false, 'a second leave changes nothing');
+  assert.deepEqual(a.endsOf(toHex(id)), { leftAt: vested + 5, terminatedAt: null });
+  assert.equal(a.shareAt(agreement, vested + 10, 'regtest').state, 'tail');
+  assert.equal(a.shareAt(agreement, vested + 10, 'regtest').shareBps, 250, 'the tail pays what he had vested');
+  assert.equal(a.shareAt(agreement, vested + 5 + 52560, 'regtest').shareBps, 0, 'and ends');
+  a.addEnd('termination', { agreementId: id, atHeight: vested + 8 }, 'cc');
+  assert.equal(a.shareAt(agreement, vested + 10, 'regtest').shareBps, 0, 'a termination ends it at once');
+  assert.equal(a.ends().length, 2);
+});
