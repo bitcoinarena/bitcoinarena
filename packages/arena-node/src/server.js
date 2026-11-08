@@ -89,7 +89,7 @@ import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX }
 import { WebSocketServer } from 'ws';
 import { createP2pTunnels, carryP2p, carryApi, P2P_TUNNEL_PATHS, GUARDIAN_NEXT_PATH, GUARDIAN_API_RELAY_PATH } from './p2p-tunnel.js';
 import { createAddressBook, announceOwn, pullAnnouncements } from './address-book.js';
-import { reserveKeyCache, payeeReserveKeys } from './reserve-key-cache.js';
+import { reserveKeyCache, payeeReserveKeysAt } from './reserve-key-cache.js';
 import { ownServices } from './own-services.js';
 import { serviceSettings } from './service-settings.js';
 import { controlsOf, installerIdOf, INSIDE } from './service-control.js';
@@ -1749,8 +1749,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // the key its guardian seats serve at GET /reserves, taken only when at least the threshold of them name the same one. Kept.
   // KEPT WITH ITS EPOCH (kanban #803, reserve-key-cache.js): a key kept for an earlier set of guardian seats is not the federation's key now
   const reserveKeys = reserveKeyCache({ db: round.db || null });
-  const reserveKeyHistory = (fed) => reserveKeys.historyOf(fed);   // (namedPayeesFor has a reserveKeys of its own)
+  const reserveKeys_ = reserveKeys;   // the cache, for code with a local reserveKeys of its own (the payee check)
   const reserveEpochOf = (fedHex, g = reserveGuardians()[fedHex]) => (g ? toHex(reserveEpochId(fromHex(fedHex), sortedKeys(g.members))) : null);
+  // THE RESERVE EPOCH AT A ROUND'S CENSUS HEIGHT (kanban #1359, audit 4 fixesB-7): the federation's guardian seats as the round's own census and
+  // the federation's record at that height name them - the same on every seat that holds them, whatever this seat observed. Null when either is
+  // not held here: the check is then unread, never an offence.
+  const reserveEpochAtRound = (fedHex, rid, contract) => {
+    try {
+      const census = roster.censusFor(rid);
+      if (!census || !census.ok || !Array.isArray(census.entries)) return null;
+      const h = Number(contract.censusHeight);
+      const guardiansOf = (f) => { const rec = fedRecords && typeof fedRecords.recordAt === 'function' ? fedRecords.recordAt(f, h) : null; return rec && rec.guardians ? rec.guardians : null; };
+      const es = reserveMembersOf(census.entries, { guardiansOf })[fedHex];
+      return es && es.length ? toHex(reserveEpochId(fromHex(fedHex), sortedKeys(es.map((e) => e.pubkey)))) : null;
+    } catch { return null; }
+  };
   const reserveKeyFor = async (fedHex) => {
     const g = reserveGuardians()[fedHex];
     // A FEDERATION WITH NO GUARDIAN SEATS HAS NO RESERVE KEY (kanban #803, measured 2026-10-30 10:0xZ: test host seat 4 still named 02533d74…
@@ -2639,11 +2652,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let reserveKeys = null;
     try {
       const fids = takesAnyFederation(contract) ? round.entriesOf(rid).map((x) => toHex(x.entry.federationId || new Uint8Array(32))) : [toHex(contract.federationId)];
-      // EVERY KEY HELD FOR THE ROUND'S FEDERATIONS, AND UNREAD WHEN ONE IS UNKNOWN (kanban #1246, audit 3 CONSENSUS-2): the key now (null during key
-      // generation, or an epoch later than the settlement's plan) judged an honest settlement's reserve row as unpayable - a slash on honest bonds
+      // THE KEYS OF THE EPOCHS THE ROUND SPANS, AND UNREAD WHEN ONE IS UNKNOWN (kanban #1246 audit 3 CONSENSUS-2; #1359 audit 4 fixesB-7): the key of
+      // the epoch at the round's census height and the key now - not every key this seat ever held (a retired key read as payable), and not
+      // "unpayable" for a key this seat never read (a seat down during that epoch filing a false offence)
       const feds = [...new Set(fids)];
       const keys = await Promise.all(feds.map((f) => reserveKeyFor(f).catch(() => null)));
-      reserveKeys = payeeReserveKeys(feds, keys.map(hex33), reserveKeyHistory);
+      reserveKeys = payeeReserveKeysAt(feds, { epochAt: (f) => reserveEpochAtRound(f, rid, contract), epochNow: (f) => reserveEpochOf(f),
+        keyOfEpoch: (f, e) => reserveKeys_.keyOfEpoch(f, e), keysNow: keys.map(hex33) });
     } catch { reserveKeys = null; }
     // A MARKET'S GAME DONATION SET AND ITS RATES (#1143 2): the hosted registration's set (the manifest the round's game id names), the book's own rates
     let gameDonationKeys, market;

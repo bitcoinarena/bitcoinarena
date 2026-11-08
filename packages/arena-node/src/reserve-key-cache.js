@@ -18,21 +18,28 @@ export function reserveKeyCache({ db = null } = {}) {
   // moment, and judging it later against the key of the epoch now made an honest settlement slashable after any epoch change. Kept in the
   // store when there is one, so a restart still knows the keys it paid to.
   const past = new Map();               // federation hex -> Set(key hex)
+  // BY EPOCH (kanban #1359, audit 4 fixesB-7): which key belonged to which set of guardian seats, so a check can ask for the key of the round's
+  // own epoch - not "any key this seat ever saw", which let a long-retired key pass and made a key this seat never read look like an offence
+  const byEpoch = new Map();            // federation hex -> Map(epoch hex -> key hex)
+  const keepEpoch = (fed, epoch, hex) => { if (epoch == null) return; const m = byEpoch.get(fed) || new Map(); if (!m.has(String(epoch))) m.set(String(epoch), hex); byEpoch.set(fed, m); };
   if (db) {
     try {
       db.exec('CREATE TABLE IF NOT EXISTS reserve_key_history (federation TEXT NOT NULL, epoch TEXT, key TEXT NOT NULL, first_ms INTEGER NOT NULL, PRIMARY KEY (federation, key))');
-      for (const r of db.prepare('SELECT federation, key FROM reserve_key_history').all()) { const s = past.get(r.federation) || new Set(); s.add(r.key); past.set(r.federation, s); }
+      for (const r of db.prepare('SELECT federation, epoch, key FROM reserve_key_history').all()) { const s = past.get(r.federation) || new Set(); s.add(r.key); past.set(r.federation, s); keepEpoch(r.federation, r.epoch, r.key); }
     } catch { /* memory only */ }
   }
   const remember = (fed, epoch, key) => {
     const hex = key instanceof Uint8Array ? Array.from(key, (b) => b.toString(16).padStart(2, '0')).join('') : (typeof key === 'string' ? key.toLowerCase() : null);
     if (!hex) return;
+    keepEpoch(fed, epoch, hex);
     const s = past.get(fed) || new Set(); if (s.has(hex)) return; s.add(hex); past.set(fed, s);
     if (db) { try { db.prepare('INSERT OR IGNORE INTO reserve_key_history (federation, epoch, key, first_ms) VALUES (?, ?, ?, ?)').run(fed, epoch == null ? null : String(epoch), hex, Date.now()); } catch { /* memory only */ } }
   };
   return {
     /** Every key (hex) this seat has held for `fed`, the current one among them (kanban #1246). */
     historyOf: (fed) => [...(past.get(fed) || [])],
+    /** The key (hex) this seat held for `fed` under `epoch`, or null: never read here (kanban #1359). */
+    keyOfEpoch: (fed, epoch) => (epoch == null ? null : ((byEpoch.get(fed) || new Map()).get(String(epoch)) || null)),
     get: (fed) => (kept.has(fed) ? kept.get(fed).key : undefined),
     has: (fed) => kept.has(fed),
     keys: () => kept.keys(),
@@ -64,6 +71,30 @@ export function payeeReserveKeys(feds, keysNow, historyOf = () => []) {
     if (!now && !had.length) return null;
     if (now) all.add(now);
     for (const k of had) all.add(String(k).toLowerCase());
+  }
+  return all;
+}
+
+/**
+ * THE RESERVE KEYS A SETTLEMENT MAY HAVE PAID, BY EPOCH (kanban #1359, audit 4 fixesB-7; replaces payeeReserveKeys' "every key ever held" for the
+ * payee check). A round's settlement pays the reserve key of the federation's guardian seats between the round's census and its claim: the epoch
+ * at the round's census height (`epochAt(fed)`) and the epoch now (`epochNow(fed)`), nothing older. Per federation:
+ *   - the census epoch unknown, or its key never read here  -> null: unread, never an offence (a seat that was down or new in that epoch)
+ *   - else that key, and the key now when the epoch has moved since (`keysNow[i]`, hex or null, or the key kept for the epoch now)
+ * A key from an epoch before the round's census is not in the set, so a reserve row paying it is not read as payable.
+ */
+export function payeeReserveKeysAt(feds, { epochAt, epochNow = () => null, keyOfEpoch, keysNow = [] }) {
+  const all = new Set();
+  const low = (k) => (typeof k === 'string' && k ? k.toLowerCase() : null);
+  for (let i = 0; i < feds.length; i++) {
+    const f = feds[i];
+    let e0 = null, en = null; try { e0 = epochAt(f); } catch { e0 = null; } try { en = epochNow(f); } catch { en = null; }
+    if (!e0) return null;
+    const now = low(keysNow[i]);
+    const k0 = low(keyOfEpoch(f, e0)) || (en === e0 ? now : null);
+    if (!k0) return null;
+    all.add(k0);
+    if (en && en !== e0) { const kn = now || low(keyOfEpoch(f, en)); if (kn) all.add(kn); }
   }
   return all;
 }
