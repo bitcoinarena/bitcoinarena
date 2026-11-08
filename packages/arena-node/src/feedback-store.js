@@ -35,7 +35,10 @@ export const REWARD_LEVELS = Object.freeze([
   Object.freeze({ level: 'critical', label: 'Bug, critical', sats: 20000, outsideBudget: true, example: 'Money can be lost or taken, or the result is wrong.' }),
 ]);
 export const NODE_BOUNTY_BASE_SATS = 20000;
-export const levelOf = (name) => REWARD_LEVELS.find((x) => x.level === String(name || '').toLowerCase()) || null;
+/** THE NODE BOUNTY (#1342): its own pot - outside the bug budget, one per person, the first `NODE_BOUNTY_MOST` outside nodes; only a node report. */
+export const NODE_BOUNTY_MOST = 10;
+const NODE_LEVEL = Object.freeze({ level: 'node', label: 'Node bounty', sats: NODE_BOUNTY_BASE_SATS, outsideBudget: true, node: true });
+export const levelOf = (name) => (String(name || '').toLowerCase() === 'node' ? NODE_LEVEL : REWARD_LEVELS.find((x) => x.level === String(name || '').toLowerCase()) || null);
 const WEEK_MS = 7 * 24 * 3600 * 1000;
 export const REPORT_AGE_MOST_S = 24 * 3600;     // a report signed more than a day ago is not taken (a replayed one)
 export const AUTH_AGE_MOST_S = 60;
@@ -153,11 +156,18 @@ export function openFeedbackStore(path = ':memory:') {
     const R = { ...REWARD_DEFAULTS, ...(rules || {}) };
     if (!Number.isInteger(sats) || sats < R.leastSats || sats > R.mostSats) return { ok: false, why: `an amount is ${R.leastSats} to ${R.mostSats} sat` };
     if (excluded.has(r.pubkey)) return { ok: false, why: 'that key is ours (team, admin or bot): never paid' };
-    if (typeof played !== 'function' || played(r.pubkey) !== true) return { ok: false, why: 'that key has not finished a round on the network: only players are rewarded' };
+    if (lv && lv.node) {
+      // A NODE BOUNTY: a node report, one per person, the first NODE_BOUNTY_MOST - its checklist (census, 7 days, owner = this key) is the caller's
+      if ((r.source || 'frontend') !== 'node' || !r.node) return { ok: false, why: 'a node bounty is for a node report (from the owner page), naming its node' };
+      const paidNodes = db.prepare(`SELECT pubkey FROM reports WHERE severity = 'node' AND state IN ('accepted', 'paid')`).all().map((x) => x.pubkey);
+      if (paidNodes.includes(r.pubkey)) return { ok: false, why: 'one node bounty per person: this key has one' };
+      if (paidNodes.length >= NODE_BOUNTY_MOST) return { ok: false, why: `the node bounty is for the first ${NODE_BOUNTY_MOST} outside nodes: all are taken` };
+    }
+    if (!(lv && lv.node) && (typeof played !== 'function' || played(r.pubkey) !== true)) return { ok: false, why: 'that key has not finished a round on the network: only players are rewarded' };
     const since = nowMs - WEEK_MS;
     const mine = db.prepare(`SELECT COUNT(*) AS n FROM reports WHERE pubkey = ? AND state IN ('accepted', 'paid') AND changed_ms >= ?`).get(r.pubkey, since).n;
     if (mine >= R.perKeyPerWeek) return { ok: false, why: `that key has ${mine} rewards this week: at most ${R.perKeyPerWeek}` };
-    const week = db.prepare(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ? AND COALESCE(severity, '') <> 'critical'`).get(since).s;   // a critical one is outside the budget
+    const week = db.prepare(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ? AND COALESCE(severity, '') NOT IN ('critical', 'node')`).get(since).s;   // a critical one is outside the budget
     if (!(lv && lv.outsideBudget) && week + sats > R.weeklyBudgetSats) return { ok: false, why: `this week's budget: ${week} of ${R.weeklyBudgetSats} sat approved, ${sats} more does not fit` };
     db.prepare('UPDATE reports SET state = ?, amount_sats = ?, severity = ?, changed_ms = ? WHERE id = ? AND state = ?').run(STATES.ACCEPTED, sats, severity, nowMs, r.id, STATES.NEW);
     db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, STATES.ACCEPTED, nowMs, by, `${sats} sat${severity ? `, ${severity}` : ''}`);
@@ -262,7 +272,7 @@ export function openFeedbackStore(path = ':memory:') {
   function budget({ rules = REWARD_DEFAULTS, nowMs = Date.now() } = {}) {
     const R = { ...REWARD_DEFAULTS, ...(rules || {}) };
     const sum = (sql, ...a) => db.prepare(sql).get(...a).s;
-    return { weekApprovedSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ? AND COALESCE(severity, '') <> 'critical'`, nowMs - WEEK_MS),
+    return { weekApprovedSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ? AND COALESCE(severity, '') NOT IN ('critical', 'node')`, nowMs - WEEK_MS),
       weeklyBudgetSats: R.weeklyBudgetSats, allApprovedSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid')`),
       paidSats: sum(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state = 'paid'`),
       openRewards: db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amount_sats), 0) AS s FROM rewards WHERE state <> 'paid'`).get(),

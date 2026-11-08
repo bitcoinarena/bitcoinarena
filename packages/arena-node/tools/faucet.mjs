@@ -26,6 +26,7 @@ import { createServer } from 'node:http';
 import { timingSafeEqual, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
+import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS } from '../src/feedback-store.js';
 import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
@@ -114,6 +115,18 @@ const isAdmin = (req) => { const code = String(req.headers['x-arena-admin'] || '
   return timingSafeEqual(Buffer.from(createHash('sha256').update(code).digest('hex')), Buffer.from(ADMIN_SHA)); };
 const RULES = (() => { try { return JSON.parse(env.FAUCET_REWARD_RULES || '{}'); } catch { return {}; } })();
 const ourKeys = () => { try { return new Set(readFileSync(env.FAUCET_FEEDBACK_EXCLUDED, 'utf8').split(/\s+/).map((x) => x.toLowerCase()).filter((x) => /^[0-9a-f]{64}$/.test(x))); } catch { return new Set(); } };
+// THE SEATS A NODE CHECK ASKS (kanban #1342): every seat the season seats list (GET /network-games - a seat does not list itself, so they are merged, and each is one too)
+const NODE_CHECKS = new Map();
+const fetchJson1342 = async (u) => { const r = await fetch(u, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(`${r.status}`); return r.json(); };
+async function nodeCheckNow(node, npub) {
+  const bases = String(env.FAUCET_SEASON_SEATS || '').split(',').filter(Boolean).map((u) => u.replace(/\/+$/, ''));
+  const lists = await Promise.all(bases.map((b) => fetchJson1342(`${b}/network-games`).then((j) => (j.seats || []).map((x) => x.seat), () => [])));
+  const seats = [...new Set([...bases, ...lists.flat()])];
+  let excluded = new Set(); try { excluded = ourKeys(); } catch { excluded = new Set(); }
+  // the hosts the team's own nodes answer at (kanban #1342: team nodes are never paid)
+  const teamHosts = String(env.FAUCET_TEAM_HOSTS || 'beelink.tail1723e2.ts.net,127.0.0.1,localhost,192.168.1.18').split(',').map((x) => x.trim()).filter(Boolean);
+  return nodeBountyCheck({ node, npub, seats, fetchJson: fetchJson1342, excluded, teamHosts });
+}
 const PLAYED = networkPlayers({ seats: String(env.FAUCET_SEASON_SEATS || '').split(',').filter(Boolean), games: String(env.FAUCET_SEASON_GAMES || 'rock-paper-scissors,nextblock,btc-updown').split(',').filter(Boolean) });
 if (FEEDBACK && BOUNTY_PAYER) setInterval(() => FEEDBACK.settle({ status: bountyStatus }).catch(() => {}), 60000).unref();
 
@@ -231,6 +244,13 @@ createServer((req, res) => {
         if ((b.action === 'approve' || b.action === 'reward') && !bountyOn()) return send(403, { ok: false, why: 'rewards are off until the owner turns them on: reject, duplicate and notes still work' });
         if (b.action === 'approve') {
           await PLAYED.fresh().catch(() => 0);
+          // A NODE BOUNTY ONLY ON ITS CHECKLIST (kanban #1342): the node's census, 7 days, committees and signed rounds, owner = the reporter - read now
+          if (String(b.severity || '').toLowerCase() === 'node') {
+            const r = (FEEDBACK.list({}) || []).find((x) => x.id === b.id);
+            if (!r || !r.node) return send(200, { ok: false, why: 'a node bounty is for a node report naming its node' });
+            const chk = await nodeCheckNow(r.node, r.pubkey).catch((e) => ({ ok: false, why: e.message }));
+            if (!chk.ok || !chk.passes) return send(200, { ok: false, why: `the node checklist does not pass: ${(chk.checks || []).filter((c) => !c.ok).map((c) => `${c.label} (${c.says})`).join('; ') || chk.why}`, checks: chk.checks || null });
+          }
           // A CRITICAL BUG ABOVE THE BANDS IS THE OWNER'S OWN CALL: critical: true lifts mostSats to the amount for this one approval
           const rules = b.critical === true ? { ...RULES, mostSats: Math.max(Number(b.amountSats) || 0, RULES.mostSats || 0) } : RULES;
           return send(200, FEEDBACK.approve(b.id, b.amountSats, { played: PLAYED.played, excluded: ourKeys(), rules, severity: b.severity || null, by }));
@@ -278,6 +298,17 @@ createServer((req, res) => {
     return undefined;
   }
   // "MY FEEDBACK" (kanban #1342): a NIP-98 sign-in by the reporter's key; the reports' reward links are bearer secrets, so never by pubkey alone
+  // THE NODE BOUNTY'S CHECKLIST (kanban #1342, Daniel 2026-11-08): read live from the seats' public doors for a node and the reporter's key - public,
+  // the same answer the form fills in and the admin approves on; kept 10 min per pair (one read asks every seat for 7 days, ~30 s)
+  if (path === '/feedback/node-check' && req.method === 'GET') {
+    const q = new URL(req.url, 'http://x').searchParams;
+    const node = String(q.get('node') || '').toLowerCase(), npub = String(q.get('npub') || '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(node) || !/^[0-9a-f]{64}$/.test(npub)) return send(400, { ok: false, why: 'GET /feedback/node-check?node=<64 hex>&npub=<64 hex>' });
+    const k = `${node}:${npub}`, kept = NODE_CHECKS.get(k);
+    if (kept && Date.now() - kept.at < 600000) return send(200, { ...kept.answer, keptMs: Date.now() - kept.at });
+    return nodeCheckNow(node, npub).then((answer) => { NODE_CHECKS.set(k, { at: Date.now(), answer }); if (NODE_CHECKS.size > 200) NODE_CHECKS.delete(NODE_CHECKS.keys().next().value); send(200, answer); },
+      (e) => send(502, { ok: false, why: `the seats could not be read: ${String(e.message || e).slice(0, 120)}` }));
+  }
   // THE REWARD TABLE (kanban #1342, Daniel 2026-11-08): the levels the form shows are the ones approve pays from - one source; public, no amounts
   // are promised while the bounty is off (the page shows the table only in its bounty build)
   if (path === '/feedback/rewards' && req.method === 'GET') {

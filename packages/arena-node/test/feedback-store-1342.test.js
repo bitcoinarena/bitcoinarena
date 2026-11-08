@@ -266,3 +266,22 @@ test('#1342 levels 500 / 1,000 / 2,000 / 5,000 / 20,000: an approval by level pa
   assert.equal(low.report.amountSats, 1000, '2,000 + 1,000 fill the 3,000 budget; the critical one is not in it');
   assert.match(more.why, /this week's budget: 3000 of 3000/);
 });
+
+// THE NODE BOUNTY (Daniel 2026-11-08): 20,000 sats, its own pot, one per person, a node report only; its checklist is the faucet's (node-bounty-check)
+test('#1342 a node bounty: 20,000 from its own pot for a node report; one per person; a frontend report cannot take it; a node operator need not have played', () => {
+  const s = openFeedbackStore();
+  const rules = { perKeyPerWeek: 3, weeklyBudgetSats: 1000, mostSats: 20000, leastSats: 100 };
+  const nodeReport = (n, text) => { const e = report(key(n), text, { type: 'bug', tags: [['source', 'node'], ['node', 'ee'.repeat(32)]] }); s.take(e); return e.id; };
+  const a = nodeReport(21, 'The installer stopped at the bond step on Ubuntu and I had to restart it twice.');
+  const b = nodeReport(21, 'After the update the owner page did not show the federation of my guardian.');
+  const f = report(key(22), 'The lobby froze after the second round of rock paper scissors in a row.'); s.take(f);
+  const first = s.approve(a, null, { played: () => false, rules, severity: 'node' });
+  const again = s.approve(b, null, { played: () => false, rules, severity: 'node' });
+  const front = s.approve(f.id, null, { played: () => true, rules, severity: 'node' });
+  const bar = s.budget({ rules });
+  console.log('  MEASURED #1342 node bounty:', JSON.stringify({ first: first.ok && first.report.amountSats, again: again.why, front: front.why, weekBudgetUsed: bar.weekApprovedSats }));
+  assert.equal(first.ok, true, first.why); assert.equal(first.report.amountSats, 20000);
+  assert.match(again.why, /one node bounty per person/);
+  assert.match(front.why, /for a node report/);
+  assert.equal(bar.weekApprovedSats, 0, 'the node bounty is not in the bug budget');
+});
