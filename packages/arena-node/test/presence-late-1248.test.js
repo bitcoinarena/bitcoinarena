@@ -30,3 +30,27 @@ test('#1248 a PRESENT taken after its seating closed is kept but not counted as 
   assert.equal(seen.has(n1), true);
   assert.equal(seen.has(n2), false, 'a PRESENT signed after the close counted as seen');
 });
+
+// KANBAN #1351 (audit 4 seats-3): #1248 cut only PRESENTs that came after the close. A node the seating DREW could still hand its PRESENT, before the
+// close, to chosen seats only (POST /presence) and give the drawn members none: its certificate says not present, those seats alone said "seen" and
+// refused the census root for good. A drawn node's presence is now its certificate's word; a PRESENT counts only for a node the seating did not draw.
+test('#1351 a drawn node\'s PRESENT handed to one seat before the close: every seat answers the same', () => {
+  const N = toHex(schnorr.getPublicKey(sk(7))), M = toHex(schnorr.getPublicKey(sk(8)));
+  const present = (n) => signPresent({ roundId: RID, role: SEATING_ROLES[0], nodePubkey: schnorr.getPublicKey(sk(n)) }, (m) => schnorr.sign(m, sk(n)));
+  const bookOf = () => {
+    const round = { db: openStore(':memory:'), now: () => Number(CLOSE) - 10000 };    // 10 s before the close
+    return presenceBook({ round, verify, closeOfRound: () => CLOSE, rootOfRound: () => 'aa'.repeat(32), slotsOfRound: () => 5,
+      roster: { committeeFor: () => ({ ok: true, drawn: [{ pubkey: fromHexKey(N) }] }) } });
+  };
+  const w = { fromMs: CLOSE - 86400000n, toMs: CLOSE + 1000n };
+  const chosen = bookOf(), other = bookOf();
+  const took = chosen.takeProof(present(7));                          // N, drawn, hands its PRESENT to this seat alone
+  chosen.takeProof(present(8)); other.takeProof(present(8));          // M, not drawn, a returning node: its PRESENT still counts
+  const a = chosen.presentsIn(w), b = other.presentsIn(w);
+  console.log('  MEASURED #1351:', JSON.stringify({ taken: took.ok, drawnSeenAtChosen: a.has(N), drawnSeenElsewhere: b.has(N), notDrawnSeen: [a.has(M), b.has(M)] }));
+  assert.equal(took.ok, true, 'the PRESENT is still kept');
+  assert.equal(a.has(N), b.has(N), 'the seat the node chose answered otherwise than the rest');
+  assert.equal(a.has(N), false);
+  assert.deepEqual([a.has(M), b.has(M)], [true, true]);
+});
+const fromHexKey = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)));
