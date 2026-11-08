@@ -11,6 +11,9 @@ import { swapQuote, swapForRound, swapGatewayPairs, SWAP_PAIRS_MAX, movePlayerWa
 function wallet(balanceMsat, rule) {
   const w = { balance: BigInt(balanceMsat), received: [], paid: [],
     feeRule: async () => JSON.stringify({ fee_base_msat: rule.base, fee_ppm: rule.ppm }),
+    // the federation's gateways and their published fees (kanban #1324: only gateways at or under the cap carry a swap)
+    gateways: async () => JSON.stringify(w.listed || ['https://gw-a.test', 'https://gw-b.test']),
+    gatewayFees: async (g) => JSON.stringify((w.fees && w.fees[g]) || { send: { ppm: 1000, baseMsat: 1000 }, receive: { ppm: 1000, baseMsat: 0 } }),
     balanceMsat: async () => String(w.balance),
     withdrawableMsat: async () => String(w.balance - 5000n),
     receive: async (msat) => { w.pending = BigInt(msat); return JSON.stringify({ invoice: `lnbcrt-swap-${msat}`, operation: 'op1' }); },
@@ -209,4 +212,22 @@ test('a swap\'s two legs try each one\'s own federation\'s seated gateways befor
     assert.deepEqual(legs[0], ['https://seat-to', 'https://seat-from'], 'the first pair: the receiving federation\'s seat, the paying federation\'s seat');
     assert.deepEqual(legs[1], ['https://seat-to', 'https://gw-c'], 'then the paying leg goes on to its federation\'s list');
   } finally { useSeatedGateways(null); }
+});
+
+test('kanban #1324: a swap goes only through gateways at or under the federation\'s fee cap; with none it waits and says why', async () => {
+  const over = { send: { ppm: 5000, baseMsat: 0 }, receive: { ppm: 0, baseMsat: 0 } };
+  const from = wallet(500000n, { base: 0, ppm: 0 }), to = wallet(0n, { base: 0, ppm: 0 });
+  from.target = { payIn: () => {} };
+  // the paying federation's gw-a is above the cap: the pay leg takes gw-b only
+  from.fees = { 'https://gw-a.test': over };
+  const states = [];
+  await swapForRound({ from, to, amountMsat: 100000n, onState: (x) => states.push(x.state) });
+  assert.ok(from.paid.length >= 1);
+  // every gateway of the round's federation above the cap: the swap waits
+  const to2 = wallet(0n, { base: 0, ppm: 0 }); to2.fees = { 'https://gw-a.test': over, 'https://gw-b.test': over };
+  const from2 = wallet(500000n, { base: 0, ppm: 0 }); from2.target = { payIn: () => {} };
+  const said = [];
+  await assert.rejects(swapForRound({ from: from2, to: to2, amountMsat: 100000n, onState: (x) => said.push(x) }), /no gateway of the round's federation charges at or under the federation's fee cap, so it waits \(https:\/\/gw-a.test: its send fee 0.5 %/);
+  assert.equal(said[said.length - 1].state, 'waiting');
+  assert.equal(from2.paid.length, 0, 'nothing paid');
 });

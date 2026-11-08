@@ -20,6 +20,7 @@
 import { ANCESTOR_TAG } from '../../arena-protocol/src/ancestor.js';
 import { noteInvite, wholeInvite } from './guardian-invites.js';
 import { taggedHash, toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { gatewayFeeWithin } from '../../arena-protocol/src/federation-record.js';
 import { TAG, networkOf } from '../../arena-protocol/src/constants.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
@@ -3378,13 +3379,41 @@ export async function handLock({ entryId, fields, nodes, needed, fetcher = fetch
  * Answers { moved, chunks, state, why }.
  */
 export const MIGRATE_DUST_MSAT = 10000n;
+/**
+ * THE GATEWAYS AT OR UNDER THE FEDERATION'S CAP (spec §23A.9, RULED 2026-11-07 kanban #1310, #1324): of `list` (in its order), those whose
+ * published send and receive fees - the lock client's gatewayFees, from each gateway's own routing info - are within `feeMax` (the federation
+ * record's gatewayFeeMax; none: the reference 0.1 % + 10 sat). A gateway that answers no fees, or a lock client that cannot ask, is not within.
+ * Answers { gateways, refused: [{ gateway, why }] }.
+ */
+export async function gatewaysWithinCap(client, list, feeMax = null) {
+  const gateways = [], refused = [];
+  for (const g of [...new Set((list || []).filter(Boolean).map(String))]) {
+    if (!client || typeof client.gatewayFees !== 'function') { refused.push({ gateway: g, why: 'this wallet cannot read a gateway\'s fees' }); continue; }
+    let fees = null;
+    try { fees = JSON.parse(await client.gatewayFees(g)); } catch (e) { refused.push({ gateway: g, why: `its fees could not be read: ${e && e.message ? e.message : e}` }); continue; }
+    const w = gatewayFeeWithin(fees, feeMax);
+    if (w.ok) gateways.push(g); else refused.push({ gateway: g, why: w.why });
+  }
+  return { gateways, refused };
+}
+const capWhy = (side, refused) => `no gateway ${side} charges at or under the federation's fee cap, so it waits${refused.length ? ` (${refused.map((r) => `${r.gateway}: ${r.why}`).join('; ')})` : ' (none is listed)'}`;
+
 export async function migrateFromDraining({ from, to, record, toFederationId, chunkMsat = null, retries = 3, maxChunks = 64,
-  gateways = [], onState = () => {}, storage = null, fromFederationId = null } = {}) {
+  gateways = [], onState = () => {}, storage = null, fromFederationId = null, feeMax = null } = {}) {
   const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
   // DRAINING, or CRITICAL with the safe federation the page chose as `successorId` (evacuatePlayerWallet, 2026-10-13)
   if (!record || !['DRAINING', 'CRITICAL'].includes(record.status)) return { moved: 0n, chunks: 0, state: 'not draining' };
   if (!record.successorId || /^0+$/.test(hex(record.successorId))) return { moved: 0n, chunks: 0, state: 'no successor named' };
   if (hex(record.successorId) !== hex(toFederationId)) return { moved: 0n, chunks: 0, state: 'that wallet is not in the successor' };
+  // ONLY THROUGH A GATEWAY AT OR UNDER THE CAP (§23A.9, kanban #1324): the paying leg from the old federation's, the receiving leg in the successor's;
+  // none on either side: the move waits and says so
+  const pay = await gatewaysWithinCap(from, [...gateways, ...await seatedGatewaysOf(from), ...await federationGateways(from)], feeMax || record.gatewayFeeMax || null);
+  const recv = await gatewaysWithinCap(to, [...await seatedGatewaysOf(to), ...await federationGateways(to)], feeMax || record.gatewayFeeMax || null);
+  if (!pay.gateways.length || !recv.gateways.length) {
+    const why = !pay.gateways.length ? capWhy('of the old federation', pay.refused) : capWhy('of the successor', recv.refused);
+    onState({ state: 'waiting', why });
+    return { moved: 0n, chunks: 0, state: 'waiting', why };
+  }
   let moved = 0n, chunks = 0, failed = 0;
   for (let n = 0; n < maxChunks; n++) {
     let can;
@@ -3395,8 +3424,8 @@ export async function migrateFromDraining({ from, to, record, toFederationId, ch
     const amount = chunkMsat !== null && can > BigInt(chunkMsat) ? BigInt(chunkMsat) : can;
     onState({ state: 'moving', leftMsat: can, chunkMsat: amount, movedMsat: moved });
     let made = null;
-    const out = await withdrawCollected({ client: from, amountMsat: amount, gateways,
-      invoiceFor: async (msat) => { made = JSON.parse(await to.receive(String(msat), '')); return { ok: true, invoice: made.invoice }; } });
+    const out = await withdrawCollected({ client: from, amountMsat: amount, gateways: pay.gateways,
+      invoiceFor: async (msat) => { made = JSON.parse(await to.receive(String(msat), recv.gateways[0])); return { ok: true, invoice: made.invoice }; } });
     const final = out.ok && made ? await to.awaitReceive(made.operation) : null;
     if (out.ok && final === 'Claimed') {
       moved += amount; chunks++; failed = 0;
@@ -3485,7 +3514,7 @@ export function swapGatewayPairs(named = [], listedTo = [], listedFrom = [], max
 }
 // `rows`: the history's two kinds - a join's swap, or the player's own Move (movePlayerWallet)
 export async function swapForRound({ from, to, amountMsat, gateways = [], storage = null, fromFederationId = null, toFederationId = null, onState = () => {},
-  rows = ['swapped-out', 'swapped-in'] }) {
+  rows = ['swapped-out', 'swapped-in'], feeMax = null }) {
   const amount = BigInt(amountMsat);
   const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
   onState({ state: 'swapping', amountMsat: amount });
@@ -3497,7 +3526,15 @@ export async function swapForRound({ from, to, amountMsat, gateways = [], storag
   // receive through one listed gateway, pay through another, and a payment that ends Refunded - the money back - tries the next
   // pair; any other end stops, as money may be on its way.
   // each leg's own federation's seated gateways first (§23A.9), then its list
-  const pairs = swapGatewayPairs(gateways, [...await seatedGatewaysOf(to), ...await federationGateways(to)], [...await seatedGatewaysOf(from), ...await federationGateways(from)]);
+  // and only through gateways at or under the federations' fee cap (§23A.9, kanban #1324): none on a leg, the swap waits and says so
+  const recvOk = await gatewaysWithinCap(to, [...gateways, ...await seatedGatewaysOf(to), ...await federationGateways(to)], feeMax);
+  const payOk = await gatewaysWithinCap(from, [...gateways, ...await seatedGatewaysOf(from), ...await federationGateways(from)], feeMax);
+  if (!recvOk.gateways.length || !payOk.gateways.length) {
+    const why = !recvOk.gateways.length ? capWhy('of the round\'s federation', recvOk.refused) : capWhy('of the paying federation', payOk.refused);
+    onState({ state: 'waiting', why });
+    throw new Error(`the swap ${why}`);
+  }
+  const pairs = swapGatewayPairs([], recvOk.gateways, payOk.gateways);
   const tried = [];
   let made = null, said = null;
   for (const [recv, pay] of pairs) {

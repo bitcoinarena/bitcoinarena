@@ -747,6 +747,21 @@ impl LockClient {
         Ok(serde_json::Value::from(list.iter().map(|u| u.to_string()).collect::<Vec<_>>()).to_string())
     }
 
+    /// A GATEWAY'S PUBLISHED FEES (spec §23A.9, kanban #1324: a migration or a swap goes only through a gateway at or under the
+    /// federation record's gateway_fee_max): its routing info, JSON { send: { ppm, baseMsat }, sendMinimum: { ppm, baseMsat },
+    /// receive: { ppm, baseMsat } } - `send` the default an outgoing payment over Lightning pays - or null when it answers none.
+    #[wasm_bindgen(js_name = gatewayFees)]
+    pub async fn gateway_fees(&self, gateway: String) -> Result<String, JsError> {
+        let ln = self.client.get_first_module::<LightningClientModule>().map_err(js)?;
+        let url = SafeUrl::parse(gateway.trim()).map_err(js)?;
+        let fee = |f: &PaymentFee| serde_json::json!({ "ppm": f.parts_per_million, "baseMsat": f.base.msats });
+        Ok(match ln.routing_info(&url).await.map_err(js)? {
+            Some(ri) => serde_json::json!({ "send": fee(&ri.send_fee_default), "sendMinimum": fee(&ri.send_fee_minimum), "receive": fee(&ri.receive_fee) }),
+            None => serde_json::Value::Null,
+        }
+        .to_string())
+    }
+
     /// Until the deposit is final: "Claimed", "Expired" or "Failure".
     #[wasm_bindgen(js_name = awaitReceive)]
     pub async fn await_receive(&self, operation: String) -> Result<String, JsError> {
