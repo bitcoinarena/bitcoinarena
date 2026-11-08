@@ -96,11 +96,15 @@ function readRound(r, { keys = false } = {}) {
     if (!keys) { entries.push({ player, stakeMsat: e.stakeMsat, payoutMsat: payout, score, outcome, name, ...(e.bot === true ? { bot: true } : {}) }); continue; }
     const roundKey = e.roundKey === null || e.roundKey === undefined ? null : String(e.roundKey).toLowerCase();
     if (roundKey !== null && !HEX64.test(roundKey)) return { id, why: 'an entry\'s round key is a 32-byte key in hex, or null' };
-    entries.push({ player, stakeMsat: e.stakeMsat, payoutMsat: payout, score, outcome, name, roundKey, ...(e.bot === true ? { bot: true } : {}) });
+    // THE WEBSITE THAT BROUGHT IT (kanban #1346, §27A.4.2): the entry's frontend_pk, what a contribution agreement's milestones read - part of
+    // the account only where an entry carries one, so an account of entries without it keeps its id
+    const frontendPk = e.frontendPk === null || e.frontendPk === undefined ? null : String(e.frontendPk).toLowerCase();
+    if (frontendPk !== null && !/^0[23][0-9a-f]{64}$/.test(frontendPk)) return { id, why: 'an entry\'s frontend key is a 33-byte compressed key in hex, or null' };
+    entries.push({ player, stakeMsat: e.stakeMsat, payoutMsat: payout, score, outcome, name, roundKey, ...(frontendPk ? { frontendPk } : {}), ...(e.bot === true ? { bot: true } : {}) });
   }
   // THE ENTRIES IN ONE ORDER, so two copies of a round that differ only in the order they were listed are one round
   const key = (e) => [e.player, e.outcome ?? '', e.score ?? '', e.stakeMsat, e.payoutMsat ?? '', e.name ?? '',
-    ...(keys ? [e.roundKey ?? ''] : [])].join('|');
+    ...(keys ? [e.roundKey ?? ''] : []), ...(keys && e.frontendPk ? [`f:${e.frontendPk}`] : [])].join('|');
   entries.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
   const canon = JSON.stringify([id, game, String(startMs), !!r.void, entries.map(key)]);
   return { id, game, startMs, void: !!r.void, entries, canon };
@@ -337,7 +341,7 @@ export function seasonRoundsToJson(rounds) {
   const s = (v) => (v === null || v === undefined ? null : String(v));
   return (rounds || []).map((r) => ({ roundId: r.roundId, gameId: r.gameId, startMs: s(r.startMs), void: !!r.void,
     entries: (r.entries || []).map((e) => ({ player: e.player, name: e.name ?? null, stakeMsat: s(e.stakeMsat),
-      payoutMsat: s(e.payoutMsat), outcome: e.outcome ?? null, score: e.score ?? null, roundKey: e.roundKey ?? null, ...(e.bot === true ? { bot: true } : {}) })) }));
+      payoutMsat: s(e.payoutMsat), outcome: e.outcome ?? null, score: e.score ?? null, roundKey: e.roundKey ?? null, ...(e.frontendPk ? { frontendPk: e.frontendPk } : {}), ...(e.bot === true ? { bot: true } : {}) })) }));
 }
 
 export function seasonRoundsFromJson(list) {
@@ -346,7 +350,7 @@ export function seasonRoundsFromJson(list) {
   return list.map((r) => (!r || typeof r !== 'object' ? r : { roundId: r.roundId, gameId: r.gameId, startMs: big(r.startMs), void: r.void === true,
     entries: Array.isArray(r.entries) ? r.entries.map((e) => (!e || typeof e !== 'object' ? e : { player: e.player, name: e.name ?? null,
       stakeMsat: big(e.stakeMsat), payoutMsat: big(e.payoutMsat), outcome: e.outcome ?? null, score: e.score ?? null,
-      roundKey: e.roundKey ?? null, ...(e.bot === true ? { bot: true } : {}) })) : r.entries,
+      roundKey: e.roundKey ?? null, ...(e.frontendPk ? { frontendPk: e.frontendPk } : {}), ...(e.bot === true ? { bot: true } : {}) })) : r.entries,
     // A SIGNED ACCOUNT'S EVIDENCE (kanban #1153), handed on as it came, for mergeSignedSeasonAccounts to check
     ...(r.contract !== undefined ? { contract: r.contract } : {}), ...(Array.isArray(r.sigs) ? { sigs: r.sigs } : {}) }));
 }
