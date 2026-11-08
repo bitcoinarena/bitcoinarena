@@ -150,9 +150,9 @@ test('kanban #738 (protocol 22): a forged justification stands for nothing - not
   assert.deepEqual(encodeJustification(decodeJustification(bytes)), bytes);
   assert.equal(toHex(decodeJustification(bytes).bound), toHex(justificationHash(null)));
   assert.equal(bytes.length, 2 + 5 * 32 + 2 + 7 * 32 + 32 + 64 + 32 + 1);
-  // the nested form is gone (kanban #746): a flag beyond bit 0 is refused
-  const flagged = Uint8Array.from(bytes); flagged[flagged.length - 1] = 2;
-  assert.throws(() => decodeJustification(flagged), /flags are bit 0 alone/);
+  // the nested form is gone (kanban #746): a flag beyond bits 0 and 1 is refused (bit 1 is a silent step since kanban #1332)
+  const flagged = Uint8Array.from(bytes); flagged[flagged.length - 1] = 4;
+  assert.throws(() => decodeJustification(flagged), /flags are bits 0 and 1 alone/);
 });
 
 test('kanban #738: below protocol 22 nothing carries a justification - the certificate and its signatures are byte for byte as before', () => {
