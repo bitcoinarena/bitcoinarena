@@ -26,7 +26,9 @@ const OLD = 'aa'.repeat(32), NEW = 'bb'.repeat(32);
 function wallets(balanceMsat, { sendFails = 0, receiveEnds = 'Claimed' } = {}) {
   let bal = BigInt(balanceMsat), got = 0n, fails = sendFails, n = 0;
   const pending = new Map();
-  const from = {
+  // each side lists one gateway and publishes fees under the cap (kanban #1324)
+  const fed = { gateways: async () => JSON.stringify(['https://gw.test']), gatewayFees: async () => JSON.stringify({ send: { ppm: 100, baseMsat: 0 }, receive: { ppm: 100, baseMsat: 0 } }) };
+  const from = { ...fed,
     withdrawableMsat: async () => String(bal > 2000n ? bal - 2000n : 0n),      // the send's fee kept back
     withdraw: async (invoice) => {
       const amount = pending.get(invoice);
@@ -35,7 +37,7 @@ function wallets(balanceMsat, { sendFails = 0, receiveEnds = 'Claimed' } = {}) {
       return JSON.stringify({ state: 'Success', invoice_msat: String(amount) });
     },
   };
-  const to = {
+  const to = { ...fed,
     receive: async (msat) => { ++n; const invoice = bolt11For(BigInt(msat), n); pending.set(invoice, BigInt(msat)); return JSON.stringify({ invoice, operation: 'op' + n }); },
     awaitReceive: async () => receiveEnds,
   };
