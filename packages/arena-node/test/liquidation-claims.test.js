@@ -443,3 +443,37 @@ test('kanban #1253 (audit 3 MONEY-3): a claim takes its notes - reissued into th
   assert.equal(alarmed.status, 503); assert.equal(alarmBook.claimed(FED).length, 0, 'a still-running federation\'s notes were claimed without taking them');
   assert.equal(stopped.ok, true, 'a federation whose consensus stopped is claimed offline, as before');
 });
+
+// KANBAN #1352 (audit 4 fixesB-2): the reissue was not written ahead. A reissue that landed after its 120 s timeout (or across a restart) took
+// the notes and kept no claim: under a mark of theft the holder got 503 "present them again", and presented again the federation answered
+// "spent" - 409 for good, the notes in the set's client and the holder never paid. Each fresh note is now kept as TAKING before the reissue.
+test('#1352 a reissue that landed late: presented again, the notes are claimed - also across a restart', async () => {
+  const ALARM = { ...LIQ, alarm: { kind: 'inflation', session: 9 } };
+  const run = async ({ restart }) => {
+    let rows = []; let landed = false;
+    const take = async () => { if (!landed) { landed = true; return { ok: false, offline: true, why: 'timed out' }; } return { ok: false, offline: false, why: 'the notes were already spent' }; };
+    const make = () => createLiquidationClaims({ validate: async (_fid, e) => ({ ok: true, notes: NOTES[e], amountMsat: NOTES[e].reduce((a, n) => a + n.amountMsat, 0n) }),
+      liquidationOf: async (fid) => (fid === FED ? ALARM : null), height: async () => 1012, escrowMsatOf: async () => 10_000_000n, clocks: REGTEST_CLOCKS,
+      load: () => JSON.parse(JSON.stringify(rows)), save: (r) => { rows = JSON.parse(JSON.stringify(r)); }, take });
+    let b = make();
+    const first = await b.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+    const keptAhead = rows.filter((r) => r.taking).length;
+    if (restart) b = make();
+    const thief = await b.offer({ federation: FED, ecash: 'e1', payoutPk: P2 });
+    const again = await b.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+    return { first: first.status, keptAhead, otherKey: thief.status, again: again.status, accepted: (again.accepted || []).length, claimed: b.claimed(FED).length, takingLeft: rows.filter((r) => r.taking).length };
+  };
+  const same = await run({ restart: false }), restarted = await run({ restart: true });
+  // a first presentation the federation refuses as spent is still refused (no earlier taking): the #1253 case
+  const fresh = await createLiquidationClaims({ validate: async (_fid, e) => ({ ok: true, notes: NOTES[e], amountMsat: 768000n }), liquidationOf: async () => LIQ,
+    height: async () => 1012, escrowMsatOf: async () => 10_000_000n, clocks: REGTEST_CLOCKS, save: () => {}, take: async () => ({ ok: false, why: 'the notes were already spent' }) })
+    .offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+  console.log('  MEASURED #1352:', JSON.stringify({ same, restarted, firstRefusalStill: fresh.status }));
+  for (const r of [same, restarted]) {
+    assert.equal(r.first, 503); assert.equal(r.keptAhead, 2, 'the notes were not kept before the reissue');
+    assert.equal(r.otherKey, 409, 'another key claimed notes being taken for the first holder');
+    assert.equal(r.again, 200, 'the re-presentation of notes that landed was refused'); assert.equal(r.accepted, 2); assert.equal(r.claimed, 2);
+    assert.equal(r.takingLeft, 0);
+  }
+  assert.equal(fresh.status, 409);
+});
