@@ -288,7 +288,8 @@ test('below protocol 26 a claim with a stalled list is refused, and a claim with
   assert.match(r.why, /not under the rule/);
   assert.match(client(W, claim).why, /not under the rule/);
   W.presence.keepClaim('ab'.repeat(32), { claims: [], certs: {} });
-  assert.equal(W.round.db.prepare('SELECT claim FROM absent_claims WHERE root = ?').get('ab'.repeat(32)).claim, '{"claims":[],"certs":{}}');
+  // a posted claim is kept as an offer (kanban #1367), its bytes as they always were
+  assert.equal(W.round.db.prepare('SELECT claim FROM absent_offers WHERE root = ?').get('ab'.repeat(32)).claim, '{"claims":[],"certs":{}}');
 });
 
 // THE SEAT'S OWN NOTES, on its own store
