@@ -707,6 +707,7 @@ export const TAG = {
   playerName: 'ARENA/v1/PlayerName',
   feeProposal: 'ARENA/v1/FeeProposal',
   feeApproval: 'ARENA/v1/FeeApproval',
+  feeSignal: 'ARENA/v1/FeeSignal',   // kanban #1283, RULED #1277 B: a fee proposal's signal on chain
   leaderboardPayout: 'ARENA/v1/LeaderboardPayout',
   // The player's lock client's root, per round, from their seed (W1b). Its own
   // tag: it must never be the player key the same seed makes for the round.
