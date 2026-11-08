@@ -115,3 +115,38 @@ test('an advertisement naming a role this build does not know is read, that role
   bytes[47] = 9;
   assert.deepEqual(decodeAdvert(bytes).roles, [], 'role index 9 is skipped, the advertisement still read');
 });
+
+// KANBAN #1331 (3), §13A.1 RULED 2026-11-07 (#1306): "An AUDIT carries H(state at tick t) with t = beta mod T_run from the auditor's own VRF output,
+// a tick that is not a checkpoint tick, so only a replayer can produce it; seats verify it from the replay they already did." Measured: from
+// AUDIT_TICK_VERSION an AUDIT without the tick hash is refused, a wrong one is refused, the replay's one counts; before it nothing changes.
+test('#1331 an AUDIT without the replayed tick\'s state hash is refused; the replay\'s hash counts', async () => {
+  const { auditTick, AUDIT_TICK_VERSION } = await import('../src/auditor.js');
+  const nodes = Array.from({ length: 30 }, (_, i) => node(i)), entries = census(30);
+  let roundId, drawn;
+  for (let r = 0; r < 50 && !drawn; r++) { roundId = taggedHash('test/round-tick', Uint8Array.of(r)); [drawn] = drawsOf(roundId, entries, nodes); }
+  const resultsHash = auditResultsHash([{ entryId: new Uint8Array(32).fill(1), resultDigest: new Uint8Array(32).fill(8) }]);
+  const vrfProof = vrf.prove(vrfSecretFor(drawn.secret, secp256k1.Point), auditAlpha(roundId));
+  const beta = vrf.proofToHash(vrfProof);
+  const RUN = 9000, EVERY = 100;
+  const t = auditTick({ beta, runTicks: RUN, checkpointEvery: EVERY });
+  const stateHashAt = (tick) => taggedHash('test/state', Uint8Array.of(tick >> 8, tick & 255));   // the seat's own replay
+  const { eligible, total } = auditEligible({ entries, bondMinSats: BOND_MIN });
+  const check = (a, extra = {}) => auditStands(a, { signature: schnorr.sign(auditId(a), drawn.secret), vrf, verify, eligible, total, resultsHash,
+    protocolVersion: AUDIT_TICK_VERSION, runTicks: RUN, checkpointEvery: EVERY, stateHashAt, ...extra });
+  const base = { roundId, resultsHash, nodePubkey: drawn.pubkey, atMs: 1_000_000n, vrfProof };
+  const without = check(base);
+  const wrong = check({ ...base, tickHash: stateHashAt((t + 1) % RUN) });
+  const right = check({ ...base, tickHash: stateHashAt(t) });
+  const noReplay = check({ ...base, tickHash: stateHashAt(t) }, { stateHashAt: null });
+  const older = auditStands(base, { signature: schnorr.sign(auditId(base), drawn.secret), vrf, verify, eligible, total, resultsHash, protocolVersion: 27 });
+  const round = decodeAudit(encodeAudit({ ...base, tickHash: stateHashAt(t) }));
+  console.log('  MEASURED #1331 (3):', JSON.stringify({ tick: t, onCheckpoint: t % EVERY === 0, withoutTickHash: without.ok, wrongTickHash: wrong.ok, replaysTickHash: right.ok,
+    seatWithoutReplay: noReplay.ok, protocol27WithoutTickHash: older.ok }));
+  assert.ok(t >= 0 && t < RUN && t % EVERY !== 0, 'the tick is a checkpoint tick');
+  assert.equal(without.ok, false); assert.match(without.why, /only a replayer can produce it/);
+  assert.equal(wrong.ok, false); assert.equal(right.ok, true, right.why);
+  assert.equal(noReplay.ok, false);
+  assert.equal(older.ok, true, 'before AUDIT_TICK_VERSION an AUDIT counts as before');
+  assert.equal(toHex(round.tickHash), toHex(stateHashAt(t)));
+  assert.equal(auditTick({ beta: new Uint8Array(8), runTicks: RUN, checkpointEvery: EVERY }), 1, 'tick 0 is a checkpoint: the next one');
+});
