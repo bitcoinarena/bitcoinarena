@@ -16130,6 +16130,35 @@ function setSharesAt(recipients, height, shareOf = () => 0) {
   return out;
 }
 
+/**
+ * THE AGREEMENT'S LIVE NUMBERS AT A HEIGHT (§27A.4.2 "the owner page and the explorer"), from the same facts as contributionShare: each
+ * milestone's count against the network's scale, the attribution over the floor's window, and per site key the identities whose first paid
+ * entry carried it and the gross of the entries that carried it. Answers { scale, t1: { have, need }, t2: { have, need }, attribution:
+ * { bps, floorBps, windowBlocks }, sites: [{ siteKey, identities, grossMsat }] }.
+ */
+function contributionProgress(a, { facts = [], height, network } = {}) {
+  const S = contributionScaleOf(network), h = Number(height);
+  const F = contributionFacts((facts || []).filter((f) => Number(f.height) <= h), a.siteKeys);
+  const mineFirsts = [...F.first.entries()].filter(([, f]) => f.mine && f.height >= a.startHeight);
+  const retained = mineFirsts.filter(([id, f]) => (F.later.get(id) || []).some((x) => x >= f.height + S.retentionBlocks)).length;
+  const W = a.tranches[0] ? a.tranches[0].windowBlocks : 12960;
+  const news = F.news.filter((n) => n.height >= Math.max(a.startHeight, h - W + 1));
+  const attributionBps = news.length ? Math.floor((news.filter((n) => n.mine).length * CONTRIB_BPS_TOTAL) / news.length) : 0;
+  const sites = a.siteKeys.map((k) => {
+    const kh = contribHexOf(k);
+    const firstOf = new Map();
+    let gross = 0n;
+    for (const r of [...(facts || [])].filter((f) => Number(f.height) <= h).sort((x, y) => Number(x.height) - Number(y.height))) {
+      const id = contribHexOf(r.identity);
+      if (!firstOf.has(id)) firstOf.set(id, r.frontendPk ? contribHexOf(r.frontendPk) : null);
+      if (r.frontendPk && contribHexOf(r.frontendPk) === kh) gross += BigInt(r.grossMsat || 0);
+    }
+    return { siteKey: kh, identities: [...firstOf.values()].filter((x) => x === kh).length, grossMsat: String(gross) };
+  });
+  return { scale: S, t1: { have: mineFirsts.length, need: S.t1Identities }, t2: { have: retained, need: S.t2Retained, afterBlocks: S.retentionBlocks },
+    attribution: { bps: attributionBps, floorBps: a.attributionFloorBps, windowBlocks: W }, sites };
+}
+
 // ---- arena-protocol/src/donation.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -19648,7 +19677,33 @@ function encodeFederationRecord(r) {
     if (!CAPACITY_BAND[r.capacityBand]) throw new Error(`capacity band ${r.capacityBand} is not one of ${Object.keys(CAPACITY_BAND).join(', ')}`);
     w.u8(CAPACITY_BAND[r.capacityBand]);
   }
+  // GATEWAY_FEE_MAX (§23A.9, RULED 2026-11-07 kanban #1310): the most a gateway may charge on a send or a receive for a migration or a swap to
+  // go through it - after the capacity band, so a record without it keeps its bytes; it needs the band before it
+  if (r.gatewayFeeMax !== undefined && r.gatewayFeeMax !== null) {
+    if (r.capacityBand === undefined || r.capacityBand === null) throw new Error('a gateway fee cap follows the capacity band: name the band too');
+    const f = r.gatewayFeeMax;
+    if (!Number.isInteger(f.ppm) || f.ppm < 0 || f.ppm > 1000000 || !Number.isInteger(f.baseMsat) || f.baseMsat < 0 || f.baseMsat > 0xffffffff)
+      throw new Error('a gateway fee cap is { ppm 0..1000000, baseMsat } in whole numbers');
+    w.u32(f.ppm); w.u32(f.baseMsat);
+  }
   return w.finish();
+}
+
+/** The reference cap (§23A.9): 0.1 % + 10 sat on each leg. */
+const GATEWAY_FEE_MAX_REFERENCE = Object.freeze({ ppm: 1000, baseMsat: 10000 });
+/**
+ * IS A GATEWAY'S PUBLISHED FEE AT OR UNDER THE CAP: `fees` { send: { ppm, baseMsat }, receive: { ppm, baseMsat } } as its routing info says; a
+ * leg it does not publish is not under anything. `max` the record's gatewayFeeMax (none: the reference). Answers { ok } or { ok: false, why }.
+ */
+function gatewayFeeWithin(fees, max = null) {
+  const cap = max || GATEWAY_FEE_MAX_REFERENCE;
+  for (const leg of ['send', 'receive']) {
+    const f = fees && fees[leg];
+    if (!f || !Number.isFinite(Number(f.ppm)) || !Number.isFinite(Number(f.baseMsat))) return { ok: false, why: `it publishes no ${leg} fee` };
+    if (Number(f.ppm) > cap.ppm || Number(f.baseMsat) > cap.baseMsat)
+      return { ok: false, why: `its ${leg} fee ${Number(f.ppm) / 10000} % + ${Number(f.baseMsat) / 1000} sat is above the federation's cap of ${cap.ppm / 10000} % + ${cap.baseMsat / 1000} sat` };
+  }
+  return { ok: true };
 }
 
 function decodeFederationRecord(bytes) {
@@ -19663,6 +19718,7 @@ function decodeFederationRecord(bytes) {
     exposureCapSats: r.u64(), reserveSats: r.u64(), height: r.u32(),
   };
   if (r.at !== bytes.length) { const band = nameOf(CAPACITY_BAND, r.u8()); if (!band) throw new Error('not a capacity band'); out.capacityBand = band; }
+  if (bytes.length - r.at === 8) out.gatewayFeeMax = { ppm: r.u32(), baseMsat: r.u32() };
   if (r.at !== bytes.length) throw new Error('trailing bytes after the federation record');
   encodeFederationRecord(out);                       // held to the encoder's rules
   return out;
@@ -21429,6 +21485,7 @@ const knownFederation = (hex) => KNOWN_GOOD_FEDERATIONS[String(hex || '').toLowe
 // wallet that holds it; and a lock already made, that no signer node has committed
 // yet, is kept with its stake (`saveLock`), so a reload before the signer node takes
 // the entry uses that lock instead of dealing and paying again.
+
 
 
 
@@ -23498,7 +23555,7 @@ async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) 
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/stake-lock?round=${toHex(roundId)}&refund=${refund}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${name} ${r.status}`, got: [] };
       const got = await r.json();
-      return { said: `${name} ${got.length}`, got };
+      return { said: `${name} ${got.length}`, got, node };
     } catch (e) { return { said: `${name} ${String(e && e.message || e).slice(0, 40)}`, got: [] }; }
   }));
   const said = answers.map((a) => a.said);
@@ -23517,6 +23574,8 @@ async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) 
   out.asked = asked.length;
   out.answered = said.filter((x) => /\s\d+$/.test(x) && !/\s[45]\d\d$/.test(x)).length;
   out.said = said;
+  // WHICH SEATS ANSWERED (kanban #1355, audit 4 fixesB-6 / CLIENT-5): a "none" counts only the round's own seats' answers
+  out.answeredBy = answers.filter((a) => a.node !== undefined).map((a) => String(a.node).replace(/\/+$/, ''));
   return out;
 }
 
@@ -23732,9 +23791,11 @@ async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee
   const need = Math.max(1, Number(needed) || 1);
   const pays = (a) => !!payee && a.moved.payouts.some((p) => (p.kind || 'qualifier') === 'qualifier' && String(p.pk).toLowerCase() === String(payee).toLowerCase());
   const agreed = ranked.find((g) => g.length >= need) || null;
-  if (agreed) return { ...agreed[0], agreeing: agreed.length, needed: need };
+  // `seats`: the seats that answered this settlement (kanban #1355): the round's own, whose word a stake's "none" may rest on
+  const seatsOf = (g) => g.map((a) => String(a.from).replace(/\/+$/, ''));
+  if (agreed) return { ...agreed[0], agreeing: agreed.length, needed: need, seats: seatsOf(agreed) };
   const paying = ranked.find((g) => g.some(pays));
-  if (paying) return { ...paying[0], agreeing: paying.length, needed: need, short: true };
+  if (paying) return { ...paying[0], agreeing: paying.length, needed: need, short: true, seats: seatsOf(paying) };
   const said = answers.filter((a) => !a.ok).map((a) => a.said);
   if (ranked.length) return { ok: false, agreeing: ranked[0].length, needed: need,
     why: `only ${ranked[0].length} of the ${need} signer nodes needed agree on this round's settlement yet${said.length ? ` (${said.join('; ')})` : ''}` };
@@ -24563,9 +24624,13 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
       // "NONE" IS FINAL ONLY ON ENOUGH SEATS' WORD (kanban #1250, audit 3 FIXES-16): one seat that never sat on the round answering [] while its own
       // seats timed out closed the record with a winner's stake still in its lock; it is waiting until the round's settlement threshold answered
       if (!ls.length) {
-        const enough = Number(locks.answered || 0) >= settlementAgreement(round, nodes);
+        // AND ONLY THE ROUND'S OWN SEATS COUNT (kanban #1355, audit 4 fixesB-6 / CLIENT-5): a seat of the lobby's list that never sat on the round
+        // answers [] at once; only the seats that answered the agreed settlement and also where the lock is make the threshold
+        const own = new Set(s.seats || []);
+        const ownAnswered = (locks.answeredBy || []).filter((n) => own.has(n)).length;
+        const enough = ownAnswered >= settlementAgreement(round, nodes);
         stake = { state: s.ok && enough ? 'none' : 'waiting', why: enough ? 'this tab keeps no lock for this round'
-          : `this tab keeps no lock for this round, and only ${Number(locks.answered || 0)} of the ${settlementAgreement(round, nodes)} seats needed answered where its lock is` };
+          : `this tab keeps no lock for this round, and only ${ownAnswered} of the ${settlementAgreement(round, nodes)} seats of the round's settlement needed answered where its lock is` };
       }
       else if (!client) stake = { state: 'waiting', why: 'the federation was not asked yet' };
       else {
@@ -24789,13 +24854,41 @@ async function handLock({ entryId, fields, nodes, needed, fetcher = fetch, door 
  * Answers { moved, chunks, state, why }.
  */
 const MIGRATE_DUST_MSAT = 10000n;
+/**
+ * THE GATEWAYS AT OR UNDER THE FEDERATION'S CAP (spec §23A.9, RULED 2026-11-07 kanban #1310, #1324): of `list` (in its order), those whose
+ * published send and receive fees - the lock client's gatewayFees, from each gateway's own routing info - are within `feeMax` (the federation
+ * record's gatewayFeeMax; none: the reference 0.1 % + 10 sat). A gateway that answers no fees, or a lock client that cannot ask, is not within.
+ * Answers { gateways, refused: [{ gateway, why }] }.
+ */
+async function gatewaysWithinCap(client, list, feeMax = null) {
+  const gateways = [], refused = [];
+  for (const g of [...new Set((list || []).filter(Boolean).map(String))]) {
+    if (!client || typeof client.gatewayFees !== 'function') { refused.push({ gateway: g, why: 'this wallet cannot read a gateway\'s fees' }); continue; }
+    let fees = null;
+    try { fees = JSON.parse(await client.gatewayFees(g)); } catch (e) { refused.push({ gateway: g, why: `its fees could not be read: ${e && e.message ? e.message : e}` }); continue; }
+    const w = gatewayFeeWithin(fees, feeMax);
+    if (w.ok) gateways.push(g); else refused.push({ gateway: g, why: w.why });
+  }
+  return { gateways, refused };
+}
+const capWhy = (side, refused) => `no gateway ${side} charges at or under the federation's fee cap, so it waits${refused.length ? ` (${refused.map((r) => `${r.gateway}: ${r.why}`).join('; ')})` : ' (none is listed)'}`;
+
 async function migrateFromDraining({ from, to, record, toFederationId, chunkMsat = null, retries = 3, maxChunks = 64,
-  gateways = [], onState = () => {}, storage = null, fromFederationId = null } = {}) {
+  gateways = [], onState = () => {}, storage = null, fromFederationId = null, feeMax = null } = {}) {
   const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
   // DRAINING, or CRITICAL with the safe federation the page chose as `successorId` (evacuatePlayerWallet, 2026-10-13)
   if (!record || !['DRAINING', 'CRITICAL'].includes(record.status)) return { moved: 0n, chunks: 0, state: 'not draining' };
   if (!record.successorId || /^0+$/.test(hex(record.successorId))) return { moved: 0n, chunks: 0, state: 'no successor named' };
   if (hex(record.successorId) !== hex(toFederationId)) return { moved: 0n, chunks: 0, state: 'that wallet is not in the successor' };
+  // ONLY THROUGH A GATEWAY AT OR UNDER THE CAP (§23A.9, kanban #1324): the paying leg from the old federation's, the receiving leg in the successor's;
+  // none on either side: the move waits and says so
+  const pay = await gatewaysWithinCap(from, [...gateways, ...await seatedGatewaysOf(from), ...await federationGateways(from)], feeMax || record.gatewayFeeMax || null);
+  const recv = await gatewaysWithinCap(to, [...await seatedGatewaysOf(to), ...await federationGateways(to)], feeMax || record.gatewayFeeMax || null);
+  if (!pay.gateways.length || !recv.gateways.length) {
+    const why = !pay.gateways.length ? capWhy('of the old federation', pay.refused) : capWhy('of the successor', recv.refused);
+    onState({ state: 'waiting', why });
+    return { moved: 0n, chunks: 0, state: 'waiting', why };
+  }
   let moved = 0n, chunks = 0, failed = 0;
   for (let n = 0; n < maxChunks; n++) {
     let can;
@@ -24806,8 +24899,8 @@ async function migrateFromDraining({ from, to, record, toFederationId, chunkMsat
     const amount = chunkMsat !== null && can > BigInt(chunkMsat) ? BigInt(chunkMsat) : can;
     onState({ state: 'moving', leftMsat: can, chunkMsat: amount, movedMsat: moved });
     let made = null;
-    const out = await withdrawCollected({ client: from, amountMsat: amount, gateways,
-      invoiceFor: async (msat) => { made = JSON.parse(await to.receive(String(msat), '')); return { ok: true, invoice: made.invoice }; } });
+    const out = await withdrawCollected({ client: from, amountMsat: amount, gateways: pay.gateways,
+      invoiceFor: async (msat) => { made = JSON.parse(await to.receive(String(msat), recv.gateways[0])); return { ok: true, invoice: made.invoice }; } });
     const final = out.ok && made ? await to.awaitReceive(made.operation) : null;
     if (out.ok && final === 'Claimed') {
       moved += amount; chunks++; failed = 0;
@@ -24896,7 +24989,7 @@ function swapGatewayPairs(named = [], listedTo = [], listedFrom = [], max = SWAP
 }
 // `rows`: the history's two kinds - a join's swap, or the player's own Move (movePlayerWallet)
 async function swapForRound({ from, to, amountMsat, gateways = [], storage = null, fromFederationId = null, toFederationId = null, onState = () => {},
-  rows = ['swapped-out', 'swapped-in'] }) {
+  rows = ['swapped-out', 'swapped-in'], feeMax = null }) {
   const amount = BigInt(amountMsat);
   const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
   onState({ state: 'swapping', amountMsat: amount });
@@ -24908,7 +25001,15 @@ async function swapForRound({ from, to, amountMsat, gateways = [], storage = nul
   // receive through one listed gateway, pay through another, and a payment that ends Refunded - the money back - tries the next
   // pair; any other end stops, as money may be on its way.
   // each leg's own federation's seated gateways first (§23A.9), then its list
-  const pairs = swapGatewayPairs(gateways, [...await seatedGatewaysOf(to), ...await federationGateways(to)], [...await seatedGatewaysOf(from), ...await federationGateways(from)]);
+  // and only through gateways at or under the federations' fee cap (§23A.9, kanban #1324): none on a leg, the swap waits and says so
+  const recvOk = await gatewaysWithinCap(to, [...gateways, ...await seatedGatewaysOf(to), ...await federationGateways(to)], feeMax);
+  const payOk = await gatewaysWithinCap(from, [...gateways, ...await seatedGatewaysOf(from), ...await federationGateways(from)], feeMax);
+  if (!recvOk.gateways.length || !payOk.gateways.length) {
+    const why = !recvOk.gateways.length ? capWhy('of the round\'s federation', recvOk.refused) : capWhy('of the paying federation', payOk.refused);
+    onState({ state: 'waiting', why });
+    throw new Error(`the swap ${why}`);
+  }
+  const pairs = swapGatewayPairs([], recvOk.gateways, payOk.gateways);
   const tried = [];
   let made = null, said = null;
   for (const [recv, pay] of pairs) {
@@ -32417,6 +32518,20 @@ const bytesOfStall = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) =>
 const is32Stall = (b) => b instanceof Uint8Array && b.length === 32;
 const cmpStall = (a, b) => { for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
 
+/**
+ * A STALLED NODE IS OUT FOR A SEASON FROM ITS THIRD PROOF (§5A.3, RULED 2026-11-07 kanban #1304): 12,960 blocks from H3, the census height of the
+ * round of its third proof. CARRIED FORWARD BY CENSUS (RULED 2026-11-08 kanban #1350): a later census leaves it out by naming an earlier census that
+ * listed it - that census's root, a duty round naming it, and H3 - in place of the proofs; the proofs are checked once, while fresh. Each census names
+ * the newest earlier one that listed the node (with proofs or itself carried), so a checker reads only a census within its own view.
+ */
+const STALL_SEASON_BLOCKS = 12960;
+/** H3 of a stalled entry: a carried one's own, else the highest census height of its proofs' rounds (`heightOf(ridHex)` -> height or null). */
+function stallH3Of(entry, heightOf) {
+  if (entry && entry.carried) return Number(entry.carried.h3);
+  const hs = (entry && Array.isArray(entry.proofs) ? entry.proofs : []).map((p) => heightOf(hexOfStall(String(p.roundId || '')))).filter(Number.isInteger);
+  return hs.length ? Math.max(...hs) : null;
+}
+
 /** The window of a census whose block's median time past is `censusTimeMs`: (from, to]. */
 function stallWindow(censusTimeMs) {
   const to = BigInt(censusTimeMs);
@@ -32501,7 +32616,7 @@ function stallCapKept(list, baseWeight) {
  * node: [{ node, proofs: [{ roundId, seatRound, notes: [hex] }] }], each with the oldest 3 rounds that name it, closes at least 1 h apart, each a fresh draw, 4 notes each.
  * A node may be drawn while it is named: a claim is made of what lies in the window at this census.
  */
-function stalledFrom({ rounds, census, window, weightOf, baseWeight, dutyOf = null }) {
+function stalledFrom({ rounds, census, window, weightOf, baseWeight, dutyOf = null, carried = [] }) {
   const inCensus = [...new Set([...census].map(hexOfStall))].sort();
   const seen = new Map();
   const isDuty = (rid) => { if (!dutyOf) return true; if (!seen.has(rid)) { const d = dutyOf(rid); seen.set(rid, !!(d && d.ok)); } return seen.get(rid); };
@@ -32523,7 +32638,15 @@ function stalledFrom({ rounds, census, window, weightOf, baseWeight, dutyOf = nu
     }
     if (proofs.length >= STALL_PROOF_ROUNDS) found.push({ node, proofs, sinceMs, weight: weightOf(node) });
   }
-  return stallCapKept(found, baseWeight).sort((a, b) => (a.node < b.node ? -1 : 1)).map(({ node, proofs }) => ({ node, proofs }));
+  // AND THE ONES CARRIED FORWARD (kanban #1350): a node an earlier census listed, its season not over, not proven afresh here; in the cap's order
+  // they are named before any fresh one (their H3 is a height, far below any time in ms)
+  const fresh = new Set(found.map((f) => f.node));
+  for (const c of carried || []) {
+    const node = hexOfStall(c.node);
+    if (fresh.has(node) || !inCensus.includes(node)) continue;
+    found.push({ node, carried: c.carried, sinceMs: BigInt(c.carried.h3), weight: weightOf(node) });
+  }
+  return stallCapKept(found, baseWeight).sort((a, b) => (a.node < b.node ? -1 : 1)).map(({ node, proofs, carried: k }) => (k ? { node, carried: k } : { node, proofs }));
 }
 
 /**
@@ -32534,7 +32657,8 @@ function stalledFrom({ rounds, census, window, weightOf, baseWeight, dutyOf = nu
  * height is not counted, so a claim that rests on one falls short of its 4 seats. Answers { ok: true } or { ok: false, node, why, proof } - proof
  * 'census', 'version', 'seat-round', 'not-duty', 'certificate', 'outside', 'not-seated', 'note', 'too-few', 'cap' - or { ok: false, notYet: true, node, why }.
  */
-function checkStallProof(claims, { census = null, window, roundOf, drawOf, certOf, dutyOf = null, verify, weightOf, keptWeight = null, settlementPointOf = stallSettlementPoint }) {
+function checkStallProof(claims, { census = null, window, roundOf, drawOf, certOf, dutyOf = null, verify, weightOf, keptWeight = null, settlementPointOf = stallSettlementPoint,
+  censusHeight = null, earlierClaimOf = null }) {
   const inCensus = census ? new Set([...census].map(hexOfStall)) : null;
   const seatings = new Map();      // seat round -> who it seated
   const list = [];
@@ -32546,6 +32670,35 @@ function checkStallProof(claims, { census = null, window, roundOf, drawOf, certO
     const short = node.slice(0, 16);
     const wrong = (proof, why) => ({ ok: false, node, proof, why });
     if (inCensus && !inCensus.has(node)) return wrong('census', `that census leaves out ${short} as stalled, and it is not in the chain census`);
+    // CARRIED FORWARD (kanban #1350): an earlier census that listed the node - a duty round naming its root, below this census - and its H3, the
+    // season not over at this census's height. A seat that holds the earlier claim reads the node in its stalled list with the same H3.
+    if (c.carried) {
+      const k = c.carried, root = hexOfStall(String(k.root || '')), rid = hexOfStall(String(k.roundId || '')), h3 = Number(k.h3);
+      if (!/^[0-9a-f]{64}$/.test(root) || !/^[0-9a-f]{64}$/.test(rid) || !Number.isInteger(h3) || h3 < 0) return wrong('carried', `the carried stall of ${short} names no census root, round and height`);
+      if (censusHeight === null || censusHeight === undefined) return wrong('carried', `a carried stall of ${short} is read against a census height, and none was given`);
+      if (!(Number(censusHeight) < h3 + STALL_SEASON_BLOCKS)) return wrong('carried', `${short}'s season out ended at block ${h3 + STALL_SEASON_BLOCKS}; this census is at ${censusHeight}`);
+      const earlier = roundOf(rid);
+      if (!earlier) return { ok: false, notYet: true, node, why: `the round ${rid.slice(0, 16)} naming the earlier census cannot be read here yet` };
+      if (hexOfStall(earlier.censusRoot) !== root) return wrong('carried', `the round ${rid.slice(0, 16)} names another census than ${root.slice(0, 16)}`);
+      if (!(Number(earlier.censusHeight) >= h3 && Number(earlier.censusHeight) < Number(censusHeight)))
+        return wrong('carried', `the earlier census (block ${earlier.censusHeight}) lies not between the third proof (${h3}) and this census (${censusHeight})`);
+      if (dutyOf) {
+        const du = dutyOf(rid);
+        if (!du) return { ok: false, notYet: true, node, why: `whether round ${rid.slice(0, 16)} is a duty posting's cannot be read here yet` };
+        if (!du.ok) return wrong('not-duty', `the round ${rid.slice(0, 16)} naming the earlier census is no duty posting's: ${du.why}`);
+      }
+      if (earlierClaimOf) {
+        const e = earlierClaimOf(root);
+        if (e) {
+          const x = (e.stalled || []).find((y) => hexOfStall(String(y.node || '')) === node);
+          if (!x) return wrong('carried', `the earlier census ${root.slice(0, 16)} does not list ${short} as stalled`);
+          const eh3 = stallH3Of(x, (r) => { const ct = roundOf(r); return ct ? Number(ct.censusHeight) : null; });
+          if (eh3 !== h3) return wrong('carried', `the earlier census lists ${short} from block ${eh3}, not ${h3}`);
+        }
+      }
+      list.push({ node, sinceMs: BigInt(h3), weight: weightOf(node) });
+      continue;
+    }
     const closes = new Set(), draws = new Set(), named = new Set();
     let sinceMs = null;
     for (const p of Array.isArray(c.proofs) ? c.proofs : []) {
@@ -33875,10 +34028,12 @@ function absenceFromChain({ contract, claim, evidenceOf, headers, firstHeight, b
     const roundOf = (ridHex) => { drawOf(ridHex, 'settlement'); const d = drawn.get(ridHex); return d ? d.contract : null; };
     const weightOf = (node) => {
       const c = stalled.find((x) => String(x.node).toLowerCase() === node);
-      const d = c && c.proofs && c.proofs[0] ? drawn.get(String(c.proofs[0].seatRound).toLowerCase()) : null;
+      // a carried entry (kanban #1350): the weight the earlier census's round gives it, that round drawn here as any proof's
+      if (c && c.carried) drawOf(String(c.carried.roundId).toLowerCase(), 'settlement');
+      const d = c && c.carried ? drawn.get(String(c.carried.roundId).toLowerCase()) : c && c.proofs && c.proofs[0] ? drawn.get(String(c.proofs[0].seatRound).toLowerCase()) : null;
       return (d ? d.entries : []).reduce((s, e) => (toHex(e.pubkey) === node ? s + BigInt(e.bondSats || 0) : s), 0n);
     };
-    const s = checkStallProof(stalled, { window: stallWindow(BigInt(t) * 1000n), verify, roundOf, drawOf, dutyOf, weightOf,
+    const s = checkStallProof(stalled, { window: stallWindow(BigInt(t) * 1000n), verify, roundOf, drawOf, dutyOf, weightOf, censusHeight: Number(contract.censusHeight),
       keptWeight: entries && entries.length ? entries.reduce((n, e) => n + BigInt(e.bondSats || 0), 0n) : null,
       certOf: (ridHex, role) => { const h = claim.certs && claim.certs[`${ridHex}:${role}`]; return h ? fromHex(h) : null; } });
     if (!s.ok) return { ok: false, node: s.node, why: s.notYet ? `${s.why}: its contract or census was not handed over` : s.why };
