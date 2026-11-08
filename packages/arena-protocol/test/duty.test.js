@@ -76,7 +76,7 @@ test('one posting per game per day: the day posts the next day; the first in dut
 // a duty item for the day it starts in, and its creator is within the first DUTY_PROOF_RANKS of that day's duty order over the round's
 // census; per day, item and kind the first confirmed publication (emergency: the first 3).
 test('a duty round: the marker of a duty item for its day, its creator within the first 3 of the day\'s order; the first confirmed posting per day, item and kind', async () => {
-  const { dutyMarkerOf, dutyRoundStands, dutyPostingsOf, backupMarkerOutput, daySlotOf, dayStartMs, DUTY_PROOF_RANKS, DUTY_PROOF_ITEMS, DUTY_EMERGENCY_CAP } = await import('../src/duty.js');
+  const { dutyMarkerOf, dutyRoundStands, isPrimaryOf, dutyPostingsOf, backupMarkerOutput, daySlotOf, dayStartMs, DUTY_PROOF_RANKS, DUTY_PROOF_ITEMS, DUTY_EMERGENCY_CAP } = await import('../src/duty.js');
   const { serializeSpend } = await import('../src/bond-spend.js');
   const { seriesPublicationOutput } = await import('../src/series.js');
   const { schnorr } = await import('@noble/curves/secp256k1.js');
@@ -108,6 +108,17 @@ test('a duty round: the marker of a duty item for its day, its creator within th
   // the day: the marker's slot posts the next day; a round of another day under that marker is none of its posting
   assert.match(dutyRoundStands({ contract: round(1, { startTimeMs: BigInt(dayStartMs(d + 2)) }), marker: m, orderEntries: entries, sw: null }).why, /the round starts on 2026-11-04/);
   assert.equal(dutyRoundStands({ contract: round(1, { startTimeMs: BigInt(dayStartMs(d + 1)) }), marker: m, orderEntries: entries, sw: null }).ok, true, 'the day\'s first moment is in');
+  // kanban #1348: rank 1's emergency grid counts only beside a confirmed primary of the day and app; ranks 2 and 3's always
+  const em = dutyMarkerOf(tx([seriesPublicationOutput(sid), dutyMarkerOutput(d, 'updown-day-emergency')]));
+  assert.equal(em.emergency, true);
+  assert.match(dutyRoundStands({ contract: round(1), marker: em, orderEntries: entries, sw: null }).why, /rank 1 .* no confirmed updown-day primary: that grid proves nothing/);
+  assert.match(dutyRoundStands({ contract: round(1), marker: em, orderEntries: entries, sw: null, primaryConfirmed: false }).why, /proves nothing/);
+  assert.equal(dutyRoundStands({ contract: round(1), marker: em, orderEntries: entries, sw: null, primaryConfirmed: true }).ok, true, 'beside a confirmed primary it counts');
+  for (const rank of [2, 3]) assert.equal(dutyRoundStands({ contract: round(rank), marker: em, orderEntries: entries, sw: null, primaryConfirmed: false }).ok, true, `rank ${rank}'s emergency grid counts`);
+  assert.equal(dutyRoundStands({ contract: round(1), marker: m, orderEntries: entries, sw: null, primaryConfirmed: false }).ok, true, 'a primary itself is not held to it');
+  assert.equal(isPrimaryOf(m, em), m.kind === 'D' && m.app === em.app && m.slot === em.slot);
+  assert.equal(isPrimaryOf(dutyMarkerOf(tx([seriesPublicationOutput(sid), dutyMarkerOutput(d, 'rps-day')])), em), false, 'another app\'s primary is not it');
+  assert.equal(isPrimaryOf(dutyMarkerOf(tx([seriesPublicationOutput(sid), backupMarkerOutput(d, 'updown-day')])), em), false, 'a backup is not the primary');
   // the first confirmed per day, item and kind; emergency grids up to DUTY_EMERGENCY_CAP; a transaction without a duty marker never
   const mk = (txid, outs) => ({ txid, marker: dutyMarkerOf(tx(outs)) });
   const marked = [mk('a1', [dutyMarkerOutput(d, 'updown-day')]), mk('a2', [dutyMarkerOutput(d, 'updown-day')]), mk('b1', [backupMarkerOutput(d, 'updown-day')]),

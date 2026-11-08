@@ -38,7 +38,7 @@ import { seatingCloseMs } from './seating.js';
 import { checkAbsenceProof, presenceWindow, dropsAbsent } from './presence.js';
 import { checkStallProof, stallWindow, stallsOut } from './stall.js';
 import { drawHeartbeat, heartbeatSlotOf, heartbeatCloseMs, hasHeartbeats } from './heartbeat.js';
-import { dutyMarkerOf, dutyRoundStands } from './duty.js';
+import { dutyMarkerOf, dutyRoundStands, isPrimaryOf } from './duty.js';
 import { creatorMessage, seriesCreatorMessage } from './creator.js';
 import { publishesRound } from './publication.js';
 import { seriesPublicationPayload } from './series.js';
@@ -357,7 +357,20 @@ export function absenceFromChain({ contract, claim, evidenceOf, headers, firstHe
     let signed = false;
     try { signed = !!sig && sig.length === 64 && verify(sig, series ? seriesCreatorMessage(c.seriesId) : creatorMessage(fromHex(ridHex)), c.creatorPubkey) === true; } catch { signed = false; }
     if (!signed) return { ok: false, why: 'its creator\'s signature was not handed over, or is not the named creator\'s' };
-    return dutyRoundStands({ contract: c, marker, orderEntries: d.entries, sw: TAG_SWITCH[networkOf(c.networkId)] || null });
+    // AN EMERGENCY GRID'S DAY PRIMARY (kanban #1348): handed over beside the publication (`primaries[ridHex]`), proven into the agreed headers and
+    // marked as the same day's primary of the same app - without it a rank-1 creator's emergency grid proves nothing
+    let primaryConfirmed = null;
+    if (marker.emergency) {
+      const q = claim.primaries && claim.primaries[ridHex];
+      primaryConfirmed = false;
+      if (q && q.transaction) {
+        try {
+          const ptx = parseTransaction(bytesOfCC(q.transaction));
+          primaryConfirmed = provenAt(headers, firstHeight, ptx.txid, proofOf(q)) !== null && isPrimaryOf(dutyMarkerOf(ptx), marker);
+        } catch { primaryConfirmed = false; }
+      }
+    }
+    return dutyRoundStands({ contract: c, marker, orderEntries: d.entries, sw: TAG_SWITCH[networkOf(c.networkId)] || null, primaryConfirmed });
   };
   const r = checkAbsenceProof(claim.claims, { window, verify, drawOf, dutyOf,
     certOf: (ridHex, role) => { const h = claim.certs && claim.certs[`${ridHex}:${role}`]; return h ? fromHex(h) : null; } });
