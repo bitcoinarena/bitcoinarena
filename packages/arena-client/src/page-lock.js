@@ -2088,7 +2088,7 @@ export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch }
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/stake-lock?round=${toHex(roundId)}&refund=${refund}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${name} ${r.status}`, got: [] };
       const got = await r.json();
-      return { said: `${name} ${got.length}`, got };
+      return { said: `${name} ${got.length}`, got, node };
     } catch (e) { return { said: `${name} ${String(e && e.message || e).slice(0, 40)}`, got: [] }; }
   }));
   const said = answers.map((a) => a.said);
@@ -2107,6 +2107,8 @@ export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch }
   out.asked = asked.length;
   out.answered = said.filter((x) => /\s\d+$/.test(x) && !/\s[45]\d\d$/.test(x)).length;
   out.said = said;
+  // WHICH SEATS ANSWERED (kanban #1355, audit 4 fixesB-6 / CLIENT-5): a "none" counts only the round's own seats' answers
+  out.answeredBy = answers.filter((a) => a.node !== undefined).map((a) => String(a.node).replace(/\/+$/, ''));
   return out;
 }
 
@@ -2322,9 +2324,11 @@ export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1
   const need = Math.max(1, Number(needed) || 1);
   const pays = (a) => !!payee && a.moved.payouts.some((p) => (p.kind || 'qualifier') === 'qualifier' && String(p.pk).toLowerCase() === String(payee).toLowerCase());
   const agreed = ranked.find((g) => g.length >= need) || null;
-  if (agreed) return { ...agreed[0], agreeing: agreed.length, needed: need };
+  // `seats`: the seats that answered this settlement (kanban #1355): the round's own, whose word a stake's "none" may rest on
+  const seatsOf = (g) => g.map((a) => String(a.from).replace(/\/+$/, ''));
+  if (agreed) return { ...agreed[0], agreeing: agreed.length, needed: need, seats: seatsOf(agreed) };
   const paying = ranked.find((g) => g.some(pays));
-  if (paying) return { ...paying[0], agreeing: paying.length, needed: need, short: true };
+  if (paying) return { ...paying[0], agreeing: paying.length, needed: need, short: true, seats: seatsOf(paying) };
   const said = answers.filter((a) => !a.ok).map((a) => a.said);
   if (ranked.length) return { ok: false, agreeing: ranked[0].length, needed: need,
     why: `only ${ranked[0].length} of the ${need} signer nodes needed agree on this round's settlement yet${said.length ? ` (${said.join('; ')})` : ''}` };
@@ -3153,9 +3157,13 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
       // "NONE" IS FINAL ONLY ON ENOUGH SEATS' WORD (kanban #1250, audit 3 FIXES-16): one seat that never sat on the round answering [] while its own
       // seats timed out closed the record with a winner's stake still in its lock; it is waiting until the round's settlement threshold answered
       if (!ls.length) {
-        const enough = Number(locks.answered || 0) >= settlementAgreement(round, nodes);
+        // AND ONLY THE ROUND'S OWN SEATS COUNT (kanban #1355, audit 4 fixesB-6 / CLIENT-5): a seat of the lobby's list that never sat on the round
+        // answers [] at once; only the seats that answered the agreed settlement and also where the lock is make the threshold
+        const own = new Set(s.seats || []);
+        const ownAnswered = (locks.answeredBy || []).filter((n) => own.has(n)).length;
+        const enough = ownAnswered >= settlementAgreement(round, nodes);
         stake = { state: s.ok && enough ? 'none' : 'waiting', why: enough ? 'this tab keeps no lock for this round'
-          : `this tab keeps no lock for this round, and only ${Number(locks.answered || 0)} of the ${settlementAgreement(round, nodes)} seats needed answered where its lock is` };
+          : `this tab keeps no lock for this round, and only ${ownAnswered} of the ${settlementAgreement(round, nodes)} seats of the round's settlement needed answered where its lock is` };
       }
       else if (!client) stake = { state: 'waiting', why: 'the federation was not asked yet' };
       else {
