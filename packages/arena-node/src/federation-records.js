@@ -983,10 +983,25 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       if (!k || !k.record) return null;
       return seatedOf(k.record);
     },
-    predecessorGuardians(fidHex) {
+    // DRAIN SHARES ONLY INSIDE drain_blocks (§23A.6 RULED 2026-11-07, kanban #1309/#1321): "paid only for rounds with census_height < draining_height +
+    // drain_blocks; after that the predecessor reads as CLOSED for pay" - draining_height its first DRAINING record held here; with no census height
+    // or drain_blocks given, as before
+    drainingHeight(predFid) {
+      const f = predFid instanceof Uint8Array ? toHex(predFid) : String(predFid).toLowerCase();
+      recordAt(f, 0);
+      const m = history.get(f);
+      let h = null;
+      if (m) for (const [at, rec] of m) if (recordStatusName(rec) === 'DRAINING' && (h === null || at < h)) h = at;
+      return h;
+    },
+    predecessorGuardians(fidHex, censusHeight = null, drainBlocks = null) {
       const out = [];
-      for (const [, k] of kept) {
+      for (const [predFid, k] of kept) {
         if (!['DRAINING', 'CRITICAL'].includes(k.status) || !k.record || toHex(k.record.successorId) !== String(fidHex).toLowerCase()) continue;
+        if (Number.isInteger(censusHeight) && Number.isInteger(drainBlocks)) {
+          const dh = this.drainingHeight(predFid);
+          if (dh !== null && censusHeight >= dh + drainBlocks) continue;
+        }
         const gone = new Set((k.record.gone || []).map((g) => toHex(g.peerKey)));
         for (const g of k.record.guardians || []) if (!gone.has(toHex(g.peerKey))) out.push(g.nodePubkey);
       }

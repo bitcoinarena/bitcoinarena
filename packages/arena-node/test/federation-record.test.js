@@ -133,6 +133,11 @@ test('a successor named: the seven sign DRAINING with successor_id, and the succ
   assert.equal(toHex(v.record.successorId), NEW);
   assert.deepEqual(s.seats[0].predecessorGuardians(NEW).map(toHex).sort(), s.nodes.map((n) => toHex(n.pubkey)).sort(), 'all seven seated');
   assert.deepEqual(s.seats[0].predecessorGuardians('ef'.repeat(32)), [], 'another federation has no predecessor');
+  // DRAIN SHARES ONLY INSIDE drain_blocks (kanban #1309/#1321): a round at census height < draining_height + drain_blocks pays them, one at it no more
+  const dh = s.seats[0].drainingHeight(s.seats[0].list()[0].federation);
+  const inside = s.seats[0].predecessorGuardians(NEW, dh + 99, 100).length, at = s.seats[0].predecessorGuardians(NEW, dh + 100, 100).length;
+  console.log('  MEASURED #1321 drain shares:', JSON.stringify({ drainingHeight: dh, drainBlocks: 100, insideLast: inside, atEnd: at }));
+  assert.deepEqual([Number.isInteger(dh), inside, at], [true, 7, 0]);
 
   const one = seven({ successor: NEW, leaving: [3] });
   const g1 = await one.seats[0].gather(FED, inviteFederationId);

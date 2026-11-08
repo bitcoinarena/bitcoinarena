@@ -6699,7 +6699,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (t.unref) t.unref();
   }
   // the drain is paid (§23A.6 step 5): a round naming a successor shares its guardian pool with the draining predecessor's
-  roster.predecessorGuardians = (fidHex) => fedRecords.predecessorGuardians(fidHex);
+  roster.predecessorGuardians = (fidHex, censusHeight = null) => fedRecords.predecessorGuardians(fidHex, censusHeight,
+    (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '').replace(/^testnet$/, 'testnet4')] || FEDERATION_CLOCKS.mainnet).drainBlocks);
   roster.seatedGuardians = (fidHex) => fedRecords.seatedGuardians(fidHex);
   const inviteFedId = (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; };
   const recordTimer = setInterval(() => { fedRecords.gatherAll(inviteFedId).then((r) => { for (const x of r) if (x.ok === false) console.log(`[federations] ${String(x.federation || '').slice(0, 16)}: ${x.why}`); }, () => {}); },
