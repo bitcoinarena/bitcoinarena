@@ -4500,7 +4500,43 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THIS SEAT'S OWN WORD ON A PROOF (5A.3B, kanban #1065, proof-judge.js): the complete proof holds the round's contract, so a seat that does not hold the round reads it from the bytes, and the rest from its own chain
   const roundOf = (contract, rid) => (round.get(rid) ? {} : { posted: contract });
   const fedOfInvite = (invite) => { try { return invite ? readInvite(invite).federationId : null; } catch { return null; } };
+  // A GAME THIS SEAT DOES NOT HOST, FOR JUDGING ONLY (§5A.3B RULED 2026-11-07, kanban #1303/#1326): "A holder judges a proof whether or not it hosts
+  // the game: it fetches the core by the proof's sim_wasm_hash and replays in its sandbox". Its package is asked of the seats that list the game
+  // (GET /plugin), checked as an install is (verifyPackage: the developer's signature, every core by its hash) and kept apart from the hosted
+  // games, under `<plugins dir>-judge`: it is never hosted, offered or served from here.
+  const judgeGames = new Map();          // game id hex -> hosted-shaped entry
+  const judgeFetching = new Map();
+  const judgeGameOf = async (contract) => {
+    const game = toHex(contract.gameId);
+    if (hosted.has(game)) return hosted;
+    if (judgeGames.has(game)) return judgeGames;
+    if (!judgeFetching.has(game)) judgeFetching.set(game, (async () => {
+      let froms = [];
+      try { const ng = await networkAppsNow(); const row = ng.games.find((g) => g.id === game); froms = row ? row.seats : networkSeats(); } catch { froms = networkSeats(); }
+      // a node from main.js always has a plugins directory; one without (a test's) keeps the judged game in a temp directory of its own
+      const dir = pluginsDir ? `${pluginsDir}-judge` : joinPath(os.tmpdir(), `arena-judge-${toHex(round.pubkey).slice(0, 16)}`);
+      for (const from of froms) {
+        try {
+          const r = await fetch(`${String(from).replace(/\/+$/, '')}/plugin?game=${game}`, { signal: AbortSignal.timeout(15000) });
+          if (!r.ok) continue;
+          const pkg = await r.json();
+          const v = verifyPackage(pkg, { verify: verifyEd25519, want: game, parentOf: hostedParent });
+          if (!v.ok) { console.log(`[judge] the package of ${game.slice(0, 16)} from ${from} was refused: ${v.why}`); continue; }
+          const reg = await registrationFromPackage(installPackage(dir, pkg, game), pkg);
+          const entry = hostedPlugins([reg]).get(game);
+          if (!entry) continue;
+          judgeGames.set(game, entry);
+          console.log(`[judge] ${game.slice(0, 16)} fetched from ${from} to judge its proofs (not hosted here)`);
+          return true;
+        } catch (e) { console.log(`[judge] ${game.slice(0, 16)} from ${from}: ${String(e.message || e).slice(0, 160)}`); }
+      }
+      return false;
+    })().finally(() => judgeFetching.delete(game)));
+    return (await judgeFetching.get(game)) ? judgeGames : null;
+  };
   const judgeProofBytes = createProofJudge({ censusOf: (contract, rid) => roster.censusFor(rid, null, roundOf(contract, rid)),
+    coreFetch: async (contract, rid) => { const games = await judgeGameOf(contract); return games ? coreForRound(contract, rid, games) : null; },
+    manifestFetch: async (contract) => { const games = await judgeGameOf(contract); if (!games) return null; const f = pluginForRound(contract, games); return f.ok ? f.plugin.manifest : null; },
     committeeOf: (contract, rid) => {
       const keys = new Map();
       for (const role of ['game', 'settlement']) {
@@ -13170,6 +13206,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     http.listen(port, host, () => { dutyAttach(); resolve({
       http, wss, round, host, verifier, ghosts, roster, stakeSecrets,
       dkg, settlements, winnings, orderBook,
+      // the proof judge, and a game fetched only to judge with (kanban #1326)
+      judge: { proofBytes: judgeProofBytes, gameOf: judgeGameOf, held: () => [...judgeGames.keys()] },
       // the round's auditors (§13A.1): this node as one, and its desk as a seat
       auditor: roundAuditor, auditDesk,
       // the protocol reserves' keys: make one with given members and peers, and the DKG of a federation
