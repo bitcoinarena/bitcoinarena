@@ -290,6 +290,7 @@ import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../arena-pr
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { createDonationBallots } from './donation-ballots.js';
 import { createContributionBook } from './contribution-book.js';
+import { contributionAgreementId, decodeContributionLeave, decodeContributionTermination, contributionLeaveDigest, contributionTerminationDigest } from '../../arena-protocol/src/contribution.js';
 import { decodeDonationProposal, donationProposalId, donationApprovalDigest, encodeDonationProposal, encodeDonationApproval } from '../../arena-protocol/src/donation-vote.js';
 
 import { TABLE_IS_NOT_F, splitTableSlashEvidence, splitSlashEvidence, AUDIT_CONTRADICTED, REPLAY_CONTRADICTS, splitAuditSlashEvidence, TWO_RESULTS, splitDoubleSlashEvidence, fraudProofHash, decodeFraudProof, readEvidence } from '../../arena-protocol/src/slash.js';
@@ -11502,6 +11503,39 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         });
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ round: rid.toString('hex'), height: Number(c.censusHeight), shares, book: contributionBook ? contributionBook.held() : null }));
+      }
+
+      // A CONTRIBUTOR'S LEAVE, OR HIS TERMINATION BY THE COLD ADMIN KEY (§27A.4.2, kanban #1346): hex body || 64-byte signature. A leave is signed by
+      // the agreement's own recipient key (secp256k1), a termination by the network's donation recovery key (Ed25519, the cold key); the
+      // agreement must be one a donation set this seat holds carries. Kept once per kind; GET answers what is held.
+      if (url.pathname === '/contribution-end' && req.method === 'GET') {
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ ends: contributionBook ? contributionBook.ends().map((e) => ({ agreementId: e.agreement_id, kind: e.kind, atHeight: e.at_height, hex: e.hex })) : [] }));
+      }
+      if (url.pathname === '/contribution-end' && req.method === 'POST') {
+        if (!contributionBook) return text(res, 503, 'this seat keeps no contribution book');
+        const hex = Buffer.from(await read(req)).toString('utf8').trim().toLowerCase();
+        let bytes; try { bytes = fromHex(hex); } catch { return text(res, 400, 'hex: the record and its 64-byte signature'); }
+        if (bytes.length < 65) return text(res, 400, 'hex: the record and its 64-byte signature');
+        const body = bytes.slice(0, -64), sig = bytes.slice(-64);
+        let kind, rec;
+        try { rec = decodeContributionLeave(body); kind = 'leave'; } catch { try { rec = decodeContributionTermination(body); kind = 'termination'; } catch { return text(res, 400, 'that is no contribution leave or termination'); } }
+        const want = toHex(rec.agreementId);
+        let carried = null, setNet = null;
+        for (const st of [...donationSets, ...approvedSets()]) for (const r of st.recipients || []) {
+          if (r && r.contribution && toHex(contributionAgreementId(r.contribution.agreement)) === want) { carried = r; setNet = st.networkId || null; }
+        }
+        if (!carried) return text(res, 404, 'no donation set held here carries that agreement');
+        let good = false;
+        if (kind === 'leave') good = verifySecp256k1(sig, contributionLeaveDigest(rec), carried.recipientPk);
+        else {
+          const keys = setNet instanceof Uint8Array ? donationKeysForNetworkId(setNet) : null;
+          good = !!keys && (await Promise.resolve(verifyDonation(sig, contributionTerminationDigest(rec), keys.recovery))) === true;
+        }
+        if (!good) return text(res, 400, `that ${kind} is not signed by ${kind === 'leave' ? 'the contributor\'s key' : 'the cold admin key'}`);
+        const got = contributionBook.addEnd(kind, rec, hex);
+        res.writeHead(got.fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ ok: true, kind, agreementId: want, atHeight: rec.atHeight, fresh: got.fresh }));
       }
 
       if (req.method === 'GET' && url.pathname === '/claim-key') {
