@@ -76,7 +76,33 @@ export function encodeFederationRecord(r) {
     if (!CAPACITY_BAND[r.capacityBand]) throw new Error(`capacity band ${r.capacityBand} is not one of ${Object.keys(CAPACITY_BAND).join(', ')}`);
     w.u8(CAPACITY_BAND[r.capacityBand]);
   }
+  // GATEWAY_FEE_MAX (§23A.9, RULED 2026-11-07 kanban #1310): the most a gateway may charge on a send or a receive for a migration or a swap to
+  // go through it - after the capacity band, so a record without it keeps its bytes; it needs the band before it
+  if (r.gatewayFeeMax !== undefined && r.gatewayFeeMax !== null) {
+    if (r.capacityBand === undefined || r.capacityBand === null) throw new Error('a gateway fee cap follows the capacity band: name the band too');
+    const f = r.gatewayFeeMax;
+    if (!Number.isInteger(f.ppm) || f.ppm < 0 || f.ppm > 1000000 || !Number.isInteger(f.baseMsat) || f.baseMsat < 0 || f.baseMsat > 0xffffffff)
+      throw new Error('a gateway fee cap is { ppm 0..1000000, baseMsat } in whole numbers');
+    w.u32(f.ppm); w.u32(f.baseMsat);
+  }
   return w.finish();
+}
+
+/** The reference cap (§23A.9): 0.1 % + 10 sat on each leg. */
+export const GATEWAY_FEE_MAX_REFERENCE = Object.freeze({ ppm: 1000, baseMsat: 10000 });
+/**
+ * IS A GATEWAY'S PUBLISHED FEE AT OR UNDER THE CAP: `fees` { send: { ppm, baseMsat }, receive: { ppm, baseMsat } } as its routing info says; a
+ * leg it does not publish is not under anything. `max` the record's gatewayFeeMax (none: the reference). Answers { ok } or { ok: false, why }.
+ */
+export function gatewayFeeWithin(fees, max = null) {
+  const cap = max || GATEWAY_FEE_MAX_REFERENCE;
+  for (const leg of ['send', 'receive']) {
+    const f = fees && fees[leg];
+    if (!f || !Number.isFinite(Number(f.ppm)) || !Number.isFinite(Number(f.baseMsat))) return { ok: false, why: `it publishes no ${leg} fee` };
+    if (Number(f.ppm) > cap.ppm || Number(f.baseMsat) > cap.baseMsat)
+      return { ok: false, why: `its ${leg} fee ${Number(f.ppm) / 10000} % + ${Number(f.baseMsat) / 1000} sat is above the federation's cap of ${cap.ppm / 10000} % + ${cap.baseMsat / 1000} sat` };
+  }
+  return { ok: true };
 }
 
 export function decodeFederationRecord(bytes) {
@@ -91,6 +117,7 @@ export function decodeFederationRecord(bytes) {
     exposureCapSats: r.u64(), reserveSats: r.u64(), height: r.u32(),
   };
   if (r.at !== bytes.length) { const band = nameOf(CAPACITY_BAND, r.u8()); if (!band) throw new Error('not a capacity band'); out.capacityBand = band; }
+  if (bytes.length - r.at === 8) out.gatewayFeeMax = { ppm: r.u32(), baseMsat: r.u32() };
   if (r.at !== bytes.length) throw new Error('trailing bytes after the federation record');
   encodeFederationRecord(out);                       // held to the encoder's rules
   return out;

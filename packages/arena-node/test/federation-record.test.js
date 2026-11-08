@@ -964,3 +964,24 @@ test('#1318 a guardian whose bond is spent at its maturity left on schedule: no 
   assert.equal(early.got.ok, true, early.got.why);
   assert.deepEqual(early.r.gone.map((g) => [g.kind, g.sinceHeight]), [[GONE.ABANDONED, H0 + 3]], 'spent before maturity: abandonment, as before');
 });
+
+// GATEWAY_FEE_MAX (§23A.9, kanban #1310 / #1324): after the band, 8 bytes, only when a record names one
+test('kanban #1324: a record names its gateway fee cap after its band; a gateway above it, or publishing no fee, is not taken', async () => {
+  const { gatewayFeeWithin, GATEWAY_FEE_MAX_REFERENCE } = await import('../../arena-protocol/src/federation-record.js');
+  const withBand = { ...bare(), capacityBand: 'CALM' };
+  const r = { ...withBand, gatewayFeeMax: { ppm: 1000, baseMsat: 10000 } }, bytes = encodeFederationRecord(r);
+  assert.equal(bytes.length, encodeFederationRecord(withBand).length + 8);
+  assert.deepEqual(decodeFederationRecord(bytes).gatewayFeeMax, { ppm: 1000, baseMsat: 10000 });
+  assert.equal('gatewayFeeMax' in decodeFederationRecord(encodeFederationRecord(withBand)), false, 'a record without one decodes as before');
+  assert.equal(toHex(federationRecordId(bare())), 'e8bc7bbba80b07e913e2a42d48e113fa759dc394610a336601a567a051fa878f', 'and a plain one keeps its id');
+  assert.throws(() => encodeFederationRecord({ ...bare(), gatewayFeeMax: { ppm: 1, baseMsat: 1 } }), /follows the capacity band/);
+  const secret = new Uint8Array(32).fill(9), nodePubkey = schnorr.getPublicKey(secret);
+  assert.deepEqual(splitSignedRecord(joinSignedRecord(bytes, [{ nodePubkey, signature: new Uint8Array(64).fill(3) }])).record.gatewayFeeMax, { ppm: 1000, baseMsat: 10000 });
+  assert.deepEqual(GATEWAY_FEE_MAX_REFERENCE, { ppm: 1000, baseMsat: 10000 }, '0.1 % + 10 sat');
+  const leg = (ppm, baseMsat) => ({ ppm, baseMsat });
+  assert.equal(gatewayFeeWithin({ send: leg(1000, 10000), receive: leg(500, 0) }).ok, true, 'at the cap');
+  assert.match(gatewayFeeWithin({ send: leg(1001, 0), receive: leg(0, 0) }).why, /send fee 0.1001 % \+ 0 sat is above the federation's cap of 0.1 % \+ 10 sat/);
+  assert.match(gatewayFeeWithin({ send: leg(0, 0), receive: leg(0, 10001) }).why, /receive fee/);
+  assert.match(gatewayFeeWithin({ send: leg(0, 0) }).why, /publishes no receive fee/);
+  assert.equal(gatewayFeeWithin({ send: leg(2000, 0), receive: leg(0, 0) }, { ppm: 5000, baseMsat: 0 }).ok, true, 'a record\'s own cap');
+});
