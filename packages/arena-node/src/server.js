@@ -12303,7 +12303,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'the audits are asked for by round id');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ round: toHex(rid), audits: auditDesk.list(new Uint8Array(rid)) }) + '\n');
+        // full=1: every AUDIT's bytes and signature with the time this seat (a relay door) held it (kanban #1331 (2): an AUDIT counts by its relay posting)
+        return res.end(JSON.stringify({ round: toHex(rid), audits: auditDesk.list(new Uint8Array(rid), { full: url.searchParams.get('full') === '1' }) }) + '\n');
       }
       // WHAT AN AUDITOR READS OF A ROUND IT IS NOT SEATED IN (§13A.1): every entry an AUDIT is over, with every signed result this seat
       // holds for it - the auditor counts the agreed run itself, against the committee it draws; nothing here is taken on trust

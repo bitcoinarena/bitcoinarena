@@ -98,3 +98,23 @@ test('the agreed runs an AUDIT is over: every entry\'s 5 of 7, in entry order - 
   const short = [{ entryId: entries[0].entryId, results: entries[0].results.slice(0, 4) }, entries[1]];
   assert.match(agreedRunsOf({ contract, committee, entries: short }).why, /has no agreed run yet/);
 });
+
+// KANBAN #1331 (2), §13A.1 RULED 2026-11-07 (#1306): "An AUDIT counts when it is on the round's publication_relays[] by the cutoff, not only when a seat
+// says it holds it." A seat that never got the AUDIT itself reads the relays (seat doors: GET /audits?full=1) and takes the one a relay held in time,
+// at the relay's arrival time; one the relay held only after the close, or a copy the relay itself had forwarded, does not count.
+test('#1331 an AUDIT on the round\'s relays by the cutoff counts at a seat that never got it; one held late does not', async () => {
+  const relayHeld = (arrivedMs, forwarded = false) => async () => new Response(JSON.stringify({ audits: [{ node: toHex(node), atMs: arrivedMs, arrivedMs, forwarded, audit: toHex(auditAt(arrivedMs)) }] }), { status: 200 });
+  const inTime = deskAt(CLOSE + 60_000);                                  // this seat reads the relays after the window closed
+  const a = await inTime.desk.fromRelays(roundId, ['https://relay.example'], { fetcher: relayHeld(1_900_000) });
+  const late = deskAt(CLOSE + 60_000);
+  const b = await late.desk.fromRelays(roundId, ['https://relay.example'], { fetcher: relayHeld(CLOSE + 1) });
+  const fwd = deskAt(CLOSE + 60_000);
+  const c = await fwd.desk.fromRelays(roundId, ['https://relay.example'], { fetcher: relayHeld(1_900_000, true) });
+  const down = deskAt(CLOSE + 60_000);
+  const d = await down.desk.fromRelays(roundId, ['https://relay.example'], { fetcher: async () => { throw new Error('down'); } });
+  console.log('  MEASURED #1331 (2):', JSON.stringify({ heldInTime: [a, inTime.desk.held(roundId).length], heldAfterClose: [b, late.desk.held(roundId).length], forwardedCopy: [c, fwd.desk.held(roundId).length], relayDown: d }));
+  assert.deepEqual(inTime.desk.held(roundId), [toHex(node)], 'an AUDIT the relay held in time did not count');
+  assert.deepEqual(late.desk.held(roundId), [], 'an AUDIT the relay held after the close counted');
+  assert.deepEqual(fwd.desk.held(roundId), []);
+  assert.deepEqual(d, { asked: 0, taken: 0 });
+});
