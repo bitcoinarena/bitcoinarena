@@ -29,7 +29,7 @@ import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureI
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord,
-  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, highestVerified, recordStatusName, thresholdOf, loadReserveOf } from '../../arena-protocol/src/federation-record.js';
+  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, highestVerified, recordStatusName, thresholdOf, loadReserveOf, statusFor } from '../../arena-protocol/src/federation-record.js';
 import { recordBand, bandOfRecord } from '../../arena-protocol/src/capacity.js';
 
 /** The census nodes guarding `federationId`, as the record lists them. */
@@ -677,12 +677,14 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const departed = [];
     const absent = [];
     const emergent = [];
+    const seatedBase = seatedOf(plain.record).length, emRanks = emergencyRanks(absences && absences.emergencyFor
+      ? plain.guardians.filter((g) => !gone.some((x) => toHex(x.peerKey) === toHex(g.peerKey))).map((g) => absences.emergencyFor(g.nodePubkey)) : []);
     if (absences) for (const g of plain.guardians) {
       if (gone.some((x) => toHex(x.peerKey) === toHex(g.peerKey))) continue;
       const d = Number.isInteger(departureNotice) ? absences.departureFor(plain.record, g.peerKey, departureNotice, b.height) : { ok: false };
       const p = Number.isInteger(abandonBlocks) ? absences.proofFor(plain.record, g.peerKey, abandonBlocks) : { ok: false };
       const em = absences.emergencyFor ? absences.emergencyFor(g.nodePubkey) : null;
-      const out = emergencyDeparted(b, g, em, p);
+      const out = emergencyDeparted(b, g, em, p, em ? { rank: emRanks.get(toHex(g.nodePubkey)) ?? 0, seatedBase, nominal: plain.record.nominal } : null);
       if (out) { gone.push(out); emergent.push(em); continue; }
       // THE BOND'S MATURITY IS A STANDING NOTICE (#1318): absent from its maturity on, the guardian departed on schedule (while the bond lock is on)
       const scheduled = lockOn(b) ? scheduledDeparture({ outputs: g.outputs, departureNotice }) : null;
@@ -805,14 +807,23 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // abandon_blocks from the guardian's last seen height (`proof`, the absence attestations held about it, when they make one) is
   // DEPARTED from its posted_at under its id, the bond untouched; a late one changes nothing (the absence is abandonment)
   const emergencyVerify = (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } };
-  function emergencyDeparted(b, g, d, proof) {
+  // FREE ONLY WHILE THE FEDERATION STAYS OPEN (§23A.5a RULED 2026-11-07, kanban #1294/#1320): "A request that takes the federation to CRITICAL or
+  // below ... reads as ABANDONED whatever key signed it: the bond pays." `order` { rank, seatedBase, nominal }: this request's place among the
+  // body's emergencies (posted_at, then node key), the seated before them, the nominal - it leaves seatedBase - (rank + 1) seated
+  function emergencyDeparted(b, g, d, proof, order = null) {
     if (!d || !Number.isInteger(abandonBlocks)) return null;
     const entry = (b.census.entries || []).find((e) => e && e.pubkey && toHex(e.pubkey) === toHex(g.nodePubkey));
     const st = emergencyDepartureStands(d, { advert: entry && entry.advert, tip: b.height, verify: emergencyVerify });
     if (!st.ok) return null;
     const eff = emergencyDepartureEffect(st, { guardian: true, lastSeenHeight: proof && proof.ok ? proof.sinceHeight : null, abandonBlocks });
-    return eff.departed ? { peerKey: g.peerKey, sinceHeight: d.postedAt, kind: GONE.DEPARTED, proofRef: emergencyDepartureId(d) } : null;
+    if (!eff.departed) return null;
+    // the band it leaves: CRITICAL or HALTED reads ABANDONED (the ruling's "to CRITICAL or below"); OPEN or DRAINING stays a free departure
+    const stillOpen = !order || !['CRITICAL', 'HALTED'].includes(statusFor({ nominal: order.nominal, seated: Math.max(0, order.seatedBase - (order.rank + 1)) }).status);
+    return { peerKey: g.peerKey, sinceHeight: d.postedAt, kind: stillOpen ? GONE.DEPARTED : GONE.ABANDONED, proofRef: emergencyDepartureId(d) };
   }
+  /** The body's emergencies in one order every seat takes: posted_at, then node key. Answers node key hex -> rank. */
+  const emergencyRanks = (reqs) => new Map([...reqs].filter(Boolean).sort((x, y) => (Number(x.postedAt) - Number(y.postedAt)) || (toHex(x.nodePubkey) < toHex(y.nodePubkey) ? -1 : 1))
+    .map((d, i) => [toHex(d.nodePubkey), i]));
 
   /** A body this seat builds anyway (with the gone it was told), signed: the second ask of `gather`. */
   function signBody(record) {
@@ -849,6 +860,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const me = toHex(round.pubkey);
     const sv = (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } };
     const gone = [];
+    const signRanks = emergencyRanks(requests);
     for (const g of plain.guardians.filter((x) => goneHex.includes(toHex(x.peerKey)))) {
       // an owner's leave request handed along for this guardian's node (§23A.5a): DEPARTED from its posted_at - only if it stands here
       // and arrived in time against the absence attestations this seat holds itself
@@ -859,7 +871,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       const req = mine;
       if (req) {
         const own = absences && Number.isInteger(abandonBlocks) ? absences.proofFor(plain.record, g.peerKey, abandonBlocks) : { ok: false };
-        const out = emergencyDeparted(b, g, req, own);
+        const out = emergencyDeparted(b, g, req, own, { rank: signRanks.get(toHex(g.nodePubkey)) ?? 0, seatedBase: seatedOf(plain.record).length, nominal: plain.record.nominal });
         if (!out) return { ok: false, why: 'that emergency departure does not stand here, or came after abandon_blocks' };
         gone.push(out); continue;
       }
