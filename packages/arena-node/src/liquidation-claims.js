@@ -28,11 +28,18 @@ export const REMAINDER_FEE_MARGIN_MSAT = 10_000n;
 // and answers { ok, nonce, nonceHash, amountMsat } or why not; `liquidationOf(fid).issuedHashes` is the issued set's nonce hashes.
 export function createLiquidationClaims({ validate, liquidationOf, height, escrowMsatOf, clocks, checkPending = null, load = () => [], save = () => {}, take = null }) {
   const claims = new Map();                  // federation hex -> Map(nonce hex -> { nonce, amountMsat, height, payoutPk })
+  // NOTES BEING TAKEN, WRITTEN AHEAD (kanban #1352, audit 4 fixesB-2): a reissue that lands after its timeout, or across a restart, took the notes
+  // and kept no claim - presented again, the federation answered "spent" and the holder got 409 for good. Each fresh note is kept as TAKING (its
+  // payout key, the height) before `take` runs; a re-presentation the federation refuses as spent is the earlier reissue landed, and is accepted.
+  const taking = new Map();                  // federation hex -> Map(nonce hex -> { payoutPk, height })
+  const takingOf = (fid) => { if (!taking.has(fid)) taking.set(fid, new Map()); return taking.get(fid); };
   for (const c of load() || []) {
+    if (c && c.taking) { takingOf(c.federation).set(c.nonce, { payoutPk: c.payoutPk, height: c.height }); continue; }
     if (!claims.has(c.federation)) claims.set(c.federation, new Map());
     claims.get(c.federation).set(c.nonce, { nonce: c.nonce, amountMsat: BigInt(c.amountMsat), height: c.height, payoutPk: c.payoutPk, ...(c.messageHash ? { messageHash: c.messageHash } : {}) });
   }
-  const persist = () => save([...claims.entries()].flatMap(([federation, m]) => [...m.values()].map((c) => ({ federation, ...c, amountMsat: String(c.amountMsat) }))));
+  const persist = () => save([...claims.entries()].flatMap(([federation, m]) => [...m.values()].map((c) => ({ federation, ...c, amountMsat: String(c.amountMsat) })))
+    .concat([...taking.entries()].flatMap(([federation, m]) => [...m.entries()].map(([nonce, t]) => ({ federation, nonce, taking: true, payoutPk: t.payoutPk, height: t.height })))));
 
   /** POST /liquidation-claims { federation, ecash, payoutPk }: the notes taken, each one already claimed refused by name. */
   async function offer(body) {
@@ -54,12 +61,26 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
     // or comes back, the holder could redeem the same notes after the escrow paid them. Notes not claimed before are reissued into this set's own client
     // of the federation first (`take`); a federation that answers no reissue takes the claim offline only when its halt is stopped consensus (a record
     // or a halt proof) - a mark of theft alone leaves a federation that may still run, and the holder presents the notes again
-    const fresh = (v.notes || []).some((n) => !mine.has(String(n.nonce).toLowerCase()) && !spent.has(String(n.nonce).toLowerCase()));
+    const freshNotes = (v.notes || []).map((n) => String(n.nonce).toLowerCase()).filter((x) => !mine.has(x) && !spent.has(x));
+    const fresh = freshNotes.length > 0;
     if (fresh && typeof take === 'function') {
+      const tk = takingOf(fid);
+      // notes another key is already taking are that holder's: not this presentation's to take
+      const other = freshNotes.filter((x) => tk.has(x) && tk.get(x).payoutPk !== payoutPk);
+      if (other.length) return { ok: false, status: 409, why: `${other.length} of those notes are being claimed for another key` };
+      const before = freshNotes.every((x) => tk.has(x));        // every fresh note was being taken for this key: a re-presentation
+      for (const x of freshNotes) if (!tk.has(x)) tk.set(x, { payoutPk, height: at });
+      persist();                                                // AHEAD of the reissue: a restart or a late landing keeps the claim
       let t; try { t = await take(fid, body.ecash); } catch (e) { t = { ok: false, offline: true, why: e.message }; }
       if (!t || !t.ok) {
-        if (!(t && t.offline)) return { ok: false, status: 409, why: `the federation refused to reissue those notes into the arbitration set's client: ${(t && t.why) || 'no answer'}` };
-        if (liq.alarm) return { ok: false, status: 503, why: `the federation answers no reissue (${t.why}), and its halt is a mark of theft, not stopped consensus: the notes are claimed once they are taken - present them again` };
+        if (!(t && t.offline)) {
+          // REFUSED: the notes this set was already taking for this key, refused now as spent, are the earlier reissue landed - claimed
+          if (!(before && /spent|already/i.test(String(t && t.why || '')))) {
+            for (const x of freshNotes) tk.delete(x);
+            persist();
+            return { ok: false, status: 409, why: `the federation refused to reissue those notes into the arbitration set's client: ${(t && t.why) || 'no answer'}` };
+          }
+        } else if (liq.alarm) return { ok: false, status: 503, why: `the federation answers no reissue (${t.why}), and its halt is a mark of theft, not stopped consensus: the notes are claimed once they are taken - present them again` };
       }
     }
     const accepted = []; const refused = [];
@@ -68,6 +89,7 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
       if (mine.has(nonce)) { refused.push({ nonce, why: 'that note was claimed before' }); continue; }
       if (spent.has(nonce)) { refused.push({ nonce, why: 'that note\'s nonce is in the published spent set' }); continue; }
       mine.set(nonce, { nonce, amountMsat: BigInt(n.amountMsat), height: at, payoutPk });
+      if (taking.has(fid)) taking.get(fid).delete(nonce);
       accepted.push({ nonce, amountMsat: String(n.amountMsat) });
     }
     if (accepted.length) persist();

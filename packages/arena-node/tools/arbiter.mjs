@@ -507,7 +507,8 @@ if (liqClients.size) {
     },
     clocks: clocksFor(network === 'testnet4' ? 'testnet4' : network).clocks,
     load: () => { try { return claimsFile ? JSON.parse(readFileSync(claimsFile, 'utf8')) : []; } catch { return []; } },
-    save: (rows) => { if (claimsFile) writeFileSync(claimsFile, JSON.stringify(rows) + '\n'); },
+    // written whole or not at all (kanban #1352): a torn file was read as no claims - with `take`, notes already taken
+    save: (rows) => { if (claimsFile) writeJsonAtomic(claimsFile, rows); },
   });
 }
 // the paid claims' locks, from the state each pass keeps (ARENA_LIQ_PAY_FEDERATION: the safe federation ARENA_LIQ_PAY_DIR is a client of)
