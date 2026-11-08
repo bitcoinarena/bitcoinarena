@@ -7103,6 +7103,13 @@
     // that took 4dc88be7's round of the same window): a part still merging names its federation by 16 hex only (arena.wallet.known.<fed16>),
     // so a wallet whose largest part was merging failed the 64-hex test and the rows went in the lobby's order; and a merging or arriving part
     // is no money an order can spend. Ranked by what each federation holds spendable, a federation named by its first 16 hex matched too.
+    function sameVersionPerSlot(rows, own) {
+      if (!Array.isArray(window.ARENA_GAME_IDS) || window.ARENA_GAME_IDS.length < 2) return rows;
+      const gid = (r) => { const c = r.contract || (r.raw && r.raw.contract); return c && c.gameId instanceof Uint8Array ? ARENACLIENT.toHex(c.gameId) : null; };
+      const slotOf = (r) => String(r.entryCloseMs ?? (r.raw && r.raw.entryCloseMs) ?? '');
+      const hasOwn = new Set(rows.filter((r) => gid(r) === own).map(slotOf));
+      return rows.filter((r) => !hasOwn.has(slotOf(r)) || gid(r) === own);
+    }
     function moneyFirst(rows, onlyOurs = false) {
       const parts = (window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || [];
       const spendable = (p) => Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0);
@@ -7150,7 +7157,11 @@
           stakeSats: r.stakeSats, entryCloseMs: r.raw ? Number(r.raw.entryCloseMs) : null, startTimeMs: r.raw ? Number(r.raw.startTimeMs) : null })),
         // EVERY LISTED ROUND OF THIS GAME: rows() is the lobby's one per kind (the free one with the most entry
         // left); a game of short rounds - Rock Paper Scissors' 15 s - picks its own among all of them, e.g. the soonest to close
-        allRows: () => moneyFirst(window.ARENA_LOBBY_ROWS || [], true).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
+        // ONE VERSION PER SLOT (kanban #1361, the owner 2026-11-08: "Damit resetted sich der score gegen den bot und faengt wieder bei 0:0 an"):
+        // every close slot lists Rock Paper Scissors' version 5 and version 6 rounds (#951 lists every version), and a seat continues a match only
+        // from the previous round of the same game id - a v6 round, then a v5 one, started the score at 0:0. A slot that holds rounds of the
+        // tile's own version offers only those; a slot with none of them offers what it has.
+        allRows: () => sameVersionPerSlot(moneyFirst(window.ARENA_LOBBY_ROWS || [], true), game.id).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
           stakeSats: r.stakeSats, entryCloseMs: r.entryCloseMs !== undefined && r.entryCloseMs !== null ? Number(r.entryCloseMs) : null,
           startTimeMs: r.contract ? Number(r.contract.startTimeMs) : null })),
         identity: () => window.ARENA_IDENTITY || null,
