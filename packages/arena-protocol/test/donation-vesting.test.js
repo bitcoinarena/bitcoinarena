@@ -56,7 +56,10 @@ test('a vesting split approved by the developers is the set in force, and pays i
   const a = { ...a0, signature: secp256k1.sign(donationApprovalDigest(a0), sk(1)) };
   const { sets } = await approvedDonationSets({ networkId: NET, known: [{ networkId: NET, serial: 3n, validFrom: 1, recipients: parent }], ballots: [{ proposal: p, approvals: [a] }],
     verifySecp256k1: (s, d, k) => secp256k1.verify(s, d, k) });
-  const f = donationSetInForce({ networkId: NET, authority: new Uint8Array(32), recovery: new Uint8Array(32).fill(1), sets: [], height: START + 30 * VESTING_DAY_BLOCKS, verify: () => false, approved: sets });
+  // a change needs the authority key too (kanban #1337): its signature over the parent and over the same serial and recipients
+  const signed = (x) => ({ ...x, signature: new Uint8Array(64).fill(1) });
+  const admin = [signed({ networkId: NET, serial: 3n, validFrom: 1, recipients: parent }), signed({ networkId: NET, serial: 4n, validFrom: 1, recipients })];
+  const f = donationSetInForce({ networkId: NET, authority: new Uint8Array(32), recovery: new Uint8Array(32).fill(1), sets: admin, height: START + 30 * VESTING_DAY_BLOCKS, verify: () => true, approved: sets });
   assert.equal(f.ok, true);
   assert.deepEqual(vestedShares(f.recipients, START + 30 * VESTING_DAY_BLOCKS).map((r) => r.shareBps), [5951, 3967, 82]);
 });
