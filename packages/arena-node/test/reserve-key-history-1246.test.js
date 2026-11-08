@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { reserveKeyCache, payeeReserveKeys } from '../src/reserve-key-cache.js';
+import { reserveKeyCache, payeeReserveKeys, payeeReserveKeysAt } from '../src/reserve-key-cache.js';
 
 const F = 'aa'.repeat(32), G = 'bb'.repeat(32);
 const K1 = '02' + '11'.repeat(32), K2 = '02' + '22'.repeat(32);
@@ -34,4 +34,32 @@ test('#1246 the payee check\'s reserve keys: unread when a federation\'s key is 
   assert.equal(generating, null, 'an unknown key read as an empty set: every reserve row unpayable');
   assert.ok(moved.has(K1) && moved.has(K2), 'the key the settlement paid no longer counted after the epoch moved');
   assert.deepEqual([...keyGen], [K1]);
+});
+
+// KANBAN #1359 (audit 4 fixesB-7): the history was "every key this seat happened to see". A seat that never read the key of the round's epoch read
+// a settlement paying it as unpayable (a false offence), and a key from epochs before the round still counted (a missed one). The set is now the
+// key of the epoch at the round's census height, plus the key now when the epoch moved since - and unread when the census epoch's key is unknown.
+const K0 = '02' + '00'.repeat(32), K3 = '02' + '33'.repeat(32);
+test('#1359 a seat that never read the round\'s epoch key: unread (null), not the key now', () => {
+  const c = reserveKeyCache();
+  c.setFor(F, 'e2', bytes(K2));                      // this seat was down during e1: it only ever read K2
+  const got = payeeReserveKeysAt([F], { epochAt: () => 'e1', epochNow: () => 'e2', keyOfEpoch: c.keyOfEpoch, keysNow: [K2] });
+  const old = payeeReserveKeys([F], [K2], c.historyOf);
+  console.log('  MEASURED #1359 unseen epoch:', JSON.stringify({ byEpoch: got, before: old && [...old].map((k) => k.slice(2, 6)) }));
+  assert.equal(got, null, 'K1 unread here: no verdict, not "unpayable"');
+});
+
+test('#1359 a key from an epoch before the round is not payable; the round\'s epoch key and the key now are', () => {
+  const db = new DatabaseSync(':memory:');
+  const c = reserveKeyCache({ db });
+  c.setFor(F, 'e0', bytes(K0)); c.setFor(F, 'e1', bytes(K1)); c.setFor(F, 'e2', bytes(K2)); c.setFor(F, 'e3', bytes(K3));
+  const again = reserveKeyCache({ db });             // a restart keeps the keys by epoch
+  const got = payeeReserveKeysAt([F], { epochAt: () => 'e2', epochNow: () => 'e3', keyOfEpoch: again.keyOfEpoch, keysNow: [K3] });
+  const same = payeeReserveKeysAt([F], { epochAt: () => 'e3', epochNow: () => 'e3', keyOfEpoch: again.keyOfEpoch, keysNow: [null] });
+  const noCensus = payeeReserveKeysAt([F], { epochAt: () => null, epochNow: () => 'e3', keyOfEpoch: again.keyOfEpoch, keysNow: [K3] });
+  console.log('  MEASURED #1359 spans:', JSON.stringify({ got: [...got].map((k) => k.slice(2, 6)), same: [...same].map((k) => k.slice(2, 6)), noCensus }));
+  assert.deepEqual([...got].sort(), [K2, K3].sort());
+  assert.ok(!got.has(K0) && !got.has(K1), 'a retired key, three epochs back, read as payable');
+  assert.deepEqual([...same], [K3]);
+  assert.equal(noCensus, null);
 });
