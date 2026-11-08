@@ -155,8 +155,8 @@ export function buildFederationRecord({ federationId, networkId, invite, nominal
   const seatedGuardians = guardians.filter((g) => !goneKeys.has(toHex(g.peerKey)));
   const band = statusFor({ nominal, seated: Math.min(nominal, seatedGuardians.length), closed });
   const cap = !seatedGuardians.length ? { ok: false }
-    : bondLock ? lockedExposureCap({ guardians: seatedGuardians, f: band.f, height, drainBlocks: bondLock.drainBlocks, bondMinGuardian: bondLock.bondMinGuardian })
-      : exposureCap({ bonds: seatedGuardians.map((g) => BigInt(g.bondSats)), f: band.f });
+    : bondLock ? lockedExposureCap({ guardians: seatedGuardians, f: band.f, threshold: band.threshold, height, drainBlocks: bondLock.drainBlocks, bondMinGuardian: bondLock.bondMinGuardian })
+      : exposureCap({ bonds: seatedGuardians.map((g) => BigInt(g.bondSats)), f: band.f, threshold: band.threshold });
   return {
     federationId, networkId, invite, nominal, threshold: band.threshold,
     guardians: guardians.map(({ peerKey, nodePubkey, operatorId, bondTxid, bondVout, endpoint }) => ({ peerKey, nodePubkey, operatorId, bondTxid, bondVout, endpoint }))

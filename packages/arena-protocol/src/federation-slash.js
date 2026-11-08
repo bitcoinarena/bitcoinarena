@@ -31,13 +31,17 @@ export const haltsAt = (f) => f + 1;
  *
  * At ten guardians and 7 of 10, `f = 3`, so four of the smallest bond - NOT the sum of all ten.
  */
-export function exposureCap({ bonds, f }) {
+export function exposureCap({ bonds, f, threshold = null }) {
   if (!Array.isArray(bonds) || !bonds.length) return { ok: false, why: 'a federation has seated guardians' };
   if (!bonds.every((b) => typeof b === 'bigint' && b > 0n))
     return { ok: false, why: 'every bond is a positive number of msat' };
   if (!Number.isInteger(f) || f < 0) return { ok: false, why: 'f is how many faults the threshold tolerates' };
   const smallest = bonds.reduce((a, b) => (b < a ? b : a));
-  return { ok: true, cap: BigInt(haltsAt(f)) * smallest, smallest, halts: haltsAt(f) };
+  // (seated - 2f), RULED 2026-11-07 (kanban #1295/#1321): it was (f + 1), which holds only at full seating - 4, 3, 2 at 10, 9, 8 seated of a ten.
+  // In general the leavers that halt it: seated - threshold + 1 (threshold 2f + 1, so seated - 2f; a 2 of 2 testnet federation, threshold 2: 1)
+  const t = Number.isInteger(threshold) ? threshold : 2 * f + 1;
+  const places = Math.max(0, bonds.length - t + 1);
+  return { ok: true, cap: BigInt(places) * smallest, smallest, halts: places };
 }
 
 /**
@@ -50,7 +54,7 @@ export function exposureCap({ bonds, f }) {
  * more than the cap for every k, so the theft cover holds. `guardians` [{ outputs: [{ bondSats, maturity }] }] or, with no outputs
  * listed, { bondSats, maturity }.
  */
-export function lockedExposureCap({ guardians, f, height, drainBlocks, bondMinGuardian }) {
+export function lockedExposureCap({ guardians, f, height, drainBlocks, bondMinGuardian, threshold = null }) {
   if (!Array.isArray(guardians) || !guardians.length) return { ok: false, why: 'a federation has seated guardians' };
   if (!Number.isInteger(f) || f < 0) return { ok: false, why: 'f is how many faults the threshold tolerates' };
   if (!Number.isInteger(height) || !Number.isInteger(drainBlocks) || drainBlocks < 0) return { ok: false, why: 'the lock is judged at a record height against drain_blocks' };
@@ -61,7 +65,7 @@ export function lockedExposureCap({ guardians, f, height, drainBlocks, bondMinGu
     .reduce((a, o) => a + BigInt(o.bondSats || 0), 0n));
   const qualifying = locked.filter((x) => x > 0n && x >= floor);
   const lapsing = guardians.length - qualifying.length;
-  const places = Math.max(0, haltsAt(f) - lapsing);
+  const places = Math.max(0, guardians.length - (Number.isInteger(threshold) ? threshold : 2 * f + 1) + 1 - lapsing);   // (seated - 2f) less the lapsing (#1295/#1321)
   const smallest = qualifying.length ? qualifying.reduce((a, b) => (b < a ? b : a)) : 0n;
   return { ok: true, cap: BigInt(places) * smallest, smallest, places, lapsing, qualifying: qualifying.length, line };
 }
