@@ -296,7 +296,7 @@ const { gridBase, seatCatalog, seatChains, agreementOf } = createGridBase({ chai
 // slot of the last 20, oldest first - one grid of the slot's target hour, carrying the duty marker, then the series to every seat.
 // Every other machine posts nothing. DUTY_DRY=1: decide and say, publish nothing.
 if (env.PAID_DUTY === '1') {
-  const { slotOf, slotStartMs, targetWindow, anchorHeight, dutyOrder, dutyMarkerOutput, dutyMarkersOf, itemTag, slotsToPost, DUTY_COMMITTEE_LEAD_MS }
+  const { slotOf, slotStartMs, targetWindow, anchorHeight, dutyDrawOrder, dutyMarkerOutput, dutyMarkersOf, itemTag, slotsToPost, DUTY_COMMITTEE_LEAD_MS }
     = await import('../../arena-protocol/src/duty.js');
   const { medianTimePast } = await import('../../arena-protocol/src/beacon.js');
   const item = env.DUTY_ITEM, game = env.DUTY_APP, fed = String(env.DUTY_FEDERATION || '').toLowerCase();
@@ -363,8 +363,8 @@ if (env.PAID_DUTY === '1') {
       const nowMs = Date.now(), slot = slotOf(nowMs);
       const anchor = await anchorHeight(slot, { mtpAt, tip, low: view.firstHeight + 11 });
       if (anchor === null) { if (lastSaid !== `wait ${slot}`) say({ duty: 'no anchor yet', item, slot }); lastSaid = `wait ${slot}`; return; }
-      if (!censusAt.has(anchor)) censusAt.set(anchor, round.dutyChain.censusKeysAt(anchor));
-      const order = dutyOrder({ networkId: round.contract.networkId, slot, nodeKeys: censusAt.get(anchor) });
+      if (!censusAt.has(anchor)) censusAt.set(anchor, round.dutyChain.censusEntriesAt(anchor));
+      const order = dutyDrawOrder({ networkId: round.contract.networkId, slot, entries: censusAt.get(anchor) });  // ruling #1291: drawn by bond outpoint, bond-weighted
       const onDuty = order.length > 0 && local.has(toHex(order[0]));
       // POSTED: a marker of this item in the chain's last 30 h of blocks or in the mempool - and what this keeper itself has in flight
       const posted = new Set(inflight);

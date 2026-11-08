@@ -26,7 +26,7 @@
  */
 import { join } from 'node:path';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { daySlotOf, targetDay, anchorHeight, dutyOrder, dutyMarkerOutput, dayMarkersOf, postedSeriesOf, itemTag, DUTY_DAY_MS, DUTY_COMMITTEE_LEAD_MS,
+import { daySlotOf, targetDay, anchorHeight, dutyDrawOrder, dutyMarkerOutput, dayMarkersOf, postedSeriesOf, itemTag, DUTY_DAY_MS, DUTY_COMMITTEE_LEAD_MS,
   backupMarkerOutput, backupPostDue, DUTY_BACKUP_COMMITTEE_LEAD_MS, DUTY_BACKUP_CENSUS_DEPTH, DUTY_BACKUP_RANK_CAP,
   dayStartMs, DUTY_BACKUP_AFTER_MS, DUTY_FALLBACK_MS } from '../../arena-protocol/src/duty.js';
 import { medianTimePast } from '../../arena-protocol/src/beacon.js';
@@ -179,7 +179,7 @@ export function createGridBase({ chainCall, prepare = null, censusEntriesAt, con
  *   game, item                  the app (updown | rps | nextblock) and its plan item's name (the marker's tag: sha256(item)[0..4])
  *   networkId                   bytes;  local  a Set of this machine's node keys (hex)
  *   dir                         where the postings are kept (<item>-<slot>.json, <item>-<slot>-e<n>.json, status-<item>.json)
- *   chain { view, censusKeysAt, seatUrls }   the blocks to the tip (headers, transactions), the census's node keys at a height, the seats
+ *   chain { view, censusEntriesAt, seatUrls }   the blocks to the tip (headers, transactions), the census's entries at a height, the seats
  *   chainCall, walletRpc        the chain's RPC and the paying wallet's
  *   gridBase                    createGridBase's;  base.ok false is said, nothing published
  *   openGrid(kind, opts)        builds, funds and sends one grid (waitBeacon false): { ok, txid, series, lines } | { dry, ... } | { ok: false, why }
@@ -606,12 +606,13 @@ export function createDayDuty(o) {
       return { anchor: null, order: null, rank: -1, why: `the day's anchor is older than the ${view.blocks.length} blocks this node reads: reading more` };
     }
     if (!censusAt.has(anchor)) {
-      let keys = null, why = '';
-      try { keys = await chain.censusKeysAt(anchor); } catch (e) { why = e.message; }
-      if (!keys || !keys.length) return { anchor, order: null, rank: -1, why: `no census at the day's anchor ${anchor} yet${why ? `: ${why}` : ''}` };
-      censusAt.set(anchor, keys);
+      // THE CENSUS'S ENTRIES, NOT ITS KEYS (kanban #1325): the duty order is drawn by bond outpoint, bond-weighted (duty.js dutyDrawOrder)
+      let entries = null, why = '';
+      try { entries = await chain.censusEntriesAt(anchor); } catch (e) { why = e.message; }
+      if (!entries || !entries.length) return { anchor, order: null, rank: -1, why: `no census at the day's anchor ${anchor} yet${why ? `: ${why}` : ''}` };
+      censusAt.set(anchor, entries);
     }
-    const order = dutyOrder({ networkId, slot, nodeKeys: censusAt.get(anchor) });
+    const order = dutyDrawOrder({ networkId, slot, entries: censusAt.get(anchor) });
     return { anchor, order, rank: order.findIndex((k) => local.has(toHex(k))) };
   };
   const look = async () => {
