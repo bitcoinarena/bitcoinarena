@@ -581,6 +581,10 @@ export const TYPE_RESULT_FRONT = 0x28;
 export const TYPE_HALT_OBSERVATION = 0x29;
 // A GUARDIAN'S OWN SIGNED VIEW IN A HALT (§23A.5, RULED 2026-11-07 kanban #1289): the guardians it sees in P2P consensus
 export const TYPE_GUARDIAN_HALT_OBSERVATION = 0x48;
+/** §27A.4.2 (kanban #1346): a contribution agreement (an entry of a donation set), its contributor's leave, its termination by the cold admin key. */
+export const TYPE_CONTRIBUTION_AGREEMENT = 0x49;
+export const TYPE_CONTRIBUTION_LEAVE = 0x4a;
+export const TYPE_CONTRIBUTION_TERMINATION = 0x4b;
 // AN ATTESTED VALUE (feature 8, protocol 2026.0.7): a scalar market's attestors' word on the number it asked for - its
 // own type, so an outcome attestation's bytes (0x1d) never decode as one, nor the other way round
 export const TYPE_VALUE_ATTESTATION = 0x2a;
@@ -622,6 +626,9 @@ export const TAG = {
   // A SEAT'S SIGNED OBSERVATION OF A HALT (§23A.5)
   haltObservation: 'ARENA/v1/HaltObservation',
   guardianHaltObservation: 'ARENA/v1/GuardianHaltObservation',
+  contributionAgreement: 'ARENA/v1/ContributionAgreement',
+  contributionLeave: 'ARENA/v1/ContributionLeave',
+  contributionTermination: 'ARENA/v1/ContributionTermination',
   entryContract: 'ARENA/v1/EntryContract',
   advert: 'ARENA/v1/Advert',
   censusLeaf: 'ARENA/v1/CensusLeaf',
