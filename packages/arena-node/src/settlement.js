@@ -2649,6 +2649,9 @@ export class LockSettlement {
     const k = `${toHex(roundIdBytes)}:fallback`;
     if (this.#settling.has(k)) return this.#settling.get(k);
     const p = (async () => {
+      // THE REGTEST FAULT (test-named-offence.js settle-hold): a seat silent in the round's settlement starts no fallback of its own either, as it
+      // starts no claim (measured on the devnet s81e 2026-11-08 01:19Z: four seats held, one of them filed the fallback with the three live ones)
+      if (settleHoldOn(roundIdBytes)) return refuse('test switch: this seat holds the settlement of this round (settle-hold)', 503);
       let m = await this.fallbackMessage(roundIdBytes);
       if (!m.ok) return m;
       if (!m.named) return refuse('only an Arena lock has a fallback claim');
