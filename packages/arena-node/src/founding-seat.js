@@ -137,6 +137,24 @@ export function guardingOpenOf({ entries = [], held = [], except = null }) {
 }
 
 /**
+ * HOW MANY OPEN FEDERATIONS EACH OPERATOR GUARDS (§23A.2 RULED 2026-11-07, kanban #1297/#1323): by its nodes' adverts (guardianOf), a federation
+ * counted when this seat holds it OPEN or OVERLOADED (an overloaded federation is OPEN with deposits refused). The draw seats f + 1 of a founding
+ * from operators guarding one, never one guarding two; an empty map - no OPEN federation yet - keeps the draw as it was.
+ */
+export function openGuardingOf({ entries = [], held = [], except = null }) {
+  const open = new Set((held || []).filter((r) => r && (r.status === 'OPEN' || r.status === 'OVERLOADED')).map((r) => lower(r.federation)));
+  const byOp = new Map();
+  for (const e of entries || []) for (const g of (e && e.advert && e.advert.guardianOf) || []) {
+    const f = toHex(g.federationId);
+    if (f === lower(except) || !open.has(f)) continue;
+    const op = opOf(e);
+    if (!byOp.has(op)) byOp.set(op, new Set());
+    byOp.get(op).add(f);
+  }
+  return new Map([...byOp].map(([op, fs]) => [op, fs.size]));
+}
+
+/**
  * fedimint-cli RUN, ITS OWN WORDS IN A REFUSAL (kanban #495, founding 53be35a3: the CLI prints a refusal such as "Local parameters have
  * already been set" as JSON on stdout, so an exec error held only "Command failed: ..." and the founding's fresh setup, which reads that
  * refusal, never started - two seated nodes posted no code): resolves the output; rejects with stdout and stderr appended to the message.
@@ -382,7 +400,7 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       let freshWait = false;
       if (!use && setup && typeof setup.freshSetup === 'function' && !tried.has(key)) {
         const probe = createFounding({ seed, triggerHeight: t.height, entries, nominal: Number.isInteger(t.nominal) && t.nominal > 0 ? t.nominal : nominal, bondMinGuardian,
-          guardingOpen: out, seatedFirst, pressureBond, candidateVersion, foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: null, firstSeason });
+          guardingOpen: out, seatedFirst, pressureBond, candidateVersion, openGuarding: openGuardingOf({ entries, held, except }), foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: null, firstSeason });
         const ps = probe.state(), me = toHex(ownKey);
         const named = (ps.seated || []).some((x) => String(x.node || x).toLowerCase() === me) || (ps.alternates || []).some((x) => String(x).toLowerCase() === me);
         let reading = GUARDIAN.UNKNOWN;
@@ -401,7 +419,8 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       // A SUCCESSOR HAS ITS PREDECESSOR'S SIZE: the held record's nominal (federation B: 7) - genesis's federation_nominal
       // is 4 on testnet4 and regtest, and B's successor drawn at 4 would seat four of B and draw nobody
       const size = Number.isInteger(t.nominal) && t.nominal > 0 ? t.nominal : nominal;
-      current = { key, trigger: t, via, freshWait, entries, founding: createFounding({ seed, triggerHeight: t.height, entries, nominal: size, bondMinGuardian, guardingOpen: out, seatedFirst, pressureBond, candidateVersion,
+      const openGuarding = openGuardingOf({ entries, held, except });
+      current = { key, trigger: t, via, freshWait, entries, founding: createFounding({ seed, triggerHeight: t.height, entries, nominal: size, bondMinGuardian, guardingOpen: out, seatedFirst, pressureBond, candidateVersion, openGuarding,
         foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: use, post, say, firstSeason }) };
       say({ founding: current.founding.id.slice(0, 16), trigger: t.kind, height: t.height, why: t.why, nominal: size, seatedFirst: seatedFirst.length,
         leftOut: [...out], takesPart: !!use, via });

@@ -909,6 +909,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       return out;
     },
     list: () => [...kept.entries()].map(([federation, k]) => ({ federation, status: k.status, height: k.height, signers: k.signers, record: toHex(k.bytes),
+      // ITS FIRST HEIGHT HERE (§23A.2 RULED 2026-11-07, kanban #1297/#1323): the oldest record this seat holds of it - a client sends no first deposit
+      // to a federation younger than drain_blocks, and reads its age as the median of the seats' answers
+      ...((() => { try { recordAt(federation, 0); const m = history.get(String(federation).toLowerCase()); return m && m.size ? { firstHeight: Math.min(...m.keys()) } : {}; } catch { return {}; } })()),
       ...((() => { let a = null; try { a = alarmOf(federation); } catch { a = null; } return a ? { alarm: a } : {}; })()),
       // THE LOAD (§23A.3): the signed record's reserve over its signed exposure cap
       ...(k.record ? { reserveSats: String(k.record.reserveSats), exposureCapSats: String(k.record.exposureCapSats),

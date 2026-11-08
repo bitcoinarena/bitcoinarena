@@ -237,28 +237,37 @@ test('federation B: a notice from B7 founds a successor of SEVEN (the record\'s 
 // the cohort draws fall on the multiples of founding_window + 1 (guardian-founding.js): a 9-block window draws at 290, 300, 310
 const cClocks = { abandonBlocks: 10, foundingWindow: 9 };
 
-test('a cohort (protocol 2026.0.14): ten new guardian-capable operators found a federation of ten while federation B is OPEN; B\'s four guardians are not drawn', async () => {
+// §23A.2 RULED 2026-11-07 (kanban #1297/#1323): a cohort seats at least f + 1 guardians of OPEN federations - before, ten new operators founded
+// a federation of ten while B was OPEN and B's guardians were left out; now that founds nothing, and B's guardians with a free slot are drawn first
+test('a cohort (protocol 2026.0.14) while federation B is OPEN: ten new operators alone found nothing; B\'s four guardians with a free founding slot take f + 1 = 4 seats, six new ones the rest (kanban #1323)', async () => {
   const bFed = 'bb'.repeat(32);
   const all = Array.from({ length: 14 }, (_, i) => key(`c${i}`));
-  const cEntries = all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/ctx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
-    advert: { operatorId: `cop${i}`, guardianCapable: true, guardianEndpoint: `wss://c${i}`,
+  const entriesWith = (slot) => all.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/ctx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
+    advert: { operatorId: `cop${i}`, guardianCapable: true, guardianEndpoint: `wss://c${i}`, ...(i < 4 && slot ? { foundingSlot: true } : {}),
       guardianOf: i < 4 ? [{ federationId: Uint8Array.from(Buffer.from(bFed, 'hex')), guardianKey: new Uint8Array(33) }] : [] } }));
   const held = [{ federation: bFed, status: 'OPEN', height: 300 }];
-  const w = { tip: 300 };
-  const s = createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? cEntries : cEntries.slice(0, 4)),
-    beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
-    guardianInSetup: async () => true, setup: { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null },
-    nominal: 4, bondMinGuardian: 500000n, clocks: cClocks, ownKey: all[5].pub, sign: (h) => schnorr.sign(h, all[5].secret), verify });
-  const first = await s.tick();
-  assert.match(first.why, /beacon after 300/, 'triggered at 300, drawn on block 301');
-  w.tip = 301;
-  const r = await s.tick();
-  assert.equal(r.ok, true, r.why);
-  const st = s.state();
-  assert.deepEqual([st.trigger.kind, st.trigger.height, st.seated.length], ['cohort', 300, 10]);
-  const drawn = new Set(st.seated.map((y) => y.node));
-  for (let i = 0; i < 4; i++) assert.ok(!drawn.has(toHex(all[i].pub)), `B's guardian ${i} is not drawn`);
-  for (let i = 4; i < 14; i++) assert.ok(drawn.has(toHex(all[i].pub)), `new node ${i} is drawn`);
+  const run = async (slot) => {
+    const cEntries = entriesWith(slot), w = { tip: 300 };
+    const s = createFoundingSeat({ records: () => held, entriesAt: async (h) => (h >= 300 ? cEntries : cEntries.slice(0, 4)),
+      beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
+      guardianInSetup: async () => true, setup: { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null },
+      nominal: 4, bondMinGuardian: 500000n, clocks: cClocks, ownKey: all[5].pub, sign: (h) => schnorr.sign(h, all[5].secret), verify });
+    const first = await s.tick();
+    assert.match(first.why, /beacon after 300/, 'triggered at 300, drawn on block 301');
+    w.tip = 301;
+    return { r: await s.tick(), st: s.state() };
+  };
+  const alone = await run(false);
+  const why = String(alone.r.why || (alone.st && alone.st.why) || '');
+  console.log('  MEASURED #1323 seat, no slot:', JSON.stringify({ ok: alone.r.ok, seated: alone.st && alone.st.seated ? alone.st.seated.length : 0, why: why.slice(0, 160) }));
+  assert.ok(!(alone.st && alone.st.seated && alone.st.seated.length), 'ten new operators founded alone');
+  const vets = await run(true);
+  assert.equal(vets.r.ok, true, vets.r.why);
+  assert.deepEqual([vets.st.trigger.kind, vets.st.trigger.height, vets.st.seated.length], ['cohort', 300, 10]);
+  const drawn = new Set(vets.st.seated.map((y) => y.node));
+  const bDrawn = [0, 1, 2, 3].filter((i) => drawn.has(toHex(all[i].pub))).length;
+  console.log('  MEASURED #1323 seat, slots:', JSON.stringify({ seated: vets.st.seated.length, ofB: bDrawn, firstFour: vets.st.seated.slice(0, 4).every((y) => [0, 1, 2, 3].some((i) => toHex(all[i].pub) === y.node)) }));
+  assert.equal(bDrawn, 4, 'B\'s guardians take f + 1 seats');
 });
 
 test('a drawn node whose guardian is not in setup (left in a failed key generation) starts it again in a fresh setup, once, and takes part (kanban #495, the installers 2026-10-22)', async () => {

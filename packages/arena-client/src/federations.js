@@ -13,6 +13,8 @@
 import { majorityThenGrace, COMPARE_GRACE_MS } from './committee.js';
 import { verifyFederationRecord, newestRecord } from '../../arena-protocol/src/federation-record.js';
 import { networkOf } from '../../arena-protocol/src/constants.js';
+import { genesisFor } from '../../arena-protocol/src/genesis.js';
+import { MAINNET_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { readInvite } from '../../arena-node/src/invite.js';
 import { readWithOneRetry } from './reread.js';
 import { noteRecordInvite } from './guardian-invites.js';
@@ -55,7 +57,7 @@ const STATUS_ASK_MS = 6000;
  * id hex -> status with `federation`; `only` keeps one. `.why` says why none stood when the map is empty.
  */
 export async function federationStatuses({ nodes, census, verify, fetcher = fetch, only = null }) {
-  const verified = new Map(), refused = new Map(), failed = [], alarms = new Map();
+  const verified = new Map(), refused = new Map(), failed = [], alarms = new Map(), firsts = new Map();
   const add = (m, k, v) => { if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
   // NOT HELD FOR THE SLOWEST SEAT, NOR FOR A HUNG ONE (kanban #625: asked with no limit, a restarting seat held an order 26 s a read): each
   // seat within STATUS_ASK_MS, and once more than half answered the rest get COMPARE_GRACE_MS - the records are signed, the newest that stands is taken
@@ -72,6 +74,7 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
         // A RESERVE ALARM (kanban #1093 part 5): a seat that saw a mark of theft in the federation's signed history names it; one seat is
         // enough to stop deposits - stopping is the safe side, and the mark carries its own proof for anyone who acts on it
         if (f.alarm && typeof f.alarm === 'object' && !alarms.has(fid)) alarms.set(fid, { ...f.alarm, from: u });
+        if (Number.isInteger(f.firstHeight)) add(firsts, fid, f.firstHeight);
         noteRecordInvite(f.record);   // its guardians, for a join one guardian cannot serve (guardian-invites.js) - verified or not
         const v = verifyFederationRecord(hexToBytes(f.record), { census, verify, inviteFederationId });
         if (v.ok) add(verified, fid, { ...v, from: u }); else add(refused, fid, `${u}: ${v.why}`);
@@ -85,7 +88,10 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
     const why = (refused.get(fid) || failed)[0];
     const st = best ? { ...statusOfRecord(best), federation: fid }
       : { status: 'unverified', allows: FEDERATION_ALLOWS.unverified, federation: fid, why: why ? `no record stands: ${why}` : 'no node holds a record of this federation' };
-    out.set(fid, alarms.has(fid) ? { ...st, alarm: alarms.get(fid), allows: { ...st.allows, deposit: false } } : st);
+    // ITS AGE (§23A.2, kanban #1323): the median of the first heights the seats hold of it - one seat cannot make a young federation look old
+    const fh = (firsts.get(fid) || []).slice().sort((a, b) => a - b);
+    const aged = fh.length ? { ...st, firstHeight: fh[Math.floor((fh.length - 1) / 2)] } : st;
+    out.set(fid, alarms.has(fid) ? { ...aged, alarm: alarms.get(fid), allows: { ...aged.allows, deposit: false } } : aged);
   }
   if (!out.size && failed.length) out.why = `no record stands: ${failed[0]}`;
   return out;
@@ -144,7 +150,19 @@ export function pickFederation(statuses, { known = () => true } = {}) {
  *   sameFederation(invite, fid)   whether an invite names that federation (inviteNamesFederation)
  * Answers { invite, federation, lowest, why }.
  */
-export function depositFederation({ lobbyInvite, statuses = [], held = [], known = () => true, sameFederation = () => false, always = true }) {
+/**
+ * TOO YOUNG FOR A FIRST DEPOSIT (§23A.2 RULED 2026-11-07, kanban #1297/#1323): "no federation younger than drain_blocks receives first deposits by
+ * default" - its newest record's height less its first height (the seats' median) under its network's drain_blocks. A federation whose first
+ * height no seat says is not held back (seats before this rule).
+ */
+export const drainBlocksOf = (network) => { try { return genesisFor(network).drainBlocks; } catch { return MAINNET_CLOCKS.drainBlocks; } };
+export function tooYoung(f, { drainBlocks = null } = {}) {
+  if (!f || !Number.isInteger(f.firstHeight) || !Number.isInteger(f.height)) return false;
+  const d = Number.isInteger(drainBlocks) ? drainBlocks : drainBlocksOf(f.network);
+  return f.height - f.firstHeight < d;
+}
+// `chosen` a federation id the player picked himself: a young one is taken then
+export function depositFederation({ lobbyInvite, statuses = [], held = [], known = () => true, sameFederation = () => false, always = true, chosen = null, drainBlocks = null }) {
   const lobby = (why) => ({ invite: lobbyInvite, federation: null, lowest: false, why });
   // EVERY DEPOSIT TO THE LOWEST LOAD (RULED 2026-10-13 ~11:50Z: "It should always take the federation with less funds so
   // it's evened out"): a returning player too - the page sums every federation's wallet (ARENA_SUM_BALANCES), so where the money
@@ -155,8 +173,10 @@ export function depositFederation({ lobbyInvite, statuses = [], held = [], known
     return lobby('a returning player stays in the federation it holds');
   }
   // A FEDERATION THAT TAKES NO NEW DEPOSITS IS NOT PICKED, whatever its load (kanban #807): at load 2 it won every pick from A at load 1338
-  const open = (statuses || []).filter((f) => f && f.invite && takesDeposits(f.federation));
-  const pick = pickFederation(open, { known });
+  const pickedHere = chosen ? String(chosen).toLowerCase() : null;
+  const open = (statuses || []).filter((f) => f && f.invite && takesDeposits(f.federation)
+    && (String(f.federation).toLowerCase() === pickedHere || !tooYoung(f, { drainBlocks })));
+  const pick = (pickedHere && pickFederation(open.filter((f) => String(f.federation).toLowerCase() === pickedHere), { known })) || pickFederation(open, { known });
   if (!pick) return lobby('no OPEN, known federation with a signed load');
   if (sameFederation(lobbyInvite, pick.federation)) return { invite: lobbyInvite, federation: pick.federation, lowest: true, why: 'the lobby federation is the lowest-load one' };
   return { invite: pick.invite, federation: pick.federation, lowest: true,

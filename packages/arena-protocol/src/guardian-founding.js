@@ -92,7 +92,14 @@ export function guardianTicket(seed, entry, height) {
  */
 // `firstSeasonEnds` (#1318, RULED #1288): a height - an output that matures at or before it counts for nothing in the draw, so a federation is never
 // founded on a bond that leaves inside its first season. Null: every output counts, the draw byte for byte as before.
-export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [], pressureBond = null, candidateVersion = null, firstSeasonEnds = null }) {
+// VETERANS FIRST (§23A.2 RULED 2026-11-07, kanban #1297/#1323): "A cohort or succession founding seats at least f + 1 guardians drawn from the
+// seated guardians of existing OPEN federations (an operator may guard at most two OPEN federations), and only the rest from the free pool".
+// `openGuarding` Map operator id -> how many OPEN federations it guards. A veteran guards exactly one and its node offers a free founding slot
+// (advert.foundingSlot - it runs the second guardian beside the first); the f + 1 (less the seated first) come from them in ticket order, the rest
+// from the free pool, and too few veterans found nothing - ten fresh bonds alone are not a federation. Null, or no OPEN federation at all (the
+// network's first founding): the draw as before, byte for byte.
+export const OPEN_GUARDED_MAX = 2;
+export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [], pressureBond = null, candidateVersion = null, firstSeasonEnds = null, openGuarding = null }) {
   if (!(seed instanceof Uint8Array) || seed.length !== 32) return { ok: false, why: 'a founding is drawn on the beacon after its trigger height' };
   if (typeof bondMinGuardian !== 'bigint' || bondMinGuardian <= 0n) return { ok: false, why: 'bond_min_guardian is a positive floor' };
   if (pressureBond !== null && (typeof pressureBond !== 'bigint' || pressureBond <= 0n)) return { ok: false, why: 'B*_net under pressure is a positive amount, or null when the network is not under pressure' };
@@ -118,6 +125,8 @@ export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian,
   }
   const pool = [...byOp].filter(([, x]) => x.bondSats >= bondMinGuardian).map(([op, x]) => ({ ...x, op }));
   const missing = nominal - first.length;
+  const veteransRule = openGuarding instanceof Map && openGuarding.size > 0;
+  if (veteransRule) return drawWithVeterans({ entries, seed, height, nominal, bondMinGuardian, first, firstOps, firstNodes, free: pool, missing, f, openGuarding, candidateVersion, firstSeasonEnds });
   const allDrawn = offered.length && !first.length ? `, everything drawn: ${offered.length} seated first is fewer than f + 1 = ${f + 1}` : '';
   if (pool.length < missing)
     return { ok: false, eligible: pool.length, seatedFirst: first.length, why: first.length
@@ -145,6 +154,46 @@ export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian,
   return { ok: true, eligible: pool.length, seatedFirst: first.length, ...(pressureBond !== null ? { atPressureBond: ahead } : {}), drawn: [...first, ...picked],
     alternates,
     why: `${first.length ? `${first.length} seated first, ` : ''}${missing} drawn of ${pool.length} eligible operators, ${alternates.length} alternates in order${allDrawn}${pressureBond !== null ? `, under pressure ${ahead} at or above B*_net ${pressureBond} go ahead of the rest` : ''}` };
+}
+
+function drawWithVeterans({ entries, seed, height, nominal, bondMinGuardian, first, firstOps, firstNodes, free, missing, f, openGuarding, candidateVersion, firstSeasonEnds }) {
+  const vByOp = new Map();
+  for (const e of entries || []) {
+    const a = e && e.advert;
+    if (!a || a.guardianCapable !== true || !a.guardianEndpoint || a.foundingSlot !== true) continue;
+    if (candidateVersion !== null && !(a.protocolVersions || []).includes(candidateVersion)) continue;
+    if (firstSeasonEnds !== null && !(Number.isInteger(a.bondMaturityHeight) && a.bondMaturityHeight > firstSeasonEnds)) continue;
+    const op = String(a.operatorId || toHex(e.pubkey));
+    const n = openGuarding.get(op) || 0;
+    if (n < 1 || n >= OPEN_GUARDED_MAX || firstOps.has(op) || firstNodes.has(toHex(e.pubkey))) continue;
+    const had = vByOp.get(op);
+    if (!had) { vByOp.set(op, { entry: e, bondSats: BigInt(e.bondSats) }); continue; }
+    had.bondSats += BigInt(e.bondSats);
+    if (outpointOrder(e, had.entry) < 0) had.entry = e;
+  }
+  const order = (xs) => xs.map((x) => ({ entry: x.entry, ticket: guardianTicket(seed, x.entry, height), weight: weightOf(x.bondSats, bondMinGuardian) }))
+    .sort((a, b) => { const l = a.ticket * b.weight, r = b.ticket * a.weight; return l < r ? -1 : l > r ? 1 : outpointOrder(a.entry, b.entry); }).map((s) => s.entry);
+  const veterans = order([...vByOp.values()].filter((x) => x.bondSats >= bondMinGuardian));
+  const freeOrdered = order(free.filter((x) => !vByOp.has(x.op)));
+  const needVets = Math.max(0, f + 1 - first.length);
+  const groupOf = (e) => (e.advert && e.advert.hostGroup instanceof Uint8Array ? toHex(e.advert.hostGroup) : `node:${toHex(e.pubkey)}`);
+  const inGroup = new Map();
+  for (const e of first) inGroup.set(groupOf(e), (inGroup.get(groupOf(e)) || 0) + 1);
+  const fits = (e) => (inGroup.get(groupOf(e)) || 0) < Math.max(1, f);
+  const take = (e) => inGroup.set(groupOf(e), (inGroup.get(groupOf(e)) || 0) + 1);
+  const vets = [];
+  for (const e of veterans) if (vets.length < needVets && fits(e)) { vets.push(e); take(e); }
+  if (vets.length < needVets)
+    return { ok: false, eligible: free.length, veterans: veterans.length, seatedFirst: first.length,
+      why: `a founding seats at least f + 1 = ${f + 1} guardians of OPEN federations (§23A.2): ${first.length} seated first and ${vets.length} of ${needVets} more from the ${veterans.length} with a free founding slot - ${free.length} fresh operators do not found alone` };
+  const picked = [...vets], rest = [];
+  for (const e of freeOrdered) { if (picked.length < missing && fits(e)) { picked.push(e); take(e); } else rest.push(e); }
+  if (picked.length < missing)
+    return { ok: false, eligible: free.length, veterans: veterans.length, seatedFirst: first.length,
+      why: `${vets.length} veterans and ${picked.length - vets.length} of the free pool: the ${missing} seats of ${nominal} are not filled, a federation is not founded with fewer` };
+  const alternates = rest.filter(fits).slice(0, ALTERNATES);
+  return { ok: true, eligible: free.length, veterans: vets.length, seatedFirst: first.length, drawn: [...first, ...picked], alternates,
+    why: `${first.length ? `${first.length} seated first, ` : ''}${vets.length} of OPEN federations and ${picked.length - vets.length} from the free pool, ${alternates.length} alternates in order` };
 }
 
 /**
