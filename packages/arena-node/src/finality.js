@@ -20,6 +20,10 @@
 // before this seat's end + 1205 s, and its signed time is within the tolerance. No threshold by then is §13C. With one,
 // the re-run's own window is [end + 1200 s, end + 1800 s), FINAL is signed on the re-run after end + 1805 s, and a valid
 // objection to the re-run received before that makes the entry VOID at once.
+/** The transcript is posted by window_open + this (§13A.1 RULED 2026-11-07, kanban #1331): from the auditors' protocol on. */
+export const TRANSCRIPT_POST_MS = 120000n;
+/** By when the postings must be held for FINAL: window_open + 120 s from the auditors' protocol (22), final_after before it. */
+export const transcriptPostBy = (contract, win) => (Number(contract.protocolVersion) >= AUDITOR_VERSION ? BigInt(win.openMs) + TRANSCRIPT_POST_MS : BigInt(win.finalAfterMs));
 import { objectionHolds, FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../arena-protocol/src/objection.js';
 import { rerunIsAgreed, runOf, decodeRerunResult, splitSignedRerun } from '../../arena-protocol/src/rerun.js';
 import { noQuorumOutcome, VOID } from '../../arena-protocol/src/payout.js';
@@ -32,7 +36,7 @@ import {
   splitSignedReceipt, decodeCheckpointReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../arena-protocol/src/receipt.js';
 import { windowsOf, withinTolerance, FINAL_TOLERANCE_MS } from '../../arena-protocol/src/window.js';
-import { settlesOnRerun, noQuorumGoesToRerun, NO_QUORUM_FINAL_GRACE_MS } from '../../arena-protocol/src/constants.js';
+import { settlesOnRerun, noQuorumGoesToRerun, NO_QUORUM_FINAL_GRACE_MS, AUDITOR_VERSION } from '../../arena-protocol/src/constants.js';
 import { finalSigned, signFinalSig } from '../../arena-protocol/src/final-sig.js';
 import { verifiedFinal, runId } from './verdict.js';
 import { transcriptIsPublished } from '../../arena-protocol/src/posting.js';
@@ -451,17 +455,21 @@ function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now() 
     // window treats the entry as VOID"). Past final_after only the postings this seat held before it count: a
     // threshold of postings completed later is not publication in the window, and the entry is VOID - decided once and
     // written, so the late posting landing never turns it FINAL. A posting after an in-time threshold is only late.
-    const inTimePosted = postedFor(agreeing[0].transcriptHash, win.finalAfterMs);
+    // THE TRANSCRIPT BY window_open + 120 s (§13A.1 RULED 2026-11-07, kanban #1306/#1331 (4)): "The transcript is posted by window_open + 120 s ... or the
+    // result cannot reach FINAL" - the auditors race the clock the committee sets, so the committee may not hold the transcript back; from the
+    // auditors' protocol (22) the deadline is window_open + 120 s, before it final_after as before
+    const postBy = transcriptPostBy(contract, win);
+    const inTimePosted = postedFor(agreeing[0].transcriptHash, postBy);
     // FROM PROTOCOL 22 AN IN-TIME QUORUM SHORT OF ITS POSTINGS GOES TO THE RE-RUN WINDOW, AND THE ROUND WAITS ON IT (RULED 2026-11-02, kanban #1047 point 2):
     // otherwise a slow seat voids an entry by posting late. A decision already written stood above.
     if (!inTimePosted.ok && noQuorumGoesToRerun(contract))
       return noQuorumWindow({ round, roundIdBytes, entryIdBytes, contract, committee, win, nowMs, playerPubkey: agreeing[0].playerPubkey, signatures: agreeing.length, needed: fin.needed || seen.needed,
-        why: `the transcript was not published by the settlement threshold by ${utc(win.finalAfterMs)}: ${inTimePosted.posted || 0} of ${inTimePosted.needed || '?'} postings held in time`,
+        why: `the transcript was not published by the settlement threshold by ${utc(postBy)}: ${inTimePosted.posted || 0} of ${inTimePosted.needed || '?'} postings held in time`,
         // A SEAT THAT WAS OUT MAY BE THE ONLY ONE SHORT (measured on seven seats, two stopped to + 708 s: back, they held no posting in time while five seats had signed FINAL): it
         // still asks for FINAL on the run, and those signatures are dated from the first final_after
         extra: { unpublished: true, published: published.ok, posted: inTimePosted.posted || 0, finalSigs: said, finalAfterMs: win.finalAfterMs, askFinalOn: signedResultId } });
     if (!inTimePosted.ok) {
-      const why = `the transcript was not published by the settlement threshold by ${utc(win.finalAfterMs)} (the round's end + 600 s + 5 s): `
+      const why = `the transcript was not published by the settlement threshold by ${utc(postBy)}${postBy === win.finalAfterMs ? ' (the round\'s end + 600 s + 5 s)' : ' (the window\'s open + 120 s)'}: `
         + `${inTimePosted.posted || 0} of ${inTimePosted.needed || '?'} postings held in time`
         + `${published.ok ? `; the posting that completed the threshold reached this seat at ${utc(published.atMs)}, after the result window's deadline` : ''}`
         + ' - a seat that cannot retrieve the transcript within the result window treats the entry as VOID (§13A, §13C)';
