@@ -73,10 +73,18 @@ export const LEGACY_REPEAL_COOLDOWN = 0;
 export const LEGACY_DECIDE_DEPTH = 1;
 /** Is a proposal published at `publishedAt` under the #1196 rule, on a network whose BALLOT_DEPTH_HEIGHT is `depthHeight`. */
 export const underDepthRule = (publishedAt, depthHeight = 0) => Number(publishedAt) >= Number(depthHeight);
-/** Is `p` a repeal: its config byte-identical to one in `history` - the configs that were live before, [{ config }] - other than the current. */
-export function isRepeal(p, history = []) {
-  const mine = toHex(p.config);
-  return history.slice(0, -1).some((h) => h.config && toHex(h.config) === mine);
+/**
+ * Is `p` a repeal (§27A.7.6, RULED 2026-11-07 kanban #1335/#1307): its config byte-identical to the config in force's DIRECT PARENT - `history`
+ * the configs that were live, [{ config, since }], the last one in force - and published within one normal cycle (REPEAL_WINDOW_BLOCKS) of the
+ * activation it undoes. "Any ancestor that was live before" let a fee config repealed years ago come back in days with no exit window.
+ */
+export const REPEAL_WINDOW_BLOCKS = 4464;
+export function isRepeal(p, history = [], { publishedAt = null } = {}) {
+  if (history.length < 2) return false;
+  const now = history[history.length - 1], parent = history[history.length - 2];
+  if (!parent.config || toHex(parent.config) !== toHex(p.config)) return false;
+  if (publishedAt !== null && Number.isInteger(now.since) && Number(publishedAt) > now.since + REPEAL_WINDOW_BLOCKS) return false;
+  return true;
 }
 /** A host dropped from the list goes faster than one added, a day of voting at most: a source gone bad must not stay listed. */
 export const HOST_REMOVAL_VOTING = 144;
@@ -91,11 +99,16 @@ export function isHostRemoval(p, history = []) {
   const now = new Set(decodeHostList(history[history.length - 1].config)), next = decodeHostList(p.config);
   return next.length < now.size && next.every((h) => now.has(h));
 }
-/** Thresholds of the bonded capital in the snapshot (§27A.7.4, §27A.8.2): turnout percent, approval of non-abstaining weight. */
+/**
+ * Thresholds of the bonded capital in the snapshot (§27A.7.4, §27A.8.2): approval of non-abstaining weight, and YES of ALL eligible capital.
+ * RULED 2026-11-07 (kanban #1300, #1335): "The turnout floor is replaced by a floor on YES over everyone eligible, so a NO can never cause a pass
+ * (the old pair, turnout 40 % and approval 66 %, let 30 % YES pass only when 10 % honest NO showed up)": DESIGN > 50 % and YES >= 15 %; MONEY
+ * >= 66 % and YES >= 26 %, counting only bonds of §27A.9.5 rule 1's age (`minAge`); an UPGRADE keeps §27A.8's 34 % (51 % turnout x 66 %).
+ */
 export const THRESHOLDS = Object.freeze({
-  [CLASS.DESIGN]: { turnoutPct: 30n, approvalPct: 50n, strict: true },     // > 50 %
-  [CLASS.MONEY]: { turnoutPct: 40n, approvalPct: 66n, strict: false },     // >= 66 %
-  [CLASS.UPGRADE]: { turnoutPct: 51n, approvalPct: 66n, strict: false },   // >= 66 %
+  [CLASS.DESIGN]: { turnoutPct: 0n, approvalPct: 50n, strict: true, minYesPct: 15n },     // > 50 %, YES >= 15 % of all
+  [CLASS.MONEY]: { turnoutPct: 0n, approvalPct: 66n, strict: false, minYesPct: 26n, minAge: true },   // >= 66 %, YES >= 26 % of rule-1 bonds
+  [CLASS.UPGRADE]: { turnoutPct: 0n, approvalPct: 66n, strict: false, minYesPct: 34n },   // >= 66 %, YES >= 34 % of all
   // > 50 %, and yes from at least 25 % of ALL bonded capital (the owner 2026-10-31: "kürzer, 66% ist Zuviel. Quorum auch", "Mindestens 25% des Bond Kapitals"): 20 % turnout alone
   // would let some 10 % of the capital add a host of its own
   [CLASS.SOURCES]: { turnoutPct: 20n, approvalPct: 50n, strict: true, minYesPct: 25n },
@@ -165,7 +178,7 @@ export function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats,
     if (history && addedHosts(p, history).length > SOURCES_ADDED_MAX) return { ok: false, why: `One proposal adds at most ${SOURCES_ADDED_MAX} hosts` };
   }
   const removal = !!history && isHostRemoval(p, history);
-  const repeal = removal || (!!history && isRepeal(p, history));
+  const repeal = removal || (!!history && isRepeal(p, history, { publishedAt }));
   // THE #1196 RULE (BALLOT_DEPTH_HEIGHT): a repeal's cooldown 2 from that height, 0 before it - an older proposal keeps the old rule
   const ruled = underDepthRule(publishedAt, depthHeight);
   const repealCooldown = ruled ? repealSchedule.cooldown : LEGACY_REPEAL_COOLDOWN;
@@ -207,8 +220,12 @@ export function decodeVote(payload) {
  * verifies under, only inside the voting phase; per bond outpoint the last by height wins (ties inside a block: lower txid).
  * ABSTAIN counts for turnout, not approval. Weight is the bond amount. Answers the weights, the percentages and `passed`.
  */
-export function tally({ proposal, standing, census, votes, verify }) {
+export function tally({ proposal, standing, census: all, votes, verify, ageBlocks = null }) {
   const id = standing.id;
+  // A MONEY VOTE COUNTS ONLY BONDS OF RULE 1'S AGE (kanban #1335): at least `ageBlocks` old at the proposal's publication, so rented capital
+  // does not set the fee - for the votes and for "all eligible capital" alike. A bond with no height is not counted.
+  const aged = THRESHOLDS[proposal.class] && THRESHOLDS[proposal.class].minAge && Number.isInteger(ageBlocks) && Number.isInteger(standing.publishedAt);
+  const census = aged ? (all || []).filter((b) => Number.isInteger(b.height) && b.height <= standing.publishedAt - ageBlocks) : all;
   const prefix = toHex(id.subarray(0, 8));
   const latest = new Map();                          // outpoint -> { choice, height, txid, weight }
   for (const v of votes || []) {
@@ -229,7 +246,7 @@ export function tally({ proposal, standing, census, votes, verify }) {
   for (const x of latest.values()) { if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }
   const t = THRESHOLDS[proposal.class];
   const turnout = yes + no + abstain;
-  const quorum = total > 0n && turnout * 100n >= t.turnoutPct * total;
+  const quorum = total > 0n && turnout * 100n >= (t.turnoutPct || 0n) * total;
   const decided = yes + no;
   const approved = decided > 0n && (t.strict ? yes * 100n > t.approvalPct * decided : yes * 100n >= t.approvalPct * decided) && (!t.minYesPct || yes * 100n >= t.minYesPct * total);
   return { totalSats: total, yesSats: yes, noSats: no, abstainSats: abstain, bondsVoted: latest.size, quorum, approved, passed: quorum && approved,

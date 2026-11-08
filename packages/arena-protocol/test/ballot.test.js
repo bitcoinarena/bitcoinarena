@@ -85,24 +85,49 @@ function election(cls = CLASS.DESIGN) {
   return { p, standing, census, vote };
 }
 
-test('DESIGN passes on 30 % turnout and more than half of the non-abstaining weight; ABSTAIN counts for turnout only', () => {
+// THRESHOLDS RULED 2026-11-07 (kanban #1300, #1335): no turnout floor; YES over ALL eligible capital instead - DESIGN > 50 % and YES >= 15 %,
+// MONEY >= 66 % and YES >= 26 % (rule-1 bonds), UPGRADE >= 66 % and YES >= 34 %. Ten bonds of 10 % each.
+test('DESIGN: more than half of the non-abstaining weight and YES at least 15 % of all; ABSTAIN counts for neither', () => {
   const e = election();
   const yes2no1 = tally({ proposal: e.p, standing: e.standing, census: e.census, verify, votes: [e.vote(0, CHOICE.YES, 102), e.vote(1, CHOICE.YES, 102), e.vote(2, CHOICE.NO, 103)] });
-  assert.deepEqual([yes2no1.turnoutPct, yes2no1.quorum, yes2no1.approved, yes2no1.passed], [30, true, true, true]);
+  assert.deepEqual([yes2no1.approved, yes2no1.passed], [true, true], '20 % YES, 10 % NO');
   const tie = tally({ proposal: e.p, standing: e.standing, census: e.census, verify, votes: [e.vote(0, CHOICE.YES, 102), e.vote(1, CHOICE.NO, 102), e.vote(2, CHOICE.ABSTAIN, 103)] });
-  assert.deepEqual([tie.quorum, tie.approved, tie.passed], [true, false, false], '50 % is not more than half');
-  const quiet = tally({ proposal: e.p, standing: e.standing, census: e.census, verify, votes: [e.vote(0, CHOICE.YES, 102), e.vote(1, CHOICE.YES, 102)] });
-  assert.deepEqual([quiet.turnoutPct, quiet.quorum, quiet.passed], [20, false, false], 'all yes, but 20 % turnout');
+  assert.deepEqual([tie.approved, tie.passed], [false, false], '50 % is not more than half');
+  const oneYes = tally({ proposal: e.p, standing: e.standing, census: e.census, verify, votes: [e.vote(0, CHOICE.YES, 102)] });
+  assert.equal(oneYes.passed, false, '10 % YES is under the 15 % floor');
+  const twoYes = tally({ proposal: e.p, standing: e.standing, census: e.census, verify, votes: [e.vote(0, CHOICE.YES, 102), e.vote(1, CHOICE.YES, 102)] });
+  assert.equal(twoYes.passed, true, '20 % YES and nobody against: it passes without any turnout floor');
 });
 
-test('MONEY needs 40 % turnout and two thirds; UPGRADE 51 %', () => {
+test('#1335 a NO can never cause a pass: MONEY with 30 % YES and 10 % NO fails, as it does with 30 % YES alone', () => {
   const m = election(CLASS.MONEY);
-  const v = [0, 1, 2, 3].map((i) => m.vote(i, i < 3 ? CHOICE.YES : CHOICE.NO, 102));
-  const r = tally({ proposal: m.p, standing: m.standing, census: m.census, verify, votes: v });
-  assert.deepEqual([r.turnoutPct, r.approvalPct, r.passed], [40, 75, true]);
+  const yes3no1 = tally({ proposal: m.p, standing: m.standing, census: m.census, verify, votes: [0, 1, 2, 3].map((i) => m.vote(i, i < 3 ? CHOICE.YES : CHOICE.NO, 102)) });
+  const yes3 = tally({ proposal: m.p, standing: m.standing, census: m.census, verify, votes: [0, 1, 2].map((i) => m.vote(i, CHOICE.YES, 102)) });
+  const yes2 = tally({ proposal: m.p, standing: m.standing, census: m.census, verify, votes: [0, 1].map((i) => m.vote(i, CHOICE.YES, 102)) });
   const u = election(CLASS.UPGRADE);
-  const r2 = tally({ proposal: u.p, standing: u.standing, census: u.census, verify, votes: [0, 1, 2, 3, 4].map((i) => u.vote(i, CHOICE.YES, 102)) });
-  assert.deepEqual([r2.turnoutPct, r2.quorum], [50, false], '50 % is short of UPGRADE\'s 51');
+  const u3 = tally({ proposal: u.p, standing: u.standing, census: u.census, verify, votes: [0, 1, 2].map((i) => u.vote(i, CHOICE.YES, 102)) });
+  const u4 = tally({ proposal: u.p, standing: u.standing, census: u.census, verify, votes: [0, 1, 2, 3].map((i) => u.vote(i, CHOICE.YES, 102)) });
+  console.log('  MEASURED #1335 thresholds:', JSON.stringify({ money30yes10no: [yes3no1.approvalPct, yes3no1.passed], money30yes: yes3.passed, money20yes: yes2.passed, upgrade30: u3.passed, upgrade40: u4.passed }));
+  assert.deepEqual([yes3no1.approvalPct, yes3no1.passed], [75, true], '30 % YES (>= 26 %) and 75 % approval passes - and it passes with or without the NO');
+  assert.equal(yes3.passed, true);
+  assert.equal(yes2.passed, false, '20 % YES is under MONEY\'s 26 %');
+  assert.equal(u3.passed, false, '30 % YES is under UPGRADE\'s 34 %'); assert.equal(u4.passed, true);
+});
+
+test('#1335 a MONEY vote counts only bonds of rule 1\'s age at publication; DESIGN counts every bond', () => {
+  const m = election(CLASS.MONEY);
+  const standing = { ...m.standing, publishedAt: 100 };
+  // bonds 0-4 are old (height 0), 5-9 were bonded 10 blocks before publication: rented capital
+  const census = m.census.map((b, i) => ({ ...b, height: i < 5 ? 0 : 90 }));
+  const rented = tally({ proposal: m.p, standing, census, verify, ageBlocks: 50, votes: [5, 6, 7, 8, 9].map((i) => m.vote(i, CHOICE.YES, 102)) });
+  const old = tally({ proposal: m.p, standing, census, verify, ageBlocks: 50, votes: [0, 1].map((i) => m.vote(i, CHOICE.YES, 102)) });
+  const d = election();
+  const design = tally({ proposal: d.p, standing: { ...d.standing, publishedAt: 100 }, census: d.census.map((b, i) => ({ ...b, height: i < 5 ? 0 : 90 })), verify, ageBlocks: 50,
+    votes: [5, 6].map((i) => d.vote(i, CHOICE.YES, 102)) });
+  console.log('  MEASURED #1335 rule-1 age:', JSON.stringify({ rentedHalfYes: [String(rented.yesSats), String(rented.totalSats), rented.passed], twoOldYes: [String(old.totalSats), old.passed], designCountsYoung: design.passed }));
+  assert.equal(rented.yesSats, 0n, 'rented capital set the fee'); assert.equal(rented.passed, false);
+  assert.equal(old.totalSats, 50000n, 'all eligible capital is the aged bonds only'); assert.equal(old.passed, true, '2 of 5 aged bonds: 40 % YES');
+  assert.equal(design.passed, true);
 });
 
 test('the last vote by height wins, ties go to the lower txid; votes outside the voting phase or by no bond key count nothing', () => {

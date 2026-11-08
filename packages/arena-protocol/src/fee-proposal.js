@@ -16,6 +16,7 @@
 //
 // OUT OF REACH OF ANY PROPOSAL: the donation's 50/50 split between the protocol and the game developers (donation.js splitTwoSets),
 // slashing, every proposal rule, and the pools' split of the node fee (it follows the node fee).
+import { NODE_FEE_BPS_MAX } from './genesis.js';
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_FEE_PROPOSAL, TYPE_FEE_APPROVAL, TAG } from './constants.js';
@@ -27,7 +28,7 @@ import { FUNDING_SCHEDULES } from './funding.js';
  * parts and the website's share in percent.
  */
 export const FEES = Object.freeze({
-  roundNodeBps:      Object.freeze({ code: 1,  today: 400, min: 100, max: 600 }),
+  roundNodeBps:      Object.freeze({ code: 1,  today: 400, min: 100, max: NODE_FEE_BPS_MAX }),   // the genesis parameter (kanban #1335)
   roundDonationBps:  Object.freeze({ code: 2,  today: 400, min: 100, max: 600, donation: true }),
   roundReserveBps:   Object.freeze({ code: 3,  today: 200, min: 50,  max: 400 }),
   itemNodesPct:      Object.freeze({ code: 4,  today: 40,  min: 10,  max: 60 }),
