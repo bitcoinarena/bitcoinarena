@@ -19,7 +19,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { foundingPressureBond } from '../../arena-protocol/src/capacity.js';
 import { foundingRecordHeight } from '../../arena-protocol/src/guardian-founding.js';
-import { decodeFederationRecord, highestVerified, splitSignedRecord, verifyFederationRecord } from '../../arena-protocol/src/federation-record.js';
+import { decodeFederationRecord, highestVerified, splitSignedRecord, verifyFederationRecord, loadReserveOf } from '../../arena-protocol/src/federation-record.js';
 import { federationsOf } from './federation-records.js';
 
 /** How many seats are asked at a time, and how long each has. */
@@ -73,7 +73,7 @@ export function foundingPressureReader({ point, bandPoint = undefined, bondMinGu
       }
       const best = highestVerified(good);
       if (!best) continue;
-      federations.push({ federation: fid, status: best.status, nominal: best.record.nominal, reserveSats: best.record.reserveSats, exposureCapSats: best.record.exposureCapSats, band: best.record.capacityBand || null });
+      federations.push({ federation: fid, status: best.status, nominal: best.record.nominal, reserveSats: loadReserveOf(best.record), exposureCapSats: best.record.exposureCapSats, band: best.record.capacityBand || null });
     }
     const bond = federations.length ? foundingPressureBond({ federations, bondMinSats: bondMinGuardian }) : null;
     answers.set(height, bond);

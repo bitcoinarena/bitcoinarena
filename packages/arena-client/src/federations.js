@@ -11,7 +11,7 @@
 //   CLOSED    its successor holds everything
 //   unverified  no record that stands: shown, and nothing about it is taken on trust
 import { majorityThenGrace, COMPARE_GRACE_MS } from './committee.js';
-import { verifyFederationRecord, newestRecord } from '../../arena-protocol/src/federation-record.js';
+import { verifyFederationRecord, newestRecord, loadReserveOf } from '../../arena-protocol/src/federation-record.js';
 import { networkOf } from '../../arena-protocol/src/constants.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { MAINNET_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
@@ -98,7 +98,8 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
 }
 
 function statusOfRecord(best) {
-  const load = best.record.exposureCapSats > 0n ? Number(((best.record.reserveSats ?? 0n) * 10000n) / best.record.exposureCapSats) / 10000 : null;
+  // LOAD AGAINST THE PLAYERS' MONEY (§23A.3a RULED 2026-11-07, kanban #1322): the record's player reserve when it names one
+  const load = best.record.exposureCapSats > 0n ? Number((loadReserveOf(best.record) * 10000n) / best.record.exposureCapSats) / 10000 : null;
   const refusesDeposit = loadRefusesDeposit({ load, networkId: best.record.networkId });
   return { status: best.status, allows: refusesDeposit ? { ...FEDERATION_ALLOWS[best.status], deposit: false } : FEDERATION_ALLOWS[best.status],
     loadRefusesDeposit: refusesDeposit, signers: best.signers, height: best.record.height, from: best.from, network: networkOf(best.record.networkId),
