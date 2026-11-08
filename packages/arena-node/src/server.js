@@ -290,6 +290,7 @@ import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../arena-pr
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { createDonationBallots } from './donation-ballots.js';
 import { createContributionBook, contributionLagOf } from './contribution-book.js';
+import { FEE_SIGNAL_CHAIN_HEIGHT } from '../../arena-protocol/src/fee-signal-chain.js';
 import { contributionAgreementId, decodeContributionLeave, decodeContributionTermination, contributionLeaveDigest, contributionTerminationDigest } from '../../arena-protocol/src/contribution.js';
 import { decodeDonationProposal, donationProposalId, donationApprovalDigest, encodeDonationProposal, encodeDonationApproval } from '../../arena-protocol/src/donation-vote.js';
 
@@ -1926,7 +1927,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }));
     return mergeServedRounds(held).rounds;
   };
-  const fundingBook = round.db ? createFundingBook({ db: round.db, schedule: fundingSchedule, log: (l) => console.log(l),
+  const fundingBook = round.db ? createFundingBook({ feeChainFrom: (netHex) => { const n = networkOf(fromHex(String(netHex))); return n && Object.prototype.hasOwnProperty.call(FEE_SIGNAL_CHAIN_HEIGHT, n) ? FEE_SIGNAL_CHAIN_HEIGHT[n] : null; },   // kanban #1283
+    db: round.db, schedule: fundingSchedule, log: (l) => console.log(l),
     // BEFORE A FEE DECISION, EVERY SEAT'S APPROVALS AND SIGNALS (ruled on #1245, kanban #1231): GET /funding-items of each network seat this seat reaches
     pull: async (pid) => {
       let seats = []; try { seats = networkSeats(); } catch { seats = []; }
