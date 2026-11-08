@@ -1796,7 +1796,11 @@
         window.ARENA_ADMIN = !!kept && await hex(kept) === window.ARENA_ADMIN_SHA256;
       } catch (e) { window.ARENA_ADMIN = false; }
       if (window.ARENA_ADMIN) {
-        const mark = () => { const b = document.getElementById('arena-build'); if (b && !/admin/.test(b.textContent)) b.textContent += ' \u00b7 admin'; };
+        const mark = () => { const b = document.getElementById('arena-build'); if (b && !/admin/.test(b.textContent)) b.textContent += ' \u00b7 admin';
+          // THE ADMIN FLAG (the owner 2026-11-08: "Zeige ein kleines flag an im client wenn der admin node aktiviert ist"): a small badge in the corner, always on top
+          if (!document.getElementById('arena-admin-flag')) { const f = document.createElement('div'); f.id = 'arena-admin-flag'; f.textContent = 'ADMIN'; f.title = 'Admin mode: your rounds are left out of the counts';
+            f.style.cssText = 'position:fixed;left:6px;bottom:6px;z-index:2147483647;padding:2px 6px;border-radius:4px;background:#c0392b;color:#fff;font:700 10px/1.4 system-ui,sans-serif;letter-spacing:.06em;pointer-events:none;opacity:.9';
+            document.body.appendChild(f); } };
         if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', mark); else mark();
         // THE OWNER'S ROUNDS LEFT OUT OF THE COUNTS (kanban #1090: "tu da meine Runden RAUS NEHMEN. Indem es ein Flag im Frontend gibt"): every
         // entry this browser's wallet history holds (a stake row's entry - its transaction id in the explorer), told to the explorer once, with
@@ -7173,7 +7177,7 @@
         hidden: (id) => readHidden().find((x) => x.roundIdHex === id) || null,
         // every move this tab hid in this game's rounds, newest last - a round leaves the lobby's rows at its entry close, and
         // its reveal and verdict come after that
-        hiddenAll: () => readHidden().filter((x) => !x.gameId || x.gameId === game.id),
+        hiddenAll: () => readHidden().filter((x) => !x.gameId || x.gameId === game.id || (window.ARENA_GAME_IDS || []).includes(x.gameId)),   // #1360: a round of any listed version
         reveal: async (id) => {
           const h = readHidden().find((x) => x.roundIdHex === id);
           if (!h) return { ok: false, why: 'this tab hid no move in that round' };
