@@ -6126,6 +6126,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const pressurePoint = foundingPressurePoint(netName === 'test' ? 'testnet4' : netName);
     const foundingBondMin = guardianFloor();
     foundingSeat = createFoundingSeat({
+      // A FEDERATION OPENS ONLY IF 2 x peg_in_min <= exposure_cap / 4 (§23A.3a RULED 2026-11-07, kanban #1322) - ON MAINNET (#1366 ruled (b)): on a
+      // test network it is a warning on the health and owner pages, never a refusal, so no minimum is handed to the draw there
+      pegInMinSats: (() => { const net = chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null; return net === 'mainnet' ? GATEWAY_MINIMUMS.mainnet.pegInSats : null; })(),
       // NO BOND THAT LEAVES INSIDE THE FIRST SEASON (#1318, RULED #1288): from the guardian bond lock's height, the network's season
       firstSeason: (() => { const net = chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null; const env = process.env.ARENA_BOND_LOCK_HEIGHT;
         const from = env !== undefined && env !== '' && (net === 'regtest' || net === 'devnet') ? Number(env) : bondLockPoint(net);
