@@ -2451,6 +2451,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const row = round.get(contract.sourceRoundId);
         if (!row) return 0n;               // a source this seat cannot read: no order is tradable here past nothing
         try { of = { contract: decodeRoundContract(new Uint8Array(row.contract)), rid: contract.sourceRoundId }; } catch { return 0n; }
+        // ITS GROSS COUNTS INTO THE SOURCE COMMITTEE'S EXPOSURE (kanban #1293/#1329): the source round's own stakes and every other market on the same source
+        // round share its max_round_pool - what is left is this market's
+        const c0 = roster.censusFor(of.rid);
+        const pool0 = c0 && c0.ok ? maxRoundPoolSats({ entries: c0.entries, stakeSats: BigInt(of.contract.stakeMsat || 0n) / 1000n, networkId: of.contract.networkId, incomeSats: incomeFor(of.contract, c0.entries) }) : null;
+        if (pool0 === null) return null;
+        let used = 0n;
+        try { for (const e of round.entriesOf(contract.sourceRoundId)) used += BigInt((e.entry && e.entry.stakeMsat) || 0n) / 1000n; } catch { /* none read */ }
+        for (const other of orderBook.marketRoundIds()) {
+          if (toHex(other) === toHex(rid)) continue;
+          const orow = round.get(other); if (!orow) continue;
+          let oc; try { oc = decodeRoundContract(new Uint8Array(orow.contract)); } catch { continue; }
+          if (oc.sourceRoundId instanceof Uint8Array && toHex(oc.sourceRoundId) === toHex(contract.sourceRoundId)) used += orderBook.filledSats(other);
+        }
+        return pool0 > used ? pool0 - used : 0n;
       }
       const c = roster.censusFor(of.rid);
       const pool = c && c.ok ? maxRoundPoolSats({ entries: c.entries, stakeSats: BigInt(of.contract.stakeMsat || 0n) / 1000n, networkId: of.contract.networkId, incomeSats: incomeFor(of.contract, c.entries) }) : null;
