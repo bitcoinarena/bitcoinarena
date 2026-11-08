@@ -247,7 +247,7 @@ export class LockSettlement {
   constructor(round, { dkg, port, curve, random, stakeSecrets, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
     signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null,
     turnClock = null, donationSetFor = null, donationTargetFor = null, orderBook = null, now = () => Date.now(), conflictsFor = null,
-    reserveKeyFor = null, payeesFor = null, feesFor = null, peerKeyOf = () => null, peerAskMs = PEER_ASK_MS, peerReadMs = PEER_READ_MS, peerGraceMs = PEER_GRACE_MS, askPointOf = undefined, finalityOf = resultFinality, settledOf = settledResult } = {}) {
+    reserveKeyFor = null, auditedRoundOf = () => false, payeesFor = null, feesFor = null, peerKeyOf = () => null, peerAskMs = PEER_ASK_MS, peerReadMs = PEER_READ_MS, peerGraceMs = PEER_GRACE_MS, askPointOf = undefined, finalityOf = resultFinality, settledOf = settledResult } = {}) {
     this.round = round;
     // WHERE A NETWORK'S SETTLEMENT_ASK_HEIGHT LIES (kanban #1075): constants.js settlementAskPoint; a harness's own to read a round below it
     this.askPointOf = askPointOf;
@@ -285,6 +285,8 @@ export class LockSettlement {
     this.winnings = winnings;
     // THE ROUND'S SITTING SIGNER NODES BY POOL (Pick A): who the fee locks pay, §22A's weights.
     this.signerNodesFor = signerNodesFor;
+    // WHICH ROUNDS HAVE AUDITORS (server.js auditedRound: paid, protocol 22+, a replayed game) - their plans carry the reserve key (§13A.1, #1331)
+    this.auditedRoundOf = auditedRoundOf;
     this.dkg = dkg;
     this.port = port;
 
@@ -552,8 +554,10 @@ export class LockSettlement {
     const feeKey = anyFed ? `${toHex(roundIdBytes)}:late:${toHex(entryIdBytes)}` : toHex(roundIdBytes);
     let fees = this.fees.get(feeKey);
     if (!fees) { fees = await port.fees(); this.fees.set(feeKey, fees); }
+    const sn = feeLock ? await this.signerNodesWithReserve(roundIdBytes, contract) : { ok: true, signerNodes: null };
+    if (!sn.ok) return refuse(sn.why);
     const args = { roundId: roundIdBytes, entryId: entryIdBytes, entry, lock, feeLock, shares, fees,
-      signerNodes: feeLock ? this.signerNodesFor(roundIdBytes, contract) : null, contract, ...this.roundFees(contract) };
+      signerNodes: sn.signerNodes, contract, ...this.roundFees(contract) };
     // THE BASE PLAN the late sends are sized from (C3b-2a). With a winnings sender it is never signed, so a winner whose
     // lock row is missing here does not block it: its payout goes by send, refunding to the committee key.
     // WINNINGS-AUTO (RULED 2026-10-01): the late shares are paid by payout contracts to the winners' own lock keys
@@ -668,6 +672,19 @@ export class LockSettlement {
    * with no fill is not claimed: its locks come back whole by the return door.
    */
   /** The fees in force at this round as the lock settlements take them: a version-11 round's node fee, the website share. */
+  // THE AUDITORS' UNPAID REMAINDER TO THE RESERVES, ON EVERY SEAT THE SAME (§13A.1 RULED 2026-11-07, kanban #1306/#1331 (1)): an audited round's plan
+  // carries its federation's reserve key, so every seat sets the 10 % aside the same way. A seat that knows no key builds nothing rather than a plan
+  // that keeps the remainder in the pools - its peers holding the key would refuse those bytes by name. A round that takes any federation keeps
+  // the old rule until its per-federation split pays a reserve (open on #1331).
+  async signerNodesWithReserve(roundIdBytes, contract) {
+    const sn = this.signerNodesFor(roundIdBytes, contract);
+    if (!sn || !this.auditedRoundOf(contract) || takesAnyFederation(contract)) return { ok: true, signerNodes: sn };
+    const key = typeof this.reserveKeyFor === 'function' && contract.federationId instanceof Uint8Array
+      ? await this.reserveKeyFor(toHex(contract.federationId)).catch(() => null) : null;
+    if (!(key instanceof Uint8Array) || key.length !== 33) return { ok: false, why: 'no lock is claimed: an audited round pays its auditors\' unpaid remainder to the protocol reserves (§13A.1), and no reserve key is known for its federation' };
+    return { ok: true, signerNodes: { ...sn, auditReserveKey: key } };
+  }
+
   roundFees(contract) {
     const set = typeof this.feesFor === 'function' && contract ? this.feesFor(contract) : null;
     if (!set) return {};
@@ -1164,8 +1181,10 @@ export class LockSettlement {
     const addressed = new Set();
     for (const e of on.entries) if (this.round.payoutAddress && this.round.payoutAddress(e.entryId)) addressed.add(toHex(e.pubkey));
     const ds = on.entries.some((e) => e.atTheDoor) && this.donationSetFor ? this.donationSetFor(contract) : null;
+    const sn = feeLocks.size ? await this.signerNodesWithReserve(roundIdBytes, contract) : { ok: true, signerNodes: null };
+    if (!sn.ok) return refuse(sn.why);
     const args = { roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, payoutShares, locks, fees,
-      feeLocks, signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract, addressed,
+      feeLocks, signerNodes: sn.signerNodes, contract, addressed,
       donationSet: ds && ds.ok ? ds.set : null, ...this.roundFees(contract), ...(fb ? { fallback: fb } : {}) };
     let plan = lockSettlement(args);
     if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
