@@ -11494,7 +11494,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let c, served;
         if (url.searchParams.get('height') !== null && !url.searchParams.get('round')) {
           // AT A HEIGHT (the explorer, a test): the set in force there on this seat's network - the network of the sets it holds, or `network` (hex)
-          const h = Number(url.searchParams.get('height'));
+          // `tip`: the block after this seat's chain tip - what a round created now would read
+          let h = Number(url.searchParams.get('height'));
+          if (url.searchParams.get('height') === 'tip') { try { h = Number(await chainTip()) + 1; } catch { h = NaN; } }
           if (!Number.isInteger(h) || h < 0) return text(res, 400, 'height is a block height');
           const nid = url.searchParams.get('network') ? fromHex(url.searchParams.get('network')) : (donationSets[0] && donationSets[0].networkId);
           const keys = nid ? donationKeysForNetworkId(nid) : null;
