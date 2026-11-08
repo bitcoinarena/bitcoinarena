@@ -290,7 +290,7 @@ import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../arena-pr
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { createDonationBallots } from './donation-ballots.js';
 import { createContributionBook, contributionLagOf } from './contribution-book.js';
-import { FEE_SIGNAL_CHAIN_HEIGHT } from '../../arena-protocol/src/fee-signal-chain.js';
+import { FEE_SIGNAL_CHAIN_HEIGHT, encodeFeeSignal, feeSignalMessage } from '../../arena-protocol/src/fee-signal-chain.js';
 import { contributionAgreementId, decodeContributionLeave, decodeContributionTermination, contributionLeaveDigest, contributionTerminationDigest } from '../../arena-protocol/src/contribution.js';
 import { decodeDonationProposal, donationProposalId, donationApprovalDigest, encodeDonationProposal, encodeDonationApproval } from '../../arena-protocol/src/donation-vote.js';
 
@@ -7534,7 +7534,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (url.pathname.startsWith('/operator/')) {
         if (!operatorTokens) return text(res, 404, 'this node runs without operator tokens');
         const answer = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
-        const scope = url.pathname === '/operator/status' ? 'read' : url.pathname === '/operator/vote' ? 'vote' : url.pathname === '/operator/config' ? 'config' : null;
+        const scope = url.pathname === '/operator/status' ? 'read' : (url.pathname === '/operator/vote' || url.pathname === '/operator/fee-signal') ? 'vote' : url.pathname === '/operator/config' ? 'config' : null;
         if (!scope) return answer(404, { ok: false, why: 'no such operator door (status, vote, config)' });
         const a = operatorTokens.check(req.headers.authorization, scope);
         if (!a.ok) return answer(a.status, a);
@@ -7546,6 +7546,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE VOTE ACTION (§27A.7.7 / §27A.7.3, on 's ballot): this node's bond key signs H(proposal_id || choice)
         // and the door answers the 77-byte OP_RETURN payload ("ARN" 'V', 2026-10-13). It broadcasts nothing: a vote transaction pays a fee, and no
         // operator scope moves money - the operator's own wallet sends the payload. { proposalId: 64 hex, choice: YES|NO|ABSTAIN }
+        // A FEE PROPOSAL'S SIGNAL ON CHAIN (kanban #1283, RULED #1277 B): the 76-byte OP_RETURN payload "ARN" 'S' signed by this node's bond key; as a vote, it broadcasts
+        // nothing - the operator's own wallet sends it, in any transaction but the bond's spend. { proposalId: 64 hex }
+        if (url.pathname === '/operator/fee-signal') {   // the vote scope: a signal is the bond key's say on a proposal, as a vote is
+          if (req.method !== 'POST') return answer(405, { ok: false, why: 'a fee signal is POSTed: { proposalId }' });
+          let body;
+          try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return answer(400, { ok: false, why: 'that is not JSON' }); }
+          const id = String(body.proposalId || '').toLowerCase();
+          if (!/^[0-9a-f]{64}$/.test(id)) return answer(400, { ok: false, why: 'a fee signal names a proposal id of 64 hex characters' });
+          const pid = fromHex(id);
+          const payload = encodeFeeSignal({ proposalId: pid, signature: schnorr.sign(feeSignalMessage(pid), round.identity.secret) });
+          console.log(`[operator] fee signal for proposal ${id.slice(0, 16)} signed by this node's bond key; the operator's wallet broadcasts it`);
+          return answer(200, { ok: true, node: toHex(round.pubkey), proposalId: id, opReturn: toHex(payload),
+            broadcast: 'send it as an OP_RETURN output from your own wallet, inside the signal period: this node moves no money' });
+        }
         if (scope === 'vote') {
           if (req.method !== 'POST') return answer(405, { ok: false, why: 'a vote is POSTed: { proposalId, choice }' });
           let body;
