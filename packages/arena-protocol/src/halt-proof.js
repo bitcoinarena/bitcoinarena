@@ -25,6 +25,8 @@
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { TAG, PROTOCOL_VERSION, TYPE_HALT_OBSERVATION, TYPE_GUARDIAN_HALT_OBSERVATION } from './constants.js';
+// a gone row's kind, as federation-record.js GONE names it (DEPARTED 1) - written out, not imported, so neither module needs the other
+const GONE_DEPARTED = 1;
 
 const is32 = (b) => b instanceof Uint8Array && b.length === 32;
 const is33 = (b) => b instanceof Uint8Array && b.length === 33;
@@ -160,8 +162,16 @@ export function haltProof(observations, { record, censusSeats, abandonBlocks, ve
   const views = new Map([...counted].map(([g, o]) => [g, new Set([g, ...o.peersSeen.map(toHex)])]));
   const largest = largestMutualSubsets(views);
   // (a guardian the record already lists as gone signs nothing that counts, and reads ABANDONED here as it did before)
-  const abandoned = []; const answered = [];
-  for (const g of record.guardians || []) (largest.members.has(toHex(g.peerKey)) ? answered : abandoned).push(g.peerKey);
-  return { ok: true, session: best.session, haltHeight, observers: set.length, abandoned, answered, signers: counted.size, largestSubset: largest.size,
+  // A DEPARTURE BEFORE THE HALT'S WINDOW IS NOT ITS CAUSE (§23A.5a RULED 2026-11-07, kanban #1294/#1320): "any DEPARTED row whose since_height lies
+  // inside abandon_blocks before a halt height reads as ABANDONED" - so one departed earlier than haltHeight - abandon_blocks is left out of the
+  // slash (`departedBefore`); one inside the window reads ABANDONED, whatever key signed its departure
+  const departedAt = new Map((record.gone || []).filter((g) => g && g.kind === GONE_DEPARTED).map((g) => [toHex(g.peerKey), Number(g.sinceHeight)]));
+  const abandoned = []; const answered = []; const departedBefore = [];
+  for (const g of record.guardians || []) {
+    const k = toHex(g.peerKey), since = departedAt.get(k);
+    if (since !== undefined && since < haltHeight - abandonBlocks) { departedBefore.push(g.peerKey); continue; }
+    (largest.members.has(k) ? answered : abandoned).push(g.peerKey);
+  }
+  return { ok: true, session: best.session, haltHeight, observers: set.length, abandoned, answered, departedBefore, signers: counted.size, largestSubset: largest.size,
     id: taggedHash(TAG.haltObservation, Uint8Array.from(set.sort((a, b) => cmp(a.observer, b.observer)).flatMap((o) => [...haltObservationId(o)]))) };
 }

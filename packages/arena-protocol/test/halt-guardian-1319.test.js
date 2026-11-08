@@ -82,3 +82,16 @@ test('a guardian view round-trips its bytes, its peers sorted; a bad one is refu
   assert.throws(() => encodeGuardianHaltObservation({ ...o, firstHeight: 400 }), /first seen after/);
   assert.throws(() => encodeGuardianHaltObservation({ ...o, guardian: new Uint8Array(32) }), /own peer key \(33\)/);
 });
+
+// KANBAN #1320 (§23A.5a RULED 2026-11-07, #1294): "any DEPARTED row whose since_height lies inside abandon_blocks before a halt height reads as ABANDONED"
+test('#1320 a departure inside abandon_blocks before the halt reads ABANDONED; one before that window is not the halt\'s and is left out', () => {
+  const gone = [{ peerKey: peer(2), sinceHeight: 300, kind: 1 }, { peerKey: peer(3), sinceHeight: 340, kind: 1 }];   // DEPARTED both
+  const p = haltProof(seatObs, { record: { ...record, gone }, censusSeats: seats.map((s) => s.pub), abandonBlocks: 10, verify,
+    guardianObservations: [view(0, [1]), view(1, [0])] });
+  console.log('  MEASURED #1320 halt:', JSON.stringify({ haltHeight: p.haltHeight, window: [p.haltHeight - 10, p.haltHeight], departedBefore: names(p.departedBefore), abandoned: names(p.abandoned), answered: names(p.answered) }));
+  assert.equal(p.ok, true, p.why);
+  assert.equal(p.haltHeight, 344);
+  assert.deepEqual(names(p.departedBefore), [2], 'departed at 300, before 334: not the halt\'s');
+  assert.deepEqual(names(p.abandoned), [3], 'departed at 340, inside the window: ABANDONED');
+  assert.deepEqual(names(p.answered), [0, 1]);
+});
