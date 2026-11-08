@@ -70,5 +70,19 @@ export function createLiquidations({ records, clocks, verify, claimsUrl = null, 
     });
   }
   // haltOf: the halt a federation is liquidated from, of either source or a mark of theft (kanban #1093 part 2: where a slashed guardian bond is owed, theft-slash.js slashedGuardianPays)
-  return { offer, list, haltOf };
+  /**
+   * THE COPIES ABOVE THE HALT'S BOUND (kanban #1269, §5A.3 offence row, RULED #1262): of every halted federation, each copy held whose session passes the halt proof's session + 1 -
+   * what a bound proof is filed from. Answers [{ federation, bound, copy }].
+   */
+  function aboveBound() {
+    const out = [];
+    for (const fid of haltedFederations()) {
+      const halt = haltOf(fid);
+      if (!halt || !halt.proof || !Number.isInteger(halt.proof.session)) continue;
+      const bound = halt.proof.session + 1;
+      for (const c of (copies.get(fid) || new Map()).values()) if (c.session > bound) out.push({ federation: fid, bound, copy: c });
+    }
+    return out;
+  }
+  return { offer, list, haltOf, aboveBound };
 }

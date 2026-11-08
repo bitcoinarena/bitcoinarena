@@ -62,6 +62,24 @@ test('each seat signs once the last session has not moved for abandon_blocks; fi
   assert.equal(l.length, 1);
   assert.deepEqual([l[0].haltHeight, l[0].haltRecord, l[0].haltProof.session, l[0].haltProof.abandoned.length, l[0].liquidatesAt], [341, null, 41, 2, 351]);
   assert.equal(l[0].record, 'cdef', 'no HALTED record behind a proven halt: the record held is listed, for the remainder\'s payees');
+  // KANBAN #1269 (§5A.3, RULED #1262): g1 signs a spent-set copy at session 0xffffffff, g0 one at 41 - only g1's is above the bound (42); its bound proof,
+  // built from the observations this seat holds, is slashable from g1's template-3 output
+  const { signSpentSet, encodeSpentSet } = await import('../../arena-protocol/src/spent-set.js');
+  const { encodeBoundProof, decodeBoundProof, boundSlashStands } = await import('../../arena-protocol/src/bound-slash.js');
+  const { BOND_TEMPLATE_V3 } = await import('../../arena-protocol/src/bond-script.js');
+  const copyOf = (i, session) => { const c = signSpentSet({ federationId: record.federationId, session, nonces: [], signer: gnodes[i].pub }, (h) => schnorr.sign(h, gnodes[i].secret));
+    return { spentSet: toHex(encodeSpentSet(c)), signature: toHex(c.signature) }; };
+  assert.equal(liq.offer(copyOf(1, 0xffffffff)).ok, true); assert.equal(liq.offer(copyOf(0, 41)).ok, true);
+  const above = liq.aboveBound();
+  const obs = me.observationsOf(fid);
+  const txid = taggedHash('TEST/g1bond', Uint8Array.of(1));
+  const bonds = [{ pubkey: gnodes[1].pub, txid, vout: 0, height: 100, bondSats: 300000n, advert: { bondScriptTemplateVersion: BOND_TEMPLATE_V3 } }];
+  const proof = decodeBoundProof(encodeBoundProof({ federationId: record.federationId, nodePubkey: gnodes[1].pub, txid, vout: 0, record: Uint8Array.of(0xcd, 0xef), copy: above[0].copy, observations: obs }));
+  const judged = boundSlashStands({ record, proof, verify, censusSeats: seats.map((x) => x.pub), abandonBlocks: clocks.abandonBlocks, bonds, atHeight: 400 });
+  console.log('  MEASURED #1269 seat:', JSON.stringify({ above: above.map((x) => [x.copy.session, x.bound, toHex(x.copy.signer).slice(0, 8)]), observations: obs.length, verdict: judged.verdict, why: judged.why }));
+  assert.deepEqual(above.map((x) => [x.copy.session, x.bound]), [[0xffffffff, 42]], 'only the copy above the bound');
+  assert.equal(obs.length, 5);
+  assert.equal(judged.verdict, true, judged.why);
 });
 
 test('a stranger, a forged observation and a later session do not make or keep a halt', async () => {

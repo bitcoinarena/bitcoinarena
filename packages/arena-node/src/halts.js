@@ -192,7 +192,9 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
   const haltOf = (fid) => { const p = proofOf(fid); return p ? { height: p.haltHeight, proof: p } : null; };
   const list = (fid) => [...(kept.get(String(fid).toLowerCase()) || new Map()).values()].map(asJson);
   const listGuardian = (fid) => [...(keptG.get(String(fid).toLowerCase()) || new Map()).values()].map(asJsonG);
-  return { observe, take, takeGuardian, proofOf, haltOf, haltedFederations, list, listGuardian, seen: (fid) => seen.get(fid) || null, CLOCK_RULE };
+  /** The signed observations held of a federation, as a bound proof carries them (kanban #1269). */
+  const observationsOf = (fid) => [...(kept.get(String(fid).toLowerCase()) || new Map()).values()];
+  return { observe, take, takeGuardian, proofOf, haltOf, haltedFederations, list, listGuardian, observationsOf, seen: (fid) => seen.get(fid) || null, CLOCK_RULE };
 }
 
 /**

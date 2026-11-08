@@ -23,7 +23,7 @@ import { guardianSlashStands, scheduledDeparture } from '../../arena-protocol/sr
 import { judgeAbandoned } from './arbiter.js';
 import { abandonedRows, outputsLeft, encodeAbandonedProof, decodeAbandonedProof, abandonedProofId } from '../../arena-protocol/src/abandoned-slash.js';
 import { abandonedSlashPoint, networkOf } from '../../arena-protocol/src/constants.js';
-import { decodeBoundProof, boundProofId, boundSlashStands } from '../../arena-protocol/src/bound-slash.js';
+import { decodeBoundProof, encodeBoundProof, boundProofId, boundSlashStands } from '../../arena-protocol/src/bound-slash.js';
 import { encodeTheftProof, decodeTheftProof, theftProofId, theftOutputs, theftSlashStands, theftTakes, sessionsShowMark, spendStands, theftVerifyInput } from '../../arena-protocol/src/theft-slash.js';
 import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDeparture, emergencyHex, readEmergencyHex } from './absences.js';
 import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
@@ -474,6 +474,30 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
           proofListed.set(name, made); keptProof(made, proof);
         }
         out.push({ federation, node: toHex(node), proof: proofListed.get(name), kind: ev.mark.kind, markHeight: ev.mark.height, recordHeight: k.height, txid: o.txid, vout: o.vout, sats: String(o.sats), template: o.template });
+      }
+    }
+    return out;
+  }
+  /**
+   * THE SLASHES A COPY ABOVE THE HALT'S BOUND FILES (kanban #1269, §5A.3, RULED #1262): `cases` [{ federation, copy, observations }] (liquidations.js aboveBound, halts.js observationsOf) -
+   * for each, every template-3 output of the copy's signer read off the census at the shared basis height, under its BoundProof (the newest kept record, the copy, the
+   * observations), kept under its hash for anyone to fetch. A signer the record does not seat files nothing. Answers [{ federation, node, proof, session, txid, vout, sats, template }].
+   */
+  async function boundSlashes(cases = []) {
+    if (!cases.length) return [];
+    const h = await bondsAtBasis();
+    if (h === null) return [];
+    const out = [];
+    for (const { federation, copy, observations } of cases) {
+      const k = kept.get(String(federation).toLowerCase());
+      if (!k || !k.record || !k.bytes || !theftTakes(k.record).some((x) => toHex(x) === toHex(copy.signer)) || !(observations || []).length) continue;
+      for (const o of theftOutputs(bondsRead.get(h), copy.signer, h)) {
+        const name = `bound:${federation}:${toHex(copy.signer)}:${copy.session}:${o.txid}:${o.vout}`;
+        if (!proofListed.has(name)) {
+          const proof = encodeBoundProof({ federationId: fromHex(federation), nodePubkey: copy.signer, txid: fromHex(o.txid), vout: o.vout, record: k.bytes, copy, observations }), made = toHex(boundProofId(proof));
+          proofListed.set(name, made); keptProof(made, proof);
+        }
+        out.push({ federation, node: toHex(copy.signer), proof: proofListed.get(name), session: copy.session, recordHeight: k.height, txid: o.txid, vout: o.vout, sats: String(o.sats), template: o.template });
       }
     }
     return out;
@@ -977,7 +1001,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     censusKeys: () => { const b = basis(); return b.ok ? (b.census.entries || []).map((e) => e.pubkey).filter(Boolean) : []; },
     /** THE CENSUS THIS SEAT READS, its entries and height (GET /roles), or why none. */
     censusNow: () => { const b = basis(); return b.ok ? { ok: true, height: b.height, entries: b.census.entries || [] } : { ok: false, why: b.why }; },
-    abandonedSlashes, abandonedProof, takeAbandonedProof, abandonedVerdict, theftSlashes, theftProof, takeTheftProof, theftVerdict, takeBoundProof, boundVerdict,
+    abandonedSlashes, abandonedProof, takeAbandonedProof, abandonedVerdict, theftSlashes, theftProof, takeTheftProof, theftVerdict, takeBoundProof, boundVerdict, boundSlashes,
     recordOf: (fidHex) => { const k = kept.get(String(fidHex).toLowerCase()); return k ? { record: k.record, status: k.status, height: k.height, bytes: k.bytes } : null; },
     /**
      * HOW MANY OF A FEDERATION'S GUARDIAN SEATS HOLD ITS RECORD CLOSED (kanban #577, measured 2026-10-22 on 89ce310e: the first guardian to

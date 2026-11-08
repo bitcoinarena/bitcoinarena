@@ -4681,13 +4681,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // EVERY GUARDIAN'S BOND AFTER A MARK OF THEFT (kanban #1093 part 2, ruling #1106): this seat's own alarm book names the federation, so it holds a TheftProof for every template-3 output of
   // every guardian its newest record lists, and the starter files them as it files an abandonment's; the census key's holders judge each on their own audit
+  // A GUARDIAN'S SPENT-SET COPY ABOVE THE HALT'S BOUND (kanban #1269, §5A.3, RULED #1262): the copies this seat holds above it, with the halt observations it holds, each
+  // template-3 output of the signer under its BoundProof; the starter files them as it files a theft's
+  const boundCases = () => (liquidations && halts && typeof liquidations.aboveBound === 'function'
+    ? liquidations.aboveBound().map((x) => ({ ...x, observations: halts.observationsOf(x.federation) })) : []);
+  const boundSeen = new Map();
+  const boundHeld = async () => {
+    let rows = []; try { rows = fedRecords ? await fedRecords.boundSlashes(boundCases()) : []; } catch { rows = []; }
+    return rows.map((r) => { if (!boundSeen.has(r.proof)) boundSeen.set(r.proof, Date.now()); return { proofId: fromHex(r.proof), seenMs: boundSeen.get(r.proof) }; });
+  };
   const theftSeen = new Map();
   const theftHeld = async () => {
     let rows = []; try { rows = fedRecords ? await fedRecords.theftSlashes() : []; } catch { rows = []; }
     return rows.map((r) => { if (!theftSeen.has(r.proof)) theftSeen.set(r.proof, Date.now()); return { proofId: fromHex(r.proof), seenMs: theftSeen.get(r.proof) }; });
   };
   const slashStarter = holdWatch && censusKey.feeCoin ? createSlashStarter({ key: round.pubkey, network: censusKey.network, db: round.db, store: new CensusKeyStore(round.db), thresholdOf: censusKey.scan.thresholdOf, totalOf: censusKey.scan.totalOf, tipHeight: censusKey.tipHeight, entriesAtTip: entriesAtTipForStart,
-    heldProofs: async () => [...round.allSlashProofs(), ...round.allRerunSlashProofs(), ...round.auditSlashProofs(), ...round.doubleSlashProofs(), ...round.tableSlashProofs(), ...round.namedClaimProofs(), ...(await abandonedHeld()), ...(await theftHeld())].flatMap((p) => { const bytes = round.relayGet(Buffer.from(p.proofId)); return bytes ? [{ proofId: p.proofId, bytes, seenMs: p.seenMs }] : []; }), bytesOf: (id) => round.relayGet(Buffer.from(id)), judge: judgeProofBytes, holdsFor: holdsForStart, feeCoin: censusKey.feeCoin, feeFind: typeof censusKey.feeCoin.find === 'function' ? censusKey.feeCoin.find : null, send: (hex) => chainSend(hex), urlsOf: () => censusUrls || [],
+    heldProofs: async () => [...round.allSlashProofs(), ...round.allRerunSlashProofs(), ...round.auditSlashProofs(), ...round.doubleSlashProofs(), ...round.tableSlashProofs(), ...round.namedClaimProofs(), ...(await abandonedHeld()), ...(await theftHeld()), ...(await boundHeld())].flatMap((p) => { const bytes = round.relayGet(Buffer.from(p.proofId)); return bytes ? [{ proofId: p.proofId, bytes, seenMs: p.seenMs }] : []; }), bytesOf: (id) => round.relayGet(Buffer.from(id)), judge: judgeProofBytes, holdsFor: holdsForStart, feeCoin: censusKey.feeCoin, feeFind: typeof censusKey.feeCoin.find === 'function' ? censusKey.feeCoin.find : null, send: (hex) => chainSend(hex), urlsOf: () => censusUrls || [],
     stepMs: Number(process.env.ARENA_SLASH_FILE_STEP_MS || 600000), log: (l) => console.log(l),
     checkOther: (request) => (slashRelease ? slashRelease.checkOther(request) : { ok: false, why: 'this seat runs no release or fallback' }),
     feeSecret: (proofId) => taggedHash('ARENA/v1/SlashFeeKey', Uint8Array.from([...round.identity.secret, ...proofId])),
@@ -11859,13 +11868,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { abandonedRows = fedRecords ? await fedRecords.abandonedSlashes() : []; } catch (e) { console.log(`[slash] abandoned rows: ${e.message}`); }
         // AND A MARK OF THEFT'S (kanban #1093 part 2): every seated guardian's template-3 output, under its TheftProof; each row says where the slash is owed (one rule with an abandonment's)
         let theftRows = []; try { theftRows = fedRecords ? await fedRecords.theftSlashes() : []; } catch (e) { console.log(`[slash] theft rows: ${e.message}`); }
+        let boundRows = []; try { boundRows = fedRecords ? await fedRecords.boundSlashes(boundCases()) : []; } catch (e) { console.log(`[slash] bound rows: ${e.message}`); }
         const owedTo = (r) => ({ ...r, pays: slashedGuardianPays({ federation: r.federation, halt: liquidations ? liquidations.haltOf(r.federation) : null }) });
-        abandonedRows = abandonedRows.map(owedTo); theftRows = theftRows.map(owedTo);
+        abandonedRows = abandonedRows.map(owedTo); theftRows = theftRows.map(owedTo); boundRows = boundRows.map(owedTo);
         abandonedRows = abandonedRows.map((r) => { const got = startsByCensusKey(r.template) && seating ? seating.presigOf({ txid: r.txid, vout: r.vout }) : null; return got ? { ...r, presig: got.signature, presigRound: got.round } : r; });
         // AND THE PROOFS OF A NAMED CLAIM'S OFFENCE (§5A.3 rows (a), (b), kanban #1044 B1): row 1 (a), 2 (b), 3 (a) at level 2, against a settlement's or a forfeit's named signers
         const namedRows = round.namedClaimProofs().map((r) => ({ round: toHex(r.roundId), node: toHex(r.nodePubkey), row: r.row, proof: toHex(r.proofId), seenMs: r.seenMs }));
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), slashes: rows, auditSlashes: auditRows, doubleSlashes: doubleRows, tableSlashes: tableRows, namedSlashes: namedRows, abandonedSlashes: abandonedRows, theftSlashes: theftRows }));
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), slashes: rows, auditSlashes: auditRows, doubleSlashes: doubleRows, tableSlashes: tableRows, namedSlashes: namedRows, abandonedSlashes: abandonedRows, theftSlashes: theftRows, boundSlashes: boundRows }));
       }
       // A ROUND'S PROOFS OF FALSE TABLES, as published (proof, ack, the rest), one after another (kanban #1040)
       if (req.method === 'GET' && url.pathname === '/table-slash-proofs') {
