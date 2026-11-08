@@ -81,7 +81,7 @@ export function decodeAttestation(bytes) {
 // THOSE, so `round` - the round's contract - is handed in, and the range and the label are the round's (manifest.js
 // marketOfRound). A template's attestation with no round to read its outcomes from is refused: the template's own labels
 // are not the question its attestors answered.
-export function attestationStands(a, { manifest: game, roundIdBytes, verify, round = null, drawn = null }) {
+export function attestationStands(a, { manifest: game, roundIdBytes, verify, round = null, drawn = null, backupOpen = false }) {
   if (!isAttested(game)) return { ok: false, why: 'that round\'s game is not attested: its result is a replayed run, not an attestation' };
   // A MARKET ON A GAME (feature 6) HAS NO ATTESTORS: its threshold is 0, so an attestation would stand with no
   // signature at all - refused by name; its outcome is its source round's signed result (game-market.js gameMarketResolution)
@@ -105,8 +105,15 @@ export function attestationStands(a, { manifest: game, roundIdBytes, verify, rou
   const draws = isDrawnAttest(manifest);
   if (draws && !(Array.isArray(drawn) && drawn.length === manifest.attestDraw.count))
     return { ok: false, why: `game "${manifest.gameName}" draws its attestors per round, and the round's ${manifest.attestDraw.count} drawn attestors were not given` };
-  const keysOf = draws ? drawn.map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))) : manifest.attestors.map(toHex);
-  const need = draws ? manifest.attestDraw.threshold : manifest.attestThreshold;
+  // THE BACKUP SET (§0A.7a, kanban #1328): an attestation whose signers are the manifest's backup keys is checked against those, and only once
+  // the seat consults them (`backupOpen`: after resolve + deadline/2, the first set silent - backupOpensAtMs); one set's keys never mix with the other's
+  const backup = !draws && manifest.backupAttestors && (a.signatures || []).length > 0
+    && (a.signatures || []).every((s) => manifest.backupAttestors.attestors.some((k) => toHex(k) === toHex(s.key))
+      && !manifest.attestors.some((k) => toHex(k) === toHex(s.key)));
+  if (backup && !backupOpen)
+    return { ok: false, why: `that attestation is signed by game "${manifest.gameName}"'s backup attestors, who are consulted only after the round's resolution plus half its deadline, while its first set is silent` };
+  const keysOf = draws ? drawn.map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))) : (backup ? manifest.backupAttestors.attestors : manifest.attestors).map(toHex);
+  const need = draws ? manifest.attestDraw.threshold : backup ? manifest.backupAttestors.threshold : manifest.attestThreshold;
   const named = new Set(keysOf);
   const signed = new Set();
   for (const s of a.signatures || []) {
@@ -119,8 +126,8 @@ export function attestationStands(a, { manifest: game, roundIdBytes, verify, rou
   }
   if (signed.size < need)
     return { ok: false, why: `that attestation carries ${signed.size} attestor signature(s), and game "${manifest.gameName}" asks ${need} of its ${named.size}` };
-  return { ok: true, outcome: a.outcome, label: manifest.outcomes[a.outcome], signers: signed.size,
-    why: `outcome ${a.outcome} "${manifest.outcomes[a.outcome]}", signed by ${signed.size} of ${named.size} attestors (threshold ${need})` };
+  return { ok: true, outcome: a.outcome, label: manifest.outcomes[a.outcome], signers: signed.size, ...(backup ? { backup: true } : {}),
+    why: `outcome ${a.outcome} "${manifest.outcomes[a.outcome]}", signed by ${signed.size} of ${named.size} ${backup ? 'backup ' : ''}attestors (threshold ${need})` };
 }
 
 /**
@@ -236,6 +243,11 @@ export function attestationTimely(a, { entryCloseMs, nowMs, terms = null }) {
  * its attestors have, `deadlineAfterResolveMs` after that. A round of a template (feature 5) names its own
  * resolution time: its terms are `roundTermsOf(manifest, contract)`, whose `resolveAfterCloseMs` is the round's.
  */
+/** When the seats consult a market's backup attestors (§0A.7a, kanban #1328): resolve_at + deadline/2. */
+export function backupOpensAtMs({ entryCloseMs, terms }) {
+  const { resolveAtMs } = marketTimes({ entryCloseMs, terms });
+  return resolveAtMs + BigInt(terms.deadlineAfterResolveMs) / 2n;
+}
 export function marketTimes({ entryCloseMs, terms }) {
   const resolveAtMs = BigInt(entryCloseMs) + BigInt(terms.resolveAfterCloseMs);
   return { resolveAtMs, deadlineMs: resolveAtMs + BigInt(terms.deadlineAfterResolveMs) };

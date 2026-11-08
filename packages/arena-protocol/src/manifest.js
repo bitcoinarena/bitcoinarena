@@ -19,6 +19,7 @@
 //         [optional, marker 0x06] scalar: low, high (i64 each), unit (feature 8: a numeric outcome paid linearly
 //           between the bounds to the sides LONG and SHORT - its attestors sign a value, scalar.js),
 //         [optional, marker 0x0A] market source: the reads, then the rule or the code its drawn nodes run (kanban #920),
+//         [optional, marker 0x0B] backup attestors[], backup_threshold (§0A.7a, kanban #1328: consulted after resolve + deadline/2 when the first set is silent),
 //       [HEAD_TO_HEAD only] players, move_count, reveal_window,
 //       [REPLAY with payout_rule TOP_SPLIT only, marker 0x03] payout_shares[] (feature 3),
 //       [optional, marker 0x07] items[]: id, name, price_sat, unlock (a game's in-game items; protocol 10 - items.js),
@@ -259,6 +260,26 @@ export const isScalar = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !
  * protocol: a seat that cannot read the draw cannot load the manifest.
  */
 export const ATTEST_DRAW_MARKER = 0x09;
+/**
+ * A BACKUP ATTESTOR SET (§0A.7a RULED 2026-11-07, kanban #1292/#1328): "a manifest may name a backup attestor set the seats consult after
+ * resolve_at + deadline/2 when the first set is silent" - silence was a VOID button. Written after its own marker, last of an attested game's
+ * fields, only when a market names one: every manifest before keeps its bytes and its game id. Key-named outcome markets only (a drawn set is
+ * the round's seats; a market on a game names no attestor; a scalar's value attestation is not covered), with market terms (its deadline),
+ * 1 to 16 keys, threshold more than half of them.
+ */
+export const BACKUP_ATTESTORS_MARKER = 0x0b;
+export function backupAttestorsFit(b, m) {
+  if (!b || typeof b !== 'object' || !Array.isArray(b.attestors)) return { ok: false, why: 'a backup attestor set is { attestors, threshold }' };
+  if (m.attestDraw) return { ok: false, why: 'a game whose attestors are drawn names no backup set: its attestors are the round\'s seats' };
+  if (m.gameSource) return { ok: false, why: 'a market on a game names no backup set: its outcome is its source round\'s signed result' };
+  if (m.scalar) return { ok: false, why: 'a scalar market names no backup set yet: its attestors sign a value (#1328 covers outcome markets)' };
+  if (!m.marketTerms) return { ok: false, why: 'a backup attestor set is consulted after resolve + deadline/2: the market names its terms' };
+  if (b.attestors.length < 1 || b.attestors.length > ATTESTORS_MAX || !b.attestors.every(manIs32))
+    return { ok: false, why: `a backup attestor set names 1 to ${ATTESTORS_MAX} attestor keys of 32 bytes` };
+  if (!Number.isInteger(b.threshold) || b.threshold < 1 || b.threshold > b.attestors.length || 2 * b.threshold <= b.attestors.length)
+    return { ok: false, why: `a backup set's threshold is more than half of its attestors: ${b.threshold} of ${b.attestors.length} is not (§0A.7a)` };
+  return { ok: true };
+}
 export const isDrawnAttest = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.attestDraw;
 export function attestDrawFits(d, m) {
   if (!d || d.count !== 7 || d.threshold !== 5) return { ok: false, why: 'a drawn attestor set is 7 of the round\'s nodes, an outcome standing with 5 (#630)' };
@@ -363,6 +384,17 @@ export function marketTermsFit(t) {
 /** Is this manifest's result attested - no core, no run, its attestors' signed outcome (§0A.7a)? */
 export const isAttested = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED;
 /**
+ * KEY-NAMED ATTESTORS NEED A BOND ON MAINNET (§0A.7a RULED 2026-11-08, kanban #1365/#1328): "on mainnet a manifest naming an unbonded attestor key is
+ * invalid". `network` the round's network name (constants.js networkOf), `bonded(keyHex)` whether that attestor key has a posted bond. Drawn
+ * attestors are seats (bonded by their census entry) and a market on a game names none: both pass. On a test network nothing is refused.
+ */
+export function attestorsBondedFor(manifest, network, bonded = () => false) {
+  if (network !== 'mainnet' || !isAttested(manifest) || isDrawnAttest(manifest)) return { ok: true };
+  const keys = (manifest.attestors || []).map((k) => Array.from(k, (b) => b.toString(16).padStart(2, '0')).join(''));
+  const unbonded = keys.filter((k) => !bonded(k));
+  return unbonded.length ? { ok: false, why: `on mainnet an attested game's attestor keys each post a bond (§0A.7a): ${unbonded.length} of ${keys.length} of game "${manifest.gameName}" post none` } : { ok: true };
+}
+/**
  * IS THIS A HEAD-TO-HEAD GAME (2026-10-09)? Each player commits a hidden move at entry and reveals
  * it after entry close; the round's nodes decide every entry's result from all the reveals together, with the game's
  * decide adapter - named in cores[] by its hash like a replay core, so a node installs and checks it the same way. No
@@ -420,8 +452,13 @@ export function encodeManifestBody(m) {
         throw new Error(`an attested game names 1 to ${ATTESTORS_MAX} attestor keys of 32 bytes`);
       if (!Number.isInteger(m.attestThreshold) || m.attestThreshold < 1 || m.attestThreshold > m.attestors.length)
         throw new Error(`an attested game's threshold is 1 to its ${m.attestors.length} attestor(s)`);
+      // MORE THAN HALF (§0A.7a RULED 2026-11-07, kanban #1292/#1328): with k > n/2 two standing outcomes always share a key, so a
+      // contradiction names its signer; a manifest at or under half is invalid
+      if (2 * m.attestThreshold <= m.attestors.length)
+        throw new Error(`an attested game's threshold is more than half of its attestors: ${m.attestThreshold} of ${m.attestors.length} is not (§0A.7a)`);
     }
     if (m.source !== undefined && m.source !== null) { const f = marketSourceFits(m.source, m); if (!f.ok) throw new Error(f.why); }
+    if (m.backupAttestors !== undefined && m.backupAttestors !== null) { const f = backupAttestorsFit(m.backupAttestors, m); if (!f.ok) throw new Error(f.why); }
     if (m.marketTerms !== undefined && m.marketTerms !== null) { const f = marketTermsFit(m.marketTerms); if (!f.ok) throw new Error(f.why); }
     if (m.template !== undefined && m.template !== null) { const f = marketTemplateFits(m.template, m); if (!f.ok) throw new Error(f.why); }
     if (onGame) { const f = gameSourceFits(m.gameSource, m); if (!f.ok) throw new Error(f.why); }
@@ -531,6 +568,8 @@ export function encodeManifestBody(m) {
     if (m.attestDraw) { w.u8(ATTEST_DRAW_MARKER); w.u8(m.attestDraw.count); w.u8(m.attestDraw.threshold); }
     // ITS SOURCE (#920), after its own marker and only when it names one: every manifest before keeps its bytes
     if (m.source) writeMarketSource(w, m.source);
+    // ITS BACKUP ATTESTORS (#1328), after their own marker and only when it names them: every manifest before keeps its bytes
+    if (m.backupAttestors) { w.u8(BACKUP_ATTESTORS_MARKER); w.vec(m.backupAttestors.attestors, (x, ww) => ww.bytes32(x), { sortedBy: manCompare32 }); w.u8(m.backupAttestors.threshold); }
   }
   // A HEAD-TO-HEAD GAME'S OWN TERMS, likewise after everything else: no other manifest's bytes move
   if (isHeadToHead(m)) {
@@ -600,6 +639,10 @@ function readBody(r) {
     if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === MARKET_SOURCE_MARKER) {
       r.u8();
       body.source = readMarketSource(r);
+    }
+    if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === BACKUP_ATTESTORS_MARKER) {
+      r.u8();
+      body.backupAttestors = { attestors: r.vec((rr) => rr.bytes32()), threshold: r.u8() };
     }
   }
   if (body.resultType === RESULT_TYPE.HEAD_TO_HEAD) {

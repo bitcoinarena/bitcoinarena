@@ -59,6 +59,11 @@ test('an attested game\'s manifest: no core, no run, its outcomes, attestors and
   assert.throws(bad({ outcomes: ['only'] }), /2 to 16 outcomes/);
   assert.throws(bad({ outcomes: ['a', 'a'] }), /each outcome once/);
   assert.throws(bad({ attestThreshold: 4 }), /threshold is 1 to its 3/);
+  // #1328 (§0A.7a RULED 2026-11-07): more than half - 1 of 3 and 2 of 5 refused, 3 of 5 taken
+  assert.throws(bad({ attestThreshold: 1 }), /more than half of its attestors: 1 of 3/);
+  const five = [b32(0xe1), b32(0xe2), b32(0xe3), b32(0xe4), b32(0xe5)];
+  assert.throws(bad({ attestors: five, attestThreshold: 2 }), /more than half of its attestors: 2 of 5/);
+  assert.ok(encodeManifest({ ...MARKET, attestors: five, attestThreshold: 3 }).length > 0);
   assert.throws(bad({ attestors: [] }), /1 to 16 attestor keys/);
   // and a replayed game may not pick the pari-mutuel rule
   assert.throws(() => encodeManifest({ ...MARKET, resultType: RESULT_TYPE.REPLAY, cores: [{ hash: b32(1), configs: [b32(2)] }], runTicksMax: 600,

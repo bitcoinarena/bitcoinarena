@@ -12,7 +12,8 @@
 // the round fits the manifest (run length, rank curve, min_score). Nothing here imports a game: `replay.js` drives the
 // adapter it is handed (start, eventsOf, step, stateHash, result, picture, runTicksFits).
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { manifestStands, roundFitsManifest, isAttested, isHeadToHead, gameIdOf, payoutRuleForRound } from '../../arena-protocol/src/manifest.js';
+import { networkOf } from '../../arena-protocol/src/constants.js';
+import { manifestStands, roundFitsManifest, isAttested, isHeadToHead, gameIdOf, payoutRuleForRound, attestorsBondedFor } from '../../arena-protocol/src/manifest.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { verifyEd25519 } from './ed25519.js';
 import { gameInfoStands, gameInfoJson } from '../../arena-protocol/src/game-info.js';
@@ -176,6 +177,9 @@ export function pluginForRound(contract, plugins) {
   if (isAttested(plugin.manifest)) {
     const fits = roundFitsManifest(contract, plugin.manifest, plugin.gameId);
     if (!fits.ok) return { ok: false, why: fits.why };
+    // no attestor bond is posted anywhere yet: on mainnet a key-named attested game is refused (§0A.7a, #1365)
+    const bonded = attestorsBondedFor(plugin.manifest, networkOf(contract.networkId));
+    if (!bonded.ok) return { ok: false, why: bonded.why };
     return { ok: true, plugin, attested: true, core: null, config: null, runTicks: null };
   }
   const runs = coreOfGame(contract, plugin);
