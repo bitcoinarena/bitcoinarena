@@ -34,11 +34,38 @@ test('rule 1, fresh bonds: 100 BTC bonded after the proposal - or a day short of
   assert.deepEqual([t.yesSats, t.passed], ['0', false]);
 });
 
-test('rule 1, short locks: a bond unlocking less than 3 months after the vote has no vote; past its lock date it serves but does not vote', () => {
+// RULE 1 RULED 2026-11-07 (kanban #1299, #1334): every seasoned bond is in everyone who could vote, whatever its lock; a bond SPENT before
+// last + lockAfterVote has its vote voided after the fact (the census at that height no longer holds it), and stays in the base.
+test('#1334 rule 1: a short lock still counts in the base; a bond spent before last + lockAfterVote has its vote voided', () => {
   const short = bond(4, 1_000_000_000, SEASONED - 10, LAST + S.lockAfterVote - 1);
-  const enough = bond(5, 1_000_000_000, SEASONED - 10, LAST + S.lockAfterVote);
-  const { w } = count([short, enough, bond(6, 1_000_000_000, SEASONED - 10, LAST - 1)], []);
-  assert.deepEqual(w.voters.map((b) => b.outpoint.slice(0, 2)), ['05']);
+  const long = bond(5, 1_000_000_000, SEASONED - 10, LAST + S.lockAfterVote);
+  const spentEarly = (op) => (op.startsWith('04') ? LAST + 100 : null);
+  const w = voteWeights({ census: [short, long], publishedHeight: PUB, last: LAST, schedule: S, spentAt: spentEarly });
+  const t = fundingTally({ proposalId: ID, census: w.voters, votes: [vote(4, CHOICE.YES), vote(5, CHOICE.NO)], from: FROM, until: UNTIL, verify: (x, m, k) => schnorr.verify(x, m, k) });
+  assert.deepEqual(w.voters.map((b) => [b.outpoint.slice(0, 2), b.voided]), [['04', true], ['05', false]]);
+  assert.equal(w.totalWeight, 2_000_000_000n, 'both seasoned bonds are everyone who could vote');
+  assert.deepEqual([t.yesSats, t.noSats], ['0', '1000000000'], 'the spent bond\'s YES was counted');
+});
+
+test('#1334 the attacker\'s long bonds alone no longer reach 20 %: the base is every seasoned bond, not the long-locked ones', () => {
+  // honest operators locked only 2 months past the vote; an attacker locks 10 % of the capital for years and votes YES alone
+  const honestShort = [bond(1, 4_500_000_000, SEASONED - 10, LAST + 8640), bond(2, 4_500_000_000, SEASONED - 10, LAST + 8640)];
+  const attacker = bond(9, 1_000_000_000, SEASONED - 10, LAST + 10 * S.year);
+  const { w, t } = count([...honestShort, attacker], [vote(9, CHOICE.YES)]);
+  // the old rule (lock past last + lockAfterVote) left the attacker as the whole electorate
+  const oldBase = [...honestShort, attacker].filter((b) => b.maturity - LAST >= S.lockAfterVote).reduce((a, b) => a + b.bondSats, 0n);
+  console.log('  MEASURED #1334 long bonds:', JSON.stringify({ attackerYesOfAllPct: t.yesOfAllPct, passed: t.passed, base: String(w.totalWeight), oldRuleBase: String(oldBase), oldRuleYesPct: 100 }));
+  assert.equal(t.yesOfAllPct, 10); assert.equal(t.passed, false);
+  assert.equal(oldBase, 1_000_000_000n, 'under the old rule the attacker was 100 % of rule 1\'s weight');
+});
+
+test('#1334 rule 5: one late NO does not stop a tranche; a NO of 20 % of rule 1\'s weight does', () => {
+  const late = count(HONEST, [vote(1, CHOICE.YES), vote(2, CHOICE.YES), vote(3, CHOICE.NO, LAST - 1)]).t;
+  const lone = count([...HONEST, bond(7, 100_000_000, SEASONED - 10, YEAR)], [vote(1, CHOICE.YES), vote(7, CHOICE.NO)]).t;
+  const revolt = count(HONEST, [vote(1, CHOICE.YES), vote(2, CHOICE.NO), vote(3, CHOICE.NO)]).t;
+  console.log('  MEASURED #1334 stop:', JSON.stringify({ oneSmallNo: [lone.noOfAllPct, lone.stops], revolt: [revolt.noOfAllPct, revolt.passed, revolt.stops], lateNoStillPasses: late.passed }));
+  assert.equal(lone.stops, false, 'one small late NO stopped a tranche');
+  assert.equal(revolt.stops, true);
 });
 
 test('rule 2, the age factor: 1x under a year, 2x from one, 3x from two - old nodes outweigh new money up to 3 : 1', () => {

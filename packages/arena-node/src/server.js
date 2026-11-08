@@ -1930,7 +1930,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // THE VOTE'S READS OF THIS SEAT'S OWN CHAIN: the same as 's ballot - tip, block hashes, the "ARN" 'V'
     // outputs of a block, the census with each bond's amount at a height
     voteChain: ballot && typeof ballot.votesAt === 'function' && typeof ballot.censusAt === 'function'
-      ? { tipHeight: ballot.tipHeight, blockHashAt: ballot.blockHashAt, votesAt: ballot.votesAt, censusAt: ballot.censusAt } : null,
+      ? { tipHeight: ballot.tipHeight, blockHashAt: ballot.blockHashAt, votesAt: ballot.votesAt, censusAt: ballot.censusAt, lateCensusAt: ballot.censusAt } : null,
     verify: (sg, m, k) => schnorr.verify(sg, m, k),
     isBonded: (nodeHex) => { const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; if (!now.ok) return null; return (now.entries || []).some((e) => toHex(e.pubkey) === nodeHex); },
     tip: async () => (typeof chainTip === 'function' ? Number(await chainTip()) : null),
@@ -1984,6 +1984,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       t += round.donationsFor(toHex(k)).filter((x) => x.federationId === fed && !spent.has(x.outpoint)).reduce((a, x) => a + BigInt(x.amountMsat), 0n);
     }
     return t / 1000n; };
+  /** The reserve figure the federation records name (sum of reserve_sats over the federations this seat keeps a reserve key for), or null. */
+  const reserveRecordSats = () => {
+    if (!fedRecords || typeof fedRecords.recordOf !== 'function') return null;
+    let t = 0n, any = false;
+    for (const fed of new Set([...Object.keys(reserveGuardians()), ...reserveKeys.keys()])) {
+      const k = fedRecords.recordOf(fed); const v = k && k.record ? k.record.reserveSats : undefined;
+      if (v === undefined || v === null) continue;
+      t += BigInt(v); any = true;
+    }
+    return any ? t : null; };
   let fundingTipSeen = null;
   const payoutWhySaid = new Set();
   const capLogged = new Set();
@@ -2017,7 +2027,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // caps (rule 4): the proposal at most 10 % of the reserves, the window's payments at most 25 % of what the reserves held at its start
     passed: () => {
       if (!fundingBook) return [];
-      const held = reserveHeldSats();
+      // RULE 4's CAPS AGAINST THE RECORDS' RESERVE FIGURE (§27A.9.5 RULED 2026-11-07, kanban #1334): the federation records' threshold-signed
+      // reserve_sats, the one read every seat shares - this seat's own reserve rows differ seat to seat, and two seats then disagreed on a cap.
+      // No record figure: nothing is paid (the caps wait).
+      const held = reserveRecordSats();
+      if (held === null) { const k = 'no-record-figure'; if (!capLogged.has(k)) { capLogged.add(k); console.log('[funding] payments wait: no federation record names a reserve figure'); } return []; }
       // what went out: handed in (SUBMITTING), taken, paid, or being refunded (kanban #1159)
       const recs = reservePayouts ? reservePayouts.list().filter((r) => r.plan && r.plan.kind !== 'move' && ['SUBMITTING', 'SENT', 'REFUNDING', 'PAID'].includes(r.state)) : [];
       const tip = fundingTipSeen;

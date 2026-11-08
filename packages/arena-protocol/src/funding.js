@@ -219,12 +219,13 @@ export function fundingTally({ proposalId, census = [], votes = [], from, until,
       if (!good) continue;
       const had = latest.get(b.outpoint);
       const later = !had || v.height > had.height || (v.height === had.height && String(v.txid) < String(had.txid));
-      if (later) latest.set(b.outpoint, { choice: d.choice, height: v.height, txid: v.txid, weight: BigInt(b.weight ?? b.bondSats) });
+      if (later) latest.set(b.outpoint, { choice: d.choice, height: v.height, txid: v.txid, weight: BigInt(b.weight ?? b.bondSats), voided: !!b.voided });
     }
   }
   const total = census.reduce((a, b) => a + BigInt(b.weight ?? b.bondSats), 0n);
   let yes = 0n, no = 0n, abstain = 0n;
-  for (const x of latest.values()) { if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }
+  // A VOIDED VOTE (kanban #1334, rule 1 RULED 2026-11-07): its bond was spent before last + lockAfterVote - it stays in everyone who could vote
+  for (const x of latest.values()) { if (x.voided) continue; if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }
   const turnout = yes + no + abstain;
   const quorum = total > 0n && turnout * 100n >= FUNDING_TURNOUT_PCT * total;
   const decided = yes + no;
@@ -233,7 +234,9 @@ export function fundingTally({ proposalId, census = [], votes = [], from, until,
   // 30 % turnout is gone, this asks real participation itself. `quorum` stays reported for the record
   const absolute = total > 0n && yes * 100n >= FUNDING_ABSOLUTE_PCT * total;
   return { totalSats: String(total), yesSats: String(yes), noSats: String(no), abstainSats: String(abstain), bondsVoted: latest.size, quorum, approved, absolute,
-    yesOfAllPct: total > 0n ? Number((yes * 10000n) / total) / 100 : 0, passed: approved && absolute, turnoutPct: total > 0n ? Number((turnout * 10000n) / total) / 100 : 0, approvalPct: decided > 0n ? Number((yes * 10000n) / decided) / 100 : 0 };
+    yesOfAllPct: total > 0n ? Number((yes * 10000n) / total) / 100 : 0, passed: approved && absolute,
+    // RULE 5's STOP (RULED 2026-11-07, kanban #1311/#1334): the floor a pass needs - NO at least 20 % of rule 1's weight - so one late NO stops nothing
+    stops: total > 0n && no * 100n >= FUNDING_ABSOLUTE_PCT * total, noOfAllPct: total > 0n ? Number((no * 10000n) / total) / 100 : 0, turnoutPct: total > 0n ? Number((turnout * 10000n) / total) / 100 : 0, approvalPct: decided > 0n ? Number((yes * 10000n) / decided) / 100 : 0 };
 }
 
 /** Rule 2: the age factor of a bond `age` blocks old - 1x under a year, 2x from one year, 3x from two. */
@@ -245,15 +248,19 @@ export const ageFactor = (age, schedule = FUNDING_SCHEDULES.spec) => (age >= 2 *
  * proposal's publication and its maturity is at least `lockAfterVote` past `last`; it weighs bondSats x its age factor at
  * publication. Answers the voting census, each with its `weight`, and `totalWeight` - everyone who could vote (rule 3's base).
  */
-export function voteWeights({ census = [], publishedHeight, last, schedule = FUNDING_SCHEDULES.spec }) {
+export function voteWeights({ census = [], publishedHeight, last, schedule = FUNDING_SCHEDULES.spec, spentAt = null }) {
+  // RULED 2026-11-07 (kanban #1299, #1334): EVERY SEASONED BOND is in everyone who could vote - the old "stays locked past last + lockAfterVote"
+  // made the electorate whoever chose a multi-year lock, so an attacker's long bonds could be 100 % of rule 1's weight. A bond SPENT before
+  // last + lockAfterVote has its vote voided after the fact (`spentAt(outpoint)` -> the height it was seen spent by, or null), and stays in the base.
   const voters = []; let totalWeight = 0n;
   for (const b of census) {
     if (!Number.isInteger(b.height)) continue;
     const age = publishedHeight - b.height;
     if (age < schedule.season) continue;
-    if (!(Number.isInteger(b.maturity) && b.maturity - last >= schedule.lockAfterVote)) continue;
     const weight = BigInt(b.bondSats) * ageFactor(age, schedule);
-    voters.push({ ...b, weight, factor: Number(ageFactor(age, schedule)) });
+    let spent = null; try { spent = typeof spentAt === 'function' ? spentAt(b.outpoint) : null; } catch { spent = null; }
+    const voided = Number.isInteger(spent) && spent < last + schedule.lockAfterVote;
+    voters.push({ ...b, weight, factor: Number(ageFactor(age, schedule)), voided });
     totalWeight += weight;
   }
   return { voters, totalWeight };

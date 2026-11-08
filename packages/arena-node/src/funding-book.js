@@ -109,8 +109,12 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   // THE COUNT WITH THE FIVE RULES (§27A.9.5): only bonds 3 months old and locked 3 months past the vote vote, weighted by their age
   // (rules 1, 2); 60 % YES and YES at least 20 % of everyone who could vote (rule 3). `until` the vote's end, or a payment's due
   // height + 1 for its re-count (rule 5)
+  // A BOND SPENT BEFORE last + lockAfterVote (kanban #1334): the census at min(tip, last + lockAfterVote) no longer holds it - read in voteRound,
+  // kept per proposal; its vote is voided, its weight stays in everyone who could vote
+  const lateCensus = new Map();                 // proposal -> { height, outpoints: Set }
+  const spentAtOf = (pid) => { const l = lateCensus.get(pid); return l ? (op) => (l.outpoints.has(op) ? null : l.height) : null; };
   const countOf = (pid, period, o, until = period.until) => { const c = voteCensus(pid); if (!c) return null;
-    const w = voteWeights({ census: c.census, publishedHeight: o.publishedHeight, last: period.last, schedule });
+    const w = voteWeights({ census: c.census, publishedHeight: o.publishedHeight, last: period.last, schedule, spentAt: spentAtOf(pid) });
     return { ...fundingTally({ proposalId: fromHex(pid), census: w.voters, votes: votesHeld(pid), from: period.from, until, verify }),
       votersEligible: w.voters.length, bondsInCensus: c.census.length }; };
   /** The last block a passed proposal's votes are read to: its last payment's due height (rule 5, at most four tranches). */
@@ -155,6 +159,16 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         db.prepare('INSERT OR IGNORE INTO funding_vote_census (proposal, height, census) VALUES (?, ?, ?)').run(row.id, period.from,
           JSON.stringify(c.map((b) => ({ pubkey: toHex(b.pubkey), outpoint: b.outpoint, bondSats: String(b.bondSats),
             height: Number.isInteger(b.height) ? b.height : null, maturity: Number.isInteger(b.maturity) ? b.maturity : null }))));
+      }
+      // the bonds still held at min(tip, last + lockAfterVote): one spent before is no longer in the census there (kanban #1334)
+      // (its own door, `lateCensusAt`, read at most once every 144 blocks: the vote's census itself is read once, at the vote's start)
+      if (height >= period.last && typeof voteChain.lateCensusAt === 'function') {
+        const at = Math.min(height, period.last + schedule.lockAfterVote);
+        const had = lateCensus.get(row.id);
+        if (!had || (had.height !== at && (at - had.height >= 144 || at === period.last + schedule.lockAfterVote))) {
+          let lc = null; try { lc = await voteChain.lateCensusAt(toHex(p.obj.networkId), at); } catch { lc = null; }
+          if (lc) lateCensus.set(row.id, { height: at, outpoints: new Set(lc.map((b) => b.outpoint)) });
+        }
       }
       // blocks a reorg replaced are read again: walk back from the newest held block while its hash moved
       let held = voteBlocks(row.id);
@@ -235,7 +249,8 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         if (fixed.cancelled_k !== null && t.k >= fixed.cancelled_k) break;
         if (!(Number.isInteger(tip) && tip >= t.payableAt) || readTo < t.dueAt) break;
         const again = countOf(row.id, period, p.obj, t.dueAt + 1);
-        if (!again || !again.passed) {
+        // A STOP NEEDS THE FLOOR A PASS NEEDS (kanban #1311/#1334): NO at least 20 % of rule 1's weight - one late NO does not stop a tranche
+        if (!again || (!again.passed && again.stops)) {
           const why = `payment ${t.k + 1} of ${t.of} cancelled at its due block ${t.dueAt}: YES ${again ? again.approvalPct : '?'} % of YES + NO, ${again ? again.yesOfAllPct : '?'} % of everyone who could vote`;
           // compare-and-set from FIXED: a re-count after a reorg never moves a cancellation already kept
           if (stepPayment(row.id, { kind: 'cancel', k: t.k, why }).ok) log(`[funding] ${row.id.slice(0, 16)}: ${why}`);
