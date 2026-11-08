@@ -142,3 +142,15 @@ test('a daemon\'s relay door keeps a transcript only under the hash its bytes ha
     assert.equal(toHex(back), toHex(bytes));
   } finally { await d.close(); }
 });
+
+// KANBAN #1331 (4), §13A.1 RULED 2026-11-07 (#1306): "The transcript is posted by window_open + 120 s, relay-timestamped, or the result cannot reach
+// FINAL" - from the auditors' protocol (22); before it, by final_after as the test above measures.
+test('#1331 the postings for FINAL are counted by window_open + 120 s from protocol 22, by final_after before it', async () => {
+  const { transcriptPostBy, TRANSCRIPT_POST_MS } = await import('../src/finality.js');
+  const win = { openMs: 1_000_000n, closeMs: 1_600_000n, finalAfterMs: 1_605_000n };
+  const p22 = transcriptPostBy({ protocolVersion: 22 }, win), p21 = transcriptPostBy({ protocolVersion: 21 }, win);
+  console.log('  MEASURED #1331 (4):', JSON.stringify({ protocol22PostBy: String(p22), protocol21PostBy: String(p21), postedAt130sCounts: 1_130_000n < p22, postedAt60sCounts: 1_060_000n < p22 }));
+  assert.equal(TRANSCRIPT_POST_MS, 120000n);
+  assert.equal(p22, 1_120_000n, 'protocol 22 counted postings past window_open + 120 s');
+  assert.equal(p21, 1_605_000n);
+});
