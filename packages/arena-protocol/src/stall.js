@@ -72,6 +72,20 @@ const bytesOfStall = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) =>
 const is32Stall = (b) => b instanceof Uint8Array && b.length === 32;
 const cmpStall = (a, b) => { for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
 
+/**
+ * A STALLED NODE IS OUT FOR A SEASON FROM ITS THIRD PROOF (§5A.3, RULED 2026-11-07 kanban #1304): 12,960 blocks from H3, the census height of the
+ * round of its third proof. CARRIED FORWARD BY CENSUS (RULED 2026-11-08 kanban #1350): a later census leaves it out by naming an earlier census that
+ * listed it - that census's root, a duty round naming it, and H3 - in place of the proofs; the proofs are checked once, while fresh. Each census names
+ * the newest earlier one that listed the node (with proofs or itself carried), so a checker reads only a census within its own view.
+ */
+export const STALL_SEASON_BLOCKS = 12960;
+/** H3 of a stalled entry: a carried one's own, else the highest census height of its proofs' rounds (`heightOf(ridHex)` -> height or null). */
+export function stallH3Of(entry, heightOf) {
+  if (entry && entry.carried) return Number(entry.carried.h3);
+  const hs = (entry && Array.isArray(entry.proofs) ? entry.proofs : []).map((p) => heightOf(hexOfStall(String(p.roundId || '')))).filter(Number.isInteger);
+  return hs.length ? Math.max(...hs) : null;
+}
+
 /** The window of a census whose block's median time past is `censusTimeMs`: (from, to]. */
 export function stallWindow(censusTimeMs) {
   const to = BigInt(censusTimeMs);
@@ -156,7 +170,7 @@ export function stallCapKept(list, baseWeight) {
  * node: [{ node, proofs: [{ roundId, seatRound, notes: [hex] }] }], each with the oldest 3 rounds that name it, closes at least 1 h apart, each a fresh draw, 4 notes each.
  * A node may be drawn while it is named: a claim is made of what lies in the window at this census.
  */
-export function stalledFrom({ rounds, census, window, weightOf, baseWeight, dutyOf = null }) {
+export function stalledFrom({ rounds, census, window, weightOf, baseWeight, dutyOf = null, carried = [] }) {
   const inCensus = [...new Set([...census].map(hexOfStall))].sort();
   const seen = new Map();
   const isDuty = (rid) => { if (!dutyOf) return true; if (!seen.has(rid)) { const d = dutyOf(rid); seen.set(rid, !!(d && d.ok)); } return seen.get(rid); };
@@ -178,7 +192,15 @@ export function stalledFrom({ rounds, census, window, weightOf, baseWeight, duty
     }
     if (proofs.length >= STALL_PROOF_ROUNDS) found.push({ node, proofs, sinceMs, weight: weightOf(node) });
   }
-  return stallCapKept(found, baseWeight).sort((a, b) => (a.node < b.node ? -1 : 1)).map(({ node, proofs }) => ({ node, proofs }));
+  // AND THE ONES CARRIED FORWARD (kanban #1350): a node an earlier census listed, its season not over, not proven afresh here; in the cap's order
+  // they are named before any fresh one (their H3 is a height, far below any time in ms)
+  const fresh = new Set(found.map((f) => f.node));
+  for (const c of carried || []) {
+    const node = hexOfStall(c.node);
+    if (fresh.has(node) || !inCensus.includes(node)) continue;
+    found.push({ node, carried: c.carried, sinceMs: BigInt(c.carried.h3), weight: weightOf(node) });
+  }
+  return stallCapKept(found, baseWeight).sort((a, b) => (a.node < b.node ? -1 : 1)).map(({ node, proofs, carried: k }) => (k ? { node, carried: k } : { node, proofs }));
 }
 
 /**
@@ -189,7 +211,8 @@ export function stalledFrom({ rounds, census, window, weightOf, baseWeight, duty
  * height is not counted, so a claim that rests on one falls short of its 4 seats. Answers { ok: true } or { ok: false, node, why, proof } - proof
  * 'census', 'version', 'seat-round', 'not-duty', 'certificate', 'outside', 'not-seated', 'note', 'too-few', 'cap' - or { ok: false, notYet: true, node, why }.
  */
-export function checkStallProof(claims, { census = null, window, roundOf, drawOf, certOf, dutyOf = null, verify, weightOf, keptWeight = null, settlementPointOf = stallSettlementPoint }) {
+export function checkStallProof(claims, { census = null, window, roundOf, drawOf, certOf, dutyOf = null, verify, weightOf, keptWeight = null, settlementPointOf = stallSettlementPoint,
+  censusHeight = null, earlierClaimOf = null }) {
   const inCensus = census ? new Set([...census].map(hexOfStall)) : null;
   const seatings = new Map();      // seat round -> who it seated
   const list = [];
@@ -201,6 +224,35 @@ export function checkStallProof(claims, { census = null, window, roundOf, drawOf
     const short = node.slice(0, 16);
     const wrong = (proof, why) => ({ ok: false, node, proof, why });
     if (inCensus && !inCensus.has(node)) return wrong('census', `that census leaves out ${short} as stalled, and it is not in the chain census`);
+    // CARRIED FORWARD (kanban #1350): an earlier census that listed the node - a duty round naming its root, below this census - and its H3, the
+    // season not over at this census's height. A seat that holds the earlier claim reads the node in its stalled list with the same H3.
+    if (c.carried) {
+      const k = c.carried, root = hexOfStall(String(k.root || '')), rid = hexOfStall(String(k.roundId || '')), h3 = Number(k.h3);
+      if (!/^[0-9a-f]{64}$/.test(root) || !/^[0-9a-f]{64}$/.test(rid) || !Number.isInteger(h3) || h3 < 0) return wrong('carried', `the carried stall of ${short} names no census root, round and height`);
+      if (censusHeight === null || censusHeight === undefined) return wrong('carried', `a carried stall of ${short} is read against a census height, and none was given`);
+      if (!(Number(censusHeight) < h3 + STALL_SEASON_BLOCKS)) return wrong('carried', `${short}'s season out ended at block ${h3 + STALL_SEASON_BLOCKS}; this census is at ${censusHeight}`);
+      const earlier = roundOf(rid);
+      if (!earlier) return { ok: false, notYet: true, node, why: `the round ${rid.slice(0, 16)} naming the earlier census cannot be read here yet` };
+      if (hexOfStall(earlier.censusRoot) !== root) return wrong('carried', `the round ${rid.slice(0, 16)} names another census than ${root.slice(0, 16)}`);
+      if (!(Number(earlier.censusHeight) >= h3 && Number(earlier.censusHeight) < Number(censusHeight)))
+        return wrong('carried', `the earlier census (block ${earlier.censusHeight}) lies not between the third proof (${h3}) and this census (${censusHeight})`);
+      if (dutyOf) {
+        const du = dutyOf(rid);
+        if (!du) return { ok: false, notYet: true, node, why: `whether round ${rid.slice(0, 16)} is a duty posting's cannot be read here yet` };
+        if (!du.ok) return wrong('not-duty', `the round ${rid.slice(0, 16)} naming the earlier census is no duty posting's: ${du.why}`);
+      }
+      if (earlierClaimOf) {
+        const e = earlierClaimOf(root);
+        if (e) {
+          const x = (e.stalled || []).find((y) => hexOfStall(String(y.node || '')) === node);
+          if (!x) return wrong('carried', `the earlier census ${root.slice(0, 16)} does not list ${short} as stalled`);
+          const eh3 = stallH3Of(x, (r) => { const ct = roundOf(r); return ct ? Number(ct.censusHeight) : null; });
+          if (eh3 !== h3) return wrong('carried', `the earlier census lists ${short} from block ${eh3}, not ${h3}`);
+        }
+      }
+      list.push({ node, sinceMs: BigInt(h3), weight: weightOf(node) });
+      continue;
+    }
     const closes = new Set(), draws = new Set(), named = new Set();
     let sinceMs = null;
     for (const p of Array.isArray(c.proofs) ? c.proofs : []) {

@@ -484,7 +484,7 @@ export class Roster {
     if (!asCommitted) {
       const t = censusTimeMs(view, contract.censusHeight);
       if (t === null) return { ok: false, notYet: true, why: 'this seat\'s view does not reach the census block\'s median time, so its 24 h cannot be read' };
-      const checked = this.absence.check(held, { census: census.entries.map((e) => toHex(e.pubkey)), w: presenceWindow(t), entries: census.entries, keptEntries: kept.entries });
+      const checked = this.absence.check(held, { census: census.entries.map((e) => toHex(e.pubkey)), w: presenceWindow(t), entries: census.entries, keptEntries: kept.entries, censusHeight: Number(contract.censusHeight) });
       if (!checked.ok && checked.notYet) return { ok: false, notYet: true, why: checked.why };
       if (!checked.ok) return { ok: false, why: checked.why, refuted: { node: checked.node, proof: checked.proof || null } };
     }

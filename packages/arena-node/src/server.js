@@ -2836,7 +2836,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     };
     const claim = await presence.absentForPosting({ census: census.entries.map((e) => toHex(e.pubkey)), w, ask, entries: census.entries });
     // AND THE STALLED, PAST THE ABSENT (§5A.3 "Stalled in its rounds", protocol 26, kanban #1052): every seat's notes of the 72 h, the 10 % read on what absence left
-    const out = stallsOut(contract) ? await stall.forPosting({ entries: withoutAbsent(census.entries, claim.claims), t, ask: async (sw) => {
+    const out = stallsOut(contract) ? await stall.forPosting({ entries: withoutAbsent(census.entries, claim.claims), t, censusHeight: Number(contract.censusHeight), ask: async (sw) => {
       const notes = [], certs = [];
       for (const j of await Promise.all(networkSeats().map(async (u) => {
         try { const r = await fetch(`${u}/stall-notes?from=${sw.fromMs}&to=${sw.toMs}`, { signal: AbortSignal.timeout(10000) }); return r.ok ? await r.json() : null; } catch { return null; }
@@ -11921,7 +11921,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const contracts = {}, publications = {}, creators = {}, primaries = {};
         // the rounds a stalled node's notes name too, beside the seatings that seat them (§5A.3, protocol 26, kanban #1052)
         const stalled = Array.isArray(held.stalled) ? held.stalled : [];
-        for (const rid of [...Object.keys(held.certs || {}).map((k) => k.split(':')[0]), ...stalled.flatMap((c) => c.proofs.map((p) => p.roundId))]) {
+        for (const rid of [...Object.keys(held.certs || {}).map((k) => k.split(':')[0]), ...stalled.flatMap((c) => (c.carried ? [c.carried.roundId] : (c.proofs || []).map((p) => p.roundId)))]) {
           const row = contracts[rid] ? null : round.get(fromHex(rid));
           if (!row) continue;
           contracts[rid] = toHex(new Uint8Array(row.contract));

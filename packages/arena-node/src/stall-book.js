@@ -21,7 +21,7 @@ import { NO_QUORUM_FINAL_GRACE_MS, stallSettlementPoint } from '../../arena-prot
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { PROVISIONALLY_FINAL } from '../../arena-protocol/src/objection.js';
 import { resultFinality } from './finality.js';
-import { STALL_STAGE, STALL_WINDOW_MS, STALL_SETTLEMENT_WAIT_MS, signStallNote, verifyStallNote, stallsOut, settlementNotesCount, stallNoteCounts, stallCloseMs, stallWindow, stalledFrom, checkStallProof } from '../../arena-protocol/src/stall.js';
+import { STALL_STAGE, STALL_WINDOW_MS, STALL_SETTLEMENT_WAIT_MS, signStallNote, verifyStallNote, stallsOut, settlementNotesCount, stallNoteCounts, stallCloseMs, stallWindow, stalledFrom, stallH3Of, STALL_SEASON_BLOCKS, checkStallProof } from '../../arena-protocol/src/stall.js';
 
 /** Notes are kept this long past their round's close: a census reads 72 h, and a posting is made a day ahead. */
 const STALL_KEEP_MS = 7n * 86400000n;
@@ -199,7 +199,43 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
    * THE STALLED, FOR A CENSUS THIS NODE POSTS. `entries` the census past its absent, `t` the census block's median time in ms, `ask(w)` an async answering { notes, certs } (hex)
    * from other seats, each taken first. Answers { stalled, certs }: the claims (stall.js stalledFrom) and, by `${seatRound}:settlement`, the certificates they rest on.
    */
-  async function forPosting({ entries, t, ask = null }) {
+  // THE ROUNDS NAMING A CENSUS ROOT this seat holds (kanban #1350), read once each: root hex -> [{ rid hex, height }]
+  const byRoot = new Map();
+  let scannedTo = 0;
+  function roundsNamingRoot(rootHex) {
+    for (const r of db.prepare('SELECT rowid AS n, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid').all(scannedTo)) {
+      scannedTo = Number(r.n);
+      let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
+      if (!(c.censusRoot instanceof Uint8Array)) continue;
+      const k = toHex(c.censusRoot);
+      if (!byRoot.has(k)) byRoot.set(k, []);
+      byRoot.get(k).push({ rid: toHex(new Uint8Array(r.round_id)), height: Number(c.censusHeight) });
+    }
+    return byRoot.get(String(rootHex).toLowerCase()) || [];
+  }
+  /**
+   * THE STALLED TO CARRY FORWARD into a census at `censusHeight` (kanban #1350): from the claims this seat holds, newest first, each node an earlier
+   * census below this one listed (with proofs or carried) whose season has not ended - named by that census's root, a duty round of it and H3.
+   */
+  function carriedFor(censusHeight) {
+    const out = new Map();
+    const heightOf = (rid) => { try { const c = contractOfStall(fromHex(rid)); return c ? Number(c.censusHeight) : null; } catch { return null; } };
+    for (const { root, claim } of presence.claimsHeld ? presence.claimsHeld() : []) {
+      if (!Array.isArray(claim.stalled) || !claim.stalled.length) continue;
+      const named = roundsNamingRoot(root).filter((x) => x.height < Number(censusHeight)).find((x) => { const d = presence.dutyOf(x.rid); return d && d.ok; });
+      if (!named) continue;
+      for (const e of claim.stalled) {
+        const node = String(e.node).toLowerCase();
+        if (out.has(node)) continue;
+        const h3 = stallH3Of(e, heightOf);
+        if (!Number.isInteger(h3) || !(Number(censusHeight) < h3 + STALL_SEASON_BLOCKS) || named.height < h3) continue;
+        out.set(node, { node, carried: { root, roundId: named.rid, h3 } });
+      }
+    }
+    return [...out.values()];
+  }
+
+  async function forPosting({ entries, t, ask = null, censusHeight = null }) {
     const w = stallWindow(t);
     if (ask) {
       let got = null;
@@ -208,9 +244,10 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
       for (const b of (got && got.certs) || []) { try { presence.takeCert(fromHex(b)); } catch { /* not one */ } }
     }
     const weights = weightsOfStall(entries);
-    const stalled = stalledFrom({ rounds: roundsIn(w), census: [...weights.keys()], window: w, weightOf: (n) => weights.get(n) || 0n, baseWeight: sumOfStall(entries), dutyOf: presence.dutyOf });
+    const carried = censusHeight === null ? [] : carriedFor(censusHeight);
+    const stalled = stalledFrom({ rounds: roundsIn(w), census: [...weights.keys()], window: w, weightOf: (n) => weights.get(n) || 0n, baseWeight: sumOfStall(entries), dutyOf: presence.dutyOf, carried });
     const certs = {};
-    for (const c of stalled) for (const p of c.proofs) {
+    for (const c of stalled) for (const p of c.proofs || []) {
       const key = `${p.seatRound}:settlement`;
       if (!certs[key]) certs[key] = toHex(presence.heldCert(fromHex(p.seatRound), 'settlement'));
     }
@@ -219,10 +256,11 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
   }
 
   /** A SEAT'S CHECK of a claim's stalled list, past presence.js's check of its absent: every note, on this seat's own draw. Nothing it holds clears a node. */
-  function check(claim, { census, w, entries, keptEntries }) {
+  function check(claim, { census, w, entries, keptEntries, censusHeight = null }) {
     if (!Array.isArray(claim.stalled) || !claim.stalled.length) return { ok: true };
     const weights = weightsOfStall(entries);
-    return checkStallProof(claim.stalled, { census, window: stallWindow(w.toMs), verify, settlementPointOf, drawOf: presence.drawOf, dutyOf: presence.dutyOf, weightOf: (n) => weights.get(n) || 0n, keptWeight: sumOfStall(keptEntries),
+    return checkStallProof(claim.stalled, { census, window: stallWindow(w.toMs), verify, settlementPointOf, censusHeight,
+      earlierClaimOf: (root) => (presence.claimFor ? presence.claimFor(root) : null), drawOf: presence.drawOf, dutyOf: presence.dutyOf, weightOf: (n) => weights.get(n) || 0n, keptWeight: sumOfStall(keptEntries),
       roundOf: (ridHex) => { try { return contractOfStall(fromHex(ridHex)); } catch { return null; } },
       certOf: (ridHex, role) => { const h = claim.certs && claim.certs[`${ridHex}:${role}`]; return h ? fromHex(h) : presence.heldCert(fromHex(ridHex), role); } });
   }

@@ -411,6 +411,9 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
     return { claims, certs };
   }
 
+  /** THE CLAIMS HELD, newest kept first (kanban #1350: the stalled an earlier census listed are carried forward from them): [{ root, claim }]. */
+  const claimsHeld = (most = 200) => db.prepare('SELECT root, claim FROM absent_claims ORDER BY kept_ms DESC LIMIT ?').all(most)
+    .map((r) => { try { return { root: r.root, claim: JSON.parse(r.claim) }; } catch { return null; } }).filter(Boolean);
   /** The claim kept for a census root (hex): { claims, certs } - or null. */
   const claimFor = (rootHex) => {
     const r = db.prepare('SELECT claim FROM absent_claims WHERE root = ?').get(String(rootHex).toLowerCase());
@@ -444,6 +447,13 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
     for (const c of named || []) {
       const node = String((c && c.node) || '').toLowerCase();
       if (!HEX64.test(node)) return { ok: false, why: 'a stalled node is its key, 32 bytes hex' };
+      // CARRIED FORWARD (kanban #1350): an earlier census's root, a duty round naming it and H3, in place of proofs
+      if (c && c.carried) {
+        const k = c.carried, root = String(k.root || '').toLowerCase(), roundId = String(k.roundId || '').toLowerCase(), h3 = Number(k.h3);
+        if (!HEX64.test(root) || !HEX64.test(roundId) || !Number.isInteger(h3) || h3 < 0) return { ok: false, why: 'a carried stall names an earlier census root, a round naming it and H3' };
+        stalled.push({ node, carried: { root, roundId, h3 } });
+        continue;
+      }
       const proofs = (Array.isArray(c.proofs) ? c.proofs : []).slice(0, 16).map((p) => ({ roundId: String((p && p.roundId) || '').toLowerCase(), seatRound: String((p && p.seatRound) || '').toLowerCase(),
         notes: (Array.isArray(p && p.notes) ? p.notes : []).slice(0, 16).map((n) => String(n).toLowerCase()) }));
       if (!proofs.every((p) => HEX64.test(p.roundId) && HEX64.test(p.seatRound) && p.notes.every((n) => /^([0-9a-f]{2})+$/.test(n) && n.length <= 4096)))
@@ -476,5 +486,5 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
   }
 
   return { seatingsIn, seenIn, presentsIn, proofsOf, certsOf, takeProof, takeCert, absentForPosting, claimFor, keepClaim, check, drawOf, dutyOf, heldCert,
-    publicationProofOf, primaryProofOf, creatorSignatureOf, roundsToReturn };
+    publicationProofOf, primaryProofOf, creatorSignatureOf, roundsToReturn, claimsHeld };
 }
