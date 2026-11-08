@@ -92,6 +92,9 @@ export function createContributionBook({ db, accountsFor, heightOf, now = () => 
   }
 
   const held = () => db.prepare('SELECT COUNT(*) n, MAX(census_height) top FROM contribution_rounds').get();
+  /** THE COUNTED ROUNDS WITH CENSUS HEIGHT IN (from, to] (kanban #1282, the income term's season): as kept, each round's entries with their stakes. */
+  const roundsBetween = (from, to) => db.prepare('SELECT round FROM contribution_rounds WHERE census_height > ? AND census_height <= ? ORDER BY round_id').all(Number(from), Number(to))
+    .map((x) => JSON.parse(x.round, unbig));
   const ends = () => db.prepare('SELECT agreement_id, kind, at_height, hex FROM contribution_ends ORDER BY agreement_id, kind').all();
-  return { keep, refresh, factsAt, shareAt, held, addEnd, endsOf, ends };
+  return { keep, refresh, factsAt, shareAt, held, addEnd, endsOf, ends, roundsBetween };
 }

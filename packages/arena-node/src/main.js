@@ -60,6 +60,7 @@ import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { votesInBlock, outpointInBlock } from '../../arena-protocol/src/ballot-chain.js';
+import { feeItemsInBlock } from '../../arena-protocol/src/fee-signal-chain.js';
 import { chainHashReader } from './ballot-tally.js';
 import { networkOf } from '../../arena-protocol/src/constants.js';
 import { censusOfView, censusReplacer, censusReviver, censusEvidenceOf } from './roster.js';
@@ -497,6 +498,11 @@ if (url) {
       votesAt: async (height, hash) => {
         const raw = fromHex(String(await call('getblock', [hash || await call('getblockhash', [height]), 0])));
         return votesInBlock(raw, height);
+      },
+      // A FEE PROPOSAL'S SIGNALS AND DEVELOPER APPROVALS IN ONE BLOCK (kanban #1283, RULED #1277 B): the same read, their OP_RETURN payloads
+      feeItemsAt: async (height, hash) => {
+        const raw = fromHex(String(await call('getblock', [hash || await call('getblockhash', [height]), 0])));
+        return feeItemsInBlock(raw, height);
       },
       // WHETHER THE ONE BLOCK A GATEWAY'S CLAIM NAMES HOLDS ITS PEG-IN (§23A.3a, kanban #999): null while that block is not read
       outpointAt: async (height, outpoint) => {

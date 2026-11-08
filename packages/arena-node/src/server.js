@@ -70,7 +70,7 @@ import { creatorSignatureStands, seriesCreatorStands } from '../../arena-protoco
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { explorerAgrees } from '../../arena-client/src/explorer-check.js';
 import { rulesStand } from '../../arena-protocol/src/rules.js';
-import { stakeWithinCeiling, isTestNetwork, maxRoundPoolSats, attestedGrossCapSats, minCap } from '../../arena-protocol/src/census-health.js';
+import { stakeWithinCeiling, isTestNetwork, maxRoundPoolSats, attestedGrossCapSats, minCap, incomeSeatSats, INCOME_SEASON_BLOCKS } from '../../arena-protocol/src/census-health.js';
 import { pruneTranscripts, pruneUnusedRounds, PRUNE_EVERY_MS } from './transcript-prune.js';
 import { maxPlayersPerRound } from '../../arena-protocol/src/replay-budget.js';
 import { bondWeightedMedian } from '../../arena-protocol/src/census-median.js';
@@ -289,7 +289,7 @@ import { refundKeyOf, lockFieldsToJson } from '../../arena-protocol/src/stake-lo
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../arena-protocol/src/claim-key.js';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { createDonationBallots } from './donation-ballots.js';
-import { createContributionBook } from './contribution-book.js';
+import { createContributionBook, contributionLagOf } from './contribution-book.js';
 import { contributionAgreementId, decodeContributionLeave, decodeContributionTermination, contributionLeaveDigest, contributionTerminationDigest } from '../../arena-protocol/src/contribution.js';
 import { decodeDonationProposal, donationProposalId, donationApprovalDigest, encodeDonationProposal, encodeDonationApproval } from '../../arena-protocol/src/donation-vote.js';
 
@@ -1584,6 +1584,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const anyAgreement = () => [...donationSets, ...approvedSets()].some((st) => (st.recipients || []).some((r) => r && r.contribution));
   const CONTRIBUTION_READ_MS = Number(process.env.ARENA_CONTRIBUTION_READ_MS || 30 * 60000);
+  // THE INCOME TERM (§5A.10 RULED 2026-11-07, kanban #1280/#1282): income_seat of a round - the nodes' fee of the counted rounds of the season before its
+  // census height, read as the contribution shares are (less the network's lag, so every seat holding the same counted rounds answers the same), ÷ its
+  // census size. Null where this seat keeps no book (a seat's table alone, as before)
+  const incomeFor = (contract, entries) => {
+    if (!contributionBook) return null;
+    try {
+      const top = Number(contract.censusHeight) - contributionLagOf(contributionNetOf(contract));
+      return incomeSeatSats({ rounds: contributionBook.roundsBetween(top - INCOME_SEASON_BLOCKS, top), censusSize: (entries || []).length });
+    } catch { return null; }
+  };
   if (contributionBook && CONTRIBUTION_READ_MS > 0) {
     const t = setInterval(() => {
       if (!anyAgreement()) return;
@@ -1939,7 +1949,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // THE VOTE'S READS OF THIS SEAT'S OWN CHAIN: the same as 's ballot - tip, block hashes, the "ARN" 'V'
     // outputs of a block, the census with each bond's amount at a height
     voteChain: ballot && typeof ballot.votesAt === 'function' && typeof ballot.censusAt === 'function'
-      ? { tipHeight: ballot.tipHeight, blockHashAt: ballot.blockHashAt, votesAt: ballot.votesAt, censusAt: ballot.censusAt, lateCensusAt: ballot.censusAt } : null,
+      ? { tipHeight: ballot.tipHeight, blockHashAt: ballot.blockHashAt, votesAt: ballot.votesAt, censusAt: ballot.censusAt, lateCensusAt: ballot.censusAt,
+        ...(typeof ballot.feeItemsAt === 'function' ? { feeItemsAt: ballot.feeItemsAt } : {}) } : null,
     verify: (sg, m, k) => schnorr.verify(sg, m, k),
     isBonded: (nodeHex) => { const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; if (!now.ok) return null; return (now.entries || []).some((e) => toHex(e.pubkey) === nodeHex); },
     tip: async () => (typeof chainTip === 'function' ? Number(await chainTip()) : null),
@@ -2440,7 +2451,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { of = { contract: decodeRoundContract(new Uint8Array(row.contract)), rid: contract.sourceRoundId }; } catch { return 0n; }
       }
       const c = roster.censusFor(of.rid);
-      const pool = c && c.ok ? maxRoundPoolSats({ entries: c.entries, stakeSats: BigInt(of.contract.stakeMsat || 0n) / 1000n, networkId: of.contract.networkId }) : null;
+      const pool = c && c.ok ? maxRoundPoolSats({ entries: c.entries, stakeSats: BigInt(of.contract.stakeMsat || 0n) / 1000n, networkId: of.contract.networkId, incomeSats: incomeFor(of.contract, c.entries) }) : null;
       // AND AN ATTESTED ROUND UNDER A QUARTER OF ITS ATTESTORS' BONDS (§0A.7a, kanban #1328): drawn attestors are seats, their bonds the census's.
       // Key-named attestors post no bond yet (before mainnet): no attestor cap for them until the ruling on #1365
       let att = null;
@@ -9720,7 +9731,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // a test network shows it at GET /census-health and refuses nothing
           if (!isTestNetwork(rc.networkId)) {
             const census = roster.censusFor(contract.roundId);
-            const h = census && census.ok ? stakeWithinCeiling({ entries: census.entries, stakeSats: rc.stakeMsat / 1000n }) : { ok: false, why: 'this seat reads no census for that round' };
+            const h = census && census.ok ? stakeWithinCeiling({ entries: census.entries, stakeSats: rc.stakeMsat / 1000n, incomeSats: incomeFor(rc, census.entries) }) : { ok: false, why: 'this seat reads no census for that round' };
             if (!h.ok) return text(res, 409, `entry refused: ${h.why} (§5A.10)`);
           }
           // Every paying round is a FEDERATION round naming its federation: the custody field has one value
@@ -11255,10 +11266,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const c = decodeRoundContract(new Uint8Array(row.contract));
         const census = roster.censusFor(new Uint8Array(rid));
         if (!census || !census.ok) return text(res, 409, `no census read for that round: ${census ? census.why : 'none'}`);
-        const h = stakeWithinCeiling({ entries: census.entries, stakeSats: c.stakeMsat / 1000n });
+        const income = incomeFor(c, census.entries), table = stakeWithinCeiling({ entries: census.entries, stakeSats: c.stakeMsat / 1000n });
+        const h = stakeWithinCeiling({ entries: census.entries, stakeSats: c.stakeMsat / 1000n, incomeSats: income });
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ ok: h.ok, stakeSats: String(c.stakeMsat / 1000n), ceilingSats: String(h.ceilingSats), why: h.why,
-          enforced: !isTestNetwork(c.networkId) }));
+          enforced: !isTestNetwork(c.networkId), tableCeilingSats: String(table.ceilingSats), incomeSeatSats: income === null ? null : String(income),
+          binds: income !== null && h.ceilingSats < table.ceilingSats ? 'income' : 'table' }));
       }
 
       // A SERIES' PUBLICATION, PROVEN (§5A.5): { series, tx, parents } hex. The tx must be the series' first confirmed

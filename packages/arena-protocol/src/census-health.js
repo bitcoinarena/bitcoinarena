@@ -16,6 +16,7 @@
 // a test network shows the ceiling and refuses nothing.
 
 import { networkOf } from './constants.js';
+import { entryFeeMsat, NODE_FEE_BPS } from './fee.js';
 
 export const MAX_PLAYERS_PER_ROUND = 64n;
 /** A test network (regtest, testnet4) shows the ceiling and refuses nothing - as ruling A of the load rule. */
@@ -44,16 +45,43 @@ export function roleCeiling({ nodes, bondedSats, stakeSats, maxPlayers = MAX_PLA
 }
 
 /**
+ * THE INCOME TERM (§5A.10 RULED 2026-11-07, kanban #1280/#1282): "max_round_pool <= income_seat ... (the lower of this and the table wins)" -
+ * income_seat = the nodes' fee of every round that counted for the season over the last `season` blocks, ÷ the census size at the round's census height.
+ * `rounds` the counted rounds ({ void, entries: [{ stakeMsat }] }, the season book's), `feeBpsOf(round)` the node fee each was charged (NODE_FEE_BPS
+ * unless a fee proposal changed it). Answers sat; 0 for a network with no counted round or an empty census.
+ */
+export const INCOME_SEASON_BLOCKS = 12960;
+export function incomeSeatSats({ rounds = [], censusSize, feeBpsOf = () => NODE_FEE_BPS }) {
+  if (!(Number(censusSize) > 0)) return 0n;
+  let fee = 0n;
+  for (const r of rounds || []) { if (!r || r.void) continue; for (const e of r.entries || []) fee += entryFeeMsat(BigInt(e.stakeMsat || 0n), feeBpsOf(r)); }
+  return fee / 1000n / BigInt(censusSize);
+}
+/** The lowest bracket (10 sat): a network whose income term is under it plays it - "a network with no season behind it ... plays the table's lowest bracket". */
+export const LOWEST_BRACKET_SATS = 10n;
+/** A stake ceiling bounded by the income term: min(table, max(lowest bracket, income_seat ÷ players)); `incomeSats` null leaves the table's. Play money (0) stays 0. */
+export function ceilingWithIncome({ ceilingSats, incomeSats = null, maxPlayers = MAX_PLAYERS_PER_ROUND }) {
+  const c = BigInt(ceilingSats);
+  if (incomeSats === null || incomeSats === undefined || c === 0n) return c;
+  const byIncome = BigInt(incomeSats) / BigInt(maxPlayers);
+  const bound = byIncome > LOWEST_BRACKET_SATS ? byIncome : LOWEST_BRACKET_SATS;
+  return c < bound ? c : bound;
+}
+
+/**
  * DOES THE CENSUS SUPPORT THIS ROUND'S STAKE? Over both roles (the binding one is the lower): `entries` the census entries ({ roles,
  * bondSats }), `stakeSats` the round's. { ok, ceilingSats, why }.
  */
-export function stakeWithinCeiling({ entries, stakeSats, maxPlayers = MAX_PLAYERS_PER_ROUND }) {
+// `incomeSats` (kanban #1282): the income term's income_seat, which bounds the table's bracket (ceilingWithIncome); null: the table alone, as before
+export function stakeWithinCeiling({ entries, stakeSats, maxPlayers = MAX_PLAYERS_PER_ROUND, incomeSats = null }) {
   const of = (role) => {
     const es = (entries || []).filter((e) => (e.roles || []).includes(role));
     return roleCeiling({ nodes: es.length, bondedSats: es.reduce((t, e) => t + BigInt(e.bondSats || 0n), 0n), stakeSats, maxPlayers });
   };
   const g = of('game'), s = of('settlement');
-  const low = g.ceilingSats <= s.ceilingSats ? g : s;
+  const low0 = g.ceilingSats <= s.ceilingSats ? g : s;
+  const bounded = ceilingWithIncome({ ceilingSats: low0.ceilingSats, incomeSats, maxPlayers });
+  const low = bounded === low0.ceilingSats ? low0 : { ceilingSats: bounded, why: `${low0.why}; bounded by the income term: ${incomeSats} sat a seat earned in the season, so up to ${bounded} sat a stake (§5A.10)` };
   const stake = BigInt(stakeSats);
   if (stake === 0n) return { ok: true, ceilingSats: low.ceilingSats, why: 'a free round: no ceiling' };
   const ok = stake <= low.ceilingSats;
@@ -65,10 +93,10 @@ export function stakeWithinCeiling({ entries, stakeSats, maxPlayers = MAX_PLAYER
  * holds - in sat, or null on a test network (it shows the ceiling and refuses nothing, ruling A) or for a free round. A market round's filled volume
  * plus an order may not pass it: "Before this a book round could hold a thousand 100,000-sat orders under a committee bonded for a 1,000-sat bracket."
  */
-export function maxRoundPoolSats({ entries, stakeSats, networkId = null, maxPlayers = MAX_PLAYERS_PER_ROUND }) {
+export function maxRoundPoolSats({ entries, stakeSats, networkId = null, maxPlayers = MAX_PLAYERS_PER_ROUND, incomeSats = null }) {
   if (networkId && isTestNetwork(networkId)) return null;
   if (BigInt(stakeSats) === 0n) return null;
-  const c = stakeWithinCeiling({ entries, stakeSats, maxPlayers });
+  const c = stakeWithinCeiling({ entries, stakeSats, maxPlayers, incomeSats });
   return c.ceilingSats * BigInt(maxPlayers);
 }
 /**
