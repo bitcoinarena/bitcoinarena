@@ -312,7 +312,8 @@ createServer((req, res) => {
           const e = b0.event;
           const tagOf = (k) => { const t = Array.isArray(e.tags) ? e.tags.find((x) => Array.isArray(x) && x[0] === k) : null; return t ? String(t[1] ?? '') : ''; };
           let words = {}; try { words = JSON.parse(e.content); } catch { words = {}; }
-          b = { ...b0, text: `${String(words.happened || '')}${words.expected ? `\nExpected: ${String(words.expected)}` : ''}`, build: tagOf('build'), game: tagOf('game'), round: tagOf('round') };
+          // and where a bounty for it is paid, if the reporter named it (kanban #1363): the signed content's lnAddress
+          b = { ...b0, text: `${String(words.happened || '')}${words.expected ? `\nExpected: ${String(words.expected)}` : ''}${words.lnAddress ? `\nBounty address: ${String(words.lnAddress).slice(0, 200)}` : ''}`, build: tagOf('build'), game: tagOf('game'), round: tagOf('round') };
           const pre = feedbackDecide({ ...b, ip }, REPORTS);
           if (!pre.ok) return send(200, pre);
           kept = FEEDBACK.take(e, { hasShot: (h) => !!shotFile(h) });
