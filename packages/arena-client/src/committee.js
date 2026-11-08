@@ -151,13 +151,20 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
   if (!got.length) return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
   if (got.length < providers) return { ok: false, lookOnly: true, from: got[0].from, entries: got[0].entries, refused,
     why: `only ${got.length} provider handed over the census - a bond list one provider serves alone is enough to look, not to lock (${refused.join('; ') || 'no other answered'})` };
-  return { ok: true, entries: unionOfEntries(got.map((g) => g.entries)), from: got.map((g) => g.from).join(' + '), refused };
+  return { ok: true, entries: unionOfEntries(got.map((g) => g.entries)), from: got.map((g) => g.from).join(' + '), fromNodes: got.map((g) => g.from), refused };
 }
-/** Census entries from several providers, joined by bond outpoint (txid:vout); the first copy of each bond is kept. */
+/**
+ * Census entries from several providers, joined by bond; the first copy of each bond is kept. A seat's GET /census entry is the bond's evidence
+ * ({ transaction, position, branch, update }), so a bond is its raw transaction there; an entry naming txid and vout is keyed by them (#1333:
+ * keyed by txid:vout alone, the 18 live entries all became "undefined:undefined" - one entry, a root that never matched).
+ */
+const bondKeyOf = (e) => (e && e.txid !== undefined && e.vout !== undefined
+  ? `o:${Array.isArray(e.txid) || e.txid instanceof Uint8Array ? toHex(Uint8Array.from(e.txid)) : String(e.txid)}:${e.vout}`
+  : `t:${typeof e?.transaction === 'string' ? e.transaction : JSON.stringify(e)}`);
 export function unionOfEntries(lists) {
   const byBond = new Map();
   for (const list of lists) for (const e of list || []) {
-    const k = `${Array.isArray(e.txid) || e.txid instanceof Uint8Array ? toHex(Uint8Array.from(e.txid)) : String(e.txid)}:${e.vout}`;
+    const k = bondKeyOf(e);
     if (!byBond.has(k)) byBond.set(k, e);
   }
   return [...byBond.values()];
@@ -286,7 +293,8 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
       bond: bondRead, verify: curve.verify, census: skip.size ? null : keptChecked.get(toHex(contract.censusRoot)) || null });
     if (got.ok || evidence.from === 'kept' || !/^the census the seats handed over hashes to /.test(String(got.why))) break;
     censusRefused.push({ node: evidence.from, why: `its census ${String(got.why).replace(/^the census the seats handed over /, '')}` });
-    skip.add(evidence.from);
+    // each provider of a union that did not hash to the root is skipped (#1333: skipping the joined "a + b" skipped nobody, and the same pair came back forever)
+    for (const n of evidence.fromNodes || [evidence.from]) skip.add(n);
     evidence = await evidenceFor(roundIdHex, contract, nodes, { fetcher, skip });
   }
   if (!got.ok) return { ...got, censusRefused };
