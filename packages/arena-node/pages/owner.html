@@ -557,6 +557,9 @@ async function nodeFeedbackPanel() {
   t.addEventListener('input', recount); recount();
   box.append(el('p', { cls: 'sub', text: 'Your words, this node’s key and the release go to the Arena team, signed with your owner key. No amounts, no secrets.' }),
     type, t, count, el('label', { cls: 'sub' }, el('span', { text: 'Screenshot (optional) ' }), shot), say, send);
+  // THE NODE BOUNTY'S TABLE AND CHECKLIST (kanban #1342, Daniel 2026-11-08): shown only where the faucet answers `on` for this page's origin (the bounty is off
+  // in public until Daniel says so); the base, the bug levels on top, and this node's five conditions read live for its owner key
+  nodeBountyBlock(box, el);
   send.onclick = async () => {
     send.disabled = true; say.textContent = 'Sending …';
     try {
@@ -580,6 +583,25 @@ async function nodeFeedbackPanel() {
           el('a', { href: 'https://t.me/+KihHE8JhcVM3NDVi', target: '_blank', rel: 'noopener noreferrer', text: 'Telegram' })));
     } catch (e) { say.textContent = (e && e.message) || 'not sent'; send.disabled = false; }
   };
+}
+async function nodeBountyBlock(box, el) {
+  let j = null; try { j = await (await fetch(FEEDBACK_URL + '/rewards', { cache: 'no-store' })).json(); } catch { j = null; }
+  if (!j || !j.on || !Array.isArray(j.levels)) return;
+  const unit = j.network === 'mainnet' ? 'sats' : 'testnet sats', n = (x) => Number(x).toLocaleString('en-US') + ' ' + unit;
+  const wrap = el('div', { cls: 'node-bounty' }, el('h3', { text: 'Node bounty' }),
+    el('p', { cls: 'sub', text: `${n(j.nodeBaseSats)} for running a node outside the team for 7 days and writing what worked and what broke; bugs found on top at these levels:` }),
+    el('table', {}, ...j.levels.map((l) => el('tr', {}, el('td', { text: l.label }), el('td', { text: n(l.sats) }), el('td', { cls: 'sub', text: l.example || '' })))),
+    el('p', { cls: 'sub', text: j.rule }));
+  const checks = el('ul', { cls: 'node-bounty-checks' }, el('li', { cls: 'sub', text: 'Reading this node from the seats (about 30 s) …' }));
+  wrap.append(el('h3', { text: 'Your conditions' }), checks);
+  box.append(wrap);
+  const node = String((state && state.node) || ''), owner = String((state && state.owner) || '');
+  if (!/^[0-9a-f]{64}$/.test(owner)) { checks.innerHTML = ''; checks.append(el('li', { text: 'Claim this node with your key first: the bounty is paid to its owner key.' })); return; }
+  let c = null; try { c = await (await fetch(`${FEEDBACK_URL}/node-check?node=${node}&npub=${owner}`, { cache: 'no-store' })).json(); } catch { c = null; }
+  checks.innerHTML = '';
+  if (!c || !Array.isArray(c.checks)) { checks.append(el('li', { text: 'The seats could not be read now: try again later.' })); return; }
+  for (const x of c.checks) checks.append(el('li', {}, el('b', { text: (x.ok ? '✓ ' : '✗ ') + x.label }), el('span', { cls: 'sub', text: ' — ' + x.says })));
+  checks.append(el('li', { text: c.passes ? 'Every condition holds: send your node feedback above.' : 'Not every condition holds yet.' }));
 }
 // THE PORTED PANELS, EACH ONLY ITS REACT SCREEN (kanban #564, 2026-10-21: "no fall backs"): the page hands each the doors it
 // reads, its signed-request helpers and, where it reports to the Overview, the need() line
