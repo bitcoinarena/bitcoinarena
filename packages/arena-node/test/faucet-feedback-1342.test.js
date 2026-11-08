@@ -283,3 +283,52 @@ test('#1342 node feedback from a node\'s own owner page: any origin may write a 
     assert.equal(facts.frontendRows, 0);
   } finally { faucet.kill(); chat.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+// THE NODE BOUNTY IN THE REVIEW LIST (Daniel 2026-11-08): the checklist beside a node report, read from the seats; approve at level "node" only when it passes
+test('#1342 a node report: the review list reads its checklist from the seats; "node" approves 20,000 when it passes and is refused when the owner is another key', async () => {
+  const { createHash } = await import('node:crypto');
+  const dir = mkdtempSync(join(tmpdir(), 'faucet-node-1342-'));
+  const dave = key(4), erin = key(5);
+  const NODE = 'ab'.repeat(32), NODE2 = 'cd'.repeat(32);
+  let seatBase = '';
+  const seat = createServer((req, res) => {
+    const u = new URL(req.url, 'http://x'); res.writeHead(200, { 'content-type': 'application/json' });
+    if (u.pathname === '/network-games') return res.end(JSON.stringify({ seats: [{ seat: seatBase }], games: [] }));
+    if (u.pathname === '/owner') return res.end(JSON.stringify({ node: NODE, claimed: true, owner: dave.pubkey }));
+    if (u.pathname === '/served') { const from = u.searchParams.get('from'); return res.end(JSON.stringify({ held: [{ roundId: `r${from}`, committee: [NODE, NODE2], finals: [NODE] }] })); }
+    return res.end(JSON.stringify({ rows: [] }));
+  });
+  const chat = createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(200); res.end('{}'); }); });
+  await new Promise((r) => seat.listen(0, '127.0.0.1', r)); await new Promise((r) => chat.listen(0, '127.0.0.1', r));
+  seatBase = `http://127.0.0.1:${seat.address().port}`;
+  writeFileSync(join(dir, 'token'), 'x'); writeFileSync(join(dir, 'ours.txt'), '\n');
+  const CODE = 'the-owners-code', port = 20000 + Math.floor(Math.random() * 9000);
+  const faucet = spawn(process.execPath, [fileURLToPath(new URL('../tools/faucet.mjs', import.meta.url))], { stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, FAUCET_PORT: String(port), FAUCET_CHAT_URL: `http://127.0.0.1:${chat.address().port}`, FAUCET_CHAT_CHANNEL: '6', FAUCET_CHAT_TOKEN_FILE: join(dir, 'token'),
+      FAUCET_FEEDBACK_DB: join(dir, 'feedback.db'), FAUCET_FEEDBACK_MINE_URLS: MINE, FAUCET_FOUNDING_FILE: join(dir, 'founding.jsonl'), FAUCET_BOOK: join(dir, 'book.json'),
+      FAUCET_ADMIN_SHA256: createHash('sha256').update(CODE).digest('hex'), FAUCET_FEEDBACK_EXCLUDED: join(dir, 'ours.txt'), FAUCET_SEASON_SEATS: seatBase,
+      FAUCET_SEASON_GAMES: 'rock-paper-scissors', FAUCET_BOUNTY_PAYER: `${dir}|127.0.0.1:1`, FAUCET_PUBLIC_BASE: 'https://testnet.example/api/faucet',
+      FAUCET_BOUNTY_ORIGINS: 'https://private.example', FAUCET_TEAM_HOSTS: 'team.example' } });
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    for (let i = 0; i < 50; i++) { try { await fetch(`${base}/feedback/mine`); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+    const ids = {};
+    for (const [name, k] of [['dave', dave], ['erin', erin]]) {
+      const ev = signed(k, FEEDBACK_KIND, [['t', 'bug'], ['source', 'node'], ['node', NODE]], JSON.stringify({ happened: `${name}: the installer stopped at the bond step and needed a restart twice` }));
+      const r = await (await fetch(`${base}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-ip': `10.0.1.${Object.keys(ids).length + 1}` }, body: JSON.stringify({ event: ev }) })).json();
+      assert.equal(r.ok, true, r.why); ids[name] = ev.id;
+    }
+    const get = async (p) => (await fetch(`${base}/feedback/admin/${p}`, { headers: { 'x-arena-admin': CODE } })).json();
+    const act = async (b) => (await fetch(`${base}/feedback/admin/act`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-admin': CODE }, body: JSON.stringify(b) })).json();
+    const daveCheck = await get(`node-check/${ids.dave}`), erinCheck = await get(`node-check/${ids.erin}`);
+    const daveOk = await act({ id: ids.dave, action: 'approve', amountSats: null, severity: 'node' });
+    const erinNo = await act({ id: ids.erin, action: 'approve', amountSats: null, severity: 'node' });
+    const facts = { dave: [daveCheck.passes, daveCheck.checks.filter((c) => !c.ok).map((c) => c.key)], erin: [erinCheck.passes, erinCheck.checks.filter((c) => !c.ok).map((c) => c.key)],
+      daveApproved: daveOk.ok && daveOk.report.amountSats, erinRefused: erinNo.why };
+    console.log('  FACTS #1342 node bounty:', JSON.stringify(facts));
+    assert.deepEqual(facts.dave, [true, []]);
+    assert.deepEqual(facts.erin, [false, ['owner']]);
+    assert.equal(facts.daveApproved, 20000);
+    assert.match(facts.erinRefused, /checklist does not pass: Owner key = your npub/);
+  } finally { faucet.kill(); seat.close(); chat.close(); rmSync(dir, { recursive: true, force: true }); }
+});

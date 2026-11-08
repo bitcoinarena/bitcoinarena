@@ -121,12 +121,19 @@
       fetch(`${API}/screenshot/${r.screenshot}`, { headers: { 'x-arena-admin': code } }).then((x) => (x.ok ? x.blob() : null)).then((b) => {
         if (!b) return box.append(el('div', { cls: 'dim', text: 'the image is not there any more' }));
         const u = URL.createObjectURL(b); box.append(el('a', { href: u, target: '_blank', rel: 'noopener' }, el('img', { src: u, alt: 'screenshot of the report', style: 'max-width:100%;max-height:420px;border:1px solid #30363d;border-radius:8px' }))); }); }
+    // A NODE REPORT'S BOUNTY CHECKLIST (kanban #1342, Daniel 2026-11-08): read live from the seats (about 30 s); approve at level "node" goes through only when it passes
+    if (r.source === 'node' && r.node) { const box = el('div', {}, el('h2', { text: 'Node bounty checklist' }), el('div', { cls: 'dim', text: 'reading the seats …' })); d.append(box);
+      call(`node-check/${r.id}`).then((c) => { box.replaceChildren(el('h2', { text: 'Node bounty checklist' }));
+        if (!c || !Array.isArray(c.checks)) return box.append(el('div', { cls: 'bad', text: (c && c.why) || 'not read' }));
+        for (const x of c.checks) box.append(el('div', { cls: x.ok ? '' : 'bad', text: `${x.ok ? '✓' : '✗'} ${x.label} — ${x.says}` }));
+        box.append(el('div', { cls: c.passes ? '' : 'warn', text: c.passes ? 'Every condition holds: approve at level "node" (20,000).' : 'Not every condition holds: a node bounty is refused.' }));
+      }, (e) => box.replaceChildren(el('h2', { text: 'Node bounty checklist' }), el('div', { cls: 'bad', text: e.message }))); }
     if (r.reason) d.append(el('div', { cls: 'bad', text: `Rejected: ${r.reason}` }));
     if (r.duplicateOf) d.append(el('div', { cls: 'dim', text: `Duplicate of ${r.duplicateOf.slice(0, 16)}…` }));
     if (r.reward) d.append(el('div', {}, el('b', { text: `Reward ${sats(r.reward.amountSats)} (${r.reward.network}) · ${r.reward.state}` }), r.reward.lnurl ? el('div', {}, el('code', { text: r.reward.lnurl })) : null));
     const act = async (body, ok) => { let a; try { a = await call('act', { id: r.id, ...body }); } catch (e) { return say(e.message, true); } if (!a.ok) return say(a.why, true); say(ok); await load(); await open(r.id); };
     const amount = el('input', { type: 'number', min: '100', step: '100', placeholder: 'sat', size: '8' });
-    const sev = el('select', {}, ...['useful', 'low', 'medium', 'high', 'critical'].map((x) => el('option', { text: x })));
+    const sev = el('select', {}, ...[...(r.source === 'node' ? ['node'] : []), 'useful', 'low', 'medium', 'high', 'critical'].map((x) => el('option', { text: x })));
     const crit = el('input', { type: 'checkbox' });
     const reason = el('input', { placeholder: 'reason the player reads', size: '30' });
     const dupOf = el('input', { placeholder: 'earlier report id', size: '24' });
@@ -134,7 +141,7 @@
     const btn = (label, fn, go = false) => { const b = el('button', { text: label, ...(go ? { cls: 'go' } : {}) }); b.addEventListener('click', fn); return b; };
     if (r.state === 'new') {
       d.append(el('h2', { text: 'Decide' }),
-        el('div', { cls: 'row' }, amount, sev, el('label', {}, crit, el('span', { text: ' critical, above the bands' })), btn('Approve', () => act({ action: 'approve', amountSats: Number(amount.value), severity: sev.value, critical: crit.checked }, 'Approved'), true)),
+        el('div', { cls: 'row' }, amount, sev, el('label', {}, crit, el('span', { text: ' critical, above the bands' })), btn('Approve', () => act({ action: 'approve', amountSats: amount.value.trim() ? Number(amount.value) : null, severity: sev.value, critical: crit.checked }, 'Approved'), true)),
         el('div', { cls: 'row' }, reason, btn('Reject', () => act({ action: 'reject', reason: reason.value }, 'Rejected'))),
         el('div', { cls: 'row' }, dupOf, btn('Duplicate of', () => act({ action: 'duplicate', of: dupOf.value.trim() }, 'Marked duplicate'))));
     }

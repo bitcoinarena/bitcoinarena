@@ -220,6 +220,15 @@ createServer((req, res) => {
         send(200, { ok: true, reports: FEEDBACK.list({ state: q.get('state'), type: q.get('type'), game: q.get('game'), pubkey: q.get('pubkey'), source: q.get('source') }).map((r) => withReward(r, ours)), budget: FEEDBACK.budget({ rules: RULES }) }); });
       return undefined;
     }
+    // A NODE REPORT'S BOUNTY CHECKLIST (kanban #1342): the node and the reporter's key read live from the seats, for the review list (admin code, any origin)
+    { const m = /^\/feedback\/admin\/node-check\/([0-9a-f]{64})$/.exec(path);
+      if (m && req.method === 'GET') {
+        const r = FEEDBACK.report(m[1]);
+        if (!r || r.source !== 'node' || !r.node) return send(200, { ok: false, why: 'not a node report naming its node' });
+        const k = `${r.node}:${r.pubkey}`, kept = NODE_CHECKS.get(k);
+        if (kept && Date.now() - kept.at < 600000) return send(200, { ...kept.answer, keptMs: Date.now() - kept.at });
+        return nodeCheckNow(r.node, r.pubkey).then((answer) => { NODE_CHECKS.set(k, { at: Date.now(), answer }); send(200, answer); }, (e) => send(502, { ok: false, why: String(e.message || e).slice(0, 160) }));
+      } }
     { const m = /^\/feedback\/admin\/report\/([0-9a-f]{64})$/.exec(path);
       if (m && req.method === 'GET') {
         const r = FEEDBACK.report(m[1]); if (!r) return send(404, { ok: false, why: 'no such report' });
@@ -246,7 +255,7 @@ createServer((req, res) => {
           await PLAYED.fresh().catch(() => 0);
           // A NODE BOUNTY ONLY ON ITS CHECKLIST (kanban #1342): the node's census, 7 days, committees and signed rounds, owner = the reporter - read now
           if (String(b.severity || '').toLowerCase() === 'node') {
-            const r = (FEEDBACK.list({}) || []).find((x) => x.id === b.id);
+            const r = FEEDBACK.report(b.id);
             if (!r || !r.node) return send(200, { ok: false, why: 'a node bounty is for a node report naming its node' });
             const chk = await nodeCheckNow(r.node, r.pubkey).catch((e) => ({ ok: false, why: e.message }));
             if (!chk.ok || !chk.passes) return send(200, { ok: false, why: `the node checklist does not pass: ${(chk.checks || []).filter((c) => !c.ok).map((c) => `${c.label} (${c.says})`).join('; ') || chk.why}`, checks: chk.checks || null });
