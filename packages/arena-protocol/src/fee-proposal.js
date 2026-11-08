@@ -164,13 +164,15 @@ export function devMajority({ proposalId, approvals = [], devKeys = [], verify }
  * developers' majority approves it. Answers { accepted: true, fees, activationHeight } or { accepted: false, why }: a refusal applies
  * nothing.
  */
-export function feeProposalOutcome({ proposal, current = FEES_TODAY, signal, tally, approvals = [], devKeys = [], verify, schedule = FUNDING_SCHEDULES.spec }) {
+// `devSaid` (kanban #1283, RULED #1277 B): each developer's answer as read from the chain (Map dev hex -> approve, a no over a yes) - used in place of the held approvals
+export function feeProposalOutcome({ proposal, current = FEES_TODAY, signal, tally, approvals = [], devKeys = [], verify, schedule = FUNDING_SCHEDULES.spec, devSaid = null }) {
   const st = feeProposalStands(proposal, { current, schedule });
   if (!st.ok) return { accepted: false, why: st.why };
   if (!signal || signal.state !== 'passed') return { accepted: false, why: 'its signal did not pass' };
   if (!tally || tally.passed !== true) return { accepted: false, why: 'its vote did not pass' };
   if (st.donations.length) {
-    const dm = devMajority({ proposalId: feeProposalId(proposal), approvals, devKeys, verify });
+    const dm = devSaid instanceof Map ? (() => { const keys = new Set(devKeys.map((k) => String(k).toLowerCase())); const yes = [...devSaid].filter(([k, v]) => keys.has(k) && v === true).length;
+      return { yes, of: keys.size, majority: keys.size > 0 && yes * 2 > keys.size }; })() : devMajority({ proposalId: feeProposalId(proposal), approvals, devKeys, verify });
     if (!dm.majority) return { accepted: false, why: `it changes ${st.donations.join(', ')}, and ${dm.yes} of ${dm.of} protocol developers approve it - a majority must` };
   }
   return { accepted: true, fees: st.fees, activationHeight: proposal.activationHeight };

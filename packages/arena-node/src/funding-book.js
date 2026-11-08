@@ -15,6 +15,7 @@ import { readSignedFunding, signalOutcome, votePeriodOf, fundingTally, voteWeigh
 import { createHash } from 'node:crypto';
 import { newerPlayerName, PLAYER_NAME_SKEW_MS } from '../../arena-protocol/src/player-name.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { countFeeChain } from '../../arena-protocol/src/fee-signal-chain.js';
 import { feeProposalStands, feeProposalOutcome, feesAt as feesAtOf, FEES, FEES_TODAY, donationChanges, devMajority } from '../../arena-protocol/src/fee-proposal.js';
 import { leaderboardVotePeriod, leaderboardPasses } from '../../arena-protocol/src/leaderboard-payout.js';
 
@@ -82,8 +83,10 @@ export function fundingPaymentStep(row, ev) {
 // proposal is decided whole (feeProposalOutcome) against the fees in force before its activation; feesAt(height) answers the set
 // in force at a height - what a round of that census height settles with.
 export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedule = FUNDING_SCHEDULES.spec, log = () => {}, now = () => Date.now(),
-  voteChain = null, maxBlocksPerPass = 64, seasonedNodes = null, devKeysOf = null, pull = null }) {
+  voteChain = null, maxBlocksPerPass = 64, seasonedNodes = null, devKeysOf = null, pull = null, feeChainFrom = () => null }) {
   db.exec(FUNDING_SQL);
+  // A FEE PROPOSAL'S SIGNAL READ FROM THE CHAIN (kanban #1283, RULED #1277 B): the signal period's blocks, held by hash, a reorg of one re-decides
+  db.exec('CREATE TABLE IF NOT EXISTS fee_chain_blocks (proposal TEXT NOT NULL, height INTEGER NOT NULL, hash TEXT, items TEXT NOT NULL, PRIMARY KEY (proposal, height))');
   const rows = (kind) => db.prepare('SELECT id, proposal, hex, kind FROM funding_items WHERE kind = ? ORDER BY at_ms, id').all(kind);
   // the proposals the signal and the vote run over: funding proposals and fee proposals
   // ... and leaderboard payout requests: voted on as they are, but with no signal - their vote starts at publication
@@ -269,6 +272,43 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     const accepted = feeOutcomes().filter((o) => o.accepted).map((o) => ({ accepted: true, activationHeight: o.activationHeight, fees: o.fees }));
     return feesAtOf({ height, accepted, base: FEES_TODAY });
   }
+  // ---- THE FEE SIGNAL ON CHAIN (kanban #1283, RULED #1277 B) ----
+  const chainMode = (o) => { if (!voteChain || typeof voteChain.feeItemsAt !== 'function') return false; let from = null; try { from = feeChainFrom(toHex(o.networkId)); } catch { from = null; } return Number.isInteger(from) && o.publishedHeight >= from; };
+  const chainHash = async (h) => { try { const x = await voteChain.blockHashAt(h); return x ? String(x).toLowerCase() : null; } catch { return null; } };
+  const chainDepth = () => Math.max(3, Number(schedule.decideDepth) || 6);   // decided 6 deep, never under 3 (#1196)
+  async function chainSignal(pid, o, height, end) {
+    const last = end - 1;
+    let held = db.prepare('SELECT height, hash FROM fee_chain_blocks WHERE proposal = ? ORDER BY height').all(pid);
+    // a held block whose hash moved is read again, and every one above it
+    for (const b of held) { const h = await chainHash(b.height); if (h && b.hash && h !== b.hash) { db.prepare('DELETE FROM fee_chain_blocks WHERE proposal = ? AND height >= ?').run(pid, b.height); break; } }
+    held = db.prepare('SELECT height FROM fee_chain_blocks WHERE proposal = ? ORDER BY height').all(pid);
+    let next = held.length ? held[held.length - 1].height + 1 : o.publishedHeight;
+    for (let n = 0; next <= Math.min(last, height) && n < maxBlocksPerPass; next++, n++) {
+      const hash = await chainHash(next);
+      let items; try { items = await voteChain.feeItemsAt(next, hash || undefined); } catch { break; }
+      const mine = (items || []).filter((x) => toHex(x.payload).slice(8, 24) === pid.slice(0, 16)).map((x) => ({ kind: x.kind, payload: toHex(x.payload), txid: String(x.txid) }));
+      db.prepare('INSERT OR REPLACE INTO fee_chain_blocks (proposal, height, hash, items) VALUES (?, ?, ?, ?)').run(pid, next, hash, JSON.stringify(mine));
+    }
+    const rows = db.prepare('SELECT height, items FROM fee_chain_blocks WHERE proposal = ? ORDER BY height').all(pid);
+    if (rows.length !== end - o.publishedHeight || height < last + chainDepth() - 1) return null;
+    let census; try { census = await voteChain.censusAt(toHex(o.networkId), o.publishedHeight); } catch { census = null; }
+    if (!Array.isArray(census)) { log(`[fees] ${pid.slice(0, 16)}: the census at ${o.publishedHeight} is not read yet`); return null; }
+    let devKeys = []; if (typeof devKeysOf === 'function') { try { devKeys = (await devKeysOf(toHex(o.networkId))) || []; } catch { devKeys = []; } }
+    const items = rows.flatMap((r) => JSON.parse(r.items).map((x) => ({ kind: x.kind, payload: fromHex(x.payload), height: r.height })));
+    const c = countFeeChain({ proposalId: fromHex(pid), items, fromHeight: o.publishedHeight, toHeight: end, census, devKeys: devKeys.map((k) => (typeof k === 'string' ? fromHex(k) : k)), verify });
+    return { state: c.signals.passes ? 'passed' : 'failed', chain: true, signalEnd: end, supporters: c.signals.bonds, active: c.signals.of, signals: c.signals.bonds,
+      pct: c.signals.of ? Math.round((c.signals.bonds * 10000) / c.signals.of) / 100 : 0, sats: String(c.signals.sats), approvals: Object.fromEntries(c.approvals), lastHash: await chainHash(last), lastHeight: last };
+  }
+  // A REORG OF A COUNTED BLOCK RE-DECIDES (RULED #1277 B): a chain signal whose last block moved, of a fee not decided yet, is dropped and read again
+  async function chainReorgs() {
+    if (!voteChain) return;
+    for (const r of db.prepare('SELECT proposal, outcome FROM funding_outcomes').all()) {
+      let o; try { o = JSON.parse(r.outcome); } catch { continue; }
+      if (!o || !o.chain || !Number.isInteger(o.lastHeight) || db.prepare('SELECT 1 FROM fee_outcomes WHERE proposal = ?').get(r.proposal)) continue;
+      const h = await chainHash(o.lastHeight);
+      if (h && o.lastHash && h !== o.lastHash) { db.prepare('DELETE FROM funding_outcomes WHERE proposal = ?').run(r.proposal); log(`[fees] ${r.proposal.slice(0, 16)}: block ${o.lastHeight} of its signal moved: decided again`); }
+    }
+  }
   const approvalsOf = (pid) => db.prepare("SELECT hex FROM funding_items WHERE kind = 'fee-approval' AND proposal = ? ORDER BY at_ms, id").all(pid)
     .map((x) => read('fee-approval', x.hex)).filter((x) => x.ok).map((x) => ({ approval: x.obj, signature: x.signature }));
   /**
@@ -298,7 +338,8 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         let took = 0; for (const it of Array.isArray(got) ? got : []) { try { const r = await book.add(it.kind, it.hex, { heldAtMs: it.atMs === undefined ? null : Number(it.atMs) }); if (r && r.ok && r.fresh) took++; } catch { /* the next */ } }
         if (took) log(`[fees] ${pid.slice(0, 16)}: ${took} approval(s) or signal(s) pulled from the peers before deciding`);
       }
-      const out = feeProposalOutcome({ proposal: o, current: feesAt(o.activationHeight - 1), signal, tally: vote, approvals: approvalsOf(pid), devKeys, verify, schedule });
+      const out = feeProposalOutcome({ proposal: o, current: feesAt(o.activationHeight - 1), signal, tally: vote, approvals: approvalsOf(pid), devKeys, verify, schedule,
+        ...(signal.chain ? { devSaid: new Map(Object.entries(signal.approvals || {})) } : {}) });
       db.prepare('INSERT OR IGNORE INTO fee_outcomes (proposal, outcome, activation, decided_ms) VALUES (?, ?, ?, ?)').run(pid, JSON.stringify(out), o.activationHeight, now());
       log(`[fees] ${pid.slice(0, 16)}: ${out.accepted ? `accepted - in force from ${o.activationHeight}` : `refused - ${out.why}`}`);
       done.push({ id: pid, ...out });
@@ -440,12 +481,20 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       const height = await Promise.resolve(tip()).catch(() => null);
       if (!Number.isInteger(height)) return [];
       const done = [];
+      await chainReorgs();
       for (const row of votedRows()) {
         if (row.kind === 'leaderboard') continue;            // no signal period
         if (outcomeOf(row.id)) continue;
         const p = read(row.kind, row.hex); if (!p.ok) continue;
         const end = p.obj.publishedHeight + schedule.signal;
         if (height < end) continue;
+        // FROM FEE_SIGNAL_CHAIN_HEIGHT A FEE PROPOSAL'S SIGNAL IS READ FROM THE CHAIN (kanban #1283): the off-chain records count for nothing
+        if (row.kind === 'fee' && chainMode(p.obj)) {
+          const out = await chainSignal(row.id, p.obj, height, end);
+          if (out) { db.prepare('INSERT OR IGNORE INTO funding_outcomes (proposal, outcome, decided_ms) VALUES (?, ?, ?)').run(row.id, JSON.stringify(out), now());
+            log(`[fees] ${row.id.slice(0, 16)}: signal on chain ${out.state} - ${out.supporters} of ${out.active} bonds (${out.pct} %)`); done.push({ id: row.id, ...out }); }
+          continue;
+        }
         // THE SIGNAL DECIDED AFTER A PULL, ON WHAT SOME SEAT HELD BEFORE THE END (kanban #1279, RULED #1277 A, the interim until signals are read from
         // the chain; audit 4 #1257 seats-4): each seat decided at the period's end from its own rows, so a signal posted to three seats just before the
         // end passed there and failed elsewhere - two fee sets from activation. When this seat first saw the end is kept; it decides once the end is
