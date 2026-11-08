@@ -985,3 +985,29 @@ test('kanban #1324: a record names its gateway fee cap after its band; a gateway
   assert.match(gatewayFeeWithin({ send: leg(0, 0) }).why, /publishes no receive fee/);
   assert.equal(gatewayFeeWithin({ send: leg(2000, 0), receive: leg(0, 0) }, { ppm: 5000, baseMsat: 0 }).ok, true, 'a record\'s own cap');
 });
+
+// PLAYER_RESERVE (§23A.3a RULED 2026-11-07, kanban #1296 / #1322): after the gateway fee cap, 8 bytes; load and the band read it
+test('kanban #1322: a federation holding only its two gateways\' mandatory peg-ins and no player reads load 0; it opens only if 2 x peg_in_min <= cap / 4', async () => {
+  const { loadReserveOf, playerReserveOf, opensWith } = await import('../../arena-protocol/src/federation-record.js');
+  const { bandOfRecord } = await import('../../arena-protocol/src/capacity.js');
+  const pegInMin = 100000n, cap = 1000000n;
+  const reserve = 2n * pegInMin;                                    // the two gateways' mandatory peg-ins, nothing else
+  const player = playerReserveOf({ reserveSats: reserve, gatewayHeldSats: [pegInMin, pegInMin] });
+  const withCap = { ...bare(), capacityBand: 'CALM', gatewayFeeMax: { ppm: 1000, baseMsat: 10000 }, exposureCapSats: cap, reserveSats: reserve };
+  const r = { ...withCap, playerReserveSats: player }, bytes = encodeFederationRecord(r), back = decodeFederationRecord(bytes);
+  const loadOf = (x) => Number((loadReserveOf(x) * 10000n) / BigInt(x.exposureCapSats)) / 10000;
+  const got = { player: String(player), loadNow: loadOf(back), loadBefore: loadOf(withCap), bytes: bytes.length - encodeFederationRecord(withCap).length,
+    bandBare: bandOfRecord({ reserveSats: reserve, exposureCapSats: cap, playerReserveSats: player }),
+    opensAtCap1M: opensWith({ exposureCapSats: cap, pegInMinSats: pegInMin }).ok, opensAtCap700k: opensWith({ exposureCapSats: 700000n, pegInMinSats: pegInMin }).ok };
+  console.log('  MEASURED #1322:', JSON.stringify(got));
+  assert.equal(player, 0n);
+  assert.equal(got.loadNow, 0); assert.equal(got.loadBefore, 0.2);
+  assert.equal(got.bytes, 8);
+  assert.equal(back.playerReserveSats, 0n);
+  assert.equal('playerReserveSats' in decodeFederationRecord(encodeFederationRecord(withCap)), false, 'a record without one decodes as before');
+  assert.throws(() => encodeFederationRecord({ ...bare(), capacityBand: 'CALM', playerReserveSats: 0n }), /follows the gateway fee cap/);
+  assert.throws(() => encodeFederationRecord({ ...withCap, playerReserveSats: reserve + 1n }), /0 to the reserve/);
+  assert.equal(got.opensAtCap1M, true);    // 200,000 <= 250,000
+  assert.equal(got.opensAtCap700k, false); // 200,000 > 175,000
+  assert.equal(toHex(federationRecordId(bare())), 'e8bc7bbba80b07e913e2a42d48e113fa759dc394610a336601a567a051fa878f', 'a plain record keeps its id');
+});

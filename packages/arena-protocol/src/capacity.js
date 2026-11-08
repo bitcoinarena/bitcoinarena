@@ -4,7 +4,7 @@
 // bond and peg-in that would relieve it - the numbers the seats serve at GET /capacity, the health page, the node dashboard and the owner
 // page warn with, and the installer's minimum bond follows. Pure arithmetic over public inputs (the signed records, the census's bonds,
 // the gateways' claims), so every seat that reads the same inputs says the same thing.
-import { faultsOf, recordStatusName } from './federation-record.js';
+import { faultsOf, recordStatusName, loadReserveOf } from './federation-record.js';
 
 /** The bands of §23A.3a: enter at, leave below (the gap keeps a federation from flapping at a boundary). */
 export const CAPACITY_BANDS = Object.freeze([
@@ -30,7 +30,8 @@ const loadOfRecord = (reserveSats, exposureCapSats) => { const cap = BigInt(expo
 /** The band a new record names: what its load enters, kept by the gap from `was`, the previous record's band. */
 export const recordBand = ({ reserveSats, exposureCapSats, was = 'CALM' }) => capacityBand(loadOfRecord(reserveSats, exposureCapSats), was);
 /** A record's band: the one it names, else the one its own load enters (no hysteresis without the record's). */
-export const bandOfRecord = (r) => (r && r.capacityBand) || recordBand({ reserveSats: r && r.reserveSats, exposureCapSats: r && r.exposureCapSats });
+// the band of a record that names none, read against its player reserve (§23A.3a, kanban #1322) when it names one
+export const bandOfRecord = (r) => (r && r.capacityBand) || recordBand({ reserveSats: r ? loadReserveOf(r) : 0n, exposureCapSats: r && r.exposureCapSats });
 
 /**
  * WHAT A RECORD SAYS ABOUT PRESSURE (§23A.3a, kanban #1028): its band, and its status only when it names a band. Only an OPEN federation's

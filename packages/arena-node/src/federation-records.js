@@ -29,7 +29,7 @@ import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureI
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord,
-  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, highestVerified, recordStatusName, thresholdOf } from '../../arena-protocol/src/federation-record.js';
+  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, highestVerified, recordStatusName, thresholdOf, loadReserveOf } from '../../arena-protocol/src/federation-record.js';
 import { recordBand, bandOfRecord } from '../../arena-protocol/src/capacity.js';
 
 /** The census nodes guarding `federationId`, as the record lists them. */
@@ -915,7 +915,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       ...((() => { let a = null; try { a = alarmOf(federation); } catch { a = null; } return a ? { alarm: a } : {}; })()),
       // THE LOAD (§23A.3): the signed record's reserve over its signed exposure cap
       ...(k.record ? { reserveSats: String(k.record.reserveSats), exposureCapSats: String(k.record.exposureCapSats),
-        load: k.record.exposureCapSats > 0n ? Number((k.record.reserveSats * 10000n) / k.record.exposureCapSats) / 10000 : null } : {}),
+        load: k.record.exposureCapSats > 0n ? Number((loadReserveOf(k.record) * 10000n) / k.record.exposureCapSats) / 10000 : null } : {}),
       // the successor's guardian pool takes this drain's seated guardians (predecessorGuardians), shown with the record
       ...(k.record && k.record.successorId && k.record.successorId.some((x) => x) ? { successor: toHex(k.record.successorId) } : {}) })),
     draining: (fidHex) => draining.get(fidHex) || null,

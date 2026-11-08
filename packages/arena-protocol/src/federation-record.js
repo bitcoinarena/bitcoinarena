@@ -85,7 +85,24 @@ export function encodeFederationRecord(r) {
       throw new Error('a gateway fee cap is { ppm 0..1000000, baseMsat } in whole numbers');
     w.u32(f.ppm); w.u32(f.baseMsat);
   }
+  // PLAYER_RESERVE (§23A.3a RULED 2026-11-07, kanban #1296/#1322): reserve less the gateways' proved e-cash - load, the bands, the founding trigger and
+  // the health line read it. After the gateway fee cap, so a record without it keeps its bytes; it needs the cap before it
+  if (r.playerReserveSats !== undefined && r.playerReserveSats !== null) {
+    if (r.gatewayFeeMax === undefined || r.gatewayFeeMax === null) throw new Error('a player reserve follows the gateway fee cap: name the cap too');
+    if (typeof r.playerReserveSats !== 'bigint' || r.playerReserveSats < 0n || r.playerReserveSats > BigInt(r.reserveSats)) throw new Error('a player reserve is a whole number of sat, 0 to the reserve');
+    w.u64(r.playerReserveSats);
+  }
   return w.finish();
+}
+
+/** THE RESERVE LOAD IS READ AGAINST (§23A.3a, kanban #1322): the players' money when the record names it, else the whole reserve (records before). */
+export const loadReserveOf = (r) => (r && r.playerReserveSats !== undefined && r.playerReserveSats !== null ? BigInt(r.playerReserveSats) : BigInt((r && r.reserveSats) ?? 0n));
+/** player_reserve = reserve - the gateways' proved e-cash (each counted by heldLockCounted), never below 0. */
+export const playerReserveOf = ({ reserveSats, gatewayHeldSats = [] }) => { const held = gatewayHeldSats.reduce((t, x) => t + BigInt(x || 0n), 0n); const r = BigInt(reserveSats); return held >= r ? 0n : r - held; };
+/** A FEDERATION OPENS ONLY IF 2 x peg_in_min <= exposure_cap / 4 (§23A.3a RULED 2026-11-07): its two gateways' mandatory peg-ins alone stay under a quarter of the cap. */
+export function opensWith({ exposureCapSats, pegInMinSats }) {
+  const ok = 2n * BigInt(pegInMinSats) <= BigInt(exposureCapSats) / 4n;
+  return { ok, why: ok ? null : `a federation opens only if 2 x peg_in_min (${2n * BigInt(pegInMinSats)} sat) <= exposure_cap / 4 (${BigInt(exposureCapSats) / 4n} sat) (§23A.3a)` };
 }
 
 /** The reference cap (§23A.9): 0.1 % + 10 sat on each leg. */
@@ -117,7 +134,8 @@ export function decodeFederationRecord(bytes) {
     exposureCapSats: r.u64(), reserveSats: r.u64(), height: r.u32(),
   };
   if (r.at !== bytes.length) { const band = nameOf(CAPACITY_BAND, r.u8()); if (!band) throw new Error('not a capacity band'); out.capacityBand = band; }
-  if (bytes.length - r.at === 8) out.gatewayFeeMax = { ppm: r.u32(), baseMsat: r.u32() };
+  if (bytes.length - r.at >= 8) out.gatewayFeeMax = { ppm: r.u32(), baseMsat: r.u32() };
+  if (bytes.length - r.at === 8) out.playerReserveSats = r.u64();
   if (r.at !== bytes.length) throw new Error('trailing bytes after the federation record');
   encodeFederationRecord(out);                       // held to the encoder's rules
   return out;
