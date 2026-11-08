@@ -145,3 +145,26 @@ test('the facts: paid entries booked to a proven identity in counted rounds, at 
   const facts = factsFromSeasonRounds(rounds, (rid) => (rid === 'aa'.repeat(32) ? 4321 : null));
   assert.deepEqual(facts, [{ height: 4321, identity: idk, frontendPk: toHex(SITE[0]), grossMsat: 100000n }]);
 });
+
+test('a donation set carries an agreement: bytes round trip, its share starts at 0, the payout beside a vesting entry', async () => {
+  const { encodeDonationSet, decodeDonationSet, donationSetStands, donationSetId, vestedShares } = await import('../src/donation.js');
+  const { setSharesAt } = await import('../src/contribution.js');
+  const sig = new Uint8Array(64).fill(7);
+  const set = [
+    { recipientPk: key33(2), label: 'dev a', shareBps: 6000 },
+    { recipientPk: key33(3), label: 'dev b', shareBps: 4000, vesting: { targetBps: 3000, startHeight: 100, days: 10 } },
+    { recipientPk: key33(1), label: 'marketing', shareBps: 0, contribution: { agreement: agreement(), signature: sig } },
+  ];
+  assert.equal(donationSetStands(set).ok, true, donationSetStands(set).why);
+  const back = decodeDonationSet(encodeDonationSet(set));
+  assert.deepEqual(encodeDonationSet(back), encodeDonationSet(set));
+  assert.deepEqual(donationSetId(back), donationSetId(set));
+  assert.match(donationSetStands(set.map((r, i) => (i === 2 ? { ...r, shareBps: 10 } : r))).why, /starts at share 0/);
+  assert.match(donationSetStands(set.map((r, i) => (i === 2 ? { ...r, recipientPk: key33(9) } : r))).why, /names another key/);
+  assert.match(donationSetStands(set.map((r, i) => (i === 2 ? { ...r, contribution: { agreement: agreement(), signature: new Uint8Array(10) } } : r))).why, /64-byte signature/);
+  // before the seats agree any share (none vested): dev b vests on its own schedule, the agreement gets 0, dev a the rest
+  assert.deepEqual(vestedShares(set, 100 + 5 * 144).map((x) => x.shareBps), [6500, 3500, 0]);
+  // with 500 bps vested to him: dev b at its step, he at 500, dev a the rest
+  assert.deepEqual(setSharesAt(set, 100 + 5 * 144, () => 500).map((x) => x.shareBps), [6000, 3500, 500]);
+  assert.equal(setSharesAt(set, 999999, () => 1250).reduce((t, x) => t + x.shareBps, 0), 10000);
+});

@@ -30,6 +30,7 @@ import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_DONATION_SET, TYPE_DONATION_SET_KEYS, TYPE_DONATION_SET_KEYS_VESTING, TAG } from './constants.js';
 import { isRefund } from './payout.js';
+import { encodeContributionAgreement, decodeContributionAgreement, agreementStands, setSharesAt } from './contribution.js';
 
 /** Basis points, and 22A's MUST: the shares sum to exactly this. */
 export const DONATION_BPS_TOTAL = 10000;
@@ -173,6 +174,16 @@ function keySetStands(recipients) {
     if (seen.has(key)) return { ok: false, why: `key ${key.slice(0, 16)}… is listed twice, which is one party with two shares` };
     seen.add(key);
     sum += r.shareBps;
+    // A CONTRIBUTION AGREEMENT (§27A.4.2, kanban #1346): its share starts at 0 and is what the chain says he earned; it names this entry's
+    // key, and the contributor's own signature over its id rides with it (checked by the seat that takes the set: donation-ballots)
+    if (r.contribution !== undefined && r.contribution !== null) {
+      if (r.vesting) return { ok: false, why: `recipient ${at} vests and carries an agreement: one or the other` };
+      if (r.shareBps !== 0) return { ok: false, why: `recipient ${at} carries an agreement and starts at share 0, not ${r.shareBps}` };
+      const a = agreementStands(r.contribution.agreement);
+      if (!a.ok) return { ok: false, why: `recipient ${at}'s agreement: ${a.why}` };
+      if (toHex(r.contribution.agreement.recipientPk) !== toHex(r.recipientPk)) return { ok: false, why: `recipient ${at}'s agreement names another key` };
+      if (!(r.contribution.signature instanceof Uint8Array) || r.contribution.signature.length !== 64) return { ok: false, why: `recipient ${at}'s agreement carries no 64-byte signature of the contributor` };
+    }
     if (r.vesting !== undefined && r.vesting !== null) {
       const v = r.vesting;
       if (!Number.isInteger(v.targetBps) || v.targetBps < 0 || v.targetBps > DONATION_BPS_TOTAL) return { ok: false, why: `recipient ${at} vests to no share in basis points` };
@@ -183,10 +194,10 @@ function keySetStands(recipients) {
   if (sum !== DONATION_BPS_TOTAL)
     return { ok: false, why: `those shares sum to ${sum} basis points and 22A says exactly ${DONATION_BPS_TOTAL}` };
   // AT FULL VESTING THE REST STILL HOLD SOMETHING TO GIVE (§27A.4.1): the vesting entries' targets, the others' shares scaled into the rest
-  const vesting = recipients.filter((r) => r.vesting);
+  const vesting = recipients.filter((r) => r.vesting || r.contribution);
   if (vesting.length) {
-    const target = vesting.reduce((t, r) => t + r.vesting.targetBps, 0);
-    const others = recipients.filter((r) => !r.vesting).reduce((t, r) => t + r.shareBps, 0);
+    const target = vesting.reduce((t, r) => t + (r.vesting ? r.vesting.targetBps : agreementStands(r.contribution.agreement).targetBps), 0);
+    const others = recipients.filter((r) => !r.vesting && !r.contribution).reduce((t, r) => t + r.shareBps, 0);
     if (target > DONATION_BPS_TOTAL) return { ok: false, why: `the vesting targets sum to ${target} basis points, more than ${DONATION_BPS_TOTAL}` };
     if (target < DONATION_BPS_TOTAL && others === 0) return { ok: false, why: 'the vesting targets leave a rest and no other recipient holds a share to scale into it' };
   }
@@ -381,14 +392,16 @@ export const donatedMsat = (entries) =>
 export function encodeDonationSet(recipients) {
   const stands = donationSetStands(recipients);
   if (!stands.ok) throw new Error(`that set does not stand: ${stands.why}`);
-  if (donationSetPaysKeys(recipients) && recipients.some((r) => r.vesting)) {
+  if (donationSetPaysKeys(recipients) && recipients.some((r) => r.vesting || r.contribution)) {
     // A SET OF KEYS THAT VESTS (§27A.4.1): each entry's key, share now, label, and - when it vests - its target, its
     // first block and its length in days; a set without vesting keeps the plain encoding below, and so its id
     const w = new Writer();
     w.u8(TYPE_DONATION_SET_KEYS_VESTING);
     w.u16(PROTOCOL_VERSION);
     w.vec(recipients, (r, ww) => { ww.bytes(r.recipientPk, RECIPIENT_KEY_BYTES); ww.u16(r.shareBps); ww.str(r.label);
-      if (r.vesting) { ww.u8(1); ww.u16(r.vesting.targetBps); ww.u32(r.vesting.startHeight); ww.u16(r.vesting.days); } else ww.u8(0); });
+      if (r.vesting) { ww.u8(1); ww.u16(r.vesting.targetBps); ww.u32(r.vesting.startHeight); ww.u16(r.vesting.days); }
+      else if (r.contribution) { const ab = encodeContributionAgreement(r.contribution.agreement); ww.u8(2); ww.u16(ab.length); ww.bytes(ab, ab.length); ww.bytes(r.contribution.signature, 64); }
+      else ww.u8(0); });
     return w.finish();
   }
   if (donationSetPaysKeys(recipients)) {
@@ -431,12 +444,13 @@ export function decodeDonationSet(bytes) {
     const recipients = r.vec((rr) => {
       const x = { recipientPk: rr.bytes(RECIPIENT_KEY_BYTES), shareBps: rr.u16(), label: rr.str() };
       const has = rr.u8();
-      if (has > 1) throw new Error('a vesting flag is 0 or 1');
-      if (has) x.vesting = { targetBps: rr.u16(), startHeight: rr.u32(), days: rr.u16() };
+      if (has > 2) throw new Error('an entry flag is 0, 1 (vesting) or 2 (a contribution agreement)');
+      if (has === 1) x.vesting = { targetBps: rr.u16(), startHeight: rr.u32(), days: rr.u16() };
+      if (has === 2) { const n = rr.u16(); x.contribution = { agreement: decodeContributionAgreement(rr.bytes(n)), signature: rr.bytes(64) }; }
       return x;
     });
     if (r.at !== bytes.length) throw new Error('trailing bytes after the donation set');
-    if (!recipients.some((x) => x.vesting)) throw new Error('a vesting set names no vesting entry: it is the plain set');
+    if (!recipients.some((x) => x.vesting || x.contribution)) throw new Error('a vesting set names no vesting entry or agreement: it is the plain set');
     const stands = donationSetStands(recipients);
     if (!stands.ok) throw new Error(`that set does not stand: ${stands.why}`);
     return recipients;
@@ -517,7 +531,9 @@ export const VESTING_DAY_BLOCKS = 144;
  * holds its share scaled into what the vesting entries leave, floored, the rest of a basis point to the first of them as
  * published. A set without vesting is answered as it is. The answer is a plain set: keys, labels, shares summing to 10000.
  */
-export function vestedShares(recipients, height) {
+export function vestedShares(recipients, height, shareOf = undefined) {
+  // A SET WITH AGREEMENTS (§27A.4.2): each pays what the seats agree he vested (`shareOf`; none known: 0), with the vesting entries
+  if (Array.isArray(recipients) && recipients.some((r) => r && r.contribution)) return setSharesAt(recipients, height, shareOf || (() => 0));
   if (!Array.isArray(recipients) || !recipients.some((r) => r && r.vesting)) return recipients;
   const h = Number(height) || 0;
   const now = recipients.map((r) => {
