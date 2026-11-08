@@ -8,12 +8,13 @@ import {
   MILESTONES, REFERENCE_AGREEMENT, RETENTION_BLOCKS, T4_WINDOW_BLOCKS, agreementStands,
   encodeContributionAgreement, decodeContributionAgreement, contributionAgreementId,
   encodeContributionLeave, decodeContributionLeave, encodeContributionTermination, decodeContributionTermination,
-  baseVestedBps, contributionShare, contributionShares,
+  baseVestedBps, contributionShare, contributionShares, factsFromSeasonRounds,
 } from '../src/contribution.js';
 
 const key33 = (i) => Uint8Array.of(0x02, ...taggedHash('TEST/c-rk', Uint8Array.of(i)));
 const k32 = (s, i) => taggedHash(`TEST/${s}`, Uint8Array.of(i));
-const SITE = [k32('site', 1), k32('site', 2)], PROJECT = k32('project', 0);
+const k33 = (s, i) => Uint8Array.of(0x03, ...k32(s, i));
+const SITE = [k33('site', 1), k33('site', 2)], PROJECT = k33('project', 0);
 const START = 1000;
 const agreement = (over = {}) => ({
   recipientPk: key33(1), siteKeys: SITE, startHeight: START,
@@ -128,4 +129,19 @@ test('the set pays his vested share; what he has not vested goes to the others i
   assert.equal(contributionShares(set, () => 333).reduce((t, x) => t + x.shareBps, 0), 10000, 'always the whole set');
   const plain = [r(2, 6000), r(3, 4000)];
   assert.equal(contributionShares(plain, () => 999), plain, 'a set without agreements is answered as it is');
+});
+
+test('the facts: paid entries booked to a proven identity in counted rounds, at the round\'s census height', () => {
+  const idk = toHex(k32('ident', 1)), rk = toHex(k32('rk', 1)), rk2 = toHex(k32('rk', 2));
+  const rounds = [
+    { roundId: 'aa'.repeat(32), void: false, entries: [
+      { player: idk, roundKey: rk, stakeMsat: 100000n, frontendPk: toHex(SITE[0]) },
+      { player: rk2, roundKey: rk2, stakeMsat: 100000n },                 // a bare round key: no identity proven
+      { player: idk, roundKey: rk, stakeMsat: 100000n, bot: true },       // the test bot
+      { player: idk, roundKey: rk, stakeMsat: 0n } ] },                   // free
+    { roundId: 'bb'.repeat(32), void: true, entries: [{ player: idk, roundKey: rk, stakeMsat: 1n }] },
+    { roundId: 'cc'.repeat(32), void: false, entries: [{ player: idk, roundKey: rk, stakeMsat: 5n }] },   // no height known
+  ];
+  const facts = factsFromSeasonRounds(rounds, (rid) => (rid === 'aa'.repeat(32) ? 4321 : null));
+  assert.deepEqual(facts, [{ height: 4321, identity: idk, frontendPk: toHex(SITE[0]), grossMsat: 100000n }]);
 });

@@ -32,8 +32,9 @@ export const REFERENCE_AGREEMENT = Object.freeze({
   attributionFloorBps: 3000, tailBlocks: 52560,
 });
 
-const SITE_KEY_BYTES = 32;
-const isKey32 = (b) => b instanceof Uint8Array && b.length === SITE_KEY_BYTES;
+// a site key is a website payout key, as an Entry Contract's frontend_pk (§22A): 33 bytes, compressed
+const SITE_KEY_BYTES = 33;
+const isKey32 = (b) => b instanceof Uint8Array && b.length === SITE_KEY_BYTES && (b[0] === 2 || b[0] === 3);
 const hexOf = (k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k));
 const isU32 = (n) => Number.isInteger(n) && n >= 0 && n <= 0xffffffff;
 
@@ -41,7 +42,7 @@ const isU32 = (n) => Number.isInteger(n) && n >= 0 && n <= 0xffffffff;
 export function agreementStands(a) {
   if (!a || !isRecipientKey(a.recipientPk)) return { ok: false, why: 'an agreement names the contributor\'s recipient key (33 bytes)' };
   if (!Array.isArray(a.siteKeys) || !a.siteKeys.length || a.siteKeys.length > 256 || !a.siteKeys.every(isKey32))
-    return { ok: false, why: 'an agreement names 1 to 256 site keys, 32 bytes each' };
+    return { ok: false, why: 'an agreement names 1 to 256 site keys, 33-byte compressed keys each' };
   if (new Set(a.siteKeys.map(toHex)).size !== a.siteKeys.length) return { ok: false, why: 'a site key is named twice' };
   if (!isU32(a.startHeight)) return { ok: false, why: 'start_height is a block height' };
   const b = a.base || {};
@@ -68,7 +69,7 @@ export function encodeContributionAgreement(a) {
   w.u16(PROTOCOL_VERSION);
   w.bytes(a.recipientPk, RECIPIENT_KEY_BYTES);
   // the site keys in byte order: one agreement, one encoding
-  w.vec([...a.siteKeys].sort((x, y) => (toHex(x) < toHex(y) ? -1 : 1)), (k) => w.bytes32(k));
+  w.vec([...a.siteKeys].sort((x, y) => (toHex(x) < toHex(y) ? -1 : 1)), (k) => w.bytes(k, SITE_KEY_BYTES));
   w.u32(a.startHeight);
   w.u16(a.base.targetBps); w.u32(a.base.cliffBlocks); w.u16(a.base.days);
   for (const t of a.tranches) { w.u16(t.bps); w.u8(MILESTONES.indexOf(t.milestone)); w.u32(t.windowBlocks); w.u32(t.expiresHeight); }
@@ -82,7 +83,7 @@ export function decodeContributionAgreement(bytes) {
   if (r.u8() !== TYPE_CONTRIBUTION_AGREEMENT) throw new Error('not a contribution agreement');
   if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const recipientPk = r.bytes(RECIPIENT_KEY_BYTES);
-  const siteKeys = r.vec(() => r.bytes32());
+  const siteKeys = r.vec(() => r.bytes(SITE_KEY_BYTES));
   const startHeight = r.u32();
   const base = { targetBps: r.u16(), cliffBlocks: r.u32(), days: r.u16() };
   const tranches = MILESTONES.map(() => {
@@ -297,5 +298,26 @@ export function contributionShares(recipients, shareOf) {
   const short = DONATION_BPS_TOTAL - out.reduce((t, x) => t + x.shareBps, 0);
   const first = recipients.findIndex((r) => !r.contribution);
   if (short && first >= 0) out[first].shareBps += short;
+  return out;
+}
+
+/**
+ * THE FACTS FROM THE ROUNDS THAT COUNT (kanban #1218 / #1153: mergeSignedSeasonAccounts' rounds, accounts carrying round keys and the
+ * entries' frontend keys): one fact per paid entry booked to a proven identity (kanban #1276: `player` is an identity, not the bare round
+ * key it joined under), at its round's census height (`heightOf(roundIdHex)` -> the contract's census_height, or null when the caller
+ * cannot read it). A void round, a bot's entry and a free entry are no facts.
+ */
+export function factsFromSeasonRounds(rounds, heightOf) {
+  const out = [];
+  for (const r of rounds || []) {
+    if (!r || r.void) continue;
+    const h = heightOf(String(r.roundId).toLowerCase());
+    if (!Number.isInteger(h)) continue;
+    for (const e of r.entries || []) {
+      if (!e || e.bot === true || !(BigInt(e.stakeMsat || 0n) > 0n)) continue;
+      if (!e.roundKey || String(e.player).toLowerCase() === String(e.roundKey).toLowerCase()) continue;
+      out.push({ height: h, identity: String(e.player).toLowerCase(), frontendPk: e.frontendPk || null, grossMsat: BigInt(e.stakeMsat) });
+    }
+  }
   return out;
 }
