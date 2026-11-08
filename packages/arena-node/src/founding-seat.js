@@ -459,6 +459,8 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     membersCache = { atMs: nowMs, value };
     return value;
   }
-  return { tick: async () => (lastTick = await tick()), readiness, members, take: (m) => (current ? current.founding.take(m) : { ok: false, status: 404, why: 'no founding runs' }),
+  /** The node keys (hex) the founding in progress seats, for the P2P tunnels' port rule (kanban #1358): none when no founding runs. */
+  const seatedKeys = () => { try { const st = current && current.founding.state ? current.founding.state() : null; return st && !st.void && !st.federation ? st.seated.map((x) => x.node) : []; } catch { return []; } };
+  return { tick: async () => (lastTick = await tick()), readiness, members, seatedKeys, take: (m) => (current ? current.founding.take(m) : { ok: false, status: 404, why: 'no founding runs' }),
     state: () => (current ? { trigger: current.trigger, via: current.via, ...current.founding.state() } : null) };
 }
