@@ -59,3 +59,28 @@ export function stakeWithinCeiling({ entries, stakeSats, maxPlayers = MAX_PLAYER
   const ok = stake <= low.ceilingSats;
   return { ok, ceilingSats: low.ceilingSats, why: ok ? `within the census's ceiling: ${low.why}` : `a ${stake} sat stake is over what this census supports - ${low.why}` };
 }
+
+/**
+ * A ROUND'S GROSS CEILING (§0A.7b RULED 2026-11-07, kanban #1293/#1329): max_round_pool of its census - the ceiling's bracket times the players a round
+ * holds - in sat, or null on a test network (it shows the ceiling and refuses nothing, ruling A) or for a free round. A market round's filled volume
+ * plus an order may not pass it: "Before this a book round could hold a thousand 100,000-sat orders under a committee bonded for a 1,000-sat bracket."
+ */
+export function maxRoundPoolSats({ entries, stakeSats, networkId = null, maxPlayers = MAX_PLAYERS_PER_ROUND }) {
+  if (networkId && isTestNetwork(networkId)) return null;
+  if (BigInt(stakeSats) === 0n) return null;
+  const c = stakeWithinCeiling({ entries, stakeSats, maxPlayers });
+  return c.ceilingSats * BigInt(maxPlayers);
+}
+/**
+ * AN ATTESTED ROUND'S GROSS AGAINST ITS ATTESTORS (§0A.7a RULED 2026-11-07, kanban #1292/#1328): gross <= Σ attestor_bond / 4, as §5A.10 caps a game
+ * round against its committee - what one attestor who signs both sides could take is bounded by what the contradiction proof slashes. `bondsSats` each
+ * attestor's bond (drawn attestors: their census bonds). null on a test network, as max_round_pool (#1329): shown, nothing refused.
+ */
+export function attestedGrossCapSats({ bondsSats, networkId = null }) {
+  if (networkId && isTestNetwork(networkId)) return null;
+  return (bondsSats || []).reduce((t, b) => t + BigInt(b || 0n), 0n) / 4n;
+}
+/** The smaller of two caps, null meaning none. */
+export const minCap = (a, b) => (a === null || a === undefined ? (b ?? null) : b === null || b === undefined ? a : (BigInt(a) < BigInt(b) ? BigInt(a) : BigInt(b)));
+/** May an order of `orderSats` join a round whose filled volume is `filledSats` under a pool of `poolSats` (null: no ceiling)? */
+export const orderWithinPool = ({ filledSats, orderSats, poolSats }) => poolSats === null || poolSats === undefined || BigInt(filledSats) + BigInt(orderSats) <= BigInt(poolSats);

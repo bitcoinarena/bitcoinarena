@@ -34,7 +34,7 @@ import { bookLedger, positionFilled } from '../../arena-protocol/src/book-ledger
 import { entryFeeBpsOf, feeBpsOf, donationBpsOf, reserveBpsOf } from '../../arena-protocol/src/fee.js';
 import { marketBps } from '../../arena-protocol/src/fee-proposal.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
-import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
 import { pluginForRound } from './plugins.js';
 import { marketOfRound } from '../../arena-protocol/src/manifest.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
@@ -64,6 +64,12 @@ export const REPLAY_RETRY_MS = 10 * 60 * 1000;
 /** A refusal no later block can lift: the stake lock is already older than the freshness window at the height it is verified at. */
 const REPLAY_NEVER = /blocks below the height \d+ it is verified at/;
 /** Which orders may be asked again (kanban #1087): `allow(o)` false while a refusal holds, `refused(o, why)` answers whether it is for good. */
+/** What a seat signs over its GET /batch-proposal answer (kanban #1330): round, batch k and the order ids it reports, sorted. */
+export function proposalDigest(roundIdBytes, k, orderIds) {
+  const ids = [...orderIds].map(String).sort();
+  return taggedHash('ARENA/v1/BatchProposal', new TextEncoder().encode(`${toHex(roundIdBytes)}|${String(k)}|${ids.join(',')}`));
+}
+
 export class ReplayGate {
   constructor({ now = () => Date.now(), retryMs = REPLAY_RETRY_MS, max = 4096 } = {}) { this.now = now; this.retryMs = retryMs; this.max = max; this.held = new Map(); }
   allow(o) { const h = this.held.get(o); return !h || h.until <= this.now(); }
@@ -109,8 +115,10 @@ class Conflict extends Error {}
 
 export class OrderBook {
   constructor(round, { plugins, peersFor = () => [], fetcher = (u, o) => fetch(u, o), now = () => Date.now(), intervalMs = Number(BATCH_MS), feesFor = null,
-    syncTimeoutMs = 4000, fetchTimeoutMs = BATCH_FETCH_MS, maxLagMs = null } = {}) {
+    syncTimeoutMs = 4000, fetchTimeoutMs = BATCH_FETCH_MS, maxLagMs = null, poolCapFor = null } = {}) {
     this.round = round;
+    // THE ROUND'S GROSS CEILING (kanban #1329): `poolCapFor(contract, roundIdBytes)` -> max_round_pool in sat, or null (no ceiling: a test network)
+    this.poolCapFor = poolCapFor;
     // A LEADER'S PEER THAT DOES NOT ANSWER does not hold the batch up (kanban #1150: the proposal fetches had no timeout)
     this.fetchTimeoutMs = fetchTimeoutMs;
     // HOW FAR BEHIND NOW A BATCH IS STILL SIGNED (kanban #1150: no bound on k - a leader could post a back-dated free k once the outcome
@@ -208,12 +216,23 @@ export class OrderBook {
     // every entry of the round and read both its locks, 2.7 s of processor in 90 s, for rows the insert then ignored)
     const fresh = this.db.prepare('SELECT entry_id, contract FROM entries WHERE round_id = ? AND entry_id NOT IN (SELECT entry_id FROM market_cancels) '
       + 'AND lower(hex(entry_id)) NOT IN (SELECT order_id FROM market_orders WHERE round_id = ?) ORDER BY entry_id').all(roundIdBytes, Buffer.from(roundIdBytes));
+    // A MARKET ROUND'S GROSS UNDER §5A.10's CEILING (§0A.7b RULED 2026-11-07, kanban #1293/#1329): an order whose stake would take the round's
+    // tradable volume past max_round_pool of its census is not tradable here - in entry id order, as every seat holding the same entries reads them
+    let cap = null, filledMsat = 0n;
+    if (typeof this.poolCapFor === 'function' && fresh.length) {
+      try { const m = this.market(roundIdBytes); cap = m && m.ok ? this.poolCapFor(m.contract, roundIdBytes) : null; } catch { cap = null; }
+      if (cap !== null && cap !== undefined) for (const r of this.db.prepare('SELECT order_id FROM market_orders WHERE round_id = ?').all(Buffer.from(roundIdBytes))) {
+        try { const e = decodeEntryContract(new Uint8Array(this.round.entry(fromHex(r.order_id)))); filledMsat += BigInt(e.stakeMsat || 0n); } catch { /* not read: not counted */ }
+      }
+    }
     for (const r of fresh) {
       const entryId = new Uint8Array(r.entry_id), entry = decodeEntryContract(new Uint8Array(r.contract));
       if (!isOrder(entry)) continue;
       const stake = this.round.stakeLock(entryId);
       const fee = this.round.feeLock ? this.round.feeLock(entryId) : null;
       if (!stake || (entry.feeMsat > 0n && !fee)) continue;
+      if (cap !== null && cap !== undefined && filledMsat + BigInt(entry.stakeMsat || 0n) > BigInt(cap) * 1000n) continue;
+      filledMsat += BigInt(entry.stakeMsat || 0n);
       put.run(toHex(entryId), Buffer.from(roundIdBytes), '', Math.max(stake.verifiedMs || 0, fee ? fee.verifiedMs || 0 : 0));
     }
   }
@@ -277,9 +296,18 @@ export class OrderBook {
     const events = this.db.prepare('SELECT kind, body FROM market_book_events WHERE round_id = ? AND batch IS NULL AND received_ms < ? ORDER BY event_id').all(rid, cutoff);
     const pending = this.db.prepare('SELECT k, batch_id, record, own_sig FROM market_batches WHERE round_id = ? AND certificate IS NULL ORDER BY k').all(rid)
       .map((r) => ({ k: String(r.k), batchId: r.batch_id, record: JSON.parse(r.record), ownSig: r.own_sig }));
+    // SIGNED, AND REMEMBERED (§0A.7b.5 RULED 2026-11-07, kanban #1313/#1330): the seat signs its answer - the orders it reports for batch k before
+    // the cutoff - and keeps them, so it refuses a batch that leaves one out (#signGuard): omission by the leader was silence, and a free look at
+    // the uniform price. Only once the cutoff has passed: what it reports then is what the batch must carry.
+    if (this.now() >= cutoff && orders.length) {
+      this.db.exec('CREATE TABLE IF NOT EXISTS market_reported (round_id BLOB NOT NULL, k INTEGER NOT NULL, order_id TEXT NOT NULL, PRIMARY KEY (round_id, k, order_id))');
+      const put = this.db.prepare('INSERT OR IGNORE INTO market_reported (round_id, k, order_id) VALUES (?, ?, ?)');
+      for (const id of orders) put.run(rid, Number(k), id);
+    }
+    const signature = toHex(schnorr.sign(proposalDigest(roundIdBytes, k, orders), this.round.identity.secret));
     return { seat: toHex(this.round.pubkey), k: String(k), orders,
       cancels: events.filter((e) => e.kind === 'cancel').map((e) => JSON.parse(e.body)),
-      sells: events.filter((e) => e.kind === 'sell').map((e) => JSON.parse(e.body)), pending };
+      sells: events.filter((e) => e.kind === 'sell').map((e) => JSON.parse(e.body)), pending, signature };
   }
 
   /** The round's entry close (ms), or Infinity when its contract cannot be read here. */
@@ -365,6 +393,10 @@ export class OrderBook {
    * none below k undecided, and no order, cancel or sell of the set in another batch here (one signed sell executed twice).
    */
   #signGuard(rid, k, c, record) {
+    // A BATCH THAT LEAVES OUT AN ORDER THIS SEAT REPORTED BEFORE THE CUTOFF (kanban #1330): refused - a leader that then cannot reach the threshold
+    // voids, and the next leader takes the union
+    const left = this.#omitted(rid, k, record);
+    if (left.length) return refuse(`batch ${k} leaves out order ${left[0].slice(0, 16)} this seat reported before the cutoff: it signs no batch without it`);
     const above = this.db.prepare('SELECT k, certificate FROM market_batches WHERE round_id = ? AND k > ? ORDER BY k DESC LIMIT 1').get(rid, k);
     if (above) return refuse(`this seat holds batch ${above.k} (${above.certificate ? 'certified' : 'signed'}): it signs no batch below one it holds`);
     const pendingBefore = this.db.prepare('SELECT k FROM market_batches WHERE round_id = ? AND k < ? AND certificate IS NULL').get(rid, k);
@@ -374,6 +406,30 @@ export class OrderBook {
     const eventAt = this.db.prepare('SELECT kind, batch FROM market_book_events WHERE event_id = ?');
     for (const id of c.events) { const r = eventAt.get(id); if (r && r.batch !== null && Number(r.batch) !== k) return refuse(`that ${r.kind} ${id.slice(0, 16)} is in batch ${r.batch} at this seat: a signed cancel or sell is in one batch only`); }
     return null;
+  }
+
+  /** The orders this seat reported up to batch k that `record` leaves out and no earlier batch held here carries (kanban #1330). */
+  #omitted(rid, k, record) {
+    let reported = [];
+    try { reported = this.db.prepare('SELECT order_id FROM market_reported WHERE round_id = ? AND k <= ?').all(rid, k).map((r) => r.order_id); } catch { reported = []; }
+    if (!reported.length) return [];
+    const inBatch = new Set(record.orders || []), placed = this.db.prepare('SELECT batch FROM market_orders WHERE order_id = ?');
+    return reported.filter((id) => { if (inBatch.has(id)) return false; const r = placed.get(id); return !(r && r.batch !== null && Number(r.batch) < k); });
+  }
+
+  /**
+   * POST /batch AT A SEAT THAT MAY LAG (kanban #1330, measured in book-sync: two seats that never received batch A's certificate held its Up order as
+   * reported and unbatched, so they refused batch B as leaving it out - 5 signatures of 7): a batch that would be refused for an omission is
+   * checked again after this seat read the round's certificates from the other seats, so an order an earlier certified batch carries is not
+   * taken for one left out.
+   */
+  async acceptSynced(roundIdBytes, record) {
+    try {
+      const m = this.market(roundIdBytes);
+      const c = m.ok ? this.#check(roundIdBytes, m, record) : null;
+      if (this.syncBeforeSign !== false && c && c.ok && this.#omitted(Buffer.from(roundIdBytes), Number(c.k), record).length) await this.sync(roundIdBytes, { force: true });
+    } catch { /* the read is best effort: accept decides on what this seat holds */ }
+    return this.accept(roundIdBytes, record);
   }
 
   /** POST /batch: the leader's set for batch k - held here and signed, or refused by name. */
@@ -683,7 +739,7 @@ export class OrderBook {
     const idc = this.#recordId(roundIdBytes, record);
     if (!idc.ok) return idc;
     record.leaderSig = toHex(schnorr.sign(fromHex(idc.id), this.round.identity.secret));
-    const own = this.accept(roundIdBytes, record);
+    const own = await this.acceptSynced(roundIdBytes, record);
     if (!own.ok) return own;
     const answers = await Promise.all(peers.map((b) => this.#post(b, `/batch?round=${rid}`, record)));
     const tSigned = this.now();

@@ -70,7 +70,7 @@ import { creatorSignatureStands, seriesCreatorStands } from '../../arena-protoco
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { explorerAgrees } from '../../arena-client/src/explorer-check.js';
 import { rulesStand } from '../../arena-protocol/src/rules.js';
-import { stakeWithinCeiling, isTestNetwork } from '../../arena-protocol/src/census-health.js';
+import { stakeWithinCeiling, isTestNetwork, maxRoundPoolSats, attestedGrossCapSats, minCap } from '../../arena-protocol/src/census-health.js';
 import { pruneTranscripts, pruneUnusedRounds, PRUNE_EVERY_MS } from './transcript-prune.js';
 import { maxPlayersPerRound } from '../../arena-protocol/src/replay-budget.js';
 import { bondWeightedMedian } from '../../arena-protocol/src/census-median.js';
@@ -276,7 +276,7 @@ import { encodeManifest, decodeManifest, gameIdOf, MARKET_SOURCE_KIND, RESULT_TY
 import { gameTypeOf, gameInfoStands } from '../../arena-protocol/src/game-info.js';
 import { genesisFor, committeesStand } from '../../arena-protocol/src/genesis.js';
 import { nonceGen as musigNonceGen, bondSigningContext as musigBondContext, bondPartialSign as musigBondPartial } from './musig2.js';
-import { marketWindowOf, decodeAttestation, attestationStands, attestationBodyId, outcomeStanding, marketTerminal, attestationTimely, roundTermsOf } from '../../arena-protocol/src/attested.js';
+import { marketWindowOf, decodeAttestation, attestationStands, attestationBodyId, outcomeStanding, marketTerminal, attestationTimely, roundTermsOf, backupOpensAtMs } from '../../arena-protocol/src/attested.js';
 import { verifyEd25519 } from './ed25519.js';
 import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync, readdirSync, renameSync, appendFileSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
@@ -732,6 +732,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const attestedOf = (c) => { const f = pluginForRound(c, hosted); return f.ok && f.attested ? f.plugin : null; };
   // AN ATTESTATION IN (POST /outcome, and a drawn seat's own combined one - kanban #630): held only if it stands for its round, timely,
   // and kept; { held, fresh, why, now } or { held: false, status, why }
+  // THE BACKUP SET IS CONSULTED (§0A.7a, kanban #1328): from resolve + deadline/2 on this seat's clock, while it holds no attestation
+  const backupOpenFor = (manifest, c) => {
+    if (!manifest.backupAttestors || !manifest.marketTerms) return false;
+    try {
+      const opens = backupOpensAtMs({ entryCloseMs: c.entryCloseMs, terms: roundTermsOf(manifest, c) });
+      return BigInt(Math.floor(round.now())) >= opens && heldOutcomes(round, new Uint8Array(roundIdOf(c))).length === 0;
+    } catch { return false; }
+  };
   const holdOutcome = (target, raw, a, valued) => {
     const row = round.get(target);
     if (!row) return { held: false, status: 404, why: 'this node holds no such round' };
@@ -740,7 +748,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!plugin) return { held: false, status: 409, why: 'that round\'s game is not an attested game this node hosts: its result is a replayed run, not an attestation' };
     // A TEMPLATE'S ROUND (feature 5): its attestors name an index into the round's own outcomes, so the round is handed in
     const stands = valued ? valueAttestationStands(a, { manifest: marketOfRound(plugin.manifest, c), roundIdBytes: new Uint8Array(roundIdOf(c)), verify: verifyEd25519 })
-      : attestationStands(a, { manifest: plugin.manifest, roundIdBytes: new Uint8Array(roundIdOf(c)), round: c, ...drawnAttestCheck(plugin.manifest, roundIdOf(c)) });
+      : attestationStands(a, { manifest: plugin.manifest, roundIdBytes: new Uint8Array(roundIdOf(c)), round: c, ...drawnAttestCheck(plugin.manifest, roundIdOf(c)),
+        backupOpen: backupOpenFor(plugin.manifest, c) });
     if (!stands.ok) return { held: false, status: 409, why: stands.why };
     // AND NOT BEFORE THE LAST PICK (§0A.7a slice 2): the round's entries closed on this seat's clock, and the outcome seen after
     // AND NOT BEFORE THE MARKET'S RESOLUTION TIME, when its manifest names one
@@ -2419,7 +2428,31 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE MARKET ORDER BOOK: orders taken here, each batch's set agreed with the round's other seats
   let polymarket = null;   // the Polymarket-compatible router (kanban #736), made on its first request
   const orderBook = new OrderBook(round, { plugins: hosted, intervalMs: orderBatchMs, now: () => round.now(), feesFor,
-    peersFor: (rid) => committeePeers(rid, 'settlement', { orElse: dkg.peers || [] }).peers });
+    peersFor: (rid) => committeePeers(rid, 'settlement', { orElse: dkg.peers || [] }).peers,
+    // THE ROUND'S GROSS CEILING (kanban #1329): max_round_pool of the round's own census - none on a test network, which shows it and refuses nothing
+    // and a MARKET ON A GAME (§0A.7d) at its SOURCE round's max_round_pool: its census and its stake, when this seat holds that round
+    poolCapFor: (contract, rid) => {
+      if (isTestNetwork(contract.networkId)) return null;
+      let of = { contract, rid };
+      if (contract.sourceRoundId instanceof Uint8Array && contract.sourceRoundId.length === 32) {
+        const row = round.get(contract.sourceRoundId);
+        if (!row) return 0n;               // a source this seat cannot read: no order is tradable here past nothing
+        try { of = { contract: decodeRoundContract(new Uint8Array(row.contract)), rid: contract.sourceRoundId }; } catch { return 0n; }
+      }
+      const c = roster.censusFor(of.rid);
+      const pool = c && c.ok ? maxRoundPoolSats({ entries: c.entries, stakeSats: BigInt(of.contract.stakeMsat || 0n) / 1000n, networkId: of.contract.networkId }) : null;
+      // AND AN ATTESTED ROUND UNDER A QUARTER OF ITS ATTESTORS' BONDS (§0A.7a, kanban #1328): drawn attestors are seats, their bonds the census's.
+      // Key-named attestors post no bond yet (before mainnet): no attestor cap for them until the ruling on #1365
+      let att = null;
+      try {
+        const plugin = attestedOf(contract);
+        if (plugin && isDrawnAttest(plugin.manifest)) {
+          const d = roster.attestorsFor(rid);
+          att = d.ok ? attestedGrossCapSats({ bondsSats: d.attestors.map((x) => x.bondSats), networkId: contract.networkId }) : (isTestNetwork(contract.networkId) ? null : 0n);
+        }
+      } catch { att = null; }
+      return minCap(pool, att);
+    } });
   // AN ORDER A CERTIFIED BATCH NAMES THAT NEVER REACHED THIS SEAT (kanban #620, measured 2026-10-24: round 42835aaa never settled - fed2-3
   // and fed2-7 held no entry 008e278a of batch 3585700432, refused its certificate - "this seat holds no entry 008e278ac2bfff47" - and
   // rebuilt settlement 8f0144a1 where the others built ffabdc94): the entry from the seat that handed the batch, kept when its bytes hash
@@ -10547,7 +10580,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let body = {};
         try { const raw = Buffer.from(await read(req)).toString('utf8'); body = raw ? JSON.parse(raw) : {}; } catch { return text(res, 400, 'that body is not JSON'); }
         let got;
-        if (url.pathname === '/batch') got = orderBook.accept(rid, body);
+        if (url.pathname === '/batch') got = await orderBook.acceptSynced(rid, body);
         else if (url.pathname === '/batch-certificate') got = orderBook.certify(rid, body);
         else if (url.pathname === '/batch-void') got = orderBook.applyVoid(rid, body);
         else if (url.pathname === '/sell') got = orderBook.ask(rid, 'sell', body);

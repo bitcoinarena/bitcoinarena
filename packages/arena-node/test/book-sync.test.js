@@ -42,7 +42,8 @@ test('a seat that missed a batch certificate reads the other seats\' batches bef
     const up = await lockAndPlay(w, player(1), { noMarks: true, pick: YES, order: { price: 60000n } });
     const kA = await nextK();
     const leadA = w.nodes.find((d) => d.orderBook.leads(w.rid, kA));
-    const lagging = w.nodes.filter((d) => d !== leadA).slice(-2);
+    // the two lagging seats lead none of the next batches (kanban #1330: a leader reads what it lacks before it signs its own set, so a lagging leader would catch up)
+    const lagging = w.nodes.filter((d) => d !== leadA && ![1, 2, 3].some((i) => d.orderBook.leads(w.rid, kA + i))).slice(-2);
     const healthy = w.nodes.filter((d) => !lagging.includes(d));
     const peersA = leadA.orderBook.peersFor;
     leadA.orderBook.peersFor = (r) => peersA(r).filter((b) => !lagging.some((d) => b === base(d)));
@@ -72,10 +73,18 @@ test('a seat that missed a batch certificate reads the other seats\' batches bef
       for (const x of asks) assert.doesNotMatch(x.u, /after=/, 'a first read asked with a cursor'); }
     // 2. BATCH B: ONE DOWN ORDER, at all seven - it crosses the Up order resting at the five
     const down = await lockAndPlay(w, player(2), { noMarks: true, pick: NO, order: { price: 45000n } });
-    const kB = await nextK();
-    const b = await w.nodes.find((d) => d.orderBook.leads(w.rid, kB)).orderBook.lead(w.rid, kB);
+    // batch B is led by a seat that is not lagging: the next batch whose leader is one of the five
+    let kB = await nextK();
+    while (lagging.some((d) => d.orderBook.leads(w.rid, kB))) kB = await nextK();
+    // the two lagging seats stay cut off from batch A here (their certificate reads answer nothing): asked to sign B, which leaves out the Up
+    // order they hold unbatched, they refuse it (kanban #1330) - a seat that can read A first signs (acceptSynced) - and B is certified by five
+    // they stay lagging until step 6: no read before they sign (syncBeforeSign off), or the first batch they sign would bring A to them
+    const leadB = w.nodes.find((d) => d.orderBook.leads(w.rid, kB));
+    assert.equal(lagging.includes(leadB), false, 'a lagging seat leads batch B');
+    for (const d of lagging) d.orderBook.syncBeforeSign = false;
+    const b = await leadB.orderBook.lead(w.rid, kB);
     assert.equal(b.ok, true, b.why);
-    assert.deepEqual([b.certified, b.heldBy, b.orderIds], [true, 7, [toHex(down.eid)]]);
+    assert.deepEqual([b.certified, b.heldBy, b.orderIds], [true, 5, [toHex(down.eid)]]);
     // THE NEXT READ: the four other healthy seats are asked after=A and hand batch B only; the two lagging ones, which listed nothing to
     // that seat before, are asked for the whole list - it is B alone there too
     { asks.length = 0;
@@ -158,6 +167,7 @@ test('a seat that missed a batch certificate reads the other seats\' batches bef
     // 6. WITH ITS PEERS HEARD: batch A taken through certify, the same book as the five, and one settlement built by all seven. The
     // lagging seat holds batch B and not A: its cursor is never its highest batch held - it was taken from no seat's list yet, so
     // every seat is asked for the whole list and A comes with it
+    for (const d of lagging) d.orderBook.syncBeforeSign = true;
     asks.length = 0;
     const unspyLag = spy(lagging[0].orderBook);
     const plans = await Promise.all(w.nodes.map((d) => d.settlements.message(w.rid)));
