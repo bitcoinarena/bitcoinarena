@@ -66,3 +66,19 @@ test('kanban #1349: regtest reads the test scale - T1 at 3 identities and a 6-bl
   assert.equal(a.shareAt(agreement, START + 2 + 6, 'regtest').shareBps, 250, 'T1 at the third identity\'s round plus 6');
   assert.equal(a.shareAt(agreement, START + 10000, 'testnet4').shareBps, 0, 'testnet4 keeps 1,000 identities');
 });
+
+// KANBAN #1282 (§5A.10, the income term): the season's counted rounds as the book keeps them; two seats with the same rounds read the same income
+test('#1282 the income term from the book: rounds with census height in the season, the same at two seats; a round outside it is not counted', async () => {
+  const { incomeSeatSats, INCOME_SEASON_BLOCKS } = await import('../../arena-protocol/src/census-health.js');
+  const seat = () => { const b = createContributionBook({ db: new DatabaseSync(':memory:'), accountsFor: async () => merged(rounds), heightOf }); b.keep(merged(rounds)); return b; };
+  const a = seat(), b = seat();
+  // rounds sit at census heights START .. START + 999, one each, 100 sat a stake (5 % node fee = 5 sat a round), census of 10
+  const top = START + 999;
+  const all = incomeSeatSats({ rounds: a.roundsBetween(top - INCOME_SEASON_BLOCKS, top), censusSize: 10 });
+  const half = incomeSeatSats({ rounds: a.roundsBetween(START + 499, top), censusSize: 10 });
+  const other = incomeSeatSats({ rounds: b.roundsBetween(top - INCOME_SEASON_BLOCKS, top), censusSize: 10 });
+  console.log('  MEASURED #1282 book:', JSON.stringify({ rounds: a.roundsBetween(top - INCOME_SEASON_BLOCKS, top).length, all: String(all), half: String(half), otherSeat: String(other) }));
+  assert.equal(all, 1000n * 5n / 10n);
+  assert.equal(half, 500n * 5n / 10n, 'only the rounds above the window\'s start');
+  assert.equal(other, all);
+});
