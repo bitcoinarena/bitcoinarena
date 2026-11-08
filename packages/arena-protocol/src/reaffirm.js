@@ -88,3 +88,17 @@ export function reaffirmedBonds(view, entries, { atHeight, networkId, verify } =
   });
   return found;
 }
+
+/**
+ * FOLLOWING A SUCCESSOR NETWORK (§27A.8.5 RULED 2026-11-07, kanban #1336): "A client MUST ask (never follow automatically) when the
+ * certificate's re-affirmed weight is under 66 % of the ancestor census, a figure that is on chain". `reaffirmedSats` the bonded weight
+ * whose re-affirmations the certificate counts, `ancestorSats` the ancestor census's whole weight (both read from the chain).
+ * Answers { ask, bps }: ask true below 6600 bps, and whenever either figure is unreadable - a client never follows on a guess.
+ */
+export const SUCCESSOR_FOLLOW_BPS = 6600;
+export function successorNeedsAsking({ reaffirmedSats, ancestorSats }) {
+  let r, a; try { r = BigInt(reaffirmedSats); a = BigInt(ancestorSats); } catch { return { ask: true, bps: null, why: 'the weights are not read' }; }
+  if (a <= 0n || r < 0n) return { ask: true, bps: null, why: 'no ancestor weight' };
+  const bps = Number((r * 10000n) / a);
+  return bps < SUCCESSOR_FOLLOW_BPS ? { ask: true, bps, why: `only ${(bps / 100).toFixed(2)} % of the ancestor census re-affirmed: under 66 %` } : { ask: false, bps };
+}
