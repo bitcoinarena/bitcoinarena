@@ -44,8 +44,7 @@ export class ContributionsPanel extends React.Component {
   componentWillUnmount() { clearInterval(this.timer); }
   async read() {
     try {
-      const tip = await this.props.api.get('/chain-tip');
-      const got = await this.props.api.get(`/contribution-shares?height=${Number(tip.height) + 1}`);
+      const got = await this.props.api.get('/contribution-shares?height=tip');
       this.setState({ got, why: '' });
     } catch (e) { this.setState({ why: e.message }); }
   }

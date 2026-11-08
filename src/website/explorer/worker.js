@@ -261,9 +261,7 @@ async function readMetrics(env) {
 }
 async function readContributions() {
   const got = await Promise.all(SEATS.map(async (seat) => {
-    const t = await ask(`${seat}/chain-tip`, READ_MS);
-    if (!t.body || !Number.isInteger(t.body.height)) return null;
-    const a = await ask(`${seat}/contribution-shares?height=${t.body.height + 1}`, READ_MS);
+    const a = await ask(`${seat}/contribution-shares?height=tip`, READ_MS);
     return a.body && Array.isArray(a.body.shares) ? a.body : null;
   }));
   const answered = got.filter(Boolean);

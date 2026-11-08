@@ -14,7 +14,7 @@
  *
  *   KEYS=<dir of contribution-devnet-keys.mjs> DEVNET_DIR DEVNET_BASE_PORT PAYER_DIR PAYER_RPC INVITE_FILE WASM_PKG LNCLI node tools/contribution-devnet.mjs
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, openSync, mkdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,7 +36,8 @@ const CONTROL = `http://127.0.0.1:${PLAN.control}`;
 const say = (o) => console.log(`#1346 ${JSON.stringify({ at: new Date().toISOString().slice(11, 19), ...o })}`);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const getJson = async (url, ms = 10000) => { const r = await fetch(url, { signal: AbortSignal.timeout(ms) }); if (!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0, 160)}`); return r.json(); };
-const tip = async () => (await getJson(`${SEATS[0]}/chain-tip`)).height;
+// THE TIP from the devnet's own bitcoind (a seat has no tip door)
+const tip = async () => Number(String(spawnSync(join(env.BITCOIN_BIN || '', 'bitcoin-cli'), ['-regtest', `-datadir=${join(D, 'btc')}`, `-rpcport=${PLAN.rpc}`, 'getblockcount'], { encoding: 'utf8', timeout: 30000 }).stdout).trim());
 const who = JSON.parse(readFileSync(join(K, 'contributor.json'), 'utf8'));
 const setBytes = fromHex(readFileSync(join(K, 'set.hex'), 'utf8').trim());
 const SET_ID = toHex(donationSetId(decodeDonationSetBody(setBytes.slice(0, -64)).recipients));
