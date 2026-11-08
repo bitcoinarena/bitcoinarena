@@ -39,7 +39,7 @@ import { HOSTED } from './plugins/hosted.js';
 import { serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import { publicationOutput } from '../../arena-protocol/src/publication.js';
 import { roundId } from '../../arena-protocol/src/contracts.js';
-import { dutyMarkerOutput, backupMarkerOutput, dutyOrder, daySlotOf, DUTY_PROOF_RANKS } from '../../arena-protocol/src/duty.js';
+import { dutyMarkerOutput, backupMarkerOutput, dutyDrawOrder, daySlotOf, DUTY_PROOF_RANKS } from '../../arena-protocol/src/duty.js';
 import { creatorMessage } from '../../arena-protocol/src/creator.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -49,7 +49,10 @@ const NODES = Array.from({ length: 12 }, (_, i) => i + 1);
 // names another rank's key as the creator (a posting the proof rule does not take).
 const DUTY_ITEM = 'nextblock-day';
 const dutySlotOf = (c) => daySlotOf(Number(c.startTimeMs)) - 1;
-const dutyOrderOf = (c) => dutyOrder({ networkId: NETWORK_ID_REGTEST, slot: dutySlotOf(c), nodeKeys: NODES.map(keyFor), sw: null });
+// THE DUTY ORDER IS DRAWN BY BOND (kanban #1325): over the census entries this world's bonds make, one census per protocol version
+const censusEntriesByVersion = new Map();
+const censusEntriesOf = (v) => { if (!censusEntriesByVersion.has(v)) censusEntriesByVersion.set(v, rootFor(bondsAt(v), null, { protocolVersion: v }).entries); return censusEntriesByVersion.get(v); };
+const dutyOrderOf = (c) => dutyDrawOrder({ networkId: NETWORK_ID_REGTEST, slot: dutySlotOf(c), entries: censusEntriesOf(c.protocolVersion ?? STALL_VERSION), sw: null });
 const asDuty = (c, rank = 1) => ({ ...c, creatorPubkey: dutyOrderOf(c)[rank - 1] });
 const rankOf = (c) => dutyOrderOf(c).findIndex((k) => toHex(k) === toHex(c.creatorPubkey)) + 1;
 /**

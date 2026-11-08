@@ -4,7 +4,7 @@
 // slot's node; a marker in the chain or mempool says a slot is posted; nobody else posts.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { slotOf, slotStartMs, targetWindow, anchorHeight, dutyOrder, dutyMarkerOutput, dutyMarkersOf, itemTag, slotsToPost,
+import { slotOf, slotStartMs, targetWindow, anchorHeight, dutyOrder, dutyDrawOrder, dutyMarkerOutput, dutyMarkersOf, itemTag, slotsToPost,
   DUTY_SLOT_MS, DUTY_MISS_GRACE_MS } from '../src/duty.js';
 import { toHex } from '../src/hash.js';
 
@@ -83,7 +83,9 @@ test('a duty round: the marker of a duty item for its day, its creator within th
   const keys = Array.from({ length: 10 }, (_, i) => schnorr.getPublicKey(b32(i + 1)));
   const start = BigInt(Date.UTC(2026, 10, 3, 9, 15));                  // the round starts 2026-11-03 09:15Z
   const d = daySlotOf(Number(start)) - 1;                               // posted by day d, the day before
-  const order = dutyOrder({ networkId: NET, slot: d, nodeKeys: keys, sw: null });
+  // the census as entries, each key its own bond (kanban #1325: the duty order is drawn by bond outpoint, bond-weighted)
+  const entries = keys.map((k, i) => ({ pubkey: k, txid: b32(0x60 + i), vout: i, bondSats: 1_000_000n }));
+  const order = dutyDrawOrder({ networkId: NET, slot: d, entries, sw: null });
   const tx = (outs) => serializeSpend({ inputs: [{ txid: b32(7), vout: 0, sequence: 0xffffffff }], outputs: outs, witnesses: [[new Uint8Array(64)]] });
   const sid = b32(0x5e);
   const primary = tx([seriesPublicationOutput(sid), dutyMarkerOutput(d, 'updown-day')]);
@@ -97,15 +99,15 @@ test('a duty round: the marker of a duty item for its day, its creator within th
   assert.equal(Object.keys(DUTY_PROOF_ITEMS).length, 6, 'three apps, a day item and an emergency item each');
   // the round: its creator's rank in the day's order over the census keys
   const round = (rank, over = {}) => ({ networkId: NET, startTimeMs: start, creatorPubkey: order[rank - 1], ...over });
-  for (const rank of [1, 2, 3]) { const r = dutyRoundStands({ contract: round(rank), marker: m, orderKeys: keys, sw: null }); assert.equal(r.ok, true, r.why); assert.equal(r.rank, rank); }
+  for (const rank of [1, 2, 3]) { const r = dutyRoundStands({ contract: round(rank), marker: m, orderEntries: entries, sw: null }); assert.equal(r.ok, true, r.why); assert.equal(r.rank, rank); }
   assert.equal(DUTY_PROOF_RANKS, 3);
-  assert.match(dutyRoundStands({ contract: round(4), marker: m, orderKeys: keys, sw: null }).why, /rank 4 of its day's duty order; a duty posting is by one of the first 3/);
-  assert.match(dutyRoundStands({ contract: round(1), marker: m, orderKeys: keys.filter((k) => k !== order[0]), sw: null }).why, /not in the round's census/);
-  assert.match(dutyRoundStands({ contract: round(1), marker: null, orderKeys: keys, sw: null }).why, /no duty marker/);
-  assert.match(dutyRoundStands({ contract: { networkId: NET, startTimeMs: start }, marker: m, orderKeys: keys, sw: null }).why, /names no creator/);
+  assert.match(dutyRoundStands({ contract: round(4), marker: m, orderEntries: entries, sw: null }).why, /rank 4 of its day's duty order; a duty posting is by one of the first 3/);
+  assert.match(dutyRoundStands({ contract: round(1), marker: m, orderEntries: entries.filter((e) => e.pubkey !== order[0]), sw: null }).why, /not in the round's census/);
+  assert.match(dutyRoundStands({ contract: round(1), marker: null, orderEntries: entries, sw: null }).why, /no duty marker/);
+  assert.match(dutyRoundStands({ contract: { networkId: NET, startTimeMs: start }, marker: m, orderEntries: entries, sw: null }).why, /names no creator/);
   // the day: the marker's slot posts the next day; a round of another day under that marker is none of its posting
-  assert.match(dutyRoundStands({ contract: round(1, { startTimeMs: BigInt(dayStartMs(d + 2)) }), marker: m, orderKeys: keys, sw: null }).why, /the round starts on 2026-11-04/);
-  assert.equal(dutyRoundStands({ contract: round(1, { startTimeMs: BigInt(dayStartMs(d + 1)) }), marker: m, orderKeys: keys, sw: null }).ok, true, 'the day\'s first moment is in');
+  assert.match(dutyRoundStands({ contract: round(1, { startTimeMs: BigInt(dayStartMs(d + 2)) }), marker: m, orderEntries: entries, sw: null }).why, /the round starts on 2026-11-04/);
+  assert.equal(dutyRoundStands({ contract: round(1, { startTimeMs: BigInt(dayStartMs(d + 1)) }), marker: m, orderEntries: entries, sw: null }).ok, true, 'the day\'s first moment is in');
   // the first confirmed per day, item and kind; emergency grids up to DUTY_EMERGENCY_CAP; a transaction without a duty marker never
   const mk = (txid, outs) => ({ txid, marker: dutyMarkerOf(tx(outs)) });
   const marked = [mk('a1', [dutyMarkerOutput(d, 'updown-day')]), mk('a2', [dutyMarkerOutput(d, 'updown-day')]), mk('b1', [backupMarkerOutput(d, 'updown-day')]),
@@ -126,4 +128,29 @@ test('no regular day posting after 12:00 UTC of the posting day, only an emergen
   assert.equal(dayPostDue({ nowMs: at(20, 51), slot, rank: 11, posted: false }), false, 'the 20:51Z repost of 10-29 is not due');
   assert.equal(backupPostDue({ nowMs: at(11, 59), slot, rank: 2, posted: false }), true, 'a backup at 11:59Z');
   assert.equal(backupPostDue({ nowMs: at(12), slot, rank: 2, posted: false }), false, 'no backup from 12:00Z');
+});
+
+// THE DUTY ORDER IS NOT GRINDABLE (RULED 2026-11-07, kanban #1291 / #1325): drawn by the bond outpoint, bond-weighted, never by the node key
+test('the duty order: a node\'s key moves nothing, keys without a bond are not drawn, and a bigger bond leads proportionally more often', () => {
+  const NET1 = new Uint8Array(32).fill(0x21);
+  const e = (i, key, sats = 1_000_000n) => ({ pubkey: new Uint8Array(32).fill(key), txid: new Uint8Array(32).fill(0x80 + i), vout: 0, bondSats: sats });
+  const census = [1, 2, 3, 4, 5].map((i) => e(i, i));
+  const order = dutyDrawOrder({ networkId: NET1, slot: 20000, entries: census, sw: null });
+  // the same bonds under freshly minted keys: each bond keeps its place (the place follows the outpoint, not the key)
+  for (let grind = 0; grind < 20; grind++) {
+    const reKeyed = census.map((x, i) => ({ ...x, pubkey: new Uint8Array(32).fill(100 + grind * 5 + i) }));
+    const o = dutyDrawOrder({ networkId: NET1, slot: 20000, entries: reKeyed, sw: null });
+    assert.deepEqual(o.map((k) => census.findIndex((x, i) => reKeyed[i].pubkey === k)), order.map((k) => census.findIndex((x) => x.pubkey === k)));
+  }
+  // keys with no bond are not in the draw, however many are minted
+  const minted = Array.from({ length: 50 }, (_, j) => ({ ...e(40 + j, 200 + j), bondSats: 0n }));
+  assert.deepEqual(dutyDrawOrder({ networkId: NET1, slot: 20000, entries: [...census, ...minted], sw: null }).map(toHex), order.map(toHex));
+  // two bonds of one key count as one entry with their sats summed
+  assert.equal(dutyDrawOrder({ networkId: NET1, slot: 20000, entries: [...census, e(9, 1)], sw: null }).length, 5);
+  // bond-weighted as the committees: the score is ticket / weight (sortition.js), so of two bonds w_big >= w_small the big one leads with
+  // probability 1 - w_small / (2 w_big) - for 3x against 1x, 5/6 (over 4,000 days: 83.3 % +- 3 %), more than its 3/4 share of the weight
+  const big = e(1, 1, 3_000_000n), small = e(2, 2, 1_000_000n);
+  let firsts = 0;
+  for (let d = 0; d < 4000; d++) if (toHex(dutyDrawOrder({ networkId: NET1, slot: d, entries: [big, small], sw: null })[0]) === toHex(big.pubkey)) firsts++;
+  assert.ok(firsts > 3213 && firsts < 3453, `the 3x bond led ${firsts} of 4000 days`);
 });

@@ -202,7 +202,7 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
     } else {
       const census = roster.censusFor(rid, null, { asCommitted: true });
       if (!census || !census.ok) return null;
-      answer = dutyRoundStands({ contract: c, marker: pub.marker, orderKeys: census.entries.map((e) => e.pubkey), sw: TAG_SWITCH[networkOf(c.networkId)] || null });
+      answer = dutyRoundStands({ contract: c, marker: pub.marker, orderEntries: census.entries, sw: TAG_SWITCH[networkOf(c.networkId)] || null });
     }
     dutyKept.set(ridHex, answer);
     if (dutyKept.size > 20000) dutyKept.delete(dutyKept.keys().next().value);

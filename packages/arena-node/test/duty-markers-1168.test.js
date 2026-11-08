@@ -22,7 +22,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { seriesPublicationOutput } from '../../arena-protocol/src/series.js';
-import { dutyOrder, dutyMarkerOutput, backupMarkerOutput, dayStartMs, itemTag } from '../../arena-protocol/src/duty.js';
+import { dutyDrawOrder, dutyMarkerOutput, backupMarkerOutput, dayStartMs, itemTag } from '../../arena-protocol/src/duty.js';
 import { serializeUnsigned } from '../src/fund-at-rate.js';
 import { createDayDuty } from '../src/duty-day.js';
 
@@ -30,8 +30,9 @@ const H = 3600000, MIN = 60000;
 const DAY = 20753;
 const T0 = dayStartMs(DAY);
 const KEYS = [1, 2, 3, 4, 5].map((n) => new Uint8Array(32).fill(n));
-const ORDER = dutyOrder({ networkId: NETWORK_ID_TESTNET4, slot: DAY, nodeKeys: KEYS });
-const ORDER_Y = dutyOrder({ networkId: NETWORK_ID_TESTNET4, slot: DAY - 1, nodeKeys: KEYS });
+const ENTRIES = KEYS.map((k, i) => ({ pubkey: k, txid: new Uint8Array(32).fill(0x40 + i), vout: 0, bondSats: 1_000_000n }));   // kanban #1325
+const ORDER = dutyDrawOrder({ networkId: NETWORK_ID_TESTNET4, slot: DAY, entries: ENTRIES });
+const ORDER_Y = dutyDrawOrder({ networkId: NETWORK_ID_TESTNET4, slot: DAY - 1, entries: ENTRIES });
 const GID = 'c4'.repeat(32), DEV = 'ab'.repeat(32), FED = '33'.repeat(32);
 const RUNNER = '43'.repeat(32);   // a runner's creator key: no node of the census
 
@@ -56,7 +57,7 @@ function world({ nowMs = T0 + 10 * MIN, local = [ORDER[0]], inBlocks = [], mempo
   const did = { published: [], bumped: [] };
   const opts = {
     game: 'nextblock', item: 'nextblock-day', role, postedPrimary: async () => false, networkId: NETWORK_ID_TESTNET4, local: new Set(local.map(toHex)), dir: dir || mkdtempSync(join(tmpdir(), 'duty1168-')),
-    chain: { view: async () => ({ blocks, firstHeight }), censusKeysAt: async () => KEYS, seatUrls: async () => ['http://s1'] },
+    chain: { view: async () => ({ blocks, firstHeight }), censusEntriesAt: async () => ENTRIES, seatUrls: async () => ['http://s1'] },
     chainCall: async (m, p) => {
       if (m === 'getrawmempool') return [...pool.keys()];
       if (m === 'getrawtransaction') { if (!pool.has(p[0])) throw new Error('gone'); return toHex(pool.get(p[0])); }

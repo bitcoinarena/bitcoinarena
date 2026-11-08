@@ -14,7 +14,7 @@ import { NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { seriesPublicationOutput } from '../../arena-protocol/src/series.js';
-import { dutyOrder, dutyMarkerOutput, backupMarkerOutput, dayStartMs, itemTag, playedOfWindow, dayMarkersOf, postedSeriesOf,
+import { dutyDrawOrder, dutyMarkerOutput, backupMarkerOutput, dayStartMs, itemTag, playedOfWindow, dayMarkersOf, postedSeriesOf,
   DUTY_BACKUP_COMMITTEE_LEAD_MS } from '../../arena-protocol/src/duty.js';
 import { serializeUnsigned } from '../src/fund-at-rate.js';
 import { createDayDuty, createGridBase } from '../src/duty-day.js';
@@ -25,8 +25,10 @@ const H = 3600000, MIN = 60000;
 const DAY = 20753;                                   // 2026-10-27: its duty posts the rounds of 10-28
 const T0 = dayStartMs(DAY);
 const KEYS = [1, 2, 3, 4, 5].map((n) => new Uint8Array(32).fill(n));
-const ORDER = dutyOrder({ networkId: NETWORK_ID_TESTNET4, slot: DAY, nodeKeys: KEYS });
-const ORDER_Y = dutyOrder({ networkId: NETWORK_ID_TESTNET4, slot: DAY - 1, nodeKeys: KEYS });
+// the census as entries: each key its own bond (kanban #1325: the duty order is drawn by bond outpoint, bond-weighted)
+const ENTRIES = KEYS.map((k, i) => ({ pubkey: k, txid: new Uint8Array(32).fill(0x40 + i), vout: 0, bondSats: 1_000_000n }));
+const ORDER = dutyDrawOrder({ networkId: NETWORK_ID_TESTNET4, slot: DAY, entries: ENTRIES });
+const ORDER_Y = dutyDrawOrder({ networkId: NETWORK_ID_TESTNET4, slot: DAY - 1, entries: ENTRIES });
 // kanban #1219: a marker counts only from its creator's own hour - these worlds' markers are the day's duty node's (rank 0, due at once)
 const RANK0 = async () => toHex(ORDER[0]);
 const GID = 'c4'.repeat(32);
@@ -48,7 +50,7 @@ const header = (timeS, n) => { const h = new Uint8Array(80); h[0] = n & 0xff; h[
  */
 function world({ nowMs = T0 + 10 * MIN, local = [ORDER[0]], inBlocks = [], mempool = [], wallet = {}, blockHash = {}, seats = ['http://s1'], seatRounds = null,
   canPay = async () => ({ ok: true }), role = 'primary', postedPrimary = async () => false, game = 'nextblock', view = null, dir = null,
-  census = async () => KEYS, mempoolFails = false, hexes = {},
+  census = async () => ENTRIES, mempoolFails = false, hexes = {},
   // WHO A MARKER'S SERIES IS FROM (kanban #1168: only a posting by a node of the day's duty order counts): every series here is held, its
   // creator the census key its first byte names
   creatorOf = async (id) => toHex(KEYS[parseInt(String(id).slice(0, 2), 16) % KEYS.length]) } = {}) {
@@ -61,7 +63,7 @@ function world({ nowMs = T0 + 10 * MIN, local = [ORDER[0]], inBlocks = [], mempo
   const did = { published: [], bumped: [], gridBase: [], sent: [] };
   const opts = {
     game, item: `${game}-day`, role, postedPrimary, networkId: NETWORK_ID_TESTNET4, local: new Set(local.map(toHex)), dir: dir || mkdtempSync(join(tmpdir(), 'duty-')),
-    chain: { view: view || (async () => ({ blocks, firstHeight })), censusKeysAt: census, seatUrls: async () => seats },
+    chain: { view: view || (async () => ({ blocks, firstHeight })), censusEntriesAt: census, seatUrls: async () => seats },
     chainCall: async (m, p) => {
       if (m === 'getrawmempool') { if (mempoolFails) throw new Error('bitcoind did not answer getrawmempool'); return [...pool.keys()]; }
       if (m === 'getrawtransaction') { if (!pool.has(p[0])) throw new Error('gone'); return toHex(pool.get(p[0])); }
@@ -96,8 +98,8 @@ function world({ nowMs = T0 + 10 * MIN, local = [ORDER[0]], inBlocks = [], mempo
 const tagOf = (item) => toHex(itemTag(item));
 
 test('every node computes the same duty order, whatever order it read the census in, and knows its own rank', async () => {
-  const shuffled = [KEYS[3], KEYS[0], KEYS[4], KEYS[2], KEYS[1], KEYS[0]];
-  assert.deepEqual(dutyOrder({ networkId: NETWORK_ID_TESTNET4, slot: DAY, nodeKeys: shuffled }).map(toHex), ORDER.map(toHex));
+  const shuffled = [ENTRIES[3], ENTRIES[0], ENTRIES[4], ENTRIES[2], ENTRIES[1], ENTRIES[0]];
+  assert.deepEqual(dutyDrawOrder({ networkId: NETWORK_ID_TESTNET4, slot: DAY, entries: shuffled }).map(toHex), ORDER.map(toHex));
   const a = world({ local: [ORDER[0]] }), b = world({ local: [ORDER[1]] });
   const sa = await createDayDuty(a.opts).look(), sb = await createDayDuty(b.opts).look();
   assert.deepEqual(sa.order.map(toHex), sb.order.map(toHex));
@@ -296,7 +298,7 @@ test('(d) a day not drawable on the seats for the newest version gets an emergen
 // saw no seat and planned emergency grids for days that were posted and drawn
 test('seat 4: a census at the anchor that does not read gives no order, says why, and posts nothing - the next pass that reads it does', async () => {
   let reads = 0;
-  const w = world({ local: [ORDER[0]], census: async () => { reads++; if (reads <= 2) throw new Error('a block read failed less than a minute ago: read again after it'); return KEYS; } });
+  const w = world({ local: [ORDER[0]], census: async () => { reads++; if (reads <= 2) throw new Error('a block read failed less than a minute ago: read again after it'); return ENTRIES; } });
   const d = createDayDuty(w.opts);
   const st = await d.look();
   assert.equal(w.did.published.length, 0);

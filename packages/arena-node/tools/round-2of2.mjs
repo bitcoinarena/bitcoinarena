@@ -1468,7 +1468,6 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // THE CHAIN, FOR THE DUTY KEEPER: the view to the tip, and the census's node keys at a height - derived as the seats do
     dutyChain: {
       view: async () => (censusView = await viewToTip()),
-      censusKeysAt: (height) => censusEntriesAt(height).map((e) => e.pubkey),
       // AND THE ENTRIES THEMSELVES (kanban #689: which versions the census's game nodes host - roles and hostedGames per entry)
       censusEntriesAt: (height) => censusEntriesAt(height),
       // the view's window for a census at that height, then the view to the tip

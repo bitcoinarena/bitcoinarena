@@ -64,6 +64,36 @@ export function dutyOrder({ networkId, slot, nodeKeys, sw = undefined }) {
   return keys.map((k) => ({ k, t: dutyTicket(networkId, slot, k, sw) })).sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0)).map((x) => x.k);
 }
 
+/**
+ * THE DUTY ORDER IS NOT GRINDABLE (RULED 2026-11-07, kanban #1291 / #1325; §5A.3, §5A.4): a node's place is drawn by its BOND, never its key -
+ * ticket H_duty(network_id || d || bond outpoint), drawn bond-weighted as every committee is (sortition.js): all of a node key's bonds count as one,
+ * their sats summed into its weight and its ticket drawn on its lowest outpoint; the score ticket / weight, compared cross-multiplied in integers,
+ * lowest first. The weight is the bond in sats - linear, as the committees' (a day has no round contract, so no role floor to normalise by; a
+ * floor only rounds). A key hash could be ground by minting keys; an outpoint costs a bond.
+ */
+export function dutyBondTicket(networkId, slot, entry, sw = undefined) {
+  const w = new Writer(); w.bytes32(networkId); w.u32(slot); w.bytes32(entry.txid); w.u32(entry.vout);
+  const tag = sw === undefined ? tagAt('duty', { ms: slot * 3_600_000 }) : tagAt('duty', { ms: slot * 3_600_000 }, sw);
+  return bytesToBigInt(taggedHash(tag, w.finish()));
+}
+const dutyOutpointCmp = (a, b) => { for (let i = 0; i < 32; i++) if (a.txid[i] !== b.txid[i]) return a.txid[i] - b.txid[i]; return a.vout - b.vout; };
+/** The day's node keys in duty order from census entries ({ pubkey, txid, vout, bondSats }): the first is on duty. */
+export function dutyDrawOrder({ networkId, slot, entries, sw = undefined }) {
+  const byKey = new Map();
+  for (const e of entries || []) {
+    if (!e || !(e.pubkey instanceof Uint8Array) || !(e.txid instanceof Uint8Array)) continue;
+    const k = toHex(e.pubkey);
+    const had = byKey.get(k);
+    if (!had) { byKey.set(k, { entry: e, bondSats: BigInt(e.bondSats || 0) }); continue; }
+    had.bondSats += BigInt(e.bondSats || 0);
+    if (dutyOutpointCmp(e, had.entry) < 0) had.entry = e;
+  }
+  const scored = [...byKey.values()].filter((x) => x.bondSats > 0n)
+    .map(({ entry, bondSats }) => ({ k: entry.pubkey, t: dutyBondTicket(networkId, slot, entry, sw), w: bondSats, entry }));
+  scored.sort((a, b) => { const l = a.t * b.w, r = b.t * a.w; return l < r ? -1 : l > r ? 1 : dutyOutpointCmp(a.entry, b.entry); });
+  return scored.map((x) => x.k);
+}
+
 /** A plan item's 4-byte tag: the first 4 bytes of sha256 of its name ("rps-fed-337ae01a", "updown-fed-...") - fixed by the name. */
 export const itemTag = (name) => sha256(new TextEncoder().encode(String(name))).subarray(0, 4);
 
@@ -242,10 +272,10 @@ export function dutyPostingsOf(marked) {
 }
 /**
  * DOES THIS ROUND STAND AS A DUTY ROUND: `contract` names its creator and starts in the day the marker's slot posts (targetDay), and
- * the creator is within the first DUTY_PROOF_RANKS of the day's duty order over `orderKeys` (the node keys of the round's census as its
- * root commits it), `sw` the network's tag switch. { ok, rank, marker } or { ok: false, why }.
+ * the creator is within the first DUTY_PROOF_RANKS of the day's duty order over `orderEntries` (the entries of the round's census as its
+ * root commits it: the order is drawn by bond, kanban #1325), `sw` the network's tag switch. { ok, rank, marker } or { ok: false, why }.
  */
-export function dutyRoundStands({ contract, marker, orderKeys, sw = undefined }) {
+export function dutyRoundStands({ contract, marker, orderEntries, sw = undefined }) {
   if (!marker) return { ok: false, why: 'its publication carries no duty marker: not a duty posting, so no proof' };
   if (!contract || !(contract.creatorPubkey instanceof Uint8Array)) return { ok: false, why: 'it names no creator, so it is nobody\'s duty posting' };
   if (!(contract.networkId instanceof Uint8Array) || typeof contract.startTimeMs !== 'bigint') return { ok: false, why: 'it names no network or no start' };
@@ -253,7 +283,7 @@ export function dutyRoundStands({ contract, marker, orderKeys, sw = undefined })
   const start = Number(contract.startTimeMs);
   if (!(start >= day.startMs && start < day.endMs))
     return { ok: false, why: `its publication is marked as day ${new Date(day.startMs).toISOString().slice(0, 10)}'s ${marker.item}, and the round starts on ${new Date(start).toISOString().slice(0, 10)}` };
-  const order = dutyOrder({ networkId: contract.networkId, slot: marker.slot, nodeKeys: orderKeys, sw });
+  const order = dutyDrawOrder({ networkId: contract.networkId, slot: marker.slot, entries: orderEntries, sw });
   const creator = toHex(contract.creatorPubkey);
   const rank = order.findIndex((k) => toHex(k) === creator);
   if (rank < 0) return { ok: false, why: `its creator ${creator.slice(0, 16)} is not in the round's census, so not in its day's duty order` };

@@ -351,13 +351,13 @@ export function absenceFromChain({ contract, claim, evidenceOf, headers, firstHe
     const publishes = series ? commitmentsOf(tx).some((x) => sameCC(x, seriesPublicationPayload(c.seriesId))) : publishesRound(tx, fromHex(ridHex));
     if (!publishes) return { ok: false, why: 'the transaction handed over as its publication does not publish it' };
     const marker = dutyMarkerOf(tx);
-    if (!marker || !(c.creatorPubkey instanceof Uint8Array)) return dutyRoundStands({ contract: c, marker, orderKeys: [] });   // no marker, no creator: why
+    if (!marker || !(c.creatorPubkey instanceof Uint8Array)) return dutyRoundStands({ contract: c, marker, orderEntries: [] });   // no marker, no creator: why
     const sigHex = claim.creators && claim.creators[ridHex];
     const sig = sigHex ? bytesOfCC(sigHex) : null;
     let signed = false;
     try { signed = !!sig && sig.length === 64 && verify(sig, series ? seriesCreatorMessage(c.seriesId) : creatorMessage(fromHex(ridHex)), c.creatorPubkey) === true; } catch { signed = false; }
     if (!signed) return { ok: false, why: 'its creator\'s signature was not handed over, or is not the named creator\'s' };
-    return dutyRoundStands({ contract: c, marker, orderKeys: d.entries.map((e) => e.pubkey), sw: TAG_SWITCH[networkOf(c.networkId)] || null });
+    return dutyRoundStands({ contract: c, marker, orderEntries: d.entries, sw: TAG_SWITCH[networkOf(c.networkId)] || null });
   };
   const r = checkAbsenceProof(claim.claims, { window, verify, drawOf, dutyOf,
     certOf: (ridHex, role) => { const h = claim.certs && claim.certs[`${ridHex}:${role}`]; return h ? fromHex(h) : null; } });

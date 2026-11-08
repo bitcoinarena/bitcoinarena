@@ -1161,6 +1161,8 @@ const TYPE_ROUND_RESULT = 0x27;
 const TYPE_RESULT_FRONT = 0x28;
 // A SEAT'S OBSERVATION THAT A FEDERATION HALTED (§23A.5 "How a halt is proven"): no guardian past session S
 const TYPE_HALT_OBSERVATION = 0x29;
+// A GUARDIAN'S OWN SIGNED VIEW IN A HALT (§23A.5, RULED 2026-11-07 kanban #1289): the guardians it sees in P2P consensus
+const TYPE_GUARDIAN_HALT_OBSERVATION = 0x48;
 // AN ATTESTED VALUE (feature 8, protocol 2026.0.7): a scalar market's attestors' word on the number it asked for - its
 // own type, so an outcome attestation's bytes (0x1d) never decode as one, nor the other way round
 const TYPE_VALUE_ATTESTATION = 0x2a;
@@ -1201,6 +1203,7 @@ const TAG = {
   // (A GUARDIAN FOUNDING'S TICKET and WHO IS ON DUTY: their tags switch from BLWP/v1 to ARENA/v1 at one point - tag-switch.js, kanban #525)
   // A SEAT'S SIGNED OBSERVATION OF A HALT (§23A.5)
   haltObservation: 'ARENA/v1/HaltObservation',
+  guardianHaltObservation: 'ARENA/v1/GuardianHaltObservation',
   entryContract: 'ARENA/v1/EntryContract',
   advert: 'ARENA/v1/Advert',
   censusLeaf: 'ARENA/v1/CensusLeaf',
@@ -15207,6 +15210,8 @@ function worldSecretFits(contract, worldSecret, sharedWorld) {
 //   payment_image  Hash | Point, as LNv2
 //   amount         msat
 //   expiration     LNv2's consensus block count
+//   fallback_after LNv2's consensus block count from which t - 1 of the named seats claim without the preimage (spec §23.2, kanban #1268 /
+//                  #1290 / #1281): the lock's block count plus stall_blocks (LOCK_STALL_BLOCKS), so expiration - stake_expiry_blocks + stall_blocks
 //   round_id       32 bytes: a lock is self-describing, a proof needs no lookup
 //   claim_keys     the round's settlement seats' node keys (BIP-340 x-only, the keys their bonds name), in seat order, at most 7
 //   threshold      t (5 of 7)
@@ -15295,6 +15300,19 @@ function namedClaimRefusal({ network, censusHeight, version, pointOf = namedClai
   return `this round locks to an Arena lock (protocol ${NAMED_CLAIM_VERSION}) and its federation does not run it: LNv2 module version ${v}, needs 1.100 from a threshold of its guardians`;
 }
 
+/**
+ * STALL_BLOCKS (spec §23.2, RULED 2026-11-07 kanban #1268): the blocks after a lock from which its fallback claim opens - 36 on mainnet and
+ * testnet4, 3 on regtest (and a devnet).
+ */
+const LOCK_STALL_BLOCKS = Object.freeze({ mainnet: 36, testnet4: 36, regtest: 3, devnet: 3 });
+/** stall_blocks of `network` ('testnet' is testnet4); null on a network that names none. */
+const lockStallBlocks = (network) => {
+  const n = network === 'testnet' ? 'testnet4' : String(network || '');
+  return Object.prototype.hasOwnProperty.call(LOCK_STALL_BLOCKS, n) ? LOCK_STALL_BLOCKS[n] : null;
+};
+/** A lock's fallback height from its expiration: the lock's block count (expiration - expiryBlocks) plus stall_blocks. */
+const fallbackAfterFor = (expiration, stallBlocks, expiryBlocks = STAKE_EXPIRY_BLOCKS) => expiration - expiryBlocks + stallBlocks;
+
 const ARENA_LOCK_CONTRACT_TAG = 'ARENA/v1/LockContract';
 const ARENA_LOCK_MAX_KEYS = 7;
 
@@ -15314,7 +15332,8 @@ const lockSized = (b, n, what) => { if (!(b instanceof Uint8Array) || b.length !
 
 /**
  * THE CONTRACT'S CONSENSUS ENCODING, byte for byte as the fork's derive writes it: the payment image an enum (variant BigSize, then its bytes
- * length-prefixed), amount and expiration BigSize, round_id raw, claim_keys a BigSize count then 32 bytes each, threshold one byte, refund_pk 33.
+ * length-prefixed), amount, expiration and fallback_after BigSize, round_id raw, claim_keys a BigSize count then 32 bytes each, threshold one
+ * byte, refund_pk 33.
  */
 function encodeArenaLockContract(f) {
   const img = f.paymentImage || {};
@@ -15323,13 +15342,14 @@ function encodeArenaLockContract(f) {
       : (() => { throw new Error('a payment image is a point or a hash'); })();
   if (!Array.isArray(f.claimKeys)) throw new Error('a lock names its claim keys');
   if (!Number.isInteger(f.threshold) || f.threshold < 0 || f.threshold > 255) throw new Error('a threshold is one byte');
-  return lockCat(image, lockBigsize(f.amountMsat), lockBigsize(f.expiration), lockSized(f.roundId, 32, 'a round id'), lockBigsize(f.claimKeys.length),
+  if (!Number.isSafeInteger(f.fallbackAfter) || f.fallbackAfter < 0) throw new Error('a lock names its fallback height');
+  return lockCat(image, lockBigsize(f.amountMsat), lockBigsize(f.expiration), lockBigsize(f.fallbackAfter), lockSized(f.roundId, 32, 'a round id'), lockBigsize(f.claimKeys.length),
     ...f.claimKeys.map((k) => lockSized(k, 32, 'a claim key')), Uint8Array.of(f.threshold), lockSized(f.refundPk, 33, 'a refund key'));
 }
 /** The contract id the guardians store the lock under (and its forfeit message). */
 const arenaLockContractId = (f) => taggedHash(ARENA_LOCK_CONTRACT_TAG, encodeArenaLockContract(f));
 
-/** The module's output rule: 1..7 distinct keys, 1 <= t <= n. { ok } or { ok: false, why }. */
+/** The module's output rule: 1..7 distinct keys, 1 <= t <= n, the fallback before the expiration. { ok } or { ok: false, why }. */
 function arenaLockValid(f) {
   const n = Array.isArray(f.claimKeys) ? f.claimKeys.length : 0;
   if (n === 0) return { ok: false, why: 'the lock names no claim keys' };
@@ -15337,6 +15357,7 @@ function arenaLockValid(f) {
   if (new Set(f.claimKeys.map(toHex)).size !== n) return { ok: false, why: 'the lock names a claim key twice' };
   if (!Number.isInteger(f.threshold) || f.threshold < 1) return { ok: false, why: 'the lock\'s threshold is zero' };
   if (f.threshold > n) return { ok: false, why: `the lock's threshold ${f.threshold} is above its ${n} claim keys` };
+  if (!(Number(f.fallbackAfter) < Number(f.expiration))) return { ok: false, why: `the lock's fallback ${f.fallbackAfter} is not before its expiration ${f.expiration}` };
   return { ok: true };
 }
 
@@ -15349,20 +15370,25 @@ function arenaLockFieldsFromJson(j) {
     paymentImage: { kind: img.kind, bytes: fromHex(String(img.bytes || '')) },
     amountMsat: BigInt(String(j.amountMsat)),
     expiration: Number(j.expiration),
+    fallbackAfter: Number(j.fallbackAfter),
     roundId: fromHex(String(j.roundId || '')),
     claimKeys: (Array.isArray(j.claimKeys) ? j.claimKeys : []).map((k) => fromHex(String(k))),
     threshold: Number(j.threshold),
     refundPk: fromHex(String(j.refundPk || '')),
   };
   if (!Number.isSafeInteger(f.expiration) || f.expiration < 0) throw new Error('an expiration is a block height');
+  if (!Number.isSafeInteger(f.fallbackAfter) || f.fallbackAfter < 0) throw new Error('a fallback height is a block height');
   return f;
 }
 const arenaLockFieldsToJson = (f) => ({
   paymentImage: { kind: f.paymentImage.kind, bytes: toHex(f.paymentImage.bytes) }, amountMsat: String(f.amountMsat), expiration: f.expiration,
-  roundId: toHex(f.roundId), claimKeys: f.claimKeys.map(toHex), threshold: f.threshold, refundPk: toHex(f.refundPk),
+  fallbackAfter: f.fallbackAfter, roundId: toHex(f.roundId), claimKeys: f.claimKeys.map(toHex), threshold: f.threshold, refundPk: toHex(f.refundPk),
 });
 
-/** The lock a client builds for an entry of a protocol-27 round: everything but its expiration, which the guardians' count gives. */
+/**
+ * The lock a client builds for an entry of a protocol-27 round: everything but its expiration and fallback height, which the guardians' count
+ * gives (the wasm lock client adds expiry_delta and `stallBlocks` to it).
+ */
 function arenaLockFor({ kind, entry, roundId, seatKeys, threshold, amountMsat, imageBytes }) {
   return {
     paymentImage: { kind: kind === 'stake' ? 'point' : 'hash', bytes: imageBytes },
@@ -15375,7 +15401,7 @@ function arenaLockFor({ kind, entry, roundId, seatKeys, threshold, amountMsat, i
  * of the attested claim_pk: claim_keys equal to the round's settlement seats' node keys in seat order, the round's threshold, and the round's id.
  * A client checks the same against the round's published, verified seating. { ok } or { ok: false, why }.
  */
-function arenaLockMatchesEntry({ lock, entry, kind, roundId, seatKeys, threshold, height, expiryBlocks = STAKE_EXPIRY_BLOCKS } = {}) {
+function arenaLockMatchesEntry({ lock, entry, kind, roundId, seatKeys, threshold, height, expiryBlocks = STAKE_EXPIRY_BLOCKS, stallBlocks } = {}) {
   if (!lock) return { ok: false, why: 'there is no lock to compare' };
   const valid = arenaLockValid(lock);
   if (!valid.ok) return valid;
@@ -15384,6 +15410,10 @@ function arenaLockMatchesEntry({ lock, entry, kind, roundId, seatKeys, threshold
   if (!Array.isArray(seatKeys) || lock.claimKeys.length !== seatKeys.length || lock.claimKeys.some((k, i) => toHex(k) !== toHex(seatKeys[i])))
     return { ok: false, why: `that ${kind} lock's claim keys are not this round's settlement seats in seat order` };
   if (lock.threshold !== threshold) return { ok: false, why: `that ${kind} lock's threshold ${lock.threshold} is not the round's ${threshold}` };
+  // THE FALLBACK HEIGHT (spec §23.1 step 5, kanban #1281): the lock's own block count plus the network's stall_blocks, nothing else
+  if (!Number.isInteger(stallBlocks)) return { ok: false, why: 'no stall_blocks to check the lock\'s fallback height against' };
+  if (lock.fallbackAfter !== fallbackAfterFor(lock.expiration, stallBlocks, expiryBlocks))
+    return { ok: false, why: `that ${kind} lock's fallback height ${lock.fallbackAfter} is not its block count plus stall_blocks ${stallBlocks} (${fallbackAfterFor(lock.expiration, stallBlocks, expiryBlocks)})` };
   // the stock checks, with the claim key out of the comparison (the named keys above stand in for it)
   const none = new Uint8Array(33);
   return lockMatchesEntry({ lock: { ...lock, claimPk: none }, entry, kind, claimPk: none, height, expiryBlocks });
@@ -15395,6 +15425,7 @@ function arenaLockMatchesEntry({ lock, entry, kind, roundId, seatKeys, threshold
  * commit, `dropped` those that failed this txid's earlier sessions. Answers the ascending set, or null when fewer than t are left.
  */
 function namedSignerSet({ committed, threshold, dropped = [] }) {
+  // (the fallback claim takes threshold - 1: namedSignerSet({ committed, threshold: threshold - 1, dropped }), spec §23.2)
   const out = new Set(dropped.map(Number));
   const left = [...new Set([...committed].map(Number))].filter((i) => Number.isInteger(i) && i >= 0 && !out.has(i)).sort((a, b) => a - b);
   return left.length >= threshold ? left.slice(0, threshold) : null;
@@ -19966,14 +19997,15 @@ function settlementNonce(roundId) {
 // table the locks are claimed and paid by is `lockActions`' over it, so a split round settles by the split and nothing
 // else here changes: the payouts are the table's rows, scaled to the claimed locks as any table's are.
 function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null,
-  sends = new Map(), addressed = null, requireSends = false, donationSet = null, payoutShares = null, feeBps = undefined, websitePct = undefined }) {
+  sends = new Map(), addressed = null, requireSends = false, donationSet = null, payoutShares = null, feeBps = undefined, websitePct = undefined, fallback = null }) {
   // `feeBps` / `websitePct`: the fees in force at the round (fee-proposal.js) - a version-11 round's node fee and the
   // website's share of it; unset, today's (4 % and 20 %)
   if (!(locks instanceof Map)) return refuse('the verified stake locks are a Map by player key');
   if (!(feeLocks instanceof Map)) return refuse('the verified fee locks are a Map by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
     return refuse('the guardians\' fee rule is BigInt ppm and base msat, 0 or more');
-  const feePart = feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps, websitePct });
+  // `fallback` (spec §23.2, kanban #1281): the fallback claim's fee - see feeSettlement
+  const feePart = feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps, websitePct, fallback });
   if (!feePart.ok) return feePart;
   // THE STAKE PART'S VERDICT IS `lockActions`'. A round with losers and nobody to
   // pay is refused there ("the operator would keep ..."), and so its stakes are not
@@ -20409,7 +20441,11 @@ function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, feeBps =
 // `donation`: { recipients } - a market's donation target (two sets: the protocol devs' and the game dev's, key sets), whose
 // donation rides in its fee locks (fee.js entryFeeBpsOf): what the fee locks hold above the node table is that
 // donation, split by `splitDonation` and paid to each key by a pre-expired payout contract, as a walk-away's 25 % is.
-function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps = undefined, donation = null, websitePct = undefined }) {
+// THE FALLBACK CLAIM'S FEE (spec §23.2, kanban #1281): `fallback` { eligible: Set(seat hex), reserveKey: 33 bytes } - the fee locks are claimed
+// without their F (the lock's Fallback witness names none), and the share of a round seat (the game/verify and settlement pools) outside
+// `eligible` - no signed result or FINAL on the relays by final_after + 60 s - is paid to the reserves, never to the other seats. Guardians,
+// gateways and liquidity providers are paid as ever. Without `fallback`, unchanged.
+function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps = undefined, donation = null, websitePct = undefined, fallback = null }) {
   const none = { ok: true, claims: [], payouts: [], unpaid: [], poolMsat: 0n, inputFeesMsat: 0n, paidMsat: 0n, outputFeesMsat: 0n, unspentMsat: 0n, unallocatedMsat: 0n };
   if (!feeLocks.size) return none;
   if (!contract || !signerNodes || !Array.isArray(signerNodes[GAME_VERIFY]) || !Array.isArray(signerNodes[SETTLEMENT]))
@@ -20420,8 +20456,8 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
     const f = feeLocks.get(toHex(e.pubkey));
     if (!f) return refuse(`an entry's fee lock was never verified, so the fee cannot be claimed: ${toHex(e.pubkey).slice(0, 16)}`);
     if (f.amountMsat !== e.feeMsat) return refuse(`a fee lock holds ${f.amountMsat} msat and its entry's fee is ${e.feeMsat}`);
-    if (!(f.preimage instanceof Uint8Array) || f.preimage.length !== 32) return refuse('a fee lock is claimed with its F, and that is 32 bytes');
-    claims.push({ pubkey: e.pubkey, outpoint: f.outpoint, amountMsat: f.amountMsat, preimage: f.preimage, kind: 'fee' });
+    if (!fallback && (!(f.preimage instanceof Uint8Array) || f.preimage.length !== 32)) return refuse('a fee lock is claimed with its F, and that is 32 bytes');
+    claims.push({ pubkey: e.pubkey, outpoint: f.outpoint, amountMsat: f.amountMsat, ...(fallback ? {} : { preimage: f.preimage }), kind: 'fee' });
   }
   const eligible = new Set([...signerNodes[GAME_VERIFY], ...signerNodes[SETTLEMENT], ...(Array.isArray(signerNodes[GUARDIAN]) ? signerNodes[GUARDIAN] : []),
     ...(Array.isArray(signerNodes[GATEWAY]) ? signerNodes[GATEWAY] : []), ...(Array.isArray(signerNodes[LIQUIDITY]) ? signerNodes[LIQUIDITY] : [])].map(toHex));
@@ -20458,8 +20494,14 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   // key, guardian-payout.js): its own output, apart from that node's committee shares.
   const payoutOf = signerNodes.guardianPayout instanceof Map ? signerNodes.guardianPayout : null;
   const owed = new Map();
+  if (fallback && !(fallback.reserveKey instanceof Uint8Array && fallback.reserveKey.length === 33)) return refuse('a fallback claim pays the quiet seats\' share to the reserves, and no reserve key is known for the round\'s federation');
   for (const [k, msat] of table.signerNodes) {
     const node = k.slice(k.indexOf(':') + 1);
+    if (fallback && (k.startsWith(`${GAME_VERIFY}:`) || k.startsWith(`${SETTLEMENT}:`)) && !fallback.eligible.has(node)) {
+      const rk = `reserve:${toHex(fallback.reserveKey)}`;
+      owed.set(rk, (owed.get(rk) || 0n) + msat);
+      continue;
+    }
     // a gateway seat's share (2026.0.15, §23A.9) goes where its guardian share goes: its advert's payout key
     // a liquidity provider's share (2026.0.16, §23A.10) too
     const pk = payoutOf && (k.startsWith(`${GUARDIAN}:`) || k.startsWith(`${GATEWAY}:`) || k.startsWith(`${LIQUIDITY}:`)) ? payoutOf.get(node) : null;
@@ -20516,14 +20558,16 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   }
   const nodesSpendable = nodePartMsat - publisherGross - frontendGross - auditorGross;
   for (const [key, msat] of owed) {
-    const guardianPk = key.startsWith('payout:') ? fromHex(key.slice(7)) : null;
+    const reservePk = key.startsWith('reserve:') ? fromHex(key.slice(8)) : null;
+    const guardianPk = key.startsWith('payout:') ? fromHex(key.slice(7)) : reservePk;
     const pubkey = guardianPk ? guardianPk.subarray(1) : fromHex(key);
     // what this node is owed once the websites' 20% is taken from the nodes' fee (its table share, scaled down by their total)
     const afterSites = sites.totalMsat ? (msat * (table.fee - sites.totalMsat)) / table.fee : msat;
     const owedMsat = auditorBps ? (afterSites * (10000n - auditorBps)) / 10000n : afterSites;
     const got = largestPayoutMsat(fees, publisherGross || frontendGross || auditorGross ? (msat * nodesSpendable) / table.fee : (msat * spendable) / poolMsat);
     if (got === 0n) { unpaid.push({ pubkey, owedMsat, why: 'its fee share does not pay its own output fee' }); continue; }
-    payouts.push({ pubkey, payoutPk: guardianPk || refundKeyOf(pubkey), owedMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: guardianPk ? 'guardian payout key' : 'signer node' });
+    payouts.push({ pubkey, payoutPk: guardianPk || refundKeyOf(pubkey), owedMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got),
+      kind: reservePk ? 'reserve' : guardianPk ? 'guardian payout key' : 'signer node', ...(reservePk ? { reserve: true, fallback: true } : {}) });
   }
   // THE DONATION'S SHARES, scaled to what the claimed locks pay as the nodes' are, each to its own key
   for (const d of donated) {
@@ -22534,12 +22578,15 @@ async function lockArenaStake({ round, roundId, invite, seed, stake, playerPubke
   const entry = { playerPubkey };
   const stakeFields = { ...arenaLockFor({ kind: 'stake', entry, roundId, seatKeys, threshold, amountMsat: amount, imageBytes: stake.stakePoint }), refundPk };
   const feeFields = feeGate.pays ? { ...arenaLockFor({ kind: 'fee', entry, roundId, seatKeys, threshold, amountMsat: feeMsat, imageBytes: image }), refundPk } : null;
+  // THE FALLBACK HEIGHT (spec §23.2, kanban #1281): the guardians' count at the lock plus the round's network's stall_blocks - the lock client adds it
+  let stallBlocks = null; try { stallBlocks = lockStallBlocks(networkOf(round.networkId)); } catch { stallBlocks = null; }
+  if (!Number.isInteger(stallBlocks)) throw new Error('this round\'s network names no stall_blocks: no Arena lock is made for it');
   for (const [what, f] of [['stake', stakeFields], ['fee', feeFields]]) {
     if (!f) continue;
-    const v = arenaLockValid(f);
+    const v = arenaLockValid({ ...f, expiration: delta, fallbackAfter: stallBlocks });   // as from a count of 0: the fallback opens before the refund
     if (!v.ok) throw new Error(`no ${what} lock is made for this round: ${v.why}`);
   }
-  const asJson = (f) => { const j = arenaLockFieldsToJson({ ...f, expiration: 0 }); delete j.expiration; return JSON.stringify(j); };
+  const asJson = (f) => { const j = arenaLockFieldsToJson({ ...f, expiration: 0, fallbackAfter: 0 }); delete j.expiration; delete j.fallbackAfter; j.stallBlocks = stallBlocks; return JSON.stringify(j); };
   onStep(`locking the stake${feeGate.pays ? ', the node fee' : ''}${donationShares.length ? ' and the donation' : ''} to the round's ${seatKeys.length} settlement seats, ${threshold} named signers (submitted, accepted behind)`);
   const submitted = JSON.parse(await client.arenaLockSubmit(asJson(stakeFields), feeFields ? asJson(feeFields) : '', delta,
     JSON.stringify(donationShares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat), image: toHex(playerPubkey) })))));
@@ -22548,7 +22595,8 @@ async function lockArenaStake({ round, roundId, invite, seed, stake, playerPubke
   const outs = submitted.outputs || [];
   const built = (o, fields) => {
     if (!o) return null;
-    const f = { ...fields, expiration: Number(o.computed_expiration), arena: true };
+    const f = { ...fields, expiration: Number(o.computed_expiration), fallbackAfter: Number(o.computed_fallback_after), arena: true };
+    if (f.fallbackAfter !== fallbackAfterFor(f.expiration, stallBlocks, delta)) throw new Error('the lock client built another fallback height than the lock\'s count plus stall_blocks');
     if (BigInt(o.amount_msat) !== f.amountMsat) throw new Error(`the lock client built ${o.amount_msat} msat, and this lock holds ${f.amountMsat}`);
     if (!Number.isSafeInteger(f.expiration) || f.expiration < 1) throw new Error('the lock client built no expiration');
     const id = toHex(arenaLockContractId(f));
@@ -32218,6 +32266,36 @@ function dutyOrder({ networkId, slot, nodeKeys, sw = undefined }) {
   return keys.map((k) => ({ k, t: dutyTicket(networkId, slot, k, sw) })).sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0)).map((x) => x.k);
 }
 
+/**
+ * THE DUTY ORDER IS NOT GRINDABLE (RULED 2026-11-07, kanban #1291 / #1325; §5A.3, §5A.4): a node's place is drawn by its BOND, never its key -
+ * ticket H_duty(network_id || d || bond outpoint), drawn bond-weighted as every committee is (sortition.js): all of a node key's bonds count as one,
+ * their sats summed into its weight and its ticket drawn on its lowest outpoint; the score ticket / weight, compared cross-multiplied in integers,
+ * lowest first. The weight is the bond in sats - linear, as the committees' (a day has no round contract, so no role floor to normalise by; a
+ * floor only rounds). A key hash could be ground by minting keys; an outpoint costs a bond.
+ */
+function dutyBondTicket(networkId, slot, entry, sw = undefined) {
+  const w = new Writer(); w.bytes32(networkId); w.u32(slot); w.bytes32(entry.txid); w.u32(entry.vout);
+  const tag = sw === undefined ? tagAt('duty', { ms: slot * 3_600_000 }) : tagAt('duty', { ms: slot * 3_600_000 }, sw);
+  return bytesToBigInt(taggedHash(tag, w.finish()));
+}
+const dutyOutpointCmp = (a, b) => { for (let i = 0; i < 32; i++) if (a.txid[i] !== b.txid[i]) return a.txid[i] - b.txid[i]; return a.vout - b.vout; };
+/** The day's node keys in duty order from census entries ({ pubkey, txid, vout, bondSats }): the first is on duty. */
+function dutyDrawOrder({ networkId, slot, entries, sw = undefined }) {
+  const byKey = new Map();
+  for (const e of entries || []) {
+    if (!e || !(e.pubkey instanceof Uint8Array) || !(e.txid instanceof Uint8Array)) continue;
+    const k = toHex(e.pubkey);
+    const had = byKey.get(k);
+    if (!had) { byKey.set(k, { entry: e, bondSats: BigInt(e.bondSats || 0) }); continue; }
+    had.bondSats += BigInt(e.bondSats || 0);
+    if (dutyOutpointCmp(e, had.entry) < 0) had.entry = e;
+  }
+  const scored = [...byKey.values()].filter((x) => x.bondSats > 0n)
+    .map(({ entry, bondSats }) => ({ k: entry.pubkey, t: dutyBondTicket(networkId, slot, entry, sw), w: bondSats, entry }));
+  scored.sort((a, b) => { const l = a.t * b.w, r = b.t * a.w; return l < r ? -1 : l > r ? 1 : dutyOutpointCmp(a.entry, b.entry); });
+  return scored.map((x) => x.k);
+}
+
 /** A plan item's 4-byte tag: the first 4 bytes of sha256 of its name ("rps-fed-337ae01a", "updown-fed-...") - fixed by the name. */
 const itemTag = (name) => sha256(new TextEncoder().encode(String(name))).subarray(0, 4);
 
@@ -32396,10 +32474,10 @@ function dutyPostingsOf(marked) {
 }
 /**
  * DOES THIS ROUND STAND AS A DUTY ROUND: `contract` names its creator and starts in the day the marker's slot posts (targetDay), and
- * the creator is within the first DUTY_PROOF_RANKS of the day's duty order over `orderKeys` (the node keys of the round's census as its
- * root commits it), `sw` the network's tag switch. { ok, rank, marker } or { ok: false, why }.
+ * the creator is within the first DUTY_PROOF_RANKS of the day's duty order over `orderEntries` (the entries of the round's census as its
+ * root commits it: the order is drawn by bond, kanban #1325), `sw` the network's tag switch. { ok, rank, marker } or { ok: false, why }.
  */
-function dutyRoundStands({ contract, marker, orderKeys, sw = undefined }) {
+function dutyRoundStands({ contract, marker, orderEntries, sw = undefined }) {
   if (!marker) return { ok: false, why: 'its publication carries no duty marker: not a duty posting, so no proof' };
   if (!contract || !(contract.creatorPubkey instanceof Uint8Array)) return { ok: false, why: 'it names no creator, so it is nobody\'s duty posting' };
   if (!(contract.networkId instanceof Uint8Array) || typeof contract.startTimeMs !== 'bigint') return { ok: false, why: 'it names no network or no start' };
@@ -32407,7 +32485,7 @@ function dutyRoundStands({ contract, marker, orderKeys, sw = undefined }) {
   const start = Number(contract.startTimeMs);
   if (!(start >= day.startMs && start < day.endMs))
     return { ok: false, why: `its publication is marked as day ${new Date(day.startMs).toISOString().slice(0, 10)}'s ${marker.item}, and the round starts on ${new Date(start).toISOString().slice(0, 10)}` };
-  const order = dutyOrder({ networkId: contract.networkId, slot: marker.slot, nodeKeys: orderKeys, sw });
+  const order = dutyDrawOrder({ networkId: contract.networkId, slot: marker.slot, entries: orderEntries, sw });
   const creator = toHex(contract.creatorPubkey);
   const rank = order.findIndex((k) => toHex(k) === creator);
   if (rank < 0) return { ok: false, why: `its creator ${creator.slice(0, 16)} is not in the round's census, so not in its day's duty order` };
@@ -33272,13 +33350,13 @@ function absenceFromChain({ contract, claim, evidenceOf, headers, firstHeight, b
     const publishes = series ? commitmentsOf(tx).some((x) => sameCC(x, seriesPublicationPayload(c.seriesId))) : publishesRound(tx, fromHex(ridHex));
     if (!publishes) return { ok: false, why: 'the transaction handed over as its publication does not publish it' };
     const marker = dutyMarkerOf(tx);
-    if (!marker || !(c.creatorPubkey instanceof Uint8Array)) return dutyRoundStands({ contract: c, marker, orderKeys: [] });   // no marker, no creator: why
+    if (!marker || !(c.creatorPubkey instanceof Uint8Array)) return dutyRoundStands({ contract: c, marker, orderEntries: [] });   // no marker, no creator: why
     const sigHex = claim.creators && claim.creators[ridHex];
     const sig = sigHex ? bytesOfCC(sigHex) : null;
     let signed = false;
     try { signed = !!sig && sig.length === 64 && verify(sig, series ? seriesCreatorMessage(c.seriesId) : creatorMessage(fromHex(ridHex)), c.creatorPubkey) === true; } catch { signed = false; }
     if (!signed) return { ok: false, why: 'its creator\'s signature was not handed over, or is not the named creator\'s' };
-    return dutyRoundStands({ contract: c, marker, orderKeys: d.entries.map((e) => e.pubkey), sw: TAG_SWITCH[networkOf(c.networkId)] || null });
+    return dutyRoundStands({ contract: c, marker, orderEntries: d.entries, sw: TAG_SWITCH[networkOf(c.networkId)] || null });
   };
   const r = checkAbsenceProof(claim.claims, { window, verify, drawOf, dutyOf,
     certOf: (ridHex, role) => { const h = claim.certs && claim.certs[`${ridHex}:${role}`]; return h ? fromHex(h) : null; } });
