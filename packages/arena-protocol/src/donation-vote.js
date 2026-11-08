@@ -94,7 +94,7 @@ export const donationApprovalDigest = (a) => taggedHash(TAG.donationApproval, en
  * acceptBps, denyBps, counted[], refused[] (why each object was not counted) }. A recipient counts once: its first valid
  * approval (lowest at_height) - a second one, either way, is not counted.
  */
-export async function tallyDonationProposal({ proposal, approvals = [], parent, verifySecp256k1 }) {
+export async function tallyDonationProposal({ proposal, approvals = [], parent, verifySecp256k1, coldCut = null }) {
   if (typeof verifySecp256k1 !== 'function') throw new Error('a tally checks signatures, and no secp256k1 verifier was injected');
   const refused = [];
   const out = (state, extra = {}) => ({ state, validFrom: null, acceptBps: 0, denyBps: 0, counted: [], refused, ...extra });
@@ -108,6 +108,13 @@ export async function tallyDonationProposal({ proposal, approvals = [], parent, 
   const pid = donationProposalId(p);
   if (!(p.signature instanceof Uint8Array) || !(await verifySecp256k1(p.signature, pid, p.proposer))) return out('refused', { why: 'the proposer\'s signature does not verify' });
 
+  // A SHARE IS CUT ONLY WITH ITS OWN SIGNATURE OR THE COLD ADMIN KEY (§27A.4.1 RULED 2026-11-07, kanban #1337): every recipient of the parent whose
+  // share the proposal lowers (or drops) must be among the accepting approvals, unless `coldCut(proposal, pid)` - the recovery key's signature over
+  // the proposal - says the cold key cut it. Until then the proposal stays open, however much share accepted it.
+  const newShare = new Map((p.recipients || []).map((r) => [r.recipientPk instanceof Uint8Array ? toHex(r.recipientPk) : '', Number(r.shareBps)]));
+  let cold = false; try { cold = typeof coldCut === 'function' && !!(await coldCut(p, donationProposalId(p))); } catch { cold = false; }
+  // (the proposer signed the proposal itself: a cut of its own share is its own signature)
+  const cut = cold ? new Set() : new Set([...shareOf].filter(([k, bps]) => k !== toHex(p.proposer) && (newShare.get(k) || 0) < bps).map(([k]) => k));
   const valid = [];
   for (const [i, a] of approvals.entries()) {
     if (!a || !sameBallotBytes(a.proposalId, pid)) { refused.push(`approval ${i} is for another proposal`); continue; }
@@ -128,10 +135,11 @@ export async function tallyDonationProposal({ proposal, approvals = [], parent, 
     if (a.accept) acceptBps += bps; else denyBps += bps;
     // A PROPOSER WHO DENIES THEIR OWN PROPOSAL WITHDRAWS IT (2026-10-22, on a proposal its proposer had denied: "This is no longer open")
     if (!a.accept && a.key === toHex(p.proposer)) return out('refused', { acceptBps, denyBps, counted, proposalId: pid, why: 'withdrawn by its proposer' });
-    if (acceptBps * 2 > DONATION_BPS_TOTAL) return out('approved', { validFrom: a.atHeight + 1, acceptBps, denyBps, counted, proposalId: pid });
+    if (acceptBps * 2 > DONATION_BPS_TOTAL && [...cut].every((k) => counted.some((c) => c.key === k && c.accept))) return out('approved', { validFrom: a.atHeight + 1, acceptBps, denyBps, counted, proposalId: pid });
     if (denyBps * 2 >= DONATION_BPS_TOTAL) return out('refused', { acceptBps, denyBps, counted, proposalId: pid, why: 'recipients holding half the parent set or more denied it' });
   }
-  return out('open', { acceptBps, denyBps, counted, proposalId: pid });
+  const waitingFor = [...cut].filter((k) => !counted.some((c) => c.key === k && c.accept));
+  return out('open', { acceptBps, denyBps, counted, proposalId: pid, ...(waitingFor.length ? { why: `${waitingFor.length} recipient(s) whose share it cuts have not approved it`, cutWaiting: waitingFor } : {}) });
 }
 
 /**
@@ -140,7 +148,7 @@ export async function tallyDonationProposal({ proposal, approvals = [], parent, 
  * admin key's and those approved before it, in serial order. Answers [{ networkId, serial, validFrom, recipients,
  * approvedBy: proposalId }] and why each other ballot is not one.
  */
-export async function approvedDonationSets({ networkId, known = [], ballots = [], verifySecp256k1 }) {
+export async function approvedDonationSets({ networkId, known = [], ballots = [], verifySecp256k1, coldCut = null }) {
   const sets = [];
   const refused = [];
   const all = [...known];
@@ -151,7 +159,7 @@ export async function approvedDonationSets({ networkId, known = [], ballots = []
     const parent = all.find((s) => sameBallotBytes(donationSetId(s.recipients), p.parentSetId));
     if (!parent) { refused.push(`proposal serial ${p.serial}: its parent set is not one this network holds`); continue; }
     if (!(p.serial > parent.serial)) { refused.push(`proposal serial ${p.serial}: not above its parent's serial ${parent.serial}`); continue; }
-    const t = await tallyDonationProposal({ proposal: p, approvals: b.approvals || [], parent: parent.recipients, verifySecp256k1 });
+    const t = await tallyDonationProposal({ proposal: p, approvals: b.approvals || [], parent: parent.recipients, verifySecp256k1, coldCut });
     if (t.state !== 'approved') { refused.push(`proposal serial ${p.serial}: ${t.state}${t.why ? ' - ' + t.why : ''}`); continue; }
     if (Number.isInteger(parent.validFrom) && t.validFrom <= parent.validFrom) { refused.push(`proposal serial ${p.serial}: approved before its parent was in force`); continue; }
     const set = { networkId: p.networkId, serial: p.serial, validFrom: t.validFrom, recipients: p.recipients, approvedBy: t.proposalId };

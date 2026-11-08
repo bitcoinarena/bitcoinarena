@@ -61,7 +61,7 @@ import { taggedHash, toHex } from './hash.js';
 import {
   PROTOCOL_VERSION, speaksVersion, TYPE_SIGNED_DONATION_SET, TYPE_AUTHORITY_ROTATION, TAG,
 } from './constants.js';
-import { encodeDonationSet, decodeDonationSet, donationSetStands } from './donation.js';
+import { encodeDonationSet, decodeDonationSet, donationSetStands, donationSetId } from './donation.js';
 
 /** The 64 bytes beside the object, as for every other signature in here. */
 export const DONATION_SIGNATURE_BYTES = 64;
@@ -365,16 +365,33 @@ export function donationSetInForce({
     }
     accepted.push(set);
   }
-  // THE SETS ITS DEVELOPERS APPROVED (§27A.4.1): checked by donation-vote.js approvedDonationSets against the
-  // set each replaces - the recipients' signatures stand in for the admin key's - and ordered by serial with the rest
+  // A CHANGE NEEDS BOTH KEYS (§27A.4.1 RULED 2026-11-07, kanban #1337): "A change of the set needs the authority key and approvals by more
+  // than half of the recipients' share_bps, so the authority key alone moves nothing". The network's first set is the authority's alone;
+  // every later serial is in force only when the authority signed a set AND its recipients approved the same set (donation-vote.js
+  // approvedDonationSets: the same serial and the same recipients), from the later of the two. Either one alone is refused, by name.
+  const ballots = [];
   for (const set of approved || []) {
     if (!set || !isDonationBytes32(set.networkId) || !sameDonationBytes32(set.networkId, networkId)) continue;
     if (!Number.isInteger(set.validFrom) || set.validFrom > height) continue;
     if (!donationSetStands(set.recipients).ok) continue;
-    accepted.push(set);
+    ballots.push(set);
   }
+  const first = accepted.reduce((m, x) => (m === null || x.serial < m ? x.serial : m), null);
+  const listId = (r) => toHex(donationSetId(r));
+  const both = [];
+  for (const set of accepted) {
+    if (set.serial === first) { both.push(set); continue; }
+    const b = ballots.find((x) => x.serial === set.serial && listId(x.recipients) === listId(set.recipients));
+    if (!b) { refused.push(`serial ${set.serial}: signed by the authority key alone - a change needs its recipients' approval too`); continue; }
+    const validFrom = Math.max(set.validFrom, b.validFrom);
+    if (validFrom > height) { refused.push(`serial ${set.serial} is not in force at ${height}`); continue; }
+    both.push({ ...set, validFrom, approvedBy: b.approvedBy });
+  }
+  for (const b of ballots)
+    if (!accepted.some((set) => set.serial === b.serial && listId(set.recipients) === listId(b.recipients)))
+      refused.push(`serial ${b.serial}: approved by its recipients, not signed by the authority key - a change needs both`);
 
-  const { best, contested } = bestBySerial(accepted, donationSetBodyId);
+  const { best, contested } = bestBySerial(both, donationSetBodyId);
   for (const serial of contested)
     refused.push(`two different sets are signed at serial ${serial}, so that serial is unusable`);
 
