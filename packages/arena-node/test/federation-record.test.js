@@ -1017,3 +1017,24 @@ test('kanban #1322: a federation holding only its two gateways\' mandatory peg-i
   assert.equal(got.opensAtCap700k, false); // 200,000 > 175,000
   assert.equal(toHex(federationRecordId(bare())), 'e8bc7bbba80b07e913e2a42d48e113fa759dc394610a336601a567a051fa878f', 'a plain record keeps its id');
 });
+
+// KANBAN #1320 (§23A.5a RULED 2026-11-07, #1294): "A request that takes the federation to CRITICAL or below ... reads as ABANDONED whatever key signed it"
+test('#1320 three emergency departures in one window on a seven: the first leaves it DRAINING and is free; the ones into CRITICAL and below read ABANDONED, at every signer', async () => {
+  const { createAbsences } = await import('../src/absences.js');
+  const { emergencyCodeBytes, emergencySecret, signEmergencyDeparture } = await import('../../arena-protocol/src/emergency.js');
+  const secret = emergencySecret(emergencyCodeBytes(new Uint8Array(32).fill(0x45)));
+  const pub = schnorr.getPublicKey(secret);
+  const stores = Array.from({ length: 7 }, () => createAbsences({ verify }));
+  const s = seven({ absencesOf: (i) => stores[i], abandonBlocks: 288, emergencyKeys: { 3: pub, 4: pub, 5: pub } });
+  const POSTED = 156000;
+  const reqs = [3, 4, 5].map((i, k) => signEmergencyDeparture({ nodePubkey: s.nodes[i].pubkey, emergencyPubkey: pub, postedAt: POSTED + k }, (m) => schnorr.sign(m, secret)));
+  for (const st of stores) for (const r of reqs) assert.equal(st.offerEmergency(r).kept, true);
+  const got = await s.seats[0].gather(FED, inviteFederationId);
+  const kept = s.seats[0].list()[0];
+  const v = verifyFederationRecord(fromHex(kept.record), { census: s.census.entries, verify, inviteFederationId });
+  const bySince = [...v.record.gone].sort((a, b) => a.sinceHeight - b.sinceHeight).map((g) => [g.sinceHeight, g.kind]);
+  console.log('  MEASURED #1320:', JSON.stringify({ status: got.status, signers: got.signers, gone: bySince, kinds: { DEPARTED: GONE.DEPARTED, ABANDONED: GONE.ABANDONED } }));
+  assert.equal(got.ok, true, got.why);
+  assert.deepEqual(bySince, [[POSTED, GONE.DEPARTED], [POSTED + 1, GONE.ABANDONED], [POSTED + 2, GONE.ABANDONED]]);
+  assert.ok(got.signers >= 3, 'the signers agree on the same body');
+});
