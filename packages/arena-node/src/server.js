@@ -200,7 +200,7 @@ import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/sr
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson, decodeNamedResendList } from './winnings-send.js';
 import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } from './send-plan-ask.js';
-import { TYPE_SETTLEMENT_ACK, TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, TYPE_ABANDONED_PROOF, TYPE_THEFT_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION, seatingRulesEpochOf } from '../../arena-protocol/src/constants.js';
+import { TYPE_SETTLEMENT_ACK, TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, TYPE_ABANDONED_PROOF, TYPE_THEFT_PROOF, TYPE_BOUND_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION, seatingRulesEpochOf } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
@@ -4571,6 +4571,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     lostForfeitOf: (_contract, rid, eid) => lostForfeitAllowed(round, rid, eid),
     // LEVEL 2 OF A NAMED CLAIM (rulings #1138 2, #1140): who the round may pay, as the filer reads it, and the Entry Contracts this seat holds of the round
     payeesOf: (contract, rid) => namedPayeesFor(contract, rid), entriesOf: (rid) => (round.get(rid) ? round.entriesOf(rid).map((x) => x.entry) : null),
+    bound: async (bytes, beforeHeight) => (fedRecords ? fedRecords.boundVerdict(bytes, (inv) => { const f = fedOfInvite(inv); return f ? fromHex(String(f)) : null; }, beforeHeight) : { verdict: undefined, why: 'this seat holds no federation records yet' }),
     theft: async (bytes, beforeHeight) => (fedRecords ? fedRecords.theftVerdict(bytes, (inv) => { const f = fedOfInvite(inv); return f ? fromHex(String(f)) : null; }, beforeHeight) : { verdict: undefined, why: 'this seat holds no federation records yet' }),
     coreOf: (contract, rid) => coreForRound(contract, rid, hosted), beaconOf: (contract, rid, entry, eid) => verifier.proofBeacon(contract, rid, entry, eid), replayRunOf: (rid, eid, core) => verifier.proofReplay(rid, eid, core), vrf: auditVrf,
     // WHO COULD AUDIT, AS THE DESK TOOK IT: the round's census less its drawn nodes. Its players come out where this seat holds the round: a seat that does not cannot name them, and an AUDIT a player signed was refused at every door that held it
@@ -12274,6 +12275,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (bytes[0] === TYPE_ABANDONED_PROOF) {
           if (!fedRecords) return text(res, 503, 'this seat holds no federation records yet');
           const r = await fedRecords.takeAbandonedProof(slashed[1], u8, (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; });
+          if (r.ok && slashStarter) slashStarter.handed(fromHex(slashed[1]));
+          return text(res, r.status, r.ok ? 'kept' : r.why);
+        }
+        // A COPY ABOVE THE HALT'S BOUND (kanban #1269): the same, the record listing the node as a guardian
+        if (bytes[0] === TYPE_BOUND_PROOF) {
+          if (!fedRecords) return text(res, 503, 'this seat holds no federation records yet');
+          const r = await fedRecords.takeBoundProof(slashed[1], u8, (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; });
           if (r.ok && slashStarter) slashStarter.handed(fromHex(slashed[1]));
           return text(res, r.status, r.ok ? 'kept' : r.why);
         }

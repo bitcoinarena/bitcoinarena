@@ -9,6 +9,7 @@ import { namedClaims } from '../../arena-protocol/src/arena-lock.js';
 import { decodeFraudProof, fraudProofHash, readEvidence } from '../../arena-protocol/src/slash.js';
 import { decodeAbandonedProof, isAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
 import { decodeTheftProof, isTheftProof } from '../../arena-protocol/src/theft-slash.js';
+import { decodeBoundProof, isBoundProof } from '../../arena-protocol/src/bound-slash.js';
 import { splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
 import { decodeEntryContract, decodeRoundContract, entryId as entryIdOf, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
@@ -22,11 +23,16 @@ import { takesAnyFederation } from '../../arena-protocol/src/constants.js';
  * null where this seat does not host it; `beaconOf(contract, rid, entry, eid)` -> { ok, hash } or { ok: false, why }; `replayRunOf(rid, eid, core)` this seat's replay in its worker pool; `auditSetOf(contract, rid)` { eligible, total } who could audit the round, or null; `vrf` the secp256k1 ECVRF; `manifestOf(contract)` the round's game's manifest, or null; `clientOf(fid hex)` -> { fees(), txid(build) } this seat's own client of a federation, or null; `panelsOf(contract, rid)` -> { ok, panelA, panelB } of keys or { ok: false, why }; `holdBlocksOf(contract)`; `abandoned(bytes, beforeHeight)` -> { verdict, why } this seat's word on an abandonment's proof (federation-records.js abandonedVerdict); `theft(bytes, beforeHeight)` the same on a theft's proof (theftVerdict, kanban #1093 part 2); `claimRead(input)` the stake-lock tool's arena-claim-read over a named claim's sessions (offline), or null where none runs here (kanban #1044 B1); `lostForfeitOf(contract, rid, eid)` -> { allowed: true | false | null, why } whether a forfeit of that entry is one the protocol allows, by this seat's own record (forfeit.js lostForfeitAllowed, kanban #1044 row (b)); `bodyOf(input, build)` its arena-body, a level-1 proof (a)'s correct body rebuilt offline from the same sessions (stake-lock-port.js readBody), or null where none runs here; `payeesOf(contract, rid)` -> { nodeKeys, donationKeys, reserveKeys } who the round may pay (named-claim-payees.js), or null; `entriesOf(rid)` the round's Entry Contracts this seat holds, or null.
  * Answers `judge(bytes)` -> { verdict, why }, and `judge.read(bytes)`, the cheap part, with no replay: { ok, kind, bond: { txid, vout }, roundId, contract, floorHeight, nodePubkey } or { ok: false, why }.
  */
-export function createProofJudge({ committeeOf, censusOf, coreOf, coreFetch = async () => null, manifestFetch = async () => null, recordClientOf = async () => null, beaconOf, replayRunOf, auditSetOf = () => null, vrf = null, manifestOf = () => null, clientOf = async () => null, panelsOf = () => ({ ok: false, why: 'no panels here' }), holdBlocksOf = () => null, abandoned = async () => ({ verdict: undefined, why: 'this seat reads no federation records' }), theft = async () => ({ verdict: undefined, why: 'this seat audits no federation' }), claimRead = async () => null, bodyOf = async () => null, lostForfeitOf = () => ({ allowed: null, why: 'this seat reads no forfeit record' }), payeesOf = async () => null, entriesOf = () => null, waiting = 32, kept = 256 }) {
+export function createProofJudge({ committeeOf, censusOf, coreOf, coreFetch = async () => null, manifestFetch = async () => null, recordClientOf = async () => null, beaconOf, replayRunOf, auditSetOf = () => null, vrf = null, manifestOf = () => null, clientOf = async () => null, panelsOf = () => ({ ok: false, why: 'no panels here' }), holdBlocksOf = () => null, abandoned = async () => ({ verdict: undefined, why: 'this seat reads no federation records' }), theft = async () => ({ verdict: undefined, why: 'this seat audits no federation' }), bound = async () => ({ verdict: undefined, why: 'this seat reads no federation records' }), claimRead = async () => null, bodyOf = async () => null, lostForfeitOf = () => ({ allowed: null, why: 'this seat reads no forfeit record' }), payeesOf = async () => null, entriesOf = () => null, waiting = 32, kept = 256 }) {
   /** Everything that needs no chain: the bytes read as a proof, and the contract in them is the round the proof names. */
   function read(bytes) {
     if (isAbandonedProof(bytes)) {
       try { const p = decodeAbandonedProof(bytes); return { ok: true, kind: 'abandoned', roundId: null, contract: null, federationId: p.federationId, nodePubkey: p.nodePubkey, bond: { txid: p.txid, vout: p.vout }, floorHeight: splitSignedRecord(p.record).record.height }; }
+      catch (e) { return { ok: false, why: `those bytes are no proof: ${e.message}` }; }
+    }
+    // A COPY ABOVE THE HALT'S BOUND (kanban #1269): no round either; the guardian's bond output, the record's height the floor
+    if (isBoundProof(bytes)) {
+      try { const p = decodeBoundProof(bytes); return { ok: true, kind: 'bound', roundId: null, contract: null, nodePubkey: p.nodePubkey, bond: { txid: p.txid, vout: p.vout }, floorHeight: splitSignedRecord(p.record).record.height }; }
       catch (e) { return { ok: false, why: `those bytes are no proof: ${e.message}` }; }
     }
     // A THEFT (kanban #1093 part 2): no round either; the guardian's bond output, and the record's height is the floor a start's slash height stands on
@@ -153,6 +159,8 @@ export function createProofJudge({ committeeOf, censusOf, coreOf, coreFetch = as
     if (isAbandonedProof(bytes)) return abandoned(bytes, startHeight === null ? null : startHeight - 1);
     // A THEFT LIKEWISE: this seat's own alarm book and its own chain, kept nowhere
     if (isTheftProof(bytes)) return theft(bytes, startHeight === null ? null : startHeight - 1);
+    // A COPY ABOVE THE HALT'S BOUND (kanban #1269) likewise: the copy, the halt observations and this seat's census and chain
+    if (isBoundProof(bytes)) return bound(bytes, startHeight === null ? null : startHeight - 1);
     const id = toHex(fraudProofHash(bytes)), had = verdicts.get(id);
     if (had) return had;
     if (judging.has(id)) return judging.get(id);

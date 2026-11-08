@@ -14,6 +14,7 @@ import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-proto
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { decodeAbandonedProof, isAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
 import { isTheftProof } from '../../arena-protocol/src/theft-slash.js';
+import { isBoundProof } from '../../arena-protocol/src/bound-slash.js';
 import { splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
 import { judgeAbandoned } from './arbiter.js';
 import { TAG } from '../../arena-protocol/src/constants.js';
@@ -83,7 +84,7 @@ export async function abandonedProofChecks({ bytes, nodePubkey, bond, bonds, cen
 }
 
 /** One check for a start of any kind: an abandonment's proof by `abandoned(bytes)`, a theft's by `theft(bytes)` (kanban #1093 part 2; none given: undefined, the node stays), every other by `replay(bytes)`. */
-export const proofChecksOf = ({ replay, abandoned, theft = async () => undefined }) => (bytes) => (isAbandonedProof(bytes) ? abandoned(bytes) : isTheftProof(bytes) ? theft(bytes) : replay(bytes));
+export const proofChecksOf = ({ replay, abandoned, theft = async () => undefined, bound = async () => undefined }) => (bytes) => (isAbandonedProof(bytes) ? abandoned(bytes) : isTheftProof(bytes) ? theft(bytes) : isBoundProof(bytes) ? bound(bytes) : replay(bytes));
 
 /**
  * THE RETURN TO SIGN: the whole hold less `feeSats` to `toScript`, on the return leaf, with the digest the owner key signs (BIP-341 script path).
