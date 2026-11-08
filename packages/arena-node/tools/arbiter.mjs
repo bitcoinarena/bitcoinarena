@@ -22,7 +22,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic, resumeIntent, txidOf, spentSetFromSeats } from '../src/arbiter.js';
+import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic, resumeIntent, resumeSlashIntent, txidOf, spentSetFromSeats } from '../src/arbiter.js';
 import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
 import { decodeSpentSet, spentNonceSet } from '../../arena-protocol/src/spent-set.js';
@@ -70,6 +70,8 @@ async function censusAt(contract, height) {
   return { ...c, tip, view };
 }
 
+/** A kept slash intent refused with its bond unspent is built anew only this many blocks after its slash height (kanban #1357). */
+const INTENT_REBUILD_BLOCKS = 6;
 async function handle(seat, s) {
   const rid = fromHex(s.round), eid = fromHex(s.entry);
   const recs = await get(`${seat}/slash-proofs?round=${s.round}&entry=${s.entry}`, 'bytes');
@@ -116,7 +118,10 @@ async function handle(seat, s) {
   // left nothing kept, and once the slash confirmed the next pass read the spent bond as "nothing to do" - its escrow never paid out. The
   // intent names its txid; a pass that finds that transaction on the chain or in the mempool takes it as posted.
   let intentTxid = null; try { intentTxid = (await rpc('decoderawtransaction', [tx.hex])).txid; } catch { intentTxid = null; }
-  if (intentTxid) { state.intents[s.proof] = { txid: intentTxid, slashHeight: census.tip, signers: tx.signers, node: s.node, round: s.round, entry: s.entry,
+  // ITS BYTES AND THE BOND IT SPENDS ARE KEPT TOO (kanban #1357, audit 4 fixesA-3): a pass whose node lost the intent sends these bytes again -
+  // built anew at a later tip it had another locktime and txid, the first one confirmed from the peers' mempools, and the escrow was never paid
+  if (intentTxid) { state.intents[s.proof] = { txid: intentTxid, hex: tx.hex, bond: { txid: toHex([...accused.txid].reverse()), vout: accused.vout },
+    slashHeight: census.tip, signers: tx.signers, node: s.node, round: s.round, entry: s.entry,
     playersSats: String(slash.built.amounts.players), players, atMs: Date.now() }; keep(); }
   const sent = await post(rpc, tx.hex);
   return sent.ok ? { done: true, posted: sent.txid, slashHeight: census.tip, signers: tx.signers, node: s.node, round: s.round, entry: s.entry,
@@ -195,7 +200,21 @@ async function pass() {
       if (state.handled[s.proof]) continue;
       // A SLASH RECORDED BEFORE ITS BROADCAST AND FOUND ON THE CHAIN OR IN THE MEMPOOL IS POSTED (kanban #1232)
       const intent = state.intents[s.proof];
-      if (intent) {
+      // A KEPT INTENT IS RESUMED, NOT REBUILT (kanban #1357): on the chain or in the mempool, or its bond spent (only this set signs the
+      // slash): posted; its bond unspent: the same bytes again. Refused with the bond unspent: built anew only once the intent is
+      // INTENT_REBUILD_BLOCKS old - before that a refusal is a node that lost it while its peers still hold it.
+      if (intent && intent.hex && intent.bond) {
+        const r = await resumeSlashIntent(rpc, intent, { rebuildBlocks: INTENT_REBUILD_BLOCKS });
+        if (r.step === 'posted') {
+          const { atMs: _a, hex: _h, bond: _b, ...rest } = intent;
+          state.handled[s.proof] = { at: Date.now(), done: true, posted: intent.txid, ...rest };
+          delete state.intents[s.proof]; keep();
+          say({ seat, proof: s.proof.slice(0, 16), node: s.node.slice(0, 16), posted: intent.txid, why: r.why });
+          continue;
+        }
+        if (r.step === 'wait') { say({ seat, proof: s.proof.slice(0, 16), node: s.node.slice(0, 16), waiting: `its recorded slash ${intent.txid.slice(0, 16)} is not taken (${r.why}): sent again next pass` }); continue; }
+        delete state.intents[s.proof]; keep();
+      } else if (intent) {
         if (await intentLanded(rpc, intent.txid, 1)) {
           const { atMs: _a, ...rest } = intent;
           state.handled[s.proof] = { at: Date.now(), done: true, posted: intent.txid, ...rest };

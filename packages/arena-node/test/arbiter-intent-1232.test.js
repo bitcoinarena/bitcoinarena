@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { intentLanded, writeJsonAtomic, post, resumeIntent, payOutSlash } from '../src/arbiter.js';
+import { intentLanded, writeJsonAtomic, post, resumeIntent, resumeSlashIntent, payOutSlash } from '../src/arbiter.js';
 
 test('#1232 a recorded slash is found in the mempool, in a block without txindex (its escrow output), or not at all', async () => {
   const TX = 'ab'.repeat(32);
@@ -87,4 +87,30 @@ test('#1232 payOutSlash resumes its recorded escrow spend: a lost answer no long
   const w = { posted: PATHB, playersSats: '100000', escrowIntent: { ...intent } };
   const refused = await payOutSlash({ proof: 'aa'.repeat(32), v: w, set: {}, rpc: escrowChain({ refuse: 'min relay fee not met' }).rpc, bin: '/bin/false', dir: '/nonexistent' });
   assert.match(refused.why, /refused/); assert.equal(w.escrowIntent, undefined, 'dropped: the next pass builds it anew'); assert.equal(w.escrowTxid, undefined);
+});
+
+// KANBAN #1357 (audit 4 fixesA-3): the slash intent kept only a txid. A node that lost the relayed slash A answered "not landed", the pass built
+// the slash again at a later tip (another locktime, txid B) and recorded B, while the peers mined A - payOutSlash looked for B's escrow forever.
+// Now the intent keeps A's bytes and its bond, and a pass sends A again; it is built anew only when refused with the bond unspent, blocks later.
+test('#1257 a lost intent is resent, not rebuilt', async () => {
+  const A = 'aa'.repeat(32), BOND = { txid: 'bb'.repeat(32), vout: 0 };
+  const intent = { txid: A, hex: '02aa', bond: BOND, slashHeight: 100 };
+  const node = ({ tip, accept, bondUnspent = true }) => { const sent = []; return { sent, rpc: async (m, p) => {
+    if (m === 'getrawtransaction') throw new Error('No such mempool or blockchain transaction');   // this node lost A
+    if (m === 'gettxout') return p[0] === BOND.txid && bondUnspent ? { value: 0.5 } : null;
+    if (m === 'testmempoolaccept') return [{ txid: A, allowed: accept, 'reject-reason': accept ? undefined : 'bad-txns-inputs-missingorspent' }];
+    if (m === 'sendrawtransaction') { sent.push(p[0]); return A; }
+    if (m === 'getblockcount') return tip;
+    throw new Error(m);
+  } }; };
+  const lost = node({ tip: 101, accept: true });
+  const r1 = await resumeSlashIntent(lost.rpc, intent);
+  const spent = await resumeSlashIntent(node({ tip: 101, accept: false, bondUnspent: false }).rpc, intent);
+  const refusedEarly = await resumeSlashIntent(node({ tip: 103, accept: false }).rpc, intent);
+  const refusedLate = await resumeSlashIntent(node({ tip: 106, accept: false }).rpc, intent);
+  console.log('  MEASURED #1357 resume:', JSON.stringify({ lostIntent: r1.step, resentBytes: lost.sent, bondSpent: spent.step, refusedAt103: refusedEarly.step, refusedAt106: refusedLate.step }));
+  assert.equal(r1.step, 'posted'); assert.deepEqual(lost.sent, ['02aa'], 'A\'s own bytes are sent again, nothing is built');
+  assert.equal(spent.step, 'posted', 'the bond spent: only this set signs a spend of it - the recorded slash');
+  assert.equal(refusedEarly.step, 'wait', 'refused 3 blocks on: no new build while A may still confirm');
+  assert.equal(refusedLate.step, 'rebuild');
 });
