@@ -329,17 +329,6 @@ try {
   if (env.KEYS_FILE) appendFileSync(env.KEYS_FILE, `${JSON.stringify({ at: new Date().toISOString(), round: toHex(rid), entry: toHex(eid),
     secret: toHex(me.secret), stake: `${toHex(locks.stake.outpoint.txid)}:${locks.stake.outpoint.outIdx}`,
     fee: locks.fee ? `${toHex(locks.fee.outpoint.txid)}:${locks.fee.outpoint.outIdx}` : null })}\n`);
-  // IDENTITY_SECRET_FILE=<64 hex> (kanban #1346): the round is booked to that identity, with its own consent (#1278, RULED #1276) - a name
-  // record signed by the round key, and the identity key over (round, round key), posted to every seat as a page's join does
-  if (env.IDENTITY_SECRET_FILE) {
-    const idSecret = fromHex(readFileSync(env.IDENTITY_SECRET_FILE, 'utf8').trim());
-    const identityKey = schnorr.getPublicKey(idSecret);
-    const rec = { roundId: rid, playerPubkey: s.player, identityPubkey: identityKey, name: env.PLAYER_NAME || '', atMs: BigInt(Date.now()) };
-    const body = JSON.stringify({ record: toHex(encodeLobbyName(rec)), sig: toHex(schnorr.sign(lobbyNameId(rec), me.secret)),
-      identitySig: toHex(schnorr.sign(matchProofId({ roundId: rid, entryId: s.player, identityKey }), idSecret)) });
-    const said = await Promise.all(nodes.map((n) => fetch(`${n}/name`, { method: 'POST', body, signal: AbortSignal.timeout(15000) }).then((r) => r.status, (e) => e.message)));
-    log({ step: 'identity named', identity: toHex(identityKey).slice(0, 16), said });
-  }
   const st = A.start(seed.seedWord, config, { runTicks: N, ...(unlocks.length ? { items: unlocks } : {}), ...(seed.slot === undefined ? {} : { slot: seed.slot }) });
   const ev = A.eventsOf({ loads: bedFrom(0) });
   const stateAt = [];
@@ -390,6 +379,17 @@ try {
       lock: l.status, lockSaid: (await l.text()).trim().slice(0, 160), ...(early.length ? { early } : {}) });
   }
   log({ step: 'handed over', entry: toHex(eid).slice(0, 16), signerNodes });
+  // IDENTITY_SECRET_FILE=<64 hex> (kanban #1346): the round is booked to that identity, with its own consent (#1278, RULED #1276) - a name
+  // record signed by the round key, and the identity key over (round, round key), posted to every seat once they hold the entry (a seat answers 409 for a round key it holds no entry of), within the join's grace (#1267)
+  if (env.IDENTITY_SECRET_FILE) {
+    const idSecret = fromHex(readFileSync(env.IDENTITY_SECRET_FILE, 'utf8').trim());
+    const identityKey = schnorr.getPublicKey(idSecret);
+    const rec = { roundId: rid, playerPubkey: s.player, identityPubkey: identityKey, name: env.PLAYER_NAME || '', atMs: BigInt(Date.now()) };
+    const body = JSON.stringify({ record: toHex(encodeLobbyName(rec)), sig: toHex(schnorr.sign(lobbyNameId(rec), me.secret)),
+      identitySig: toHex(schnorr.sign(matchProofId({ roundId: rid, entryId: s.player, identityKey }), idSecret)) });
+    const said = await Promise.all(nodes.map((n) => fetch(`${n}/name`, { method: 'POST', body, signal: AbortSignal.timeout(15000) }).then((r) => r.status, (e) => e.message)));
+    log({ step: 'identity named', identity: toHex(identityKey).slice(0, 16), said });
+  }
   if (signerNodes.filter((x) => x.lock >= 200 && x.lock < 300).length < needed) throw new Error('fewer seats than needed took the lock');
   // NO_MARKS=1: IN THE ROUND AND NEVER PLAYED: not one mark is sent (tools/no-quorum-devnet.mjs)
   if (env.NO_MARKS && !env.REFUND_AT_EXPIRY) { log({ step: 'no marks sent' }); process.exit(0); }

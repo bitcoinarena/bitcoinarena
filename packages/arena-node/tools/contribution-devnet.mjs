@@ -88,12 +88,12 @@ try {
   // THREE NEWCOMERS through his link, once the seats hold grid 1's round
   if (!(await held(g1[0].id))) throw new Error('grid 1\'s round was never posted to the seats');
   const players1 = ids.map((x) => play(g1[0], x));
-  for (const stop = Date.now() + 15 * 60000; Date.now() < stop && !players1.every((p) => stepOf(p, 'published').length || p.child.exitCode !== null); await wait(5000));
+  for (const stop = Date.now() + 75 * 60000; Date.now() < stop && !players1.every((p) => stepOf(p, 'published').length || p.child.exitCode !== null); await wait(5000));
   say({ step: 'grid 1 played', round: g1[0].id.slice(0, 8), census: c1, named: players1.map((p) => (stepOf(p, 'identity named')[0] || '').slice(0, 140)), published: players1.map((p) => stepOf(p, 'published').length > 0) });
   // 2 TWO OF THEM BACK in grid 2's round
   if (!(await held(g2[0].id))) throw new Error('grid 2\'s round was never posted to the seats');
   const players2 = ids.slice(0, 2).map((x) => play(g2[0], x));
-  for (const stop = Date.now() + 15 * 60000; Date.now() < stop && !players2.every((p) => stepOf(p, 'published').length || p.child.exitCode !== null); await wait(5000));
+  for (const stop = Date.now() + 75 * 60000; Date.now() < stop && !players2.every((p) => stepOf(p, 'published').length || p.child.exitCode !== null); await wait(5000));
   say({ step: 'grid 2 played', round: g2[0].id.slice(0, 8), census: g2[0].censusHeight, published: players2.map((p) => stepOf(p, 'published').length > 0) });
 
   // 3 THE BOOKS: T1 and T2 vested, two seats answering the same
