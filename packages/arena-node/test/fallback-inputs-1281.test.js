@@ -47,3 +47,31 @@ test('FINAL, four seats on one result content, as written; the node row by final
   const seatHex = seats.map((s) => toHex(s.pub));
   assert.deepEqual([...got.eligible].sort(), [0, 1, 2, 3, 4].map((i) => seatHex[i]).sort(), 'seat 5 one ms late and seat 6 silent: no node row');
 });
+
+test('kanban #1347: the fallback takes an entry with no FINAL as written and pays it by four signatures - the claim still waits for it', async () => {
+  const { LockSettlement } = await import('../src/settlement.js');
+  const db = store();
+  const FA = 1_000_000;
+  // entry 0 FINAL; entry 1 no FINAL (a run that never reached one), four seats signed one result; entry 2 no FINAL, in a re-run window; entry 3 no quorum being decided
+  db.prepare('INSERT INTO entry_finals VALUES (?, ?, ?, ?, 0, ?)').run(Buffer.from(rid), Buffer.from(eid(0)), 'run', FA, FA);
+  result(0, 0, 'DELIVERED', 5, FA - 100, db);
+  for (const s of [0, 1, 2, 3]) result(s, 1, 'DELIVERED', 4, FA + 1000, db);
+  for (const s of [0, 1, 2]) result(s, 2, 'DELIVERED', 3, FA + 1000, db);
+  const standings = [{ state: 'FINAL', rerunResult: { outcome: 'DELIVERED', score: 5 } }, { state: 'PROVISIONALLY_FINAL', why: 'no FINAL formed' }, { state: 'SUSPENDED', why: 'an objection' }, { state: null, holdsRound: true, why: 'no quorum' }];
+  const ent = (i) => ({ entryId: eid(i), entry: { playerPubkey: player(i), stakeMsat: 100000n, feeMsat: 4000n, donationMsat: 0n, feePreimage: new Uint8Array(32) } });
+  const round = { entriesOf: () => [0, 1, 2, 3].map(ent), stakeSeen: () => true, entryVoid: () => null, noQuorum: () => null, firstMarkHeld: () => true };
+  const ls = new LockSettlement(round, { finalityOf: (_r, _rid, entryId) => standings[[0, 1, 2, 3].find((i) => toHex(eid(i)) === toHex(entryId))] });
+  // the claim: refused while any entry has no FINAL
+  const claim = ls.entriesOnRecord(rid, {});
+  assert.equal(claim.ok, false);
+  // the fallback: every entry on record, those with no FINAL as VOID marked noFinal
+  const fb = ls.entriesOnRecord(rid, {}, { fallback: true });
+  assert.equal(fb.ok, true, fb.why);
+  assert.deepEqual(fb.entries.map((e) => [e.outcome, !!e.noFinal]), [['DELIVERED', false], ['VOID', true], ['VOID', true], ['VOID', true]]);
+  const got = fallbackInputs({ db, roundIdBytes: rid, contract: { nodes: seats.map((s) => s.pub) }, entries: fb.entries, finalAfterMs: FA });
+  assert.deepEqual(got.entries.map((e) => [e.outcome, e.score, e.by]), [['DELIVERED', 5, 'final'], ['DELIVERED', 4, 'four signatures'], ['VOID', 0, 'as written'], ['VOID', 0, 'as written']]);
+  // a FINAL kept in the store for an entry the seat does not stand FINAL is not taken as its FINAL
+  db.prepare('INSERT INTO entry_finals VALUES (?, ?, ?, ?, 0, ?)').run(Buffer.from(rid), Buffer.from(eid(2)), 'run', FA, FA);
+  const again = fallbackInputs({ db, roundIdBytes: rid, contract: { nodes: seats.map((s) => s.pub) }, entries: fb.entries, finalAfterMs: FA });
+  assert.equal(again.entries[2].by, 'as written');
+});

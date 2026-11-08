@@ -42,7 +42,7 @@ export function fallbackInputs({ db, roundIdBytes, contract, entries, finalAfter
   for (const r of db.prepare('SELECT signer_pubkey, seen_ms FROM final_sigs WHERE round_id = ?').all(rid)) saw(hexOf(r.signer_pubkey), r.seen_ms);
   const mapped = fallbackEntries((entries || []).map((e) => {
     const k = toHex(e.entryId);
-    return { ...e, final: finals.has(k) ? { outcome: e.outcome, score: e.score } : null, signedResults: byEntry.get(k) || [] };
+    return { ...e, final: finals.has(k) && !e.noFinal ? { outcome: e.outcome, score: e.score } : null, signedResults: byEntry.get(k) || [] };
   }));
   const fa = finalAfterMs !== null ? Number(finalAfterMs) : Number(windowsOf(contract).finalAfterMs);
   return { entries: mapped, eligible: fallbackEligible({ seats: contract.nodes || [], seenAtMs: seen, finalAfterMs: fa }), finalAfterMs: fa };
