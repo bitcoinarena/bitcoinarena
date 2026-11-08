@@ -12,6 +12,8 @@ import { taggedHash, bytesToBigInt, toHex } from './hash.js';
 import { TAG, FOUNDING_PRESSURE_VERSION } from './constants.js';
 import { weightOf } from './sortition.js';
 import { tagAt } from './tag-switch.js';
+import { exposureCap } from './federation-slash.js';
+import { opensWith } from './federation-record.js';
 
 export const ALTERNATES = 3;
 
@@ -99,7 +101,7 @@ export function guardianTicket(seed, entry, height) {
 // from the free pool, and too few veterans found nothing - ten fresh bonds alone are not a federation. Null, or no OPEN federation at all (the
 // network's first founding): the draw as before, byte for byte.
 export const OPEN_GUARDED_MAX = 2;
-export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [], pressureBond = null, candidateVersion = null, firstSeasonEnds = null, openGuarding = null }) {
+export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [], pressureBond = null, candidateVersion = null, firstSeasonEnds = null, openGuarding = null, pegInMinSats = null }) {
   if (!(seed instanceof Uint8Array) || seed.length !== 32) return { ok: false, why: 'a founding is drawn on the beacon after its trigger height' };
   if (typeof bondMinGuardian !== 'bigint' || bondMinGuardian <= 0n) return { ok: false, why: 'bond_min_guardian is a positive floor' };
   if (pressureBond !== null && (typeof pressureBond !== 'bigint' || pressureBond <= 0n)) return { ok: false, why: 'B*_net under pressure is a positive amount, or null when the network is not under pressure' };
@@ -126,7 +128,7 @@ export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian,
   const pool = [...byOp].filter(([, x]) => x.bondSats >= bondMinGuardian).map(([op, x]) => ({ ...x, op }));
   const missing = nominal - first.length;
   const veteransRule = openGuarding instanceof Map && openGuarding.size > 0;
-  if (veteransRule) return drawWithVeterans({ entries, seed, height, nominal, bondMinGuardian, first, firstOps, firstNodes, free: pool, missing, f, openGuarding, candidateVersion, firstSeasonEnds });
+  if (veteransRule) return opensOrNot(drawWithVeterans({ entries, seed, height, nominal, bondMinGuardian, first, firstOps, firstNodes, free: pool, missing, f, openGuarding, candidateVersion, firstSeasonEnds }), f, pegInMinSats);
   const allDrawn = offered.length && !first.length ? `, everything drawn: ${offered.length} seated first is fewer than f + 1 = ${f + 1}` : '';
   if (pool.length < missing)
     return { ok: false, eligible: pool.length, seatedFirst: first.length, why: first.length
@@ -151,9 +153,22 @@ export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian,
   if (picked.length < missing)
     return { ok: false, eligible: pool.length, seatedFirst: first.length, why: `the ${missing} seats to draw cannot be filled with at most ${Math.max(1, f)} guardians per host_group: ${picked.length} fit` };
   const alternates = rest.filter(fits).slice(0, ALTERNATES);
-  return { ok: true, eligible: pool.length, seatedFirst: first.length, ...(pressureBond !== null ? { atPressureBond: ahead } : {}), drawn: [...first, ...picked],
+  return opensOrNot({ ok: true, eligible: pool.length, seatedFirst: first.length, ...(pressureBond !== null ? { atPressureBond: ahead } : {}), drawn: [...first, ...picked],
     alternates,
-    why: `${first.length ? `${first.length} seated first, ` : ''}${missing} drawn of ${pool.length} eligible operators, ${alternates.length} alternates in order${allDrawn}${pressureBond !== null ? `, under pressure ${ahead} at or above B*_net ${pressureBond} go ahead of the rest` : ''}` };
+    why: `${first.length ? `${first.length} seated first, ` : ''}${missing} drawn of ${pool.length} eligible operators, ${alternates.length} alternates in order${allDrawn}${pressureBond !== null ? `, under pressure ${ahead} at or above B*_net ${pressureBond} go ahead of the rest` : ''}` }, f, pegInMinSats);
+}
+
+/**
+ * A FEDERATION OPENS ONLY IF 2 x peg_in_min <= exposure_cap / 4 (§23A.3a RULED 2026-11-07, kanban #1296/#1322): the drawn set's cap - halts at f
+ * times its smallest bond - is read before anyone is asked to take part; a set whose two gateways' mandatory peg-ins would be more than a
+ * quarter of it founds nothing. `pegInMinSats` null: not checked (the draw as before).
+ */
+function opensOrNot(draw, f, pegInMinSats) {
+  if (!draw.ok || pegInMinSats === null || pegInMinSats === undefined) return draw;
+  const cap = exposureCap({ bonds: draw.drawn.map((e) => BigInt(e.bondSats)), f });
+  if (!cap.ok) return { ok: false, eligible: draw.eligible, seatedFirst: draw.seatedFirst, why: cap.why };
+  const o = opensWith({ exposureCapSats: cap.cap, pegInMinSats });
+  return o.ok ? draw : { ok: false, eligible: draw.eligible, seatedFirst: draw.seatedFirst, capSats: cap.cap, why: `the drawn set's exposure cap is ${cap.cap} sat: ${o.why}` };
 }
 
 function drawWithVeterans({ entries, seed, height, nominal, bondMinGuardian, first, firstOps, firstNodes, free, missing, f, openGuarding, candidateVersion, firstSeasonEnds }) {

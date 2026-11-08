@@ -40,3 +40,17 @@ test('#1323 ten fresh bonds do not found alone; f + 1 veterans of OPEN federatio
   assert.equal(two.ok, false); assert.equal(noSlot.ok, false);
   assert.equal(got.firstFoundingSame, true); assert.equal(before.ok, true);
 });
+
+// KANBAN #1322 (§23A.3a RULED 2026-11-07, #1296): "A federation opens only if 2 x peg_in_min <= exposure_cap / 4" - the drawn set's cap, before anyone takes part
+test('#1322 a drawn set whose exposure cap is under 8 x peg_in_min founds nothing', async () => {
+  const { GATEWAY_MINIMUMS } = await import('../src/gateway-seats.js');
+  const mainnet = drawGuardians({ ...base, entries: fresh, pegInMinSats: GATEWAY_MINIMUMS.mainnet.pegInSats });
+  const testnet4 = drawGuardians({ ...base, entries: fresh, pegInMinSats: GATEWAY_MINIMUMS.testnet4.pegInSats });
+  const unchecked = drawGuardians({ ...base, entries: fresh });
+  const got = { mainnet: [mainnet.ok, String(mainnet.capSats), mainnet.why], testnet4: testnet4.ok, unchecked: unchecked.ok };
+  console.log('  MEASURED #1322 open:', JSON.stringify(got));
+  assert.equal(mainnet.ok, false); assert.match(mainnet.why, /opens only if 2 x peg_in_min \(4000000 sat\) <= exposure_cap \/ 4/);
+  assert.equal(testnet4.ok, true, testnet4.why);
+  assert.equal(unchecked.ok, true);
+  assert.deepEqual(testnet4.drawn.map((e) => toHex(e.pubkey)), unchecked.drawn.map((e) => toHex(e.pubkey)), 'a set that opens is the same draw');
+});

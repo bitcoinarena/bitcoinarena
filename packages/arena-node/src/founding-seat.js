@@ -258,7 +258,8 @@ export function cliSetup({ run, apiPort, password, guardianName, freshSetup = nu
  * `candidateVersionAt(height)` the version a candidate at that height has to advertise, else null; `redrawFrom` the height every kind of
  * trigger redraws from (foundingTrigger), null for none.
  */
-export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = null, pressureBondAt = null, candidateVersionAt = () => null, redrawFrom = null, notices = () => [], emergencies = () => [], next = null, nominal,
+// `pegInMinSats` the network's gateway peg-in minimum: a drawn set whose cap is under 8 x it founds nothing (§23A.3a, kanban #1322); null: not checked
+export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = null, pegInMinSats = null, pressureBondAt = null, candidateVersionAt = () => null, redrawFrom = null, notices = () => [], emergencies = () => [], next = null, nominal,
   bondMinGuardian, clocks, ownKey, sign, verify, post = async () => {}, postTo = null, peers = () => [], fetchJson = null, endpointOf = (e) => e.advert.endpoint, say = () => {}, keep = 4096,
   freshTried = null, firstSeason = null }) {
   let current = null;                        // { key, founding }
@@ -400,7 +401,7 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       let freshWait = false;
       if (!use && setup && typeof setup.freshSetup === 'function' && !tried.has(key)) {
         const probe = createFounding({ seed, triggerHeight: t.height, entries, nominal: Number.isInteger(t.nominal) && t.nominal > 0 ? t.nominal : nominal, bondMinGuardian,
-          guardingOpen: out, seatedFirst, pressureBond, candidateVersion, openGuarding: openGuardingOf({ entries, held, except }), foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: null, firstSeason });
+          guardingOpen: out, seatedFirst, pressureBond, candidateVersion, openGuarding: openGuardingOf({ entries, held, except }), pegInMinSats, foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: null, firstSeason });
         const ps = probe.state(), me = toHex(ownKey);
         const named = (ps.seated || []).some((x) => String(x.node || x).toLowerCase() === me) || (ps.alternates || []).some((x) => String(x).toLowerCase() === me);
         let reading = GUARDIAN.UNKNOWN;
@@ -420,7 +421,7 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       // is 4 on testnet4 and regtest, and B's successor drawn at 4 would seat four of B and draw nobody
       const size = Number.isInteger(t.nominal) && t.nominal > 0 ? t.nominal : nominal;
       const openGuarding = openGuardingOf({ entries, held, except });
-      current = { key, trigger: t, via, freshWait, entries, founding: createFounding({ seed, triggerHeight: t.height, entries, nominal: size, bondMinGuardian, guardingOpen: out, seatedFirst, pressureBond, candidateVersion, openGuarding,
+      current = { key, trigger: t, via, freshWait, entries, founding: createFounding({ seed, triggerHeight: t.height, entries, nominal: size, bondMinGuardian, guardingOpen: out, seatedFirst, pressureBond, candidateVersion, openGuarding, pegInMinSats,
         foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: use, post, say, firstSeason }) };
       say({ founding: current.founding.id.slice(0, 16), trigger: t.kind, height: t.height, why: t.why, nominal: size, seatedFirst: seatedFirst.length,
         leftOut: [...out], takesPart: !!use, via });
