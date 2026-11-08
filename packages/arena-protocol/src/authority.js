@@ -61,7 +61,7 @@ import { taggedHash, toHex } from './hash.js';
 import {
   PROTOCOL_VERSION, speaksVersion, TYPE_SIGNED_DONATION_SET, TYPE_AUTHORITY_ROTATION, TAG,
 } from './constants.js';
-import { encodeDonationSet, decodeDonationSet, donationSetStands, donationSetId } from './donation.js';
+import { encodeDonationSet, decodeDonationSet, donationSetStands, donationSetId, donationSetPaysKeys } from './donation.js';
 
 /** The 64 bytes beside the object, as for every other signature in here. */
 export const DONATION_SIGNATURE_BYTES = 64;
@@ -376,11 +376,16 @@ export function donationSetInForce({
     if (!donationSetStands(set.recipients).ok) continue;
     ballots.push(set);
   }
+  // A SET WHOSE RECIPIENTS CANNOT VOTE (an LNURL set: no recipient keys) is replaced by the authority alone - nobody holds a share_bps that
+  // could approve, so the ruling's majority is over keys only: testnet4's key set (serial 3) replaced its LNURL set (serial 2) that way
   const first = accepted.reduce((m, x) => (m === null || x.serial < m ? x.serial : m), null);
   const listId = (r) => toHex(donationSetId(r));
+  const parentOf = (set) => accepted.filter((x) => x.serial < set.serial).reduce((m, x) => (m === null || x.serial > m.serial ? x : m), null);
   const both = [];
   for (const set of accepted) {
     if (set.serial === first) { both.push(set); continue; }
+    const parent = parentOf(set);
+    if (parent && !donationSetPaysKeys(parent.recipients)) { both.push(set); continue; }
     const b = ballots.find((x) => x.serial === set.serial && listId(x.recipients) === listId(set.recipients));
     if (!b) { refused.push(`serial ${set.serial}: signed by the authority key alone - a change needs its recipients' approval too`); continue; }
     const validFrom = Math.max(set.validFrom, b.validFrom);
