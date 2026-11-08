@@ -31,6 +31,11 @@ export const TAG_NETWORK_ID = 'ARENA/v1/NetworkId';
  * height after committee_time. Entry closes before that height is known.
  */
 export const RANDOMNESS_SOURCE = 'bitcoin-block-hash';
+/**
+ * NODE_FEE_BPS_MAX, A GENESIS PARAMETER (§27A.7.4 RULED 2026-11-07, kanban #1300/#1335): the highest node fee a MONEY ballot may set. Raising it
+ * is an UPGRADE - a new network the clients must choose to follow (§27A.8) - never a config vote, so a fee vote cannot raise its own ceiling.
+ */
+export const NODE_FEE_BPS_MAX = 600;
 
 /**
  * THE SLASH CLOCKS OF TEMPLATE 3, by network (§27A.6's table, §5A.3B). Hashed into mainnet's network id. On testnet4 and regtest they are

@@ -142,3 +142,20 @@ test('the one block a claimed peg-in names: the transaction is in it, and the ou
   assert.equal(outpointInBlock(RAW, `${txid}:${first.outputs.length}`), false, 'no such output');
   assert.equal(outpointInBlock(RAW, `${'ab'.repeat(32)}:0`), false, 'not in this block');
 });
+
+// KANBAN #1335 (§27A.7.6 RULED 2026-11-07, #1307): a repeal names only the config in force's DIRECT PARENT, within one normal cycle (4,464 blocks)
+// of the activation it undoes. "Any ancestor that was live before" let a fee config repealed years ago come back in days with no exit window.
+test('#1335 a repeal of a non-parent is refused; so is one of the parent after a whole cycle', async () => {
+  const { REPEAL_WINDOW_BLOCKS } = await import('../src/ballot.js');
+  const history = [{ config: Uint8Array.of(1), since: 0 }, { config: Uint8Array.of(2), since: 500 }, { config: Uint8Array.of(3), since: 2000 }];
+  const parent = { config: Uint8Array.of(2) }, grandparent = { config: Uint8Array.of(1) };
+  const got = {
+    parentInCycle: isRepeal(parent, history, { publishedAt: 2000 + 100 }),
+    grandparent: isRepeal(grandparent, history, { publishedAt: 2000 + 100 }),
+    parentAfterCycle: isRepeal(parent, history, { publishedAt: 2000 + REPEAL_WINDOW_BLOCKS + 1 }),
+    parentAtCycleEnd: isRepeal(parent, history, { publishedAt: 2000 + REPEAL_WINDOW_BLOCKS }),
+  };
+  console.log('  MEASURED #1335 repeal:', JSON.stringify(got));
+  assert.deepEqual(got, { parentInCycle: true, grandparent: false, parentAfterCycle: false, parentAtCycleEnd: true });
+  assert.equal(REPEAL_WINDOW_BLOCKS, 4464);
+});

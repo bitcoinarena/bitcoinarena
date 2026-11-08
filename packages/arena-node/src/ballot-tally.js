@@ -30,6 +30,7 @@
 // already learned outran its slice on the slower machine and held seven seats at 105-170 % of a core): a pass reads at most
 // `maxBlocksPerPass` blocks over all proposals, each proposal keeps how far it has read, nothing already read or decided is
 // asked again, and the vote cache drops every height below the lowest phase still open.
+import { fundingScheduleFor } from '../../arena-protocol/src/funding.js';
 import { tally, CLASS, MIN_DECIDE_DEPTH as MIN_DEPTH, LEGACY_DECIDE_DEPTH, underDepthRule } from '../../arena-protocol/src/ballot.js';
 import { liveConfig, BALLOT_GENESIS, SOURCES_GENESIS, hostsLiveAt, entriesLiveAt } from '../../arena-protocol/src/ballot-chain.js';
 import { decodeHostList, decodeSourceList } from '../../arena-protocol/src/market-check.js';
@@ -222,8 +223,9 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
           o.readTo = h; o.readHash = hashByHeight.get(h) || null;
         }
         if (o.dirty) {
-          o.result = tally({ proposal: { class: CLASS[p.class] }, standing: { id: fromHex(p.id), votingFrom: p.votingFrom, votingUntil: p.votingUntil },
-            census: o.census, votes: o.votes, verify });
+          // a MONEY vote counts bonds of rule 1's age at publication (kanban #1335): the network's funding season
+          o.result = tally({ proposal: { class: CLASS[p.class] }, standing: { id: fromHex(p.id), votingFrom: p.votingFrom, votingUntil: p.votingUntil, publishedAt: p.publishedAt },
+            census: o.census, votes: o.votes, verify, ageBlocks: (() => { try { return fundingScheduleFor(fromHex(p.networkId)).season; } catch { return null; } })() });
           o.dirty = false;
         }
         // DECIDED ONCE: the whole phase read, and its last block deep enough - no later than the block before its activation
