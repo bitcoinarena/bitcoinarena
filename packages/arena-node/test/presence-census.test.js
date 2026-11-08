@@ -415,3 +415,22 @@ test('kanban #1325: a claim leaving out more than 20 % of the chain census is re
   assert.equal(d.ok, false);
   assert.match(d.why, /above the 20 %/);
 });
+
+test('kanban #1325: the client refuses a committed census under 75 % of the chain census it sees itself; the honest one passes', () => {
+  const W = world();
+  const claim = claimOf(STOPPED, W.seatings.slice(0, 3));
+  W.book.keepClaim(toHex(W.contract.censusRoot), claim);
+  const ev = W.roster.censusEvidenceFor(W.rid);
+  const own = committeeFromChain({ contract: W.contract, roundId: W.rid, headers: W.view.blocks.map((b) => b.header), firstHeight: W.view.firstHeight,
+    evidence: ev.entries, bond: bondSetFor('regtest'), verify });
+  assert.equal(own.ok, true, own.why);
+  const check = (entries) => absenceFromChain({ contract: W.contract, claim: { ...claim, contracts: W.contracts, publications: W.publications, creators: W.creators },
+    headers: W.view.blocks.map((b) => b.header), firstHeight: W.view.firstHeight, evidenceOf: (r) => W.roster.censusEvidenceFor(fromHex(r)).entries,
+    bond: bondSetFor('regtest'), verify, entries });
+  const honest = check(own.checkedCensus.entries);
+  assert.equal(honest.ok, true, honest.why);
+  // the same claim over a census that also dropped two nodes nobody named: half the chain census the client read from the proof rounds
+  const short = check(own.checkedCensus.entries.slice(2));
+  assert.equal(short.ok, false);
+  assert.match(short.why, /under 75 % of the \d+ this client sees on the chain itself/);
+});

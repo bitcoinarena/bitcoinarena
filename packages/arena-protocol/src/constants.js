@@ -52,6 +52,8 @@ export const STALL_CAP_BPS = 1000n;
  * census's bonded weight, in basis points - oldest-missed first, the rest stay in. A claim over it is refused by every seat and the client.
  */
 export const ABSENCE_CAP_BPS = 2000n;
+/** THE CLIENT'S FLOOR (§5A.3, kanban #1291): a client refuses a committed census weighing under this share, in basis points, of the chain census it can see itself. */
+export const CLIENT_CENSUS_FLOOR_BPS = 7500n;
 /** A settlement that has not landed this long after the round's final_after is a stalled one. */
 export const STALL_SETTLEMENT_WAIT_MS = 7200000n;
 /** EVERY BONDED NODE HOSTS A MARKET WITH A SOURCE (kanban #920): its rounds say so in their question (`event.allBonded`), so no node's advertisement has to name each new market. */

@@ -30,7 +30,7 @@ import { BOND_TEMPLATE_V3 } from './bond-script.js';
 import { censusRootOf, sumsBonds, floorOnSums } from './census.js';
 import { beaconFromChain, committeeSeedFromBeacon } from './beacon.js';
 import { selectCommittee, drawCommittee, slotsForRole, drawAttestors } from './sortition.js';
-import { networkOf } from './constants.js';
+import { networkOf, CLIENT_CENSUS_FLOOR_BPS } from './constants.js';
 import { toHex, fromHex } from './hash.js';
 import { medianTimePast } from './beacon.js';
 import { decodeRoundContract, roundId } from './contracts.js';
@@ -379,5 +379,34 @@ export function absenceFromChain({ contract, claim, evidenceOf, headers, firstHe
       certOf: (ridHex, role) => { const h = claim.certs && claim.certs[`${ridHex}:${role}`]; return h ? fromHex(h) : null; } });
     if (!s.ok) return { ok: false, node: s.node, why: s.notYet ? `${s.why}: its contract or census was not handed over` : s.why };
   }
+  // THE 75 % FLOOR (§5A.3, RULED 2026-11-07 kanban #1291, kanban #1325): the chain census this client can see itself is every census it
+  // checked here - each named round's, against its own root in the agreed headers - and the round's own with the nodes the claim leaves
+  // out added back at the weight those censuses give them. A committed census under 75 % of the largest is refused.
+  if (entries && entries.length) {
+    const floor = censusFloor({ entries, out: [...claim.claims, ...stalled].map((c) => String(c.node).toLowerCase()), seen: [...checkedCensus.values()].map((c) => c.entries) });
+    if (!floor.ok) return { ok: false, why: floor.why };
+  }
   return { ok: true, absent: claim.claims.map((c) => String(c.node).toLowerCase()), ...(stalled.length ? { stalled: stalled.map((c) => String(c.node).toLowerCase()) } : {}) };
+}
+
+const weighOf = (list) => (list || []).reduce((n, e) => n + BigInt(e.bondSats || 0), 0n);
+/**
+ * THE CLIENT'S CENSUS FLOOR (kanban #1291): `entries` the round's committed census as checked, `out` the node keys (hex) a claim leaves
+ * out, `seen` the other censuses this client checked (entry lists). The chain census it sees: the largest of those, and the committed
+ * one plus each left-out node's largest weight among them. Answers { ok, committedSats, seenSats } or { ok: false, why, ... }.
+ */
+export function censusFloor({ entries, out = [], seen = [] }) {
+  const committed = weighOf(entries);
+  let back = 0n;
+  for (const node of new Set(out)) {
+    let w = 0n;
+    for (const list of seen) { const v = (list || []).reduce((n, e) => (toHex(e.pubkey) === node ? n + BigInt(e.bondSats || 0) : n), 0n); if (v > w) w = v; }
+    back += w;
+  }
+  let seenSats = committed + back;
+  for (const list of seen) { const v = weighOf(list); if (v > seenSats) seenSats = v; }
+  if (committed * 10000n < seenSats * CLIENT_CENSUS_FLOOR_BPS) {
+    return { ok: false, committedSats: committed, seenSats, why: `that round's census weighs ${committed} bonded sats, under ${Number(CLIENT_CENSUS_FLOOR_BPS) / 100} % of the ${seenSats} this client sees on the chain itself (§5A.3)` };
+  }
+  return { ok: true, committedSats: committed, seenSats };
 }

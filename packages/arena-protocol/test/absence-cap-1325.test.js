@@ -48,3 +48,15 @@ test('a node above the cap alone stays in, and order is by the oldest miss, then
   const tie = absenceCapKept([{ node: hex(1), sinceMs: 5n }, { node: hex(0), sinceMs: 5n }], weightsOf([{ pubkey: hex(0), bondSats: 1n }, { pubkey: hex(1), bondSats: 1n }, ...Array.from({ length: 8 }, (_, i) => ({ pubkey: hex(i + 2), bondSats: 1n }))]));
   assert.deepEqual(tie.map((c) => c.node), [hex(0), hex(1)].sort());
 });
+
+test('the client floor: 75 % of the largest census it checked, or of the committed one with the left-out nodes added back', async () => {
+  const { censusFloor } = await import('../src/client-committee.js');
+  const e = (i, s) => ({ pubkey: taggedHash('TEST/cap-node', Uint8Array.of(i)), bondSats: BigInt(s) });
+  const chain = [e(0, 25), e(1, 25), e(2, 25), e(3, 25)];
+  assert.equal(censusFloor({ entries: chain.slice(1), out: [hex(0)], seen: [chain] }).ok, true, '75 of 100: at the floor');
+  const r = censusFloor({ entries: chain.slice(2), out: [hex(0)], seen: [chain] });
+  assert.equal(r.ok, false, '50 of 100');
+  assert.equal(r.seenSats, 100n);
+  assert.equal(censusFloor({ entries: chain.slice(2), out: [hex(0), hex(1)], seen: [] }).ok, true, 'a client that checked no other census sees only the committed one: nothing to hold it against');
+  assert.equal(censusFloor({ entries: [e(2, 25)], out: [hex(0)], seen: [[e(0, 50)]] }).ok, false, '25 of 75: the left-out node added back at the weight another census gives it');
+});
