@@ -74,6 +74,14 @@ test('on a running seat: the pairing token reads status and signs a vote; config
     assert.equal(schnorr.verify(dec.signature, vm(Uint8Array.from(Buffer.from(pid, 'hex')), C.YES), Uint8Array.from(Buffer.from(st.node, 'hex'))), true,
       'signed by the node key the census counts');
     assert.equal((await castVote({ proposalId: 'zz', choice: 'YES' })).status, 400);
+    // A FEE SIGNAL ON CHAIN (kanban #1283): the 76-byte "ARN" 'S' payload, signed by the same bond key, under the vote scope
+    const { decodeFeeSignal, feeSignalMessage } = await import('../../arena-protocol/src/fee-signal-chain.js');
+    const fs = await (await fetch(base + '/operator/fee-signal', { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ proposalId: pid }) })).json();
+    assert.equal(fs.ok, true, fs.why);
+    const fd = decodeFeeSignal(Uint8Array.from(Buffer.from(fs.opReturn, 'hex')));
+    console.log('  FEE SIGNAL:', JSON.stringify({ bytes: fs.opReturn.length / 2, marker: Buffer.from(fs.opReturn.slice(0, 8), 'hex').toString(), prefix: toHex(fd.idPrefix) }));
+    assert.equal(fs.opReturn.length / 2, 76);
+    assert.equal(schnorr.verify(fd.signature, feeSignalMessage(Uint8Array.from(Buffer.from(pid, 'hex'))), Uint8Array.from(Buffer.from(st.node, 'hex'))), true, 'signed by the node key');
     assert.equal((await castVote({ proposalId: pid, choice: 'MAYBE' })).status, 400);
     assert.equal((await get('/operator/config', token)).status, 501);
     // the owner mints a read-only token and revokes it again
