@@ -301,6 +301,8 @@ createServer((req, res) => {
   // THE NODE BOUNTY'S CHECKLIST (kanban #1342, Daniel 2026-11-08): read live from the seats' public doors for a node and the reporter's key - public,
   // the same answer the form fills in and the admin approves on; kept 10 min per pair (one read asks every seat for 7 days, ~30 s)
   if (path === '/feedback/node-check' && req.method === 'GET') {
+    // as every reward detail: only toward the private page's origin while the bounty is off in public (Daniel 2026-11-07)
+    if (!(bountyOn() && BOUNTY_ORIGINS.includes(String(req.headers.origin || '')))) return send(200, { ok: true, on: false });
     const q = new URL(req.url, 'http://x').searchParams;
     const node = String(q.get('node') || '').toLowerCase(), npub = String(q.get('npub') || '').toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(node) || !/^[0-9a-f]{64}$/.test(npub)) return send(400, { ok: false, why: 'GET /feedback/node-check?node=<64 hex>&npub=<64 hex>' });
@@ -312,7 +314,9 @@ createServer((req, res) => {
   // THE REWARD TABLE (kanban #1342, Daniel 2026-11-08): the levels the form shows are the ones approve pays from - one source; public, no amounts
   // are promised while the bounty is off (the page shows the table only in its bounty build)
   if (path === '/feedback/rewards' && req.method === 'GET') {
-    return send(200, { ok: true, on: bountyOn(), network: BOUNTY_NETWORK, levels: REWARD_LEVELS, nodeBaseSats: NODE_BOUNTY_BASE_SATS, perKeyPerWeek: RULES.perKeyPerWeek,
+    // the amounts only toward the private page's origin (Daniel 2026-11-07: "Den bounty Funktion ausmachen bis ich es sage und nur auf einer privaten URL aktivieren")
+    if (!(bountyOn() && BOUNTY_ORIGINS.includes(String(req.headers.origin || '')))) return send(200, { ok: true, on: false });
+    return send(200, { ok: true, on: true, network: BOUNTY_NETWORK, levels: REWARD_LEVELS, nodeBaseSats: NODE_BOUNTY_BASE_SATS, perKeyPerWeek: RULES.perKeyPerWeek,
       rule: 'A person reviews every report. Only the first report of a bug is paid. Nothing is paid for game results.' });
   }
   if (path === '/feedback/mine') {
