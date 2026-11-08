@@ -171,7 +171,9 @@ if (!E.length) throw new Error('no entry was played');
 if (SCENARIO === 'forfeit-lost') for (const k of armed) writeFileSync(offenceFile(k), E.map((e) => `forfeit-lost ${e}`).join('\n') + '\n');
 say({ step: 'entries', entries: E, armedLines: SCENARIO === 'forfeit-lost' ? E.length : OFF ? 1 : 0 });
 // THREE SETTLEMENT SEATS SILENT (stall3): the contract's last three nodes' seat processes stopped; their guardians keep running
-const STALL = SCENARIO === 'stall3' ? order.slice(-3) : [];
+// STALL_N (kanban #1281, the fallback claim): how many of the last seats are silent - 3 (the four left file the fallback at lock + stall_blocks), 4 (three
+// cannot: the locks refund at their expiration). FALLBACK_END=1 ends the watch once a live seat holds the round's settlement ACCEPTED.
+const STALL = SCENARIO === 'stall3' ? order.slice(-Number(env.STALL_N || 3)) : [];
 // STALL_AT=signed: the three are stopped only once every seat holds each entry's signed result (PROVISIONALLY_FINAL, the window running), so the
 // result goes FINAL on the four left and only the settlement (5 of 7) is missing - §23 hole 1 as written. Otherwise at once, before any result is signed
 const finalityAt = async (k) => Promise.all(E.map(async (e) => { try { return await (await get(`${SEATS[k]}/settlement?entry=${e}`, 20000)).json(); } catch (x) { return { error: x.message }; } }));
@@ -184,7 +186,7 @@ const stopStall = async (why) => {
   if (BY_STOP) for (const k of STALL) { process.kill(pidOf(k), 'SIGSTOP'); stopped.add(k); }
   else for (const k of STALL) writeFileSync(offenceFile(k), `settle-hold ${ROUND}\n`);
   stallOn = true;
-  say({ step: 'three seats stopped', by: BY_STOP ? 'SIGSTOP' : 'settle-hold', why, seats: STALL.map((k) => k + 1), height: await height() });
+  say({ step: `${STALL.length} seats stopped`, by: BY_STOP ? 'SIGSTOP' : 'settle-hold', why, seats: STALL.map((k) => k + 1), height: await height() });
 };
 const releaseStall = () => {
   if (BY_STOP) for (const k of [...stopped]) backIn(k);
@@ -305,6 +307,10 @@ for (;;) {
       resumedAt = Date.now();
     }
     if (resumedAt && Date.now() - resumedAt > Number(env.RESUME_WATCH_S || 1800) * 1000) break;
+  }
+  if (SCENARIO === 'stall3' && env.FALLBACK_END === '1' && [...last.entries()].some(([key, v]) => key.endsWith(' settlement') && /^ACCEPTED/.test(v || ''))) {
+    say({ step: 'settled while seats were silent', height: await height(), states: [...last.entries()].filter(([key]) => key.endsWith(' settlement')) });
+    break;
   }
   if (SCENARIO === 'send-refund' && !outsider && [...last.entries()].some(([key, v]) => key.endsWith(' settlement') && /^ACCEPTED/.test(v || ''))) await outsiderSubmits();
   if (ADDRESSED) for (const [i, e] of E.entries()) {

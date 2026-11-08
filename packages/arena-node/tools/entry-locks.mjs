@@ -14,7 +14,8 @@ import { paysReserves, roundSplit } from '../../arena-protocol/src/reserves.js';
 import { decodeDonationSet } from '../../arena-protocol/src/donation.js';
 import { decodeDonationSetBody } from '../../arena-protocol/src/authority.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
-import { namedClaims, namedClaimKeys, arenaLockFor, arenaLockFieldsToJson, arenaLockContractId } from '../../arena-protocol/src/arena-lock.js';
+import { namedClaims, namedClaimKeys, arenaLockFor, arenaLockFieldsToJson, arenaLockContractId, lockStallBlocks, fallbackAfterFor } from '../../arena-protocol/src/arena-lock.js';
+import { networkOf } from '../../arena-protocol/src/constants.js';
 import { roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
 
 /**
@@ -116,7 +117,10 @@ async function lockArena({ lc, c, split, stakePoint, player, refundPk, F, zero, 
   const entry = { playerPubkey: player };
   const stakeFields = { ...arenaLockFor({ kind: 'stake', entry, roundId, seatKeys, threshold, amountMsat: split.netMsat, imageBytes: stakePoint }), refundPk };
   const feeFields = F ? { ...arenaLockFor({ kind: 'fee', entry, roundId, seatKeys, threshold, amountMsat: split.feeMsat, imageBytes: sha256(F) }), refundPk } : null;
-  const asJson = (f) => { const j = arenaLockFieldsToJson({ ...f, expiration: 0 }); delete j.expiration; return JSON.stringify(j); };
+  // THE FALLBACK HEIGHT (spec §23.2, kanban #1281): the lock client adds the round's network's stall_blocks to the guardians' count, as the page does
+  const stallBlocks = lockStallBlocks(networkOf(c.networkId));
+  if (!Number.isInteger(stallBlocks)) throw new Error('this round\'s network names no stall_blocks: no Arena lock is made for it');
+  const asJson = (f) => { const j = arenaLockFieldsToJson({ ...f, expiration: 0, fallbackAfter: 0 }); delete j.expiration; delete j.fallbackAfter; j.stallBlocks = stallBlocks; return JSON.stringify(j); };
   const sub = JSON.parse(await lc.arenaLockSubmit(asJson(stakeFields), feeFields ? asJson(feeFields) : '', Number(c.stakeExpiryBlocks),
     JSON.stringify(split.shares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat), image: toHex(player) })))));
   if (sub.arena !== true) throw new Error('the lock client answered a stock lock for a round that locks to an Arena lock');
@@ -124,7 +128,8 @@ async function lockArena({ lc, c, split, stakePoint, player, refundPk, F, zero, 
   const at = (o) => ({ txid: fromHex(sub.txid), outIdx: BigInt(o.out_idx) });
   const built = (o, fields, what) => {
     if (!o) throw new Error(`the lock client built no ${what} lock`);
-    const f = { ...fields, expiration: Number(o.computed_expiration), arena: true };
+    const f = { ...fields, expiration: Number(o.computed_expiration), fallbackAfter: Number(o.computed_fallback_after), arena: true };
+    if (f.fallbackAfter !== fallbackAfterFor(f.expiration, stallBlocks, Number(c.stakeExpiryBlocks))) throw new Error(`the lock client built another fallback height for the Arena ${what} lock than the count plus stall_blocks`);
     if (BigInt(o.amount_msat) !== f.amountMsat) throw new Error(`the lock client built ${o.amount_msat} msat of ${what}, not ${f.amountMsat}`);
     if (String(o.computed_contract_id).toLowerCase() !== toHex(arenaLockContractId(f))) throw new Error(`the lock client built another Arena ${what} lock than computed here`);
     return { outpoint: at(o), fields: f };
