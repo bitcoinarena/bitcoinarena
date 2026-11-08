@@ -26,6 +26,19 @@ export const MILESTONES = Object.freeze(['first-paid', 'retention', 'gross-share
 export const RETENTION_BLOCKS = 4032;
 /** T1 and T2's counts, T3's gross share and T4's new-identity share and run of windows (§27A.4.2). */
 export const T1_IDENTITIES = 1000, T2_RETAINED = 300, T3_GROSS_BPS = 2000, T4_NEW_BPS = 3000, T4_WINDOWS = 6, T4_WINDOW_BLOCKS = 4320;
+/**
+ * THE MILESTONES' SCALE PER NETWORK (RULED 2026-11-08, kanban #1349, as LOCK_STALL_BLOCKS is per network): mainnet and testnet4 run §27A.4.2's
+ * numbers; regtest and a devnet run the same rules at test scale - T1 3 identities, T2 2 of them back after 6 blocks, T3 20 % over a 12-block
+ * window, T4 30 % in 3 windows of 6 blocks, and a read lag of 6 blocks in place of 288. Not fields of the agreement: every agreement on a
+ * network reads the same scale. `t3WindowBlocks` null: T3 reads the tranche's own window_blocks.
+ */
+const SPEC_SCALE = Object.freeze({ t1Identities: T1_IDENTITIES, t2Retained: T2_RETAINED, retentionBlocks: RETENTION_BLOCKS, t3GrossBps: T3_GROSS_BPS,
+  t3WindowBlocks: null, t4NewBps: T4_NEW_BPS, t4Windows: T4_WINDOWS, t4WindowBlocks: T4_WINDOW_BLOCKS, lagBlocks: 288 });
+const TEST_SCALE = Object.freeze({ t1Identities: 3, t2Retained: 2, retentionBlocks: 6, t3GrossBps: 2000, t3WindowBlocks: 12,
+  t4NewBps: 3000, t4Windows: 3, t4WindowBlocks: 6, lagBlocks: 6 });
+export const CONTRIBUTION_SCALE = Object.freeze({ mainnet: SPEC_SCALE, testnet4: SPEC_SCALE, regtest: TEST_SCALE, devnet: TEST_SCALE });
+/** The scale a network reads (an unknown name reads mainnet's). */
+export const contributionScaleOf = (network) => CONTRIBUTION_SCALE[network] || SPEC_SCALE;
 /** The reference agreement (§27A.4.2): 2.5 % for time, 4 x 2.5 % for results, a 30 % attribution floor, a 12-month tail, three years to meet a tranche. */
 export const REFERENCE_AGREEMENT = Object.freeze({
   base: Object.freeze({ targetBps: 250, cliffBlocks: 26280, days: 730 }),
@@ -177,22 +190,24 @@ function contribFloorHolds(F, a, h, windowBlocks) {
  * THE FIRST HEIGHT A TRANCHE'S MILESTONE IS MET, or null - before the attribution floor. T1 and T2 stay met once met; T3 and T4 are read
  * on windows aligned to start_height and are met at a window's last block.
  */
-function contribMilestoneHeight(F, a, t, network) {
+function contribMilestoneHeight(F, a, t, network, main = network === 'mainnet') {
+  const S = contributionScaleOf(network);
   const myFirsts = F.myNewHeights;   // first paid entries carrying his keys, since start, ascending
-  if (t.milestone === 'first-paid') return myFirsts.length >= T1_IDENTITIES ? myFirsts[T1_IDENTITIES - 1] : null;
+  if (t.milestone === 'first-paid') return myFirsts.length >= S.t1Identities ? myFirsts[S.t1Identities - 1] : null;
   if (t.milestone === 'retention') {
     const back = [];
     for (const [id, f] of F.first) {
       if (!f.mine || f.height < a.startHeight) continue;
-      const again = (F.later.get(id) || []).find((h) => h >= f.height + RETENTION_BLOCKS);
+      const again = (F.later.get(id) || []).find((h) => h >= f.height + S.retentionBlocks);
       if (again !== undefined) back.push(again);
     }
     back.sort((x, y) => x - y);
-    return back.length >= T2_RETAINED ? back[T2_RETAINED - 1] : null;
+    return back.length >= S.t2Retained ? back[S.t2Retained - 1] : null;
   }
   if (t.milestone === 'gross-share') {
-    if (network !== 'mainnet') return null;
-    const W = t.windowBlocks, sums = new Map();
+    // T3 is mainnet's; a devnet tests it with the `main` flag set (kanban #1349)
+    if (!main) return null;
+    const W = S.t3WindowBlocks || t.windowBlocks, sums = new Map();
     for (const r of F.rows) {
       if (r.height < a.startHeight) continue;
       const k = Math.floor((r.height - a.startHeight) / W);
@@ -202,12 +217,12 @@ function contribMilestoneHeight(F, a, t, network) {
     }
     for (const k of [...sums.keys()].sort((x, y) => x - y)) {
       const s = sums.get(k);
-      if (s.all > 0n && s.his * BigInt(CONTRIB_BPS_TOTAL) >= s.all * BigInt(T3_GROSS_BPS)) return a.startHeight + (k + 1) * W - 1;
+      if (s.all > 0n && s.his * BigInt(CONTRIB_BPS_TOTAL) >= s.all * BigInt(S.t3GrossBps)) return a.startHeight + (k + 1) * W - 1;
     }
     return null;
   }
   if (t.milestone === 'new-share') {
-    const W = T4_WINDOW_BLOCKS, per = new Map();
+    const W = S.t4WindowBlocks, per = new Map();
     for (const n of F.news) {
       if (n.height < a.startHeight) continue;
       const k = Math.floor((n.height - a.startHeight) / W);
@@ -219,8 +234,8 @@ function contribMilestoneHeight(F, a, t, network) {
     let run = 0;
     for (let k = 0; k <= last; k++) {
       const s = per.get(k);
-      run = s && s.his * CONTRIB_BPS_TOTAL >= s.all * T4_NEW_BPS ? run + 1 : 0;
-      if (run >= T4_WINDOWS) return a.startHeight + (k + 1) * W - 1;
+      run = s && s.his * CONTRIB_BPS_TOTAL >= s.all * S.t4NewBps ? run + 1 : 0;
+      if (run >= S.t4Windows) return a.startHeight + (k + 1) * W - 1;
     }
     return null;
   }
@@ -231,8 +246,8 @@ function contribMilestoneHeight(F, a, t, network) {
  * WHEN A TRANCHE VESTS: the first height >= its milestone's at which the attribution floor holds over the tranche's window - a height
  * where a new identity enters the window or one leaves it - and never after its expiry, his leave or his termination. Answers the height or null.
  */
-function contribTrancheVestsAt(F, a, t, { network, until }) {
-  const m = contribMilestoneHeight(F, a, t, network);
+function contribTrancheVestsAt(F, a, t, { network, until, main }) {
+  const m = contribMilestoneHeight(F, a, t, network, main);
   if (m === null) return null;
   const end = Math.min(t.expiresHeight, until);
   if (m > end) return null;
@@ -257,7 +272,7 @@ export function baseVestedBps(a, height) {
  *   leave        the unvested part lapses at leftAt; what was vested then pays until leftAt + tail_blocks, then 0
  *   termination  the unvested part lapses and the vested part ends at terminatedAt
  */
-export function contributionShare(a, { facts = [], height, network, leftAt = null, terminatedAt = null } = {}) {
+export function contributionShare(a, { facts = [], height, network, main = network === 'mainnet', leftAt = null, terminatedAt = null } = {}) {
   const h = Number(height);
   const stops = [leftAt, terminatedAt].filter((x) => x !== null && x !== undefined).map(Number);
   const until = stops.length ? Math.min(...stops) : Infinity;
@@ -267,8 +282,8 @@ export function contributionShare(a, { facts = [], height, network, leftAt = nul
     myNewHeights: base.news.filter((n) => n.mine && n.height >= a.startHeight).map((n) => n.height) };
   const at = Math.min(h, until);
   const tranches = a.tranches.map((t) => {
-    const metAt = contribMilestoneHeight(F, a, t, network);
-    const vestedAt = contribTrancheVestsAt(F, a, t, { network, until });
+    const metAt = contribMilestoneHeight(F, a, t, network, main);
+    const vestedAt = contribTrancheVestsAt(F, a, t, { network, until, main });
     return { milestone: t.milestone, bps: t.bps, metAt, vestedAt, vested: vestedAt !== null && vestedAt <= at };
   });
   const baseBps = baseVestedBps(a, at);

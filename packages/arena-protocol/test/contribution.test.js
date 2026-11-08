@@ -8,7 +8,7 @@ import {
   MILESTONES, REFERENCE_AGREEMENT, RETENTION_BLOCKS, T4_WINDOW_BLOCKS, agreementStands,
   encodeContributionAgreement, decodeContributionAgreement, contributionAgreementId,
   encodeContributionLeave, decodeContributionLeave, encodeContributionTermination, decodeContributionTermination,
-  baseVestedBps, contributionShare, contributionShares, factsFromSeasonRounds,
+  baseVestedBps, contributionShare, contributionShares, factsFromSeasonRounds, contributionScaleOf,
 } from '../src/contribution.js';
 
 const key33 = (i) => Uint8Array.of(0x02, ...taggedHash('TEST/c-rk', Uint8Array.of(i)));
@@ -167,4 +167,22 @@ test('a donation set carries an agreement: bytes round trip, its share starts at
   // with 500 bps vested to him: dev b at its step, he at 500, dev a the rest
   assert.deepEqual(setSharesAt(set, 100 + 5 * 144, () => 500).map((x) => x.shareBps), [6000, 3500, 500]);
   assert.equal(setSharesAt(set, 999999, () => 1250).reduce((t, x) => t + x.shareBps, 0), 10000);
+});
+
+test('kanban #1349: regtest runs the rules at test scale; mainnet and testnet4 keep the spec numbers', () => {
+  assert.equal(contributionScaleOf('mainnet').t1Identities, 1000);
+  assert.equal(contributionScaleOf('testnet4').retentionBlocks, 4032);
+  assert.deepEqual(contributionScaleOf('regtest'), { t1Identities: 3, t2Retained: 2, retentionBlocks: 6, t3GrossBps: 2000, t3WindowBlocks: 12, t4NewBps: 3000, t4Windows: 3, t4WindowBlocks: 6, lagBlocks: 6 });
+  const a = agreement({ base: { targetBps: 0, cliffBlocks: 0, days: 1 } });
+  // three newcomers through his links at START, +1, +2; two of them back 6 blocks after their first
+  const facts = [...newcomers({ n: 3, from: START }), { height: START + 6, identity: id(0), frontendPk: PROJECT, grossMsat: 1n }, { height: START + 8, identity: id(1), frontendPk: PROJECT, grossMsat: 1n }];
+  const r = contributionShare(a, { facts, height: START + 20, network: 'regtest' });
+  assert.equal(r.tranches[0].vestedAt, START + 2, 'T1 at the third identity');
+  assert.equal(r.tranches[1].vestedAt, START + 8, 'T2 at the second one back');
+  assert.equal(r.tranches[2].metAt, null, 'T3 needs the main flag');
+  assert.equal(contributionShare(a, { facts, height: START + 20, network: 'regtest', main: true }).tranches[2].vestedAt, START + 11, 'with it: the first 12-block window');
+  assert.equal(r.tranches[3].vestedAt, null, 'T4: a 6-block window with no newcomer breaks the run');
+  const three = [...facts, ...newcomers({ n: 1, from: START + 7, base: 50 }), ...newcomers({ n: 1, from: START + 13, base: 60 })];
+  assert.equal(contributionShare(a, { facts: three, height: START + 20, network: 'regtest' }).tranches[3].vestedAt, START + 17, 'T4 at the third window\'s last block');
+  assert.equal(contributionShare(a, { facts, height: START + 20, network: 'testnet4' }).shareBps, 0, 'testnet4 keeps the spec numbers');
 });

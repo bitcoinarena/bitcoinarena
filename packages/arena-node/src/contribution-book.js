@@ -8,15 +8,16 @@
 //
 //   READ     `refresh()` asks every seat's GET /season-rounds for a window (the caller's `accountsFor(window)`), merges the signed accounts
 //            and keeps every counted round it did not hold yet: round id, census height, entries - append-only, a kept round never changes.
-//   LAG      the share at height H reads only rounds whose census height is at most H - CONTRIBUTION_LAG_BLOCKS: a round is settled and its
+//   LAG      the share at height H reads only rounds whose census height is at most H - the network's lag (288; regtest 6, #1349): a round is settled and its
 //            account signed hours after its census, and by two days every seat has read it. So two seats holding the same counted rounds
 //            answer the same share at every height, and the page takes a share only where a majority of the round's seats agree.
 //   SHARE    `shareAt(agreement, height, network, { leftAt, terminatedAt })` -> protocol contributionShare over the book's facts.
-import { contributionShare, factsFromSeasonRounds, contributionAgreementId } from '../../arena-protocol/src/contribution.js';
+import { contributionShare, factsFromSeasonRounds, contributionAgreementId, contributionScaleOf } from '../../arena-protocol/src/contribution.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
-/** The share at H reads rounds with census height <= H - this (288 blocks, ~2 days): every seat has their signed accounts by then. */
+/** The share at H reads rounds with census height <= H - this (288 blocks, ~2 days, on mainnet and testnet4; 6 on regtest and a devnet, kanban #1349). */
 export const CONTRIBUTION_LAG_BLOCKS = 288;
+export const contributionLagOf = (network) => contributionScaleOf(network).lagBlocks;
 
 export const CONTRIBUTION_BOOK_SQL = `CREATE TABLE IF NOT EXISTS contribution_rounds (round_id TEXT PRIMARY KEY, census_height INTEGER NOT NULL,
   round TEXT NOT NULL, kept_ms INTEGER NOT NULL);
@@ -58,8 +59,8 @@ export function createContributionBook({ db, accountsFor, heightOf, now = () => 
   }
 
   /** The facts for a share at `height`: the kept rounds with census height <= height - CONTRIBUTION_LAG_BLOCKS. */
-  function factsAt(height) {
-    const rows = db.prepare('SELECT round_id, census_height, round FROM contribution_rounds WHERE census_height <= ? ORDER BY round_id').all(Number(height) - CONTRIBUTION_LAG_BLOCKS);
+  function factsAt(height, network = 'mainnet') {
+    const rows = db.prepare('SELECT round_id, census_height, round FROM contribution_rounds WHERE census_height <= ? ORDER BY round_id').all(Number(height) - contributionLagOf(network));
     const heights = new Map(rows.map((x) => [x.round_id, Number(x.census_height)]));
     return factsFromSeasonRounds(rows.map((x) => JSON.parse(x.round, unbig)), (rid) => heights.get(rid) ?? null);
   }
@@ -82,9 +83,9 @@ export function createContributionBook({ db, accountsFor, heightOf, now = () => 
   }
 
   /** His share at `height` (protocol contributionShare), and the agreement's id; his leave and termination as held here unless given. */
-  function shareAt(agreement, height, network, ends = null) {
+  function shareAt(agreement, height, network, ends = null, { main = network === 'mainnet' } = {}) {
     const { leftAt, terminatedAt } = ends || endsOf(toHex(contributionAgreementId(agreement)));
-    const s = contributionShare(agreement, { facts: factsAt(height), height, network, leftAt, terminatedAt });
+    const s = contributionShare(agreement, { facts: factsAt(height, network), height, network, main, leftAt, terminatedAt });
     return { agreementId: toHex(contributionAgreementId(agreement)), height: Number(height), ...s };
   }
 
