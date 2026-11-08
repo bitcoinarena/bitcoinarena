@@ -16,8 +16,9 @@
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_CONTRIBUTION_AGREEMENT, TYPE_CONTRIBUTION_LEAVE, TYPE_CONTRIBUTION_TERMINATION, TAG } from './constants.js';
-import { RECIPIENT_KEY_BYTES, isRecipientKey, DONATION_BPS_TOTAL } from './donation.js';
-import { VESTING_DAY_BLOCKS } from './donation.js';
+// donation.js reads this module (a set entry carries an agreement), so its constants are restated here rather than imported: the same values
+const CONTRIB_KEY_BYTES = 33, CONTRIB_BPS_TOTAL = 10000, CONTRIB_DAY_BLOCKS = 144;
+const isContribRecipientKey = (b) => b instanceof Uint8Array && b.length === CONTRIB_KEY_BYTES && (b[0] === 0x02 || b[0] === 0x03);
 
 /** The four milestones, in the agreement's tranche order (§27A.4.2's table). */
 export const MILESTONES = Object.freeze(['first-paid', 'retention', 'gross-share', 'new-share']);
@@ -33,31 +34,31 @@ export const REFERENCE_AGREEMENT = Object.freeze({
 });
 
 // a site key is a website payout key, as an Entry Contract's frontend_pk (§22A): 33 bytes, compressed
-const SITE_KEY_BYTES = 33;
-const isKey32 = (b) => b instanceof Uint8Array && b.length === SITE_KEY_BYTES && (b[0] === 2 || b[0] === 3);
-const hexOf = (k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k));
-const isU32 = (n) => Number.isInteger(n) && n >= 0 && n <= 0xffffffff;
+const CONTRIB_SITE_KEY_BYTES = 33;
+const isContribSiteKey = (b) => b instanceof Uint8Array && b.length === CONTRIB_SITE_KEY_BYTES && (b[0] === 2 || b[0] === 3);
+const contribHexOf = (k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k));
+const isContribU32 = (n) => Number.isInteger(n) && n >= 0 && n <= 0xffffffff;
 
 /** Is this agreement well formed? { ok } or { ok: false, why }. */
 export function agreementStands(a) {
-  if (!a || !isRecipientKey(a.recipientPk)) return { ok: false, why: 'an agreement names the contributor\'s recipient key (33 bytes)' };
-  if (!Array.isArray(a.siteKeys) || !a.siteKeys.length || a.siteKeys.length > 256 || !a.siteKeys.every(isKey32))
+  if (!a || !isContribRecipientKey(a.recipientPk)) return { ok: false, why: 'an agreement names the contributor\'s recipient key (33 bytes)' };
+  if (!Array.isArray(a.siteKeys) || !a.siteKeys.length || a.siteKeys.length > 256 || !a.siteKeys.every(isContribSiteKey))
     return { ok: false, why: 'an agreement names 1 to 256 site keys, 33-byte compressed keys each' };
   if (new Set(a.siteKeys.map(toHex)).size !== a.siteKeys.length) return { ok: false, why: 'a site key is named twice' };
-  if (!isU32(a.startHeight)) return { ok: false, why: 'start_height is a block height' };
+  if (!isContribU32(a.startHeight)) return { ok: false, why: 'start_height is a block height' };
   const b = a.base || {};
-  if (!Number.isInteger(b.targetBps) || b.targetBps < 0 || !isU32(b.cliffBlocks) || !Number.isInteger(b.days) || b.days < 1 || b.days > 0xffff)
+  if (!Number.isInteger(b.targetBps) || b.targetBps < 0 || !isContribU32(b.cliffBlocks) || !Number.isInteger(b.days) || b.days < 1 || b.days > 0xffff)
     return { ok: false, why: 'the base is { target_bps, cliff_blocks, days >= 1 }' };
   if (!Array.isArray(a.tranches) || a.tranches.length !== MILESTONES.length) return { ok: false, why: `an agreement has ${MILESTONES.length} tranches, one per milestone` };
   for (const [i, t] of a.tranches.entries()) {
     if (t.milestone !== MILESTONES[i]) return { ok: false, why: `tranche ${i + 1} is the ${MILESTONES[i]} milestone` };
-    if (!Number.isInteger(t.bps) || t.bps < 0 || !isU32(t.windowBlocks) || t.windowBlocks < 1 || !isU32(t.expiresHeight) || t.expiresHeight <= a.startHeight)
+    if (!Number.isInteger(t.bps) || t.bps < 0 || !isContribU32(t.windowBlocks) || t.windowBlocks < 1 || !isContribU32(t.expiresHeight) || t.expiresHeight <= a.startHeight)
       return { ok: false, why: `tranche ${i + 1} is { bps, window_blocks >= 1, expires_height after start_height }` };
   }
   const total = b.targetBps + a.tranches.reduce((s, t) => s + t.bps, 0);
-  if (total > DONATION_BPS_TOTAL) return { ok: false, why: `the agreement's base and tranches come to ${total} basis points, more than the whole set` };
-  if (!Number.isInteger(a.attributionFloorBps) || a.attributionFloorBps < 0 || a.attributionFloorBps > DONATION_BPS_TOTAL) return { ok: false, why: 'the attribution floor is 0 to 10000 basis points' };
-  if (!isU32(a.tailBlocks)) return { ok: false, why: 'tail_blocks is a block count' };
+  if (total > CONTRIB_BPS_TOTAL) return { ok: false, why: `the agreement's base and tranches come to ${total} basis points, more than the whole set` };
+  if (!Number.isInteger(a.attributionFloorBps) || a.attributionFloorBps < 0 || a.attributionFloorBps > CONTRIB_BPS_TOTAL) return { ok: false, why: 'the attribution floor is 0 to 10000 basis points' };
+  if (!isContribU32(a.tailBlocks)) return { ok: false, why: 'tail_blocks is a block count' };
   return { ok: true, targetBps: total };
 }
 
@@ -67,9 +68,9 @@ export function encodeContributionAgreement(a) {
   const w = new Writer();
   w.u8(TYPE_CONTRIBUTION_AGREEMENT);
   w.u16(PROTOCOL_VERSION);
-  w.bytes(a.recipientPk, RECIPIENT_KEY_BYTES);
+  w.bytes(a.recipientPk, CONTRIB_KEY_BYTES);
   // the site keys in byte order: one agreement, one encoding
-  w.vec([...a.siteKeys].sort((x, y) => (toHex(x) < toHex(y) ? -1 : 1)), (k) => w.bytes(k, SITE_KEY_BYTES));
+  w.vec([...a.siteKeys].sort((x, y) => (toHex(x) < toHex(y) ? -1 : 1)), (k) => w.bytes(k, CONTRIB_SITE_KEY_BYTES));
   w.u32(a.startHeight);
   w.u16(a.base.targetBps); w.u32(a.base.cliffBlocks); w.u16(a.base.days);
   for (const t of a.tranches) { w.u16(t.bps); w.u8(MILESTONES.indexOf(t.milestone)); w.u32(t.windowBlocks); w.u32(t.expiresHeight); }
@@ -82,8 +83,8 @@ export function decodeContributionAgreement(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_CONTRIBUTION_AGREEMENT) throw new Error('not a contribution agreement');
   if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
-  const recipientPk = r.bytes(RECIPIENT_KEY_BYTES);
-  const siteKeys = r.vec(() => r.bytes(SITE_KEY_BYTES));
+  const recipientPk = r.bytes(CONTRIB_KEY_BYTES);
+  const siteKeys = r.vec(() => r.bytes(CONTRIB_SITE_KEY_BYTES));
   const startHeight = r.u32();
   const base = { targetBps: r.u16(), cliffBlocks: r.u32(), days: r.u16() };
   const tranches = MILESTONES.map(() => {
@@ -105,7 +106,7 @@ export const contributionAgreementId = (a) => taggedHash(TAG.contributionAgreeme
 
 /** ContributionLeave { agreement_id, at_height }, signed by the contributor's recipient key. */
 export function encodeContributionLeave(l) {
-  if (!(l.agreementId instanceof Uint8Array) || l.agreementId.length !== 32 || !isU32(l.atHeight)) throw new Error('a leave names an agreement and a height');
+  if (!(l.agreementId instanceof Uint8Array) || l.agreementId.length !== 32 || !isContribU32(l.atHeight)) throw new Error('a leave names an agreement and a height');
   const w = new Writer();
   w.u8(TYPE_CONTRIBUTION_LEAVE); w.u16(PROTOCOL_VERSION); w.bytes32(l.agreementId); w.u32(l.atHeight);
   return w.finish();
@@ -122,7 +123,7 @@ export const contributionLeaveDigest = (l) => taggedHash(TAG.contributionLeave, 
 
 /** ContributionTermination { agreement_id, at_height, cause }, signed by the cold admin key. The node records who signed what; the cause is the law's. */
 export function encodeContributionTermination(t) {
-  if (!(t.agreementId instanceof Uint8Array) || t.agreementId.length !== 32 || !isU32(t.atHeight)) throw new Error('a termination names an agreement and a height');
+  if (!(t.agreementId instanceof Uint8Array) || t.agreementId.length !== 32 || !isContribU32(t.atHeight)) throw new Error('a termination names an agreement and a height');
   if (typeof t.cause !== 'string' || !t.cause.trim() || t.cause.length > 500) throw new Error('a termination states its cause, at most 500 characters');
   const w = new Writer();
   w.u8(TYPE_CONTRIBUTION_TERMINATION); w.u16(PROTOCOL_VERSION); w.bytes32(t.agreementId); w.u32(t.atHeight); w.str(t.cause);
@@ -145,8 +146,8 @@ export const contributionTerminationDigest = (t) => taggedHash(TAG.contributionT
  * later entries' heights; the gross per height, all and his. `facts` [{ height, identity, frontendPk, grossMsat }], any order.
  */
 export function contributionFacts(facts, siteKeys) {
-  const mine = new Set((siteKeys || []).map(hexOf));
-  const rows = [...(facts || [])].map((f) => ({ height: Number(f.height), identity: hexOf(f.identity), mineEntry: !!f.frontendPk && mine.has(hexOf(f.frontendPk)), grossMsat: BigInt(f.grossMsat || 0) }))
+  const mine = new Set((siteKeys || []).map(contribHexOf));
+  const rows = [...(facts || [])].map((f) => ({ height: Number(f.height), identity: contribHexOf(f.identity), mineEntry: !!f.frontendPk && mine.has(contribHexOf(f.frontendPk)), grossMsat: BigInt(f.grossMsat || 0) }))
     .sort((a, b) => (a.height - b.height) || (a.identity < b.identity ? -1 : a.identity > b.identity ? 1 : 0));
   const first = new Map();   // identity -> { height, mine }
   const later = new Map();   // identity -> heights after the first, ascending
@@ -160,23 +161,23 @@ export function contributionFacts(facts, siteKeys) {
   return { rows, first, later, news };
 }
 
-const countIn = (sorted, lo, hi) => {   // how many of `sorted` (ascending numbers) lie in [lo, hi]
+const contribCountIn = (sorted, lo, hi) => {   // how many of `sorted` (ascending numbers) lie in [lo, hi]
   const lower = (x) => { let a = 0, b = sorted.length; while (a < b) { const m = (a + b) >> 1; if (sorted[m] < x) a = m + 1; else b = m; } return a; };
   return Math.max(0, lower(hi + 1) - lower(lo));
 };
 
 /** THE ATTRIBUTION FLOOR at height `h` over `windowBlocks`: his share of the new identities whose first paid entry lies in (h - window, h]. */
-function floorHolds(F, a, h, windowBlocks) {
+function contribFloorHolds(F, a, h, windowBlocks) {
   const lo = Math.max(a.startHeight, h - windowBlocks + 1);
-  const all = countIn(F.newHeights, lo, h), his = countIn(F.myNewHeights, lo, h);
-  return all > 0 && his * DONATION_BPS_TOTAL >= all * a.attributionFloorBps;
+  const all = contribCountIn(F.newHeights, lo, h), his = contribCountIn(F.myNewHeights, lo, h);
+  return all > 0 && his * CONTRIB_BPS_TOTAL >= all * a.attributionFloorBps;
 }
 
 /**
  * THE FIRST HEIGHT A TRANCHE'S MILESTONE IS MET, or null - before the attribution floor. T1 and T2 stay met once met; T3 and T4 are read
  * on windows aligned to start_height and are met at a window's last block.
  */
-function milestoneHeight(F, a, t, network) {
+function contribMilestoneHeight(F, a, t, network) {
   const myFirsts = F.myNewHeights;   // first paid entries carrying his keys, since start, ascending
   if (t.milestone === 'first-paid') return myFirsts.length >= T1_IDENTITIES ? myFirsts[T1_IDENTITIES - 1] : null;
   if (t.milestone === 'retention') {
@@ -201,7 +202,7 @@ function milestoneHeight(F, a, t, network) {
     }
     for (const k of [...sums.keys()].sort((x, y) => x - y)) {
       const s = sums.get(k);
-      if (s.all > 0n && s.his * BigInt(DONATION_BPS_TOTAL) >= s.all * BigInt(T3_GROSS_BPS)) return a.startHeight + (k + 1) * W - 1;
+      if (s.all > 0n && s.his * BigInt(CONTRIB_BPS_TOTAL) >= s.all * BigInt(T3_GROSS_BPS)) return a.startHeight + (k + 1) * W - 1;
     }
     return null;
   }
@@ -218,7 +219,7 @@ function milestoneHeight(F, a, t, network) {
     let run = 0;
     for (let k = 0; k <= last; k++) {
       const s = per.get(k);
-      run = s && s.his * DONATION_BPS_TOTAL >= s.all * T4_NEW_BPS ? run + 1 : 0;
+      run = s && s.his * CONTRIB_BPS_TOTAL >= s.all * T4_NEW_BPS ? run + 1 : 0;
       if (run >= T4_WINDOWS) return a.startHeight + (k + 1) * W - 1;
     }
     return null;
@@ -230,14 +231,14 @@ function milestoneHeight(F, a, t, network) {
  * WHEN A TRANCHE VESTS: the first height >= its milestone's at which the attribution floor holds over the tranche's window - a height
  * where a new identity enters the window or one leaves it - and never after its expiry, his leave or his termination. Answers the height or null.
  */
-function trancheVestsAt(F, a, t, { network, until }) {
-  const m = milestoneHeight(F, a, t, network);
+function contribTrancheVestsAt(F, a, t, { network, until }) {
+  const m = contribMilestoneHeight(F, a, t, network);
   if (m === null) return null;
   const end = Math.min(t.expiresHeight, until);
   if (m > end) return null;
   const candidates = new Set([m]);
   for (const h of F.newHeights) { if (h > m && h <= end) candidates.add(h); if (h + t.windowBlocks > m && h + t.windowBlocks <= end) candidates.add(h + t.windowBlocks); }
-  for (const h of [...candidates].sort((x, y) => x - y)) if (floorHolds(F, a, h, t.windowBlocks)) return h;
+  for (const h of [...candidates].sort((x, y) => x - y)) if (contribFloorHolds(F, a, h, t.windowBlocks)) return h;
   return null;
 }
 
@@ -245,7 +246,7 @@ function trancheVestsAt(F, a, t, { network, until }) {
 export function baseVestedBps(a, height) {
   const { targetBps, cliffBlocks, days } = a.base;
   if (height < a.startHeight + cliffBlocks) return 0;
-  const elapsed = Math.min(days, Math.floor((height - a.startHeight) / VESTING_DAY_BLOCKS));
+  const elapsed = Math.min(days, Math.floor((height - a.startHeight) / CONTRIB_DAY_BLOCKS));
   return Math.trunc((targetBps * elapsed) / days);
 }
 
@@ -266,8 +267,8 @@ export function contributionShare(a, { facts = [], height, network, leftAt = nul
     myNewHeights: base.news.filter((n) => n.mine && n.height >= a.startHeight).map((n) => n.height) };
   const at = Math.min(h, until);
   const tranches = a.tranches.map((t) => {
-    const metAt = milestoneHeight(F, a, t, network);
-    const vestedAt = trancheVestsAt(F, a, t, { network, until });
+    const metAt = contribMilestoneHeight(F, a, t, network);
+    const vestedAt = contribTrancheVestsAt(F, a, t, { network, until });
     return { milestone: t.milestone, bps: t.bps, metAt, vestedAt, vested: vestedAt !== null && vestedAt <= at };
   });
   const baseBps = baseVestedBps(a, at);
@@ -289,13 +290,13 @@ export function contributionShare(a, { facts = [], height, network, leftAt = nul
  */
 export function contributionShares(recipients, shareOf) {
   if (!Array.isArray(recipients) || !recipients.some((r) => r && r.contribution)) return recipients;
-  const theirs = recipients.map((r) => (r.contribution ? Math.max(0, Math.min(DONATION_BPS_TOTAL, Number(shareOf(r)) || 0)) : null));
+  const theirs = recipients.map((r) => (r.contribution ? Math.max(0, Math.min(CONTRIB_BPS_TOTAL, Number(shareOf(r)) || 0)) : null));
   const taken = theirs.reduce((t, x) => t + (x === null ? 0 : x), 0);
   const othersBase = recipients.reduce((t, r) => t + (r.contribution ? 0 : r.shareBps), 0);
-  const rest = Math.max(0, DONATION_BPS_TOTAL - taken);
+  const rest = Math.max(0, CONTRIB_BPS_TOTAL - taken);
   const out = recipients.map((r, i) => ({ recipientPk: r.recipientPk, label: r.label,
     shareBps: r.contribution ? theirs[i] : (othersBase > 0 ? Math.floor((r.shareBps * rest) / othersBase) : 0) }));
-  const short = DONATION_BPS_TOTAL - out.reduce((t, x) => t + x.shareBps, 0);
+  const short = CONTRIB_BPS_TOTAL - out.reduce((t, x) => t + x.shareBps, 0);
   const first = recipients.findIndex((r) => !r.contribution);
   if (short && first >= 0) out[first].shareBps += short;
   return out;
@@ -319,5 +320,31 @@ export function factsFromSeasonRounds(rounds, heightOf) {
       out.push({ height: h, identity: String(e.player).toLowerCase(), frontendPk: e.frontendPk || null, grossMsat: BigInt(e.stakeMsat) });
     }
   }
+  return out;
+}
+
+/**
+ * THE SET'S SHARES AT A HEIGHT, VESTING AND AGREEMENTS TOGETHER (§27A.4.1 and §27A.4.2): a vesting entry at its day's step towards its target;
+ * an entry carrying a `contribution` at `shareOf(entry)` (its vested share_bps, as the seats agree it for this height); every other entry
+ * its share scaled into what those leave, floored, the rest of a basis point to the first of them as published. Answers a plain set.
+ */
+export function setSharesAt(recipients, height, shareOf = () => 0) {
+  if (!Array.isArray(recipients) || !recipients.some((r) => r && (r.vesting || r.contribution))) return recipients;
+  const h = Number(height) || 0;
+  const now = recipients.map((r) => {
+    if (r.contribution) return Math.max(0, Math.min(CONTRIB_BPS_TOTAL, Number(shareOf(r)) || 0));
+    if (!r.vesting) return null;
+    const { targetBps, startHeight, days } = r.vesting;
+    const elapsed = h < startHeight ? 0 : Math.min(days, Math.floor((h - startHeight) / CONTRIB_DAY_BLOCKS));
+    return r.shareBps + Math.trunc(((targetBps - r.shareBps) * elapsed) / days);
+  });
+  const fixed = now.reduce((t, x) => t + (x === null ? 0 : x), 0);
+  const othersBase = recipients.reduce((t, r, i) => t + (now[i] === null ? r.shareBps : 0), 0);
+  const rest = Math.max(0, CONTRIB_BPS_TOTAL - fixed);
+  const out = recipients.map((r, i) => ({ recipientPk: r.recipientPk, label: r.label,
+    shareBps: now[i] !== null ? now[i] : (othersBase > 0 ? Math.floor((r.shareBps * rest) / othersBase) : 0) }));
+  const short = CONTRIB_BPS_TOTAL - out.reduce((t, x) => t + x.shareBps, 0);
+  const first = now.findIndex((x) => x === null);
+  if (short > 0 && first >= 0) out[first].shareBps += short;
   return out;
 }
