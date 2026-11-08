@@ -9,6 +9,7 @@
 //   list()              every proposal with its tally, for the owner page
 //   add(kind, hex)      a new object: decoded, checked, kept, the tally run again; `true` when it was new
 // A proposal or approval that does not stand is not kept. Forwarding is the server's (it knows the peers).
+import { contributionAgreementId } from '../../arena-protocol/src/contribution.js';
 import { decodeDonationProposal, decodeDonationApproval, donationProposalId, donationApprovalDigest, tallyDonationProposal, approvedDonationSets } from '../../arena-protocol/src/donation-vote.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -70,6 +71,12 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
       const digest = kind === 'proposal' ? donationProposalId(obj) : donationApprovalDigest(obj);
       const signer = kind === 'proposal' ? obj.proposer : obj.signer;
       if (!(await verifySecp256k1(obj.signature, digest, signer))) return { ok: false, status: 400, why: 'the signature does not verify' };
+      // A CONTRIBUTION AGREEMENT IN A PROPOSAL (§27A.4.2, kanban #1346) is signed by the contributor's own key too, over the agreement's id
+      if (kind === 'proposal') for (const r of obj.recipients || []) {
+        if (!r.contribution) continue;
+        if (!(await verifySecp256k1(r.contribution.signature, contributionAgreementId(r.contribution.agreement), r.recipientPk)))
+          return { ok: false, status: 400, why: `the contribution agreement of ${toHex(r.recipientPk).slice(0, 16)} is not signed by that key` };
+      }
       const id = toHex(digest);
       if (db.prepare('SELECT 1 FROM donation_ballots WHERE id = ?').get(id)) return { ok: true, fresh: false, id };
       db.prepare('INSERT INTO donation_ballots (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, digestKey, String(hex).toLowerCase(), Date.now());

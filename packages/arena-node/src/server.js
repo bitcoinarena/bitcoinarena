@@ -133,7 +133,7 @@ import { PriceFeed } from './price-feed.js';
 import { matchOf } from './match.js';
 import { matchProofId, presenceId, PRESENCE_MS } from '../../arena-protocol/src/match.js';
 import { dashboardData, dashboardHtml } from './dashboard.js';
-import { season, seasonWindow, mergeSeasonAccounts, seasonRoundsToJson, seasonRoundsFromJson, SEASON_NETWORK_AGREE,
+import { season, seasonWindow, mergeSeasonAccounts, mergeSignedSeasonAccounts, seasonRoundsToJson, seasonRoundsFromJson, SEASON_NETWORK_AGREE,
   SEASON_NETWORK_UNCHECKED, SEASON_DAYS_MAX, DAY_MS } from '../../arena-protocol/src/season.js';
 import { seasonRounds, seasonRoundOf, signedSeasonRoundsJson } from './season-read.js';
 import { createWinnersBook } from './leaderboard-freeze.js';
@@ -289,6 +289,7 @@ import { refundKeyOf, lockFieldsToJson } from '../../arena-protocol/src/stake-lo
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../arena-protocol/src/claim-key.js';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { createDonationBallots } from './donation-ballots.js';
+import { createContributionBook } from './contribution-book.js';
 import { decodeDonationProposal, donationProposalId, donationApprovalDigest, encodeDonationProposal, encodeDonationApproval } from '../../arena-protocol/src/donation-vote.js';
 
 import { TABLE_IS_NOT_F, splitTableSlashEvidence, splitSlashEvidence, AUDIT_CONTRADICTED, REPLAY_CONTRADICTS, splitAuditSlashEvidence, TWO_RESULTS, splitDoubleSlashEvidence, fraudProofHash, decodeFraudProof, readEvidence } from '../../arena-protocol/src/slash.js';
@@ -1553,8 +1554,33 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const game = contract.gameId instanceof Uint8Array ? hosted.get(toHex(contract.gameId)) : null;
     if (!game || !Array.isArray(game.donationSet)) return { ok: false, why: 'this node holds no donation set of that round\'s game' };
     // A SET THAT VESTS (§27A.4.1) pays its shares at the round's census height
-    return { ok: true, set: ds.set, target: { network: vestedShares(ds.set.recipients, contract.censusHeight), game: game.donationSet } };
+    // AND A SET WITH CONTRIBUTION AGREEMENTS (§27A.4.2, kanban #1346) pays each its vested share at that height, from this seat's book
+    return { ok: true, set: ds.set, target: { network: vestedShares(ds.set.recipients, contract.censusHeight, contributionShareOf(contract)), game: game.donationSet } };
   };
+  // CONTRIBUTION AGREEMENTS (§27A.4.2, kanban #1346): the counted rounds as their seats signed them (#1153), kept in a book; a share at a height
+  // reads the rounds two days before it (contribution-book.js), so every seat holding the same counted rounds answers the same
+  const contributionBook = round.db ? createContributionBook({ db: round.db,
+    accountsFor: async (w) => {
+      const got = await seasonAccounts([...hosted.keys()], w, { days: w.days, keyed: true, signed: true });
+      return mergeSignedSeasonAccounts(got.bySeat, { seatsOf: seasonSeatsOf, verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } } });
+    },
+    heightOf: (cHex) => { try { return Number(decodeRoundContract(fromHex(String(cHex))).censusHeight); } catch { return null; } } }) : null;
+  const contributionShareOf = (contract) => (entry) => {
+    if (!contributionBook || !entry || !entry.contribution) return 0;
+    try { return contributionBook.shareAt(entry.contribution.agreement, Number(contract.censusHeight), ballotNetKind(toHex(contract.networkId))).shareBps; } catch { return 0; }
+  };
+  const anyAgreement = () => [...donationSets, ...approvedSets()].some((st) => (st.recipients || []).some((r) => r && r.contribution));
+  const CONTRIBUTION_READ_MS = Number(process.env.ARENA_CONTRIBUTION_READ_MS || 30 * 60000);
+  if (contributionBook && CONTRIBUTION_READ_MS > 0) {
+    const t = setInterval(() => {
+      if (!anyAgreement()) return;
+      const nowMs = Date.now();
+      contributionBook.refresh({ fromMs: nowMs - 3 * 86400000, toMs: nowMs, days: 3 })
+        .then((r) => { if (r.kept) console.log(`[contribution] ${r.kept} counted round(s) kept (${r.counted} counted in the window)`); })
+        .catch((e) => console.error(`[contribution] the counted rounds could not be read: ${e.message}`));
+    }, CONTRIBUTION_READ_MS);
+    if (t.unref) t.unref();
+  }
   // A PAYING ROUND THAT NAMES A SET OTHER THAN THE ONE IN FORCE, AS A REFUSAL (2026-10-06: series
   // d37c1ef1 named serial 2 where serial 3 was in force; its rounds were written and listed 7 of 7, a page locked a stake into
   // one, and only the session refused it). One answer per network, census height and set id - every round of a series asks.
@@ -11456,6 +11482,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         out.set(served.set.signature, body.length);
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
         return res.end(Buffer.from(out));
+      }
+
+      // EACH CONTRIBUTION AGREEMENT'S SHARE FOR A ROUND (§27A.4.2, kanban #1346): at its census height, from this seat's book of counted
+      // rounds - the page cannot read the network's rounds itself and takes a share only where a majority of the round's seats agree on it
+      if (req.method === 'GET' && url.pathname === '/contribution-shares') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'that is not a round id');
+        const row = round.get(rid);
+        if (!row) return text(res, 404, 'this node holds no such round');
+        const c = decodeRoundContract(new Uint8Array(row.contract));
+        const served = donationSetFor(c);
+        if (!served.ok) return text(res, 404, served.why);
+        const shareOf = contributionShareOf(c);
+        const shares = (served.set.recipients || []).filter((r) => r && r.contribution).map((r) => {
+          const s = contributionBook ? contributionBook.shareAt(r.contribution.agreement, Number(c.censusHeight), ballotNetKind(toHex(c.networkId))) : null;
+          return { recipient: toHex(r.recipientPk), agreementId: s ? s.agreementId : null, shareBps: shareOf(r), state: s ? s.state : null,
+            tranches: s ? s.tranches.map((x) => ({ milestone: x.milestone, bps: x.bps, metAt: x.metAt, vestedAt: x.vestedAt })) : [] };
+        });
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ round: rid.toString('hex'), height: Number(c.censusHeight), shares, book: contributionBook ? contributionBook.held() : null }));
       }
 
       if (req.method === 'GET' && url.pathname === '/claim-key') {
