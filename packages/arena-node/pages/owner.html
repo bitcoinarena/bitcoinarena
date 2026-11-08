@@ -530,6 +530,7 @@ async function area() {
   standingPanel();
   uptimePanel();
   roundsPanel();
+  contributionsPanel();
   capacityPlea();
   bondAnswer();
   servicesPanel();
@@ -595,6 +596,8 @@ async function capacityPlea() { mount('capacity-plea', 'mountPlea', { capacity: 
 
 // THE ROUNDS THIS NODE IS DRAWN FOR (kanban #715), and why there are none
 function roundsPanel() { mount('rounds', 'mountRounds', { api: { get: getJson } }); }
+// CONTRIBUTION AGREEMENTS (§27A.4.2, kanban #1346): each agreement of the developers' set, its share and live numbers from this node's book
+function contributionsPanel() { mount('contributions', 'mountContributions', { api: { get: getJson } }); }
 
 // THIS NODE'S STANDING (§5A.3, §5A.10B): the draws it missed and its bond against the bracket now common; missed draws on the Overview
 function standingPanel() {

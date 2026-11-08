@@ -6,6 +6,7 @@
 // collapsed until opened. The Worker builds what its store holds into the page (window.EXPLORER_DATA), so nothing waits on a node.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { ContributionCard } from '../owner/ContributionsPanel.jsx';
 
 const kept = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
 const keep = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* full: not kept */ } };
@@ -428,6 +429,9 @@ export function Metrics({ data = null }) {
         <td className="barcell"><i className="vbar" style={{ width: Math.max(1, Number((BigInt(d.msat) * 100n) / most)) + '%' }} /></td></tr>)}</tbody></table>) : <p className="dim">No transactions yet.</p>}</div>
     {m.referral && m.referral.sites.length ? (<><h2>Referral programs</h2><div className="card"><table className="rows"><thead><tr><th>Program</th><th>Key</th><th>Payouts</th><th>Earned</th></tr></thead><tbody>
       {m.referral.sites.map((x) => <tr key={x.site}><td><b>{x.name || 'unnamed'}</b></td><td className="mono">{x.site.slice(0, 16)}…</td><td>{x.payouts}</td><td className="nw"><b>{amount(x.msat)}</b></td></tr>)}</tbody></table></div></>) : null}
+    {/* CONTRIBUTION AGREEMENTS (§27A.4.2, kanban #1346): the share the most seats name, how many of them, and the live numbers */}
+    {m.contributions && (m.contributions.agreements || []).length ? (<><h2>Contribution agreements <span className="dim">{m.contributions.answered} of {m.contributions.of} nodes answered</span></h2>
+      {m.contributions.agreements.map((a) => <div key={a.recipient}><ContributionCard a={a} height={a.height} /><p className="dim">{a.agreeing} of {a.answered} nodes name this share.</p></div>)}</>) : null}
     {m.readAt ? <p className="dim">Reserve and referral fees read from {m.seats ? m.seats.reserves + ' of ' + m.seats.of : 'the'} nodes {ago(Date.parse(m.readAt))}.</p> : null}
   </>);
 }

@@ -363,3 +363,32 @@ export function setSharesAt(recipients, height, shareOf = () => 0) {
   if (short > 0 && first >= 0) out[first].shareBps += short;
   return out;
 }
+
+/**
+ * THE AGREEMENT'S LIVE NUMBERS AT A HEIGHT (§27A.4.2 "the owner page and the explorer"), from the same facts as contributionShare: each
+ * milestone's count against the network's scale, the attribution over the floor's window, and per site key the identities whose first paid
+ * entry carried it and the gross of the entries that carried it. Answers { scale, t1: { have, need }, t2: { have, need }, attribution:
+ * { bps, floorBps, windowBlocks }, sites: [{ siteKey, identities, grossMsat }] }.
+ */
+export function contributionProgress(a, { facts = [], height, network } = {}) {
+  const S = contributionScaleOf(network), h = Number(height);
+  const F = contributionFacts((facts || []).filter((f) => Number(f.height) <= h), a.siteKeys);
+  const mineFirsts = [...F.first.entries()].filter(([, f]) => f.mine && f.height >= a.startHeight);
+  const retained = mineFirsts.filter(([id, f]) => (F.later.get(id) || []).some((x) => x >= f.height + S.retentionBlocks)).length;
+  const W = a.tranches[0] ? a.tranches[0].windowBlocks : 12960;
+  const news = F.news.filter((n) => n.height >= Math.max(a.startHeight, h - W + 1));
+  const attributionBps = news.length ? Math.floor((news.filter((n) => n.mine).length * CONTRIB_BPS_TOTAL) / news.length) : 0;
+  const sites = a.siteKeys.map((k) => {
+    const kh = contribHexOf(k);
+    const firstOf = new Map();
+    let gross = 0n;
+    for (const r of [...(facts || [])].filter((f) => Number(f.height) <= h).sort((x, y) => Number(x.height) - Number(y.height))) {
+      const id = contribHexOf(r.identity);
+      if (!firstOf.has(id)) firstOf.set(id, r.frontendPk ? contribHexOf(r.frontendPk) : null);
+      if (r.frontendPk && contribHexOf(r.frontendPk) === kh) gross += BigInt(r.grossMsat || 0);
+    }
+    return { siteKey: kh, identities: [...firstOf.values()].filter((x) => x === kh).length, grossMsat: String(gross) };
+  });
+  return { scale: S, t1: { have: mineFirsts.length, need: S.t1Identities }, t2: { have: retained, need: S.t2Retained, afterBlocks: S.retentionBlocks },
+    attribution: { bps: attributionBps, floorBps: a.attributionFloorBps, windowBlocks: W }, sites };
+}

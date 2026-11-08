@@ -623,7 +623,34 @@ async function runner() {
           const id = await open('paid', { stakeMsat: BigInt(u.searchParams.get('stakeMsat') || stake), entryAfterStartMs: windowMs });
           return send(201, state.rounds.find((r) => r.id === id));
         }
-        send(404, { why: 'GET /state, POST /open-free, POST /open-paid' });
+        // POST /open-grid?stakeMsat=&slots=&windowMs=&leadMs=&censusHeight= (kanban #1346, ARENA_GRID_REGTEST=1): a paid grid of series rounds - the
+        // rounds that count (#1218) - published on this chain; answers its first rounds' ids, starts and census height once posted to the seats
+        if (req.method === 'POST' && u.pathname === '/open-grid') {
+          const { decodeRoundContract, roundId } = await import('../../arena-protocol/src/contracts.js');
+          const { toHex, fromHex } = await import('../../arena-protocol/src/hash.js');
+          const windowMs = BigInt(Math.max(60000, Number(u.searchParams.get('windowMs') || 180000)));
+          const slots = Math.max(1, Math.min(Number(u.searchParams.get('slots') || 4), 40));
+          const committee = BigInt(Date.now() + Number(u.searchParams.get('leadMs') || 120000));
+          // a grid starts at least 45 min after its committee time (series.js gridIsValid): the first close is lead + start + a window on
+          const leadMin = 2700000n;
+          const firstClose = committee + leadMin + 60000n + windowMs;
+          const ch = u.searchParams.get('censusHeight');
+          const ds = u.searchParams.get('donationSetId');
+          const fields = { ...(ch ? { censusHeight: Number(ch) } : {}), ...(ds ? { donationSetId: fromHex(ds) } : {}) };
+          // ANSWERED ONCE PUBLISHED: the grid's rounds are posted to the seats only after its beacon (45 min past its committee time, the grid rule),
+          // so that part goes on in the background and is logged; a second grid does not wait for the first
+          const answer = await new Promise((done) => {
+            round.openGrid({ stakeMsat: BigInt(u.searchParams.get('stakeMsat') || stake), ...(Object.keys(fields).length ? { fields } : {}) },
+              { slots, tables: 1, windowMs, entryAfterStartMs: windowMs, firstCloseMs: firstClose, committeeTimeMs: committee,
+                onPublished: (p) => done({ ok: true, published: p }) })
+              .then((got) => { console.log(`[grid] ${got.ok ? 'posted' : 'not posted'}: ${JSON.stringify({ txid: got.txid, why: got.why || null, posted: got.posted || null }).slice(0, 400)}`); done({ ok: !!got.ok, why: got.why || null, got }); },
+                (e) => { console.error(`[grid] ${e.message}`); done({ ok: false, why: e.message }); });
+          });
+          const published = answer.published || null;
+          const ids = (published && published.contracts ? published.contracts : []).map((h) => { const c = decodeRoundContract(fromHex(h)); return { id: toHex(roundId(c)), start: Number(c.startTimeMs), close: Number(c.entryCloseMs), censusHeight: c.censusHeight }; });
+          return send(answer.ok ? 201 : 409, { ok: !!answer.ok, why: answer.why || null, txid: published ? published.txid : null, rounds: ids });
+        }
+        send(404, { why: 'GET /state, POST /open-free, POST /open-paid, POST /open-grid' });
       } catch (e) { send(500, { why: e.message }); }
     }).listen(PLAN.control, '127.0.0.1');
   } catch (e) {

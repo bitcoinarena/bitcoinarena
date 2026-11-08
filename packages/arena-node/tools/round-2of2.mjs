@@ -1268,7 +1268,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // writers open the rounds. A beacon that came before the publication confirmed answers `dead`: nothing is posted.
   async function openGrid(kind = {}, { slots = 225, tables = 2, windowMs = 8000n, entryAfterStartMs = 80000n, firstCloseMs,
     committeeTimeMs, feeRate = 1, maxFeeRate = 4, onPublished = () => {}, onPosted = () => {}, extraOutputs = [], waitBeacon = true } = {}) {
-    if (!onChain || onChain.minable) throw new Error('a grid is published on a chain nobody here mines (testnet4)');
+    // ARENA_GRID_REGTEST=1 (kanban #1346): a devnet publishes a grid on its own regtest chain too - its block clock mines the publication and the
+    // beacon - so its rounds are series rounds, the rounds that count (#1218)
+    if (!onChain || (onChain.minable && process.env.ARENA_GRID_REGTEST !== '1')) throw new Error('a grid is published on a chain nobody here mines (testnet4)');
     if (firstCloseMs === undefined || committeeTimeMs === undefined) throw new Error('a grid names its first close and its committee time');
     // A GRID OF ITS OWN CENSUS HEIGHT (kanban #689: the duty names the census of the day it posts, not the one this tool stood up at its
     // start - 10-20 and 10-26 days named a census from before their version's adverts): the view's window moves with it

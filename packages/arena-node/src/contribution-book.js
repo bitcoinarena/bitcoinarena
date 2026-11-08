@@ -12,7 +12,7 @@
 //            account signed hours after its census, and by two days every seat has read it. So two seats holding the same counted rounds
 //            answer the same share at every height, and the page takes a share only where a majority of the round's seats agree.
 //   SHARE    `shareAt(agreement, height, network, { leftAt, terminatedAt })` -> protocol contributionShare over the book's facts.
-import { contributionShare, factsFromSeasonRounds, contributionAgreementId, contributionScaleOf } from '../../arena-protocol/src/contribution.js';
+import { contributionShare, contributionProgress, factsFromSeasonRounds, contributionAgreementId, contributionScaleOf } from '../../arena-protocol/src/contribution.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
 /** The share at H reads rounds with census height <= H - this (288 blocks, ~2 days, on mainnet and testnet4; 6 on regtest and a devnet, kanban #1349). */
@@ -86,7 +86,9 @@ export function createContributionBook({ db, accountsFor, heightOf, now = () => 
   function shareAt(agreement, height, network, ends = null, { main = network === 'mainnet' } = {}) {
     const { leftAt, terminatedAt } = ends || endsOf(toHex(contributionAgreementId(agreement)));
     const s = contributionShare(agreement, { facts: factsAt(height, network), height, network, main, leftAt, terminatedAt });
-    return { agreementId: toHex(contributionAgreementId(agreement)), height: Number(height), ...s };
+    const facts = factsAt(height, network);
+    return { agreementId: toHex(contributionAgreementId(agreement)), height: Number(height), ...s, ends: { leftAt, terminatedAt },
+      progress: contributionProgress(agreement, { facts, height: Number(height) - contributionLagOf(network), network }) };
   }
 
   const held = () => db.prepare('SELECT COUNT(*) n, MAX(census_height) top FROM contribution_rounds').get();
