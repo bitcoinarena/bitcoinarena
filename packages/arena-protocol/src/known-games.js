@@ -522,6 +522,19 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     sharedWorld: Object.freeze([]),
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
   }),
+  '147fad8e7a8ff4d4c20c7043a4ad6c2b8f7a00a4c98feccc289122b29d586f42': Object.freeze({
+    name: 'rock-paper-scissors',
+    //: manifest version 7, parent e3e5752c - version 6 in every term but its client: one countdown while a move is missing, the match's opponent kept (kanban #1361)
+    requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
+    cores: Object.freeze({
+      'f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
   'b8b88e233baac6671c8ac6da8193f816d7f552423a3888b184018b7b49839651': Object.freeze({
     name: 'nextblock',
     // 2026.0.3: manifest version 3, parent c693585b, sells the larger truck (core f0cc7b7b), protocol 10 - added by hand
