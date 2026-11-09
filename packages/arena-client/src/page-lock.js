@@ -1086,6 +1086,12 @@ export function depositEnded(storage, federationId, operation, final, d) {
   if (final === DEPOSIT_STATE.CLAIMED || final === DEPOSIT_STATE.EXPIRED || final === DEPOSIT_STATE.FAILED) pendingDrop(storage, federationId, operation);
   return added;
 }
+/** THE WELCOME THAT CAME AS E-CASH (kanban #1381): one deposit row per e-cash string, however many pages received it. */
+export function faucetEcashRowOnce(storage, federationId, { ecash, msat }) {
+  if (!storage || !fedHexOf(federationId) || !ecash) return false;
+  const id = `dep-faucet-${toHex(taggedHash('arena/faucet/ecash/v1', new TextEncoder().encode(String(ecash)))).slice(0, 32)}`;
+  return ledgerAppend(storage, federationId, { kind: 'deposit', msat: String(msat), invoiceHash: null, faucet: true }, id);
+}
 /** One history row per paid invoice, however many pages saw it claimed. */
 function depositRowOnce(storage, federationId, d) {
   if (!storage || !fedHexOf(federationId)) return false;
@@ -1202,9 +1208,12 @@ export async function walletDepositOffer({ federationId, invite, seed, LockClien
 // THE TOP-UP IS 300 (kanban #1088, the owner 2026-11-03: "Get 300 sats, aus dem faucet. Im deposit auch 300. Bis zu 5x faucet am Tag"): the faucet pays it up to 5 times a day per account
 export const FAUCET_GRANTS = Object.freeze({ welcome: { sats: 500, invoiceMsat: 500000n }, topup: { sats: 300, invoiceMsat: 300000n } });
 export const faucetAccountOf = (seed) => toHex(taggedHash('arena/faucet/account/v1', seed instanceof Uint8Array ? seed : fromHex(String(seed))));
-export async function askFaucet({ url, kind, invoice, seed, fetcher = fetch } = {}) {
-  const r = await fetcher(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind, account: faucetAccountOf(seed), invoice }), signal: AbortSignal.timeout(45000) });
+// `ecash` (kanban #1381): the federation id in hex - the welcome comes as ready e-cash of that federation when the faucet holds some ({ ok, sats, ecash });
+// without an invoice and none ready, the answer is `noEcash` and nothing is given (the page then asks again with an invoice)
+export async function askFaucet({ url, kind, invoice, seed, ecash, fetcher = fetch } = {}) {
+  const r = await fetcher(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind, account: faucetAccountOf(seed), invoice, ...(ecash ? { ecash } : {}) }), signal: AbortSignal.timeout(45000) });
   const j = await r.json().catch(() => ({ ok: false, why: `the faucet answered ${r.status}` }));
+  if (!j.ok && j.noEcash) return j;
   if (!j.ok) throw new Error(j.why || 'the faucet gave nothing');
   return j;
 }
