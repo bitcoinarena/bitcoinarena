@@ -7349,9 +7349,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // of it - for a page's four queries, `next=8` / `next=2` / `next=12` / `ahead=900000`, each built on its own and each
     // walking all 4,595 open rounds the seat holds to list a handful). The scan is the same for every query: what it keeps
     // (listable, of a hosted game, not ended at the scan) is shared, and each query cuts its own from it.
+    // `games` (game ids, hex, comma-separated, up to 16): ONLY THOSE GAMES' ROUNDS (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; measured on
+    // live UI 605: a game screen read every seat's whole listing - 600-800 KB, 205-264 rows of every game - every few seconds, most of its parse and garbage
+    // time). Unnamed, every game as before; a page that names its game reads only its rows.
+    const gamesRaw = url.searchParams.get('games');
+    const gameSet = gamesRaw ? new Set(String(gamesRaw).toLowerCase().split(',').filter((g) => /^[0-9a-f]{64}$/.test(g)).slice(0, 16)) : null;
     for (const x of await openScan(nowMs, yieldIfLong)) {
       if (nowMs >= x.endMs) continue;   // over: announced no longer
       if (aheadMs !== null && x.c.startTimeMs > nowMs + aheadMs) continue;
+      if (gameSet && gameSet.size && !gameSet.has(toHex(x.c.gameId))) continue;
       candidates.push(x);
     }
     if (perSeries !== null) {
