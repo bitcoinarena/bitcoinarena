@@ -264,7 +264,18 @@ createServer((req, res) => {
         book.refills = book.refills || []; book.refills.push({ sats: d.sats, atMs: Date.now(), hash: inv.payment_hash }); saveBook(book);
         for (const payer of PAYERS) {
           const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', b.invoice], 15000);
-          if (paid.timedOut || /Payment status: (SUCCEEDED|IN_FLIGHT)/.test(paid.out)) { console.log(`${new Date().toISOString()} refill ${d.sats} sat: ${inv.payment_hash.slice(0, 16)}`); return send(200, { ok: true, sats: d.sats }); }
+          if (paid.timedOut || /Payment status: (SUCCEEDED|IN_FLIGHT)/.test(paid.out)) {
+            // A PAYMENT THAT FAILED AFTER ITS ANSWER IS NOT A TOP-UP (kanban #1391, measured 2026-11-09: 13 refills of the test opponent, 39,000 sat, were
+            // counted when lncli ran past 15 s - every one then FAILED, INCORRECT_PAYMENT_DETAILS or NO_ROUTE, no sat moved - and the day's cap said "the
+            // top-ups of today are used up" while the bot's wallet held 0, so it entered no round): once lnd knows, a failed one leaves the day's count
+            if (!/Payment status: SUCCEEDED/.test(paid.out)) setTimeout(async () => {
+              const t = await lncli(payer, ['trackpayment', inv.payment_hash], 20000);
+              if (/Payment status: FAILED/.test(t.out)) {
+                const later = readBook(); later.refills = (later.refills || []).filter((r) => r.hash !== inv.payment_hash); saveBook(later);
+                console.log(`${new Date().toISOString()} refill ${d.sats} sat: ${inv.payment_hash.slice(0, 16)} failed after its answer - not counted`);
+              }
+            }, 120000);
+            console.log(`${new Date().toISOString()} refill ${d.sats} sat: ${inv.payment_hash.slice(0, 16)}`); return send(200, { ok: true, sats: d.sats }); }
         }
         const after = readBook(); after.refills = (after.refills || []).filter((r) => r.hash !== inv.payment_hash); saveBook(after);
         send(200, { ok: false, why: 'could not pay just now' });
