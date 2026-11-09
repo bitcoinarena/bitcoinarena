@@ -3383,6 +3383,22 @@
       } catch { return null; }
     }
     window.ARENA_PREP_STAKE = prepStake;
+    // THE TABLES AHEAD, TWO AT A TIME (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; measured on live UI 601: every paid table of the
+    // next 20 s - 8-12 rounds - built its committee at once, each asking 14 seats 56 times, and each took 6-10 s, where one alone takes 0.7-1 s; a tap's own
+    // order waited behind them and the next round's tap replaced it): warmed in the order they close, at most WARM_AT_ONCE in flight, a closed one dropped.
+    // A tapped round's join still builds its own at once (prepRound), and takes a warmed one when it is ready.
+    const WARM_AT_ONCE = 2, warmQueue = new Map(); let warming = 0;
+    const warmNext = () => {
+      while (warming < WARM_AT_ONCE && warmQueue.size) {
+        const [id, w] = [...warmQueue].sort((x, y) => Number(x[1].c.entryCloseMs) - Number(y[1].c.entryCloseMs))[0];
+        warmQueue.delete(id);
+        if (Number(w.c.entryCloseMs) < Date.now() || ROUND_PREP.has(id)) continue;
+        warming += 1;
+        let p = null; try { p = prepRound(id, w.c, w.nodes).signer; } catch { p = null; }
+        Promise.resolve(p).catch(() => {}).finally(() => { warming -= 1; warmNext(); });
+      }
+    };
+    function warmRound(id, c, nodes) { if (ROUND_PREP.has(id) || warmQueue.has(id)) return; warmQueue.set(id, { c, nodes }); warmNext(); }
     function prepRound(roundIdHex, round, nodes) {
       const known = ROUND_PREP.get(roundIdHex);
       if (known) return known;
@@ -9171,7 +9187,7 @@
           for (const r of (window.ARENA_LOBBY_ROWS || [])) {
             const c = r.contract;
             if (r.free || !c || !r.joinable || !ARENACLIENT.roundLocks(c) || Number(c.entryCloseMs) > soon || Number(c.entryCloseMs) < Date.now()) continue;
-            try { prepRound(r.id, c, (window.ARENA_ROW_NODES ? window.ARENA_ROW_NODES(r.id) : null) || (testnet ? testnet.named : named).nodes); } catch { /* the join asks itself */ }
+            warmRound(r.id, c, (window.ARENA_ROW_NODES ? window.ARENA_ROW_NODES(r.id) : null) || (testnet ? testnet.named : named).nodes);
           }
         }
       };
