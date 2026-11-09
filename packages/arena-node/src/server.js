@@ -43,7 +43,7 @@ import { createGatewayWatch } from './gateway-watch.js';
 import { createHeldReads, withHeldLock } from './held-read.js';
 import { heldProofHeight, heldReadWindow, heldWindowOpen, HELD_CLAIM_PK, HELD_MIN_BLOCKS_LEFT } from '../../arena-protocol/src/held-proof.js';
 import { lnv2ModuleId, federationCoins, incomingSince } from './gateway-volume.js';
-import { signGatewaySeating, standingSeating, seatingEpochAt, paidSeatsOf, provedPegInsOf, seatingRecordFor, seatingRulesActive } from '../../arena-protocol/src/gateway-seating.js';
+import { signGatewaySeating, standingSeating, seatingEpochAt, paidSeatsOf, provedPegInsOf, seatedFeesOf, seatingRecordFor, seatingRulesActive } from '../../arena-protocol/src/gateway-seating.js';
 import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } from '../../arena-protocol/src/liquidity-seating.js';
 import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
@@ -6581,7 +6581,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           { const paid = paidSeatsOf(v);
             // floored to whole 100,000 sat from the activation epoch (ruling 1, this seat's network's SEATING_RULES_EPOCH), by the epoch signed
             const pegIns = provedPegInsOf(paid, v.gateways, { epoch, network: seatingNetwork() });
-            const own = signGatewaySeating({ federationId: v.federationId, epoch, seats: paid, ...(Object.keys(pegIns).length ? { pegIns } : {}) }, toHex(round.pubkey), (h) => schnorr.sign(h, round.identity.secret));
+            // AND THE FEE EACH PAID SEAT WAS SEATED AT (§23A.9 RULED 2026-11-07, kanban #1324), from the 2.0 seating rules' epoch: its published fees as the watch read them
+            const fees = seatingRulesActive(epoch, seatingRulesEpochOf(seatingNetwork())) ? seatedFeesOf(paid, v.gateways) : {};
+            const own = signGatewaySeating({ federationId: v.federationId, epoch, seats: paid, ...(Object.keys(pegIns).length ? { pegIns } : {}), ...(Object.keys(fees).length ? { fees } : {}) }, toHex(round.pubkey), (h) => schnorr.sign(h, round.identity.secret));
             ownSeatings.set(`${v.federationId}:${epoch}`, own); keepSeating('own', v.federationId, epoch, own); }
       }
       const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };

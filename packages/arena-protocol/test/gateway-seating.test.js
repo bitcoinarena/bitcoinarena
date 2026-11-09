@@ -252,3 +252,27 @@ test('the activation epoch: a seating of that epoch or later is judged by the re
   const fresh = seatingRecordFor({ epoch: E, recordAt: () => null, current: next, rulesEpoch: E });
   assert.deepEqual([fresh.at, fresh.record], ['now', next]);
 });
+
+test('kanban #1324: the seating names the fee each paid seat was seated at - signed with the seats, the same fees make one body, none hashes as before', async () => {
+  const { gatewaySeatingHash, seatedFeesOf, seatingFeesOf } = await import('../src/gateway-seating.js');
+  const fa = { send: { ppm: 500, baseMsat: 0 }, receive: { ppm: 0, baseMsat: 1000 } }, fb = { send: { ppm: 800, baseMsat: 2000 }, receive: { ppm: 100, baseMsat: 0 } };
+  const signF = (i, fees, pegIns = undefined) => signGatewaySeating({ federationId: fid, epoch: 7, seats: [A, B], fees, ...(pegIns ? { pegIns } : {}) }, g[i].hex, (h) => schnorr.sign(h, g[i].secret));
+  // the watch's view to the signed fees: only paid seats whose fees were read
+  assert.deepEqual(seatedFeesOf([A, B], { [A]: { fees: fa }, [B]: { fees: null }, [C]: { fees: fb } }), { [A]: fa });
+  // three guardians read the same fees: it stands, and names them
+  const r = standingSeating({ signed: [signF(0, { [A]: fa, [B]: fb }), signF(1, { [B]: fb, [A]: fa }), signF(2, { [A]: fa, [B]: fb })], federationId: fid, epoch: 7, seated, threshold: 3, verify });
+  assert.equal(r.ok, true, r.why);
+  assert.deepEqual(r.seating.fees, { [A]: fa, [B]: fb });
+  // one read another fee: a different body - two of four, it does not stand
+  const split = standingSeating({ signed: [signF(0, { [A]: fa, [B]: fb }), signF(1, { [A]: fa, [B]: fb }), signF(2, { [A]: fa, [B]: { ...fb, send: { ppm: 900, baseMsat: 2000 } } })], federationId: fid, epoch: 7, seated, threshold: 3, verify });
+  assert.equal(split.ok, false);
+  // a seating naming no fees hashes as before; fees change the hash; a fee for a seat not in the seating is dropped
+  const plain = { federationId: fid, epoch: 7, seats: [A, B] };
+  assert.equal(toHex(gatewaySeatingHash({ ...plain, fees: {} })), toHex(gatewaySeatingHash(plain)));
+  assert.equal(toHex(gatewaySeatingHash({ ...plain, fees: { [C]: fa } })), toHex(gatewaySeatingHash(plain)));
+  assert.notEqual(toHex(gatewaySeatingHash({ ...plain, fees: { [A]: fa } })), toHex(gatewaySeatingHash(plain)));
+  // with peg-ins too: the peg-ins' hash stays as it was without fees, and fees beside them change it
+  const pegs = { [A]: '100000' };
+  assert.notEqual(toHex(gatewaySeatingHash({ ...plain, pegIns: pegs, fees: { [A]: fa } })), toHex(gatewaySeatingHash({ ...plain, pegIns: pegs })));
+  assert.deepEqual(seatingFeesOf({ seats: [A], fees: { [A]: { send: { ppm: 1.5, baseMsat: 0 }, receive: { ppm: 0, baseMsat: 0 } } } }), [], 'a fee that is not whole is not named');
+});

@@ -81,6 +81,25 @@ export function seatingPegInsOf(seating) {
 }
 
 /**
+ * THE FEES A SEATING NAMES (§23A.9 RULED 2026-11-07, kanban #1324: "The gateway seating names the fee a seat was seated at"): [node hex,
+ * { send: { ppm, baseMsat }, receive: { ppm, baseMsat } }] for its seats that name them, sorted by node; [] when it names none.
+ */
+export function seatingFeesOf(seating) {
+  const f = (seating && seating.fees) || {};
+  const seats = new Set(((seating && seating.seats) || []).map((x) => String(x).toLowerCase()));
+  const leg = (x) => ({ ppm: Number(x && x.ppm), baseMsat: Number(x && x.baseMsat) });
+  const whole = (x) => Number.isInteger(x.ppm) && x.ppm >= 0 && Number.isInteger(x.baseMsat) && x.baseMsat >= 0;
+  return Object.entries(f).map(([n, v]) => [String(n).toLowerCase(), { send: leg(v && v.send), receive: leg(v && v.receive) }])
+    .filter(([n, v]) => seats.has(n) && whole(v.send) && whole(v.receive)).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+}
+/** THE FEES A GUARDIAN SIGNS (kanban #1324): each paid seat's published fees as its watch read them (`gateways`: node hex -> { fees }). */
+export function seatedFeesOf(paid, gateways) {
+  return Object.fromEntries((paid || []).filter((n) => gateways && gateways[n] && gateways[n].fees && gateways[n].fees.send && gateways[n].fees.receive)
+    .map((n) => [n, { send: gateways[n].fees.send, receive: gateways[n].fees.receive }]));
+}
+const FEES_MARK = 0x46454553;   // 'FEES': the fee block after the peg-ins, never read as one
+
+/**
  * The 32 bytes a seating's signatures cover: the federation, the epoch, the seats (node keys, sorted) - and, only when it names
  * them, its seats' proved peg-ins (count, then node and sats each), so a seating that names none hashes as before.
  */
@@ -90,13 +109,17 @@ export function gatewaySeatingHash(seating, tag = tagAt('gatewaySeating', { epoc
   w.bytes32(fromHex(federationId)); w.u32(epoch);
   w.vec([...seats].map((s) => String(s).toLowerCase()).sort(), (s, ww) => ww.bytes32(fromHex(s)));
   const pegs = seatingPegInsOf(seating);
-  if (pegs.length) { w.u32(pegs.length); for (const [n, v] of pegs) { w.bytes32(fromHex(n)); w.u64(v); } }
+  const fees = seatingFeesOf(seating);
+  // the peg-ins' count always written ahead of the fees, so the two blocks never read as each other; a seating that names no fees hashes as before
+  if (pegs.length || fees.length) { w.u32(pegs.length); for (const [n, v] of pegs) { w.bytes32(fromHex(n)); w.u64(v); } }
+  if (fees.length) { w.u32(FEES_MARK); w.u32(fees.length); for (const [n, v] of fees) { w.bytes32(fromHex(n)); w.u32(v.send.ppm); w.u32(v.send.baseMsat); w.u32(v.receive.ppm); w.u32(v.receive.baseMsat); } }
   return taggedHash(tag, w.finish());
 }
 
 function pegInsBody(seating) {
   const pegs = seatingPegInsOf(seating);
-  return pegs.length ? { pegIns: Object.fromEntries(pegs.map(([n, v]) => [n, String(v)])) } : {};
+  const fees = seatingFeesOf(seating);
+  return { ...(pegs.length ? { pegIns: Object.fromEntries(pegs.map(([n, v]) => [n, String(v)])) } : {}), ...(fees.length ? { fees: Object.fromEntries(fees) } : {}) };
 }
 
 /** One guardian's signature on a seating. */
@@ -120,7 +143,7 @@ export function standingSeating({ signed = [], federationId, epoch, seated, thre
     if (!good) continue;
     // the same seats with the same proved peg-ins are one body: a guardian that proved another amount signs a different one
     const seatsKey = [...s.seats].map((x) => String(x).toLowerCase()).sort().join(',');
-    const key = seatsKey + '|' + seatingPegInsOf(s).map(([n, v]) => n + '=' + v).join(',');
+    const key = seatsKey + '|' + seatingPegInsOf(s).map(([n, v]) => n + '=' + v).join(',') + '|' + JSON.stringify(seatingFeesOf(s));
     const row = byBody.get(key) || { seats: seatsKey ? seatsKey.split(',') : [], ...pegInsBody(s), signers: new Set() };
     row.signers.add(String(s.guardian).toLowerCase());
     byBody.set(key, row);
@@ -128,6 +151,6 @@ export function standingSeating({ signed = [], federationId, epoch, seated, thre
   const best = [...byBody.values()].sort((a, b) => b.signers.size - a.signers.size)[0];
   if (!best || best.signers.size < threshold)
     return { ok: false, signers: best ? best.signers.size : 0, why: `no seating for epoch ${epoch} is signed by ${threshold} of the federation's seated guardians (at most ${best ? best.signers.size : 0}): no gateway seats in it` };
-  return { ok: true, seating: { federationId: String(federationId).toLowerCase(), epoch, seats: best.seats, ...(best.pegIns ? { pegIns: best.pegIns } : {}) }, signers: best.signers.size,
+  return { ok: true, seating: { federationId: String(federationId).toLowerCase(), epoch, seats: best.seats, ...(best.pegIns ? { pegIns: best.pegIns } : {}), ...(best.fees ? { fees: best.fees } : {}) }, signers: best.signers.size,
     why: `${best.signers.size} of the seated guardians signed ${best.seats.length} gateway seat${best.seats.length === 1 ? '' : 's'} for epoch ${epoch}` };
 }
