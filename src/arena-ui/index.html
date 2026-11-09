@@ -4492,7 +4492,9 @@
         if (!lock) return null;
         try { vault().setItem(mark, JSON.stringify({ at: Date.now() })); } catch { /* said or not, the lock is held */ }
         PHRASES_HELD_HERE.add(hex.slice(0, 16));
-        try { return await fn(); } finally { PHRASES_HELD_HERE.delete(hex.slice(0, 16)); try { vault().removeItem(mark); } catch { /* it goes stale in 30 s */ } }
+        // ITS WALLET CLIENTS GO WITH THE LOCK (kanban #1387, audit 2 #1204 CLIENT-15): another tab may use that phrase next, and a client kept here would not see it
+        try { return await fn(); } finally { PHRASES_HELD_HERE.delete(hex.slice(0, 16)); try { vault().removeItem(mark); } catch { /* it goes stale in 30 s */ }
+          try { if (ARENACLIENT.forgetPhraseWallets) ARENACLIENT.forgetPhraseWallets(hex); } catch { /* opened afresh or not: the next open reads the store */ } }
       }).catch((e) => {
         // TAKEN FROM THIS TAB (an older page's steal): its wallet client of that phrase must not run on beside the taker's - the tab reloads
         if (e && e.name === 'AbortError') { console.error('[arena] #1164 the lock on phrase ' + hex.slice(0, 8) + ' was taken from this tab\'s collect: the tab reloads'); location.reload(); return null; }
@@ -8149,7 +8151,8 @@
                 const ownHold = PHRASES_TAKEN.has(x.hex.slice(0, 16));
                 // AND THIS TAB'S OWN MERGE OF ANOTHER FEDERATION (measured on preview UI 393: the merges of 337ae01a and 4dc88be7 ran together, both
                 // over wallet 8c860796 - the second found the lock taken by the first and stayed "stuck" with "open in another tab")
-                const hold = async () => { const k = x.hex.slice(0, 16); PHRASES_TAKEN.add(k); try { await take(); } finally { PHRASES_TAKEN.delete(k); } };
+                // its wallet clients leave the cache with the lock (kanban #1387, CLIENT-15)
+                const hold = async () => { const k = x.hex.slice(0, 16); PHRASES_TAKEN.add(k); try { await take(); } finally { PHRASES_TAKEN.delete(k); try { if (ARENACLIENT.forgetPhraseWallets) ARENACLIENT.forgetPhraseWallets(x.hex); } catch { /* the next open reads the store */ } } };
                 if (ownHold) {
                   mergeSaid(fedHex, 'merging', 'waiting for this tab to finish with wallet ' + from);
                   await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { signal: AbortSignal.timeout(MERGE_LOCK_MS) }, hold)

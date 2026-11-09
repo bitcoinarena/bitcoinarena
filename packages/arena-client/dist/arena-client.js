@@ -19789,8 +19789,34 @@ function encodeFederationRecord(r) {
     if (typeof r.playerReserveSats !== 'bigint' || r.playerReserveSats < 0n || r.playerReserveSats > BigInt(r.reserveSats)) throw new Error('a player reserve is a whole number of sat, 0 to the reserve');
     w.u64(r.playerReserveSats);
   }
+  // THE SUCCESSION'S REASON (§23A.6 RULED 2026-11-07, kanban #1309/#1321): "A guardian-called succession names its reason (a federation_nominal
+  // change or a listed upgrade) or pays no drain shares" - a DRAINING record naming its successor; after the player reserve, which it needs
+  if (r.successionReason !== undefined && r.successionReason !== null) {
+    if (r.playerReserveSats === undefined || r.playerReserveSats === null) throw new Error('a succession reason follows the player reserve: name the reserve too');
+    if (nameOf(FEDERATION_STATUS, r.status) !== 'DRAINING' || !r.successorId || !r.successorId.some((x) => x)) throw new Error('a succession reason is named by a DRAINING record that names its successor');
+    const kind = SUCCESSION_REASON[r.successionReason.kind];
+    if (!kind) throw new Error(`a succession reason is one of ${Object.keys(SUCCESSION_REASON).join(', ')}`);
+    const ref = r.successionReason.ref || new Uint8Array(32);
+    if (!(ref instanceof Uint8Array) || ref.length !== 32) throw new Error('a succession reason\'s reference is 32 bytes (the listed upgrade; zeros for a nominal change)');
+    w.u8(kind); w.bytes32(ref);
+  }
   return w.finish();
 }
+
+/** WHY GUARDIANS CALLED A SUCCESSION (§23A.6 trigger 3): a change of federation_nominal by §27A, or a listed upgrade (`ref` names it). */
+const SUCCESSION_REASON = Object.freeze({ NOMINAL_CHANGE: 1, LISTED_UPGRADE: 2 });
+/**
+ * A GUARDIAN-CALLED SUCCESSION (§23A.6 trigger 3, kanban #1321): a DRAINING record whose seated guardians alone would read OPEN - DRAINING by
+ * its guardians' decision, not by the guardians it lost (trigger 1) or a departure notice (trigger 2, the departing guardian listed gone).
+ */
+function guardianCalled(r) {
+  if (!r || nameOf(FEDERATION_STATUS, r.status) !== 'DRAINING') return false;
+  const gone = new Set((r.gone || []).map((g) => toHex(g.peerKey)));
+  const seated = (r.guardians || []).filter((g) => !gone.has(toHex(g.peerKey))).length;
+  try { return statusFor({ nominal: r.nominal, seated: Math.min(r.nominal, seated) }).status === 'OPEN'; } catch { return false; }
+}
+/** WHETHER A DRAINING PREDECESSOR PAYS DRAIN SHARES (§23A.6 RULED 2026-11-07): a forced succession does; a guardian-called one only when it names its reason. */
+const paysDrainShares = (r) => !guardianCalled(r) || !!(r && r.successionReason);
 
 /** THE RESERVE LOAD IS READ AGAINST (§23A.3a, kanban #1322): the players' money when the record names it, else the whole reserve (records before). */
 const loadReserveOf = (r) => (r && r.playerReserveSats !== undefined && r.playerReserveSats !== null ? BigInt(r.playerReserveSats) : BigInt((r && r.reserveSats) ?? 0n));
@@ -19832,7 +19858,8 @@ function decodeFederationRecord(bytes) {
   };
   if (r.at !== bytes.length) { const band = nameOf(CAPACITY_BAND, r.u8()); if (!band) throw new Error('not a capacity band'); out.capacityBand = band; }
   if (bytes.length - r.at >= 8) out.gatewayFeeMax = { ppm: r.u32(), baseMsat: r.u32() };
-  if (bytes.length - r.at === 8) out.playerReserveSats = r.u64();
+  if (bytes.length - r.at >= 8) out.playerReserveSats = r.u64();
+  if (bytes.length - r.at === 33) { const k = nameOf(SUCCESSION_REASON, r.u8()); if (!k) throw new Error('not a succession reason'); out.successionReason = { kind: k, ref: r.bytes32() }; }
   if (r.at !== bytes.length) throw new Error('trailing bytes after the federation record');
   encodeFederationRecord(out);                       // held to the encoder's rules
   return out;
@@ -19849,7 +19876,7 @@ const federationRecordId = (r) => taggedHash(TAG.federationRecord, encodeFederat
 // each guardian row then carries its `outputs` [{ bondSats, maturity }]
 // `predecessor` { reserveSats, closed, nodeKeys: [hex] } - the federation this one succeeds, from its record (kanban #1298/#1321): while it is not CLOSED,
 // a bond both name counts once - this cap is (seated - 2f) x the smallest SHARED bond, less its reserve_old
-function buildFederationRecord({ federationId, networkId, invite, nominal, guardians, gone = [], successorId = null, closed = false, reserveSats = 0n, height, bondLock = null, predecessor = null }) {
+function buildFederationRecord({ federationId, networkId, invite, nominal, guardians, gone = [], successorId = null, closed = false, reserveSats = 0n, height, bondLock = null, predecessor = null, successionReason = null }) {
   const goneKeys = new Set(gone.map((g) => toHex(g.peerKey)));
   const seatedGuardians = guardians.filter((g) => !goneKeys.has(toHex(g.peerKey)));
   const band = statusFor({ nominal, seated: Math.min(nominal, seatedGuardians.length), closed });
@@ -19866,6 +19893,8 @@ function buildFederationRecord({ federationId, networkId, invite, nominal, guard
     successorId: successorId || new Uint8Array(32), gone: [...gone].sort((a, b) => cmp(a.peerKey, b.peerKey)),
     exposureCapSats: cap.ok ? successorCap({ cap, seatedGuardians, predecessor }) : 0n, reserveSats, height,
     seated: seatedGuardians.length, band,
+    // the guardians' reason for a succession they called (kanban #1321): carried for the encoder, which names it after the player reserve
+    ...(successionReason ? { successionReason } : {}),
   };
 }
 
@@ -20150,6 +20179,24 @@ function auditResultsHash(results) {
  * t = int(beta[0..8]) mod T_run, moved one tick on (mod T_run) when it lands on a checkpoint tick.
  */
 const AUDIT_TICK_VERSION = 28;
+/**
+ * THE AUDIT'S TICK HASH (§13A.1 RULED 2026-11-09, kanban #1383): tagged_hash("ARENA/v1/AuditTick", t || for each entry in entry-id order:
+ * entry_id || H(its run's state at tick min(t, its last tick))). `entries` [{ entryId (32 bytes), stateHash (32 bytes, or null for an entry with
+ * no run: 32 zero bytes) }]. One hash, every run replayed - the AUDIT vouches for every entry.
+ */
+const AUDIT_TICK_TAG = 'ARENA/v1/AuditTick';
+function auditTickHash({ t, entries }) {
+  if (!Number.isInteger(t) || t < 0 || t > 0xffffffff) throw new Error('a tick is a u32');
+  const rows = (entries || []).map((e) => {
+    if (!is32Audit(e.entryId)) throw new Error('an entry id is 32 bytes');
+    if (e.stateHash !== null && e.stateHash !== undefined && !is32Audit(e.stateHash)) throw new Error('a state hash is 32 bytes');
+    return { id: e.entryId, h: e.stateHash || new Uint8Array(32) };
+  }).sort((a, b) => (toHex(a.id) < toHex(b.id) ? -1 : toHex(a.id) > toHex(b.id) ? 1 : 0));
+  const w = new Writer();
+  w.u32(t);
+  for (const r of rows) { w.bytes32(r.id); w.bytes32(r.h); }
+  return taggedHash(AUDIT_TICK_TAG, w.finish());
+}
 function auditTick({ beta, runTicks, checkpointEvery = 0 }) {
   if (!(beta instanceof Uint8Array) || beta.length < 8) throw new Error('a VRF output of at least 8 bytes');
   const n = BigInt(runTicks); if (n <= 0n) throw new Error('a run has ticks');
@@ -22182,6 +22229,21 @@ function paysIntoALock(round, invite, LockClient) {
 // the slowest step of a paying join - and the deposit, the lock and the withdraw use that same open client rather than
 // joining again on the same store. A join that failed is not kept.
 const openWallets = new WeakMap();
+// THE OPEN WALLETS OF EACH PHRASE (kanban #1387, audit 2 #1204 CLIENT-15): seed hex (16) -> [{ map, key }] - what forgetPhraseWallets drops
+const phraseWallets = new Map();
+/**
+ * ANOTHER PHRASE'S WALLET CLIENTS LEAVE THE CACHE WITH ITS LOCK (kanban #1387, audit 2 #1204 CLIENT-15): a client this tab opened for a kept phrase it
+ * collected or merged under that phrase's lock stayed cached after the lock went; another tab then used the phrase, and the next collect here got the
+ * old client back - its in-memory store did not see the other tab's notes (the balance read 0, merges refused). The page calls this in the finally
+ * that releases the lock; the next open of that phrase opens it afresh from its store. The client itself is not freed (a call may still hold it).
+ */
+function forgetPhraseWallets(seedHex) {
+  const k = String(seedHex || '').toLowerCase().slice(0, 16);
+  const list = phraseWallets.get(k) || [];
+  for (const { map, key } of list) map.delete(key);
+  phraseWallets.delete(k);
+  return list.length;
+}
 // THE PAGE'S GATE ON A PHRASE'S WALLETS (kanban #1164): fn(seedHex) -> a promise that resolves once this tab may open that phrase's wallets
 let walletGate = null;
 function useWalletGate(fn) { walletGate = typeof fn === 'function' ? fn : null; }
@@ -22261,6 +22323,7 @@ async function openPlayerWallet({ federationId, invite, seed, LockClient, storag
     const m = open || new Map(); if (!open) byStore.set(storage, m);
     m.set(key, joining);
     joining.catch(() => m.delete(key));
+    if (seed instanceof Uint8Array) { const ph = toHex(seed).slice(0, 16); if (!phraseWallets.has(ph)) phraseWallets.set(ph, []); phraseWallets.get(ph).push({ map: m, key }); }
   }
   return joining;
 }
@@ -42555,7 +42618,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
          fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, referralOf: referralOf, referralNameFor: referralNameFor, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
-         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, faucetEcashRowOnce: faucetEcashRowOnce, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
+         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, faucetEcashRowOnce: faucetEcashRowOnce, forgetPhraseWallets: forgetPhraseWallets, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, reopenUncheckedDone: reopenUncheckedDone, releaseUntakenEntry: releaseUntakenEntry, keptLockUse: keptLockUse,
          reconcileKeptLock: reconcileKeptLock, bindLockEntry: bindLockEntry, lockRecordOf: lockRecordOf, collectState: collectState, forfeitCheck: forfeitCheck, settlementAgreement: settlementAgreement, useWalletGate: useWalletGate,
