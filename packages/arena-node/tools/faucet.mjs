@@ -29,6 +29,8 @@ import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS } from '../src/feedback-store.js';
 import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { PLAYER_GRANTS } from '../src/faucet.js';
+const PLAYER_WELCOME_SATS = PLAYER_GRANTS.welcome.invoiceSats;
 import { join as pathJoin } from 'node:path';
 import { refillDecide, feedbackDecide, faucetDecide, playerGrantDecide, playerGrantTotals, opponentWant, opponentWants, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
 
@@ -191,6 +193,36 @@ async function grant(ask) {
   saveBook(after);
   console.log(`${new Date().toISOString()} player ${ask.kind} not paid: ${tried.join(' | ')}`);
   return { ok: false, why: 'the faucet could not pay just now: try again in a minute' };
+}
+
+// THE WELCOME AS READY E-CASH (kanban #1381, Daniel 2026-11-09: "Das Ziel ist unter 3s fuer die 500"): an invoice, a Lightning payment
+// through a gateway and its claim are three federation steps (12-15 s for a new wallet); a note made ahead of time (tools/faucet-ecash.mjs
+// keep) is one reissue in the player's wallet. A page that names its federation gets one when the pool holds one; else it asks by invoice.
+const ECASH_POOL = env.FAUCET_ECASH_POOL || null;
+function takeEcash(federation, msat) {
+  if (!ECASH_POOL || !/^[0-9a-f]{64}$/.test(String(federation || ''))) return null;
+  const shelf = pathJoin(ECASH_POOL, federation);
+  let names = []; try { names = readdirSync(shelf).filter((f) => f.startsWith(`${msat}-`) && f.endsWith('.json')).sort(); } catch { return null; }
+  mkdirSync(pathJoin(shelf, 'taken'), { recursive: true, mode: 0o700 });
+  for (const f of names) {
+    const to = pathJoin(shelf, 'taken', f);
+    try { renameSync(pathJoin(shelf, f), to); } catch { continue; }   // another take had it
+    try { const n = JSON.parse(readFileSync(to, 'utf8')); if (String(n.msat) === String(msat) && n.ecash) return { ecash: String(n.ecash), file: to }; } catch { /* a broken file: the next */ }
+  }
+  return null;
+}
+function grantEcash(ask) {
+  const book = readBook();
+  book.players = book.players || [];
+  const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: PLAYER_WELCOME_SATS }, book);
+  if (!d.ok) return d;
+  const got = takeEcash(ask.ecash, d.grant.invoiceSats * 1000);
+  if (!got) return null;
+  const hash = createHash('sha256').update(got.ecash).digest('hex');
+  book.players.push({ account: ask.account, kind: ask.kind, ip: ask.ip, sats: d.grant.invoiceSats, atMs: Date.now(), hash, ecash: true });
+  saveBook(book);
+  console.log(`${new Date().toISOString()} player ${ask.kind} ${d.grant.invoiceSats} sat as e-cash (${ask.ip || 'no ip'}): ${hash.slice(0, 16)}`);
+  return { ok: true, sats: d.grant.sats, ecash: got.ecash };
 }
 
 const WANTS = new Map();
@@ -433,7 +465,9 @@ createServer((req, res) => {
     req.on('end', () => {
       let ask;
       try { ask = JSON.parse(raw || '{}'); } catch { return send(400, { ok: false, why: 'not JSON' }); }
-      one(() => grant({ kind: ask.kind, account: ask.account, invoice: ask.invoice, ip: ipOf(req) }))
+      const who = { kind: ask.kind, account: ask.account, ip: ipOf(req) };
+      one(async () => (ask.kind === 'welcome' && ask.ecash && grantEcash({ ...who, ecash: String(ask.ecash).toLowerCase() }))
+        || (ask.invoice ? grant({ ...who, invoice: ask.invoice }) : { ok: false, noEcash: true, why: 'no e-cash is ready: ask with an invoice' }))
         .then((r) => send(200, r), (e) => { console.log(`${new Date().toISOString()} player failed: ${e.message}`); send(500, { ok: false, why: 'the faucet could not pay just now' }); });
     });
     return undefined;
