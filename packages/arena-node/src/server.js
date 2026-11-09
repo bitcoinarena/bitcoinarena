@@ -2970,7 +2970,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const listedSources = (entries) => ({ hosts: entries.map((e) => e.host), inits: Object.fromEntries(entries.filter((e) => e.init).map((e) => [e.host, e.init])) });
   const sourcesOfRound = (c) => listedSources(ballotTally && c.networkId instanceof Uint8Array ? ballotTally.entriesAt(toHex(c.networkId), c.censusHeight) : SOURCE_ENTRIES);
   let drawnAfterRowid = 0;             // the rounds row read last (kanban #791)
+  // THE DRAWN ATTESTOR'S WORDS AND OPENING VALUES, KEPT (kanban #1376): a restarted seat serves the word it signed - never a second one from a later read
+  const drawnStore = drawnHosted ? (() => {
+    round.db.exec('CREATE TABLE IF NOT EXISTS drawn_words (round TEXT PRIMARY KEY, word TEXT NOT NULL); CREATE TABLE IF NOT EXISTS drawn_starts (round TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    const big = (k, v) => (typeof v === 'bigint' ? { $big: String(v) } : v), unbig = (k, v) => (v && typeof v === 'object' && typeof v.$big === 'string' ? BigInt(v.$big) : v);
+    const wordOf = (id) => { const r = round.db.prepare('SELECT word FROM drawn_words WHERE round = ?').get(id); return r ? JSON.parse(r.word) : null; };
+    return {
+      word: wordOf,
+      keepWord: (id, json) => { round.db.prepare('INSERT OR IGNORE INTO drawn_words (round, word) VALUES (?, ?)').run(id, JSON.stringify(json)); return wordOf(id); },
+      start: (id) => { const r = round.db.prepare('SELECT value FROM drawn_starts WHERE round = ?').get(id); return r ? JSON.parse(r.value, unbig) : undefined; },
+      keepStart: (id, v) => { round.db.prepare('INSERT OR IGNORE INTO drawn_starts (round, value) VALUES (?, ?)').run(id, JSON.stringify(v, big)); },
+    };
+  })() : null;
   const drawnAttestor = drawnHosted ? new DrawnAttestor({
+    store: drawnStore,
     readPrice: () => prices.readPrice(), selfKey: toHex(round.pubkey), sign: (d) => schnorr.sign(d, round.identity.secret),
     attestorsFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? got.attestors.map((e) => toHex(e.pubkey)) : null; },
     peersFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? peerEndpointsOf(got.attestors, round.pubkey) : []; },

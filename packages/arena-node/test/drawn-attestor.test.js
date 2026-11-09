@@ -90,3 +90,34 @@ test('a rising market reads when its window opens and is compared to that', asyn
   assert.equal((await a.wordForSource(r)).body.outcome, 0);
   assert.deepEqual(asked[1], [3, 100]);
 });
+
+// kanban #1376 (audit 2 #1204 MKT-3): a restarted drawn attestor serves the word it signed - never a second outcome from a later read of the source
+test('#1376 after a restart the source market\'s word is the one signed before, and a rising market keeps its opening value', async () => {
+  const self = 'ab'.repeat(32);
+  const memStore = () => { const w = new Map(), s = new Map(); return { word: (id) => w.get(id) || null, keepWord: (id, j) => { if (!w.has(id)) w.set(id, j); return w.get(id); },
+    start: (id) => (s.has(id) ? s.get(id) : undefined), keepStart: (id, v) => { if (!s.has(id)) s.set(id, v); } }; };
+  const store = memStore();
+  const r = { roundId: new Uint8Array(32).fill(9), window: { startMs: 0n, endMs: 1000n }, source: { kind: 1, rule: 1 }, outcomes: ['Yes', 'No'] };
+  const make = (out, runs) => new DrawnAttestor({ readPrice: async () => null, selfKey: self, sign: () => new Uint8Array(64).fill(1), attestorsFor: () => [self], peersFor: () => [],
+    due: () => [], hold: async () => true, threshold: 1, now: () => 10000000, store, runSource: async () => { runs.n++; return { ok: true, out }; } });
+  const first = { n: 0 }, again = { n: 0 };
+  const w1 = await make('Yes', first).wordForSource(r);
+  // THE RESTART: the source now reads the other way
+  const restarted = make('No', again);
+  const w2 = await restarted.wordForSource(r);
+  console.log(`#1376 signed ${w1.body.outcome}, after the restart ${w2.body.outcome} (source read again: ${again.n})`);
+  assert.equal(w2.body.outcome, w1.body.outcome, 'a second outcome signed by one key');
+  assert.equal(again.n, 0, 'the source was read again after the restart');
+  assert.equal(restarted.served(r.roundId).body.outcome, 0);
+  // A RISING MARKET: its opening value survives the restart
+  const rise = { roundId: new Uint8Array(32).fill(10), window: { startMs: 0n, endMs: 1000n }, source: { kind: 1, rule: 3 }, outcomes: ['Up', 'Down'] };
+  const opener = new DrawnAttestor({ readPrice: async () => null, selfKey: self, sign: () => new Uint8Array(64), attestorsFor: () => [self], now: () => 10000000, opening: () => [rise], store,
+    runSource: async (s) => (s.rule === 0 ? { ok: true, out: 100 } : { ok: true, out: 'Up' }) });
+  await opener.read();
+  const asked = [];
+  const after = new DrawnAttestor({ readPrice: async () => null, selfKey: self, sign: () => new Uint8Array(64), attestorsFor: () => [self], now: () => 10000000, opening: () => [], store,
+    runSource: async (s, m) => { asked.push([s.rule, m.start]); return { ok: true, out: 'Up' }; } });
+  const wr = await after.wordForSource(rise);
+  assert.ok(wr, 'a rising market signed nothing after a restart');
+  assert.deepEqual(asked, [[3, 100]]);
+});
