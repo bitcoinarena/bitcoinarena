@@ -1187,6 +1187,33 @@ impl LockClient {
         Ok(mint.blwp_tweaks_ready() as u32)
     }
 
+    /// THE FILTER A TWEAK IS GROUND AGAINST (kanban #1391): hex of 32 bytes - a tweak passes when SHA-256(tweak || filter) starts with
+    /// two zero bytes. The page's Web Workers grind with it, on every core, and hand the tweaks to `addTweaks`.
+    #[wasm_bindgen(js_name = tweakFilter)]
+    pub fn tweak_filter(&self) -> Result<String, JsError> {
+        let mint = self.client.get_first_module::<fedimint_mintv2_client::MintClientModule>().map_err(js)?;
+        Ok(mint.blwp_tweak_filter().iter().map(|b| format!("{b:02x}")).collect())
+    }
+
+    /// TWEAKS GROUND ELSEWHERE INTO THE QUEUE (kanban #1391): hex, 16 bytes each, back to back. Each is checked with the grinder's
+    /// own filter; answers how many were taken (a full queue takes none).
+    #[wasm_bindgen(js_name = addTweaks)]
+    pub fn add_tweaks(&self, hex: String) -> Result<u32, JsError> {
+        if hex.len() % 32 != 0 || !hex.is_ascii() {
+            return Err(js("tweaks are 16 bytes of hex each"));
+        }
+        let mut tweaks = Vec::with_capacity(hex.len() / 32);
+        for c in 0..hex.len() / 32 {
+            let mut t = [0u8; 16];
+            for (i, b) in t.iter_mut().enumerate() {
+                *b = u8::from_str_radix(&hex[32 * c + 2 * i..32 * c + 2 * i + 2], 16).map_err(js)?;
+            }
+            tweaks.push(t);
+        }
+        let mint = self.client.get_first_module::<fedimint_mintv2_client::MintClientModule>().map_err(js)?;
+        Ok(mint.blwp_add_tweaks(&tweaks) as u32)
+    }
+
     #[wasm_bindgen(js_name = lockSubmit)]
     #[allow(clippy::too_many_arguments)]
     pub async fn lock_submit(
