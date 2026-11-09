@@ -28,7 +28,7 @@ import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { absentFrom, weightsOf, checkAbsenceProof, provenProof, presentAt, missedAt, inWindow, ABSENCE_PROOF_SEATINGS } from '../../arena-protocol/src/presence.js';
 import { heartbeatSlotOf, decodeHeartbeatCertificate, HEARTBEAT_ROLES, HEARTBEAT_SLOTS_PER_ROUND, HEARTBEAT_SPACING_MS } from '../../arena-protocol/src/heartbeat.js';
 import { TYPE_HEARTBEAT_HEARD, networkOf } from '../../arena-protocol/src/constants.js';
-import { dutyMarkerOf, dutyRoundStands, dutyPostingsOf, isPrimaryOf, DUTY_EMERGENCY_CAP } from '../../arena-protocol/src/duty.js';
+import { dutyMarkerOf, dutyRoundStands, dutyPostingKey, isPrimaryOf, DUTY_EMERGENCY_CAP } from '../../arena-protocol/src/duty.js';
 import { TAG_SWITCH } from '../../arena-protocol/src/tag-switch.js';
 import { parseTransaction, commitmentsOf } from '../../arena-protocol/src/tx.js';
 import { seriesPublicationPayload } from '../../arena-protocol/src/series.js';
@@ -54,18 +54,6 @@ function blockIndexOf(block) {
   blockIndexKept.set(block, got);
   return got;
 }
-// THE DAY'S POSTINGS OF A VIEW: the first confirmed transaction per day, item and kind (duty.js dutyPostingsOf), once per view object
-const postingsKept = new WeakMap();
-function postingsIn(view) {
-  let got = postingsKept.get(view);
-  if (got) return got;
-  const marked = [];
-  for (const block of view.blocks) for (const m of blockIndexOf(block).marked) marked.push({ txid: m.txid, marker: m.marker });
-  got = dutyPostingsOf(marked);
-  postingsKept.set(view, got);
-  return got;
-}
-
 /** THE DAY'S PRIMARY OF AN EMERGENCY MARKER'S APP in a view's blocks (kanban #1348): { block, m } of the first confirmed, or null. */
 function primaryIn(view, marker) {
   for (const block of view.blocks) { const m = blockIndexOf(block).marked.find((x) => isPrimaryOf(x.marker, marker)); if (m) return { block, m }; }
@@ -192,6 +180,47 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
    * round stands by duty.js dutyRoundStands over its census as its root commits. { ok, rank } / { ok: false, why }; null while this seat
    * cannot read it yet (no such round, no chain view, no census). A round the seat can draw (drawOf) has its publication in the view.
    */
+  // A HELD ROUND OF A SERIES (kanban #1372): the rounds' contracts read once, by rowid, as they arrive
+  const seriesRounds = new Map(); let seriesRow = 0;
+  const roundOfSeries = (sidHex) => {
+    if (!seriesRounds.has(sidHex)) {
+      for (const r of db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid').all(seriesRow)) {
+        seriesRow = r.rowid;
+        try { const c = decodeRoundContract(new Uint8Array(r.contract)); if (c.seriesId instanceof Uint8Array && !seriesRounds.has(toHex(c.seriesId))) seriesRounds.set(toHex(c.seriesId), new Uint8Array(r.round_id)); } catch { /* not a round */ }
+      }
+    }
+    return seriesRounds.get(sidHex) || null;
+  };
+  // does a marked transaction stand as a duty posting: true / false, null while its round's census cannot be read here
+  const standsAsPosting = (view, m) => {
+    for (const hex of m.payloads) {
+      if (hex.length !== 72 || !hex.startsWith('41524e')) continue;
+      const kind = hex.slice(6, 8), id = hex.slice(8);
+      const rid = kind === '52' ? fromHex(id) : kind === '53' ? roundOfSeries(id) : null;
+      if (!rid) continue;
+      const c = contractOf(rid);
+      if (!c || toHex(fromHex(publicationPayloadOf(rid, c))) !== hex) continue;
+      const census = roster.censusFor(rid, null, { asCommitted: true });
+      if (!census || !census.ok) return null;
+      const st = dutyRoundStands({ contract: c, marker: m.marker, orderEntries: census.entries, sw: TAG_SWITCH[networkOf(c.networkId)] || null,
+        primaryConfirmed: m.marker.emergency ? !!primaryIn(view, m.marker) : null });
+      if (st && st.ok) return true;
+    }
+    return false;
+  };
+  // how many marked transactions of `pub`'s day, item and kind confirmed before it stand (null: one cannot be judged yet)
+  const earlierStanding = (view, pub) => {
+    const key = dutyPostingKey(pub.marker);
+    let n = 0;
+    for (const block of view.blocks) for (const m of blockIndexOf(block).marked) {
+      if (m.txid === pub.txid) return n;
+      if (dutyPostingKey(m.marker) !== key) continue;
+      const st = standsAsPosting(view, m);
+      if (st === null) return null;
+      if (st) n++;
+    }
+    return n;
+  };
   const dutyKept = new Map();
   const dutyOf = (ridHex) => {
     if (dutyKept.has(ridHex)) return dutyKept.get(ridHex);
@@ -204,8 +233,14 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
     let pub = null;
     for (const block of view.blocks) { const m = blockIndexOf(block).marked.find((x) => x.payloads.has(want)); if (m) { pub = m; break; } }
     let answer;
+    // THE DAY'S FIRST CONFIRMED POSTING COUNTS AMONG THOSE THAT STAND (kanban #1372, audit 2 #1204 FED-C3; §5A.3 note (7): a marker anyone can write
+    // "for proofs counts for nothing"): an earlier marked transaction of the same day, item and kind takes the place only when it publishes a round
+    // or series this seat holds and that round stands as a duty round - a bare marker, or one beside a self-posted series, never does. Null (not yet)
+    // while an earlier one cannot be judged here.
+    const earlier = pub ? earlierStanding(view, pub) : 0;
+    if (earlier === null) return null;
     if (!pub) answer = { ok: false, why: 'its publication carries no duty marker: not a duty posting, so no proof' };
-    else if (!postingsIn(view).has(pub.txid)) {
+    else if (earlier >= (pub.marker.emergency ? DUTY_EMERGENCY_CAP : 1)) {
       answer = { ok: false, why: `its publication is not the day's first confirmed ${pub.marker.item} ${pub.marker.kind === 'B' ? 'backup' : 'posting'}`
         + `${pub.marker.emergency ? ` (the first ${DUTY_EMERGENCY_CAP} count)` : ''}: a later duplicate proves nothing` };
     } else {

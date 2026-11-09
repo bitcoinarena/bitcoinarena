@@ -62,6 +62,8 @@ const rankOf = (c) => dutyOrderOf(c).findIndex((k) => toHex(k) === toHex(c.creat
  */
 // kanban #1348: the rank-1 posting as an emergency grid ('no-primary': the day has no confirmed primary; 'with-primary': a primary is confirmed beside it)
 let EMERGENCY = null;
+// kanban #1372 (audit 2 #1204 FED-C3): a bare primary marker for the same day mined ahead of each honest posting
+let BARE_FIRST = false;
 function publicationsOf(contracts) {
   const byPosting = new Map();
   const out = [];
@@ -73,6 +75,8 @@ function publicationsOf(contracts) {
   }
   for (const [key, list] of byPosting) {
     const marker = key.endsWith(':D') ? dutyMarkerOutput(dutySlotOf(list[0]), EMERGENCY ? `${DUTY_ITEM}-emergency` : DUTY_ITEM) : backupMarkerOutput(dutySlotOf(list[0]), DUTY_ITEM);
+    if (BARE_FIRST && key.endsWith(':D'))
+      out.push(serializeSpend({ inputs: [{ txid: b32(0x79), vout: dutySlotOf(list[0]) & 0xffff, sequence: 0xffffffff }], outputs: [dutyMarkerOutput(dutySlotOf(list[0]), DUTY_ITEM)], witnesses: [[new Uint8Array(64)]] }));
     if (EMERGENCY === 'with-primary' && key.endsWith(':D'))
       out.push(serializeSpend({ inputs: [{ txid: b32(0x77), vout: dutySlotOf(list[0]) & 0xffff, sequence: 0xffffffff }], outputs: [dutyMarkerOutput(dutySlotOf(list[0]), DUTY_ITEM)], witnesses: [[new Uint8Array(64)]] }));
     out.push(serializeSpend({ inputs: [{ txid: roundId(list[0]), vout: 0, sequence: 0xffffffff }], outputs: [...list.map((c) => publicationOutput(roundId(c))), marker], witnesses: [[new Uint8Array(64)]] }));
@@ -500,4 +504,19 @@ test('kanban #1367: a junk absent claim posted after or before the real one does
   for (let i = 0; i < 40; i++) W.book.keepClaim(root, { claims: [{ node: (i + 0x10).toString(16).padStart(2, '0').repeat(32), proofs: [] }], certs: {} });
   assert.ok(W.book.claimsFor(root).length <= 17);
   assert.equal(W.roster.censusFor(W.rid).ok, true);
+});
+
+test('kanban #1372: a bare day marker mined ahead of the honest posting takes nothing: the posting\'s rounds still prove the absent node', () => {
+  BARE_FIRST = true;
+  try {
+    const W = world();
+    const claim = claimOf(STOPPED, W.seatings.slice(0, 3));
+    W.book.keepClaim(toHex(W.contract.censusRoot), claim);
+    const c = W.roster.censusFor(W.rid);
+    console.log(`#1372 with a bare marker first: census ${c.ok ? 'ok, absent ' + c.absent.map((x) => x.node.slice(0, 8)).join(',') : 'refused: ' + c.why}`);
+    assert.equal(c.ok, true, c.why);
+    assert.deepEqual(c.absent.map((x) => x.node), [STOPPED]);
+    const duty = W.book.dutyOf(W.seatings[0].roundId);
+    assert.equal(duty && duty.ok, true, duty && duty.why);
+  } finally { BARE_FIRST = false; }
 });
