@@ -17,20 +17,22 @@ const FED = new Uint8Array(32).fill(0x37), NET = new Uint8Array(32).fill(0x10), 
 const inviteFederationId = (inv) => fromHex(String(inv).split(':')[1]);
 
 /** Four guardians (threshold 3, cap 100,000 at 50,000 sat each), at height `w.h`, reading reserve `w.reserve`. */
-function net({ bandFrom = 0, bandAtSeat = () => bandFrom, censusAt = undefined } = {}) {
+function net({ bandFrom = 0, bandAtSeat = () => bandFrom, censusAt = undefined, heldAt = null } = {}) {
   const w = { h: 96, reserve: 0n };
   const nodes = Array.from({ length: 4 }, (_, i) => { const secret = new Uint8Array(32).fill(i + 1); return { secret, pubkey: schnorr.getPublicKey(secret), guardianKey: Uint8Array.from([2, ...new Uint8Array(32).fill(0x60 + i)]), endpoint: `wss://seat-${i}.example` }; });
   const census = { ok: true, entries: nodes.map((n, i) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xa0 + i), vout: 0, bondSats: 50000n,
     advert: { operatorId: `op${i}`, endpoint: n.endpoint, guardianEndpoint: `wss://g${i}.example`, guardianOf: [{ federationId: FED, guardianKey: n.guardianKey }] } })) };
   const seats = nodes.map((n, i) => federationRecords({ round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: w.h, networkId: NET } }),
     roster: { censusFor: () => census }, inviteFor: () => (w.mirroring === i ? null : INVITE), networkId: NET, bandFrom: bandAtSeat(i), ...(censusAt ? { censusAt } : {}), reserveOf: async () => ({ ok: true, reserveSats: w.reserve }),
+    ...(heldAt ? { playerHeldOf: async () => { const h = heldAt(i); return h ? { ok: true, sats: h } : { ok: false, why: 'not counted' }; } } : {}),
     peerSeats: () => [], fetcher: async (url) => {
       const j = seats[nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')))];
       if ((w.down || []).includes(nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:'))))) throw new Error('down');
       if (url.includes('/federation-records-at')) { const u = new URL(url), r = j.recordAt(toHex(FED), Number(u.searchParams.get('height'))); return new Response(JSON.stringify({ records: r ? [{ federation: toHex(FED), record: r.__hex }] : [] })); }
       if (url.endsWith('/federations')) { const held = w.serving && w.serving.recordOf(toHex(FED)); return new Response(JSON.stringify({ federations: held ? [{ federation: toHex(FED), record: toHex(held.bytes) }] : [] })); }
       const u = new URL(url); w.urls = [...(w.urls || []), url];
-      const body = await j.mySignature(u.searchParams.get('federation'), Number(u.searchParams.get('height')), u.searchParams.get('reserve'), { previous: u.searchParams.get('previous'), inviteFederationId });
+      const player = u.searchParams.get('player') === null ? null : BigInt(u.searchParams.get('player'));   // kanban #1322
+      const body = await j.mySignature(u.searchParams.get('federation'), Number(u.searchParams.get('height')), u.searchParams.get('reserve'), { previous: u.searchParams.get('previous'), inviteFederationId, player });
       return new Response(JSON.stringify(body), { status: body.ok ? 200 : 404 });
     } }));
   // every guardian seat keeps a record its gatherer got to threshold, as the mirror does
@@ -209,4 +211,31 @@ test('every record names a band whatever its status, and only an OPEN federation
   const before = { ...drained }; delete before.capacityBand;
   assert.deepEqual(pressureOf(before), { band: null, status: null });
   assert.notEqual(weights(before), null, 'as today');
+});
+
+test('kanban #1322: the seats write the player reserve (reserve less the gateways\' proved e-cash) with the fee cap, each signing only its own same sum; the band reads it', async () => {
+  const { GATEWAY_FEE_MAX_REFERENCE } = await import('../../arena-protocol/src/federation-record.js');
+  // every seat counts the two gateways' held locks: 30,000 + 20,000 of a 65,000 reserve
+  const n = net({ heldAt: () => [30000n, 20000n] });
+  const r = await n.step(96, 65000);
+  assert.equal(r.ok, true, r.why);
+  const rec = n.seats[0].recordOf(toHex(FED)).record;
+  console.log('  MEASURED #1322:', JSON.stringify({ reserve: String(rec.reserveSats), player: String(rec.playerReserveSats), cap: String(rec.exposureCapSats), band: rec.capacityBand, signers: r.signers }));
+  assert.equal(rec.playerReserveSats, 15000n);
+  assert.deepEqual(rec.gatewayFeeMax, GATEWAY_FEE_MAX_REFERENCE);
+  // a 75 % reserve is PRESSURE by the reserve - by the players' money (45 %) it is CALM
+  assert.equal((await n.step(102, 95000)).ok, true);
+  assert.equal(n.bandAt(), 'CALM', 'the band read the whole reserve, not the players\' money');
+  // one seat counts another sum: it does not sign that body, and says why
+  const odd = net({ heldAt: (i) => (i === 2 ? [30000n] : [30000n, 20000n]) });
+  const ro = await odd.step(96, 65000);
+  assert.equal(ro.ok, true, ro.why);
+  const said = await odd.seats[2].mySignature(toHex(FED), 96, '65000', { inviteFederationId, player: 15000n });
+  assert.equal(said.ok, false);
+  assert.match(said.why, /player reserve of 35000 sat, not 15000/);
+  // no seat counts held e-cash: the record as before - no cap, no player reserve
+  const none = net();
+  assert.equal((await none.step(96, 65000)).ok, true);
+  const plain = none.seats[0].recordOf(toHex(FED)).record;
+  assert.deepEqual([plain.gatewayFeeMax, plain.playerReserveSats], [undefined, undefined]);
 });

@@ -6086,6 +6086,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     departureNotice: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).departureNotice,
     leavingAtMs: () => (owner ? owner.leavingAtMs() : null),
     successorOf: (fidHex) => { const d = drainingFeds.get(fidHex); return d && d.successor ? String(d.successor) : null; },
+    // THE GATEWAYS' PROVED E-CASH (§23A.3a RULED 2026-11-07, kanban #1322): each paid seat's held lock as this seat's gateway watch counts it
+    // (heldLockCounted, on the last whole epoch, from the 2.0 seating rules) - the player reserve is the reserve less their sum
+    playerHeldOf: async (fidHex) => {
+      for (const { watch } of gatewayWatches) {
+        const v = await watch.view().catch(() => ({ ok: false }));
+        if (!v.ok || String(v.federationId).toLowerCase() !== String(fidHex).toLowerCase()) continue;
+        if (v.measuredEpoch !== 'whole') return { ok: false, why: 'no whole epoch measured yet' };
+        const paid = paidSeatsOf(v);
+        if (paid.some((n) => !v.gateways || !v.gateways[n] || v.gateways[n].heldLockSats === undefined)) return { ok: false, why: 'held locks are counted from the 2.0 seating rules\' epoch' };
+        return { ok: true, sats: paid.map((n) => BigInt(v.gateways[n].heldLockSats)) };
+      }
+      return { ok: false, why: 'this seat watches no gateways of that federation' };
+    },
     closedOf: (fidHex) => { const d = drainingFeds.get(fidHex); return !!d && Number(round.now()) - Number(d.sinceMs) >= DRAIN_MS && !openRoundNames(fidHex); },
     // A FEDERATION ITS OWNER CONSENTED TO RETIRE (kanban #577, federation-retire.js): this seat builds its record CLOSED, no successor
     retiringOf: (fidHex) => retireBook.has(fidHex) });
@@ -12030,7 +12043,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // `left`: the leave statements of the guardians named gone by their own word, each peer key + signature in hex (kanban #1157)
         const left = String(url.searchParams.get('left') || '').split(',').filter(Boolean);
         if (!left.every((x) => /^[0-9a-fA-F]{194}$/.test(x))) return text(res, 400, 'a leave statement is a peer key (33 bytes) and a signature (64 bytes), in hex');
-        const handed = { previous, inviteFederationId: inviteFedId, left };
+        // `player`: the player reserve the gathering seat read (kanban #1322); this seat signs it only on its own same reading
+        const pv = url.searchParams.get('player');
+        if (pv !== null && !/^[0-9]{1,16}$/.test(pv)) return text(res, 400, 'a player reserve, whole satoshi');
+        const handed = { previous, inviteFederationId: inviteFedId, left, player: pv === null ? null : BigInt(pv) };
         const r = goneHex.length ? await fedRecords.mySignatureWithGone(fid, goneHex, atHeight, rv, absentHex, departedHex, emergencyHexes, handed) : await fedRecords.mySignature(fid, atHeight, rv, handed);
         res.writeHead(r.ok ? 200 : 404, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify(r));
