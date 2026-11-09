@@ -72,6 +72,16 @@ fi
 # share-by-share check, as before. The earlier variants (ARENA_NOTE_YIELDS, ARENA_NOTE_BATCH) patch the same lines.
 if [ -n "${ARENA_NOTE_YIELDS:-}${ARENA_NOTE_BATCH:-}" ]; then echo "ARENA_NOTE_YIELDS/ARENA_NOTE_BATCH: replaced by the batch every build applies (#196)" >&2; exit 2; fi
 patch -p1 < $HERE/fedimint-mintv2-note-batch2.patch; grep -q "static COMBINED" modules/fedimint-mintv2-client/src/api.rs
+# A NEW WALLET'S FIRST RECEIVE IS AS QUICK AS A TOP-UP (kanban #1381, Daniel 2026-11-09 "it is very slow on new accounts"; measured: the welcome's 500 sat
+# credited 15-20 s after the faucet paid, a 300 sat top-up into the same wallet 1.6-1.9 s). Every transaction's rebalance stocks the wallet up to
+# TARGET_PER_DENOMINATION (3) notes of every denomination from 1 msat up; an empty wallet's first receive asked ~50 notes (its claim 8432 bytes, the
+# top-up's 1670), each needing a ground tweak (~65536 SHA-256 tries) the grinder had not made yet - 9.5 s before the claim, then 5.5 s of share checks.
+# The stock is only for later spends: it now takes at most half the tweaks already ground; the notes the amount needs are made as before.
+F=modules/fedimint-mintv2-client/src/lib.rs
+grep -q "let n_missing = TARGET_PER_DENOMINATION.saturating_sub(n_denomination as usize);" $F
+perl -pi -e 's/^(\s*)let n_denominations = self\.get_count_by_denomination_dbtx\(dbtx\)\.await;$/$1let n_denominations = self.get_count_by_denomination_dbtx(dbtx).await;\n$1let mut blwp_stock_budget = self.tweak_receiver.len() \/ 2;   \/\/ kanban #1381/' $F
+perl -pi -e 's/let n_missing = TARGET_PER_DENOMINATION\.saturating_sub\(n_denomination as usize\);/let n_missing = TARGET_PER_DENOMINATION.saturating_sub(n_denomination as usize).min(blwp_stock_budget);\n            blwp_stock_budget -= n_missing;/' $F
+grep -q "let mut blwp_stock_budget = self.tweak_receiver.len() / 2;" $F && grep -q "blwp_stock_budget -= n_missing;" $F
 if [ -n "${ARENA_AWAIT_PARALLEL:-}" ]; then patch -p1 < $HERE/fedimint-client-await-parallel.patch; grep -q "drop(tx_submitted)" fedimint-client-module/src/transaction/sm.rs; fi
 grep -n "(0..42).map(Denomination)" modules/fedimint-mintv2-common/src/config.rs | wc -l | tr -d ' ' | grep -qx 2
 # PENDING OUTPUTS (spec 23A.5 "Notes still in issuance at the halt"): the wallet names what was issued to its seed
