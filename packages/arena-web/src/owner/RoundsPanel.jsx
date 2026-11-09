@@ -8,6 +8,13 @@ import React from 'react';
 const at = (ms) => new Date(ms).toISOString().slice(11, 16) + ' UTC';
 const day = (ms) => new Date(ms).toISOString().slice(0, 10);
 const PHASE = { upcoming: 'coming', running: 'running', done: 'done' };
+// A PAID ROUND'S STAKE AGAINST ITS CEILING (§5A.10, kanban #1282): both bounds, which one binds, and whether it is enforced on this network
+const n = (x) => Number(x || 0).toLocaleString('en-US');
+export function ceilingLine(x) {
+  const bounds = `census table ${n(x.tableCeilingSats)} sat${x.incomeSeatSats !== null && x.incomeSeatSats !== undefined ? `, one seat's season income ${n(x.incomeSeatSats)} sat` : ''}`;
+  return `stake ${n(x.stakeSats)} of a ceiling of ${n(x.ceilingSats)} sat (${bounds}; the ${x.binds === 'income' ? 'income' : 'table'} binds)`
+    + (x.ok ? '' : x.enforced ? ' - above it: refused' : ' - above it: shown only, not enforced on a test network');
+}
 
 export class RoundsPanel extends React.Component {
   constructor(props) { super(props); this.state = { loaded: false, data: null, error: null, ...(props.initial || {}) }; }
@@ -38,7 +45,8 @@ export class RoundsPanel extends React.Component {
             {rounds.slice(0, 40).map((r) => (
               <tr key={r.round} className={r.phase}>
                 <td>{day(r.startMs)} {at(r.startMs)}</td>
-                <td>{r.game ? `${r.game.title || r.game.name}${r.game.version ? ` v${r.game.version}` : ''}` : 'a game this node does not host'}{r.paid === false ? ' · free' : ''}</td>
+                <td>{r.game ? `${r.game.title || r.game.name}${r.game.version ? ` v${r.game.version}` : ''}` : 'a game this node does not host'}{r.paid === false ? ' · free' : ''}
+                  {r.ceiling ? <div className={`sub ceiling${r.ceiling.ok ? '' : ' warn'}`}>{ceilingLine(r.ceiling)}</div> : null}</td>
                 <td>{(r.does || []).join(' · ')}</td>
                 <td><span className={`pill ${r.phase === 'running' ? 'on' : r.phase === 'upcoming' ? 'wait' : ''}`}>{PHASE[r.phase] || r.phase}</span></td>
               </tr>))}

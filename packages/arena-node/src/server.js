@@ -1607,6 +1607,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return incomeSeatSats({ rounds: contributionBook.roundsBetween(top - INCOME_SEASON_BLOCKS, top), censusSize: (entries || []).length });
     } catch { return null; }
   };
+  // A ROUND'S STAKE AGAINST ITS CEILING (§5A.10, kanban #1282): the census table's bound and the income term, which one binds; enforced off the
+  // test networks, shown on them. One answer for GET /census-health and the owner page's rounds. Null when this seat reads no census for it
+  const stakeCeilingOf = (rid, c) => {
+    const census = roster.censusFor(rid);
+    if (!census || !census.ok) return null;
+    const income = incomeFor(c, census.entries), table = stakeWithinCeiling({ entries: census.entries, stakeSats: c.stakeMsat / 1000n });
+    const h = stakeWithinCeiling({ entries: census.entries, stakeSats: c.stakeMsat / 1000n, incomeSats: income });
+    return { ok: h.ok, stakeSats: String(c.stakeMsat / 1000n), ceilingSats: String(h.ceilingSats), why: h.why, enforced: !isTestNetwork(c.networkId),
+      tableCeilingSats: String(table.ceilingSats), incomeSeatSats: income === null ? null : String(income), binds: income !== null && h.ceilingSats < table.ceilingSats ? 'income' : 'table' };
+  };
   if (contributionBook && CONTRIBUTION_READ_MS > 0) {
     const t = setInterval(() => {
       if (!anyAgreement()) return;
@@ -7737,7 +7747,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // check / Pay out winners / reserve), and when there is none the first reason that holds, in plain words (owner-rounds.js)
         if (req.method === 'GET' && url.pathname === '/owner/rounds') {
           const me = toHex(round.pubkey), now = Date.now();
-          const rows = [];
+          const rows = [], contractsOf = new Map();
           let own = null, share = null;
           // THE ROUNDS THIS NODE IS ASSIGNED TO FIRST (kanban #757): a node holding the day's grids holds thousands of rounds written 3 h
           // ahead, and the 400 written last are the far end of that horizon - the ones it sits in, from its own signer_nodes rows, are
@@ -7772,8 +7782,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             const startMs = Number(c.startTimeMs);
             rows.push({ round: toHex(rid), game: (() => { const x = gameOfContract(c); const h = hosted.get(toHex(c.gameId)); return x ? { ...x, version: h && h.manifest ? h.manifest.version : null } : null; })(), startMs, endMs, phase: now < startMs ? 'upcoming' : now < endMs ? 'running' : 'done',
               gameSeated: has(g, 'committee'), settleSeated: has(st, 'committee'), drawn: has(g, 'drawn') || has(st, 'drawn'), hostedHere, paid: c.stakeMsat > 0n });
+            contractsOf.set(toHex(rid), { rid, c });
           }
           rows.sort((a, b) => b.startMs - a.startMs);
+          // THE STAKE AGAINST ITS CEILING (§5A.10, kanban #1282), for the paid rounds the page shows (its first 40 of this node's): the two bounds and which binds
+          { let n = 0; for (const r of rows) { if (n >= 40) break; if (!(r.gameSeated || r.settleSeated || r.drawn)) continue; n++; if (!r.paid) continue;
+            const k = contractsOf.get(r.round); try { const x = k ? stakeCeilingOf(k.rid, k.c) : null; if (x) r.ceiling = x; } catch { /* no ceiling read */ } } }
           const { roundsForOwner } = await import('./owner-rounds.js');
           // AND ITS WORK AS AN AUDITOR (kanban #1002): earned off each audited round's settlement plan, a few rounds a read, kept
           const { auditForOwner } = await import('./owner-rounds.js');
@@ -9456,7 +9470,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             players: Object.fromEntries(players.map((p) => { const who = round.identityOf(fromHex(p.entry)); return [p.entry, who ? toHex(who.identity) : null]; })) };
         }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ id: rid.toString('hex'), state: held.state, free: c.stakeMsat === 0n, players, match }));
+        // AND ITS STAKE AGAINST THE CEILING (§5A.10, kanban #1282), for the dashboard: both bounds and which binds
+        let ceiling = null; if (c.stakeMsat > 0n) { try { ceiling = stakeCeilingOf(new Uint8Array(rid), c); } catch { ceiling = null; } }
+        return res.end(JSON.stringify({ id: rid.toString('hex'), state: held.state, free: c.stakeMsat === 0n, players, match, ...(ceiling ? { ceiling } : {}) }));
       }
 
       // A SEASON: ONE GAME'S BOARD ACROSS ITS ROUNDS (feature 1). ?game= a hosted game's name (every version
@@ -11393,12 +11409,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const c = decodeRoundContract(new Uint8Array(row.contract));
         const census = roster.censusFor(new Uint8Array(rid));
         if (!census || !census.ok) return text(res, 409, `no census read for that round: ${census ? census.why : 'none'}`);
-        const income = incomeFor(c, census.entries), table = stakeWithinCeiling({ entries: census.entries, stakeSats: c.stakeMsat / 1000n });
-        const h = stakeWithinCeiling({ entries: census.entries, stakeSats: c.stakeMsat / 1000n, incomeSats: income });
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ ok: h.ok, stakeSats: String(c.stakeMsat / 1000n), ceilingSats: String(h.ceilingSats), why: h.why,
-          enforced: !isTestNetwork(c.networkId), tableCeilingSats: String(table.ceilingSats), incomeSeatSats: income === null ? null : String(income),
-          binds: income !== null && h.ceilingSats < table.ceilingSats ? 'income' : 'table' }));
+        return res.end(JSON.stringify(stakeCeilingOf(new Uint8Array(rid), c)));
       }
 
       // A SERIES' PUBLICATION, PROVEN (§5A.5): { series, tx, parents } hex. The tx must be the series' first confirmed

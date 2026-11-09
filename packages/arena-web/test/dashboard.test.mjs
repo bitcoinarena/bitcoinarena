@@ -168,3 +168,10 @@ test('the faucet\'s card: new and returning accounts apart, with what they got i
   assert.match(h, /2,500 sat in all/);
   assert.equal(new FaucetGrants({}).state.t, null);
 });
+
+test('kanban #1282: an opened paid round shows its stake against the ceiling above its players, in the owner page\'s words', () => {
+  const ceiling = { ok: false, stakeSats: '20000', ceilingSats: '8000', tableCeilingSats: '100000', incomeSeatSats: '8000', binds: 'income', enforced: false };
+  const h = renderToStaticMarkup(React.createElement(Players, { result: { id: 'r1', free: false, ceiling, players: [] } }));
+  assert.ok(h.startsWith('<p class="sub ceiling bad">stake 20,000 of a ceiling of 8,000 sat (census table 100,000 sat, one seat&#x27;s season income 8,000 sat; the income binds) - above it: shown only, not enforced on a test network</p>'), h);
+  assert.match(h, /no players in this round/);
+});
