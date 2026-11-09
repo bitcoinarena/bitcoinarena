@@ -38,12 +38,37 @@ export class DrawnAttestor {
    * takes a combined attestation (this seat's intake, then every seat); `threshold` 5. A due round with `source` and `outcomes` is a market with its own source:
    * `runSource(source, market)` answers { ok, out }, and `opening()` names the source rounds whose window has just opened.
    */
-  constructor({ readPrice, selfKey, sign, attestorsFor, peersFor, due, hold, threshold = 5, fetcher = (u, o) => fetch(u, o), now = () => Date.now(), runSource = null, opening = () => [] }) {
-    Object.assign(this, { readPrice, selfKey, sign, attestorsFor, peersFor, due, hold, threshold, fetcher, now, runSource, opening });
+  constructor({ readPrice, selfKey, sign, attestorsFor, peersFor, due, hold, threshold = 5, fetcher = (u, o) => fetch(u, o), now = () => Date.now(), runSource = null, opening = () => [], store = null }) {
+    // `store` (kanban #1376, audit 2 #1204 MKT-3): { word(id), keepWord(id, json) -> the json now kept, start(id), keepStart(id, value) } - the seat's
+    // database, so a restart serves the word it signed and never signs another from a later read of the source
+    Object.assign(this, { readPrice, selfKey, sign, attestorsFor, peersFor, due, hold, threshold, fetcher, now, runSource, opening, store });
     this.starts = new Map();    // round hex -> a "rises" market's value when its window opened
     this.samples = [];          // [{ atMs, price }] BigInt, this seat's own readings
     this.words = new Map();     // round hex -> this seat's word
     this.held = new Set();      // round hex: an attestation of it is held - nothing more to do
+  }
+
+  /** The word kept for a round: memory, else the store (after a restart). */
+  #kept(id) {
+    if (this.words.has(id)) return this.words.get(id);
+    if (!this.store) return undefined;
+    let j = null; try { j = this.store.word(id); } catch { j = null; }
+    const w = j ? wordFromJson(j) : null;
+    if (w) { this.words.set(id, w); return w; }
+    return undefined;
+  }
+  /** A word signed now, kept before it is served: the store's first stands (INSERT OR IGNORE), so two signings of one round serve one word. */
+  #keep(id, word) {
+    if (this.store) { try { const j = this.store.keepWord(id, wordToJson(word)); const w = j ? wordFromJson(j) : null; if (w) word = w; } catch { /* memory only */ } }
+    this.words.set(id, word);
+    return word;
+  }
+  #start(id) {
+    if (this.starts.has(id)) return this.starts.get(id);
+    if (!this.store) return undefined;
+    let v; try { v = this.store.start(id); } catch { v = undefined; }
+    if (v !== undefined && v !== null) { this.starts.set(id, v); return v; }
+    return undefined;
   }
 
   async read() {
@@ -58,9 +83,9 @@ export class DrawnAttestor {
     if (this.runSource) {
       for (const r of this.opening()) {
         const id = toHex(r.roundId);
-        if (r.source.rule !== MARKET_RULE.RISES || this.starts.has(id)) continue;
+        if (r.source.rule !== MARKET_RULE.RISES || this.#start(id) !== undefined) continue;
         const got = await this.runSource({ ...r.source, rule: MARKET_RULE.VALUE }, { outcomes: r.outcomes }, r.listed);
-        if (got.ok) this.starts.set(id, got.out);
+        if (got.ok) { this.starts.set(id, got.out); if (this.store) try { this.store.keepStart(id, got.out); } catch { /* memory only */ } }
       }
     }
   }
@@ -68,24 +93,23 @@ export class DrawnAttestor {
   /** This seat's word on a market with its own source: as wordFor, the outcome from the source. A read that fails is tried again on the next pass. */
   async wordForSource(r) {
     const id = toHex(r.roundId);
-    if (this.words.has(id)) return this.words.get(id);
+    { const k = this.#kept(id); if (k !== undefined) return k; }
     const drawn = this.attestorsFor(r.roundId);
     if (!drawn || !drawn.includes(this.selfKey)) return null;
     if (BigInt(this.now()) < r.window.endMs + BigInt(SETTLE_MS)) return null;
-    if (r.source.rule === MARKET_RULE.RISES && !this.starts.has(id)) return null;
-    const got = await this.runSource(r.source, { outcomes: r.outcomes, start: this.starts.get(id) }, r.listed);
+    if (r.source.rule === MARKET_RULE.RISES && this.#start(id) === undefined) return null;
+    const got = await this.runSource(r.source, { outcomes: r.outcomes, start: this.#start(id) }, r.listed);
     const outcome = got.ok ? outcomeIndex(got.out, r.outcomes) : null;
     if (outcome === null) return null;
     const body = { roundId: r.roundId, outcome, observedAtMs: r.window.endMs };
     const word = { body, key: this.selfKey, signature: toHex(this.sign(attestationBodyId(body))) };
-    this.words.set(id, word);
-    return word;
+    return this.#keep(id, word);
   }
 
   /** This seat's word on a round: signed once, once its window has ended; null when it is not drawn or cannot read the outcome. */
   wordFor(roundId, window) {
     const id = toHex(roundId);
-    if (this.words.has(id)) return this.words.get(id);
+    { const k = this.#kept(id); if (k !== undefined) return k; }
     const drawn = this.attestorsFor(roundId);
     if (!drawn || !drawn.includes(this.selfKey)) return null;
     if (BigInt(this.now()) < window.endMs + BigInt(SETTLE_MS)) return null;
@@ -93,17 +117,17 @@ export class DrawnAttestor {
     if (!out.ok) { this.words.set(id, null); return null; }
     const body = { roundId, outcome: out.outcome, observedAtMs: window.endMs };
     const word = { body, key: this.selfKey, signature: toHex(this.sign(attestationBodyId(body))), priceToBeat: out.priceToBeat, endPrice: out.endPrice, label: out.label };
-    this.words.set(id, word);
-    return word;
+    return this.#keep(id, word);
   }
 
   /** GET /attestation-word's answer for a round, or null. */
-  served(roundId) { const w = this.words.get(toHex(roundId)); return w ? wordToJson(w) : null; }
+  served(roundId) { const w = this.#kept(toHex(roundId)); return w ? wordToJson(w) : null; }
 
   /** One pass: every due round's word made, the others' asked for, and an attestation of 5 held. */
   async pass() {
     const done = [];
-    for (const r of this.due()) {
+    const dueNow = this.due();
+    for (const r of dueNow) {
       const id = toHex(r.roundId);
       if (this.held.has(id)) continue;
       const mine = r.source ? await this.wordForSource(r) : this.wordFor(r.roundId, r.window);
@@ -119,7 +143,9 @@ export class DrawnAttestor {
       if (!got) continue;
       try { if (await this.hold(got.bytes, r.roundId)) { this.held.add(id); done.push({ round: id, signers: got.signers, outcome: got.body.outcome }); } } catch { /* asked again next pass */ }
     }
-    for (const id of [...this.words.keys()].slice(0, Math.max(0, this.words.size - 512))) this.words.delete(id);
+    // a round still due keeps its word in memory (kanban #1376); the store keeps every one
+    const due = new Set(dueNow.map((r) => toHex(r.roundId)));
+    for (const id of [...this.words.keys()].filter((k) => !due.has(k)).slice(0, Math.max(0, this.words.size - 512))) this.words.delete(id);
     return done;
   }
 }
