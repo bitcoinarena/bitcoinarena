@@ -127,7 +127,7 @@ import { OBJECTION_WINDOW_MS, windowsOf } from '../../arena-protocol/src/window.
 import { msForTicks } from '../../arena-protocol/src/tick.js';
 import { entryFeeMsat, feeBpsOf, entryFeeBpsOf } from '../../arena-protocol/src/fee.js';
 import { cancelId, BATCH_MS } from '../../arena-protocol/src/order-book.js';
-import { OrderBook } from './order-batch.js';
+import { OrderBook, sourcePoolLeft } from './order-batch.js';
 import { createPolymarketRouter } from './polymarket.js';
 import { PriceFeed } from './price-feed.js';
 import { matchOf } from './match.js';
@@ -2480,15 +2480,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const c0 = roster.censusFor(of.rid);
         const pool0 = c0 && c0.ok ? maxRoundPoolSats({ entries: c0.entries, stakeSats: BigInt(of.contract.stakeMsat || 0n) / 1000n, networkId: of.contract.networkId, incomeSats: incomeFor(of.contract, c0.entries) }) : null;
         if (pool0 === null) return null;
-        let used = 0n;
-        try { for (const e of round.entriesOf(contract.sourceRoundId)) used += BigInt((e.entry && e.entry.stakeMsat) || 0n) / 1000n; } catch { /* none read */ }
+        let sourceStakesSats = 0n;
+        try { for (const e of round.entriesOf(contract.sourceRoundId)) sourceStakesSats += BigInt((e.entry && e.entry.stakeMsat) || 0n) / 1000n; } catch { /* none read */ }
+        const othersFilledSats = [];
         for (const other of orderBook.marketRoundIds()) {
           if (toHex(other) === toHex(rid)) continue;
           const orow = round.get(other); if (!orow) continue;
           let oc; try { oc = decodeRoundContract(new Uint8Array(orow.contract)); } catch { continue; }
-          if (oc.sourceRoundId instanceof Uint8Array && toHex(oc.sourceRoundId) === toHex(contract.sourceRoundId)) used += orderBook.filledSats(other);
+          if (oc.sourceRoundId instanceof Uint8Array && toHex(oc.sourceRoundId) === toHex(contract.sourceRoundId)) othersFilledSats.push(orderBook.filledSats(other));
         }
-        return pool0 > used ? pool0 - used : 0n;
+        return sourcePoolLeft({ poolSats: pool0, sourceStakesSats, othersFilledSats });
       }
       const c = roster.censusFor(of.rid);
       const pool = c && c.ok ? maxRoundPoolSats({ entries: c.entries, stakeSats: BigInt(of.contract.stakeMsat || 0n) / 1000n, networkId: of.contract.networkId, incomeSats: incomeFor(of.contract, c.entries) }) : null;

@@ -111,6 +111,17 @@ export const BATCH_MOVES = Object.freeze({
 export const SYNC_STATE = Object.freeze({ UNREAD: 'UNREAD', KEPT: 'KEPT', STALE: 'STALE' });
 /** How long a seat waits for one other seat's answer while it leads a batch (proposals, void asks, sets, certificates). */
 export const BATCH_FETCH_MS = 1000;
+
+/**
+ * WHAT IS LEFT OF A SOURCE ROUND'S POOL FOR ONE MARKET ON IT (§0A.7d RULED #1293, kanban #1329): `poolSats` the source round's max_round_pool,
+ * less its own entries' stakes (`sourceStakesSats`) and the filled volume of every OTHER market on the same source round (`othersFilledSats`).
+ * Never below 0. Every seat holding the same entries and books computes the same.
+ */
+export function sourcePoolLeft({ poolSats, sourceStakesSats = 0n, othersFilledSats = [] }) {
+  const used = BigInt(sourceStakesSats) + othersFilledSats.reduce((a, x) => a + BigInt(x || 0n), 0n);
+  const pool = BigInt(poolSats);
+  return pool > used ? pool - used : 0n;
+}
 class Conflict extends Error {}
 
 export class OrderBook {
