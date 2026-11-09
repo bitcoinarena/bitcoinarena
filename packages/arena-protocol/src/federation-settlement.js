@@ -89,7 +89,7 @@ function splitPart({ claims, payouts, federationOf, feesOf, part, reserveKeyOf =
     for (const p of fp) {
       if (!p.reserve) continue;
       const k = typeof reserveKeyOf === 'function' ? reserveKeyOf(fid) : null;
-      if (!(k instanceof Uint8Array) || k.length !== 33) return refuse(`federation ${fid.slice(0, 16)} names no reserve key, and this market pays the protocol reserve`);
+      if (!(k instanceof Uint8Array) || k.length !== 33) return refuse(`federation ${fid.slice(0, 16)} names no reserve key, and this round pays the protocol reserve`);
       p.payoutPk = k; p.pubkey = k.subarray(1);
     }
     const paidMsat = fp.reduce((s, p) => s + p.msat, 0n);

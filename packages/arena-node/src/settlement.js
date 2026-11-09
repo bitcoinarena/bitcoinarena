@@ -162,11 +162,13 @@ export const GONE_MARGIN_BLOCKS = 3;   // kanban #1183: a stake lock this close 
  * every federation prices its own (splitByFederation) - and split into one balanced transaction per federation. `args`:
  * lockSettlement's; `federationOf(outpoint)` -> the federation hex a claimed lock is in; `feesOf(fidHex)` -> its fee rule.
  */
-export function federationPlans(args, { federationOf, feesOf }) {
+// `reserveKeyOf(fidHex)`: each federation's reserve key - a plan naming RESERVE_LATER_PK (the auditors' unpaid remainder, kanban #1331) pays each
+// federation's part of it to its own
+export function federationPlans(args, { federationOf, feesOf, reserveKeyOf = null }) {
   const plan = lockSettlement({ ...args, fees: NO_FEES });
   if (!plan.ok) return { ok: false, why: plan.why };
   if (plan.nothing) return { ok: false, why: plan.why, ...(plan.noFill ? { code: REFUSAL.NOTHING_CLAIMED } : {}) };
-  const split = splitByFederation(plan, { roundId: args.roundId, federationOf, feesOf });
+  const split = splitByFederation(plan, { roundId: args.roundId, federationOf, feesOf, reserveKeyOf });
   if (!split.ok) return { ok: false, why: split.why };
   return { ok: true, plan, split };
 }
@@ -554,7 +556,10 @@ export class LockSettlement {
     const feeKey = anyFed ? `${toHex(roundIdBytes)}:late:${toHex(entryIdBytes)}` : toHex(roundIdBytes);
     let fees = this.fees.get(feeKey);
     if (!fees) { fees = await port.fees(); this.fees.set(feeKey, fees); }
-    const sn = feeLock ? await this.signerNodesWithReserve(roundIdBytes, contract) : { ok: true, signerNodes: null };
+    // a late loser of a round taking any federation: its lock's federation's reserve (kanban #1331)
+    let lateFed = null;
+    if (anyFed) { try { const raw = this.round.entry(entryIdBytes); const ef = raw ? entryFederation(contract, decodeEntryContract(new Uint8Array(raw))) : null; lateFed = ef && ef.ok ? toHex(ef.federationId) : null; } catch { lateFed = null; } }
+    const sn = feeLock ? await this.signerNodesWithReserve(roundIdBytes, contract, lateFed) : { ok: true, signerNodes: null };
     if (!sn.ok) return refuse(sn.why);
     const args = { roundId: roundIdBytes, entryId: entryIdBytes, entry, lock, feeLock, shares, fees,
       signerNodes: sn.signerNodes, contract, ...this.roundFees(contract) };
@@ -674,13 +679,14 @@ export class LockSettlement {
   /** The fees in force at this round as the lock settlements take them: a version-11 round's node fee, the website share. */
   // THE AUDITORS' UNPAID REMAINDER TO THE RESERVES, ON EVERY SEAT THE SAME (§13A.1 RULED 2026-11-07, kanban #1306/#1331 (1)): an audited round's plan
   // carries its federation's reserve key, so every seat sets the 10 % aside the same way. A seat that knows no key builds nothing rather than a plan
-  // that keeps the remainder in the pools - its peers holding the key would refuse those bytes by name. A round that takes any federation keeps
-  // the old rule until its per-federation split pays a reserve (open on #1331).
-  async signerNodesWithReserve(roundIdBytes, contract) {
+  // that keeps the remainder in the pools - its peers holding the key would refuse those bytes by name. A round that takes any federation pays
+  // each federation's part to its own reserve: its split re-keys RESERVE_LATER_PK (lockPlan), a late loser's plan its lock's federation's key.
+  // `federationHex`: the federation the plan's locks are in when the round takes any (a late loser's - kanban #1331); none given there: the old rule
+  async signerNodesWithReserve(roundIdBytes, contract, federationHex = null) {
     const sn = this.signerNodesFor(roundIdBytes, contract);
-    if (!sn || !this.auditedRoundOf(contract) || takesAnyFederation(contract)) return { ok: true, signerNodes: sn };
-    const key = typeof this.reserveKeyFor === 'function' && contract.federationId instanceof Uint8Array
-      ? await this.reserveKeyFor(toHex(contract.federationId)).catch(() => null) : null;
+    if (!sn || !this.auditedRoundOf(contract) || (takesAnyFederation(contract) && !federationHex)) return { ok: true, signerNodes: sn };
+    const fid = takesAnyFederation(contract) ? String(federationHex).toLowerCase() : (contract.federationId instanceof Uint8Array ? toHex(contract.federationId) : null);
+    const key = typeof this.reserveKeyFor === 'function' && fid ? await this.reserveKeyFor(fid).catch(() => null) : null;
     if (!(key instanceof Uint8Array) || key.length !== 33) return { ok: false, why: 'no lock is claimed: an audited round pays its auditors\' unpaid remainder to the protocol reserves (§13A.1), and no reserve key is known for its federation' };
     return { ok: true, signerNodes: { ...sn, auditReserveKey: key } };
   }
@@ -1168,8 +1174,21 @@ export class LockSettlement {
       const ds = on.entries.some((e) => e.atTheDoor) && this.donationSetFor ? this.donationSetFor(contract) : null;
       const fed = await this.#federationsOf(roundIdBytes, contract, on.entries.map((e) => ({ entryId: e.entryId, pubkey: e.pubkey })), locks, feeLocks);
       if (!fed.ok) return fed;
+      // THE AUDITORS' UNPAID REMAINDER, EACH FEDERATION'S PART TO ITS OWN RESERVE (§13A.1 RULED 2026-11-07, kanban #1331 (1)): planned to RESERVE_LATER_PK,
+      // then the split pays each federation's part to its reserve key; one this seat knows no key for: nothing is built (as a single-federation round)
+      const audited = feeLocks.size && this.auditedRoundOf(contract);
+      const sn = feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null;
+      const reserveKeys = new Map();
+      if (audited) {
+        for (const fid of fed.federationIds) {
+          const k = this.reserveKeyFor ? await this.reserveKeyFor(fid).catch(() => null) : null;
+          if (!(k instanceof Uint8Array) || k.length !== 33) return refuse(`no lock is claimed: an audited round pays its auditors' unpaid remainder to the protocol reserves (§13A.1), and no reserve key is known for federation ${fid.slice(0, 16)}`);
+          reserveKeys.set(fid, k);
+        }
+      }
       const got = federationPlans({ roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, payoutShares, locks, feeLocks,
-        signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract, donationSet: ds && ds.ok ? ds.set : null }, fed);
+        signerNodes: sn && audited ? { ...sn, auditReserveKey: RESERVE_LATER_PK } : sn, contract, donationSet: ds && ds.ok ? ds.set : null },
+        { ...fed, reserveKeyOf: (fid) => reserveKeys.get(fid) || null });
       if (!got.ok) return refuse(`no lock is claimed: ${got.why}`);
       return { ok: true, anyFed: true, plan: got.plan, split: got.split, base: { plan: got.plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry,
         ackRows: entryRows(roundIdBytes, on.entries, contract.minScore, payoutShares) };
