@@ -7513,7 +7513,11 @@
           if (close - now < 5000) return false;
           // noted once it is near enough to be shown (the client's 8 s + 1.5 s) and the client shows no reveal or result of its own: measured on stage, a
           // round noted while a slow reveal (8 s) still ran was shown after it with 2 s left
-          if (close - now <= 9500 && !clientBusy()) offeredAt.set(r.id, close);
+          if (close - now <= 9500 && !clientBusy()) {
+            offeredAt.set(r.id, close);
+            // WHAT WAS OFFERED, WITH HOW MUCH TIME (kanban #1394): the page's own record, read by a measurement instead of a screen sample
+            const log = window.ARENA_OFFERED = window.ARENA_OFFERED || []; log.push({ id: String(r.id).slice(0, 8), leftMs: close - now, at: now }); if (log.length > 100) log.shift();
+          }
           return true;
         });
       };
