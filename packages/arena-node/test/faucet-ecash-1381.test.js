@@ -29,10 +29,10 @@ async function faucet(fill, fn) {
 }
 
 test('#1381 a welcome that names its federation gets a ready note, once per account, and the note leaves the pool', async () => {
-  await faucet((pool) => { note(pool, FED, 500000, 'fedimintaaa'); note(pool, FED, 500000, 'fedimintbbb'); }, async ({ ask, pool, book }) => {
+  await faucet((pool) => { note(pool, FED, 3000000, 'fedimintaaa'); note(pool, FED, 3000000, 'fedimintbbb'); }, async ({ ask, pool, book }) => {
     const first = await ask({ kind: 'welcome', account: 'cd'.repeat(32), ecash: FED });
     assert.equal(first.ok, true, JSON.stringify(first));
-    assert.equal(first.sats, 500);
+    assert.equal(first.sats, 3000);
     assert.match(first.ecash, /^fedimint(aaa|bbb)$/);
     assert.equal(readdirSync(join(pool, FED)).filter((f) => f.endsWith('.json')).length, 1, 'the note handed out is still in the pool');
     assert.equal(existsSync(join(pool, FED, 'taken')), true);
@@ -44,7 +44,7 @@ test('#1381 a welcome that names its federation gets a ready note, once per acco
     assert.notEqual(other.ecash, first.ecash, 'one note handed out twice');
     const rows = book().players;
     assert.equal(rows.length, 2);
-    assert.equal(rows.every((r) => r.ecash === true && r.sats === 500 && r.kind === 'welcome'), true);
+    assert.equal(rows.every((r) => r.ecash === true && r.sats === 3000 && r.kind === 'welcome'), true);
   });
 });
 
@@ -60,7 +60,7 @@ test('#1381 no note of that federation or amount: nothing given, nothing booked 
 });
 
 test('#1381 a top-up is never paid from the pool', async () => {
-  await faucet((pool) => { note(pool, FED, 500000, 'fedimintaaa'); note(pool, FED, 300000, 'fedimintbbb'); }, async ({ ask, pool }) => {
+  await faucet((pool) => { note(pool, FED, 3000000, 'fedimintaaa'); note(pool, FED, 300000, 'fedimintbbb'); }, async ({ ask, pool }) => {
     const r = await ask({ kind: 'topup', account: 'cd'.repeat(32), ecash: FED });
     assert.equal(r.ok, false);
     assert.equal(r.ecash, undefined);
@@ -69,7 +69,7 @@ test('#1381 a top-up is never paid from the pool', async () => {
 });
 
 test('#1381 the day caps hold for e-cash too: the eleventh welcome from one address gets nothing', async () => {
-  await faucet((pool) => { for (let i = 0; i < 12; i++) note(pool, FED, 500000, `fedimint${i}x`); }, async ({ ask }) => {
+  await faucet((pool) => { for (let i = 0; i < 12; i++) note(pool, FED, 3000000, `fedimint${i}x`); }, async ({ ask }) => {
     const got = [];
     for (let i = 0; i < 11; i++) got.push(await ask({ kind: 'welcome', account: (i + 16).toString(16).padStart(2, '0').repeat(32), ecash: FED }));
     assert.equal(got.slice(0, 10).every((r) => r.ok), true);
