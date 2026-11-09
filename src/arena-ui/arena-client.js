@@ -32045,8 +32045,9 @@ async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher = (u, 
       try {
         const r = await fetcher(`${base}/reserves`, { signal: AbortSignal.timeout(timeoutMs) });
         if (!r.ok) return;
-        const f = ((await r.json()).federations || []).find((x) => x.federationId === fed && /^0[23][0-9a-f]{64}$/.test(String(x.key || '')));
-        if (f) { said.set(f.key, (said.get(f.key) || 0) + 1); if (said.get(f.key) >= needed) done(); }
+        const f = ((await r.json()).federations || []).find((x) => x.federationId === fed && /^0[23][0-9a-f]{64}$/.test(String(x.key || x.reserveKey || '')));
+        const k = f ? String(f.key || f.reserveKey) : null;
+        if (k) { said.set(k, (said.get(k) || 0) + 1); if (said.get(k) >= needed) done(); }
       } catch { /* a node that does not answer names nothing */ }
     })().finally(() => { left -= 1; if (!left) done(); });
   });
