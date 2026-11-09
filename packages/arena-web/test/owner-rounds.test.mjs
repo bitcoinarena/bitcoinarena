@@ -35,3 +35,17 @@ test('the auditor\'s line shows rounds, objections and sats, and says when some 
   const h = renderToStaticMarkup(React.createElement(RoundsPanel, { initial: { loaded: true, data: { rounds: [], why: null, audit: { audited: 3, objections: 1, earnedMsat: '12000', unread: 2 } } } }));
   assert.match(h, /As an auditor: 3 rounds audited, 1 objection filed, 12 sats earned so far \(2 still being read\)\./);
 });
+
+test('kanban #1282: a paid round shows its stake against the ceiling - both bounds and which binds; above it, refused or only shown on a test network', () => {
+  const r = (ceiling) => ({ round: 'ab'.repeat(32), game: { name: 'nextblock', title: 'Tick Tock' }, startMs: Date.UTC(2026, 10, 9, 10), phase: 'upcoming', does: ['Play and check'], paid: true, ceiling });
+  const income = { ok: true, stakeSats: '1000', ceilingSats: '8000', tableCeilingSats: '100000', incomeSeatSats: '8000', binds: 'income', enforced: true };
+  let h = show({ rounds: [r(income)], upcoming: 1 });
+  assert.ok(h.includes('stake 1,000 of a ceiling of 8,000 sat (census table 100,000 sat, one seat&#x27;s season income 8,000 sat; the income binds)'), h);
+  h = show({ rounds: [r({ ...income, ok: false, stakeSats: '20000', enforced: false })], upcoming: 1 });
+  assert.match(h, /class="sub ceiling warn"/);
+  assert.match(h, /above it: shown only, not enforced on a test network/);
+  h = show({ rounds: [r({ ok: true, stakeSats: '1000', ceilingSats: '100000', tableCeilingSats: '100000', incomeSeatSats: null, binds: 'table', enforced: true })], upcoming: 1 });
+  assert.match(h, /stake 1,000 of a ceiling of 100,000 sat \(census table 100,000 sat; the table binds\)/);
+  // a free round, or one with no ceiling read: no line
+  assert.ok(!show({ rounds: [{ ...r(null), paid: false }], upcoming: 1 }).includes('ceiling'));
+});

@@ -9,6 +9,7 @@
 // the page's own script drew is here too - a round opened to its players with their replays (readResult), the notes, every host row,
 // the capacity plea and the liquidity card (the page hands in liquidity-claim and capacity?node=me), and the words for an unreadable node.
 import React from 'react';
+import { ceilingLine } from '../owner/RoundsPanel.jsx';
 import { SetupStatus, FoundingWait, PegInCard, NoBondCard, noBond } from './SetupStatus.jsx';
 import { CopyButton } from '../design/components.jsx';
 import { UptimeStats } from './Uptime.jsx';
@@ -166,13 +167,15 @@ export class Players extends React.Component {
     const a = this.props.result;
     if (!a || a.loading) return <p className="sub">reading api/round-result…</p>;
     if (a.error) return <p className="bad">could not read api/round-result: {a.error}</p>;
-    if (!(a.players || []).length) return <p className="sub">no players in this round</p>;
-    return (
+    // the stake against its ceiling (§5A.10, kanban #1282): the owner page's words
+    const ceil = a.ceiling ? <p className={`sub ceiling${a.ceiling.ok ? '' : ' bad'}`}>{ceilingLine(a.ceiling)}</p> : null;
+    if (!(a.players || []).length) return <>{ceil}<p className="sub">no players in this round</p></>;
+    return (<>{ceil}
       <table className="tbl"><thead><tr><th>Player</th><th>Outcome</th><th className="n">Score</th><th className="n">Signed by</th><th className="n">Stake</th><th>Won or lost</th><th className="n">Net</th><th>Replay</th></tr></thead>
         <tbody>{a.players.map((p, i) => { const c = tone(p.netMsat); return (
           <tr key={p.entry || i}><td>{p.name || ''}</td><td>{p.outcome || 'not signed yet'}</td><td className="n">{score(p.score)}</td><td className="n">{p.signedBy | 0}</td><td className="n">{sat(p.stakeMsat)}</td>
             <td className={c || undefined}>{p.result || ''}</td><td className={`n${c ? ` ${c}` : ''}`}>{signedSat(p.netMsat)}</td>
-            <td><a href={`replay?round=${encodeURIComponent(a.id)}&entry=${encodeURIComponent(p.entry)}`} target="_blank" rel="noopener">replay</a></td></tr>); })}</tbody></table>);
+            <td><a href={`replay?round=${encodeURIComponent(a.id)}&entry=${encodeURIComponent(p.entry)}`} target="_blank" rel="noopener">replay</a></td></tr>); })}</tbody></table></>);
   }
 }
 
