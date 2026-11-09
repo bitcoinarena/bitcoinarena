@@ -68,12 +68,13 @@ test('#1381 a top-up is never paid from the pool', async () => {
   });
 });
 
-test('#1381 the day caps hold for e-cash too: the eleventh welcome from one address gets nothing', async () => {
-  await faucet((pool) => { for (let i = 0; i < 12; i++) note(pool, FED, 3000000, `fedimint${i}x`); }, async ({ ask }) => {
+test('#1381 the day caps hold for e-cash too: the welcome past one address\'s day gets nothing', async () => {
+  const { PLAYER_PER_IP_PER_DAY: N } = await import('../src/faucet.js');   // kanban #1397: 200 a day (was 10)
+  await faucet((pool) => { for (let i = 0; i < N + 2; i++) note(pool, FED, 3000000, `fedimint${i}x`); }, async ({ ask }) => {
     const got = [];
-    for (let i = 0; i < 11; i++) got.push(await ask({ kind: 'welcome', account: (i + 16).toString(16).padStart(2, '0').repeat(32), ecash: FED }));
-    assert.equal(got.slice(0, 10).every((r) => r.ok), true);
-    assert.equal(got[10].ok, false);
-    assert.match(got[10].why, /address took all/);
+    for (let i = 0; i <= N; i++) got.push(await ask({ kind: 'welcome', account: (i + 16).toString(16).padStart(4, '0').repeat(16), ecash: FED }));
+    assert.equal(got.slice(0, N).every((r) => r.ok), true);
+    assert.equal(got[N].ok, false);
+    assert.match(got[N].why, /address took all/);
   });
 });
