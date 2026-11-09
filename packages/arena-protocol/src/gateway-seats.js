@@ -20,6 +20,22 @@
 import { Writer } from './encode.js';
 import { taggedHash, bytesToBigInt, toHex } from './hash.js';
 import { tagAt, TAG_PAIRS } from './tag-switch.js';
+import { gatewayFeeWithin } from './federation-record.js';
+
+/**
+ * A GATEWAY'S PUBLISHED FEES FROM ITS LNv2 routing_info (kanban #1324, §23A.9): { send, receive } each { ppm, baseMsat } - send_fee_default
+ * and receive_fee as fedimint's PaymentFee { base (msat), parts_per_million }. Null when the answer names neither.
+ */
+export function feesOfRoutingInfo(ri) {
+  const one = (f) => {
+    if (!f || typeof f !== 'object') return null;
+    const base = typeof f.base === 'object' && f.base !== null ? f.base.msats : f.base;
+    const ppm = f.parts_per_million;
+    return Number.isFinite(Number(base)) && Number.isFinite(Number(ppm)) ? { ppm: Number(ppm), baseMsat: Number(base) } : null;
+  };
+  const send = one(ri && ri.send_fee_default), receive = one(ri && ri.receive_fee);
+  return send || receive ? { send, receive } : null;
+}
 
 export const GATEWAY_SEATS = 2;
 export const GATEWAY_EPOCH_BLOCKS = 144;
@@ -51,7 +67,7 @@ export function gatewayTicket(beacon, nodeKey, epoch) {
 }
 
 /** Why a candidate may not stand, or null. `c` { seatedGuardian, registered, inboundSats, outboundSats, pegInSats, availabilityPct, bondSats }. */
-export function ineligibleWhy(c, { minimums, bondMinGuardian }) {
+export function ineligibleWhy(c, { minimums, bondMinGuardian, feeCap = null }) {
   if (!c.seatedGuardian) return 'not a seated guardian of the federation';
   // a gateway-seat offence (part 6 above): never seated while it stands, not even as the federation's last gateway
   if (c.pegInPastCap) return `pegged in past the cap: ${c.pegInPastCap} went in at load >= 1, a gateway-seat offence (unseated)`;
@@ -63,6 +79,9 @@ export function ineligibleWhy(c, { minimums, bondMinGuardian }) {
   if (BigInt(c.pegInSats) < minimums.pegInSats) return `peg-in ${c.pegInSats} below ${minimums.pegInSats} sat`;
   if (Math.floor(Number(c.availabilityPct)) < minimums.availabilityPct) return `available ${Math.floor(Number(c.availabilityPct))} % of the epoch, below ${minimums.availabilityPct} %`;
   if (BigInt(c.bondSats) < BigInt(bondMinGuardian)) return `bond below bond_min_guardian`;
+  // ABOVE THE FEDERATION'S GATEWAY FEE CAP (§23A.9 RULED 2026-11-07, kanban #1310/#1324): below the minimums - it may still hold the one seat a
+  // federation is never without, unpaid. `feeCap` the record's gatewayFeeMax or the reference; null: no fee rule (a seating before the 2.0 rules)
+  if (feeCap) { const w = gatewayFeeWithin(c.fees || null, feeCap); if (!w.ok) return `fee: ${w.why}`; }
   return null;
 }
 
@@ -75,7 +94,7 @@ export function ineligibleWhy(c, { minimums, bondMinGuardian }) {
 // `pegInStarSats`: P* while the federation is under peg-in pressure (capacity.js pegInPressure), else null - then a candidate's proved
 // peg-in up to P* (`provedPegInSats`) ranks before its routed volume (§23A.3a part 2: "a gateway that can take the deposits is seated
 // ahead of one that has routed more but cannot")
-export function seatGateways({ candidates = [], beacon, epoch, incumbents = [], network = 'testnet4', bondMinGuardian, seats = GATEWAY_SEATS, pegInStarSats = null }) {
+export function seatGateways({ candidates = [], beacon, epoch, incumbents = [], network = 'testnet4', bondMinGuardian, seats = GATEWAY_SEATS, pegInStarSats = null, feeCap = null }) {
   if (!(beacon instanceof Uint8Array) || beacon.length !== 32) throw new TypeError('the epoch is ranked on its first block\'s hash');
   const minimums = GATEWAY_MINIMUMS[network];
   if (!minimums) throw new Error(`no gateway minimums for ${network}`);
@@ -85,7 +104,7 @@ export function seatGateways({ candidates = [], beacon, epoch, incumbents = [], 
   const rankable = (c) => ({ ...c, nodeHex: toHex(c.node), pegin: pegOf(c), volume: floorTo(c.volumeSats || 0, 1000n), capacity: floorTo(BigInt(c.inboundSats || 0) < BigInt(c.outboundSats || 0) ? c.inboundSats || 0 : c.outboundSats || 0, 100_000n),
     availability: BigInt(Math.floor(Number(c.availabilityPct))), bond: BigInt(c.bondSats || 0), ticket: gatewayTicket(beacon, c.node, epoch) });
   for (const c of candidates) {
-    const why = ineligibleWhy(c, { minimums, bondMinGuardian });
+    const why = ineligibleWhy(c, { minimums, bondMinGuardian, feeCap });
     if (why) {
       ineligible.push({ node: toHex(c.node), why });
       if (c.seatedGuardian && c.registered && !c.pegInPastCap && BigInt(c.pegInSats || 0) > 0n) serving.push(rankable(c));

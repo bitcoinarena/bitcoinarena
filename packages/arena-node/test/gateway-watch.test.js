@@ -276,13 +276,16 @@ const heldLockOf = (i, { epoch = 40, sat = 1_000_000n, outpoint = `${String(i + 
   const lock = { outpoint, contractId: '77'.repeat(32), amountMsat: String(sat * 1000n) };
   return { ...lock, reads: signers.map((g) => signHeldRead({ federationId: fid, epoch, gateway: keys[i].hex, ...lock, blocksLeft: 6, tipHeight: epoch * 144 + 72 }, g.hex, (h) => schnorr.sign(h, g.secret))) };
 };
-function aged({ claim0, claim1 = {}, rulesEpoch = 0, tipAt = 144 * 40 + 5, inBlock = () => true, network = 'regtest', coins, held0 = heldLockOf(0), held1 = heldLockOf(1), heldSet = { seated: keys.map((k) => k.hex), threshold: 3 } }) {
+function aged({ claim0, claim1 = {}, fees = {}, rulesEpoch = 0, tipAt = 144 * 40 + 5, inBlock = () => true, network = 'regtest', coins, held0 = heldLockOf(0), held1 = heldLockOf(1), heldSet = { seated: keys.map((k) => k.hex), threshold: 3 } }) {
   const claims = { 0: { ...claimOf(0, claim0), ...(held0 ? { heldLock: held0 } : {}) }, 1: { ...claimOf(1, claim1), ...(held1 ? { heldLock: held1 } : {}) } };
   const entries = keys.map((k, i) => ({ pubkey: Uint8Array.from(Buffer.from(k.hex, 'hex')), bondSats: 50000n, advert: { endpoint: `https://seat${i}.example`, operatorId: `op${i}` } }));
   const fetcher = async (url) => {
     const seat = /^https:\/\/seat(\d)\.example\/gateway-claim\?federation=[0-9a-f]{64}$/.exec(url);
     if (seat) return claims[seat[1]] ? { status: 200, json: async () => claims[seat[1]] } : { status: 404, json: async () => ({}) };
-    return { status: 200, text: async () => '{"module_public_key":"02' + 'cd'.repeat(32) + '"}' };
+    // an LNv2 routing_info, its fees as fedimint's PaymentFee (kanban #1324): 0 % unless the test names a seat's
+    const gw = /^https:\/\/n(\d)\.example\/gateway\/routing_info$/.exec(url);
+    const f = (gw && fees[gw[1]]) || { base: 0, parts_per_million: 0 };
+    return { status: 200, text: async () => JSON.stringify({ module_public_key: '02' + 'cd'.repeat(32), send_fee_default: f, send_fee_minimum: f, receive_fee: f }) };
   };
   const asked = [], w = { tip: tipAt };
   const watch = createGatewayWatch({ federationId: async () => fid, seated: async () => [keys[0].hex, keys[1].hex], entries: async () => entries, tip: async () => w.tip, beaconAt: async () => new Uint8Array(32).fill(7),
@@ -415,4 +418,20 @@ test('a peg-in past the cap unseats its gateway: the watch names the outpoint, t
   assert.match(off && off.why, new RegExp(`pegged in past the cap: ${o1} went in at load >= 1`));
   assert.ok(!v.seated.includes(keys[0].hex), 'not seated, not even as the last gateway');
   assert.ok(!(v.ineligible || []).some((x) => x.node === keys[1].hex && /past the cap/.test(x.why)), 'the other gateway\'s peg-in went in below the cap');
+});
+
+test('kanban #1324: from the rules epoch a gateway whose published fee is above the cap is not seated; its fees are said; before it, fees are not read', async () => {
+  const dear = { 1: { base: 0, parts_per_million: 3000 } };   // seat 1's gateway: 0.3 %, above the reference 0.1 % + 10 sat
+  const x = aged({ claim0: {}, claim1: {}, fees: dear, coins: coinsOf });
+  await x.watch.probe();
+  const v = await x.watch.view();
+  assert.deepEqual(v.gateways[keys[1].hex].fees, { send: { ppm: 3000, baseMsat: 0 }, receive: { ppm: 3000, baseMsat: 0 } });
+  assert.ok(!v.seated.includes(keys[1].hex), `seated above the cap: ${JSON.stringify(v.seated)}`);
+  assert.ok(v.seated.includes(keys[0].hex));
+  assert.match(JSON.stringify(v.ineligible), /fee: its send fee 0.3 %/);
+  // before the rules epoch the fee rule does not apply: both are seated as before
+  const before = aged({ claim0: {}, claim1: {}, fees: dear, rulesEpoch: 41, coins: coinsOf });
+  await before.watch.probe();
+  const vb = await before.watch.view();
+  assert.ok(vb.seated.includes(keys[1].hex), JSON.stringify(vb.seated));
 });
