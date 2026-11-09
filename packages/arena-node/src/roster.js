@@ -130,6 +130,10 @@ const TXIDS_OF_VIEW = new WeakMap();
 // after the minute or the next block - a lobby listing took 27-39 s): a census reads the blocks up to its height, so the refusal holds
 // while that block is the same object in the view - a view extended at its tip keeps it; a reorganised one is read anew, and asks again.
 const REFUSED_AT_BLOCK = new WeakMap();
+// THE CENSUS BLOCK'S HASH, once per block object (kanban #1373): the memory key of a census names the block it was read under
+const HASH_OF_BLOCK = new WeakMap();
+const hashOfBlock = (b) => { let h = HASH_OF_BLOCK.get(b); if (!h) { h = toHex(blockHashOf(b.header)); HASH_OF_BLOCK.set(b, h); } return h; };
+
 const blockAtCensus = (view, contract) => {
   const i = Number(contract.censusHeight) - view.firstHeight;
   const b = Number.isInteger(i) && i >= 0 && i < view.blocks.length ? view.blocks[i] : null;
@@ -559,7 +563,11 @@ export class Roster {
     const keysName = standingKeysName(standingKeys, Number(contract.censusHeight));
     const kept = `${whose}:${view.firstHeight}:${contract.censusHeight}${keysName ? `:keys${keysName}` : ''}:${asRoundsOwn ? (asCommitted ? 'committed' : 'round') : 'height'}`;
     // a census checked in full as the round's own serves a draw as committed too
-    const had = this.censuses.get(kept) || (asCommitted ? this.censuses.get(kept.replace(/:committed$/, ':round')) : null);
+    // KEPT IN MEMORY UNDER THE BLOCK AT THE CENSUS HEIGHT (kanban #1373, audit 2 #1204 FED-B2): as the store's key (#786) - after a reorg below the census
+    // height the old branch's census is another key, never served; with no such block in the view nothing is read from memory
+    const atBlock = blockAtCensus(view, contract);
+    const memKey = atBlock && atBlock.header instanceof Uint8Array ? `${kept}@${hashOfBlock(atBlock)}` : null;
+    const had = !memKey ? null : this.censuses.get(memKey) || (asCommitted ? this.censuses.get(memKey.replace(/:committed@/, ':round@')) : null);
     if (had) {
       if (asRoundsOwn && !(contract.seriesId instanceof Uint8Array)) {
         if (!(contract.censusRoot instanceof Uint8Array) || contract.censusRoot.length !== 32)
@@ -573,7 +581,6 @@ export class Roster {
     // KEPT ACROSS A RESTART (OPEN-LIST-2140 item 4, measured: one derivation held the loop 2.7 s - every transaction of a
     // ~2,000-block view parsed and hashed again - and a restarted seat derived one per series): a census this node checked
     // against its round's own root is read back from the store instead.
-    const atBlock = blockAtCensus(view, contract);
     const refusedHere = atBlock && REFUSED_AT_BLOCK.get(atBlock);
     const refused = refusedHere && asRoundsOwn && contract.censusRoot instanceof Uint8Array && refusedHere.get(`${kept}:${toHex(contract.censusRoot)}`);
     if (refused) return refused;
@@ -584,7 +591,7 @@ export class Roster {
     const stored = asRoundsOwn && storeKey ? readKeptCensus(this.round, storeKey) : null;
     if (stored && stored.root instanceof Uint8Array && contract.censusRoot instanceof Uint8Array
         && stored.root.length === 32 && stored.root.every((b, i) => b === contract.censusRoot[i])) {
-      this.censuses.set(kept, stored);
+      if (memKey) this.censuses.set(memKey, stored);
       return stored;
     }
 
@@ -636,7 +643,7 @@ export class Roster {
 
     // KEPT ONLY WHEN IT IS THIS ROUND'S OWN: a refusal above is never kept, so a view that grows into the answer is
     // still derived when it can be.
-    this.censuses.set(kept, census);
+    if (memKey) this.censuses.set(memKey, census);
     if (this.censuses.size > Roster.CENSUS_KEPT) this.censuses.delete(this.censuses.keys().next().value);
     if (!asCommitted && storeKey) keepCensus(this.round, storeKey, census);
     return census;
