@@ -112,10 +112,12 @@ export function createStageBook(db) {
       for (const k of keys || []) { const r = q.get(hexOf(k)); if (r) out.set(hexOf(k), { version: r.version, sinceMs: Number(r.since_ms) }); }
       return out;
     },
-    write: (rows) => {
+    // `version` the release this decision was asked for (kanban #1377, audit 2 #1204 INSTALLER-DOORS-8): a fellow found elsewhere, silent or unhealthy
+    // clears only its row of THAT release - an ask naming another release (anyone's GET /update-stage?version=x) never resets its hour on the real one
+    write: (rows, version = null) => {
       const put = db.prepare('INSERT INTO update_stage_seen (node, version, since_ms) VALUES (?, ?, ?) ON CONFLICT(node) DO UPDATE SET version = excluded.version, since_ms = excluded.since_ms');
-      const del = db.prepare('DELETE FROM update_stage_seen WHERE node = ?');
-      for (const [k, row] of rows || []) { if (row) put.run(hexOf(k), String(row.version), Number(row.sinceMs)); else del.run(hexOf(k)); }
+      const del = version === null ? db.prepare('DELETE FROM update_stage_seen WHERE node = ?') : db.prepare('DELETE FROM update_stage_seen WHERE node = ? AND version = ?');
+      for (const [k, row] of rows || []) { if (row) put.run(hexOf(k), String(row.version), Number(row.sinceMs)); else if (version === null) del.run(hexOf(k)); else del.run(hexOf(k), String(version)); }
     },
   };
 }

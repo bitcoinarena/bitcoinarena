@@ -5062,6 +5062,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE RELEASE THIS NODE RUNS (kanban #674): the release's VERSION and COMMIT files (tools/release/build-release.sh writes them at its
   // root), read once; a node run from a checkout has neither
   let releaseHereKept = null;
+  const stageAsked = new Map();   // release -> { atMs, body }: the last decision, answered again for 60 s (kanban #1377)
   let stageBook = null;   // this seat's clock per fellow guardian for a staged update (update-stage.js, kanban #1169)
   const SEAT_STARTED_AT_MS = Date.now();   // since when this seat runs the release it runs (GET /release, kanban #1093 part 3)
   const releaseHere = () => {
@@ -7407,6 +7408,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const version = String(url.searchParams.get('version') || '').trim();
         const answer = (body) => { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
         if (!version) return text(res, 400, 'the stage is asked for a release: ?version=');
+        // A RELEASE NAME, AND ONE DECISION PER RELEASE A MINUTE (kanban #1377): an outsider's junk version names no release, and each ask would cost a
+        // signed GET /release at every fellow
+        if (!/^\d{4}\.\d{1,4}\.\d{1,4}(\.\d{1,4})?$/.test(version)) return text(res, 400, 'that is not a release name (2026.<minor>.<patch>[.<n>])');
+        { const c = stageAsked.get(version); if (c && Date.now() - c.atMs < 60000) return answer(c.body); }
         const own = ownGuardianSeat();
         if (!own) return answer({ go: true, why: 'this node guards no federation: nothing to stage' });
         const fed = reserveGuardians()[own.federation];
@@ -7419,9 +7424,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         for (const a of reads) if (a && typeof a.node === 'string' && answers.has(a.node.toLowerCase())) answers.set(a.node.toLowerCase(), a);
         if (!stageBook) stageBook = createStageBook(round.db);
         const d = stageDecision({ version, self: round.pubkey, members: fed.members, answers, nonce, verify: schnorrVerify, seen: stageBook.read(fed.members.map(toHex)) });
-        stageBook.write(d.rows);
+        stageBook.write(d.rows, version);
         const { fellows, rows, ...said } = d;
-        return answer({ federation: own.federation, members: fed.members.length, answered: reads.filter(Boolean).length, fellows: Object.fromEntries(fellows), ...said });
+        const body = { federation: own.federation, members: fed.members.length, answered: reads.filter(Boolean).length, fellows: Object.fromEntries(fellows), ...said };
+        stageAsked.set(version, { atMs: Date.now(), body });
+        if (stageAsked.size > 16) stageAsked.delete(stageAsked.keys().next().value);
+        return answer(body);
       }
       if (req.method === 'GET' && url.pathname === '/guardian') {
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });

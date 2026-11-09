@@ -110,3 +110,23 @@ test('#1169 fellowStep: one transition per reading', () => {
   assert.deepEqual(fellowStep({ prev: { version: V, sinceMs: NOW - STAGE_HEALTHY_MS }, reading: fresh, version: V, nowMs: NOW }).state, FELLOW.TRIAL, 'restarted a minute ago: on trial');
   assert.deepEqual(fellowStep({ prev: { version: OLD, sinceMs: NOW - STAGE_HEALTHY_MS }, reading: proven, version: V, nowMs: NOW }).row, { version: V, sinceMs: NOW }, 'a row of another release does not count');
 });
+
+// kanban #1377 (audit 2 #1204 INSTALLER-DOORS-8): an ask naming another release (anyone's GET /update-stage?version=x) never resets a fellow's hour on the real one
+test('#1377 a junk version asked between two asks for V leaves A and B\'s healthy hour on V standing', () => {
+  const db = new DatabaseSync(':memory:');
+  const book = stage.createStageBook(db);
+  const m = { [SEVEN[0]]: fresh, [SEVEN[1]]: fresh, ...Object.fromEntries(SEVEN.slice(2).map((k) => [k, old])) };
+  const self = SEVEN[2];
+  // t0: A and B seen healthy on V for the first time
+  const first = stageDecision({ version: V, members: SEVEN, nonce: NONCE, verify, nowMs: NOW, self, answers: answersOf(m), seen: book.read(SEVEN) });
+  book.write(first.rows, V);
+  // an outsider asks this seat about release 'x': every fellow answers V, so none is on x
+  const junk = stageDecision({ version: '2026.9.9', members: SEVEN, nonce: NONCE, verify, nowMs: NOW + 60_000, self, answers: answersOf(m), seen: book.read(SEVEN) });
+  book.write(junk.rows, '2026.9.9');
+  // an hour later the updater asks for V: A and B are proven, so C may go
+  const later = stageDecision({ version: V, members: SEVEN, nonce: NONCE, verify, nowMs: NOW + STAGE_HEALTHY_MS + 1000, self, answers: answersOf(m), seen: book.read(SEVEN) });
+  console.log(`#1377 after the junk ask: A ${later.fellows.get(SEVEN[0])}, B ${later.fellows.get(SEVEN[1])}, go ${later.go}`);
+  assert.equal(later.fellows.get(SEVEN[0]), stage.FELLOW.PROVEN);
+  assert.equal(later.fellows.get(SEVEN[1]), stage.FELLOW.PROVEN);
+  assert.equal(later.go, true);
+});
