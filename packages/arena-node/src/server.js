@@ -47,7 +47,7 @@ import { signGatewaySeating, standingSeating, seatingEpochAt, paidSeatsOf, prove
 import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } from '../../arena-protocol/src/liquidity-seating.js';
 import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
-import { capacityBandPoint, bondLockPoint } from '../../arena-protocol/src/federation-record.js';
+import { capacityBandPoint, bondLockPoint, opensWith } from '../../arena-protocol/src/federation-record.js';
 import { createReserveAlarms, alarmRefusal } from './reserve-alarms.js';
 import { createReserveAudit } from './reserve-audit.js';
 import { createReserveSpendWatch, spendWatchReads } from './reserve-spend-watch.js';
@@ -12301,6 +12301,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         });
         const v = capacityView({ federations: feds, bondMinSats: bondMin, pegInMinSats: pegInMin, was: capacityWas });
         for (const r of v.federations) capacityWas[r.federation] = r.band;
+        // THE OPEN CONDITION AS A WARNING ON A TEST NETWORK (§23A.3a RULED 2026-11-08, kanban #1366 (b) / #1322): 2 x peg_in_min <= exposure_cap / 4 is a
+        // mainnet rule - there a founding that fails it is refused; here the health and owner pages say which federation would not open on mainnet
+        { const net = chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null;
+          if (net && net !== 'mainnet') {
+            const pegMin = (GATEWAY_MINIMUMS[net] || {}).pegInSats || pegInMin;
+            for (const r of v.federations) { const f = feds.find((x) => x.federation === r.federation); const o = f ? opensWith({ exposureCapSats: BigInt(f.exposureCapSats || 0), pegInMinSats: pegMin }) : { ok: true };
+              if (!o.ok) r.opensWarning = `On mainnet this federation would not open: its two gateways' peg-ins (2 × ${pegMin.toLocaleString('en-US')} sat) are more than a quarter of what its bonds cover (${(BigInt(f.exposureCapSats || 0) / 4n).toLocaleString('en-US')} sat). On ${net} it opens anyway.`; }
+          } }
         // ?node=<hex> (or me: this seat's own key): the plea to that node (capacity.js capacityPlea) - the dashboard's and owner page's warning
         const asked = url.searchParams.get('node');
         const pleaFor = asked === 'me' ? toHex(round.pubkey) : (asked && /^[0-9a-f]{64}$/i.test(asked) ? asked.toLowerCase() : null);

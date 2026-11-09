@@ -104,9 +104,13 @@ export class CapacityPlea extends React.Component {
   render() {
     const c = this.props.capacity;
     const p = c && c.plea && !(c.mine || []).length ? c.plea : null;
-    if (!p) return null;
-    return (
+    // THE OPEN CONDITION ON A TEST NETWORK (§23A.3a, kanban #1366 (b) / #1322): a federation this node guards that would not open on mainnet
+    const guarded = new Set(((c && c.mine) || []).map((m) => m.federation).concat(p && p.federation ? [p.federation] : []));
+    const opens = ((c && c.federations) || []).filter((f) => f.opensWarning && (!guarded.size || guarded.has(f.federation)));
+    const warnCard = opens.length ? <div className="card"><h3>Would not open on mainnet</h3>{opens.map((f) => <p key={f.federation} className="warnline">{f.opensWarning}</p>)}</div> : null;
+    if (!p) return warnCard;
+    return (<>{warnCard}
       <div className="card"><h3>A federation you guard is filling up</h3><p className="warnline">{p.says}</p>
-        {p.addSats ? <p className="sub">Optional. A bigger bond lets this federation take more deposits and earns you a bigger share. Add to your bond below.</p> : null}</div>);
+        {p.addSats ? <p className="sub">Optional. A bigger bond lets this federation take more deposits and earns you a bigger share. Add to your bond below.</p> : null}</div></>);
   }
 }

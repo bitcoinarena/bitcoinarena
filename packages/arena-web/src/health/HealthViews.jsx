@@ -99,7 +99,9 @@ export function capacityView(cap, feds = [], fedNo = () => null) {
     const below = f.band !== 'CALM' && f.band !== 'NOT_OPEN' && (f.guardiansBelowTarget || []).length
       ? `${f.guardiansBelowTarget.length} of ${f.guardians} guardians below the bond B* = ${sat(f.targetBondSats)} sat - increase your bond by ${[...new Set(f.guardiansBelowTarget.map((g) => sat(g.addSats)))].join(' / ')} sat (Add to bond).` : null;
     const gw = f.band !== 'CALM' && f.band !== 'NOT_OPEN' && (f.gatewaysBelowTarget || []).length ? `${f.gatewaysBelowTarget.length} gateway(s) below the peg-in P* = ${sat(f.targetPegInSats)} sat.` : null;
-    return { key: f.federation, name: nm(f.federation), band: f.band === 'NOT_OPEN' ? f.status : f.band, status: f.band === 'NOT_OPEN' ? null : f.status, tone, word, say, below, gw,
+    // a test network's warning that it would not open on mainnet (§23A.3a, kanban #1366 (b) / #1322)
+    const opens = f.opensWarning || null;
+    return { key: f.federation, name: nm(f.federation), band: f.band === 'NOT_OPEN' ? f.status : f.band, status: f.band === 'NOT_OPEN' ? null : f.status, tone, word, say, below, gw, opens,
       load: f.band === 'NOT_OPEN' || typeof f.load !== 'number' ? null : f.load, room: f.band === 'NOT_OPEN' ? null : `room ${sat(f.headroomSats)} sat` };
   });
   const n = cap.network || {};
@@ -118,6 +120,7 @@ export function Capacity({ view }) {
           <div className="caphead"><b>{r.name}</b><span className={`pill ${r.tone}`}>{r.band}</span>{r.status ? <span className="muted">{r.status}</span> : null}<span className="muted grow">{r.word}</span>{r.room ? <span className="muted">{r.room}</span> : null}</div>
           {r.load !== null ? <div className="loadbar"><i className={r.tone} style={{ width: `${Math.min(100, Math.round(r.load * 100))}%` }} /><span>{pct(r.load)}</span></div> : null}
           <p>{r.say}</p>
+          {r.opens ? <p className="warnline">{r.opens}</p> : null}
           {r.below ? <p className="warn">{r.below}</p> : null}
           {r.gw ? <p className="warn">{r.gw}</p> : null}
         </div>))}

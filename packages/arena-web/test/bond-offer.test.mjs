@@ -72,3 +72,14 @@ test('no bond: the answer draws nothing, not even an empty card', () => {
   const o = answer({ standing: null, capacity: { ok: true }, bond: { bond: null, oldBonds: [] } });
   assert.equal(o.html(), '');
 });
+
+test('kanban #1322 / #1366 (b): the owner page names a guarded federation that would not open on mainnet, with or without a plea', () => {
+  const A = 'aa'.repeat(32), B = 'bb'.repeat(32);
+  const feds = [{ federation: A, opensWarning: 'On mainnet this federation would not open: x. On testnet4 it opens anyway.' }, { federation: B, opensWarning: 'B would not open' }];
+  // a guardian of A only: A's warning, not B's
+  const h = renderToStaticMarkup(React.createElement(CapacityPlea, { capacity: { ok: true, federations: feds, mine: [{ federation: A }] } }));
+  assert.match(h, /<h3>Would not open on mainnet<\/h3><p class="warnline">On mainnet this federation would not open: x\. On testnet4 it opens anyway\.<\/p>/);
+  assert.ok(!h.includes('B would not open'));
+  // nothing to warn of: nothing drawn
+  assert.equal(renderToStaticMarkup(React.createElement(CapacityPlea, { capacity: { ok: true, federations: [{ federation: A }] } })), '');
+});

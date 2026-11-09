@@ -129,3 +129,11 @@ test('apps: the newest version, and every version\'s earnings under the app\'s n
   const rows = appsView(games, nodes);
   assert.deepEqual(rows.map((a) => [a.title, a.newest, a.total, a.month]), [['Bitcoin Up or Down', 19, 10, 4], ['x', null, 9, 0], ['Tick Tock', 5, 0, 0]]);
 });
+
+test('kanban #1322 / #1366 (b): a test network\'s federation that would not open on mainnet says so on its card; one that would says nothing', () => {
+  const warn = 'On mainnet this federation would not open: its two gateways\' peg-ins (2 × 50,000 sat) are more than a quarter of what its bonds cover (25,000 sat). On testnet4 it opens anyway.';
+  const v = capacityView({ federations: [{ federation: A, band: 'CALM', status: 'OPEN', load: 0.1, headroomSats: 90000, opensWarning: warn }, { federation: B, band: 'CALM', status: 'OPEN', load: 0.1, headroomSats: 90000 }], network: {} }, [], fedNo);
+  const h = renderToStaticMarkup(React.createElement(Capacity, { view: v }));
+  assert.equal((h.match(/class="warnline"/g) || []).length, 1);
+  assert.ok(h.includes('<p class="warnline">On mainnet this federation would not open: its two gateways&#x27; peg-ins (2 × 50,000 sat) are more than a quarter of what its bonds cover (25,000 sat). On testnet4 it opens anyway.</p>'), h);
+});
