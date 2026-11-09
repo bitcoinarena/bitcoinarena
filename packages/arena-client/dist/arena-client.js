@@ -34718,6 +34718,10 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
   // ONE READ OF A ROLE'S SEATING. `every`: wait for every seat, not for a majority and the grace.
   const askSeating = async (role, every = false) => {
     let spoke = false; const refused = [];
+    // A CERTIFICATE OF ANOTHER ROUND (kanban #1389, Daniel's playtest 2026-11-09 ~11:05Z, UI 594: the old test host's seats, on an older tree, seated each
+    // round of an RPS table on its own and answered that round's certificate, where the table's first round seats it): no lie about this round's
+    // seating, so it does not refuse the round when a checked certificate stands - it is said in the console; with none standing it still counts
+    const other = [];
     let found = null;
     // EVERY SEAT ASKED AT ONCE, EACH WITHIN SEATING_ASK_MS (kanban #625, measured 2026-10-24 20:07Z: asked one after the other with no
     // limit, a restarting seat held an order's committee 20 s): read in the seats' order once more than half answered and the grace passed
@@ -34744,13 +34748,14 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
           if (!anchor) break;
           continue;
         }
-        refused.push(`${u}: ${v.why}`);
+        if (/names another round/.test(String(v.why))) other.push(`${u}: ${v.why}`); else refused.push(`${u}: ${v.why}`);
       } catch { /* that seat says nothing */ }
     }
     // A CERTIFICATE THAT DID NOT CHECK IS KEPT BESIDE THE ONE THAT DID (measured 2026-10-16 on live testnet4: guardian-1 handing a
     // seating with another node seated was refused here, and guardian-2's standing certificate dropped that refusal - the lying seat
     // went unnamed); settlementSignerNodesFrom refuses the round on it
-    return { found, spoke, refused, answered: said.some(Boolean) };
+    if (found && other.length) console.warn(`[arena] #1389 ${role} seating of ${seatHex.slice(0, 8)}: ${other.length} seat(s) answered another round's certificate (an older seat): ${other.join('; ')}`);
+    return { found, spoke, refused: found ? refused : [...refused, ...other], other, answered: said.some(Boolean) };
   };
   const keepSeating = (role, s) => {
     // NO ANSWER AT ALL IS NOT "NO SEATING" (kanban #1036, the owner's Android 2026-11-02 ~17:05Z: every seat refused, and the client's list held the offline b36828fa; reproduced
