@@ -99,6 +99,11 @@ export const PAYOUT_NEXT = Object.freeze({
 export const PLAN_EXPIRY_BLOCKS = 12;
 /** A SIGNED ATTEMPT IS HANDED IN ONLY THIS MANY BLOCKS BEFORE ITS PLAN IS DUE TO EXPIRE (kanban #1229): after that the co-signers may have expired it. */
 export const SUBMIT_CUTOFF_BLOCKS = 2;
+/** NOT EXPIRED WHILE THE FEDERATION STANDS STILL (kanban #1354, audit 4 fixesA-5): a transaction handed in stays in the guardians' queue until a
+ *  session decides it, so an attempt due to expire is expired only once the federation has run this many sessions after this seat first saw it
+ *  due - and the federation's word is read again then. A stalled federation runs none: nothing expires, and no later attempt is signed while the
+ *  first may still be taken (it paid twice: attempt 1 queued at a stalled federation, attempt 2 from other inputs). */
+export const EXPIRE_AFTER_SESSIONS = 2;
 export const canMove = (from, to) => (PAYOUT_NEXT[from || 'NONE'] || []).includes(to);
 /** WHAT A PAYOUT RECORD'S SIGNATURE COVERS (kanban #1156): every field it carries, the seat that says it last. */
 const RECORD_FIELDS = ['proposal', 'planId', 'federation', 'state', 'plan', 'txid', 'preimage', 'refundTxid', 'why', 'claimTxid', 'claimMsat', 'from'];
@@ -219,8 +224,23 @@ export function reserveRowsOfNetwork(rows, networkHex, networkOfRound) {
 
 export function createReservePayouts({ db, me, curve, random, passed, guardians, reserveRows, portOf, payRequest, invoiceFor, network = 'testnet',
   keepRow = () => {}, broadcast = () => {}, log = () => {}, now = () => Date.now(), moves = () => [], leaderboards = () => [], winners: winnersBook = NO_WINNERS,
-  sign: signNode = null, heightNow = () => null, payeeFor = null }) {
+  sign: signNode = null, heightNow = () => null, payeeFor = null, sessionsOf = undefined }) {
   db.exec(RESERVE_PAYOUT_SQL);
+  // `sessionsOf(fedHex)`: { session } - the federation's session count as this seat last read it (server.js: the halts book); null when unread.
+  // Not given (the tests before #1354): no session wait. The session first read when an attempt was due, per proposal and attempt, in memory -
+  // a restart reads it again, which only waits longer.
+  const dueAtSession = new Map();
+  function sessionsPassed(pid, plan) {
+    if (sessionsOf === undefined) return { ok: true };
+    let s = null; try { s = sessionsOf(plan.federation); } catch { s = null; }
+    const n = s && Number.isInteger(s.session) ? s.session : null;
+    if (n === null) return { ok: false, why: 'the federation\'s session count is not read: an attempt is expired only after the federation ran sessions' };
+    const key = `${pid}:${attemptOf(plan)}`;
+    if (!dueAtSession.has(key)) dueAtSession.set(key, n);
+    const from = dueAtSession.get(key);
+    if (n >= from + EXPIRE_AFTER_SESSIONS) return { ok: true, from, at: n };
+    return { ok: false, why: `due to expire at session ${from}: waits until the federation ran ${EXPIRE_AFTER_SESSIONS} sessions (now ${n}) - a transaction it holds is decided first` };
+  }
   const ownPayee = payeeFor || (async (lnurl, msat) => {
     const inv = await invoiceFor(lnurl, msat);
     if (!inv || !inv.ok) return inv || refuse('no answer', 503);
@@ -572,7 +592,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         return { expired: false };
       }
     }
-    const t = transition(r.proposal, PAYOUT.PLANNED, PAYOUT.EXPIRED, { why: `no transaction ${h - Number(r.planned_at)} blocks after it was planned here (height ${r.planned_at}): its inputs are free again` }, { release: true });
+    const w = sessionsPassed(r.proposal, plan);
+    if (!w.ok) { note(r.proposal, PAYOUT.PLANNED, w.why); return { expired: false, why: w.why }; }
+    const t = transition(r.proposal, PAYOUT.PLANNED, PAYOUT.EXPIRED, { why: `no transaction ${h - Number(r.planned_at)} blocks after it was planned here (height ${r.planned_at})${w.from !== undefined ? ` and ${w.at - w.from} federation sessions after it was due` : ''}: its inputs are free again` }, { release: true });
     if (t.ok) log(`[payout] ${r.proposal.slice(0, 16)}: EXPIRED - attempt ${attemptOf(plan)} went nowhere in ${PLAN_EXPIRY_BLOCKS} blocks; its inputs are free`);
     return { expired: t.ok };
   }
@@ -1137,6 +1159,9 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
             let si = null; try { si = await port.status(outpointOf(x.outpoint)); } catch (e) { si = { error: e.message }; }
             if (!si || si.error || !si.stored) { note(pid, PAYOUT.SUBMITTING, si && si.error ? `due to expire, and the federation could not be read: ${si.error}` : `due to expire, and ${String(x.outpoint).slice(0, 16)}… is spent: waits for the record`); return refuse('due to expire with an input spent: not handed in, waits for the record', 409); }
           }
+          // NOT HANDED IN AGAIN, AND NOT EXPIRED, UNTIL THE FEDERATION RAN SESSIONS (kanban #1354): an earlier hand-in may sit in its queue
+          const w = sessionsPassed(pid, plan);
+          if (!w.ok) { note(pid, PAYOUT.SUBMITTING, `${w.why}; not handed in again`); return refuse(w.why, 503); }
           const t = transition(pid, PAYOUT.SUBMITTING, PAYOUT.EXPIRED, { submit_sig: null, why: `signed at height ${r.planned_at}, not taken, and due to expire at ${h}: not handed in` });
           if (t.ok) log(`[payout] ${pid.slice(0, 16)}: EXPIRED - attempt ${attemptOf(plan)} signed but not taken before its plan was due to expire`);
           return t.ok ? { ok: true, state: PAYOUT.EXPIRED } : t;
