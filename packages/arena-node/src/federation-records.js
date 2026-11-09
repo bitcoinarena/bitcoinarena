@@ -30,7 +30,7 @@ import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureI
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord,
-  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, highestVerified, recordStatusName, thresholdOf, loadReserveOf, statusFor } from '../../arena-protocol/src/federation-record.js';
+  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, highestVerified, recordStatusName, thresholdOf, loadReserveOf, statusFor, paysDrainShares } from '../../arena-protocol/src/federation-record.js';
 import { recordBand, bandOfRecord } from '../../arena-protocol/src/capacity.js';
 
 /** The census nodes guarding `federationId`, as the record lists them. */
@@ -1063,6 +1063,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       const out = [];
       for (const [predFid, k] of kept) {
         if (!['DRAINING', 'CRITICAL'].includes(k.status) || !k.record || toHex(k.record.successorId) !== String(fidHex).toLowerCase()) continue;
+        // A GUARDIAN-CALLED SUCCESSION THAT NAMES NO REASON PAYS NO DRAIN SHARES (§23A.6 RULED 2026-11-07, kanban #1309/#1321)
+        if (!paysDrainShares(k.record)) continue;
         if (Number.isInteger(censusHeight) && Number.isInteger(drainBlocks)) {
           const dh = this.drainingHeight(predFid);
           if (dh !== null && censusHeight >= dh + drainBlocks) continue;

@@ -131,18 +131,20 @@ test('a successor named: the seven sign DRAINING with successor_id, and the succ
   const v = verifyFederationRecord(fromHex(s.seats[0].list()[0].record), { census: s.census.entries, verify, inviteFederationId });
   assert.equal(v.ok, true, v.why);
   assert.equal(toHex(v.record.successorId), NEW);
-  assert.deepEqual(s.seats[0].predecessorGuardians(NEW).map(toHex).sort(), s.nodes.map((n) => toHex(n.pubkey)).sort(), 'all seven seated');
+  // ALL SEVEN SEATED: a succession its guardians called (§23A.6 trigger 3), naming no reason - it pays no drain shares (RULED 2026-11-07, kanban #1309/#1321)
+  assert.deepEqual(s.seats[0].predecessorGuardians(NEW), [], 'a guardian-called succession with no reason paid drain shares');
   assert.deepEqual(s.seats[0].predecessorGuardians('ef'.repeat(32)), [], 'another federation has no predecessor');
-  // DRAIN SHARES ONLY INSIDE drain_blocks (kanban #1309/#1321): a round at census height < draining_height + drain_blocks pays them, one at it no more
-  const dh = s.seats[0].drainingHeight(s.seats[0].list()[0].federation);
-  const inside = s.seats[0].predecessorGuardians(NEW, dh + 99, 100).length, at = s.seats[0].predecessorGuardians(NEW, dh + 100, 100).length;
-  console.log('  MEASURED #1321 drain shares:', JSON.stringify({ drainingHeight: dh, drainBlocks: 100, insideLast: inside, atEnd: at }));
-  assert.deepEqual([Number.isInteger(dh), inside, at], [true, 7, 0]);
 
+  // one gone: DRAINING by its lost guardian (trigger 1), its six seated paid
   const one = seven({ successor: NEW, leaving: [3] });
   const g1 = await one.seats[0].gather(FED, inviteFederationId);
   assert.equal(g1.status, 'DRAINING');
   assert.equal(one.seats[0].predecessorGuardians(NEW).length, 6, 'the one gone is not paid');
+  // DRAIN SHARES ONLY INSIDE drain_blocks (kanban #1309/#1321): a round at census height < draining_height + drain_blocks pays them, one at it no more
+  const dh = one.seats[0].drainingHeight(one.seats[0].list()[0].federation);
+  const inside = one.seats[0].predecessorGuardians(NEW, dh + 99, 100).length, at = one.seats[0].predecessorGuardians(NEW, dh + 100, 100).length;
+  console.log('  MEASURED #1321 drain shares:', JSON.stringify({ drainingHeight: dh, drainBlocks: 100, insideLast: inside, atEnd: at }));
+  assert.deepEqual([Number.isInteger(dh), inside, at], [true, 6, 0]);
 
   // two gone of seven while draining: CRITICAL (reserve 0), and the five still seated are still paid until CLOSED
   const two = seven({ successor: NEW, leaving: [3, 4] });
