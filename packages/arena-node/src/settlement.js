@@ -920,6 +920,7 @@ export class LockSettlement {
       await this.#handSignature(roundIdBytes, q, signature, m);
     }
     // THE INTENT ON DISK FIRST, WITH WHAT IT MOVES (kanban #1172), through the row's one transition function; submitted in the late loser's federation
+    { const fz = this.#frozenBeside(roundIdBytes, where, m, signature); if (fz) return fz; }
     this.keepScopedMoves(roundIdBytes, where, m);
     if (!this.#putScoped(roundIdBytes, where, { txid: m.txid, message: m.message, signature, state: SUBMITTING,
       why: 'about to submit; if this signer node dies here, ask the federation for the claimed lock' })) return refuse('this late settlement\'s row is final here: nothing is submitted again', 409);
@@ -2193,6 +2194,22 @@ export class LockSettlement {
     return { ok: true, share: pair.share };
   }
 
+  /**
+   * THE #1170 FREEZE ON THE SEAT'S OWN PASS TOO (kanban #1370, audit 2 #1204 SETTLEMENT-2): a pass reads the row once before its signing rounds, and a
+   * peer's batch over the same body may be taken meanwhile (take() above). A scope SUBMITTING or ACCEPTED on another txid stays on it: this pass's
+   * batch is kept beside it, the federation asked soon, and nothing is written over the row or submitted. Null when the pass may go on.
+   */
+  #frozenBeside(roundIdBytes, where, m, signature) {
+    if (!m.named) return null;
+    const row = this.#scopeRow(roundIdBytes, where);
+    if (!row || !(row.state === SUBMITTING || row.state === ACCEPTED) || row.txid === m.txid) return null;
+    if (where.federation || where.entry) this.keepScopedMoves(roundIdBytes, where, m);
+    else if (typeof this.round.putSettlementTxid === 'function')
+      this.round.putSettlementTxid({ roundId: roundIdBytes, txid: m.txid, message: m.message, signature, claims: m.claims.map((c) => `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`), payouts: m.plan.payouts.length });
+    if (row.state === SUBMITTING) this.confirmSoon(roundIdBytes);
+    return refuse(`this seat's row is ${row.state} on ${String(row.txid).slice(0, 16)} (a batch taken while this pass signed): its own batch ${String(m.txid).slice(0, 16)} (S ${(m.signers || []).join(',')}) is kept beside it, not submitted`, 409);
+  }
+
   /** A combined signature handed over by a peer: kept only if it verifies over what THIS signer node rebuilt. */
   async take(roundIdBytes, signature, { entry = null, federation = null, named = null, fallback = false } = {}) {
     let m = fallback ? await this.fallbackMessage(roundIdBytes) : federation ? await this.fedMessage(roundIdBytes, federation) : entry ? await this.lateMessage(roundIdBytes, entry) : await this.message(roundIdBytes);
@@ -2686,6 +2703,7 @@ export class LockSettlement {
       if (!n.ok) return n;
       let signature;
       ({ m, signature } = n);
+      { const fz = this.#frozenBeside(roundIdBytes, {}, m, signature); if (fz) return fz; }
       this.keepMoves(roundIdBytes, m);
       if (!this.#putRow(roundIdBytes, { txid: m.txid, message: m.message, signature, state: SUBMITTING,
         why: 'the fallback claim, about to submit; if this signer node dies here, ask the federation for the claimed locks' })) return refuse('this round\'s settlement row is final here: nothing is submitted again', 409);
@@ -2812,6 +2830,7 @@ export class LockSettlement {
     }
     // THE INTENT IS ON DISK BEFORE THE SUBMIT, as a hold's settle is: a signer node that
     // dies here comes back knowing it signed, and asks the federation.
+    { const fz = this.#frozenBeside(roundIdBytes, {}, m, signature); if (fz) return fz; }
     this.keepMoves(roundIdBytes, m);
     if (!this.#putRow(roundIdBytes, { txid: m.txid, message: m.message, signature, state: SUBMITTING,
       why: 'about to submit; if this signer node dies here, ask the federation for the claimed locks' })) return refuse('this round\'s settlement row is final here: nothing is submitted again', 409);
@@ -2909,6 +2928,7 @@ export class LockSettlement {
         await this.#handSignature(roundIdBytes, q, signature, m);
       }
       // THE INTENT ON DISK WITH WHAT IT MOVES, THROUGH THE ROW'S ONE TRANSITION FUNCTION (kanban #1172), then the submit
+      { const fz = this.#frozenBeside(roundIdBytes, where, m, signature); if (fz) { results.push({ federation: fid, ok: false, why: fz.why }); continue; } }
       this.keepScopedMoves(roundIdBytes, where, m);
       if (!this.#putScoped(roundIdBytes, where, { txid: m.txid, message: m.message, signature, state: SUBMITTING,
         why: 'about to submit; if this signer node dies here, ask the federation for the claimed locks' })) { results.push({ federation: fid, ok: false, why: 'this federation\'s row is final here: nothing is submitted again' }); continue; }
