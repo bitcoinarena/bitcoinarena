@@ -12,7 +12,8 @@
 import { checkGatewayClaim, pegInOutpointsOf, pegInItem, pegInAgeStands } from '../../arena-protocol/src/gateway-claim.js';
 import { seatingRulesActive } from '../../arena-protocol/src/gateway-seating.js';
 import { seatingRulesEpochOf, pegInMaxAgeOf } from '../../arena-protocol/src/constants.js';
-import { seatGateways, GATEWAY_EPOCH_BLOCKS, GATEWAY_SEATS, GATEWAY_MINIMUMS } from '../../arena-protocol/src/gateway-seats.js';
+import { seatGateways, feesOfRoutingInfo, GATEWAY_EPOCH_BLOCKS, GATEWAY_SEATS, GATEWAY_MINIMUMS } from '../../arena-protocol/src/gateway-seats.js';
+import { GATEWAY_FEE_MAX_REFERENCE } from '../../arena-protocol/src/federation-record.js';
 import { pegInPressure } from '../../arena-protocol/src/capacity.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { nodeBondOf } from '../../arena-protocol/src/census.js';
@@ -83,14 +84,14 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
   let loaded = false;
   const stateOut = () => ({ cursor, seatedBy: Object.fromEntries(seatedBy), volumes: Object.fromEntries([...volumes].map(([e, m]) => [e, Object.fromEntries([...m].map(([k, v]) => [k, String(v)]))])) });
   const saveState = async (fid) => { if (keep && keep.state) { try { await keep.state.save(fid, stateOut()); } catch { /* the next probe */ } } };
-  const rowsOut = (rows) => Object.fromEntries([...rows].map(([k, r]) => [k, { probes: r.probes, up: r.up, claim: r.claim, modulePk: r.modulePk || null }]));
+  const rowsOut = (rows) => Object.fromEntries([...rows].map(([k, r]) => [k, { probes: r.probes, up: r.up, claim: r.claim, modulePk: r.modulePk || null, fees: r.fees || null }]));
   async function loadKept(fid) {
     if (loaded || !keep) return; loaded = true;
     try {
       const got = (await keep.load(fid)) || {};
       for (const [e, rows] of Object.entries(got)) {
         const m = new Map();
-        for (const [node, r] of Object.entries(rows || {})) if (r && r.claim && checkGatewayClaim(r.claim, verify).ok && r.claim.node === node) m.set(node, { probes: Number(r.probes) || 0, up: Number(r.up) || 0, claim: r.claim, ...(r.modulePk ? { modulePk: r.modulePk } : {}) });
+        for (const [node, r] of Object.entries(rows || {})) if (r && r.claim && checkGatewayClaim(r.claim, verify).ok && r.claim.node === node) m.set(node, { probes: Number(r.probes) || 0, up: Number(r.up) || 0, claim: r.claim, ...(r.modulePk ? { modulePk: r.modulePk } : {}), ...(r.fees ? { fees: r.fees } : {}) });
         if (m.size && !epochs.has(Number(e))) epochs.set(Number(e), m);
       }
     } catch { /* none kept */ }
@@ -132,7 +133,9 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
       try {
         const r = await fetcher(`${claim.gatewayUrl}routing_info`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(fid), signal: AbortSignal.timeout(timeoutMs) });
         const body = r.status === 200 ? (await r.text()).trim() : 'null';
-        if (body && body !== 'null') { row.up++; try { const k = JSON.parse(body).module_public_key; if (/^0[23][0-9a-f]{64}$/.test(k || '')) row.modulePk = k; } catch { /* no key */ } }
+        if (body && body !== 'null') { row.up++; try { const ri = JSON.parse(body), k = ri.module_public_key; if (/^0[23][0-9a-f]{64}$/.test(k || '')) row.modulePk = k;
+          // ITS PUBLISHED FEES, the newest probe's (kanban #1324, §23A.9): ranked against the federation's gateway fee cap
+          const f = feesOfRoutingInfo(ri); if (f) row.fees = f; } catch { /* no key */ } }
       } catch { /* down this probe */ }
       rows.set(node, row);
     }
@@ -181,7 +184,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
         const x = all.find((y) => toHex(y.pubkey) === node);
         return { node: Uint8Array.from(Buffer.from(node, 'hex')), operatorId: (x && x.advert && x.advert.operatorId) || node, seatedGuardian: seatedNow.has(node),
           registered: r.up > 0, volumeSats: r.modulePk ? ((volumes.get(e) || new Map()).get(r.modulePk) || 0n) / 1000n : 0n, capacitySats: BigInt(r.claim.capacitySats), inboundSats: BigInt(r.claim.inboundSats || 0), outboundSats: BigInt(r.claim.outboundSats || 0), outsideInboundSats: BigInt(r.claim.outsideInboundSats || 0), pegInSats: BigInt(r.claim.pegInSats),
-          availabilityPct: r.probes ? (100 * r.up) / r.probes : 0, bondSats: x ? nodeBondOf(all, node).bondSats : 0n, gatewayUrl: r.claim.gatewayUrl };
+          availabilityPct: r.probes ? (100 * r.up) / r.probes : 0, bondSats: x ? nodeBondOf(all, node).bondSats : 0n, gatewayUrl: r.claim.gatewayUrl, fees: r.fees || null };
       });
       // PROVED PEG-INS: each claimed outpoint that is one of the federation's own coins, counted once - an outpoint two claims name counts
       // for neither (kanban #559/#543)
@@ -222,11 +225,15 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
           reserveSats: rec.reserveSats, exposureCapSats: rec.exposureCapSats, band: rec.band || null, status: rec.status || null, pegInMinSats: (GATEWAY_MINIMUMS[network] || GATEWAY_MINIMUMS.mainnet).pegInSats, seats }) : null;
         if (p) pegInStarSats = p.targetPegInSats;
       } catch { pegInStarSats = null; }
-      const s = seatGateways({ candidates, beacon, epoch: e, incumbents: inc, network, bondMinGuardian, seats, pegInStarSats });
+      // THE FEE CAP (§23A.9 RULED 2026-11-07, kanban #1324), from the 2.0 seating rules' epoch: the record's gatewayFeeMax, else the reference
+      let feeCap = null;
+      if (aged) { let rec = null; try { rec = await pressureFor(fid); } catch { rec = null; } feeCap = (rec && rec.gatewayFeeMax) || GATEWAY_FEE_MAX_REFERENCE; }
+      const s = seatGateways({ candidates, beacon, epoch: e, incumbents: inc, network, bondMinGuardian, seats, pegInStarSats, feeCap });
       return { ok: true, s: { ...s, ...(pegInStarSats !== null ? { pegInPressure: { targetPegInSats: String(pegInStarSats) } } : {}) }, gateways: Object.fromEntries(candidates.map((c) => [toHex(c.node), { url: newestUrlOf(toHex(c.node), c.gatewayUrl), availabilityPct: Math.round(c.availabilityPct), probes: rows.get(toHex(c.node)).probes, volumeSats: String(c.volumeSats),
         inboundSats: String(c.inboundSats), outboundSats: String(c.outboundSats), outsideInboundSats: String(c.outsideInboundSats), pegInSats: String(rows.get(toHex(c.node)).claim.pegInSats || 0), lightningPubkey: rows.get(toHex(c.node)).claim.lightningPubkey, lightningAddr: rows.get(toHex(c.node)).claim.lightningAddr || '',
         // what the operator states is still on its way (peg-ins confirming, kanban #552): beside the signed claim, shown as stated
         pending: rows.get(toHex(c.node)).claim.pending || null,
+        fees: c.fees || null,
         provedPegInSats: (() => { const v = provedOf(toHex(c.node)); return v === null ? null : String(v); })(),
         ...(aged ? { heldLockSats: String(heldOf(toHex(c.node), rows.get(toHex(c.node)))) } : {}) }])) };
     };

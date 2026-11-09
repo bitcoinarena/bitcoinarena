@@ -108,3 +108,31 @@ test('gateways keep the cap (kanban #1093 part 6): a peg-in at load >= 1 is past
   const s = seat([ok(1, { pegInPastCap: 'ab:0' })]);
   assert.deepEqual([s.seated, s.belowMinimums], [[], []], 'the at-least-one rule does not seat an offender');
 });
+
+const toHexOf = (n) => toHex(k(n));
+test('kanban #1324: a gateway above the federation\'s fee cap is below the minimums - not seated while one under it stands, and unpaid as the last', async () => {
+  const { feesOfRoutingInfo } = await import('../src/gateway-seats.js');
+  const { GATEWAY_FEE_MAX_REFERENCE } = await import('../src/federation-record.js');
+  const fee = (ppm, base = 0) => ({ send: { ppm, baseMsat: base }, receive: { ppm, baseMsat: base } });
+  const cheap = { ...ok(1), fees: fee(500) }, dear = { ...ok(2), fees: fee(3000), volumeSats: 9_000_000n }, silent = { ...ok(3) };
+  const run = (candidates, feeCap) => seatGateways({ candidates, beacon, network: 'testnet4', bondMinGuardian: 50_000n, feeCap });
+  // no cap (a seating before the 2.0 rules): fees are not read - the dearer one's volume ranks it first
+  assert.deepEqual(run([cheap, dear], null).seated, [toHexOf(2), toHexOf(1)]);
+  // the reference cap (0.1 % + 10 sat): only the cheap one is eligible; the dear one and the one that publishes no fee are named, not seated
+  const r = run([cheap, dear, silent], GATEWAY_FEE_MAX_REFERENCE);
+  assert.deepEqual(r.seated, [toHexOf(1)]);
+  assert.match(r.ineligible.find((x) => x.node === toHexOf(2)).why, /^fee: its send fee 0.3 % \+ 0 sat is above the federation's cap of 0.1 % \+ 10 sat/);
+  assert.match(r.ineligible.find((x) => x.node === toHexOf(3)).why, /^fee: it publishes no send fee/);
+  // a record that allows 0.5 %: both stand
+  assert.equal(run([cheap, dear], { ppm: 5000, baseMsat: 10000 }).seated.length, 2);
+  // only the dear one: it holds the one seat a federation is never without - below the minimums, so the signed seating leaves it unpaid
+  const last = run([dear], GATEWAY_FEE_MAX_REFERENCE);
+  assert.deepEqual(last.seated, [toHexOf(2)]);
+  assert.deepEqual(last.belowMinimums, [toHexOf(2)]);
+  const { paidSeatsOf } = await import('../src/gateway-seating.js');
+  assert.deepEqual(paidSeatsOf(last), []);
+  // the LNv2 routing_info's PaymentFee read as the cap is written
+  assert.deepEqual(feesOfRoutingInfo({ send_fee_default: { base: 2000, parts_per_million: 3000 }, receive_fee: { base: 0, parts_per_million: 0 }, module_public_key: '02' + '11'.repeat(32) }),
+    { send: { ppm: 3000, baseMsat: 2000 }, receive: { ppm: 0, baseMsat: 0 } });
+  assert.equal(feesOfRoutingInfo(null), null);
+});

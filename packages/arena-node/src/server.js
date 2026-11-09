@@ -6335,7 +6335,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       outpointAt: ballot && typeof ballot.outpointAt === 'function' ? (h, o) => ballot.outpointAt(h, o) : null,
       endpointOf: (e) => addressBook.endpointOf(e),   // its announced address first (kanban #577)
       // the federation's reserve and cap from its record: under peg-in pressure the proved peg-in ranks first (§23A.3a part 2)
-      pressureFor: async (fid) => { const r = fedRecords.recordOf(fid); return r && r.record ? { reserveSats: r.record.reserveSats, exposureCapSats: r.record.exposureCapSats, ...pressureOf(r.record) } : null; },
+      pressureFor: async (fid) => { const r = fedRecords.recordOf(fid); return r && r.record ? { reserveSats: r.record.reserveSats, exposureCapSats: r.record.exposureCapSats, gatewayFeeMax: r.record.gatewayFeeMax || null, ...pressureOf(r.record) } : null; },
       // a peg-in confirmed at `height` into a federation whose record before it says load >= 1: the gateway is unseated (kanban #1093 part 6)
       pastCapAt: async (fid, height) => { const rec = fedRecords.recordAt ? fedRecords.recordAt(fid, Number(height) - 1) : null;
         return !!rec && pegInPastCap({ reserveSats: rec.reserveSats, exposureCapSats: rec.exposureCapSats, network: networkOf(rec.networkId) }); },
