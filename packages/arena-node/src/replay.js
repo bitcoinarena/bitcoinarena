@@ -135,7 +135,8 @@ function runTicksIn(core, s) {
   return Number.isInteger(core.runTicks) ? core.runTicks : s.meta.runTicks ? s.call('runTicks', { config: core.config }) : s.meta.RUN_TICKS;
 }
 
-export function replay(transcript, entry, { core, seedWord, roundRandomness, marks = [], pictures = [] } = {}) {
+// `hashTicks` [tick]: the run's state hash at each, clamped to the run - min(t, its last tick) (kanban #1383, an AUDIT's tick hash)
+export function replay(transcript, entry, { core, seedWord, roundRandomness, marks = [], pictures = [], hashTicks = [] } = {}) {
   const box = sandboxOf(core);
   if (!box.ok) return { ok: false, why: box.why };
   const s = box.s;
@@ -204,7 +205,7 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
       seedWord, config: core.config, runTicks: runTicksForEntry(start, runTicks), start, ...(unl.unlocks.length ? { items: unl.unlocks } : {}), slot: slotOf(entry, core),
       words: ticks.map((t) => t.words),
       events: { liquidations: transcript.liquidations, loads: transcript.loads, samples: transcript.samples, tapes: transcript.tapes },
-      marks: marks.map((m) => [m.tick, hex(m.stateHash)]), pictures,
+      marks: marks.map((m) => [m.tick, hex(m.stateHash)]), pictures, ...(hashTicks.length ? { hashAt: hashTicks } : {}),
     });
   } catch (e) { return { ok: false, why: e.message }; }
   const taken = new Map(ran.taken.map((p) => [p.tick, p]));
@@ -232,6 +233,9 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
     unchecked: marks.length - checked,
     divergedAt,
     agrees: divergedAt === null,
+    // the state at each tick asked, clamped to the run: [{ asked, tick, stateHash }] (kanban #1383)
+    ...(hashTicks.length ? { hashes: hashTicks.map((asked) => { const t = Math.max(start, Math.min(Number(asked), Number(ran.last))); const h = (ran.hashes || []).find((x) => x[0] === t);
+      return { asked, tick: t, stateHash: h ? h[1] : null }; }) } : {}),
   };
 }
 
