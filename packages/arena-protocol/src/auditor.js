@@ -106,6 +106,24 @@ export function auditResultsHash(results) {
  * t = int(beta[0..8]) mod T_run, moved one tick on (mod T_run) when it lands on a checkpoint tick.
  */
 export const AUDIT_TICK_VERSION = 28;
+/**
+ * THE AUDIT'S TICK HASH (§13A.1 RULED 2026-11-09, kanban #1383): tagged_hash("ARENA/v1/AuditTick", t || for each entry in entry-id order:
+ * entry_id || H(its run's state at tick min(t, its last tick))). `entries` [{ entryId (32 bytes), stateHash (32 bytes, or null for an entry with
+ * no run: 32 zero bytes) }]. One hash, every run replayed - the AUDIT vouches for every entry.
+ */
+export const AUDIT_TICK_TAG = 'ARENA/v1/AuditTick';
+export function auditTickHash({ t, entries }) {
+  if (!Number.isInteger(t) || t < 0 || t > 0xffffffff) throw new Error('a tick is a u32');
+  const rows = (entries || []).map((e) => {
+    if (!is32Audit(e.entryId)) throw new Error('an entry id is 32 bytes');
+    if (e.stateHash !== null && e.stateHash !== undefined && !is32Audit(e.stateHash)) throw new Error('a state hash is 32 bytes');
+    return { id: e.entryId, h: e.stateHash || new Uint8Array(32) };
+  }).sort((a, b) => (toHex(a.id) < toHex(b.id) ? -1 : toHex(a.id) > toHex(b.id) ? 1 : 0));
+  const w = new Writer();
+  w.u32(t);
+  for (const r of rows) { w.bytes32(r.id); w.bytes32(r.h); }
+  return taggedHash(AUDIT_TICK_TAG, w.finish());
+}
 export function auditTick({ beta, runTicks, checkpointEvery = 0 }) {
   if (!(beta instanceof Uint8Array) || beta.length < 8) throw new Error('a VRF output of at least 8 bytes');
   const n = BigInt(runTicks); if (n <= 0n) throw new Error('a run has ticks');

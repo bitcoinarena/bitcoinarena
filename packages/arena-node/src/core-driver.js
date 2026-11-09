@@ -40,7 +40,8 @@ function meta() {
 const startOptions = (runTicks, items, slot) => ({ runTicks, ...(Array.isArray(items) && items.length ? { items } : {}), ...(Number.isInteger(slot) ? { slot } : {}) });
 
 /** REPLAY ONE RUN: the loop replay.js describes, here and nowhere else. The node checked the transcript before. */
-function replay({ seedWord, config, runTicks, items, slot, start, words, events: ev, marks, pictures }) {
+// `hashAt` [tick]: the state hash at each, clamped to the run (kanban #1383: an AUDIT's tick hash takes the state at min(t, the run's last tick))
+function replay({ seedWord, config, runTicks, items, slot, start, words, events: ev, marks, pictures, hashAt = [] }) {
   const want = new Map(marks);
   const wanted = new Set(pictures);
   const taken = [];
@@ -50,11 +51,14 @@ function replay({ seedWord, config, runTicks, items, slot, start, words, events:
   let divergedAt = null;
   const atStart = want.get(start);
   if (atStart !== undefined) { checked++; if (A.stateHash(st) !== atStart) divergedAt = start; }
+  const last = start + words.length, hashWant = new Set((hashAt || []).map((t) => Math.max(start, Math.min(Number(t), last)))), hashes = [];
+  if (hashWant.has(start)) hashes.push([start, A.stateHash(st)]);
   for (let i = 0; i < words.length; i++) {
     const tick = start + i;
     events.before(st, tick);
     A.step(st, words[i]);
     if (wanted.has(tick) && typeof A.picture === 'function') taken.push({ tick, ...A.picture(st) });
+    if (hashWant.has(tick + 1)) hashes.push([tick + 1, A.stateHash(st)]);
     const at = want.get(tick + 1);
     if (at !== undefined) {
       checked++;
@@ -62,7 +66,7 @@ function replay({ seedWord, config, runTicks, items, slot, start, words, events:
     }
   }
   const ran = A.result(st);
-  return { outcome: ran.outcome, score: ran.score, heat: ran.heat, stateHash: A.stateHash(st), taken, count: events.count, checked, divergedAt };
+  return { outcome: ran.outcome, score: ran.score, heat: ran.heat, stateHash: A.stateHash(st), taken, count: events.count, checked, divergedAt, hashes, last };
 }
 
 /** THE WARM GHOST: a run kept here and stepped forward a slice at a time; the node holds only its number. */
