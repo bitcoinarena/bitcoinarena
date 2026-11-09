@@ -2056,6 +2056,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     log: (l) => console.log(l) }) : null;
   const reservePayouts = round.db ? createReservePayouts({ db: round.db, me: toHex(round.pubkey), curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
     leaderboards: leaderboardsDue, winners: winnersBook,
+    // an attempt expires only after its federation ran sessions (kanban #1354): the session count the halts book reads, null before it is read
+    sessionsOf: (fid) => (halts ? halts.seen(String(fid).toLowerCase()) : null),
     network: payoutNet, payRequest: lnurlAsk.payRequest, invoiceFor: lnurlAsk.invoiceFor, log: (l) => console.log(l),
     // THE PAYMENTS A PASSED VOTE ALLOWS NOW (§27A.9.5): its tranches past the delay whose re-count still passes (rule 5), each within the
     // caps (rule 4): the proposal at most 10 % of the reserves, the window's payments at most 25 % of what the reserves held at its start
