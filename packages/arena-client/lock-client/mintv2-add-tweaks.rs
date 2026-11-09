@@ -3,6 +3,12 @@
 // above runs on the page's one wasm thread, about one tweak a second, and a lock takes 7-22. The page grinds more in Web Workers, on every
 // core, and hands them in here. Each one is checked against this wallet's filter exactly as the grinder's own (check_tweak), so a
 // tweak from outside is never one the recovery scan would not find; one that does not pass is dropped, and the queue's bound holds.
+/// Set once a page's workers handed tweaks in: from then on the grinder below pauses while its queue holds BLWP_FED_FLOOR, so it does not
+/// take the page's one thread from what the workers already do (kanban #1391: 1.8-3.6 s of every minute of an RPS page, profiled on stage UI 604).
+/// Under the floor it grinds as before, so a wallet the workers stopped feeding is never left waiting.
+pub static BLWP_FED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub const BLWP_FED_FLOOR: usize = 32;
+
 impl MintClientModule {
     /// The 32 bytes a tweak is checked against: SHA-256(tweak || filter) starting with two zero bytes.
     pub fn blwp_tweak_filter(&self) -> [u8; 32] {
@@ -17,6 +23,9 @@ impl MintClientModule {
             if issuance::check_tweak(*t, filter) && self.blwp_tweak_sender.try_send(*t).is_ok() {
                 taken += 1;
             }
+        }
+        if taken > 0 {
+            BLWP_FED.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         taken
     }
