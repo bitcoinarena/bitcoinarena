@@ -5092,6 +5092,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   round.db.exec('CREATE TABLE IF NOT EXISTS expected_grids (series TEXT PRIMARY KEY, body TEXT NOT NULL, last_close_ms INTEGER NOT NULL)');
   const announced = new Map();
   try { for (const r of round.db.prepare('SELECT series, body, last_close_ms FROM expected_grids WHERE last_close_ms > ?').all(Date.now())) announced.set(r.series, JSON.parse(r.body)); } catch { /* none kept */ }
+  const EXPECTED_AHEAD_MS = 96 * 3600000;   // kanban #1378: measured 2026-11-09 on live seats, honest grids close at most 42 h ahead
   function announceGrid(line, txHex) {
     let t; try { t = parseSeriesLine(String(line)); } catch (e) { return { ok: false, code: 400, why: `that is not a series line: ${e.message}` }; }
     if (!isGridSeries(t)) return { ok: false, code: 400, why: 'only a grid series is announced here' };
@@ -5106,6 +5107,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const lastClose = Number(t.entryCloseMs + BigInt(count - 1) * period);
     if (lastClose < Date.now()) return { ok: false, code: 410, why: 'that grid\'s last round has closed' };
     const game = [...hosted.values()].find((g) => toHex(g.gameId) === toHex(t.gameId));
+    // WHAT AN OPEN DOOR KEEPS (kanban #1378, audit 2 #1204 INSTALLER-DOORS-13: anyone could post any number of grids of any game closing years ahead,
+    // kept for good, and each GET /pending asked the mempool once per grid): a game this seat hosts, and a last round within EXPECTED_AHEAD_MS. No count
+    // cap: refusing past one would let fake grids of a hosted game crowd out the honest ones; bounding the count needs the chain's word (open on #1378)
+    if (!game) return { ok: false, code: 404, why: 'this seat does not host that grid\'s game' };
+    if (lastClose > Date.now() + EXPECTED_AHEAD_MS) return { ok: false, code: 409, why: `that grid's last round closes more than ${EXPECTED_AHEAD_MS / 3600000} h from now` };
     const e = { game: game ? String(game.name) : toHex(t.gameId).slice(0, 16), gameId: toHex(t.gameId), series: id,
       firstWindowMs: Number(t.entryCloseMs - period), firstCloseMs: Number(t.entryCloseMs), lastCloseMs: lastClose, slots: count,
       committeeTimeMs: Number(t.committeeTimeMs), federation: t.federationId ? toHex(t.federationId) : '',
