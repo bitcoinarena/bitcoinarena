@@ -19,3 +19,17 @@ test('games= lists only the named games\' rounds; unnamed or malformed, every ro
     assert.ok((await ids('?next=8&games=nothex')).includes(rid), 'nothing well-formed named: every game');
   } finally { await w.close(); }
 });
+
+test('compact=1 says a drawn committee as drawn: true and keeps both committees; without it the drawn keys as before', async () => {
+  const w = await lockRound();
+  try {
+    const d = w.a; d.round.now = () => Number(w.c.committeeTimeMs) + 1;
+    const row = async (q) => (await (await fetch(`http://127.0.0.1:${d.port}/rounds${q}`)).json()).rounds.find((r) => r.id === toHex(w.rid));
+    const full = await row('?next=8'), compact = await row('?next=8&compact=1');
+    assert.ok(full.committee.drawn, 'drawn');   // the keys where reserve seats seat ({ game, settlement }), else true
+    assert.equal(compact.committee.drawn, true, 'compact: drawn, without the keys');
+    assert.deepEqual(compact.committee.game, full.committee.game); assert.deepEqual(compact.committee.settlement, full.committee.settlement);
+    assert.equal(compact.sig, full.sig, 'the signed facts are the same');
+    assert.deepEqual((await row('?next=8')).committee.drawn, full.committee.drawn, 'the kept committee was not changed by the compact answer');
+  } finally { await w.close(); }
+});
