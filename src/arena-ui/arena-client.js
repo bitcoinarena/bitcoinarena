@@ -6934,6 +6934,20 @@ function reaffirmedBonds(view, entries, { atHeight, networkId, verify } = {}) {
   return found;
 }
 
+/**
+ * FOLLOWING A SUCCESSOR NETWORK (§27A.8.5 RULED 2026-11-07, kanban #1336): "A client MUST ask (never follow automatically) when the
+ * certificate's re-affirmed weight is under 66 % of the ancestor census, a figure that is on chain". `reaffirmedSats` the bonded weight
+ * whose re-affirmations the certificate counts, `ancestorSats` the ancestor census's whole weight (both read from the chain).
+ * Answers { ask, bps }: ask true below 6600 bps, and whenever either figure is unreadable - a client never follows on a guess.
+ */
+const SUCCESSOR_FOLLOW_BPS = 6600;
+function successorNeedsAsking({ reaffirmedSats, ancestorSats }) {
+  let r, a; try { r = BigInt(reaffirmedSats); a = BigInt(ancestorSats); } catch { return { ask: true, bps: null, why: 'the weights are not read' }; }
+  if (a <= 0n || r < 0n) return { ask: true, bps: null, why: 'no ancestor weight' };
+  const bps = Number((r * 10000n) / a);
+  return bps < SUCCESSOR_FOLLOW_BPS ? { ask: true, bps, why: `only ${(bps / 100).toFixed(2)} % of the ancestor census re-affirmed: under 66 %` } : { ask: false, bps };
+}
+
 // ---- arena-protocol/src/protocol-version.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -11868,6 +11882,32 @@ const KNOWN_GOOD_GAMES = Object.freeze({
   '147fad8e7a8ff4d4c20c7043a4ad6c2b8f7a00a4c98feccc289122b29d586f42': Object.freeze({
     name: 'rock-paper-scissors',
     //: manifest version 7, parent e3e5752c - version 6 in every term but its client: one countdown while a move is missing, the match's opponent kept (kanban #1361)
+    requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
+    cores: Object.freeze({
+      'f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
+  '05d00dfe326f6941900543a15c828579126934f30a37f6eb2c1195cee602ad0e': Object.freeze({
+    name: 'rock-paper-scissors',
+    //: manifest version 8, parent 147fad8e - version 7 in every term but its client: the result held from its arrival (kanban #1361)
+    requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
+    cores: Object.freeze({
+      'f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
+  '769a47545b1f2316653c3f7d2b88bd1bbdbd6a543960a7c209fc4bccf8ce6c62': Object.freeze({
+    name: 'rock-paper-scissors',
+    //: manifest version 9, parent 05d00dfe - version 8 in every term but its client: the score read from the rounds before the newest (kanban #1361)
     requiredProtocolVersion: 2,
     // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
     // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
@@ -17971,6 +18011,12 @@ function depositEnded(storage, federationId, operation, final, d) {
   if (final === DEPOSIT_STATE.CLAIMED || final === DEPOSIT_STATE.EXPIRED || final === DEPOSIT_STATE.FAILED) pendingDrop(storage, federationId, operation);
   return added;
 }
+/** THE WELCOME THAT CAME AS E-CASH (kanban #1381): one deposit row per e-cash string, however many pages received it. */
+function faucetEcashRowOnce(storage, federationId, { ecash, msat }) {
+  if (!storage || !fedHexOf(federationId) || !ecash) return false;
+  const id = `dep-faucet-${toHex(taggedHash('arena/faucet/ecash/v1', new TextEncoder().encode(String(ecash)))).slice(0, 32)}`;
+  return ledgerAppend(storage, federationId, { kind: 'deposit', msat: String(msat), invoiceHash: null, faucet: true }, id);
+}
 /** One history row per paid invoice, however many pages saw it claimed. */
 function depositRowOnce(storage, federationId, d) {
   if (!storage || !fedHexOf(federationId)) return false;
@@ -18087,9 +18133,12 @@ async function walletDepositOffer({ federationId, invite, seed, LockClient, stor
 // THE TOP-UP IS 300 (kanban #1088, the owner 2026-11-03: "Get 300 sats, aus dem faucet. Im deposit auch 300. Bis zu 5x faucet am Tag"): the faucet pays it up to 5 times a day per account
 const FAUCET_GRANTS = Object.freeze({ welcome: { sats: 500, invoiceMsat: 500000n }, topup: { sats: 300, invoiceMsat: 300000n } });
 const faucetAccountOf = (seed) => toHex(taggedHash('arena/faucet/account/v1', seed instanceof Uint8Array ? seed : fromHex(String(seed))));
-async function askFaucet({ url, kind, invoice, seed, fetcher = fetch } = {}) {
-  const r = await fetcher(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind, account: faucetAccountOf(seed), invoice }), signal: AbortSignal.timeout(45000) });
+// `ecash` (kanban #1381): the federation id in hex - the welcome comes as ready e-cash of that federation when the faucet holds some ({ ok, sats, ecash });
+// without an invoice and none ready, the answer is `noEcash` and nothing is given (the page then asks again with an invoice)
+async function askFaucet({ url, kind, invoice, seed, ecash, fetcher = fetch } = {}) {
+  const r = await fetcher(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind, account: faucetAccountOf(seed), invoice, ...(ecash ? { ecash } : {}) }), signal: AbortSignal.timeout(45000) });
   const j = await r.json().catch(() => ({ ok: false, why: `the faucet answered ${r.status}` }));
+  if (!j.ok && j.noEcash) return j;
   if (!j.ok) throw new Error(j.why || 'the faucet gave nothing');
   return j;
 }
@@ -23890,16 +23939,38 @@ function donationSetInForce({
     }
     accepted.push(set);
   }
-  // THE SETS ITS DEVELOPERS APPROVED (§27A.4.1): checked by donation-vote.js approvedDonationSets against the
-  // set each replaces - the recipients' signatures stand in for the admin key's - and ordered by serial with the rest
+  // A CHANGE NEEDS BOTH KEYS (§27A.4.1 RULED 2026-11-07, kanban #1337): "A change of the set needs the authority key and approvals by more
+  // than half of the recipients' share_bps, so the authority key alone moves nothing". The network's first set is the authority's alone;
+  // every later serial is in force only when the authority signed a set AND its recipients approved the same set (donation-vote.js
+  // approvedDonationSets: the same serial and the same recipients), from the later of the two. Either one alone is refused, by name.
+  const ballots = [];
   for (const set of approved || []) {
     if (!set || !isDonationBytes32(set.networkId) || !sameDonationBytes32(set.networkId, networkId)) continue;
     if (!Number.isInteger(set.validFrom) || set.validFrom > height) continue;
     if (!donationSetStands(set.recipients).ok) continue;
-    accepted.push(set);
+    ballots.push(set);
   }
+  // A SET WHOSE RECIPIENTS CANNOT VOTE (an LNURL set: no recipient keys) is replaced by the authority alone - nobody holds a share_bps that
+  // could approve, so the ruling's majority is over keys only: testnet4's key set (serial 3) replaced its LNURL set (serial 2) that way
+  const first = accepted.reduce((m, x) => (m === null || x.serial < m ? x.serial : m), null);
+  const listId = (r) => toHex(donationSetId(r));
+  const parentOf = (set) => accepted.filter((x) => x.serial < set.serial).reduce((m, x) => (m === null || x.serial > m.serial ? x : m), null);
+  const both = [];
+  for (const set of accepted) {
+    if (set.serial === first) { both.push(set); continue; }
+    const parent = parentOf(set);
+    if (parent && !donationSetPaysKeys(parent.recipients)) { both.push(set); continue; }
+    const b = ballots.find((x) => x.serial === set.serial && listId(x.recipients) === listId(set.recipients));
+    if (!b) { refused.push(`serial ${set.serial}: signed by the authority key alone - a change needs its recipients' approval too`); continue; }
+    const validFrom = Math.max(set.validFrom, b.validFrom);
+    if (validFrom > height) { refused.push(`serial ${set.serial} is not in force at ${height}`); continue; }
+    both.push({ ...set, validFrom, approvedBy: b.approvedBy });
+  }
+  for (const b of ballots)
+    if (!accepted.some((set) => set.serial === b.serial && listId(set.recipients) === listId(b.recipients)))
+      refused.push(`serial ${b.serial}: approved by its recipients, not signed by the authority key - a change needs both`);
 
-  const { best, contested } = bestBySerial(accepted, donationSetBodyId);
+  const { best, contested } = bestBySerial(both, donationSetBodyId);
   for (const serial of contested)
     refused.push(`two different sets are signed at serial ${serial}, so that serial is unusable`);
 
@@ -24023,7 +24094,7 @@ const donationApprovalDigest = (a) => taggedHash(TAG.donationApproval, encodeDon
  * acceptBps, denyBps, counted[], refused[] (why each object was not counted) }. A recipient counts once: its first valid
  * approval (lowest at_height) - a second one, either way, is not counted.
  */
-async function tallyDonationProposal({ proposal, approvals = [], parent, verifySecp256k1 }) {
+async function tallyDonationProposal({ proposal, approvals = [], parent, verifySecp256k1, coldCut = null }) {
   if (typeof verifySecp256k1 !== 'function') throw new Error('a tally checks signatures, and no secp256k1 verifier was injected');
   const refused = [];
   const out = (state, extra = {}) => ({ state, validFrom: null, acceptBps: 0, denyBps: 0, counted: [], refused, ...extra });
@@ -24037,6 +24108,13 @@ async function tallyDonationProposal({ proposal, approvals = [], parent, verifyS
   const pid = donationProposalId(p);
   if (!(p.signature instanceof Uint8Array) || !(await verifySecp256k1(p.signature, pid, p.proposer))) return out('refused', { why: 'the proposer\'s signature does not verify' });
 
+  // A SHARE IS CUT ONLY WITH ITS OWN SIGNATURE OR THE COLD ADMIN KEY (§27A.4.1 RULED 2026-11-07, kanban #1337): every recipient of the parent whose
+  // share the proposal lowers (or drops) must be among the accepting approvals, unless `coldCut(proposal, pid)` - the recovery key's signature over
+  // the proposal - says the cold key cut it. Until then the proposal stays open, however much share accepted it.
+  const newShare = new Map((p.recipients || []).map((r) => [r.recipientPk instanceof Uint8Array ? toHex(r.recipientPk) : '', Number(r.shareBps)]));
+  let cold = false; try { cold = typeof coldCut === 'function' && !!(await coldCut(p, donationProposalId(p))); } catch { cold = false; }
+  // (the proposer signed the proposal itself: a cut of its own share is its own signature)
+  const cut = cold ? new Set() : new Set([...shareOf].filter(([k, bps]) => k !== toHex(p.proposer) && (newShare.get(k) || 0) < bps).map(([k]) => k));
   const valid = [];
   for (const [i, a] of approvals.entries()) {
     if (!a || !sameBallotBytes(a.proposalId, pid)) { refused.push(`approval ${i} is for another proposal`); continue; }
@@ -24057,10 +24135,11 @@ async function tallyDonationProposal({ proposal, approvals = [], parent, verifyS
     if (a.accept) acceptBps += bps; else denyBps += bps;
     // A PROPOSER WHO DENIES THEIR OWN PROPOSAL WITHDRAWS IT (2026-10-22, on a proposal its proposer had denied: "This is no longer open")
     if (!a.accept && a.key === toHex(p.proposer)) return out('refused', { acceptBps, denyBps, counted, proposalId: pid, why: 'withdrawn by its proposer' });
-    if (acceptBps * 2 > DONATION_BPS_TOTAL) return out('approved', { validFrom: a.atHeight + 1, acceptBps, denyBps, counted, proposalId: pid });
+    if (acceptBps * 2 > DONATION_BPS_TOTAL && [...cut].every((k) => counted.some((c) => c.key === k && c.accept))) return out('approved', { validFrom: a.atHeight + 1, acceptBps, denyBps, counted, proposalId: pid });
     if (denyBps * 2 >= DONATION_BPS_TOTAL) return out('refused', { acceptBps, denyBps, counted, proposalId: pid, why: 'recipients holding half the parent set or more denied it' });
   }
-  return out('open', { acceptBps, denyBps, counted, proposalId: pid });
+  const waitingFor = [...cut].filter((k) => !counted.some((c) => c.key === k && c.accept));
+  return out('open', { acceptBps, denyBps, counted, proposalId: pid, ...(waitingFor.length ? { why: `${waitingFor.length} recipient(s) whose share it cuts have not approved it`, cutWaiting: waitingFor } : {}) });
 }
 
 /**
@@ -24069,7 +24148,7 @@ async function tallyDonationProposal({ proposal, approvals = [], parent, verifyS
  * admin key's and those approved before it, in serial order. Answers [{ networkId, serial, validFrom, recipients,
  * approvedBy: proposalId }] and why each other ballot is not one.
  */
-async function approvedDonationSets({ networkId, known = [], ballots = [], verifySecp256k1 }) {
+async function approvedDonationSets({ networkId, known = [], ballots = [], verifySecp256k1, coldCut = null }) {
   const sets = [];
   const refused = [];
   const all = [...known];
@@ -24080,7 +24159,7 @@ async function approvedDonationSets({ networkId, known = [], ballots = [], verif
     const parent = all.find((s) => sameBallotBytes(donationSetId(s.recipients), p.parentSetId));
     if (!parent) { refused.push(`proposal serial ${p.serial}: its parent set is not one this network holds`); continue; }
     if (!(p.serial > parent.serial)) { refused.push(`proposal serial ${p.serial}: not above its parent's serial ${parent.serial}`); continue; }
-    const t = await tallyDonationProposal({ proposal: p, approvals: b.approvals || [], parent: parent.recipients, verifySecp256k1 });
+    const t = await tallyDonationProposal({ proposal: p, approvals: b.approvals || [], parent: parent.recipients, verifySecp256k1, coldCut });
     if (t.state !== 'approved') { refused.push(`proposal serial ${p.serial}: ${t.state}${t.why ? ' - ' + t.why : ''}`); continue; }
     if (Number.isInteger(parent.validFrom) && t.validFrom <= parent.validFrom) { refused.push(`proposal serial ${p.serial}: approved before its parent was in force`); continue; }
     const set = { networkId: p.networkId, serial: p.serial, validFrom: t.validFrom, recipients: p.recipients, approvedBy: t.proposalId };
@@ -28805,12 +28884,24 @@ async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, expl
   return got;
 }
 
-async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Set() }) {
+/** How many independent providers a bond list must come from before the client pays (§25.1 RULED 2026-11-07, kanban #1312/#1333). */
+const CENSUS_PROVIDERS_TO_LOCK = 2;
+/**
+ * THE BOND LIST FROM TWO PROVIDERS, AS THEIR UNION (§25.1 RULED 2026-11-07, kanban #1312/#1333): "Omission is the attack, so the second source is
+ * normative: a client that pays takes bond lists from at least two independent providers and uses the union ... A list that one provider serves
+ * alone is enough to look, not to lock." Each provider is a distinct node (its endpoint root); the entries are joined by bond outpoint, so a bond
+ * one of them left out is back in the union - and a union that no longer matches the round's census_root is then refused by the root check.
+ * One provider alone answers { ok: false, lookOnly: true }. Not yet here: §25.1's completeness from BIP158 filters since a census checkpoint
+ * (no filter source in the browser yet).
+ */
+async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Set(), providers = CENSUS_PROVIDERS_TO_LOCK }) {
   const key = toHex(contract.censusRoot);
   if (keptCensus.has(key) && !skip.size) return { ok: true, entries: keptCensus.get(key), from: 'kept' };
-  const refused = [];
+  const refused = [], got = [], roots = new Set();
   for (const u of nodes) {
-    if (skip.has(u)) continue;
+    if (skip.has(u) || got.length >= providers) continue;
+    const root = String(baseOf(u)).toLowerCase();
+    if (roots.has(root)) continue;
     try {
       const r = await readWithOneRetry(fetcher, `${baseOf(u)}/census?round=${roundIdHex}`);
       if (!r.ok) { refused.push(`${u}: ${r.status}`); continue; }
@@ -28818,10 +28909,29 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
       if (!j || !Array.isArray(j.entries)) { refused.push(`${u}: no entries`); continue; }
       // the nodes this seat left out for their protocol version: shown, never counted
       if (Array.isArray(j.tooOld)) keptTooOld.set(key, j.tooOld.filter((x) => x && /^[0-9a-f]{64}$/.test(String(x.node))));
-      return { ok: true, entries: j.entries, from: u, refused };
+      roots.add(root); got.push({ from: u, entries: j.entries });
     } catch (e) { refused.push(`${u}: ${e.message}`); }
   }
-  return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
+  if (!got.length) return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
+  if (got.length < providers) return { ok: false, lookOnly: true, from: got[0].from, entries: got[0].entries, refused,
+    why: `only ${got.length} provider handed over the census - a bond list one provider serves alone is enough to look, not to lock (${refused.join('; ') || 'no other answered'})` };
+  return { ok: true, entries: unionOfEntries(got.map((g) => g.entries)), from: got.map((g) => g.from).join(' + '), fromNodes: got.map((g) => g.from), refused };
+}
+/**
+ * Census entries from several providers, joined by bond; the first copy of each bond is kept. A seat's GET /census entry is the bond's evidence
+ * ({ transaction, position, branch, update }), so a bond is its raw transaction there; an entry naming txid and vout is keyed by them (#1333:
+ * keyed by txid:vout alone, the 18 live entries all became "undefined:undefined" - one entry, a root that never matched).
+ */
+const bondKeyOf = (e) => (e && e.txid !== undefined && e.vout !== undefined
+  ? `o:${Array.isArray(e.txid) || e.txid instanceof Uint8Array ? toHex(Uint8Array.from(e.txid)) : String(e.txid)}:${e.vout}`
+  : `t:${typeof e?.transaction === 'string' ? e.transaction : JSON.stringify(e)}`);
+function unionOfEntries(lists) {
+  const byBond = new Map();
+  for (const list of lists) for (const e of list || []) {
+    const k = bondKeyOf(e);
+    if (!byBond.has(k)) byBond.set(k, e);
+  }
+  return [...byBond.values()];
 }
 
 /**
@@ -28873,7 +28983,8 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
       verify: curve.verify, census: skip.size ? null : keptChecked.get(toHex(contract.censusRoot)) || null });
     if (got.ok || evidence.from === 'kept' || !/^the census the seats handed over hashes to /.test(String(got.why))) break;
     censusRefused.push({ node: evidence.from, why: `its census ${String(got.why).replace(/^the census the seats handed over /, '')}` });
-    skip.add(evidence.from);
+    // each provider of a union that did not hash to the root is skipped (#1333: skipping the joined "a + b" skipped nobody, and the same pair came back forever)
+    for (const n of evidence.fromNodes || [evidence.from]) skip.add(n);
     evidence = await evidenceFor(roundIdHex, contract, nodes, { fetcher, skip });
   }
   if (!got.ok) return { ...got, censusRefused };
@@ -37026,7 +37137,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
          fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, referralOf: referralOf, referralNameFor: referralNameFor, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
-         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
+         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, faucetEcashRowOnce: faucetEcashRowOnce, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, reopenUncheckedDone: reopenUncheckedDone, releaseUntakenEntry: releaseUntakenEntry, keptLockUse: keptLockUse,
          reconcileKeptLock: reconcileKeptLock, bindLockEntry: bindLockEntry, lockRecordOf: lockRecordOf, collectState: collectState, forfeitCheck: forfeitCheck, settlementAgreement: settlementAgreement, useWalletGate: useWalletGate,
