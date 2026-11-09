@@ -5466,7 +5466,9 @@
       window.ArenaMove.open(box.querySelector('.mv-body'), { feds,
         canOf: async (id) => ARENACLIENT.moveCanMsat({ from: { federation: id, invite: inviteOf(id) }, seed, LockClient: await lockClient(), storage: vault() }),
         move: async ({ from, to, amountMsat, onStep }) => ARENACLIENT.movePlayerWallet({ from: { federation: from, invite: inviteOf(from) }, to: { federation: to, invite: inviteOf(to) },
-          seed, LockClient: await lockClient(), storage: vault(), amountMsat, gateways: window.ARENA_LEDGER_GATEWAYS || [], onState: onStep }),
+          seed, LockClient: await lockClient(), storage: vault(), amountMsat, gateways: window.ARENA_LEDGER_GATEWAYS || [], onState: onStep,
+          // each leg under its federation record's gateway fee cap (§23A.9, kanban #1324), from the verified statuses
+          feeMaxOf: (f) => { const st = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.get(String(f).toLowerCase()); return (st && st.gatewayFeeMax) || null; } }),
         onMoved: () => { paintHistory(); if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES(); else if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
     }
     window.ARENA_OPEN_MOVE = openMove;

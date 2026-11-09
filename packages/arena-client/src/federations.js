@@ -111,7 +111,9 @@ function statusOfRecord(best) {
     // THE SUCCESSION (§23A.6): the successor the guardians named (hex, or null) and this federation's own invite,
     // so a page can open the player's wallet in the successor from the successor's record
     successorId: best.record.successorId && best.record.successorId.some((x) => x) ? bytesToHex(best.record.successorId) : null,
-    invite: best.record.invite || null };
+    invite: best.record.invite || null,
+    // THE GATEWAY FEE CAP (§23A.9, kanban #1324): a swap's or a migration's leg in this federation goes only through a gateway at or under it
+    gatewayFeeMax: best.record.gatewayFeeMax || null };
 }
 
 /**
