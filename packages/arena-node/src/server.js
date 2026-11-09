@@ -6086,6 +6086,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     departureNotice: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).departureNotice,
     leavingAtMs: () => (owner ? owner.leavingAtMs() : null),
     successorOf: (fidHex) => { const d = drainingFeds.get(fidHex); return d && d.successor ? String(d.successor) : null; },
+    successionReasonOf: (fidHex) => { const d = drainingFeds.get(fidHex); return d && d.reason ? { kind: d.reason.kind, ref: d.reason.ref ? fromHex(d.reason.ref) : new Uint8Array(32) } : null; },
     // THE GATEWAYS' PROVED E-CASH (§23A.3a RULED 2026-11-07, kanban #1322): each paid seat's held lock as this seat's gateway watch counts it
     // (heldLockCounted, on the last whole epoch, from the 2.0 seating rules) - the player reserve is the reserve less their sum
     playerHeldOf: async (fidHex) => {
@@ -6835,9 +6836,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (restoreSoon.unref) restoreSoon.unref();
   const recordSoon = setTimeout(() => { fedRecords.gatherAll(inviteFedId).catch(() => {}); }, 45000);
   if (recordSoon.unref) recordSoon.unref();
-  const markDraining = (nid, oldFed, successor, sinceMs = round.now(), keep = true) => {
+  // `reason` { kind, ref hex } (kanban #1321): why the guardians called it - from the seat setting or the kept draining.json; a package names none
+  const markDraining = (nid, oldFed, successor, sinceMs = round.now(), keep = true, reason = null) => {
     if (!oldFed || oldFed === successor || drainingFeds.has(oldFed)) return;
-    drainingFeds.set(oldFed, { successor, sinceMs });
+    drainingFeds.set(oldFed, { successor, sinceMs, ...(reason ? { reason } : {}) });
     for (let i = writers.length - 1; i >= 0; i--) {
       const t = series.find((x) => toHex(seriesId(x)) === toHex(writers[i].id));
       if (!t || toHex(t.federationId) !== oldFed || !(t.stakeMsat > 0n)) continue;
@@ -6848,7 +6850,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (keep && networksDir) {
       const file = joinPath(networksDir, nid, 'draining.json');
       let all = {}; try { all = JSON.parse(readFileSync(file, 'utf8')); } catch { all = {}; }
-      all[oldFed] = { successor, sinceMs };
+      all[oldFed] = { successor, sinceMs, ...(reason ? { reason } : {}) };
       writeFileSync(file, JSON.stringify(all));
     }
     console.log(`[networks] federation ${oldFed.slice(0, 16)} is draining: its successor is ${successor.slice(0, 16)} - no new round or deposit names it`);
@@ -6937,15 +6939,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   // A DRAIN NAMED AT START (the succession regtest): ARENA_DRAINING=<old federation hex>:<successor hex>[,...] -
   // what an installed network package's draining.json says, as a seat setting
+  // and, after them, why the guardians called it (kanban #1321): `:NOMINAL_CHANGE`, or `:LISTED_UPGRADE:<the upgrade, 32 bytes hex>`
   for (const pair of String(process.env.ARENA_DRAINING || '').split(',').filter(Boolean)) {
-    const [oldFed, successor] = pair.split(':').map((x) => String(x || '').toLowerCase());
-    if (/^[0-9a-f]{64}$/.test(oldFed) && /^[0-9a-f]{64}$/.test(successor)) { markDraining(null, oldFed, successor, round.now(), false); console.log(`[networks] federation ${oldFed.slice(0, 16)} is draining into ${successor.slice(0, 16)} (ARENA_DRAINING)`); }
+    const [oldFed, successor, kind, ref] = pair.split(':').map((x) => String(x || ''));
+    const reason = kind === 'NOMINAL_CHANGE' ? { kind } : kind === 'LISTED_UPGRADE' && /^[0-9a-fA-F]{64}$/.test(ref || '') ? { kind, ref: ref.toLowerCase() } : null;
+    if (kind && !reason) console.log(`[networks] ARENA_DRAINING: "${kind}" is no succession reason (NOMINAL_CHANGE, or LISTED_UPGRADE:<64 hex>) - named without one`);
+    if (/^[0-9a-f]{64}$/i.test(oldFed) && /^[0-9a-f]{64}$/i.test(successor)) { markDraining(null, oldFed.toLowerCase(), successor.toLowerCase(), round.now(), false, reason); console.log(`[networks] federation ${oldFed.slice(0, 16)} is draining into ${successor.slice(0, 16)} (ARENA_DRAINING)`); }
   }
   // THE INSTALLED NETWORKS AT START: each checked and tried again before it is held (a package that no longer stands is not)
   if (networksDir && existsSync(networksDir)) {
     for (const id of readdirSync(networksDir).filter((x) => /^[0-9a-f]{64}$/.test(x))) {
       let pkg; try { pkg = JSON.parse(readFileSync(joinPath(networksDir, id, 'package.json'), 'utf8')); } catch (e) { console.error(`[networks] ${id.slice(0, 16)}: ${e.message}`); continue; }
-      try { for (const [fed, d] of Object.entries(JSON.parse(readFileSync(joinPath(networksDir, id, 'draining.json'), 'utf8')))) markDraining(id, fed, d.successor, d.sinceMs, false); } catch { /* none draining */ }
+      try { for (const [fed, d] of Object.entries(JSON.parse(readFileSync(joinPath(networksDir, id, 'draining.json'), 'utf8')))) markDraining(id, fed, d.successor, d.sinceMs, false, d.reason || null); } catch { /* none draining */ }
       const v = checkOnSeat(pkg);
       if (!v.ok || v.networkId !== id) { console.error(`[networks] installed network ${id.slice(0, 16)} refused: ${v.why || 'another network id'}`); continue; }
       activateNetwork(pkg, v);
