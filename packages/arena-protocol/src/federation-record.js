@@ -92,8 +92,34 @@ export function encodeFederationRecord(r) {
     if (typeof r.playerReserveSats !== 'bigint' || r.playerReserveSats < 0n || r.playerReserveSats > BigInt(r.reserveSats)) throw new Error('a player reserve is a whole number of sat, 0 to the reserve');
     w.u64(r.playerReserveSats);
   }
+  // THE SUCCESSION'S REASON (§23A.6 RULED 2026-11-07, kanban #1309/#1321): "A guardian-called succession names its reason (a federation_nominal
+  // change or a listed upgrade) or pays no drain shares" - a DRAINING record naming its successor; after the player reserve, which it needs
+  if (r.successionReason !== undefined && r.successionReason !== null) {
+    if (r.playerReserveSats === undefined || r.playerReserveSats === null) throw new Error('a succession reason follows the player reserve: name the reserve too');
+    if (nameOf(FEDERATION_STATUS, r.status) !== 'DRAINING' || !r.successorId || !r.successorId.some((x) => x)) throw new Error('a succession reason is named by a DRAINING record that names its successor');
+    const kind = SUCCESSION_REASON[r.successionReason.kind];
+    if (!kind) throw new Error(`a succession reason is one of ${Object.keys(SUCCESSION_REASON).join(', ')}`);
+    const ref = r.successionReason.ref || new Uint8Array(32);
+    if (!(ref instanceof Uint8Array) || ref.length !== 32) throw new Error('a succession reason\'s reference is 32 bytes (the listed upgrade; zeros for a nominal change)');
+    w.u8(kind); w.bytes32(ref);
+  }
   return w.finish();
 }
+
+/** WHY GUARDIANS CALLED A SUCCESSION (§23A.6 trigger 3): a change of federation_nominal by §27A, or a listed upgrade (`ref` names it). */
+export const SUCCESSION_REASON = Object.freeze({ NOMINAL_CHANGE: 1, LISTED_UPGRADE: 2 });
+/**
+ * A GUARDIAN-CALLED SUCCESSION (§23A.6 trigger 3, kanban #1321): a DRAINING record whose seated guardians alone would read OPEN - DRAINING by
+ * its guardians' decision, not by the guardians it lost (trigger 1) or a departure notice (trigger 2, the departing guardian listed gone).
+ */
+export function guardianCalled(r) {
+  if (!r || nameOf(FEDERATION_STATUS, r.status) !== 'DRAINING') return false;
+  const gone = new Set((r.gone || []).map((g) => toHex(g.peerKey)));
+  const seated = (r.guardians || []).filter((g) => !gone.has(toHex(g.peerKey))).length;
+  try { return statusFor({ nominal: r.nominal, seated: Math.min(r.nominal, seated) }).status === 'OPEN'; } catch { return false; }
+}
+/** WHETHER A DRAINING PREDECESSOR PAYS DRAIN SHARES (§23A.6 RULED 2026-11-07): a forced succession does; a guardian-called one only when it names its reason. */
+export const paysDrainShares = (r) => !guardianCalled(r) || !!(r && r.successionReason);
 
 /** THE RESERVE LOAD IS READ AGAINST (§23A.3a, kanban #1322): the players' money when the record names it, else the whole reserve (records before). */
 export const loadReserveOf = (r) => (r && r.playerReserveSats !== undefined && r.playerReserveSats !== null ? BigInt(r.playerReserveSats) : BigInt((r && r.reserveSats) ?? 0n));
@@ -135,7 +161,8 @@ export function decodeFederationRecord(bytes) {
   };
   if (r.at !== bytes.length) { const band = nameOf(CAPACITY_BAND, r.u8()); if (!band) throw new Error('not a capacity band'); out.capacityBand = band; }
   if (bytes.length - r.at >= 8) out.gatewayFeeMax = { ppm: r.u32(), baseMsat: r.u32() };
-  if (bytes.length - r.at === 8) out.playerReserveSats = r.u64();
+  if (bytes.length - r.at >= 8) out.playerReserveSats = r.u64();
+  if (bytes.length - r.at === 33) { const k = nameOf(SUCCESSION_REASON, r.u8()); if (!k) throw new Error('not a succession reason'); out.successionReason = { kind: k, ref: r.bytes32() }; }
   if (r.at !== bytes.length) throw new Error('trailing bytes after the federation record');
   encodeFederationRecord(out);                       // held to the encoder's rules
   return out;
@@ -152,7 +179,7 @@ export const federationRecordId = (r) => taggedHash(TAG.federationRecord, encode
 // each guardian row then carries its `outputs` [{ bondSats, maturity }]
 // `predecessor` { reserveSats, closed, nodeKeys: [hex] } - the federation this one succeeds, from its record (kanban #1298/#1321): while it is not CLOSED,
 // a bond both name counts once - this cap is (seated - 2f) x the smallest SHARED bond, less its reserve_old
-export function buildFederationRecord({ federationId, networkId, invite, nominal, guardians, gone = [], successorId = null, closed = false, reserveSats = 0n, height, bondLock = null, predecessor = null }) {
+export function buildFederationRecord({ federationId, networkId, invite, nominal, guardians, gone = [], successorId = null, closed = false, reserveSats = 0n, height, bondLock = null, predecessor = null, successionReason = null }) {
   const goneKeys = new Set(gone.map((g) => toHex(g.peerKey)));
   const seatedGuardians = guardians.filter((g) => !goneKeys.has(toHex(g.peerKey)));
   const band = statusFor({ nominal, seated: Math.min(nominal, seatedGuardians.length), closed });
@@ -169,6 +196,8 @@ export function buildFederationRecord({ federationId, networkId, invite, nominal
     successorId: successorId || new Uint8Array(32), gone: [...gone].sort((a, b) => cmp(a.peerKey, b.peerKey)),
     exposureCapSats: cap.ok ? successorCap({ cap, seatedGuardians, predecessor }) : 0n, reserveSats, height,
     seated: seatedGuardians.length, band,
+    // the guardians' reason for a succession they called (kanban #1321): carried for the encoder, which names it after the player reserve
+    ...(successionReason ? { successionReason } : {}),
   };
 }
 
