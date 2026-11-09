@@ -17463,6 +17463,21 @@ function paysIntoALock(round, invite, LockClient) {
 // the slowest step of a paying join - and the deposit, the lock and the withdraw use that same open client rather than
 // joining again on the same store. A join that failed is not kept.
 const openWallets = new WeakMap();
+// THE OPEN WALLETS OF EACH PHRASE (kanban #1387, audit 2 #1204 CLIENT-15): seed hex (16) -> [{ map, key }] - what forgetPhraseWallets drops
+const phraseWallets = new Map();
+/**
+ * ANOTHER PHRASE'S WALLET CLIENTS LEAVE THE CACHE WITH ITS LOCK (kanban #1387, audit 2 #1204 CLIENT-15): a client this tab opened for a kept phrase it
+ * collected or merged under that phrase's lock stayed cached after the lock went; another tab then used the phrase, and the next collect here got the
+ * old client back - its in-memory store did not see the other tab's notes (the balance read 0, merges refused). The page calls this in the finally
+ * that releases the lock; the next open of that phrase opens it afresh from its store. The client itself is not freed (a call may still hold it).
+ */
+function forgetPhraseWallets(seedHex) {
+  const k = String(seedHex || '').toLowerCase().slice(0, 16);
+  const list = phraseWallets.get(k) || [];
+  for (const { map, key } of list) map.delete(key);
+  phraseWallets.delete(k);
+  return list.length;
+}
 // THE PAGE'S GATE ON A PHRASE'S WALLETS (kanban #1164): fn(seedHex) -> a promise that resolves once this tab may open that phrase's wallets
 let walletGate = null;
 function useWalletGate(fn) { walletGate = typeof fn === 'function' ? fn : null; }
@@ -17542,6 +17557,7 @@ async function openPlayerWallet({ federationId, invite, seed, LockClient, storag
     const m = open || new Map(); if (!open) byStore.set(storage, m);
     m.set(key, joining);
     joining.catch(() => m.delete(key));
+    if (seed instanceof Uint8Array) { const ph = toHex(seed).slice(0, 16); if (!phraseWallets.has(ph)) phraseWallets.set(ph, []); phraseWallets.get(ph).push({ map: m, key }); }
   }
   return joining;
 }
@@ -37137,7 +37153,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
          fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, referralOf: referralOf, referralNameFor: referralNameFor, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
-         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, faucetEcashRowOnce: faucetEcashRowOnce, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
+         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, faucetEcashRowOnce: faucetEcashRowOnce, forgetPhraseWallets: forgetPhraseWallets, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, reopenUncheckedDone: reopenUncheckedDone, releaseUntakenEntry: releaseUntakenEntry, keptLockUse: keptLockUse,
          reconcileKeptLock: reconcileKeptLock, bindLockEntry: bindLockEntry, lockRecordOf: lockRecordOf, collectState: collectState, forfeitCheck: forfeitCheck, settlementAgreement: settlementAgreement, useWalletGate: useWalletGate,
