@@ -119,5 +119,7 @@ export function createAbsences({ verify, max = 4096, store = null, nodeOf = null
     for (const h of (had && had.emergencies) || []) { try { offerEmergency(readEmergencyHex(h)); } catch { /* not one */ } }
     loading = false;
   }
-  return { offer, proofFor, list, offerDeparture, departureFor, listDepartures, offerEmergency, emergencyFor, listEmergencies };
+  /** Whether this seat keeps a notice of node `nodeHex` for (federation, peer) - the leaver's own check that its notice is made (kanban #1379). */
+  const heldDeparture = (fidHex, peerHex, nodeHex) => notices.has(`${String(fidHex).toLowerCase()}:${String(peerHex).toLowerCase()}:${String(nodeHex).toLowerCase()}`);
+  return { offer, proofFor, list, offerDeparture, departureFor, listDepartures, heldDeparture, offerEmergency, emergencyFor, listEmergencies };
 }

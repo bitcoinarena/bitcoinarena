@@ -141,7 +141,7 @@ import { holdsNothing, guardedFederationOf, auditGuardian, createRetireBook } fr
 import { federationRecords } from './federation-records.js';
 import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departureHex, readEmergencyHex, emergencyHex } from './absences.js';
 import { emergencyDepartureStands } from '../../arena-protocol/src/emergency.js';
-import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture } from './absence-producer.js';
+import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture, owedDepartures } from './absence-producer.js';
 import { createFoundingSeat, cliSetup, execCli, fileKeySet } from './founding-seat.js';
 import { FOUNDING_WINDOW } from '../../arena-protocol/src/guardian-founding.js';
 import { createEndpointsOf, federationOfDir, configInvite } from './federation-endpoints.js';
@@ -621,6 +621,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   let seatGenesisKept;
   const seatGenesis = () => { if (givenGenesis) return givenGenesis; if (seatGenesisKept === undefined) { const n = String(chain || '').replace(/^bitcoin-/, ''); try { seatGenesisKept = genesisFor(n === 'test' ? 'testnet4' : n); } catch { seatGenesisKept = null; } } return seatGenesisKept; };
   let ownGuardianSeat = () => null;
+  let ownGuardianSeats = () => [];   // every record seating this node (kanban #1379)
+  let departuresPass = async () => [];
   const guardianWiring = { founding: false, absences: false, spentSet: false };   // which guardian wirings this seat started
   let fedRecordsSettled = false, foundingPassNow = () => {};   // the founding's first pass waits for the restored federation records (kanban #585)
   let foundingSeat = null;                     // founding-seat.js, with ARENA_FOUNDING=1            // { federation, peerKey } of the record naming this node a guardian, once records are held
@@ -4924,6 +4926,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return null;
   };
+  // EVERY FEDERATION THIS NODE GUARDS (kanban #1379, audit 2 #1204 INSTALLER-DOORS-14): its guardian and its guardian-next can sit in two records
+  ownGuardianSeats = () => {
+    const out = [];
+    for (const f of (fedRecords.list() || []).map((x) => x.federation)) {
+      const held = fedRecords.recordOf(f);
+      const g = held && held.status !== 'CLOSED' ? (held.record.guardians || []).find((x) => toHex(x.nodePubkey) === toHex(round.pubkey)) : null;
+      if (g) out.push({ federation: f, peerKey: g.peerKey });
+    }
+    return out;
+  };
+  // A LEAVING NODE'S DEPARTURE NOTICES, OWED UNTIL MADE (kanban #1379): while its owner is leaving, a notice for every federation that seats it and
+  // has none of this node's yet - made at the leave and then once a minute, so a leave asked before the records were read, or while the chain did
+  // not answer, still gets its notices, and a second record is not forgotten. A notice once made stands; staying does not take it back.
+  departuresPass = async () => {
+    if (!guardian || typeof chainTip !== 'function' || !owner || !owner.leavingAtMs()) return [];
+    const me = toHex(round.pubkey);
+    const out = await owedDepartures({ seats: ownGuardianSeats(), held: (f, p) => absences.heldDeparture(f, p, me), tip: () => chainTip(),
+      departureNotice: fedClocks.departureNotice, nodePubkey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret), offer: (d) => absences.offerDeparture(d),
+      post: async (hex) => { const posted = await Promise.all(networkSeats().map((u) => fetch(`${u}/departure`, { method: 'POST', body: hex, signal: AbortSignal.timeout(15000) })
+        .then((x) => x.ok).catch(() => false))); return { postedTo: posted.filter(Boolean).length, of: posted.length }; } });
+    for (const x of out) if (x.notice) console.log(`[owner] departure notice for ${x.federation.slice(0, 16)}: leave after ${x.leaveAfterHeight}, posted to ${x.postedTo} of ${x.of} seats`);
+    return out;
+  };
+  { const t = setInterval(() => { departuresPass().catch((e) => console.log(`[owner] departure notices: ${e.message}`)); }, 60000); if (t.unref) t.unref(); }
   // A FOUNDING BY SORTITION (§23A.2), with ARENA_FOUNDING=1: every 10 min the seat reads a trigger off the records it
   // holds (founding-seat.js), the beacon and the census at trigger_height from its chain view, and - while its own guardian waits in
   // Fedimint's setup - takes part through the guardian's own setup API (fedimint-cli, ARENA_FEDIMINT_CLI). GET/POST /founding.
@@ -6590,19 +6616,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // A GUARDIAN LEAVES BY NOTICE (§23A.5, RULED 2026-09-21 "Leaving is legitimate"): its node signs
           // (federation_id, peer, leave_after = now + departure_notice, posted_at) once, keeps it and posts it to every seat - from
           // leave_after on the record has it DEPARTED, its bond untouched. A notice once posted stands; staying does not take it back.
-          const own = guardian && typeof chainTip === 'function' ? ownGuardianSeat() : null;
-          if (own && !r.already) {
-            try {
-              const tip = Number(await chainTip());
-              const d = ownDeparture({ own, tip, departureNotice: fedClocks.departureNotice, nodePubkey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret) });
-              absences.offerDeparture(d);
-              const hex = departureHex(d);
-              const posted = await Promise.all(networkSeats().map((u) => fetch(`${u}/departure`, { method: 'POST', body: hex, signal: AbortSignal.timeout(15000) })
-                .then((x) => x.ok).catch(() => false)));
-              r.departure = { federation: own.federation, leaveAfterHeight: d.leaveAfterHeight, postedAt: tip, notice: hex, postedTo: posted.filter(Boolean).length, of: posted.length };
-              console.log(`[owner] departure notice for ${own.federation.slice(0, 16)}: leave after ${d.leaveAfterHeight}, posted to ${r.departure.postedTo} of ${posted.length} seats`);
-            } catch (e) { r.departure = { why: e.message }; }
-          }
+          // EVERY FEDERATION THAT SEATS IT, AND AGAIN UNTIL MADE (kanban #1379): a second leave asks for what is still owed, never "already done"
+          r.departures = await departuresPass();
+          if (r.departures.length === 1) r.departure = r.departures[0];
           return answer(200, r);
         }
         // INSTALL, UPDATE, REMOVE (2026-10-10: like an App Store, from the browser, no restart): each

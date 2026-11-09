@@ -11,7 +11,8 @@
 // Peer ids are mapped to the peer keys a federation record lists through the federation's own config: its
 // `broadcast_public_keys`, by peer id (federation.js: the guardian keys are the config's broadcast keys).
 import { signAbsence, signDeparture } from '../../arena-protocol/src/absence.js';
-import { fromHex } from '../../arena-protocol/src/hash.js';
+import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
+import { departureHex } from './absences.js';
 
 export function createAbsenceProducer({ federationId, peerKeyOf, ownPeerId, status, height, attester, sign, every = 144, load = () => null, save = () => {} }) {
   const lastSeen = new Map();                // peer id -> chain height at which it was last seen contributing
@@ -74,6 +75,29 @@ export async function wsAdminStatus(port, password, { timeoutMs = 10000, WebSock
  * node signs (federation_id, its peer key, leave_after = tip + departure_notice, posted_at = tip) with its node key - the
  * shortest notice that stands. `own` is { federation (hex), peerKey } of the record that names this node a guardian.
  */
+/**
+ * THE NOTICES A LEAVING NODE STILL OWES, MADE (kanban #1379, audit 2 #1204 INSTALLER-DOORS-14): one per record that seats it (`seats`
+ * [{ federation, peerKey }]) and holds none of its notices yet (`held(federation, peerHex)`). `tip()` the chain tip, `offer(d)` keeps it,
+ * `post(hex)` sends it to every seat ({ postedTo, of }). Answers one line per seat: { made: true } for one made before, or the notice made now, or why not.
+ */
+export async function owedDepartures({ seats, held, tip, departureNotice, nodePubkey, sign, offer, post }) {
+  const out = [];
+  let at = null;
+  for (const own of seats || []) {
+    if (held(own.federation, toHex(own.peerKey))) { out.push({ federation: own.federation, made: true }); continue; }
+    try {
+      if (at === null) at = Number(await tip());
+      const d = ownDeparture({ own, tip: at, departureNotice, nodePubkey, sign });
+      const k = offer(d);
+      if (!k || !k.ok) { out.push({ federation: own.federation, why: (k && k.why) || 'not kept' }); continue; }
+      const hex = departureHex(d);
+      const sent = await post(hex);
+      out.push({ federation: own.federation, leaveAfterHeight: d.leaveAfterHeight, postedAt: at, notice: hex, ...sent });
+    } catch (e) { out.push({ federation: own.federation, why: e.message }); }
+  }
+  return out;
+}
+
 export function ownDeparture({ own, tip, departureNotice, nodePubkey, sign }) {
   if (!Number.isInteger(tip) || !Number.isInteger(departureNotice)) throw new Error('a departure notice needs the chain tip and the departure_notice clock');
   return signDeparture({ federationId: fromHex(own.federation), peerKey: own.peerKey, leaveAfterHeight: tip + departureNotice, postedAt: tip, nodePubkey }, sign);
