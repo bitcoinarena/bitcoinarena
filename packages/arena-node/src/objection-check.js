@@ -62,7 +62,9 @@ export function inputsFormOf(j) {
  * Returns `{ holds, step, why, ... }` - `step` names the check that refused.
  */
 export async function checkObjectionBundle({ bundle, roundId, entryId, entry, contract, committee, signedResultId,
-  core, roundRandomness, verify, replayRun = async (form, e, options) => replay(form, e, options) }) {
+  core, roundRandomness, verify, replayRun = async (form, e, options) => replay(form, e, options), hashTicks = [] }) {
+  // `hashTicks`: the run's state at each, handed back as replayed.hashes (an auditor's tick hash, kanban #1331/#1383)
+  const ht = Array.isArray(hashTicks) && hashTicks.length ? { hashTicks } : {};
   const no = (step, why) => ({ holds: false, step, why });
   if (!(bundle instanceof Uint8Array) || !bundle.length)
     return no('bundle', 'an objection carries its transcript and receipts (13A)');
@@ -147,7 +149,7 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
   //    A run LIVE at its last tick is scored as the seats score it after the close (§15): at its last receipted mark.
   const marks = t.marks.map((m) => { const c = decodeCheckpoint(splitSigned(m).body); return { tick: c.tick, stateHash: c.stateHash }; });
   let answer;
-  try { answer = await replayRun(form, entry, { core, roundRandomness, marks }); } catch (e) { answer = { ok: false, why: e.message }; }
+  try { answer = await replayRun(form, entry, { core, roundRandomness, marks, ...ht }); } catch (e) { answer = { ok: false, why: e.message }; }
   // THE INPUTS ARE THE RUN THE MARKS RECEIPTED: every mark's state hash reproduced, none left unreached
   if (answer && answer.ok && (answer.divergedAt !== null && answer.divergedAt !== undefined))
     return no('replay', `the inputs do not reproduce the receipted checkpoint at tick ${answer.divergedAt}`);
@@ -159,7 +161,7 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
     const prefix = { ticks: form.ticks.filter((x) => x.tick < last), liquidations: cut(form.liquidations), loads: cut(form.loads),
       samples: cut(form.samples), tapes: cut(form.tapes) };
     if (prefix.ticks.length && prefix.ticks.length < form.ticks.length) {
-      try { answer = await replayRun(prefix, entry, { core, roundRandomness }); } catch (e) { answer = { ok: false, why: e.message }; }
+      try { answer = await replayRun(prefix, entry, { core, roundRandomness, ...ht }); } catch (e) { answer = { ok: false, why: e.message }; }
     }
   }
   const built = resultFrom({ answer, contract, entry, transcript: { ...t, hash: th }, entryId, nodePubkey: NOBODY, stopped: true });
@@ -168,7 +170,7 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
   const claimed = runId({ roundId: o.roundId, playerPubkey: o.playerPubkey, outcome: o.claimedOutcome, score: o.claimedScore,
     transcriptHash: o.transcriptHash, simCoreHash: contract.simCoreHash, nodePubkey: NOBODY });
   const facts = { replayedRunId: hex(replayed), claimedRunId: hex(claimed), signedRunId: hex(signedResultId),
-    replayed: { outcome: built.result.outcome, score: built.result.score }, claimed: { outcome: o.claimedOutcome, score: o.claimedScore } };
+    replayed: { outcome: built.result.outcome, score: built.result.score, ...(answer && answer.hashes ? { hashes: answer.hashes } : {}) }, claimed: { outcome: o.claimedOutcome, score: o.claimedScore } };
   if (hex(replayed) !== hex(claimed))
     return { ...no('replay', `the replay gives ${built.result.outcome} ${built.result.score}, not the claimed ${o.claimedOutcome} ${o.claimedScore}`), ...facts };
   // THE TEST FAULT, OFF BY DEFAULT (test-dissent.js dissentsOn2026-10-05): for the one named entry this
