@@ -162,7 +162,9 @@ export const UNREADABLE_MS = 30000;
 /** How long after its entry closes a round the seats still list is named among the lobby's `closed`. */
 export const CLOSED_KEPT_MS = 2n * 3600n * 1000n;
 
-export const LOBBY_CONTRACTS_PER_READ = 64;
+// 32 A READ (kanban #1391, measured on stage UI 601: with the open rounds asked first the first read made its rows, but its 64 contracts took 7-8 s in four
+// batches of 16; the next reads bring the rest, a second apart)
+export const LOBBY_CONTRACTS_PER_READ = 32;
 export const LOBBY_OTHER_CONTRACTS_PER_READ = 16;
 
 // A NODE WHOSE READ FAILED IS NOT ASKED AGAIN FOR FAILED_NODE_SKIP_MS (kanban #1133: every lobby read on the owner's iPhone asked the 7 stopped
@@ -268,7 +270,11 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
   // (the page's chosen game's version ids), that game's rounds are fetched first and every one of them, the rest of the read at most
   // LOBBY_OTHER_CONTRACTS_PER_READ; the others follow on the next reads, a second apart
   const open = [...said.keys()].filter((id) => !CONTRACTS.has(id) && !(nowMs - (UNREADABLE.get(id) ?? -Infinity) < UNREADABLE_MS))
-    .sort((a, b) => (soonest.get(a) ?? Infinity) - (soonest.get(b) ?? Infinity));
+    // A ROUND STILL TAKING ENTRIES FIRST (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; measured on live UI 600: the seats list the
+    // rounds closed in the last 2 h too, RPS 8 s apart, and the first read fetched its 64 contracts soonest first - every one already closed - so it made
+    // no row and the game said "The next round opens in a moment" until the second read, 13-14 s after the game opened): the open ones, soonest first,
+    // then the closed ones, soonest first
+    .sort((a, b) => (((soonest.get(a) ?? Infinity) <= nowMs) - ((soonest.get(b) ?? Infinity) <= nowMs)) || ((soonest.get(a) ?? Infinity) - (soonest.get(b) ?? Infinity)));
   const prefer = Array.isArray(preferGames) && preferGames.length ? new Set(preferGames.map((g) => String(g).toLowerCase())) : null;
   const wanted = prefer
     ? [...open.filter((id) => prefer.has(gameOf.get(id))), ...open.filter((id) => !prefer.has(gameOf.get(id))).slice(0, LOBBY_OTHER_CONTRACTS_PER_READ)].slice(0, LOBBY_CONTRACTS_PER_READ)
