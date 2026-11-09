@@ -4541,6 +4541,10 @@
         // EVERY SAVED PHRASE OF THIS BROWSER, each scanned with its own key and its finds kept under its own seed
         const tabHex = ARENACLIENT.toHex(tabSeed);
         const seeds = ARENACLIENT.browserSeedHexes ? ARENACLIENT.browserSeedHexes(vault(), tabHex) : [tabHex];
+        // A WALLET MADE IN THIS PAGE OWES NOTHING FROM BEFORE IT (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; profiled on live UI 604:
+        // the scan derived 33 keys for every round the signer nodes settled in 24 h - 3-5 s of the page's thread in the first minute of a new account):
+        // the only phrase of this browser, created here, is not scanned; a reload, a restored or a second phrase scans as before
+        if (window.ARENA_NEW_WALLET && seeds.length === 1 && seeds[0] === tabHex) { console.log('[arena] collect scan: a wallet made in this page - no round before it to find'); return; }
         // ONE READ OF EACH SIGNER NODE PER SCAN (2026-10-07): its /settled list is matched against every
         // phrase's keys - 7 asks on 7 signer nodes however many phrases are kept (was 7 per phrase: 49 for seven)
         const knownBySeed = new Map(seeds.map((hex) => [hex, ARENACLIENT.savedCollects(vault(), { seed: ARENACLIENT.fromHex(hex) }).map((r) => r.roundIdHex)]));

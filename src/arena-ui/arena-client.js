@@ -24578,6 +24578,17 @@ const COLLECT_NOTE = 'arena.collect.';
  * its id and name a federation. Nothing is spent. Returns the rounds worth keeping - the page
  * keeps them and looks at them as its own.
  */
+const OWED_KEYS = new Map(), OWED_KEYS_MAX = 200000;
+const owedKeyOf = (seed, id, order, curve) => {
+  const k = toHex(seed) + id + ':' + order;
+  let v = OWED_KEYS.get(k);
+  if (v === undefined) {
+    v = toHex(refundKeyOf(playerFor({ id: fromHex(id) }, { seed, curve, order }).pubkey));
+    if (OWED_KEYS.size >= OWED_KEYS_MAX) OWED_KEYS.delete(OWED_KEYS.keys().next().value);
+    OWED_KEYS.set(k, v);
+  }
+  return v;
+};
 async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [], knownBySeed = null } = {}) {
   // EVERY SAVED PHRASE AT ONCE (2026-10-07): each signer node's /settled is read once and matched against
   // every phrase's keys - 7 asks on 7 signer nodes, not 7 per phrase. One `seed` (with `known`) is the one-phrase scan as before.
@@ -24607,7 +24618,7 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
       if (skips[i].has(id)) continue;
       // EVERY ORDER'S KEY TOO: a tab's orders in a market round are keyed 0, 1, 2 ... - read up to ORDER_SCAN (32: a bot places 12 a window)
       for (let order = 0; order <= ORDER_SCAN; order++) {
-      const mine = toHex(refundKeyOf(playerFor({ id: fromHex(id) }, { seed: list[i], curve, order }).pubkey));
+      const mine = owedKeyOf(list[i], id, order, curve);
       const payout = l.payouts.has(mine); const lock = l.refunds.has(mine);
       if (!payout && !lock) continue;
       if (!contracts.has(id)) {
@@ -34669,6 +34680,13 @@ async function absenceFor(contract, nodes, { fetcher, headers, firstHeight, entr
  * agrees, why }] } or { ok: false, why }. `compare: false` skips asking the nodes' /committee.
  */
 // `anchorAt` ({ hash, height }) is for a test's own chain only: a page never passes it, and takes the network's compiled-in one.
+const SEATING_CHECKED = new Map(), SEATING_CHECKED_MAX = 5000;
+const seatingChecked = (certHex, o) => {
+  const k = [String(certHex), toHex(o.roundId), o.role, (o.drawn || []).map((x) => toHex(x.key || x)).join(','), JSON.stringify(o.slots)].join('|');
+  let v = SEATING_CHECKED.get(k);
+  if (!v) { v = verifySeating(fromHex(certHex), o); if (SEATING_CHECKED.size >= SEATING_CHECKED_MAX) SEATING_CHECKED.delete(SEATING_CHECKED.keys().next().value); SEATING_CHECKED.set(k, v); }
+  return v;
+};
 async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = fetch, least = 2, compare = true, nowMs = Date.now(),
   roles = ['game', 'settlement'], anchorAt = null, explorer = null, genesis = null } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'no node to ask for the chain and the census' };
@@ -34786,7 +34804,7 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
         const { cert, index = 0 } = JSON.parse(body);
         // A TABLE'S LATER SEATING (kanban #1020): a check-in of this table at or before this round; of those a seat hands, the newest stands
         if (anchor && index > contract.roundIndex) { refused.push(`${u}: a seating of a later round of the table`); continue; }
-        const v = verifySeating(fromHex(cert), { roundId: anchor && index > 0 ? seriesRoundIdOf(contract.seriesId, index) : seatId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
+        const v = seatingChecked(cert, { roundId: anchor && index > 0 ? seriesRoundIdOf(contract.seriesId, index) : seatId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
         if (v.ok) {
           if (!found || index > found.index) found = { seated: v.seating.seated, from: u, index };
           if (!anchor) break;
