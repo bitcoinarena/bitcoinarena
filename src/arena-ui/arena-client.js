@@ -25175,7 +25175,7 @@ function swapGatewayPairs(named = [], listedTo = [], listedFrom = [], max = SWAP
 }
 // `rows`: the history's two kinds - a join's swap, or the player's own Move (movePlayerWallet)
 async function swapForRound({ from, to, amountMsat, gateways = [], storage = null, fromFederationId = null, toFederationId = null, onState = () => {},
-  rows = ['swapped-out', 'swapped-in'], feeMax = null }) {
+  rows = ['swapped-out', 'swapped-in'], feeMax = null, feeMaxFrom = null, feeMaxTo = null }) {
   const amount = BigInt(amountMsat);
   const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
   onState({ state: 'swapping', amountMsat: amount });
@@ -25188,8 +25188,9 @@ async function swapForRound({ from, to, amountMsat, gateways = [], storage = nul
   // pair; any other end stops, as money may be on its way.
   // each leg's own federation's seated gateways first (§23A.9), then its list
   // and only through gateways at or under the federations' fee cap (§23A.9, kanban #1324): none on a leg, the swap waits and says so
-  const recvOk = await gatewaysWithinCap(to, [...gateways, ...await seatedGatewaysOf(to), ...await federationGateways(to)], feeMax);
-  const payOk = await gatewaysWithinCap(from, [...gateways, ...await seatedGatewaysOf(from), ...await federationGateways(from)], feeMax);
+  // EACH LEG UNDER ITS OWN FEDERATION'S CAP (§23A.9 "in the federation record", kanban #1324): the receiving leg the round's, the paying leg the old one's
+  const recvOk = await gatewaysWithinCap(to, [...gateways, ...await seatedGatewaysOf(to), ...await federationGateways(to)], feeMaxTo || feeMax);
+  const payOk = await gatewaysWithinCap(from, [...gateways, ...await seatedGatewaysOf(from), ...await federationGateways(from)], feeMaxFrom || feeMax);
   if (!recvOk.gateways.length || !payOk.gateways.length) {
     const why = !recvOk.gateways.length ? capWhy('of the round\'s federation', recvOk.refused) : capWhy('of the paying federation', payOk.refused);
     onState({ state: 'waiting', why });
@@ -25229,7 +25230,7 @@ async function moveCanMsat({ from, seed, LockClient, storage } = {}) {
     throw e;
   }
 }
-async function movePlayerWallet({ from, to, seed, LockClient, storage, amountMsat = null, gateways = [], onState = () => {} } = {}) {
+async function movePlayerWallet({ from, to, seed, LockClient, storage, amountMsat = null, gateways = [], onState = () => {}, feeMaxOf = () => null } = {}) {
   if (!from || !to || !from.invite || !to.invite) return { ok: false, state: 'refused', why: 'both federations need their invite' };
   if (String(from.federation).toLowerCase() === String(to.federation).toLowerCase()) return { ok: false, state: 'refused', why: 'choose two different federations' };
   const fromId = fromHex(String(from.federation)), toId = fromHex(String(to.federation));
@@ -25242,7 +25243,8 @@ async function movePlayerWallet({ from, to, seed, LockClient, storage, amountMsa
   const amount = amountMsat === null ? can : BigInt(amountMsat);
   if (amount <= 0n) return { ok: false, state: 'refused', canMsat: can, why: can <= 0n ? 'nothing to send from that federation after the fees' : 'a move is more than 0 sat' };
   if (amount > can) return { ok: false, state: 'refused', canMsat: can, why: `that federation can send ${can / 1000n} sat after the fees, less than the ${amount / 1000n} sat asked` };
-  const done = await swapForRound({ from: a, to: b, amountMsat: amount, gateways, storage, fromFederationId: fromId, toFederationId: toId, onState, rows: ['moved-out', 'moved-in'] });
+  const done = await swapForRound({ from: a, to: b, amountMsat: amount, gateways, storage, fromFederationId: fromId, toFederationId: toId, onState, rows: ['moved-out', 'moved-in'],
+    feeMaxFrom: feeMaxOf(String(from.federation).toLowerCase()), feeMaxTo: feeMaxOf(String(to.federation).toLowerCase()) });
   return { ...done, canMsat: can };
 }
 
@@ -25252,7 +25254,7 @@ async function movePlayerWallet({ from, to, seed, LockClient, storage, amountMsa
  * `needMsat`; else the shortfall quoted, `confirm(quote)` asked - the fee shown, the press the player's - and swapped.
  */
 async function swapPlayerWalletForRound({ round, toInvite, fromInvite, fromFederationId, seed, LockClient, storage, needMsat, gateways = [],
-  confirm = async () => false, onState = () => {}, openWallet = playerWallet } = {}) {
+  confirm = async () => false, onState = () => {}, openWallet = playerWallet, feeMaxOf = () => null } = {}) {
   const to = await openWallet({ round, invite: toInvite, seed, LockClient, storage });
   const have = BigInt(await to.balanceMsat());
   if (have >= BigInt(needMsat)) return { ok: true, state: 'enough', haveMsat: have };
@@ -25260,7 +25262,9 @@ async function swapPlayerWalletForRound({ round, toInvite, fromInvite, fromFeder
   const quote = await swapQuote({ from, to, amountMsat: BigInt(needMsat) - have });
   if (!quote.enough) return { ok: false, state: 'short', quote, why: `the wallet in federation ${String(fromFederationId).slice(0, 8)} can send ${quote.withdrawableMsat} msat, less than ${quote.amountMsat}` };
   if (!(await confirm(quote))) return { ok: false, state: 'declined', quote };
-  const done = await swapForRound({ from, to, amountMsat: quote.amountMsat, gateways, storage, fromFederationId, toFederationId: round.federationId, onState });
+  const hexOf = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
+  const done = await swapForRound({ from, to, amountMsat: quote.amountMsat, gateways, storage, fromFederationId, toFederationId: round.federationId, onState,
+    feeMaxFrom: feeMaxOf(hexOf(fromFederationId)), feeMaxTo: feeMaxOf(hexOf(round.federationId)) });
   return { ...done, quote };
 }
 
@@ -35497,7 +35501,9 @@ function statusOfRecord(best) {
     // THE SUCCESSION (§23A.6): the successor the guardians named (hex, or null) and this federation's own invite,
     // so a page can open the player's wallet in the successor from the successor's record
     successorId: best.record.successorId && best.record.successorId.some((x) => x) ? bytesToHex(best.record.successorId) : null,
-    invite: best.record.invite || null };
+    invite: best.record.invite || null,
+    // THE GATEWAY FEE CAP (§23A.9, kanban #1324): a swap's or a migration's leg in this federation goes only through a gateway at or under it
+    gatewayFeeMax: best.record.gatewayFeeMax || null };
 }
 
 /**

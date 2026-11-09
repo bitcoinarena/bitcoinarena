@@ -231,3 +231,28 @@ test('kanban #1324: a swap goes only through gateways at or under the federation
   assert.equal(said[said.length - 1].state, 'waiting');
   assert.equal(from2.paid.length, 0, 'nothing paid');
 });
+
+test('kanban #1324: each leg under its own federation\'s cap - the paying leg the old federation\'s, the receiving leg the round\'s', async () => {
+  const at02 = { send: { ppm: 2000, baseMsat: 0 }, receive: { ppm: 2000, baseMsat: 0 } };   // 0.2 %: over the reference 0.1 %
+  const wide = { ppm: 5000, baseMsat: 10000 };                                               // a record that allows 0.5 %
+  // the old federation's record allows 0.5 %: its 0.2 % gateways pay; the round's record names no cap, so the reference holds there too - every gateway is 0 %
+  const from = wallet(500000n, { base: 0, ppm: 0 }), to = wallet(0n, { base: 0, ppm: 0 });
+  from.target = { payIn: () => {} };
+  from.fees = { 'https://gw-a.test': at02, 'https://gw-b.test': at02 };
+  await swapForRound({ from, to, amountMsat: 100000n, feeMaxFrom: wide, feeMaxTo: null });
+  assert.ok(from.paid.length >= 1, 'the old federation\'s own cap was not applied to its paying leg');
+  // the same 0.2 % on the round's side, whose record names no cap (the reference): the swap waits, nothing paid - the old federation's wide cap does not reach it
+  const from2 = wallet(500000n, { base: 0, ppm: 0 }), to2 = wallet(0n, { base: 0, ppm: 0 });
+  from2.target = { payIn: () => {} };
+  to2.fees = { 'https://gw-a.test': at02, 'https://gw-b.test': at02 };
+  const said = [];
+  await assert.rejects(swapForRound({ from: from2, to: to2, amountMsat: 100000n, feeMaxFrom: wide, feeMaxTo: null, onState: (x) => said.push(x) }), /no gateway of the round's federation charges at or under/);
+  assert.equal(said[said.length - 1].state, 'waiting');
+  assert.equal(from2.paid.length, 0);
+  // and the round's record allowing 0.5 %: it lands
+  const from3 = wallet(500000n, { base: 0, ppm: 0 }), to3 = wallet(0n, { base: 0, ppm: 0 });
+  from3.target = { payIn: () => {} };
+  to3.fees = { 'https://gw-a.test': at02, 'https://gw-b.test': at02 };
+  await swapForRound({ from: from3, to: to3, amountMsat: 100000n, feeMaxFrom: null, feeMaxTo: wide });
+  assert.ok(from3.paid.length >= 1);
+});
