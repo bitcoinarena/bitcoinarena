@@ -85,6 +85,16 @@ export function markerStanding({ own = false, creator = null, order = null, trus
  */
 export const BUMP = Object.freeze({ NONE: 'NONE', ASKED: 'ASKED', DONE: 'DONE' });
 const BUMP_MOVES = Object.freeze({ [BUMP.NONE]: [BUMP.ASKED, BUMP.DONE], [BUMP.ASKED]: [BUMP.DONE, BUMP.NONE], [BUMP.DONE]: [] });
+/**
+ * WHETHER BITCOIND ANSWERED NO (kanban #1371, audit 2 #1204 FED-C2): a JSON-RPC error in its body (chain-rpc.js "bitcoind refused ...", or the HTTP 500 a
+ * JSON-RPC 1.0 error comes with) - not a transport error ("did not answer": a reset, a restart), not a wallet still loading (-28), not a non-JSON answer.
+ * Only a definite no ends a fee raise without its new txid; anything else leaves it ASKED for the wallet to settle.
+ */
+export const bitcoindRefused = (e) => {
+  const m = String((e && e.message) || e || '');
+  if (/"code":\s*-28\b|loading|warming up|rescanning/i.test(m)) return false;
+  return /^bitcoind refused /.test(m) || /^bitcoind answered 5\d\d: .*"error":\s*\{/.test(m);
+};
 export const bumpOf = (k) => (k.bump && k.bump.state) || (k.bumped ? BUMP.DONE : BUMP.NONE);
 /** The posting `k` moved to bump state `to` (BUMP_MOVES), `fields` merged in: answers false (k unchanged) for a move that is not one. */
 export function bumpStep(k, to, { atMs = Date.now(), ...fields } = {}) {
@@ -413,7 +423,11 @@ export function createDayDuty(o) {
   const settleBump = async (k) => {
     if (bumpOf(k) !== BUMP.ASKED) return;
     const from = (k.bump && k.bump.from) || k.txid;
-    let by = null; try { const t = await walletRpc('gettransaction', [from]); by = t && t.replaced_by_txid ? String(t.replaced_by_txid) : null; } catch { by = null; }
+    // a wallet that did not answer says nothing (kanban #1371): the raise stays ASKED and the posting is not judged on this pass; a definite no
+    // ("not a wallet transaction") says nothing replaced it
+    let by = null;
+    try { const t = await walletRpc('gettransaction', [from]); by = t && t.replaced_by_txid ? String(t.replaced_by_txid) : null; }
+    catch (e) { if (!bitcoindRefused(e)) throw new Error(`the wallet did not say what replaced ${from.slice(0, 16)}: its fee raise stays asked (${e.message})`); by = null; }
     if (by) { bumpStep(k, BUMP.DONE, { replaced: [...(k.replaced || []), from], txid: by, atMs: now() }); say({ dutyDay: 'fee raise found', item, slot: k.slot, from: from.slice(0, 16), to: by.slice(0, 16) }); }
     else bumpStep(k, BUMP.NONE, { atMs: now() });
     keep(k);
@@ -446,7 +460,12 @@ export function createDayDuty(o) {
       bumpStep(k, BUMP.ASKED, { atMs: nowMs }); keep(k);
       try { const b = await walletRpc('bumpfee', [k.txid, { fee_rate: maxFeeRate }]); say({ dutyDay: 'fee raised', item, slot: k.slot, from: k.txid.slice(0, 16), to: String(b.txid).slice(0, 16), feeRate: maxFeeRate });
         bumpStep(k, BUMP.DONE, { replaced: [...(k.replaced || []), k.txid], txid: String(b.txid), atMs: nowMs }); }
-      catch (e) { say({ dutyDay: 'fee not raised', item, slot: k.slot, txid: k.txid.slice(0, 16), why: e.message }); bumpStep(k, BUMP.DONE, { atMs: nowMs }); }
+      catch (e) {
+        // ONLY A DEFINITE NO ENDS THE RAISE (kanban #1371): a lost answer may hide a raise bitcoind made - it stays ASKED, and settleBump reads the
+        // wallet's replaced_by_txid on the next pass
+        if (bitcoindRefused(e)) { say({ dutyDay: 'fee not raised', item, slot: k.slot, txid: k.txid.slice(0, 16), why: e.message }); bumpStep(k, BUMP.DONE, { atMs: nowMs }); }
+        else say({ dutyDay: 'fee raise unanswered', item, slot: k.slot, txid: k.txid.slice(0, 16), why: e.message, kept: 'asked: the wallet is read on the next pass' });
+      }
       keep(k); changed = true;
     }
     // THE SEATS NAME THE NEW TXID (kanban #1126, 11-04: three fee raises left every seat's /expected and /pending on a dead tx)
@@ -660,7 +679,10 @@ export function createDayDuty(o) {
         // POSTED: the day's marker in the chain or the mempool, or this machine's own kept posting while the wallet still holds its transaction
         let posted = marks.some((m) => m.counts && m.tag === tag && m.slot === slot);
         if (!posted) for (const k of keptOf(slot).filter((x) => !x.emergency)) {
-          try { const t = await walletRpc('gettransaction', [k.txid]); if (Number(t.confirmations) >= 0) posted = true; } catch { /* not the wallet's */ }
+          // A WALLET THAT DID NOT ANSWER (kanban #1371: still loading after a restart, a reset) says nothing: the day is not posted again on this
+          // pass - only a definite no ("not a wallet transaction") reads as not this wallet's
+          try { const t = await walletRpc('gettransaction', [k.txid]); if (Number(t.confirmations) >= 0) posted = true; }
+          catch (e) { if (!bitcoindRefused(e)) { posted = true; fail(`the wallet did not say whether ${k.txid.slice(0, 16)} is held: the day is not posted again on this pass (${e.message})`); } }
         }
         const due = backup ? backupPostDue({ nowMs, slot, rank, posted, postedPrimary: await postedPrimary(slot), cap: DUTY_BACKUP_RANK_CAP })
           : guard.dayDueCapped({ nowMs, slot, rank, posted, cap: rankCap });
