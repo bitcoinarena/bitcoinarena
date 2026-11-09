@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +21,9 @@ async function ask(payers) {
   writeFileSync(fake, `#!${process.execPath}
 const a = process.argv.slice(2), spec = JSON.parse(require('fs').readFileSync(${JSON.stringify(join(dir, 'spec.json'))}, 'utf8'));
 const me = spec[(a.find((x) => x.startsWith('--rpcserver=')) || '').slice(12)] || {};
-if (a.includes('decodepayreq')) { console.log(JSON.stringify({ num_satoshis: '500', payment_hash: '${HASH}' })); process.exit(0); }
+if (a.includes('decodepayreq')) { console.log(JSON.stringify({ num_satoshis: '500', payment_hash: '${HASH}', destination: spec.destination || 'none' })); process.exit(0); }
+if (a.includes('getinfo')) { console.log(JSON.stringify({ identity_pubkey: me.key || 'k-' + (a.find((x) => x.startsWith('--rpcserver=')) || '') })); process.exit(0); }
+if (a.includes('payinvoice')) require('fs').appendFileSync(${JSON.stringify(join(dir, 'pays.log'))}, ((a.find((x) => x.startsWith('--rpcserver=')) || '').slice(12)) + '\\n');
 if (a.includes('payinvoice')) {
   if (me.pay === 'fail') { console.error('[lncli] rpc error: self-payments not allowed'); process.exit(1); }
   if (me.pay === 'ok') { console.log('Payment status: SUCCEEDED'); process.exit(0); }
@@ -37,11 +39,13 @@ console.log('{}');
   const port = 20000 + Math.floor(Math.random() * 10000);
   const child = spawn(process.execPath, [FAUCET], { env: { ...process.env, FAUCET_PORT: String(port), FAUCET_BOOK: join(dir, 'book.json'), FAUCET_PENDING: join(dir, 'pending.txt'),
     FAUCET_RPC_URL: 'http://127.0.0.1:1/wallet/x', FAUCET_COOKIE: join(dir, 'none'), FAUCET_LNCLI: fake, FAUCET_FEEDBACK_DB: join(dir, 'fb.db'),
-    FAUCET_PAYERS: Object.keys(payers).map((rpc) => `${dir}|${rpc}`).join(','), FAUCET_PAY_WAIT_MS: '800', FAUCET_PAY_SETTLE_MS: '1500', FAUCET_PAY_POLL_MS: '200' }, stdio: 'ignore' });
+    FAUCET_PAYERS: Object.keys(payers).filter((k) => k !== 'destination').map((rpc) => `${dir}|${rpc}`).join(','), FAUCET_PAY_WAIT_MS: '800', FAUCET_PAY_SETTLE_MS: '1500', FAUCET_PAY_POLL_MS: '200' }, stdio: 'ignore' });
   try {
     for (let i = 0; i < 50; i++) { try { await fetch(`http://127.0.0.1:${port}/player`); break; } catch { await new Promise((ok) => setTimeout(ok, 100)); } }
     const r = await fetch(`http://127.0.0.1:${port}/player`, { method: 'POST', body: JSON.stringify({ kind: 'welcome', account: 'cd'.repeat(32), invoice: `lntb5u1p${'q'.repeat(40)}` }) });
-    return await r.json();
+    const out = await r.json();
+    let pays = []; try { pays = readFileSync(join(dir, 'pays.log'), 'utf8').trim().split('\n'); } catch { pays = []; }
+    return Object.defineProperty(out, 'pays', { value: pays, enumerable: false });
   } finally { child.kill(); }
 }
 
@@ -63,4 +67,10 @@ test('#1381 the 11-09 case: payer a cannot pay its own gateway, payer b finds no
   assert.equal((await ask({ '127.0.0.1:1': { pay: 'fail' }, '127.0.0.1:2': { pay: 'timeout', state: 'FAILED' } })).ok, false);
   assert.deepEqual(await ask({ '127.0.0.1:1': { pay: 'fail' }, '127.0.0.1:2': { pay: 'ok' } }), { ok: true, sats: 500 });
   assert.deepEqual(await ask({ '127.0.0.1:1': { pay: 'fail' }, '127.0.0.1:2': { pay: 'timeout', state: 'SUCCEEDED' } }), { ok: true, sats: 500 });
+});
+
+test('#1381 the payer whose own node the invoice names is asked last, so the other pays at once', async () => {
+  const r = await ask({ destination: 'node-a', '127.0.0.1:1': { key: 'node-a', pay: 'fail' }, '127.0.0.1:2': { key: 'node-b', pay: 'ok' } });
+  assert.deepEqual(r, { ok: true, sats: 500 });
+  assert.deepEqual(r.pays, ['127.0.0.1:2'], 'payer a was asked to pay its own node');
 });
