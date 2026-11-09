@@ -52,7 +52,8 @@ function seven({ leaving = [], successor = null, closed = false, retiring = [], 
       const departed = (u.searchParams.get('departed') || '').split(',').filter(Boolean);
       const emergency = (u.searchParams.get('emergency') || '').split(',').filter(Boolean);
       const left = (u.searchParams.get('left') || '').split(',').filter(Boolean);
-      const body = await (gone.length ? j.mySignatureWithGone(u.searchParams.get('federation'), gone, null, rv, absent, departed, emergency, { left }) : j.mySignature(u.searchParams.get('federation'), null, rv));
+      const player = u.searchParams.get('player') === null ? null : BigInt(u.searchParams.get('player'));   // kanban #1322
+      const body = await (gone.length ? j.mySignatureWithGone(u.searchParams.get('federation'), gone, null, rv, absent, departed, emergency, { left, player }) : j.mySignature(u.searchParams.get('federation'), null, rv, { player }));
       return new Response(JSON.stringify(body), { status: body.ok ? 200 : 404 });
     },
   }));
