@@ -2748,6 +2748,20 @@ const COLLECT_NOTE = 'arena.collect.';
  * its id and name a federation. Nothing is spent. Returns the rounds worth keeping - the page
  * keeps them and looks at them as its own.
  */
+// A ROUND'S KEY FOR A PHRASE, DERIVED ONCE (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; profiled on live UI 604: 3.1 s of every minute
+// of an RPS page went to the curve here - every scan derived 33 keys for every settled round each signer node listed, the same rounds as the scan before):
+// kept by phrase, round and order; the oldest let go past OWED_KEYS_MAX
+const OWED_KEYS = new Map(), OWED_KEYS_MAX = 200000;
+const owedKeyOf = (seed, id, order, curve) => {
+  const k = toHex(seed) + id + ':' + order;
+  let v = OWED_KEYS.get(k);
+  if (v === undefined) {
+    v = toHex(refundKeyOf(playerFor({ id: fromHex(id) }, { seed, curve, order }).pubkey));
+    if (OWED_KEYS.size >= OWED_KEYS_MAX) OWED_KEYS.delete(OWED_KEYS.keys().next().value);
+    OWED_KEYS.set(k, v);
+  }
+  return v;
+};
 export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [], knownBySeed = null } = {}) {
   // EVERY SAVED PHRASE AT ONCE (2026-10-07): each signer node's /settled is read once and matched against
   // every phrase's keys - 7 asks on 7 signer nodes, not 7 per phrase. One `seed` (with `known`) is the one-phrase scan as before.
@@ -2777,7 +2791,7 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
       if (skips[i].has(id)) continue;
       // EVERY ORDER'S KEY TOO: a tab's orders in a market round are keyed 0, 1, 2 ... - read up to ORDER_SCAN (32: a bot places 12 a window)
       for (let order = 0; order <= ORDER_SCAN; order++) {
-      const mine = toHex(refundKeyOf(playerFor({ id: fromHex(id) }, { seed: list[i], curve, order }).pubkey));
+      const mine = owedKeyOf(list[i], id, order, curve);
       const payout = l.payouts.has(mine); const lock = l.refunds.has(mine);
       if (!payout && !lock) continue;
       if (!contracts.has(id)) {
