@@ -37664,10 +37664,11 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
   // the seats that answered; a late one is in the next read, a second later
   let settle = null; let answeredCount = 0;
   const settled = new Promise((resolve) => { settle = resolve; });
+  const gamesQuery = Array.isArray(preferGames) && preferGames.length && preferGames.length <= 16 ? `&games=${preferGames.map((g) => String(g).toLowerCase()).join(',')}` : '';
   const answers = await Promise.all(unique.map((node) => {
     // AT MOST 8 UPCOMING ROUNDS OF EACH SERIES (`next`): a node holding two series lists ~1150 rounds otherwise - 63 s,
     // past what the lobby waits for a node. A lobby shows one round per kind; eight leaves the lead's choice its room.
-    const one = ask(`${String(node).replace(/\/+$/, '')}/rounds?next=${LOBBY_PER_SERIES}`).then((r) => ({ r }), (e) => ({ e }));
+    const one = ask(`${String(node).replace(/\/+$/, '')}/rounds?next=${LOBBY_PER_SERIES}${gamesQuery}`).then((r) => ({ r }), (e) => ({ e }));
     one.then(() => { answeredCount += 1; if (answeredCount * 2 >= unique.length && unique.length > 2) setTimeout(settle, LOBBY_LAST_MS); });
     return Promise.race([one, settled.then(() => ({ e: Object.assign(new Error(`did not answer within ${LOBBY_LAST_MS} ms of half the seats`), { silent: true }) }))]);
   }));
