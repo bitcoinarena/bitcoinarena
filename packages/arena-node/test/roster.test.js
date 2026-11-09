@@ -889,8 +889,10 @@ test('rounds of no series naming one census share one derivation, and a round na
   const a = round.open(contractFor({ censusRoot: rootFor(bonds), publicationRelays: ['wss://r.example/a'] }));
   const b = round.open(contractFor({ censusRoot: rootFor(bonds), publicationRelays: ['wss://r.example/b'] }));
   const forged = round.open(contractFor({ censusRoot: new Uint8Array(32).fill(0x77), publicationRelays: ['wss://r.example/c'] }));
-  const roster = new Roster(round, { chainFor: ({ contract: c } = {}) => chainWith(bonds, c),
-    randomnessFor: ({ contract: c }) => beaconOf(chainWith(bonds, c), c) });
+  // ONE CHAIN holding the three publications (kanban #1373: a census is kept under the block at its height, so the rounds share it only on one branch)
+  const one = () => { const blocks = []; for (let h = FROM; h <= TIP; h++) blocks.push({ transactions: h === FROM ? bonds : [] });
+    blocks[1] = { transactions: [a, b, forged].map((r) => publicationOf(decodeRoundContract(new Uint8Array(round.get(r).contract)))) }; return chainOf(blocks, FROM); };
+  const roster = new Roster(round, { chainFor: () => one(), randomnessFor: ({ contract: c }) => beaconOf(one(), c) });
   const first = roster.censusFor(a);
   assert.equal(first.ok, true, first.why);
   const second = roster.censusFor(b);
@@ -899,4 +901,24 @@ test('rounds of no series naming one census share one derivation, and a round na
   const refused = roster.censusFor(forged);
   assert.equal(refused.ok, false, 'a round naming another root was served the kept census');
   assert.match(refused.why, /^that round names census root 7777777777777777 and the chain gives /);
+});
+
+// kanban #1373 (audit 2 #1204 FED-B2): a census kept in memory names the block at its census height - after a reorg below it, the old branch's is not served
+test('#1373 after a reorg below the census height the memory serves the new branch\'s census, not the old one', () => {
+  const A = [bondOf(0x11), bondOf(0x12)], B = [bondOf(0x11), bondOf(0x13)];
+  const round = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
+  const onA = round.open(contractFor({ censusRoot: rootFor(A) }));
+  const onB = round.open(contractFor({ censusRoot: rootFor(B) }));
+  let bonds = A;
+  const roster = new Roster(round, { chainFor: ({ contract: c } = {}) => chainWith(bonds, c), randomnessFor: ({ contract: c }) => beaconOf(chainWith(bonds, c), c) });
+  const a = roster.censusFor(onA);
+  assert.equal(a.ok, true, a.why);
+  // THE REORG: the same first height and length, another branch below the census height (bond 0x12 gone, 0x13 there)
+  bonds = B;
+  const b = roster.censusFor(onB);
+  console.log(`#1373 after the reorg: the round naming B's root ${b.ok ? 'served' : 'refused: ' + b.why}`);
+  assert.equal(b.ok, true, b.why);
+  assert.equal(toHex(b.root), toHex(rootFor(B)));
+  const stale = roster.censusFor(onA);
+  assert.equal(stale.ok, false, 'the old branch\'s census was served from memory after the reorg');
 });
