@@ -224,6 +224,9 @@ test('kanban #1322: the seats write the player reserve (reserve less the gateway
   console.log('  MEASURED #1322:', JSON.stringify({ reserve: String(rec.reserveSats), player: String(rec.playerReserveSats), cap: String(rec.exposureCapSats), band: rec.capacityBand, signers: r.signers }));
   assert.equal(rec.playerReserveSats, 15000n);
   assert.deepEqual(rec.gatewayFeeMax, GATEWAY_FEE_MAX_REFERENCE);
+  // the list GET /capacity reads (the health line): the player reserve beside the reserve, the load from it
+  const listed = n.seats[0].list()[0];
+  assert.deepEqual([listed.reserveSats, listed.playerReserveSats, listed.load], ['65000', '15000', 0.15]);
   // a 75 % reserve is PRESSURE by the reserve - by the players' money (45 %) it is CALM
   assert.equal((await n.step(102, 95000)).ok, true);
   assert.equal(n.bandAt(), 'CALM', 'the band read the whole reserve, not the players\' money');

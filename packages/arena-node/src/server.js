@@ -12295,7 +12295,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const rec = fedRecords.recordOf(f.federation);
           const seated = (fedRecords.seatedGuardians(f.federation) || []).map((k) => toHex(k));
           return { federation: f.federation, status: f.status, nominal: rec && rec.record ? rec.record.nominal : seated.length || 1, band: rec && rec.record ? rec.record.capacityBand || null : null,
-            reserveSats: f.reserveSats || '0', exposureCapSats: f.exposureCapSats || '0',
+            // THE HEALTH LINE READS THE PLAYERS' MONEY (§23A.3a RULED 2026-11-07, kanban #1322): load, band and room from the player reserve the record names
+            reserveSats: f.playerReserveSats || f.reserveSats || '0', exposureCapSats: f.exposureCapSats || '0',
             guardianBonds: seated.map((node) => { const n = nodeBondOf(entries, node); return { node, bondSats: n ? n.bondSats : 0n }; }),
             gateways: (() => { const gw = gws.find((x) => x && x.ok && x.federationId === f.federation); return gw ? Object.entries(gw.gateways || {}).map(([node, g]) => ({ node, pegInSats: BigInt(g.pegInSats || 0) })) : []; })() };
         });
