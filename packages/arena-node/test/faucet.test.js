@@ -48,7 +48,7 @@ test('the players\' faucet: a welcome once, five top-ups a day, an IP and a day 
   assert.equal(old.ok, true); assert.equal(old.grant.sats, 250);
   assert.equal(d(ask('topup', a, { invoiceSats: 250 }), { players: tops(5) }).ok, false, 'an old page after five');
   assert.equal(d(ask('topup', a, { invoiceSats: 299 }), { players: [] }).ok, false, 'any other amount');
-  assert.equal(d(ask('welcome', a, { invoiceSats: 250 }), { players: [] }).ok, false, 'a welcome is 500 only');
+  assert.equal(d(ask('welcome', a, { invoiceSats: 250 }), { players: [] }).ok, false, 'a welcome is 3,000 only');
   assert.equal(d(ask('topup', a), { players: Array.from({ length: PLAYER_PER_IP_PER_DAY }, () => row('topup', b, { ip: '1.1.1.1' })) }).ok, false, 'one address');
   assert.equal(d(ask('topup', a, { ip: null }), { players: [row('topup', b, { sats: PLAYER_DAY_CAP_SATS })] }).ok, false, 'the day cap');
   const t = playerGrantTotals({ players: [row('welcome', a), row('welcome', b, { atMs: now - 86400000 }), row('topup', a), row('topup', a)] }, now);
