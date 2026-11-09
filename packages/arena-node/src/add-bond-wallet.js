@@ -36,7 +36,16 @@ export function bondCliFrom(env = process.env) {
  * THE PLAN, AND WITH `post` THE TWO TRANSACTIONS SENT. { ok, plan: { addSats, bondSats, totalSats, fees: { total }, maturity, lock: { estimatedMs },
  * countsAfter }, bond?: { txid } } or { ok: false, why }. `blockMs` the chain's block interval, for the time estimate only.
  */
-export async function addBondFromWallet({ cli, wallet, network = 'testnet4', secret, pubkey, addSats, post = false, blockMs = 600000, now = Date.now() }) {
+/**
+ * ONE OWNER ACTION SENT, NOT TWO (kanban #1374, audit 2 #1204 FED-C4 / INSTALLER-DOORS-15; #1165 fixed only the installer's path): what a post is about to
+ * broadcast is kept first (`journal.keep(kind, record)`, the seat's store), and the same request again - its key, or with no key the same amount or roles
+ * within SAME_ACTION_MS - while that transaction is not confirmed answers the one kept and broadcasts its bytes again, in place of funding a second.
+ */
+export const SAME_ACTION_MS = 30 * 60_000;
+const rebroadcast = (cli, hexes) => { for (const h of hexes) { try { cli('sendrawtransaction', h); } catch { /* in the mempool or mined already */ } } };
+const sameAction = (was, { key, what, nowMs }) => !!was && (key ? was.key === key : (!was.key && was.what === what && nowMs - Number(was.atMs || 0) < SAME_ACTION_MS));
+
+export async function addBondFromWallet({ cli, wallet, network = 'testnet4', secret, pubkey, addSats, post = false, blockMs = 600000, now = Date.now(), key = null, journal = null }) {
   let add; try { add = BigInt(String(addSats)); } catch { return { ok: false, why: 'name the sat to add as a whole number' }; }
   if (add < MIN_ADD) return { ok: false, why: `add at least ${MIN_ADD} sat` };
   const { regtest } = await import('../tools/regtest-bond.mjs');
@@ -44,6 +53,14 @@ export async function addBondFromWallet({ cli, wallet, network = 'testnet4', sec
   const bonds = rt.bondsOf(secret);
   if (!bonds.length) return { ok: false, why: 'this node has no confirmed bond to add to yet' };
   const bondSats = bonds.reduce((a, b) => a + BigInt(b.sats), 0n);
+  // THE SAME ADD ASKED AGAIN (kanban #1374): the one sent before, while its bond is not confirmed yet
+  if (post && journal) {
+    const was = journal.last('add-bond');
+    if (sameAction(was, { key, what: String(add), nowMs: now }) && !bonds.some((b) => b.txid === was.bondTxid)) {
+      rebroadcast(cli, was.hexes || []);
+      return { ok: true, plan: was.plan, bond: was.bond, already: true };
+    }
+  }
   const newest = bonds[0];
   const versions = [...new Set([...(newest.advert.protocolVersions || []), ...SUPPORTED_PROTOCOL_VERSIONS])].sort((a, b) => a - b);
   let fundingHex = null, fundingFee = 0n, made;
@@ -78,6 +95,8 @@ export async function addBondFromWallet({ cli, wallet, network = 'testnet4', sec
   const plan = { addSats: String(add), bondSats: String(bondSats), totalSats: String(bondSats + add), fees: { total: String(fundingFee + CARRIER_FEE) },
     maturity: made.maturity, lock: { estimatedMs: now + Math.max(0, made.maturity - tip) * blockMs }, countsAfter: 6 };
   if (!post) return { ok: true, plan };
+  // KEPT BEFORE IT IS SENT (kanban #1374): a lost answer, a restart or a second click finds it
+  if (journal) journal.keep('add-bond', { key, what: String(add), atMs: now, hexes: [fundingHex, made.hex], bondTxid: made.txid, bond: { txid: made.txid }, plan });
   cli('sendrawtransaction', fundingHex);
   cli('sendrawtransaction', made.hex);
   return { ok: true, plan, bond: { txid: made.txid } };
@@ -102,7 +121,7 @@ const UPDATE_CARRIER_SATS = 3000n;
  * wallet. No bond is spent and no maturity clock starts. Without `post` both transactions are built and checked (testmempoolaccept);
  * with it, sent. The census reads the new roles once the update is 6 deep.
  */
-export async function changeRolesFromWallet({ cli, wallet, network = 'testnet4', secret, pubkey, roles, custody, post = false }) {
+export async function changeRolesFromWallet({ cli, wallet, network = 'testnet4', secret, pubkey, roles, custody, post = false, key = null, journal = null, nowMs = Date.now() }) {
   const want = [...new Set((roles || []).map(String))];
   const bad = want.filter((r) => !ADVERT_ROLES.includes(r));
   if (bad.length) return { ok: false, why: `${bad.join(', ')}: not a role an advertisement names (${ADVERT_ROLES.join(', ')})` };
@@ -119,14 +138,22 @@ export async function changeRolesFromWallet({ cli, wallet, network = 'testnet4',
   // CUSTODY OFF NAMES NO GUARDIAN ENDPOINT (advert.js guardianRole: "a node that is not guardian-capable names no guardian_endpoint";
   // measured 2026-10-26, kanban #577: turning the n495 test nodes out of the founding draw was refused before anything was built)
   const advert = { ...now, roles: after.roles, guardianCapable: after.custody, ...(after.custody ? {} : { guardianEndpoint: '' }), timestamp: BigInt(Date.now()) };
-  const sent = sendUpdateFromWallet({ cli, rt, secret, bond, advert, post });
+  // THE SAME CHANGE ASKED AGAIN (kanban #1374): a confirmed one reads as "already advertises" above; one sent and not confirmed is answered, not paid twice
+  if (post && journal) {
+    const was = journal.last('roles');
+    if (sameAction(was, { key, what: JSON.stringify(after), nowMs })) { rebroadcast(cli, was.hexes || []); return { ok: true, plan: was.plan, update: { txid: was.txid }, already: true }; }
+  }
+  let plan = null;
+  const sent = sendUpdateFromWallet({ cli, rt, secret, bond, advert, post,
+    keep: (hexes, txid, feeSats) => { if (journal) journal.keep('roles', { key, what: JSON.stringify(after), atMs: nowMs, hexes, txid,
+      plan: { before, after, bond: `${bond.txid}:${bond.vout}`, feeSats, countsAfter: 6 } }); } });
   if (!sent.ok) return sent;
-  const plan = { before, after, bond: `${bond.txid}:${bond.vout}`, feeSats: sent.feeSats, countsAfter: 6 };
+  plan = { before, after, bond: `${bond.txid}:${bond.vout}`, feeSats: sent.feeSats, countsAfter: 6 };
   return post ? { ok: true, plan, update: { txid: sent.txid } } : { ok: true, plan };
 }
 
 /** AN ADVERTISEMENT UPDATE OF `bond`, ITS CARRIER FUNDED FROM THE BOND WALLET: built, checked with testmempoolaccept, and with `post` sent. */
-function sendUpdateFromWallet({ cli, rt, secret, bond, advert, post }) {
+function sendUpdateFromWallet({ cli, rt, secret, bond, advert, post, keep = () => {} }) {
   const prepared = rt.prepareAdvertUpdate(secret, advert);
   const address = JSON.parse(cli('decodescript', toHex(prepared.spk))).address;
   let funded;
@@ -145,6 +172,7 @@ function sendUpdateFromWallet({ cli, rt, secret, bond, advert, post }) {
   if (!accept.every((a) => a.allowed)) return { ok: false, why: `the network would refuse it (${accept.map((a) => a['reject-reason']).filter(Boolean).join(', ')}); nothing was sent` };
   const feeSats = String(BigInt(Math.round(Number(funded.fee) * 1e8)) + 1200n);
   if (!post) return { ok: true, feeSats };
+  keep([final.hex, update.hex], update.txid, feeSats);   // kept before it is sent (kanban #1374)
   cli('sendrawtransaction', final.hex);
   cli('sendrawtransaction', update.hex);
   return { ok: true, feeSats, txid: update.txid };
