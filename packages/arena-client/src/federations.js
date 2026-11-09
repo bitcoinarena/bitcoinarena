@@ -17,7 +17,14 @@ import { readInvite } from '../../arena-node/src/invite.js';
 import { readWithOneRetry } from './reread.js';
 import { noteRecordInvite } from './guardian-invites.js';
 
-const hexToBytes = (h) => Uint8Array.from(String(h).match(/../g).map((x) => parseInt(x, 16)));
+// HEX BY TABLE (kanban #1391, profiled on stage UI 603: the regex-and-map decode of each seat's signed records took 1.1 s of every minute of an RPS page):
+// the same bytes for hex; a character that is not hex reads as 0, as parseInt's NaN did
+const HEX_VALUE = (() => { const t = new Int8Array(128).fill(-1); for (let i = 0; i < 10; i++) t[48 + i] = i; for (let i = 0; i < 6; i++) { t[97 + i] = 10 + i; t[65 + i] = 10 + i; } return t; })();
+const hexToBytes = (h) => {
+  const s = String(h), out = new Uint8Array(s.length >> 1);
+  for (let i = 0; i < out.length; i++) { const a = HEX_VALUE[s.charCodeAt(2 * i)], b = HEX_VALUE[s.charCodeAt(2 * i + 1)]; out[i] = a >= 0 && b >= 0 ? (a << 4) | b : a >= 0 ? a : 0; }
+  return out;
+};
 const bytesToHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 export const inviteFederationId = (invite) => { const f = readInvite(invite).federationId; return f ? hexToBytes(f) : null; };
 
