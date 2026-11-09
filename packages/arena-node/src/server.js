@@ -1086,6 +1086,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return devAttribute(rows, cfg.recipientPkHex);
     } catch { return null; }
   };
+  // THE OWNER ACTIONS A SEAT SET UP BY HAND SENT (kanban #1374): the last add-bond and roles change, kept in the store before they are broadcast,
+  // so the same request again - a lost answer, a restart, a second click - answers the one sent (add-bond-wallet.js journal)
+  const ownerJournal = {
+    last: (kind) => { try { round.db.exec('CREATE TABLE IF NOT EXISTS owner_actions (kind TEXT PRIMARY KEY, record TEXT NOT NULL)');
+      const r = round.db.prepare('SELECT record FROM owner_actions WHERE kind = ?').get(kind); return r ? JSON.parse(r.record) : null; } catch { return null; } },
+    keep: (kind, record) => { round.db.exec('CREATE TABLE IF NOT EXISTS owner_actions (kind TEXT PRIMARY KEY, record TEXT NOT NULL)');
+      round.db.prepare('INSERT OR REPLACE INTO owner_actions (kind, record) VALUES (?, ?)').run(kind, JSON.stringify(record)); },
+  };
+  const actionKeyOf = (args) => (typeof args.key === 'string' && args.key ? args.key.slice(0, 64) : null);
   const owner = ownerFiles ? createOwner({ store: ownerFiles.store, node: toHex(round.pubkey), log: (l) => console.log(l),
     verify: (sig, msg, key) => schnorr.verify(sig, msg, key) }) : null;
   if (roundClock) round.now = roundClock;
@@ -8217,7 +8226,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             const args = body.args || {};
             try {
               const net = chainNetworkId() ? (toHex(fromHex(chainNetworkId())) === toHex(NETWORK_ID_TESTNET4) ? 'testnet4' : 'regtest') : 'testnet4';
-              const r = await addBondFromWallet({ ...w, network: net, secret: round.identity.secret, pubkey: round.pubkey, addSats: args.sats, post: args.post === true,
+              const r = await addBondFromWallet({ ...w, network: net, secret: round.identity.secret, pubkey: round.pubkey, addSats: args.sats, post: args.post === true, key: actionKeyOf(args), journal: ownerJournal,
                 blockMs: net === 'testnet4' ? 600000 : 1000, censusKey: newestCensusKey() });
               if (!r.ok) return answer(400, r);
               if (r.bond) console.log(`[bond] added ${r.plan.addSats} sat beside the bond from the bond wallet: ${r.bond.txid}:0 (total ${r.plan.totalSats} sat)`);
@@ -8300,7 +8309,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const args = body.args || {};
           try {
             const net = chainNetworkId() ? (toHex(fromHex(chainNetworkId())) === toHex(NETWORK_ID_TESTNET4) ? 'testnet4' : 'regtest') : 'testnet4';
-            const r = await changeRolesFromWallet({ ...w, network: net, secret: round.identity.secret, pubkey: round.pubkey, roles: args.roles, custody: args.custody, post: args.post === true });
+            const r = await changeRolesFromWallet({ ...w, network: net, secret: round.identity.secret, pubkey: round.pubkey, roles: args.roles, custody: args.custody, post: args.post === true, key: actionKeyOf(args), journal: ownerJournal });
             if (!r.ok) return answer(400, r);
             if (r.update) console.log(`[roles] advertisement update ${r.update.txid}: ${r.plan.before.roles.join(',')}${r.plan.before.custody ? '+custody' : ''} -> ${r.plan.after.roles.join(',')}${r.plan.after.custody ? '+custody' : ''}`);
             return answer(200, { ok: true, plan: r.plan, update: r.update || null });
