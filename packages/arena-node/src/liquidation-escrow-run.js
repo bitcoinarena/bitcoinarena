@@ -47,7 +47,7 @@ export const CLAIM_LOCK = Object.freeze({ FREE: 'free', HELD: 'held', CARRIED: '
  * `federationsAt(height)` the reserves' view on the records in force there; `reserveKeyOf(fid)`; `portFor(fid)` a client { peginAddress, peginClaim, payouts, ecashBalance? } or null.
  * `marginMsat` the network's carrier margin each claims_carrier output holds; `payoutFeeMsat` the part of it a carrier keeps back for its payout's fee (kanban #1093).
  */
-export function createLiquidationEscrow({ secret, me, networkId, clocks, db, tweakPoint, tipHeight, entriesAtTip, txOut, fetchProof, judge, holdersOf, heldKey, thresholdOf, signer, urlOf,
+export function createLiquidationEscrow({ asker = null, secret, me, networkId, clocks, db, tweakPoint, tipHeight, entriesAtTip, txOut, fetchProof, judge, holdersOf, heldKey, thresholdOf, signer, urlOf,
   fetchFn = fetch, send, portFor = async () => null, scriptOf, federationsAt = async () => [], reserveKeyOf = () => null, claimsOf = async () => null, now = Date.now, stepMs = 600000,
   log = () => {}, confirmedOf, fallbackRank, getJson, marginMsat = 0n, payoutFeeMsat = marginMsat }) {
   db.exec(`CREATE TABLE IF NOT EXISTS liq_escrow_chain (table_id TEXT NOT NULL, seq INTEGER NOT NULL, start TEXT NOT NULL, federation TEXT NOT NULL, escrow_in TEXT NOT NULL, value INTEGER NOT NULL,
@@ -315,7 +315,7 @@ export function createLiquidationEscrow({ secret, me, networkId, clocks, db, twe
     if (!threshold) return { ok: false, why: `this seat reads no threshold for key ${keyHex.slice(0, 16)}` };
     const request = { kind: 'liquidation-escrow', start: ctx.start, tableId: ctx.tableId, escrow: w.cur.name, loadHeight, outputsId: prop.outputs_id };
     const own = heldKey(ctx.censusKey) ? signer() : null;
-    const got = await gatherCensusSignature({ request, digest: b.digest, publicKey: ctx.censusKey, threshold, urls: holders.filter((k) => k !== me).map(urlOf).filter(Boolean), own, fetchFn });
+    const got = await gatherCensusSignature({ asker, request, digest: b.digest, publicKey: ctx.censusKey, threshold, urls: holders.filter((k) => k !== me).map(urlOf).filter(Boolean), own, fetchFn });
     if (!got.ok) return got;
     const raw = serializeSpend({ ...b.spend.tx, witnesses: [escrowWitness({ escrow: ctx.output, path: 'fallback', signature: got.signature })] });
     let sent;

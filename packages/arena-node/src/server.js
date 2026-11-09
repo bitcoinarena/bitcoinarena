@@ -4789,7 +4789,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let rows = []; try { rows = fedRecords ? await fedRecords.theftSlashes() : []; } catch { rows = []; }
     return rows.map((r) => { if (!theftSeen.has(r.proof)) theftSeen.set(r.proof, Date.now()); return { proofId: fromHex(r.proof), seenMs: theftSeen.get(r.proof) }; });
   };
-  const slashStarter = holdWatch && censusKey.feeCoin ? createSlashStarter({ key: round.pubkey, network: censusKey.network, db: round.db, store: new CensusKeyStore(round.db), thresholdOf: censusKey.scan.thresholdOf, totalOf: censusKey.scan.totalOf, tipHeight: censusKey.tipHeight, entriesAtTip: entriesAtTipForStart,
+  // THE FILER'S SIGNED ASK (kanban #1386, audit 2 #1204 RES-7): every census-sign ask this seat files goes signed by its node key
+  const censusAsker = { node: toHex(round.pubkey), sign: (d) => schnorr.sign(d, round.identity.secret) };
+  const slashStarter = holdWatch && censusKey.feeCoin ? createSlashStarter({ asker: censusAsker, key: round.pubkey, network: censusKey.network, db: round.db, store: new CensusKeyStore(round.db), thresholdOf: censusKey.scan.thresholdOf, totalOf: censusKey.scan.totalOf, tipHeight: censusKey.tipHeight, entriesAtTip: entriesAtTipForStart,
     heldProofs: async () => [...round.allSlashProofs(), ...round.allRerunSlashProofs(), ...round.auditSlashProofs(), ...round.doubleSlashProofs(), ...round.tableSlashProofs(), ...round.namedClaimProofs(), ...(await abandonedHeld()), ...(await theftHeld()), ...(await boundHeld())].flatMap((p) => { const bytes = round.relayGet(Buffer.from(p.proofId)); return bytes ? [{ proofId: p.proofId, bytes, seenMs: p.seenMs }] : []; }), bytesOf: (id) => round.relayGet(Buffer.from(id)), judge: judgeProofBytes, holdsFor: holdsForStart, feeCoin: censusKey.feeCoin, feeFind: typeof censusKey.feeCoin.find === 'function' ? censusKey.feeCoin.find : null, send: (hex) => chainSend(hex), urlsOf: () => censusUrls || [],
     stepMs: Number(process.env.ARENA_SLASH_FILE_STEP_MS || 600000), log: (l) => console.log(l),
     checkOther: (request) => (slashRelease ? slashRelease.checkOther(request) : { ok: false, why: 'this seat runs no release or fallback' }),
@@ -4921,7 +4923,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return { accepted: p.accepted, coveredMsat: new Map((p.paidNotes || []).map((n) => [String(n.nonce).toLowerCase(), BigInt(n.msat)])), afterWindow: !!p.split };
     } catch { return null; }
   };
-  slashRelease = holdWatch ? createSlashRelease({ key: round.pubkey, secret: round.identity.secret, networkId: censusKey.networkId, clocks: holdClocksOf(censusKey.networkId), db: round.db, tweakPoint,
+  slashRelease = holdWatch ? createSlashRelease({ asker: censusAsker, key: round.pubkey, secret: round.identity.secret, networkId: censusKey.networkId, clocks: holdClocksOf(censusKey.networkId), db: round.db, tweakPoint,
     tipHeight: censusKey.tipHeight, entriesAtTip: slashEntriesAtTip, rawTx: slashRawTx, unspent: async (txid, vout) => (typeof chainTxOut === 'function' ? !!(await chainTxOut(txid, vout).catch(() => null)) : false),
     fetchProof: (id) => proofBytesFetched(id), judge: judgeProofBytes, panelsOf: (contract, rid) => roster.slashPanelsFor(rid, { posted: contract }), seatsOf: async (contract, rid) => roundSeatKeys(contract, rid),
     lossesFor: slashLossesFor, handles: (held) => !held || !held.offence || OFFENCES.includes(held.offence), federations: slashFederations, retired: String(process.env.ARENA_ARBITER_RETIRED || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),

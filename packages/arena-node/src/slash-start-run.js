@@ -42,7 +42,7 @@ export const filerRank = (proofId, keys, me) => [...keys].sort((a, b) => (toHex(
  * THE REPAID FEE (sweep): `txOut(txid display, vout)` a confirmed unspent output { sats, script hex } or null (bitcoind's gettxout without the mempool); `returnScript()` this node's own wallet
  * script; `ownServed(start)` this seat's own GET /slash-release answer, if it built the release or the fallback itself.
  */
-export function createSlashStarter({ key, network, db, store, thresholdOf, totalOf = () => null, tipHeight, entriesAtTip, heldProofs, bytesOf, judge, holdsFor, feeCoin, send, urlsOf, checkOther = null, feeSecret = () => schnorr.utils.randomSecretKey(), stepMs = 600000, judgeAgainMs = 600000, feeSats = 700n, fetchFn = fetch, now = Date.now, log = () => {},
+export function createSlashStarter({ asker = null, key, network, db, store, thresholdOf, totalOf = () => null, tipHeight, entriesAtTip, heldProofs, bytesOf, judge, holdsFor, feeCoin, send, urlsOf, checkOther = null, feeSecret = () => schnorr.utils.randomSecretKey(), stepMs = 600000, judgeAgainMs = 600000, feeSats = 700n, fetchFn = fetch, now = Date.now, log = () => {},
   txOut = null, returnScript = async () => null, ownServed = null, sweepEveryMs = 60000, feeFind = null }) {
   const me = toHex(key);
   db.exec(`CREATE TABLE IF NOT EXISTS slash_starts (proof_id BLOB PRIMARY KEY, bond TEXT NOT NULL, txid TEXT NOT NULL, kept_ms INTEGER NOT NULL)`);
@@ -74,7 +74,9 @@ export function createSlashStarter({ key, network, db, store, thresholdOf, total
   // ONE SIGNER FOR EVERY ASK OF THIS NODE'S SHARES: a start here, a fallback (slash-release-run.js checkFallback) by its `kind`
   // THE ROSTER A SIGNING SET IS READ AGAINST (kanban #1155): the record this node's keygen kept, or for key 0, kept without one, the chain's word on that key
   const rosterOf = (publicKey, held) => rosterOfRecord(publicKey, held) || (held.record && held.record.length ? null : { total: totalOf(toHex(publicKey)), threshold: thresholdOf(toHex(publicKey)) });
+  // A SIGNED ASK COUNTS FOR ITS CENSUS NODE (kanban #1386, audit 2 #1204 RES-7): an unsigned one shares a small pool and gives way first
   const signer = createCensusSigner({ key, held: (publicKey) => store.held(publicKey), rosterOf,
+    isAsker: async (nodeHex) => ((await entriesAtTip()) || []).some((e) => toHex(e.pubkey) === String(nodeHex).toLowerCase()),
     check: (request) => (request && request.kind && request.kind !== 'start' ? (checkOther ? checkOther(request) : { ok: false, why: `this seat signs no ${request.kind} yet` }) : check(request)) });
 
   // THE FEE COIN'S KEY, FROM THE NODE'S OWN AND THE PROOF: the release repays this coin to the very script it came from (5A.3B, pays = filer), so the filer can still spend it, after a restart too
@@ -183,7 +185,7 @@ export function createSlashStarter({ key, network, db, store, thresholdOf, total
     if (!threshold) return { ok: false, why: `this seat reads no threshold for key ${keyHex.slice(0, 16)}` };
     const request = { proof: toHex(bytes), presig: toHex(presig), tx: txJson(tx), prevouts: coinsJson(prevouts) };
     const digest = slashStartDigest({ tx, prevouts, nodeKey, censusKey });
-    const got = await gatherCensusSignature({ request, digest, publicKey: censusKey, threshold, urls: urlsOf(entries), own: store.held(censusKey) ? signer : null, fetchFn });
+    const got = await gatherCensusSignature({ asker, request, digest, publicKey: censusKey, threshold, urls: urlsOf(entries), own: store.held(censusKey) ? signer : null, fetchFn });
     if (!got.ok) return got;
     const feeWitness = scriptPathWitness({ stack: [schnorr.sign(tapSighash({ ...tx, prevouts, inputIndex: 1, leafHash: fee.leafHash }), fee.secret)], script: fee.leaf, controlBlock: fee.control });
     const control = controlBlockFor('slash', bondKeyOf(nodeKey, entry.advert.bondMaturityHeight, network, censusKey, entry.advert.ownerPubkey)).controlBlock;

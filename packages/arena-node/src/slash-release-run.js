@@ -73,7 +73,7 @@ export const fallbackRank = (proofId, keys, me) => [...keys].sort((a, b) => (toH
  * `urlOf(key hex)`; `heldKey(publicKey)` CensusKeyStore's; `thresholdOf(key hex)`; `holdersOf(key hex, height)` -> [{ key, shares }]; `signer()` this node's census signer or null.
  * `send(hex)`. `claimsOf(fid hex)` the one claims ledger of a liquidating federation, for a slash with no round (liquidation-escrow-run.js).
  */
-export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPoint, tipHeight, entriesAtTip, rawTx, unspent, fetchProof, judge, panelsOf, seatsOf = () => [], lossesFor, handles = () => true,
+export function createSlashRelease({ asker = null, key, secret, networkId, clocks, db, tweakPoint, tipHeight, entriesAtTip, rawTx, unspent, fetchProof, judge, panelsOf, seatsOf = () => [], lossesFor, handles = () => true,
   federations = async () => [], retired = [], portFor = async () => null, scriptOf, reserveKeyOf = () => null, keepReserveRow = () => {}, urlOf = () => null, heldKey = () => null,
   thresholdOf = () => null, holdersOf = async () => [], signer = () => null, send, claimsOf = async () => null, stepMs = 600000, fetchFn = fetch, now = Date.now, log = () => {},
   txOut = async (txid, vout) => ((await unspent(txid, vout)) ? { confirmations: 1 } : null), federationsAt = async () => federations(), carrierMarginMsat = carrierMarginOf(networkId),
@@ -511,7 +511,7 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
     if (!threshold) return { ok: false, why: `this seat reads no threshold for key ${keyHex.slice(0, 16)}` };
     const request = { kind: 'fallback', start: info.start, proof: toHex(info.bytes), tableId: toHex(b.tableId) };
     const own = heldKey(e.advert.censusKey) ? signer() : null;
-    const got = await gatherCensusSignature({ request, digest: b.digest, publicKey: e.advert.censusKey, threshold, urls: holders.filter((k) => k !== me).map(urlOf).filter(Boolean), own, fetchFn });
+    const got = await gatherCensusSignature({ asker, request, digest: b.digest, publicKey: e.advert.censusKey, threshold, urls: holders.filter((k) => k !== me).map(urlOf).filter(Boolean), own, fetchFn });
     if (!got.ok) return got;
     const { raw, txid } = signedHoldSpend({ spend: b.spend, witness: fallbackWitness({ hold, signature: got.signature }) });
     let sent;
@@ -720,10 +720,10 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
   let peers = [];                                 // the census' node keys at the last pass: whom an earlier table is asked of
   // WHAT A SLASH LEFT IN ESCROW (RULED 2026-11-03, kanban #1085): slash-escrow-run.js, on this run's reads
   // WHAT A SLASH WITH NO ROUND LEFT IN ESCROW pays the liquidation's claims (kanban #1093 part 2, ruling #1111): liquidation-escrow-run.js, on this run's reads
-  const liquidation = createLiquidationEscrow({ secret, me, networkId, clocks, db, tweakPoint, tipHeight, entriesAtTip, txOut, fetchProof, judge, holdersOf, heldKey, thresholdOf, signer, urlOf,
+  const liquidation = createLiquidationEscrow({ asker, secret, me, networkId, clocks, db, tweakPoint, tipHeight, entriesAtTip, txOut, fetchProof, judge, holdersOf, heldKey, thresholdOf, signer, urlOf,
     fetchFn, send, portFor, scriptOf, federationsAt, reserveKeyOf, claimsOf, now, stepMs, log, confirmedOf, fallbackRank, getJson, marginMsat: carrierMarginMsat,
     payoutFeeMsat: carrierPayoutFeeMsat });
-  const escrow = createSlashEscrow({ secret, me, clocks, db, tweakPoint, tipHeight, entriesAtTip, txOut, fetchProof, judge, panelsOf, seatsOf, holdersOf, heldKey, thresholdOf, signer, urlOf,
+  const escrow = createSlashEscrow({ asker, secret, me, clocks, db, tweakPoint, tipHeight, entriesAtTip, txOut, fetchProof, judge, panelsOf, seatsOf, holdersOf, heldKey, thresholdOf, signer, urlOf,
     fetchFn, send, portFor, scriptOf, federationsAt, retired, now, stepMs, log, confirmedOf, peers: () => peers, fallbackRank, getJson, payOn });
   const unhandled = new Set();                    // starts whose offence no loss rule reads: dropped once (pass)
   async function pass() {
