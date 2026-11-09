@@ -5612,33 +5612,90 @@
     // names a federation: an invoice for it, paid by the faucet, and the green line when it lands. It asks nothing of the player; a refusal leaves only the deposit window.
     // THE GRANT SURVIVES A RELOAD (kanban #963): the pending mark goes only once the faucet paid, or said this account has its grant
     let welcomeRunning = false;
+    function browserHoldsAnotherWallet(mine) {
+      try {
+        const S = window.localStorage;
+        let kept = []; try { kept = JSON.parse(S.getItem('arena.seeds') || '[]'); } catch { kept = []; }
+        return !!(ARENACLIENT.phraseWalletEntries && Array.isArray(kept) && kept.some((x) => x && x.hex && x.hex !== mine && ARENACLIENT.phraseWalletEntries(S, x.hex) > 0));
+      } catch { return false; /* the check could not read the browser's wallets: the faucet still pays one welcome per account */ }
+    }
+    // THE WELCOME AS READY E-CASH (kanban #1381, Daniel 2026-11-09: "Das Ziel ist unter 3s fuer die 500"): the faucet hands out a note made ahead of time
+    // - an invoice, its Lightning payment and the claim were three federation steps (12-15 s). The note is kept as an e-cash record of this federation
+    // (arena.ecash.pending.*, the copy the balance counts until it is received, kanban #1149): `onKept` runs then - the money is the player's from that
+    // moment, a bearer note no one else holds - and the wallet reissues it after. A reload finds the record and receives it. Answers receiveKeptEcash's
+    // word, or null: no note ready (the invoice, as before).
+    async function welcomeEcash({ seed, open, federationId, onKept = () => {} }) {
+      const fedHex = ARENACLIENT.toHex(federationId), grant = ARENACLIENT.FAUCET_GRANTS.welcome, t0 = performance.now(), L = vault();
+      const prefix = ARENACLIENT.ECASH_PENDING_PREFIX + fedHex.slice(0, 16) + '.';
+      let key = null, rec = null;
+      try { key = Object.keys(L).find((k) => k.startsWith(prefix) && k.endsWith('.welcome')) || null; rec = key ? ARENACLIENT.readEcashTransfer(L, key) : null; } catch { key = null; rec = null; }
+      if (!rec || rec.state !== 'kept') {
+        const got = await ARENACLIENT.askFaucet({ url: window.ARENA_FAUCET_URL, kind: 'welcome', seed, ecash: fedHex });
+        if (!got.ecash) return null;
+        key = prefix + Date.now() + '.welcome';
+        const tag = { fed: fedHex, to: ARENACLIENT.toHex(seed).slice(0, 16), at: Date.now(), from: 'faucet welcome' };
+        try { rec = ARENACLIENT.moveEcashTransfer(L, key, null, 'intent', tag); rec = ARENACLIENT.moveEcashTransfer(L, key, rec, 'kept', { ecash: got.ecash, msat: String(grant.invoiceMsat) }); }
+        catch { rec = { v: 3, state: 'kept', ...tag, ecash: got.ecash, msat: String(grant.invoiceMsat), memoryOnly: true }; }   // a full store: received from memory
+      }
+      console.log('[faucet] welcome e-cash kept, ' + Math.round(performance.now() - t0) + ' ms after the ask');
+      try { onKept(rec); } catch { /* the words are not the money */ }
+      // THE WALLET OPENS AFTER (the join holds the page's thread for seconds; the faucet's answer waited behind it - measured 3.3 s on stage)
+      const client = await open();
+      const said = await ARENACLIENT.receiveKeptEcash({ storage: L, key, rec, federation: fedHex, receive: (e) => client.receiveEcash(e) });
+      console.log('[faucet] welcome e-cash: ' + (said.state || said.why) + ', ' + Math.round(performance.now() - t0) + ' ms after the ask');
+      if (said.ok) ARENACLIENT.faucetEcashRowOnce(L, federationId, { ecash: rec.ecash, msat: said.credited || grant.invoiceMsat });
+      if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
+      return said;
+    }
     async function welcomeSats() {
       let pending = null; try { pending = sessionStorage.getItem('arena.welcome.pending'); } catch { return; }
       if (!pending || !window.ARENA_FAUCET_URL || welcomeRunning) return;
       // A BROWSER THAT ALREADY HOLDS A WALLET GETS NO WELCOME (kanban #1091, the owner's playtest 2026-11-03 15:33Z: "die Meldung ueber 500 sat
       // kommt obwohl ich sie schon habe" - a new tab with no phrase made a new wallet beside the one with 1,600 sat, and said 500 sat were coming):
       // any phrase this browser keeps with a wallet entry (money or history) means the player is not new - no grant, no green line
-      try {
-        const S = window.localStorage, mine = typeof walletSeed === 'function' && walletSeed() ? ARENACLIENT.toHex(walletSeed()) : null;
-        let kept = []; try { kept = JSON.parse(S.getItem('arena.seeds') || '[]'); } catch { kept = []; }
-        if (ARENACLIENT.phraseWalletEntries && Array.isArray(kept) && kept.some((x) => x && x.hex && x.hex !== mine && ARENACLIENT.phraseWalletEntries(S, x.hex) > 0)) {
-          try { sessionStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ }
-          console.log('[faucet] no welcome sats: this browser already holds a wallet');
-          return;
-        }
-      } catch { /* the check could not read the browser's wallets: the faucet still pays one welcome per account */ }
+      if (browserHoldsAnotherWallet(typeof walletSeed === 'function' && walletSeed() ? ARENACLIENT.toHex(walletSeed()) : null)) {
+        try { sessionStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ }
+        console.log('[faucet] no welcome sats: this browser already holds a wallet');
+        return;
+      }
       welcomeRunning = true;
       // WHAT A PLAY PRESSED MEANWHILE WAITS FOR (kanban #1042): nothing else says sats are on their way, the wallet reads 0 until they land
       let welcomeLanded = () => {};
       window.ARENA_WELCOME_WAIT = new Promise((go) => { welcomeLanded = () => { window.ARENA_WELCOME_WAIT = null; go(); }; });
       window.ARENA_MONEY_ALERT.coming(ARENACLIENT.FAUCET_GRANTS.welcome.sats + ' test sats are on their way to your wallet \u2026');
-      for (let i = 0; i < 90 && !(window.ARENA_LEDGER_LOBBY && window.ARENA_LEDGER_LOBBY.federation && typeof walletSeed === 'function' && walletSeed()); i++) await new Promise((r) => setTimeout(r, 1000));
+      for (let i = 0; i < 900 && !(window.ARENA_LEDGER_LOBBY && window.ARENA_LEDGER_LOBBY.federation && typeof walletSeed === 'function' && walletSeed()); i++) await new Promise((r) => setTimeout(r, 100));   // every 0.1 s (kanban #1381)
       const lob = window.ARENA_LEDGER_LOBBY, seed = typeof walletSeed === 'function' ? walletSeed() : null;
       if (!lob || !lob.federation || !seed) { welcomeRunning = false; welcomeLanded(); window.ARENA_MONEY_ALERT.notComing(); return; }
       try {
-        const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
         const into = depositPick(lob.federation).invite || lob.federation;
-        const federationId = ARENACLIENT.fromHex(String(wasm.LockClient.federationIdOf(into)));
+        // THE FEDERATION FROM ITS VERIFIED STATUS (kanban #1381): the lock client loads only after Unity's start (measured 3.2 s after a quick Create);
+        // the faucet's ask needs only the federation's id, and the lock client is loaded for the join after
+        let known = null;
+        try { for (const [k, x] of window.ARENA_FED_LOADS || []) { const f = String((x && x.federation) || k || '').toLowerCase(); if (x && x.invite === into && /^[0-9a-f]{64}$/.test(f)) known = { federation: f }; } } catch { known = null; }
+        let wasm = null;
+        const loadWasm = async () => { if (!wasm) { wasm = await window.ARENA_LOCK_WASM(); await wasm.default(); } return wasm; };
+        const federationId = ARENACLIENT.fromHex(known ? String(known.federation).toLowerCase() : String((await loadWasm()).LockClient.federationIdOf(into)));
+        // THE WELCOME AS READY E-CASH FIRST (kanban #1381, Daniel 2026-11-09: "Das Ziel ist unter 3s fuer die 500"): the faucet hands out a note made
+        // ahead of time and this wallet reissues it - one federation step, where an invoice, its Lightning payment and the claim took three (12-15 s).
+        // The string is kept in the tab until the federation took it, so a reload receives it again; no note ready: the invoice below, as before.
+        {
+          const grant = ARENACLIENT.FAUCET_GRANTS.welcome;
+          const open = async () => { window.ARENA_WELCOME_ASKING = false; return ARENACLIENT.openPlayerWallet({ federationId, invite: into, seed, LockClient: (await loadWasm()).LockClient, storage: vault() })
+            .then((client) => { if (window.ARENA_KEEP_WALLET) window.ARENA_KEEP_WALLET(ARENACLIENT.toHex(federationId), client); return client; }); };
+          let said = null, shown = false;
+          const show = () => { if (shown) return; shown = true; window.ARENA_MONEY_ALERT.nextWords(grant.sats + ' sats have been credited to your wallet for testing.');
+            window.ARENA_MONEY_ALERT.credited(grant.invoiceMsat, true); if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES(); window.ARENA_TRACK('faucet-welcome'); };
+          window.ARENA_WELCOME_ASKING = true;
+          try { said = await welcomeEcash({ seed, open, federationId, onKept: show }); } finally { window.ARENA_WELCOME_ASKING = false; }
+          if (said) {
+            if (said.ok || said.refused) { try { sessionStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ } }
+            welcomeLanded(); paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
+            if (!said.ok && !said.retry) throw new Error('the welcome e-cash was not received: ' + (said.why || said.state));
+            if (!said.ok) console.log('[faucet] the welcome e-cash is kept and received again later: ' + said.why);
+            return;
+          }
+        }
+        await loadWasm();
         const offer = await ARENACLIENT.walletDepositOffer({ federationId, invite: into, seed, LockClient: wasm.LockClient, storage: vault(), gateways: window.ARENA_LEDGER_GATEWAYS || [],
           onClaimed: (d) => { welcomeLanded(); if (d && d.amountMsat) window.ARENA_MONEY_ALERT.credited(d.amountMsat, true); paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
         if (offer.client && window.ARENA_KEEP_WALLET) window.ARENA_KEEP_WALLET(ARENACLIENT.toHex(federationId), offer.client);
@@ -8323,7 +8380,7 @@
             window.ARENA_WALLET_BALANCE = { sats: Number(sum / 1000n), pending: window.ARENA_PENDING_SATS || 0, arriving: Number(arriving / 1000n), merging: Number(merging / 1000n), parts, unread, arrivingLine,
               federation: parts.length === 1 ? 'federation ' + parts[0].federation.slice(0, 16) + '\u2026' : parts.length + ' federations' };
             lastBalance(window.ARENA_WALLET_BALANCE);
-            if (arriving > 0n) { console.log('[arena] ' + Number(arriving / 1000n) + ' sat still being issued to the player wallet'); setTimeout(() => window.ARENA_SUM_BALANCES(), 3000); }
+            if (arriving > 0n) { console.log('[arena] ' + Number(arriving / 1000n) + ' sat still being issued to the player wallet'); setTimeout(() => window.ARENA_SUM_BALANCES(), 500); }
             if (parts.length > 1) console.log('[arena] balance over ' + parts.length + ' federations: ' + Number(sum / 1000n) + ' sat (' + parts.map((x) => x.federation.slice(0, 8) + ' ' + x.sats).join(', ') + ')');
           }
         } finally { window.ARENA_BALANCE_TRIED = true; if (window.ARENA_PAINT_SETTINGS) window.ARENA_PAINT_SETTINGS(); }
@@ -8546,6 +8603,8 @@
         if (window.ARENA_WALLET_EARLY || !lobby || !lobby.federation || !ARENACLIENT.openPlayerWallet) return;
         const seed = walletSeed();
         if (!seed) { setTimeout(() => openWalletEarly(lobby), 1000); return; }
+        // NOT WHILE THE WELCOME ASKS THE FAUCET (kanban #1381): the join holds the page's thread, and the faucet's answer is what the player waits for
+        if (window.ARENA_WELCOME_ASKING) { setTimeout(() => openWalletEarly(lobby), 100); return; }
         const t0 = Date.now();
         window.ARENA_WALLET_EARLY = (async () => {
           const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
@@ -9780,7 +9839,7 @@
         window.ARENA_WALLET_SCREEN.made = 'new';
         window.ARENA_TRACK('wallet-new');
         window.ARENA_NEW_WALLET = true; window.ARENA_BALANCE_TRIED = true; try { sessionStorage.setItem('arena.welcome.pending', '1'); } catch { /* no storage, no welcome */ }
-        setTimeout(() => { if (window.ARENA_WELCOME) window.ARENA_WELCOME(); }, 300);
+        setTimeout(() => { if (window.ARENA_WELCOME) window.ARENA_WELCOME(); }, 0);   // at once (kanban #1381)
         done();
         // THE SEED AT ONCE (kanban #1033, the owner 2026-11-02: "Beim neuen wallet nach create new wallet muss der seed direkt angezeigt werden und auch 3 Woerter verifiziere
         // werden"; this replaces 2026-10-11, which left the words to Settings): the 24 words, then three of them checked

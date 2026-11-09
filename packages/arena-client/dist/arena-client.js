@@ -1174,6 +1174,8 @@ const TYPE_GUARDIAN_HALT_OBSERVATION = 0x48;
 const TYPE_CONTRIBUTION_AGREEMENT = 0x49;
 const TYPE_CONTRIBUTION_LEAVE = 0x4a;
 const TYPE_CONTRIBUTION_TERMINATION = 0x4b;
+// A GUARDIAN THAT SIGNED A SPENT-SET COPY ABOVE THE HALT'S BOUND (kanban #1269, §5A.3 offence row, RULED #1262): the copy and the halt proof (bound-slash.js)
+const TYPE_BOUND_PROOF = 0x4c;
 // AN ATTESTED VALUE (feature 8, protocol 2026.0.7): a scalar market's attestors' word on the number it asked for - its
 // own type, so an outcome attestation's bytes (0x1d) never decode as one, nor the other way round
 const TYPE_VALUE_ATTESTATION = 0x2a;
@@ -1296,6 +1298,7 @@ const TAG = {
   playerName: 'ARENA/v1/PlayerName',
   feeProposal: 'ARENA/v1/FeeProposal',
   feeApproval: 'ARENA/v1/FeeApproval',
+  feeSignal: 'ARENA/v1/FeeSignal',   // kanban #1283, RULED #1277 B: a fee proposal's signal on chain
   leaderboardPayout: 'ARENA/v1/LeaderboardPayout',
   // The player's lock client's root, per round, from their seed (W1b). Its own
   // tag: it must never be the player key the same seed makes for the round.
@@ -7474,6 +7477,20 @@ function reaffirmedBonds(view, entries, { atHeight, networkId, verify } = {}) {
   return found;
 }
 
+/**
+ * FOLLOWING A SUCCESSOR NETWORK (§27A.8.5 RULED 2026-11-07, kanban #1336): "A client MUST ask (never follow automatically) when the
+ * certificate's re-affirmed weight is under 66 % of the ancestor census, a figure that is on chain". `reaffirmedSats` the bonded weight
+ * whose re-affirmations the certificate counts, `ancestorSats` the ancestor census's whole weight (both read from the chain).
+ * Answers { ask, bps }: ask true below 6600 bps, and whenever either figure is unreadable - a client never follows on a guess.
+ */
+const SUCCESSOR_FOLLOW_BPS = 6600;
+function successorNeedsAsking({ reaffirmedSats, ancestorSats }) {
+  let r, a; try { r = BigInt(reaffirmedSats); a = BigInt(ancestorSats); } catch { return { ask: true, bps: null, why: 'the weights are not read' }; }
+  if (a <= 0n || r < 0n) return { ask: true, bps: null, why: 'no ancestor weight' };
+  const bps = Number((r * 10000n) / a);
+  return bps < SUCCESSOR_FOLLOW_BPS ? { ask: true, bps, why: `only ${(bps / 100).toFixed(2)} % of the ancestor census re-affirmed: under 66 %` } : { ask: false, bps };
+}
+
 // ---- arena-protocol/src/protocol-version.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -7814,13 +7831,17 @@ const haltsAt = (f) => f + 1;
  *
  * At ten guardians and 7 of 10, `f = 3`, so four of the smallest bond - NOT the sum of all ten.
  */
-function exposureCap({ bonds, f }) {
+function exposureCap({ bonds, f, threshold = null }) {
   if (!Array.isArray(bonds) || !bonds.length) return { ok: false, why: 'a federation has seated guardians' };
   if (!bonds.every((b) => typeof b === 'bigint' && b > 0n))
     return { ok: false, why: 'every bond is a positive number of msat' };
   if (!Number.isInteger(f) || f < 0) return { ok: false, why: 'f is how many faults the threshold tolerates' };
   const smallest = bonds.reduce((a, b) => (b < a ? b : a));
-  return { ok: true, cap: BigInt(haltsAt(f)) * smallest, smallest, halts: haltsAt(f) };
+  // (seated - 2f), RULED 2026-11-07 (kanban #1295/#1321): it was (f + 1), which holds only at full seating - 4, 3, 2 at 10, 9, 8 seated of a ten.
+  // In general the leavers that halt it: seated - threshold + 1 (threshold 2f + 1, so seated - 2f; a 2 of 2 testnet federation, threshold 2: 1)
+  const t = Number.isInteger(threshold) ? threshold : 2 * f + 1;
+  const places = Math.max(0, bonds.length - t + 1);
+  return { ok: true, cap: BigInt(places) * smallest, smallest, halts: places };
 }
 
 /**
@@ -7833,7 +7854,7 @@ function exposureCap({ bonds, f }) {
  * more than the cap for every k, so the theft cover holds. `guardians` [{ outputs: [{ bondSats, maturity }] }] or, with no outputs
  * listed, { bondSats, maturity }.
  */
-function lockedExposureCap({ guardians, f, height, drainBlocks, bondMinGuardian }) {
+function lockedExposureCap({ guardians, f, height, drainBlocks, bondMinGuardian, threshold = null }) {
   if (!Array.isArray(guardians) || !guardians.length) return { ok: false, why: 'a federation has seated guardians' };
   if (!Number.isInteger(f) || f < 0) return { ok: false, why: 'f is how many faults the threshold tolerates' };
   if (!Number.isInteger(height) || !Number.isInteger(drainBlocks) || drainBlocks < 0) return { ok: false, why: 'the lock is judged at a record height against drain_blocks' };
@@ -7844,7 +7865,7 @@ function lockedExposureCap({ guardians, f, height, drainBlocks, bondMinGuardian 
     .reduce((a, o) => a + BigInt(o.bondSats || 0), 0n));
   const qualifying = locked.filter((x) => x > 0n && x >= floor);
   const lapsing = guardians.length - qualifying.length;
-  const places = Math.max(0, haltsAt(f) - lapsing);
+  const places = Math.max(0, guardians.length - (Number.isInteger(threshold) ? threshold : 2 * f + 1) + 1 - lapsing);   // (seated - 2f) less the lapsing (#1295/#1321)
   const smallest = qualifying.length ? qualifying.reduce((a, b) => (b < a ? b : a)) : 0n;
   return { ok: true, cap: BigInt(places) * smallest, smallest, places, lapsing, qualifying: qualifying.length, line };
 }
@@ -8143,6 +8164,11 @@ const TAG_NETWORK_ID = 'ARENA/v1/NetworkId';
  * height after committee_time. Entry closes before that height is known.
  */
 const RANDOMNESS_SOURCE = 'bitcoin-block-hash';
+/**
+ * NODE_FEE_BPS_MAX, A GENESIS PARAMETER (§27A.7.4 RULED 2026-11-07, kanban #1300/#1335): the highest node fee a MONEY ballot may set. Raising it
+ * is an UPGRADE - a new network the clients must choose to follow (§27A.8) - never a config vote, so a fee vote cannot raise its own ceiling.
+ */
+const NODE_FEE_BPS_MAX = 600;
 
 /**
  * THE SLASH CLOCKS OF TEMPLATE 3, by network (§27A.6's table, §5A.3B). Hashed into mainnet's network id. On testnet4 and regtest they are
@@ -10137,6 +10163,13 @@ const signSeen = (s, sign) => sign(seenId(s));
 // AT MOST JUSTIFICATION_DEPTH STEPS IN ALL - the step and the signer's steps before - so a justification is finite and small. An
 // honest seat refuses to sign a seating whose justification would carry more (arena-node seating-agent.js resign).
 const JUSTIFICATION_DEPTH = 8;
+// A SILENT MEMBER (§5A.7 RULED 2026-11-07, kanban #1314/#1332): "A drawn node that answers PRESENT and then signs no SEATING does not hold the round:
+// a seating that drops a member of S with no signature by seating_close + Δ (Δ = 20 s) counts as coming after S for the ordered rule, with the
+// missing signature, attested by the signers' own SEEN record, as the justification". A silent step is flag bit 1: `seated` carries the signer's
+// SEEN `present` list (the member among them), `signature` the signer's own SEEN signature over S, `bound` 32 zero bytes, and after the flags
+// vec(leftOut) - the SEEN's other list. What it shows is the signer's word that the member was there and did not sign; a slow honest node loses its
+// seat to a reserve, which the text accepts.
+const SILENT_AFTER_MS = 20000;
 /** How many steps a justification carries in all: itself and the signer's steps before (prior). */
 const justificationSteps = (j) => (j ? 1 + (j.prior ? justificationSteps(j.prior.justification) : 0) : 0);
 /** Does seating `a` come before seating `b` (node keys hex, both in score order) in a draw (`rank`: node key hex -> draw index)? */
@@ -10148,6 +10181,17 @@ const listOf = (keys) => keys.map(toHex).join(',');
 /** The steps of a justification's own chain, last first: it, then the signer's step before (prior), and so on. */
 function justificationChain(j) { const out = []; for (let at = j; at; at = at.prior ? at.prior.justification : null) out.push(at); return out; }
 function writeSteps(j, w) {
+  if (j && j.silent) {
+    if (!Array.isArray(j.of) || !j.of.every(is32Seat) || !Array.isArray(j.present) || !j.present.every(is32Seat) || !Array.isArray(j.leftOut) || !j.leftOut.every(is32Seat)
+      || !is32Seat(j.member) || !(j.signature instanceof Uint8Array) || j.signature.length !== 64) throw new Error('a silent step names the seating left, the SEEN lists, the member and the signer\'s SEEN signature');
+    if (j.prior && !(j.prior.signature instanceof Uint8Array && j.prior.signature.length === 64 && j.prior.justification)) throw new Error('a justification\'s step before is the signer\'s signature over the seating left and its justification');
+    w.vec(j.of, (k, ww) => ww.bytes32(k)); w.vec(j.present, (k, ww) => ww.bytes32(k));
+    w.bytes32(j.member); w.bytes(j.signature, 64); w.bytes32(new Uint8Array(32));
+    w.u8((j.prior ? 1 : 0) | 2);
+    w.vec(j.leftOut, (k, ww) => ww.bytes32(k));
+    if (j.prior) { w.bytes(j.prior.signature, 64); writeSteps(j.prior.justification, w); }
+    return;
+  }
   if (!j || !Array.isArray(j.of) || !Array.isArray(j.seated) || !j.of.every(is32Seat) || !j.seated.every(is32Seat) || !is32Seat(j.member)
     || !(j.signature instanceof Uint8Array) || j.signature.length !== 64 || !is32Seat(j.bound)) throw new Error('a justification names the seating left, the member\'s seating, the member, its signature and the hash it binds');
   if (j.prior && !(j.prior.signature instanceof Uint8Array && j.prior.signature.length === 64 && j.prior.justification)) throw new Error('a justification\'s step before is the signer\'s signature over the seating left and its justification');
@@ -10167,10 +10211,12 @@ function readJustification(r, budget = { left: JUSTIFICATION_DEPTH }) {
   const of = r.vec((x) => x.bytes32()); const seated = r.vec((x) => x.bytes32());
   const member = r.bytes32(); const signature = r.bytes(64); const bound = r.bytes32();
   const flags = r.u8();
-  if (flags > 1) throw new Error('a justification\'s flags are bit 0 alone');
-  if (!flags) return { of, seated, member, signature, bound };
+  if (flags > 3) throw new Error('a justification\'s flags are bits 0 and 1 alone');
+  // a silent step (bit 1): `seated` is the signer's SEEN present list, `signature` its SEEN signature, then its leftOut list
+  const head = flags & 2 ? { silent: true, of, present: seated, member, signature, leftOut: r.vec((x) => x.bytes32()) } : { of, seated, member, signature, bound };
+  if (!(flags & 1)) return head;
   const prior = { signature: r.bytes(64), justification: readJustification(r, budget) };
-  return { of, seated, member, signature, bound, prior };
+  return { ...head, prior };
 }
 /** A justification's bytes (GET /seating-sig and GET /seating-batch carry them as hex, `justification`). */
 function encodeJustification(j) { const w = new Writer(); writeJustification(j, w); return w.finish(); }
@@ -10195,6 +10241,28 @@ function verifyJustification(j, ctx) {
 function verifyStep(j, { roundId, role, drawn, slots, verify, signer, onto }) {
   const rank = new Map(drawn.map((k, i) => [toHex(k), i]));
   const shaped = (list) => list.length >= 1 && list.length <= slots && list.every((k, i) => rank.has(toHex(k)) && (i === 0 || rank.get(toHex(list[i - 1])) < rank.get(toHex(k))));
+  if (j.silent) {
+    // A SILENT MEMBER (kanban #1332): the member is in S and was PRESENT by the signer's own signed SEEN of S; the seating signed onto seats the
+    // signer and drops the member - it counts as coming after S
+    if (!shaped(j.of) || (onto && !shaped(onto))) return { ok: false, why: 'a silent step names a seating that is not of drawn nodes in score order within the seats' };
+    const of = j.of.map(toHex), s = toHex(signer), m = toHex(j.member), on = onto ? onto.map(toHex) : null;
+    if (!of.includes(s) || (on && !on.includes(s))) return { ok: false, why: 'a silent step for a node not in the seating it left or not in the one it signed' };
+    if (m === s) return { ok: false, why: 'a silent step that names the signer itself' };
+    if (!of.includes(m)) return { ok: false, why: `the silent member ${m.slice(0, 16)} is not in the seating left` };
+    if (!j.present.map(toHex).includes(m)) return { ok: false, why: `the signer's SEEN does not hold the silent member ${m.slice(0, 16)} present` };
+    if (on && on.includes(m)) return { ok: false, why: 'the seating signed still seats the silent member' };
+    let seen = false;
+    try { seen = verify(j.signature, seenId({ roundId, role, seating: seatingId({ roundId, role, seated: j.of }), present: j.present, leftOut: j.leftOut }), signer); } catch { seen = false; }
+    if (!seen) return { ok: false, why: `the silent step's SEEN is not ${s.slice(0, 16)}'s signature over the seating left` };
+    if (j.prior) {
+      let mine = false;
+      try { mine = verify(j.prior.signature, seatingSignedId({ roundId, role, seated: j.of }, justificationHash(encodeJustification(j.prior.justification))), signer); } catch { mine = false; }
+      if (!mine) return { ok: false, why: `the signer ${s.slice(0, 16)}'s signature over the seating it left does not verify, binding the justification with it` };
+      const p = verifyStep(j.prior.justification, { roundId, role, drawn, slots, verify, signer, onto: j.of });
+      if (!p.ok) return { ok: false, why: `the signer's step before: ${p.why}` };
+    }
+    return { ok: true };
+  }
   if (!shaped(j.of) || !shaped(j.seated) || (onto && !shaped(onto))) return { ok: false, why: 'a justification names a seating that is not of drawn nodes in score order within the seats' };
   const of = j.of.map(toHex), seated = j.seated.map(toHex), s = toHex(signer), m = toHex(j.member);
   const on = onto ? onto.map(toHex) : null;
@@ -10398,7 +10466,8 @@ function judgeOf(certs, check, presented) {
     if (!j) return;
     lasts.push({ node: toHex(node), to: sid(seated), j });
     pool.push({ signer: toHex(node), j });
-    record(j.member, j.seated, j.bound, j.signature);
+    // a silent step carries no signature of the member's (kanban #1332): only the signer's own SEEN, nothing to record as a seating signature
+    if (!j.silent) record(j.member, j.seated, j.bound, j.signature);
     if (j.prior) addBound(node, j.of, j.prior.justification, j.prior.signature);
   };
   // the certificates' signatures, each binding the justification the certificate carries for it (verifySeating checked them)
@@ -17290,10 +17359,18 @@ const LEGACY_REPEAL_COOLDOWN = 0;
 const LEGACY_DECIDE_DEPTH = 1;
 /** Is a proposal published at `publishedAt` under the #1196 rule, on a network whose BALLOT_DEPTH_HEIGHT is `depthHeight`. */
 const underDepthRule = (publishedAt, depthHeight = 0) => Number(publishedAt) >= Number(depthHeight);
-/** Is `p` a repeal: its config byte-identical to one in `history` - the configs that were live before, [{ config }] - other than the current. */
-function isRepeal(p, history = []) {
-  const mine = toHex(p.config);
-  return history.slice(0, -1).some((h) => h.config && toHex(h.config) === mine);
+/**
+ * Is `p` a repeal (§27A.7.6, RULED 2026-11-07 kanban #1335/#1307): its config byte-identical to the config in force's DIRECT PARENT - `history`
+ * the configs that were live, [{ config, since }], the last one in force - and published within one normal cycle (REPEAL_WINDOW_BLOCKS) of the
+ * activation it undoes. "Any ancestor that was live before" let a fee config repealed years ago come back in days with no exit window.
+ */
+const REPEAL_WINDOW_BLOCKS = 4464;
+function isRepeal(p, history = [], { publishedAt = null } = {}) {
+  if (history.length < 2) return false;
+  const now = history[history.length - 1], parent = history[history.length - 2];
+  if (!parent.config || toHex(parent.config) !== toHex(p.config)) return false;
+  if (publishedAt !== null && Number.isInteger(now.since) && Number(publishedAt) > now.since + REPEAL_WINDOW_BLOCKS) return false;
+  return true;
 }
 /** A host dropped from the list goes faster than one added, a day of voting at most: a source gone bad must not stay listed. */
 const HOST_REMOVAL_VOTING = 144;
@@ -17308,11 +17385,16 @@ function isHostRemoval(p, history = []) {
   const now = new Set(decodeHostList(history[history.length - 1].config)), next = decodeHostList(p.config);
   return next.length < now.size && next.every((h) => now.has(h));
 }
-/** Thresholds of the bonded capital in the snapshot (§27A.7.4, §27A.8.2): turnout percent, approval of non-abstaining weight. */
+/**
+ * Thresholds of the bonded capital in the snapshot (§27A.7.4, §27A.8.2): approval of non-abstaining weight, and YES of ALL eligible capital.
+ * RULED 2026-11-07 (kanban #1300, #1335): "The turnout floor is replaced by a floor on YES over everyone eligible, so a NO can never cause a pass
+ * (the old pair, turnout 40 % and approval 66 %, let 30 % YES pass only when 10 % honest NO showed up)": DESIGN > 50 % and YES >= 15 %; MONEY
+ * >= 66 % and YES >= 26 %, counting only bonds of §27A.9.5 rule 1's age (`minAge`); an UPGRADE keeps §27A.8's 34 % (51 % turnout x 66 %).
+ */
 const THRESHOLDS = Object.freeze({
-  [CLASS.DESIGN]: { turnoutPct: 30n, approvalPct: 50n, strict: true },     // > 50 %
-  [CLASS.MONEY]: { turnoutPct: 40n, approvalPct: 66n, strict: false },     // >= 66 %
-  [CLASS.UPGRADE]: { turnoutPct: 51n, approvalPct: 66n, strict: false },   // >= 66 %
+  [CLASS.DESIGN]: { turnoutPct: 0n, approvalPct: 50n, strict: true, minYesPct: 15n },     // > 50 %, YES >= 15 % of all
+  [CLASS.MONEY]: { turnoutPct: 0n, approvalPct: 66n, strict: false, minYesPct: 26n, minAge: true },   // >= 66 %, YES >= 26 % of rule-1 bonds
+  [CLASS.UPGRADE]: { turnoutPct: 0n, approvalPct: 66n, strict: false, minYesPct: 34n },   // >= 66 %, YES >= 34 % of all
   // > 50 %, and yes from at least 25 % of ALL bonded capital (the owner 2026-10-31: "kürzer, 66% ist Zuviel. Quorum auch", "Mindestens 25% des Bond Kapitals"): 20 % turnout alone
   // would let some 10 % of the capital add a host of its own
   [CLASS.SOURCES]: { turnoutPct: 20n, approvalPct: 50n, strict: true, minYesPct: 25n },
@@ -17382,7 +17464,7 @@ function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats, schedu
     if (history && addedHosts(p, history).length > SOURCES_ADDED_MAX) return { ok: false, why: `One proposal adds at most ${SOURCES_ADDED_MAX} hosts` };
   }
   const removal = !!history && isHostRemoval(p, history);
-  const repeal = removal || (!!history && isRepeal(p, history));
+  const repeal = removal || (!!history && isRepeal(p, history, { publishedAt }));
   // THE #1196 RULE (BALLOT_DEPTH_HEIGHT): a repeal's cooldown 2 from that height, 0 before it - an older proposal keeps the old rule
   const ruled = underDepthRule(publishedAt, depthHeight);
   const repealCooldown = ruled ? repealSchedule.cooldown : LEGACY_REPEAL_COOLDOWN;
@@ -17424,8 +17506,12 @@ function decodeVote(payload) {
  * verifies under, only inside the voting phase; per bond outpoint the last by height wins (ties inside a block: lower txid).
  * ABSTAIN counts for turnout, not approval. Weight is the bond amount. Answers the weights, the percentages and `passed`.
  */
-function tally({ proposal, standing, census, votes, verify }) {
+function tally({ proposal, standing, census: all, votes, verify, ageBlocks = null }) {
   const id = standing.id;
+  // A MONEY VOTE COUNTS ONLY BONDS OF RULE 1'S AGE (kanban #1335): at least `ageBlocks` old at the proposal's publication, so rented capital
+  // does not set the fee - for the votes and for "all eligible capital" alike. A bond with no height is not counted.
+  const aged = THRESHOLDS[proposal.class] && THRESHOLDS[proposal.class].minAge && Number.isInteger(ageBlocks) && Number.isInteger(standing.publishedAt);
+  const census = aged ? (all || []).filter((b) => Number.isInteger(b.height) && b.height <= standing.publishedAt - ageBlocks) : all;
   const prefix = toHex(id.subarray(0, 8));
   const latest = new Map();                          // outpoint -> { choice, height, txid, weight }
   for (const v of votes || []) {
@@ -17446,7 +17532,7 @@ function tally({ proposal, standing, census, votes, verify }) {
   for (const x of latest.values()) { if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }
   const t = THRESHOLDS[proposal.class];
   const turnout = yes + no + abstain;
-  const quorum = total > 0n && turnout * 100n >= t.turnoutPct * total;
+  const quorum = total > 0n && turnout * 100n >= (t.turnoutPct || 0n) * total;
   const decided = yes + no;
   const approved = decided > 0n && (t.strict ? yes * 100n > t.approvalPct * decided : yes * 100n >= t.approvalPct * decided) && (!t.minYesPct || yes * 100n >= t.minYesPct * total);
   return { totalSats: total, yesSats: yes, noSats: no, abstainSats: abstain, bondsVoted: latest.size, quorum, approved, passed: quorum && approved,
@@ -17896,12 +17982,13 @@ function fundingTally({ proposalId, census = [], votes = [], from, until, verify
       if (!good) continue;
       const had = latest.get(b.outpoint);
       const later = !had || v.height > had.height || (v.height === had.height && String(v.txid) < String(had.txid));
-      if (later) latest.set(b.outpoint, { choice: d.choice, height: v.height, txid: v.txid, weight: BigInt(b.weight ?? b.bondSats) });
+      if (later) latest.set(b.outpoint, { choice: d.choice, height: v.height, txid: v.txid, weight: BigInt(b.weight ?? b.bondSats), voided: !!b.voided });
     }
   }
   const total = census.reduce((a, b) => a + BigInt(b.weight ?? b.bondSats), 0n);
   let yes = 0n, no = 0n, abstain = 0n;
-  for (const x of latest.values()) { if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }
+  // A VOIDED VOTE (kanban #1334, rule 1 RULED 2026-11-07): its bond was spent before last + lockAfterVote - it stays in everyone who could vote
+  for (const x of latest.values()) { if (x.voided) continue; if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }
   const turnout = yes + no + abstain;
   const quorum = total > 0n && turnout * 100n >= FUNDING_TURNOUT_PCT * total;
   const decided = yes + no;
@@ -17910,7 +17997,9 @@ function fundingTally({ proposalId, census = [], votes = [], from, until, verify
   // 30 % turnout is gone, this asks real participation itself. `quorum` stays reported for the record
   const absolute = total > 0n && yes * 100n >= FUNDING_ABSOLUTE_PCT * total;
   return { totalSats: String(total), yesSats: String(yes), noSats: String(no), abstainSats: String(abstain), bondsVoted: latest.size, quorum, approved, absolute,
-    yesOfAllPct: total > 0n ? Number((yes * 10000n) / total) / 100 : 0, passed: approved && absolute, turnoutPct: total > 0n ? Number((turnout * 10000n) / total) / 100 : 0, approvalPct: decided > 0n ? Number((yes * 10000n) / decided) / 100 : 0 };
+    yesOfAllPct: total > 0n ? Number((yes * 10000n) / total) / 100 : 0, passed: approved && absolute,
+    // RULE 5's STOP (RULED 2026-11-07, kanban #1311/#1334): the floor a pass needs - NO at least 20 % of rule 1's weight - so one late NO stops nothing
+    stops: total > 0n && no * 100n >= FUNDING_ABSOLUTE_PCT * total, noOfAllPct: total > 0n ? Number((no * 10000n) / total) / 100 : 0, turnoutPct: total > 0n ? Number((turnout * 10000n) / total) / 100 : 0, approvalPct: decided > 0n ? Number((yes * 10000n) / decided) / 100 : 0 };
 }
 
 /** Rule 2: the age factor of a bond `age` blocks old - 1x under a year, 2x from one year, 3x from two. */
@@ -17922,15 +18011,19 @@ const ageFactor = (age, schedule = FUNDING_SCHEDULES.spec) => (age >= 2 * schedu
  * proposal's publication and its maturity is at least `lockAfterVote` past `last`; it weighs bondSats x its age factor at
  * publication. Answers the voting census, each with its `weight`, and `totalWeight` - everyone who could vote (rule 3's base).
  */
-function voteWeights({ census = [], publishedHeight, last, schedule = FUNDING_SCHEDULES.spec }) {
+function voteWeights({ census = [], publishedHeight, last, schedule = FUNDING_SCHEDULES.spec, spentAt = null }) {
+  // RULED 2026-11-07 (kanban #1299, #1334): EVERY SEASONED BOND is in everyone who could vote - the old "stays locked past last + lockAfterVote"
+  // made the electorate whoever chose a multi-year lock, so an attacker's long bonds could be 100 % of rule 1's weight. A bond SPENT before
+  // last + lockAfterVote has its vote voided after the fact (`spentAt(outpoint)` -> the height it was seen spent by, or null), and stays in the base.
   const voters = []; let totalWeight = 0n;
   for (const b of census) {
     if (!Number.isInteger(b.height)) continue;
     const age = publishedHeight - b.height;
     if (age < schedule.season) continue;
-    if (!(Number.isInteger(b.maturity) && b.maturity - last >= schedule.lockAfterVote)) continue;
     const weight = BigInt(b.bondSats) * ageFactor(age, schedule);
-    voters.push({ ...b, weight, factor: Number(ageFactor(age, schedule)) });
+    let spent = null; try { spent = typeof spentAt === 'function' ? spentAt(b.outpoint) : null; } catch { spent = null; }
+    const voided = Number.isInteger(spent) && spent < last + schedule.lockAfterVote;
+    voters.push({ ...b, weight, factor: Number(ageFactor(age, schedule)), voided });
     totalWeight += weight;
   }
   return { voters, totalWeight };
@@ -17999,13 +18092,14 @@ function capStands({ proposalSats, paymentSats, reservesSats, paidByProposalSats
 
 
 
+
 /**
  * THE FEES A PROPOSAL MAY CHANGE, each with its code on the wire, its value today, its hard limit and whether it is a donation (a
  * change needs the protocol developers' majority, and it is never 0). Round and market fees in basis points of a stake; an item's
  * parts and the website's share in percent.
  */
 const FEES = Object.freeze({
-  roundNodeBps:      Object.freeze({ code: 1,  today: 400, min: 100, max: 600 }),
+  roundNodeBps:      Object.freeze({ code: 1,  today: 400, min: 100, max: NODE_FEE_BPS_MAX }),   // the genesis parameter (kanban #1335)
   roundDonationBps:  Object.freeze({ code: 2,  today: 400, min: 100, max: 600, donation: true }),
   roundReserveBps:   Object.freeze({ code: 3,  today: 200, min: 50,  max: 400 }),
   itemNodesPct:      Object.freeze({ code: 4,  today: 40,  min: 10,  max: 60 }),
@@ -18141,13 +18235,15 @@ function devMajority({ proposalId, approvals = [], devKeys = [], verify }) {
  * developers' majority approves it. Answers { accepted: true, fees, activationHeight } or { accepted: false, why }: a refusal applies
  * nothing.
  */
-function feeProposalOutcome({ proposal, current = FEES_TODAY, signal, tally, approvals = [], devKeys = [], verify, schedule = FUNDING_SCHEDULES.spec }) {
+// `devSaid` (kanban #1283, RULED #1277 B): each developer's answer as read from the chain (Map dev hex -> approve, a no over a yes) - used in place of the held approvals
+function feeProposalOutcome({ proposal, current = FEES_TODAY, signal, tally, approvals = [], devKeys = [], verify, schedule = FUNDING_SCHEDULES.spec, devSaid = null }) {
   const st = feeProposalStands(proposal, { current, schedule });
   if (!st.ok) return { accepted: false, why: st.why };
   if (!signal || signal.state !== 'passed') return { accepted: false, why: 'its signal did not pass' };
   if (!tally || tally.passed !== true) return { accepted: false, why: 'its vote did not pass' };
   if (st.donations.length) {
-    const dm = devMajority({ proposalId: feeProposalId(proposal), approvals, devKeys, verify });
+    const dm = devSaid instanceof Map ? (() => { const keys = new Set(devKeys.map((k) => String(k).toLowerCase())); const yes = [...devSaid].filter(([k, v]) => keys.has(k) && v === true).length;
+      return { yes, of: keys.size, majority: keys.size > 0 && yes * 2 > keys.size }; })() : devMajority({ proposalId: feeProposalId(proposal), approvals, devKeys, verify });
     if (!dm.majority) return { accepted: false, why: `it changes ${st.donations.join(', ')}, and ${dm.yes} of ${dm.of} protocol developers approve it - a majority must` };
   }
   return { accepted: true, fees: st.fees, activationHeight: proposal.activationHeight };
@@ -19686,7 +19782,24 @@ function encodeFederationRecord(r) {
       throw new Error('a gateway fee cap is { ppm 0..1000000, baseMsat } in whole numbers');
     w.u32(f.ppm); w.u32(f.baseMsat);
   }
+  // PLAYER_RESERVE (§23A.3a RULED 2026-11-07, kanban #1296/#1322): reserve less the gateways' proved e-cash - load, the bands, the founding trigger and
+  // the health line read it. After the gateway fee cap, so a record without it keeps its bytes; it needs the cap before it
+  if (r.playerReserveSats !== undefined && r.playerReserveSats !== null) {
+    if (r.gatewayFeeMax === undefined || r.gatewayFeeMax === null) throw new Error('a player reserve follows the gateway fee cap: name the cap too');
+    if (typeof r.playerReserveSats !== 'bigint' || r.playerReserveSats < 0n || r.playerReserveSats > BigInt(r.reserveSats)) throw new Error('a player reserve is a whole number of sat, 0 to the reserve');
+    w.u64(r.playerReserveSats);
+  }
   return w.finish();
+}
+
+/** THE RESERVE LOAD IS READ AGAINST (§23A.3a, kanban #1322): the players' money when the record names it, else the whole reserve (records before). */
+const loadReserveOf = (r) => (r && r.playerReserveSats !== undefined && r.playerReserveSats !== null ? BigInt(r.playerReserveSats) : BigInt((r && r.reserveSats) ?? 0n));
+/** player_reserve = reserve - the gateways' proved e-cash (each counted by heldLockCounted), never below 0. */
+const playerReserveOf = ({ reserveSats, gatewayHeldSats = [] }) => { const held = gatewayHeldSats.reduce((t, x) => t + BigInt(x || 0n), 0n); const r = BigInt(reserveSats); return held >= r ? 0n : r - held; };
+/** A FEDERATION OPENS ONLY IF 2 x peg_in_min <= exposure_cap / 4 (§23A.3a RULED 2026-11-07): its two gateways' mandatory peg-ins alone stay under a quarter of the cap. */
+function opensWith({ exposureCapSats, pegInMinSats }) {
+  const ok = 2n * BigInt(pegInMinSats) <= BigInt(exposureCapSats) / 4n;
+  return { ok, why: ok ? null : `a federation opens only if 2 x peg_in_min (${2n * BigInt(pegInMinSats)} sat) <= exposure_cap / 4 (${BigInt(exposureCapSats) / 4n} sat) (§23A.3a)` };
 }
 
 /** The reference cap (§23A.9): 0.1 % + 10 sat on each leg. */
@@ -19718,7 +19831,8 @@ function decodeFederationRecord(bytes) {
     exposureCapSats: r.u64(), reserveSats: r.u64(), height: r.u32(),
   };
   if (r.at !== bytes.length) { const band = nameOf(CAPACITY_BAND, r.u8()); if (!band) throw new Error('not a capacity band'); out.capacityBand = band; }
-  if (bytes.length - r.at === 8) out.gatewayFeeMax = { ppm: r.u32(), baseMsat: r.u32() };
+  if (bytes.length - r.at >= 8) out.gatewayFeeMax = { ppm: r.u32(), baseMsat: r.u32() };
+  if (bytes.length - r.at === 8) out.playerReserveSats = r.u64();
   if (r.at !== bytes.length) throw new Error('trailing bytes after the federation record');
   encodeFederationRecord(out);                       // held to the encoder's rules
   return out;
@@ -19733,13 +19847,15 @@ const federationRecordId = (r) => taggedHash(TAG.federationRecord, encodeFederat
  */
 // `bondLock` { drainBlocks, bondMinGuardian }: from BOND_LOCK_HEIGHT on, the cap counts only bonds locked past the drain (lockedExposureCap);
 // each guardian row then carries its `outputs` [{ bondSats, maturity }]
-function buildFederationRecord({ federationId, networkId, invite, nominal, guardians, gone = [], successorId = null, closed = false, reserveSats = 0n, height, bondLock = null }) {
+// `predecessor` { reserveSats, closed, nodeKeys: [hex] } - the federation this one succeeds, from its record (kanban #1298/#1321): while it is not CLOSED,
+// a bond both name counts once - this cap is (seated - 2f) x the smallest SHARED bond, less its reserve_old
+function buildFederationRecord({ federationId, networkId, invite, nominal, guardians, gone = [], successorId = null, closed = false, reserveSats = 0n, height, bondLock = null, predecessor = null }) {
   const goneKeys = new Set(gone.map((g) => toHex(g.peerKey)));
   const seatedGuardians = guardians.filter((g) => !goneKeys.has(toHex(g.peerKey)));
   const band = statusFor({ nominal, seated: Math.min(nominal, seatedGuardians.length), closed });
   const cap = !seatedGuardians.length ? { ok: false }
-    : bondLock ? lockedExposureCap({ guardians: seatedGuardians, f: band.f, height, drainBlocks: bondLock.drainBlocks, bondMinGuardian: bondLock.bondMinGuardian })
-      : exposureCap({ bonds: seatedGuardians.map((g) => BigInt(g.bondSats)), f: band.f });
+    : bondLock ? lockedExposureCap({ guardians: seatedGuardians, f: band.f, threshold: band.threshold, height, drainBlocks: bondLock.drainBlocks, bondMinGuardian: bondLock.bondMinGuardian })
+      : exposureCap({ bonds: seatedGuardians.map((g) => BigInt(g.bondSats)), f: band.f, threshold: band.threshold });
   return {
     federationId, networkId, invite, nominal, threshold: band.threshold,
     guardians: guardians.map(({ peerKey, nodePubkey, operatorId, bondTxid, bondVout, endpoint }) => ({ peerKey, nodePubkey, operatorId, bondTxid, bondVout, endpoint }))
@@ -19748,9 +19864,25 @@ function buildFederationRecord({ federationId, networkId, invite, nominal, guard
     // successor_id"): OPEN becomes DRAINING; a worse band (CRITICAL, HALTED) and CLOSED stay what they are
     status: FEDERATION_STATUS[!closed && successorId && successorId.some((x) => x) && band.status === 'OPEN' ? 'DRAINING' : band.status],
     successorId: successorId || new Uint8Array(32), gone: [...gone].sort((a, b) => cmp(a.peerKey, b.peerKey)),
-    exposureCapSats: cap.ok ? cap.cap : 0n, reserveSats, height,
+    exposureCapSats: cap.ok ? successorCap({ cap, seatedGuardians, predecessor }) : 0n, reserveSats, height,
     seated: seatedGuardians.length, band,
   };
+}
+
+/**
+ * A SUCCESSOR'S CAP WHILE ITS PREDECESSOR IS NOT CLOSED (§23A.6 RULED 2026-11-07, kanban #1298/#1321): "A bond counts once across the records that
+ * name it: ... the successor's exposure_cap is (seated - 2f) x smallest shared bond - reserve_old, both figures from the records." The places
+ * are the cap's own (`cap.halts`); the smallest bond among the seated guardians the predecessor also names (by node key); never below 0. No
+ * predecessor, a CLOSED one, or no guardian shared: the cap as it is.
+ */
+function successorCap({ cap, seatedGuardians, predecessor }) {
+  if (!predecessor || predecessor.closed) return cap.cap;
+  const theirs = new Set((predecessor.nodeKeys || []).map((k) => String(k).toLowerCase()));
+  const shared = seatedGuardians.filter((g) => theirs.has(toHex(g.nodePubkey))).map((g) => BigInt(g.bondSats ?? 0n)).filter((b) => b > 0n);
+  if (!shared.length) return cap.cap;
+  const smallest = shared.reduce((a, b) => (b < a ? b : a));
+  const gross = BigInt(cap.halts ?? cap.places ?? 0) * smallest, old = BigInt(predecessor.reserveSats ?? 0n);
+  return gross > old ? gross - old : 0n;
 }
 
 /** Signed bytes: the body, then (u8 count) of (node key 32 || signature 64), sorted by key. */
@@ -20011,6 +20143,24 @@ function auditResultsHash(results) {
   return taggedHash(TAG.auditResults, w.finish());
 }
 
+/**
+ * THE REPLAYED TICK (§13A.1 RULED 2026-11-07, kanban #1306/#1331 (3)): "An AUDIT carries H(state at tick t) with t = beta mod T_run from the auditor's
+ * own VRF output, a tick that is not a checkpoint tick, so only a replayer can produce it; seats verify it from the replay they already did." From
+ * AUDIT_TICK_VERSION an AUDIT without it is refused. `beta` the auditor's VRF output, `runTicks` T_run, `checkpointEvery` the checkpoint interval:
+ * t = int(beta[0..8]) mod T_run, moved one tick on (mod T_run) when it lands on a checkpoint tick.
+ */
+const AUDIT_TICK_VERSION = 28;
+function auditTick({ beta, runTicks, checkpointEvery = 0 }) {
+  if (!(beta instanceof Uint8Array) || beta.length < 8) throw new Error('a VRF output of at least 8 bytes');
+  const n = BigInt(runTicks); if (n <= 0n) throw new Error('a run has ticks');
+  let x = 0n; for (let i = 0; i < 8; i++) x = (x << 8n) | BigInt(beta[i]);
+  let t = x % n;
+  const every = BigInt(checkpointEvery || 0);
+  if (every > 0n && t % every === 0n) t = (t + 1n) % n;
+  if (every > 0n && t % every === 0n) t = (t + 1n) % n;   // a run of one tick between checkpoints: the next
+  return Number(t);
+}
+
 function encodeAudit(a) {
   if (!is32Audit(a.roundId) || !is32Audit(a.resultsHash) || !is32Audit(a.nodePubkey)) throw new Error('an AUDIT names a round, its results and its node (32 bytes each)');
   if (!(a.vrfProof instanceof Uint8Array) || a.vrfProof.length !== AUDIT_PROOF_BYTES) throw new Error(`an AUDIT carries its ${AUDIT_PROOF_BYTES}-byte VRF proof`);
@@ -20018,6 +20168,8 @@ function encodeAudit(a) {
   w.u8(TYPE_AUDIT); w.u16(PROTOCOL_VERSION);
   if (typeof a.atMs !== 'bigint' || a.atMs < 0n) throw new Error('an AUDIT carries the time it was signed (BigInt ms)');
   w.bytes32(a.roundId); w.bytes32(a.resultsHash); w.bytes32(a.nodePubkey); w.u64(a.atMs); w.bytes(a.vrfProof, AUDIT_PROOF_BYTES);
+  // AND THE REPLAYED TICK'S STATE HASH (kanban #1331), when it carries one: 32 bytes at the end - an AUDIT without them is byte for byte as before
+  if (a.tickHash !== undefined && a.tickHash !== null) { if (!is32Audit(a.tickHash)) throw new Error('an AUDIT\'s tick hash is 32 bytes'); w.bytes32(a.tickHash); }
   return w.finish();
 }
 
@@ -20026,6 +20178,7 @@ function decodeAudit(bytes) {
   if (r.u8() !== TYPE_AUDIT) throw new Error('not an AUDIT');
   r.u16();
   const a = { roundId: r.bytes32(), resultsHash: r.bytes32(), nodePubkey: r.bytes32(), atMs: r.u64(), vrfProof: r.bytes(AUDIT_PROOF_BYTES) };
+  if (r.at < bytes.length) a.tickHash = r.bytes32();
   r.end();
   return a;
 }
@@ -20038,7 +20191,7 @@ const auditId = (a) => taggedHash(TAG.audit, encodeAudit(a));
  * round under that node's key, the node eligible and drawn, and its results hash the one being settled. The arrival time is the
  * seat's to check (signed times, §13A rule 3). Answers { ok, beta } or { ok: false, why }.
  */
-function auditStands(a, { signature, vrf, verify, eligible, total, resultsHash, windowCloseMs = null }) {
+function auditStands(a, { signature, vrf, verify, eligible, total, resultsHash, windowCloseMs = null, protocolVersion = 0, runTicks = null, checkpointEvery = 0, stateHashAt = null }) {
   if (windowCloseMs !== null && a.atMs > BigInt(windowCloseMs) - BigInt(AUDIT_LEAD_MS)) return { ok: false, why: `an AUDIT is signed at least ${AUDIT_LEAD_MS / 1000} s before the window closes` };
   if (!(signature instanceof Uint8Array) || signature.length !== 64) return { ok: false, why: 'an AUDIT is signed (64 bytes)' };
   if (!verify(signature, auditId(a), a.nodePubkey)) return { ok: false, why: 'the AUDIT is not signed by the node it names' };
@@ -20049,6 +20202,16 @@ function auditStands(a, { signature, vrf, verify, eligible, total, resultsHash, 
   if (!beta) return { ok: false, why: 'the VRF proof does not verify for that node and round' };
   if (!isAuditor({ beta, weight, total })) return { ok: false, why: 'that node was not drawn to audit this round' };
   if (resultsHash && toHex(resultsHash) !== toHex(a.resultsHash)) return { ok: false, why: 'the AUDIT vouches for other results than these' };
+  // THE REPLAYED TICK (kanban #1331 (3)): from AUDIT_TICK_VERSION the AUDIT carries H(state at its tick), and it counts only where this seat's own replay
+  // gives the same hash - a seat with no replay of that tick does not count it
+  if (Number(protocolVersion) >= AUDIT_TICK_VERSION) {
+    if (!is32Audit(a.tickHash)) return { ok: false, why: 'an AUDIT carries H(state at its VRF tick) - only a replayer can produce it' };
+    if (!Number.isInteger(Number(runTicks)) || typeof stateHashAt !== 'function') return { ok: false, why: 'this seat holds no replay to check the AUDIT\'s tick against' };
+    const t = auditTick({ beta, runTicks, checkpointEvery });
+    let mine = null; try { mine = stateHashAt(t); } catch { mine = null; }
+    if (!is32Audit(mine)) return { ok: false, why: `this seat's replay has no state at tick ${t}` };
+    if (toHex(mine) !== toHex(a.tickHash)) return { ok: false, why: `the AUDIT's state at tick ${t} is not the replay's` };
+  }
   return { ok: true, beta };
 }
 
@@ -21043,15 +21206,29 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   // the seats hold (`signerNodes.auditors`, node keys hex, the same set on every seat by §13A.1's rule) - one line each, before the seats'.
   // None held: nothing taken, the seats share all of it as before.
   let auditorGross = 0n, auditorBps = 0n;
-  const auditors = Number(contract.protocolVersion) >= AUDITOR_VERSION && Array.isArray(signerNodes.auditors) ? signerNodes.auditors : [];
-  if (auditors.length) {
-    const shares = auditorShares({ nodesMsat: nodePartMsat - publisherGross - frontendGross, auditors });
+  const audited = Number(contract.protocolVersion) >= AUDITOR_VERSION;
+  const auditors = audited && Array.isArray(signerNodes.auditors) ? signerNodes.auditors : [];
+  // THE UNPAID REMAINDER TO THE RESERVES (§13A.1 RULED 2026-11-07, kanban #1306/#1331 (1)): "The unpaid remainder of the auditors' 10 % goes to the
+  // protocol reserves, never back into the nodes' pools" - with no AUDIT, all of it. Paid to `signerNodes.auditReserveKey` (the round's federation's
+  // reserve key, 33 bytes); a seat that hands none keeps the old rule (the remainder stays in the pools) until it does.
+  const auditReserveKey = audited && signerNodes.auditReserveKey instanceof Uint8Array && signerNodes.auditReserveKey.length === 33 ? signerNodes.auditReserveKey : null;
+  if (auditors.length || auditReserveKey) {
+    const base = nodePartMsat - publisherGross - frontendGross;
+    const shares = auditorShares({ nodesMsat: base, auditors });
     for (const { key, msat } of shares.each) {
       const pubkey = fromHex(key);
       const got = largestPayoutMsat(fees, msat);
       if (got === 0n) { unpaid.push({ pubkey, owedMsat: msat, why: 'the auditor\'s share does not pay its own output fee' }); continue; }
       auditorGross += got + lnv2FeeMsat(fees, got);
       payouts.push({ pubkey, payoutPk: refundKeyOf(pubkey), owedMsat: msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'auditor' });
+    }
+    if (auditReserveKey) {
+      const rest = (base * AUDIT_SHARE_BPS) / 10000n - auditorGross;
+      const got = rest > 0n ? largestPayoutMsat(fees, rest) : 0n;
+      if (got > 0n) {
+        auditorGross += got + lnv2FeeMsat(fees, got);
+        payouts.push({ pubkey: auditReserveKey.subarray(1), payoutPk: auditReserveKey, owedMsat: rest, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'reserve', reserve: true, auditRemainder: true });
+      } else if (rest > 0n) unpaid.push({ pubkey: auditReserveKey.subarray(1), owedMsat: rest, why: 'the auditors\' unpaid remainder does not pay its own output fee' });
     }
     auditorBps = 1000n;
   }
@@ -22553,6 +22730,12 @@ function depositEnded(storage, federationId, operation, final, d) {
   if (final === DEPOSIT_STATE.CLAIMED || final === DEPOSIT_STATE.EXPIRED || final === DEPOSIT_STATE.FAILED) pendingDrop(storage, federationId, operation);
   return added;
 }
+/** THE WELCOME THAT CAME AS E-CASH (kanban #1381): one deposit row per e-cash string, however many pages received it. */
+function faucetEcashRowOnce(storage, federationId, { ecash, msat }) {
+  if (!storage || !fedHexOf(federationId) || !ecash) return false;
+  const id = `dep-faucet-${toHex(taggedHash('arena/faucet/ecash/v1', new TextEncoder().encode(String(ecash)))).slice(0, 32)}`;
+  return ledgerAppend(storage, federationId, { kind: 'deposit', msat: String(msat), invoiceHash: null, faucet: true }, id);
+}
 /** One history row per paid invoice, however many pages saw it claimed. */
 function depositRowOnce(storage, federationId, d) {
   if (!storage || !fedHexOf(federationId)) return false;
@@ -22669,9 +22852,12 @@ async function walletDepositOffer({ federationId, invite, seed, LockClient, stor
 // THE TOP-UP IS 300 (kanban #1088, the owner 2026-11-03: "Get 300 sats, aus dem faucet. Im deposit auch 300. Bis zu 5x faucet am Tag"): the faucet pays it up to 5 times a day per account
 const FAUCET_GRANTS = Object.freeze({ welcome: { sats: 500, invoiceMsat: 500000n }, topup: { sats: 300, invoiceMsat: 300000n } });
 const faucetAccountOf = (seed) => toHex(taggedHash('arena/faucet/account/v1', seed instanceof Uint8Array ? seed : fromHex(String(seed))));
-async function askFaucet({ url, kind, invoice, seed, fetcher = fetch } = {}) {
-  const r = await fetcher(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind, account: faucetAccountOf(seed), invoice }), signal: AbortSignal.timeout(45000) });
+// `ecash` (kanban #1381): the federation id in hex - the welcome comes as ready e-cash of that federation when the faucet holds some ({ ok, sats, ecash });
+// without an invoice and none ready, the answer is `noEcash` and nothing is given (the page then asks again with an invoice)
+async function askFaucet({ url, kind, invoice, seed, ecash, fetcher = fetch } = {}) {
+  const r = await fetcher(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind, account: faucetAccountOf(seed), invoice, ...(ecash ? { ecash } : {}) }), signal: AbortSignal.timeout(45000) });
   const j = await r.json().catch(() => ({ ok: false, why: `the faucet answered ${r.status}` }));
+  if (!j.ok && j.noEcash) return j;
   if (!j.ok) throw new Error(j.why || 'the faucet gave nothing');
   return j;
 }
@@ -28633,16 +28819,38 @@ function donationSetInForce({
     }
     accepted.push(set);
   }
-  // THE SETS ITS DEVELOPERS APPROVED (§27A.4.1): checked by donation-vote.js approvedDonationSets against the
-  // set each replaces - the recipients' signatures stand in for the admin key's - and ordered by serial with the rest
+  // A CHANGE NEEDS BOTH KEYS (§27A.4.1 RULED 2026-11-07, kanban #1337): "A change of the set needs the authority key and approvals by more
+  // than half of the recipients' share_bps, so the authority key alone moves nothing". The network's first set is the authority's alone;
+  // every later serial is in force only when the authority signed a set AND its recipients approved the same set (donation-vote.js
+  // approvedDonationSets: the same serial and the same recipients), from the later of the two. Either one alone is refused, by name.
+  const ballots = [];
   for (const set of approved || []) {
     if (!set || !isDonationBytes32(set.networkId) || !sameDonationBytes32(set.networkId, networkId)) continue;
     if (!Number.isInteger(set.validFrom) || set.validFrom > height) continue;
     if (!donationSetStands(set.recipients).ok) continue;
-    accepted.push(set);
+    ballots.push(set);
   }
+  // A SET WHOSE RECIPIENTS CANNOT VOTE (an LNURL set: no recipient keys) is replaced by the authority alone - nobody holds a share_bps that
+  // could approve, so the ruling's majority is over keys only: testnet4's key set (serial 3) replaced its LNURL set (serial 2) that way
+  const first = accepted.reduce((m, x) => (m === null || x.serial < m ? x.serial : m), null);
+  const listId = (r) => toHex(donationSetId(r));
+  const parentOf = (set) => accepted.filter((x) => x.serial < set.serial).reduce((m, x) => (m === null || x.serial > m.serial ? x : m), null);
+  const both = [];
+  for (const set of accepted) {
+    if (set.serial === first) { both.push(set); continue; }
+    const parent = parentOf(set);
+    if (parent && !donationSetPaysKeys(parent.recipients)) { both.push(set); continue; }
+    const b = ballots.find((x) => x.serial === set.serial && listId(x.recipients) === listId(set.recipients));
+    if (!b) { refused.push(`serial ${set.serial}: signed by the authority key alone - a change needs its recipients' approval too`); continue; }
+    const validFrom = Math.max(set.validFrom, b.validFrom);
+    if (validFrom > height) { refused.push(`serial ${set.serial} is not in force at ${height}`); continue; }
+    both.push({ ...set, validFrom, approvedBy: b.approvedBy });
+  }
+  for (const b of ballots)
+    if (!accepted.some((set) => set.serial === b.serial && listId(set.recipients) === listId(b.recipients)))
+      refused.push(`serial ${b.serial}: approved by its recipients, not signed by the authority key - a change needs both`);
 
-  const { best, contested } = bestBySerial(accepted, donationSetBodyId);
+  const { best, contested } = bestBySerial(both, donationSetBodyId);
   for (const serial of contested)
     refused.push(`two different sets are signed at serial ${serial}, so that serial is unusable`);
 
@@ -28766,7 +28974,7 @@ const donationApprovalDigest = (a) => taggedHash(TAG.donationApproval, encodeDon
  * acceptBps, denyBps, counted[], refused[] (why each object was not counted) }. A recipient counts once: its first valid
  * approval (lowest at_height) - a second one, either way, is not counted.
  */
-async function tallyDonationProposal({ proposal, approvals = [], parent, verifySecp256k1 }) {
+async function tallyDonationProposal({ proposal, approvals = [], parent, verifySecp256k1, coldCut = null }) {
   if (typeof verifySecp256k1 !== 'function') throw new Error('a tally checks signatures, and no secp256k1 verifier was injected');
   const refused = [];
   const out = (state, extra = {}) => ({ state, validFrom: null, acceptBps: 0, denyBps: 0, counted: [], refused, ...extra });
@@ -28780,6 +28988,13 @@ async function tallyDonationProposal({ proposal, approvals = [], parent, verifyS
   const pid = donationProposalId(p);
   if (!(p.signature instanceof Uint8Array) || !(await verifySecp256k1(p.signature, pid, p.proposer))) return out('refused', { why: 'the proposer\'s signature does not verify' });
 
+  // A SHARE IS CUT ONLY WITH ITS OWN SIGNATURE OR THE COLD ADMIN KEY (§27A.4.1 RULED 2026-11-07, kanban #1337): every recipient of the parent whose
+  // share the proposal lowers (or drops) must be among the accepting approvals, unless `coldCut(proposal, pid)` - the recovery key's signature over
+  // the proposal - says the cold key cut it. Until then the proposal stays open, however much share accepted it.
+  const newShare = new Map((p.recipients || []).map((r) => [r.recipientPk instanceof Uint8Array ? toHex(r.recipientPk) : '', Number(r.shareBps)]));
+  let cold = false; try { cold = typeof coldCut === 'function' && !!(await coldCut(p, donationProposalId(p))); } catch { cold = false; }
+  // (the proposer signed the proposal itself: a cut of its own share is its own signature)
+  const cut = cold ? new Set() : new Set([...shareOf].filter(([k, bps]) => k !== toHex(p.proposer) && (newShare.get(k) || 0) < bps).map(([k]) => k));
   const valid = [];
   for (const [i, a] of approvals.entries()) {
     if (!a || !sameBallotBytes(a.proposalId, pid)) { refused.push(`approval ${i} is for another proposal`); continue; }
@@ -28800,10 +29015,11 @@ async function tallyDonationProposal({ proposal, approvals = [], parent, verifyS
     if (a.accept) acceptBps += bps; else denyBps += bps;
     // A PROPOSER WHO DENIES THEIR OWN PROPOSAL WITHDRAWS IT (2026-10-22, on a proposal its proposer had denied: "This is no longer open")
     if (!a.accept && a.key === toHex(p.proposer)) return out('refused', { acceptBps, denyBps, counted, proposalId: pid, why: 'withdrawn by its proposer' });
-    if (acceptBps * 2 > DONATION_BPS_TOTAL) return out('approved', { validFrom: a.atHeight + 1, acceptBps, denyBps, counted, proposalId: pid });
+    if (acceptBps * 2 > DONATION_BPS_TOTAL && [...cut].every((k) => counted.some((c) => c.key === k && c.accept))) return out('approved', { validFrom: a.atHeight + 1, acceptBps, denyBps, counted, proposalId: pid });
     if (denyBps * 2 >= DONATION_BPS_TOTAL) return out('refused', { acceptBps, denyBps, counted, proposalId: pid, why: 'recipients holding half the parent set or more denied it' });
   }
-  return out('open', { acceptBps, denyBps, counted, proposalId: pid });
+  const waitingFor = [...cut].filter((k) => !counted.some((c) => c.key === k && c.accept));
+  return out('open', { acceptBps, denyBps, counted, proposalId: pid, ...(waitingFor.length ? { why: `${waitingFor.length} recipient(s) whose share it cuts have not approved it`, cutWaiting: waitingFor } : {}) });
 }
 
 /**
@@ -28812,7 +29028,7 @@ async function tallyDonationProposal({ proposal, approvals = [], parent, verifyS
  * admin key's and those approved before it, in serial order. Answers [{ networkId, serial, validFrom, recipients,
  * approvedBy: proposalId }] and why each other ballot is not one.
  */
-async function approvedDonationSets({ networkId, known = [], ballots = [], verifySecp256k1 }) {
+async function approvedDonationSets({ networkId, known = [], ballots = [], verifySecp256k1, coldCut = null }) {
   const sets = [];
   const refused = [];
   const all = [...known];
@@ -28823,7 +29039,7 @@ async function approvedDonationSets({ networkId, known = [], ballots = [], verif
     const parent = all.find((s) => sameBallotBytes(donationSetId(s.recipients), p.parentSetId));
     if (!parent) { refused.push(`proposal serial ${p.serial}: its parent set is not one this network holds`); continue; }
     if (!(p.serial > parent.serial)) { refused.push(`proposal serial ${p.serial}: not above its parent's serial ${parent.serial}`); continue; }
-    const t = await tallyDonationProposal({ proposal: p, approvals: b.approvals || [], parent: parent.recipients, verifySecp256k1 });
+    const t = await tallyDonationProposal({ proposal: p, approvals: b.approvals || [], parent: parent.recipients, verifySecp256k1, coldCut });
     if (t.state !== 'approved') { refused.push(`proposal serial ${p.serial}: ${t.state}${t.why ? ' - ' + t.why : ''}`); continue; }
     if (Number.isInteger(parent.validFrom) && t.validFrom <= parent.validFrom) { refused.push(`proposal serial ${p.serial}: approved before its parent was in force`); continue; }
     const set = { networkId: p.networkId, serial: p.serial, validFrom: t.validFrom, recipients: p.recipients, approvedBy: t.proposalId };
@@ -34228,12 +34444,24 @@ async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, expl
   return got;
 }
 
-async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Set() }) {
+/** How many independent providers a bond list must come from before the client pays (§25.1 RULED 2026-11-07, kanban #1312/#1333). */
+const CENSUS_PROVIDERS_TO_LOCK = 2;
+/**
+ * THE BOND LIST FROM TWO PROVIDERS, AS THEIR UNION (§25.1 RULED 2026-11-07, kanban #1312/#1333): "Omission is the attack, so the second source is
+ * normative: a client that pays takes bond lists from at least two independent providers and uses the union ... A list that one provider serves
+ * alone is enough to look, not to lock." Each provider is a distinct node (its endpoint root); the entries are joined by bond outpoint, so a bond
+ * one of them left out is back in the union - and a union that no longer matches the round's census_root is then refused by the root check.
+ * One provider alone answers { ok: false, lookOnly: true }. Not yet here: §25.1's completeness from BIP158 filters since a census checkpoint
+ * (no filter source in the browser yet).
+ */
+async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Set(), providers = CENSUS_PROVIDERS_TO_LOCK }) {
   const key = toHex(contract.censusRoot);
   if (keptCensus.has(key) && !skip.size) return { ok: true, entries: keptCensus.get(key), from: 'kept' };
-  const refused = [];
+  const refused = [], got = [], roots = new Set();
   for (const u of nodes) {
-    if (skip.has(u)) continue;
+    if (skip.has(u) || got.length >= providers) continue;
+    const root = String(baseOf(u)).toLowerCase();
+    if (roots.has(root)) continue;
     try {
       const r = await readWithOneRetry(fetcher, `${baseOf(u)}/census?round=${roundIdHex}`);
       if (!r.ok) { refused.push(`${u}: ${r.status}`); continue; }
@@ -34241,10 +34469,29 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
       if (!j || !Array.isArray(j.entries)) { refused.push(`${u}: no entries`); continue; }
       // the nodes this seat left out for their protocol version: shown, never counted
       if (Array.isArray(j.tooOld)) keptTooOld.set(key, j.tooOld.filter((x) => x && /^[0-9a-f]{64}$/.test(String(x.node))));
-      return { ok: true, entries: j.entries, from: u, refused };
+      roots.add(root); got.push({ from: u, entries: j.entries });
     } catch (e) { refused.push(`${u}: ${e.message}`); }
   }
-  return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
+  if (!got.length) return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
+  if (got.length < providers) return { ok: false, lookOnly: true, from: got[0].from, entries: got[0].entries, refused,
+    why: `only ${got.length} provider handed over the census - a bond list one provider serves alone is enough to look, not to lock (${refused.join('; ') || 'no other answered'})` };
+  return { ok: true, entries: unionOfEntries(got.map((g) => g.entries)), from: got.map((g) => g.from).join(' + '), fromNodes: got.map((g) => g.from), refused };
+}
+/**
+ * Census entries from several providers, joined by bond; the first copy of each bond is kept. A seat's GET /census entry is the bond's evidence
+ * ({ transaction, position, branch, update }), so a bond is its raw transaction there; an entry naming txid and vout is keyed by them (#1333:
+ * keyed by txid:vout alone, the 18 live entries all became "undefined:undefined" - one entry, a root that never matched).
+ */
+const bondKeyOf = (e) => (e && e.txid !== undefined && e.vout !== undefined
+  ? `o:${Array.isArray(e.txid) || e.txid instanceof Uint8Array ? toHex(Uint8Array.from(e.txid)) : String(e.txid)}:${e.vout}`
+  : `t:${typeof e?.transaction === 'string' ? e.transaction : JSON.stringify(e)}`);
+function unionOfEntries(lists) {
+  const byBond = new Map();
+  for (const list of lists) for (const e of list || []) {
+    const k = bondKeyOf(e);
+    if (!byBond.has(k)) byBond.set(k, e);
+  }
+  return [...byBond.values()];
 }
 
 /**
@@ -34369,7 +34616,8 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
       bond: bondRead, verify: curve.verify, census: skip.size ? null : keptChecked.get(toHex(contract.censusRoot)) || null });
     if (got.ok || evidence.from === 'kept' || !/^the census the seats handed over hashes to /.test(String(got.why))) break;
     censusRefused.push({ node: evidence.from, why: `its census ${String(got.why).replace(/^the census the seats handed over /, '')}` });
-    skip.add(evidence.from);
+    // each provider of a union that did not hash to the root is skipped (#1333: skipping the joined "a + b" skipped nobody, and the same pair came back forever)
+    for (const n of evidence.fromNodes || [evidence.from]) skip.add(n);
     evidence = await evidenceFor(roundIdHex, contract, nodes, { fetcher, skip });
   }
   if (!got.ok) return { ...got, censusRefused };
@@ -35155,6 +35403,8 @@ function backupLine(storage, seed) {
 
 
 
+
+
 const hexToBytes = (h) => Uint8Array.from(String(h).match(/../g).map((x) => parseInt(x, 16)));
 const bytesToHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 const inviteFederationId = (invite) => { const f = readInvite(invite).federationId; return f ? hexToBytes(f) : null; };
@@ -35193,7 +35443,7 @@ const STATUS_ASK_MS = 6000;
  * id hex -> status with `federation`; `only` keeps one. `.why` says why none stood when the map is empty.
  */
 async function federationStatuses({ nodes, census, verify, fetcher = fetch, only = null }) {
-  const verified = new Map(), refused = new Map(), failed = [], alarms = new Map();
+  const verified = new Map(), refused = new Map(), failed = [], alarms = new Map(), firsts = new Map();
   const add = (m, k, v) => { if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
   // NOT HELD FOR THE SLOWEST SEAT, NOR FOR A HUNG ONE (kanban #625: asked with no limit, a restarting seat held an order 26 s a read): each
   // seat within STATUS_ASK_MS, and once more than half answered the rest get COMPARE_GRACE_MS - the records are signed, the newest that stands is taken
@@ -35210,6 +35460,7 @@ async function federationStatuses({ nodes, census, verify, fetcher = fetch, only
         // A RESERVE ALARM (kanban #1093 part 5): a seat that saw a mark of theft in the federation's signed history names it; one seat is
         // enough to stop deposits - stopping is the safe side, and the mark carries its own proof for anyone who acts on it
         if (f.alarm && typeof f.alarm === 'object' && !alarms.has(fid)) alarms.set(fid, { ...f.alarm, from: u });
+        if (Number.isInteger(f.firstHeight)) add(firsts, fid, f.firstHeight);
         noteRecordInvite(f.record);   // its guardians, for a join one guardian cannot serve (guardian-invites.js) - verified or not
         const v = verifyFederationRecord(hexToBytes(f.record), { census, verify, inviteFederationId });
         if (v.ok) add(verified, fid, { ...v, from: u }); else add(refused, fid, `${u}: ${v.why}`);
@@ -35223,14 +35474,18 @@ async function federationStatuses({ nodes, census, verify, fetcher = fetch, only
     const why = (refused.get(fid) || failed)[0];
     const st = best ? { ...statusOfRecord(best), federation: fid }
       : { status: 'unverified', allows: FEDERATION_ALLOWS.unverified, federation: fid, why: why ? `no record stands: ${why}` : 'no node holds a record of this federation' };
-    out.set(fid, alarms.has(fid) ? { ...st, alarm: alarms.get(fid), allows: { ...st.allows, deposit: false } } : st);
+    // ITS AGE (§23A.2, kanban #1323): the median of the first heights the seats hold of it - one seat cannot make a young federation look old
+    const fh = (firsts.get(fid) || []).slice().sort((a, b) => a - b);
+    const aged = fh.length ? { ...st, firstHeight: fh[Math.floor((fh.length - 1) / 2)] } : st;
+    out.set(fid, alarms.has(fid) ? { ...aged, alarm: alarms.get(fid), allows: { ...aged.allows, deposit: false } } : aged);
   }
   if (!out.size && failed.length) out.why = `no record stands: ${failed[0]}`;
   return out;
 }
 
 function statusOfRecord(best) {
-  const load = best.record.exposureCapSats > 0n ? Number(((best.record.reserveSats ?? 0n) * 10000n) / best.record.exposureCapSats) / 10000 : null;
+  // LOAD AGAINST THE PLAYERS' MONEY (§23A.3a RULED 2026-11-07, kanban #1322): the record's player reserve when it names one
+  const load = best.record.exposureCapSats > 0n ? Number((loadReserveOf(best.record) * 10000n) / best.record.exposureCapSats) / 10000 : null;
   const refusesDeposit = loadRefusesDeposit({ load, networkId: best.record.networkId });
   return { status: best.status, allows: refusesDeposit ? { ...FEDERATION_ALLOWS[best.status], deposit: false } : FEDERATION_ALLOWS[best.status],
     loadRefusesDeposit: refusesDeposit, signers: best.signers, height: best.record.height, from: best.from, network: networkOf(best.record.networkId),
@@ -35282,7 +35537,19 @@ function pickFederation(statuses, { known = () => true } = {}) {
  *   sameFederation(invite, fid)   whether an invite names that federation (inviteNamesFederation)
  * Answers { invite, federation, lowest, why }.
  */
-function depositFederation({ lobbyInvite, statuses = [], held = [], known = () => true, sameFederation = () => false, always = true }) {
+/**
+ * TOO YOUNG FOR A FIRST DEPOSIT (§23A.2 RULED 2026-11-07, kanban #1297/#1323): "no federation younger than drain_blocks receives first deposits by
+ * default" - its newest record's height less its first height (the seats' median) under its network's drain_blocks. A federation whose first
+ * height no seat says is not held back (seats before this rule).
+ */
+const drainBlocksOf = (network) => { try { return genesisFor(network).drainBlocks; } catch { return MAINNET_CLOCKS.drainBlocks; } };
+function tooYoung(f, { drainBlocks = null } = {}) {
+  if (!f || !Number.isInteger(f.firstHeight) || !Number.isInteger(f.height)) return false;
+  const d = Number.isInteger(drainBlocks) ? drainBlocks : drainBlocksOf(f.network);
+  return f.height - f.firstHeight < d;
+}
+// `chosen` a federation id the player picked himself: a young one is taken then
+function depositFederation({ lobbyInvite, statuses = [], held = [], known = () => true, sameFederation = () => false, always = true, chosen = null, drainBlocks = null }) {
   const lobby = (why) => ({ invite: lobbyInvite, federation: null, lowest: false, why });
   // EVERY DEPOSIT TO THE LOWEST LOAD (RULED 2026-10-13 ~11:50Z: "It should always take the federation with less funds so
   // it's evened out"): a returning player too - the page sums every federation's wallet (ARENA_SUM_BALANCES), so where the money
@@ -35293,8 +35560,10 @@ function depositFederation({ lobbyInvite, statuses = [], held = [], known = () =
     return lobby('a returning player stays in the federation it holds');
   }
   // A FEDERATION THAT TAKES NO NEW DEPOSITS IS NOT PICKED, whatever its load (kanban #807): at load 2 it won every pick from A at load 1338
-  const open = (statuses || []).filter((f) => f && f.invite && takesDeposits(f.federation));
-  const pick = pickFederation(open, { known });
+  const pickedHere = chosen ? String(chosen).toLowerCase() : null;
+  const open = (statuses || []).filter((f) => f && f.invite && takesDeposits(f.federation)
+    && (String(f.federation).toLowerCase() === pickedHere || !tooYoung(f, { drainBlocks })));
+  const pick = (pickedHere && pickFederation(open.filter((f) => String(f.federation).toLowerCase() === pickedHere), { known })) || pickFederation(open, { known });
   if (!pick) return lobby('no OPEN, known federation with a signed load');
   if (sameFederation(lobbyInvite, pick.federation)) return { invite: lobbyInvite, federation: pick.federation, lowest: true, why: 'the lobby federation is the lowest-load one' };
   return { invite: pick.invite, federation: pick.federation, lowest: true,
@@ -36949,6 +37218,7 @@ function lateJoinTick(c, nowMs = Date.now(), leadMs = LATE_JOIN_SESSION_MS) {
 // a test network shows the ceiling and refuses nothing.
 
 
+
 const MAX_PLAYERS_PER_ROUND = 64n;
 /** A test network (regtest, testnet4) shows the ceiling and refuses nothing - as ruling A of the load rule. */
 const isTestNetwork = (networkId) => ['regtest', 'testnet4'].includes(networkOf(networkId));
@@ -36976,21 +37246,73 @@ function roleCeiling({ nodes, bondedSats, stakeSats, maxPlayers = MAX_PLAYERS_PE
 }
 
 /**
+ * THE INCOME TERM (§5A.10 RULED 2026-11-07, kanban #1280/#1282): "max_round_pool <= income_seat ... (the lower of this and the table wins)" -
+ * income_seat = the nodes' fee of every round that counted for the season over the last `season` blocks, ÷ the census size at the round's census height.
+ * `rounds` the counted rounds ({ void, entries: [{ stakeMsat }] }, the season book's), `feeBpsOf(round)` the node fee each was charged (NODE_FEE_BPS
+ * unless a fee proposal changed it). Answers sat; 0 for a network with no counted round or an empty census.
+ */
+const INCOME_SEASON_BLOCKS = 12960;
+function incomeSeatSats({ rounds = [], censusSize, feeBpsOf = () => NODE_FEE_BPS }) {
+  if (!(Number(censusSize) > 0)) return 0n;
+  let fee = 0n;
+  for (const r of rounds || []) { if (!r || r.void) continue; for (const e of r.entries || []) fee += entryFeeMsat(BigInt(e.stakeMsat || 0n), feeBpsOf(r)); }
+  return fee / 1000n / BigInt(censusSize);
+}
+/** The lowest bracket (10 sat): a network whose income term is under it plays it - "a network with no season behind it ... plays the table's lowest bracket". */
+const LOWEST_BRACKET_SATS = 10n;
+/** A stake ceiling bounded by the income term: min(table, max(lowest bracket, income_seat ÷ players)); `incomeSats` null leaves the table's. Play money (0) stays 0. */
+function ceilingWithIncome({ ceilingSats, incomeSats = null, maxPlayers = MAX_PLAYERS_PER_ROUND }) {
+  const c = BigInt(ceilingSats);
+  if (incomeSats === null || incomeSats === undefined || c === 0n) return c;
+  const byIncome = BigInt(incomeSats) / BigInt(maxPlayers);
+  const bound = byIncome > LOWEST_BRACKET_SATS ? byIncome : LOWEST_BRACKET_SATS;
+  return c < bound ? c : bound;
+}
+
+/**
  * DOES THE CENSUS SUPPORT THIS ROUND'S STAKE? Over both roles (the binding one is the lower): `entries` the census entries ({ roles,
  * bondSats }), `stakeSats` the round's. { ok, ceilingSats, why }.
  */
-function stakeWithinCeiling({ entries, stakeSats, maxPlayers = MAX_PLAYERS_PER_ROUND }) {
+// `incomeSats` (kanban #1282): the income term's income_seat, which bounds the table's bracket (ceilingWithIncome); null: the table alone, as before
+function stakeWithinCeiling({ entries, stakeSats, maxPlayers = MAX_PLAYERS_PER_ROUND, incomeSats = null }) {
   const of = (role) => {
     const es = (entries || []).filter((e) => (e.roles || []).includes(role));
     return roleCeiling({ nodes: es.length, bondedSats: es.reduce((t, e) => t + BigInt(e.bondSats || 0n), 0n), stakeSats, maxPlayers });
   };
   const g = of('game'), s = of('settlement');
-  const low = g.ceilingSats <= s.ceilingSats ? g : s;
+  const low0 = g.ceilingSats <= s.ceilingSats ? g : s;
+  const bounded = ceilingWithIncome({ ceilingSats: low0.ceilingSats, incomeSats, maxPlayers });
+  const low = bounded === low0.ceilingSats ? low0 : { ceilingSats: bounded, why: `${low0.why}; bounded by the income term: ${incomeSats} sat a seat earned in the season, so up to ${bounded} sat a stake (§5A.10)` };
   const stake = BigInt(stakeSats);
   if (stake === 0n) return { ok: true, ceilingSats: low.ceilingSats, why: 'a free round: no ceiling' };
   const ok = stake <= low.ceilingSats;
   return { ok, ceilingSats: low.ceilingSats, why: ok ? `within the census's ceiling: ${low.why}` : `a ${stake} sat stake is over what this census supports - ${low.why}` };
 }
+
+/**
+ * A ROUND'S GROSS CEILING (§0A.7b RULED 2026-11-07, kanban #1293/#1329): max_round_pool of its census - the ceiling's bracket times the players a round
+ * holds - in sat, or null on a test network (it shows the ceiling and refuses nothing, ruling A) or for a free round. A market round's filled volume
+ * plus an order may not pass it: "Before this a book round could hold a thousand 100,000-sat orders under a committee bonded for a 1,000-sat bracket."
+ */
+function maxRoundPoolSats({ entries, stakeSats, networkId = null, maxPlayers = MAX_PLAYERS_PER_ROUND, incomeSats = null }) {
+  if (networkId && isTestNetwork(networkId)) return null;
+  if (BigInt(stakeSats) === 0n) return null;
+  const c = stakeWithinCeiling({ entries, stakeSats, maxPlayers, incomeSats });
+  return c.ceilingSats * BigInt(maxPlayers);
+}
+/**
+ * AN ATTESTED ROUND'S GROSS AGAINST ITS ATTESTORS (§0A.7a RULED 2026-11-07, kanban #1292/#1328): gross <= Σ attestor_bond / 4, as §5A.10 caps a game
+ * round against its committee - what one attestor who signs both sides could take is bounded by what the contradiction proof slashes. `bondsSats` each
+ * attestor's bond (drawn attestors: their census bonds). null on a test network, as max_round_pool (#1329): shown, nothing refused.
+ */
+function attestedGrossCapSats({ bondsSats, networkId = null }) {
+  if (networkId && isTestNetwork(networkId)) return null;
+  return (bondsSats || []).reduce((t, b) => t + BigInt(b || 0n), 0n) / 4n;
+}
+/** The smaller of two caps, null meaning none. */
+const minCap = (a, b) => (a === null || a === undefined ? (b ?? null) : b === null || b === undefined ? a : (BigInt(a) < BigInt(b) ? BigInt(a) : BigInt(b)));
+/** May an order of `orderSats` join a round whose filled volume is `filledSats` under a pool of `poolSats` (null: no ceiling)? */
+const orderWithinPool = ({ filledSats, orderSats, poolSats }) => poolSats === null || poolSats === undefined || BigInt(filledSats) + BigInt(orderSats) <= BigInt(poolSats);
 
 // ---- arena-client/src/lobby.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
@@ -38106,6 +38428,7 @@ const itemsHex = (items) => (items || []).map((it) => ({ ...it, priceSat: String
 //         [optional, marker 0x06] scalar: low, high (i64 each), unit (feature 8: a numeric outcome paid linearly
 //           between the bounds to the sides LONG and SHORT - its attestors sign a value, scalar.js),
 //         [optional, marker 0x0A] market source: the reads, then the rule or the code its drawn nodes run (kanban #920),
+//         [optional, marker 0x0B] backup attestors[], backup_threshold (§0A.7a, kanban #1328: consulted after resolve + deadline/2 when the first set is silent),
 //       [HEAD_TO_HEAD only] players, move_count, reveal_window,
 //       [REPLAY with payout_rule TOP_SPLIT only, marker 0x03] payout_shares[] (feature 3),
 //       [optional, marker 0x07] items[]: id, name, price_sat, unlock (a game's in-game items; protocol 10 - items.js),
@@ -38345,6 +38668,26 @@ const isScalar = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.scal
  * protocol: a seat that cannot read the draw cannot load the manifest.
  */
 const ATTEST_DRAW_MARKER = 0x09;
+/**
+ * A BACKUP ATTESTOR SET (§0A.7a RULED 2026-11-07, kanban #1292/#1328): "a manifest may name a backup attestor set the seats consult after
+ * resolve_at + deadline/2 when the first set is silent" - silence was a VOID button. Written after its own marker, last of an attested game's
+ * fields, only when a market names one: every manifest before keeps its bytes and its game id. Key-named outcome markets only (a drawn set is
+ * the round's seats; a market on a game names no attestor; a scalar's value attestation is not covered), with market terms (its deadline),
+ * 1 to 16 keys, threshold more than half of them.
+ */
+const BACKUP_ATTESTORS_MARKER = 0x0b;
+function backupAttestorsFit(b, m) {
+  if (!b || typeof b !== 'object' || !Array.isArray(b.attestors)) return { ok: false, why: 'a backup attestor set is { attestors, threshold }' };
+  if (m.attestDraw) return { ok: false, why: 'a game whose attestors are drawn names no backup set: its attestors are the round\'s seats' };
+  if (m.gameSource) return { ok: false, why: 'a market on a game names no backup set: its outcome is its source round\'s signed result' };
+  if (m.scalar) return { ok: false, why: 'a scalar market names no backup set yet: its attestors sign a value (#1328 covers outcome markets)' };
+  if (!m.marketTerms) return { ok: false, why: 'a backup attestor set is consulted after resolve + deadline/2: the market names its terms' };
+  if (b.attestors.length < 1 || b.attestors.length > ATTESTORS_MAX || !b.attestors.every(manIs32))
+    return { ok: false, why: `a backup attestor set names 1 to ${ATTESTORS_MAX} attestor keys of 32 bytes` };
+  if (!Number.isInteger(b.threshold) || b.threshold < 1 || b.threshold > b.attestors.length || 2 * b.threshold <= b.attestors.length)
+    return { ok: false, why: `a backup set's threshold is more than half of its attestors: ${b.threshold} of ${b.attestors.length} is not (§0A.7a)` };
+  return { ok: true };
+}
 const isDrawnAttest = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.attestDraw;
 function attestDrawFits(d, m) {
   if (!d || d.count !== 7 || d.threshold !== 5) return { ok: false, why: 'a drawn attestor set is 7 of the round\'s nodes, an outcome standing with 5 (#630)' };
@@ -38449,6 +38792,17 @@ function marketTermsFit(t) {
 /** Is this manifest's result attested - no core, no run, its attestors' signed outcome (§0A.7a)? */
 const isAttested = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED;
 /**
+ * KEY-NAMED ATTESTORS NEED A BOND ON MAINNET (§0A.7a RULED 2026-11-08, kanban #1365/#1328): "on mainnet a manifest naming an unbonded attestor key is
+ * invalid". `network` the round's network name (constants.js networkOf), `bonded(keyHex)` whether that attestor key has a posted bond. Drawn
+ * attestors are seats (bonded by their census entry) and a market on a game names none: both pass. On a test network nothing is refused.
+ */
+function attestorsBondedFor(manifest, network, bonded = () => false) {
+  if (network !== 'mainnet' || !isAttested(manifest) || isDrawnAttest(manifest)) return { ok: true };
+  const keys = (manifest.attestors || []).map((k) => Array.from(k, (b) => b.toString(16).padStart(2, '0')).join(''));
+  const unbonded = keys.filter((k) => !bonded(k));
+  return unbonded.length ? { ok: false, why: `on mainnet an attested game's attestor keys each post a bond (§0A.7a): ${unbonded.length} of ${keys.length} of game "${manifest.gameName}" post none` } : { ok: true };
+}
+/**
  * IS THIS A HEAD-TO-HEAD GAME (2026-10-09)? Each player commits a hidden move at entry and reveals
  * it after entry close; the round's nodes decide every entry's result from all the reveals together, with the game's
  * decide adapter - named in cores[] by its hash like a replay core, so a node installs and checks it the same way. No
@@ -38506,8 +38860,13 @@ function encodeManifestBody(m) {
         throw new Error(`an attested game names 1 to ${ATTESTORS_MAX} attestor keys of 32 bytes`);
       if (!Number.isInteger(m.attestThreshold) || m.attestThreshold < 1 || m.attestThreshold > m.attestors.length)
         throw new Error(`an attested game's threshold is 1 to its ${m.attestors.length} attestor(s)`);
+      // MORE THAN HALF (§0A.7a RULED 2026-11-07, kanban #1292/#1328): with k > n/2 two standing outcomes always share a key, so a
+      // contradiction names its signer; a manifest at or under half is invalid
+      if (2 * m.attestThreshold <= m.attestors.length)
+        throw new Error(`an attested game's threshold is more than half of its attestors: ${m.attestThreshold} of ${m.attestors.length} is not (§0A.7a)`);
     }
     if (m.source !== undefined && m.source !== null) { const f = marketSourceFits(m.source, m); if (!f.ok) throw new Error(f.why); }
+    if (m.backupAttestors !== undefined && m.backupAttestors !== null) { const f = backupAttestorsFit(m.backupAttestors, m); if (!f.ok) throw new Error(f.why); }
     if (m.marketTerms !== undefined && m.marketTerms !== null) { const f = marketTermsFit(m.marketTerms); if (!f.ok) throw new Error(f.why); }
     if (m.template !== undefined && m.template !== null) { const f = marketTemplateFits(m.template, m); if (!f.ok) throw new Error(f.why); }
     if (onGame) { const f = gameSourceFits(m.gameSource, m); if (!f.ok) throw new Error(f.why); }
@@ -38617,6 +38976,8 @@ function encodeManifestBody(m) {
     if (m.attestDraw) { w.u8(ATTEST_DRAW_MARKER); w.u8(m.attestDraw.count); w.u8(m.attestDraw.threshold); }
     // ITS SOURCE (#920), after its own marker and only when it names one: every manifest before keeps its bytes
     if (m.source) writeMarketSource(w, m.source);
+    // ITS BACKUP ATTESTORS (#1328), after their own marker and only when it names them: every manifest before keeps its bytes
+    if (m.backupAttestors) { w.u8(BACKUP_ATTESTORS_MARKER); w.vec(m.backupAttestors.attestors, (x, ww) => ww.bytes32(x), { sortedBy: manCompare32 }); w.u8(m.backupAttestors.threshold); }
   }
   // A HEAD-TO-HEAD GAME'S OWN TERMS, likewise after everything else: no other manifest's bytes move
   if (isHeadToHead(m)) {
@@ -38686,6 +39047,10 @@ function readBody(r) {
     if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === MARKET_SOURCE_MARKER) {
       r.u8();
       body.source = readMarketSource(r);
+    }
+    if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === BACKUP_ATTESTORS_MARKER) {
+      r.u8();
+      body.backupAttestors = { attestors: r.vec((rr) => rr.bytes32()), threshold: r.u8() };
     }
   }
   if (body.resultType === RESULT_TYPE.HEAD_TO_HEAD) {
@@ -39693,7 +40058,7 @@ function decodeAttestation(bytes) {
 // THOSE, so `round` - the round's contract - is handed in, and the range and the label are the round's (manifest.js
 // marketOfRound). A template's attestation with no round to read its outcomes from is refused: the template's own labels
 // are not the question its attestors answered.
-function attestationStands(a, { manifest: game, roundIdBytes, verify, round = null, drawn = null }) {
+function attestationStands(a, { manifest: game, roundIdBytes, verify, round = null, drawn = null, backupOpen = false }) {
   if (!isAttested(game)) return { ok: false, why: 'that round\'s game is not attested: its result is a replayed run, not an attestation' };
   // A MARKET ON A GAME (feature 6) HAS NO ATTESTORS: its threshold is 0, so an attestation would stand with no
   // signature at all - refused by name; its outcome is its source round's signed result (game-market.js gameMarketResolution)
@@ -39717,8 +40082,15 @@ function attestationStands(a, { manifest: game, roundIdBytes, verify, round = nu
   const draws = isDrawnAttest(manifest);
   if (draws && !(Array.isArray(drawn) && drawn.length === manifest.attestDraw.count))
     return { ok: false, why: `game "${manifest.gameName}" draws its attestors per round, and the round's ${manifest.attestDraw.count} drawn attestors were not given` };
-  const keysOf = draws ? drawn.map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))) : manifest.attestors.map(toHex);
-  const need = draws ? manifest.attestDraw.threshold : manifest.attestThreshold;
+  // THE BACKUP SET (§0A.7a, kanban #1328): an attestation whose signers are the manifest's backup keys is checked against those, and only once
+  // the seat consults them (`backupOpen`: after resolve + deadline/2, the first set silent - backupOpensAtMs); one set's keys never mix with the other's
+  const backup = !draws && manifest.backupAttestors && (a.signatures || []).length > 0
+    && (a.signatures || []).every((s) => manifest.backupAttestors.attestors.some((k) => toHex(k) === toHex(s.key))
+      && !manifest.attestors.some((k) => toHex(k) === toHex(s.key)));
+  if (backup && !backupOpen)
+    return { ok: false, why: `that attestation is signed by game "${manifest.gameName}"'s backup attestors, who are consulted only after the round's resolution plus half its deadline, while its first set is silent` };
+  const keysOf = draws ? drawn.map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))) : (backup ? manifest.backupAttestors.attestors : manifest.attestors).map(toHex);
+  const need = draws ? manifest.attestDraw.threshold : backup ? manifest.backupAttestors.threshold : manifest.attestThreshold;
   const named = new Set(keysOf);
   const signed = new Set();
   for (const s of a.signatures || []) {
@@ -39731,8 +40103,8 @@ function attestationStands(a, { manifest: game, roundIdBytes, verify, round = nu
   }
   if (signed.size < need)
     return { ok: false, why: `that attestation carries ${signed.size} attestor signature(s), and game "${manifest.gameName}" asks ${need} of its ${named.size}` };
-  return { ok: true, outcome: a.outcome, label: manifest.outcomes[a.outcome], signers: signed.size,
-    why: `outcome ${a.outcome} "${manifest.outcomes[a.outcome]}", signed by ${signed.size} of ${named.size} attestors (threshold ${need})` };
+  return { ok: true, outcome: a.outcome, label: manifest.outcomes[a.outcome], signers: signed.size, ...(backup ? { backup: true } : {}),
+    why: `outcome ${a.outcome} "${manifest.outcomes[a.outcome]}", signed by ${signed.size} of ${named.size} ${backup ? 'backup ' : ''}attestors (threshold ${need})` };
 }
 
 /**
@@ -39848,6 +40220,11 @@ function attestationTimely(a, { entryCloseMs, nowMs, terms = null }) {
  * its attestors have, `deadlineAfterResolveMs` after that. A round of a template (feature 5) names its own
  * resolution time: its terms are `roundTermsOf(manifest, contract)`, whose `resolveAfterCloseMs` is the round's.
  */
+/** When the seats consult a market's backup attestors (§0A.7a, kanban #1328): resolve_at + deadline/2. */
+function backupOpensAtMs({ entryCloseMs, terms }) {
+  const { resolveAtMs } = marketTimes({ entryCloseMs, terms });
+  return resolveAtMs + BigInt(terms.deadlineAfterResolveMs) / 2n;
+}
 function marketTimes({ entryCloseMs, terms }) {
   const resolveAtMs = BigInt(entryCloseMs) + BigInt(terms.resolveAfterCloseMs);
   return { resolveAtMs, deadlineMs: resolveAtMs + BigInt(terms.deadlineAfterResolveMs) };
@@ -42172,7 +42549,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
          fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, referralOf: referralOf, referralNameFor: referralNameFor, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
-         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
+         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, faucetEcashRowOnce: faucetEcashRowOnce, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, reopenUncheckedDone: reopenUncheckedDone, releaseUntakenEntry: releaseUntakenEntry, keptLockUse: keptLockUse,
          reconcileKeptLock: reconcileKeptLock, bindLockEntry: bindLockEntry, lockRecordOf: lockRecordOf, collectState: collectState, forfeitCheck: forfeitCheck, settlementAgreement: settlementAgreement, useWalletGate: useWalletGate,
