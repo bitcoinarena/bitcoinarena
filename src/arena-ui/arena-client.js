@@ -31787,7 +31787,7 @@ const UNREADABLE_MS = 30000;
 /** How long after its entry closes a round the seats still list is named among the lobby's `closed`. */
 const CLOSED_KEPT_MS = 2n * 3600n * 1000n;
 
-const LOBBY_CONTRACTS_PER_READ = 64;
+const LOBBY_CONTRACTS_PER_READ = 32;
 const LOBBY_OTHER_CONTRACTS_PER_READ = 16;
 
 // A NODE WHOSE READ FAILED IS NOT ASKED AGAIN FOR FAILED_NODE_SKIP_MS (kanban #1133: every lobby read on the owner's iPhone asked the 7 stopped
@@ -31893,7 +31893,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
   // (the page's chosen game's version ids), that game's rounds are fetched first and every one of them, the rest of the read at most
   // LOBBY_OTHER_CONTRACTS_PER_READ; the others follow on the next reads, a second apart
   const open = [...said.keys()].filter((id) => !CONTRACTS.has(id) && !(nowMs - (UNREADABLE.get(id) ?? -Infinity) < UNREADABLE_MS))
-    .sort((a, b) => (soonest.get(a) ?? Infinity) - (soonest.get(b) ?? Infinity));
+    .sort((a, b) => (((soonest.get(a) ?? Infinity) <= nowMs) - ((soonest.get(b) ?? Infinity) <= nowMs)) || ((soonest.get(a) ?? Infinity) - (soonest.get(b) ?? Infinity)));
   const prefer = Array.isArray(preferGames) && preferGames.length ? new Set(preferGames.map((g) => String(g).toLowerCase())) : null;
   const wanted = prefer
     ? [...open.filter((id) => prefer.has(gameOf.get(id))), ...open.filter((id) => !prefer.has(gameOf.get(id))).slice(0, LOBBY_OTHER_CONTRACTS_PER_READ)].slice(0, LOBBY_CONTRACTS_PER_READ)
