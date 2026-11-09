@@ -40,7 +40,7 @@ const nameOf = (txidDisplay, vout) => `${txidDisplay}:${vout}`;
 /**
  * Made by slash-release-run.js with its own reads: `confirmedOf(start)` the release or fallback that confirmed, `peers()` the census' keys, `fallbackRank`, and the run's deps.
  */
-export function createSlashEscrow({ secret, me, clocks, db, tweakPoint, tipHeight, entriesAtTip, txOut, fetchProof, judge, panelsOf, seatsOf, holdersOf, heldKey, thresholdOf,
+export function createSlashEscrow({ asker = null, secret, me, clocks, db, tweakPoint, tipHeight, entriesAtTip, txOut, fetchProof, judge, panelsOf, seatsOf, holdersOf, heldKey, thresholdOf,
   signer, urlOf, fetchFn, send, portFor, scriptOf, federationsAt, retired, now, stepMs, log, confirmedOf, peers, fallbackRank, getJson, payOn }) {
   db.exec(`CREATE TABLE IF NOT EXISTS slash_escrow_chain (table_id TEXT NOT NULL, seq INTEGER NOT NULL, start TEXT NOT NULL, escrow_in TEXT NOT NULL, value INTEGER NOT NULL, path TEXT NOT NULL,
       outputs BLOB NOT NULL, txid TEXT NOT NULL, PRIMARY KEY (table_id, seq));
@@ -360,7 +360,7 @@ export function createSlashEscrow({ secret, me, clocks, db, tweakPoint, tipHeigh
     if (!threshold) return { ok: false, why: `this seat reads no threshold for key ${keyHex.slice(0, 16)}` };
     const request = { kind: 'escrow', start: ctx.start, tableId: ctx.tableId, escrow: w.cur.name, loadHeight: prop.load_height, outputsId: prop.outputs_id };
     const own = heldKey(ctx.censusKey) ? signer() : null;
-    const got = await gatherCensusSignature({ request, digest: b.digest, publicKey: ctx.censusKey, threshold, urls: holders.filter((k) => k !== me).map(urlOf).filter(Boolean), own, fetchFn });
+    const got = await gatherCensusSignature({ asker, request, digest: b.digest, publicKey: ctx.censusKey, threshold, urls: holders.filter((k) => k !== me).map(urlOf).filter(Boolean), own, fetchFn });
     if (!got.ok) return got;
     const raw = serializeSpend({ ...b.spend.tx, witnesses: [escrowWitness({ escrow: ctx.output, path: 'fallback', signature: got.signature })] });
     const r = await sendRaw(raw, parseTransaction(raw).txid, 'escrow fallback');

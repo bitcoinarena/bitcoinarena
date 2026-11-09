@@ -16,7 +16,7 @@
 import { randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
-import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
+import { fromHex, toHex, taggedHash } from '../../arena-protocol/src/hash.js';
 import { decodeCensusKeyRecord } from '../../arena-protocol/src/census-key.js';
 import { feldmanGroup } from './curve.js';
 import { censusKeyInWorker } from './census-key-work.js';
@@ -25,6 +25,21 @@ const random = (n) => new Uint8Array(randomBytes(n));
 const SESSION_MS = 600000;
 /** How many signing sessions a holder keeps open, and how many requests it checks at once (kanban #1187). A filer asks each holder once per try and hands back what it does not use. */
 export const SESSION_LIMITS = Object.freeze({ perDigest: 4, perKey: 32, total: 256, checking: 16 });
+/**
+ * THE ASKER, SIGNED (kanban #1386, audit 2 #1204 RES-7): the door is anyone's, and an outsider re-sending valid requests (public data, a liquidation
+ * escrow's digest varied by its load height) held every key's sessions - every holder answered "busy" to the real filer. A filer now signs its ask
+ * with its node key: `asker` { node, at (ms), sig } over tagged_hash(CENSUS_ASK_TAG, the request without `asker` as canonical JSON || '|' || at).
+ * A holder that knows the census (`isAsker`) counts a census node's sessions per asker, keeps the unsigned ones in a small pool of their own, and
+ * evicts the oldest unsigned session of a key when a signed ask finds it full.
+ */
+export const CENSUS_ASK_TAG = 'ARENA/v1/CensusSignAsk';
+export const ASK_LIMITS = Object.freeze({ perAskerDigest: 4, perAskerKey: 16, anonymous: 32, anonymousPerKey: 8 });
+export const ASK_FRESH_MS = 600000;
+const canonical = (v) => (Array.isArray(v) ? `[${v.map(canonical).join(',')}]` : v && typeof v === 'object'
+  ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}` : JSON.stringify(v));
+export const askId = (request, at) => { const { asker, ...plain } = request || {}; return taggedHash(CENSUS_ASK_TAG, new TextEncoder().encode(`${canonical(plain)}|${at}`)); };
+/** A request signed by its filer: `asker` { node (hex), sign(digest) -> 64 bytes }. */
+export const signAsk = (request, asker, at = Date.now()) => ({ ...request, asker: { node: String(asker.node).toLowerCase(), at, sig: toHex(asker.sign(askId(request, at))) } });
 const scalarHex = (z) => z.toString(16).padStart(64, '0');
 /**
  * The wire's commitment list as the signers hash it: by id, whatever order it came in, each node with the x of the shares it signs for. The xs are in the
@@ -83,7 +98,8 @@ export const rosterOfRecord = (publicKey, shares) => {
  * THE HOLDER'S SIDE. `check(request)` -> { ok, digest, publicKey } or { ok: false, why }; `held(publicKey)` CensusKeyStore's. `work` the worker's job, as in a run.
  * `rosterOf(publicKey, held)` -> { total, threshold } this holder trusts for that key, by default its own record of it.
  */
-export function createCensusSigner({ key, check, held, work = censusKeyInWorker, now = Date.now, rosterOf = rosterOfRecord, limits = SESSION_LIMITS }) {
+// `isAsker(nodeHex)` (sync or async): whether that node may sign asks - a census node; not given: every ask counted as one, as before (kanban #1386)
+export function createCensusSigner({ key, check, held, work = censusKeyInWorker, now = Date.now, rosterOf = rosterOfRecord, limits = SESSION_LIMITS, isAsker = null, askLimits = ASK_LIMITS }) {
   const me = toHex(key);
   let checking = 0;
   const sessions = new Map();                    // session id -> { state: committed, ... }; none and used are not in it
@@ -106,10 +122,48 @@ export function createCensusSigner({ key, check, held, work = censusKeyInWorker,
     if (ofKey >= limits.perKey) return `this holder has ${ofKey} signing sessions open for that key: one is used or expires first`;
     return null;
   };
+  // WHO ASKS (kanban #1386): a census node whose signature over this very request is fresh, or null - an unsigned (or unprovable) ask
+  async function askerOf(request) {
+    const a = request && request.asker;
+    if (!isAsker || !a || typeof a !== 'object' || !isHex(String(a.node || ''), 32) || !isHex(String(a.sig || ''), 64) || !Number.isFinite(Number(a.at))) return null;
+    if (Math.abs(now() - Number(a.at)) > ASK_FRESH_MS) return null;
+    let good = false; try { good = schnorr.verify(fromHex(a.sig), askId(request, Number(a.at)), fromHex(a.node)); } catch { good = false; }
+    if (!good) return null;
+    let known = false; try { known = !!(await isAsker(a.node)); } catch { known = false; }
+    return known ? a.node : null;
+  }
+  // THE ADMISSION BY ASKER (kanban #1386): a signed ask is counted against its own asker; unsigned asks share a small pool; a signed ask that finds the
+  // key or the holder full takes the place of the oldest unsigned session (of that key first). Synchronous with the move that opens the session.
+  const admitByAsker = (publicKey, digest, asker) => {
+    const k = toHex(publicKey), d = toHex(digest);
+    const open = [...sessions.entries()];
+    if (asker) {
+      const mine = open.filter(([, s]) => s.asker === asker && toHex(s.publicKey) === k);
+      if (mine.filter(([, s]) => toHex(s.digest) === d).length >= askLimits.perAskerDigest) return `this holder has ${askLimits.perAskerDigest} signing sessions open for that request from you: one is used or expires first`;
+      if (mine.length >= askLimits.perAskerKey) return `this holder has ${askLimits.perAskerKey} signing sessions open for that key from you: one is used or expires first`;
+      const ofKey = open.filter(([, s]) => toHex(s.publicKey) === k).length;
+      if (ofKey >= limits.perKey || sessions.size >= limits.total) {
+        const anon = open.filter(([, s]) => !s.asker).sort((a, b) => (toHex(a[1].publicKey) === k ? 0 : 1) - (toHex(b[1].publicKey) === k ? 0 : 1) || a[1].atMs - b[1].atMs);
+        if (!anon.length) return `this holder has ${sessions.size} signing sessions open: one is used or expires first`;
+        move(anon[0][0], SESSION.COMMITTED, SESSION.USED);   // the oldest unsigned one makes room
+      }
+      return null;
+    }
+    const anon = open.filter(([, s]) => !s.asker);
+    if (anon.length >= askLimits.anonymous) return `this holder has ${anon.length} unsigned signing sessions open: sign the ask with a census node key`;
+    const anonKey = anon.filter(([, s]) => toHex(s.publicKey) === k);
+    if (anonKey.length >= askLimits.anonymousPerKey) return `this holder has ${anonKey.length} unsigned signing sessions open for that key: sign the ask with a census node key`;
+    if (anonKey.filter(([, s]) => toHex(s.digest) === d).length >= limits.perDigest) return `this holder has ${limits.perDigest} unsigned signing sessions open for that very request`;
+    if (sessions.size >= limits.total) return `this holder has ${sessions.size} signing sessions open: one is used or expires first`;
+    return null;
+  };
   async function takeCommit(request) {
     prune();
+    const asker = isAsker ? await askerOf(request) : null;
+    if (request && request.asker) { const { asker: _a, ...plain } = request; request = plain; }   // the check reads the request as it always did
     // BEFORE THE CHECK, since the check may cost a replay: a holder full in all, or busy checking, spends nothing on the ask
-    if (sessions.size >= limits.total) return { ok: false, why: `this holder has ${sessions.size} signing sessions open: one is used or expires first`, busy: true };
+    if (!isAsker && sessions.size >= limits.total) return { ok: false, why: `this holder has ${sessions.size} signing sessions open: one is used or expires first`, busy: true };
+    if (isAsker && !asker && [...sessions.values()].filter((s) => !s.asker).length >= askLimits.anonymous) return { ok: false, why: 'this holder has as many unsigned signing sessions open as it keeps: sign the ask with a census node key', busy: true };
     if (checking >= limits.checking) return { ok: false, why: `this holder is checking ${checking} requests already`, busy: true };
     let checked;
     checking += 1;
@@ -122,12 +176,13 @@ export function createCensusSigner({ key, check, held, work = censusKeyInWorker,
       return { ok: false, why: 'this node keeps no record of that key to sign by' };
     if ([...shares.shares.keys()].some((x) => !Number.isInteger(x) || x < 1 || x > roster.total)) return { ok: false, why: 'this node\'s shares are not that key\'s' };
     prune();
-    const full = sessions.size >= limits.total ? `this holder has ${sessions.size} signing sessions open: one is used or expires first` : fullFor(checked.publicKey, checked.digest);
+    const full = isAsker ? admitByAsker(checked.publicKey, checked.digest, asker)
+      : sessions.size >= limits.total ? `this holder has ${sessions.size} signing sessions open: one is used or expires first` : fullFor(checked.publicKey, checked.digest);
     if (full) return { ok: false, why: full, busy: true };
     const anyShare = [...shares.shares.values()][0];
     const nonces = { hiding: nonceGenerate340(random(32), anyShare), binding: nonceGenerate340(random(32), anyShare) };
     const session = toHex(random(16)), hiding = toHex(feldmanGroup.pointFromScalar(nonces.hiding)), binding = toHex(feldmanGroup.pointFromScalar(nonces.binding));
-    if (!move(session, SESSION.NONE, SESSION.COMMITTED, { nonces, digest: checked.digest, publicKey: checked.publicKey, shares, roster, hiding, binding, atMs: now() }))
+    if (!move(session, SESSION.NONE, SESSION.COMMITTED, { nonces, digest: checked.digest, publicKey: checked.publicKey, shares, roster, hiding, binding, atMs: now(), asker }))
       return { ok: false, why: 'that session is taken' };
     return { ok: true, session, node: me, xs: [...shares.shares.keys()], hiding, binding, bind: CENSUS_SIGN_BIND };
   }
@@ -147,7 +202,8 @@ export function createCensusSigner({ key, check, held, work = censusKeyInWorker,
  * THE FILER'S SIDE: asks holders until the threshold of shares has committed, then each of those for its share, and answers { ok, signature } or { ok: false, why, refused }. A share that does not add up shows in the
  * signature, which is checked here before anything is sent. `urls` the seats to ask, `own` this node's signer or null, `request` as `check` reads it. A holder that refuses is named in `refused`, with its reason.
  */
-export async function gatherCensusSignature({ request, digest, publicKey, threshold, urls, own = null, fetchFn = fetch, timeoutMs = 60000, atOnce = 8 }) {
+// `asker` { node (hex), sign(digest) }: this filer's node key - each remote ask goes signed (kanban #1386); null: unsigned, as before
+export async function gatherCensusSignature({ request, digest, publicKey, threshold, urls, own = null, fetchFn = fetch, timeoutMs = 60000, atOnce = 8, asker = null }) {
   const post = async (url, path, body) => {
     const r = await fetchFn(`${url}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
     return r.json();
@@ -167,7 +223,7 @@ export async function gatherCensusSignature({ request, digest, publicKey, thresh
   if (own) takeOrHandBack(null, await own.takeCommit(request).catch((e) => ({ ok: false, why: e.message })));
   const left = [...urls];
   while (have < threshold && left.length) {
-    await Promise.all(left.splice(0, atOnce).map(async (u) => takeOrHandBack(u, await post(u, '/census-sign/commit', request).catch((e) => ({ ok: false, why: e.message })))));
+    await Promise.all(left.splice(0, atOnce).map(async (u) => takeOrHandBack(u, await post(u, '/census-sign/commit', asker ? signAsk(request, asker) : request).catch((e) => ({ ok: false, why: e.message })))));
   }
   if (have < threshold) { await handBack([...said, ...unused]); return { ok: false, why: `${have} of the ${threshold} shares of that key answered`, refused }; }
   if (unused.length) await handBack(unused);
