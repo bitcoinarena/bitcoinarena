@@ -205,3 +205,31 @@ test('#1170 the batch step: a row SUBMITTING or ACCEPTED on T freezes T\'s batch
   assert.deepEqual(after, { state: 'ACCEPTED', row: T2b.slice(0, 8), standing: T2b.slice(0, 8) });
   assert.equal(seats[2].sendBuilt(RID, await seats[2].message(RID)).txid, T2b);
 });
+
+// kanban #1370 (audit 2 #1204 SETTLEMENT-2): the freeze holds on the seat's own pass too - a batch taken while the pass signed is not written over
+test('#1370 a batch taken while this seat\'s own pass signed: the pass keeps its batch beside it and submits nothing', async () => {
+  const { seats, stores, log, down } = world();
+  const origFetch = seats[1].fetcher;
+  let fired = false;
+  // seat 1 asks; at its first share request, seat 0 settles with seat 4 silent (S_A = 0,1,2,3,5) and hands T_A to seat 1
+  seats[1].fetcher = async (url, opts) => {
+    if (!fired && new URL(url).pathname === '/settle-share') {
+      fired = true;
+      down.push(4);
+      const a = await seats[0].settle(RID);
+      down.length = 0;
+      assert.equal(a.ok, true, a.why);
+    }
+    return origFetch(url, opts);
+  };
+  seats[1].turn = async () => ({ mine: true, why: 'seat 1 asks' });
+  const b = await seats[1].settle(RID);
+  const TA = log[0] && log[0].txid;
+  const row = stores[1].lockSettlement(RID);
+  const submits = log.map((x) => `${x.txid.slice(0, 8)} S ${x.signers.join(',')} ${x.accepted ? 'in' : 'refused'}`);
+  console.log(`#1370 submits: ${submits.join(' | ')}; seat 1 row ${row ? `${row.state} ${row.txid.slice(0, 8)}` : 'none'}; its pass: ${b.ok ? 'ok' : b.why}`);
+  assert.ok(fired && TA, 'seat 0 submitted T_A during seat 1\'s pass');
+  assert.equal(log.length, 1, 'seat 1 submitted nothing of its own over the frozen row');
+  assert.equal(row.txid, TA, 'seat 1\'s row stays on T_A');
+  assert.equal(stores[1].lockSettlementMoves ? stores[1].lockSettlementMoves(RID).txid : TA, TA, 'and its moves name T_A');
+});
