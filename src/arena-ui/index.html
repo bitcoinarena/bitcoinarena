@@ -1923,7 +1923,9 @@
     { let lastRefused = '';
       setInterval(() => {
         const j = window.ARENA_JOIN;
-        if (j && j.state === 'refused' && j.why && j.why !== lastRefused) { lastRefused = j.why; window.ARENA_ERROR_FEEDBACK('Joining a round failed: ' + j.why); }
+        // a refused order the order strip shows has its own "Report this" there (kanban #1389): no second note over the strip's words
+        const stripSays = document.body.classList.contains('arena-own-client') && !window.ARENA_CLIENT_SAYS_JOIN;
+        if (j && j.state === 'refused' && j.why && j.why !== lastRefused) { lastRefused = j.why; if (!stripSays) window.ARENA_ERROR_FEEDBACK('Joining a round failed: ' + j.why); }
         for (const f of document.querySelectorAll('iframe')) {
           let doc = null; try { doc = f.contentDocument; } catch { doc = null; }
           if (!doc || !doc.body || doc.__arenaErrorWatch) continue;
@@ -9930,7 +9932,7 @@
         // the key leaves the countdown out: a held order is one line, closed once
         const key = j.round + ':' + (cls === 'held' ? 'held' : j.state) + ':' + (j.why || '');
         if (key !== shownKey) { shownKey = key; doneAt = cls === 'ok' || cls === 'bad' ? Date.now() : 0; }
-        if (closedKey === key || (doneAt && Date.now() - doneAt > (cls === 'bad' ? 20000 : 8000))) { box.classList.remove('on'); return; }
+        if (closedKey === key || (doneAt && cls !== 'bad' && Date.now() - doneAt > 8000)) { box.classList.remove('on'); return; }
         window.ArenaText.say(txt, line); box.classList.toggle('ok', cls === 'ok' || cls === 'held'); box.classList.toggle('bad', cls === 'bad'); box.classList.add('on');
         rep.hidden = !(cls === 'bad' && window.ARENA_OPEN_FEEDBACK && window.ARENA_FAUCET_URL);
         window.ARENA_JOIN_STATUS = { line, cls, state: j.state };
