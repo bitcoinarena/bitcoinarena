@@ -3,7 +3,7 @@
 // The Arena faucet's rules (kanban #635): an address once, an IP a few times a day, a daily cap, never more than it holds.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { faucetDecide, faucetAddressOk, FAUCET_MAX_SATS, DAY_MS } from '../src/faucet.js';
+import { faucetDecide, faucetAddressOk, FAUCET_MAX_SATS, FAUCET_PER_IP_PER_DAY, DAY_MS } from '../src/faucet.js';
 
 const A = 'tb1pqqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc0sx9n0a2';
 const B = 'tb1q9v8zvd6jgz0xvyq5stk0d4uyh8ux5nevkf92sn';
@@ -17,18 +17,18 @@ test('a testnet4 address and a whole amount up to the maximum are paid', () => {
   assert.match(faucetDecide({ address: A, sats: FAUCET_MAX_SATS + 1 }, { paid: [] }).why, /at most/);
 });
 
-test('an address is paid once, an IP three times a day, and never past the daily cap or the balance', () => {
+test('an address is paid once, an IP a few times a day (FAUCET_PER_IP_PER_DAY), and never past the daily cap or the balance', () => {
   const book = { paid: [{ address: A, ip: '1.2.3.4', sats: 60000, atMs: now - 1000 }] };
   assert.match(faucetDecide({ address: A, sats: 1000, ip: '9.9.9.9' }, book, { nowMs: now }).why, /already/);
-  const busy = { paid: [1, 2, 3].map((i) => ({ address: `tb1qaddress${'x'.repeat(i)}0000000`, ip: '5.5.5.5', sats: 1000, atMs: now - i })) };
-  assert.match(faucetDecide({ address: B, sats: 1000, ip: '5.5.5.5' }, busy, { nowMs: now }).why, /3 times a day/);
+  const busy = { paid: Array.from({ length: FAUCET_PER_IP_PER_DAY }, (_, j) => j + 1).map((i) => ({ address: `tb1qaddress${'x'.repeat(i)}0000000`, ip: '5.5.5.5', sats: 1000, atMs: now - i })) };
+  assert.match(faucetDecide({ address: B, sats: 1000, ip: '5.5.5.5' }, busy, { nowMs: now }).why, new RegExp(`${FAUCET_PER_IP_PER_DAY} times a day`));
   assert.equal(faucetDecide({ address: B, sats: 1000, ip: '5.5.5.5' }, busy, { nowMs: now + DAY_MS }).ok, true, 'the next UTC day it pays again');
   assert.match(faucetDecide({ address: B, sats: 50000, ip: '6.6.6.6' }, book, { nowMs: now, dayCapSats: 100000 }).why, /today's coins/);
   assert.match(faucetDecide({ address: B, sats: 50000, ip: '6.6.6.6' }, { paid: [] }, { nowMs: now, balanceSats: 40000 }).why, /out of coins/);
 });
 
-test('the players\' faucet: a welcome once, five top-ups a day, an IP and a day capped, and only its own invoice amount', async () => {
-  const { playerGrantDecide: d, playerGrantTotals, PLAYER_GRANTS, PLAYER_PER_IP_PER_DAY, PLAYER_DAY_CAP_SATS } = await import('../src/faucet.js');
+test('the players\' faucet: a welcome once, PLAYER_TOPUPS_PER_DAY top-ups a day, an IP and a day capped, and only its own invoice amount', async () => {
+  const { playerGrantDecide: d, playerGrantTotals, PLAYER_GRANTS, PLAYER_PER_IP_PER_DAY, PLAYER_DAY_CAP_SATS, PLAYER_TOPUPS_PER_DAY: K } = await import('../src/faucet.js');
   const a = 'a'.repeat(64), b = 'b'.repeat(64), now = 86400000 * 20758 + 1000, W = PLAYER_GRANTS.welcome.invoiceSats, T = PLAYER_GRANTS.topup.invoiceSats;
   const ask = (kind, account, extra = {}) => ({ kind, account, ip: '1.1.1.1', invoiceSats: kind === 'welcome' ? W : T, nowMs: now, ...extra });
   const row = (kind, account, extra = {}) => ({ kind, account, ip: '2.2.2.2', sats: kind === 'welcome' ? W : T, atMs: now, ...extra });
@@ -40,13 +40,13 @@ test('the players\' faucet: a welcome once, five top-ups a day, an IP and a day 
   assert.equal(d(ask('topup', 'nope'), { players: [] }).ok, false);
   const tops = (n) => Array.from({ length: n }, () => row('topup', a));
   assert.equal(T, 300, 'a top-up is 300 sats (kanban #1088)');
-  assert.equal(d(ask('topup', a), { players: tops(4) }).ok, true, 'a fifth top-up');
-  assert.equal(d(ask('topup', a), { players: tops(5) }).ok, false, 'a sixth top-up');
-  assert.equal(d(ask('topup', a, { nowMs: now + 86400000 }), { players: tops(5) }).ok, true, 'the next day');
+  assert.equal(d(ask('topup', a), { players: tops(K - 1) }).ok, true, 'the last top-up of the day');
+  assert.equal(d(ask('topup', a), { players: tops(K) }).ok, false, 'one more');
+  assert.equal(d(ask('topup', a, { nowMs: now + 86400000 }), { players: tops(K) }).ok, true, 'the next day');
   // A PAGE STILL OPEN FROM BEFORE asks 250: paid as asked, and it counts toward the same five
-  const old = d(ask('topup', a, { invoiceSats: 250 }), { players: tops(4) });
+  const old = d(ask('topup', a, { invoiceSats: 250 }), { players: tops(K - 1) });
   assert.equal(old.ok, true); assert.equal(old.grant.sats, 250);
-  assert.equal(d(ask('topup', a, { invoiceSats: 250 }), { players: tops(5) }).ok, false, 'an old page after five');
+  assert.equal(d(ask('topup', a, { invoiceSats: 250 }), { players: tops(K) }).ok, false, 'an old page after the last');
   assert.equal(d(ask('topup', a, { invoiceSats: 299 }), { players: [] }).ok, false, 'any other amount');
   assert.equal(d(ask('welcome', a, { invoiceSats: 250 }), { players: [] }).ok, false, 'a welcome is 3,000 only');
   assert.equal(d(ask('topup', a), { players: Array.from({ length: PLAYER_PER_IP_PER_DAY }, () => row('topup', b, { ip: '1.1.1.1' })) }).ok, false, 'one address');
