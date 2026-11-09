@@ -22,8 +22,12 @@ export async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher
       try {
         const r = await fetcher(`${base}/reserves`, { signal: AbortSignal.timeout(timeoutMs) });
         if (!r.ok) return;
-        const f = ((await r.json()).federations || []).find((x) => x.federationId === fed && /^0[23][0-9a-f]{64}$/.test(String(x.key || '')));
-        if (f) { said.set(f.key, (said.get(f.key) || 0) + 1); if (said.get(f.key) >= needed) done(); }
+        // A SIGNER NODE OUTSIDE THE FEDERATION NAMES IT TOO (kanban #1391, measured 2026-11-09 12:3xZ: an RPS table's committee of 6 held 4 of federation
+        // A's guardian seats, so "only 4 name reserve key 02533d74…, and 5 must" refused every round of it): `key` is a member's own, `reserveKey` the
+        // key that seat's guardian seats agreed on at their threshold - every seat that knows the federation names it. Five must still agree.
+        const f = ((await r.json()).federations || []).find((x) => x.federationId === fed && /^0[23][0-9a-f]{64}$/.test(String(x.key || x.reserveKey || '')));
+        const k = f ? String(f.key || f.reserveKey) : null;
+        if (k) { said.set(k, (said.get(k) || 0) + 1); if (said.get(k) >= needed) done(); }
       } catch { /* a node that does not answer names nothing */ }
     })().finally(() => { left -= 1; if (!left) done(); });
   });
