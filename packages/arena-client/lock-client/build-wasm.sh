@@ -93,6 +93,16 @@ grep -q "fn blwp_issuing_msat" modules/fedimint-mintv2-client/src/lib.rs || cat 
 grep -q "fn blwp_issuing_detail" modules/fedimint-mintv2-client/src/lib.rs || cat $HERE/mintv2-issuing-detail.rs >> modules/fedimint-mintv2-client/src/lib.rs
 # STUCK OUTPUTS (kanban #910): a machine whose transaction state was lost can be asked at the federation and ended, and what the seed was issued comes back
 grep -q "fn blwp_recover_stuck" modules/fedimint-mintv2-client/src/lib.rs || cat $HERE/mintv2-recover-stuck.rs >> modules/fedimint-mintv2-client/src/lib.rs
+# TWEAKS FROM THE PAGE'S WORKERS (kanban #1391, Daniel 2026-11-09 "Yes fork it"): the module keeps a sender beside its tweak queue, the queue holds 256
+# (a lock takes up to 22, the welcome's re-issue as many), and blwp_add_tweaks takes ground tweaks in, each checked with the grinder's own filter
+F2=modules/fedimint-mintv2-client/src/lib.rs
+grep -q "fn blwp_add_tweaks" $F2 || {
+  perl -pi -e 's/let \(tweak_sender, tweak_receiver\) = async_channel::bounded\(\d+\);/let (tweak_sender, tweak_receiver) = async_channel::bounded(256);\n        let blwp_tweak_sender = tweak_sender.clone();/' $F2
+  perl -pi -e 's/^(\s*)tweak_receiver: async_channel::Receiver<\[u8; 16\]>,$/$1tweak_receiver: async_channel::Receiver<[u8; 16]>,\n$1blwp_tweak_sender: async_channel::Sender<[u8; 16]>,/' $F2
+  perl -pi -e 's/^(\s*)tweak_receiver,$/$1tweak_receiver,\n$1blwp_tweak_sender,/' $F2
+  cat $HERE/mintv2-add-tweaks.rs >> $F2
+}
+grep -q "async_channel::bounded(256)" $F2 && grep -q "blwp_tweak_sender: async_channel::Sender" $F2 && grep -q "^\s*blwp_tweak_sender,$" $F2 && grep -q "fn blwp_add_tweaks" $F2
 grep -q "BLWP_GIVEN_UP" modules/fedimint-mintv2-client/src/output.rs || perl -0pi -e 'BEGIN { open F, "<", shift @ARGV; local $/; $r = <F>; } s/global_context\s*\.await_tx_accepted\(range\.txid\)\s*\.await\?;/$r/' $HERE/mintv2-stuck-output.txt modules/fedimint-mintv2-client/src/output.rs
 grep -q "BLWP_GIVEN_UP" modules/fedimint-mintv2-client/src/output.rs
 ln -sfn $HERE blwp-lock-client
