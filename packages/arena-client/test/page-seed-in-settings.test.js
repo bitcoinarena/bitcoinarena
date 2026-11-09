@@ -53,7 +53,7 @@ test('Settings keeps the 24 words and their check; the lobby\'s backup line lead
 test('the seed modal says why the words must be written down, above them', async () => {
   const box = SEED.slice(SEED.indexOf('<h3>Your seed phrase</h3>'));
   assert.ok(box.indexOf('className="seed-why"') > 0 && box.indexOf('className="seed-why"') < box.indexOf('className="seed-grid"'), 'the reason above the words');
-  assert.match(box, /These 24 words are your wallet\.<\/b> Your sats are kept only in this browser/);
-  assert.match(box, /Never share them: whoever has them can take your sats\./);
+  // (kanban #1390, Daniel 2026-11-09: "Viel kürzer"): one short line
+  assert.match(box, /These 24 words are your wallet\.<\/b> Write them down\. Never share them\.<\/div>/);
   assert.match(HTML, /@media \(max-width: 420px\) \{ #arena-seed-modal \.seed-why \{ font-size: 12\.5px;/);
 });

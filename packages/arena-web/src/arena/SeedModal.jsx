@@ -50,7 +50,7 @@ export class SeedModal extends React.Component {
     return (
       <div className="modal-box">
         <h3>Your seed phrase</h3>
-        <div className="seed-why"><b>These 24 words are your wallet.</b> Your sats are kept only in this browser: if it is cleared, or this phone is lost or replaced, these words are the only way to get them back. Write them on paper, in order, and keep them offline. Never share them: whoever has them can take your sats.</div>
+        <div className="seed-why"><b>These 24 words are your wallet.</b> Write them down. Never share them.</div>
         <div className="seed-grid">{notReady || words.map((w, i) => <div key={i} className="seed-cell"><span className="n">{String(i + 1)}</span><span>{w}</span></div>)}</div>
         {notReady ? null : <button type="button" className="primary" onClick={() => this.start()}>Verify seed phrase</button>}
         <button type="button" onClick={onClose}>Close</button>
