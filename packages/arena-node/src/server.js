@@ -5992,6 +5992,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // `games` (game ids, hex, comma-separated, up to 16): ONLY THOSE GAMES' ROUNDS (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; measured on
     // live UI 605: a game screen read every seat's whole listing - 600-800 KB, 205-264 rows of every game - every few seconds, most of its parse and garbage
     // time). Unnamed, every game as before; a page that names its game reads only its rows.
+    // `compact=1`: A DRAWN COMMITTEE SAID AS `drawn: true` (kanban #1391, measured 2026-11-09 on guardian-3: the drawn keys of both roles, 842 bytes a row, were
+    // 558 KB of an 874 KB listing, and a page reads `drawn` only as drawn or not); the committees, the seating and every other field as before. Not signed: a
+    // row's signature covers its round, seat, time, phase, assignment and counts
+    const compact = url.searchParams.get('compact') === '1';
+    const compactOf = (k) => (compact && k && k.drawn && typeof k.drawn === 'object' ? { ...k, drawn: true } : k);
     const gamesRaw = url.searchParams.get('games');
     const gameSet = gamesRaw ? new Set(String(gamesRaw).toLowerCase().split(',').filter((g) => /^[0-9a-f]{64}$/.test(g)).slice(0, 16)) : null;
     for (const x of await openScan(nowMs, yieldIfLong)) {
@@ -6065,7 +6070,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         ...(c.event ? { event: { question: c.event.question, outcomes: [...c.event.outcomes], resolveAtMs: String(c.event.resolveAtMs) } } : {}),
         // AN ATTESTED ROUND'S OUTCOME (§0A.7a): OPEN, ATTESTED with its label, or DISPUTED; null for a replayed game
         outcome: outcomeOf(held.roundId, c),
-        startTime: iso(c.startTimeMs), endTime: iso(endMs), committee: set.committees.get(id) || (() => { const k = committeeOf(held.roundId); set.committees.set(id, k); return k; })(),
+        startTime: iso(c.startTimeMs), endTime: iso(endMs), committee: compactOf(set.committees.get(id) || (() => { const k = committeeOf(held.roundId); set.committees.set(id, k); return k; })()),
         // THE BACKUP RULE (§5A.5): whether this round is a day's backup grid's, and whether it is the one played in its window here
         ...(free ? {} : (() => { const p = playedListed(held.roundId, c); return { backup: p.backup, played: p.played }; })()),
         committeeTimeMs: String(c.committeeTimeMs), startTimeMs: String(c.startTimeMs),
