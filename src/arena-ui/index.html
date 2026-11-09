@@ -7250,6 +7250,25 @@
         const w = (ma - mb + 3) % 3, of = (e, won) => ({ ...e, provisional: true, signedBy: 1, outcome: won === false ? 'FAILED' : 'DELIVERED', score: won === true ? 2 : won === false ? 0 : 1 });
         return { ...held, entries: [of(a, w === 0 ? null : w === 1), of(b, w === 0 ? null : w === 2)] }; };
       const revealsSeen = new Map();   // round -> the moves uncovered so far (kanban #947)   // this tab's signed presence, one per round's table (ARENA_GAME.here)
+      // THE REVEAL BEFORE THE NEXT ROUND (kanban #1391, Daniel's playtest 2026-11-09 ~20:15Z: "wenn ich die order erfolgreich absetze (und der bot auch), started
+      // Wait korrekt, aber bevor reveal started sieht man nochmal eine neue Runde mit countdown mit Timer für 2-3 sekunden und erst dann started der reveal"): a
+      // head-to-head client takes the next round's table CLOSING_MS (1.5 s) before its round closes, and the two moves are uncovered only after the close. While
+      // this tab's round has both entries and its moves are not both open - from 1.5 s before its close, for at most 12 s after it - no next round is offered,
+      // so the stage shows the reveal first; alone in its round, the next round comes as before
+      const holdForReveal = () => {
+        if (!(game.manifest && game.manifest.resultType === 3)) return false;
+        const now = Date.now();
+        for (const h of readHidden()) {
+          const close = Number(h.entryCloseMs);
+          if (!(now >= close - 1500 && now < close + 12000)) continue;
+          const seen = resultsSeen.get(h.roundIdHex);
+          if (!seen || !Array.isArray(seen.entries) || seen.entries.length < 2) continue;
+          const moves = revealsSeen.get(h.roundIdHex);
+          if (moves && Object.keys(moves).length >= 2) continue;
+          return true;
+        }
+        return false;
+      };
       window.ARENA_GAME = {
         game: { id: game.id, name: game.name, title: game.title, known: game.known, devKey: game.devKey, attested: game.attested,
           outcomes: game.manifest.outcomes || [], attestThreshold: game.manifest.attestThreshold || 0, attestors: (game.manifest.attestors || []).length,
@@ -7265,7 +7284,7 @@
         // every close slot lists Rock Paper Scissors' version 5 and version 6 rounds (#951 lists every version), and a seat continues a match only
         // from the previous round of the same game id - a v6 round, then a v5 one, started the score at 0:0. A slot that holds rounds of the
         // tile's own version offers only those; a slot with none of them offers what it has.
-        allRows: () => sameVersionPerSlot(moneyFirst(window.ARENA_LOBBY_ROWS || [], true), game.id).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
+        allRows: () => (holdForReveal() ? [] : sameVersionPerSlot(moneyFirst(window.ARENA_LOBBY_ROWS || [], true), game.id)).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
           stakeSats: r.stakeSats, entryCloseMs: r.entryCloseMs !== undefined && r.entryCloseMs !== null ? Number(r.entryCloseMs) : null,
           startTimeMs: r.contract ? Number(r.contract.startTimeMs) : null })),
         identity: () => window.ARENA_IDENTITY || null,
