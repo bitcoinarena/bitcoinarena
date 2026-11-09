@@ -1018,6 +1018,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       ...((() => { let a = null; try { a = alarmOf(federation); } catch { a = null; } return a ? { alarm: a } : {}; })()),
       // THE LOAD (§23A.3): the signed record's reserve over its signed exposure cap
       ...(k.record ? { reserveSats: String(k.record.reserveSats), exposureCapSats: String(k.record.exposureCapSats),
+        ...(k.record.playerReserveSats !== undefined && k.record.playerReserveSats !== null ? { playerReserveSats: String(k.record.playerReserveSats) } : {}),
         load: k.record.exposureCapSats > 0n ? Number((loadReserveOf(k.record) * 10000n) / k.record.exposureCapSats) / 10000 : null } : {}),
       // the successor's guardian pool takes this drain's seated guardians (predecessorGuardians), shown with the record
       ...(k.record && k.record.successorId && k.record.successorId.some((x) => x) ? { successor: toHex(k.record.successorId) } : {}) })),
