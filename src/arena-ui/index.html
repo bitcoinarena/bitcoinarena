@@ -9707,7 +9707,7 @@
         // the key leaves the countdown out: a held order is one line, closed once
         const key = j.round + ':' + (cls === 'held' ? 'held' : j.state) + ':' + (j.why || '');
         if (key !== shownKey) { shownKey = key; doneAt = cls === 'ok' || cls === 'bad' ? Date.now() : 0; }
-        if (closedKey === key || (doneAt && Date.now() - doneAt > (cls === 'bad' ? 20000 : 8000))) { box.classList.remove('on'); return; }
+        if (closedKey === key || (doneAt && cls !== 'bad' && Date.now() - doneAt > 8000)) { box.classList.remove('on'); return; }
         window.ArenaText.say(txt, line); box.classList.toggle('ok', cls === 'ok' || cls === 'held'); box.classList.toggle('bad', cls === 'bad'); box.classList.add('on');
         rep.hidden = !(cls === 'bad' && window.ARENA_OPEN_FEEDBACK && window.ARENA_FAUCET_URL);
         window.ARENA_JOIN_STATUS = { line, cls, state: j.state };
