@@ -36,6 +36,9 @@ export const assetNameFor = (version, platform = process.platform, arch = proces
 /** auto_update in arena.conf: on unless 0 / off / no / false. */
 export const autoUpdateOn = (values) => !['0', 'off', 'no', 'false'].includes(String(values.auto_update ?? '1').trim().toLowerCase());
 
+/** A RELEASE THIS NODE ROLLED BACK IS TRIED AGAIN ONCE A DAY, not every check (kanban #1369, audit 2 #1204 INSTALLER-DOORS-9). */
+export const ROLLED_BACK_RETRY_MS = 24 * 3600_000;
+const recorded = (home) => { try { return JSON.parse(readFileSync(join(home, 'auto-update.json'), 'utf8')); } catch { return null; } };
 const record = (home, r) => { try { writeFileSync(join(home, 'auto-update.json'), JSON.stringify({ atMs: Date.now(), ...r }, null, 2) + '\n', { mode: 0o600 }); } catch { /* the log has it */ } };
 
 /**
@@ -72,6 +75,13 @@ async function updateOnce({ home, latest, fetcher = fetch, platform = process.pl
   if (!l.latest) return { ok: false, why: l.why || 'the newest release could not be read' };
   if (!l.newer) return { ok: true, upToDate: true, version: node.version, latest: l.latest.version };
   const v = l.latest.version;
+  // THE RELEASE ROLLED BACK HERE (kanban #1369): every try stops the node, copies its database and waits up to 7 min before it rolls back
+  // again - each 30 min check doing that kept a node down a fifth of the time and filled its disk with backups. The same release (version and,
+  // where both name one, commit) is tried again only a day after its rollback; `bitcoinarena update` (force) tries it at once.
+  const last = recorded(home);
+  const commit = l.latest.commit || null;
+  if (!force && last && last.rolledBack && last.to === v && (!last.commit || !commit || last.commit === commit) && Date.now() - Number(last.atMs || 0) < ROLLED_BACK_RETRY_MS)
+    return { ok: true, skipped: `release ${v} was rolled back on this node at ${new Date(Number(last.atMs)).toISOString()}: tried again after ${new Date(Number(last.atMs) + ROLLED_BACK_RETRY_MS).toISOString()} (or now with bitcoinarena update)` };
   // the new name first; a release that still carries the old one (its update channel, for nodes before 2026.1.8) under that
   const name = [assetNameFor(v, platform, arch), assetNameFor(v, platform, arch, LEGACY_ASSET_PREFIX)].find((n) => (l.latest.assets || {})[n]) || assetNameFor(v, platform, arch);
   trace.debug(`this system's asset: ${name} (${platform}-${arch}; ${name.startsWith(`${ASSET_PREFIX}-`) ? 'the new name' : 'the release carries only the name before 2026.1.8'}); the release names ${Object.keys(l.latest.assets || {}).length} asset(s)`);
@@ -180,7 +190,7 @@ async function updateOnce({ home, latest, fetcher = fetch, platform = process.pl
   say(60, `Updating your node to ${v}`);
   const r = await apply({ home, newRelease, port: node.port, node: join(newRelease, 'runtime', platform === 'win32' ? 'node.exe' : 'node'), installUpdaterFn, trace: given, progress: moved });
   trace.verbose(`the node moved: ${r.ok ? 'ok' : r.rolledBack ? 'rolled back' : 'not updated'} (${trace.since(t0)})`);
-  const out = r.ok ? { ok: true, from: node.version, to: v, backup: r.backup } : { ok: false, from: node.version, to: v, why: r.why, rolledBack: !!r.rolledBack };
+  const out = r.ok ? { ok: true, from: node.version, to: v, backup: r.backup } : { ok: false, from: node.version, to: v, why: r.why, rolledBack: !!r.rolledBack, ...(l.latest.commit ? { commit: l.latest.commit } : {}) };
   record(home, out);
   return out;
 }
