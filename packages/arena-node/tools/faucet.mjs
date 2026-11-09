@@ -60,7 +60,7 @@ const lncli = (payer, args, timeoutMs = 20000) => new Promise((res) => execFile(
 
 /** A player's grant: read the invoice, decide, keep it in the book BEFORE paying (a crash pays nobody twice), and take it out again if no payer could pay. */
 /** After a payinvoice that timed out: 'sent' once the payment SUCCEEDED or has an HTLC in flight, 'no' once it FAILED or none went out in time. */
-const PAY_SETTLE_MS = 45000;
+const PAY_SETTLE_MS = Number(env.FAUCET_PAY_SETTLE_MS || 45000), PAY_WAIT_MS = Number(env.FAUCET_PAY_WAIT_MS || 15000), PAY_POLL_MS = Number(env.FAUCET_PAY_POLL_MS || 3000);   // the tests' to shorten
 async function paymentSent(payer, hash) {
   const until = Date.now() + PAY_SETTLE_MS;
   while (Date.now() < until) {
@@ -69,7 +69,7 @@ async function paymentSent(payer, hash) {
     if (p && p.status === 'SUCCEEDED') return 'sent';
     if (p && p.status === 'FAILED') return 'no';
     if (p && (p.htlcs || []).some((h) => h.status === 'IN_FLIGHT' || h.status === 'SUCCEEDED')) return 'sent';
-    await new Promise((ok) => setTimeout(ok, 3000));
+    await new Promise((ok) => setTimeout(ok, PAY_POLL_MS));
   }
   return 'no';
 }
@@ -92,7 +92,7 @@ async function grant(ask) {
     // channel to node a was down, payinvoice was still looking for a route at 15 s, the page was told "500 sat" and the payment FAILED with NO_ROUTE
     // after): the payment's own state is read - an HTLC on its way (the federation's incoming contract holds it until the client claims) or SUCCEEDED
     // is paid; FAILED, or no part sent within PAY_SETTLE_MS, is not, and the next payer is asked
-    const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', ask.invoice], 15000);
+    const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', ask.invoice], PAY_WAIT_MS);
     const state = /Payment status: (SUCCEEDED|IN_FLIGHT)/.test(paid.out) ? 'sent' : paid.timedOut ? await paymentSent(payer, inv.payment_hash) : 'no';
     if (state === 'sent') {
       console.log(`${new Date().toISOString()} player ${ask.kind} ${d.grant.invoiceSats} sat (${ask.ip || 'no ip'}): ${inv.payment_hash.slice(0, 16)}`);
