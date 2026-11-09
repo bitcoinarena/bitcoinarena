@@ -215,6 +215,7 @@
     #arena-join-status .txt { flex: 1; min-width: 0; }
     #arena-join-status .spin { flex: none; width: 16px; height: 16px; border-radius: 50%; border: 2px solid #3a4452; border-top-color: #f7931a; animation: arena-spin .8s linear infinite; }
     #arena-join-status.ok .spin, #arena-join-status.bad .spin { display: none; }
+    #arena-join-status .rep { flex: none; background: none; border: 1px solid #f85149; border-radius: 6px; color: #ffb4ad; font: inherit; font-size: 12px; padding: 2px 8px; cursor: pointer; }
     #arena-join-status .x { flex: none; background: none; border: 0; color: #8b949e; font-size: 20px; line-height: 1; cursor: pointer; padding: 0 2px; }
     @keyframes arena-spin { to { transform: rotate(360deg); } }
     body.arena-clean #arena-join-status { display: none !important; }
@@ -9897,6 +9898,10 @@
       }, 1000);
       const box = document.getElementById('arena-join-status'); if (!box) return;
       const txt = box.querySelector('.txt'); let shownKey = '', doneAt = 0, closedKey = '';
+      // REPORT THIS (kanban #1389, Daniel 2026-11-09: "Der screen shot hat auch keinen report bug button"): a refused order opens the feedback with its words
+      const rep = document.createElement('button'); rep.type = 'button'; rep.className = 'rep'; rep.textContent = 'Report this'; rep.hidden = true;
+      rep.addEventListener('click', (e) => { e.stopPropagation(); if (window.ARENA_OPEN_FEEDBACK) window.ARENA_OPEN_FEEDBACK({ type: 'bug', error: (window.ARENA_JOIN_STATUS || {}).line || txt.textContent }); });
+      box.insertBefore(rep, box.querySelector('.x'));
       box.querySelector('.x').addEventListener('click', () => { closedKey = shownKey; box.classList.remove('on'); });
       // A GREEN LINE GOES WHEN IT IS CLICKED (kanban #930); one still under way or refused stays until its X
       box.addEventListener('click', () => { if (box.classList.contains('ok')) { closedKey = shownKey; box.classList.remove('on'); } });
@@ -9927,6 +9932,7 @@
         if (key !== shownKey) { shownKey = key; doneAt = cls === 'ok' || cls === 'bad' ? Date.now() : 0; }
         if (closedKey === key || (doneAt && Date.now() - doneAt > (cls === 'bad' ? 20000 : 8000))) { box.classList.remove('on'); return; }
         window.ArenaText.say(txt, line); box.classList.toggle('ok', cls === 'ok' || cls === 'held'); box.classList.toggle('bad', cls === 'bad'); box.classList.add('on');
+        rep.hidden = !(cls === 'bad' && window.ARENA_OPEN_FEEDBACK && window.ARENA_FAUCET_URL);
         window.ARENA_JOIN_STATUS = { line, cls, state: j.state };
       }, 500);
     })();
