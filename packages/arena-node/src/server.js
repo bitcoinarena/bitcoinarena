@@ -320,6 +320,7 @@ import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
 import { decodeCommitments, encodeCommitments, encodeShare } from './pool-wire.js';
 import { setTagNetwork } from '../../arena-protocol/src/tag-switch.js';
 import { keptRead } from './kept-read.js';
+import { guardianAnswers } from './guardian-probe.js';
 
 // who sits at each head-to-head round's table, per seat (POST /here): round hex -> identity key hex -> last said (ms)
 const presenceByRound = new WeakMap();
@@ -7422,9 +7423,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // THE RELEASE THIS NODE RUNS, SINCE WHEN, AND WHETHER ITS GUARDIAN ANSWERS (kanban #1093 part 3, staged updates): what a fellow guardian's
       // seat reads before its updater takes a new release. Healthy: this node guards nothing, or its guardian answers on its API port.
       if (req.method === 'GET' && url.pathname === '/release') {
+        // HEALTHY IS CONSENSUS, NOT AN OPEN PORT (kanban #1380, audit 2 #1204 FED-A4): this node's own guardian answering its admin password and past
+        // setup (guardian-probe.js guardianAnswers, the checked probe) - any HTTP answer on the port made a release that never reaches consensus "healthy",
+        // and after an hour proven, so the stage let the next guardians take it
         let healthy = true;
         if (guardian && guardian.apiPort) {
-          try { await fetch(`http://127.0.0.1:${guardian.apiPort}/`, { signal: AbortSignal.timeout(3000) }); } catch { healthy = false; }
+          try { const g = await guardianAnswers({ apiPort: guardian.apiPort, dataDir: guardian.dataDir }); healthy = !!(g.ok && !g.setup); } catch { healthy = false; }
         }
         const r = releaseHere();
         // SIGNED WITH THE NODE KEY OVER THE ASKER'S NONCE (kanban #1169): a fellow's seat counts this answer only as this node's own word to its ask

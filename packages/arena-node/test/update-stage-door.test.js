@@ -27,3 +27,20 @@ test('#1169 GET /release?nonce= is signed by the node key over the nonce; withou
     assert.equal(verifiedAnswer(plain, { node: plain.node, nonce, verify: (s, m, k) => schnorr.verify(s, m, k) }), null, 'unsigned: counts as silent');
   } finally { await d.close(); }
 });
+
+// kanban #1380 (audit 2 #1204 FED-A4): "healthy" is this node's guardian in consensus, not anything answering HTTP on its port
+test('#1380 a guardian port that only answers HTTP 404 is not healthy', async () => {
+  const { createServer } = await import('node:http');
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const plain = createServer((req, res) => { res.writeHead(404); res.end('no'); });
+  await new Promise((ok) => plain.listen(0, '127.0.0.1', ok));
+  const d = await serve(openStore(':memory:'), { port: 0, ...opts, guardian: { apiPort: plain.address().port, dataDir: mkdtempSync(join(tmpdir(), 'g1380-')) } });
+  try {
+    const a = await (await fetch(`http://127.0.0.1:${d.port}/release?nonce=${'7c'.repeat(16)}`)).json();
+    console.log(`#1380 /release with a 404 server on the guardian port: healthy ${a.healthy}`);
+    assert.equal(a.guardian, true);
+    assert.equal(a.healthy, false, 'an open port that is no guardian in consensus counted as healthy');
+  } finally { await d.close(); plain.close(); }
+});
