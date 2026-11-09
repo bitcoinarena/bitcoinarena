@@ -106,8 +106,9 @@ grep -q "fn blwp_add_tweaks" $F2 || {
   perl -pi -e 's/^(\s*)tweak_receiver: async_channel::Receiver<\[u8; 16\]>,$/$1tweak_receiver: async_channel::Receiver<[u8; 16]>,\n$1blwp_tweak_sender: async_channel::Sender<[u8; 16]>,/' $F2
   perl -pi -e 's/^(\s*)tweak_receiver,$/$1tweak_receiver,\n$1blwp_tweak_sender,/' $F2
   cat $HERE/mintv2-add-tweaks.rs >> $F2
+  perl -0pi -e 's/(\n(\s*)let mut tries: u32 = 0;\n\s*loop \{\n)/$1$2    if BLWP_FED.load(std::sync::atomic::Ordering::Relaxed) && tweak_sender.len() >= BLWP_FED_FLOOR {\n$2        fedimint_core::task::sleep(Duration::from_millis(250)).await;\n$2        continue;\n$2    }\n/' $F2
 }
-grep -q "async_channel::bounded(256)" $F2 && grep -q "blwp_tweak_sender: async_channel::Sender" $F2 && grep -q "^\s*blwp_tweak_sender,$" $F2 && grep -q "fn blwp_add_tweaks" $F2
+grep -q "tweak_sender.len() >= BLWP_FED_FLOOR" $F2
 grep -q "BLWP_GIVEN_UP" modules/fedimint-mintv2-client/src/output.rs || perl -0pi -e 'BEGIN { open F, "<", shift @ARGV; local $/; $r = <F>; } s/global_context\s*\.await_tx_accepted\(range\.txid\)\s*\.await\?;/$r/' $HERE/mintv2-stuck-output.txt modules/fedimint-mintv2-client/src/output.rs
 grep -q "BLWP_GIVEN_UP" modules/fedimint-mintv2-client/src/output.rs
 ln -sfn $HERE blwp-lock-client
