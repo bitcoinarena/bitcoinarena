@@ -179,7 +179,7 @@ import { RoundAuditor, auditorNet } from './round-auditor.js';
 import { buildObjectionBundle } from './objection-bundle.js';
 import { decodeObjectionBundle } from '../../arena-protocol/src/objection.js';
 import { runId as runIdOf } from './verdict.js';
-import { auditEligible, vrfSecretFor, decodeAudit, auditId, auditResultsHash } from '../../arena-protocol/src/auditor.js';
+import { auditEligible, vrfSecretFor, decodeAudit, auditId, auditResultsHash, auditTickHash, auditTick, AUDIT_TICK_VERSION } from '../../arena-protocol/src/auditor.js';
 import { makeVrf, SUITE_SECP256K1_TAI } from '../../arena-protocol/src/vrf.js';
 import { entryId as entryIdOfContract } from '../../arena-protocol/src/contracts.js';
 import { runSourceOnce, tryExample } from './market-test.js';
@@ -3282,6 +3282,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   // THE ENTRIES AN AUDIT IS OVER: every entry of the round but one void at the door (§15), which has no run to agree on
   const auditEntries = (rid) => round.entriesOf(rid).filter((e) => !round.entryVoid(e.entryId));
+  const auditTickCache = new Map();   // round:t -> Promise(tick hash) (kanban #1383)
   const auditDesk = createAuditDesk({ db: round.db, now: () => round.now(), vrf: auditVrf, verify: verifyAudit,
     contextFor: async (rid) => {
       const c = contractOfRound(rid);
@@ -3296,7 +3297,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // A PLAYER'S OWN NODE AUDITS NOTHING OF ITS ROUND (§13A.1): a key that plays in it is not taken here, though it counts in W
       const players = new Set(entries.map((e) => toHex(e.entry.playerPubkey)));
       const eligible = new Map([...set.eligible].filter(([key]) => !players.has(key)));
-      return { ok: true, eligible, total: set.total, closeMs: Number(windowsOf(c).closeMs), resultsHash: runs.resultsHash };
+      // THE TICK HASH THIS SEAT'S OWN REPLAY GIVES (§13A.1 RULED 2026-11-09, kanban #1383): over the entries the AUDIT vouches for, each one's state at
+      // min(t, its last tick) (verifier.stateHashAt), zeros for an entry it holds no run of; one replay set per round and tick
+      const tickHashAt = (t) => {
+        const k = `${toHex(rid)}:${t}`;
+        if (!auditTickCache.has(k)) {
+          const p = (async () => auditTickHash({ t, entries: await Promise.all(runs.runs.map(async (r) => {
+            const h = await verifier.stateHashAt(rid, r.entryId, t); return { entryId: r.entryId, stateHash: h ? fromHex(h) : null }; })) }))();
+          auditTickCache.set(k, p); p.catch(() => auditTickCache.delete(k));
+          if (auditTickCache.size > 64) auditTickCache.delete(auditTickCache.keys().next().value);
+        }
+        return auditTickCache.get(k);
+      };
+      return { ok: true, eligible, total: set.total, closeMs: Number(windowsOf(c).closeMs), resultsHash: runs.resultsHash,
+        protocolVersion: Number(c.protocolVersion), runTicks: Number(c.blockTicks), tickHashAt };
     } });
   // A NEW AUDIT GOES ON TO THE ROUND'S OTHER SEATS (§13A.1: "hands every new one to the round's other seats"), signed by this seat, so each
   // takes it until window_close whatever its signed time - and every seat holds the same set for the payout all of them sign
@@ -3429,6 +3443,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     selfKey: round.pubkey, prove: (alpha) => auditVrf.prove(vrfSecretFor(round.identity.secret, secp256k1.Point), alpha),
     outputOf: (pi) => auditVrf.proofToHash(pi), sign: (d) => schnorr.sign(d, round.identity.secret), due: auditDue, eligibleFor: auditSetFor,
     ...auditNet,
+    // THE AUDIT'S TICK (§13A.1 RULED 2026-11-09, kanban #1383): from AUDIT_TICK_VERSION, t = beta mod T_run (the round's blockTicks); no fixed checkpoint
+    // interval exists (marks come with events), so none is skipped
+    tickOf: (rid, beta) => { const c = contractOfRound(rid); return c && Number(c.protocolVersion) >= AUDIT_TICK_VERSION && Number(c.blockTicks) > 0 ? auditTick({ beta, runTicks: Number(c.blockTicks), checkpointEvery: 0 }) : null; },
     // counted for the owner area (kanban #1002), taken or not
     object: async (rid, eid) => { const took = await auditNet.object(rid, eid); try { auditDesk.noteObjection(rid, eid, took); } catch { /* the count is not worth an audit */ } return took; },
     now: () => round.now(), log: (m) => console.log(m),

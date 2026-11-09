@@ -1227,6 +1227,29 @@ export class Verifier {
    * inside the result window; past it, a signer node still unable to retrieve the
    * transcript decides by §13C (2026-09-15 07:49, #unretrievedPastWindow).
    */
+  /**
+   * THE STATE OF A STORED RUN AT A TICK (kanban #1331/#1383): what an AUDIT's tick hash is checked against - this seat's own replay of the
+   * transcript it stores, at min(t, the run's last tick), its state hash in hex. Null when it stores no transcript of that entry (no run);
+   * throws when it cannot replay one it stores.
+   */
+  async stateHashAt(roundIdBytes, entryIdBytes, t) {
+    const row = this.round.get(roundIdBytes);
+    if (!row) throw new Error('no such round');
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const found = this.round.entriesOf(roundIdBytes).find((e) => hex(e.entryId) === hex(entryIdBytes));
+    if (!found) throw new Error('no such entry in that round');
+    const held = this.round.transcript(roundIdBytes, entryIdBytes);
+    if (!held || !Array.isArray(held.ticks) || !held.ticks.length) return null;
+    const beacon = beaconFor(this.randomnessFor, contract, roundIdBytes, found.entry, entryIdBytes, this.chainFor);
+    if (!beacon.ok) throw new Error(beacon.why);
+    const answer = await this.pool.submit({ core: this.#coreOf(roundIdBytes), key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:tick:${t}:${++retryJobs}`,
+      objected: false, ...this.#runFor(roundIdBytes, entryIdBytes), entry: found.entry, options: { roundRandomness: beacon.hash, hashTicks: [t] } });
+    if (!answer || !answer.ok) throw new Error(`entry ${hex(entryIdBytes).slice(0, 16)} does not replay here: ${answer ? answer.why : 'no answer'}`);
+    const h = (answer.hashes || [])[0];
+    if (!h || !h.stateHash) throw new Error(`entry ${hex(entryIdBytes).slice(0, 16)}: the replay gave no state at tick ${t}`);
+    return String(h.stateHash);
+  }
+
   retryClose(roundIdBytes, entryIdBytes) {
     return timed(`close retry ${hex(entryIdBytes).slice(0, 8)}`, () => this.#retryClose(roundIdBytes, entryIdBytes), { over: 50 });
   }
@@ -1497,14 +1520,15 @@ export class Verifier {
       return await checkObjectionBundle({
         bundle, roundId: roundIdBytes, entryId: entryIdBytes, entry: found.entry, contract,
         committee: given.committee || this.round.signerNodes(roundIdBytes), signedResultId, core, roundRandomness: beacon.hash,
-        verify: (sig, msg, key) => verifyKept(sig, msg, key),
+        verify: (sig, msg, key) => verifyKept(sig, msg, key), hashTicks: given.hashTicks || [],
         replayRun: (form, entry, options) => {
-          const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${content}:${form.ticks.length}`;
+          const ticksAsked = (options.hashTicks || []).join('.');
+          const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${content}:${form.ticks.length}${ticksAsked ? `:h${ticksAsked}` : ''}`;
           const had = content && this.objectionReplays.get(key);
           if (had) return had;
           this.objectionReplayCount++;
           const job = this.pool.submit({ core, key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:objection:${++objectionJobs}`,
-            objected: false, transcript: form, source: null, entry, options: { roundRandomness: options.roundRandomness, marks: options.marks || [] } });
+            objected: false, transcript: form, source: null, entry, options: { roundRandomness: options.roundRandomness, marks: options.marks || [], ...(ticksAsked ? { hashTicks: options.hashTicks } : {}) } });
           if (content) {
             this.objectionReplays.set(key, job);
             job.catch(() => this.objectionReplays.delete(key));

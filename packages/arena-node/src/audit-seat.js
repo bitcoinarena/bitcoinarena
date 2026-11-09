@@ -11,7 +11,7 @@
 // now contradicts, since a seat takes one only over the results it holds - and keeps its bytes and signature as the evidence. A
 // contradicted AUDIT is paid nothing: `held` leaves it out of the auditors' lines. And it is filed for slashing (kanban #724, #725):
 // `contradicted` hands its bytes and signature to verify.js fileAuditSlashProofs, which files the AUDIT_CONTRADICTED proof.
-import { decodeAudit, auditStands, auditId, auditResultsHash, AUDIT_TOLERANCE_MS } from '../../arena-protocol/src/auditor.js';
+import { decodeAudit, auditStands, auditId, auditResultsHash, AUDIT_TOLERANCE_MS, AUDIT_TICK_VERSION, auditTick, vrfPublicKey, auditAlpha } from '../../arena-protocol/src/auditor.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { TAG } from '../../arena-protocol/src/constants.js';
 import { verifiedFinal } from './verdict.js';
@@ -87,7 +87,18 @@ export function createAuditDesk({ db, now = () => Date.now(), contextFor, vrf, v
       const d = a.atMs - BigInt(arrived);
       if ((d < 0n ? -d : d) > BigInt(AUDIT_TOLERANCE_MS)) return { ok: false, status: 409, why: `an AUDIT's signed time is within ${AUDIT_TOLERANCE_MS / 1000} s of the seat's clock (§13A rule 3)` };
     }
-    const st = auditStands(a, { signature, vrf, verify, eligible: ctx.eligible, total: ctx.total, resultsHash: ctx.resultsHash, windowCloseMs: ctx.closeMs });
+    // THE REPLAYED TICK (§13A.1 RULED 2026-11-09, kanban #1383): from AUDIT_TICK_VERSION the AUDIT's tick hash is checked against this seat's own replay
+    // of every entry at the auditor's tick - t from the auditor's VRF output; a seat that cannot replay an entry leaves the AUDIT unread
+    let tickArgs = {};
+    if (Number(ctx.protocolVersion) >= AUDIT_TICK_VERSION) {
+      let beta = null; try { beta = vrf.verify(vrfPublicKey(a.nodePubkey), auditAlpha(a.roundId), a.vrfProof); } catch { beta = null; }
+      if (beta && typeof ctx.tickHashAt === 'function' && Number.isInteger(Number(ctx.runTicks))) {
+        const t = auditTick({ beta, runTicks: Number(ctx.runTicks), checkpointEvery: Number(ctx.checkpointEvery || 0) });
+        let mine = null; try { mine = await ctx.tickHashAt(t); } catch (e) { return { ok: false, status: 503, why: `this seat cannot read the AUDIT's tick ${t}: ${e.message}` }; }
+        tickArgs = { protocolVersion: Number(ctx.protocolVersion), runTicks: Number(ctx.runTicks), checkpointEvery: Number(ctx.checkpointEvery || 0), stateHashAt: (x) => (x === t ? mine : null) };
+      } else tickArgs = { protocolVersion: Number(ctx.protocolVersion) };
+    }
+    const st = auditStands(a, { signature, vrf, verify, eligible: ctx.eligible, total: ctx.total, resultsHash: ctx.resultsHash, windowCloseMs: ctx.closeMs, ...tickArgs });
     if (!st.ok) return { ok: false, status: 409, why: st.why };
     const r = insert.run(a.roundId, a.nodePubkey, bytes, signature, Number(a.atMs), arrived, forwarded ? 1 : 0);
     return { ok: true, kept: r.changes > 0, round: toHex(a.roundId), node: toHex(a.nodePubkey), body };

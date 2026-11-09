@@ -12,7 +12,7 @@
 // valid objection later contradicts slashes its signer (§13A.1).
 //
 // Everything that touches the network, the census or the replay worker is injected, as drawn-attestor.js does.
-import { auditAlpha, isAuditor, auditResultsHash, encodeAudit, auditId, AUDIT_LEAD_MS } from '../../arena-protocol/src/auditor.js';
+import { auditAlpha, isAuditor, auditResultsHash, encodeAudit, auditId, AUDIT_LEAD_MS, auditTickHash } from '../../arena-protocol/src/auditor.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
 export class RoundAuditor {
@@ -24,8 +24,10 @@ export class RoundAuditor {
    * replays that entry to, or null; `object(roundId, entryId)` posts the objection, true once a seat took it; `post(bytes, signature,
    * roundId)` hands the AUDIT to the round's seats, the number that took it.
    */
-  constructor({ selfKey, prove, outputOf, sign, due, eligibleFor, entriesFor, replay, object, post, now = () => Date.now(), log = () => {} }) {
-    Object.assign(this, { selfKey, prove, outputOf, sign, due, eligibleFor, entriesFor, replay, object, post, now, log });
+  // `tickOf(roundId, beta)`: the AUDIT's tick from the round's protocol on (kanban #1383), else null; `stateAt(roundId, entryId)`: the state (32 bytes)
+  // this node's replay gave at that tick, or null
+  constructor({ selfKey, prove, outputOf, sign, due, eligibleFor, entriesFor, replay, object, post, tickOf = () => null, stateAt = () => null, now = () => Date.now(), log = () => {} }) {
+    Object.assign(this, { selfKey, prove, outputOf, sign, due, eligibleFor, entriesFor, replay, object, post, tickOf, stateAt, now, log });
     this.draws = new Map();   // round hex -> { drawn, pi }
     this.done = new Map();    // round hex -> 'not drawn' | 'audited' | 'objected' | 'late' | 'could not replay'
   }
@@ -57,9 +59,11 @@ export class RoundAuditor {
       const entries = await this.entriesFor(r.roundId);
       if (!entries || !entries.length) continue;   // not all signed yet: the next pass
       let differs = null, missing = false;
+      // THE REPLAYED TICK (§13A.1 RULED 2026-11-09, kanban #1383): each replay also hands its state at t, from the auditor's own VRF output
+      let t = null; try { t = this.tickOf(r.roundId, this.outputOf(draw.pi)); } catch { t = null; }
       for (const e of entries) {
         let got = null;
-        try { got = await this.replay(r.roundId, e.entryId); } catch { got = null; }
+        try { got = await this.replay(r.roundId, e.entryId, t === null ? [] : [t]); } catch { got = null; }
         if (!got) { missing = true; break; }
         if (toHex(got) !== toHex(e.runId)) { differs = e; break; }
       }
@@ -73,8 +77,14 @@ export class RoundAuditor {
       }
       if (missing) { if (this.now() > r.closeMs - 2 * AUDIT_LEAD_MS) this.done.set(id, 'could not replay'); continue; }
       if (this.now() > r.closeMs - AUDIT_LEAD_MS) { this.done.set(id, 'late'); continue; }
+      let tickHash = null;
+      if (t !== null) {
+        const states = entries.map((e) => ({ entryId: e.entryId, stateHash: this.stateAt(r.roundId, e.entryId) }));
+        if (states.some((x) => !x.stateHash)) { if (this.now() > r.closeMs - 2 * AUDIT_LEAD_MS) this.done.set(id, 'could not replay'); continue; }
+        tickHash = auditTickHash({ t, entries: states });
+      }
       const audit = { roundId: r.roundId, resultsHash: auditResultsHash(entries.map((e) => ({ entryId: e.entryId, resultDigest: e.runId }))),
-        nodePubkey: this.selfKey, atMs: BigInt(this.now()), vrfProof: draw.pi };
+        nodePubkey: this.selfKey, atMs: BigInt(this.now()), vrfProof: draw.pi, ...(tickHash ? { tickHash } : {}) };
       const bytes = encodeAudit(audit), signature = this.sign(auditId(audit));
       let n = 0;
       try { n = await this.post(bytes, signature, r.roundId); } catch { n = 0; }
@@ -144,14 +154,21 @@ export function auditorNet({ seatsFor, committeeFor, contractOf, check, secret, 
     playerPubkey: k.entry.playerPubkey, claimed, objectorSecret: secret, atMs: BigInt(now()), fetcher });
 
   /** The run this node's replay gives for one entry (bytes), or null when it could not replay it. */
-  async function replay(roundId, entryId) {
+  async function replay(roundId, entryId, hashTicks = []) {
     const at = kept.get(toHex(roundId)), k = at && at.entries.get(toHex(entryId));
     if (!k || !k.signed) return null;
     const b = await bundleOf(roundId, entryId, k, { outcome: k.signed.outcome, score: k.signed.score });
-    const r = await check(roundId, entryId, b.bundle, k.runId, { entry: k.entry, committee: committeeFor(roundId) });
+    const r = await check(roundId, entryId, b.bundle, k.runId, { entry: k.entry, committee: committeeFor(roundId), ...(hashTicks.length ? { hashTicks } : {}) });
     if (!r || !r.replayedRunId) { log(`[audit] ${toHex(entryId).slice(0, 16)}: not replayed - ${r ? `${r.step}: ${r.why}` : 'no answer'}`); return null; }
     k.replayed = r.replayed;
+    // the state at the AUDIT's tick (kanban #1383), kept for stateAt
+    k.tickState = hashTicks.length && r.replayed && r.replayed.hashes && r.replayed.hashes[0] && r.replayed.hashes[0].stateHash ? fromHexStr(r.replayed.hashes[0].stateHash) : null;
     return fromHexStr(r.replayedRunId);
+  }
+  /** The state (32 bytes) this node's last replay of that entry gave at the tick it was asked for, or null. */
+  function stateAt(roundId, entryId) {
+    const at = kept.get(toHex(roundId)), k = at && at.entries.get(toHex(entryId));
+    return k && k.tickState ? k.tickState : null;
   }
 
   /** The §13A objection for an entry whose replay gave another run: the bundle claiming that run, to every seat. True once one took it. */
@@ -183,6 +200,6 @@ export function auditorNet({ seatsFor, committeeFor, contractOf, check, secret, 
     }
     return n;
   }
-  return { entriesFor, replay, object, post };
+  return { entriesFor, replay, object, post, stateAt };
 }
 
