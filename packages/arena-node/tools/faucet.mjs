@@ -131,6 +131,19 @@ const PLAYED = networkPlayers({ seats: String(env.FAUCET_SEASON_SEATS || '').spl
 if (FEEDBACK && BOUNTY_PAYER) setInterval(() => FEEDBACK.settle({ status: bountyStatus }).catch(() => {}), 60000).unref();
 
 /** A player's grant: read the invoice, decide, keep it in the book BEFORE paying (a crash pays nobody twice), and take it out again if no payer could pay. */
+/** Each payer's own node key, read once (lncli getinfo); a payer whose node is the invoice's destination goes last. */
+const PAYER_KEYS = new Map();
+async function payersFor(destination) {
+  for (const payer of PAYERS) {
+    if (PAYER_KEYS.has(payer)) continue;
+    const r = await lncli(payer, ['getinfo']);
+    let key = null; try { key = JSON.parse(r.out).identity_pubkey || null; } catch { key = null; }
+    if (key) PAYER_KEYS.set(payer, key);
+  }
+  const own = (p) => !!destination && PAYER_KEYS.get(p) === destination;
+  return [...PAYERS.filter((p) => !own(p)), ...PAYERS.filter(own)];
+}
+
 /** After a payinvoice that timed out: 'sent' once the payment SUCCEEDED or has an HTLC in flight, 'no' once it FAILED or none went out in time. */
 const PAY_SETTLE_MS = Number(env.FAUCET_PAY_SETTLE_MS || 45000), PAY_WAIT_MS = Number(env.FAUCET_PAY_WAIT_MS || 15000), PAY_POLL_MS = Number(env.FAUCET_PAY_POLL_MS || 3000);   // the tests' to shorten
 async function paymentSent(payer, hash) {
@@ -159,7 +172,8 @@ async function grant(ask) {
   book.players.push(row);
   saveBook(book);
   const tried = [];
-  for (const payer of PAYERS) {
+  // A PAYER IS NOT ASKED TO PAY ITS OWN NODE'S INVOICE (kanban #1381): payer a is gateway a's lnd - "self-payments not allowed" cost a call before payer b
+  for (const payer of await payersFor(inv.destination)) {
     // A TIMEOUT IS NOT A REFUSAL, AND NOT A PAYMENT EITHER (kanban #1381, Daniel 2026-11-09 "scheitere daran die test sats zu bekommen": payer b's
     // channel to node a was down, payinvoice was still looking for a route at 15 s, the page was told "500 sat" and the payment FAILED with NO_ROUTE
     // after): the payment's own state is read - an HTLC on its way (the federation's incoming contract holds it until the client claims) or SUCCEEDED
