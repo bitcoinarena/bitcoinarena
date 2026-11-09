@@ -243,3 +243,25 @@ test('a browser that cannot write the intent sends nothing (kanban #1149)', asyn
   assert.equal(b.wallets.get(SEEDS.rich).msat, 300000n);
   assert.ok(!b.log.some((l) => l.startsWith('send rich')), 'the wallet was never asked to send');
 });
+
+// KANBAN #1388 (audit 2 #1204 CLIENT-13): a merge's send committed (the intent written, the notes spent into a string in the wallet's log) and the tab
+// closed before the string was kept. Next load that wallet reads 0: it was marked empty and never opened again, the intent never resolved - its
+// notes counted nowhere. Now the intent is resolved before the balance is read, and the wallet is not marked empty while one stays open.
+test('#1388 an intent left by a closed tab on a wallet that now reads 0: resolved from the wallet\'s log and merged; not marked empty while it stays open', async () => {
+  const key = `arena.ecash.pending.${FED.slice(0, 16)}.5.${SEEDS.rich.slice(0, 8)}`;
+  const intent = { v: 3, state: 'intent', kind: 'merge', msat: '5000', from: 'rich', fromKey: SEEDS.rich.slice(0, 16), fed: FED, atMs: 1 };
+  const b = browser({ balances: { rich: 0n }, pending: [{ key, rec: intent }] });
+  b.wallets.get(SEEDS.rich).sentEcash = async (k) => JSON.stringify(k === key ? { ecash: 'ecash:rich:5000', msat: '5000' } : {});
+  await b.run();
+  console.log(`  MEASURED #1388: main ${b.main.msat} msat; records left ${JSON.stringify(b.pendingKeys())}; empty mark ${b.store.has('arena.wallet.empty.' + FED.slice(0, 16) + '.' + SEEDS.rich.slice(0, 16))}`);
+  assert.equal(b.main.msat, 5000n, 'the notes of the left intent were not merged');
+  assert.deepEqual(b.pendingKeys(), []);
+  // a lock client that cannot read its log: the intent stays, and the wallet is not marked empty, so the next pass opens it again
+  const c = browser({ balances: { rich: 0n }, pending: [{ key, rec: intent }] });
+  await c.run();
+  assert.deepEqual(c.pendingKeys(), [key], 'the open intent was dropped');
+  assert.equal(c.store.has('arena.wallet.empty.' + FED.slice(0, 16) + '.' + SEEDS.rich.slice(0, 16)), false, 'marked empty while its intent is open');
+  c.opened.length = 0;
+  await c.run();
+  assert.ok(c.opened.includes('rich'), 'the wallet with an open intent was not opened again');
+});

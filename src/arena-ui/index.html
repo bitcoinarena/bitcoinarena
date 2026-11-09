@@ -8082,7 +8082,11 @@
           // (ancestor.js), kept here under its own store; this tab's own phrase's too. Swept the same way, once, into this tab's.
           const emptyKey = (hex, ancestor) => 'arena.wallet.empty.' + (ancestor ? 'blwp.' : '') + (legacy ? '' : fedHex.slice(0, 16) + '.') + hex.slice(0, 16);
           const entriesOf = (hex, ancestor) => ARENACLIENT.phraseWalletEntries(L, hex, fedHex, { ancestor: !!ancestor });
-          const wanted = (x, ancestor) => { const n = entriesOf(x.hex, ancestor); return n > 0 && L.getItem(emptyKey(x.hex, ancestor)) !== String(n); };
+          // A PHRASE WITH AN OPEN MERGE INTENT IS WANTED (kanban #1388, audit 2 #1204 CLIENT-13): its notes left in a send the intent names, whatever its
+          // wallet reads now - marked empty, it was never opened again and the intent never resolved
+          const openIntentOf = (hex, ancestor) => { const fk = hex.slice(0, 16) + (ancestor ? '.blwp' : '');
+            try { return Object.keys(L).some((k) => k.startsWith(ARENACLIENT.ECASH_PENDING_PREFIX + fedHex.slice(0, 16) + '.') && (() => { const r = ARENACLIENT.readEcashTransfer(L, k); return !!(r && r.state === 'intent' && r.fromKey === fk); })()); } catch { return false; } };
+          const wanted = (x, ancestor) => { const n = entriesOf(x.hex, ancestor); return n > 0 && (L.getItem(emptyKey(x.hex, ancestor)) !== String(n) || openIntentOf(x.hex, ancestor)); };
           const phrases = kept.filter((x) => /^[0-9a-f]{64}$/i.test(x.hex));
           if (/^[0-9a-f]{64}$/i.test(cur) && !phrases.some((x) => x.hex === cur)) phrases.push({ hex: cur });
           const others = [
@@ -8114,19 +8118,24 @@
               // it's not merged yet. The merge is a kind of slow process"): the sum counts it from the next read on, a next page from its first
               const knownKey = 'arena.wallet.known.' + fedHex.slice(0, 16) + '.' + x.hex.slice(0, 16) + (x.ancestor ? '.blwp' : '');
               const noteEmpty = () => { L.setItem(emptyKey(x.hex, x.ancestor), String(entriesOf(x.hex, x.ancestor))); L.removeItem(knownKey); };
+              // ITS LEFT INTENTS FIRST (kanban #1388, audit 2 #1204 CLIENT-13): a send that committed before a stop left this wallet reading 0 while its
+              // notes sit as a string in its log - resolved before the balance is read, and the wallet is not marked empty while one stays open
+              const fromKey = x.hex.slice(0, 16) + (x.ancestor ? '.blwp' : '');
+              let recovered = 0;
+              for (const k of Object.keys(L).filter((y) => y.startsWith(ARENACLIENT.ECASH_PENDING_PREFIX + fedHex.slice(0, 16) + '.'))) {
+                const left = ARENACLIENT.readEcashTransfer(L, k);
+                if (left && left.state === 'intent' && left.fromKey === fromKey) { const back = await ARENACLIENT.recoverEcashIntent({ storage: L, key: k, rec: left, wallet: other }); if (back && back.ok && back.rec) recovered += 1; }
+              }
+              // a string recovered from the wallet's log is received now, as every kept copy is
+              if (recovered) await receiveKept();
               mergeSaid(fedHex, 'merging', 'reading wallet ' + from);
               const holds = BigInt(await other.balanceMsat());
               console.log('[arena] merge ' + fedHex.slice(0, 8) + ' wallet ' + from + ': open ' + Math.round(performance.now() - walletAt) + ' ms, holds ' + holds + ' msat');
-              if (holds === 0n) { noteEmpty(); return; }
+              if (holds === 0n) { if (!openIntentOf(x.hex, x.ancestor)) noteEmpty(); return; }
               mergeSaid(fedHex, 'merging', 'sending the notes of wallet ' + from);
               L.setItem(knownKey, String(holds)); if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
               // KEPT BEFORE IT LEAVES THE WALLET (kanban #1149): the intent written, the send tagged with it (the wallet's log keeps the string
               // with that tag), the string written; a browser that cannot write the intent sends nothing
-              const fromKey = x.hex.slice(0, 16) + (x.ancestor ? '.blwp' : '');
-              for (const k of Object.keys(L).filter((y) => y.startsWith(ARENACLIENT.ECASH_PENDING_PREFIX + fedHex.slice(0, 16) + '.'))) {
-                const left = ARENACLIENT.readEcashTransfer(L, k);
-                if (left && left.state === 'intent' && left.fromKey === fromKey) await ARENACLIENT.recoverEcashIntent({ storage: L, key: k, rec: left, wallet: other });
-              }
               const sent = await ARENACLIENT.sendKeptEcash({ storage: L, key: ARENACLIENT.ECASH_PENDING_PREFIX + fedHex.slice(0, 16) + '.' + Date.now() + '.' + x.hex.slice(0, 8) + (x.ancestor ? '.blwp' : ''),
                 wallet: other, fields: { kind: 'merge', msat: String(holds), from, fromKey, fed: fedHex } });
               if (sent.nothing) { noteEmpty(); return; }
