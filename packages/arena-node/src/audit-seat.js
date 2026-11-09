@@ -36,6 +36,30 @@ export function agreedRunsOf({ contract, committee, entries }) {
   return { ok: true, runs, resultsHash: auditResultsHash(runs.map((r) => ({ entryId: r.entryId, resultDigest: r.runId }))) };
 }
 
+/**
+ * THE SEAT'S SWEEP OF THE RELAYS (§13A.1 RULED 2026-11-07 (2), kanban #1331 part 2): of `rows` ({ round_id, contract } bytes), each paid round with
+ * auditors (`audited`) whose window has closed and that names publication_relays[] is asked once (`fromRelays`), at most `max` a pass; `swept`
+ * (a Set of round hex) keeps it from being asked again. A round not closed yet waits; one an hour past final_after is let be. Answers what was
+ * asked: [{ round, asked, taken }] or [{ round, why }].
+ */
+export async function relaySweep({ rows = [], nowMs, swept, decode, audited, windowsOf, fromRelays, max = 20 }) {
+  const out = [];
+  for (const r of rows) {
+    if (out.length >= max) break;
+    const rid = new Uint8Array(r.round_id), hex = toHex(rid);
+    if (swept.has(hex)) continue;
+    let c; try { c = decode(new Uint8Array(r.contract)); } catch { swept.add(hex); continue; }
+    if (!audited(c) || !(c.publicationRelays || []).length) { swept.add(hex); continue; }
+    let w; try { w = windowsOf(c); } catch { swept.add(hex); continue; }
+    if (Number(nowMs) < Number(w.closeMs)) continue;
+    if (Number(nowMs) > Number(w.finalAfterMs ?? w.closeMs) + 3600000) { swept.add(hex); continue; }
+    swept.add(hex);
+    try { const got = await fromRelays(rid, c.publicationRelays); out.push({ round: hex, asked: got.asked, taken: got.taken }); }
+    catch (e) { out.push({ round: hex, why: `the relays could not be read: ${e.message}` }); }
+  }
+  return out;
+}
+
 export function createAuditDesk({ db, now = () => Date.now(), contextFor, vrf, verify }) {
   db.exec(`CREATE TABLE IF NOT EXISTS audits (
     round_id BLOB NOT NULL, node BLOB NOT NULL, bytes BLOB NOT NULL, signature BLOB NOT NULL, at_ms INTEGER NOT NULL, arrived_ms INTEGER NOT NULL,

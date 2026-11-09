@@ -174,7 +174,7 @@ import { createSettleBackoff, refusedForGood, REFUSAL } from './settle-backoff.j
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
 import { DrawnAttestor } from './drawn-attestor.js';
-import { createAuditDesk, agreedRunsOf, forwardDigest } from './audit-seat.js';
+import { relaySweep, createAuditDesk, agreedRunsOf, forwardDigest } from './audit-seat.js';
 import { RoundAuditor, auditorNet } from './round-auditor.js';
 import { buildObjectionBundle } from './objection-bundle.js';
 import { decodeObjectionBundle } from '../../arena-protocol/src/objection.js';
@@ -3433,6 +3433,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     object: async (rid, eid) => { const took = await auditNet.object(rid, eid); try { auditDesk.noteObjection(rid, eid, took); } catch { /* the count is not worth an audit */ } return took; },
     now: () => round.now(), log: (m) => console.log(m),
   });
+  // AN AUDIT COUNTS BY ITS POSTING ON THE ROUND'S RELAYS (§13A.1 RULED 2026-11-07 (2), kanban #1331 part 2): once a paid round with auditors has
+  // closed, this seat asks each of its publication_relays[] once (audit-seat.js fromRelays: what a relay held directly before the close, at the
+  // relay's own time) - before final_after, when its settlement reads the auditors it holds. Every ARENA_AUDIT_RELAY_SWEEP_MS (30 s; 0: off)
+  { const swept = new Set(), every = Number(process.env.ARENA_AUDIT_RELAY_SWEEP_MS ?? 30000);
+    const sweep = async () => {
+      let rows = []; try { rows = round.db.prepare('SELECT round_id, contract FROM rounds WHERE opened_ms > ? ORDER BY opened_ms DESC LIMIT 400').all(Number(round.now()) - 6 * 3600000); } catch { rows = []; }
+      const said = await relaySweep({ rows, nowMs: Number(round.now()), swept, decode: decodeRoundContract, audited: auditedRound, windowsOf, fromRelays: auditDesk.fromRelays });
+      for (const x of said) if (x.why || x.taken) console.log(`[audit] ${x.round.slice(0, 16)}: ${x.why || `${x.taken} AUDIT(s) taken from ${x.asked} relay(s)`}`);
+    };
+    if (every > 0) { const t = setInterval(() => { sweep().catch(() => {}); }, every); if (t.unref) t.unref(); }
+  }
   let auditPassing = false;
   const auditTimer = Number(auditOpts.everyMs ?? 10000) > 0 ? setInterval(() => {
     if (auditPassing || shuttingDown) return;
