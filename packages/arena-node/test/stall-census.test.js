@@ -28,7 +28,7 @@ import { presenceWindow, censusTimeMs } from '../../arena-protocol/src/presence.
 import { signSeatingBound, signSeen, seatingId, encodeSeatingCertificate } from '../../arena-protocol/src/seating.js';
 import { STALL_VERSION } from '../../arena-protocol/src/constants.js';
 import { stallBook } from '../src/stall-book.js';
-import { STALL_STAGE, signStallNote, stallWindow, stallCloseMs, verifyStallNote } from '../../arena-protocol/src/stall.js';
+import { STALL_STAGE, signStallNote, stallWindow, stallCloseMs, verifyStallNote, STALL_SEASON_BLOCKS } from '../../arena-protocol/src/stall.js';
 import { windowsOf } from '../../arena-protocol/src/window.js';
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH, NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
@@ -136,7 +136,8 @@ function certOf(s) {
  * THE WORLD: twelve bonded nodes, rounds of 7 seats of a drawn 9, ten earlier duty rounds an hour apart under the chain's own census. `target`s: the keys the round's root leaves out as stalled.
  * Each earlier round's seats are the first 7 of its draw; `book` a seat's presence and stall books over one store.
  */
-function world({ out = 1, over = {}, selfPosted = 0 } = {}) {
+// `later({ less, bonds, targets, over })`: more rounds on the chain and in the seat after the current one (kanban #1327: a duty round of this census, a later census)
+function world({ out = 1, over = {}, selfPosted = 0, later = null } = {}) {
   const version = over.protocolVersion ?? STALL_VERSION;
   const bonds = bondsAt(version);
   const full = rootFor(bonds, null, over);
@@ -159,7 +160,8 @@ function world({ out = 1, over = {}, selfPosted = 0 } = {}) {
   const targets = [...count.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([h]) => h).slice(0, out);
   const less = rootFor(bonds, targets, over);
   const current = contractFor({ ...over, censusRoot: less.root });
-  const view = chainWith(bonds, [current, ...earlier, ...others]);
+  const laterContracts = later ? later({ less, bonds, targets, over }) : [];
+  const view = chainWith(bonds, [current, ...earlier, ...others, ...laterContracts]);
   const round = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const roster = new Roster(round, { chainFor: () => view, randomnessFor: ({ contract: c }) => beaconOf(view, c) });
   const creators = {};
@@ -176,11 +178,12 @@ function world({ out = 1, over = {}, selfPosted = 0 } = {}) {
     seatings.push({ roundId: toHex(rid), drawn: d.drawn.map((e) => toHex(e.pubkey)), seated: d.drawn.slice(0, 7).map((e) => toHex(e.pubkey)), self: !c.creatorPubkey, contract: c });
   }
   const rid = round.open(current);
+  const laterIds = laterContracts.map((c) => { const r = round.open(c); if (c.creatorPubkey) creators[toHex(r)] = creatorSigOf(c); return r; });
   const contract = decodeRoundContract(new Uint8Array(round.get(rid).contract));
   const w = presenceWindow(censusTimeMs(view, HEIGHT));
   const contracts = Object.fromEntries(seatings.map((s) => [s.roundId, toHex(new Uint8Array(round.get(fromHex(s.roundId)).contract))]));
   const publications = Object.fromEntries(seatings.map((s) => [s.roundId, presence.publicationProofOf(s.roundId)]));
-  return { round, roster, presence, stall, rid, contract, view, seatings, w, contracts, publications, creators, bonds, less, targets, me };
+  return { round, roster, presence, stall, rid, contract, view, seatings, w, contracts, publications, creators, bonds, less, targets, me, laterIds };
 }
 /** Four seats of a round (not `node`) sign notes naming `node`. */
 const notesOf = (s, nodes, signers = s.seated.filter((h) => !nodes.includes(h)).slice(0, 4)) =>
@@ -477,4 +480,56 @@ test('the duty node: notes gathered from the seats, a seat holding them answers 
   const a = W.stall.answer(stallWindow(t));
   assert.equal(a.notes.length, notes.length);
   assert.equal(a.certs.length, 3);
+});
+
+// KANBAN #1327 (§5A.3, ruling #1350 A): a stalled node is out for a season from H3, carried forward by census - a later census names the earlier
+// census root, a duty round of it and H3 instead of the proofs. Measured at the seat: the later census keeps the node out of its draw on the carried
+// entry alone, and at H3 + STALL_SEASON_BLOCKS nothing is carried, so the node is drawn again.
+test('#1327 a later census keeps a stalled node out of the draw on its carried entry, and takes it back at H3 + the season', async () => {
+  const LATER = HEIGHT + 3;
+  const W = world({ later: ({ less, bonds, targets, over }) => [
+    asDuty(contractFor({ ...over, censusRoot: less.root })),                                                            // a duty round of the census that named the node
+    contractFor({ ...over, censusHeight: LATER, censusRoot: rootFor(bonds, targets, { ...over, censusHeight: LATER }).root }) ] });   // the later census, the node out
+  const [node] = W.targets;
+  const [dutyRid, laterRid] = W.laterIds;
+  // THE EARLIER CENSUS: the node out on its three proofs, the claim kept at this seat
+  const claim = claimOf(W, [node]);
+  const kept = W.presence.keepClaim(toHex(W.contract.censusRoot), claim);
+  assert.equal(kept.ok, true, kept.why);
+  // the earlier census read once, as a seat does: the offer stands and is kept for its root (#1367) - through the roster's stand hook, as server.js wires it
+  W.roster.absence.stand = (rootHex, c) => W.presence.standClaim(rootHex, c);
+  const first = W.roster.censusFor(W.rid);
+  assert.deepEqual(first.stalled.map((x) => x.node), [node]);
+  // THE LATER CENSUS: the poster carries the node - no proofs, the earlier root, its duty round, H3
+  const census = W.roster.censusFor(laterRid, null, { asRoundsOwn: false });
+  assert.equal(census.ok, true, census.why);
+  const got = await W.stall.forPosting({ entries: census.entries, t: W.w.toMs, censusHeight: LATER });
+  assert.deepEqual(got.stalled.map((x) => x.node), [node]);
+  const carried = got.stalled[0];
+  assert.equal(carried.proofs, undefined, 'carried, not proved afresh');
+  assert.deepEqual([carried.carried.root, carried.carried.roundId, carried.carried.h3], [toHex(W.contract.censusRoot), toHex(dutyRid), HEIGHT]);
+  // the seat keeps that claim and its draw leaves the node out
+  const later = W.presence.keepClaim(toHex(decodeRoundContract(new Uint8Array(W.round.get(laterRid).contract)).censusRoot), { claims: [], certs: got.certs, stalled: got.stalled });
+  assert.equal(later.ok, true, later.why);
+  const c = W.roster.censusFor(laterRid);
+  assert.equal(c.ok, true, c.why);
+  assert.deepEqual(c.stalled.map((x) => x.node), [node]);
+  for (const role of ['game', 'settlement']) {
+    const d = W.roster.committeeFor(laterRid, role);
+    assert.equal(d.ok, true, d.why);
+    assert.ok(!d.drawn.some((e) => toHex(e.pubkey) === node), `${role}: the carried node was drawn`);
+  }
+  // THE SEASON: the last census inside it still carries the node, the first at H3 + STALL_SEASON_BLOCKS does not - the node is drawn again
+  const inside = await W.stall.forPosting({ entries: census.entries, t: W.w.toMs, censusHeight: HEIGHT + STALL_SEASON_BLOCKS - 1 });
+  const after = await W.stall.forPosting({ entries: census.entries, t: W.w.toMs, censusHeight: HEIGHT + STALL_SEASON_BLOCKS });
+  console.log(`  MEASURED #1327: H3 ${HEIGHT}; census ${LATER} carried ${JSON.stringify(got.stalled.map((x) => x.node.slice(0, 8)))}, drawn without it; at ${HEIGHT + STALL_SEASON_BLOCKS - 1}: ${inside.stalled.length} carried; at ${HEIGHT + STALL_SEASON_BLOCKS}: ${after.stalled.length}`);
+  assert.deepEqual(inside.stalled.map((x) => x.node), [node]);
+  assert.deepEqual(after.stalled, [], 'carried past its season');
+  // and a seat refuses that carried entry at a census past the season
+  const checkAt = (h) => W.stall.check({ claims: [], certs: {}, stalled: got.stalled }, { census: census.entries.map((e) => toHex(e.pubkey)), w: W.w, entries: census.entries,
+    keptEntries: census.entries.filter((e) => toHex(e.pubkey) !== node), censusHeight: h });
+  assert.equal(checkAt(LATER).ok, true, checkAt(LATER).why);
+  const late = checkAt(HEIGHT + STALL_SEASON_BLOCKS);
+  assert.equal(late.ok, false);
+  assert.match(late.why, /season out ended at block/);
 });
