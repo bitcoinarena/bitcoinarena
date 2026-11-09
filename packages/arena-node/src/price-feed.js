@@ -254,7 +254,7 @@ export class PriceFeed {
     if (!this.signedDb) return null;
     let r = null; try { r = this.signedDb.get.get(roundHex, String(slot)); } catch { r = null; }
     if (!r) return null;
-    const v = slot === 'tape' ? r.value : Number(r.value);
+    const v = slot === 'tape' || slot === 'result5' ? r.value : Number(r.value);   // the round's one result is kept as JSON (kanban #1375)
     this.signed.set(key, v);
     return v;
   }
@@ -729,6 +729,13 @@ export class PriceFeed {
   }
 
   async #result5(rid, rh, c, endTick, kClose) {
+    // ONE RESULT PER ROUND FROM THIS SEAT (kanban #1375, audit 2 #1204 MKT-2): the first it signed is kept (price_signed, slot 'result5') and is the
+    // answer from then on - a result signed again over readings that arrived later could name another close, and two threshold-signed results
+    // of one round void or split a market on it
+    const kept = this.#signedOf(rh, 'result5');
+    if (kept) { try { const r = JSON.parse(kept, (k, v) => (v && typeof v === 'object' && typeof v.$big === 'string' ? BigInt(v.$big) : v)); return { ...r, ...this.#sign(fromHex(r.resultId)) }; } catch { /* not readable: signed anew below */ } }
+    if (!this.firstResultAsk) this.firstResultAsk = new Map();
+    if (!this.firstResultAsk.has(rh)) this.firstResultAsk.set(rh, this.now());
     const short = [0, kClose].some((k) => this.#heardAt(rh, k).size < c.committee.length);
     if (short && !(this.now() - (this.endsAsked.get(rh) ?? -Infinity) < ASK_ENDS_EVERY_MS)) {
       this.endsAsked.set(rh, this.now());
@@ -740,8 +747,20 @@ export class PriceFeed {
       endTick, committee: c.committee, threshold: c.needed, verify });
     if (!got.ok) return refuse(got.why);
     const x = got.result;
-    return { ok: true, round: rh, openCents: x.openCents, closeCents: x.closeCents, front: frontName(x.front), samples: got.samples, readings: got.readings,
-      openTick: got.openTick, closeTick: got.closeTick, committee: c.committee.map(toHex), needed: c.needed, ...this.#sign(roundResultId(x)) };
+    // SIGNED ONCE THE READINGS ARE ALL IN, or two fetch periods after the first ask (kanban #1375): never over a set that is still filling
+    const stillShort = [0, kClose].some((k) => this.#heardAt(rh, k).size < c.committee.length);
+    if (stillShort && this.now() - this.firstResultAsk.get(rh) < 2 * ASK_ENDS_EVERY_MS)
+      return refuse(`not yet: ${c.committee.length} readings of each end are awaited for ${Math.ceil((2 * ASK_ENDS_EVERY_MS - (this.now() - this.firstResultAsk.get(rh))) / 1000)} s more before this seat signs the round's one result`, 503);
+    const id = roundResultId(x);
+    const answer = { ok: true, round: rh, openCents: x.openCents, closeCents: x.closeCents, front: frontName(x.front), samples: got.samples, readings: got.readings,
+      openTick: got.openTick, closeTick: got.closeTick, committee: c.committee.map(toHex), needed: c.needed, resultId: toHex(id) };
+    // KEPT BEFORE IT IS SIGNED (compare-and-set): a row already there names the one this seat signed
+    if (this.signedDb) {
+      let ch = 0; try { ch = this.signedDb.put.run(rh, 'result5', JSON.stringify(answer, (k, v) => (typeof v === 'bigint' ? { $big: String(v) } : v))).changes; } catch { ch = 0; }
+      if (ch !== 1) { this.signed.delete(`${rh}:result5`); const again = this.#signedOf(rh, 'result5'); if (again) return this.#result5(rid, rh, c, endTick, kClose); }
+    }
+    this.signed.set(`${rh}:result5`, JSON.stringify(answer, (k, v) => (typeof v === 'bigint' ? { $big: String(v) } : v)));
+    return { ...answer, ...this.#sign(id) };
   }
 
   async #post(roundIdBytes, body) {
