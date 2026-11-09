@@ -39,11 +39,14 @@ export function faucetDecide(ask, book, { nowMs = Date.now(), maxSats = FAUCET_M
 // through gateway B credited 501,000 msat, 251,000 through gateway A 251,000: the invoice is the amount the player is told).
 // A TOP-UP IS 300 SATS, UP TO 5 A DAY (kanban #1088, the owner 2026-11-03: "Get 300 sats, aus dem faucet ... Bis zu 5x faucet am Tag"); a page
 // still open from before asks for 250, which is paid as asked and counts toward the same 5 (PLAYER_TOPUP_OLD_INVOICE_SATS)
-export const PLAYER_GRANTS = Object.freeze({ welcome: Object.freeze({ sats: 500, invoiceSats: 500 }), topup: Object.freeze({ sats: 300, invoiceSats: 300 }) });
+// A WELCOME OF 3,000 SATS (kanban #1391, Daniel 2026-11-09: "bigger welcome" - 500 sat were 5 RPS orders of 100 sat, then the wallet stood empty while the
+// stakes of unplayed rounds waited for their locks to expire); a page still open from before asks for 500, which is paid as asked (PLAYER_WELCOME_OLD_INVOICE_SATS)
+export const PLAYER_GRANTS = Object.freeze({ welcome: Object.freeze({ sats: 3000, invoiceSats: 3000 }), topup: Object.freeze({ sats: 300, invoiceSats: 300 }) });
 export const PLAYER_TOPUP_OLD_INVOICE_SATS = 250;
+export const PLAYER_WELCOME_OLD_INVOICE_SATS = 500;
 export const PLAYER_TOPUPS_PER_DAY = 5;          // one account (kanban #1088: was 3)
 export const PLAYER_PER_IP_PER_DAY = 10;         // one address, a household or a meetup behind it
-export const PLAYER_DAY_CAP_SATS = 200000;       // all players of one UTC day
+export const PLAYER_DAY_CAP_SATS = 1000000;      // all players of one UTC day (kanban #1391: 333 welcomes of 3,000)
 
 /** Whether a player's request is paid: { ok, grant } or { ok: false, why }. `book`: { players: [{ account, kind, ip, sats, atMs }] }. Never paid twice as a welcome. */
 export function playerGrantDecide({ kind, account, ip = null, invoiceSats, nowMs = Date.now() }, book) {
@@ -51,7 +54,7 @@ export function playerGrantDecide({ kind, account, ip = null, invoiceSats, nowMs
   if (!grant) return { ok: false, why: 'a grant is welcome or topup' };
   if (!/^[0-9a-f]{64}$/.test(String(account || ''))) return { ok: false, why: 'an account is 32 bytes of hex' };
   const asked = Number(invoiceSats);
-  const paysOld = kind === 'topup' && asked === PLAYER_TOPUP_OLD_INVOICE_SATS;
+  const paysOld = (kind === 'topup' && asked === PLAYER_TOPUP_OLD_INVOICE_SATS) || (kind === 'welcome' && asked === PLAYER_WELCOME_OLD_INVOICE_SATS);
   if (asked !== grant.invoiceSats && !paysOld) return { ok: false, why: `this grant pays an invoice of ${grant.invoiceSats} sat` };
   const granted = paysOld ? Object.freeze({ sats: asked, invoiceSats: asked }) : grant;
   const paid = (book && book.players) || [];

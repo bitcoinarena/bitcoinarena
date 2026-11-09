@@ -22913,7 +22913,7 @@ async function walletDepositOffer({ federationId, invite, seed, LockClient, stor
  * hash of the seed, so the faucet can pay a welcome once and learns no key. Throws naming why it gave nothing.
  */
 // THE TOP-UP IS 300 (kanban #1088, the owner 2026-11-03: "Get 300 sats, aus dem faucet. Im deposit auch 300. Bis zu 5x faucet am Tag"): the faucet pays it up to 5 times a day per account
-const FAUCET_GRANTS = Object.freeze({ welcome: { sats: 500, invoiceMsat: 500000n }, topup: { sats: 300, invoiceMsat: 300000n } });
+const FAUCET_GRANTS = Object.freeze({ welcome: { sats: 3000, invoiceMsat: 3000000n }, topup: { sats: 300, invoiceMsat: 300000n } });
 const faucetAccountOf = (seed) => toHex(taggedHash('arena/faucet/account/v1', seed instanceof Uint8Array ? seed : fromHex(String(seed))));
 // `ecash` (kanban #1381): the federation id in hex - the welcome comes as ready e-cash of that federation when the faucet holds some ({ ok, sats, ecash });
 // without an invoice and none ready, the answer is `noEcash` and nothing is given (the page then asks again with an invoice)

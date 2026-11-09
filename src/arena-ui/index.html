@@ -8394,12 +8394,12 @@
             // ONLY A PHRASE THIS BROWSER KEEPS CAN MERGE IN (2026-10-22 playtest, "it's been like this for minutes"; measured in Chrome on
             // UI 306: a remembered balance of a phrase no longer kept was counted as merging for good - no merge can ever take it in)
             let keptHex = new Set([curHex]); try { for (const x of JSON.parse(L2.getItem('arena.seeds') || '[]')) { const h = typeof x === 'string' ? x : x && x.hex; if (h) keptHex.add(String(h).slice(0, 16).toLowerCase()); } } catch { /* none kept */ }
-            const by = new Map();
+            const by = new Map(), keptBy = new Map();
             for (const k of Object.keys(L2)) {
               let f = null, m = 0n;
               if (k.startsWith('arena.wallet.known.')) { const seg = k.split('.'); if (!seg[5] && seg[4] === curHex) continue; if (!keptHex.has(seg[4])) continue; f = seg[3]; try { m = BigInt(L2.getItem(k) || 0); } catch { m = 0n; } }
               // a record that still holds money (kanban #1149): an intent, a short or a refused record is not counted
-              else if (k.startsWith('arena.ecash.pending.')) { try { const r = ARENACLIENT.readEcashTransfer(L2, k); f = String((r && r.fed) || '').slice(0, 16) || null; m = ARENACLIENT.ecashTransferMsatInFlight(r); } catch { f = null; } }
+              else if (k.startsWith('arena.ecash.pending.')) { try { const r = ARENACLIENT.readEcashTransfer(L2, k); f = String((r && r.fed) || '').slice(0, 16) || null; m = ARENACLIENT.ecashTransferMsatInFlight(r); } catch { f = null; } if (f && m > 0n) keptBy.set(f, (keptBy.get(f) || 0n) + m); }
               if (f && m > 0n) by.set(f, (by.get(f) || 0n) + m);
             }
             for (const [f, m] of by) {
@@ -8408,7 +8408,14 @@
               if (part) { part.sats += Number(m / 1000n); part.merging = Number(m / 1000n); }
               else parts.push({ federation: f, sats: Number(m / 1000n), arriving: 0, merging: Number(m / 1000n) });
             }
-            sum += merging; }
+            sum += merging;
+            // NOTES BEING ISSUED ARE THE PLAYER'S (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; measured on stage UI 599: a new account's
+            // 3,000 sat welcome showed at 5.6 s, then "0 sat" from 12.7 s to 24 s while its note was re-issued - the kept record had gone to the merge and
+            // the issuing notes were only said in the console): what a federation is issuing counts, less what a kept e-cash record of it already counts
+            for (const part of parts) {
+              const f = part.federation.slice(0, 16), extra = BigInt(part.arriving || 0) * 1000n - (keptBy.get(f) || 0n);
+              if (extra > 0n) { sum += extra; part.sats += Number(extra / 1000n); }
+            } }
           // A BALANCE ALWAYS ONCE SUMMED (the same playtest: with no held federation's wallet open the balance was never set and the bar said
           // "– sat" until some later read): nothing open is 0 sat, with how many held federations could not be read beside it
           const unread = held.filter((f) => !window.ARENA_WALLETS.has(f)).length;
