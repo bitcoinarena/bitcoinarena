@@ -7,7 +7,7 @@
 
 export const FAUCET_MAX_SATS = 1500000;        // one request: a custody node's whole deposit fits (bond, peg-in, channels, fees)
 export const FAUCET_DAY_CAP_SATS = 30000000;    // all requests of one UTC day
-export const FAUCET_PER_IP_PER_DAY = 3;
+export const FAUCET_PER_IP_PER_DAY = 30;   // kanban #1397 (Daniel 2026-11-09: "Set the limits much higher"): was 3
 export const DAY_MS = 86400000;
 
 /** A testnet4 address the faucet pays: bech32 / bech32m with the tb1 prefix, nothing else. */
@@ -44,9 +44,9 @@ export function faucetDecide(ask, book, { nowMs = Date.now(), maxSats = FAUCET_M
 export const PLAYER_GRANTS = Object.freeze({ welcome: Object.freeze({ sats: 3000, invoiceSats: 3000 }), topup: Object.freeze({ sats: 300, invoiceSats: 300 }) });
 export const PLAYER_TOPUP_OLD_INVOICE_SATS = 250;
 export const PLAYER_WELCOME_OLD_INVOICE_SATS = 500;
-export const PLAYER_TOPUPS_PER_DAY = 5;          // one account (kanban #1088: was 3)
-export const PLAYER_PER_IP_PER_DAY = 10;         // one address, a household or a meetup behind it
-export const PLAYER_DAY_CAP_SATS = 1000000;      // all players of one UTC day (kanban #1391: 333 welcomes of 3,000)
+export const PLAYER_TOPUPS_PER_DAY = 50;         // one account (kanban #1088: was 3; #1397 Daniel 2026-11-09 "Set the limits much higher": was 5)
+export const PLAYER_PER_IP_PER_DAY = 200;        // one address, a household or a meetup behind it (#1397: was 10)
+export const PLAYER_DAY_CAP_SATS = 10000000;     // all players of one UTC day (kanban #1391: 333 welcomes of 3,000; #1397: 3,333)
 
 /** Whether a player's request is paid: { ok, grant } or { ok: false, why }. `book`: { players: [{ account, kind, ip, sats, atMs }] }. Never paid twice as a welcome. */
 export function playerGrantDecide({ kind, account, ip = null, invoiceSats, nowMs = Date.now() }, book) {
@@ -77,7 +77,7 @@ export function playerGrantTotals(book, nowMs = Date.now()) {
 }
 
 // THE TEST OPPONENT'S TOP-UP (kanban #947, the owner 2026-11-01: "der bot muss aufgefüllt werden wenn die balance leer ist"): a stake waits in a lock until its round settles, so its wallets run dry
-export const REFILL_MOST_SATS = 5000, REFILL_DAY_CAP_SATS = 40000;
+export const REFILL_MOST_SATS = 20000, REFILL_DAY_CAP_SATS = 1000000;   // kanban #1395/#1397 2026-11-09: 40,000 ran out at 20:41Z with players on; Daniel: "Set the limits much higher"
 export function refillDecide({ invoiceSats, nowMs = Date.now() }, book) {
   const sats = Number(invoiceSats);
   if (!(sats > 0) || sats > REFILL_MOST_SATS) return { ok: false, why: `a top-up is 1 to ${REFILL_MOST_SATS} sat` };
@@ -88,7 +88,7 @@ export function refillDecide({ invoiceSats, nowMs = Date.now() }, book) {
 
 // A PLAYER'S REPORT (kanban #926 item 9, #949): one box in the page, a message in Arena Chat's #feedback. It takes text and what the page knows (build, game, round), never a key: anything shaped like
 // one is taken out here before it is kept. The text is a stranger's and is marked so.
-export const FEEDBACK_MOST = 4000, FEEDBACK_PER_IP_PER_DAY = 5, FEEDBACK_PER_DAY = 100;
+export const FEEDBACK_MOST = 4000, FEEDBACK_PER_IP_PER_DAY = 50, FEEDBACK_PER_DAY = 1000;   // #1397: were 5 and 100
 const scrubKeys = (t) => t.replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]').replace(/\b(?:[a-z]{3,8}\s+){11,23}[a-z]{3,8}\b/g, '[removed]');
 export function feedbackDecide({ text, ip = null, build = '', game = '', round = '', player = null, nowMs = Date.now() }, log) {
   const clean = scrubKeys(String(text || '').trim()).slice(0, FEEDBACK_MOST);

@@ -7269,6 +7269,32 @@
         }
         return false;
       };
+      // FULL ROUNDS AND FULL REVEALS (kanban #1394, Daniel 2026-11-09: "don't join rounds that are less than 5 seconds to go. It would be better if all
+      // rounds always started at least 8 seconds out not 3-5 like now, after a reveal. We want full rounds and full reveals"): rounds close every 8 s and
+      // the reveal runs about 7.5 s after this tab's round closed, so the round right after it had only 3-5 s left when the reveal ended. After this tab's
+      // own round that next round is skipped and the one after it is offered (about 8 s left as the reveal ends); any other round is first offered only
+      // with 5 s left at least, and stays offered to its close once shown
+      const offeredAt = new Map();
+      const clientBusy = () => { try { const st = frame.contentWindow.RPS_STATES, l = st && st[st.length - 1]; return !!(l && (l.phase === 'reveal' || l.phase === 'result' || l.phase === 'wait')); } catch { return false; } };
+      const fullRounds = (rows) => {
+        if (!(game.manifest && game.manifest.resultType === 3)) return rows;
+        const now = Date.now(), mine = readHidden();
+        const ownIds = new Set(mine.map((h) => h.roundIdHex));
+        const lastClose = Math.max(0, ...mine.map((h) => Number(h.entryCloseMs) || 0).filter((c) => c <= now));
+        const skipUntil = now - lastClose < 20000 ? lastClose + 12000 : 0;   // the slot 8 s after this tab's round
+        for (const [id, close] of offeredAt) if (close < now - 60000) offeredAt.delete(id);
+        return rows.filter((r) => {
+          const close = Number(r.entryCloseMs);
+          if (!close || ownIds.has(r.id)) return true;
+          if (close > lastClose && close < skipUntil) return false;
+          if (offeredAt.has(r.id)) return true;
+          if (close - now < 5000) return false;
+          // noted once it is near enough to be shown (the client's 8 s + 1.5 s) and the client shows no reveal or result of its own: measured on stage, a
+          // round noted while a slow reveal (8 s) still ran was shown after it with 2 s left
+          if (close - now <= 9500 && !clientBusy()) offeredAt.set(r.id, close);
+          return true;
+        });
+      };
       window.ARENA_GAME = {
         game: { id: game.id, name: game.name, title: game.title, known: game.known, devKey: game.devKey, attested: game.attested,
           outcomes: game.manifest.outcomes || [], attestThreshold: game.manifest.attestThreshold || 0, attestors: (game.manifest.attestors || []).length,
@@ -7284,7 +7310,7 @@
         // every close slot lists Rock Paper Scissors' version 5 and version 6 rounds (#951 lists every version), and a seat continues a match only
         // from the previous round of the same game id - a v6 round, then a v5 one, started the score at 0:0. A slot that holds rounds of the
         // tile's own version offers only those; a slot with none of them offers what it has.
-        allRows: () => (holdForReveal() ? [] : sameVersionPerSlot(moneyFirst(window.ARENA_LOBBY_ROWS || [], true), game.id)).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
+        allRows: () => (holdForReveal() ? [] : fullRounds(sameVersionPerSlot(moneyFirst(window.ARENA_LOBBY_ROWS || [], true), game.id))).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
           stakeSats: r.stakeSats, entryCloseMs: r.entryCloseMs !== undefined && r.entryCloseMs !== null ? Number(r.entryCloseMs) : null,
           startTimeMs: r.contract ? Number(r.contract.startTimeMs) : null })),
         identity: () => window.ARENA_IDENTITY || null,
@@ -7503,7 +7529,38 @@
       frame.style.visibility = 'hidden';
       const shown = setTimeout(() => { frame.style.visibility = ''; }, 8000);
       frame.addEventListener('load', () => { clearTimeout(shown); setTimeout(() => { frame.style.visibility = ''; }, 0); }, { once: true });
-      frame.src = URL.createObjectURL(new Blob([file.bytes], { type: 'text/html' }));
+      // LIGHTER ON A PHONE'S GPU (kanban #1393, Daniel 2026-11-09: "It's also lagging on iPhone ... make it less gpu heavy"): the Rock Paper Scissors stage draws
+      // at the screen's density up to 3x with antialias (an iPhone: 9 pixels for each one), and drops it only after the frame rate fell under 45. On a touch
+      // screen denser than 1.5x the frame is told 1.5 before the client's own scripts run - 4x fewer pixels on an iPhone; the client's checked bytes run unchanged after it
+      let bytes = file.bytes;
+      try {
+        // AND AT MOST 60 FRAMES A SECOND, NO BLUR (kanban #1393, Daniel 2026-11-09: "And make it less laggy"): an iPhone's ProMotion screen asks for 120 frames a
+        // second, twice the work for the same picture, and a frosted-glass panel (backdrop-filter) blurs the 3D stage under it again on every frame
+        if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
+          const html = new TextDecoder().decode(file.bytes);
+          const dense = (window.devicePixelRatio || 1) > 1.5;
+          const cap = '<scr' + 'ipt>try{' + (dense ? 'Object.defineProperty(window,"devicePixelRatio",{get:function(){return 1.5},configurable:true});' : '')
+            + '(function(){var o=window.requestAnimationFrame.bind(window),seen=new WeakMap();window.requestAnimationFrame=function(cb){return o(function step(t){var l=seen.get(cb)||0;if(t-l<15){o(step);return}seen.set(cb,t);cb(t)})};window.RPS_FPS_CAP=60})();'
+            + '}catch(e){}</scr' + 'ipt><style>*{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}</style>';
+          const out = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + cap) : cap + html;
+          bytes = new TextEncoder().encode(out);
+          console.log('[arena] #1393 the game frame on this touch screen: ' + (dense ? 'drawn at 1.5x (screen ' + window.devicePixelRatio + 'x), ' : '') + 'at most 60 frames a second, no blur');
+        }
+        // A QUICKER REVEAL (kanban #1395, Daniel 2026-11-09: "Warum dauert der reveal überhaupt 3-7? Das ist das eigentliche Problem. Mach es schneller"):
+        // measured on stage, both moves stood 0.8-3.5 s after the close, but Rock Paper Scissors client 7587b604 waited for a seat's signed result
+        // (6.9-11.1 s after the close) before it said who won, never before 5 s, and its show struck 4 s after it began. For that client only, by its
+        // hash: the winner is said from the two open moves (the seats' signed result follows and stands over it), not before 2.5 s, held 4 s (to the next round's opening: no empty screen between), and the show runs
+        // 1.6x faster (the strike 2.5 s after the moves stand). Its next version carries the same numbers in its own bytes
+        if (/^7587b604be5ad153/.test(String(file.hash || ''))) {
+          let html = new TextDecoder().decode(bytes);
+          const swaps = [['const REVEAL_MS = 5000, RESULT_HOLD_MS = 2500;', 'const REVEAL_MS = 2500, RESULT_HOLD_MS = 4000;'],
+            ['me.signedBy > 0 && !me.provisional', 'me.signedBy > 0'], ['seq.t += dt;', 'seq.t += dt * 1.6;'],
+            ['Math.max(0, STRIKE_AT - seq.t)', 'Math.max(0, STRIKE_AT - seq.t) / 1.6'], ['revealing ? 4.5 : 14', 'revealing ? 7.2 : 14']];
+          if (swaps.every(([x]) => html.split(x).length === 2)) { for (const [x, y] of swaps) html = html.replace(x, () => y); bytes = new TextEncoder().encode(html); window.ARENA_RPS_QUICK = true;
+            console.log('[arena] #1395 Rock Paper Scissors: the winner from the open moves, the show 1.6x faster'); }
+        }
+      } catch { bytes = file.bytes; }
+      frame.src = URL.createObjectURL(new Blob([bytes], { type: 'text/html' }));
       // A CLIENT TALLER THAN ITS FRAME SCROLLS (2026-10-12: "scrolling down is not possible" in Bitcoin Up or
       // Down on iOS): the Up/Down client's body is overflow:hidden with only its order list scrolling, and on a phone the market
       // card and the buy box fill the frame - the list gets no height and nothing below reaches the screen. The frame is this
@@ -9052,18 +9109,20 @@
       }, 1000);
       // WHY A ROUND CANNOT BE JOINED, by name (kanban #761: an unseated round answered "this round is no longer listed in the lobby", or
       // "its entry has closed" with ten minutes of entry left)
+      // NO ORDER IN A ROUND'S LAST 3 SECONDS (kanban #1394, Daniel 2026-11-09: "make sure not to accept any orders when the timer is less than 3 seconds
+      // away"): an order needs about 2 s to lock its stake, so one sent later lands after the close and is refused by the seats
+      const ORDER_CUTOFF_MS = 3000;
+      window.ARENA_ORDER_CUTOFF_MS = ORDER_CUTOFF_MS;
       const notJoinableWhy = (id) => {
         const held = (window.ARENA_LOBBY_UNOFFERED || []).find((x) => x.id === id);
-        if (held && held.why === 'no reserve key') return 'paid rounds in this federation are paused - it has no reserve key yet';
-        if (held && held.why === 'federation not active') return 'paid rounds in this federation are paused - it is not active right now';
-        if (held) return held.why === 'not seated' ? 'no playable round for this window - its committee is not seated'
-          : held.why === 'not drawn' ? 'no playable round for this window - its committee is not drawn' : 'no playable round for this window - it is played on another grid';
+        // IN THE PLAYER'S WORDS (kanban #1393, Daniel 2026-11-09: "Make all messages human readable"): no committee, signer node or grid
+        if (held && (held.why === 'no reserve key' || held.why === 'federation not active')) return 'paid games with this wallet are paused right now - try again later';
+        if (held) return 'this round is not ready on the game servers - tap again for the next one';
         const row = (window.ARENA_LOBBY_ROWS || []).find((x) => x.id === id);
-        if (!row) return 'this round is not listed in the lobby';
-        if (Number(row.entryCloseMs) <= Date.now()) return 'this round takes no more orders - its entry has closed';
-        if (row.seating && row.seating.state !== 'named') return 'no playable round for this window - its committee is not seated';
-        if (row.phase === 'pending') return 'this round takes no orders yet - its committee is not drawn';
-        return 'this round takes no orders yet - ' + (row.signerNodesAgree || 0) + ' of the ' + (row.needed || '?') + ' signer nodes needed list it open';
+        if (!row) return 'this round is no longer open - tap again for the next one';
+        if (Number(row.entryCloseMs) - Date.now() < ORDER_CUTOFF_MS) return 'too late for this round - tap again for the next one';
+        if (row.seating && row.seating.state !== 'named') return 'this round is not ready on the game servers - tap again for the next one';
+        return 'this round is not open yet - the game servers are still getting it ready';
       };
       // A BALANCE THAT CANNOT BE PLAYED SAYS SO (2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
       // message"): the tables of such a federation are not offered, so nothing else would tell the player why. Every game, lobby and table alike;
@@ -9106,7 +9165,9 @@
           // EVERY ANSWER CARRIES ITS REASON (2026-10-03: two PLAY clicks answered false before any join, cause
           // unnamed): window.ARENA_JOIN_ANSWER { ok, why, at, round, ... } and one line; Unity still gets true or false.
           const answer = (ok, why, more) => {
-            window.ARENA_JOIN_ANSWER = Object.assign({ ok: !!ok, why, at: Date.now(), round: String(id) }, more || {});
+            // a game client shows `why` to the player ("That tap did not go in (why)"): words a player can read (kanban #1393), the code kept as `code`
+            const said = why === 'busy' ? 'your last order is still going in' : why === 'no-row' ? 'that round is no longer open' : why === 'too-late' ? 'too late for this round' : why;
+            window.ARENA_JOIN_ANSWER = Object.assign({ ok: !!ok, why: said, code: why, at: Date.now(), round: String(id) }, more || {});
             if (!ok) console.warn('[arena] join ' + String(id).slice(0, 16) + ' not-started: ' + why + ' ' + JSON.stringify(more || {}));
             return !!ok;
           };
@@ -9143,6 +9204,11 @@
             window.ARENA_JOIN = { state: 'refused', stage: '', round: id, kindKnown: false, why: notJoinableWhy(id) };
             return answer(false, 'no-row', more);
           }
+          { const closeAt = Number((r.raw && r.raw.entryCloseMs) || ((window.ARENA_LOBBY_ROWS || []).find((x) => x.id === id) || {}).entryCloseMs || 0);
+            if (closeAt && closeAt - Date.now() < ORDER_CUTOFF_MS) {   // kanban #1394: the round's last 3 s take no order
+              window.ARENA_JOIN = { state: 'refused', stage: '', round: id, kindKnown: false, why: 'too late for this round - tap again for the next one' };
+              return answer(false, 'too-late', { leftMs: closeAt - Date.now() });
+            } }
           // ANOTHER TAB OF THIS BROWSER IS IN A PAID RUN: this paid join is refused by name (see ARENA_PAID_RUN_ELSEWHERE)
           if (!r.free && window.ARENA_PAID_RUN_ELSEWHERE) {
             const there = window.ARENA_PAID_RUN_ELSEWHERE();
@@ -9723,32 +9789,48 @@
       const txt = box.querySelector('.txt'); let shownKey = '', doneAt = 0, closedKey = '';
       // REPORT THIS (kanban #1389, Daniel 2026-11-09: "Der screen shot hat auch keinen report bug button"): a refused order opens the feedback with its words
       const rep = document.createElement('button'); rep.type = 'button'; rep.className = 'rep'; rep.textContent = 'Report this'; rep.hidden = true;
-      rep.addEventListener('click', (e) => { e.stopPropagation(); if (window.ARENA_OPEN_FEEDBACK) window.ARENA_OPEN_FEEDBACK({ type: 'bug', error: (window.ARENA_JOIN_STATUS || {}).line || txt.textContent }); });
+      rep.addEventListener('click', (e) => { e.stopPropagation(); if (window.ARENA_OPEN_FEEDBACK) window.ARENA_OPEN_FEEDBACK({ type: 'bug', error: (() => { const st = window.ARENA_JOIN_STATUS || {}; return (st.line || txt.textContent) + (st.why ? ' - the seats said: ' + st.why : ''); })() }); });
       box.insertBefore(rep, box.querySelector('.x'));
       box.querySelector('.x').addEventListener('click', () => { closedKey = shownKey; box.classList.remove('on'); });
       // A GREEN LINE GOES WHEN IT IS CLICKED (kanban #930); one still under way or refused stays until its X
       box.addEventListener('click', () => { if (box.classList.contains('ok')) { closedKey = shownKey; box.classList.remove('on'); } });
+      // WORDS A PLAYER CAN READ (kanban #1393, Daniel's playtest 2026-11-09 ~21:00Z: "Adjust the error message to be much more readable, eg Order was sent too
+      // late for this round ... Make all messages human readable"; his screenshots: "locking your stake: the player wallet holds 3000000 msat; this round's
+      // locks need 100000 msat", "locking the stake, the node fee and the donation (submitted, accepted behind)"): while an order goes in, only what the
+      // player can act on - sats still arriving, not enough sats; every inner step is just "Placing your order …"
       const plain = (stage) => {
         const st = String(stage || '');
-        // WHAT IT REALLY WAITS FOR (2026-10-30: "kommt mit der order nicht weiter" at "locking your stake", 11 sat arriving): notes still being
-        // issued hold the lock until the entry closes
         { const m = /is being issued (\d+) msat more/.exec(st);
-          if (m) return `waiting for ${Math.ceil(Number(m[1]) / 1000)} sat still arriving in your wallet before your stake can be locked`; }
-        // THE STEP ITSELF (2026-10-30: the same line on one device for minutes, on another the order went through): it says where it waits
-        if (/^stake lock/.test(st)) return 'locking your stake: ' + st.replace(/^stake lock:\s*/, '').slice(0, 140);
+          if (m) return `waiting for ${Math.ceil(Number(m[1]) / 1000)} sat still arriving in your wallet`; }
+        if (/waiting for the deposit|insufficient funds|less than this round's stake/.test(st)) return 'your wallet does not hold enough sats for this round - add some with Deposit or Get 300 sats';
         const starts = /round starts in ([0-9:]+)/.exec(st); if (starts) return 'locked - the window starts in ' + starts[1];
-        return st;
+        return '';
       };
+      // a refused order in one sentence; the seats' own words go with Report this
+      const refusedWords = (why) => {
+        const w = String(why || '');
+        if (/before the deposit arrived|insufficient funds|does not hold enough|less than this round's stake/i.test(w)) return 'Not enough sats in your wallet for this round. Add some with Deposit or Get 300 sats.';
+        if (/entr(y|ies) closed|entry new to this seat is not taken|closed before it went in|too late/i.test(w)) return 'Your order came too late for this round. Tap again to play the next one.';
+        if (/replaced by another PLAY/i.test(w)) return 'You tapped a newer round, so this order was dropped.';
+        if (/not seated yet|seating certificate/i.test(w)) return 'This round was not ready on the game servers. Tap again to play the next one.';
+        if (/could not be read just now|did not answer|not asked|Failed to fetch|timed out/i.test(w)) return 'The game servers did not answer in time. Tap again.';
+        if (/settlement committee|signer nodes than this client|names another/i.test(w)) return 'The game servers did not agree on this round. Tap again to play the next one.';
+        if (/deposit was closed/i.test(w)) return 'The deposit was cancelled - nothing was paid.';
+        if (/already seats/i.test(w)) return 'That table was full. Tap again to sit at another one.';
+        if (/federation/i.test(w) && /HALTED|CRITICAL|DRAINING|not taking|takes no/i.test(w)) return 'Your wallet\'s bank (federation) is not taking orders right now.';
+        return 'Your order did not go in. Tap again - if it keeps happening, tap Report this.';
+      };
+      window.ARENA_ORDER_WORDS = refusedWords;
       setInterval(() => {
         // a client that says its orders itself (Up/Down v5) has no strip over it
         if (!document.body.classList.contains('arena-own-client') || window.ARENA_CLIENT_SAYS_JOIN) { box.classList.remove('on'); return; }
         const j = window.ARENA_JOIN; if (!j || !j.round) { box.classList.remove('on'); return; }
         let line, cls;
-        if (j.state === 'refused') { line = 'Order not placed: ' + (j.why || 'refused'); cls = 'bad'; }
+        if (j.state === 'refused') { line = refusedWords(j.why); cls = 'bad'; }
         else if (j.state === 'joined' || j.state === 'entered' || j.state === 'playing' || j.state === 'picked') { line = '✓ Order placed' + (j.stakeSats ? ' · ' + Number(j.stakeSats).toLocaleString('en-US') + ' sat' : ''); cls = 'ok'; }
         else if (j.state === 'joining' && /round starts in ([0-9:]+)/.test(String(j.stage || ''))) {
           line = '✓ Order locked · the window starts in ' + /round starts in ([0-9:]+)/.exec(j.stage)[1]; cls = 'held'; }
-        else if (j.state === 'joining') { line = 'Placing your order … ' + (plain(j.stage) || 'asking the round\'s seats'); cls = ''; }
+        else if (j.state === 'joining') { const sub = plain(j.stage); line = 'Placing your order …' + (sub ? ' ' + sub : ''); cls = ''; }
         else { box.classList.remove('on'); return; }
         // the key leaves the countdown out: a held order is one line, closed once
         const key = j.round + ':' + (cls === 'held' ? 'held' : j.state) + ':' + (j.why || '');
@@ -9756,7 +9838,7 @@
         if (closedKey === key || (doneAt && cls !== 'bad' && Date.now() - doneAt > 8000)) { box.classList.remove('on'); return; }
         window.ArenaText.say(txt, line); box.classList.toggle('ok', cls === 'ok' || cls === 'held'); box.classList.toggle('bad', cls === 'bad'); box.classList.add('on');
         rep.hidden = !(cls === 'bad' && window.ARENA_OPEN_FEEDBACK && window.ARENA_FAUCET_URL);
-        window.ARENA_JOIN_STATUS = { line, cls, state: j.state };
+        window.ARENA_JOIN_STATUS = { line, cls, state: j.state, why: j.why || null };
       }, 500);
     })();
     // SHOW FPS: off by default; the toggle in Settings' Graphics keeps the choice in this browser

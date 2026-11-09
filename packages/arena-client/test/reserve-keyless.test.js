@@ -114,7 +114,7 @@ test('a reload in the middle of a join puts no refusal over the page (2026-10-30
 test('a lock held by notes still arriving says so (2026-10-30: "kommt mit der order nicht weiter")', () => {
   const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   const at = src.indexOf('is being issued (\\d+) msat more');
-  assert.ok(at > 0 && at < src.indexOf("return 'locking your stake: '"), 'read before the general line');
+  assert.ok(at > 0 && at < src.indexOf('/waiting for the deposit|insufficient funds|less than this round'), 'read before the not-enough line');
   assert.match("the player wallet holds 89000 msat and is being issued 11000 msat more (a restore, a deposit or a payment's change): waiting for those notes", /is being issued (\d+) msat more/);
 });
 
@@ -203,3 +203,30 @@ test('the securing line stays clear of the next round box (2026-10-30: it lay on
   assert.match(css, /#arena-securing \{ top: calc\(49px[^}]*bottom: auto !important; \}/);
 });
 
+
+// kanban #1393 (Daniel's playtest 2026-11-09: "Make all messages human readable"): the order strip says no msat, no inner step, and a refused order in one sentence
+test('the order strip speaks to the player: no msat or inner steps, a refusal in one sentence, the seats\' words only with Report this', () => {
+  const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  const strip = src.slice(src.indexOf('const plain = (stage) => {'), src.indexOf("window.ARENA_JOIN_STATUS = { line, cls, state: j.state, why: j.why || null };"));
+  assert.ok(strip.length > 500, 'the strip code is found');
+  assert.ok(!/'Order not placed: ' \+ \(j\.why/.test(strip), 'the raw reason is not the line');
+  assert.ok(!/return 'locking your stake: '/.test(strip), 'no inner step on the line');
+  assert.match(strip, /if \(j\.state === 'refused'\) \{ line = refusedWords\(j\.why\); cls = 'bad'; \}/);
+  for (const words of ['Your order came too late for this round. Tap again to play the next one.', 'Not enough sats in your wallet for this round. Add some with Deposit or Get 300 sats.']) assert.ok(strip.includes(words), words);
+  const said = strip.match(/return '[^']*'/g) || [];
+  assert.ok(said.length >= 8 && said.every((r) => !/msat|signer node|seating|federation lock|census/.test(r)), 'no inner words in what the player reads');
+});
+
+// kanban #1394 (Daniel 2026-11-09: "make sure not to accept any orders when the timer is less than 3 seconds away, and don't join rounds that are less
+// than 5 seconds to go ... at least 8 seconds out ... after a reveal"): the page refuses an order in a round's last 3 s and offers a head-to-head round
+// first with 5 s left, 8 s right after this tab's own round
+test('no order in the last 3 s; a head-to-head round is first offered with 5 s left, the round right after its own one skipped', () => {
+  const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  assert.match(src, /const ORDER_CUTOFF_MS = 3000;/);
+  assert.match(src, /if \(closeAt && closeAt - Date\.now\(\) < ORDER_CUTOFF_MS\) \{/);
+  assert.match(src, /const skipUntil = now - lastClose < 20000 \? lastClose \+ 12000 : 0;/);
+  assert.ok(src.includes('if (close > lastClose && close < skipUntil) return false;') && src.includes('if (close - now < 5000) return false;'));
+  assert.match(src, /allRows: \(\) => \(holdForReveal\(\) \? \[\] : fullRounds\(sameVersionPerSlot\(/);
+  const cut = src.indexOf('if (closeAt && closeAt - Date.now() < ORDER_CUTOFF_MS)'), pay = src.indexOf('// ANOTHER TAB OF THIS BROWSER IS IN A PAID RUN');
+  assert.ok(cut > 0 && cut < pay, 'the cutoff comes before any money is touched');
+});
