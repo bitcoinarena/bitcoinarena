@@ -116,6 +116,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // `playerHeldOf(fidHex)`: { ok, sats: [bigint] } - the gateways' proved e-cash this seat counts (its gateway watch: each paid seat's held
   // lock, heldLockCounted), or { ok: false }; null: this seat names no player reserve (kanban #1322)
   playerHeldOf = null,
+  // `successionReasonOf(fidHex)`: { kind: NOMINAL_CHANGE | LISTED_UPGRADE, ref } - why its guardians called the succession (kanban #1321), or null
+  successionReasonOf = () => null,
   successorOf = () => null, closedOf = () => false, retiringOf = () => false, reserveOf = null, absences = null, abandonBlocks = null, departureNotice = null,
   // THE GUARDIANS' ADDRESSES FROM THE FEDERATION'S OWN CONFIGURATION (federation-endpoints.js): async (fidHex) -> Map(peer key
   // hex -> API URL) | null; a guardian it names takes that endpoint into the body, one it does not keeps its advert's
@@ -662,6 +664,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // THE PLAYERS' MONEY (§23A.3a RULED 2026-11-07, kanban #1322): with a band, the reference gateway fee cap and the player reserve named,
     // in the record's order (band, cap, player reserve); none named: the record as before
     if (r.capacityBand !== undefined && player !== null && player !== undefined) { r.gatewayFeeMax = { ...GATEWAY_FEE_MAX_REFERENCE }; r.playerReserveSats = BigInt(player); }
+    // THE SUCCESSION'S REASON (§23A.6 RULED 2026-11-07, kanban #1321), after the player reserve: a DRAINING body naming its successor names why
+    // its guardians called it, when this seat was told; none told: a guardian-called succession pays no drain shares
+    if (r.playerReserveSats !== undefined && succ && r.status === FEDERATION_STATUS.DRAINING) { const why = successionReasonOf(fid); if (why) r.successionReason = why; }
     return { ok: true, record: r, guardians };
   }
 

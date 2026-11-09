@@ -25,6 +25,7 @@ function net({ bandFrom = 0, bandAtSeat = () => bandFrom, censusAt = undefined, 
   const seats = nodes.map((n, i) => federationRecords({ round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: w.h, networkId: NET } }),
     roster: { censusFor: () => census }, inviteFor: () => (w.mirroring === i ? null : INVITE), networkId: NET, bandFrom: bandAtSeat(i), ...(censusAt ? { censusAt } : {}), reserveOf: async () => ({ ok: true, reserveSats: w.reserve }),
     ...(heldAt ? { playerHeldOf: async () => { const h = heldAt(i); return h ? { ok: true, sats: h } : { ok: false, why: 'not counted' }; } } : {}),
+    successorOf: () => w.successor || null, successionReasonOf: () => w.reason || null,   // kanban #1321
     peerSeats: () => [], fetcher: async (url) => {
       const j = seats[nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')))];
       if ((w.down || []).includes(nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:'))))) throw new Error('down');
@@ -238,4 +239,21 @@ test('kanban #1322: the seats write the player reserve (reserve less the gateway
   assert.equal((await none.step(96, 65000)).ok, true);
   const plain = none.seats[0].recordOf(toHex(FED)).record;
   assert.deepEqual([plain.gatewayFeeMax, plain.playerReserveSats], [undefined, undefined]);
+});
+
+test('kanban #1321: a guardian-called succession signs its reason after the player reserve, and pays drain shares only with it', async () => {
+  const NEW = 'cd'.repeat(32);
+  for (const reason of [null, { kind: 'NOMINAL_CHANGE', ref: new Uint8Array(32) }, { kind: 'LISTED_UPGRADE', ref: new Uint8Array(32).fill(0xab) }]) {
+    const n = net({ heldAt: () => [30000n, 20000n] });
+    n.w.successor = NEW; n.w.reason = reason;
+    const r = await n.step(96, 65000);
+    assert.equal(r.ok, true, r.why);
+    const rec = n.seats[0].recordOf(toHex(FED)).record;
+    const paid = n.seats[0].predecessorGuardians(NEW).length;
+    console.log(`  MEASURED #1321 reason ${reason ? reason.kind : 'none'}: status ${n.seats[0].list()[0].status}, reason in record ${rec.successionReason ? rec.successionReason.kind : 'none'}, ${r.signers} signers, drain shares to ${paid}`);
+    assert.equal(n.seats[0].list()[0].status, 'DRAINING');
+    assert.equal(rec.successionReason ? rec.successionReason.kind : null, reason ? reason.kind : null);
+    if (reason && reason.kind === 'LISTED_UPGRADE') assert.deepEqual([...rec.successionReason.ref], [...reason.ref]);
+    assert.equal(paid, reason ? 4 : 0);
+  }
 });
