@@ -614,7 +614,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // a departure notice is taken only from the node key the held record names for that guardian (kanban #1222)
     nodeOf: (fidHex, peerHex) => { const k = fedRecords && typeof fedRecords.recordOf === 'function' ? fedRecords.recordOf(fidHex) : null;
       const g = k && k.record ? k.record.guardians.find((x) => toHex(x.peerKey) === peerHex) : null; return g ? toHex(g.nodePubkey) : null; },
-    store: absencesFile ? { read: () => JSON.parse(readFileSync(absencesFile, 'utf8')), write: (v) => writeFileSync(absencesFile, JSON.stringify(v)) } : null });
+    // and an attestation or a notice about a held record only from its own guardians (kanban #1384)
+    guardiansOf: (fidHex) => { const k = fedRecords && typeof fedRecords.recordOf === 'function' ? fedRecords.recordOf(fidHex) : null; return k && k.record ? k.record.guardians.map((g) => toHex(g.nodePubkey)) : null; },
+    // WRITTEN WHOLE (kanban #1384, FED-B4): a crash mid-write left a torn file and lost every held notice - now a temp file renamed over it
+    store: absencesFile ? { read: () => JSON.parse(readFileSync(absencesFile, 'utf8')), write: (v) => { writeFileSync(`${absencesFile}.tmp`, JSON.stringify(v)); renameSync(`${absencesFile}.tmp`, absencesFile); } } : null });
   let liquidations = null;                     // liquidations.js, over fedRecords
   let halts = null;                            // halts.js: the seats' halt observations and proof
   // THIS SEAT'S NETWORK'S GENESIS, read once: null where this build names none
