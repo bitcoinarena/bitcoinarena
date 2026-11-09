@@ -128,3 +128,31 @@ test('a release that carries only the old arena-node name is fetched under it', 
     assert.equal(applied[0].newRelease, join(home, 'releases', 'arena-node-0.1.1-linux-x64'));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+// kanban #1369 (audit 2 #1204 INSTALLER-DOORS-9): a release rolled back here is not tried at every 30 min check - each try stops the node and backs it up
+test('#1369 a rolled-back release is tried again only a day later, at once by hand, and a new commit of it at once', async () => {
+  const { root, home } = nodeAt();
+  try {
+    const s = served(Buffer.from('the release asset that does not come up on this machine'.repeat(3)));
+    const withCommit = (commit) => async (own) => { const l = await s.latest(own); return { ...l, latest: { ...l.latest, commit } }; };
+    const applied = [];
+    const go = (o = {}) => checkOnce({ home, latest: withCommit('c'.repeat(40)), fetcher: s.fetcher, platform: 'linux', arch: 'x64', verifyAsset: () => ({ ok: true }),
+      unpack: (archive, dir) => { mkdirSync(join(dir, 'bitcoin-arena-node-0.1.1-linux-x64'), { recursive: true }); },
+      apply: async () => { applied.push(Date.now()); return { ok: false, rolledBack: true, why: 'the new release did not answer in 300 s' }; }, ...o });
+    const first = await go();
+    assert.equal(first.rolledBack, true);
+    assert.equal(JSON.parse(readFileSync(join(home, 'auto-update.json'), 'utf8')).commit, 'c'.repeat(40), 'the rollback names the commit');
+    const again = await go();
+    assert.match(again.skipped, /rolled back on this node .* tried again after/);
+    assert.equal(applied.length, 1, 'the next check does not stop the node again');
+    await go({ force: true });
+    assert.equal(applied.length, 2, 'bitcoinarena update tries it at once');
+    await go({ latest: withCommit('d'.repeat(40)) });
+    assert.equal(applied.length, 3, 'the same version re-published with a new commit is tried');
+    // a day after the rollback it is tried again
+    const rec = JSON.parse(readFileSync(join(home, 'auto-update.json'), 'utf8'));
+    writeFileSync(join(home, 'auto-update.json'), JSON.stringify({ ...rec, commit: 'c'.repeat(40), atMs: Date.now() - 24 * 3600_000 - 1000 }));
+    await go();
+    assert.equal(applied.length, 4);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
