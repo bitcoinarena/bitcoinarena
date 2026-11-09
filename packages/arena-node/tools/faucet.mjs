@@ -131,6 +131,21 @@ const PLAYED = networkPlayers({ seats: String(env.FAUCET_SEASON_SEATS || '').spl
 if (FEEDBACK && BOUNTY_PAYER) setInterval(() => FEEDBACK.settle({ status: bountyStatus }).catch(() => {}), 60000).unref();
 
 /** A player's grant: read the invoice, decide, keep it in the book BEFORE paying (a crash pays nobody twice), and take it out again if no payer could pay. */
+/** After a payinvoice that timed out: 'sent' once the payment SUCCEEDED or has an HTLC in flight, 'no' once it FAILED or none went out in time. */
+const PAY_SETTLE_MS = 45000;
+async function paymentSent(payer, hash) {
+  const until = Date.now() + PAY_SETTLE_MS;
+  while (Date.now() < until) {
+    const r = await lncli(payer, ['listpayments', '--include_incomplete', '--max_payments', '30']);
+    let p = null; try { p = (JSON.parse(r.out).payments || []).find((x) => x.payment_hash === hash) || null; } catch { p = null; }
+    if (p && p.status === 'SUCCEEDED') return 'sent';
+    if (p && p.status === 'FAILED') return 'no';
+    if (p && (p.htlcs || []).some((h) => h.status === 'IN_FLIGHT' || h.status === 'SUCCEEDED')) return 'sent';
+    await new Promise((ok) => setTimeout(ok, 3000));
+  }
+  return 'no';
+}
+
 async function grant(ask) {
   if (!/^lntb[0-9a-z]{20,1500}$/.test(String(ask.invoice || ''))) return { ok: false, why: 'that is not a testnet invoice' };
   const read = await lncli(PAYERS[0], ['decodepayreq', ask.invoice]);
@@ -145,9 +160,13 @@ async function grant(ask) {
   saveBook(book);
   const tried = [];
   for (const payer of PAYERS) {
-    // A TIMEOUT IS NOT A REFUSAL: the federation's incoming contract holds the payment open until the client claims it (seen: "IN_FLIGHT", then Claimed)
+    // A TIMEOUT IS NOT A REFUSAL, AND NOT A PAYMENT EITHER (kanban #1381, Daniel 2026-11-09 "scheitere daran die test sats zu bekommen": payer b's
+    // channel to node a was down, payinvoice was still looking for a route at 15 s, the page was told "500 sat" and the payment FAILED with NO_ROUTE
+    // after): the payment's own state is read - an HTLC on its way (the federation's incoming contract holds it until the client claims) or SUCCEEDED
+    // is paid; FAILED, or no part sent within PAY_SETTLE_MS, is not, and the next payer is asked
     const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', ask.invoice], 15000);
-    if (paid.timedOut || /Payment status: (SUCCEEDED|IN_FLIGHT)/.test(paid.out)) {
+    const state = /Payment status: (SUCCEEDED|IN_FLIGHT)/.test(paid.out) ? 'sent' : paid.timedOut ? await paymentSent(payer, inv.payment_hash) : 'no';
+    if (state === 'sent') {
       console.log(`${new Date().toISOString()} player ${ask.kind} ${d.grant.invoiceSats} sat (${ask.ip || 'no ip'}): ${inv.payment_hash.slice(0, 16)}`);
       return { ok: true, sats: d.grant.sats };
     }
