@@ -538,6 +538,21 @@ function paysIntoALock(round, invite, LockClient) {
 // the slowest step of a paying join - and the deposit, the lock and the withdraw use that same open client rather than
 // joining again on the same store. A join that failed is not kept.
 const openWallets = new WeakMap();
+// THE OPEN WALLETS OF EACH PHRASE (kanban #1387, audit 2 #1204 CLIENT-15): seed hex (16) -> [{ map, key }] - what forgetPhraseWallets drops
+const phraseWallets = new Map();
+/**
+ * ANOTHER PHRASE'S WALLET CLIENTS LEAVE THE CACHE WITH ITS LOCK (kanban #1387, audit 2 #1204 CLIENT-15): a client this tab opened for a kept phrase it
+ * collected or merged under that phrase's lock stayed cached after the lock went; another tab then used the phrase, and the next collect here got the
+ * old client back - its in-memory store did not see the other tab's notes (the balance read 0, merges refused). The page calls this in the finally
+ * that releases the lock; the next open of that phrase opens it afresh from its store. The client itself is not freed (a call may still hold it).
+ */
+export function forgetPhraseWallets(seedHex) {
+  const k = String(seedHex || '').toLowerCase().slice(0, 16);
+  const list = phraseWallets.get(k) || [];
+  for (const { map, key } of list) map.delete(key);
+  phraseWallets.delete(k);
+  return list.length;
+}
 // THE PAGE'S GATE ON A PHRASE'S WALLETS (kanban #1164): fn(seedHex) -> a promise that resolves once this tab may open that phrase's wallets
 let walletGate = null;
 export function useWalletGate(fn) { walletGate = typeof fn === 'function' ? fn : null; }
@@ -617,6 +632,7 @@ export async function openPlayerWallet({ federationId, invite, seed, LockClient,
     const m = open || new Map(); if (!open) byStore.set(storage, m);
     m.set(key, joining);
     joining.catch(() => m.delete(key));
+    if (seed instanceof Uint8Array) { const ph = toHex(seed).slice(0, 16); if (!phraseWallets.has(ph)) phraseWallets.set(ph, []); phraseWallets.get(ph).push({ map: m, key }); }
   }
   return joining;
 }
