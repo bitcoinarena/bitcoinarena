@@ -238,3 +238,55 @@ test('#1219 a duty marker of a low rank seen before its hour counts for nothing;
   assert.deepEqual(inHour.standing, ['DUTY'], 'a lower rank in its own hour counts');
   assert.equal(inHour.published, 0);
 });
+
+// kanban #1371 (audit 2 #1204 FED-C2): only a definite no from bitcoind ends a fee raise without its new txid
+test('#1371 a lost bumpfee answer, and a wallet still loading after a crash: the posting ends on the raised txid, not the replaced one', async () => {
+  const run = async (mode) => {
+    const dir = mkdtempSync(join(tmpdir(), 'duty1371-'));
+    const pub = txOf([dutyMarkerOutput(DAY, 'nextblock-day')]);
+    const raised = txOf([dutyMarkerOutput(DAY, 'nextblock-day')]);
+    const w = world({ local: [ORDER[0]], nowMs: T0 + 10 * H, dir, mempool: [pub], wallet: { [pub.txid]: 0, [raised.txid]: 0 }, hexes: { [raised.txid]: raised.hex } });
+    keptPosting(dir, { slot: DAY, txid: pub.txid, committeeMs: dayStartMs(DAY + 1) - 12 * H, firstStartMs: dayStartMs(DAY + 1), announcedTxid: pub.txid, announcedTo: ['http://s1'] });
+    const file = join(dir, `nextblock-day-${DAY}.json`);
+    let inside = null;
+    w.opts.walletRpc = ((inner) => async (m, p) => {
+      if (m !== 'bumpfee') return inner(m, p);
+      w.did.bumped.push(p[0]);
+      // lost: bitcoind made the raise, its answer never came back; crash: the process died inside the call (the file as it stood)
+      if (mode === 'lost') throw new Error('bitcoind at http://127.0.0.1:48332/wallet/duty did not answer bumpfee: socket hang up');
+      inside = readFileSync(file, 'utf8');
+      return { txid: raised.txid };
+    })(w.opts.walletRpc);
+    w.opts.announce = async () => ({ took: 1, of: 1 });
+    await createDayDuty(w.opts).look();
+    const atEnd = mode === 'lost' ? readFileSync(file, 'utf8') : inside;
+    const k = JSON.parse(atEnd);
+    // THE NEXT LOOK (lost: the same process; crash: a restart from the file) - for `crash` the wallet first answers -28 (still loading)
+    const dir2 = mkdtempSync(join(tmpdir(), 'duty1371-'));
+    writeFileSync(join(dir2, `nextblock-day-${DAY}.json`), atEnd);
+    const r = world({ local: [ORDER[0]], nowMs: T0 + 10 * H + 2 * MIN, dir: dir2, mempool: [raised],
+      wallet: { [pub.txid]: { confirmations: -1, replaced_by_txid: raised.txid }, [raised.txid]: 0 }, hexes: { [raised.txid]: raised.hex } });
+    r.opts.announce = async () => ({ took: 1, of: 1 });
+    let loading = mode === 'crash';
+    r.opts.walletRpc = ((inner) => async (m, p) => {
+      if (m === 'bumpfee') { r.did.bumped.push(p[0]); throw new Error(`bitcoind refused bumpfee: Transaction ${p[0]} has descendants in the wallet`); }
+      if (loading && m === 'gettransaction') throw new Error('bitcoind answered 500: {"result":null,"error":{"code":-28,"message":"Loading wallet..."},"id":"arena"}');
+      return inner(m, p);
+    })(r.opts.walletRpc);
+    const duty = createDayDuty(r.opts);
+    await duty.look();
+    const mid = JSON.parse(readFileSync(join(dir2, `nextblock-day-${DAY}.json`), 'utf8'));
+    loading = false;
+    await duty.look();
+    const after = JSON.parse(readFileSync(join(dir2, `nextblock-day-${DAY}.json`), 'utf8'));
+    return { first: { txidIsRaise: k.txid === raised.txid, bump: k.bump ? k.bump.state : null },
+      whileLoading: { bump: mid.bump ? mid.bump.state : null, txidIsRaise: mid.txid === raised.txid },
+      after: { postedAgain: r.did.published.length, bumpedAgain: r.did.bumped.length, txidIsRaise: after.txid === raised.txid, bump: after.bump ? after.bump.state : null, verdict: after.verdict && after.verdict.state } };
+  };
+  const lost = await run('lost'), crash = await run('crash');
+  console.log('  MEASURED #1371:', JSON.stringify({ lost, crash }));
+  assert.deepEqual(lost.first, { txidIsRaise: false, bump: 'ASKED' }, 'a lost answer leaves the raise asked, not done on the old txid');
+  assert.deepEqual(lost.after, { postedAgain: 0, bumpedAgain: 0, txidIsRaise: true, bump: 'DONE', verdict: 'pending' });
+  assert.deepEqual(crash.whileLoading, { bump: 'ASKED', txidIsRaise: false }, 'a loading wallet says nothing: the raise stays asked');
+  assert.deepEqual(crash.after, { postedAgain: 0, bumpedAgain: 0, txidIsRaise: true, bump: 'DONE', verdict: 'pending' });
+});
