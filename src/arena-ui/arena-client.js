@@ -6252,7 +6252,14 @@ const previousHashOf = (h) => header(h).slice(4, 36);
 const merkleRootOf = (h) => header(h).slice(36, 68);
 
 /** A block's own id: the double hash of its 80 bytes. */
-const blockHashOf = (h) => hash256(header(h));
+const HASHED = new Map(), HASHED_MAX = 50000;
+const hashedOf = (b) => {
+  const k = String.fromCharCode.apply(null, b);
+  let e = HASHED.get(k);
+  if (!e) { e = { hash: hash256(b), meets: undefined }; if (HASHED.size >= HASHED_MAX) HASHED.delete(HASHED.keys().next().value); HASHED.set(k, e); }
+  return e;
+};
+const blockHashOf = (h) => hashedOf(header(h)).hash.slice();
 
 /**
  * The time a header claims, from bytes 68..72, LITTLE-ENDIAN and in SECONDS.
@@ -6302,11 +6309,13 @@ function targetOf(h) {
  * so it is the REVERSED bytes that must come out below the target.
  */
 function meetsTarget(h) {
+  const e = hashedOf(header(h));
+  if (e.meets !== undefined) return e.meets;
   const target = targetOf(h);
-  if (target <= 0n) return false;
-  let value = 0n;
-  for (const b of blockHashOf(h).reverse()) value = (value << 8n) | BigInt(b);
-  return value <= target;
+  let ok = false;
+  if (target > 0n) { let value = 0n; for (let i = 31; i >= 0; i--) value = (value << 8n) | BigInt(e.hash[i]); ok = value <= target; }
+  e.meets = ok;
+  return ok;
 }
 
 /**
