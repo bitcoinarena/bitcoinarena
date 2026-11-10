@@ -178,6 +178,9 @@
     #arena-feedback .fb-levels-table td.ex { opacity: .75; }
     /* the ADMIN link (kanban #1342): in a game's own stamp only while that game is open - elsewhere that stamp lies over "Docs" bottom left */
     body:not(.arena-own-client) #arena-build .arena-admin-link { display: none !important; }
+    /* ...and on the games screen too (Daniel 2026-11-10 on the iPad: "Ich seh kein admin link"): there the stamp sits right-aligned before the icons,
+       clear of "Docs"; a phone (< 600 px) keeps the stamp hidden, as it hides the UI number there */
+    @media (min-width: 600px) { html.arena-root body:not(.arena-own-client) #arena-build .arena-admin-link { display: inline-block !important; } }
     #arena-feedback .fb-chips-head { font-size: 12px; color: #8b949e; margin: 6px 0 4px; }
     #arena-feedback .fb-chips { display: flex; flex-wrap: wrap; gap: 4px; } #arena-feedback .fb-chip { font-size: 11px; padding: 2px 7px; border-radius: 10px; background: #21262d; border: 1px solid #30363d; color: #e6edf3; }
     #arena-feedback .fb-chip b { color: #f7931a; }
