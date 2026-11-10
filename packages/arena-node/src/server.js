@@ -138,7 +138,7 @@ import { season, seasonWindow, mergeSeasonAccounts, mergeSignedSeasonAccounts, s
 import { seasonRounds, seasonRoundOf, signedSeasonRoundsJson } from './season-read.js';
 import { createWinnersBook } from './leaderboard-freeze.js';
 import { slotsForRole } from '../../arena-protocol/src/sortition.js';
-import { createOwner } from './owner.js';
+import { createOwner, ownerStatementMessage } from './owner.js';
 import { donationReport } from './owner-donations.js';
 import { leaveStatus, takesRound } from './owner-leave.js';
 import { packageOf, verifyPackage, installPackage, registrationFromPackage } from './plugin-package.js';
@@ -7752,7 +7752,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (url.pathname === '/owner' || url.pathname.startsWith('/owner/')) {
         if (!owner) return text(res, 404, 'this node runs without an owner area');
         const answer = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
-        if (req.method === 'GET' && url.pathname === '/owner') return answer(200, owner.state());
+        // signed by this node (kanban #1418): { ...state, statement: { atMs, sig } } over [node, owner, atMs]
+        if (req.method === 'GET' && url.pathname === '/owner') { const st = owner.state(), atMs = Date.now();
+          let statement = null; try { statement = { atMs, sig: toHex(schnorr.sign(ownerStatementMessage({ node: st.node, owner: st.claimed ? st.owner : '', atMs }), round.identity.secret)) }; } catch { statement = null; }
+          return answer(200, { ...st, statement }); }
         // THE DEV CLIENT (step 3, owner-donations.js): what this seat verified for the protocol developers' set (the newest
         // serial it holds per network) and for each hosted game's developer set - public, as GET /donations is
         // WHAT A LEAVING SEAT STILL OWES (step 2, owner-leave.js): the rounds it holds on a committee and is not free of yet,
