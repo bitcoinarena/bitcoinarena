@@ -115,3 +115,21 @@ test('#1257 a lost intent is resent, not rebuilt', async () => {
   assert.equal(refusedEarly.step, 'wait', 'refused 3 blocks on: no new build while A may still confirm');
   assert.equal(refusedLate.step, 'rebuild');
 });
+
+// AUDIT 5 (kanban #1403): gettxout's error was read as "spent" - a bitcoind still warming up (-28) after a restart marked the kept slash posted
+// though it never went out, its intent was dropped, and the bond was never slashed
+test('#1403 a chain that can not be read is not a spent bond: the slash intent waits and is kept', async () => {
+  const A = 'aa'.repeat(32), BOND = { txid: 'bb'.repeat(32), vout: 0 };
+  const intent = { txid: A, hex: '02aa', bond: BOND, slashHeight: 100 };
+  const warming = async (m) => {
+    if (m === 'getrawtransaction') throw new Error('No such mempool or blockchain transaction');
+    if (m === 'gettxout') throw new Error('Loading block index... (-28)');
+    if (m === 'getblockcount') return 110;
+    throw new Error(m);
+  };
+  const r = await resumeSlashIntent(warming, intent);
+  assert.equal(r.step, 'wait', `an RPC error became "${r.step}"`);
+  assert.match(r.why, /could not be read/);
+  const ri = await resumeIntent(warming, intent, BOND);
+  assert.equal(ri.ok, false); assert.equal(ri.inferred, undefined);
+});
