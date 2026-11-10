@@ -31,7 +31,11 @@ if (a.includes('payinvoice')) {
 }
 if (a.includes('trackpayment')) {
   if (me.state === 'NONE') { console.error("[lncli] rpc error: payment isn't initiated"); process.exit(1); }
-  console.log(JSON.stringify({ payment_hash: '${HASH}', status: me.state === 'HELD' ? 'IN_FLIGHT' : me.state })); process.exit(0);
+  // AS LNCLI 0.21 PRINTS IT (audit 7, kanban #1430): JSON only with --json (the payment's status, then its htlcs'), else a table and "Payment status: X"
+  const st = me.state === 'HELD' ? 'IN_FLIGHT' : me.state;
+  if (a.includes('--json')) { console.log(JSON.stringify({ payment_hash: '${HASH}', status: st, htlcs: [{ status: st === 'SUCCEEDED' ? 'SUCCEEDED' : 'FAILED' }] })); process.exit(0); }
+  console.log('+------------+--------------+\\n| HOP_CHAN_ID | LAST_HOP_ALIAS |\\n+------------+--------------+');
+  console.log('Payment status: ' + st + (st === 'SUCCEEDED' ? ', preimage: ' + 'ab'.repeat(32) : '')); process.exit(0);
 }
 if (a.includes('listpayments')) {
   const p = me.state === 'NONE' ? [] : [{ payment_hash: '${HASH}', status: me.state === 'HELD' ? 'IN_FLIGHT' : me.state, htlcs: me.state === 'HELD' ? [{ status: 'IN_FLIGHT' }] : [] }];
