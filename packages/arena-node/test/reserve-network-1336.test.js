@@ -29,11 +29,13 @@ test('#1336 a successor at 34 % cannot pay out the ancestor\'s reserves, and a c
   const ask66 = successorNeedsAsking({ reaffirmedSats: 66_000_000n, ancestorSats: 100_000_000n });
   const ask65 = successorNeedsAsking({ reaffirmedSats: 65_990_000n, ancestorSats: 100_000_000n });
   const unread = successorNeedsAsking({ reaffirmedSats: 90n, ancestorSats: 0n });
-  console.log('  MEASURED #1336:', JSON.stringify({ successorSpends: atSuccessor.map((r) => r.outpoint), successorMsat: String(sum(atSuccessor)),
-    ancestorSpends: atAncestor.map((r) => r.outpoint), ancestorMsat: String(sum(atAncestor)), ask34: [ask34.ask, ask34.bps], ask66: [ask66.ask, ask66.bps], ask65: ask65.ask, unread: unread.ask }));
-  assert.deepEqual(atSuccessor.map((r) => r.outpoint), ['b:0', 'c:1'], 'the successor spent the ancestor\'s reserve rows');
-  assert.deepEqual(atAncestor.map((r) => r.outpoint), ['a:0', 'a:1', 'c:1'], 'the ancestor never stops: it still pays its own');
-  assert.ok(!atSuccessor.some((r) => r.outpoint === 'd:0') && !atAncestor.some((r) => r.outpoint === 'd:0'), 'a row of an unreadable round was spent');
+  console.log('  MEASURED #1336:', JSON.stringify({ successorSpends: atSuccessor.filter((r) => !r.unknown).map((r) => r.outpoint), successorMsat: String(sum(atSuccessor.filter((r) => !r.unknown))),
+    ancestorSpends: atAncestor.filter((r) => !r.unknown).map((r) => r.outpoint), ancestorMsat: String(sum(atAncestor.filter((r) => !r.unknown))), ask34: [ask34.ask, ask34.bps], ask66: [ask66.ask, ask66.bps], ask65: ask65.ask, unread: unread.ask }));
+  // a row of a round this seat cannot read is kept as unknown (kanban #1409): never picked by this seat, never another network's
+  const known = (rs) => rs.filter((r) => !r.unknown).map((r) => r.outpoint);
+  assert.deepEqual(known(atSuccessor), ['b:0', 'c:1'], 'the successor spent the ancestor\'s reserve rows');
+  assert.deepEqual(known(atAncestor), ['a:0', 'a:1', 'c:1'], 'the ancestor never stops: it still pays its own');
+  assert.deepEqual([atSuccessor, atAncestor].map((rs) => rs.filter((r) => r.unknown).map((r) => r.outpoint)), [['d:0'], ['d:0']], 'a row of an unreadable round is unknown, not dropped');
   assert.deepEqual(reserveRowsOfNetwork(rows, null, net), [], 'a seat with no network id spends nothing');
   assert.equal(SUCCESSOR_FOLLOW_BPS, 6600);
   assert.deepEqual([ask34.ask, ask34.bps], [true, 3400]);
