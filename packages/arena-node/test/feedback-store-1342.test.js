@@ -189,7 +189,10 @@ test('#1342 a claim pays once: wrong amounts refused, two claims at once pay one
   const unknown = await s.claim(k2, 'inv:1000', { decode, pay: async () => ({ ok: false, why: 'timeout' }) });
   const stuck = s.reward(k2).state;
   const blocked = await s.claim(k2, 'inv:1000', { decode, pay: slowPay });
-  const settled = await s.settle({ status: async () => 'paid' });
+  // a payment tried just now is left alone (audit 5 #1402: lnd may not know it yet); read three minutes later it is settled
+  const tooSoon = await s.settle({ status: async () => 'failed' });
+  assert.deepEqual([tooSoon.length, tooSoon[0].fresh, s.reward(k2).state], [1, true, 'paying'], 'a fresh payment read as failed reopened the link');
+  const settled = await s.settle({ status: async () => 'paid', nowMs: Date.now() + 181000 });
   const facts = { wrong: wrong.reason, claims: [c1.status, c2.status], pays, after: [after.state, after.paymentHash], third: third.reason, report: s.report(after.report).state,
     failed: failed.reason, reopened, unknown: unknown.reason, stuck, blocked: blocked.reason, settled, k2: s.reward(k2).state };
   console.log('  FACTS #1342 claim:', JSON.stringify(facts));
@@ -284,4 +287,46 @@ test('#1342 a node bounty: 20,000 from its own pot for a node report; one per pe
   assert.match(again.why, /one node bounty per person/);
   assert.match(front.why, /for a node report/);
   assert.equal(bar.weekApprovedSats, 0, 'the node bounty is not in the bug budget');
+});
+
+// AUDIT 5 (kanban #1402, reproduced): approve, make the reward link, reject - the link still paid, outside the week's budget; and one node re-claimed
+// under new keys took a node bounty per key
+test('#1402 a rejected report\'s reward link no longer pays, a paid one blocks the rejection, and one node gets one node bounty', async () => {
+  const s = openFeedbackStore();
+  const alice = key(1);
+  const decode = async (inv) => ({ ok: true, amountSats: Number(inv.split(':')[1]), paymentHash: `h-${inv}` });
+  let pays = 0; const pay = async () => { pays++; return { ok: true, paymentHash: 'p' }; };
+  const id = approved(s, alice, 'bug that gets rejected after the link', 1000);
+  const k1 = s.createReward(id).reward.k1;
+  const rejected = s.move(id, 'rejected', { reason: 'not reproducible' });
+  assert.equal(rejected.ok, true);
+  assert.equal(s.reward(k1).state, 'void');
+  assert.match(s.withdrawRequest(k1, { base: 'https://x' }).reason, /withdrawn/);
+  const claimed = await s.claim(k1, 'inv:1000', { decode, pay });
+  assert.equal(claimed.status, 'ERROR'); assert.equal(pays, 0, 'a rejected report was paid');
+  // a paid reward keeps its report: the rejection is refused
+  const id2 = approved(s, alice, 'bug paid before anyone rejects it', 1000);
+  const k2 = s.createReward(id2).reward.k1;
+  assert.equal((await s.claim(k2, 'inv:1000', { decode, pay })).status, 'OK');
+  assert.equal(s.move(id2, 'rejected', { reason: 'too late' }).ok, false);
+});
+
+test('#1402 one node bounty per node: the same node reported under a second key is refused', () => {
+  const s = openFeedbackStore();
+  const rules = { perKeyPerWeek: 3, weeklyBudgetSats: 1000, mostSats: 20000, leastSats: 100 };
+  const nodeReport = (n, text) => { const e = report(key(n), text, { type: 'bug', tags: [['source', 'node'], ['node', 'ab'.repeat(32)]] }); s.take(e); return e.id; };
+  const first = s.approve(nodeReport(31, 'My node ran the whole week and the owner page showed every round it served.'), null, { played: () => false, rules, severity: 'node' });
+  const second = s.approve(nodeReport(32, 'Same node, a new owner key after a reset: the installer asked for the bond again.'), null, { played: () => false, rules, severity: 'node' });
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, false);
+  assert.match(second.why, /one node bounty per node/);
+});
+
+// AUDIT 5 (kanban #1402): /feedback/node-check was gated by the Origin header alone; each new (node, npub) pair asked every seat (~136 requests)
+test('#1402 the faucet\'s node check runs one at a time and at most 10 an hour per address', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../tools/faucet.mjs', import.meta.url), 'utf8');
+  assert.ok(src.includes('const NODE_CHECKS_PER_HOUR = 10; let NODE_CHECK_BUSY = false;'));
+  assert.ok(src.includes("if (NODE_CHECK_BUSY) return send(429, { ok: false, why: 'a node check is running: try again in a minute' });"));
+  assert.ok(src.includes("const who = ip.includes(':') ? ip.split(':').slice(0, 4).join(':') : ip;"), 'an IPv6 address counted per /64');
 });
