@@ -58,3 +58,13 @@ test('#1418 a seat naming itself owner of someone else\'s node does not pass: un
   assert.equal(cases.unsigned.passes, false);
   assert.equal(cases.unsigned.checks.find((c) => c.key === 'outside').ok, false, 'the team host is read where the node\'s signed word was served');
 });
+
+// KANBAN #1426 N7 (audit 6 re-check): a seat relaying a team node's signed word must not make it look outside - any team host that served it counts
+test('#1426 N7 a team node\'s signed statement relayed by an outside seat is still a team node', async () => {
+  const served = (url) => { const from = Number(new URL(url).searchParams.get('from')), dayAgo = Math.round((Math.floor(NOW / DAY) * DAY - from) / DAY);
+    return { held: dayAgo >= 1 && dayAgo <= 7 ? [{ roundId: `r${dayAgo}`, committee: [NODE], finals: [NODE] }] : [] }; };
+  const relayNewer = async (url) => (url.endsWith('/owner') ? (url.startsWith('https://relay.example') ? said(ME, NOW - 1000) : said(ME, NOW - 9000)) : served(url));
+  const r = await nodeBountyCheck({ node: NODE, npub: ME, seats: ['https://node.example', 'https://relay.example'], fetchJson: relayNewer, nowMs: NOW, teamHosts: ['node.example'] });
+  console.log('  MEASURED #1426 N7: team node relayed (newer copy) by an outside seat -> outside check', r.checks.find((c) => c.key === 'outside').ok);
+  assert.equal(r.checks.find((c) => c.key === 'outside').ok, false);
+});
