@@ -94,11 +94,15 @@ export function newestSpentSet(copies, { record, verify, maxSession = null }) {
     k.signers.add(toHex(c.signer));
   }
   if (!bySession.size) return { copy: null, why: refused.length ? `no copy stands: ${refused[0]}` : 'no guardian published a spent set', refused };
-  // THE NEWEST SESSION n - t + 1 GUARDIANS REACHED (kanban #1262): one with fewer signers is never read, however new
-  const reached = [...signersAt.entries()].filter(([, who]) => who.size >= need).map(([at]) => at);
-  if (!reached.length) return { copy: null, why: `no session has copies from ${need} distinct guardians yet (n - t + 1): no spent set`, need, refused };
+  // THE NEWEST SESSION WHERE ONE CONTENT HAS n - t + 1 DISTINCT SIGNERS (kanban #1262; audit 5 #1408, reproduced): counted per session over
+  // all contents, f lying guardians at a session one or two honest ones had reached (the rest still a session behind) made up the quorum
+  // and their empty copy won the plurality or the tie - the liars' redeemed notes paid from the escrow again. n - t + 1 > f, so no content
+  // the liars sign alone reaches it; honest guardians at one session sign one content.
+  const reachedBy = (kinds) => kinds.filter((k) => k.signers.size >= need);
+  const reached = [...bySession.entries()].filter(([, kinds]) => reachedBy([...kinds.values()]).length).map(([at]) => at);
+  if (!reached.length) return { copy: null, why: `no session has one content from ${need} distinct guardians yet (n - t + 1): no spent set`, need, refused };
   const session = Math.max(...reached);
-  const kinds = [...bySession.get(session).values()]
-    .sort((a, b) => b.signers.size - a.signers.size || a.copy.nonces.length - b.copy.nonces.length);
-  return { copy: kinds[0].copy, session, signers: kinds[0].signers.size, disagree: kinds.length - 1, need, refused };
+  const all = [...bySession.get(session).values()];
+  const kinds = reachedBy(all).sort((a, b) => b.signers.size - a.signers.size || b.copy.nonces.length - a.copy.nonces.length);
+  return { copy: kinds[0].copy, session, signers: kinds[0].signers.size, disagree: all.length - 1, need, refused };
 }
