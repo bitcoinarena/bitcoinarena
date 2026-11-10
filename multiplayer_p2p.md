@@ -5184,6 +5184,20 @@ After a result is `PROVISIONALLY_FINAL`, the window `W` runs: **exactly 10
 minutes, 600 seconds of wall time** (RULED 2026-10-01 09:40,
 WINDOW-10-SPEC).
 
+**One exception, head-to-head rounds (RULED 2026-11-10, kanban #1398; it narrows
+WINDOW-10-SPEC and the owner, whose playtest raised it, confirms it).** A
+head-to-head round's result is a pure function of two signed commitments and
+two signed reveals, checked in a millisecond by anyone who holds them; there is
+no transcript to replay and nothing the ten minutes can find. Its window is
+**60 seconds** (`objection_window_h2h`; regtest 5), long enough to object with
+a receipted reveal the seats did not count, and its settlement follows at
+once, so winnings are in the wallet about a minute after the round instead of
+eleven. Replayed games keep the 600 seconds, and the page says "N sat arrive in
+about 10 minutes" while they wait. Refused: paying at PROVISIONALLY_FINAL (an
+upheld objection would then claw back spent money), and re-staking provisional
+winnings (a voided round would void the rounds it funded, a cascade no player
+can follow).
+
 **The window, stated once.**
 
 - **What it was.** Until this ruling `W` was a contract field with a
