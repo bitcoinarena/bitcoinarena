@@ -210,16 +210,25 @@ const NO_WINNERS = { freeze: async () => ({ ok: false, why: 'this seat keeps no 
  * chain's census, so its payouts spend only rows whose round names this seat's network. `networkOfRound(roundHex)` -> the round's network id
  * (hex) or null. A row with no round (a payout's change, a move's claim: zero round id) was made by this network's own payout and stays; a row
  * whose round this seat cannot read is not spent - after a fork the ancestor's reserves are not the successor's to pay.
+ *
+ * UNREAD IS UNKNOWN, NOT FOREIGN (kanban #1409, audit 5 #1399): a seat holds the contracts of about half the rounds (those of its committees), but
+ * it imports the verified reserve rows of all of them from its peers - so dropping every row whose round it cannot read made co-signers refuse
+ * plans ("no unspent reserve output of this seat") and coordinators write a terminal SHORT though the federation held enough. Such a row is now
+ * kept and marked `unknown: true`: this seat never picks it as a coordinator, takes it as a co-signer when the coordinator's plan names it (that
+ * seat read its round), and never calls a payout SHORT while unknown rows could cover it. A row whose round names ANOTHER network is still dropped.
  */
 export function reserveRowsOfNetwork(rows, networkHex, networkOfRound) {
   const want = String(networkHex || '').toLowerCase();
   if (!want) return [];
-  return (rows || []).filter((r) => {
+  const out = [];
+  for (const r of rows || []) {
     const rid = String(r.roundId || '').toLowerCase();
-    if (!rid || /^0+$/.test(rid)) return true;
+    if (!rid || /^0+$/.test(rid)) { out.push(r); continue; }
     let n = null; try { n = networkOfRound(rid); } catch { n = null; }
-    return typeof n === 'string' && n.toLowerCase() === want;
-  });
+    if (typeof n !== 'string') out.push({ ...r, unknown: true });
+    else if (n.toLowerCase() === want) out.push(r);
+  }
+  return out;
 }
 
 export function createReservePayouts({ db, me, curve, random, passed, guardians, reserveRows, portOf, payRequest, invoiceFor, network = 'testnet',
@@ -312,8 +321,11 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   // THIS SEAT'S CHAIN HEIGHT (kanban #1159): what `heightNow` says, else the height its last pass ran at
   let lastHeight = null;
   const tipNow = () => { let h = null; try { h = Number(heightNow()); } catch { h = null; } return Number.isInteger(h) && h > 0 ? h : lastHeight; };
-  const unspent = (fed, alsoBy = null) => (reserveRows(fed) || []).filter((r) => { const s = spentBy(r.outpoint); return !s || (alsoBy && s === alsoBy); })
+  // `withUnknown` (kanban #1409): also the rows whose round this seat cannot read - a co-signer's check and the "could they cover it" test; a
+  // coordinator picks from the rows it knows only
+  const unspent = (fed, alsoBy = null, withUnknown = false) => (reserveRows(fed) || []).filter((r) => { if (r.unknown && !withUnknown) return false; const s = spentBy(r.outpoint); return !s || (alsoBy && s === alsoBy); })
     .sort((a, b) => (a.verifiedMs - b.verifiedMs) || (a.outpoint < b.outpoint ? -1 : 1));
+  const unknownHeld = (fed) => unspent(fed, null, true).filter((r) => r.unknown);
   const recordResent = new Set();
   const recordOf = (r) => ({ proposal: r.proposal, planId: r.plan_id, federation: r.federation, state: r.state, plan: planOfRow(r), txid: r.txid,
     preimage: r.preimage, refundTxid: r.refund_txid, why: r.why, claimTxid: r.claim_txid || null, claimMsat: r.claim_msat || null });
@@ -405,7 +417,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     const had = rowOf(plan.proposal);
     if (had && had.plan_id !== pid && !late && !laterAttempt(had, plan)) return refuse(`a payout of that proposal is already ${had.state} here (plan ${String(had.plan_id || '-').slice(0, 16)}): no second plan`, 409);
     if (attemptOf(plan) < 0 || plan.nonce !== toHex(nonceOf(plan.proposal, attemptOf(plan)))) return refuse('the plan carries another nonce than the proposal\'s for its attempt');
-    const own = new Map(unspent(plan.federation).map((r) => [r.outpoint, r]));
+    const own = new Map(unspent(plan.federation, null, true).map((r) => [r.outpoint, r]));   // rows whose round this seat cannot read too (kanban #1409)
     const seen = new Set();
     for (const x of plan.refunds || []) {
       if (seen.has(x.outpoint)) return refuse('an input twice'); seen.add(x.outpoint);
@@ -487,7 +499,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     if (had && had.plan_id !== pid && !late && !laterAttempt(had, plan)) return refuse(`a payout of that request is already ${had.state} here (plan ${String(had.plan_id || '-').slice(0, 16)}): no second plan`, 409);
     if (attemptOf(plan) < 0 || plan.nonce !== toHex(nonceOf(plan.proposal, attemptOf(plan)))) return refuse('the plan carries another nonce than the request\'s for its attempt');
     if (!Array.isArray(plan.winners) || !plan.winners.length) return refuse('a leaderboard payout pays at least one winner');
-    const own = new Map(unspent(plan.federation).map((r) => [r.outpoint, r]));
+    const own = new Map(unspent(plan.federation, null, true).map((r) => [r.outpoint, r]));   // rows whose round this seat cannot read too (kanban #1409)
     const seen = new Set();
     for (const x of plan.refunds || []) {
       if (seen.has(x.outpoint)) return refuse('an input twice'); seen.add(x.outpoint);
@@ -748,6 +760,8 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       const held = have.reduce((t, x) => t + BigInt(x.amountMsat), 0n);
       needs[fed] = { held: String(held), need: String(contractMsat + lnv2FeeMsat(fees, contractMsat)) };
       if (payAmountsCover(have, contractMsat, fees)) return { payer: fed, needs, unread };
+      // rows whose round this seat cannot read (kanban #1409) might cover it: not a shortfall - another guardian's turn reads them
+      if (unknownHeld(fed).length && payAmountsCover(unspent(fed, null, true), contractMsat, fees)) unread.push(`${fed.slice(0, 8)}: rows whose round this seat cannot read would cover it`);
     }
     return { payer: null, needs, unread };
   }
@@ -1006,8 +1020,10 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         const fees = await port.fees();
         const have = unspent(lb.federation);
         const heldSats = have.reduce((t, x) => t + BigInt(x.amountMsat), 0n) / 1000n;
+        // rows whose round this seat cannot read (kanban #1409): never a SHORT while they exist - asked again, and another guardian's turn reads them
+        const unknownNow = unknownHeld(lb.federation).length;
         const cap = leaderboardCap({ amountSats: lb.amountSats, reservesSats: heldSats });
-        if (!cap.ok) { out.push(short(cap.why)); continue; }
+        if (!cap.ok) { out.push(unknownNow ? { id: lb.id, ok: false, why: `not decided this pass: ${unknownNow} reserve row(s) whose round this seat cannot read` } : short(cap.why)); continue; }
         // THE WINNERS (kanban #1153): this seat's own read frozen once, merged with every guardian peer's frozen evidence, so the plan
         // holds every signed round any co-signer counts; each co-signer checks that list on the evidence and persists it before it commits
         const theirs = (await Promise.all((g.peers || []).map(async (p) => { try { return typeof p.winners === 'function' ? await p.winners(lb.id) : null; } catch { return null; } })))
@@ -1019,7 +1035,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         const inputs = [];
         for (const x of have) { inputs.push({ outpoint: x.outpoint, amountMsat: String(x.amountMsat) }); if (leaderboardAmounts({ inputs, winners, fees }).covers) break; }
         const amounts = leaderboardAmounts({ inputs, winners, fees });
-        if (!amounts.covers) { out.push(short(`the reserves there (${heldSats} sat) do not cover ${lb.amountSats} sat and the fees`)); continue; }
+        if (!amounts.covers) { out.push(unknownNow ? { id: lb.id, ok: false, why: `not decided this pass: ${unknownNow} reserve row(s) whose round this seat cannot read` } : short(`the reserves there (${heldSats} sat) do not cover ${lb.amountSats} sat and the fees`)); continue; }
         plan = { kind: 'leaderboard', proposal: lb.id, federation: lb.federation, reserveKey: toHex(g.key), amountSats: String(lb.amountSats), winners,
           rounds: w.pairs, winnersId: w.winnersId, refunds: inputs, changeMsat: String(amounts.changeMsat), nonce: toHex(nonceOf(lb.id, attempt)), ...(attempt ? { attempt: String(attempt) } : {}) };
         const st = await planStands(plan, { evidence: w.evidence });
