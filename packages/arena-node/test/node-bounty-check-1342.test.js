@@ -71,3 +71,20 @@ test('#1426 N7 a team node\'s signed statement relayed by an outside seat is sti
   console.log('  MEASURED #1426 N7: team node relayed (newer copy) by an outside seat -> outside check', r.checks.find((c) => c.key === 'outside').ok);
   assert.equal(r.checks.find((c) => c.key === 'outside').ok, false);
 });
+
+// KANBAN #1428 (audit 7, high): a team seat that answers /owner unsigned (every release before 2026.1.9.27) passed "Not a team node" - the team-host
+// test read only signed statements. An unsigned answer at a team host now makes it a team node; a node listed nowhere unsigned stays outside
+test('#1428 a team seat answering /owner unsigned is a team node; #1429 the node naming another owner is flagged', async () => {
+  const served = (url) => { const from = Number(new URL(url).searchParams.get('from')), dayAgo = Math.round((Math.floor(NOW / DAY) * DAY - from) / DAY);
+    return { held: dayAgo >= 1 && dayAgo <= 3 ? [{ roundId: `r${dayAgo}`, committee: [NODE], finals: [NODE] }] : [] }; };
+  const unsigned = async (url) => (url.endsWith('/owner') ? { node: NODE, claimed: false } : served(url));
+  const atTeam = await nodeBountyCheck({ node: NODE, npub: 'ab'.repeat(32), seats: ['http://127.0.0.1:1'], fetchJson: unsigned, nowMs: NOW, teamHosts: ['127.0.0.1'] });
+  const outside = await nodeBountyCheck({ node: NODE, npub: 'ab'.repeat(32), seats: ['https://seat.example'], fetchJson: unsigned, nowMs: NOW, teamHosts: ['127.0.0.1'] });
+  const named = await nodeBountyCheck({ node: NODE, npub: 'ab'.repeat(32), seats, fetchJson: async (u) => (u.endsWith('/owner') ? said(OTHER, NOW - 1000) : served(u)), nowMs: NOW });
+  const mine = await nodeBountyCheck({ node: NODE, npub: OTHER, seats, fetchJson: async (u) => (u.endsWith('/owner') ? said(OTHER, NOW - 1000) : served(u)), nowMs: NOW });
+  const none = await nodeBountyCheck({ node: NODE, seats: ['https://seat.example'], fetchJson: unsigned, nowMs: NOW });
+  console.log('  MEASURED #1428/#1429:', JSON.stringify({ teamUnsigned: atTeam.passes, outsideUnsigned: outside.passes, otherOwner: named.owner.other, ownOwner: mine.owner.other, noOwner: none.owner.other }));
+  assert.equal(atTeam.passes, false); assert.equal(atTeam.checks.find((c) => c.key === 'outside').ok, false);
+  assert.equal(outside.passes, true, 'an outside node on an older release (unsigned) still qualifies');
+  assert.deepEqual([named.owner.other, mine.owner.other, none.owner.other], [true, false, false]);
+});
