@@ -53,6 +53,21 @@ test('the page keeps only after the login, and drops a refused key in start()', 
   const refused = HTML.slice(HTML.indexOf('if (state.owner !== mine) {'), HTML.indexOf('return area();'));
   assert.match(refused, /held = null; me = null;/);
   assert.match(refused, /Nothing was kept in this browser/);
-  const writes = HTML.split('\n').filter((l) => /localStorage\.setItem/.test(l));
-  assert.deepEqual(writes.filter((l) => !/d\.seed|d\.secret|k\.seed|k\.secret|held\.seed/.test(l)), [], 'every write is the installer hand-over or keepHeld');
+  // THE HAND-OVER WRITES THROUGH keep() (audit 8, commit 39cb10c31, kanban #1433: the installer's key hand-off is "taken only from a loopback
+  // origin ... and never over a key this browser already keeps"): keep() is the one setItem that is not keepHeld's, it writes only where nothing is
+  // kept, every call of it carries a hand-over key (d.* / k.*), and the hand-over is read only from the installer on this machine
+  const lines = HTML.split('\n');
+  const keepDef = lines.filter((l) => /const keep = \(k, v\) =>/.test(l));
+  assert.equal(keepDef.length, 1, 'one keep() helper');
+  assert.match(keepDef[0], /if \(!localStorage\.getItem\(k\)\) localStorage\.setItem\(k, v\)/, 'keep() never writes over a kept key');
+  const keeps = lines.filter((l) => /\bkeep\(/.test(l) && !/const keep = /.test(l));
+  assert.ok(keeps.length >= 4, `the hand-over keeps seed and nsec, for the page and per node (${keeps.length})`);
+  assert.deepEqual(keeps.filter((l) => !/d\.seed|d\.secret|k\.seed|k\.secret/.test(l)), [], 'keep() is called only with a hand-over key');
+  const handoff = HTML.slice(HTML.indexOf("const handoff = HASH.has('owner-handoff')"), HTML.indexOf("removeEventListener('message', on)"));
+  assert.ok(handoff.indexOf('127\\.0\\.0\\.1') > 0 && handoff.indexOf('127\\.0\\.0\\.1') < handoff.indexOf('keep('), 'only from the installer on the loopback address');
+  // THE BOUNTY'S LIGHTNING ADDRESS (commit d40f6e845, kanban #1342, Daniel 2026-11-10: "ich brauch da die selben Felder wie im Frontend"): the payout
+  // address the node feedback form remembers under the game page's own key 'arena.feedback.ln' - an address to be paid at, never a key or a secret
+  const writes = lines.filter((l) => /localStorage\.setItem/.test(l));
+  assert.deepEqual(writes.filter((l) => !/held\.seed/.test(l) && !keepDef.includes(l) && !/localStorage\.setItem\('arena\.feedback\.ln', lnAddress\)/.test(l)), [],
+    'every write is the installer hand-over (keep), keepHeld, or the bounty Lightning address');
 });

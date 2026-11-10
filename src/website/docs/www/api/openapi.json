@@ -2,7 +2,7 @@
  "openapi": "3.0.3",
  "info": {
   "title": "Bitcoin Arena node API",
-  "version": "2026-11-10",
+  "version": "2026-11-11",
   "description": "Every request a Bitcoin Arena node (`arena-node`) answers, generated from `packages/arena-node/src/server.js` by `src/website/docs/gen-docs.py`. Concepts and guides: https://docs.bitcoinarena.io/"
  },
  "servers": [
@@ -3433,6 +3433,41 @@
      }
     },
     "x-changes-state": true
+   }
+  },
+  "/funding-items": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "A proposal's signals and fee approvals",
+    "description": "The signals and fee approvals this seat holds for one funding proposal, as signed, each with when this seat first held it (atMs). A seat pulls them from every network seat it reaches before it decides a fee proposal or a signal, so every seat decides on the same set (kanban #1231, #1279).\n\nAccess: none\n\nReturns: 200 JSON {proposal, items[{kind, hex, atMs}]}; 400\n\nSource: `packages/arena-node/src/server.js` line 10118.",
+    "operationId": "get_funding_items",
+    "parameters": [
+     {
+      "name": "proposal",
+      "in": "query",
+      "required": true,
+      "description": "Proposal id, 64 hex (32 bytes).",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{proposal, items: [{kind: signal|fee-approval, hex: the signed record, atMs}]}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "No proposal id, or not 64 hex.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
    }
   },
   "/game-donation-set": {

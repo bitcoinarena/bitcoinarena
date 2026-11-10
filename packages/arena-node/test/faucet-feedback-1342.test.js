@@ -285,8 +285,11 @@ test('#1342 node feedback from a node\'s own owner page: any origin may write a 
   } finally { faucet.kill(); chat.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-// THE NODE BOUNTY IN THE REVIEW LIST (Daniel 2026-11-08): the checklist beside a node report, read from the seats; approve at level "node" only when it passes
-test('#1342 a node report: the review list reads its checklist from the seats; "node" approves 20,000 when it passes and is refused when the owner is another key', async () => {
+// THE NODE BOUNTY IN THE REVIEW LIST (Daniel 2026-11-08): the checklist beside a node report, read from the seats; approve at level "node" only when it passes.
+// Since 6db00e733 (Daniel 2026-11-10: "1 tag online reicht. npub muss nicht sein", "Jeder kriegt einmalig 10000 sats extra wenn er eine node startet") the
+// base is 10,000 and the owner key is no condition of the checklist, only a hint to the reviewer (`owner`); and since 5211e030d (audit 7, kanban #1429)
+// the approve still refuses a report whose node's own signed statement names another owner (owner.other).
+test('#1342 a node report: the review list reads its checklist from the seats; "node" approves 10,000 when it passes and is refused when the node names another owner', async () => {
   const { createHash } = await import('node:crypto');
   const dir = mkdtempSync(join(tmpdir(), 'faucet-node-1342-'));
   const dave = key(4), erin = key(5);
@@ -327,11 +330,14 @@ test('#1342 a node report: the review list reads its checklist from the seats; "
     const daveOk = await act({ id: ids.dave, action: 'approve', amountSats: null, severity: 'node' });
     const erinNo = await act({ id: ids.erin, action: 'approve', amountSats: null, severity: 'node' });
     const facts = { dave: [daveCheck.passes, daveCheck.checks.filter((c) => !c.ok).map((c) => c.key)], erin: [erinCheck.passes, erinCheck.checks.filter((c) => !c.ok).map((c) => c.key)],
-      daveApproved: daveOk.ok && daveOk.report.amountSats, erinRefused: erinNo.why };
+      owner: { dave: daveCheck.owner && [daveCheck.owner.ok, daveCheck.owner.other], erin: erinCheck.owner && [erinCheck.owner.ok, erinCheck.owner.other] },
+      daveApproved: daveOk.ok && daveOk.report.amountSats, erinApproved: erinNo.ok, erinRefused: erinNo.why };
     console.log('  FACTS #1342 node bounty:', JSON.stringify(facts));
     assert.deepEqual(facts.dave, [true, []]);
-    assert.deepEqual(facts.erin, [false, ['owner']]);
-    assert.equal(facts.daveApproved, 20000);
-    assert.match(facts.erinRefused, /checklist does not pass: Owner key = your npub/);
+    assert.deepEqual(facts.erin, [true, []], 'the owner key is no condition of the checklist (6db00e733)');
+    assert.deepEqual(facts.owner, { dave: [true, false], erin: [false, true] }, 'the reviewer is told who owns the node');
+    assert.equal(facts.daveApproved, 10000);
+    assert.equal(facts.erinApproved, false, 'a node naming another owner is paid to that owner\'s report only');
+    assert.match(facts.erinRefused, /the node names another owner: its bounty goes to that owner's report/);
   } finally { faucet.kill(); seat.close(); chat.close(); rmSync(dir, { recursive: true, force: true }); }
 });
