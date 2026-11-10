@@ -67,6 +67,8 @@
 <script>
 (() => {
   const API = '/api/faucet/feedback/admin';
+  // the sats each level pays, from the faucet's own table (the list answers them): picking a level fills the amount in (Daniel 2026-11-10)
+  let LEVELS = [];
   const $ = (id) => document.getElementById(id);
   const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (k === 'text') e.textContent = v; else if (k === 'cls') e.className = v; else e.setAttribute(k, v); } for (const c of kids) if (c) e.append(c); return e; };
   const sats = (n) => `${Number(n || 0).toLocaleString('en')} sat`;
@@ -97,7 +99,7 @@
     say('Reading…');
     let j; try { j = await call(`list?${q}`); } catch (e) { return say(e.message, true); }
     if (!j.ok) return say(j.why || 'not read', true);
-    show(true); budget(j.budget);
+    show(true); budget(j.budget); if (Array.isArray(j.levels)) LEVELS = j.levels;
     const tb = $('rows'); tb.replaceChildren();
     for (const r of j.reports) {
       const who = el('td', {}, el('code', { text: `${r.pubkey.slice(0, 12)}…` }), el('div', { cls: r.ours ? 'warn' : r.played ? 'dim' : 'bad', text: r.ours ? 'ours' : r.played ? 'played' : 'no finished round' }));
@@ -140,6 +142,8 @@
     const amount = el('input', { type: 'number', min: '100', step: '100', placeholder: 'sat', size: '8' });
     const sev = el('select', {}, ...[...(r.source === 'node' ? ['node'] : []), 'useful', 'low', 'medium', 'high', 'critical'].map((x) => el('option', { text: x })));
     const crit = el('input', { type: 'checkbox' });
+    const fill = () => { const l = LEVELS.find((x) => x.level === sev.value); if (l) amount.value = String(l.sats); };
+    sev.addEventListener('change', fill); fill();
     const reason = el('input', { placeholder: 'reason the player reads', size: '30' });
     const dupOf = el('input', { placeholder: 'earlier report id', size: '24' });
     const ticket = el('input', { placeholder: '#ticket', size: '8' });

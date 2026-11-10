@@ -300,7 +300,9 @@ createServer((req, res) => {
       return { ...r, ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
     if (path === '/feedback/admin/list' && req.method === 'GET') {
       PLAYED.fresh().catch(() => 0).then(() => { const ours = ourKeys();
-        send(200, { ok: true, reports: FEEDBACK.list({ state: q.get('state'), type: q.get('type'), game: q.get('game'), pubkey: q.get('pubkey'), source: q.get('source') }).map((r) => withReward(r, ours)), budget: FEEDBACK.budget({ rules: RULES }) }); });
+        send(200, { ok: true, reports: FEEDBACK.list({ state: q.get('state'), type: q.get('type'), game: q.get('game'), pubkey: q.get('pubkey'), source: q.get('source') }).map((r) => withReward(r, ours)), budget: FEEDBACK.budget({ rules: RULES }),
+          // THE SATS EACH LEVEL PAYS (Daniel 2026-11-10: "Da muss er auch die sats automatisch ausfüllen die wir definiert haben"): the review form fills them in
+          levels: [...REWARD_LEVELS.map((l) => ({ level: l.level, sats: l.sats })), { level: 'node', sats: NODE_BOUNTY_BASE_SATS }] }); });
       return undefined;
     }
     // A NODE REPORT'S BOUNTY CHECKLIST (kanban #1342): the node and the reporter's key read live from the seats, for the review list (admin code, any origin)
