@@ -6,7 +6,7 @@
 // from -), the seed (seed.hex) and the seat's database (node.db and the files main.js keeps beside it). Every file is the user's only
 // (0600, the directory 0700). An update keeps this directory as it is; the release is elsewhere.
 import { port, INSTANCE, PORT_OFFSET, homeDefault } from './instance.js';
-import { envToConfValues, formatConf } from '../../arena-node/src/arena-conf.js';
+import { envToConfValues, formatConf, parseConf, setInConf, unsetInConf } from '../../arena-node/src/arena-conf.js';
 import { appsIn, appsEnvValue, chosenApps } from './apps.js';
 import { mkdirSync, readFileSync, renameSync, existsSync, chmodSync, openSync, writeSync, fsyncSync, closeSync, unlinkSync, statSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -260,4 +260,42 @@ export function seatConf(s, { home, release, platform = process.platform }) {
   if (INSTANCE) values.instance = INSTANCE;
   if (PORT_OFFSET) values.port_offset = String(PORT_OFFSET);
   return formatConf(values, { eol: platform === 'win32' ? '\r\n' : '\n' });
+}
+
+/**
+ * THE KEYS SEATCONF WRITES (kanban #1442, settings audit 8 O8-3): what the installer derives from state.json. A rewrite sets these and
+ * takes out the ones the state no longer gives (a role dropped, Core in place of the chain bridge); instance and port_offset are only
+ * ever set, never taken out (a program started without --home's instance must not turn a second node into the first).
+ */
+export const SEAT_CONF_KEYS = Object.freeze(['network', 'port', 'database', 'bind', 'public_url', 'roles', 'instance', 'port_offset', 'bitcoind_url',
+  'bitcoind_cookie', 'apps', 'plugins_dir', 'donation_network', 'close_at_end', 'gateway_port', 'gateway_claim_file', 'founding', 'fedimintd',
+  'fedimint_cli', 'stake_lock_bin', 'federation_client_dir', 'fedimint_ram', 'guardian_endpoint', 'guardian_bitcoind_url', 'guardian_bitcoind_cookie',
+  'liquidity_claim_file', 'liquidity_provider_url', 'machine_name']);
+const NEVER_UNSET = new Set(['instance', 'port_offset']);
+
+/**
+ * ARENA.CONF REWRITTEN, NOT REGENERATED (kanban #1442, settings audit 8 O8-3: "Become a liquidity provider", the owner page's reach /
+ * custody / chain switch and every "Install and start" wrote seatConf over the file, and the owner's own `bitcoinarena config set`
+ * values - auto_update=0, duty_post=off, seating=0, latest_url, log_level - were gone, so the node updated itself, posted rounds and
+ * was seated again): `existing` (the file as it is) with the installer's own keys set from `fresh` (seatConf's text) and the ones
+ * fresh no longer has taken out; every other key, and every comment, as the owner left it. No file yet: `fresh` as it is.
+ */
+export function mergeSeatConf(existing, fresh) {
+  if (!Object.keys(parseConf(existing).values).length) return fresh;
+  const want = parseConf(fresh).values;
+  const eol = /\r\n/.test(String(fresh)) || /\r\n/.test(String(existing)) ? '\r\n' : '\n';
+  let text = String(existing);
+  if (!text.endsWith('\n')) text += eol;
+  for (const k of new Set([...SEAT_CONF_KEYS, ...Object.keys(want)])) {
+    if (want[k] !== undefined) text = setInConf(text, k, want[k], { eol });
+    else if (!NEVER_UNSET.has(k) && k in parseConf(text).values) text = unsetInConf(text, k);
+  }
+  return text;
+}
+
+/** seatConf written to the node's arena.conf through mergeSeatConf (kanban #1442): what every writer of the file calls. Answers the text. */
+export function writeSeatConf(state, s, opts) {
+  const text = mergeSeatConf(state.exists('arena.conf') ? readFileSync(state.path('arena.conf'), 'utf8') : '', seatConf(s, opts));
+  state.writeSecret('arena.conf', text);
+  return text;
 }
