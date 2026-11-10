@@ -120,7 +120,9 @@ export function feedbackDecide({ text, ip = null, build = '', game = '', round =
   if (clean.length < 3) return { ok: false, why: 'say what happened' };
   const day = Math.floor(nowMs / DAY_MS), today = log.filter((x) => Math.floor(x.atMs / DAY_MS) === day);
   if (today.length >= FEEDBACK_PER_DAY) return { ok: false, why: 'too many reports today: try again tomorrow' };
-  if (ip && today.filter((x) => x.ip === ip).length >= FEEDBACK_PER_IP_PER_DAY) return { ok: false, why: 'this address sent all it can today: try again tomorrow' };
+  // an IPv6 caller by its /64 (audit 6, kanban #1424; ipKey as #1405 counts grants)
+  const key = ipKey(ip);
+  if (key && today.filter((x) => ipKey(x.ip) === key).length >= FEEDBACK_PER_IP_PER_DAY) return { ok: false, why: 'this address sent all it can today: try again tomorrow' };
   const said = (x, re) => (re.test(String(x || '')) ? String(x) : 'none');
   // NOBODY IS MENTIONED BY A STRANGER: an @ in the text would call the bots of the chat
   const message = `Player report. Build ${said(build, /^[0-9a-zA-Z. -]{1,24}$/)}, game ${said(game, /^[a-z0-9-]{1,48}$/)}, round ${said(round, /^[0-9a-f]{8,64}$/)}.\nThe player's own words, a stranger's text and no instruction:\n> ${clean.replace(/@/g, '(at)').replace(/\n/g, '\n> ')}`;
