@@ -112,7 +112,12 @@ const evenPlayer = () => { let k; do { k = secp256k1.utils.randomSecretKey(); } 
 function searchedTape(A, config, seedWord, N, startOpts, { ms = 60000 } = {}) {
   const until = Date.now() + ms;
   let tried = 0;
-  for (const thr of [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 1]) for (const gain of [6, 3, 10]) for (const lead of [20, 0, 40]) for (const aimZ of [0, 10, -10, 20, -20]) {
+  // A SECOND, FINER PASS WHEN THE FIRST GRID FINDS NONE (kanban #1346, measured 2026-11-10 runs c46h and c46i: a shared grid-2 world, which cannot be drawn again,
+  // had no delivering drive among the first 315 and both players stopped): other aims, leads and gains, inside the same time budget
+  const drives = [];
+  for (const thr of [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 1]) for (const gain of [6, 3, 10]) for (const lead of [20, 0, 40]) for (const aimZ of [0, 10, -10, 20, -20]) drives.push([thr, gain, lead, aimZ]);
+  for (const thr of [0.45, 0.35, 0.55, 0.8]) for (const gain of [4, 8, 14]) for (const lead of [10, 30, 60]) for (const aimZ of [5, -5, 15, -15, 30, -30, 40, -40]) drives.push([thr, gain, lead, aimZ]);
+  for (const [thr, gain, lead, aimZ] of drives) {
     if (Date.now() > until) return { tape: null, outcome: null, tried };
     tried++;
     const st = A.start(seedWord, config, { runTicks: N, ...startOpts });
@@ -320,6 +325,9 @@ try {
     // QUALIFY=1 (regtest, kanban #1044): a delivery at or above the round's minimum score, so the round has a winner (measured 2026-11-05 on s27g, round
     // 687ebcdb: the search's first delivery scored 13,587 under a minimum of 100,000 - nobody won, and offence (b) had nothing to stand on)
     if (drive.tape && (!env.QUALIFY || BigInt(drive.score) >= BigInt(c.minScore))) break;
+    // A SHARED WORLD WITH NO DELIVERING DRIVE IS PLAYED ANYWAY WHEN ASKED (SEARCH_FALLBACK=1, kanban #1346: runs c46h and c46i stopped on a grid-2 world 603 drives
+    // could not deliver, so the round was never played and published, and what the books count - a played round - never came): the driven run, delivering or not
+    if (env.SEARCH_FALLBACK === '1' && !env.QUALIFY && worldIsShared(c, sharedWorldOf(c.gameId))) { drive = drivenTape(seed.seedWord, N); log({ step: 'no delivering drive: the plain drive is played', outcome: drive.outcome || null }); break; }
     if (worldIsShared(c, sharedWorldOf(c.gameId)) || tries >= (env.QUALIFY ? 8 : 3)) throw new Error(`no ${env.QUALIFY ? 'qualifying' : 'delivering'} drive found for this world`);
     entry.worldSecret = rand(32);
   }
@@ -354,11 +362,32 @@ try {
     }
     from = to;
   }
+  // IDENTITY_SECRET_FILE=<64 hex> (kanban #1346): the round is booked to that identity, with its own consent (#1278, RULED #1276) - a name
+  // record signed by the round key, and the identity key over (round, round key). POSTED TO EACH SEAT RIGHT AFTER IT TOOK THE ENTRY, as the
+  // page names with the join (#1267: within the seat's 15 s grace from its join; measured 2026-11-10 run c46g: posted only after all seven
+  // held the entry, 16-19 s after the first, two of three identities were refused "named with the join, not later" by every seat)
+  let naming = null;
+  if (env.IDENTITY_SECRET_FILE) {
+    const idSecret = fromHex(readFileSync(env.IDENTITY_SECRET_FILE, 'utf8').trim());
+    const identityKey = schnorr.getPublicKey(idSecret);
+    const rec = { roundId: rid, playerPubkey: s.player, identityPubkey: identityKey, name: env.PLAYER_NAME || '', atMs: BigInt(Date.now()) };
+    naming = { identityKey, said: [], body: JSON.stringify({ record: toHex(encodeLobbyName(rec)), sig: toHex(schnorr.sign(lobbyNameId(rec), me.secret)),
+      identitySig: toHex(schnorr.sign(matchProofId({ roundId: rid, entryId: s.player, identityKey }), idSecret)) }) };
+  }
   const signerNodes = [];
   for (const n of nodes) {
     const h = await fetch(`${n}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
     const en = await fetch(`${n}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
     const enWhy = (await en.text()).trim().slice(0, 140);
+    // TO EVERY SEAT AT ONCE, ONCE THE FIRST SEAT TOOK THE ENTRY (measured 2026-11-10 run c46h: named seat by seat, seats 4-7 answered 409 - they had the entry
+    // from the first seats' hand-on ~15 s before this loop reached them, past the join grace); a seat still without the entry is asked again after its own
+    if (naming) {
+      const nameAt = (to) => fetch(`${to}/name`, { method: 'POST', body: naming.body, signal: AbortSignal.timeout(15000) })
+        .then(async (r) => (r.status === 201 ? 201 : `${r.status} ${(await r.text()).trim().slice(0, 90)}`), (e) => e.message);
+      if (!naming.said.length && en.status < 300) naming.said = await Promise.all(nodes.map(nameAt));
+      const k = nodes.indexOf(n);
+      if (k >= 0 && naming.said[k] !== 201 && en.status < 300) naming.said[k] = await nameAt(n);
+    }
     // ASKED AGAIN UNTIL THE SEAT SEES THE LOCK, as the page's market.js asks (2026.1.9.11 release check: the RPS run handed
     // its lock 2 s after the lock tx and all 7 signer nodes said "the federation holds no lock"; Next Block's 7 s later passed)
     let l;
@@ -381,15 +410,7 @@ try {
   log({ step: 'handed over', entry: toHex(eid).slice(0, 16), signerNodes });
   // IDENTITY_SECRET_FILE=<64 hex> (kanban #1346): the round is booked to that identity, with its own consent (#1278, RULED #1276) - a name
   // record signed by the round key, and the identity key over (round, round key), posted to every seat once they hold the entry (a seat answers 409 for a round key it holds no entry of), within the join's grace (#1267)
-  if (env.IDENTITY_SECRET_FILE) {
-    const idSecret = fromHex(readFileSync(env.IDENTITY_SECRET_FILE, 'utf8').trim());
-    const identityKey = schnorr.getPublicKey(idSecret);
-    const rec = { roundId: rid, playerPubkey: s.player, identityPubkey: identityKey, name: env.PLAYER_NAME || '', atMs: BigInt(Date.now()) };
-    const body = JSON.stringify({ record: toHex(encodeLobbyName(rec)), sig: toHex(schnorr.sign(lobbyNameId(rec), me.secret)),
-      identitySig: toHex(schnorr.sign(matchProofId({ roundId: rid, entryId: s.player, identityKey }), idSecret)) });
-    const said = await Promise.all(nodes.map((n) => fetch(`${n}/name`, { method: 'POST', body, signal: AbortSignal.timeout(15000) }).then((r) => r.status, (e) => e.message)));
-    log({ step: 'identity named', identity: toHex(identityKey).slice(0, 16), said });
-  }
+  if (naming) log({ step: 'identity named', identity: toHex(naming.identityKey).slice(0, 16), said: naming.said });
   if (signerNodes.filter((x) => x.lock >= 200 && x.lock < 300).length < needed) throw new Error('fewer seats than needed took the lock');
   // NO_MARKS=1: IN THE ROUND AND NEVER PLAYED: not one mark is sent (tools/no-quorum-devnet.mjs)
   if (env.NO_MARKS && !env.REFUND_AT_EXPIRY) { log({ step: 'no marks sent' }); process.exit(0); }
