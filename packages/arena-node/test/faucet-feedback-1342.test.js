@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { eventId } from '../src/nostr-relay.js';
 import { FEEDBACK_KIND, HTTP_AUTH_KIND } from '../src/feedback-store.js';
+import { ownerStatementMessage } from '../src/owner.js';
 
 const hex = (b) => Buffer.from(b).toString('hex');
 const key = (n) => { const secret = new Uint8Array(32).fill(n); return { secret, pubkey: hex(schnorr.getPublicKey(secret)) }; };
@@ -289,12 +290,14 @@ test('#1342 a node report: the review list reads its checklist from the seats; "
   const { createHash } = await import('node:crypto');
   const dir = mkdtempSync(join(tmpdir(), 'faucet-node-1342-'));
   const dave = key(4), erin = key(5);
-  const NODE = 'ab'.repeat(32), NODE2 = 'cd'.repeat(32);
+  // the node signs its owner statement (kanban #1418): a node key with its secret
+  const NODE_SECRET = new Uint8Array(32).fill(0x4d), NODE = Buffer.from(schnorr.getPublicKey(NODE_SECRET)).toString('hex'), NODE2 = 'cd'.repeat(32);
   let seatBase = '';
   const seat = createServer((req, res) => {
     const u = new URL(req.url, 'http://x'); res.writeHead(200, { 'content-type': 'application/json' });
     if (u.pathname === '/network-games') return res.end(JSON.stringify({ seats: [{ seat: seatBase }], games: [] }));
-    if (u.pathname === '/owner') return res.end(JSON.stringify({ node: NODE, claimed: true, owner: dave.pubkey }));
+    if (u.pathname === '/owner') { const atMs = Date.now(); return res.end(JSON.stringify({ node: NODE, claimed: true, owner: dave.pubkey,
+      statement: { atMs, sig: Buffer.from(schnorr.sign(ownerStatementMessage({ node: NODE, owner: dave.pubkey, atMs }), NODE_SECRET)).toString('hex') } })); }
     if (u.pathname === '/served') { const from = u.searchParams.get('from'); return res.end(JSON.stringify({ held: [{ roundId: `r${from}`, committee: [NODE, NODE2], finals: [NODE] }] })); }
     return res.end(JSON.stringify({ rows: [] }));
   });
