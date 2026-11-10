@@ -1635,7 +1635,7 @@
     <button id="arena-shop-go" type="button" title="Shop: this game's items, bought once and kept" aria-label="Shop"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h11l-1 8h-9z"/><path d="M5.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"/></svg><span class="word">Shop</span></button>
     <button id="arena-settings-go" type="button" title="Settings">&#9881;</button>
     <div id="arena-nav" class="arena-nav"><button id="arena-nav-go" class="arena-nav-go" type="button" aria-label="Menu" aria-expanded="false" aria-controls="arena-nav-menu">&#9776;</button>
-      <nav id="arena-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoinarena.io/">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a><a class="arena-nav-nostr" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)">Nostr: bitcoinarena.io &#10003;</a></nav></div>
+      <nav id="arena-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoinarena.io/">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a><a class="arena-nav-mine" href="?feedback=mine">My Feedback</a><a class="arena-nav-nostr" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)">Nostr: bitcoinarena.io &#10003;</a></nav></div>
     <div id="arena-hdr-why" role="status"></div>
   </div>
   <!-- SETTINGS, ITS OWN SCREEN (2026-09-25 21:16: "The wallet page belongs in the settings screen. Deposit,
@@ -1651,7 +1651,7 @@
     <button id="arena-wb-season" type="button" title="Leaderboard" aria-label="Leaderboard"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg><span class="word">Leaderboard</span></button>
     <button id="arena-wb-gear" type="button" title="Settings">&#9881;</button>
     <div id="arena-wb-nav" class="arena-nav"><button id="arena-wb-nav-go" class="arena-nav-go" type="button" aria-label="Menu" aria-expanded="false" aria-controls="arena-wb-nav-menu">&#9776;</button>
-      <nav id="arena-wb-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoinarena.io/">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a><a class="arena-nav-nostr" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)">Nostr: bitcoinarena.io &#10003;</a></nav></div>
+      <nav id="arena-wb-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoinarena.io/">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a><a class="arena-nav-mine" href="?feedback=mine">My Feedback</a><a class="arena-nav-nostr" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)">Nostr: bitcoinarena.io &#10003;</a></nav></div>
     <div id="arena-wb-why" role="status"></div>
   </div>
   <div id="arena-withdraw" role="dialog" aria-modal="true" aria-labelledby="arena-withdraw-title"><div class="wd-head"><h3 id="arena-withdraw-title">Withdraw</h3><button type="button" class="wd-close" aria-label="Close">&times;</button></div><div class="wd-body"></div></div>
@@ -1873,7 +1873,11 @@
           }
         }).catch(() => {});
       }
-      d.append(el('div', { cls: 'card' }, el('h3', { text: 'Feedback' }), el('p', { text: 'Your words, the build and the game are sent. No amounts, and no private key.' }), type, t, count, x, ln, shotRow, tick, say, levels, el('div', { cls: 'row' }, off, send)));
+      // MY FEEDBACK FROM HERE TOO (Daniel 2026-11-10: "My feedback fehlt wo der User sein eigenes Feedback sieht"): it was only in Settings; the dialog the
+      // footer's Feedback opens now has it next to Cancel, and the thank-you line opens it
+      const mineBtn = el('button', { type: 'button', cls: 'off', text: 'My feedback' });
+      mineBtn.onclick = () => { d.remove(); if (window.ARENA_MY_FEEDBACK) window.ARENA_MY_FEEDBACK(); };
+      d.append(el('div', { cls: 'card' }, el('h3', { text: 'Feedback' }), el('p', { text: 'Your words, the build and the game are sent. No amounts, and no private key.' }), type, t, count, x, ln, shotRow, tick, say, levels, el('div', { cls: 'row' }, mineBtn, off, send)));
       const LEAST = 50;
       const recount = () => { const n = t.value.trim().length; count.textContent = n < LEAST ? (LEAST - n) + ' more characters' : n + ' characters'; count.className = 'fb-count' + (n < LEAST ? ' short' : ''); send.disabled = n < LEAST; };
       t.addEventListener('input', recount); recount();
@@ -1933,6 +1937,7 @@
           if (!j.ok) throw new Error(j.why || 'not sent');
           if (window.ARENA_TRACK) window.ARENA_TRACK('feedback-sent');
           say.textContent = body.event ? 'Thank you. It is in My feedback, where you see what the team decides.' : 'Thank you, it reached the team.';
+          if (body.event) { say.style.cursor = 'pointer'; say.style.textDecoration = 'underline'; say.onclick = () => { d.remove(); if (window.ARENA_MY_FEEDBACK) window.ARENA_MY_FEEDBACK(); }; }
           t.value = ''; x.value = ''; shot.value = '';
           // THE INVITATION IN PLACE OF THE FORM; Close stays
           for (const n of [type, t, count, x, ln, shotRow, tick, send]) n.remove();
@@ -2018,6 +2023,10 @@
           const open = () => (f === 'mine' ? window.ARENA_MY_FEEDBACK() : window.ARENA_OPEN_FEEDBACK({}));
           if (window.ARENACLIENT) setTimeout(open, 600); else window.addEventListener('load', () => setTimeout(open, 600)); } } catch { /* a page without it */ }
     });
+    // MY FEEDBACK IN THE MENU (Daniel 2026-11-10: "Füge es da hinzu, My Feedback"): opens the list here, menu closed; with no faucet the item goes
+    document.addEventListener('click', (e) => { const a = e.target && e.target.closest ? e.target.closest('a.arena-nav-mine') : null; if (!a || !window.ARENA_MY_FEEDBACK) return;
+      e.preventDefault(); for (const n of document.querySelectorAll('.arena-nav.open')) n.classList.remove('open'); window.ARENA_MY_FEEDBACK(); });
+    window.addEventListener('DOMContentLoaded', () => { if (!window.ARENA_FAUCET_URL) for (const a of document.querySelectorAll('a.arena-nav-mine')) a.remove(); });
     window.ARENA_OPPONENT_URL = window.ARENA_FAUCET_URL ? window.ARENA_FAUCET_URL.replace(/\/player$/, '/opponent') : '';
     // LET BOTS JOIN THE GAMES (kanban #926): on unless a player turned it off, kept in this browser; off, the page names no table to the test opponent
     window.ARENA_BOTS_ON = () => { try { return localStorage.getItem('arena.bots') !== 'off'; } catch { return true; } };
