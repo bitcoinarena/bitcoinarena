@@ -18,7 +18,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, renameSync,
 import { join } from 'node:path';
 import { execFileSync, execFile } from 'node:child_process';
 import { checkAsset } from './release-verify.js';
-import { updateNode, resumeUpdate, readJournal, openJournal, takeUpdateLock } from './update.js';
+import { updateNode, resumeUpdate, readJournal, openJournal, takeUpdateLock, roomForUpdate, freeBytesAt } from './update.js';
 import { nodeOf } from './node-services.js';
 import { QUIET } from '../../arena-node/src/log-level.js';
 import { within, mbOf, progressBar } from './update-progress.js';
@@ -47,6 +47,8 @@ export async function stageOf(node, version, fetcher = fetch) {
 }
 export const autoUpdateOn = (values) => !['0', 'off', 'no', 'false'].includes(String(values.auto_update ?? '1').trim().toLowerCase());
 
+/** The room a release takes before it is moved to (kanban #1440): its archive (about 210 MB) and its unpacked tree (about 550 MB), rounded up. */
+export const RELEASE_ROOM_BYTES = 2 ** 30;
 /** A RELEASE THIS NODE ROLLED BACK IS TRIED AGAIN ONCE A DAY, not every check (kanban #1369, audit 2 #1204 INSTALLER-DOORS-9). */
 export const ROLLED_BACK_RETRY_MS = 24 * 3600_000;
 const recorded = (home) => { try { return JSON.parse(readFileSync(join(home, 'auto-update.json'), 'utf8')); } catch { return null; } };
@@ -70,7 +72,7 @@ export async function checkOnce({ progress = () => {}, ...o }) {
 }
 
 async function updateOnce({ home, latest, fetcher = fetch, platform = process.platform, arch = process.arch, apply = updateNode, force = false, log = () => {},
-  verifyAsset = checkAsset, trace: given = QUIET, say = () => {}, moved = () => {},
+  verifyAsset = checkAsset, trace: given = QUIET, say = () => {}, moved = () => {}, freeBytes = freeBytesAt,
   unpack = (archive, dir) => execFileSync('tar', [archive.endsWith('.zip') ? '-xf' : '-xzf', archive, '-C', dir]) }) {
   // EACH STEP OF THE UPDATE SAID AT --verbose (kanban #693): what is read, fetched and checked, with its time; the decisions at --debug
   const trace = given.tag('update');
@@ -107,6 +109,12 @@ async function updateOnce({ home, latest, fetcher = fetch, platform = process.pl
   const want = (l.latest.assets || {})[name];
   const d = l.latest.download;
   if (!want || !d || !d.base || !d.parts || !Array.isArray(d.parts[name]) || !d.parts[name].length) return { ok: false, why: `release ${v} names no download of ${name} for this system` };
+  // ROOM FOR THE RELEASE AND THE BACKUP, BEFORE ANYTHING IS FETCHED (kanban #1440): a release already unpacked whole needs only the backup's
+  const base0 = name.replace(/\.(tar\.gz|zip)$/, '');
+  const unpackedBefore = (() => { try { return existsSync(join(home, 'releases', base0)) && readFileSync(join(home, 'releases', `.unpacked-${base0}`), 'utf8').trim() === want; } catch { return false; } })();
+  const room = roomForUpdate(home, { extra: unpackedBefore ? 0 : RELEASE_ROOM_BYTES, freeBytes });
+  trace.debug(`free disk space: ${room.free === null ? 'not said by this system' : `${room.free} bytes, ${room.need} needed`}`);
+  if (!room.ok) return { ok: false, why: room.why };
   log(`release ${v} is out (this node runs ${node.version}): fetching ${name} in ${d.parts[name].length} piece(s)`);
   const dir = join(home, 'releases', 'downloads', v);
   mkdirSync(dir, { recursive: true });
@@ -207,7 +215,11 @@ async function updateOnce({ home, latest, fetcher = fetch, platform = process.pl
   };
   t0 = performance.now();
   say(60, `Updating your node to ${v}`);
-  const r = await apply({ home, newRelease, port: node.port, node: join(newRelease, 'runtime', platform === 'win32' ? 'node.exe' : 'node'), installUpdaterFn, trace: given, progress: moved });
+  let r;
+  // AN UPDATE THAT THREW IS RECORDED AS ROLLED BACK TOO (kanban #1440, audit 8 O8-1): without the record the #1369 day's wait never applied, and
+  // every 30 min check stopped the node again
+  try { r = await apply({ home, newRelease, port: node.port, node: join(newRelease, 'runtime', platform === 'win32' ? 'node.exe' : 'node'), installUpdaterFn, trace: given, progress: moved }); }
+  catch (e) { record(home, { ok: false, from: node.version, to: v, why: e.message, rolledBack: true, threw: true, ...(l.latest.commit ? { commit: l.latest.commit } : {}) }); throw e; }
   trace.verbose(`the node moved: ${r.ok ? 'ok' : r.rolledBack ? 'rolled back' : 'not updated'} (${trace.since(t0)})`);
   const out = r.ok ? { ok: true, from: node.version, to: v, backup: r.backup } : { ok: false, from: node.version, to: v, why: r.why, rolledBack: !!r.rolledBack, ...(l.latest.commit ? { commit: l.latest.commit } : {}) };
   record(home, out);
