@@ -1824,7 +1824,12 @@
     const BOUNTY_RULES = 'Reviewed by the team; paid by severity, first report only.';
     const feedbackUrl = () => (window.ARENA_FAUCET_URL ? window.ARENA_FAUCET_URL.replace(/\/player$/, '/feedback') : '');
     const identitySign = (t) => ARENACLIENT.identitySignEvent(t, { storage: window.sessionStorage, random: () => { throw new Error('this tab has no wallet yet'); }, curve: window.ARENA_CURVE });
-    const hasIdentity = () => !!(window.ARENA_IDENTITY && typeof window.ARENA_IDENTITY.pubkey === 'string');
+    // A WALLET IS ENOUGH TO SIGN (Daniel 2026-11-10: "I just entered feedback but don't see it in my own list and also not on the admin list"): the
+    // identity was known only once a game had opened (ARENA_IDENTITY), so a report sent from the games screen went out unsigned - posted to the team's
+    // chat but never kept, numbered or listed. The tab's identity comes from its own seed, as identitySign signs with it
+    const myPubkey = () => { if (window.ARENA_IDENTITY && typeof window.ARENA_IDENTITY.pubkey === 'string') return window.ARENA_IDENTITY.pubkey;
+      try { return ARENACLIENT.tabIdentity({ storage: window.sessionStorage, random: () => { throw new Error('this tab has no wallet yet'); }, curve: window.ARENA_CURVE }).pubkeyHex || null; } catch { return null; } };
+    const hasIdentity = () => !!myPubkey();
     const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (k === 'text') e.textContent = v; else if (k === 'cls') e.className = v; else e.setAttribute(k, v); } for (const c of kids) if (c) e.append(c); return e; };
     window.ARENA_OPEN_FEEDBACK = (ctx = {}) => {
       if (!feedbackUrl() || document.getElementById('arena-feedback')) return;
@@ -1846,7 +1851,7 @@
       ln.className = 'fb-ln';
       try { ln.value = localStorage.getItem('arena.feedback.ln') || ''; } catch { /* this visit only */ }
       const lnOk = (v) => !v || /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(v) || /^lnurl1[02-9ac-hj-np-z]+$/i.test(v);
-      const me = hasIdentity() ? window.ARENA_IDENTITY.pubkey : null;
+      const me = myPubkey();
       const tick = el('label', { cls: 'badge' }, el('input', { type: 'checkbox' }), el('span', { text: ' Send my public key for the Founding Tester badge' }));
       if (!me) tick.hidden = true;
       const say = el('div', { cls: 'say', role: 'status', text: window.ARENA_BOUNTY_ON
