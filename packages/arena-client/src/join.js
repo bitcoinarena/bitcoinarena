@@ -24,6 +24,7 @@
 import { decodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
 import { takesAnyFederation, FRONTEND_FEE_VERSION, ITEMS_VERSION } from '../../arena-protocol/src/constants.js';
 import { OBJECTION_WINDOW_MS } from '../../arena-protocol/src/window.js';
+import { objectionWindowAllowed } from '../../arena-protocol/src/constants.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { advertInTransaction } from '../../arena-protocol/src/census.js';
 import { httpProvider, headerSources, HEADER_SOURCES_ASKED } from './headers.js';
@@ -176,8 +177,10 @@ export async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
       }
       // §13A, WINDOW-10-SPEC (RULED 2026-10-01): a round whose objection window is not exactly 600 000 ms is
       // invalid - the page lists it nowhere and joins it never, whatever a node answers.
-      if (contract.objectionWindowMs !== OBJECTION_WINDOW_MS)
-        throw new Error(`round ${id} names an objection window of ${contract.objectionWindowMs} ms, not ${OBJECTION_WINDOW_MS}: that contract is invalid and the page does not join it`);
+      // ...OR A HEAD-TO-HEAD ROUND'S 60 s (5 s on a regtest; §13A RULED 2026-11-10, kanban #1398). Audit 5 (#1399): this read still refused anything
+      // but 600 s, so a day of 60 s RPS rounds would have left the page with no round to list or join
+      if (!objectionWindowAllowed(contract.objectionWindowMs))
+        throw new Error(`round ${id} names an objection window of ${contract.objectionWindowMs} ms, not one a round may name (${OBJECTION_WINDOW_MS} ms, or a head-to-head round's): that contract is invalid and the page does not join it`);
       ROUNDS_KEPT.set(id, { contract, from: node });
       if (ROUNDS_KEPT.size > ROUNDS_KEPT_MAX) ROUNDS_KEPT.delete(ROUNDS_KEPT.keys().next().value);
       return { contract, from: node, refused };
