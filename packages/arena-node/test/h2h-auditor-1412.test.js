@@ -13,6 +13,11 @@ import { auditAlpha, vrfSecretFor, auditEligible } from '../../arena-protocol/sr
 import { isH2hAuditor, h2hCheck } from '../../arena-protocol/src/h2h-audit.js';
 import { headToHeadCommit, VERDICT } from '../../arena-protocol/src/head-to-head.js';
 import { taggedHash, toHex } from '../../arena-protocol/src/hash.js';
+import { lockSettlement } from '../../arena-protocol/src/lock-settlement.js';
+import { DELIVERED, FAILED } from '../../arena-protocol/src/payout.js';
+import { AUDITOR_VERSION } from '../../arena-protocol/src/constants.js';
+import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const { secp256k1, schnorr } = await import('@noble/curves/secp256k1.js');
 const vrf = makeVrf({ Point: secp256k1.Point, suite: SUITE_SECP256K1_TAI });
@@ -63,4 +68,39 @@ test('#1412 the auditor service: a drawn node checks the moves and its H2H_AUDIT
   assert.equal(facts.afterOne, 'long');
   assert.equal(facts.second.seats, 1);
   assert.deepEqual(facts.window, ['short', true]);
+});
+
+// THE 10 % PAY (step 6): the server hands settlement the auditors the H2H desk holds for a head-to-head round on the short window (server.js
+// `auditors: [...auditDesk.held(rid), ...h2hDesk.held(rid) keys]`); lock-settlement.js pays them 10 % of the nodes' part, equally
+test('#1412 the H2H auditors the desk holds are paid 10 % of the nodes\' part, equally - the players\' lines untouched', async () => {
+  const clock = { now: P + 8_000 };
+  const desk = createH2hAuditDesk({ db: openStore(':memory:'), now: () => clock.now, vrf, verify,
+    contextFor: async () => ({ ok: true, eligible: set.eligible, total: set.total, resultsHash: AGREED, provisionalAtMs: P }) });
+  for (const nd of AUD.slice(0, 2)) await auditorFor(nd, { clock, desk }).pass();
+  const auditors = desk.held(RID).map((x) => toHex(x.nodePubkey));   // what server.js hands settlement
+  const b = (n) => new Uint8Array(32).fill(n);
+  const pk = (n) => { const k = new Uint8Array(32); k[0] = n; k[31] = n; return k; };
+  const refund = (n) => { const k = new Uint8Array(33); k[0] = 0x02; k[1] = n; k[32] = n; return k; };
+  const STAKE = 10_000_000n, FEE = (STAKE * 4n) / 100n, nodes = [pk(0xa1), pk(0xa2)];
+  const e = (n, outcome, score) => ({ pubkey: pk(n), stakeMsat: STAKE, feeMsat: FEE, donationMsat: 0n, outcome, score });
+  const W = e(1, DELIVERED, 2), L = e(2, FAILED, 0);
+  const locks = new Map([W, L].map((x, i) => [toHex(x.pubkey), { outpoint: { txid: b(0x40 + i), outIdx: BigInt(i) }, amountMsat: STAKE - FEE, refundPk: refund(i + 1) }]));
+  const feeLocks = new Map([W, L].map((x, i) => [toHex(x.pubkey), { outpoint: { txid: b(0x80 + i), outIdx: BigInt(i) }, amountMsat: FEE, preimage: b(0xf0 + i) }]));
+  const contract = { networkId: b(0x4e), configHash: b(0x43), censusConfirmations: 1, gameVerifySlots: 2, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: b(1),
+    startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 60000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID,
+    stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b(0xd0), censusHeight: 900000, censusRoot: b(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
+    stakeMsat: STAKE, bondMinSats: 50000n, blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1,
+    rankNumerator: 3, rankDenominator: 4, nodes, protocolVersion: AUDITOR_VERSION };
+  const plan = (aud) => lockSettlement({ roundId: b(0x5f), entries: [W, L], minScore: 1, locks, feeLocks, fees: { ppm: 0n, baseMsat: 1000n }, contract,
+    signerNodes: { gameVerify: nodes, settlement: nodes, ...(aud ? { auditors: aud } : {}) } });
+  const none = plan(null), paid = plan(auditors);
+  const lines = paid.payouts.filter((x) => x.kind === 'auditor');
+  const nodesPart = none.payouts.filter((x) => x.kind === 'signer node').reduce((t, x) => t + x.msat + x.feeMsat, 0n);
+  const playerLines = (p) => p.payouts.filter((x) => x.kind !== 'auditor' && x.kind !== 'signer node' && x.kind !== 'reserve').map((x) => `${x.kind}:${x.msat}`).join(',');
+  console.log(`  MEASURED #1412 pay: ${auditors.length} H2H auditors held -> ${lines.length} lines of ${lines.map((x) => x.owedMsat).join(' / ')} msat of a nodes' part of ${nodesPart} msat; players' lines the same: ${playerLines(none) === playerLines(paid)}`);
+  assert.equal(none.ok && paid.ok, true);
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].owedMsat, lines[1].owedMsat);
+  assert.ok(lines[0].owedMsat * 20n >= nodesPart - 4000n && lines[0].owedMsat * 20n <= nodesPart + 4000n, `each about 5 %: ${lines[0].owedMsat} of ${nodesPart}`);
+  assert.equal(playerLines(none), playerLines(paid));
 });

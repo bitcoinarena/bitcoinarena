@@ -2720,7 +2720,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         conflicted: [...conflictsFor(rid).conflicted.keys()], ...(publisher ? { publisher } : {}), ...(guardianPayout ? { guardianPayout } : {}),
         // AND THE ROUND'S AUDITORS (§13A.1, kanban #725, protocol 22): every auditor whose AUDIT this seat took in time and no valid objection
         // contradicted - the same set on every seat by the forwarding rule, read at settlement, after final_after, when no more is taken
-        ...(Number(contract.protocolVersion) >= AUDITOR_VERSION ? { auditors: auditDesk.held(rid) } : {}) };
+        // AND A HEAD-TO-HEAD ROUND'S (§13A.1 RULED 2026-11-10, kanban #1412): "as auditors are paid below, the 10 % of the nodes' fee over the valid
+        // H2H_AUDITs the seats hold at final_after" - the H2H audit desk keeps only valid ones over this seat's results that arrived in its window, and the
+        // forwarding makes it the same set on every seat
+        ...(Number(contract.protocolVersion) >= AUDITOR_VERSION ? { auditors: [...auditDesk.held(rid),
+          ...(h2hShortRound(contract) ? h2hDesk.held(rid).map((x) => toHex(x.nodePubkey)) : [])] } : {}) };
     },
   });
   // THE FALLBACK CLAIM'S SWEEP (spec §23.2, kanban #1281): once a minute, every round with Arena stake locks and no ACCEPTED settlement whose locks
