@@ -340,3 +340,24 @@ test('#1337 the authority key alone cannot change the set; the recipients alone 
   assert.equal(bothLate.serial, 9n); assert.equal(bothLate.validFrom, 500, 'in force from the later of the two');
   assert.equal(before.serial, 3n);
 });
+
+// AUDIT 5 (kanban #1407, a regression of #1337, both reproduced): the authority key alone moved the set by signing a serial below the live
+// one (it became the network's "first") or an LNURL set that was itself refused (it was taken as the next set's LNURL parent)
+test('#1407 the authority key alone cannot move the set by a lower serial (testnet4: first is serial 1) or through a refused LNURL "parent"', async () => {
+  const { NETWORK_ID_TESTNET4 } = await import('../src/genesis-ids.js');
+  const keyOf = (v) => { const k = new Uint8Array(33).fill(v); k[0] = 0x02; return k; };
+  const KEYS = [{ recipientPk: keyOf(0x11), shareBps: 6000, label: 'a' }, { recipientPk: keyOf(0x22), shareBps: 4000, label: 'b' }];
+  const THIEF_KEYS = [{ recipientPk: keyOf(0x66), shareBps: 10000, label: 'thief' }];
+  // A - testnet4's chain is 1 (LNURL) -> 2 (LNURL) -> 3 (keys); a serial 0 signed by the authority alone is below the first set and refused
+  const tn = (o) => setOf({ ...o, networkId: NETWORK_ID_TESTNET4 });
+  const live = [tn({ serial: 1n, validFrom: 10 }), tn({ serial: 2n, validFrom: 20 }), tn({ serial: 3n, validFrom: 30, recipients: KEYS })];
+  const a = inForce({ networkId: NETWORK_ID_TESTNET4, sets: [...live, tn({ serial: 0n, validFrom: 5, recipients: THIEF_KEYS })], height: 1000 });
+  assert.equal(a.serial, 3n, 'the set in force stays serial 3');
+  assert.ok(a.refused.some((r) => /below the network's first donation set/.test(r)));
+  // B - in force serial 3 (keys); the authority alone signs an LNURL set at 4 (refused: its parent pays keys) and then the thief's keys at 5
+  const b = inForce({ sets: [setOf({ serial: 3n, validFrom: 10, recipients: KEYS }), setOf({ serial: 4n, validFrom: 20 }),
+    setOf({ serial: 5n, validFrom: 30, recipients: THIEF_KEYS })], height: 1000 });
+  assert.equal(b.serial, 3n, 'neither 4 nor 5 is in force');
+  assert.ok(b.refused.some((r) => /serial 4: signed by the authority key alone/.test(r)));
+  assert.ok(b.refused.some((r) => /serial 5: signed by the authority key alone/.test(r)));
+});

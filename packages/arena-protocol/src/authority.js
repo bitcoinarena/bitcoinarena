@@ -58,6 +58,7 @@
 // one.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
+import { NETWORK_ID_TESTNET4 } from './genesis-ids.js';
 import {
   PROTOCOL_VERSION, speaksVersion, TYPE_SIGNED_DONATION_SET, TYPE_AUTHORITY_ROTATION, TAG,
 } from './constants.js';
@@ -333,6 +334,13 @@ export function authorityAt({
  * being IN FORCE without a signature to point at, and that is what this
  * returns `ok` for.
  */
+/**
+ * A NETWORK'S FIRST DONATION SET, BY ITS FOUNDING (audit 5, kanban #1407): the serial its chain of sets starts at - the authority's alone; a set
+ * below it is refused. testnet4's chain starts at serial 1 (the founding test set, then the LNURL set 2, then the key set 3). A network not
+ * named here starts at its lowest authority-signed serial, as before.
+ */
+export const DONATION_FIRST_SERIAL = Object.freeze({ [toHex(NETWORK_ID_TESTNET4)]: 1n });
+
 export function donationSetInForce({
   networkId, authority, recovery, sets = [], rotations = [], height, verify, approved = [],
 }) {
@@ -378,13 +386,28 @@ export function donationSetInForce({
   }
   // A SET WHOSE RECIPIENTS CANNOT VOTE (an LNURL set: no recipient keys) is replaced by the authority alone - nobody holds a share_bps that
   // could approve, so the ruling's majority is over keys only: testnet4's key set (serial 3) replaced its LNURL set (serial 2) that way
-  const first = accepted.reduce((m, x) => (m === null || x.serial < m ? x.serial : m), null);
+  // THE CHAIN ACTUALLY IN FORCE (audit 5, kanban #1407; a regression of #1337, reproduced): `first` was the lowest serial the authority had
+  // signed and a set's parent was looked up among every authority-signed set, refused ones too - so the authority key alone could sign a
+  // serial below the live one (it became `first`, taken without approval) or an LNURL set at k (itself refused) and then any set at k+1
+  // (its "LNURL parent" let it pass). Now: a network's first set is its founding serial (DONATION_FIRST_SERIAL; testnet4 1) - a set below it
+  // is refused - and a set's parent is the last set IN FORCE below it, in serial order (two different sets at that serial: no parent).
   const listId = (r) => toHex(donationSetId(r));
-  const parentOf = (set) => accepted.filter((x) => x.serial < set.serial).reduce((m, x) => (m === null || x.serial > m.serial ? x : m), null);
+  const sorted = [...accepted].sort((x, y) => (x.serial < y.serial ? -1 : x.serial > y.serial ? 1 : 0));
+  const bodyIds = (serial) => new Set(sorted.filter((x) => x.serial === serial).map((x) => toHex(donationSetBodyId(x))));
   const both = [];
-  for (const set of accepted) {
-    if (set.serial === first) { both.push(set); continue; }
+  const parentOf = (set) => {
+    const below = both.filter((x) => x.serial < set.serial);
+    if (!below.length) return null;
+    const top = below.reduce((m, x) => (x.serial > m.serial ? x : m));
+    return bodyIds(top.serial).size === 1 ? top : null;   // two different sets at the parent's serial: no parent stands
+  };
+  const pinned = DONATION_FIRST_SERIAL[toHex(networkId)];
+  const firstSerial = pinned !== undefined ? pinned : (sorted.length ? sorted[0].serial : null);
+  for (const set of sorted) {
+    if (set.serial < firstSerial) { refused.push(`serial ${set.serial}: below the network's first donation set (serial ${firstSerial})`); continue; }
+    if (set.serial === firstSerial) { both.push(set); continue; }
     const parent = parentOf(set);
+    if (!parent) { refused.push(`serial ${set.serial}: no donation set in force below it - a change replaces the set in force`); continue; }
     if (parent && !donationSetPaysKeys(parent.recipients)) { both.push(set); continue; }
     const b = ballots.find((x) => x.serial === set.serial && listId(x.recipients) === listId(set.recipients));
     if (!b) { refused.push(`serial ${set.serial}: signed by the authority key alone - a change needs its recipients' approval too`); continue; }
