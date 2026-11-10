@@ -35,7 +35,8 @@ export const REWARD_LEVELS = Object.freeze([
   Object.freeze({ level: 'low', label: 'Bug, low', sats: 1000, example: 'A wrong text or a layout glitch that does not stop play.' }),
   Object.freeze({ level: 'medium', label: 'Bug, medium', sats: 2000, example: 'A round or a deposit that needs a retry to go through.' }),
   Object.freeze({ level: 'high', label: 'Bug, high', sats: 5000, example: 'Play or a payout stops and only a reload or a restart helps.' }),
-  Object.freeze({ level: 'critical', label: 'Bug, critical', sats: 20000, outsideBudget: true, example: 'Money can be lost or taken, or the result is wrong.' }),
+  // CRITICAL 10,000 (Daniel 2026-11-10: "Mach 20000 critical zu 10000 sats")
+  Object.freeze({ level: 'critical', label: 'Bug, critical', sats: 10000, outsideBudget: true, example: 'Money can be lost or taken, or the result is wrong.' }),
 ]);
 export const NODE_BOUNTY_BASE_SATS = 20000;
 /** THE NODE BOUNTY (#1342): its own pot - outside the bug budget, one per person, the first `NODE_BOUNTY_MOST` outside nodes; only a node report. */

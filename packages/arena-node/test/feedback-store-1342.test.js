@@ -254,8 +254,8 @@ test('#1342 a report: bug or improvement, at least 50 characters, from the front
 });
 
 // THE REWARD LEVELS (Daniel 2026-11-08, final): one table the form shows and approve pays from
-test('#1342 levels 500 / 1,000 / 2,000 / 5,000 / 20,000: an approval by level pays its amount; a critical one is outside the weekly budget', () => {
-  assert.deepEqual(REWARD_LEVELS.map((l) => [l.level, l.sats]), [['useful', 500], ['low', 1000], ['medium', 2000], ['high', 5000], ['critical', 20000]]);
+test('#1342 levels 500 / 1,000 / 2,000 / 5,000 / 10,000: an approval by level pays its amount; a critical one is outside the weekly budget', () => {
+  assert.deepEqual(REWARD_LEVELS.map((l) => [l.level, l.sats]), [['useful', 500], ['low', 1000], ['medium', 2000], ['high', 5000], ['critical', 10000]]);
   assert.equal(NODE_BOUNTY_BASE_SATS, 20000);
   const s = openFeedbackStore();
   const rules = { perKeyPerWeek: 3, weeklyBudgetSats: 3000, mostSats: 20000, leastSats: 100 };
@@ -264,8 +264,8 @@ test('#1342 levels 500 / 1,000 / 2,000 / 5,000 / 20,000: an approval by level pa
   const bar = s.budget ? s.budget({ rules }) : null;
   console.log('  MEASURED #1342 levels:', JSON.stringify({ medium: medium.ok && medium.report.amountSats, critical: critical.ok && critical.report.amountSats, low: low.ok && low.report.amountSats, more: more.ok ? 'ok' : more.why, week: bar && bar.weekApprovedSats }));
   assert.equal(medium.report.amountSats, 2000);
-  assert.equal(critical.ok, true, 'critical: 20,000 though the week\'s budget is 3,000');
-  assert.equal(critical.report.amountSats, 20000);
+  assert.equal(critical.ok, true, 'critical: 10,000 though the week\'s budget is 3,000');
+  assert.equal(critical.report.amountSats, 10000);
   assert.equal(low.report.amountSats, 1000, '2,000 + 1,000 fill the 3,000 budget; the critical one is not in it');
   assert.match(more.why, /this week's budget: 3000 of 3000/);
 });

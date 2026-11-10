@@ -543,24 +543,99 @@ async function area() {
 // NODE FEEDBACK (kanban #1342, Daniel 2026-11-07): what broke or could be better on this node, signed by the owner key, tagged source=node and this
 // node's key, to the Arena's testnet faucet; a screenshot optional; at least 50 characters; then the community. Testnet nodes only (phase 1).
 const FEEDBACK_URL = 'https://bitcoinarena.io/api/faucet/feedback';
+// FEEDBACK STANDS OUT (Daniel 2026-11-10: "Mach feedback klar sichtbar in einer anderen farbe und form damit man es auch sieht"): its menu entry is an
+// orange button with a speech bubble, apart from the plain entries - the node's own entry (a release with the Feedback section) and this page's alike
+function feedbackLook() {
+  if (document.getElementById('fb-look-css')) return;
+  const st = document.createElement('style'); st.id = 'fb-look-css';
+  st.textContent = '#side a[data-s=feedback]{display:flex;align-items:center;justify-content:center;gap:6px;margin:12px 0 4px;padding:9px 12px;border:2px solid #f2a93b;border-radius:999px;color:#c97a00;background:rgba(242,169,59,.12);font-weight:700}'
+    + '#side a[data-s=feedback]::before{content:"\\1F4AC";font-size:15px}'
+    + '#side a[data-s=feedback]:hover,#side a[data-s=feedback].on{background:#f2a93b;color:#14171c}'
+    + '@media (max-width:820px){#side a[data-s=feedback]{margin:0;padding:6px 12px;order:-1}}'
+    + '@media (prefers-color-scheme: dark){#side a[data-s=feedback]{color:#f2a93b}#side a[data-s=feedback]:hover,#side a[data-s=feedback].on{color:#14171c}}';
+  document.head.append(st);
+}
+function feedbackSection() {
+  const side = $('side'), main = side && side.parentNode ? side.parentNode.querySelector('main') : null;
+  if (!side || !main) return;
+  const sec = document.createElement('section'); sec.id = 's-feedback'; sec.className = 'fb-own';
+  const h = document.createElement('h2'); h.textContent = 'Feedback'; const box = document.createElement('div'); box.id = 'node-feedback'; box.className = 'card';
+  sec.append(h, box); main.append(sec);
+  const a = document.createElement('a'); a.href = '#feedback'; a.dataset.s = 'feedback'; a.textContent = 'Feedback';
+  const out = side.querySelector('a.out'); if (out) side.insertBefore(a, out); else side.append(a);
+  if (!document.getElementById('fb-own-css')) { const st = document.createElement('style'); st.id = 'fb-own-css';
+    st.textContent = 'main > section.fb-own{display:none} main.fb-on > section{display:none!important} main.fb-on > section.fb-own{display:block!important}'; document.head.append(st); }
+  // the page keeps the node beside the section (keepNode: #feedback becomes #node=<key>&section=feedback), so the section is read from either form
+  const show = () => { const raw = location.hash.slice(1), on = raw === 'feedback' || new URLSearchParams(raw).get('section') === 'feedback'; main.classList.toggle('fb-on', on); a.classList.toggle('on', on);
+    for (const x of side.querySelectorAll('a[data-s]')) if (x !== a && on) x.classList.remove('on'); };
+  addEventListener('hashchange', show); show();
+}
 async function nodeFeedbackPanel() {
+  // ITS OWN MENU ENTRY WHEN THE NODE'S MENU HAS NONE (Daniel 2026-11-10: "Wo ist das Node feedback?"): the menu and its sections come from the node's own
+  // software (/owner/react.js), and no release up to 2026.1.9.26 has the Feedback section yet - this page adds the entry and the section itself
+  feedbackLook();
+  if (!$('node-feedback')) feedbackSection();
   const box = $('node-feedback'); if (!box) return;
-  let net = ''; try { net = String(((await (await fetch(at('/owner/bond'), { cache: 'no-store' })).json()) || {}).network || ''); } catch { net = ''; }
+  // THE NETWORK READ AGAIN WHEN IT FAILS (Daniel 2026-11-10: "Da kann ich nichts eingeben" - one read during a node restart said "testnet only"): three tries;
+  // still unknown, the form is shown and the faucet decides
+  let net = '';
+  for (let i = 0; i < 3 && !net; i++) { try { net = String(((await (await fetch(at('/owner/bond'), { cache: 'no-store' })).json()) || {}).network || ''); } catch { net = ''; } if (!net) await new Promise((go) => setTimeout(go, 2000)); }
   box.innerHTML = '';
   const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (k === 'text') e.textContent = v; else if (k === 'cls') e.className = v; else e.setAttribute(k, v); } for (const c of kids) if (c) e.append(c); return e; };
-  if (!/testnet/.test(net)) { box.append(el('p', { cls: 'sub', text: 'Node feedback goes to the Arena team from testnet nodes.' })); return; }
+  if (net && !/testnet/.test(net)) { box.append(el('p', { cls: 'sub', text: 'Node feedback goes to the Arena team from testnet nodes.' })); return; }
   const type = el('select', { 'aria-label': 'Category' }, el('option', { value: 'bug', text: 'Bug: something broke on this node' }), el('option', { value: 'improvement', text: 'Improvement: something could be better' }));
-  const t = el('textarea', { rows: '5', maxlength: '4000', placeholder: 'What happened on this node? (at least 50 characters)', style: 'width:100%' });
-  const count = el('div', { cls: 'sub' }), shot = el('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp' });
+  // THE SAME FIELDS AS THE GAME PAGE'S FEEDBACK (Daniel 2026-11-10: "ich brauch da die selben Felder wie im Frontend"): what happened, what was expected,
+  // the bounty's Lightning address checked as it is typed, a screenshot, the rewards and this week's budget
+  const t = el('textarea', { rows: '4', maxlength: '4000', placeholder: 'What happened on this node? (at least 50 characters)', 'aria-label': 'What happened' });
+  const count = el('div', { cls: 'sub fbn-count' }), shot = el('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp' });
+  const x = el('textarea', { rows: '2', maxlength: '4000', placeholder: 'What did you expect? (optional)', 'aria-label': 'What you expected' });
+  const ln = el('input', { type: 'text', maxlength: '200', autocomplete: 'off', placeholder: 'Lightning address for a bounty (optional), e.g. you@walletofsatoshi.com', 'aria-label': 'Bounty Lightning address' });
+  try { ln.value = localStorage.getItem('arena.feedback.ln') || ''; } catch {}
+  const lnSay = el('div', { cls: 'sub fbn-lnsay', role: 'status' });
   const say = el('p', { cls: 'sub', role: 'status' }), send = el('button', { type: 'button', cls: 'primary', text: 'Send node feedback' });
-  const recount = () => { const n = t.value.trim().length; count.textContent = n < 50 ? (50 - n) + ' more characters' : n + ' characters'; send.disabled = n < 50; };
+  const lnOk = (v) => !v || /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(v) || /^lnurl1[02-9ac-hj-np-z]+$/i.test(v);
+  let lnBad = false, lnTimer = null, lnAsked = '';
+  const recount = () => { const n = t.value.trim().length; count.textContent = n < 50 ? (50 - n) + ' more characters' : n + ' characters'; count.classList.toggle('short', n < 50); send.disabled = n < 50 || lnBad; };
+  const lnCheck = async () => { const v = ln.value.trim(); lnAsked = v;
+    if (!v) { lnBad = false; lnSay.textContent = ''; lnSay.className = 'sub fbn-lnsay'; return recount(); }
+    if (!lnOk(v)) { lnBad = true; lnSay.textContent = 'That is not a Lightning address (name@wallet.com) or an LNURL.'; lnSay.className = 'sub fbn-lnsay bad'; return recount(); }
+    lnSay.textContent = 'Checking the address …'; lnSay.className = 'sub fbn-lnsay';
+    let r = null; try { r = await (await fetch(FEEDBACK_URL + '/lnaddress?a=' + encodeURIComponent(v), { signal: AbortSignal.timeout(12000) })).json(); } catch { r = null; }
+    if (lnAsked !== v) return;
+    if (r && r.ok) { lnBad = false; lnSay.textContent = '✓ This Lightning address takes payments.'; lnSay.className = 'sub fbn-lnsay good'; }
+    else if (r && r.why && !/not asked from the page|too many checks/.test(r.why)) { lnBad = true; lnSay.textContent = 'This Lightning address does not work: ' + r.why + '.'; lnSay.className = 'sub fbn-lnsay bad'; }
+    else { lnBad = false; lnSay.textContent = ''; lnSay.className = 'sub fbn-lnsay'; }
+    recount(); };
+  ln.addEventListener('input', () => { clearTimeout(lnTimer); lnTimer = setTimeout(lnCheck, 700); });
+  if (ln.value.trim()) setTimeout(lnCheck, 300);
   t.addEventListener('input', recount); recount();
-  box.append(el('p', { cls: 'sub', text: 'Your words, this node’s key and the release go to the Arena team, signed with your owner key. No amounts, no secrets.' }),
-    type, t, count, el('label', { cls: 'sub' }, el('span', { text: 'Screenshot (optional) ' }), shot), say, send);
+  const levels = el('div', { cls: 'fbn-levels' });
+  fetch(FEEDBACK_URL + '/rewards', { cache: 'no-store' }).then((r) => r.json()).then((j) => {
+    if (!j || !Array.isArray(j.levels)) return;
+    const unit = j.network === 'mainnet' ? 'sats' : 'testnet sats';
+    levels.append(el('div', { cls: 'sub', text: 'Rewards in ' + unit + ':' }), el('div', { cls: 'fbn-chips' }, ...j.levels.map((l) => { const c = el('span', { cls: 'fbn-chip' }, el('b', { text: Number(l.sats).toLocaleString('en-US') }), el('span', { text: ' ' + String(l.label).replace(/^Bug, /, '') })); if (l.example) c.title = l.example; return c; })));
+    if (j.budget && Number(j.budget.weeklyBudgetSats) > 0) {
+      const used = Number(j.budget.weekApprovedSats) || 0, all = Number(j.budget.weeklyBudgetSats);
+      const bar = el('div', { cls: 'fbn-bar' }, el('div', { cls: 'fbn-fill' })); bar.firstChild.style.width = Math.min(100, Math.round((used / all) * 100)) + '%';
+      levels.append(el('div', { cls: 'sub', text: 'This week: ' + used.toLocaleString('en-US') + ' / ' + all.toLocaleString('en-US') + ' sats' }), bar);
+    }
+  }).catch(() => {});
+  if (!document.getElementById('fbn-css')) { const st = document.createElement('style'); st.id = 'fbn-css';
+    st.textContent = '#node-feedback textarea,#node-feedback input[type=text],#node-feedback select{display:block;width:100%;box-sizing:border-box;margin:6px 0;padding:9px 10px;border-radius:9px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit}'
+      + '#node-feedback .fbn-count.short{color:#d29922}#node-feedback .fbn-lnsay.bad{color:#f85149}#node-feedback .fbn-lnsay.good{color:#3fb950}'
+      + '#node-feedback .fbn-chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}#node-feedback .fbn-chip{border:1px solid var(--line);border-radius:999px;padding:3px 9px;font-size:12.5px}'
+      + '#node-feedback .fbn-bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin:4px 0 10px}#node-feedback .fbn-fill{height:100%;background:#f2a93b}'
+      + '#node-feedback button.primary:disabled{opacity:.45;cursor:not-allowed}#node-feedback .fbn-shot{display:block;margin:6px 0}';
+    document.head.append(st); }
+  box.append(el('p', { cls: 'sub', text: 'Sent: your words, this node’s key and its release, signed with your owner key. Never your seed or a secret.' }),
+    type, t, count, x, ln, lnSay, el('label', { cls: 'sub fbn-shot' }, el('span', { text: 'Screenshot (optional) ' }), shot), levels, say, send);
   // THE NODE BOUNTY'S TABLE AND CHECKLIST (kanban #1342, Daniel 2026-11-08): shown only where the faucet answers `on` for this page's origin (the bounty is off
   // in public until Daniel says so); the base, the bug levels on top, and this node's five conditions read live for its owner key
   nodeBountyBlock(box, el);
   send.onclick = async () => {
+    const lnAddress = ln.value.trim();
+    if (!lnOk(lnAddress)) { say.textContent = 'That is not a Lightning address (name@wallet.com) or an LNURL.'; ln.focus(); return; }
+    try { if (lnAddress) localStorage.setItem('arena.feedback.ln', lnAddress); } catch {}
     send.disabled = true; say.textContent = 'Sending …';
     try {
       const who = await identity(); if (!who || !who.signEvent) throw new Error('sign in first');
@@ -571,8 +646,8 @@ async function nodeFeedbackPanel() {
         if (!up.ok) throw new Error(up.why || 'the screenshot did not go'); hash = up.sha256;
       }
       const build = String((state && (state.release || state.version)) || '').slice(0, 24).replace(/[^0-9a-zA-Z. -]/g, '');
-      const tags = [['t', type.value], ['source', 'node'], ['node', String(state.node)], ...(build ? [['build', build]] : []), ...(hash ? [['screenshot', hash]] : [])];
-      const event = await who.signEvent({ kind: 27842, tags, content: JSON.stringify({ happened: t.value, expected: '' }) });
+      const tags = [['t', type.value], ['source', 'node'], ['node', String(state.node)], ...(build ? [['build', build]] : []), ...(hash ? [['screenshot', hash]] : []), ...(lnAddress ? [['lud16', lnAddress]] : [])];
+      const event = await who.signEvent({ kind: 27842, tags, content: JSON.stringify({ happened: t.value, expected: x.value, ...(lnAddress ? { lnAddress } : {}) }) });
       const r = await (await fetch(FEEDBACK_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ event }) })).json();
       if (!r.ok) throw new Error(r.why || 'not sent');
       counted('node-feedback-sent');
@@ -682,11 +757,23 @@ async function leavePanel() {
 // THE PLUGIN STORE, LIKE AN APP STORE (2026-10-10: in the browser, no restart, updates as a setting, malicious-code checks): the apps on
 // this node, and the network's apps or one node's looked at by its address - checked in this browser with the page's own package checks
 // (C.checkPackage, C.checkUpdate), then installed or updated; the seat checks again and runs a trial in a sandbox first
+// THE CHECK IN ONE LINE (Daniel 2026-11-10 on Update for Tick Tock v7: "Die Update funktion schlägt fehl und sie schaut nicht wirklich gut aus, man sollte
+// nicht scrollen dürfen"): the card listed all 15 checks. Now a passed package says how many checks passed, a refused one names only the check that
+// failed. A game whose core is a source tree (Tick Tock: its sim hash covers every file of the engine, hash-core.js) is no store package - no seat
+// can hand it over in one file - so it says that the version comes with the node software (Updates) instead of a hash
+function shortCheck(pkg, opts) {
+  const r = C.checkPackage(pkg, opts);
+  const checks = r.checks || [], failed = checks.filter((c) => !c.ok);
+  if (r.ok) return { ...r, checks: [{ check: `all ${checks.length} checks passed in this browser`, ok: true, detail: '' }] };
+  if (failed.some((c) => / is the file its manifest names$/.test(c.check)))
+    return { ...r, checks: [], why: `${pkg && pkg.title ? pkg.title : 'This game'} is built into the node software, so it does not come from the store. Its new version arrives with the next node update (menu: Updates).` };
+  return { ...r, checks: failed.slice(0, 1) };
+}
 function storePanel() {
   const apps = () => mount('installed', 'mountApps', { api: { get: getJson, post, signed } });
   apps();
   mount('netfound', 'mountNetworkApps', { api: { get: getJson, post, signed, fetchJson },
-    client: { checkPackage: C.checkPackage, checkUpdate: C.checkUpdate, verifyEd25519: C.verifyEd25519, toHex: C.toHex, fromHex: C.fromHex }, onChanged: apps });
+    client: { checkPackage: shortCheck, checkUpdate: C.checkUpdate, verifyEd25519: C.verifyEd25519, toHex: C.toHex, fromHex: C.fromHex }, onChanged: apps });
 }
 // THE NETWORK STORE (letter 2026-10-10): this node's network - chain, donation sets, series, federation - and another node's network
 // package, checked in this browser (C.checkNetworkPackage, C.checkNetworkUpdate), then installed or updated; Remove
