@@ -5437,6 +5437,46 @@ objects carry their own verification.
 
 **RULED 2026-11-07 (spec review, kanban #1306).** Four changes so the auditor layer has an equilibrium. (1) The unpaid remainder of the auditors' 10 % goes to the protocol reserves, never back into the nodes' pools. (2) An AUDIT counts when it is on the round's `publication_relays[]` by the cutoff (that path is built), not only when a seat says it holds it. (3) An AUDIT carries one tick hash over every entry of the round (RULED 2026-11-09, kanban #1383): `t = beta mod T_run` from the auditor's own VRF output, with `T_run` the Round Contract's run length, skipped to the next tick if `t` is a checkpoint tick; the hash is `tagged_hash("ARENA/v1/AuditTick", t ‖ for each entry in entry-id order: entry_id ‖ H(its run's state at tick min(t, its last tick)))`, an entry with no run (VOID before any mark) contributing 32 zero bytes. One hash, every run replayed, since the AUDIT vouches for every entry; seats verify it from the replay they already did. A hash over one entry (picked by beta) would prove one replay of many, and one hash per entry would carry the same proof in more bytes. (4) The transcript is posted by `window_open + 120 s`, relay-timestamped, or the result cannot reach FINAL. Before this the seats paid the auditors out of their own fee and kept what they did not pay, an AUDIT needed no replay, and the committee controlled the clock the auditors raced.
 
+**Head-to-head rounds: the audit before FINAL (RULED 2026-11-10, kanban #1400;
+the owner: "when the objection window is just 60 seconds, some other node need
+to check the result, not just the 5 of 7").** With the 60 s window (§13A,
+kanban #1398) a head-to-head result is `FINAL` only when nodes outside the
+committee have checked it:
+
+- **Who:** the same lottery as below, over the same eligible set `E` (census
+  less the drawn, less the players' and operators' nodes, less nodes without
+  the audit role), with `AUDITORS_H2H = 5` expected per round in place of 3,
+  since the check is a hash and costs nothing. Drawn in secret, published
+  with the signature; `(beta, pi)` prove the draw.
+- **What they check:** every entry's commitment against its reveal (the
+  hash, the move among the game's, the round and entry it is bound to), each
+  reveal's receipts against the reveal window, FORFEIT for an entry with no
+  stood reveal, VOID with one entry, and the decide adapter's verdict over the
+  stood reveals. A check, not a replay: a few milliseconds.
+- **What they sign:** one `H2H_AUDIT { round_id, results_hash, beta, pi }`
+  per round over the per-entry outcomes (entry-id order, `entry_id ‖ outcome ‖
+  score`), posted to the round's `publication_relays[]` and handed to the
+  seats.
+- **FINAL inside the 60 s** needs the committee's 5 of 7 **and** `k = 2`
+  valid `H2H_AUDIT`s over the same `results_hash` from distinct drawn
+  auditors, on the relays before the window closes. Five expected and two
+  needed: with four of five online, fewer than two answer in about one round
+  in twelve.
+- **Too few by 60 s:** the window **extends to 600 s** and the round finishes
+  as a replayed round does, `FINAL` without audits at the end of the long
+  window. Never VOID for want of auditors: the players did nothing wrong. The
+  page says "checking the result" for the minute and "arrives in about 10
+  minutes" if it extends.
+- **A dissenting auditor** files the ordinary §13A objection with the bytes
+  that contradict (a reveal and its receipt the seats did not count, a
+  commitment that does not open to the counted move); it suspends as any
+  objection does. An `H2H_AUDIT` over a result such an objection then
+  contradicts is the §13A.1 `AUDIT` offence and is slashed the same way.
+- **Pay:** as auditors are paid below, the 10 % of the nodes' fee over the
+  valid `H2H_AUDIT`s the seats hold at `final_after`.
+- **Until built and live** (its own protocol height), the duty poster names
+  600 s on head-to-head days and the 60 s window stays off (kanban #1399).
+
 Every seat of a round's committees replays its runs (§34), and anyone may
 object (above). But nobody outside the committee is obliged to look, so five
 colluding seats are caught only if somebody happens to replay. From protocol
