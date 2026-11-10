@@ -300,6 +300,9 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     // absence proof's round at the seats and the client. An item named otherwise (ARENA_DUTY_ITEM_<APP>) posts rounds that are played but
     // prove nothing.
     const e = createDayDuty({ game, role, item: String(env[`ARENA_DUTY_ITEM_${game.toUpperCase()}`] || `${game}-day`), networkId: fromHex(nid),
+      // A DAY OF RPS NAMES THE HEAD-TO-HEAD 60 s WINDOW (§13A, RULED 2026-11-10, kanban #1398): every seat takes it from audit36 on, and the day's duty
+      // node posts it - the template otherwise carries the 600 s of the last day forward for good. ARENA_H2H_WINDOW=0 keeps 600 s.
+      extraFields: (g) => (g === 'rps' && env.ARENA_H2H_WINDOW !== '0' ? { objectionWindowMs: 60_000n } : {}),
       postedPrimary: async (slot) => { const p = engines.get(game); return !!p && (p.state().mine || []).some((x) => x.slot === slot && !x.emergency); },
       local: new Set([toHex(seat.nodeKey)]), dir: join(dir, role === 'backup' ? `${game}-backup` : game),
       chain: { view: chainView, widen, censusEntriesAt: async (h) => { const es = await censusEntriesAt(nid, h); remember(es); return es || null; }, seatUrls },
