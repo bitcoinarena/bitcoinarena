@@ -57,8 +57,10 @@ export function devnetPorts(base = 24000) {
   const guardians = nodes.map((p) => ({ api: p + 1000, p2p: p + 2000, ui: p + 3000, metrics: p + 4000 }));
   const lnd = (o) => ({ rpc: b + o, p2p: b + o + 1, rest: b + o + 2 });
   const gateway = (o) => ({ api: b + o, iroh: b + o + 1, metrics: b + o + 2 });
+  // AUDIT-ONLY NODES (kanban #1412: the head-to-head audit measured with six auditors outside the seven): DEVNET_AUDITORS of them, from base + 300
+  const auditors = Array.from({ length: Math.max(0, Math.min(9, Number(process.env.DEVNET_AUDITORS || 0))) }, (_, k) => b + 300 + 10 * k);
   const plan = { base: b, rpc: b + 1, p2p: b + 2, page: b + 3, control: b + 5, zmqBlock: b + 6, zmqTx: b + 7, lnurl: b + 8,
-    lnd: { a: lnd(10), b: lnd(20), c: lnd(50) }, gateway: { a: gateway(30), b: gateway(40) }, nodes, guardians };
+    lnd: { a: lnd(10), b: lnd(20), c: lnd(50) }, gateway: { a: gateway(30), b: gateway(40) }, nodes, guardians, auditors };
   const all = [
     { port: plan.rpc, what: 'bitcoind rpc' }, { port: plan.p2p, what: 'bitcoind p2p' },
     { port: plan.zmqBlock, what: 'bitcoind zmq blocks' }, { port: plan.zmqTx, what: 'bitcoind zmq transactions' },
@@ -66,6 +68,7 @@ export function devnetPorts(base = 24000) {
     ...Object.entries(plan.lnd.c).map(([role, port]) => ({ port, what: `lnd c ${role}` })),
     ...['a', 'b'].flatMap((x) => [...Object.entries(plan.lnd[x]).map(([role, port]) => ({ port, what: `lnd ${x} ${role}` })),
       ...Object.entries(plan.gateway[x]).map(([role, port]) => ({ port, what: `gateway ${x} ${role}` }))]),
+    ...auditors.map((p, k) => ({ port: p, what: `auditor ${k + 1}` })),
     ...nodes.flatMap((p, k) => [{ port: p, what: `node ${k + 1}` },
       ...Object.entries(guardians[k]).map(([role, port]) => ({ port, what: `node ${k + 1} guardian ${role}` }))]),
   ];
