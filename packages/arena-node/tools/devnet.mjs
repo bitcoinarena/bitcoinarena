@@ -291,6 +291,21 @@ async function up() {
   }
   const guardians = await Promise.all(PLAN.nodes.map((_, k) => getJson(`${nodeUrl(k)}/guardian`).catch((e) => ({ error: e.message }))));
   say({ step: 'seven nodes', ports: PLAN.nodes, guardians: guardians.filter((g) => g.guardian === true).length });
+  // ---- 3b. AUDIT-ONLY NODES (DEVNET_AUDITORS, kanban #1412): no guardian, no federation role - each bonded later with roles [audit] only
+  // (`devnet.mjs auditors`), so no committee draws it and the §13A.1 lottery may
+  for (const [k, port] of PLAN.auditors.entries()) {
+    const name = `auditor-${k + 1}`;
+    if (!running(name)) startPart(name, process.execPath, ['src/main.js', String(port), path('nodes', `${name}.db`)], { env: fedEnv({
+      ARENA_APPS: apps.join(','), ARENA_DONATION_NETWORK: 'regtest', [`ARENA_WSS_${port}`]: `ws://127.0.0.1:${port}` }) });
+  }
+  for (const [k, port] of PLAN.auditors.entries()) {
+    for (let i = 0; ; i++) {
+      try { if ((await fetch(`http://127.0.0.1:${port}/identity`, { signal: AbortSignal.timeout(3000) })).ok) break; } catch { /* not yet */ }
+      if (i > 240) throw new Error(`auditor ${k + 1} (${port}) did not answer in 120 s: see logs/auditor-${k + 1}.log`);
+      await wait(500);
+    }
+  }
+  if (PLAN.auditors.length) say({ step: 'audit-only nodes', ports: PLAN.auditors });
 
   // ---- 4. A FEDERATION CLIENT FOR THE RUNNER AND EACH NODE (each its own data dir: one client database is one flock) ----
   const clients = ['runner', ...PLAN.nodes.map((_, k) => `node-${k + 1}`)].map((n) => path('clients', n));
@@ -945,7 +960,8 @@ async function newGame() {
 async function down() {
   const stopped = [];
   // the runner and the page first (they post to the nodes), then the nodes with their guardians, then the chain
-  for (const n of ['runner', 'page', 'lnurl', ...PLAN.nodes.map((_, k) => `node-${k + 1}`).reverse(), 'gateway-a', 'gateway-b', 'lnd-a', 'lnd-b', 'lnd-c', 'bitcoind']) {
+  // the audit-only nodes (kanban #1412) by every name they may have had: a down without DEVNET_AUDITORS still stops them (a pid file stops only what it started)
+  for (const n of ['runner', 'page', 'lnurl', ...Array.from({ length: 9 }, (_, k) => `auditor-${k + 1}`), ...PLAN.nodes.map((_, k) => `node-${k + 1}`).reverse(), 'gateway-a', 'gateway-b', 'lnd-a', 'lnd-b', 'lnd-c', 'bitcoind']) {
     const s = await stopPart(n, n === 'bitcoind' ? 60000 : 20000);
     if (s) stopped.push(s);
   }
@@ -983,7 +999,39 @@ async function stopCmd() {
   say({ step: 'stop', node: n, was: stopped ? stopped.pid : null, gone: stopped ? !!stopped.gone : true });
 }
 
+// THE AUDIT-ONLY NODES' BONDS (kanban #1412): each node's first bond, roles ['audit'] only and an operator of its own, read from its own store,
+// included one by one and mined to maturity - so the census of a round created after this names them, no committee draws them, and the
+// §13A.1 lottery may. Run after `up` with DEVNET_AUDITORS, before the head-to-head round is opened.
+async function auditorsCmd() {
+  if (!PLAN.auditors.length) throw new Error('no audit-only nodes: run up with DEVNET_AUDITORS=<n>');
+  const { regtest } = await import('./regtest-bond.mjs');
+  const { DatabaseSync } = await import('node:sqlite');
+  const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const cli = (...a) => execFileSync(join(BTC, 'bitcoin-cli'), [`-rpcport=${PLAN.rpc}`, `-rpccookiefile=${COOKIE()}`, '-regtest', ...a], { encoding: 'utf8' }).trim();
+  const rt = regtest(cli, { network: 'regtest', wallet: 'arena' });
+  const versions = Number(env.ARENA_PROTOCOL_VERSION || 1);
+  // the games they may audit: what node 1's own bond advertises (the seven host the same games)
+  const seatKey = new Uint8Array(await (await fetch(`${nodeUrl(0)}/identity`)).arrayBuffer());
+  const seatBond = rt.bondsOf({ pubkey: seatKey })[0];
+  if (!seatBond || !seatBond.advert) throw new Error('node 1 has no bond on chain yet: run up (its runner bonds the seven) first');
+  const hosted = seatBond.advert.hostedGames;
+  const out = [];
+  for (const [k, port] of PLAN.auditors.entries()) {
+    const db = new DatabaseSync(path('nodes', `auditor-${k + 1}.db`), { readOnly: true });
+    let row; try { row = db.prepare('SELECT secret FROM identity WHERE one = 0').get(); } finally { db.close(); }
+    if (!row) throw new Error(`auditor ${k + 1}: no identity in its store`);
+    const secret = new Uint8Array(row.secret), key = schnorr.getPublicKey(secret);
+    if (rt.bondsOf({ pubkey: key }).length) { out.push({ auditor: k + 1, bonded: 'already' }); continue; }
+    const p = rt.postBond(secret, { endpoint: `ws://127.0.0.1:${port}`, roles: ['audit'], operatorId: `audit-${k + 1}`, hostedGames: hosted,
+      protocolVersions: Array.from({ length: versions }, (_, i) => i + 1) });
+    rt.include([p.hex]);
+    out.push({ auditor: k + 1, port, key: Buffer.from(key).toString('hex').slice(0, 16), txid: p.txid });
+  }
+  rt.mine(8);
+  say({ step: 'auditor bonds', bonds: out, height: rt.height() });
+}
+
 const cmd = process.argv[2];
-const run = { up, runner, page, status, play, replay: replayCmd, down, stop: stopCmd, restart: restartCmd, 'new-game': newGame, liquidity, lnurl: lnurlDoor }[cmd];
+const run = { up, runner, page, status, play, replay: replayCmd, down, stop: stopCmd, restart: restartCmd, 'new-game': newGame, liquidity, lnurl: lnurlDoor, auditors: auditorsCmd }[cmd];
 if (!run) { console.error('devnet.mjs up | liquidity | status | play [round] [--game name] | replay [round entry] | down | new-game <dir> [name]     (DEVNET_DIR, DEVNET_BASE_PORT, BITCOIN_BIN, FEDIMINT_BIN)'); process.exit(2); }
 run().catch((e) => { console.error(`devnet ${cmd}: ${e.message}`); process.exit(1); });
