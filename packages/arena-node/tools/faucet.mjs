@@ -92,6 +92,44 @@ async function paymentSent(payer, hash) {
   return 'no';
 }
 
+// A PAYMENT'S FINAL WORD (audit 6, kanban #1421): the grant's verdict was taken while the payment could still change - IN_FLIGHT read as paid (it
+// may fail downstream: a welcome booked that never arrived), a timeout as unpaid (a late attempt may succeed: paid, the row gone, a second welcome
+// possible). The grant now books an unsure verdict as such - a row `pending` with its payers, or a removed row kept in `unsure` - and this sweep reads
+// each payer's own record of the payment until it is SUCCEEDED or FAILED, and sets the book to it.
+async function paymentFinal(payer, hash) {
+  if (!payer) return null;
+  const r = await lncli(payer, ['listpayments', '--include_incomplete', '--max_payments', '200']);
+  let p = null; try { p = (JSON.parse(r.out).payments || []).find((x) => x.payment_hash === hash) || null; } catch { p = null; }
+  return p ? p.status : null;   // SUCCEEDED, FAILED, IN_FLIGHT, or null (this payer has no such payment)
+}
+const UNSURE_KEEP_MS = 24 * 3600 * 1000;
+async function sweepPayments(nowMs = Date.now()) {
+  const book = readBook();
+  book.players = book.players || []; book.unsure = book.unsure || [];
+  let changed = false;
+  for (const r of book.players.filter((x) => x.pending)) {
+    const states = await Promise.all((r.payers || []).map((i) => paymentFinal(PAYERS[i], r.hash).catch(() => null)));
+    if (states.includes('SUCCEEDED')) { delete r.pending; delete r.payers; changed = true; console.log(`${new Date().toISOString()} player ${r.kind} ${r.hash.slice(0, 16)}: SUCCEEDED, kept`); }
+    else if (states.length && !states.includes('IN_FLIGHT') && !states.includes(null)) {
+      book.players = book.players.filter((x) => x !== r); changed = true; console.log(`${new Date().toISOString()} player ${r.kind} ${r.hash.slice(0, 16)}: FAILED at every payer, the row removed (the welcome can be asked again)`);
+    }
+  }
+  for (const u of [...book.unsure]) {
+    const states = await Promise.all((u.payers || []).map((i) => paymentFinal(PAYERS[i], u.hash).catch(() => null)));
+    if (states.includes('SUCCEEDED')) {
+      const { payers, removedMs, ...row } = u;
+      if (!book.players.some((x) => x.hash === row.hash)) book.players.push(row);
+      book.unsure = book.unsure.filter((x) => x !== u); changed = true;
+      console.log(`${new Date().toISOString()} player ${row.kind} ${row.hash.slice(0, 16)}: paid after all - booked again`);
+    } else if (!states.includes('IN_FLIGHT') && (nowMs - Number(u.removedMs || 0) > UNSURE_KEEP_MS || states.every((x) => x === 'FAILED'))) {
+      book.unsure = book.unsure.filter((x) => x !== u); changed = true;
+    }
+  }
+  if (changed) saveBook(book);
+  return changed;
+}
+if (PAYERS.length) setInterval(() => { one(() => sweepPayments()).catch(() => {}); }, Number(env.FAUCET_SWEEP_MS || 120000)).unref();
+
 async function grant(ask) {
   if (!/^lntb[0-9a-z]{20,1500}$/.test(String(ask.invoice || ''))) return { ok: false, why: 'that is not a testnet invoice' };
   const read = await lncli(PAYERS[0], ['decodepayreq', ask.invoice]);
@@ -104,7 +142,7 @@ async function grant(ask) {
   const row = { account: ask.account, kind: ask.kind, ip: ask.ip, sats: d.grant.invoiceSats, atMs: Date.now(), hash: inv.payment_hash };
   book.players.push(row);
   saveBook(book);
-  const tried = [];
+  const tried = [], askedPayers = [];
   // A PAYER IS NOT ASKED TO PAY ITS OWN NODE'S INVOICE (kanban #1381): payer a is gateway a's lnd - "self-payments not allowed" cost a call before payer b
   for (const payer of await payersFor(inv.destination)) {
     // A TIMEOUT IS NOT A REFUSAL, AND NOT A PAYMENT EITHER (kanban #1381, Daniel 2026-11-09 "scheitere daran die test sats zu bekommen": payer b's
@@ -113,6 +151,12 @@ async function grant(ask) {
     // is paid; FAILED, or no part sent within PAY_SETTLE_MS, is not, and the next payer is asked
     const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', ask.invoice], PAY_WAIT_MS);
     const state = /Payment status: (SUCCEEDED|IN_FLIGHT)/.test(paid.out) ? 'sent' : paid.timedOut ? await paymentSent(payer, inv.payment_hash) : 'no';
+    askedPayers.push(PAYERS.indexOf(payer));
+    // NOT FINAL YET (kanban #1421): booked as pending with the payers asked; the sweep reads their final word
+    if (state === 'sent' && !/Payment status: SUCCEEDED/.test(paid.out)) {
+      const b2 = readBook(); const mine = (b2.players || []).find((x) => x.hash === row.hash);
+      if (mine) { mine.pending = true; mine.payers = [...askedPayers]; saveBook(b2); }
+    }
     if (state === 'sent') {
       console.log(`${new Date().toISOString()} player ${ask.kind} ${d.grant.invoiceSats} sat (${ask.ip || 'no ip'}): ${inv.payment_hash.slice(0, 16)}`);
       return { ok: true, sats: d.grant.sats };
@@ -121,6 +165,8 @@ async function grant(ask) {
   }
   const after = readBook();
   after.players = (after.players || []).filter((p) => p.hash !== row.hash);
+  // a payer that timed out may still pay it (kanban #1421): kept in `unsure` for the sweep, booked again if any payer says SUCCEEDED
+  after.unsure = [...(after.unsure || []), { ...row, payers: askedPayers, removedMs: Date.now() }].slice(-500);
   saveBook(after);
   console.log(`${new Date().toISOString()} player ${ask.kind} not paid: ${tried.join(' | ')}`);
   return { ok: false, why: 'the faucet could not pay just now: try again in a minute' };
