@@ -173,6 +173,11 @@ export const LOBBY_OTHER_CONTRACTS_PER_READ = 16;
 // (key arena.nodes.down: node -> until, ms), so a reload skips them too; a node that answers is out of the list at once; when every node of a
 // read would be skipped, all of them are asked. Only for a caller that asks for it (`skipFailed`, the page's lobby).
 export const FAILED_NODE_SKIP_MS = 300000;
+// A SEAT THAT FAILED ONCE IS ASKED AGAIN SOON (kanban #1391, measured 2026-11-10 00:53-00:58Z on the live page: while the page collected 36 rounds' payouts,
+// some seats' reads failed once and were skipped for the full 5 min; the rounds then lacked their seats' agreement and no round was joinable for 5 min):
+// the first skip is FAILED_NODE_FIRST_SKIP_MS and each failure in a row doubles it, up to FAILED_NODE_SKIP_MS - a dead node still reaches 5 min after six
+export const FAILED_NODE_FIRST_SKIP_MS = 15000;
+const FAILS = new Map();
 const DOWN_KEY = 'arena.nodes.down';
 let DOWN = null;
 const downStore = () => { try { return typeof globalThis.localStorage === 'object' && globalThis.localStorage ? globalThis.localStorage : null; } catch { return null; } };
@@ -186,7 +191,7 @@ const downSave = (nowMs) => { try { const st = downStore(); if (!st) return; con
 /** The nodes skipped now, each with the ms it is skipped until (for a page's diagnostics and tests). */
 export const skippedNodes = (nowMs = Date.now()) => [...downMap()].filter(([, v]) => v > nowMs).map(([node, untilMs]) => ({ node, untilMs }));
 /** Forget every skip (tests). */
-export const forgetSkippedNodes = () => { DOWN = new Map(); try { const st = downStore(); if (st) st.removeItem(DOWN_KEY); } catch { /* nothing kept */ } };
+export const forgetSkippedNodes = () => { DOWN = new Map(); FAILS.clear(); try { const st = downStore(); if (st) st.removeItem(DOWN_KEY); } catch { /* nothing kept */ } };
 export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, verifyMany = null, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS, skipFailed = false, preferGames = null } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
   if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
@@ -372,7 +377,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
   rows.sort((x, y) => (x.phase === y.phase ? x.entryCloseMs - y.entryCloseMs : (x.phase === 'open' ? -1 : 1)));
   // FAILED NOW: skipped from here on for FAILED_NODE_SKIP_MS; ANSWERED NOW: out of the list (kanban #1133)
   if (skipFailed) { const silentNow = new Set(unanswered.map(String)), failedNow = new Set(failed.map(String));
-    for (const n of unique) { const k = String(n); if (failedNow.has(k) && !silentNow.has(k)) down.set(k, nowMs + FAILED_NODE_SKIP_MS); else if (!failedNow.has(k)) down.delete(k); }
+    for (const n of unique) { const k = String(n); if (failedNow.has(k) && !silentNow.has(k)) { const times = (FAILS.get(k) || 0) + 1; FAILS.set(k, times); down.set(k, nowMs + Math.min(FAILED_NODE_SKIP_MS, FAILED_NODE_FIRST_SKIP_MS * 2 ** (times - 1))); } else if (!failedNow.has(k)) { down.delete(k); FAILS.delete(k); } }
     downSave(nowMs); }
   return { rows, closed, refused, unanswered, failed, asked: unique.length, skipped: unique === named ? [] : skipped, why: { ...why, contracts: [...said.keys()].filter((id) => CONTRACTS.has(id)).length, unreadable: [...said.keys()].filter((id) => UNREADABLE.has(id)).length,
     contractError: (refused.find((r) => /^[0-9a-f]{16}: /.test(r)) || '').slice(0, 160) } };

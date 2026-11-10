@@ -7559,9 +7559,18 @@
           let html = new TextDecoder().decode(bytes);
           const swaps = [['const REVEAL_MS = 5000, RESULT_HOLD_MS = 2500;', 'const REVEAL_MS = 2500, RESULT_HOLD_MS = 4000;'],
             ['me.signedBy > 0 && !me.provisional', 'me.signedBy > 0'], ['seq.t += dt;', 'seq.t += dt * 1.6;'],
-            ['Math.max(0, STRIKE_AT - seq.t)', 'Math.max(0, STRIKE_AT - seq.t) / 1.6'], ['revealing ? 4.5 : 14', 'revealing ? 7.2 : 14']];
+            ['Math.max(0, STRIKE_AT - seq.t)', 'Math.max(0, STRIKE_AT - seq.t) / 1.6'], ['revealing ? 4.5 : 14', 'revealing ? 7.2 : 14'],
+            // WAIT UNTIL THE CLOSE, THEN THE REVEAL (kanban #1391, measured 2026-11-10 00:58-00:59Z: "The next round opens in a moment" ~2 s between Wait and
+            // "Revealing both moves" in every paired round): the client left Wait 1.5 s before the close to take the next table, and with no next round
+            // offered in that time it drew the empty screen. Wait now stands to the close; the reveal comes straight after it
+            ["(last.phase === 'wait' && (Date.now() < last.closeMs - CLOSING_MS || (last.them === 0 && company)))", "(last.phase === 'wait' && (Date.now() < last.closeMs || (last.them === 0 && company)))"],
+            // THE TAP'S NOTE IN THE PLAYER'S WORDS (kanban #1393, Daniel: "Make all messages human readable"; seen 2026-11-10 01:29Z on UI 612: "That tap did not
+            // go in (this round's stake goes into a federation lock, and it was not made: the deposit was closed: nothing was paid) - tap again"): the client
+            // put the seats' raw reason in its note; it now says the page's one sentence for it (ARENA_ORDER_WORDS, the same as the order strip)
+            ["note('That tap did not go in (' + (rec.why || 'refused') + ') - tap again');", "note((() => { try { return window.parent.ARENA_ORDER_WORDS(rec.why); } catch { return 'Your order did not go in. Tap again.'; } })());"],
+            ["note('That tap did not go in (' + (j.why || 'refused') + ') - tap again'); return;", "note((() => { try { return window.parent.ARENA_ORDER_WORDS(j.why); } catch { return 'Your order did not go in. Tap again.'; } })()); return;"]];
           if (swaps.every(([x]) => html.split(x).length === 2)) { for (const [x, y] of swaps) html = html.replace(x, () => y); bytes = new TextEncoder().encode(html); window.ARENA_RPS_QUICK = true;
-            console.log('[arena] #1395 Rock Paper Scissors: the winner from the open moves, the show 1.6x faster'); }
+            console.log('[arena] #1395 #1391 Rock Paper Scissors: the winner from the open moves, the show 1.6x faster, Wait to the close, notes in plain words'); }
         }
       } catch { bytes = file.bytes; }
       frame.src = URL.createObjectURL(new Blob([bytes], { type: 'text/html' }));
