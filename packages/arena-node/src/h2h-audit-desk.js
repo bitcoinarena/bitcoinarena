@@ -7,9 +7,34 @@
 //
 // `contextFor(roundId)`: { ok, eligible, total, resultsHash, provisionalAtMs } or { ok: false, why } - the seat's own view: who may audit the round,
 // the hash over its own agreed per-entry outcomes, and when its PROVISIONALLY_FINAL stood.
-import { decodeH2hAudit, h2hAuditStands, h2hFinality } from '../../arena-protocol/src/h2h-audit.js';
+import { decodeH2hAudit, h2hAuditStands, h2hFinality, h2hResultsHash, h2hAuditId } from '../../arena-protocol/src/h2h-audit.js';
 import { OBJECTION_WINDOW_H2H_MS } from '../../arena-protocol/src/constants.js';
-import { toHex } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
+import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
+import { verifiedFinal, runId as runIdOf } from './verdict.js';
+
+/** What a seat signs when it hands an H2H_AUDIT (its bytes and the auditor's signature) on to the round's other seats. */
+export const H2H_FORWARD_TAG = 'ARENA/v1/H2hAuditForward';
+export const h2hForwardDigest = (body) => taggedHash(H2H_FORWARD_TAG, h2hAuditId(decodeH2hAudit(body.subarray(0, body.length - 64))));
+
+/**
+ * THE RESULTS AN H2H_AUDIT VOUCHES FOR, as a seat holds them: for every entry the outcome and score of the run its committee agreed (verifiedFinal over
+ * the signed results, the 5 of 7). `entries` [{ entryId (bytes), results: [signed bytes] }]. Answers { ok, results, resultsHash } or { ok: false, why }
+ * while an entry has no agreed run - an H2H_AUDIT is over every entry of the round.
+ */
+export function h2hAgreedResultsOf({ contract, committee, entries }) {
+  if (!entries || !entries.length) return { ok: false, why: 'the round has no entry to audit' };
+  const results = [];
+  for (const e of entries) {
+    const seen = verifiedFinal(e.results, { contract, signerNodes: committee });
+    if (!seen.ok || !seen.final) return { ok: false, why: `entry ${toHex(e.entryId).slice(0, 16)} has no agreed result yet: ${seen.why}` };
+    let r = null;
+    for (const b of e.results) { try { const x = decodePlayerResult(splitSignedResult(b).body); if (toHex(runIdOf(x)) === seen.runId) { r = x; break; } } catch { /* not this one */ } }
+    if (!r) return { ok: false, why: `entry ${toHex(e.entryId).slice(0, 16)}: no held result of its agreed run` };
+    results.push({ entryId: e.entryId, outcome: r.outcome, score: Number(r.score) });
+  }
+  return { ok: true, results, resultsHash: h2hResultsHash(results) };
+}
 
 export function createH2hAuditDesk({ db, now = () => Date.now(), contextFor, vrf, verify }) {
   db.exec(`CREATE TABLE IF NOT EXISTS h2h_audits (
