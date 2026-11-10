@@ -119,6 +119,7 @@ const RULES = (() => { try { return JSON.parse(env.FAUCET_REWARD_RULES || '{}');
 const ourKeys = () => { try { return new Set(readFileSync(env.FAUCET_FEEDBACK_EXCLUDED, 'utf8').split(/\s+/).map((x) => x.toLowerCase()).filter((x) => /^[0-9a-f]{64}$/.test(x))); } catch { return new Set(); } };
 // THE SEATS A NODE CHECK ASKS (kanban #1342): every seat the season seats list (GET /network-games - a seat does not list itself, so they are merged, and each is one too)
 const NODE_CHECKS = new Map();
+const NODE_CHECK_ASKS = new Map(); const NODE_CHECKS_PER_HOUR = 10; let NODE_CHECK_BUSY = false;   // audit 5 #1402
 const fetchJson1342 = async (u) => { const r = await fetch(u, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(`${r.status}`); return r.json(); };
 async function nodeCheckNow(node, npub) {
   const bases = String(env.FAUCET_SEASON_SEATS || '').split(',').filter(Boolean).map((u) => u.replace(/\/+$/, ''));
@@ -393,8 +394,17 @@ createServer((req, res) => {
     if (!/^[0-9a-f]{64}$/.test(node) || !/^[0-9a-f]{64}$/.test(npub)) return send(400, { ok: false, why: 'GET /feedback/node-check?node=<64 hex>&npub=<64 hex>' });
     const k = `${node}:${npub}`, kept = NODE_CHECKS.get(k);
     if (kept && Date.now() - kept.at < 600000) return send(200, { ...kept.answer, keptMs: Date.now() - kept.at });
+    // A FRESH CHECK ASKS EVERY SEAT (~136 requests), so (audit 5 #1402): one at a time over all callers, and at most NODE_CHECKS_PER_HOUR per address
+    // (an IPv6 address counted per /64) - random npubs missed the cache and multiplied the load onto every seat
+    const ip = String(req.headers['cf-connecting-ip'] || req.socket.remoteAddress || '');
+    const who = ip.includes(':') ? ip.split(':').slice(0, 4).join(':') : ip;
+    const mine = (NODE_CHECK_ASKS.get(who) || []).filter((t) => t > Date.now() - 3600000);
+    if (mine.length >= NODE_CHECKS_PER_HOUR) return send(429, { ok: false, why: `at most ${NODE_CHECKS_PER_HOUR} node checks an hour from one address: try again later` });
+    if (NODE_CHECK_BUSY) return send(429, { ok: false, why: 'a node check is running: try again in a minute' });
+    mine.push(Date.now()); NODE_CHECK_ASKS.set(who, mine); if (NODE_CHECK_ASKS.size > 5000) NODE_CHECK_ASKS.delete(NODE_CHECK_ASKS.keys().next().value);
+    NODE_CHECK_BUSY = true;
     return nodeCheckNow(node, npub).then((answer) => { NODE_CHECKS.set(k, { at: Date.now(), answer }); if (NODE_CHECKS.size > 200) NODE_CHECKS.delete(NODE_CHECKS.keys().next().value); send(200, answer); },
-      (e) => send(502, { ok: false, why: `the seats could not be read: ${String(e.message || e).slice(0, 120)}` }));
+      (e) => send(502, { ok: false, why: `the seats could not be read: ${String(e.message || e).slice(0, 120)}` })).finally(() => { NODE_CHECK_BUSY = false; });
   }
   // THE REWARD TABLE (kanban #1342, Daniel 2026-11-08): the levels the form shows are the ones approve pays from - one source; public, no amounts
   // are promised while the bounty is off (the page shows the table only in its bounty build)

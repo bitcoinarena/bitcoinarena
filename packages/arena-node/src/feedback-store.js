@@ -131,6 +131,14 @@ export function openFeedbackStore(path = ':memory:') {
       if (of.state === STATES.DUPLICATE) return { ok: false, why: 'name the first report, not another duplicate' };
       if (of.received_ms > r.received_ms) return { ok: false, why: 'the report it repeats came later: the first report keeps its place' };
     }
+    // A REJECTION TAKES ITS REWARD LINK BACK (audit 5 #1402, reproduced: approve, make the link, reject - the link still paid, outside the week's budget):
+    // an open link is voided (compare-and-set from open); one being paid or paid keeps the report as it is
+    if (to === STATES.REJECTED) {
+      const w = db.prepare('SELECT * FROM rewards WHERE report = ?').get(r.id);
+      if (w && w.state !== 'open' && w.state !== 'void') return { ok: false, why: `its reward is ${w.state === 'paid' ? 'paid' : 'being paid'}: a paid report stays as it is` };
+      if (w && w.state === 'open' && db.prepare("UPDATE rewards SET state = 'void', why = 'the report was rejected' WHERE k1 = ? AND state = 'open'").run(w.k1).changes !== 1)
+        return { ok: false, why: 'its reward is being paid: try again in a minute' };
+    }
     db.prepare('UPDATE reports SET state = ?, reason = ?, duplicate_of = ?, changed_ms = ? WHERE id = ? AND state = ?')
       .run(to, to === STATES.REJECTED ? String(reason).trim().slice(0, 500) : r.reason, to === STATES.DUPLICATE ? String(duplicateOf) : r.duplicate_of, nowMs, r.id, r.state);
     db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, to, nowMs, by, reason || duplicateOf || null);
@@ -159,8 +167,11 @@ export function openFeedbackStore(path = ':memory:') {
     if (lv && lv.node) {
       // A NODE BOUNTY: a node report, one per person, the first NODE_BOUNTY_MOST - its checklist (census, 7 days, owner = this key) is the caller's
       if ((r.source || 'frontend') !== 'node' || !r.node) return { ok: false, why: 'a node bounty is for a node report (from the owner page), naming its node' };
-      const paidNodes = db.prepare(`SELECT pubkey FROM reports WHERE severity = 'node' AND state IN ('accepted', 'paid')`).all().map((x) => x.pubkey);
+      const paidRows = db.prepare(`SELECT pubkey, node FROM reports WHERE severity = 'node' AND state IN ('accepted', 'paid')`).all();
+      const paidNodes = paidRows.map((x) => x.pubkey);
       if (paidNodes.includes(r.pubkey)) return { ok: false, why: 'one node bounty per person: this key has one' };
+      // AND ONE PER NODE (audit 5 #1402, reproduced: one node re-claimed by 12 keys took 10 approvals, 200,000 sat)
+      if (paidRows.some((x) => x.node && String(x.node) === String(r.node))) return { ok: false, why: 'one node bounty per node: that node has one' };
       if (paidNodes.length >= NODE_BOUNTY_MOST) return { ok: false, why: `the node bounty is for the first ${NODE_BOUNTY_MOST} outside nodes: all are taken` };
     }
     if (!(lv && lv.node) && (typeof played !== 'function' || played(r.pubkey) !== true)) return { ok: false, why: 'that key has not finished a round on the network: only players are rewarded' };
@@ -198,10 +209,13 @@ export function openFeedbackStore(path = ':memory:') {
     if (!w) return { status: 'ERROR', reason: 'no such reward' };
     if (w.state === 'paid') return { status: 'ERROR', reason: 'this reward was claimed' };
     if (w.state === 'paying') return { status: 'ERROR', reason: 'this reward is being paid: try again in a minute' };
+    if (w.state === 'void' || !reportPays(w)) return { status: 'ERROR', reason: 'this reward was withdrawn: its report is not approved' };
     const msat = w.amount_sats * 1000;
     return { tag: 'withdrawRequest', callback: `${base}/lnurlw/${w.k1}/callback`, k1: w.k1, minWithdrawable: msat, maxWithdrawable: msat,
       defaultDescription: `Bitcoin Arena feedback reward, ${w.amount_sats} sat${w.network === 'mainnet' ? '' : ' (testnet sats, no value)'}` };
   }
+  /** A reward pays only while its report is approved (audit 5 #1402). */
+  const reportPays = (w) => { const r = get.get(w.report); return !!r && (r.state === STATES.ACCEPTED || r.state === STATES.PAID); };
   /** The link a wallet scans: LUD-01 bech32 of `<base>/lnurlw/<k1>`. */
   const lnurlOf = (k1, { base }) => lnurlFor(`${base}/lnurlw/${k1}`);
 
@@ -214,7 +228,8 @@ export function openFeedbackStore(path = ':memory:') {
   async function claim(k1, invoice, { decode, pay, nowMs = Date.now() } = {}) {
     const w = rewardOf.get(String(k1));
     if (!w) return { status: 'ERROR', reason: 'no such reward' };
-    if (w.state !== 'open') return { status: 'ERROR', reason: w.state === 'paid' ? 'this reward was claimed' : 'this reward is being paid' };
+    if (w.state !== 'open') return { status: 'ERROR', reason: w.state === 'paid' ? 'this reward was claimed' : w.state === 'void' ? 'this reward was withdrawn: its report is not approved' : 'this reward is being paid' };
+    if (!reportPays(w)) return { status: 'ERROR', reason: 'this reward was withdrawn: its report is not approved' };   // audit 5 #1402
     let d;
     try { d = await decode(String(invoice || '')); } catch { d = { ok: false }; }
     if (!d || !d.ok) return { status: 'ERROR', reason: 'that invoice could not be read' };
@@ -240,9 +255,12 @@ export function openFeedbackStore(path = ':memory:') {
    * A PAYMENT WHOSE OUTCOME WAS NOT KNOWN (a restart mid-pay, a timeout): `status(paymentHash)` -> 'paid' | 'failed' | 'unknown', the payer's own
    * record. Paid: the reward and the report are paid. Failed: the link opens again. Unknown: it stays paying.
    */
-  async function settle({ status, nowMs = Date.now() } = {}) {
+  // A PAYMENT STILL GOING IS LEFT ALONE (audit 5 #1402): the payer's own record may not know it yet, and "not found" read as failed reopened the link while
+  // claim()'s payinvoice still ran (75 s) - with a hold invoice the holder claimed again and was paid twice. Read only after `freshMs`.
+  async function settle({ status, nowMs = Date.now(), freshMs = 180000 } = {}) {
     const out = [];
     for (const w of db.prepare("SELECT * FROM rewards WHERE state = 'paying'").all()) {
+      if (Number(w.tried_ms || 0) > nowMs - freshMs) { out.push({ k1: w.k1, status: 'unknown', fresh: true }); continue; }
       let st = 'unknown';
       try { st = w.payment_hash ? await status(w.payment_hash) : 'unknown'; } catch { st = 'unknown'; }
       if (st === 'paid') paidNow(w, w.payment_hash, nowMs);
