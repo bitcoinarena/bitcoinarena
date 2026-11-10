@@ -66,7 +66,7 @@ function play(round, who_) {
   const child = spawn(process.execPath, [join(HERE, 'tn4-live-run.mjs')], { detached: true, stdio: ['ignore', fd, fd],
     env: { ...env, ARENA_TN4_NETWORK: 'regtest', ARENA_REGTEST_CENSUS_KEY_0: join(D, 'census', 'key0.json'), ROUND: round.id, PORTS: PLAN.nodes.join(','),
       KEYS_FILE: join(D, 'c1346', 'keys.jsonl'), COLLECT_MS: String(env.COLLECT_MS || 1200000), IDENTITY_SECRET_FILE: who_.file, PLAYER_NAME: `c1346-${who_.i}`,
-      FRONTEND_PK: who.siteKey, SEARCH: '1' } });
+      FRONTEND_PK: who.siteKey, SEARCH: '1', SEARCH_FALLBACK: '1' } });
   return { log, child, done: new Promise((ok) => child.on('exit', (code) => ok(code))) };
 }
 const stepOf = (p, step) => { try { return readFileSync(p.log, 'utf8').split('\n').filter((l) => l.includes(`"step":"${step}"`)); } catch { return []; } };
