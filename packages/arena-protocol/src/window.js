@@ -14,7 +14,7 @@
 //
 // Every node computes these from the signed contract the round id binds, so every window starts and ends at the same
 // instant everywhere and nobody - no node, no signer's timestamp, no miner - can move them.
-import { OBJECTION_WINDOW_MS, FINAL_TOLERANCE_MS } from './constants.js';
+import { OBJECTION_WINDOW_MS, FINAL_TOLERANCE_MS, objectionWindowAllowed } from './constants.js';
 import { roundEndMs } from './first-mark.js';
 
 export { OBJECTION_WINDOW_MS, FINAL_TOLERANCE_MS };
@@ -22,7 +22,8 @@ export { OBJECTION_WINDOW_MS, FINAL_TOLERANCE_MS };
 /** All of a round's window instants (BigInt ms), from its contract alone. */
 export function windowsOf(contract) {
   const end = roundEndMs(contract);
-  const W = OBJECTION_WINDOW_MS;
+  // THE CONTRACT'S OWN WINDOW (kanban #1398): 600 s, or a head-to-head round's 60 s (5 s on a regtest); one it may not name counts as 600 s
+  const W = typeof contract.objectionWindowMs === 'bigint' && objectionWindowAllowed(contract.objectionWindowMs) ? contract.objectionWindowMs : OBJECTION_WINDOW_MS;
   const T = FINAL_TOLERANCE_MS;
   return {
     openMs: end,

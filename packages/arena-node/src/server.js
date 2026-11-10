@@ -158,6 +158,7 @@ import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/sr
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
 import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } from './send-plan-ask.js';
+import { objectionWindowAllowed } from '../../arena-protocol/src/constants.js';   // kanban #1398
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
@@ -5913,7 +5914,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (kept.listedUnder !== seriesVersion) {
       // §13A, WINDOW-10-SPEC: not 600 000 ms, never listed. A ROUND OF A SERIES THIS NODE NO LONGER HOLDS IS NOT
       // ANNOUNCED (the 82/90 fork: a series replaced before it ran takes no entry at any door, so it is offered nowhere).
-      kept.unlisted = kept.c.objectionWindowMs !== OBJECTION_WINDOW_MS || !!offerRefusal(kept.c);
+      kept.unlisted = !objectionWindowAllowed(kept.c.objectionWindowMs) || !!offerRefusal(kept.c);   // kanban #1398: a head-to-head round's short window too
       kept.listedEnd = kept.endMs !== null ? kept.endMs : kept.c.entryCloseMs;
       kept.listedUnder = seriesVersion;
     }
