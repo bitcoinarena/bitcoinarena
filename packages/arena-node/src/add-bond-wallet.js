@@ -52,8 +52,12 @@ const rebroadcast = (cli, hexes) => { for (const h of hexes) { try { cli('sendra
 // THE KEPT ACTION'S TRANSACTION IS REALLY THERE (audit 6, kanban #1423): the journal is written before the broadcast (#1374), so a broadcast that threw
 // left a row for a transaction no node holds, and the same ask answered "already" with nothing sent. After the rebroadcast it must be in this node's
 // mempool or mined (`confirmed`); else the row is stale and the action is built again
-const txThere = (cli, txid, confirmed = false) => { if (confirmed) return true; try { cli('getmempoolentry', txid); return true; } catch { /* not in the mempool */ }
-  try { const t = JSON.parse(cli('gettransaction', txid)); return Number(t.confirmations) > 0; } catch { return false; } };
+// ONLY "NOT FOUND" IS "NOT THERE" (audit 6 re-check N8, kanban #1426): a busy or restarting bitcoind's error read as missing, and the same add was built
+// and sent a second time; any other error answers "already" - the safe side, the kept bytes were re-sent above
+const notFound = (e) => /not in mempool|No such mempool|No such mempool or blockchain transaction|Invalid or non-wallet transaction id|-5\b/i.test(`${e && e.message} ${e && e.stderr}`);
+const txThere = (cli, txid, confirmed = false) => { if (confirmed) return true;
+  try { cli('getmempoolentry', txid); return true; } catch (e) { if (!notFound(e)) return true; }
+  try { const t = JSON.parse(cli('gettransaction', txid)); return Number(t.confirmations) > 0; } catch (e) { return !notFound(e); } };
 const sameAction = (was, { key, what, nowMs }) => !!was && (key ? was.key === key : (!was.key && was.what === what && nowMs - Number(was.atMs || 0) < SAME_ACTION_MS));
 
 export async function addBondFromWallet({ cli, wallet, network = 'testnet4', secret, pubkey, addSats, post = false, blockMs = 600000, now = Date.now(), censusKey = null, key = null, journal = null }) {

@@ -513,6 +513,9 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         if (typeof endTimeAt === 'function') {
           let t = null; try { t = Number(await endTimeAt(end)); } catch { t = null; }
           if (!Number.isFinite(t) || t <= 0) { log(`[funding] ${row.id.slice(0, 16)}: the signal ended at ${end}, that block's time not read yet`); continue; }
+          // A HEADER TIME AHEAD OF THIS SEAT'S CLOCK (audit 6 re-check N5, kanban #1426): a miner may date a block up to 2 h ahead; deciding before that
+          // moment, a seat missed signals other seats still counted until it - two outcomes again. It decides once its own clock has passed it
+          if (t > now()) { log(`[funding] ${row.id.slice(0, 16)}: the end block is dated ${Math.round((t - now()) / 1000)} s ahead of this seat's clock: decided after it`); continue; }
           endSeen = t;
         }
         const a = await activeAt(end).catch((e) => ({ ok: false, why: e.message }));
