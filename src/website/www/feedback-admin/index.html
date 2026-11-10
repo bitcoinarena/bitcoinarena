@@ -131,7 +131,9 @@
       el('div', { cls: 'dim', text: `Received ${when(r.receivedMs)} · from the ${r.source === 'node' ? 'node' : 'frontend'} · game ${r.game || 'none'} · round ${r.round || 'none'} · build ${r.build || 'none'}` }),
       r.node ? el('div', { cls: 'dim' }, el('span', { text: 'Node ' }), el('code', { text: r.node })) : null,
       el('div', { cls: 'dim' }, el('span', { text: 'Player ' }), el('code', { text: r.pubkey }), el('span', { cls: r.ours ? 'warn' : r.played ? '' : 'bad', text: r.ours ? ' · ours, never paid' : r.played ? ' · this key has finished a round before (any game, any time) - so it may be rewarded' : ' · this key never finished a round on the network - no reward' })),
-      el('h2', { text: 'What happened' }), el('pre', { text: r.happened }), r.expected ? el('h2', { text: 'Expected' }) : null, r.expected ? el('pre', { text: r.expected }) : null);
+      el('h2', { text: 'What happened' }), el('pre', { text: r.happened }), r.expected ? el('h2', { text: 'Expected' }) : null, r.expected ? el('pre', { text: r.expected }) : null,
+      // THE CLIENT'S DEBUG (kanban #1391): the page's order, steps, wallet, lobby and console as the report carried them
+      r.debug ? el('h2', { text: 'Client debug' }) : null, r.debug ? el('pre', { text: r.debug, style: 'max-height:480px;overflow:auto;font-size:12px' }) : null);
     // THE SCREENSHOT, fetched with the admin code (the faucet serves it to nobody else) and shown from its bytes
     if (r.screenshot) { const box = el('div', {}, el('h2', { text: 'Screenshot' })); d.append(box);
       fetch(`${API}/screenshot/${r.screenshot}`, { headers: { 'x-arena-admin': code } }).then((x) => (x.ok ? x.blob() : null)).then((b) => {
