@@ -219,6 +219,9 @@
     #arena-join-status .x { flex: none; background: none; border: 0; color: #8b949e; font-size: 20px; line-height: 1; cursor: pointer; padding: 0 2px; }
     @keyframes arena-spin { to { transform: rotate(360deg); } }
     body.arena-clean #arena-join-status { display: none !important; }
+    /* NOT ON THE ORDER STRIP (kanban #1393, seen 2026-11-10 01:41Z at iPhone width on UI 612: "Round over: send feedback" sat on the strip's "Your order came
+       too late ..."; at the top it covered the game's own note): while the strip shows, the round's feedback note waits hidden - Feedback stays in the footer */
+    body.arena-own-client:has(#arena-join-status.on) #arena-round-feedback { display: none; }
     /* ONE LINE AT THE FOOT (2026-10-17: "This can be better in the same line, Donate on right and build numbers before in one line
        so the vertical space is less"): the build line and Donate share one 30 px row; the settlement facts above it only when there are any */
     body.arena-own-client #arena-donate-go { display: block; position: fixed; right: 6px; bottom: calc(min(env(safe-area-inset-bottom, 0px), 4px) + 3px); z-index: 9992; height: 24px; padding: 0 10px;
