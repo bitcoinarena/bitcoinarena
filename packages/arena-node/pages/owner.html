@@ -257,7 +257,8 @@ const bootTick = setInterval(() => { if (!document.getElementById('boot')) clear
 const HASH = new URLSearchParams(location.hash.slice(1));
 const NODE_KEY = ON_SITE ? String(HASH.get('node') || '').trim().toLowerCase() : null;
 async function siteBase() {
-  if (HASH.get('url')) return String(HASH.get('url')).replace(/\/+$/, '');
+  // NO ADDRESS FROM THE LINK (audit 8, kanban #1432: #url= named any server, and the page on the Arena site ran its code): the node is found only
+  // by its key, through the seats' signed announcements, or on this machine (local=)
   if (!/^[0-9a-f]{64}$/.test(NODE_KEY || '')) return null;
   let seats = ['https://tn4.bitcoin-arena.io/guardian-1', 'https://tn4.bitcoin-arena.io/guardian-2', 'https://tn4.bitcoin-arena.io/guardian-3'];
   try { const d = await (await fetch('/daily.json', { cache: 'no-store' })).json(); const t = (d && d.testnet) || d || {}; if (Array.isArray(t.node) && t.node.length) seats = t.node; } catch {}
@@ -302,15 +303,19 @@ const handoff = HASH.has('owner-handoff') && window.opener ? new Promise((done) 
   const on = (e) => {
     const d = e.data;
     if (e.source !== window.opener || !d || d.type !== 'arena-owner-key') return;
+    // ONLY FROM THE INSTALLER ON THIS MACHINE, AND NEVER OVER A KEY ALREADY KEPT (audit 8, kanban #1433: any site that opened this page with
+    // owner-handoff could replace the owner keys this browser keeps): the installer's wizard is served on the loopback address
+    if (!/^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(String(e.origin || ''))) return;
+    const keep = (k, v) => { try { if (!localStorage.getItem(k)) localStorage.setItem(k, v); } catch {} };
     try {
-      if (d.kind === 'seed' && /^[0-9a-f]{64}$/.test(d.seed)) localStorage.setItem(HSTORE, d.seed);
-      else if (d.kind === 'nsec' && /^[0-9a-f]{64}$/.test(d.secret)) localStorage.setItem(HNSTORE, JSON.stringify({ how: 'nsec', secret: d.secret }));
+      if (d.kind === 'seed' && /^[0-9a-f]{64}$/.test(d.seed)) keep(HSTORE, d.seed);
+      else if (d.kind === 'nsec' && /^[0-9a-f]{64}$/.test(d.secret)) keep(HNSTORE, JSON.stringify({ how: 'nsec', secret: d.secret }));
       // EVERY NODE OF THE MACHINE AT ONCE (kanban #713, 2026-10-26: "You need to store credentials for *all* owner pages where its needed and
       // provide links"): `keys` names each node by its key, and each owner key is kept under that node, as its own page keeps it
       if (ON_SITE && Array.isArray(d.keys)) for (const k of d.keys) {
         if (!k || !/^[0-9a-f]{64}$/.test(String(k.node || ''))) continue;
-        if (k.kind === 'seed' && /^[0-9a-f]{64}$/.test(k.seed)) localStorage.setItem('arena-owner-seed:node:' + k.node, k.seed);
-        else if (k.kind === 'nsec' && /^[0-9a-f]{64}$/.test(k.secret)) localStorage.setItem('arena-owner-nostr:node:' + k.node, JSON.stringify({ how: 'nsec', secret: k.secret }));
+        if (k.kind === 'seed' && /^[0-9a-f]{64}$/.test(k.seed)) keep('arena-owner-seed:node:' + k.node, k.seed);
+        else if (k.kind === 'nsec' && /^[0-9a-f]{64}$/.test(k.secret)) keep('arena-owner-nostr:node:' + k.node, JSON.stringify({ how: 'nsec', secret: k.secret }));
       }
     } catch {}
     removeEventListener('message', on); HASH.delete('owner-handoff');
@@ -374,7 +379,12 @@ fetch(at('/owner/version'), { cache: 'no-store' }).then((r) => r.json()).then((v
   if (v.version) document.getElementById('build').textContent = 'Bitcoin Arena ' + v.version;
 }).catch(() => {});
 // a node that stops answering here is said, not waited for under a bar that counts on (kanban #834)
-const loaded = (p) => import(at(p)).catch((e) => { document.getElementById('who').textContent = 'This node did not answer: ' + e.message; loadEnd(); throw e; });
+// THE OWNER CODE FROM THE ARENA SITE ITSELF (audit 8, kanban #1432, critical): on the site this page imported /owner/client.js and /owner/react.js
+// from whatever address a link or a node's announcement named - a node operator, or anyone with a link, ran code in testnet.bitcoinarena.io, which
+// keeps the owner keys, the player wallets and the admin code. On the site both files are the site's own copies (beside this page); only the
+// requests go to the node. A node's own /Dashboard/owner keeps loading them from the node, which is its own origin
+const codeAt = (p) => (ON_SITE ? new URL('./' + (p === '/owner/client.js' ? 'client.js' : 'react.js'), location.href).href : at(p));
+const loaded = (p) => import(codeAt(p)).catch((e) => { document.getElementById('who').textContent = 'This node did not answer: ' + e.message; loadEnd(); throw e; });
 const C = await loaded('/owner/client.js');
 // THE REACT SCREENS (kanban #564, 2026-10-21: "Delete the old html code of those components you have ported, no fall backs"): the
 // bundle is loaded once, here, and every ported panel is drawn by it alone
