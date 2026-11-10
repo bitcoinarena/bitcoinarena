@@ -270,6 +270,13 @@ function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now() 
   const seen = verifiedFinal(held.map((r) => r.bytes), { contract, signerNodes: committee });
   let win = null;
   try { win = windowsOf(contract); } catch { win = null; }
+  // THE HEAD-TO-HEAD AUDIT GATE (§13A.1 RULED 2026-11-10, kanban #1400, build #1412): a head-to-head round on the short window is FINAL in it only with two
+  // drawn auditors' H2H_AUDITs over this seat's results, held in time; else its window is the long one (600 s) - never VOID for want of auditors. The
+  // round answers the window to apply (`h2hWindowMs`), or null for any other round
+  if (win && typeof round.h2hWindowMs === 'function') {
+    let w = null; try { w = round.h2hWindowMs(roundIdBytes, contract); } catch { w = null; }
+    if (w !== null && w !== undefined && BigInt(w) !== BigInt(contract.objectionWindowMs)) { try { win = windowsOf({ ...contract, objectionWindowMs: BigInt(w) }); } catch { /* the contract's own */ } }
+  }
   // THE IN-TIME QUORUM (§13A "Results must be in before the window closes ... one that has not by window_close falls to
   // §13C's no-quorum rule"; §13CRULED 2026-10-04). The deadline is final_after - the round's end +
   // 600 s + 5 s, wall-clock ms - on this seat's clock, by when this seat HELD each result (a PlayerResult carries no
