@@ -2068,6 +2068,33 @@
         }
         window.ARENA_ADMIN = !!adminCode;
       } catch (e) { window.ARENA_ADMIN = !!adminCode; }
+      // THE OWNER'S ROUNDS, TOLD TO THE EXPLORER: by the admin code, or (kanban #1414) by the admin's address
+      let addressTold = false;
+      const markOwn = async (byAddress) => {
+        const S = (window.ARENA_BROWSER_STORE && window.ARENA_BROWSER_STORE()) || store;
+        const ids = new Set();
+        // every place this browser keeps an entry id (kanban #1090, measured on the owner's phone 11-03: its history held deposits only): the
+        // wallet history's stake rows, each kept lock's committedTo, each round note arena.pending.<round>.<entry>
+        const add = (x) => { if (/^[0-9a-f]{64}$/i.test(String(x || ''))) ids.add(String(x).toLowerCase()); };
+        for (let i = 0; i < S.length; i++) {
+          const k = S.key(i) || '';
+          try {
+            if (k.startsWith('arena.ledger.') && !k.startsWith('arena.ledger.read.')) { for (const r of JSON.parse(S.getItem(k) || '[]')) if (r) add(r.entry); }
+            else if (k.startsWith('arena.lock.saved.')) add((JSON.parse(S.getItem(k) || 'null') || {}).committedTo);
+            else if (k.startsWith('arena.pending.') && k !== 'arena.pending.mine') add(k.split('.').pop());
+          } catch { /* not ours */ }
+        }
+        let sent = []; try { sent = JSON.parse(store.getItem('arena.admin.marked') || '[]'); } catch { sent = []; }
+        const fresh = [...ids].filter((x) => !sent.includes(x)).slice(0, 500);
+        // the admin's address is told once a page load, entries or not (kanban #1414): a fresh admin browser registers it too
+        if (!fresh.length && (byAddress || addressTold)) return;
+        if (!byAddress) addressTold = true;
+        try {
+          const r = await fetch('https://explorer.bitcoinarena.io/api/' + (byAddress ? 'mark-ip' : 'mark'), { method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(byAddress ? { keys: fresh } : { kind: 'owner', keys: fresh, code: adminCode }) });
+          if (r.ok) store.setItem('arena.admin.marked', JSON.stringify(sent.concat(fresh).slice(-5000)));
+        } catch { /* the next minute asks again */ }
+      };
       if (window.ARENA_ADMIN) {
         // THE ADMIN LINK, RIGHT BEFORE THE UI STAMP (the owner 2026-11-08: "Zeige ein kleines flag an im client wenn der admin node aktiviert ist"; Daniel
         // 2026-11-10: "wenn ich auf das admin links unten klicke muss die aber die admin Seite aufgehen, nicht 2 links. Admin ist auch zu links, man kann es nicht
@@ -2091,31 +2118,24 @@
         // THE OWNER'S ROUNDS LEFT OUT OF THE COUNTS (kanban #1090: "tu da meine Runden RAUS NEHMEN. Indem es ein Flag im Frontend gibt"): every
         // entry this browser's wallet history holds (a stake row's entry - its transaction id in the explorer), told to the explorer once, with
         // the admin code; again each minute for the rounds joined since
-        const report = async () => {
-          const S = (window.ARENA_BROWSER_STORE && window.ARENA_BROWSER_STORE()) || store;
-          const ids = new Set();
-          // every place this browser keeps an entry id (kanban #1090, measured on the owner's phone 11-03: its history held deposits only): the
-          // wallet history's stake rows, each kept lock's committedTo, each round note arena.pending.<round>.<entry>
-          const add = (x) => { if (/^[0-9a-f]{64}$/i.test(String(x || ''))) ids.add(String(x).toLowerCase()); };
-          for (let i = 0; i < S.length; i++) {
-            const k = S.key(i) || '';
-            try {
-              if (k.startsWith('arena.ledger.') && !k.startsWith('arena.ledger.read.')) { for (const r of JSON.parse(S.getItem(k) || '[]')) if (r) add(r.entry); }
-              else if (k.startsWith('arena.lock.saved.')) add((JSON.parse(S.getItem(k) || 'null') || {}).committedTo);
-              else if (k.startsWith('arena.pending.') && k !== 'arena.pending.mine') add(k.split('.').pop());
-            } catch { /* not ours */ }
-          }
-          let sent = []; try { sent = JSON.parse(store.getItem('arena.admin.marked') || '[]'); } catch { sent = []; }
-          const fresh = [...ids].filter((x) => !sent.includes(x)).slice(0, 500);
-          if (!fresh.length) return;
-          try {
-            const r = await fetch('https://explorer.bitcoinarena.io/api/mark', { method: 'POST', headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ kind: 'owner', keys: fresh, code: adminCode }) });
-            if (r.ok) store.setItem('arena.admin.marked', JSON.stringify(sent.concat(fresh).slice(-5000)));
-          } catch { /* the next minute asks again */ }
-        };
+        const report = () => markOwn(false);
         window.ARENA_ADMIN_REPORT = report;
         setTimeout(report, 5000); setInterval(report, 60000);
+      } else {
+        // ADMIN BY ADDRESS (kanban #1414, Daniel 2026-11-10: "Wenn ich einen anonymen browser aufmache von einer IP die davor einen admin key hatte müssen
+        // wir das auch erkennen und ihn als admin flaggen obwohl die session neu ist"): a browser with no code asks the explorer whether its address sent
+        // the admin code (within 90 days); if so it is flagged, sends no Umami event, and its rounds are left out of the counts by address
+        try {
+          const r = await fetch('https://explorer.bitcoinarena.io/api/admin-ip', { cache: 'no-store' });
+          const j = await r.json();
+          if (j && j.admin === true) {
+            window.ARENA_ADMIN_IP = true;
+            console.log('[admin] this address is the admin\'s: this browser\'s rounds are left out of the counts');
+            const byIp = () => markOwn(true);
+            window.ARENA_ADMIN_REPORT = byIp;
+            setTimeout(byIp, 5000); setInterval(byIp, 60000);
+          }
+        } catch { /* not known: a player */ }
       }
     })();
     window.addEventListener('DOMContentLoaded', () => {
