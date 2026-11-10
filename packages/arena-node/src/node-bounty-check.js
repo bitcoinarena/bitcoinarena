@@ -33,14 +33,18 @@ export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Da
   // answer won - a seat of one's own named itself the owner of someone else's node. Only a statement the node key signed counts, at most a day old,
   // the newest of them; `at` (the team-host check) is where that statement was served
   let owner = null, at = null, newest = -1;
+  const servedAt = new Set();   // every host that served the node's signed word (audit 6 re-check N7, kanban #1426)
   await Promise.all(urls.map(async (u) => { try { const o = await fetchJson(`${u}/owner`); if (!o || String(o.node).toLowerCase() !== n || !o.statement) return;
     const atMs = Number(o.statement.atMs), named = o.claimed ? String(o.owner || '').toLowerCase() : '';
     if (!Number.isFinite(atMs) || Math.abs(nowMs - atMs) > OWNER_STATEMENT_MAX_AGE_MS || !/^[0-9a-f]{128}$/.test(String(o.statement.sig || ''))) return;
     let good = false; try { good = schnorr.verify(fromHex(String(o.statement.sig)), ownerStatementMessage({ node: n, owner: named, atMs }), fromHex(n)); } catch { good = false; }
-    if (!good || atMs <= newest) return;
+    if (!good) return;
+    servedAt.add(u);
+    if (atMs <= newest) return;
     newest = atMs; at = u; owner = named || null; } catch { /* not answering */ } }));
   const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch { return ''; } };
-  const team = excluded.has(n) || excluded.has(me) || (at !== null && (teamHosts || []).map((h) => String(h).toLowerCase()).includes(hostOf(at)));
+  // a seat relaying a team node's signed word must not make it look outside: any team host among those that served it makes it a team node
+  const team = excluded.has(n) || excluded.has(me) || [...servedAt].some((u) => (teamHosts || []).map((h) => String(h).toLowerCase()).includes(hostOf(u)));
   // THE LAST `days` UTC DAYS: each seat's rounds of that day, merged by round id
   const today = Math.floor(nowMs / DAY_MS) * DAY_MS;
   // the days in parallel (measured 2026-11-08 on 17 seats: one after another took 120 s)

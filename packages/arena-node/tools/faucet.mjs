@@ -178,39 +178,49 @@ async function paymentSent(payer, hash) {
 // may fail downstream: a welcome booked that never arrived), a timeout as unpaid (a late attempt may succeed: paid, the row gone, a second welcome
 // possible). The grant now books an unsure verdict as such - a row `pending` with its payers, or a removed row kept in `unsure` - and this sweep reads
 // each payer's own record of the payment until it is SUCCEEDED or FAILED, and sets the book to it.
+// BY THE PAYMENT'S HASH (audit 6 re-check N2, kanban #1426): listpayments shows the newest 200 only, so a payment that fell out of it read as "no record"
+// and its row stayed pending for good. trackpayment answers one hash: its status, or "not initiated" (this payer never paid it: NONE); no answer in
+// time is still in flight
 async function paymentFinal(payer, hash) {
   if (!payer) return null;
-  const r = await lncli(payer, ['listpayments', '--include_incomplete', '--max_payments', '200']);
-  let p = null; try { p = (JSON.parse(r.out).payments || []).find((x) => x.payment_hash === hash) || null; } catch { p = null; }
-  return p ? p.status : null;   // SUCCEEDED, FAILED, IN_FLIGHT, or null (this payer has no such payment)
+  const r = await lncli(payer, ['trackpayment', hash], 10000);
+  const text = `${r.out || ''}\n${r.err || ''}`;
+  if (/isn't initiated|not initiated|not found|unknown payment/i.test(text)) return 'NONE';
+  const states = [...text.matchAll(/"status":\s*"([A-Z_]+)"/g)].map((m) => m[1]);
+  const last = states[states.length - 1] || null;
+  if (last === 'SUCCEEDED' || last === 'FAILED') return last;
+  return r.timedOut || last ? 'IN_FLIGHT' : null;
 }
 const UNSURE_KEEP_MS = 24 * 3600 * 1000;
+// OUT OF THE PLAYERS' QUEUE, AND ONLY ITS OWN CHANGES (audit 6 re-check N3/N4, kanban #1426): in the queue its lncli reads held welcomes past the page's
+// 45 s again, and saving the book it had read before its awaits dropped refill rows written meanwhile. The reads run first; the book is read again
+// and only this sweep's decisions, by payment hash, are applied to it in one synchronous step
+const notPaid = (states) => states.length > 0 && states.every((x) => x === 'FAILED' || x === 'NONE');
 async function sweepPayments(nowMs = Date.now()) {
+  const seen = readBook();
+  const keep = new Set(), drop = new Set(), rebook = new Map(), forget = new Set();
+  for (const r of (seen.players || []).filter((x) => x.pending)) {
+    const states = await Promise.all((r.payers || []).map((i) => paymentFinal(PAYERS[i], r.hash).catch(() => null)));
+    if (states.includes('SUCCEEDED')) keep.add(r.hash);
+    else if (notPaid(states)) drop.add(r.hash);
+  }
+  for (const u of seen.unsure || []) {
+    const states = await Promise.all((u.payers || []).map((i) => paymentFinal(PAYERS[i], u.hash).catch(() => null)));
+    if (states.includes('SUCCEEDED')) rebook.set(u.hash, u);
+    else if (notPaid(states) || (!states.includes('IN_FLIGHT') && nowMs - Number(u.removedMs || 0) > UNSURE_KEEP_MS)) forget.add(u.hash);
+  }
+  if (!keep.size && !drop.size && !rebook.size && !forget.size) return false;
   const book = readBook();
   book.players = book.players || []; book.unsure = book.unsure || [];
-  let changed = false;
-  for (const r of book.players.filter((x) => x.pending)) {
-    const states = await Promise.all((r.payers || []).map((i) => paymentFinal(PAYERS[i], r.hash).catch(() => null)));
-    if (states.includes('SUCCEEDED')) { delete r.pending; delete r.payers; changed = true; console.log(`${new Date().toISOString()} player ${r.kind} ${r.hash.slice(0, 16)}: SUCCEEDED, kept`); }
-    else if (states.length && !states.includes('IN_FLIGHT') && !states.includes(null)) {
-      book.players = book.players.filter((x) => x !== r); changed = true; console.log(`${new Date().toISOString()} player ${r.kind} ${r.hash.slice(0, 16)}: FAILED at every payer, the row removed (the welcome can be asked again)`);
-    }
-  }
-  for (const u of [...book.unsure]) {
-    const states = await Promise.all((u.payers || []).map((i) => paymentFinal(PAYERS[i], u.hash).catch(() => null)));
-    if (states.includes('SUCCEEDED')) {
-      const { payers, removedMs, ...row } = u;
-      if (!book.players.some((x) => x.hash === row.hash)) book.players.push(row);
-      book.unsure = book.unsure.filter((x) => x !== u); changed = true;
-      console.log(`${new Date().toISOString()} player ${row.kind} ${row.hash.slice(0, 16)}: paid after all - booked again`);
-    } else if (!states.includes('IN_FLIGHT') && (nowMs - Number(u.removedMs || 0) > UNSURE_KEEP_MS || states.every((x) => x === 'FAILED'))) {
-      book.unsure = book.unsure.filter((x) => x !== u); changed = true;
-    }
-  }
-  if (changed) saveBook(book);
-  return changed;
+  for (const r of book.players) if (r.pending && keep.has(r.hash)) { delete r.pending; delete r.payers; console.log(`${new Date().toISOString()} player ${r.kind} ${r.hash.slice(0, 16)}: SUCCEEDED, kept`); }
+  book.players = book.players.filter((r) => { const gone = r.pending && drop.has(r.hash); if (gone) console.log(`${new Date().toISOString()} player ${r.kind} ${r.hash.slice(0, 16)}: not paid by any payer, the row removed (the welcome can be asked again)`); return !gone; });
+  for (const [h, u] of rebook) { const { payers, removedMs, ...row } = u; if (!book.players.some((x) => x.hash === h)) { book.players.push(row); console.log(`${new Date().toISOString()} player ${row.kind} ${h.slice(0, 16)}: paid after all - booked again`); } }
+  book.unsure = book.unsure.filter((u) => !rebook.has(u.hash) && !forget.has(u.hash));
+  saveBook(book);
+  return true;
 }
-if (PAYERS.length) setInterval(() => { one(() => sweepPayments()).catch(() => {}); }, Number(env.FAUCET_SWEEP_MS || 120000)).unref();
+let sweeping = false;
+if (PAYERS.length) setInterval(() => { if (sweeping) return; sweeping = true; sweepPayments().catch(() => {}).finally(() => { sweeping = false; }); }, Number(env.FAUCET_SWEEP_MS || 120000)).unref();
 
 async function grant(ask) {
   if (!/^lntb[0-9a-z]{20,1500}$/.test(String(ask.invoice || ''))) return { ok: false, why: 'that is not a testnet invoice' };
@@ -533,7 +543,9 @@ createServer((req, res) => {
           // kept and none counted, so the limits never tripped
           if (kept.kept) { REPORTS.push({ ip, atMs: Date.now() }); counted = true; }
         }
-        const d = feedbackDecide({ ...b, ip }, REPORTS);
+        // counted once (audit 6 re-check N9, kanban #1426): a signed report kept above is in REPORTS already, so the address's 50th report was
+        // kept and numbered here and then refused as its own 51st
+        const d = feedbackDecide({ ...b, ip }, counted ? REPORTS.slice(0, -1) : REPORTS);
         if (!d.ok) return send(200, d);
         // AN UNSIGNED REPORT'S BOUNTY ADDRESS TOO (#1342, measured on testnet-stage: a report from a tab with no identity named an address nothing pays to and
         // was taken): its "Bounty address:" line must work as well

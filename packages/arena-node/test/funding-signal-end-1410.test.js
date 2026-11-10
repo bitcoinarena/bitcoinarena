@@ -51,3 +51,22 @@ test('#1410 a seat deciding hours late counts the same signals as a live one: th
   assert.deepEqual(after.A, after.C, 'two outcomes for one period');
   assert.deepEqual(after.C, ['failed', 14]);
 });
+
+// KANBAN #1426 N5 (audit 6 re-check): an end block dated ahead of a seat's clock - the seat decides only once its clock has passed that time
+test('#1426 an end block dated in the future: no seat decides before that moment, so a signal held until then counts at every seat', async () => {
+  const clock = { now: 1_000_000 }, state = { tip: 157807 };
+  const ahead = 2 * 3600_000, endAt = clock.now + ahead;
+  const b = createFundingBook({ db: openStore(':memory:'), verify, tip: async () => state.tip, now: () => clock.now,
+    isBonded: (hex) => NODES.some((n) => toHex(pk(n)) === hex),
+    activeAt: async (end) => ({ ok: true, nodes: NODES.map((n) => toHex(pk(n))), fromHeight: end - 432 }),
+    endTimeAt: async () => endAt });
+  await b.add('proposal', proposalHex()); for (let i = 1; i <= 14; i++) await b.add('signal', signalHex(i + 1));
+  state.tip = END + 10;
+  const early = await b.decide();
+  clock.now += ahead - 1000; await b.add('signal', signalHex(16));     // held before the block's own time
+  clock.now += 2000;
+  const [late] = await b.decide();
+  console.log(`  MEASURED #1426 N5: decided while the end block was 2 h ahead: ${early.length}; after its time: ${late.state} ${late.supporters}`);
+  assert.equal(early.length, 0);
+  assert.deepEqual([late.state, late.supporters], ['passed', 15]);
+});
