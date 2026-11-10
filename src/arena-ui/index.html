@@ -1936,7 +1936,8 @@
           const j = await r.json();
           if (!j.ok) throw new Error(j.why || 'not sent');
           if (window.ARENA_TRACK) window.ARENA_TRACK('feedback-sent');
-          say.textContent = body.event ? 'Thank you. It is in My feedback, where you see what the team decides.' : 'Thank you, it reached the team.';
+          // ITS NUMBER (kanban #1413): "Thank you. Feedback #012 is in My feedback ..."
+          say.textContent = body.event ? 'Thank you. ' + (j.label ? j.label + ' is' : 'It is') + ' in My feedback, where you see what the team decides.' : 'Thank you, it reached the team.';
           if (body.event) { say.style.cursor = 'pointer'; say.style.textDecoration = 'underline'; say.onclick = () => { d.remove(); if (window.ARENA_MY_FEEDBACK) window.ARENA_MY_FEEDBACK(); }; }
           t.value = ''; x.value = ''; shot.value = '';
           // THE INVITATION IN PLACE OF THE FORM; Close stays
@@ -1997,7 +1998,7 @@
         if (!j.reports.length) { list.textContent = 'No signed reports yet. Send one from Feedback.'; return; }
         const said = { new: 'waiting for the team', accepted: 'accepted', rejected: 'not accepted', duplicate: 'already reported by someone', paid: 'paid' };
         for (const rp of j.reports) {
-          const row = el('div', { cls: 'fb-row' }, el('div', { cls: 'fb-head', text: new Date(rp.receivedMs).toISOString().slice(0, 10) + ' · ' + rp.type + (rp.screenshot ? ' · with screenshot' : '') + ' · ' + (said[rp.state] || rp.state) }),
+          const row = el('div', { cls: 'fb-row' }, el('div', { cls: 'fb-head', text: (rp.label ? rp.label + ' · ' : '') + new Date(rp.receivedMs).toISOString().slice(0, 10) + ' · ' + rp.type + (rp.screenshot ? ' · with screenshot' : '') + ' · ' + (said[rp.state] || rp.state) }),
             el('div', { cls: 'fb-text', text: rp.happened.length > 160 ? rp.happened.slice(0, 160) + '…' : rp.happened }));
           if (rp.reason) row.append(el('div', { cls: 'fb-why', text: 'Why: ' + rp.reason }));
           if (window.ARENA_BOUNTY_ON && rp.reward && rp.reward.lnurl) {
