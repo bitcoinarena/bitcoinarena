@@ -70,7 +70,16 @@ const readBook = () => { try { return JSON.parse(readFileSync(env.FAUCET_BOOK, '
 const saveBook = (b) => { writeFileSync(`${env.FAUCET_BOOK}.new`, JSON.stringify(b, null, 1)); renameSync(`${env.FAUCET_BOOK}.new`, env.FAUCET_BOOK); };
 const balanceSats = async () => Math.round(Number((await rpc('getbalances')).mine.trusted) * 1e8);
 // THE CALLER'S ADDRESS: the site's Worker names it (behind it x-forwarded-for is Cloudflare's), else the tunnel's header; no header, no limit by address
-const ipOf = (req) => String(req.headers['x-arena-ip'] || req.headers['x-forwarded-for'] || '').split(',')[0].trim() || null;
+// ONLY THE WORKER NAMES IT (audit 8, kanban #1434): x-arena-ip counts with the Worker's key (FAUCET_WORKER_KEY); any other caller - straight over
+// the tunnel - is the address the tunnel itself added last to x-forwarded-for, whatever the caller wrote before it
+const WORKER_KEY = String(env.FAUCET_WORKER_KEY || '');
+const fromWorker = (req) => { const k = String(req.headers['x-arena-worker'] || ''); return !!WORKER_KEY && k.length === WORKER_KEY.length && timingSafeEqual(Buffer.from(k), Buffer.from(WORKER_KEY)); };
+const ipOf = (req) => {
+  if (!WORKER_KEY) return String(req.headers['x-arena-ip'] || req.headers['x-forwarded-for'] || '').split(',')[0].trim() || null;
+  if (fromWorker(req)) return String(req.headers['x-arena-ip'] || '').trim() || null;
+  const hops = String(req.headers['x-forwarded-for'] || '').split(',').map((x) => x.trim()).filter(Boolean);
+  return hops.length ? hops[hops.length - 1] : (req.socket && req.socket.remoteAddress) || null;
+};
 
 let queue = Promise.resolve();
 const one = (fn) => { const run = queue.then(fn, fn); queue = run.catch(() => {}); return run; };
@@ -456,7 +465,7 @@ createServer((req, res) => {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '86400' }); return res.end(); }
     if (req.method !== 'POST') return send(405, { ok: false, why: 'POST' });
     if (!FEEDBACK || !SHOTS) return send(503, { ok: false, why: 'screenshots are not kept here' });
-    const ip = ipKey(req.headers['x-arena-ip'] || null), day = Math.floor(Date.now() / DAY_MS);
+    const ip = ipKey(ipOf(req)), day = Math.floor(Date.now() / DAY_MS);
     while (SHOT_UPLOADS.length && Math.floor(SHOT_UPLOADS[0].atMs / DAY_MS) !== day) SHOT_UPLOADS.shift();
     if (ip && SHOT_UPLOADS.filter((x) => x.ip === ip).length >= SHOTS_PER_IP_PER_DAY) return send(429, { ok: false, why: 'this address sent all the screenshots it can today' });
     if (SHOT_UPLOADS.reduce((n, x) => n + (x.bytes || 0), 0) >= SHOT_DAY_BYTES) return send(429, { ok: false, why: 'the faucet took all the screenshots it keeps today: send the report without one, or try tomorrow' });
@@ -489,7 +498,7 @@ createServer((req, res) => {
     if (kept && Date.now() - kept.at < 600000) return send(200, { ...kept.answer, keptMs: Date.now() - kept.at });
     // A FRESH CHECK ASKS EVERY SEAT (~136 requests), so (audit 5 #1402): one at a time over all callers, and at most NODE_CHECKS_PER_HOUR per address
     // (an IPv6 address counted per /64) - random npubs missed the cache and multiplied the load onto every seat
-    const ip = String(req.headers['cf-connecting-ip'] || req.socket.remoteAddress || '');
+    const ip = String(ipOf(req) || '');
     const who = ipKey(ip) || ip;   // an IPv6 address by its /64, :: written out (kanban #1405)
     const mine = (NODE_CHECK_ASKS.get(who) || []).filter((t) => t > Date.now() - 3600000);
     if (mine.length >= NODE_CHECKS_PER_HOUR) return send(429, { ok: false, why: `at most ${NODE_CHECKS_PER_HOUR} node checks an hour from one address: try again later` });
@@ -505,7 +514,7 @@ createServer((req, res) => {
   // check a report's address gets at Send (lnAddressWorks), asked by the dialog - only from the page's own origin, at most 30 an IP in 10 minutes
   if (path === '/feedback/lnaddress' && req.method === 'GET') {
     if (!BOUNTY_ORIGINS.includes(String(req.headers.origin || ''))) return send(200, { ok: false, why: 'not asked from the page' });
-    const ip = String(req.headers['x-arena-ip'] || req.socket.remoteAddress || ''), now = Date.now();
+    const ip = String(ipOf(req) || ''), now = Date.now();
     const seen = (LN_ASKS.get(ip) || []).filter((t) => now - t < 600000); if (seen.length >= 30) return send(200, { ok: false, why: 'too many checks - it is checked again at Send' });
     seen.push(now); LN_ASKS.set(ip, seen); if (LN_ASKS.size > 5000) LN_ASKS.delete(LN_ASKS.keys().next().value);
     lnAddressWorks(String(new URL(req.url, 'http://x').searchParams.get('a') || '').slice(0, 200)).then((w) => send(200, { ok: !!w.ok, why: w.ok ? null : w.why }), (e) => send(200, { ok: false, why: String((e && e.message) || e).slice(0, 120) }));
@@ -546,7 +555,7 @@ createServer((req, res) => {
     req.on('data', (c) => { raw += c; if (raw.length > 98304) req.destroy(); });
     req.on('end', async () => {
       try {
-        const b0 = JSON.parse(raw || '{}'), ip = req.headers['x-arena-ip'] || null;
+        const b0 = JSON.parse(raw || '{}'), ip = ipOf(req);
         // A SIGNED REPORT (kanban #1342): its own words go to the chat, and it is kept for review - only if it stands
         let b = b0, kept = null, counted = false;
         if (b0.event) {

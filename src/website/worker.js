@@ -109,6 +109,9 @@ async fetch(request, env, ctx) {
   if (url.pathname === '/api/faucet/player' || url.pathname === '/api/faucet/opponent' || url.pathname === '/api/faucet/feedback' || url.pathname === '/api/faucet/feedback/mine' || url.pathname === '/api/faucet/feedback/screenshot' || url.pathname === '/api/faucet/feedback/rewards' || url.pathname === '/api/faucet/feedback/lnaddress' || url.pathname === '/api/faucet/feedback/node-check' || /^\/api\/faucet\/feedback\/admin\/(list|act|export\.csv|report\/[0-9a-f]{64}|node-check\/[0-9a-f]{64}|screenshot\/[0-9a-f]{64})$/.test(url.pathname) || /^\/api\/faucet\/lnurlw\/[0-9a-f]{64}(\/callback)?$/.test(url.pathname) || url.pathname === '/api/faucet/founding' || url.pathname === '/api/faucet/refill') {
     if (!env.FAUCET_ORIGIN) return new Response('{"ok":false,"why":"the faucet is off"}', { status: 503, headers: { 'content-type': 'application/json' } });
     const headers = new Headers({ 'content-type': 'application/json', 'x-arena-ip': request.headers.get('cf-connecting-ip') || '' });
+    // THE FAUCET BELIEVES THAT ADDRESS ONLY WITH THIS WORKER'S KEY (audit 8, kanban #1434): x-arena-ip was taken from any caller, also straight
+    // over the tunnel, so one machine could pass for many and empty the day's welcome pot
+    if (env.FAUCET_WORKER_KEY) headers.set('x-arena-worker', env.FAUCET_WORKER_KEY);
     // "MY FEEDBACK" IS ASKED WITH THE PLAYER'S NIP-98 SIGN-IN (kanban #1342): that header, and only on that path
     if (url.pathname === '/api/faucet/feedback/mine' && request.headers.get('authorization')) headers.set('authorization', request.headers.get('authorization'));
     // THE REVIEW LIST'S ADMIN CODE (kanban #1342 section 4): that header, only on the admin paths
