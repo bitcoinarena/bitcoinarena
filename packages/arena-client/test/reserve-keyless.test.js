@@ -231,3 +231,16 @@ test('no order in the last 3 s; a head-to-head round is first offered with 5 s l
   const cut = src.indexOf('if (closeAt && closeAt - Date.now() < ORDER_CUTOFF_MS)'), pay = src.indexOf('// ANOTHER TAB OF THIS BROWSER IS IN A PAID RUN');
   assert.ok(cut > 0 && cut < pay, 'the cutoff comes before any money is touched');
 });
+
+// kanban #1395 / #1391 (Daniel 2026-11-09: "Mach es schneller"; the hold screen between Wait and the reveal): for Rock Paper Scissors client
+// 7587b604 only, by its hash, the page sets the winner from the open moves, runs the show 1.6x faster and keeps Wait up to the close
+test('client 7587b604: the quick reveal swaps are applied only all together and only to that hash, Wait stands to the close', () => {
+  const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  const at = src.indexOf("if (/^7587b604be5ad153/.test(String(file.hash || '')))");
+  assert.ok(at > 0, 'gated by the client hash');
+  const block = src.slice(at, src.indexOf('} catch { bytes = file.bytes; }', at));
+  for (const x of ["'me.signedBy > 0 && !me.provisional', 'me.signedBy > 0'", "'seq.t += dt;', 'seq.t += dt * 1.6;'",
+    "(Date.now() < last.closeMs - CLOSING_MS || (last.them === 0 && company)))\", \"(last.phase === 'wait' && (Date.now() < last.closeMs ||",
+    "return window.parent.ARENA_ORDER_WORDS(rec.why);", "return window.parent.ARENA_ORDER_WORDS(j.why);"]) assert.ok(block.includes(x), x);   // #1393: the tap notes in plain words
+  assert.match(block, /if \(swaps\.every\(\(\[x\]\) => html\.split\(x\)\.length === 2\)\)/, 'all or none, each found exactly once');
+});
