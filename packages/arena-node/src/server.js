@@ -4281,6 +4281,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const g = pluginForRound(c, hosted);
     return g.ok && g.headToHead ? c : null;
   };
+  // A PLAIN-PICK CANCEL REACHES EVERY SEAT OF ITS ROUND BEFORE THE ENTRY CLOSE (kanban #1435, audit 8 R1): no seat carries another seat's cancel
+  // from the close on (settlement.js #carryCancels), so a cancel this door took fresh is handed on to the round's other seats, through their own
+  // POST /cancel - each checks the signature and its own entry close there, so this adds no trust in the seat that hands it. After the client's own
+  // posts have had their time, and at once just before the close; only a fresh take is handed on, so two seats never hand one back and forth.
+  const handCancelOn = (roundId, eid, signature, closeMs) => {
+    const left = Number(closeMs) - Number(round.now()) - 300;
+    const t = setTimeout(async () => {
+      const said = await Promise.all(settlementPeers(roundId).map(async (peer) => {
+        try {
+          const r = await fetch(`${String(peer).replace(/\/+$/, '')}/cancel?entry=${toHex(eid)}`,
+            { method: 'POST', body: signature, headers: { [RELAY_HEADER]: '1' }, signal: AbortSignal.timeout(4000) });
+          return r.status;
+        } catch { return 0; }
+      }));
+      if (said.length) console.log(`[cancel] ${toHex(roundId).slice(0, 16)} ${toHex(eid).slice(0, 16)}: handed on, ${said.filter((x) => x === 201).length} of ${said.length} seats took it fresh`);
+    }, Math.max(0, Math.min(700 + Math.random() * 500, Number.isFinite(left) ? left : Infinity)));
+    if (t.unref) t.unref();
+  };
   const entryRelay = createEntryRelay({
     peersOf: (rid) => verifier.peersOf(rid),
     entryOf: (hex) => { const e = round.entry(fromHex(hex)); return e ? new Uint8Array(e) : null; },
@@ -9329,7 +9347,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (round.cancelled(eid)) { res.writeHead(200, { 'content-type': 'application/json', ...CORS }); return res.end(JSON.stringify({ cancelled: true, fresh: false })); }
         if (BigInt(round.now()) >= c.entryCloseMs)
           return text(res, 409, `entries closed at ${new Date(Number(c.entryCloseMs)).toISOString()}: that order is in the round now, and its fee is due`);
-        round.putCancel({ roundId: entry.roundId, entryId: new Uint8Array(eid), signature, receivedMs: round.now() });
+        if (round.putCancel({ roundId: entry.roundId, entryId: new Uint8Array(eid), signature, receivedMs: round.now() }))
+          handCancelOn(entry.roundId, new Uint8Array(eid), signature, c.entryCloseMs);   // to the round's other seats, before the close (kanban #1435)
         console.log(`[cancel] ${toHex(entry.roundId).slice(0, 16)} ${toHex(eid).slice(0, 16)}: cancelled by its player`);
         res.writeHead(201, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ cancelled: true, fresh: true }));
