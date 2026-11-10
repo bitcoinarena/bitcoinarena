@@ -2267,6 +2267,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE MARKET ORDER BOOK: orders taken here, each batch's set agreed with the round's other seats
   const orderBook = new OrderBook(round, { plugins: hosted, intervalMs: orderBatchMs, now: () => round.now(), feesFor,
     peersFor: (rid) => { const picked = roster.committeeFor(rid, 'settlement'); return picked.ok ? peerEndpointsOf(picked.committee, round.pubkey) : (dkg.peers || []); } });
+  // the round's door asks whether a round is a book by the certified batches (§0A.7b, kanban #1411/#1417)
+  round.isBookRound = (rid) => orderBook.isBook(rid);
   // AN ORDER A CERTIFIED BATCH NAMES THAT NEVER REACHED THIS SEAT (kanban #620, measured 2026-10-24: round 42835aaa never settled - fed2-3
   // and fed2-7 held no entry 008e278a of batch 3585700432, refused its certificate - "this seat holds no entry 008e278ac2bfff47" - and
   // rebuilt settlement 8f0144a1 where the others built ffabdc94): the entry from the seat that handed the batch, kept when its bytes hash
