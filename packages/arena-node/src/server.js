@@ -629,6 +629,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   chainTxOut = null,
   // THE CHAIN'S MEDIAN TIME AT A HEIGHT, in ms (a funding signal's 432-block active window), as the launcher reads it
   blockTimeAt = null,
+  // A BLOCK'S OWN HEADER TIME, in ms: the one moment every seat agrees a funding signal period ended (kanban #1410)
+  blockHeaderTimeAt = null,
   // A BLOCK'S TRANSACTION IDS, and whether a transaction waits in this node's mempool (GET /pending, kanban #560)
   chainBlockTxids = null,
   chainInMempool = null,
@@ -1953,7 +1955,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }));
     return mergeServedRounds(held).rounds;
   };
-  const fundingBook = round.db ? createFundingBook({ feeChainFrom: (netHex) => { const n = networkOf(fromHex(String(netHex))); return n && Object.prototype.hasOwnProperty.call(FEE_SIGNAL_CHAIN_HEIGHT, n) ? FEE_SIGNAL_CHAIN_HEIGHT[n] : null; },   // kanban #1283
+  const fundingBook = round.db ? createFundingBook({ endTimeAt: typeof blockHeaderTimeAt === 'function' ? blockHeaderTimeAt : null, feeChainFrom: (netHex) => { const n = networkOf(fromHex(String(netHex))); return n && Object.prototype.hasOwnProperty.call(FEE_SIGNAL_CHAIN_HEIGHT, n) ? FEE_SIGNAL_CHAIN_HEIGHT[n] : null; },   // kanban #1283
     db: round.db, schedule: fundingSchedule, log: (l) => console.log(l),
     // BEFORE A FEE DECISION, EVERY SEAT'S APPROVALS AND SIGNALS (ruled on #1245, kanban #1231): GET /funding-items of each network seat this seat reaches
     pull: async (pid) => {
