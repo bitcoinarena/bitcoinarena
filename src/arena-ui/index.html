@@ -9806,14 +9806,20 @@
         const st = String(stage || '');
         { const m = /is being issued (\d+) msat more/.exec(st);
           if (m) return `waiting for ${Math.ceil(Number(m[1]) / 1000)} sat still arriving in your wallet`; }
-        if (/waiting for the deposit|insufficient funds|less than this round's stake/.test(st)) return 'your wallet does not hold enough sats for this round - add some with Deposit or Get 300 sats';
+        if (/waiting for the deposit|insufficient funds|less than this round's stake/.test(st)) { const owed = Number((window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.pending) || 0);
+          return 'your wallet does not hold enough sats for this round' + (owed > 0 ? ' (' + owed.toLocaleString('en-US') + ' sat of winnings arrive within about 10 minutes)' : '') + ' - add some with Deposit or Get 300 sats'; }
         const starts = /round starts in ([0-9:]+)/.exec(st); if (starts) return 'locked - the window starts in ' + starts[1];
         return '';
       };
       // a refused order in one sentence; the seats' own words go with Report this
       const refusedWords = (why) => {
         const w = String(why || '');
-        if (/before the deposit arrived|insufficient funds|does not hold enough|less than this round's stake/i.test(w)) return 'Not enough sats in your wallet for this round. Add some with Deposit or Get 300 sats.';
+        // AND WHAT IS ON ITS WAY (kanban #1391, measured 2026-11-10: the wallet read 0 sat with 1,980 sat of winnings pending; a payout is spendable once
+        // its 10-minute objection window has ended, §13A): the player learns the sats are coming and about when, not only that the wallet is empty
+        if (/before the deposit arrived|insufficient funds|does not hold enough|less than this round's stake/i.test(w)) {
+          const owed = Number((window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.pending) || 0);
+          return 'Not enough sats in your wallet for this round.' + (owed > 0 ? ' ' + owed.toLocaleString('en-US') + ' sat of your winnings arrive within about 10 minutes.' : '') + ' Add some with Deposit or Get 300 sats.';
+        }
         if (/entr(y|ies) closed|entry new to this seat is not taken|closed before it went in|too late/i.test(w)) return 'Your order came too late for this round. Tap again to play the next one.';
         if (/replaced by another PLAY/i.test(w)) return 'You tapped a newer round, so this order was dropped.';
         if (/not seated yet|seating certificate/i.test(w)) return 'This round was not ready on the game servers. Tap again to play the next one.';
