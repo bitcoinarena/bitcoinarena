@@ -8527,6 +8527,42 @@
  },
  {
   "method": "GET",
+  "path": "/funding-items",
+  "params": "query proposal (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {proposal, items[{kind, hex, atMs}]}; 400",
+  "purpose": "The signals and fee approvals this seat holds for one funding proposal, as signed, each with when this seat first held it (atMs). A seat pulls them from every network seat it reaches before it decides a fee proposal or a signal, so every seat decides on the same set (kanban #1231, #1279).",
+  "audience": "node-to-node",
+  "line": 10118,
+  "summary": "A proposal's signals and fee approvals",
+  "query": [
+   {
+    "name": "proposal",
+    "required": true,
+    "type": "string",
+    "description": "Proposal id, 64 hex (32 bytes)."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{proposal, items: [{kind: signal|fee-approval, hex: the signed record, atMs}]}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "No proposal id, or not 64 hex."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
   "path": "/funding",
   "params": "none",
   "auth": "none",
