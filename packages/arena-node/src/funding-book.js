@@ -83,7 +83,7 @@ export function fundingPaymentStep(row, ev) {
 // proposal is decided whole (feeProposalOutcome) against the fees in force before its activation; feesAt(height) answers the set
 // in force at a height - what a round of that census height settles with.
 export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedule = FUNDING_SCHEDULES.spec, log = () => {}, now = () => Date.now(),
-  voteChain = null, maxBlocksPerPass = 64, seasonedNodes = null, devKeysOf = null, pull = null, feeChainFrom = () => null }) {
+  voteChain = null, maxBlocksPerPass = 64, seasonedNodes = null, devKeysOf = null, pull = null, feeChainFrom = () => null, endTimeAt = null }) {
   db.exec(FUNDING_SQL);
   // A FEE PROPOSAL'S SIGNAL READ FROM THE CHAIN (kanban #1283, RULED #1277 B): the signal period's blocks, held by hash, a reorg of one re-decides
   db.exec('CREATE TABLE IF NOT EXISTS fee_chain_blocks (proposal TEXT NOT NULL, height INTEGER NOT NULL, hash TEXT, items TEXT NOT NULL, PRIMARY KEY (proposal, height))');
@@ -506,7 +506,15 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
           let took = 0; for (const it of Array.isArray(got) ? got : []) { try { const x = await book.add(it.kind, it.hex, { heldAtMs: it.atMs === undefined ? null : Number(it.atMs) }); if (x && x.ok && x.fresh) took++; } catch { /* the next */ } }
           if (took) log(`[funding] ${row.id.slice(0, 16)}: ${took} signal(s) or approval(s) pulled from the peers before deciding the signal`);
         }
-        const endSeen = db.prepare('SELECT seen_ms FROM funding_signal_ends WHERE proposal = ?').get(row.id).seen_ms;
+        // ONE CUTOFF FOR EVERY SEAT (audit 5, kanban #1410): the end was "when this seat first saw it" - a seat restarting or catching up hours later counted
+        // every signal held before then, a live seat did not, and one period had two outcomes. With `endTimeAt(height)` (the end block's header time, the
+        // same on every seat that holds that chain) a signal counts when some seat held it by the time the end block was made; without it, as before
+        let endSeen = db.prepare('SELECT seen_ms FROM funding_signal_ends WHERE proposal = ?').get(row.id).seen_ms;
+        if (typeof endTimeAt === 'function') {
+          let t = null; try { t = Number(await endTimeAt(end)); } catch { t = null; }
+          if (!Number.isFinite(t) || t <= 0) { log(`[funding] ${row.id.slice(0, 16)}: the signal ended at ${end}, that block's time not read yet`); continue; }
+          endSeen = t;
+        }
         const a = await activeAt(end).catch((e) => ({ ok: false, why: e.message }));
         if (!a || !a.ok) { log(`[funding] ${row.id.slice(0, 16)}: the signal ended at ${end}, its active nodes not read yet: ${a ? a.why : '?'}`); continue; }
         // THE SIGNAL RULE: only nodes with a bond 3 months old count, among the active and among the signals
