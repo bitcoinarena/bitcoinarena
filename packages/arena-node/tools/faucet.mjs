@@ -73,6 +73,12 @@ const ipOf = (req) => String(req.headers['x-arena-ip'] || req.headers['x-forward
 
 let queue = Promise.resolve();
 const one = (fn) => { const run = queue.then(fn, fn); queue = run.catch(() => {}); return run; };
+// THE ADMIN'S OWN QUEUE (audit 6, kanban #1419): an approve reads the seats (played rounds, the node checklist) for half a minute and more; in the
+// players' queue that held every welcome behind it past the page's 45 s
+let adminQueue = Promise.resolve();
+const oneAdmin = (fn) => { const run = adminQueue.then(fn, fn); adminQueue = run.catch(() => {}); return run; };
+// a welcome answered again to the same caller (its address, an IPv6 /64) within this long: its first answer may never have reached the page
+const WELCOME_REISSUE_MS = 15 * 60 * 1000;
 
 async function pay(ask) {
   const book = readBook();
@@ -221,12 +227,20 @@ function takeEcash(federation, msat) {
 function grantEcash(ask) {
   const book = readBook();
   book.players = book.players || [];
+  // THE SAME NOTE AGAIN (audit 6, kanban #1419): a welcome taken for a page that had already given up was booked, its note gone, and the account could
+  // never have its welcome. An account's e-cash welcome is answered again - the same note - to the same caller (its address) within WELCOME_REISSUE_MS
+  if (ask.kind === 'welcome') {
+    const had = book.players.find((x) => x.account === ask.account && x.kind === 'welcome' && x.ecash && x.noteFile);
+    if (had && ipKey(had.ip) && ipKey(had.ip) === ipKey(ask.ip) && Date.now() - Number(had.atMs) < WELCOME_REISSUE_MS) {
+      try { const n = JSON.parse(readFileSync(had.noteFile, 'utf8')); if (n.ecash) { console.log(`${new Date().toISOString()} player welcome answered again (${ask.ip || 'no ip'}): ${String(had.hash || '').slice(0, 16)}`); return { ok: true, sats: had.sats, ecash: String(n.ecash), again: true }; } } catch { /* the note file is gone: refused below as before */ }
+    }
+  }
   const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: PLAYER_WELCOME_SATS }, book);
   if (!d.ok) return d;
   const got = takeEcash(ask.ecash, d.grant.invoiceSats * 1000);
   if (!got) return null;
   const hash = createHash('sha256').update(got.ecash).digest('hex');
-  book.players.push({ account: ask.account, kind: ask.kind, ip: ask.ip, sats: d.grant.invoiceSats, atMs: Date.now(), hash, ecash: true });
+  book.players.push({ account: ask.account, kind: ask.kind, ip: ask.ip, sats: d.grant.invoiceSats, atMs: Date.now(), hash, ecash: true, noteFile: got.file });
   saveBook(book);
   console.log(`${new Date().toISOString()} player ${ask.kind} ${d.grant.invoiceSats} sat as e-cash (${ask.ip || 'no ip'}): ${hash.slice(0, 16)}`);
   return { ok: true, sats: d.grant.sats, ecash: got.ecash };
@@ -332,7 +346,7 @@ createServer((req, res) => {
     if (path === '/feedback/admin/act' && req.method === 'POST') {
       let raw = ''; req.setEncoding('utf8');
       req.on('data', (c) => { raw += c; if (raw.length > 8192) req.destroy(); });
-      req.on('end', () => one(async () => {
+      req.on('end', () => oneAdmin(async () => {
         let b; try { b = JSON.parse(raw || '{}'); } catch { return send(400, { ok: false, why: 'not JSON' }); }
         const by = 'admin';
         if ((b.action === 'approve' || b.action === 'reward') && !bountyOn()) return send(403, { ok: false, why: 'rewards are off until the owner turns them on: reject, duplicate and notes still work' });
@@ -508,7 +522,9 @@ createServer((req, res) => {
       let ask;
       try { ask = JSON.parse(raw || '{}'); } catch { return send(400, { ok: false, why: 'not JSON' }); }
       const who = { kind: ask.kind, account: ask.account, ip: ipOf(req) };
-      one(async () => (ask.kind === 'welcome' && ask.ecash && grantEcash({ ...who, ecash: String(ask.ecash).toLowerCase() }))
+      // A PAGE THAT STOPPED WAITING TAKES NOTHING (audit 6, kanban #1419): a request whose connection closed while it was queued is dropped here
+      one(async () => (req.socket.destroyed ? { ok: false, why: 'the page stopped waiting: ask again' } : null)
+        || (ask.kind === 'welcome' && ask.ecash && grantEcash({ ...who, ecash: String(ask.ecash).toLowerCase() }))
         || (ask.invoice ? grant({ ...who, invoice: ask.invoice }) : { ok: false, noEcash: true, why: 'no e-cash is ready: ask with an invoice' }))
         .then((r) => send(200, r), (e) => { console.log(`${new Date().toISOString()} player failed: ${e.message}`); send(500, { ok: false, why: 'the faucet could not pay just now' }); });
     });
