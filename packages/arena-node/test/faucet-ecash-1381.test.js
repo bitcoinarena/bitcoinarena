@@ -23,7 +23,7 @@ async function faucet(fill, fn) {
     FAUCET_PAYERS: `${dir}|127.0.0.1:1`, FAUCET_ECASH_POOL: pool }, stdio: 'ignore' });
   try {
     for (let i = 0; i < 50; i++) { try { await fetch(`http://127.0.0.1:${port}/player`); break; } catch { await new Promise((ok) => setTimeout(ok, 100)); } }
-    const ask = async (body) => (await fetch(`http://127.0.0.1:${port}/player`, { method: 'POST', headers: { 'x-forwarded-for': '198.51.100.7' }, body: JSON.stringify(body) })).json();
+    const ask = async (body, ip = '198.51.100.7') => (await fetch(`http://127.0.0.1:${port}/player`, { method: 'POST', headers: { 'x-forwarded-for': ip }, body: JSON.stringify(body) })).json();
     return await fn({ ask, pool, book: () => JSON.parse(readFileSync(join(dir, 'book.json'), 'utf8')) });
   } finally { child.kill(); }
 }
@@ -36,9 +36,15 @@ test('#1381 a welcome that names its federation gets a ready note, once per acco
     assert.match(first.ecash, /^fedimint(aaa|bbb)$/);
     assert.equal(readdirSync(join(pool, FED)).filter((f) => f.endsWith('.json')).length, 1, 'the note handed out is still in the pool');
     assert.equal(existsSync(join(pool, FED, 'taken')), true);
+    // THE SAME NOTE AGAIN to the same caller (kanban #1419: a first answer the page never read left the account without its welcome); another address
+    // asking for that account gets nothing
     const again = await ask({ kind: 'welcome', account: 'cd'.repeat(32), ecash: FED });
-    assert.equal(again.ok, false);
-    assert.match(again.why, /already has/);
+    assert.deepEqual([again.ok, again.again, again.ecash], [true, true, first.ecash], 'the same caller asking again got another answer than its note');
+    assert.equal(readdirSync(join(pool, FED)).filter((f) => f.endsWith('.json')).length, 1, 'answering again took a second note');
+    const stranger = await ask({ kind: 'welcome', account: 'cd'.repeat(32), ecash: FED }, '203.0.113.9');
+    assert.equal(stranger.ok, false);
+    assert.match(stranger.why, /already has/);
+    console.log(`  MEASURED #1419: welcome again from the same address -> the same note (${again.ecash}); from another address -> ${stranger.why}`);
     const other = await ask({ kind: 'welcome', account: 'ef'.repeat(32), ecash: FED });
     assert.equal(other.ok, true);
     assert.notEqual(other.ecash, first.ecash, 'one note handed out twice');
