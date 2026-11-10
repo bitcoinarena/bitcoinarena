@@ -14,7 +14,7 @@
 //      the old release started, and the update said refused, with why.
 // A data migration is the seat's own: openStore migrates its database on start (store.js), and the backup is what a failed one
 // is rolled back from.
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, renameSync, rmSync, statSync, statfsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, uptime } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -192,6 +192,20 @@ export function backupNode(home, stamp = new Date().toISOString().replace(/[:.]/
   for (const f of NODE_FILES) if (existsSync(join(home, f))) { copyFileSync(join(home, f), join(dir, f)); files.push(f); }
   return { dir, files, print };
 }
+// ROOM FOR THE BACKUP BEFORE ANYTHING STOPS (kanban #1440, audit 8 O8-1): a full disk while node.db was copied threw after the node was stopped.
+// The update is refused, the node running, unless the disk holds a copy of the node's files (node.db, about 1 GB on a seat, and its WAL) plus
+// a margin - and `extra` (the auto updater: the new release's archive and its unpacked tree). A system that cannot say its free space is not refused.
+export const BACKUP_MARGIN_BYTES = 64 * 2 ** 20;
+export const freeBytesAt = (dir) => { const s = statfsSync(dir); return Number(s.bavail) * Number(s.bsize); };
+const mbText = (n) => `${Math.round(n / 2 ** 20)} MB`;
+export function roomForUpdate(home, { extra = 0, freeBytes = freeBytesAt } = {}) {
+  let need = BACKUP_MARGIN_BYTES + extra;
+  for (const f of NODE_FILES) { try { need += statSync(join(home, f)).size; } catch { /* not there */ } }
+  let free;
+  try { free = freeBytes(home); } catch { return { ok: true, need, free: null }; }
+  if (!Number.isFinite(free) || free >= need) return { ok: true, need, free };
+  return { ok: false, need, free, why: `not enough free disk space at ${home}: ${mbText(free)} free, the update needs ${mbText(need)} (a backup of your node${extra ? ' and the new release' : ''}) - nothing was stopped` };
+}
 /** Put a backup's files back (the database first). A file Windows still holds (EBUSY / EPERM / EACCES: the stopped seat's handle not
  *  closed yet) is tried again each second for a while; one that never frees is named, and the others still go back. { ok, failed } */
 export async function restoreNode(home, backup, { tries = 30, pause = (ms) => new Promise((ok) => setTimeout(ok, ms)), copy = copyFileSync } = {}) {
@@ -260,8 +274,10 @@ async function rollBack({ svc, home, moving, oldTexts, migrating, confFile, back
   // started whatever the restore says (measured in the Windows VM: copying the backup back threw while the stopped seat still held its
   // database, and the node was left with nothing running)
   try { await svc.stop(moving, to); } catch { /* the start below is what matters */ }
-  for (const [f, t] of Object.entries(oldTexts)) writeFileSync(f, t);
-  if (migrating && backup) rmSync(confFile, { force: true });
+  // and nothing here throws before that start (kanban #1440): a service file or arena.conf that cannot be written is named, not fatal
+  const notPut = [];
+  for (const [f, t] of Object.entries(oldTexts)) { try { writeFileSync(f, t); } catch (e) { notPut.push(`${String(f).split(/[\\/]/).pop()}: ${e.code || e.message}`); } }
+  if (migrating && backup) { try { rmSync(confFile, { force: true }); } catch (e) { notPut.push(`arena.conf: ${e.code || e.message}`); } }
   // stopped before its backup (STOPPING): nothing was changed yet - the old services start again
   const files = backup ? backup.files.filter((f) => !NEVER_RESTORED.has(f) && !(keepDb && SEAT_DATA_FILES.includes(f))) : [];
   let put = backup ? { ok: false, failed: ['not tried'] } : { ok: true, failed: [] };
@@ -270,7 +286,8 @@ async function rollBack({ svc, home, moving, oldTexts, migrating, confFile, back
     // the database put back: a WAL the new release left beside it belongs to the newer file - replayed on the old one it would corrupt it
     if (!keepDb && files.includes('node.db')) for (const f of ['node.db-wal', 'node.db-shm']) if (!backup.files.includes(f)) rmSync(join(home, f), { force: true });
   } catch (e) { put = { ok: false, failed: [e.message] }; }
-  await svc.start(moving);
+  if (notPut.length) put = { ok: false, failed: [...(put.ok ? [] : put.failed), ...notPut] };
+  try { await svc.start(moving); } catch { /* the answer below says whether it runs */ }
   const back = await waitHealthy({ port, fetcher, waitMs });
   return { put, back, dbKept: !!keepDb };
 }
@@ -563,7 +580,7 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
   fetcher = fetch, nowMs = () => Date.now(), waitMs = null, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), platform = process.platform,
   quickUrl = quickTunnelUrl, restartService = (id, o) => control('restart', id, o), installUpdaterFn = null, fetchApps = ensureApps, arch = process.arch,
   lndKit = { installLnd }, refreshGames = async (o) => (await import('./change-roles.js')).refreshHostedGames(o), trace: given = QUIET,
-  say = () => {}, failedAt = () => null }) {
+  say = () => {}, failedAt = () => null, freeBytes = freeBytesAt }) {
   // EVERY STEP SAID AT --verbose, WITH ITS TIME; THE DECISIONS AT --debug (kanban #693, 2026-10-26: "shows more info on what its doing, what
   // is going wrong etc")
   const trace = given.tag('update');
@@ -636,204 +653,238 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
   const envFile = join(home, 'node.env');
   const confFile = join(home, 'arena.conf');
   const migrating = !existsSync(confFile);
+  const room = roomForUpdate(home, { freeBytes });
+  step(`free disk space: ${room.free === null ? 'not said by this system' : `${mbText(room.free)}, the backup needs ${mbText(room.need)}`}`);
+  if (!room.ok) return { ok: false, why: room.why };
   let journal = beginJournal(home, { from, to: newRelease, port, platform, migrating, identityBefore: before.ok ? before.identity : null, oldTexts: Object.fromEntries(oldTexts) });
-  say(24, 'Stopping your node');
-  await svc.prepare(newRelease);
-  const stop = await svc.stop(moving, from);
-  step(`stopped: ${stop.ok ? 'ok' : stop.why}`);
-  if (!stop.ok) {
-    // the old services start again: nothing was changed
-    journal = journalStep(home, journal.id, U.ROLLING_BACK, { why: stop.why });
-    await svc.start(moving).catch(() => null);
-    journalStep(home, journal.id, U.ROLLED_BACK);
-    return { ok: false, why: stop.why };
-  }
-  // and the processes of those older releases (Windows ends a release's processes by its folder; elsewhere the units above stop them)
-  const olders = [...new Set(moving.flatMap((f) => oldersIn(oldTexts.get(f))))];
-  if (platform === 'win32') for (const o of olders) await svc.stop([], o);
-  // NOTHING OF AN OLDER RELEASE STILL RUNS (kanban #546): after the stop the process list is asked; a leftover is ended and named. Every
-  // release beside the new one counts, named by a launcher or not (measured 2026-10-20 04:41Z in the Windows VM, .901 -> .902 by hand:
-  // the updater's child still ran 2026.1.1, which no launcher named any more, so a check of the release updated from missed it)
-  const newFolder = String(newRelease).split(/[\\/]/).filter(Boolean).pop();
-  const besides = (() => { try { return readdirSync(releasesDir).filter((d) => /^(bitcoin-)?arena-node-/.test(d) && d !== newFolder).map((d) => join(releasesDir, d)); } catch { return []; } })();
-  const oldFolders = [...new Set([from, ...olders, ...besides])];
-  const leftAfterStop = svc.leftovers ? await svc.leftovers(oldFolders) : [];
-  if (leftAfterStop.length && svc.end) await svc.end(leftAfterStop.map((x) => x.pid));
-  if (leftAfterStop.length) step(`still running from an older release after the stop, ended: ${leftAfterStop.map((x) => `${x.name} ${x.pid}`).join(', ')}`);
-  say(32, 'Backing up your node');
-  const backup = backupNode(home);
-  step(`backed up ${backup.files.length} file(s) into ${backup.dir}: ${backup.files.join(', ')}`);
-  journal = journalStep(home, journal.id, U.BACKED_UP, { backup });
-  say(36, `Writing the settings for ${label}`);
-  // THE SETTINGS: arena.conf, its paths into an older release moved to the new one. A node from before it ran from
-  // node.env: its settings are moved into arena.conf here, once (node.env stays until the new release answers, then is kept as
-  // node.env.migrated; a rollback takes arena.conf away again and the old release reads node.env as before)
-  const locks = stakeLockSetupOf({ home, release: newRelease, platform });   // kanban #824: an installed node has none of these yet
-  trace.debug(migrating ? 'arena.conf is missing: the settings move from node.env into it (once)' : 'arena.conf: its paths into an older release move to the new one, renamed keys take their new names');
-  if (migrating) {
-    const values = { network: state.network || 'testnet4', ...renameValues(envToConfValues(envForRelease(readFileSync(envFile, 'utf8'), newRelease), { port, database: join(home, 'node.db') })) };
-    if (INSTANCE && !values.instance) values.instance = INSTANCE;
-    if (PORT_OFFSET && !values.port_offset) values.port_offset = String(PORT_OFFSET);
-    if (locks && !values.stake_lock_bin) { values.stake_lock_bin = locks.bin; values.federation_client_dir = locks.clientDir; }
-    writeFileSync(confFile, formatConf(values, { eol: platform === 'win32' ? '\r\n' : '\n', header: 'moved from node.env by an update' }), { mode: 0o600 });
-  } else {
-    const confText = readFileSync(confFile, 'utf8');
-    // and a key that took a new name under it, once (kanban #569: games= is apps=)
-    const confNew = withStakeLocks(renameKeys(envForRelease(confText, newRelease)), locks);
-    if (confNew !== confText) writeFileSync(confFile, confNew, { mode: 0o600 });
-  }
-  // A CHAIN BRIDGE THE NODE NO LONGER READS (the owner's services card on 2026.1.9.9: "Do I need electrum when I have bitcoin core installed
-  // and running?"): a node on its own Core keeps no bridge of its interim Electrum chain - it is taken away, not moved (removeProgram)
-  const noBridge = !!(state.chain && state.chain.kind === 'core');
-  // ANY NODE'S BRIDGE OF THIS MACHINE, by its own name (kanban #719: the update of the owner's second node looked for arena-chain-bridge.service,
-  // the name of the process's own node, and left arena-chain-bridge--2.service restarting 840 times) - `moving` holds this node's files only
-  const isBridge = (f) => { const b = f.split(/[\\/]/).pop(); return b === BRIDGE_UNIT || /^arena-chain-bridge(--[a-z0-9]+)?\.service$/.test(b) || b === `${LAUNCHD_LABEL}.chain-bridge.plist` || /^arena-chain-bridge(--[a-z0-9]+)?\.cmd$/.test(b); };
-  if (noBridge && moving.some(isBridge)) {
-    const bridgeUnit = moving.map((f) => f.split(/[\\/]/).pop()).find((b) => /\.service$/.test(b) && isBridge(b)) || null;
-    await removeProgram({ id: 'chain-bridge', home, env, sh, platform, unit: bridgeUnit });
-    step('the chain bridge of the interim Electrum chain was taken away: this node reads its own Bitcoin Core');
-  }
-  for (const f of moving) {
-    if (noBridge && isBridge(f)) continue;
-    const moved = f === svc.seatFile ? svc.seatFor(newRelease, oldTexts.get(f))
-      : svc.bridgeFor && f.endsWith(BRIDGE_UNIT) ? svc.bridgeFor(newRelease, state)
-        : staleHomesIn(oldTexts.get(f)).reduce((t, h) => t.replace(new RegExp(`${h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\\\/]releases[\\\\/](?:bitcoin-)?arena-node-[^\\\\/"'\\s<>]+`, 'g'), newRelease).split(h).join(home),
-          oldersIn(oldTexts.get(f)).reduce((t, o) => t.split(o).join(newRelease), oldTexts.get(f).split(from).join(newRelease)));
-    // an agent an older installer wrote runs throttled at priority 20 (kanban #1122): it moves as Interactive
-    const swapped = f === lndFile ? lnd.swap(moved) : moved;
-    const text = f.endsWith('.plist') ? interactivePlist(swapped) : swapped;
-    // the gateway of an older install gets its own metrics port (gateway.js: by itself it took the liquidity provider's)
-    writeFileSync(f, /gateway/.test(f.split(/[\\/]/).pop()) ? gatewayMetricsOwn(text) : text);
-  }
-  step(`wrote the service files for the new release${lnd ? ` (and LND ${lnd.to})` : ''}`);
-  journal = journalStep(home, journal.id, U.UNITS_WRITTEN);
-  // A QUICK TUNNEL COMES BACK UNDER A NEW NAME (measured on the test host, node A rc.16 -> rc.18: the tunnel restarted as
-  // cult-turns-….trycloudflare.com while node.env still named conventional-cube-…, so the node's public address, its guardian endpoint
-  // and the advert its bond posts named a host that no longer answers). The tunnel starts first, its new name is read from its log,
-  // the settings take the new host, and only then the seat starts - no second restart (on Windows stopping one launcher ends them all).
-  const isTunnel = (f) => { const b = f.split(/[\\/]/).pop(); return b === TUNNEL_UNIT || b === `${LAUNCHD_LABEL}.tunnel.plist` || b === 'arena-tunnel.cmd'; };
-  const tunnels = state.reach && state.reach.mode === 'quick' && state.reach.url ? moving.filter(isTunnel) : [];
-  let reachUrl = null, tunnelStarted = { ok: true };
-  if (tunnels.length) {
-    say(40, 'Starting the tunnel');
-    const startAt = Date.now();
-    tunnelStarted = await svc.start(tunnels);
-    const url = await quickUrl({ unit: TUNNEL_UNIT, home, platform, sh, sinceMs: startAt });
-    step(`the quick tunnel started first: ${url ? `it answers as ${url}${url !== state.reach.url ? `, not ${state.reach.url}: the files follow it` : ''}` : 'its new name was not read'}`);
-    if (url && url !== state.reach.url) {
-      const oldHost = new URL(state.reach.url).host, newHost = new URL(url).host;
-      writeFileSync(confFile, readFileSync(confFile, 'utf8').split(oldHost).join(newHost), { mode: 0o600 });
-      // and every service started after it that names the host - the gateway's --api-addr above all (measured in the Windows VM, 0.1.0 ->
-      // 0.1.1: arena.conf took the new name, arena-gateway.cmd kept the old one, and the gateway announced a host that no longer answers)
-      for (const f of moving) {
-        if (tunnels.includes(f) || (noBridge && isBridge(f))) continue;
-        const t = readFileSync(f, 'utf8');
-        if (t.includes(oldHost)) writeFileSync(f, t.split(oldHost).join(newHost));
+  let backup = null;
+  // ANY FAILURE AFTER THE JOURNAL BEGAN IS ROLLED BACK (kanban #1440, audit 8 O8-1: a backup that threw on a full disk left the node stopped, its
+  // journal at `stopping`; the next check 30 min later started the old release and stopped it again, for good): the old service files, the
+  // backup if one was made, the old release started, the journal ended ROLLED_BACK, and the update answered rolled back - so the auto updater
+  // records it and waits a day (#1369). A failure after KEPT is no failure of the move: the new release runs, and it is thrown as before.
+  const failedAfterStop = async (e) => {
+    const j = readJournal(home);
+    if (!j || j.id !== journal.id || !openJournal(j)) throw e;
+    const failedStep = failedAt();
+    step(`failed after the node was stopped (${failedStep || j.phase}): ${e.message}; rolling back`);
+    say(null, `Going back to ${releaseIdOf(from).version || 'the release it ran'}`);
+    const bk = backup || j.backup || null;
+    const keepDb = !!j.served || dbChangedSince(home, bk);
+    try { if (j.phase !== U.ROLLING_BACK) journalStep(home, j.id, U.ROLLING_BACK, { served: keepDb, why: e.message }); } catch { /* the resume finishes it */ }
+    const { put, back, dbKept } = await rollBack({ svc, home, moving, oldTexts: Object.fromEntries(oldTexts), migrating, confFile, backup: bk, keepDb, to: newRelease, port, fetcher, waitMs, sleep });
+    try { journalStep(home, j.id, U.ROLLED_BACK, { restored: back.ok, dbKept }); } catch { /* the resume finishes it */ }
+    step(`rolled back after the failure: the old release ${back.ok ? 'answers' : `does not answer (${back.why})`}${put.ok ? '' : `; not put back: ${put.failed.join(', ')}`}`);
+    return { ok: false, rolledBack: true, from, to: newRelease, backup: bk ? bk.dir : null, failedAt: failedStep, dbKept,
+      why: `the update failed after your node was stopped: ${e.message}`, restored: back.ok, ...(put.ok ? {} : { notRestored: put.failed }) };
+  };
+  try {
+    say(24, 'Stopping your node');
+    await svc.prepare(newRelease);
+    const stop = await svc.stop(moving, from);
+    step(`stopped: ${stop.ok ? 'ok' : stop.why}`);
+    if (!stop.ok) {
+      // the old services start again: nothing was changed
+      journal = journalStep(home, journal.id, U.ROLLING_BACK, { why: stop.why });
+      await svc.start(moving).catch(() => null);
+      journalStep(home, journal.id, U.ROLLED_BACK);
+      return { ok: false, why: stop.why };
+    }
+    // and the processes of those older releases (Windows ends a release's processes by its folder; elsewhere the units above stop them)
+    const olders = [...new Set(moving.flatMap((f) => oldersIn(oldTexts.get(f))))];
+    if (platform === 'win32') for (const o of olders) await svc.stop([], o);
+    // NOTHING OF AN OLDER RELEASE STILL RUNS (kanban #546): after the stop the process list is asked; a leftover is ended and named. Every
+    // release beside the new one counts, named by a launcher or not (measured 2026-10-20 04:41Z in the Windows VM, .901 -> .902 by hand:
+    // the updater's child still ran 2026.1.1, which no launcher named any more, so a check of the release updated from missed it)
+    const newFolder = String(newRelease).split(/[\\/]/).filter(Boolean).pop();
+    const besides = (() => { try { return readdirSync(releasesDir).filter((d) => /^(bitcoin-)?arena-node-/.test(d) && d !== newFolder).map((d) => join(releasesDir, d)); } catch { return []; } })();
+    const oldFolders = [...new Set([from, ...olders, ...besides])];
+    const leftAfterStop = svc.leftovers ? await svc.leftovers(oldFolders) : [];
+    if (leftAfterStop.length && svc.end) await svc.end(leftAfterStop.map((x) => x.pid));
+    if (leftAfterStop.length) step(`still running from an older release after the stop, ended: ${leftAfterStop.map((x) => `${x.name} ${x.pid}`).join(', ')}`);
+    say(32, 'Backing up your node');
+    backup = backupNode(home);
+    step(`backed up ${backup.files.length} file(s) into ${backup.dir}: ${backup.files.join(', ')}`);
+    journal = journalStep(home, journal.id, U.BACKED_UP, { backup });
+    say(36, `Writing the settings for ${label}`);
+    // THE SETTINGS: arena.conf, its paths into an older release moved to the new one. A node from before it ran from
+    // node.env: its settings are moved into arena.conf here, once (node.env stays until the new release answers, then is kept as
+    // node.env.migrated; a rollback takes arena.conf away again and the old release reads node.env as before)
+    const locks = stakeLockSetupOf({ home, release: newRelease, platform });   // kanban #824: an installed node has none of these yet
+    trace.debug(migrating ? 'arena.conf is missing: the settings move from node.env into it (once)' : 'arena.conf: its paths into an older release move to the new one, renamed keys take their new names');
+    if (migrating) {
+      const values = { network: state.network || 'testnet4', ...renameValues(envToConfValues(envForRelease(readFileSync(envFile, 'utf8'), newRelease), { port, database: join(home, 'node.db') })) };
+      if (INSTANCE && !values.instance) values.instance = INSTANCE;
+      if (PORT_OFFSET && !values.port_offset) values.port_offset = String(PORT_OFFSET);
+      if (locks && !values.stake_lock_bin) { values.stake_lock_bin = locks.bin; values.federation_client_dir = locks.clientDir; }
+      writeFileSync(confFile, formatConf(values, { eol: platform === 'win32' ? '\r\n' : '\n', header: 'moved from node.env by an update' }), { mode: 0o600 });
+    } else {
+      const confText = readFileSync(confFile, 'utf8');
+      // and a key that took a new name under it, once (kanban #569: games= is apps=)
+      const confNew = withStakeLocks(renameKeys(envForRelease(confText, newRelease)), locks);
+      if (confNew !== confText) writeFileSync(confFile, confNew, { mode: 0o600 });
+    }
+    // A CHAIN BRIDGE THE NODE NO LONGER READS (the owner's services card on 2026.1.9.9: "Do I need electrum when I have bitcoin core installed
+    // and running?"): a node on its own Core keeps no bridge of its interim Electrum chain - it is taken away, not moved (removeProgram)
+    const noBridge = !!(state.chain && state.chain.kind === 'core');
+    // ANY NODE'S BRIDGE OF THIS MACHINE, by its own name (kanban #719: the update of the owner's second node looked for arena-chain-bridge.service,
+    // the name of the process's own node, and left arena-chain-bridge--2.service restarting 840 times) - `moving` holds this node's files only
+    const isBridge = (f) => { const b = f.split(/[\\/]/).pop(); return b === BRIDGE_UNIT || /^arena-chain-bridge(--[a-z0-9]+)?\.service$/.test(b) || b === `${LAUNCHD_LABEL}.chain-bridge.plist` || /^arena-chain-bridge(--[a-z0-9]+)?\.cmd$/.test(b); };
+    if (noBridge && moving.some(isBridge)) {
+      const bridgeUnit = moving.map((f) => f.split(/[\\/]/).pop()).find((b) => /\.service$/.test(b) && isBridge(b)) || null;
+      await removeProgram({ id: 'chain-bridge', home, env, sh, platform, unit: bridgeUnit });
+      step('the chain bridge of the interim Electrum chain was taken away: this node reads its own Bitcoin Core');
+    }
+    for (const f of moving) {
+      if (noBridge && isBridge(f)) continue;
+      const moved = f === svc.seatFile ? svc.seatFor(newRelease, oldTexts.get(f))
+        : svc.bridgeFor && f.endsWith(BRIDGE_UNIT) ? svc.bridgeFor(newRelease, state)
+          : staleHomesIn(oldTexts.get(f)).reduce((t, h) => t.replace(new RegExp(`${h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\\\/]releases[\\\\/](?:bitcoin-)?arena-node-[^\\\\/"'\\s<>]+`, 'g'), newRelease).split(h).join(home),
+            oldersIn(oldTexts.get(f)).reduce((t, o) => t.split(o).join(newRelease), oldTexts.get(f).split(from).join(newRelease)));
+      // an agent an older installer wrote runs throttled at priority 20 (kanban #1122): it moves as Interactive
+      const swapped = f === lndFile ? lnd.swap(moved) : moved;
+      const text = f.endsWith('.plist') ? interactivePlist(swapped) : swapped;
+      // the gateway of an older install gets its own metrics port (gateway.js: by itself it took the liquidity provider's)
+      writeFileSync(f, /gateway/.test(f.split(/[\\/]/).pop()) ? gatewayMetricsOwn(text) : text);
+    }
+    step(`wrote the service files for the new release${lnd ? ` (and LND ${lnd.to})` : ''}`);
+    journal = journalStep(home, journal.id, U.UNITS_WRITTEN);
+    // A QUICK TUNNEL COMES BACK UNDER A NEW NAME (measured on the test host, node A rc.16 -> rc.18: the tunnel restarted as
+    // cult-turns-….trycloudflare.com while node.env still named conventional-cube-…, so the node's public address, its guardian endpoint
+    // and the advert its bond posts named a host that no longer answers). The tunnel starts first, its new name is read from its log,
+    // the settings take the new host, and only then the seat starts - no second restart (on Windows stopping one launcher ends them all).
+    const isTunnel = (f) => { const b = f.split(/[\\/]/).pop(); return b === TUNNEL_UNIT || b === `${LAUNCHD_LABEL}.tunnel.plist` || b === 'arena-tunnel.cmd'; };
+    const tunnels = state.reach && state.reach.mode === 'quick' && state.reach.url ? moving.filter(isTunnel) : [];
+    let reachUrl = null, tunnelStarted = { ok: true };
+    if (tunnels.length) {
+      say(40, 'Starting the tunnel');
+      const startAt = Date.now();
+      tunnelStarted = await svc.start(tunnels);
+      const url = await quickUrl({ unit: TUNNEL_UNIT, home, platform, sh, sinceMs: startAt });
+      step(`the quick tunnel started first: ${url ? `it answers as ${url}${url !== state.reach.url ? `, not ${state.reach.url}: the files follow it` : ''}` : 'its new name was not read'}`);
+      if (url && url !== state.reach.url) {
+        const oldHost = new URL(state.reach.url).host, newHost = new URL(url).host;
+        writeFileSync(confFile, readFileSync(confFile, 'utf8').split(oldHost).join(newHost), { mode: 0o600 });
+        // and every service started after it that names the host - the gateway's --api-addr above all (measured in the Windows VM, 0.1.0 ->
+        // 0.1.1: arena.conf took the new name, arena-gateway.cmd kept the old one, and the gateway announced a host that no longer answers)
+        for (const f of moving) {
+          if (tunnels.includes(f) || (noBridge && isBridge(f))) continue;
+          const t = readFileSync(f, 'utf8');
+          if (t.includes(oldHost)) writeFileSync(f, t.split(oldHost).join(newHost));
+        }
+        reachUrl = url;
       }
-      reachUrl = url;
     }
-  }
-  say(42, 'Starting your node');
-  const rest = await svc.start(moving.filter((f) => !tunnels.includes(f) && !(noBridge && isBridge(f))));
-  const started = !tunnelStarted.ok ? tunnelStarted : rest;
-  journal = journalStep(home, journal.id, U.STARTED, reachUrl ? { reachUrl } : {});
-  step(`started: ${started.ok ? 'ok' : started.why}; waiting up to ${Math.round(waitMs / 1000)} s for the seat to answer on port ${port}`);
-  // THE FIRST ANSWER: nobody knows how long a node takes to load its games; the bar moves with each ask, 45 % towards 85 %, closer
-  // the longer it takes (most answer within a minute), and the seconds are said
-  const waitFrom = Date.now();
-  say(45, "Waiting for your node's first answer");
-  const asking = (url, o) => { const s = (Date.now() - waitFrom) / 1000; if (s >= 1) say(45 + 40 * (1 - Math.exp(-s / 60)), "Waiting for your node's first answer", `${Math.round(s)} s`); return fetcher(url, o); };
-  const after = await waitHealthy({ port, fetcher: asking, waitMs });
-  const sameKey = after.ok && (!before.ok || after.identity === before.identity);
-  // from its first answer as this node the new release may sign: its database is never put back from before (kanban #1166)
-  if (sameKey) journalNote(home, journal.id, { served: true, servedMs: nowMs() });
-  step(`after: ${after.ok ? `the seat answers as ${after.identity.slice(0, 16)}…, ${sameKey ? 'the same node' : 'ANOTHER node'}` : `the seat did not answer: ${after.why}`}`);
-  // THE NEW RELEASE, NOT THE OLD PROCESS (kanban #546): a release that names its version must answer with it and its commit
-  const want = releaseIdOf(newRelease);
-  if (sameKey && want.version) say(86, `Checking it runs ${label}`);
-  const answered = sameKey && want.version ? await versionAnswers({ port, fetcher, want, waitMs: Math.min(waitMs, 120000) }) : { ok: sameKey };
-  if (sameKey && want.version) step(`GET /owner/version: ${answered.ok ? `${answered.version} (${String(answered.commit).slice(0, 12)}), the new release` : answered.why}`);
-  // and no process of an older release left after the start: ended and named, and if one will not end, no update
-  let leftAfterStart = sameKey && answered.ok && svc.leftovers ? await svc.leftovers(oldFolders) : [];
-  if (leftAfterStart.length && svc.end) { await svc.end(leftAfterStart.map((x) => x.pid)); await sleep(3000); }
-  const stillLeft = leftAfterStart.length && svc.leftovers ? await svc.leftovers(oldFolders) : [];
-  const same = sameKey && answered.ok && !stillLeft.length;
-  if (leftAfterStart.length) step(`still running from an older release after the start, ended: ${leftAfterStart.map((x) => `${x.name} ${x.pid}`).join(', ')}${stillLeft.length ? `; would not end: ${stillLeft.map((x) => `${x.name} ${x.pid}`).join(', ')}` : ''}`);
-  if (same) {
-    say(92, 'Finishing up');
-    // THE STATE AS IT STANDS NOW, NOT AS IT WAS READ MINUTES AGO (kanban #1178): what the seat, the owner page or the custody agent saved
-    // while the update ran (an on-chain action, custody.pegIn) is kept; only the release and a quick tunnel's new name are set
-    nodeSt.update((n) => ({ ...(reachUrl ? { reach: { ...n.reach, url: reachUrl } } : {}), release: { path: newRelease, from, atMs: nowMs() } }));
-    if (migrating && existsSync(envFile)) renameSync(envFile, `${envFile}.migrated`);
-    journal = journalStep(home, journal.id, U.KEPT);
-    // the peer ports on this machine only, for a node installed before that was the default; those services restarted to take it
-    let local = [];
-    try {
-      local = peerPortsLocal(home);
-      for (const id of local) await restartService(id, { home, platform, env, sh });
-    } catch (e) { local = [`not changed: ${e.message}`]; }
-    // AND ON LINUX, LND STARTED ONCE ITS TOR ANSWERS (kanban #720): the two units' lines, then a daemon-reload
-    if (platform === 'linux') {
+    say(42, 'Starting your node');
+    const rest = await svc.start(moving.filter((f) => !tunnels.includes(f) && !(noBridge && isBridge(f))));
+    const started = !tunnelStarted.ok ? tunnelStarted : rest;
+    journal = journalStep(home, journal.id, U.STARTED, reachUrl ? { reachUrl } : {});
+    step(`started: ${started.ok ? 'ok' : started.why}; waiting up to ${Math.round(waitMs / 1000)} s for the seat to answer on port ${port}`);
+    // THE FIRST ANSWER: nobody knows how long a node takes to load its games; the bar moves with each ask, 45 % towards 85 %, closer
+    // the longer it takes (most answer within a minute), and the seconds are said
+    const waitFrom = Date.now();
+    say(45, "Waiting for your node's first answer");
+    const asking = (url, o) => { const s = (Date.now() - waitFrom) / 1000; if (s >= 1) say(45 + 40 * (1 - Math.exp(-s / 60)), "Waiting for your node's first answer", `${Math.round(s)} s`); return fetcher(url, o); };
+    const after = await waitHealthy({ port, fetcher: asking, waitMs });
+    const sameKey = after.ok && (!before.ok || after.identity === before.identity);
+    // from its first answer as this node the new release may sign: its database is never put back from before (kanban #1166)
+    if (sameKey) journalNote(home, journal.id, { served: true, servedMs: nowMs() });
+    step(`after: ${after.ok ? `the seat answers as ${after.identity.slice(0, 16)}…, ${sameKey ? 'the same node' : 'ANOTHER node'}` : `the seat did not answer: ${after.why}`}`);
+    // THE NEW RELEASE, NOT THE OLD PROCESS (kanban #546): a release that names its version must answer with it and its commit
+    const want = releaseIdOf(newRelease);
+    if (sameKey && want.version) say(86, `Checking it runs ${label}`);
+    const answered = sameKey && want.version ? await versionAnswers({ port, fetcher, want, waitMs: Math.min(waitMs, 120000) }) : { ok: sameKey };
+    if (sameKey && want.version) step(`GET /owner/version: ${answered.ok ? `${answered.version} (${String(answered.commit).slice(0, 12)}), the new release` : answered.why}`);
+    // and no process of an older release left after the start: ended and named, and if one will not end, no update
+    let leftAfterStart = sameKey && answered.ok && svc.leftovers ? await svc.leftovers(oldFolders) : [];
+    if (leftAfterStart.length && svc.end) { await svc.end(leftAfterStart.map((x) => x.pid)); await sleep(3000); }
+    const stillLeft = leftAfterStart.length && svc.leftovers ? await svc.leftovers(oldFolders) : [];
+    const same = sameKey && answered.ok && !stillLeft.length;
+    if (leftAfterStart.length) step(`still running from an older release after the start, ended: ${leftAfterStart.map((x) => `${x.name} ${x.pid}`).join(', ')}${stillLeft.length ? `; would not end: ${stillLeft.map((x) => `${x.name} ${x.pid}`).join(', ')}` : ''}`);
+    if (same) {
+      say(92, 'Finishing up');
+      // THE STATE AS IT STANDS NOW, NOT AS IT WAS READ MINUTES AGO (kanban #1178): what the seat, the owner page or the custody agent saved
+      // while the update ran (an on-chain action, custody.pegIn) is kept; only the release and a quick tunnel's new name are set
+      nodeSt.update((n) => ({ ...(reachUrl ? { reach: { ...n.reach, url: reachUrl } } : {}), release: { path: newRelease, from, atMs: nowMs() } }));
+      if (migrating && existsSync(envFile)) renameSync(envFile, `${envFile}.migrated`);
+      journal = journalStep(home, journal.id, U.KEPT);
+      // the peer ports on this machine only, for a node installed before that was the default; those services restarted to take it
+      let local = [];
       try {
-        const units = lndWaitsForTor(home, { env });
-        if (units.length) { await sh('systemctl', ['--user', 'daemon-reload']); local.push(...units); }
-      } catch (e) { local.push(`LND/Tor units not changed: ${e.message}`); }
+        local = peerPortsLocal(home);
+        for (const id of local) await restartService(id, { home, platform, env, sh });
+      } catch (e) { local = [`not changed: ${e.message}`]; }
+      // AND ON LINUX, LND STARTED ONCE ITS TOR ANSWERS (kanban #720): the two units' lines, then a daemon-reload
+      if (platform === 'linux') {
+        try {
+          const units = lndWaitsForTor(home, { env });
+          if (units.length) { await sh('systemctl', ['--user', 'daemon-reload']); local.push(...units); }
+        } catch (e) { local.push(`LND/Tor units not changed: ${e.message}`); }
+      }
+      // THE AUTO UPDATE SERVICE for a node installed before it, once
+      let updater = null;
+      if (installUpdaterFn) {
+        try { updater = await installUpdaterFn({ home, platform, env, sh }); } catch (e) { updater = { ok: false, why: e.message }; }
+      }
+      // the bitcoinarena command (and arenanode, the small script that runs it) runs the new release from now on
+      let command = null;
+      try {
+        command = writeCommand({ home, release: newRelease, node, platform, env, run: sh });
+        if (command.pathSet) { const r = await command.pathSet; delete command.pathSet; if (r && r.ok === false) command.why = `the user PATH was not changed: ${(r.err || r.out || '').trim().slice(0, 160)}`; }
+      } catch (e) { command = { why: e.message }; }
+      // and on Windows the updater running again - after the bitcoinarena command names the new release, which its loop CALLs (kanban #546)
+      let updaterBack = null;
+      if (svc.updater) { try { updaterBack = await svc.updater(); } catch (e) { updaterBack = { ok: false, why: e.message }; } }
+      // THE OLDER RELEASES REMOVED (kanban #576, measured 2026-10-22: an installed node kept every release it ever ran - 12 folders, 5 GB
+      // on one): once the new release answers as the same node, only it and the release it updated from (the way back) stay
+      const fromFolder = String(from).split(/[\\/]/).filter(Boolean).pop();
+      const pruned = [];
+      for (const d of besides) {
+        const name = d.split(/[\\/]/).filter(Boolean).pop();
+        if (name === fromFolder || name === newFolder) continue;
+        try { rmSync(d, { recursive: true, force: true }); pruned.push(name); } catch { /* a file still open (Windows): kept, the next update tries again */ }
+      }
+      // AND THE DOWNLOADED ARCHIVES (kanban #1444, audit 8 O8-5: releases/downloads/<version>/ kept every auto update's archive, about 200 MB
+      // each, for good): only the new release's and the one it came from stay
+      const keepDl = new Set([want.version, releaseIdOf(from).version].filter(Boolean));
+      const downloads = join(home, 'releases', 'downloads');
+      const prunedDownloads = [];
+      for (const d of (() => { try { return readdirSync(downloads); } catch { return []; } })()) {
+        if (keepDl.has(d)) continue;
+        try { rmSync(join(downloads, d), { recursive: true, force: true }); prunedDownloads.push(d); } catch { /* the next update tries again */ }
+      }
+      // THE NEWEST GAMES IN THE ADVERTISEMENT (2026-10-25: "Make sure the installer and the nodes use the newest versions"): the new
+      // release's app versions named in an advertisement update when the bond's advertisement does not name them yet - never fatal: the node
+      // runs, and is drawn for the new versions once the update counts
+      let games = null;
+      if (refreshGames) { try { games = await refreshGames({ home, release: newRelease, post: true }); } catch (e) { trace.fail('the advertisement\'s app versions', e); games = { ok: false, why: e.message }; } }
+      step(`done: ${from} -> ${newRelease}${pruned.length ? `; removed the older release(s) ${pruned.join(', ')}` : ''}${prunedDownloads.length ? `; removed the downloads of ${prunedDownloads.join(', ')}` : ''}${updater ? `; auto update ${updater.already ? 'was there' : updater.ok ? 'installed' : `not installed (${updater.why})`}` : ''}`);
+      return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), lnd: lnd ? lnd.to : null, command, migrated: migrating, peerPortsLocal: local, updater, pruned, prunedDownloads, games,
+        ...(want.version ? { answered: { version: answered.version, commit: answered.commit } } : {}), ...(updaterBack ? { updaterBack } : {}),
+        ...(leftAfterStop.length ? { endedAfterStop: leftAfterStop } : {}), ...(leftAfterStart.length ? { endedAfterStart: leftAfterStart } : {}),
+        ...(reachUrl ? { reach: reachUrl } : {}), ...(started.ok ? {} : { notStarted: started.why }) };
     }
-    // THE AUTO UPDATE SERVICE for a node installed before it, once
-    let updater = null;
-    if (installUpdaterFn) {
-      try { updater = await installUpdaterFn({ home, platform, env, sh }); } catch (e) { updater = { ok: false, why: e.message }; }
-    }
-    // the bitcoinarena command (and arenanode, the small script that runs it) runs the new release from now on
-    let command = null;
-    try {
-      command = writeCommand({ home, release: newRelease, node, platform, env, run: sh });
-      if (command.pathSet) { const r = await command.pathSet; delete command.pathSet; if (r && r.ok === false) command.why = `the user PATH was not changed: ${(r.err || r.out || '').trim().slice(0, 160)}`; }
-    } catch (e) { command = { why: e.message }; }
-    // and on Windows the updater running again - after the bitcoinarena command names the new release, which its loop CALLs (kanban #546)
-    let updaterBack = null;
-    if (svc.updater) { try { updaterBack = await svc.updater(); } catch (e) { updaterBack = { ok: false, why: e.message }; } }
-    // THE OLDER RELEASES REMOVED (kanban #576, measured 2026-10-22: an installed node kept every release it ever ran - 12 folders, 5 GB
-    // on one): once the new release answers as the same node, only it and the release it updated from (the way back) stay
-    const fromFolder = String(from).split(/[\\/]/).filter(Boolean).pop();
-    const pruned = [];
-    for (const d of besides) {
-      const name = d.split(/[\\/]/).filter(Boolean).pop();
-      if (name === fromFolder || name === newFolder) continue;
-      try { rmSync(d, { recursive: true, force: true }); pruned.push(name); } catch { /* a file still open (Windows): kept, the next update tries again */ }
-    }
-    // THE NEWEST GAMES IN THE ADVERTISEMENT (2026-10-25: "Make sure the installer and the nodes use the newest versions"): the new
-    // release's app versions named in an advertisement update when the bond's advertisement does not name them yet - never fatal: the node
-    // runs, and is drawn for the new versions once the update counts
-    let games = null;
-    if (refreshGames) { try { games = await refreshGames({ home, release: newRelease, post: true }); } catch (e) { trace.fail('the advertisement\'s app versions', e); games = { ok: false, why: e.message }; } }
-    step(`done: ${from} -> ${newRelease}${pruned.length ? `; removed the older release(s) ${pruned.join(', ')}` : ''}${updater ? `; auto update ${updater.already ? 'was there' : updater.ok ? 'installed' : `not installed (${updater.why})`}` : ''}`);
-    return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), lnd: lnd ? lnd.to : null, command, migrated: migrating, peerPortsLocal: local, updater, pruned, games,
-      ...(want.version ? { answered: { version: answered.version, commit: answered.commit } } : {}), ...(updaterBack ? { updaterBack } : {}),
-      ...(leftAfterStop.length ? { endedAfterStop: leftAfterStop } : {}), ...(leftAfterStart.length ? { endedAfterStart: leftAfterStart } : {}),
-      ...(reachUrl ? { reach: reachUrl } : {}), ...(started.ok ? {} : { notStarted: started.why }) };
-  }
-  // WHY IT DID NOT COME UP, SAID WITH IT (kanban #663: the rollback said only "did not answer on port 8470"): the new release's last log
-  // lines - the journal of the seat's unit on Linux, node.log elsewhere - read before the old release starts again
-  const seatLog = !after.ok ? await seatLogTail({ home, platform, sh, unit: svc.seatFile ? String(svc.seatFile).split(/[\\/]/).pop() : UNIT }).catch(() => []) : [];
-  step('rolling back: the old service files, the backup and the old release');
-  const failedStep = failedAt();
-  say(null, `Going back to ${releaseIdOf(from).version || 'the release it ran'}`);
-  if (seatLog.length) trace.debug(`the new release's last log lines:\n  ${seatLog.join('\n  ')}`);
-  // ROLLED BACK: the old services, the backup, the old release started (rollBack) - the database kept when the new release answered as
-  // this node (kanban #1166: it may have signed since)
-  // AND WHEN IT WROTE ITS DATABASE (kanban #1286, audit 4 #1257 CLIENT-4: #1227 kept a changed database on the resume only): a release that reached
-  // serve() as the wait ran out answered peers and wrote nonces, entries and locks without ever answering here - the backup over them would
-  // lose them, and a nonce put back after its use could sign twice
-  const written = !sameKey && dbChangedSince(home, backup);
-  journal = journalStep(home, journal.id, U.ROLLING_BACK, { served: sameKey || written });
-  const { put, back, dbKept } = await rollBack({ svc, home, moving, oldTexts: Object.fromEntries(oldTexts), migrating, confFile, backup, keepDb: sameKey || written, to: newRelease, port, fetcher, waitMs, sleep });
-  journalStep(home, journal.id, U.ROLLED_BACK, { restored: back.ok, dbKept });
-  step(`rolled back: the backup ${put.ok ? 'put back' : `not all put back (${put.failed.join(', ')})`}${dbKept ? (sameKey ? ' (its database kept: the new release had answered as this node)' : ' (its database kept: the new release wrote it since the backup)') : ''}; the old release ${back.ok ? 'answers' : `does not answer (${back.why})`}`);
-  return { ok: false, rolledBack: true, from, to: newRelease, backup: backup.dir, failedAt: failedStep, dbKept,
-    why: !after.ok ? `the new release did not come up: ${after.why}${seatLog.length ? `. Its last log lines: ${seatLog.join(' | ')}` : ''}`
-      : !sameKey ? `the new release answered as another node (${after.identity.slice(0, 16)}), not ${before.identity.slice(0, 16)}`
-        : !answered.ok ? (answered.version && answered.version === releaseIdOf(from).version ? `the old release still answers (${answered.version}): ${answered.why}` : answered.why)
-          : `processes of an older release would not end: ${stillLeft.map((x) => `${x.name} ${x.pid}`).join(', ')}`,
-    restored: back.ok, ...(put.ok ? {} : { notRestored: put.failed }) };
+    // WHY IT DID NOT COME UP, SAID WITH IT (kanban #663: the rollback said only "did not answer on port 8470"): the new release's last log
+    // lines - the journal of the seat's unit on Linux, node.log elsewhere - read before the old release starts again
+    const seatLog = !after.ok ? await seatLogTail({ home, platform, sh, unit: svc.seatFile ? String(svc.seatFile).split(/[\\/]/).pop() : UNIT }).catch(() => []) : [];
+    step('rolling back: the old service files, the backup and the old release');
+    const failedStep = failedAt();
+    say(null, `Going back to ${releaseIdOf(from).version || 'the release it ran'}`);
+    if (seatLog.length) trace.debug(`the new release's last log lines:\n  ${seatLog.join('\n  ')}`);
+    // ROLLED BACK: the old services, the backup, the old release started (rollBack) - the database kept when the new release answered as
+    // this node (kanban #1166: it may have signed since)
+    // AND WHEN IT WROTE ITS DATABASE (kanban #1286, audit 4 #1257 CLIENT-4: #1227 kept a changed database on the resume only): a release that reached
+    // serve() as the wait ran out answered peers and wrote nonces, entries and locks without ever answering here - the backup over them would
+    // lose them, and a nonce put back after its use could sign twice
+    const written = !sameKey && dbChangedSince(home, backup);
+    journal = journalStep(home, journal.id, U.ROLLING_BACK, { served: sameKey || written });
+    const { put, back, dbKept } = await rollBack({ svc, home, moving, oldTexts: Object.fromEntries(oldTexts), migrating, confFile, backup, keepDb: sameKey || written, to: newRelease, port, fetcher, waitMs, sleep });
+    journalStep(home, journal.id, U.ROLLED_BACK, { restored: back.ok, dbKept });
+    step(`rolled back: the backup ${put.ok ? 'put back' : `not all put back (${put.failed.join(', ')})`}${dbKept ? (sameKey ? ' (its database kept: the new release had answered as this node)' : ' (its database kept: the new release wrote it since the backup)') : ''}; the old release ${back.ok ? 'answers' : `does not answer (${back.why})`}`);
+    return { ok: false, rolledBack: true, from, to: newRelease, backup: backup.dir, failedAt: failedStep, dbKept,
+      why: !after.ok ? `the new release did not come up: ${after.why}${seatLog.length ? `. Its last log lines: ${seatLog.join(' | ')}` : ''}`
+        : !sameKey ? `the new release answered as another node (${after.identity.slice(0, 16)}), not ${before.identity.slice(0, 16)}`
+          : !answered.ok ? (answered.version && answered.version === releaseIdOf(from).version ? `the old release still answers (${answered.version}): ${answered.why}` : answered.why)
+            : `processes of an older release would not end: ${stillLeft.map((x) => `${x.name} ${x.pid}`).join(', ')}`,
+      restored: back.ok, ...(put.ok ? {} : { notRestored: put.failed }) };
+  } catch (e) { return await failedAfterStop(e); }
 }
