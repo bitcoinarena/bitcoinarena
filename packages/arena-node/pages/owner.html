@@ -623,8 +623,8 @@ async function nodeFeedbackPanel() {
   if (!document.getElementById('fbn-css')) { const st = document.createElement('style'); st.id = 'fbn-css';
     st.textContent = '#node-feedback textarea,#node-feedback input[type=text],#node-feedback select{display:block;width:100%;box-sizing:border-box;margin:6px 0;padding:9px 10px;border-radius:9px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit}'
       + '#node-feedback .fbn-count.short{color:#d29922}#node-feedback .fbn-lnsay.bad{color:#f85149}#node-feedback .fbn-lnsay.good{color:#3fb950}'
-      + '#node-feedback .fbn-chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}#node-feedback .fbn-chip{border:1px solid var(--line);border-radius:999px;padding:3px 9px;font-size:12.5px}'
-      + '#node-feedback .fbn-bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin:4px 0 10px}#node-feedback .fbn-fill{height:100%;background:#f2a93b}'
+      + '#node-feedback .fbn-chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}#node-feedback .fbn-chip{border:1px solid #30363d;border-radius:10px;padding:3px 9px;font-size:12.5px;background:#21262d;color:#e6edf3}#node-feedback .fbn-chip b{color:#f7931a}'
+      + '#node-feedback .fbn-bar{height:8px;border-radius:4px;background:#21262d;overflow:hidden;margin:4px 0 10px}#node-feedback .fbn-fill{height:100%;background:#f7931a}'
       + '#node-feedback button.primary:disabled{opacity:.45;cursor:not-allowed}#node-feedback .fbn-shot{display:block;margin:6px 0}';
     document.head.append(st); }
   box.append(el('p', { cls: 'sub', text: 'Sent: your words, this node’s key and its release, signed with your owner key. Never your seed or a secret.' }),
