@@ -14,7 +14,10 @@ const { addBondFromWallet, changeRolesFromWallet, SAME_ACTION_MS } = await impor
 // `mempool`: the transaction ids this node's mempool holds (kanban #1423: an "already" answer needs the kept transaction to be there)
 const world = (mempool = new Set(['b2'.repeat(32), 'b3'.repeat(32), 'u1'.repeat(32)])) => {
   const calls = [], store = new Map();
-  const cli = (m, ...a) => { calls.push([m, ...a]); if (m === 'getblockcount') return '100'; if (m === 'getmempoolentry' && mempool.has(a[0])) return '{}'; throw new Error(`no ${m}`); };
+  const cli = (m, ...a) => { calls.push([m, ...a]); if (m === 'getblockcount') return '100'; if (m === 'getmempoolentry' && mempool.has(a[0])) return '{}';
+    // bitcoind's own answer for a transaction it does not hold (kanban #1426 N8: only this reads as "not there")
+    if (m === 'getmempoolentry' || m === 'gettransaction') throw new Error('error code: -5\nerror message:\nNo such mempool or blockchain transaction');
+    throw new Error(`no ${m}`); };
   const journal = { last: (k) => store.get(k) || null, keep: (k, r) => store.set(k, r) };
   return { calls, store, cli, journal, sent: () => calls.filter((c) => c[0] === 'sendrawtransaction').map((c) => c[1]) };
 };
@@ -65,4 +68,13 @@ test('#1423 the same add or roles change again after a broadcast that never went
   console.log(`  MEASURED #1423: kept add-bond not in the mempool -> ${add}; kept roles update not in the mempool -> ${roles}`);
   assert.match(add, /BUILD: a second bond would be funded/);
   assert.match(roles, /BUILD: a second update would be funded/);
+});
+
+test('#1426 N8 a busy bitcoind is not "the transaction is not there": the kept add answers already, nothing built', async () => {
+  const w = world(new Set());
+  const busy = (m, ...a) => { w.calls.push([m, ...a]); if (m === 'getblockcount') return '100'; if (m === 'getmempoolentry' || m === 'gettransaction') throw new Error('error code: -28\nLoading block index...'); throw new Error(`no ${m}`); };
+  const now = 1_800_000_000_000;
+  w.journal.keep('add-bond', { key: null, what: '50000', atMs: now - 60_000, hexes: ['f00d', 'b0nd'], bondTxid: 'b2'.repeat(32), bond: { txid: 'b2'.repeat(32) }, plan: { addSats: '50000' } });
+  const r = await addBondFromWallet({ cli: busy, network: 'regtest', secret: new Uint8Array(32).fill(1), pubkey: new Uint8Array(32), addSats: '50000', post: true, now, journal: w.journal });
+  assert.equal(r.already, true, 'a busy bitcoind made a second add-bond');
 });
