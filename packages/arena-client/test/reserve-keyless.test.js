@@ -213,7 +213,8 @@ test('the order strip speaks to the player: no msat or inner steps, a refusal in
   assert.ok(!/return 'locking your stake: '/.test(strip), 'no inner step on the line');
   assert.match(strip, /if \(j\.state === 'refused'\) \{ line = refusedWords\(j\.why\); cls = 'bad'; \}/);
   for (const words of ['Your order came too late for this round. Tap again to play the next one.', 'Not enough sats in your wallet for this round.', ' Add some with Deposit or Get 300 sats.',
-    ' sat of your winnings arrive within about 10 minutes.']) assert.ok(strip.includes(words), words);   // #1391: the pending winnings are named
+    " sat of your winnings arrive ' + pendingWhen() + '.'"]) assert.ok(strip.includes(words), words);   // #1391: the pending winnings are named, #1398: with their own window
+  assert.ok(strip.includes("return mins <= 1 ? 'within about a minute' : 'within about ' + mins + ' minutes'; };"), 'when they arrive, from the seats\' window close');
   const said = strip.match(/return '[^']*'/g) || [];
   assert.ok(said.length >= 8 && said.every((r) => !/msat|signer node|seating|federation lock|census/.test(r)), 'no inner words in what the player reads');
 });
