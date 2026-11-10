@@ -74,7 +74,9 @@ export function openFeedbackStore(path = ':memory:') {
   const row = (r) => (r ? { id: r.id, pubkey: r.pubkey, type: r.type, signedAt: r.signed_at, receivedMs: r.received_ms, happened: r.happened, expected: r.expected,
     game: r.game || null, round: r.round || null, build: r.build || null, state: r.state, reason: r.reason || null, duplicateOf: r.duplicate_of || null,
     severity: r.severity || null, amountSats: r.amount_sats ?? null, ticket: r.ticket || null, changedMs: r.changed_ms ?? null,
-    source: r.source || 'frontend', node: r.node || null, screenshot: r.screenshot || null, number: r.number ?? null, label: feedbackLabel(r.number) } : null);
+    source: r.source || 'frontend', node: r.node || null, screenshot: r.screenshot || null, number: r.number ?? null, label: feedbackLabel(r.number),
+    // THE CLIENT'S DEBUG (kanban #1391): what the page sent beside the words, out of the signed event as kept, scrubbed as the words are
+    debug: (() => { try { const c = JSON.parse(JSON.parse(r.event).content); return c && c.debug ? scrubKeys(String(c.debug)).slice(0, 60000) : null; } catch { return null; } })() } : null);
 
   /**
    * A REPORT IN: the signed event, checked as a relay checks one (id, signature), of the report kind, signed within a day. Kept once per event id

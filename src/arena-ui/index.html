@@ -1,6 +1,27 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>
+  // THE CLIENT'S OWN LOG FOR A REPORT (kanban #1391, Daniel 2026-11-10: "Add as much debug as possible from the client in the feedback session"): the last 300
+  // [arena] lines, warnings and errors, ids shortened to 16 hex, no line that names a seed, phrase, mnemonic, nsec, secret or password - handed with a report
+  (function () {
+    var ring = [], keep = 300, t0 = Date.now();
+    var safe = function (x) { var s; try { s = typeof x === 'string' ? x : (x && x.message) ? String(x.message) : JSON.stringify(x); } catch (e) { s = String(x); } return String(s); };
+    var clean = function (line) { return line.replace(/\b([0-9a-f]{16})[0-9a-f]{16,}\b/gi, '$1…').slice(0, 400); };
+    var bad = /seed|phrase|mnemonic|nsec|ncryptsec|secret|password|admin.?code|x-arena-admin/i;
+    ['log', 'warn', 'error'].forEach(function (k) {
+      var orig = console[k] && console[k].bind(console); if (!orig) return;
+      console[k] = function () {
+        try { var line = Array.prototype.map.call(arguments, safe).join(' ');
+          if ((k !== 'log' || /^\[arena\]|^\[rps\]/.test(line)) && !bad.test(line)) { ring.push(((Date.now() - t0) / 1000).toFixed(1) + 's ' + k[0] + ' ' + clean(line)); if (ring.length > keep) ring.shift(); } } catch (e) { /* the log goes on */ }
+        return orig.apply(null, arguments); };
+    });
+    window.addEventListener('error', function (e) { try { ring.push(((Date.now() - t0) / 1000).toFixed(1) + 's E ' + clean(String(e.message || e)) + ' @' + String(e.filename || '').split('/').pop() + ':' + e.lineno); } catch (x) { /* none */ } });
+    window.addEventListener('unhandledrejection', function (e) { try { ring.push(((Date.now() - t0) / 1000).toFixed(1) + 's R ' + clean(safe(e.reason))); } catch (x) { /* none */ } });
+    window.ARENA_CONSOLE_TAIL = function () { return ring.slice(); };
+    window.ARENA_PAGE_T0 = t0;
+  })();
+</script>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Bitcoin Arena</title>
@@ -1934,7 +1955,9 @@
               if (lnAddress) tags.push(['lud16', lnAddress]);
               if (/^[a-z0-9-]{1,48}$/.test(game)) tags.push(['game', game]);
               if (/^[0-9a-f]{8,64}$/.test(String(round))) tags.push(['round', String(round)]);
-              body = { event: await identitySign({ kind: FEEDBACK_KIND, tags, content: JSON.stringify({ happened: t.value, expected: x.value, ...(lnAddress ? { lnAddress } : {}) }) }), player: badge };
+              // THE CLIENT'S STATE WITH THE REPORT (kanban #1391): the order, its steps, the wallet, the lobby, the console - ARENA_DEBUG_DUMP, at most 60,000 characters
+              let debug = ''; try { debug = window.ARENA_DEBUG_DUMP ? String(window.ARENA_DEBUG_DUMP()).slice(0, 60000) : ''; } catch (e) { debug = 'debug dump failed: ' + (e && e.message); }
+              body = { event: await identitySign({ kind: FEEDBACK_KIND, tags, content: JSON.stringify({ happened: t.value, expected: x.value, ...(lnAddress ? { lnAddress } : {}), ...(debug ? { debug } : {}) }) }), player: badge };
             } catch (e) { console.warn('[arena] #1342 feedback sent unsigned: ' + (e && e.message ? e.message : e)); }
           }
           const r = await fetch(feedbackUrl(), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -3785,6 +3808,7 @@
       // page could not be asked. It has to say it. One line in, one line out, per await that can hold it.
       // EACH STEP FROM THE PRESS, KEPT FOR THE ORDER'S TRANSACTION (kanban #624): handed to the seats with the order's timing (ARENA_TX_TIMING_POST)
       const pressAt = window.ARENA_ORDER_PRESSED_AT || performance.now();
+      window.ARENA_TX_PRESS_AT = pressAt;   // the strip times the open step from it (kanban #1391)
       window.ARENA_JOIN_PRESS_AT = pressAt;   // a run's entry goes out later, from the game's session (Client.at's join below)
       window.ARENA_TX_STEPS = [];
       // AN ORDER IN FLIGHT HAS THE WALLET TO ITSELF (playtest 2026-10-24 21:24Z, 0f975760: "It's stuck at placing" - "money moved ahead into
@@ -3814,11 +3838,21 @@
       let earlyDeposit = null;
       // A NEW WALLET'S TEST SATS ON THEIR WAY ARE WAITED FOR, NOT ASKED AS A DEPOSIT (kanban #1042, measured 2026-11-02: PLAY at 47 s, "Not enough sats" with the green line still saying
       // they are coming, and refused 24 times in 5 min; PLAY at 102 s locked in 1 s)
-      if (pays && window.ARENA_WELCOME_WAIT) {
+      // ONLY WHEN THE ROUND'S OWN FEDERATION CANNOT PAY WITHOUT THEM (kanban #1391, Daniel 2026-11-10 #010/#011: "not in yet after 56 s / 15 s", the stage empty the
+      // whole time, the seats never saw the entry): a welcome still pending held every paid order to the round's close, whatever the wallet already held. A wallet
+      // that covers the stake in the round's federation goes on at once; the wait and its reason are in the order's steps
+      const welcomeNeeded = () => { try { const fedHex = Array.from(named.round.federationId || [], (b) => b.toString(16).padStart(2, '0')).join('');
+        const plan = ARENACLIENT.joinFundingPlan({ parts: (window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || [], roundFederation: fedHex, needMsat: named.round.stakeMsat || 0 });
+        return plan.coveredBy !== 'here'; } catch { return true; } };
+      if (pays && window.ARENA_WELCOME_WAIT && !welcomeNeeded()) console.log('[arena] join step: test sats still on their way, not waited for - this federation\'s wallet covers the stake');
+      if (pays && window.ARENA_WELCOME_WAIT && welcomeNeeded()) {
         const closes = ARENACLIENT.entryOpenUntilMs ? Number(ARENACLIENT.entryOpenUntilMs(named.round)) : NaN;
         const left = Number.isFinite(closes) ? closes - Date.now() : 60000;
+        window.ARENA_JOIN && Object.assign(window.ARENA_JOIN, { stage: 'waiting for the test sats to arrive in your wallet' });
+        if (window.ARENA_TX_STEP) window.ARENA_TX_STEP('-> welcome sats');
         console.log('[arena] join step: waiting for the test sats, at most ' + Math.round(Math.min(left, 60000) / 1000) + ' s');
         await Promise.race([window.ARENA_WELCOME_WAIT, new Promise((go) => setTimeout(go, Math.max(0, Math.min(left, 60000))))]);
+        if (window.ARENA_TX_STEP) window.ARENA_TX_STEP('<- welcome sats');
         if (window.ARENA_READ_BALANCE) await Promise.resolve(window.ARENA_READ_BALANCE()).catch(() => {});
       }
       // NOT WHEN ANOTHER FEDERATION OF THE PLAYER'S HOLDS THE STAKE (2026-10-20 17:3xZ: 200 sat in 4dc88be7, a 100 sat Up/Down order in
@@ -10284,6 +10318,29 @@
         return 'Your order did not go in. Tap again - if it keeps happening, tap Report this.';
       };
       window.ARENA_ORDER_WORDS = refusedWords;
+      // THE DEBUG DUMP OF A REPORT (kanban #1391): what this tab holds now, ids at 16 hex, nothing secret
+      window.ARENA_DEBUG_DUMP = () => {
+        const id = (x) => String(x || '').slice(0, 16), ago = (ms) => (Number(ms) ? Math.round((Date.now() - Number(ms)) / 100) / 10 + ' s ago' : null);
+        const j = window.ARENA_JOIN || {}, st = window.ARENA_JOIN_STATUS || {}, bal = window.ARENA_WALLET_BALANCE || {};
+        const loads = window.ARENA_FED_LOADS instanceof Map ? [...window.ARENA_FED_LOADS.entries()].map(([k, v]) => ({ fed: id(k).slice(0, 8), status: v && v.status, load: v && v.load, deposit: v && v.allows ? v.allows.deposit : undefined })) : null;
+        const rows = (window.ARENA_LOBBY_ROWS || []).filter((r) => r && Number(r.entryCloseMs) > Date.now() - 60000).sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs)).slice(0, 6)
+          .map((r) => ({ round: id(r.id), game: r.game || (r.raw && r.raw.game) || null, closesInS: Math.round((Number(r.entryCloseMs) - Date.now()) / 100) / 10, joinable: !!r.joinable, free: !!r.free, stakeSats: r.stakeSats || null,
+            fed: r.contract && r.contract.federationId ? Array.from(r.contract.federationId.slice(0, 4), (b) => b.toString(16).padStart(2, '0')).join('') : null }));
+        const out = {
+          at: new Date().toISOString(), pageAgeS: window.ARENA_PAGE_T0 ? Math.round((Date.now() - window.ARENA_PAGE_T0) / 1000) : null,
+          build: (document.getElementById('boot-build') || {}).textContent || null, path: location.pathname + location.search.replace(/([?&](code|key|secret|token|nsec)=)[^&]*/gi, '$1…'),
+          agent: navigator.userAgent, screen: `${innerWidth}x${innerHeight}@${devicePixelRatio}`, online: navigator.onLine, visible: document.visibilityState,
+          game: (window.ARENA_GAME && window.ARENA_GAME.name) || null,
+          order: { state: j.state || null, stage: String(j.stage || '').slice(0, 300), why: String(j.why || '').slice(0, 600), round: id(j.round), startedAgo: ago(j.startedMs), busyTapAgo: ago(j.busyTapAt), locking: !!j.locking,
+            strip: st.line || null, busyUntilInS: window.ARENA_ORDER_BUSY_UNTIL ? Math.round((window.ARENA_ORDER_BUSY_UNTIL - Date.now()) / 1000) : null, refused: window.ARENA_JOIN_REFUSED || null },
+          steps: (window.ARENA_TX_STEPS || []).slice(-80).map((x) => `${x.ms}ms ${x.step}`),
+          wallet: { sats: bal.sats ?? null, pending: bal.pending ?? null, arriving: bal.arriving ?? null, merging: bal.merging ?? null, unread: bal.unread ?? null,
+            parts: (bal.parts || []).map((x) => `${id(x.federation).slice(0, 8)}:${x.sats}${x.merging ? ` merging ${x.merging}` : ''}${x.arriving ? ` arriving ${x.arriving}` : ''}`), walletFed: id(window.ARENA_WALLET_FEDERATION).slice(0, 8) },
+          federations: loads, lobby: rows,
+          console: window.ARENA_CONSOLE_TAIL ? window.ARENA_CONSOLE_TAIL().slice(-300) : [],
+        };
+        return JSON.stringify(out, null, 1);
+      };
       setInterval(() => {
         // a client that says its orders itself (Up/Down v5) has no strip over it
         if (!document.body.classList.contains('arena-own-client') || window.ARENA_CLIENT_SAYS_JOIN) { box.classList.remove('on'); return; }
@@ -10298,10 +10355,14 @@
           // NOTHING SILENT PAST 3 S (kanban #1391, Daniel 2026-11-10: "It should get an error after 2-3 seconds max that the user can understand"): an order that is
           // not in 3 s after the tap says so in red, with the step it waits on in plain words; a tap the busy order took no notice of says that too
           const slow = j.startedMs && Date.now() - j.startedMs > 3000;
+          // THE STEP IT WAITS ON BY NAME (kanban #1391, #011: "not in yet after 15 s - the game servers have not confirmed it" with no stage): the join's last step
+          // begun and not ended (ARENA_TX_STEPS '-> name' with no '<- name' after it)
+          const openStep = () => { const xs = window.ARENA_TX_STEPS || []; const done = new Set(xs.filter((x) => /^<- /.test(x.step)).map((x) => x.step.slice(3)));
+            const o = xs.filter((x) => /^-> /.test(x.step) && !done.has(x.step.slice(3))).pop(); return o ? 'waiting on ' + o.step.slice(3) + ' (' + Math.round(((performance.now() - (window.ARENA_TX_PRESS_AT || 0)) - o.ms) / 100) / 10 + ' s)' : ''; };
           const busy = j.busyTapAt && Date.now() - j.busyTapAt < 6000 ? 'That tap was not taken: your previous order is still being placed. ' : '';
           if (slow || busy) {
             line = busy + (slow ? 'Your order is not in yet after ' + Math.round((Date.now() - j.startedMs) / 1000) + ' s - '
-              + (sub || 'the game servers have not confirmed it') + '. If it is not in when the round closes, nothing is taken.' : 'Placing your order …' + (sub ? ' ' + sub : ''));
+              + (sub || openStep() || 'the game servers have not confirmed it') + '. If it is not in when the round closes, nothing is taken.' : 'Placing your order …' + (sub ? ' ' + sub : ''));
             cls = 'bad';
           } else { line = 'Placing your order …' + (sub ? ' ' + sub : ''); cls = ''; }
         }

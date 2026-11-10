@@ -520,7 +520,8 @@ createServer((req, res) => {
     if (!env.FAUCET_CHAT_URL) return send(503, { ok: false, why: 'reports are off' });
     let raw = '';
     req.setEncoding('utf8');
-    req.on('data', (c) => { raw += c; if (raw.length > 24576) req.destroy(); });
+    // THE CLIENT'S DEBUG WITH A REPORT (kanban #1391): a signed report carries up to 60,000 characters of the page's state, so a post is read to 96 KB
+    req.on('data', (c) => { raw += c; if (raw.length > 98304) req.destroy(); });
     req.on('end', async () => {
       try {
         const b0 = JSON.parse(raw || '{}'), ip = req.headers['x-arena-ip'] || null;
