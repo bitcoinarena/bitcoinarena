@@ -221,7 +221,9 @@ export function createDayDuty(o) {
     committeeLeadMs = guard.DUTY_DAY_COMMITTEE_LEAD_MS, rankCap = guard.DUTY_DAY_RANK_CAP, drawableByMs = guard.DUTY_DRAWABLE_BY_MS,
     emergencyOn = true, emergencyCommitteeLeadMs = guard.DUTY_EMERGENCY_COMMITTEE_LEAD_MS, seedWaitMs = guard.DUTY_SEED_WAIT_MS,
     drawSeats = 12, dryRank0 = false, seatsAgreeOn = null, role = 'primary', postedPrimary = async () => false, fetchFn = fetch, say = () => {}, now = Date.now, canPay = async () => ({ ok: true }),
-    announce = null, publicSend = null, creatorOf = null, seriesInfoOf = null, creators = [] } = o;
+    announce = null, publicSend = null, creatorOf = null, seriesInfoOf = null, creators = [],
+    // FIELDS THE CALLER SETS ON THE DAY'S ROUNDS (kanban #1398: a head-to-head game's 60 s objection window, once every seat takes it); none by default
+    extraFields = () => ({}) } = o;
   // WHO A MARKER IS FROM (kanban #1168, MARKER above): `creatorOf(seriesIdHex)` the creator key (hex) of a series whose signed line this
   // process holds - null for none; `creators` the creator keys the operator names as duty posters beside the day's duty order
   const trusted = new Set((creators || []).map((k) => String(k).trim().toLowerCase()).filter((k) => /^[0-9a-f]{64}$/.test(k)));
@@ -317,7 +319,7 @@ export function createDayDuty(o) {
     const times = plan || { committeeMs: startMs - leadMs, firstStartMs: startMs, slots: (endMs - startMs) / shape.periodMs };
     const marker = backup ? backupMarkerOutput(slot, item) : dutyMarkerOutput(slot, plan ? emergencyItem : item);
     const per = (extra) => postFeds.map((f) => ({ donationSetId: base.donationSetId, federationId: fromHex(f), ...extra }));
-    const kind = { ...creator, fields: { ...base.fields, censusHeight: base.censusHeight }, tableFields: game === 'rps' ? [...per({}), ...per({})] : per({}), stakeMsat, mustDraw: true,
+    const kind = { ...creator, fields: { ...base.fields, ...extraFields(game), censusHeight: base.censusHeight }, tableFields: game === 'rps' ? [...per({}), ...per({})] : per({}), stakeMsat, mustDraw: true,
       base, ...(game === 'updown' ? { stakeExpiryFor: (t) => { const n = marketExpiryBlocks(t, base.marketTerms); if (!n.ok) throw new Error(n.why); return n.blocks; } } : {}) };
     const got = await openGrid(kind, { feeRate, maxFeeRate, committeeTimeMs: BigInt(times.committeeMs), extraOutputs: [marker], waitBeacon: false,
       slots: times.slots, windowMs: BigInt(shape.periodMs), entryAfterStartMs: BigInt(shape.entryAfterStartMs), firstCloseMs: BigInt(times.firstStartMs + shape.entryAfterStartMs) });

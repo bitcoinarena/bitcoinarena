@@ -459,6 +459,8 @@ if (env.PAID_DUTY_DAILY === '1') {
   const duty = createDayDuty({ game, item, networkId: round.contract.networkId, local, dir: join(home, 'paid', 'duty-day'),
     chain: round.dutyChain, chainCall, walletRpc: rpc, gridBase, openGrid: (kind, opts) => round.openGrid(kind, opts),
     postSeries: (line) => round.postSeries(line), fedsNow, seatCatalog, devOf: DEV_OF, creator: CREATOR, stakeMsat,
+    // A DAY OF RPS NAMES THE HEAD-TO-HEAD 60 s WINDOW (§13A, RULED 2026-11-10, kanban #1398) with RPS_H2H_WINDOW=1, set once every seat runs it
+    extraFields: (g) => (g === 'rps' && env.RPS_H2H_WINDOW === '1' ? { objectionWindowMs: 60_000n } : {}),
     feeRate: Number(env.DUTY_FEE_RATE || 0.1), maxFeeRate: Number(env.DUTY_MAX_FEE_RATE || 1), dry: env.DUTY_DRY === '1', gridDry: env.ARENA_GRID_DRY === '1',
     fromDay: Number(env.DUTY_FROM_DAY || 0), committeeLeadMs, rankCap, drawableByMs, emergencyOn,
     emergencyCommitteeLeadMs: Number(env.DUTY_EMERGENCY_COMMITTEE_LEAD_MS || guard.DUTY_EMERGENCY_COMMITTEE_LEAD_MS), seedWaitMs: Number(env.DUTY_SEED_WAIT_MS || guard.DUTY_SEED_WAIT_MS),
