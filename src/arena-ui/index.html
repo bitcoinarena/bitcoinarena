@@ -7540,6 +7540,30 @@
       const provisional = (held, moves) => { const [a, b] = held.entries, ma = moves[a.entry], mb = moves[b.entry]; if (!Number.isInteger(ma) || !Number.isInteger(mb)) return held;
         const w = (ma - mb + 3) % 3, of = (e, won) => ({ ...e, provisional: true, signedBy: 1, outcome: won === false ? 'FAILED' : 'DELIVERED', score: won === true ? 2 : won === false ? 0 : 1 });
         return { ...held, entries: [of(a, w === 0 ? null : w === 1), of(b, w === 0 ? null : w === 2)] }; };
+      // THE PROVISIONAL VERDICT IS CHECKED (audit 5, kanban #1406): the client shows the winner once, from the open moves, and moves on before the seats sign;
+      // a round they sign otherwise (a forfeit, a void) never redrew it. What this tab was told is kept per round; the signed result is read again after
+      // the close, and a different verdict is said out loud once
+      const provisionalSaid = new Map();   // round -> { entry, outcome, score, checks }
+      const verdictWords = (e) => { const o = String(e.outcome || '').toUpperCase();
+        if (o === 'VOID') return 'void - the stakes go back'; if (o === 'FORFEIT' || o === 'FORFEITED') return 'a forfeit';
+        return Number(e.score) === 2 ? 'a win' : Number(e.score) === 0 ? 'a loss' : Number(e.score) === 1 ? 'a draw' : o.toLowerCase() || 'undecided'; };
+      const saidProvisionally = (id, p) => {
+        const h = readHidden().find((x) => x.roundIdHex === id); if (!h || !p || !Array.isArray(p.entries)) return p;
+        const mine = p.entries.find((e) => e.entry === h.entryIdHex); if (!mine) return p;
+        const had = provisionalSaid.get(id), checks = had ? had.checks : 0;
+        provisionalSaid.set(id, { entry: mine.entry, outcome: mine.outcome, score: mine.score, checks }); if (provisionalSaid.size > 32) provisionalSaid.delete(provisionalSaid.keys().next().value);
+        if (checks < 4) { provisionalSaid.get(id).checks = checks + 1;
+          const due = Math.max(2000, Number(h.entryCloseMs) + 8000 + checks * 10000 - Date.now());
+          setTimeout(() => { const g = window.ARENA_GAME; if (g && g.result) g.result(id).catch(() => {}); }, due); }
+        return p; };
+      const checkSigned = (id, best) => {
+        const said = provisionalSaid.get(id); if (!said || !best || !Array.isArray(best.entries)) return;
+        const signed = best.entries.find((e) => e.entry === said.entry && e.outcome && e.signedBy > 0 && !e.provisional); if (!signed) return;
+        provisionalSaid.delete(id);
+        if (verdictWords(signed) === verdictWords(said)) return;
+        const words = 'Correction: the game servers signed your last round as ' + verdictWords(signed) + ', not ' + verdictWords(said) + '.';
+        console.warn('[arena] #1406 round ' + id.slice(0, 16) + ': ' + words);
+        try { window.ARENA_MONEY_ALERT.coming(words); } catch { /* none */ } };
       const revealsSeen = new Map();   // round -> the moves uncovered so far (kanban #947)   // this tab's signed presence, one per round's table (ARENA_GAME.here)
       // THE REVEAL BEFORE THE NEXT ROUND (kanban #1391, Daniel's playtest 2026-11-09 ~20:15Z: "wenn ich die order erfolgreich absetze (und der bot auch), started
       // Wait korrekt, aber bevor reveal started sieht man nochmal eine neue Runde mit countdown mit Timer für 2-3 sekunden und erst dann started der reveal"): a
@@ -7620,7 +7644,16 @@
         // A HEAD-TO-HEAD GAME: enter a round hiding `move`; reveal it once entries are closed; read what the seats
         // hold. Which moves there are and what beats what is the game client's own; these only carry a move, never judge one.
         headToHead: game.manifest.resultType === 3 ? { players: game.manifest.players, moveCount: game.manifest.moveCount } : null,
-        hide: (id, move) => { window.ARENA_HIDDEN_CHOSEN = { round: id, move };
+        hide: (id, move) => {
+          // NOTHING FOR A TAP THAT CANNOT GO IN (audit 5, kanban #1406): a tap in the round's last 3 s (the client offers its row down to 1.5 s) set the hidden
+          // move, told the bot "tapped" and set a reveal for a join the page then refused; and a tap on another round while a paid join was locking left
+          // that join's hidden move replaced - a stake locked with no hidden entry. Both are refused here first, with nothing changed
+          { const row = (window.ARENA_LOBBY_ROWS || []).find((r) => r && r.id === id), left = row ? Number(row.entryCloseMs) - Date.now() : null, j = window.ARENA_JOIN;
+            if (left !== null && left < Number(window.ARENA_ORDER_CUTOFF_MS || 3000)) {
+              if (!(j && j.state === 'joining')) window.ARENA_JOIN = { state: 'refused', stage: '', round: id, kindKnown: false, why: 'too late for this round - tap again for the next one' };
+              return false; }
+            if (j && j.state === 'joining' && j.locking && j.round !== id) return false; }
+          window.ARENA_HIDDEN_CHOSEN = { round: id, move };
           // UNCOVERED AS THE COUNTDOWN ENDS (kanban #947, the owner 2026-11-01: "Das Ergebnis sollte angezeigt werden wenn der countdown auf 0:00 geht"): not at the client's next once-a-second look
           { const row = (window.ARENA_LOBBY_ROWS || []).find((r) => r && r.id === id), left = row ? Number(row.entryCloseMs) - Date.now() : -1;
             // AND THE MOVES READ AT ONCE, so the client's next look finds them here and asks nobody
@@ -7674,7 +7707,7 @@
         result: async (id) => {
           const h = readHidden().find((x) => x.roundIdHex === id);
           // THE FIRST SECONDS AFTER THE CLOSE, FROM WHAT IS HELD (kanban #947): both entries seen and both moves open, no seat need answer for the verdict; the seats are read again after them
-          { const kept = resultsSeen.get(id), moves = revealsSeen.get(id); if (kept && moves && Object.keys(moves).length >= 2 && h && Date.now() < Number(h.entryCloseMs) + 6000) return provisional(kept, moves); }
+          { const kept = resultsSeen.get(id), moves = revealsSeen.get(id); if (kept && moves && Object.keys(moves).length >= 2 && h && Date.now() < Number(h.entryCloseMs) + 6000) return saidProvisionally(id, provisional(kept, moves)); }
           let none = null, best = null;
           const needs = (game.manifest && game.manifest.resultType === 3) ? 2 : 1;
           for (const n of (h ? h.nodes : [])) {
@@ -7695,7 +7728,8 @@
             } catch { /* the next seat */ }
           }
           if (best && needs === 2 && best.entries.length === 2) { resultsSeen.set(id, best); if (resultsSeen.size > 32) resultsSeen.delete(resultsSeen.keys().next().value); }
-          if (best && needs === 2 && best.entries.length === 2 && !best.entries.some((e) => e.outcome && e.signedBy > 0)) return provisional(best, revealsSeen.get(id) || {});
+          if (best && needs === 2 && best.entries.length === 2 && !best.entries.some((e) => e.outcome && e.signedBy > 0)) return saidProvisionally(id, provisional(best, revealsSeen.get(id) || {}));
+          checkSigned(id, best);
           // AFTER EVERY FINISHED ROUND (the owner 2026-11-08, kanban #1363: "es muss nach jeder fertigen Runde kommen"): this tab's entry signed by the
           // seats - every game the page reads a result for, not only a paid round's collect; a few seconds on, after the game shows its result
           if (best && h && best.entries.some((e) => e.entry === h.entryIdHex && e.outcome && e.signedBy > 0) && window.ARENA_ROUND_FEEDBACK) setTimeout(() => window.ARENA_ROUND_FEEDBACK(id), 4000);
@@ -9513,7 +9547,10 @@
           }
           { const closeAt = Number((r.raw && r.raw.entryCloseMs) || ((window.ARENA_LOBBY_ROWS || []).find((x) => x.id === id) || {}).entryCloseMs || 0);
             if (closeAt && closeAt - Date.now() < ORDER_CUTOFF_MS) {   // kanban #1394: the round's last 3 s take no order
-              window.ARENA_JOIN = { state: 'refused', stage: '', round: id, kindKnown: false, why: 'too late for this round - tap again for the next one' };
+              // A JOIN STILL GOING ON ANOTHER ROUND IS LEFT AS IT IS (audit 5, kanban #1406): this refusal overwrote it, the strip showed a red for a join that
+              // went on, and the next tap skipped the busy guard
+              const still = window.ARENA_JOIN;
+              if (!(still && still.state === 'joining' && still.round !== id)) window.ARENA_JOIN = { state: 'refused', stage: '', round: id, kindKnown: false, why: 'too late for this round - tap again for the next one' };
               return answer(false, 'too-late', { leftMs: closeAt - Date.now() });
             } }
           // ANOTHER TAB OF THIS BROWSER IS IN A PAID RUN: this paid join is refused by name (see ARENA_PAID_RUN_ELSEWHERE)
@@ -10117,7 +10154,9 @@
       // a refused order in one sentence; the seats' own words go with Report this
       // WHEN THE PENDING WINNINGS ARRIVE (kanban #1398: a head-to-head round's window is 60 s, a replayed game's 600 s): from the latest window close
       // the seats name for them, plus the settlement; 10 minutes when none is known
+      // PAST ITS TIME (audit 5, kanban #1406): "within about a minute" stood forever once the close had passed and no payout came
       const pendingWhen = () => { const c = Number(window.ARENA_PENDING_CLOSE_MS || 0); if (!c) return 'within about 10 minutes';
+        if (Date.now() > c + 120000) return 'soon (later than expected: the game servers are still paying them out)';
         const mins = Math.max(1, Math.ceil((c - Date.now() + 30000) / 60000)); return mins <= 1 ? 'within about a minute' : 'within about ' + mins + ' minutes'; };
       window.ARENA_PENDING_WHEN = pendingWhen;
       const refusedWords = (why) => {
