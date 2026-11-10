@@ -668,9 +668,10 @@ export class Round {
         // ONLY ENTRIES BACKED BY A LOCK DECIDE IT (kanban #1270, audit 4 #1257 PLAYER-4): the door takes an entry before any lock is verified, so one
         // free plain pick with no lock behind it made a seat refuse every order of an Up/Down round - anyone could stop a market trading at no cost
         // (and a lockless order a pool's picks). An entry counts here once this seat has seen its stake
-        const others = this.entriesOf(contract.roundId).filter((x) => !same(x.entry.sessionPubkey, contract.sessionPubkey) && (contract.stakeMsat === 0n || !!this.stakeSeen(x.entryId)));
-        if (others.some((x) => (x.entry.limitPrice !== undefined && x.entry.limitPrice !== null) !== order))
-          throw new Error(order ? 'that round takes plain picks (pari-mutuel): it takes no order' : 'that round is an order book: it takes orders, not a plain pick');
+        // AND THE KIND IS THE CERTIFIED BATCHES' (§0A.7b, kanban #1411/#1417): a plain pick is refused once a certified batch holds an order here; an
+        // order is taken while no batch is certified - a round that ends with none is a pool, and its orders' stakes come back
+        if (!order && typeof this.isBookRound === 'function' && this.isBookRound(contract.roundId))
+          throw new Error('that round is an order book: it takes orders, not a plain pick');
         if (order) {
           // A SCALAR MARKET TRADES ITS TWO SIDES TOO (§0A.7e): a share is worth its side's part of a sat at the value
           // (book-ledger.js bookSettlement `scalar`); a round is still a book or a pool, never both
