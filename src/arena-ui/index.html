@@ -185,6 +185,8 @@
     #arena-feedback label.badge { display: block; margin: 8px 0 0; color: #8b949e; font-size: 13px; } #arena-feedback label.badge[hidden] { display: none; }
     #arena-feedback h3 { margin: 0 0 4px; font-size: 17px; } #arena-feedback p { margin: 0 0 8px; color: #8b949e; font-size: 13px; }
     #arena-feedback .say { font-size: 12px; margin-top: 6px; }
+    /* A SEND THAT CANNOT GO LOOKS IT (kanban #1342, seen 2026-11-10 on UI 633: disabled by a bad bounty address, it still looked orange and ready) */
+    #arena-feedback button:disabled { opacity: .4; cursor: not-allowed; filter: grayscale(.6); }
     #arena-feedback .fb-lnsay { font-size: 12px; margin: 3px 0 0; color: #8b949e; min-height: 0; } #arena-feedback .fb-lnsay.bad { color: #f85149; } #arena-feedback .fb-lnsay.good { color: #3fb950; }
     #arena-feedback textarea { width: 100%; box-sizing: border-box; padding: 8px; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; font: inherit; resize: vertical; }
     #arena-feedback select { width: 100%; margin: 0 0 8px; padding: 7px; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; font: inherit; }
