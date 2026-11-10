@@ -29,6 +29,10 @@ if (a.includes('payinvoice')) {
   if (me.pay === 'ok') { console.log('Payment status: SUCCEEDED'); process.exit(0); }
   setTimeout(() => process.exit(1), 30000); return;
 }
+if (a.includes('trackpayment')) {
+  if (me.state === 'NONE') { console.error("[lncli] rpc error: payment isn't initiated"); process.exit(1); }
+  console.log(JSON.stringify({ payment_hash: '${HASH}', status: me.state === 'HELD' ? 'IN_FLIGHT' : me.state })); process.exit(0);
+}
 if (a.includes('listpayments')) {
   const p = me.state === 'NONE' ? [] : [{ payment_hash: '${HASH}', status: me.state === 'HELD' ? 'IN_FLIGHT' : me.state, htlcs: me.state === 'HELD' ? [{ status: 'IN_FLIGHT' }] : [] }];
   console.log(JSON.stringify({ payments: p })); process.exit(0);

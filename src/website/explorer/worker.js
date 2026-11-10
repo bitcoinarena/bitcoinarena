@@ -281,7 +281,8 @@ async function adminIp(env, request) {
 async function putMarks(env, keys, kind) {
   const at = Date.now();
   for (let i = 0; i < keys.length; i += 50)
-    await env.DB.batch(keys.slice(i, i + 50).map((k) => env.DB.prepare('INSERT INTO marked (key, kind, at_ms) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET kind = excluded.kind, at_ms = excluded.at_ms').bind(k, kind, at)));
+    // a mark with the code or a bot's clears an earlier address's by_ip (audit 6 re-check N6, kanban #1426): undoing marks by address never takes it
+    await env.DB.batch(keys.slice(i, i + 50).map((k) => env.DB.prepare('INSERT INTO marked (key, kind, at_ms) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET kind = excluded.kind, at_ms = excluded.at_ms, by_ip = NULL').bind(k, kind, at)));
 }
 const keysOf = (b) => [...new Set((Array.isArray(b && b.keys) ? b.keys : []).map((k) => String(k).toLowerCase()).filter((k) => hex64.test(k)))].slice(0, 500);
 // POST /api/mark-ip { keys }: the entries of a browser on an admin address, marked as the owner's - no code; any other address is refused.
