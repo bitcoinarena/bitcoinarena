@@ -338,7 +338,7 @@ test('the command on the PATH: bitcoinarena with the node\'s home in it, arenano
     assert.equal(readFileSync(join(root, 'taken2', 'arenanode'), 'utf8'), '#!/bin/sh\necho another arenanode\n');
     const ran = [];
     const w = writeCommand({ home, release: 'C:\\r', node: 'C:\\r\\runtime\\node.exe', platform: 'win32', env: { HOME: H }, run: (cmd, args) => ran.push([cmd, ...args]) });
-    assert.match(readFileSync(w.file, 'utf8'), /^@echo off\r\nrem .*\r\n"C:\\r\\runtime\\node\.exe" "C:\\r[\\/]packages[\\/]arena-installer[\\/]bin[\\/]bitcoinarena\.mjs" --home ".*" --name bitcoinarena %\*\r\n$/);
+    assert.match(readFileSync(w.file, 'utf8'), /^@echo off\r\nrem .*\r\n"C:\\r\\runtime\\node\.exe" "C:\\r[\\/]packages[\\/]arena-installer[\\/]bin[\\/]bitcoinarena\.mjs" --home ".*" --name bitcoinarena %\* & exit \/b\r\n$/);
     assert.equal(w.file.split(/[\\/]/).pop(), 'bitcoinarena.cmd');
     assert.equal(readFileSync(w.legacy.file, 'utf8'), `@echo off\r\nrem arenanode: the old name, ${SHIM_MARK}\r\ncall "%~dp0bitcoinarena.cmd" %*\r\nexit /b %errorlevel%\r\n`);
     assert.match(ran[0].at(-1), /SetEnvironmentVariable\('Path'/);
