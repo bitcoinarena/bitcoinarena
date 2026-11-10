@@ -589,7 +589,10 @@ export function spentSetFromSeats(listings, { verify, readRecord = (hex) => spli
  */
 export async function resumeIntent(rpc, intent, input) {
   if (await intentLanded(rpc, intent.txid, 0)) return { ok: true, landed: true };
-  const still = await rpc('gettxout', [input.txid, input.vout, true]).catch(() => null);
+  // AN ERROR IS NOT "SPENT" (audit 5 #1403): a bitcoind still warming up (-28) or a timeout read as a spent input marked a slash posted that never
+  // went out, and its intent was dropped for good - the bond never slashed. Only gettxout's own null (no such unspent output) is spent.
+  let still;
+  try { still = await rpc('gettxout', [input.txid, input.vout, true]); } catch (e) { return { ok: false, why: `the chain could not be read: ${String((e && e.message) || e).slice(0, 120)}` }; }
   if (!still) return { ok: true, inferred: true };
   const sent = await post(rpc, intent.hex);
   return sent.ok ? { ok: true, again: true } : { ok: false, drop: true, why: sent.why };
