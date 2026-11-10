@@ -35,7 +35,8 @@ import {
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION, ITEMS_VERSION } from '../../arena-protocol/src/constants.js';
+import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION, ITEMS_VERSION, objectionWindowFits } from '../../arena-protocol/src/constants.js';
+import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { entryFeeBpsForRound, entryPaysReserves, roundSplit, RESERVES_NODE_FEE_BPS } from '../../arena-protocol/src/reserves.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
 import { itemPurchaseKept } from './item-purchase-seat.js';
@@ -428,6 +429,11 @@ export class Round {
     }
     // A HEAD-TO-HEAD ROUND HAS NO RUN: its end is its reveal deadline, which may lie no further from its entry
     // close than its game's reveal window
+    // AND ITS OBJECTION WINDOW IS ITS GAME'S (§13A, RULED 2026-11-10, kanban #1398): a replayed game exactly 600 s; a head-to-head game 60 s
+    // (5 s on a regtest) or 600 s
+    { const regtest = contract.networkId instanceof Uint8Array && contract.networkId.length === NETWORK_ID_REGTEST.length && contract.networkId.every((b, i) => b === NETWORK_ID_REGTEST[i]);
+      const fits = objectionWindowFits(contract.objectionWindowMs, { headToHead: !!runs.headToHead, regtest });
+      if (!fits.ok) throw new Error(fits.why); }
     if (runs.headToHead) {
       const span = BigInt(roundEndMs(contract)) - contract.entryCloseMs;
       if (span < H2H_REVEAL_MIN_MS || span > runs.plugin.manifest.revealWindowMs)
