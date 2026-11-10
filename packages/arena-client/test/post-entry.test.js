@@ -23,3 +23,9 @@ test('a handout that never comes ends after its tries', async () => {
   await assert.rejects(postEntry('http://x/entry', new Uint8Array(1), { fetcher: f, tries: 4, waitMs: 1 }), /publish the handout first/);
   assert.equal(f.asked(), 4);
 });
+test('a seat whose seating certificate is still on its way is asked again (Daniel 2026-11-10, round 0ff01991)', async () => {
+  const notSeated = [409, 'entry refused: that round is not seated yet - no seating certificate for its game and settlement roles (§5A.7)'];
+  const f = seat([notSeated, notSeated, missing, [201, '']]);
+  const r = await postEntry('http://x/entry', new Uint8Array(1), { fetcher: f, waitMs: 1 });
+  assert.equal(r.status, 201); assert.equal(f.asked(), 4);
+});

@@ -247,7 +247,9 @@ export async function postEntry(url, body, { fetcher = (...a) => fetch(...a), tr
     const r = await fetcher(url, { method: 'POST', body });
     if (r.status === 201) return r;
     const said = (await r.text()).trim();
-    if (n + 1 >= tries || !/publish the handout first/.test(said)) throw new Error(`the node refused the entry: ${said}`);
+    // AND A SEAT WHOSE SEATING CERTIFICATE IS STILL ON ITS WAY (Daniel's report 2026-11-10 08:54Z, round 0ff01991: the six seats had signed the seating,
+    // the certificate reached them after the entry, which came 9 s before the close; the join ended with the stake locked) - asked again the same 8 s
+    if (n + 1 >= tries || !/publish the handout first|that round is not seated yet/.test(said)) throw new Error(`the node refused the entry: ${said}`);
     await new Promise((res) => setTimeout(res, waitMs));
   }
 }
