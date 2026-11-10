@@ -1752,16 +1752,20 @@ test('a withdrawal of a chosen amount pays only an invoice of exactly that amoun
 // THE OBJECTION WINDOW IS EXACTLY 600 000 ms (§13A, WINDOW-10-SPEC, RULED 2026-10-01): "a node refuses to open it,
 // list it or take an entry for it" - and the page, which reads every round through fetchRound (the lobby's rows and a
 // join alike), lists and joins none, whatever a node answers.
-test('WINDOW-10-SPEC: the page lists and joins only a round whose objection window is 600000 ms - 0, 599999 and 600001 refused by name', async () => {
+test('WINDOW-10-SPEC + #1398: the page lists and joins a round whose objection window is 600000 ms or a head-to-head round\'s 60000 (5000 on a regtest) - 0, 599999, 600001, 59999 refused by name (audit 5, #1399)', async () => {
   const { fetchRound } = await import('../src/join.js');
   const answering = (c) => async () => ({ ok: true, status: 200, arrayBuffer: async () => encodeRoundContract(c).buffer.slice(0) });
-  for (const w of [0n, 599999n, 600001n]) {
+  for (const w of [0n, 599999n, 600001n, 59999n]) {
     const c = { ...round, objectionWindowMs: w };
     await assert.rejects(fetchRound(toHex(roundId(c)), ['http://127.0.0.1:9'], { fetcher: answering(c) }),
-      new RegExp(`names an objection window of ${w} ms, not 600000: that contract is invalid and the page does not join it`));
+      new RegExp(`names an objection window of ${w} ms, not one a round may name`));
   }
   const got = await fetchRound(toHex(rid), ['http://127.0.0.1:9'], { fetcher: answering(round) });
   assert.equal(got.contract.objectionWindowMs, 600000n);
+  // a head-to-head round's 60 s: before audit 5 the page refused it, and a day of them would have listed no round
+  const short = { ...round, objectionWindowMs: 60000n };
+  const got60 = await fetchRound(toHex(roundId(short)), ['http://127.0.0.1:9'], { fetcher: answering(short) });
+  assert.equal(got60.contract.objectionWindowMs, 60000n);
 });
 
 // TWO PLAYERS IN ONE BROWSER (ORDER-2116, measured 2026-10-02 05:5xZ): keyed by round alone, the loser's record replaced the
