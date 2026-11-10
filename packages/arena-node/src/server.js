@@ -9240,7 +9240,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const joinGrace = round.entryCloseGraceMs === null || round.entryCloseGraceMs === undefined ? 15000 : Number(round.entryCloseGraceMs);
           // a replayed game's only: a market's outcome is attested long after an order (its page names orders every 30 s), a head-to-head round has no grace (#1263)
           let replayed = false; try { const pg = pluginForRound(decodeRoundContract(new Uint8Array(round.get(rec.roundId).contract)), hosted); replayed = !!(pg.ok && !pg.attested && !pg.headToHead); } catch { replayed = false; }
-          if (replayed && held !== toHex(rec.identityPubkey) && joinedAt !== null && Number(round.now()) > joinedAt + joinGrace)
+          // ...AND ADDING THE IDENTITY'S CONSENT IS SETTING IT (audit 5 #1401): since #1278 the consent is what books the round, so a record taken
+          // without it at the join and sent again with it once the score was seen booked only the good runs
+          const heldConsent = typeof round.consentedIdentityOf === 'function' ? round.consentedIdentityOf(rec.roundId, rec.playerPubkey) : null;
+          const sends = identityProof !== null;
+          if (replayed && (held !== toHex(rec.identityPubkey) || (sends && heldConsent !== toHex(rec.identityPubkey))) && joinedAt !== null && Number(round.now()) > joinedAt + joinGrace)
             return answer(409, { why: `that player joined this round at ${joinedAt} on this seat's clock: the identity its entry is booked to is named with the join (within ${joinGrace} ms), not later (kanban #1267)` }); }
         // THE IDENTITY'S OWN CONSENT, if sent (kanban #1278, RULED #1276): its key over (round id, round key); one that does not verify is refused
         let identitySig = null;
@@ -10725,7 +10729,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // public, and the identity was taken whenever the reveal stood - a player posted his reveal again with his identity only when he had won,
             // and his losses stayed on a bare round key (season board, badges, the leaderboard payout). A name record is taken only before the close:
             // with none held, the reveal is kept and its identity is not
-            if (named) round.putIdentity({ roundId: entry.roundId, entryId: new Uint8Array(eid), identity: key, sig }); }
+            // AND ONLY THE ONE THE PLAYER CONSENTED TO AT THE JOIN (audit 5 #1401, reproduced): a record without the identity's consent books nothing
+            // (#1278), so the reveal's proof was the consent - given after the close, once the opponent's public move told who won
+            const consented = typeof round.consentedIdentityOf === 'function' ? round.consentedIdentityOf(entry.roundId, entry.playerPubkey) : null;
+            if (named && consented === toHex(key)) round.putIdentity({ roundId: entry.roundId, entryId: new Uint8Array(eid), identity: key, sig }); }
         }
         const fresh = round.putReveal({ roundId: entry.roundId, entryId: eid, move: body.move, salt, receivedMs: round.now() });
         console.log(`[reveal] ${toHex(entry.roundId).slice(0, 16)} ${toHex(eid).slice(0, 16)}: move ${body.move}${fresh ? '' : ' (held already)'}`);
