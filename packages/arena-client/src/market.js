@@ -114,7 +114,9 @@ export function pickSheet({ market, contract = null, stakeMsat = contract ? cont
 // called with { entryId, entries } as soon as the seats answered the entry, while the locks are handed after it
 // `onSubmitted({ entryId, node })` (kanban #601): once, as soon as the first seat took the entry - the order is the player's from then on
 // `handedOut` (postHandout's `posted`): a seat's entry is posted once that seat answered its handout - one slow seat is not waited on by the others
-export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries = null, onSubmitted = null, handedOut = null }) {
+// `onEntry({ entryId, entries, x })` (kanban #1391): each seat's answer as it comes, the answers so far beside it - a caller may go on once the seats that
+// count have the entry, while a slow seat outside the round is still waited on here (measured 2026-11-10, Daniel's seed: one silent seat held a tap 22 s)
+export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries = null, onSubmitted = null, handedOut = null, onEntry = null }) {
   const eid = entryId(entry);
   const bytes = encodeEntryContract(entry);
   // EVERY SEAT AT ONCE; what each answered kept as it comes (`entriesNow`), all of them in `entriesAll`
@@ -128,6 +130,7 @@ export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onE
       x = { node, status: r.status, why: r.status === 201 ? null : (await r.text()).trim() };
     } catch (e) { x = { node, status: 0, why: e.message }; }
     entriesNow[i] = x;
+    if (onEntry) { try { onEntry({ entryId: toHex(eid), entries: entriesNow.slice(), x }); } catch { /* the caller's own fault */ } }
     if (x.status === 201 && onSubmitted && !submittedSaid) { submittedSaid = true; try { onSubmitted({ entryId: toHex(eid), node }); } catch { /* the caller's own fault */ } }
     return x;
   });

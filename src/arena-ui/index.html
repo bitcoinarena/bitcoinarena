@@ -4484,7 +4484,12 @@
         // (measured: counted at 6.5 s median, the entry taken at ~2.8 s), and the next round's tap is not held as "busy"
         let entriesIn = null;
         const tookEntries = new Promise((res) => { entriesIn = res; });
-        const all = ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, onEntries: (x) => entriesIn(x) });
+        // GONE ON ONCE THE ROUND'S SEATS HAVE IT (kanban #1391, Daniel 2026-11-10: "56 seconds pending bet"; reproduced with his seed: the stake locked in 2-4 s,
+        // then the tap waited on all 14 seats' answers - seven not in the round, one silent until its 20 s timeout - 7.7 s and 22 s): as many seats as the round
+        // seats (its settlement slots) took the entry, the move is the tab's; the rest answer in the background
+        const seatsThatCount = Number(named.round.settlementSlots || named.round.gameVerifySlots || 0);
+        const all = ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, onEntries: (x) => entriesIn(x),
+          onEntry: (p) => { if (seatsThatCount > 0 && p.entries.filter((x) => x.status === 201).length >= seatsThatCount) entriesIn({ entryId: p.entryId, entries: p.entries }); } });
         all.then((x) => entriesIn(x), (e) => entriesIn({ entries: [], why: e.message }));
         // THIS TAB'S NAME RECORD, FROM THE TAP UNTIL THE CLOSE (kanban #1263; #1364, measured on UI 590: a move tapped 1.5 s before the close had its entry
         // taken, but the record went out only once every seat had answered the entry - after the close, where a head-to-head round takes none - so the
@@ -7578,7 +7583,11 @@
       const hereProofs = new Map();
       const resultsSeen = new Map();   // round -> its two entries as a seat last said them
       // BOTH MOVES ARE OPEN, SO THE ROUND IS DECIDED (kanban #947): the seats' signatures take seconds more; until they are in, the two uncovered moves say who won, by the same rule, and the signed result then stands in its place
-      const provisional = (held, moves) => { const [a, b] = held.entries, ma = moves[a.entry], mb = moves[b.entry]; if (!Number.isInteger(ma) || !Number.isInteger(mb)) return held;
+      // NO VERDICT FROM A SEAT'S UNSIGNED ANSWER (kanban #1391, Daniel 2026-11-10 ~15:50Z: "Correction: the game servers signed your last round as a draw, not a loss" -
+      // round 35dc09c3, rock against rock): with one move not yet open, a seat's own unsigned outcome (a reveal still on its way read as "no reveal -> 0") was
+      // handed on as it stood, shown and remembered as a loss; an entry no seat signed and no two open moves decide has no outcome yet
+      const undecided = (held) => ({ ...held, entries: held.entries.map((e) => (e.signedBy > 0 ? e : { ...e, outcome: null, score: null })) });
+      const provisional = (held, moves) => { const [a, b] = held.entries, ma = moves[a.entry], mb = moves[b.entry]; if (!Number.isInteger(ma) || !Number.isInteger(mb)) return undecided(held);
         const w = (ma - mb + 3) % 3, of = (e, won) => ({ ...e, provisional: true, signedBy: 1, outcome: won === false ? 'FAILED' : 'DELIVERED', score: won === true ? 2 : won === false ? 0 : 1 });
         return { ...held, entries: [of(a, w === 0 ? null : w === 1), of(b, w === 0 ? null : w === 2)] }; };
       // THE PROVISIONAL VERDICT IS CHECKED (audit 5, kanban #1406): the client shows the winner once, from the open moves, and moves on before the seats sign;
@@ -7590,7 +7599,7 @@
         return Number(e.score) === 2 ? 'a win' : Number(e.score) === 0 ? 'a loss' : Number(e.score) === 1 ? 'a draw' : o.toLowerCase() || 'undecided'; };
       const saidProvisionally = (id, p) => {
         const h = readHidden().find((x) => x.roundIdHex === id); if (!h || !p || !Array.isArray(p.entries)) return p;
-        const mine = p.entries.find((e) => e.entry === h.entryIdHex); if (!mine) return p;
+        const mine = p.entries.find((e) => e.entry === h.entryIdHex); if (!mine || !mine.provisional) return p;   // only a verdict this tab showed from both open moves
         const had = provisionalSaid.get(id), checks = had ? had.checks : 0;
         provisionalSaid.set(id, { entry: mine.entry, outcome: mine.outcome, score: mine.score, checks }); if (provisionalSaid.size > 32) provisionalSaid.delete(provisionalSaid.keys().next().value);
         if (checks < 4) { provisionalSaid.get(id).checks = checks + 1;
@@ -7948,9 +7957,27 @@
             ['    function show(s) {', "    function show(s) {\n      if (seq && s.phase === 'pick' && s.id && shownFor && s.id !== shownFor) seq.t = seq.end;"],
             ["{ shownFor = done.id; console.log('[rps] the show: ' + NAMES[done.mine] + ' vs ' + NAMES[done.theirs]); shoot(done.mine, done.theirs); }",
               "{ shownFor = done.id; if (((s.phase === 'pick' || s.phase === 'none') && done.id !== s.id) || ((c) => Date.now() - c > 12000 || c < performance.timeOrigin)(Number((done.id === s.id ? s.closeMs : s.prev && s.prev.closeMs) || 0))) console.log('[rps] the show of the round before is skipped: its moment has passed'); else { console.log('[rps] the show: ' + NAMES[done.mine] + ' vs ' + NAMES[done.theirs]); shoot(done.mine, done.theirs); } }"],
-            ['if (last.verdict && bannerFor !== h.roundIdHex && Date.now() - closeMs < 60000) {', 'if (last.verdict && bannerFor !== h.roundIdHex && Date.now() - closeMs < 12000 && closeMs >= performance.timeOrigin) {']];
+            ['if (last.verdict && bannerFor !== h.roundIdHex && Date.now() - closeMs < 60000) {', 'if (last.verdict && bannerFor !== h.roundIdHex && Date.now() - closeMs < 12000 && closeMs >= performance.timeOrigin) {'],
+            // THE SCORE STAYS (kanban #1391, Daniel 2026-11-10 ~16:00Z: "Der Score 1:0 wird auch nicht konsistent beibehalten, er verliert sich sehr oft und man fängt
+            // wieder bei 0:0 an"; "Der Score solle immer da stehen mit 0:0"): the client showed the seats' match record only while it continued - a void, a
+            // missed or an alone round reset it or took the row away. Now this tab counts its own signed results (a seat-signed win, loss or forfeit; a draw
+            // and a void count nothing), kept for the tab across a reload of the game, from 0:0 and always shown
+            ['last.revealEndMs = closeMs + REVEAL_MS;', "try { const T = window.__rpsTally || (window.__rpsTally = (() => { try { return JSON.parse(sessionStorage.getItem('rps.tally')); } catch { return null; } })() || { me: 0, them: 0, ids: [] }); if (me && me.outcome && me.signedBy > 0 && !me.provisional && !T.ids.includes(h.roundIdHex)) { if (me.outcome === 'DELIVERED' && me.score >= 2) T.me++; else if (me.outcome !== 'DELIVERED' && me.outcome !== 'VOID') T.them++; T.ids.push(h.roundIdHex); T.ids = T.ids.slice(-300); try { sessionStorage.setItem('rps.tally', JSON.stringify(T)); } catch { /* this frame only */ } } } catch { /* the score as it was */ }\n          last.revealEndMs = closeMs + REVEAL_MS;"],
+            ['const scoreboard = kept && kept.played && Date.now() - kept.closeMs <= MATCH_CONTINUE_MS ? kept : null;', "const scoreboard = (() => { const T = window.__rpsTally || (window.__rpsTally = (() => { try { return JSON.parse(sessionStorage.getItem('rps.tally')); } catch { return null; } })() || { me: 0, them: 0, ids: [] }); if (kept && kept.themName) T.themName = kept.themName; return { me: T.me, them: T.them, themName: T.themName || 'Test bot', themKey: kept ? kept.themKey : null, played: 1, closeMs: kept ? kept.closeMs : 0 }; })();"],
+            // WHO IS HERE IS WHO IS HERE: with the score always shown, it no longer stands for an opponent being present ("You are alone" stays true)
+            ['return a.length||u||t.scoreboard?', 'return a.length||u?'],
+            // NOTHING JUMPS ("Alle dieser Felder springen ... Last round kommt und geht je nach Runde"): the last-round line keeps its place, unseen, until there is one
+            ['(0,T.jsx)("em",{children:c})]})})():null', '(0,T.jsx)("em",{children:c})]})})():(0,T.jsxs)("div",{className:"last",style:{visibility:"hidden"},children:[(0,T.jsx)("span",{children:"last round"}),(0,T.jsx)("b",{children:"\u270A"})]})'],
+            ['(0,b.jsx)("em",{children:c})]})})():null', '(0,b.jsx)("em",{children:c})]})})():(0,b.jsxs)("div",{className:"last",style:{visibility:"hidden"},children:[(0,b.jsx)("span",{children:"last round"}),(0,b.jsx)("b",{children:"\u270A"})]})'],
+            // "You are playing" / "You are alone" ALWAYS THERE (Daniel 2026-11-10: "...immer da stehen und darauf achten dass es nie springt"): the presence card was drawn
+            // only while picking and waiting, and left its place empty in the reveal and the result
+            ['(0,T.jsxs)(T.Fragment,{children:[t.phase==="pick"||t.phase==="wait"?this.presence(t):null', '(0,T.jsxs)(T.Fragment,{children:[this.presence(t)'],
+            ['(0,b.jsxs)(b.Fragment,{children:[t.phase==="pick"||t.phase==="wait"?this.presence(t):null', '(0,b.jsxs)(b.Fragment,{children:[this.presence(t)'],
+            // THE LAST ROUND STAYS UNTIL A NEWER ONE IS DONE ("Last round kommt und geht je nach Runde"): it was drawn only while the client still held the round before
+            ['if(!t)return null;let e=!u&&!a,n=t.prev;return(0,T.jsxs)', 'if(!t)return null;let e=!u&&!a,n=(t.prev&&(t.prev.phase==="result"||t.prev.phase==="alone"||t.prev.phase==="reveal")?(window.__rpsPrev=t.prev):window.__rpsPrev)||t.prev;return(0,T.jsxs)'],
+            ['if(!t)return null;let e=!u&&!a,n=t.prev;return(0,b.jsxs)', 'if(!t)return null;let e=!u&&!a,n=(t.prev&&(t.prev.phase==="result"||t.prev.phase==="alone"||t.prev.phase==="reveal")?(window.__rpsPrev=t.prev):window.__rpsPrev)||t.prev;return(0,b.jsxs)']];
           if (swaps.every(([x]) => html.split(x).length === 2)) { for (const [x, y] of swaps) html = html.replace(x, () => y); bytes = new TextEncoder().encode(html); window.ARENA_RPS_QUICK = true;
-            console.log('[arena] #1395 #1391 Rock Paper Scissors: the winner from the open moves, the show 1.6x faster, Wait to the close, notes in plain words, no show over the next round'); }
+            console.log('[arena] #1395 #1391 Rock Paper Scissors: the winner from the open moves, the show 1.6x faster, Wait to the close, notes in plain words, no show over the next round, the score kept and always shown, no jumping rows'); }
         }
       } catch { bytes = file.bytes; }
       frame.src = URL.createObjectURL(new Blob([bytes], { type: 'text/html' }));
