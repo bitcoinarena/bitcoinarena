@@ -345,3 +345,11 @@ test('#1342 a bounty Lightning address works only when its wallet answers a pay 
   assert.match((await lnAddressWorks('bob@w.example', { fetchFn: wallet({ tag: 'withdrawRequest', callback: 'https://w/cb' }) })).why, /does not take payments/);
   assert.equal((await lnAddressWorks('not an address')).ok, false);
 });
+
+test('#1342 the faucet asks the bounty address of a signed and of an unsigned report before it keeps or posts either', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../tools/faucet.mjs', import.meta.url), 'utf8');
+  assert.ok(src.includes('if (words.lnAddress) { const w = await lnAddressWorks(words.lnAddress);'), 'signed');
+  assert.ok(src.includes("if (!b0.event) { const m = /\\nBounty address: (\\S+)/.exec(String(b0.text || '')); if (m) { const w = await lnAddressWorks(m[1]);"), 'unsigned');
+  assert.ok(src.indexOf('if (!b0.event) { const m =') < src.indexOf("const key = readFileSync(env.FAUCET_CHAT_TOKEN_FILE, 'utf8').trim();"), 'before the chat post');
+});
