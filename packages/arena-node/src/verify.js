@@ -760,6 +760,8 @@ export class Verifier {
           try { good = schnorr.verify(sig, matchProofId({ roundId: roundIdBytes, entryId, identityKey: key }), key); } catch { good = false; }
           // and only the identity the player's name record names, where it is held (kanban #1224)
           if (good && typeof this.round.namedIdentityOf === 'function') { const named = this.round.namedIdentityOf(roundIdBytes, entry.playerPubkey); if (named && named !== hex(key)) good = false; }
+          // and only one the player consented to at the join, as at the reveal door (audit 5 #1401): none held here, none kept
+          if (good && typeof this.round.consentedIdentityOf === 'function' && this.round.consentedIdentityOf(roundIdBytes, entry.playerPubkey) !== hex(key)) good = false;
           if (good) this.round.putIdentity({ roundId: roundIdBytes, entryId, identity: key, sig });
         }
       }

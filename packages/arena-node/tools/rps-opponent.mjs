@@ -175,7 +175,9 @@ async function enter(c, rid, ready) {
   const took = tookOf();
   // ITS NAME, signed with the round key as a page's is
   const rec = { roundId: rid, playerPubkey: s.player, identityPubkey: identityKey, name: NAME, atMs: BigInt(Date.now()) };
-  const nameBody = JSON.stringify({ record: toHex(encodeLobbyName(rec)), sig: toHex(schnorr.sign(lobbyNameId(rec), me.secret)) });
+  // AND ITS IDENTITY'S CONSENT, as the page sends it (kanban #1278; audit 5 #1401: a seat keeps a reveal's identity only when the join's record consented to it)
+  const nameBody = JSON.stringify({ record: toHex(encodeLobbyName(rec)), sig: toHex(schnorr.sign(lobbyNameId(rec), me.secret)),
+    identitySig: toHex(schnorr.sign(matchProofId({ roundId: rid, entryId: s.player, identityKey }), identity)) });
   for (const n of nodes) fetch(`${n}/name`, { method: 'POST', signal: AbortSignal.timeout(POST_MS), body: nameBody }).catch(() => null);
   log({ step: 'entered', round: roundHex.slice(0, 8), entry: toHex(eid).slice(0, 8), took, of: said.length, needed, ms: steps, leftAtEndMs: Number(c.entryCloseMs) - Date.now(),
     ...(took < needed ? { refused: [...new Set(said.map((x) => x.why).filter(Boolean))].slice(0, 2) } : {}) });

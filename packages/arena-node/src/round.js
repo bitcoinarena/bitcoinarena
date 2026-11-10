@@ -3368,6 +3368,17 @@ export class Round {
     return b.length >= 96 ? Buffer.from(b.subarray(64, 96)).toString('hex') : null;
   }
 
+  /**
+   * THE IDENTITY A PLAYER CONSENTED TO FOR A ROUND (kanban #1278; audit 5 #1401): the identity its name record names, only where that record carries
+   * the identity's own signature (identity_sig) - taken at the join, before the entry close (#1213/#1263/#1267). Hex, or null.
+   */
+  consentedIdentityOf(roundIdBytes, playerPubkeyBytes) {
+    const r = this.db.prepare('SELECT record, identity_sig FROM lobby_names WHERE round_id = ? AND player_pubkey = ?').get(Buffer.from(roundIdBytes), Buffer.from(playerPubkeyBytes));
+    if (!r || !r.identity_sig) return null;
+    const b = new Uint8Array(r.record);
+    return b.length >= 96 ? Buffer.from(b.subarray(64, 96)).toString('hex') : null;
+  }
+
   /** A head-to-head entry's identity, kept once: the key and its signature over matchProofId. */
   putIdentity({ roundId, entryId, identity, sig }) {
     return this.db.prepare('INSERT OR IGNORE INTO h2h_identities (entry_id, round_id, identity, sig) VALUES (?, ?, ?, ?)')
