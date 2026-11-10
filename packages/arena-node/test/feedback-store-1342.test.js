@@ -328,7 +328,7 @@ test('#1402 the faucet\'s node check runs one at a time and at most 10 an hour p
   const src = readFileSync(new URL('../tools/faucet.mjs', import.meta.url), 'utf8');
   assert.ok(src.includes('const NODE_CHECKS_PER_HOUR = 10; let NODE_CHECK_BUSY = false;'));
   assert.ok(src.includes("if (NODE_CHECK_BUSY) return send(429, { ok: false, why: 'a node check is running: try again in a minute' });"));
-  assert.ok(src.includes("const who = ip.includes(':') ? ip.split(':').slice(0, 4).join(':') : ip;"), 'an IPv6 address counted per /64');
+  assert.ok(src.includes("const who = ipKey(ip) || ip;"), 'an IPv6 address counted per /64 (ipKey since #1405: the split missed compressed addresses)');
 });
 
 // Daniel 2026-11-10 (#1342): "Die lnd addresse muss validiert werden ob die funktioniert" and "ein Budget von 100000 sats pro Woche"

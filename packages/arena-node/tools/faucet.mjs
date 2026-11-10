@@ -455,7 +455,7 @@ createServer((req, res) => {
       try {
         const b0 = JSON.parse(raw || '{}'), ip = req.headers['x-arena-ip'] || null;
         // A SIGNED REPORT (kanban #1342): its own words go to the chat, and it is kept for review - only if it stands
-        let b = b0, kept = null;
+        let b = b0, kept = null, counted = false;
         if (b0.event) {
           if (!FEEDBACK) return send(503, { ok: false, why: 'signed reports are not kept here' });
           const e = b0.event;
@@ -469,6 +469,9 @@ createServer((req, res) => {
           if (words.lnAddress) { const w = await lnAddressWorks(words.lnAddress); if (!w.ok) return send(200, { ok: false, why: `That Lightning address does not work: ${w.why}. Check it, or leave it empty.` }); }
           kept = FEEDBACK.take(e, { hasShot: (h) => !!shotFile(h) });
           if (!kept.ok) return send(200, kept);
+          // COUNTED WHEN KEPT (audit 6, kanban #1424): it was counted only after the chat post went out - with the chat down every signed report was
+          // kept and none counted, so the limits never tripped
+          if (kept.kept) { REPORTS.push({ ip, atMs: Date.now() }); counted = true; }
         }
         const d = feedbackDecide({ ...b, ip }, REPORTS);
         if (!d.ok) return send(200, d);
@@ -478,7 +481,7 @@ createServer((req, res) => {
         const key = readFileSync(env.FAUCET_CHAT_TOKEN_FILE, 'utf8').trim();
         const r = await fetch(`${env.FAUCET_CHAT_URL}/api/channels/${env.FAUCET_CHAT_CHANNEL}/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` }, body: JSON.stringify({ text: (kept && kept.label ? `${kept.label} · ` : '') + d.text }), signal: AbortSignal.timeout(10000) });
         if (!r.ok) return send(502, { ok: false, why: 'the report could not be kept just now' });
-        REPORTS.push({ ip, atMs: Date.now() });
+        if (!counted) REPORTS.push({ ip, atMs: Date.now() });
         if (d.player) appendFileSync(FOUNDING_FILE, `${JSON.stringify({ player: d.player, atMs: Date.now() })}\n`);
         send(200, { ok: true, ...(kept ? { id: kept.id, kept: kept.kept, number: kept.number ?? null, label: kept.label || null } : {}) });   // its number (kanban #1413)
       } catch { send(400, { ok: false, why: 'not JSON' }); }
