@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { homedir, uptime } from 'node:os';
 import { execFile } from 'node:child_process';
 import { checkAsset } from './release-verify.js';
-import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL, interactivePlist, windowsLauncher, removeProgram, unitName, waitPortLine } from './service.js';
+import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL, interactivePlist, windowsLauncher, withWindowsRestart, removeProgram, unitName, waitPortLine } from './service.js';
 import { adhocSign } from './tor.js';
 import { INSTANCE, PORT_OFFSET } from './instance.js';
 import { envToConfValues, formatConf, renameKeys, renameValues, setInConf } from '../../arena-node/src/arena-conf.js';
@@ -99,6 +99,31 @@ export function withNewAppVersions(text, release, want) {
   if (!add.length) return text;
   lines[i] = 'apps=' + [...have, ...add].join(',') + cr;
   return lines.join('\n');
+}
+
+/**
+ * THE OLD HOMES A SERVICE FILE STILL NAMES (kanban #818): every `<old home>/releases/(bitcoin-)arena-node-*` in `text` whose release is gone,
+ * the old home's path each. A QUOTED PATH MAY HOLD SPACES (kanban #1441, audit 8 O8-2: a Windows profile "C:\Users\John Doe" - the rule
+ * read "\.bitcoinarena" after the space as a gone home and rewrote the tunnel and chain bridge launchers into paths that do not exist): a
+ * path inside "..." or <string>...</string> is read whole; outside them a path ends at a space. A path that is this home, or the tail of
+ * it (the text before it completes it to this home), is never an old home.
+ */
+export function staleHomesOf(text, { home, releasesDir, exists = existsSync }) {
+  const slashes = (p) => String(p).replace(/\\/g, '/');
+  const homeN = slashes(home);
+  const found = [];
+  const scan = (part, spaces) => {
+    const re = spaces ? /((?:[A-Za-z]:)?[\\/][^"'<>=\r\n]*?)[\\/]releases[\\/](?:bitcoin-)?arena-node-[^\\/"'\s<>]+/g
+      : /((?:[A-Za-z]:)?[\\/][^\s"'<>=]*?)[\\/]releases[\\/](?:bitcoin-)?arena-node-[^\\/"'\s<>]+/g;
+    for (const m of part.matchAll(re)) {
+      if (slashes(part.slice(0, m.index + m[1].length)).endsWith(homeN) || homeN.endsWith(slashes(m[1]))) continue;
+      if (m[0].startsWith(releasesDir) || exists(m[0])) continue;
+      found.push(m[1]);
+    }
+  };
+  const bare = String(text || '').replace(/"([^"\r\n]*)"|<string>([^<]*)<\/string>/g, (_, a, b) => { scan(a ?? b, true); return ' '; });
+  scan(bare, false);
+  return [...new Set(found)];
 }
 
 /** node.env's paths into a release - the games, the custody binaries - moved to the new release, from EVERY older one, not only the
@@ -427,7 +452,12 @@ function servicesOf({ platform, env, sh, home, port, node, selfPid = process.pid
         // arena-node-2026.1.0-windows-x64/runtime/node.exe", the release was named with backslashes, -like matched nothing, the old node
         // kept its port, the new one could not start, and the old one answered the health check - a false "updated")
         const folder = String(release).split(/[\\/]/).filter(Boolean).pop();
-        const r = await ps(`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Replace('/', '\\') -like '*\\${q(folder)}\\*' -and $_.ProcessId -ne ${Number(selfPid)} -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
+        // FIRST THE LAUNCHERS' OWN cmd.exe (kanban #1443): a launcher starts its program again when it ends with an error, so ending the
+        // program alone would let the loop start the old release again mid-update. Each cmd.exe running one of these files is ended (not
+        // its tree: a program it started is ended by its folder below, and this update's own process is never one of them)
+        const mine = fs.map((f) => String(f).replace(/\//g, '\\').toLowerCase());
+        const launchers = mine.length ? `$files = @(${mine.map((f) => `'${q(f)}'`).join(', ')}); Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'cmd.exe' -and $_.CommandLine -and $_.ProcessId -ne $PID } | Where-Object { $c = $_.CommandLine.Replace('/', '\\').ToLower(); @($files | Where-Object { $c.Contains($_) }).Count -gt 0 } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; ` : '';
+        const r = await ps(`${launchers}Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Replace('/', '\\') -like '*\\${q(folder)}\\*' -and $_.ProcessId -ne ${Number(selfPid)} -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
         return r.ok ? { ok: true } : { ok: false, why: `the node did not stop: ${(r.err || '').trim().slice(0, 200)}` };
       },
       // THE PROCESSES STILL RUNNING FROM `folders` (kanban #546): [{ pid, name, commandLine }] - every one whose command line names one of
@@ -657,8 +687,7 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
   // A SERVICE LEFT ON A PATH THAT IS GONE (kanban #818, a friend's gateway 2026-10-30: "die Pfad Struktur [hat] sich geändert ... das wurde nicht
   // migriert"): a release under another home - the layout before this one - is in none of the above, so that file was never moved and kept
   // starting a program that no longer exists. It names the old home, so its data paths move with it. A path that still exists is left alone.
-  const staleHomesIn = (t) => [...new Set([...t.matchAll(/((?:[A-Za-z]:)?[\\/][^\s"'<>=]*?)[\\/]releases[\\/](?:bitcoin-)?arena-node-[^\\/"'\s<>]+/g)]
-    .filter((m) => m[1] !== home && !m[0].startsWith(releasesDir) && !existsSync(m[0])).map((m) => m[1]))];
+  const staleHomesIn = (t) => staleHomesOf(t, { home, releasesDir });
   const moving = svcFiles.filter((f) => { const t = readFileSync(f, 'utf8'); return f === svc.seatFile || f === lndFile || t.includes(from) || oldersIn(t).length > 0 || staleHomesIn(t).length > 0; });
   const oldTexts = new Map(moving.map((f) => [f, readFileSync(f, 'utf8')]));
   step(`${moving.length} of ${svcFiles.length} service file(s) move: ${moving.map((f) => f.split(/[\\/]/).pop()).join(', ')}`);
@@ -760,7 +789,9 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
             oldersIn(oldTexts.get(f)).reduce((t, o) => t.split(o).join(newRelease), oldTexts.get(f).split(from).join(newRelease)));
       // an agent an older installer wrote runs throttled at priority 20 (kanban #1122): it moves as Interactive
       const swapped = f === lndFile ? lnd.swap(moved) : moved;
-      const text = f.endsWith('.plist') ? interactivePlist(swapped) : swapped;
+      // a Windows launcher written before the restart loop gets it (kanban #1443); the seat's is written whole above
+      const looped = platform === 'win32' && f.endsWith('.cmd') && f !== svc.seatFile ? withWindowsRestart(swapped, /arena-tunnel(--[a-z0-9]+)?\.cmd$/.test(f) ? 10 : 30) : swapped;
+      const text = f.endsWith('.plist') ? interactivePlist(looped) : looped;
       // the gateway of an older install gets its own metrics port (gateway.js: by itself it took the liquidity provider's)
       writeFileSync(f, /gateway/.test(f.split(/[\\/]/).pop()) ? gatewayMetricsOwn(text) : text);
     }

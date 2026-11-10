@@ -154,7 +154,8 @@ export function launchdPlist({ node, release, home, port, boot = true, env = {} 
 }
 
 // WINDOWS: A SCHEDULED TASK (ruling 2: no custody on Windows - fedimint does not build there) - "Arena node",
-// at logon (or at start-up with the user's password), restarted on failure, running a .cmd that starts the seat from arena.conf.
+// at logon (or at start-up with the user's password), running a .cmd that starts the seat from arena.conf - and starts it again when it
+// ends with an error (the launcher's own loop, windowsRestart: the task itself restarts nothing).
 export const WINDOWS_TASK = named('Arena node', ' ');
 /**
  * THE NODE'S SERVICE, AS THE OWNER FINDS IT ON THIS SYSTEM (the 2026.1.9.11 install test, kanban #704: the installer's last words said "the user
@@ -164,8 +165,27 @@ export const nodeServiceWords = (platform = process.platform) => (platform === '
   : platform === 'win32' ? `the scheduled task "${WINDOWS_TASK}"` : `the user service ${UNIT}`);
 export function windowsLauncher({ node, release, home, port }) {
   return ['@echo off', 'rem The Arena node, written by the installer: the seat started from its settings, arena.conf (bitcoinarena config).',
-    `cd /d "${release}\\packages\\arena-node"`,
-    `"${node}" src\\run.js "${home}\\arena.conf" >> "${home}\\node.log" 2>&1`].join('\r\n') + '\r\n';
+    `cd /d "${release}\\packages\\arena-node"`, ':again',
+    `"${node}" src\\run.js "${home}\\arena.conf" >> "${home}\\node.log" 2>&1`, windowsRestart(10)].join('\r\n') + '\r\n';
+}
+/**
+ * A WINDOWS LAUNCHER STARTS ITS PROGRAM AGAIN (kanban #1443, audit 8 O8-4): nothing restarted a seat, tunnel or chain bridge that ended
+ * on Windows (an uncaught error, "the apps could not be fetched" at a boot without network) until the next logon - systemd does it
+ * after 10 s (Restart=on-failure), launchd too (KeepAlive). The line after the program: on an error exit, wait `seconds` (ping: `timeout`
+ * refuses a window without input) and go back to `:again`; `always` also after a clean exit (systemd Restart=always). A stop must end
+ * the launcher's cmd.exe with its program, or this loop starts the program again: the owner page's stop ends the process tree, the
+ * update's ends the launchers it moves (update.js).
+ */
+export const windowsRestart = (seconds, always = false) => (always ? `ping -n ${seconds + 1} 127.0.0.1 >nul & goto again`
+  : `if %errorlevel% neq 0 (ping -n ${seconds + 1} 127.0.0.1 >nul & goto again)`);
+/** A launcher written before the loop (a tunnel, a chain bridge, a program): the loop put around its program line. Written with one: unchanged. */
+export function withWindowsRestart(text, seconds = 30) {
+  if (/^:again\r?$/m.test(text)) return text;
+  const lines = String(text).split('\r\n');
+  const i = lines.findLastIndex((l) => /^(call )?"/.test(l));
+  if (i < 0) return text;
+  lines.splice(i, 1, ':again', lines[i], windowsRestart(seconds));
+  return lines.join('\r\n');
 }
 /**
  * START A PROGRAM AT EVERY LOGON, AND NOW, ON WINDOWS. A scheduled task at logon first; Windows refuses that to a user without
@@ -235,7 +255,7 @@ async function installWindows({ node, release, home, port, tunnelArgs, boot, sh,
   const t0 = Date.now();
   const tasks = [{ name: WINDOWS_TASK, file: join(home, 'arena-node.cmd'), text: windowsLauncher({ node, release, home, port }) }];
   if (tunnelArgs) tasks.push({ name: `${WINDOWS_TASK} tunnel`, file: join(home, 'arena-tunnel.cmd'),
-    text: ['@echo off', 'rem The Arena node tunnel, written by the installer.', `${tunnelArgs.map((a) => `"${a}"`).join(' ')} >> "${home}\\tunnel.log" 2>&1`].join('\r\n') + '\r\n' });
+    text: ['@echo off', 'rem The Arena node tunnel, written by the installer.', ':again', `${tunnelArgs.map((a) => `"${a}"`).join(' ')} >> "${home}\\tunnel.log" 2>&1`, windowsRestart(10)].join('\r\n') + '\r\n' });
   for (const t of tasks) {
     writeFileSync(t.file, t.text);
     if (boot) {
@@ -322,14 +342,15 @@ export async function installProgram({ id, description, args, home, boot = true,
   }
   if (platform === 'win32') {
     const file = join(home, `arena-${id}.cmd`);
-    // `againOn`: an exit code on which the program is started again (no service manager restarts a launcher on Windows; the auto update
-    // ends with 75 to come back from the new release)
+    // `againOn`: an exit code on which the program is started again at once (the auto update ends with 75 to come back from the new
+    // release); any other error exit starts it again after 30 s, as systemd's RestartSec (kanban #1443: no service manager restarts a
+    // launcher on Windows), and `restart: 'always'` a clean exit too
     writeFileSync(file, ['@echo off', `rem ${description}, written by the installer.`, ...varLines.map(([k, v]) => `set "${k}=${v}"`),
-      ...(againOn ? [':again'] : []),
+      ':again',
       // CALL a batch file (measured 2026-10-19 22:43Z in the Windows VM: "ending: this service starts again from the new release", exit 75,
       // and nothing started it - a .cmd run from a .cmd without `call` never returns to the caller, so `goto again` never ran)
       `${/\.(cmd|bat)$/i.test(String(args[0])) ? 'call ' : ''}${args.map((a) => `"${a}"`).join(' ')} >> "${home}\\${id}.log" 2>&1`,
-      ...(againOn ? [`if %errorlevel%==${againOn} goto again`] : [])].join('\r\n') + '\r\n', { mode: 0o600 });
+      ...(againOn ? [`if %errorlevel%==${againOn} goto again`] : []), windowsRestart(30, restart === 'always')].join('\r\n') + '\r\n', { mode: 0o600 });
     const name = named(`Arena ${id}`, ' ');
     if (boot) {
       const a = await windowsAutostart({ name, file, sh, env });
