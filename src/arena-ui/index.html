@@ -7693,7 +7693,8 @@
             if (left !== null && left < Number(window.ARENA_ORDER_CUTOFF_MS || 3000)) {
               if (!(j && j.state === 'joining')) window.ARENA_JOIN = { state: 'refused', stage: '', round: id, kindKnown: false, why: 'too late for this round - tap again for the next one' };
               return false; }
-            if (j && j.state === 'joining' && j.locking && j.round !== id) return false; }
+            // A TAP WHILE ANOTHER ORDER IS STILL LOCKING IS SAID, NOT DROPPED IN SILENCE (kanban #1391, Daniel 2026-11-10: 50+ s of taps that did nothing)
+            if (j && j.state === 'joining' && j.locking && j.round !== id) { j.busyTapAt = Date.now(); return false; } }
           window.ARENA_HIDDEN_CHOSEN = { round: id, move };
           // UNCOVERED AS THE COUNTDOWN ENDS (kanban #947, the owner 2026-11-01: "Das Ergebnis sollte angezeigt werden wenn der countdown auf 0:00 geht"): not at the client's next once-a-second look
           { const row = (window.ARENA_LOBBY_ROWS || []).find((r) => r && r.id === id), left = row ? Number(row.entryCloseMs) - Date.now() : -1;
@@ -9647,11 +9648,36 @@
               .catch((e) => console.error('[arena] pick sheet ' + String(id).slice(0, 16) + ': ' + e.message));
             return answer(false, 'a market: its pick sheet is open', { market: true });
           }
+          // THE ROUND'S OWN FEDERATION MUST HOLD THE STAKE, SAID AT THE TAP (kanban #1391, Daniel 2026-11-10 14:55Z: "trying to put in an order for 50+ seconds",
+          // then "too late for this round"; "It should get an error after 2-3 seconds max that the user can understand"): with 105 sat in the round's
+          // federation and 1,439 in another (4dc88be7, full), an order skipped the deposit at the press because the sats were "elsewhere", then waited
+          // in the funding for a deposit that never came until the round closed - and every tap on the next rounds was dropped while it waited.
+          // Nothing moves money between federations inside a round's entry window, so a paid round the round's federation cannot pay is refused here,
+          // at once, with where the sats are and what to do. Read off the balance the page already holds: no network, no wait.
+          if (!r.free && r.raw && r.raw.contract && r.raw.contract.federationId && window.ARENA_WALLET_BALANCE && Array.isArray(window.ARENA_WALLET_BALANCE.parts)
+              && window.ARENA_WALLET_BALANCE.parts.length) {
+            const parts = window.ARENA_WALLET_BALANCE.parts, fedHex = ARENACLIENT.toHex(r.raw.contract.federationId).toLowerCase();
+            const needMsat = BigInt(r.raw.contract.stakeMsat || 0n);
+            const plan = ARENACLIENT.joinFundingPlan({ parts, roundFederation: fedHex, needMsat });
+            if (needMsat > 0n && (plan.coveredBy === 'swap' || plan.coveredBy === 'merge')) {
+              const sat = (n) => Number(n).toLocaleString('en-US');
+              const others = parts.filter((p) => String(p.federation).toLowerCase().slice(0, 16) !== fedHex.slice(0, 16) && Number(p.sats) > 0);
+              const why = 'Not enough sats in this game\'s federation (' + fedHex.slice(0, 8) + '): you have ' + sat(plan.ownHere) + ' sat there and a round needs '
+                + sat(Number(needMsat / 1000n)) + ' sat. '
+                + (plan.coveredBy === 'merge' ? 'Your other sats are still being moved into it - tap again in about a minute.'
+                  : 'Your other ' + sat(others.reduce((t, p) => t + Number(p.sats), 0)) + ' sat are in federation ' + others.map((p) => String(p.federation).slice(0, 8)).join(', ')
+                    + '. Move them over with Move (Settings, under your balance), then play.');
+              const still = window.ARENA_JOIN;
+              if (!(still && still.state === 'joining' && still.round !== id)) window.ARENA_JOIN = { state: 'refused', stage: '', round: id, kindKnown: false, why };
+              console.log('[arena] join ' + String(id).slice(0, 16) + ': refused at the tap - ' + why);
+              return answer(false, 'not-funded-here', { coveredBy: plan.coveredBy, ownHere: plan.ownHere });
+            }
+          }
           const back = location.search;
           window.ARENA_LOBBY_BACK = back;         // where the address goes back to once the run is over
           history.replaceState(null, '', location.pathname + withGame(r.join + '&play=1'));
           window.ARENA_JOIN_REFUSED = null;
-          const join = window.ARENA_JOIN = { state: 'joining', why: '', stage: '', round: id, kindKnown: true, free: !!r.free, endMs: Date.parse(r.endTime) || 0,
+          const join = window.ARENA_JOIN = { state: 'joining', why: '', stage: '', round: id, kindKnown: true, free: !!r.free, endMs: Date.parse(r.endTime) || 0, startedMs: Date.now(),
             stakeSats: Number(r.stakeSats) || 0, next: !!next };
           const refuse = (why) => {
             // THE COUNTDOWN GOES WITH THE JOIN (V2, measured 0.0.2481: a lock refused after the round was shown loaded left
@@ -10212,6 +10238,8 @@
       window.ARENA_PENDING_WHEN = pendingWhen;
       const refusedWords = (why) => {
         const w = String(why || '');
+        // already said in the player's words at the tap (kanban #1391): where the sats are and what to do
+        if (/^Not enough sats in this game's federation/.test(w)) return w;
         // AND WHAT IS ON ITS WAY (kanban #1391, measured 2026-11-10: the wallet read 0 sat with 1,980 sat of winnings pending; a payout is spendable once
         // its 10-minute objection window has ended, §13A): the player learns the sats are coming and about when, not only that the wallet is empty
         if (/before the deposit arrived|insufficient funds|does not hold enough|less than this round's stake/i.test(w)) {
@@ -10238,7 +10266,18 @@
         else if (j.state === 'joined' || j.state === 'entered' || j.state === 'playing' || j.state === 'picked') { line = '✓ Order placed' + (j.stakeSats ? ' · ' + Number(j.stakeSats).toLocaleString('en-US') + ' sat' : ''); cls = 'ok'; }
         else if (j.state === 'joining' && /round starts in ([0-9:]+)/.test(String(j.stage || ''))) {
           line = '✓ Order locked · the window starts in ' + /round starts in ([0-9:]+)/.exec(j.stage)[1]; cls = 'held'; }
-        else if (j.state === 'joining') { const sub = plain(j.stage); line = 'Placing your order …' + (sub ? ' ' + sub : ''); cls = ''; }
+        else if (j.state === 'joining') {
+          const sub = plain(j.stage);
+          // NOTHING SILENT PAST 3 S (kanban #1391, Daniel 2026-11-10: "It should get an error after 2-3 seconds max that the user can understand"): an order that is
+          // not in 3 s after the tap says so in red, with the step it waits on in plain words; a tap the busy order took no notice of says that too
+          const slow = j.startedMs && Date.now() - j.startedMs > 3000;
+          const busy = j.busyTapAt && Date.now() - j.busyTapAt < 6000 ? 'That tap was not taken: your previous order is still being placed. ' : '';
+          if (slow || busy) {
+            line = busy + (slow ? 'Your order is not in yet after ' + Math.round((Date.now() - j.startedMs) / 1000) + ' s - '
+              + (sub || 'the game servers have not confirmed it') + '. If it is not in when the round closes, nothing is taken.' : 'Placing your order …' + (sub ? ' ' + sub : ''));
+            cls = 'bad';
+          } else { line = 'Placing your order …' + (sub ? ' ' + sub : ''); cls = ''; }
+        }
         else { box.classList.remove('on'); return; }
         // the key leaves the countdown out: a held order is one line, closed once
         const key = j.round + ':' + (cls === 'held' ? 'held' : j.state) + ':' + (j.why || '');
