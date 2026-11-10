@@ -3,13 +3,18 @@
 // KANBAN #1342 (Daniel 2026-11-08): the node bounty's checklist, read from the seats' public doors.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
+import { ownerStatementMessage } from '../src/owner.js';
+import { toHex } from '../../arena-protocol/src/hash.js';
 
-const NODE = 'aa'.repeat(32), ME = 'bb'.repeat(32), OTHER = 'cc'.repeat(32);
+// the node's identity: it signs its owner statement (kanban #1418)
+const NODE_SECRET = new Uint8Array(32).fill(0x2a), NODE = toHex(schnorr.getPublicKey(NODE_SECRET)), ME = 'bb'.repeat(32), OTHER = 'cc'.repeat(32);
+const said = (owner, atMs) => ({ node: NODE, claimed: true, owner, statement: { atMs, sig: toHex(schnorr.sign(ownerStatementMessage({ node: NODE, owner, atMs }), NODE_SECRET)) } });
 const DAY = 24 * 3600 * 1000, NOW = 20000 * DAY + 5000;
 // two seats; the node served one round a day on `servedDays` of the last 7, signing each, and claims `owner`
 const fake = ({ servedDays, owner }) => async (url) => {
-  if (url.endsWith('/owner')) return url.startsWith('https://node.example') ? { node: NODE, claimed: true, owner } : { node: 'dd'.repeat(32), claimed: true, owner: OTHER };
+  if (url.endsWith('/owner')) return url.startsWith('https://node.example') ? said(owner, NOW - 1000) : { node: 'dd'.repeat(32), claimed: true, owner: OTHER };
   const from = Number(new URL(url).searchParams.get('from')), dayAgo = Math.round((Math.floor(NOW / DAY) * DAY - from) / DAY);
   const held = servedDays.includes(dayAgo) ? [{ roundId: `r${dayAgo}`, committee: [NODE, OTHER], finals: [NODE] }] : [];
   return { held };
@@ -30,4 +35,26 @@ test('#1342 the node checklist: served all 7 days and owned by the reporter pass
   assert.equal((await nodeBountyCheck({ node: 'x', npub: ME, seats, fetchJson: fake({ servedDays: [], owner: ME }) })).ok, false);
   const byHost = await nodeBountyCheck({ node: NODE, npub: ME, seats, fetchJson: fake({ servedDays: [1, 2, 3, 4, 5, 6, 7], owner: ME }), nowMs: NOW, teamHosts: ['node.example'] });
   assert.deepEqual(failed(byHost), ['outside'], 'a node answering at a team host is a team node');
+});
+
+// KANBAN #1418 (audit 6, high): any listed seat answered GET /owner for any node and the last answer won - an attacker's seat named itself owner
+// of someone else's node and passed the checklist (team-host check included). Now only a statement signed by the node key counts.
+test('#1418 a seat naming itself owner of someone else\'s node does not pass: unsigned, forged or stale statements are not the node\'s word', async () => {
+  const served = (url) => { const from = Number(new URL(url).searchParams.get('from')), dayAgo = Math.round((Math.floor(NOW / DAY) * DAY - from) / DAY);
+    return { held: dayAgo >= 1 && dayAgo <= 7 ? [{ roundId: `r${dayAgo}`, committee: [NODE], finals: [NODE] }] : [] }; };
+  const evil = (answer) => async (url) => (url.endsWith('/owner') ? (url.startsWith('https://evil.example') ? (await new Promise((r) => setTimeout(r, 30)), answer) : said(ME, NOW - 5000)) : served(url));
+  const seatsE = ['https://node.example', 'https://evil.example'];
+  const ATT = 'ee'.repeat(32);
+  const forgedSig = toHex(schnorr.sign(ownerStatementMessage({ node: NODE, owner: ATT, atMs: NOW }), new Uint8Array(32).fill(0x33)));
+  const cases = {
+    unsigned: await nodeBountyCheck({ node: NODE, npub: ATT, seats: seatsE, fetchJson: evil({ node: NODE, claimed: true, owner: ATT }), nowMs: NOW, teamHosts: ['node.example'] }),
+    forged: await nodeBountyCheck({ node: NODE, npub: ATT, seats: seatsE, fetchJson: evil({ node: NODE, claimed: true, owner: ATT, statement: { atMs: NOW, sig: forgedSig } }), nowMs: NOW }),
+    staleReal: await nodeBountyCheck({ node: NODE, npub: ATT, seats: ['https://evil.example'], fetchJson: async (u) => (u.endsWith('/owner') ? said(ATT, NOW - 3 * DAY) : served(u)), nowMs: NOW }),
+    realOwner: await nodeBountyCheck({ node: NODE, npub: ME, seats: seatsE, fetchJson: evil({ node: NODE, claimed: true, owner: ATT }), nowMs: NOW }),
+  };
+  const ownerOk = Object.fromEntries(Object.entries(cases).map(([k, r]) => [k, r.checks.find((c) => c.key === 'owner').ok]));
+  console.log('  MEASURED #1418 owner check:', JSON.stringify(ownerOk), 'team check with the attacker answering last:', cases.unsigned.checks.find((c) => c.key === 'outside').ok);
+  assert.deepEqual(ownerOk, { unsigned: false, forged: false, staleReal: false, realOwner: true });
+  assert.equal(cases.unsigned.passes, false);
+  assert.equal(cases.unsigned.checks.find((c) => c.key === 'outside').ok, false, 'the team host is read where the node\'s signed word was served');
 });

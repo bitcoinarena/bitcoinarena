@@ -9,6 +9,11 @@
 // Answers { ok, node, checks: [{ key, label, ok, says }], passes } - `passes` only when every check holds. Team nodes are refused by `excluded`.
 import { splitSignedFinalSig, decodeFinalSig } from '../../arena-protocol/src/final-sig.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { ownerStatementMessage } from './owner.js';
+
+// a node's owner statement counts only signed by that node and at most this old (kanban #1418)
+export const OWNER_STATEMENT_MAX_AGE_MS = 24 * 3600 * 1000;
 
 const DAY_MS = 24 * 3600 * 1000;
 // a held FINAL (hex of its signed bytes) -> its signer's node key hex; a key given as such is taken as it is (a test's)
@@ -24,9 +29,16 @@ export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Da
   const n = String(node || '').toLowerCase(), me = String(npub || '').toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(n) || !/^[0-9a-f]{64}$/.test(me)) return { ok: false, why: 'a node key and an owner key, 64 hex each' };
   const urls = [...new Set((seats || []).map((u) => String(u).replace(/\/+$/, '')))];
-  // THE OWNER: the node's own word, from its own door
-  let owner = null, at = null;
-  await Promise.all(urls.map(async (u) => { try { const o = await fetchJson(`${u}/owner`); if (o && String(o.node).toLowerCase() === n) { at = u; if (o.claimed) owner = String(o.owner || '').toLowerCase(); } } catch { /* not answering */ } }));
+  // THE OWNER: the node's own word, SIGNED BY THE NODE (audit 6, kanban #1418): any listed seat can answer GET /owner naming any node, and the last
+  // answer won - a seat of one's own named itself the owner of someone else's node. Only a statement the node key signed counts, at most a day old,
+  // the newest of them; `at` (the team-host check) is where that statement was served
+  let owner = null, at = null, newest = -1;
+  await Promise.all(urls.map(async (u) => { try { const o = await fetchJson(`${u}/owner`); if (!o || String(o.node).toLowerCase() !== n || !o.statement) return;
+    const atMs = Number(o.statement.atMs), named = o.claimed ? String(o.owner || '').toLowerCase() : '';
+    if (!Number.isFinite(atMs) || Math.abs(nowMs - atMs) > OWNER_STATEMENT_MAX_AGE_MS || !/^[0-9a-f]{128}$/.test(String(o.statement.sig || ''))) return;
+    let good = false; try { good = schnorr.verify(fromHex(String(o.statement.sig)), ownerStatementMessage({ node: n, owner: named, atMs }), fromHex(n)); } catch { good = false; }
+    if (!good || atMs <= newest) return;
+    newest = atMs; at = u; owner = named || null; } catch { /* not answering */ } }));
   const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch { return ''; } };
   const team = excluded.has(n) || excluded.has(me) || (at !== null && (teamHosts || []).map((h) => String(h).toLowerCase()).includes(hostOf(at)));
   // THE LAST `days` UTC DAYS: each seat's rounds of that day, merged by round id
