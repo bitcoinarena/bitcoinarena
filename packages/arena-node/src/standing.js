@@ -15,7 +15,7 @@ import { computePayoutTable, netStakeMsat, VOID, FORFEIT, ENTRY_VOID } from '../
 import { payoutRuleOfRound } from './plugins.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { roundEndMs } from '../../arena-protocol/src/first-mark.js';
-import { OBJECTION_WINDOW_MS, FINAL_TOLERANCE_MS } from '../../arena-protocol/src/window.js';
+import { OBJECTION_WINDOW_MS, FINAL_TOLERANCE_MS, windowsOf } from '../../arena-protocol/src/window.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { resultFinality } from './finality.js';
 import { PROVISIONALLY_FINAL, FINAL } from '../../arena-protocol/src/objection.js';
@@ -55,7 +55,8 @@ export function standingOf(round, roundIdBytes, entryIdBytes, contract) {
   let openMs = null;
   try { openMs = roundEndMs(contract); } catch { openMs = null; }
   const base = { windowOpenMs: openMs === null ? null : String(openMs),
-    windowCloseMs: openMs === null ? null : String(openMs + OBJECTION_WINDOW_MS) };
+    // THE ROUND'S OWN WINDOW (audit 5, #1399): a head-to-head round's closes 60 s after its end, not 600 s (§13A, #1398)
+    windowCloseMs: openMs === null ? null : String((() => { try { return windowsOf(contract).closeMs; } catch { return openMs + OBJECTION_WINDOW_MS; } })()) };
   const all = round.entriesOf(roundIdBytes);
   const entries = [];
   let mine = null;
@@ -88,7 +89,7 @@ export function standingOf(round, roundIdBytes, entryIdBytes, contract) {
   // stays PROVISIONALLY_FINAL and nothing signs a FINAL for it (rounds settled before the FINAL signature existed, whose
   // census the seats' chain view no longer reaches).
   if (mine.decided && mine.state === PROVISIONALLY_FINAL && openMs !== null
-    && BigInt(round.now()) >= openMs + OBJECTION_WINDOW_MS + FINAL_TOLERANCE_MS) {
+    && BigInt(round.now()) >= (() => { try { return windowsOf(contract).finalAfterMs; } catch { return openMs + OBJECTION_WINDOW_MS + FINAL_TOLERANCE_MS; } })()) {
     const settled = settledFor(round, roundIdBytes, entryIdBytes, mine.pubkey);
     if (settled)
       return { ...base, state: mine.state, outcome: mine.outcome, pendingMsat: null, kind: null, settled: settled.txid,

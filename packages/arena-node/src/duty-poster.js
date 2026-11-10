@@ -20,6 +20,8 @@
  * and posts nothing: the day falls to the next node an hour later (duty.js dayPostDue). arena.conf duty_post: auto (the default: on while the
  * wallet holds confirmed coins), on, off.
  */
+import { OBJECTION_WINDOW_MS, OBJECTION_WINDOW_H2H_MS, OBJECTION_WINDOW_H2H_REGTEST_MS } from '../../arena-protocol/src/constants.js';   // #1399
+import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';   // #1399
 import { join } from 'node:path';
 import { appendFileSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -300,9 +302,13 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     // absence proof's round at the seats and the client. An item named otherwise (ARENA_DUTY_ITEM_<APP>) posts rounds that are played but
     // prove nothing.
     const e = createDayDuty({ game, role, item: String(env[`ARENA_DUTY_ITEM_${game.toUpperCase()}`] || `${game}-day`), networkId: fromHex(nid),
-      // A DAY OF RPS NAMES THE HEAD-TO-HEAD 60 s WINDOW (§13A, RULED 2026-11-10, kanban #1398): every seat takes it from audit36 on, and the day's duty
-      // node posts it - the template otherwise carries the 600 s of the last day forward for good. ARENA_H2H_WINDOW=0 keeps 600 s.
-      extraFields: (g) => (g === 'rps' && env.ARENA_H2H_WINDOW !== '0' ? { objectionWindowMs: 60_000n } : {}),
+      // A DAY OF RPS NAMES THE HEAD-TO-HEAD WINDOW (§13A, RULED 2026-11-10, kanban #1398): every seat takes it from audit36 on, and the day's duty
+      // node posts it - the template otherwise carries the 600 s of the last day forward for good. Audit 5 (#1399): a regtest's is 5 s (60 s there is
+      // refused by every regtest seat), and ARENA_H2H_WINDOW=0 names 600 s outright (an empty override let a held 60 s template carry on)
+      // OFF UNTIL OTHER NODES AUDIT THE RESULT (Daniel 2026-11-10 ~07:20Z: "When the objection window is just 60 seconds, some other node need to
+      // check audit the result not just the 5 of 7"): only with ARENA_H2H_WINDOW=1; otherwise an RPS day names 600 s outright, whatever its template held
+      extraFields: (g) => (g !== 'rps' ? {} : env.ARENA_H2H_WINDOW !== '1' ? { objectionWindowMs: OBJECTION_WINDOW_MS }
+        : { objectionWindowMs: nid === toHex(NETWORK_ID_REGTEST) ? OBJECTION_WINDOW_H2H_REGTEST_MS : OBJECTION_WINDOW_H2H_MS }),
       postedPrimary: async (slot) => { const p = engines.get(game); return !!p && (p.state().mine || []).some((x) => x.slot === slot && !x.emergency); },
       local: new Set([toHex(seat.nodeKey)]), dir: join(dir, role === 'backup' ? `${game}-backup` : game),
       chain: { view: chainView, widen, censusEntriesAt: async (h) => { const es = await censusEntriesAt(nid, h); remember(es); return es || null; }, seatUrls },
