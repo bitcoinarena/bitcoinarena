@@ -689,7 +689,8 @@ export class Round {
         if (!hidden) throw new Error(`an entry into a round of head-to-head game "${m.gameName}" hides its move: it carries no commitment`);
         if (!accepted && typeof asks.entryCloseMs === 'bigint' && BigInt(this.now()) >= asks.entryCloseMs)
           throw new Error(`that round's entries closed at ${new Date(Number(asks.entryCloseMs)).toISOString()}: a head-to-head round takes no entry after it - the moves are being revealed`);
-        const seated = this.entriesOf(contract.roundId).filter((x) => !same(x.entry.sessionPubkey, contract.sessionPubkey)).length;
+        // ONLY ENTRIES BACKED BY A LOCK TAKE A SEAT OF A PAYING ROUND (kanban #1437, audit 8 R3); a third lock is refused at /lock (stake-lock-signer-node.js)
+        const seated = this.seatedEntriesOf(contract.roundId, asks.stakeMsat).filter((x) => !same(x.entry.sessionPubkey, contract.sessionPubkey)).length;
         if (seated >= m.players && !accepted) throw new Error(`that round already seats game "${m.gameName}"'s ${m.players} players`);
       } else if (hidden) throw new Error('that entry hides a move, and its round is not a head-to-head game\'s');
     }
@@ -1832,6 +1833,17 @@ export class Round {
         entryId: new Uint8Array(r.entry_id),
         entry: decodeEntryContract(new Uint8Array(r.contract)),
       }));
+  }
+
+  /**
+   * THE ENTRIES THAT TAKE A SEAT OF A HEAD-TO-HEAD ROUND (kanban #1437, audit 8 R3): in a paying round only those backed by a lock here - its stake
+   * seen, or its stake lock verified and waiting for its fee lock - since the /entry door takes an entry before any lock is verified, and two
+   * lockless entries took both seats of a paying round at no cost. `stakeMsat` is the round's: a free round's every entry takes one, as before.
+   */
+  seatedEntriesOf(roundIdBytes, stakeMsat) {
+    const all = this.entriesOf(roundIdBytes);
+    if (stakeMsat === 0n) return all;
+    return all.filter(({ entryId }) => !!this.stakeSeen(entryId) || !!this.stakeLock(entryId));
   }
 
   /**
