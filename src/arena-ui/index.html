@@ -180,19 +180,20 @@
     #arena-money-stack > * { pointer-events: auto; }
     html.arena-boot-steps #bar { width: 100%; animation: none; transition: transform .35s ease-out; transform-origin: left; transform: scaleX(var(--boot, .08)); }
     html.arena-boot-steps #creep { display: none; }
-    #arena-feedback { position: fixed; inset: 0; z-index: 2147483001; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,.6); }
-    #arena-feedback .card { width: min(440px, 100%); padding: 18px; border-radius: 12px; background: #161b22; border: 1px solid #30363d; color: #e6edf3; font: 400 14px/1.4 system-ui, sans-serif; }
+    #arena-feedback { position: fixed; inset: 0; z-index: 2147483001; display: flex; align-items: flex-start; justify-content: center; padding: 12px; box-sizing: border-box; background: rgba(0,0,0,.6); }
+    #arena-feedback .card { width: min(440px, 100%); box-sizing: border-box; padding: 14px; border-radius: 12px; background: #161b22; border: 1px solid #30363d; color: #e6edf3; font: 400 14px/1.4 system-ui, sans-serif; }
     #arena-feedback label.badge { display: block; margin: 8px 0 0; color: #8b949e; font-size: 13px; } #arena-feedback label.badge[hidden] { display: none; }
-    #arena-feedback h3 { margin: 0 0 6px; font-size: 17px; } #arena-feedback p { margin: 0 0 10px; color: #8b949e; }
+    #arena-feedback h3 { margin: 0 0 4px; font-size: 17px; } #arena-feedback p { margin: 0 0 8px; color: #8b949e; font-size: 13px; }
+    #arena-feedback .say { font-size: 12px; margin-top: 6px; }
     #arena-feedback textarea { width: 100%; box-sizing: border-box; padding: 8px; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; font: inherit; resize: vertical; }
     #arena-feedback select { width: 100%; margin: 0 0 8px; padding: 7px; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; font: inherit; }
     #arena-feedback textarea + textarea { margin-top: 8px; }
     /* the bounty Lightning address (kanban #1363) as wide and dark as the other fields (#1342: it showed narrow and pale) */
     /* fb-row-sticky (#1342): with the reward table the card scrolls; Cancel and Send stay at its bottom edge */
-    #arena-feedback .card > .row:last-child { position: sticky; bottom: -18px; margin: 10px -18px -18px; padding: 10px 18px 18px; background: #161b22; border-top: 1px solid #30363d; }
+    #arena-feedback .card > .row:last-child { position: sticky; bottom: -14px; margin: 8px -14px -14px; padding: 8px 14px 12px; background: #161b22; border-top: 1px solid #30363d; }
     #arena-feedback input.fb-ln { display: block; width: 100%; box-sizing: border-box; margin: 8px 0 0; padding: 7px; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; font: inherit; }
     #arena-feedback .fb-row { padding: 8px 0; border-bottom: 1px solid #30363d; } #arena-feedback .fb-head { color: #8b949e; font-size: 13px; } #arena-feedback .fb-why { color: #f85149; font-size: 13px; }
-    #arena-feedback .fb-reward { margin-top: 4px; color: #3fb950; } #arena-feedback .fb-reward a { color: #f7931a; } #arena-feedback .card { max-height: 86vh; overflow-y: auto; }
+    #arena-feedback .fb-reward { margin-top: 4px; color: #3fb950; } #arena-feedback .fb-reward a { color: #f7931a; } #arena-feedback .card { max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); overflow-y: auto; }
     #arena-feedback .fb-levels-table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0 4px; }
     #arena-feedback .fb-levels-table td { padding: 2px 6px 2px 0; vertical-align: top; }
     #arena-feedback .fb-levels-table td.n { white-space: nowrap; font-weight: 700; }
@@ -205,7 +206,7 @@
     #arena-feedback .fb-chips-head { font-size: 12px; color: #8b949e; margin: 6px 0 4px; }
     #arena-feedback .fb-chips { display: flex; flex-wrap: wrap; gap: 4px; } #arena-feedback .fb-chip { font-size: 11px; padding: 2px 7px; border-radius: 10px; background: #21262d; border: 1px solid #30363d; color: #e6edf3; }
     #arena-feedback .fb-chip b { color: #f7931a; }
-    #arena-feedback .fb-budget { margin: 6px 0 2px; font-size: 11px; color: #8b949e; } #arena-feedback .fb-budget-line { margin-bottom: 4px; }
+    #arena-feedback .fb-budget { margin: 6px 0 8px; font-size: 11px; color: #8b949e; } #arena-feedback .fb-budget-line { margin-bottom: 4px; }
     #arena-feedback .fb-budget-bar { height: 8px; border-radius: 4px; background: #21262d; overflow: hidden; } #arena-feedback .fb-budget-fill { height: 100%; background: #f7931a; }
     #arena-feedback .fb-join .icons { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 4px; }
     #arena-feedback .fb-join a.icon { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; padding: 0; border: 0; color: #e6edf3; font-size: 12px; font-weight: 600; text-decoration: none; }
@@ -1858,13 +1859,13 @@
       // THE CATEGORIES (Daniel 2026-11-07: "bug / improvement")
       const type = el('select', { 'aria-label': 'Category' }, el('option', { value: 'bug', text: 'Bug: something broke' }), el('option', { value: 'improvement', text: 'Improvement: something could be better' }));
       if (ctx.type === 'improvement') type.value = 'improvement';
-      const t = el('textarea', { rows: '4', maxlength: '4000', placeholder: 'What happened? (at least 50 characters)' });
+      const t = el('textarea', { rows: '3', maxlength: '4000', placeholder: 'What happened? (at least 50 characters)' });
       // AT LEAST 50 CHARACTERS (Daniel 2026-11-07), counted as the player types; Send waits for them
       const count = el('div', { cls: 'fb-count', 'aria-live': 'polite' });
       // A SCREENSHOT (Daniel 2026-11-07): optional; a big one is made smaller here (1600 px, JPEG) before it goes
       const shot = el('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', 'aria-label': 'Screenshot (optional)' });
       const shotRow = el('label', { cls: 'fb-shot' }, el('span', { text: 'Screenshot (optional) ' }), shot);
-      const x = el('textarea', { rows: '2', maxlength: '4000', placeholder: 'What did you expect? (optional)' });
+      const x = el('textarea', { rows: '1', maxlength: '4000', placeholder: 'What did you expect? (optional)' });
       if (ctx.error) t.value = 'The page said: ' + String(ctx.error).slice(0, 600) + '\n';
       // THE BOUNTY'S LIGHTNING ADDRESS (the owner 2026-11-08, kanban #1363: "Es fehlt die bounty ln addresse"): where a reward for this report is paid,
       // optional, remembered in this browser for the next report
@@ -1874,7 +1875,7 @@
       const lnOk = (v) => !v || /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(v) || /^lnurl1[02-9ac-hj-np-z]+$/i.test(v);
       const me = myPubkey();
       const tick = el('label', { cls: 'badge' }, el('input', { type: 'checkbox' }), el('span', { text: ' Send my public key for the Founding Tester badge' }));
-      if (!me) tick.hidden = true;
+      tick.hidden = true;   // THE FOUNDING TESTER BADGE OFF FOR NOW (Daniel 2026-11-10: "Remove the tester badge for now")
       const say = el('div', { cls: 'say', role: 'status', text: window.ARENA_BOUNTY_ON
         ? (me ? 'Signed with your key. ' + BOUNTY_RULES + ' A reward shows in My feedback.' : 'Open a wallet to be rewarded. ' + BOUNTY_RULES)
         : (me ? 'Signed with your key: My feedback shows what the team decides.' : 'It reaches the team. Open a wallet to follow it in My feedback.') });
@@ -1903,7 +1904,13 @@
       // footer's Feedback opens now has it next to Cancel, and the thank-you line opens it
       const mineBtn = el('button', { type: 'button', cls: 'off', text: 'My feedback' });
       mineBtn.onclick = () => { d.remove(); if (window.ARENA_MY_FEEDBACK) window.ARENA_MY_FEEDBACK(); };
-      d.append(el('div', { cls: 'card' }, el('h3', { text: 'Feedback' }), el('p', { text: 'Your words, the build and the game are sent. No amounts, and no private key.' }), type, t, count, x, ln, shotRow, tick, say, levels, el('div', { cls: 'row' }, mineBtn, off, send)));
+      const fitFeedback = () => { if (!d.isConnected) { if (window.visualViewport) { visualViewport.removeEventListener('resize', fitFeedback); visualViewport.removeEventListener('scroll', fitFeedback); } return; }
+        const v = window.visualViewport, h = v ? v.height : innerHeight;
+        d.style.top = (v ? v.offsetTop : 0) + 'px'; d.style.height = h + 'px'; d.style.bottom = 'auto';
+        const c = d.querySelector('.card'); if (c) c.style.maxHeight = Math.max(240, h - 24) + 'px'; };
+      if (window.visualViewport) { visualViewport.addEventListener('resize', fitFeedback); visualViewport.addEventListener('scroll', fitFeedback); }
+      requestAnimationFrame(fitFeedback);
+      d.append(el('div', { cls: 'card' }, el('h3', { text: 'Feedback' }), el('p', { text: 'Sent: your words, the game and this page\'s debug log (order steps, balance). Never your seed or key.' }), type, t, count, x, ln, shotRow, tick, say, levels, el('div', { cls: 'row' }, mineBtn, off, send)));
       const LEAST = 50;
       const recount = () => { const n = t.value.trim().length; count.textContent = n < LEAST ? (LEAST - n) + ' more characters' : n + ' characters'; count.className = 'fb-count' + (n < LEAST ? ' short' : ''); send.disabled = n < LEAST; };
       t.addEventListener('input', recount); recount();
