@@ -48,7 +48,7 @@ test('the same two players round after round: 1:0, 1:1, a draw keeps 1:1; both s
     const { encodeLobbyName } = await import('../../arena-protocol/src/lobby-name.js');
     for (const d of r.nodes) for (const [played, who] of [[a, ALICE], [b, BOB]]) {
       const pk = d.round.entriesOf(r.rid).find((x) => toHex(x.entryId) === toHex(played.eid)).entry.playerPubkey;
-      d.round.putLobbyName({ roundId: r.rid, playerPubkey: pk, record: encodeLobbyName({ roundId: r.rid, playerPubkey: pk, identityPubkey: who.key, atMs: 1n }), signature: new Uint8Array(64), atMs: 1n });
+      d.round.putLobbyName({ roundId: r.rid, playerPubkey: pk, record: encodeLobbyName({ roundId: r.rid, playerPubkey: pk, identityPubkey: who.key, atMs: 1n }), signature: new Uint8Array(64), identitySig: new Uint8Array(64), /* consent, as the page sends it (audit 5 #1401) */ atMs: 1n });
     }
     skipTo(Number(r.c.entryCloseMs) + 500);
     const bad = forged ? await reveal(r, a, moveA, sa, proof(BOB, r.rid, a.eid) && { key: toHex(ALICE.key), sig: proof(BOB, r.rid, a.eid).sig }) : null;
@@ -105,7 +105,7 @@ test('#1224 a stranger\'s identity on a seen reveal is refused where the player\
     const playerKey = a.entry ? a.entry.playerPubkey : null;
     for (const d of w.nodes) {
       const pk = playerKey || d.round.entriesOf(w.rid).find((x) => toHex(x.entryId) === toHex(a.eid)).entry.playerPubkey;
-      d.round.putLobbyName({ roundId: w.rid, playerPubkey: pk, record: encodeLobbyName({ roundId: w.rid, playerPubkey: pk, identityPubkey: ALICE.key, atMs: 1n }), signature: new Uint8Array(64), atMs: 1n });
+      d.round.putLobbyName({ roundId: w.rid, playerPubkey: pk, record: encodeLobbyName({ roundId: w.rid, playerPubkey: pk, identityPubkey: ALICE.key, atMs: 1n }), signature: new Uint8Array(64), identitySig: new Uint8Array(64), /* consent, as the page sends it (audit 5 #1401) */ atMs: 1n });
     }
     skipTo(Number(w.c.entryCloseMs) + 500);
     const stolen = await reveal(w, a, ROCK, sa, proof(MALLORY, w.rid, a.eid));

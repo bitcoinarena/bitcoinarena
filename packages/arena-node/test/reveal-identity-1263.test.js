@@ -26,8 +26,10 @@ const player = (k) => ({ name: 'p', key: k.key, worldSecret: new Uint8Array(32),
 const proof = (who, rid, eid) => ({ key: toHex(who.key), sig: toHex(schnorr.sign(matchProofId({ roundId: rid, entryId: eid, identityKey: who.key }), who.secret)) });
 const post = async (d, path, body) => { const x = await fetch(`http://127.0.0.1:${d.port}${path}`, { method: 'POST', body: JSON.stringify(body) }); return x.status; };
 const reveal = (w, played, move, salt, identity) => Promise.all(w.nodes.map((d) => post(d, `/reveal?entry=${toHex(played.eid)}`, { move, salt: toHex(salt), ...(identity ? { identity } : {}) })));
-const nameRecord = (w, roundKey, identity) => { const r = { roundId: w.rid, playerPubkey: roundKey.key, identityPubkey: identity.key, name: '', atMs: BigInt(testNow()) };
-  return { record: toHex(encodeLobbyName(r)), sig: toHex(schnorr.sign(lobbyNameId(r), roundKey.secret)) }; };
+// `consent`: the identity's own signature over (round id, round key) - what the page sends at the join (kanban #1278); without it the record books nothing
+const nameRecord = (w, roundKey, identity, consent = false) => { const r = { roundId: w.rid, playerPubkey: roundKey.key, identityPubkey: identity.key, name: '', atMs: BigInt(testNow()) };
+  return { record: toHex(encodeLobbyName(r)), sig: toHex(schnorr.sign(lobbyNameId(r), roundKey.secret)),
+    ...(consent ? { identitySig: toHex(schnorr.sign(matchProofId({ roundId: w.rid, entryId: roundKey.key, identityKey: identity.key }), identity.secret)) } : {}) }; };
 
 test('#1263 a reveal\'s identity is kept only when the name record held names it; a head-to-head round takes no record after its close', async () => {
   const w = await lockRound({ serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 4000 });
@@ -37,8 +39,9 @@ test('#1263 a reveal\'s identity is kept only when the name record held names it
     const sa = new Uint8Array(randomBytes(32)), sc = new Uint8Array(randomBytes(32));
     const a = await lockAndPlay(w, player(kA), { hidden: { move: ROCK, salt: sa }, noMarks: true });
     const c = await lockAndPlay(w, player(kC), { hidden: { move: SCISSORS, salt: sc }, noMarks: true });
-    // Carol names herself before the close, as the page does at the join
-    const carolNamed = await Promise.all(w.nodes.map((d) => post(d, '/name', nameRecord(w, kC, CAROL))));
+    // Carol names herself before the close with her identity's consent, as the page does at the join; Alice names herself WITHOUT consent (audit 5 #1401)
+    const carolNamed = await Promise.all(w.nodes.map((d) => post(d, '/name', nameRecord(w, kC, CAROL, true))));
+    const aliceNamedNoConsent = await Promise.all(w.nodes.map((d) => post(d, '/name', nameRecord(w, kA, ALICE))));
     skipTo(Number(w.c.entryCloseMs) + 5000);
     // Alice reveals with no identity, then Carol (named) - Alice won, rock over scissors - and Alice posts her reveal again with her identity
     await reveal(w, a, ROCK, sa, null);
@@ -52,7 +55,13 @@ test('#1263 a reveal\'s identity is kept only when the name record held names it
       identityKept: kept.map((x) => ({ alice: toKey(x.alice), carol: toKey(x.carol) })) }));
     assert.ok(carolNamed.every((s) => s === 201), 'the fixture: a record before the close is taken');
     assert.ok(lateName.every((s) => s === 409), `a name record after a head-to-head round's close was taken: ${lateName}`);
+    assert.ok(aliceNamedNoConsent.every((s) => s === 201), 'the fixture: a record without consent before the close is taken');
+    // AUDIT 5 #1401: the record names ALICE (no consent) and her second reveal carries ALICE's proof - before the fix that proof was the consent, given
+    // after the result; now only the consent sent with the join counts
     assert.ok(kept.every((x) => !x.alice), 'an identity attached after the result was kept');
+    // and the match: Carol's side from her consented record; Alice's has no consented identity, so no match record is made from a bare key
+    assert.ok(w.nodes.every((d) => d.round.consentedIdentityOf(w.rid, kC.key) === toHex(CAROL.key)));
+    assert.ok(w.nodes.every((d) => d.round.consentedIdentityOf(w.rid, kA.key) === null));
     assert.ok(kept.every((x) => x.carol && toKey(x.carol) === toHex(CAROL.key).slice(0, 8)), 'the identity named before the close was not kept');
   } finally { await w.close(); }
 });
