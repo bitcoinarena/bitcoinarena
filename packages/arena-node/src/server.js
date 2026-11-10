@@ -2111,7 +2111,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // only the rows paid under this seat's network, whose census ratifies its funding votes (kanban #1336, §27A.8.5)
       const netOfRound = (rid) => { try { const c = round.contractOf(fromHex(rid)); return c && c.networkId instanceof Uint8Array ? toHex(c.networkId) : null; } catch { return null; } };
       return k ? reserveRowsOfNetwork(round.donationsFor(toHex(k)).filter((r) => r.federationId === fed), chainNetworkId(), netOfRound)
-        .map((r) => ({ outpoint: r.outpoint, amountMsat: r.amountMsat, verifiedMs: r.verifiedMs })) : []; },
+        .map((r) => ({ outpoint: r.outpoint, amountMsat: r.amountMsat, verifiedMs: r.verifiedMs, ...(r.unknown ? { unknown: true } : {}) })) : []; },
     portOf: (fed) => portOfFederation(fromHex(fed)),
     // THE DRAINED-FEDERATION MOVES (decision A): from this seat's own verified federation records - status, the record's
     // height, the successor - and the reserves it holds unspent there (reserve-move.js moveTargets)
