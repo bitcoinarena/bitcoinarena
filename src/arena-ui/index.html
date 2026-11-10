@@ -2029,29 +2029,49 @@
     (async () => {
       const hex = async (t) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t))), (b) => b.toString(16).padStart(2, '0')).join('');
       const store = (() => { try { return window.localStorage; } catch { return null; } })();
+      // KEPT TWICE, AND HELD FOR THIS PAGE EITHER WAY (Daniel 2026-11-10 on the iPad: "wenn ich neu lade ohne link ist er weg"): a browser whose
+      // storage the round wallets fill refuses the write (Safari gives half of Chrome's room), so the code goes to localStorage and to IndexedDB
+      // (a store of its own), each write on its own; a page opened with the right code is an admin page even when neither write goes in
+      const idb = (mode, value) => new Promise((done) => { try { const o = indexedDB.open('arena-admin', 1);
+        o.onupgradeneeded = () => o.result.createObjectStore('kv');
+        o.onerror = () => done(null);
+        o.onsuccess = () => { try { const db = o.result, tx = db.transaction('kv', mode === 'get' ? 'readonly' : 'readwrite'), kv = tx.objectStore('kv');
+          const r = mode === 'get' ? kv.get('code') : mode === 'del' ? kv.delete('code') : kv.put(value, 'code');
+          r.onsuccess = () => { db.close(); done(mode === 'get' ? (typeof r.result === 'string' ? r.result : null) : true); }; r.onerror = () => { db.close(); done(null); };
+        } catch { done(null); } }; } catch { done(null); } });
+      const lsGet = () => { try { return store && store.getItem('arena.admin.code'); } catch { return null; } };
+      const lsSet = (c) => { try { if (store) store.setItem('arena.admin.code', c); } catch (e) { console.log('[admin] this browser\'s storage refused the admin code (' + (e && e.name) + '); kept in IndexedDB'); } };
+      let adminCode = null;
       try {
         const u = new URL(location.href), asked = u.searchParams.get('admin');
         if (asked !== null) {
           u.searchParams.delete('admin'); history.replaceState(history.state, '', u.pathname + u.search + u.hash);
-          if (asked === 'off' || asked === '0') { if (store) store.removeItem('arena.admin.code'); }
-          else if (await hex(asked.trim()) === window.ARENA_ADMIN_SHA256 && store) store.setItem('arena.admin.code', asked.trim());
+          if (asked === 'off' || asked === '0') { try { if (store) store.removeItem('arena.admin.code'); } catch { /* none */ } await idb('del'); }
+          else if (await hex(asked.trim()) === window.ARENA_ADMIN_SHA256) { adminCode = asked.trim(); lsSet(adminCode); await idb('put', adminCode); }
           else console.log('[admin] that admin code is not this site\'s');
         }
-        const kept = store && store.getItem('arena.admin.code');
-        window.ARENA_ADMIN = !!kept && await hex(kept) === window.ARENA_ADMIN_SHA256;
-      } catch (e) { window.ARENA_ADMIN = false; }
+        if (!adminCode && !(asked === 'off' || asked === '0')) {
+          let kept = lsGet();
+          if (!(kept && await hex(kept) === window.ARENA_ADMIN_SHA256)) { kept = await idb('get'); if (kept && await hex(kept) === window.ARENA_ADMIN_SHA256) lsSet(kept); else kept = null; }
+          else if (!(await idb('get'))) idb('put', kept);   // a code kept before the second copy existed gets it now
+          adminCode = kept || null;
+        }
+        window.ARENA_ADMIN = !!adminCode;
+      } catch (e) { window.ARENA_ADMIN = !!adminCode; }
       if (window.ARENA_ADMIN) {
         // THE ADMIN LINK, RIGHT BEFORE THE UI STAMP (the owner 2026-11-08: "Zeige ein kleines flag an im client wenn der admin node aktiviert ist"; Daniel
         // 2026-11-10: "wenn ich auf das admin links unten klicke muss die aber die admin Seite aufgehen, nicht 2 links. Admin ist auch zu links, man kann es nicht
         // klicken. Vor ui 592 soll es hin"): a red ADMIN link at the start of each build stamp (the games' footer and a game's own), clickable, opening the
         // feedback review and payouts with this browser's admin code in the URL fragment - a fragment is never sent to a server; the admin page takes it once
-        const adminHref = () => { let c = ''; try { c = (store && store.getItem('arena.admin.code')) || ''; } catch { c = ''; } return 'https://bitcoinarena.io/feedback-admin/' + (c ? '#code=' + encodeURIComponent(c) : ''); };
+        const adminHref = () => 'https://bitcoinarena.io/feedback-admin/' + (adminCode ? '#code=' + encodeURIComponent(adminCode) : '');
         const mark = () => {
           for (const b of document.querySelectorAll('#arena-build, .build-line')) {
             if (b.querySelector('.arena-admin-link')) continue;
             const a = document.createElement('a'); a.className = 'arena-admin-link'; a.textContent = 'ADMIN'; a.title = 'Admin mode (your rounds are left out of the counts) - open the feedback payouts';
-            a.href = adminHref(); a.target = '_blank'; a.rel = 'noopener';
-            a.addEventListener('click', () => { a.href = adminHref(); });
+            // IN THIS TAB (Daniel 2026-11-10: "es passiert nichts wenn ich drauf klicke"): measured in WebKit at iPad size, a tap on a new-tab link in
+            // the stamp opened nothing, the same link in this tab opens the admin page; Back returns to the games
+            a.href = adminHref();
+            a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); location.assign(adminHref()); });
             a.style.cssText = 'pointer-events:auto;display:inline-block;margin-right:6px;padding:1px 6px;border-radius:4px;background:#c0392b;color:#fff;font:700 10px/1.5 system-ui,sans-serif;letter-spacing:.06em;cursor:pointer;text-decoration:none;vertical-align:middle';
             b.insertBefore(a, b.firstChild);
           }
@@ -2080,7 +2100,7 @@
           if (!fresh.length) return;
           try {
             const r = await fetch('https://explorer.bitcoinarena.io/api/mark', { method: 'POST', headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ kind: 'owner', keys: fresh, code: store.getItem('arena.admin.code') }) });
+              body: JSON.stringify({ kind: 'owner', keys: fresh, code: adminCode }) });
             if (r.ok) store.setItem('arena.admin.marked', JSON.stringify(sent.concat(fresh).slice(-5000)));
           } catch { /* the next minute asks again */ }
         };
