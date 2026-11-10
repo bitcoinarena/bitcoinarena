@@ -5443,6 +5443,12 @@ to check the result, not just the 5 of 7").** With the 60 s window (§13A,
 kanban #1398) a head-to-head result is `FINAL` only when nodes outside the
 committee have checked it:
 
+- **Nothing in the round waits for it (the owner, 2026-11-10: "the reveal
+  phase must stay fast; the audit runs in the background").** Commit, reveal
+  window and decide run exactly as §0A.7 head-to-head rules say, 8 s rounds
+  included; the auditors start when the seats' `PROVISIONALLY_FINAL` stands
+  and work in parallel to the 60 s window. The audit gates only `FINAL`, the
+  payout; never a reveal, never the next round, never play.
 - **Who:** the same lottery as below, over the same eligible set `E` (census
   less the drawn, less the players' and operators' nodes, less nodes without
   the audit role), with `AUDITORS_H2H = 5` expected per round in place of 3,
