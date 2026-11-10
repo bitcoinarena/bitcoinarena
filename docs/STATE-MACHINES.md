@@ -25,6 +25,7 @@ release commit and brings this file up to date with it - new machines added, cha
 10. [Decisions several seats must share](#10-decisions-several-seats-must-share)
 11. [State the 2026-11-06 fixes introduced or changed](#11-state-the-2026-11-06-fixes-introduced-or-changed)
 12. [The page, its storage and its frames](#12-the-page-its-storage-and-its-frames)
+13. [State the 2026-11-10 audits (5, 6) introduced or changed](#13-state-the-2026-11-10-audits-5-6-introduced-or-changed)
 
 ## 1. Rounds and settlement
 
@@ -1451,3 +1452,53 @@ States: entry 201 at a seat, then `accepted`, then placed.
 `gameClientFile` (games.js 107-127) accepts only bytes whose SHA-256 a manifest of that developer key and name pins, fetched from this page's own origin, `games/<name>/index.html`.
 
 The frame is a blob of those bytes (index.html 7316): same origin, so it gets `localStorage` and `window.parent`. The seeds in plain hex are `arena.seeds` (2514) and sessionStorage `arena.player.seed`. `window.parent.ARENA_WALLETS` holds the live lock clients. Under arena-embed.js the client and engine run in the host site's window (arena-embed.js 24-27).
+
+## 13. State the 2026-11-10 audits (5, 6) introduced or changed
+
+Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2026.1.9.27. Each machine as it stands after its fix; the ticket that fixed it in brackets.
+
+#### SM-11 (add) Entry finality: the head-to-head window
+- The objection window is the contract's W: 600 s, or 60 s for a head-to-head game (5 s on regtest), §13A as ruled 2026-11-10 (#1398). `Round.open` refuses a W that does not fit the game kind and network (`objectionWindowFits`); windows, standing, lock expiry and the price feed read W from the contract.
+- The duty poster names 60 s for RPS only with `ARENA_H2H_WINDOW=1` until §13A.1's audit exists (#1400, build #1412).
+
+#### SM-F1 (change) Funding signal period end
+- The cutoff is the end block's header time (`endTimeAt`, the launcher's `blockHeaderTimeAt`), the same on every seat; a signal counts when some seat held it by then. `funding_signal_ends.seen_ms` is only the fallback without a chain (#1410).
+
+#### SM-M1 (change) Book or pool
+- A two-outcome round is a book iff a threshold-certified batch holds an order (`order-batch.js isBook`); batches take only orders whose locks their signers verified. Settlement reads the other seats' batches before deciding; a pool settles over plain picks only (#1411, spec §0A.7b ruled #1417).
+- The door refuses a plain pick once the round is a book; an order is not refused for picks. A plain pick in a book is no entry of it: its stake secret stays sealed (stake-secret.js) and its lock is returned at once (forfeit.js, as §23.2 REFUSED).
+
+#### SM-21 Feedback report (`reports.state`, feedback-store.js)
+| from | to | by | guard |
+|---|---|---|---|
+| none | new | POST /feedback `{event}` (`take`) | kind 27842, signed within a day, bug or improvement, >= 50 characters, a node report names its node, a named screenshot exists; one row per event id; `number` = MAX + 1, unique (#1413) |
+| new | accepted | admin `approve` | not ours; a player (finished a round), except level node; <= 3 per key in 7 days; weekly budget 100,000 sat except critical and node; level node: a node report, one per key, one per node, the first 10; the level stored normalised (#1422) |
+| new | rejected / duplicate | admin `move` | a reason; a duplicate names an earlier report by id or number |
+| accepted | rejected | admin `move` | its reward link voided by compare-and-set; refused while paying or paid (#1402) |
+| accepted | paid | `claim` / `settle` | its reward paid |
+- `note` changes the ticket in any state and the level only while a report is new (#1422). A report is counted toward the limits when kept, per address by `ipKey` (#1424). The page signs from the tab's own seed, so a report from the games screen is kept too.
+
+#### SM-22 Feedback reward link (`rewards.state`)
+- open -> paying (claim, compare-and-set, the invoice for exactly the amount) -> paid; paying -> open on a sure failure or a `settle` read failed >= 180 s after the try; open -> void when the report is rejected (#1402).
+
+#### SM-19 (change) Faucet book
+- Player grants and refills run in one queue (`one()`), admin actions in their own (`oneAdmin`) (#1419). A queued request whose connection closed takes nothing.
+- Invoice grant: the row is booked before paying; a verdict that is not final is booked as `pending` with its payers, a removed row whose payer may still pay is kept in `unsure`; a sweep in the queue reads each payer's `listpayments` every 2 min and sets the book to SUCCEEDED / FAILED (#1421).
+- E-cash welcome: a note is taken by rename into `taken/`; the row keeps its file; the same caller (`ipKey`) asking again within 15 min gets the same note (#1419).
+- Limits: per address by `ipKey` (an IPv6 /64 is one), 2,000,000 sat an hour, 10,000,000 a day; screenshots by `ipKey`, a day byte cap and a free-disk floor (#1405).
+
+#### SM-C8 (change) Owner actions and the owner statement
+- Add-bond and roles changes are kept in `owner_actions` before the broadcast (#1374); the same ask again is answered "already" only while its transaction is in the mempool or mined, else built again (#1423).
+- GET /owner carries a statement signed by the node key over [node, owner, atMs]; the node bounty's checklist counts only such a statement, at most a day old, the newest (#1418).
+
+#### SM-X1 Explorer admin marks (`marked`, `admin_ips`)
+- POST /api/mark with the admin code marks keys and, for kind owner, keeps the caller's address (`admin_ips`, IPv6 by /64) (#1414).
+- An address is the admin's for 48 h after its last code mark. POST /api/mark-ip marks only entry ids the explorer holds, never over an existing mark, the row naming the address (`by_ip`) (#1420).
+
+#### Absences, spent set, arbiter, reserves (changed rules)
+- Absences: the store is read back whole at start, each signature verified again, capped per federation at `max` (#1404).
+- Spent set: the newest session where one content has n - t + 1 distinct guardian signers (#1408).
+- Arbiter slash intent: an RPC error is "wait", never "posted" (#1403).
+- Reserve payout: rows whose round this seat cannot read are `unknown` - taken as a co-signer, never picked as coordinator, never a SHORT while they could cover it (#1409).
+- Donation sets: a network's first set is its founding serial; a set's parent is the last set in force below it (#1407).
+
