@@ -185,6 +185,7 @@
     #arena-feedback label.badge { display: block; margin: 8px 0 0; color: #8b949e; font-size: 13px; } #arena-feedback label.badge[hidden] { display: none; }
     #arena-feedback h3 { margin: 0 0 4px; font-size: 17px; } #arena-feedback p { margin: 0 0 8px; color: #8b949e; font-size: 13px; }
     #arena-feedback .say { font-size: 12px; margin-top: 6px; }
+    #arena-feedback .fb-lnsay { font-size: 12px; margin: 3px 0 0; color: #8b949e; min-height: 0; } #arena-feedback .fb-lnsay.bad { color: #f85149; } #arena-feedback .fb-lnsay.good { color: #3fb950; }
     #arena-feedback textarea { width: 100%; box-sizing: border-box; padding: 8px; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; font: inherit; resize: vertical; }
     #arena-feedback select { width: 100%; margin: 0 0 8px; padding: 7px; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; font: inherit; }
     #arena-feedback textarea + textarea { margin-top: 8px; }
@@ -1873,6 +1874,21 @@
       ln.className = 'fb-ln';
       try { ln.value = localStorage.getItem('arena.feedback.ln') || ''; } catch { /* this visit only */ }
       const lnOk = (v) => !v || /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(v) || /^lnurl1[02-9ac-hj-np-z]+$/i.test(v);
+      // THE ADDRESS CHECKED AS IT IS TYPED (Daniel 2026-11-10: "er sagt mir nicht das test@test.de keine valid lightning addresse ist"): 0.7 s after the last key the
+      // faucet asks the address's wallet (GET /feedback/lnaddress), and the line under it says whether it takes payments; Send waits while it is known not to
+      const lnSay = el('div', { cls: 'fb-lnsay', role: 'status' }); let lnBad = false, lnTimer = null, lnAsked = '';
+      const lnCheck = async () => { const v = ln.value.trim(); lnAsked = v;
+        if (!v) { lnBad = false; lnSay.textContent = ''; lnSay.className = 'fb-lnsay'; if (window.ARENA_FB_RECOUNT) window.ARENA_FB_RECOUNT(); return; }
+        if (!lnOk(v)) { lnBad = true; lnSay.textContent = 'That is not a Lightning address (name@wallet.com) or an LNURL.'; lnSay.className = 'fb-lnsay bad'; if (window.ARENA_FB_RECOUNT) window.ARENA_FB_RECOUNT(); return; }
+        lnSay.textContent = 'Checking the address …'; lnSay.className = 'fb-lnsay';
+        let r = null; try { r = await (await fetch(feedbackUrl() + '/lnaddress?a=' + encodeURIComponent(v), { signal: AbortSignal.timeout(12000) })).json(); } catch { r = null; }
+        if (lnAsked !== v) return;
+        if (r && r.ok) { lnBad = false; lnSay.textContent = '✓ This Lightning address takes payments.'; lnSay.className = 'fb-lnsay good'; }
+        else if (r && r.why && !/not asked from the page|too many checks/.test(r.why)) { lnBad = true; lnSay.textContent = 'This Lightning address does not work: ' + r.why + '.'; lnSay.className = 'fb-lnsay bad'; }
+        else { lnBad = false; lnSay.textContent = ''; lnSay.className = 'fb-lnsay'; }
+        if (window.ARENA_FB_RECOUNT) window.ARENA_FB_RECOUNT(); };
+      ln.addEventListener('input', () => { clearTimeout(lnTimer); lnTimer = setTimeout(lnCheck, 700); });
+      if (ln.value.trim()) setTimeout(lnCheck, 300);
       const me = myPubkey();
       const tick = el('label', { cls: 'badge' }, el('input', { type: 'checkbox' }), el('span', { text: ' Send my public key for the Founding Tester badge' }));
       tick.hidden = true;   // THE FOUNDING TESTER BADGE OFF FOR NOW (Daniel 2026-11-10: "Remove the tester badge for now")
@@ -1910,9 +1926,10 @@
         const c = d.querySelector('.card'); if (c) c.style.maxHeight = Math.max(240, h - 24) + 'px'; };
       if (window.visualViewport) { visualViewport.addEventListener('resize', fitFeedback); visualViewport.addEventListener('scroll', fitFeedback); }
       requestAnimationFrame(fitFeedback);
-      d.append(el('div', { cls: 'card' }, el('h3', { text: 'Feedback' }), el('p', { text: 'Sent: your words, the game and this page\'s debug log (order steps, balance). Never your seed or key.' }), type, t, count, x, ln, shotRow, tick, say, levels, el('div', { cls: 'row' }, mineBtn, off, send)));
+      d.append(el('div', { cls: 'card' }, el('h3', { text: 'Feedback' }), el('p', { text: 'Sent: your words, the game and this page\'s debug log (order steps, balance). Never your seed or key.' }), type, t, count, x, ln, lnSay, shotRow, tick, say, levels, el('div', { cls: 'row' }, mineBtn, off, send)));
       const LEAST = 50;
-      const recount = () => { const n = t.value.trim().length; count.textContent = n < LEAST ? (LEAST - n) + ' more characters' : n + ' characters'; count.className = 'fb-count' + (n < LEAST ? ' short' : ''); send.disabled = n < LEAST; };
+      const recount = () => { const n = t.value.trim().length; count.textContent = n < LEAST ? (LEAST - n) + ' more characters' : n + ' characters'; count.className = 'fb-count' + (n < LEAST ? ' short' : ''); send.disabled = n < LEAST || lnBad; };
+      window.ARENA_FB_RECOUNT = recount;
       t.addEventListener('input', recount); recount();
       const shrink = (file) => new Promise((ok, no) => {
         if (file.size <= 1400000) return ok(file);

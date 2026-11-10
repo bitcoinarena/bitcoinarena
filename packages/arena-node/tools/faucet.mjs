@@ -28,6 +28,7 @@ import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks } from '../src/feedback-store.js';
+const LN_ASKS = new Map();   // ip -> times it asked GET /feedback/lnaddress (kanban #1342)
 import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync, statfsSync } from 'node:fs';
 import { PLAYER_GRANTS } from '../src/faucet.js';
 const PLAYER_WELCOME_SATS = PLAYER_GRANTS.welcome.invoiceSats;
@@ -367,7 +368,7 @@ createServer((req, res) => {
     if (!isAdmin(req)) return send(403, { ok: false, why: 'not the admin code' });
     const q = new URL(req.url, 'http://x').searchParams;
     const withReward = (r, ours) => { const w = FEEDBACK.rewards({ pubkey: r.pubkey }).find((x) => x.report === r.id);
-      return { ...r, ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
+      return { ...r, ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), rounds: PLAYED.history ? PLAYED.history(r.pubkey) : null, reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
     if (path === '/feedback/admin/list' && req.method === 'GET') {
       PLAYED.fresh().catch(() => 0).then(() => { const ours = ourKeys();
         send(200, { ok: true, reports: FEEDBACK.list({ state: q.get('state'), type: q.get('type'), game: q.get('game'), pubkey: q.get('pubkey'), source: q.get('source') }).map((r) => withReward(r, ours)), budget: FEEDBACK.budget({ rules: RULES }),
@@ -489,6 +490,16 @@ createServer((req, res) => {
   }
   // THE REWARD TABLE (kanban #1342, Daniel 2026-11-08): the levels the form shows are the ones approve pays from - one source; public, no amounts
   // are promised while the bounty is off (the page shows the table only in its bounty build)
+  // THE BOUNTY ADDRESS CHECKED WHILE IT IS TYPED (Daniel 2026-11-10: "er sagt mir nicht das test@test.de keine valid lightning addresse ist"): the same
+  // check a report's address gets at Send (lnAddressWorks), asked by the dialog - only from the page's own origin, at most 30 an IP in 10 minutes
+  if (path === '/feedback/lnaddress' && req.method === 'GET') {
+    if (!BOUNTY_ORIGINS.includes(String(req.headers.origin || ''))) return send(200, { ok: false, why: 'not asked from the page' });
+    const ip = String(req.headers['x-arena-ip'] || req.socket.remoteAddress || ''), now = Date.now();
+    const seen = (LN_ASKS.get(ip) || []).filter((t) => now - t < 600000); if (seen.length >= 30) return send(200, { ok: false, why: 'too many checks - it is checked again at Send' });
+    seen.push(now); LN_ASKS.set(ip, seen); if (LN_ASKS.size > 5000) LN_ASKS.delete(LN_ASKS.keys().next().value);
+    lnAddressWorks(String(new URL(req.url, 'http://x').searchParams.get('a') || '').slice(0, 200)).then((w) => send(200, { ok: !!w.ok, why: w.ok ? null : w.why }), (e) => send(200, { ok: false, why: String((e && e.message) || e).slice(0, 120) }));
+    return;
+  }
   if (path === '/feedback/rewards' && req.method === 'GET') {
     // the amounts only toward the private page's origin (Daniel 2026-11-07: "Den bounty Funktion ausmachen bis ich es sage und nur auf einer privaten URL aktivieren")
     if (!(bountyOn() && BOUNTY_ORIGINS.includes(String(req.headers.origin || '')))) return send(200, { ok: true, on: false });

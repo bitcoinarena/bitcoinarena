@@ -108,7 +108,9 @@
     show(true); budget(j.budget); if (Array.isArray(j.levels)) LEVELS = j.levels;
     const tb = $('rows'); tb.replaceChildren();
     for (const r of j.reports) {
-      const who = el('td', {}, el('code', { text: `${r.pubkey.slice(0, 12)}…` }), el('div', { cls: r.ours ? 'warn' : r.played ? 'dim' : 'bad', text: r.ours ? 'ours' : r.played ? 'has played before' : 'never finished a round' }));
+      const who = el('td', {}, el('code', { text: `${r.pubkey.slice(0, 12)}…` }), el('div', { cls: r.ours ? 'warn' : r.played ? 'dim' : 'bad', text: r.ours ? 'ours' : r.played ? 'has played before' : 'never finished a round' }),
+        // HOW MUCH AND WHAT (Daniel 2026-11-10: "wieviel runden der spieler gemacht hat und welche apps er genutzt hat")
+        r.rounds && r.rounds.rounds ? el('div', { cls: 'dim', text: `${r.rounds.rounds} rounds · ${r.rounds.games.map(([g, n]) => `${g} ${n}`).join(', ')}` }) : null);
       // FRONTEND OR NODE (Daniel 2026-11-07: "in der admin ui wird angezeigt ob es frontend oder node war")
       const from = el('td', {}, el('span', { cls: `tag ${r.source === 'node' ? 's-accepted' : 's-new'}`, text: r.source === 'node' ? 'node' : 'frontend' }), r.node ? el('div', {}, el('code', { text: `${r.node.slice(0, 10)}…` })) : null);
       const tr = el('tr', { cls: 'pick' }, el('td', {}, el('b', { text: r.label || '' }), el('div', { cls: 'dim', text: when(r.receivedMs) })), from,
@@ -130,10 +132,12 @@
     d.append(el('h2', { text: `${r.label ? `${r.label} · ` : ''}${r.type} · ${r.state}${r.severity ? ` · ${r.severity}` : ''}${r.ticket ? ` · ${r.ticket}` : ''}` }),
       el('div', { cls: 'dim', text: `Received ${when(r.receivedMs)} · from the ${r.source === 'node' ? 'node' : 'frontend'} · game ${r.game || 'none'} · round ${r.round || 'none'} · build ${r.build || 'none'}` }),
       r.node ? el('div', { cls: 'dim' }, el('span', { text: 'Node ' }), el('code', { text: r.node })) : null,
+      r.rounds ? el('div', { cls: 'dim', text: r.rounds.rounds ? `Played ${r.rounds.rounds} round${r.rounds.rounds === 1 ? '' : 's'} in the last ${r.rounds.days} days: ${r.rounds.games.map(([g, n]) => `${g} ${n}`).join(', ')}` : `No finished round in the last ${r.rounds.days} days` }) : null,
       el('div', { cls: 'dim' }, el('span', { text: 'Player ' }), el('code', { text: r.pubkey }), el('span', { cls: r.ours ? 'warn' : r.played ? '' : 'bad', text: r.ours ? ' · ours, never paid' : r.played ? ' · this key has finished a round before (any game, any time) - so it may be rewarded' : ' · this key never finished a round on the network - no reward' })),
       el('h2', { text: 'What happened' }), el('pre', { text: r.happened }), r.expected ? el('h2', { text: 'Expected' }) : null, r.expected ? el('pre', { text: r.expected }) : null,
       // THE CLIENT'S DEBUG (kanban #1391): the page's order, steps, wallet, lobby and console as the report carried them
-      r.debug ? el('h2', { text: 'Client debug' }) : null, r.debug ? el('pre', { text: r.debug, style: 'max-height:480px;overflow:auto;font-size:12px' }) : null);
+      // FOLDED AWAY (Daniel 2026-11-10: "Mach den Client debug in einem accordion so dass ich ihn nicht sehe"): opened by a click on its line
+      r.debug ? el('details', { cls: 'debug' }, el('summary', { text: `Client debug (${Math.round(r.debug.length / 100) / 10}k characters)` }), el('pre', { text: r.debug, style: 'max-height:480px;overflow:auto;font-size:12px' })) : null);
     // THE SCREENSHOT, fetched with the admin code (the faucet serves it to nobody else) and shown from its bytes
     if (r.screenshot) { const box = el('div', {}, el('h2', { text: 'Screenshot' })); d.append(box);
       fetch(`${API}/screenshot/${r.screenshot}`, { headers: { 'x-arena-admin': code } }).then((x) => (x.ok ? x.blob() : null)).then((b) => {
