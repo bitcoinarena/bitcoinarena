@@ -176,6 +176,8 @@ import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
 import { DrawnAttestor } from './drawn-attestor.js';
 import { relaySweep, createAuditDesk, agreedRunsOf, forwardDigest } from './audit-seat.js';
 import { createH2hAuditDesk, h2hAgreedResultsOf, h2hForwardDigest } from './h2h-audit-desk.js';
+import { H2hAuditor, h2hAuditorNet } from './h2h-auditor.js';
+import { sandboxFor as h2hSandboxFor } from './core-sandbox.js';
 import { decodeH2hAudit, h2hFinality } from '../../arena-protocol/src/h2h-audit.js';
 import { RoundAuditor, auditorNet } from './round-auditor.js';
 import { buildObjectionBundle } from './objection-bundle.js';
@@ -3511,6 +3513,40 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     };
     if (every > 0) { const t = setInterval(() => { sweep().catch(() => {}); }, every); if (t.unref) t.unref(); }
   }
+  // THIS NODE AS AN AUDITOR OF HEAD-TO-HEAD ROUNDS (§13A.1 RULED 2026-11-10, kanban #1412): every 3 s, the head-to-head rounds on the short window it holds
+  // and is not seated in, from their PROVISIONALLY_FINAL (the window's start) to the window's close; drawn (five expected), it checks the moves itself
+  // and posts an H2H_AUDIT to every seat's POST /h2h-audit - two of those in time make the round FINAL at 60 s (finality.js, the gate)
+  const h2hDue = () => {
+    const now = round.now(), out = [];
+    for (const r of round.db.prepare('SELECT round_id, contract FROM rounds WHERE opened_ms > ?').all(now - 3600000)) {
+      let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
+      if (!h2hShortRound(c)) continue;
+      const rid = new Uint8Array(r.round_id);
+      let w; try { w = windowsOf(c); } catch { continue; }
+      const startMs = Number(w.closeMs) - Number(c.objectionWindowMs);
+      if (now < startMs || now > Number(w.closeMs) || seatOf(rid)) continue;
+      if (!auditSetFor(rid)) continue;
+      out.push({ roundId: rid, closeMs: Number(w.closeMs) });
+    }
+    return out;
+  };
+  const h2hNet = h2hAuditorNet({ seatsFor: auditSeats, committeeFor: committeeOfRound, contractOf: contractOfRound, decodeEntry: decodeEntryContract,
+    revealWindowOf: (c) => BigInt(roundEndMs(c)) - c.entryCloseMs,
+    decideFor: (rid) => { const c = contractOfRound(rid); const f = c ? pluginForRound(c, hosted) : null; if (!f || !f.ok || f.headToHead !== true || !f.core) return null;
+      let box; try { box = h2hSandboxFor(f.core); } catch { return null; }
+      if (!box || !box.meta || !box.meta.decide) return null;
+      return { decide: (moves, config) => box.call('decide', { moves, config }), config: f.config, moveCount: f.plugin.manifest.moveCount, players: f.plugin.manifest.players }; } });
+  const h2hAuditor = new H2hAuditor({
+    selfKey: round.pubkey, prove: (alpha) => auditVrf.prove(vrfSecretFor(round.identity.secret, secp256k1.Point), alpha),
+    outputOf: (pi) => auditVrf.proofToHash(pi), sign: (d) => schnorr.sign(d, round.identity.secret), due: h2hDue, eligibleFor: auditSetFor,
+    ...h2hNet, now: () => round.now(), log: (m) => console.log(m) });
+  let h2hPassing = false;
+  const h2hTimer = Number(auditOpts.h2hEveryMs ?? 3000) > 0 ? setInterval(() => {
+    if (h2hPassing || shuttingDown) return;
+    h2hPassing = true;
+    h2hAuditor.pass().catch((e) => console.log(`[h2h-audit] pass: ${e.message}`)).finally(() => { h2hPassing = false; });
+  }, Number(auditOpts.h2hEveryMs ?? 3000)) : null;
+  if (h2hTimer && h2hTimer.unref) h2hTimer.unref();
   let auditPassing = false;
   const auditTimer = Number(auditOpts.everyMs ?? 10000) > 0 ? setInterval(() => {
     if (auditPassing || shuttingDown) return;
@@ -10941,7 +10977,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!round.get(id)) return text(res, 404, 'this node holds no such round');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ round: toHex(id), reveals: round.revealsOf(new Uint8Array(id))
-          .map((r) => { const who = round.identityOf(r.entryId); return { entry: toHex(r.entryId), move: r.move, salt: toHex(r.salt),
+          // when this seat took each (kanban #1412: a head-to-head auditor checks it against the reveal window)
+          .map((r) => { const who = round.identityOf(r.entryId); return { entry: toHex(r.entryId), move: r.move, salt: toHex(r.salt), receivedMs: r.receivedMs,
             ...(who ? { identity: { key: toHex(who.identity), sig: toHex(who.sig) } } : {}) }; }) }));
       }
 
