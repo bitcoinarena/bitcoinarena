@@ -32,6 +32,22 @@ export const ownerSecretFromSeed = (seed) => taggedHash(OWNER_KEY_TAG, seed);
 export const NOSTR_SEED_TAG = 'arena/nostr-node-seed/v1';
 export const nodeSeedFromNsecSecret = (secret) => taggedHash(NOSTR_SEED_TAG, secret);
 
+// THE NODE'S OWN WORD ON ITS OWNER (audit 6, kanban #1418): GET /owner answers it signed with the node's identity key, so a reader that finds it at any
+// seat checks it came from that node - before, the node bounty's checklist took an unsigned answer from whichever listed seat named the node, and
+// a seat of one's own could name itself the owner of someone else's node
+export const OWNER_STATEMENT_TAG = 'arena/owner-statement/v1';
+/** What the node signs about its owner: [node key hex, owner key hex or '', atMs] as JSON, tagged. */
+export const ownerStatementMessage = ({ node, owner, atMs }) =>
+  taggedHash(OWNER_STATEMENT_TAG, utf8Encode(JSON.stringify([String(node).toLowerCase(), String(owner || '').toLowerCase(), Number(atMs)])));
+
+// THE NODE'S OWN WORD ON ITS OWNER (audit 6, kanban #1418): GET /owner answers it signed with the node's identity key, so a reader that finds it at any
+// seat checks it came from that node - before, the node bounty's checklist took an unsigned answer from whichever listed seat named the node, and
+// a seat of one's own could name itself the owner of someone else's node
+export const OWNER_STATEMENT_TAG = 'arena/owner-statement/v1';
+/** What the node signs about its owner: [node key hex, owner key hex or '', atMs] as JSON, tagged. */
+export const ownerStatementMessage = ({ node, owner, atMs }) =>
+  taggedHash(OWNER_STATEMENT_TAG, utf8Encode(JSON.stringify([String(node).toLowerCase(), String(owner || '').toLowerCase(), Number(atMs)])));
+
 /** What the owner signs: [node key hex, action, args, atMs] as JSON, tagged. */
 export const ownerMessage = ({ node, action, args = {}, atMs }) =>
   taggedHash(OWNER_MESSAGE_TAG, utf8Encode(JSON.stringify([String(node), String(action), args, Number(atMs)])));
