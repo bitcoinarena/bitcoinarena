@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ONE-TIME MOVE FROM blwp.* TO arena.*. The page's keys were renamed from blwp.* to arena.*; a browser
 // that played before keeps its seed, its kept phrases, its vault and its wallet only if they move before anything reads
-// them. This runs the very script the page ships (index.html, <script id="arena-storage-move">, the first script there)
+// them. This runs the very script the page ships (index.html, <script id="arena-storage-move">, the first script there that touches storage)
 // against a browser filled the old way, then reads that browser back through the client's own readers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -52,10 +52,21 @@ function oldBrowser() {
   return { local, session };
 }
 
-test('the move is the first script on the page, before anything reads a key', () => {
+test('the move runs before anything reads a key: only the console recorder, which touches no storage, comes before it', () => {
   assert.ok(MOVE, 'index.html has no <script id="arena-storage-move">');
-  const first = PAGE.indexOf('<script');
-  assert.equal(first, PAGE.indexOf('<script id="arena-storage-move">'), 'another script runs before the move');
+  // THE CONSOLE RECORDER RUNS FIRST ON PURPOSE (kanban #1391, a764e17f3, Daniel 2026-11-10: "Add as much debug as possible from the client in
+  // the feedback session" - "a console recorder from the page's first line"), so that every line after it, the move's too, reaches a report.
+  // What the move needs is that nothing READS A KEY before it (kanban #1415): every script before it is inline, loads nothing, and names
+  // no storage at all.
+  const at = PAGE.indexOf('<script id="arena-storage-move">');
+  const before = [...PAGE.slice(0, at).matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)];
+  assert.equal(PAGE.slice(0, at).split('<script').length - 1, before.length, 'a script before the move is not closed before it');
+  assert.ok(before.length <= 1, `${before.length} scripts run before the move`);
+  for (const [, attrs, body] of before) {
+    assert.equal(/\bsrc\s*=/.test(attrs), false, `a loaded script runs before the move: <script${attrs}>`);
+    assert.match(body, /ARENA_CONSOLE_TAIL/, 'the script before the move is not the console recorder');
+    assert.equal(/localStorage|sessionStorage|indexedDB|\bblwp\.|\barena\.[a-z]/i.test(body), false, 'a script before the move names the browser\'s storage');
+  }
 });
 
 test('an old browser keeps its seed, its kept phrases, its vault and its wallet under arena.*', () => {

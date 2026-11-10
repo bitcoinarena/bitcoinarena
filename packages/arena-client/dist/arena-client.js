@@ -1350,6 +1350,25 @@ const OBJECTION_WINDOW_REFERENCE_MS = 600000n;
  * objection_window_W is anything else is invalid. It replaces the six-hour cap (MAX_OBJECTION_WINDOW_MS, withdrawn).
  */
 const OBJECTION_WINDOW_MS = 600_000n;
+/**
+ * §13A'S ONE EXCEPTION, HEAD-TO-HEAD ROUNDS (RULED 2026-11-10, kanban #1398): a head-to-head round's result is a pure function of two
+ * signed commitments and two signed reveals, so its window is 60 s (`objection_window_h2h`), 5 s on a regtest; replayed games keep 600 s.
+ * A contract may name one of these; which one its round may name is its game's kind, checked where the game is known (objectionWindowFits).
+ */
+const OBJECTION_WINDOW_H2H_MS = 60_000n;
+const OBJECTION_WINDOW_H2H_REGTEST_MS = 5_000n;
+/** A window some round may name: 600 s, or a head-to-head round's 60 s (5 s on a regtest). */
+const objectionWindowAllowed = (w) => w === OBJECTION_WINDOW_MS || w === OBJECTION_WINDOW_H2H_MS || w === OBJECTION_WINDOW_H2H_REGTEST_MS;
+/**
+ * The window a round of this kind may name: a replayed game exactly 600 s; a head-to-head game its short window (60 s, a regtest's 5 s) - or
+ * 600 s, as every head-to-head round published before the ruling names. `regtest`: the contract names the regtest network.
+ */
+function objectionWindowFits(w, { headToHead = false, regtest = false } = {}) {
+  if (w === OBJECTION_WINDOW_MS) return { ok: true };
+  if (!headToHead) return { ok: false, why: `that round's objection window is ${w} ms; a replayed game's is exactly ${OBJECTION_WINDOW_MS} ms (§13A)` };
+  const short = regtest ? OBJECTION_WINDOW_H2H_REGTEST_MS : OBJECTION_WINDOW_H2H_MS;
+  return w === short ? { ok: true } : { ok: false, why: `that round's objection window is ${w} ms; a head-to-head game's is ${short} ms or ${OBJECTION_WINDOW_MS} ms (§13A, kanban #1398)` };
+}
 /** The clock tolerance (§13A, RULED with WINDOW-10-SPEC): a seat signs FINAL at window close + 5 s, and counts a signed time only within 5 s of its own clock. */
 const FINAL_TOLERANCE_MS = 5_000n;
 
@@ -2746,7 +2765,8 @@ function roundWindowsAreValid(c) {
   // entry for it." The field was contract-defined with a 10-minute reference and a 6-hour cap; neither stands.
   if (typeof c.objectionWindowMs !== 'bigint')
     return { ok: false, opensAt, why: 'that round names no objection window, so nothing says when a result may become final' };
-  if (c.objectionWindowMs !== OBJECTION_WINDOW_MS)
+  // ...OR A HEAD-TO-HEAD ROUND'S 60 s (5 s on a regtest; RULED 2026-11-10, kanban #1398) - which one a round may name is its game's, checked by a node that holds it
+  if (!objectionWindowAllowed(c.objectionWindowMs))
     return {
       ok: false,
       opensAt,
@@ -5049,7 +5069,8 @@ function roundEndMs(contract) {
 /** All of a round's window instants (BigInt ms), from its contract alone. */
 function windowsOf(contract) {
   const end = roundEndMs(contract);
-  const W = OBJECTION_WINDOW_MS;
+  // THE CONTRACT'S OWN WINDOW (kanban #1398): 600 s, or a head-to-head round's 60 s (5 s on a regtest); one it may not name counts as 600 s
+  const W = typeof contract.objectionWindowMs === 'bigint' && objectionWindowAllowed(contract.objectionWindowMs) ? contract.objectionWindowMs : OBJECTION_WINDOW_MS;
   const T = FINAL_TOLERANCE_MS;
   return {
     openMs: end,
@@ -6252,7 +6273,17 @@ const previousHashOf = (h) => header(h).slice(4, 36);
 const merkleRootOf = (h) => header(h).slice(36, 68);
 
 /** A block's own id: the double hash of its 80 bytes. */
-const blockHashOf = (h) => hash256(header(h));
+// A HEADER'S HASH AND ITS WORK CHECK ONCE (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; profiled on live UI 602: 6 s of every minute
+// of an RPS page went to SHA-256 in JS - every chain read checked the same headers again, two double hashes each): kept by the header's 80 bytes, the
+// oldest let go past HASHED_MAX; the hash handed out as a copy, since a caller may reverse it in place
+const HASHED = new Map(), HASHED_MAX = 50000;
+const hashedOf = (b) => {
+  const k = String.fromCharCode.apply(null, b);
+  let e = HASHED.get(k);
+  if (!e) { e = { hash: hash256(b), meets: undefined }; if (HASHED.size >= HASHED_MAX) HASHED.delete(HASHED.keys().next().value); HASHED.set(k, e); }
+  return e;
+};
+const blockHashOf = (h) => hashedOf(header(h)).hash.slice();
 
 /**
  * The time a header claims, from bytes 68..72, LITTLE-ENDIAN and in SECONDS.
@@ -6302,11 +6333,13 @@ function targetOf(h) {
  * so it is the REVERSED bytes that must come out below the target.
  */
 function meetsTarget(h) {
+  const e = hashedOf(header(h));
+  if (e.meets !== undefined) return e.meets;
   const target = targetOf(h);
-  if (target <= 0n) return false;
-  let value = 0n;
-  for (const b of blockHashOf(h).reverse()) value = (value << 8n) | BigInt(b);
-  return value <= target;
+  let ok = false;
+  if (target > 0n) { let value = 0n; for (let i = 31; i >= 0; i--) value = (value << 8n) | BigInt(e.hash[i]); ok = value <= target; }
+  e.meets = ok;
+  return ok;
 }
 
 /**
@@ -14028,6 +14061,7 @@ function claimKeyIsAttested({ roundId, claimPk, signatures, signerNodes, settlem
 
 
 
+
 /**
  * THE ENTRY FEE A ROUND CHARGES, as this page knows it: the rate the page set on the round (an unpinned market the
  * player confirmed - its manifest's), else the pinned game's, else the network's 5 %. A MARKET'S IS ITS NODE FEE AND ITS
@@ -14164,8 +14198,10 @@ async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
       }
       // §13A, WINDOW-10-SPEC (RULED 2026-10-01): a round whose objection window is not exactly 600 000 ms is
       // invalid - the page lists it nowhere and joins it never, whatever a node answers.
-      if (contract.objectionWindowMs !== OBJECTION_WINDOW_MS)
-        throw new Error(`round ${id} names an objection window of ${contract.objectionWindowMs} ms, not ${OBJECTION_WINDOW_MS}: that contract is invalid and the page does not join it`);
+      // ...OR A HEAD-TO-HEAD ROUND'S 60 s (5 s on a regtest; §13A RULED 2026-11-10, kanban #1398). Audit 5 (#1399): this read still refused anything
+      // but 600 s, so a day of 60 s RPS rounds would have left the page with no round to list or join
+      if (!objectionWindowAllowed(contract.objectionWindowMs))
+        throw new Error(`round ${id} names an objection window of ${contract.objectionWindowMs} ms, not one a round may name (${OBJECTION_WINDOW_MS} ms, or a head-to-head round's): that contract is invalid and the page does not join it`);
       ROUNDS_KEPT.set(id, { contract, from: node });
       if (ROUNDS_KEPT.size > ROUNDS_KEPT_MAX) ROUNDS_KEPT.delete(ROUNDS_KEPT.keys().next().value);
       return { contract, from: node, refused };
@@ -15501,10 +15537,17 @@ function noteInvite(invite) {
 }
 
 /** A seat's signed federation record (hex), verified or not: its invite's guardians are noted. */
+// A RECORD NOTED ONCE (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; profiled on stage UI 603: 1.75 s of every minute of an RPS page
+// decoded the same signed records again - each seat's, each federation's, on every read): a record already noted is not decoded again
+const NOTED_RECORDS = new Set();
 function noteRecordInvite(recordHex) {
+  const k = String(recordHex);
+  if (NOTED_RECORDS.has(k)) return true;
   try {
-    const bytes = Uint8Array.from(String(recordHex).match(/../g).map((x) => parseInt(x, 16)));
-    return noteInvite(splitSignedRecord(bytes).record.invite);
+    const bytes = Uint8Array.from(k.match(/../g).map((x) => parseInt(x, 16)));
+    const ok = noteInvite(splitSignedRecord(bytes).record.invite);
+    if (ok) { if (NOTED_RECORDS.size >= 2000) NOTED_RECORDS.clear(); NOTED_RECORDS.add(k); }
+    return ok;
   } catch { return false; }
 }
 
@@ -15520,7 +15563,7 @@ function wholeInvite(invite) {
   try { return inviteForGuardians(id, guardians); } catch { return null; }
 }
 
-const forgetGuardianInvites = () => seen.clear();   // tests
+const forgetGuardianInvites = () => { seen.clear(); NOTED_RECORDS.clear(); };   // tests
 
 // ---- arena-client/src/lock-result.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
@@ -16662,6 +16705,9 @@ function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, co
   if (unspentMsat < 0n) return refuse('the payouts and their fees come to more than the claimed locks pay for');
   return { ok: true, nothing: false, claims: claims.sort(byOutpoint), payouts: payouts.sort(byPayoutPk), unpaid, forfeits: [],
     nonce: settlementNonce(roundId), stakeWhy: null, poolMsat, inputFeesMsat, spendableMsat, paidMsat, outputFeesMsat, unspentMsat,
+    // ONE POT (kanban #1438): every line above is paid out of the stake and fee locks together, so a round that takes any
+    // federation splits them as one part (federation-settlement.js splitByFederation), never by `signerNodePayouts`
+    onePot: true,
     book: { claimed: table.claimed.length, feesDueMsat: table.feesDueMsat, nodesMsat, giftMsat, reserveMsat, websitesMsat: sites.totalMsat },
     // WHAT IT PAID EACH WINNER (measured 2026-10-17: the Up/Down season read 0 wins and a whole loss for every order -
     // a book claims every filled lock, the winners' too, and kept no shares, so a season read 0 paid): each qualifier's out, by its
@@ -17553,6 +17599,7 @@ async function openPlayerWallet({ federationId, invite, seed, LockClient, storag
     new Promise((_, no) => { timer = setTimeout(() => no(new Error(`the federation did not open the player wallet in ${Math.round(joinWaitMs / 1000)} s - press PLAY again`)), joinWaitMs); }),
   ]).finally(() => clearTimeout(timer));
   joining.then((c) => noteClientFederation(c, toHex(round.federationId)), () => {});
+  joining.then((c) => { try { feedTweaks(c); } catch { /* the lock client grinds its own */ } }, () => {});
   if (byStore) {
     const m = open || new Map(); if (!open) byStore.set(storage, m);
     m.set(key, joining);
@@ -17560,6 +17607,34 @@ async function openPlayerWallet({ federationId, invite, seed, LockClient, storag
     if (seed instanceof Uint8Array) { const ph = toHex(seed).slice(0, 16); if (!phraseWallets.has(ph)) phraseWallets.set(ph, []); phraseWallets.get(ph).push({ map: m, key }); }
   }
   return joining;
+}
+
+// TWEAKS GROUND ON EVERY CORE (kanban #1391, Daniel 2026-11-09: "Yes fork it", "Make sure it is everything fast"): a new wallet's first locks waited
+// 18-37 s for change-note tweaks - the lock client grinds them on the page's one wasm thread, about one a second, and a lock takes 7-22. Web Workers
+// grind them here (one SHA-256 block each; 18.6 a second a core measured on the Beelink) and hand them to the lock client (addTweaks), which checks
+// each against the wallet's own filter before it takes it. They stop at `high` ready and start again under `low`; `high` is the queue's whole 256, so the
+// lock client's own grinder - SHA-256 on the page's one thread, 1.84 s a minute profiled on stage UI 604 - waits on a full queue. A client without addTweaks: nothing.
+const TWEAK_WORKER_SRC = "// the worker body (kanban #1391): grinds tweaks that pass SHA-256(tweak || filter)[0..2] == 0, one compression each\nconst K = new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);\nlet F = null, on = false, running = false;\nconst W = new Uint32Array(64), t = new Uint32Array(4);\nconst hex8 = (x) => (x >>> 0).toString(16).padStart(8, '0');\nfunction first(w0, w1, w2, w3) {\n  W[0] = w0; W[1] = w1; W[2] = w2; W[3] = w3;\n  for (let i = 16; i < 64; i++) {\n    const a = W[i - 15], b = W[i - 2];\n    const s0 = ((a >>> 7) | (a << 25)) ^ ((a >>> 18) | (a << 14)) ^ (a >>> 3);\n    const s1 = ((b >>> 17) | (b << 15)) ^ ((b >>> 19) | (b << 13)) ^ (b >>> 10);\n    W[i] = (W[i - 16] + s0 + W[i - 7] + s1) | 0;\n  }\n  let A = 0x6a09e667, B = 0xbb67ae85, C = 0x3c6ef372, D = 0xa54ff53a, E = 0x510e527f, G = 0x9b05688c, H = 0x1f83d9ab, I = 0x5be0cd19;\n  for (let i = 0; i < 64; i++) {\n    const S1 = ((E >>> 6) | (E << 26)) ^ ((E >>> 11) | (E << 21)) ^ ((E >>> 25) | (E << 7));\n    const t1 = (I + S1 + ((E & G) ^ (~E & H)) + K[i] + W[i]) | 0;\n    const S0 = ((A >>> 2) | (A << 30)) ^ ((A >>> 13) | (A << 19)) ^ ((A >>> 22) | (A << 10));\n    const t2 = (S0 + ((A & B) ^ (A & C) ^ (B & C))) | 0;\n    I = H; H = G; G = E; E = (D + t1) | 0; D = C; C = B; B = A; A = (t1 + t2) | 0;\n  }\n  return (A + 0x6a09e667) >>> 0;\n}\nfunction grind(ms) {\n  const found = [];\n  const until = Date.now() + ms;\n  while (Date.now() < until) {\n    crypto.getRandomValues(t);\n    for (let n = 0; n < 65536; n++) {\n      const w3 = (t[3] + n) >>> 0;\n      if ((first(t[0], t[1], t[2], w3) >>> 16) === 0) found.push(hex8(t[0]) + hex8(t[1]) + hex8(t[2]) + hex8(w3));\n    }\n  }\n  return found;\n}\nfunction loop() {\n  if (!on || !F) { running = false; return; }\n  running = true;\n  const found = grind(150);\n  if (found.length) postMessage(found);\n  setTimeout(loop, 0);\n}\nonmessage = (e) => {\n  const d = e.data || {};\n  if (d.filter) { F = d.filter; for (let i = 0; i < 8; i++) W[4 + i] = parseInt(F.slice(8 * i, 8 * i + 8), 16) | 0; W[12] = 0x80000000 | 0; W[13] = 0; W[14] = 0; W[15] = 384; }\n  if ('on' in d) on = !!d.on;\n  if (on && !running) loop();\n};\n";
+const tweakFed = new WeakSet();
+function feedTweaks(client, { WorkerCtor = globalThis.Worker, workers = null, high = 256, low = 200, everyMs = 500 } = {}) {
+  if (!client || typeof client.tweakFilter !== 'function' || typeof client.addTweaks !== 'function' || typeof client.tweaksReady !== 'function'
+    || typeof WorkerCtor !== 'function' || typeof Blob !== 'function' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function' || tweakFed.has(client)) return null;
+  tweakFed.add(client);
+  let filter; try { filter = String(client.tweakFilter()); } catch { return null; }
+  const n = workers || Math.max(1, Math.min(4, ((globalThis.navigator && navigator.hardwareConcurrency) || 2) - 1));
+  const url = URL.createObjectURL(new Blob([TWEAK_WORKER_SRC], { type: 'text/javascript' }));
+  const pool = []; let on = null, timer = null, taken = 0;
+  const stop = () => { clearInterval(timer); for (const w of pool) { try { w.terminate(); } catch { /* gone */ } } pool.length = 0; try { URL.revokeObjectURL(url); } catch { /* kept */ } };
+  const set = (v) => { if (v === on) return; on = v; for (const w of pool) w.postMessage({ on: v }); };
+  for (let i = 0; i < n; i++) {
+    let w; try { w = new WorkerCtor(url); } catch { break; }
+    w.onmessage = (e) => { try { taken += Number(client.addTweaks((e.data || []).join(''))) || 0; } catch { stop(); } };
+    w.postMessage({ filter }); pool.push(w);
+  }
+  if (!pool.length) { stop(); return null; }
+  const check = () => { let ready; try { ready = Number(client.tweaksReady()); } catch { stop(); return; } if (ready >= high) set(false); else if (ready < low) set(true); };
+  check(); timer = setInterval(check, everyMs);
+  return { workers: pool.length, taken: () => taken, stop };
 }
 
 /**
@@ -18147,7 +18222,7 @@ async function walletDepositOffer({ federationId, invite, seed, LockClient, stor
  * hash of the seed, so the faucet can pay a welcome once and learns no key. Throws naming why it gave nothing.
  */
 // THE TOP-UP IS 300 (kanban #1088, the owner 2026-11-03: "Get 300 sats, aus dem faucet. Im deposit auch 300. Bis zu 5x faucet am Tag"): the faucet pays it up to 5 times a day per account
-const FAUCET_GRANTS = Object.freeze({ welcome: { sats: 500, invoiceMsat: 500000n }, topup: { sats: 300, invoiceMsat: 300000n } });
+const FAUCET_GRANTS = Object.freeze({ welcome: { sats: 3000, invoiceMsat: 3000000n }, topup: { sats: 300, invoiceMsat: 300000n } });
 const faucetAccountOf = (seed) => toHex(taggedHash('arena/faucet/account/v1', seed instanceof Uint8Array ? seed : fromHex(String(seed))));
 // `ecash` (kanban #1381): the federation id in hex - the welcome comes as ready e-cash of that federation when the faucet holds some ({ ok, sats, ecash });
 // without an invoice and none ready, the answer is `noEcash` and nothing is given (the page then asks again with an invoice)
@@ -19646,6 +19721,20 @@ const COLLECT_NOTE = 'arena.collect.';
  * its id and name a federation. Nothing is spent. Returns the rounds worth keeping - the page
  * keeps them and looks at them as its own.
  */
+// A ROUND'S KEY FOR A PHRASE, DERIVED ONCE (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; profiled on live UI 604: 3.1 s of every minute
+// of an RPS page went to the curve here - every scan derived 33 keys for every settled round each signer node listed, the same rounds as the scan before):
+// kept by phrase, round and order; the oldest let go past OWED_KEYS_MAX
+const OWED_KEYS = new Map(), OWED_KEYS_MAX = 200000;
+const owedKeyOf = (seed, id, order, curve) => {
+  const k = toHex(seed) + id + ':' + order;
+  let v = OWED_KEYS.get(k);
+  if (v === undefined) {
+    v = toHex(refundKeyOf(playerFor({ id: fromHex(id) }, { seed, curve, order }).pubkey));
+    if (OWED_KEYS.size >= OWED_KEYS_MAX) OWED_KEYS.delete(OWED_KEYS.keys().next().value);
+    OWED_KEYS.set(k, v);
+  }
+  return v;
+};
 async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [], knownBySeed = null } = {}) {
   // EVERY SAVED PHRASE AT ONCE (2026-10-07): each signer node's /settled is read once and matched against
   // every phrase's keys - 7 asks on 7 signer nodes, not 7 per phrase. One `seed` (with `known`) is the one-phrase scan as before.
@@ -19675,7 +19764,7 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
       if (skips[i].has(id)) continue;
       // EVERY ORDER'S KEY TOO: a tab's orders in a market round are keyed 0, 1, 2 ... - read up to ORDER_SCAN (32: a bot places 12 a window)
       for (let order = 0; order <= ORDER_SCAN; order++) {
-      const mine = toHex(refundKeyOf(playerFor({ id: fromHex(id) }, { seed: list[i], curve, order }).pubkey));
+      const mine = owedKeyOf(list[i], id, order, curve);
       const payout = l.payouts.has(mine); const lock = l.refunds.has(mine);
       if (!payout && !lock) continue;
       if (!contracts.has(id)) {
@@ -23653,6 +23742,7 @@ function invoiceAnswersPayRequest({ invoice, amountMsat, metadata, network } = {
 
 
 
+
 /** The 64 bytes beside the object, as for every other signature in here. */
 const DONATION_SIGNATURE_BYTES = 64;
 
@@ -23923,6 +24013,13 @@ function authorityAt({
  * being IN FORCE without a signature to point at, and that is what this
  * returns `ok` for.
  */
+/**
+ * A NETWORK'S FIRST DONATION SET, BY ITS FOUNDING (audit 5, kanban #1407): the serial its chain of sets starts at - the authority's alone; a set
+ * below it is refused. testnet4's chain starts at serial 1 (the founding test set, then the LNURL set 2, then the key set 3). A network not
+ * named here starts at its lowest authority-signed serial, as before.
+ */
+const DONATION_FIRST_SERIAL = Object.freeze({ [toHex(NETWORK_ID_TESTNET4)]: 1n });
+
 function donationSetInForce({
   networkId, authority, recovery, sets = [], rotations = [], height, verify, approved = [],
 }) {
@@ -23968,13 +24065,28 @@ function donationSetInForce({
   }
   // A SET WHOSE RECIPIENTS CANNOT VOTE (an LNURL set: no recipient keys) is replaced by the authority alone - nobody holds a share_bps that
   // could approve, so the ruling's majority is over keys only: testnet4's key set (serial 3) replaced its LNURL set (serial 2) that way
-  const first = accepted.reduce((m, x) => (m === null || x.serial < m ? x.serial : m), null);
+  // THE CHAIN ACTUALLY IN FORCE (audit 5, kanban #1407; a regression of #1337, reproduced): `first` was the lowest serial the authority had
+  // signed and a set's parent was looked up among every authority-signed set, refused ones too - so the authority key alone could sign a
+  // serial below the live one (it became `first`, taken without approval) or an LNURL set at k (itself refused) and then any set at k+1
+  // (its "LNURL parent" let it pass). Now: a network's first set is its founding serial (DONATION_FIRST_SERIAL; testnet4 1) - a set below it
+  // is refused - and a set's parent is the last set IN FORCE below it, in serial order (two different sets at that serial: no parent).
   const listId = (r) => toHex(donationSetId(r));
-  const parentOf = (set) => accepted.filter((x) => x.serial < set.serial).reduce((m, x) => (m === null || x.serial > m.serial ? x : m), null);
+  const sorted = [...accepted].sort((x, y) => (x.serial < y.serial ? -1 : x.serial > y.serial ? 1 : 0));
+  const bodyIds = (serial) => new Set(sorted.filter((x) => x.serial === serial).map((x) => toHex(donationSetBodyId(x))));
   const both = [];
-  for (const set of accepted) {
-    if (set.serial === first) { both.push(set); continue; }
+  const parentOf = (set) => {
+    const below = both.filter((x) => x.serial < set.serial);
+    if (!below.length) return null;
+    const top = below.reduce((m, x) => (x.serial > m.serial ? x : m));
+    return bodyIds(top.serial).size === 1 ? top : null;   // two different sets at the parent's serial: no parent stands
+  };
+  const pinned = DONATION_FIRST_SERIAL[toHex(networkId)];
+  const firstSerial = pinned !== undefined ? pinned : (sorted.length ? sorted[0].serial : null);
+  for (const set of sorted) {
+    if (set.serial < firstSerial) { refused.push(`serial ${set.serial}: below the network's first donation set (serial ${firstSerial})`); continue; }
+    if (set.serial === firstSerial) { both.push(set); continue; }
     const parent = parentOf(set);
+    if (!parent) { refused.push(`serial ${set.serial}: no donation set in force below it - a change replaces the set in force`); continue; }
     if (parent && !donationSetPaysKeys(parent.recipients)) { both.push(set); continue; }
     const b = ballots.find((x) => x.serial === set.serial && listId(x.recipients) === listId(set.recipients));
     if (!b) { refused.push(`serial ${set.serial}: signed by the authority key alone - a change needs its recipients' approval too`); continue; }
@@ -24482,7 +24594,8 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
   const served = toHex(answers[0].bytes);
   if (answers.some((a) => toHex(a.bytes) !== served)) return { ok: false, why: 'the signer nodes of this round serve different donation sets' };
   // A SET ITS DEVELOPERS APPROVED (§27A.4.1): the nodes serve, as JSON, the admin key's set it replaces (signed,
-  // checked below as any set) and the proposals and approvals since; this page tallies them itself
+  // checked below as any set), the proposals and approvals since, and the admin key's signature over the approved set (`admin`, kanban
+  // #1337); this page tallies them itself
   let approval = null;
   let bytes = answers[0].bytes;
   if (bytes.length && bytes[0] === 0x7b) {
@@ -24528,9 +24641,25 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
       });
     } catch (e) { return { ok: false, why: `the developers' ballots served do not decode: ${e.message}` }; }
     const got = await approvedDonationSets({ networkId: round.networkId, known: [set], ballots, verifySecp256k1 });
-    const now = donationSetInForce({ networkId: round.networkId, authority: inForce.authority, recovery: networkKeys.recovery, sets: [set], rotations: [],
-      height: round.censusHeight, verify: (sig) => toHex(sig) === toHex(set.signature), approved: got.sets });
-    if (!now.ok || !now.approvedBy) return { ok: false, why: `the developers' approvals served do not make a set in force at the round's height${got.refused.length ? ': ' + got.refused[0] : ''}` };
+    // A CHANGE NEEDS BOTH KEYS (§27A.4.1 RULED 2026-11-07, kanban #1337, 8a94d6cbf: "the authority key alone moves nothing" - and the
+    // recipients alone neither): the approved serial is in force only beside the authority's signature over the same serial and recipients.
+    // The nodes hand it as `admin` (body + signature, like `root`), checked here against the authority in force; without it the approvals
+    // alone make no set in force, and this page used to refuse every approved split for that reason (kanban #1415).
+    const signedSets = [set];
+    if (typeof approval.admin === 'string') {
+      try {
+        const ab = fromHex(approval.admin);
+        if (ab.length > DONATION_SIGNATURE_BYTES) {
+          const admin = { ...decodeDonationSetBody(ab.slice(0, -DONATION_SIGNATURE_BYTES)), signature: ab.slice(-DONATION_SIGNATURE_BYTES) };
+          if (await verifyEd25519(admin.signature, donationSetBodyId(admin), inForce.authority) === true) signedSets.push(admin);
+        }
+      } catch { /* not a signed set: the approvals alone, refused below */ }
+    }
+    const signedSigs = new Set(signedSets.map((x) => toHex(x.signature)));
+    const now = donationSetInForce({ networkId: round.networkId, authority: inForce.authority, recovery: networkKeys.recovery, sets: signedSets, rotations: [],
+      height: round.censusHeight, verify: (sig) => signedSigs.has(toHex(sig)), approved: got.sets });
+    const said = [...got.refused, ...now.refused];
+    if (!now.ok || !now.approvedBy) return { ok: false, why: `the developers' approvals served do not make a set in force at the round's height${said.length ? ': ' + said[0] : ''}` };
     const named = donationSetMatchesRound(round, now.recipients);
     if (!named.ok) return { ok: false, why: named.why };
     set = { networkId: set.networkId, serial: now.serial, validFrom: now.validFrom, recipients: now.recipients, approvedBy: now.approvedBy };
@@ -24810,7 +24939,9 @@ async function postEntry(url, body, { fetcher = (...a) => fetch(...a), tries = 1
     const r = await fetcher(url, { method: 'POST', body });
     if (r.status === 201) return r;
     const said = (await r.text()).trim();
-    if (n + 1 >= tries || !/publish the handout first/.test(said)) throw new Error(`the node refused the entry: ${said}`);
+    // AND A SEAT WHOSE SEATING CERTIFICATE IS STILL ON ITS WAY (Daniel's report 2026-11-10 08:54Z, round 0ff01991: the six seats had signed the seating,
+    // the certificate reached them after the entry, which came 9 s before the close; the join ended with the stake locked) - asked again the same 8 s
+    if (n + 1 >= tries || !/publish the handout first|that round is not seated yet/.test(said)) throw new Error(`the node refused the entry: ${said}`);
     await new Promise((res) => setTimeout(res, waitMs));
   }
 }
@@ -27074,8 +27205,12 @@ async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher = (u, 
       try {
         const r = await fetcher(`${base}/reserves`, { signal: AbortSignal.timeout(timeoutMs) });
         if (!r.ok) return;
-        const f = ((await r.json()).federations || []).find((x) => x.federationId === fed && /^0[23][0-9a-f]{64}$/.test(String(x.key || '')));
-        if (f) { said.set(f.key, (said.get(f.key) || 0) + 1); if (said.get(f.key) >= needed) done(); }
+        // A SIGNER NODE OUTSIDE THE FEDERATION NAMES IT TOO (kanban #1391, measured 2026-11-09 12:3xZ: an RPS table's committee of 6 held 4 of federation
+        // A's guardian seats, so "only 4 name reserve key 02533d74…, and 5 must" refused every round of it): `key` is a member's own, `reserveKey` the
+        // key that seat's guardian seats agreed on at their threshold - every seat that knows the federation names it. Five must still agree.
+        const f = ((await r.json()).federations || []).find((x) => x.federationId === fed && /^0[23][0-9a-f]{64}$/.test(String(x.key || x.reserveKey || '')));
+        const k = f ? String(f.key || f.reserveKey) : null;
+        if (k) { said.set(k, (said.get(k) || 0) + 1); if (said.get(k) >= needed) done(); }
       } catch { /* a node that does not answer names nothing */ }
     })().finally(() => { left -= 1; if (!left) done(); });
   });
@@ -28956,6 +29091,16 @@ function unionOfEntries(lists) {
  * agrees, why }] } or { ok: false, why }. `compare: false` skips asking the nodes' /committee.
  */
 // `anchorAt` ({ hash, height }) is for a test's own chain only: a page never passes it, and takes the network's compiled-in one.
+// A SEATING CERTIFICATE CHECKED ONCE (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; profiled on live UI 604: 2.1 s of every minute of an
+// RPS page went to verifySeating - every seat hands the same table certificate, for every round of the table): its answer kept under everything it was
+// checked with - the certificate, the round, the role, the drawn keys, the slots
+const SEATING_CHECKED = new Map(), SEATING_CHECKED_MAX = 5000;
+const seatingChecked = (certHex, o) => {
+  const k = [String(certHex), toHex(o.roundId), o.role, (o.drawn || []).map((x) => toHex(x.key || x)).join(','), JSON.stringify(o.slots)].join('|');
+  let v = SEATING_CHECKED.get(k);
+  if (!v) { v = verifySeating(fromHex(certHex), o); if (SEATING_CHECKED.size >= SEATING_CHECKED_MAX) SEATING_CHECKED.delete(SEATING_CHECKED.keys().next().value); SEATING_CHECKED.set(k, v); }
+  return v;
+};
 async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = fetch, least = 2, compare = true, nowMs = Date.now(),
   roles = ['game', 'settlement'], anchorAt = null, explorer = null, genesis = null } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'no node to ask for the chain and the census' };
@@ -29042,7 +29187,7 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
         const { cert, index = 0 } = JSON.parse(body);
         // A TABLE'S LATER SEATING (kanban #1020): a check-in of this table at or before this round; of those a seat hands, the newest stands
         if (anchor && index > contract.roundIndex) { refused.push(`${u}: a seating of a later round of the table`); continue; }
-        const v = verifySeating(fromHex(cert), { roundId: anchor && index > 0 ? seriesRoundIdOf(contract.seriesId, index) : seatId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
+        const v = seatingChecked(cert, { roundId: anchor && index > 0 ? seriesRoundIdOf(contract.seriesId, index) : seatId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
         if (v.ok) {
           if (!found || index > found.index) found = { seated: v.seating.seated, from: u, index };
           if (!anchor) break;
@@ -29773,7 +29918,14 @@ function backupLine(storage, seed) {
 
 
 
-const hexToBytes = (h) => Uint8Array.from(String(h).match(/../g).map((x) => parseInt(x, 16)));
+// HEX BY TABLE (kanban #1391, profiled on stage UI 603: the regex-and-map decode of each seat's signed records took 1.1 s of every minute of an RPS page):
+// the same bytes for hex; a character that is not hex reads as 0, as parseInt's NaN did
+const HEX_VALUE = (() => { const t = new Int8Array(128).fill(-1); for (let i = 0; i < 10; i++) t[48 + i] = i; for (let i = 0; i < 6; i++) { t[97 + i] = 10 + i; t[65 + i] = 10 + i; } return t; })();
+const hexToBytes = (h) => {
+  const s = String(h), out = new Uint8Array(s.length >> 1);
+  for (let i = 0; i < out.length; i++) { const a = HEX_VALUE[s.charCodeAt(2 * i)], b = HEX_VALUE[s.charCodeAt(2 * i + 1)]; out[i] = a >= 0 && b >= 0 ? (a << 4) | b : a >= 0 ? a : 0; }
+  return out;
+};
 const bytesToHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 const inviteFederationId = (invite) => { const f = readInvite(invite).federationId; return f ? hexToBytes(f) : null; };
 
@@ -31758,7 +31910,9 @@ const UNREADABLE_MS = 30000;
 /** How long after its entry closes a round the seats still list is named among the lobby's `closed`. */
 const CLOSED_KEPT_MS = 2n * 3600n * 1000n;
 
-const LOBBY_CONTRACTS_PER_READ = 64;
+// 32 A READ (kanban #1391, measured on stage UI 601: with the open rounds asked first the first read made its rows, but its 64 contracts took 7-8 s in four
+// batches of 16; the next reads bring the rest, a second apart)
+const LOBBY_CONTRACTS_PER_READ = 32;
 const LOBBY_OTHER_CONTRACTS_PER_READ = 16;
 
 // A NODE WHOSE READ FAILED IS NOT ASKED AGAIN FOR FAILED_NODE_SKIP_MS (kanban #1133: every lobby read on the owner's iPhone asked the 7 stopped
@@ -31767,6 +31921,11 @@ const LOBBY_OTHER_CONTRACTS_PER_READ = 16;
 // (key arena.nodes.down: node -> until, ms), so a reload skips them too; a node that answers is out of the list at once; when every node of a
 // read would be skipped, all of them are asked. Only for a caller that asks for it (`skipFailed`, the page's lobby).
 const FAILED_NODE_SKIP_MS = 300000;
+// A SEAT THAT FAILED ONCE IS ASKED AGAIN SOON (kanban #1391, measured 2026-11-10 00:53-00:58Z on the live page: while the page collected 36 rounds' payouts,
+// some seats' reads failed once and were skipped for the full 5 min; the rounds then lacked their seats' agreement and no round was joinable for 5 min):
+// the first skip is FAILED_NODE_FIRST_SKIP_MS and each failure in a row doubles it, up to FAILED_NODE_SKIP_MS - a dead node still reaches 5 min after six
+const FAILED_NODE_FIRST_SKIP_MS = 15000;
+const FAILS = new Map();
 const DOWN_KEY = 'arena.nodes.down';
 let DOWN = null;
 const downStore = () => { try { return typeof globalThis.localStorage === 'object' && globalThis.localStorage ? globalThis.localStorage : null; } catch { return null; } };
@@ -31780,7 +31939,7 @@ const downSave = (nowMs) => { try { const st = downStore(); if (!st) return; con
 /** The nodes skipped now, each with the ms it is skipped until (for a page's diagnostics and tests). */
 const skippedNodes = (nowMs = Date.now()) => [...downMap()].filter(([, v]) => v > nowMs).map(([node, untilMs]) => ({ node, untilMs }));
 /** Forget every skip (tests). */
-const forgetSkippedNodes = () => { DOWN = new Map(); try { const st = downStore(); if (st) st.removeItem(DOWN_KEY); } catch { /* nothing kept */ } };
+const forgetSkippedNodes = () => { DOWN = new Map(); FAILS.clear(); try { const st = downStore(); if (st) st.removeItem(DOWN_KEY); } catch { /* nothing kept */ } };
 async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, verifyMany = null, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS, skipFailed = false, preferGames = null } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
   if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
@@ -31803,10 +31962,13 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
   // the seats that answered; a late one is in the next read, a second later
   let settle = null; let answeredCount = 0;
   const settled = new Promise((resolve) => { settle = resolve; });
+  // ONLY THE OPENED GAME'S ROUNDS (kanban #1391, measured on live UI 605: a game screen read every seat's whole listing, 600-800 KB of every game, every few
+  // seconds): with `preferGames` the seats are asked for those games alone (GET /rounds?games=); a seat before it answers every game, as before
+  const gamesQuery = Array.isArray(preferGames) && preferGames.length && preferGames.length <= 16 ? `&games=${preferGames.map((g) => String(g).toLowerCase()).join(',')}` : '';
   const answers = await Promise.all(unique.map((node) => {
     // AT MOST 8 UPCOMING ROUNDS OF EACH SERIES (`next`): a node holding two series lists ~1150 rounds otherwise - 63 s,
     // past what the lobby waits for a node. A lobby shows one round per kind; eight leaves the lead's choice its room.
-    const one = ask(`${String(node).replace(/\/+$/, '')}/rounds?next=${LOBBY_PER_SERIES}`).then((r) => ({ r }), (e) => ({ e }));
+    const one = ask(`${String(node).replace(/\/+$/, '')}/rounds?next=${LOBBY_PER_SERIES}&compact=1${gamesQuery}`).then((r) => ({ r }), (e) => ({ e }));
     one.then(() => { answeredCount += 1; if (answeredCount * 2 >= unique.length && unique.length > 2) setTimeout(settle, LOBBY_LAST_MS); });
     return Promise.race([one, settled.then(() => ({ e: Object.assign(new Error(`did not answer within ${LOBBY_LAST_MS} ms of half the seats`), { silent: true }) }))]);
   }));
@@ -31864,7 +32026,11 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
   // (the page's chosen game's version ids), that game's rounds are fetched first and every one of them, the rest of the read at most
   // LOBBY_OTHER_CONTRACTS_PER_READ; the others follow on the next reads, a second apart
   const open = [...said.keys()].filter((id) => !CONTRACTS.has(id) && !(nowMs - (UNREADABLE.get(id) ?? -Infinity) < UNREADABLE_MS))
-    .sort((a, b) => (soonest.get(a) ?? Infinity) - (soonest.get(b) ?? Infinity));
+    // A ROUND STILL TAKING ENTRIES FIRST (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; measured on live UI 600: the seats list the
+    // rounds closed in the last 2 h too, RPS 8 s apart, and the first read fetched its 64 contracts soonest first - every one already closed - so it made
+    // no row and the game said "The next round opens in a moment" until the second read, 13-14 s after the game opened): the open ones, soonest first,
+    // then the closed ones, soonest first
+    .sort((a, b) => (((soonest.get(a) ?? Infinity) <= nowMs) - ((soonest.get(b) ?? Infinity) <= nowMs)) || ((soonest.get(a) ?? Infinity) - (soonest.get(b) ?? Infinity)));
   const prefer = Array.isArray(preferGames) && preferGames.length ? new Set(preferGames.map((g) => String(g).toLowerCase())) : null;
   const wanted = prefer
     ? [...open.filter((id) => prefer.has(gameOf.get(id))), ...open.filter((id) => !prefer.has(gameOf.get(id))).slice(0, LOBBY_OTHER_CONTRACTS_PER_READ)].slice(0, LOBBY_CONTRACTS_PER_READ)
@@ -31959,7 +32125,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
   rows.sort((x, y) => (x.phase === y.phase ? x.entryCloseMs - y.entryCloseMs : (x.phase === 'open' ? -1 : 1)));
   // FAILED NOW: skipped from here on for FAILED_NODE_SKIP_MS; ANSWERED NOW: out of the list (kanban #1133)
   if (skipFailed) { const silentNow = new Set(unanswered.map(String)), failedNow = new Set(failed.map(String));
-    for (const n of unique) { const k = String(n); if (failedNow.has(k) && !silentNow.has(k)) down.set(k, nowMs + FAILED_NODE_SKIP_MS); else if (!failedNow.has(k)) down.delete(k); }
+    for (const n of unique) { const k = String(n); if (failedNow.has(k) && !silentNow.has(k)) { const times = (FAILS.get(k) || 0) + 1; FAILS.set(k, times); down.set(k, nowMs + Math.min(FAILED_NODE_SKIP_MS, FAILED_NODE_FIRST_SKIP_MS * 2 ** (times - 1))); } else if (!failedNow.has(k)) { down.delete(k); FAILS.delete(k); } }
     downSave(nowMs); }
   return { rows, closed, refused, unanswered, failed, asked: unique.length, skipped: unique === named ? [] : skipped, why: { ...why, contracts: [...said.keys()].filter((id) => CONTRACTS.has(id)).length, unreadable: [...said.keys()].filter((id) => UNREADABLE.has(id)).length,
     contractError: (refused.find((r) => /^[0-9a-f]{16}: /.test(r)) || '').slice(0, 160) } };
@@ -35583,7 +35749,9 @@ function pickSheet({ market, contract = null, stakeMsat = contract ? contract.st
 // called with { entryId, entries } as soon as the seats answered the entry, while the locks are handed after it
 // `onSubmitted({ entryId, node })` (kanban #601): once, as soon as the first seat took the entry - the order is the player's from then on
 // `handedOut` (postHandout's `posted`): a seat's entry is posted once that seat answered its handout - one slow seat is not waited on by the others
-async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries = null, onSubmitted = null, handedOut = null }) {
+// `onEntry({ entryId, entries, x })` (kanban #1391): each seat's answer as it comes, the answers so far beside it - a caller may go on once the seats that
+// count have the entry, while a slow seat outside the round is still waited on here (measured 2026-11-10, Daniel's seed: one silent seat held a tap 22 s)
+async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries = null, onSubmitted = null, handedOut = null, onEntry = null }) {
   const eid = entryId(entry);
   const bytes = encodeEntryContract(entry);
   // EVERY SEAT AT ONCE; what each answered kept as it comes (`entriesNow`), all of them in `entriesAll`
@@ -35597,6 +35765,7 @@ async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries 
       x = { node, status: r.status, why: r.status === 201 ? null : (await r.text()).trim() };
     } catch (e) { x = { node, status: 0, why: e.message }; }
     entriesNow[i] = x;
+    if (onEntry) { try { onEntry({ entryId: toHex(eid), entries: entriesNow.slice(), x }); } catch { /* the caller's own fault */ } }
     if (x.status === 201 && onSubmitted && !submittedSaid) { submittedSaid = true; try { onSubmitted({ entryId: toHex(eid), node }); } catch { /* the caller's own fault */ } }
     return x;
   });
