@@ -100,6 +100,21 @@ async function chainOn(base, rid, eid) {
   return toHex(new Uint8Array(await r.arrayBuffer()));
 }
 
+/**
+ * THE ENTRY REACHES EVERY SEAT (kanban #1216, 6b6046313: "Every game's entry reaches every seat"): a seat that took an entry hands it on to
+ * the round's other seats 0.7-1.2 s later (entry-relay.js). Waits until `base` holds it - so a test's "behind" is a peer without the
+ * inputs, which is the only way a seat can be behind now, never a peer without the entry, which the relay closes by itself.
+ */
+async function entryReached(base, eid) {
+  for (let i = 0; i < 100; i++) {
+    const r = await fetch(`${base}/entry?id=${toHex(eid)}`);
+    await r.arrayBuffer();
+    if (r.status === 200) return true;
+    await new Promise((ok) => setTimeout(ok, 100));
+  }
+  return false;
+}
+
 /** Everything recorded published to this client's node, and every peer fed. */
 async function publishAll(client) {
   for (let i = 0; i < 500 && (client.hold.length || client.publishing); i++) {
@@ -271,40 +286,39 @@ test('a daemon that has not caught up refuses rather than signs, then signs once
     const before = [await heldTicks(client.base, rid, eid), await heldTicks(B, rid, eid)];
     assert.deepEqual(before, [60, 0], `without the node list A and B hold ${before}`);
 
-    // NOW THE NODE LIST ARRIVES, with B never having seen the entry. Its first
-    // batch is refused for the signer node, the signer node is given, and its feed stops
-    // there until the next try.
-    client.deliverTo(named.nodes);
-    drive(client, 60);
-    await publishAll(client);
-    assert.equal(client.peerBatchesRefused, 1, 'B was expected to refuse once, for the missing signer node');
-    assert.match(client.peerBatches()[0].why, /no such entry/);
-    assert.match(client.status(120), / inputs refused 1\b/, 'a refused input was not on the line');
-    assert.equal(await heldTicks(B, rid, eid), 0, 'B is joined and holds nothing yet');
+    // B HOLDS THE ENTRY, NOT ITS INPUTS. Before kanban #1216 B never saw the entry here and refused the first batch for the signer node
+    // ("no such entry"); since 6b6046313 ("Every game's entry reaches every seat, and an entry new to a seat after its round's entry close
+    // is refused", audit 3 CONSENSUS-1) A hands the entry on to B by itself, so the page's own feed never meets that refusal and does not
+    // count one. B is behind only in the inputs.
+    assert.equal(await entryReached(B, eid), true, 'A did not hand the entry on to B (kanban #1216)');
+    assert.equal(await heldTicks(B, rid, eid), 0, 'B holds the entry and none of its inputs');
 
-    // B IS ASKED TO SIGN BEFORE IT HOLDS THE INPUTS, and does not. Sent the low
-    // way, `mark`, which does not wait - the way a client that raced its
-    // batches would.
+    // NOW THE NODE LIST ARRIVES, and B IS ASKED TO SIGN BEFORE IT HOLDS THE INPUTS, and does not. Sent the low way, `mark`, which does
+    // not wait - the way a client that raced its batches would.
+    client.deliverTo(named.nodes);
     const early = await client.mark(driven(7, 60), { roundId: rid, entryId: eid, tick: 60 });
     console.log(`  B behind: A ${early.answer}, B ${early.refused.join('; ')}`);
-    assert.equal(early.answer, 'receipted', 'A holds 120 ticks and should sign the mark at 60');
+    assert.equal(early.answer, 'receipted', 'A holds 60 ticks and should sign the mark at 60');
     assert.equal(early.refused.length, 1);
     assert.match(early.refused[0], /holds this run's inputs only before tick 0/);
     assert.equal(early.live, false, 'one receipt of two went live');
     assert.deepEqual([await stored(client.base, rid, eid), await stored(B, rid, eid)], [1, 0]);
 
-    // B IS CAUGHT UP FROM THE FIRST BATCH THIS CLIENT KEPT, and then the same
+    // B IS CAUGHT UP FROM THE FIRST BATCH THIS CLIENT KEPT - with no batch refused, the entry already there - and then the same
     // checkpoint - the same bytes - is signed by B too and goes live.
     client.pumpPeers();
     await client.awaitPeers();
+    assert.equal(client.peerBatchesRefused, 0, `B holds the entry, yet ${client.peerBatchesRefused} batch(es) were counted refused`);
+    assert.equal(/inputs refused/.test(client.status(60)), false, 'a refused input was printed where there was none');
     const caught = [await transcriptOn(client.base, rid, eid), await transcriptOn(B, rid, eid)];
-    assert.deepEqual(caught.map((c) => c.ticks), [120, 120],
+    assert.deepEqual(caught.map((c) => c.ticks), [60, 60],
       'B was not caught up across the ticks published before the node list arrived');
     assert.equal(caught[1].hash, caught[0].hash);
     const again = await client.mark(driven(7, 60), { roundId: rid, entryId: eid, tick: 60 });
     assert.equal(toHex(again.id), toHex(early.id), 'the second send is not the same checkpoint');
     assert.deepEqual(again.refused, [], `refused after catching up: ${again.refused}`);
     assert.equal(again.live, true, 'both daemons hold the inputs and both signed, so it is live');
+    drive(client, 60);
 
     // AND FROM HERE THE PAGE'S OWN PATH carries on, on both.
     drive(client, 60);
@@ -350,6 +364,7 @@ test('a peer behind by a hundred batches is caught up in round trips, not one ro
     const batches = client.published.length;
     assert.ok(batches >= 90, `the backlog was meant to be about a hundred batches, it is ${batches}`);
     assert.deepEqual([await heldTicks(client.base, rid, eid), await heldTicks(B, rid, eid)], [TICKS, 0]);
+    assert.equal(await entryReached(B, eid), true, 'A did not hand the entry on to B (kanban #1216)');
 
     // EVERY FRAME TO B IS COUNTED, and so is how many were on the wire at once. A wave is one round trip's
     // worth: the count goes up each time the wire goes from empty to busy.
@@ -366,8 +381,9 @@ test('a peer behind by a hundred batches is caught up in round trips, not one ro
     client.deliverTo(named.nodes);
     client.pumpPeers();
     await client.awaitPeers();
-    // B WAS NOT IN THE ROUND AT ALL, so the first wave is refused for the signer node and the entry is
-    // handed over; the feed then catches it up. Whatever it takes, it is counted here.
+    // B HOLDS THE ENTRY AND NONE OF ITS INPUTS: A handed the entry on (kanban #1216, 6b6046313 "Every game's entry reaches every
+    // seat"), so the backlog is the inputs alone. Before #1216 B was not in the round at all and refused the first wave for the
+    // signer node. Whatever the catch-up takes, it is counted here.
     for (let i = 0; i < 10 && (await heldTicks(B, rid, eid)) < TICKS; i++) {
       client.pumpPeers();
       await client.awaitPeers();
@@ -380,8 +396,10 @@ test('a peer behind by a hundred batches is caught up in round trips, not one ro
     assert.ok(mostAtOnce > 1, 'the backlog still went one frame per round trip');
     assert.ok(waves <= ceiling + 3,
       `${batches} batches took ${waves} waves and ${ceiling} + the retry are what a window of ${FEED_WINDOW} allows`);
-    assert.equal(client.peerBatchesRefused, 1,
-      `a whole window of refusals was counted where one batch was refused: ${client.peerBatchesRefused}`);
+    // ...AND NO BATCH IS REFUSED: before #1216 exactly one was (the entry B lacked), counted once for its whole window; with the
+    // entry relayed none is, and none may be counted
+    assert.equal(client.peerBatchesRefused, 0,
+      `B holds the entry (kanban #1216), yet ${client.peerBatchesRefused} batch(es) were counted refused`);
 
     // AND THE RUN GOES ON THROUGH THE PAGE'S OWN PATH, on both.
     const mark = await client.markNow(driven(7, TICKS), TICKS);
