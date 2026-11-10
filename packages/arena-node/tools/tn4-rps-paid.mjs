@@ -87,6 +87,9 @@ const nodes = env.NODES ? env.NODES.split(',').map((u) => u.trim().replace(/\/+$
 const invite = readFileSync(env.INVITE_FILE, 'utf8').replace(/["\s]/g, '');
 // THE NEWEST VERSION'S TABLES by default (2026-10-27: the day grids post v5 62a940ae; v5 decides with v4's core, which decides as v1's -
 // the moves, the hidden entry and the reveal are the same); RPS_V1=1 / RPS_V2=1 for the older tables
+// A PRIVATE CHAIN'S OWN GENESIS (as tn4-live-run.mjs, kanban #1412: the head-to-head audit regtest): ANCHOR_HASH=<block hash hex, display order>
+// on a devnet, where no compiled-in anchor names the chain
+const anchorAt = env.ANCHOR_HASH ? { hash: Uint8Array.from(Buffer.from(env.ANCHOR_HASH, 'hex')).reverse(), height: Number(env.ANCHOR_HEIGHT || 0) } : null;
 const GAME = toHex(env.RPS_V1 ? RPS_GAME_ID : env.RPS_V2 ? RPS_GAME_ID_V2 : RPS_GAME_ID_V5);
 
 async function paidEntry(c, rid, roundHex, move, who) {
@@ -243,7 +246,7 @@ try {
   // none 11 s after the close, all 7 seats holding it a minute later) - asked again every 5 s, until 150 s before entry close
   let seated = null;
   for (;;) {
-    try { seated = await clientSettlementSignerNodes(roundHex, c, nodes, { curve: pageCurve }); break; }
+    try { seated = await clientSettlementSignerNodes(roundHex, c, nodes, { curve: pageCurve, ...(anchorAt ? { anchorAt } : {}) }); break; }
     catch (e) { if (!/no certificate/.test(e.message) || Date.now() > Number(c.entryCloseMs) - 150000) throw e; log({ step: 'certificate not yet', why: e.message.slice(0, 120) }); await new Promise((r) => setTimeout(r, 5000)); }
   }
   log({ step: 'seated', signerNodes: seated.signerNodes.length, agreed: seated.agreed });

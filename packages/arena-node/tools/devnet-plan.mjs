@@ -139,6 +139,9 @@ export function portsOfPart(plan, name) {
   if (name === 'runner') return [plan.control];
   if (name === 'page') return [plan.page];
   if (name === 'lnurl') return [plan.lnurl];
+  // the audit-only nodes (kanban #1412): a running one's port is this devnet's, so `up` on it again starts only what is down
+  const au = /^auditor-(\d)$/.exec(name);
+  if (au) return plan.auditors && plan.auditors[Number(au[1]) - 1] ? [plan.auditors[Number(au[1]) - 1]] : [];
   const k = /^node-(\d)$/.exec(name);
   if (k && Number(k[1]) >= 1 && Number(k[1]) <= NODE_COUNT) {
     const i = Number(k[1]) - 1;
