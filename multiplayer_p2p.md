@@ -473,6 +473,18 @@ is no core.
 
 ## 0A.7b The market we build first: "Bitcoin Up or Down - 15 minutes" *(2026-10-09: "match this polymarket market", board /#278)*
 
+**Book or pool, decided the same at every seat (RULED 2026-11-10, kanban #1417).** A
+two-outcome round can hold backed orders and backed plain picks, and "backed" is a fact each
+seat learns at its own time, so no seat may decide the round's kind from the stakes it has
+seen. The kind is read from the one fact every seat shares: **a round is a book iff a
+threshold-certified batch holds an order**; a batch takes only orders whose stake the batching
+seats saw, and a round with no certified batch by its close is a pool. A plain pick in a book
+round, and an order in a pool round, is not an entry of that round: the seats forfeit its lock
+at once, as a refused round's stake is returned (§23.2, REFUSED-RETURN), and the page says
+which kind the round became. For the 2.0 line the Round Contract names its kind
+(`market_kind`: book or pool) and the door refuses the other type outright; the certified-batch
+rule is the 1.9 answer and stays the fallback where a contract names none.
+
 **RULED 2026-11-07 (spec review, kanban #1293).** A market round's **gross** is under §5A.10's ceiling: a seat refuses an order once the round's filled volume plus the order would exceed `max_round_pool` of its census, and a market on a game (§0A.7d) is capped at the source round's `max_round_pool` and its gross counts into the source committee's exposure. Before this a book round could hold a thousand 100,000-sat orders under a committee bonded for a 1,000-sat bracket.
 
 The model is Polymarket's series **BTC Up or Down 15m**
