@@ -577,7 +577,9 @@ if (env.PAID_RPS_GRID === '1') {
         fedPick = openingFederation({ listed: fl.federations || [], serves, own });
       } catch { /* its own, said above */ }
       say({ rpsGrid: 'federation', ...fedPick, serves: serves.map((f) => f.slice(0, 16)) });
-      const got = await round.openGrid({ ...CREATOR, fields: { ...base.fields, censusHeight: base.censusHeight, donationSetId, federationId: fromHex(fedPick.federationId) }, stakeMsat, mustDraw: true }, { slots, tables, feeRate, maxFeeRate, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
+      // A HEAD-TO-HEAD ROUND'S 60 s WINDOW (§13A, RULED 2026-11-10, kanban #1398): named only with RPS_H2H_WINDOW=1, once every seat takes it
+      const h2hWindow = env.RPS_H2H_WINDOW === '1' ? { objectionWindowMs: 60_000n } : {};
+      const got = await round.openGrid({ ...CREATOR, fields: { ...base.fields, ...h2hWindow, censusHeight: base.censusHeight, donationSetId, federationId: fromHex(fedPick.federationId) }, stakeMsat, mustDraw: true }, { slots, tables, feeRate, maxFeeRate, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
         onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `rps-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ rpsGrid: 'published', ...p }); }, onPosted: (p) => say({ rpsGrid: 'posted', ...p }) });
       if (got.dry) { say({ rpsGrid: 'dry', ...got }); return; }
       say({ rpsGrid: got.ok ? 'up' : 'not up', ok: got.ok, why: got.why, txid: got.txid, publishedAt: got.publishedAt, beacon: got.beacon,
