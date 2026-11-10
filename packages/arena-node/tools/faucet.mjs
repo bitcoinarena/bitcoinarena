@@ -28,10 +28,11 @@ import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks } from '../src/feedback-store.js';
-import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync, statfsSync } from 'node:fs';
 import { PLAYER_GRANTS } from '../src/faucet.js';
 const PLAYER_WELCOME_SATS = PLAYER_GRANTS.welcome.invoiceSats;
 import { join as pathJoin } from 'node:path';
+import { ipKey } from '../src/faucet.js';
 import { refillDecide, feedbackDecide, faucetDecide, playerGrantDecide, playerGrantTotals, opponentWant, opponentWants, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
 
 const env = process.env;
@@ -56,6 +57,11 @@ if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 const shotFile = (h) => { if (!SHOTS || !/^[0-9a-f]{64}$/.test(h)) return null; for (const ext of ['png', 'jpg', 'webp']) { const f = pathJoin(SHOTS, `${h}.${ext}`); if (existsSync(f)) return f; } return null; };
 const SHOT_UPLOADS = [];   // { ip, atMs } of today
 const SHOTS_PER_IP_PER_DAY = 10;
+// THE DISK IS NOT THE UPLOADER'S (audit 5, kanban #1405): an address counts by ipKey (an IPv6 /64 is one), all uploads of a day together write at
+// most SHOT_DAY_BYTES, and none is written while the disk holds less than SHOT_FREE_FLOOR_BYTES free
+const SHOT_DAY_BYTES = Number(env.FAUCET_SHOT_DAY_BYTES || 300e6);
+const SHOT_FREE_FLOOR_BYTES = Number(env.FAUCET_SHOT_FREE_FLOOR_BYTES || 20e9);
+const freeBytes = (dir) => { try { const s = statfsSync(dir); return Number(s.bavail) * Number(s.bsize); } catch { return null; } };
 if (SHOTS && FEEDBACK) setInterval(() => { try { const used = FEEDBACK.shotsInUse(); for (const f of readdirSync(SHOTS)) { const h = f.split('.')[0];
   if (!used.has(h) && Date.now() - statSync(pathJoin(SHOTS, f)).mtimeMs > SHOT_UNCLAIMED_MS) unlinkSync(pathJoin(SHOTS, f)); } } catch { /* next hour */ } }, 3600000).unref();
 const MINE_URLS = String(env.FAUCET_FEEDBACK_MINE_URLS || 'https://bitcoinarena.io/api/faucet/feedback/mine').split(',').map((x) => x.trim()).filter(Boolean);
@@ -366,9 +372,11 @@ createServer((req, res) => {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '86400' }); return res.end(); }
     if (req.method !== 'POST') return send(405, { ok: false, why: 'POST' });
     if (!FEEDBACK || !SHOTS) return send(503, { ok: false, why: 'screenshots are not kept here' });
-    const ip = req.headers['x-arena-ip'] || null, day = Math.floor(Date.now() / DAY_MS);
+    const ip = ipKey(req.headers['x-arena-ip'] || null), day = Math.floor(Date.now() / DAY_MS);
     while (SHOT_UPLOADS.length && Math.floor(SHOT_UPLOADS[0].atMs / DAY_MS) !== day) SHOT_UPLOADS.shift();
     if (ip && SHOT_UPLOADS.filter((x) => x.ip === ip).length >= SHOTS_PER_IP_PER_DAY) return send(429, { ok: false, why: 'this address sent all the screenshots it can today' });
+    if (SHOT_UPLOADS.reduce((n, x) => n + (x.bytes || 0), 0) >= SHOT_DAY_BYTES) return send(429, { ok: false, why: 'the faucet took all the screenshots it keeps today: send the report without one, or try tomorrow' });
+    { const free = freeBytes(SHOTS); if (free !== null && free < SHOT_FREE_FLOOR_BYTES) return send(507, { ok: false, why: 'the faucet has no room for screenshots just now: send the report without one' }); }
     const parts = []; let size = 0, over = false;
     // TOO BIG: read on and keep nothing, answered 413 at its end; cut only past four times the cap
     req.on('data', (c) => { size += c.length; if (size > SHOT_MOST) { over = true; parts.length = 0; if (size > 4 * SHOT_MOST) req.destroy(); return; } parts.push(c); });
@@ -377,8 +385,9 @@ createServer((req, res) => {
       const bytes = Buffer.concat(parts), kind = imageKind(bytes);
       if (!kind) return send(415, { ok: false, why: 'a screenshot is a PNG, JPEG or WebP image' });
       const h = createHash('sha256').update(bytes).digest('hex');
-      if (!shotFile(h)) writeFileSync(pathJoin(SHOTS, `${h}.${kind}`), bytes);
-      SHOT_UPLOADS.push({ ip, atMs: Date.now() });
+      const fresh = !shotFile(h);
+      if (fresh) writeFileSync(pathJoin(SHOTS, `${h}.${kind}`), bytes);
+      SHOT_UPLOADS.push({ ip, atMs: Date.now(), bytes: fresh ? bytes.length : 0 });
       return send(200, { ok: true, sha256: h });
     });
     return undefined;
@@ -397,7 +406,7 @@ createServer((req, res) => {
     // A FRESH CHECK ASKS EVERY SEAT (~136 requests), so (audit 5 #1402): one at a time over all callers, and at most NODE_CHECKS_PER_HOUR per address
     // (an IPv6 address counted per /64) - random npubs missed the cache and multiplied the load onto every seat
     const ip = String(req.headers['cf-connecting-ip'] || req.socket.remoteAddress || '');
-    const who = ip.includes(':') ? ip.split(':').slice(0, 4).join(':') : ip;
+    const who = ipKey(ip) || ip;   // an IPv6 address by its /64, :: written out (kanban #1405)
     const mine = (NODE_CHECK_ASKS.get(who) || []).filter((t) => t > Date.now() - 3600000);
     if (mine.length >= NODE_CHECKS_PER_HOUR) return send(429, { ok: false, why: `at most ${NODE_CHECKS_PER_HOUR} node checks an hour from one address: try again later` });
     if (NODE_CHECK_BUSY) return send(429, { ok: false, why: 'a node check is running: try again in a minute' });

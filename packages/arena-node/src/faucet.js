@@ -47,6 +47,29 @@ export const PLAYER_WELCOME_OLD_INVOICE_SATS = 500;
 export const PLAYER_TOPUPS_PER_DAY = 50;         // one account (kanban #1088: was 3; #1397 Daniel 2026-11-09 "Set the limits much higher": was 5)
 export const PLAYER_PER_IP_PER_DAY = 200;        // one address, a household or a meetup behind it (#1397: was 10)
 export const PLAYER_DAY_CAP_SATS = 10000000;     // all players of one UTC day (kanban #1391: 333 welcomes of 3,000; #1397: 3,333)
+// ONE PERSON CANNOT TAKE THE DAY IN MINUTES (audit 5, kanban #1405): an IPv6 caller holds a whole /64 - every address of it is one household
+// (ipKey), and all players together take at most PLAYER_HOUR_CAP_SATS an hour, so the day's 10M last at least 5 hours whoever asks
+export const PLAYER_HOUR_CAP_SATS = 2000000;
+const HOUR_MS = 3600000;
+
+/**
+ * THE ADDRESS A LIMIT COUNTS (kanban #1405): an IPv4 address as it is; an IPv6 address by its /64 (its first four groups, written out), so the
+ * 2^64 addresses one line gets count as one; an IPv4-mapped IPv6 address (::ffff:1.2.3.4) as its IPv4. Anything else as given, lowercased.
+ */
+export function ipKey(ip) {
+  const s = String(ip || '').trim().toLowerCase().replace(/^\[|\]$/g, '').split('%')[0];
+  if (!s) return null;
+  const v4 = /^(?:::ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/.exec(s);
+  if (v4) return v4[1];
+  if (!s.includes(':')) return s;
+  const [head, tail = null] = s.split('::');
+  if (s.split('::').length > 2) return s;
+  const a = head ? head.split(':') : [], b = tail ? tail.split(':') : [];
+  if (b.length && b[b.length - 1].includes('.')) b.splice(b.length - 1, 1, '0', '0');   // an embedded IPv4 tail: two groups
+  const groups = tail === null ? a : [...a, ...Array(Math.max(0, 8 - a.length - b.length)).fill('0'), ...b];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return s;
+  return `${groups.slice(0, 4).map((g) => g.padStart(4, '0')).join(':')}::/64`;
+}
 
 /** Whether a player's request is paid: { ok, grant } or { ok: false, why }. `book`: { players: [{ account, kind, ip, sats, atMs }] }. Never paid twice as a welcome. */
 export function playerGrantDecide({ kind, account, ip = null, invoiceSats, nowMs = Date.now() }, book) {
@@ -61,7 +84,9 @@ export function playerGrantDecide({ kind, account, ip = null, invoiceSats, nowMs
   const day = Math.floor(nowMs / DAY_MS);
   const today = paid.filter((p) => Math.floor(p.atMs / DAY_MS) === day);
   if (today.reduce((n, p) => n + p.sats, 0) + granted.invoiceSats > PLAYER_DAY_CAP_SATS) return { ok: false, why: 'the faucet gave all it gives today: try again tomorrow' };
-  if (ip && today.filter((p) => p.ip === ip).length >= PLAYER_PER_IP_PER_DAY) return { ok: false, why: 'this address took all it can today: try again tomorrow' };
+  if (paid.filter((p) => p.atMs > nowMs - HOUR_MS).reduce((n, p) => n + p.sats, 0) + granted.invoiceSats > PLAYER_HOUR_CAP_SATS) return { ok: false, why: 'the faucet gave all it gives this hour: try again in a little while' };
+  const key = ipKey(ip);
+  if (key && today.filter((p) => ipKey(p.ip) === key).length >= PLAYER_PER_IP_PER_DAY) return { ok: false, why: 'this address took all it can today: try again tomorrow' };
   if (kind === 'welcome' && paid.some((p) => p.account === account && p.kind === 'welcome')) return { ok: false, why: 'this account already has its welcome sats' };
   if (kind === 'topup' && today.filter((p) => p.account === account && p.kind === 'topup').length >= PLAYER_TOPUPS_PER_DAY) return { ok: false, why: `the faucet gives an account ${PLAYER_TOPUPS_PER_DAY} top-ups a day: try again tomorrow` };
   return { ok: true, grant: granted };
