@@ -176,7 +176,7 @@ import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
 import { DrawnAttestor } from './drawn-attestor.js';
 import { relaySweep, createAuditDesk, agreedRunsOf, forwardDigest } from './audit-seat.js';
 import { createH2hAuditDesk, h2hAgreedResultsOf, h2hForwardDigest } from './h2h-audit-desk.js';
-import { decodeH2hAudit } from '../../arena-protocol/src/h2h-audit.js';
+import { decodeH2hAudit, h2hFinality } from '../../arena-protocol/src/h2h-audit.js';
 import { RoundAuditor, auditorNet } from './round-auditor.js';
 import { buildObjectionBundle } from './objection-bundle.js';
 import { decodeObjectionBundle } from '../../arena-protocol/src/objection.js';
@@ -3339,8 +3339,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // regtest) is FINAL in it only with two drawn auditors' H2H_AUDITs over this seat's own agreed results; the desk keeps them (h2h-audit-desk.js). Who may
   // audit is the §13A.1 eligible set (auditSetFor) less the round's players; the window's start is its close less W (the contract's own).
   const h2hShortRound = (c) => { if (!c) return false; const f = pluginForRound(c, hosted); return f.ok && f.headToHead === true && BigInt(c.objectionWindowMs) < 600_000n; };
-  const h2hDesk = createH2hAuditDesk({ db: round.db, now: () => round.now(), vrf: auditVrf, verify: verifyAudit,
-    contextFor: async (rid) => {
+  const h2hContext = (rid) => {
       const c = contractOfRound(rid);
       if (!c) return { ok: false, why: 'this seat holds no such round' };
       if (!h2hShortRound(c)) return { ok: false, why: 'that round is no head-to-head round on the short window: it takes no H2H_AUDIT' };
@@ -3354,7 +3353,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const eligible = new Map([...set.eligible].filter(([key]) => !players.has(key)));
       let w; try { w = windowsOf(c); } catch (e) { return { ok: false, why: `the round's window: ${e.message}` }; }
       return { ok: true, eligible, total: set.total, resultsHash: agreed.resultsHash, provisionalAtMs: BigInt(w.closeMs) - BigInt(c.objectionWindowMs) };
-    } });
+    };
+  const h2hDesk = createH2hAuditDesk({ db: round.db, now: () => round.now(), vrf: auditVrf, verify: verifyAudit, contextFor: async (rid) => h2hContext(rid) });
+  // THE WINDOW finality.js APPLIES to a round (kanban #1412): null for any round but a head-to-head one on the short window; for that one its own W with
+  // two audits in time over this seat's results, else the long window
+  round.h2hWindowMs = (rid, c) => {
+    if (!h2hShortRound(c)) return null;
+    const ctx = h2hContext(rid);
+    if (!ctx.ok) return OBJECTION_WINDOW_MS;
+    const f = h2hFinality({ provisionalAtMs: ctx.provisionalAtMs, committeeFinal: true, audits: h2hDesk.held(rid), resultsHash: ctx.resultsHash, nowMs: round.now() });
+    return f.window === 'short' ? c.objectionWindowMs : OBJECTION_WINDOW_MS;
+  };
   function forwardH2hAudit(body, rid) {
     let sig;
     try { sig = schnorr.sign(h2hForwardDigest(body), round.identity.secret); } catch { return; }
