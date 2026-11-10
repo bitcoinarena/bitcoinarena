@@ -72,6 +72,11 @@
   const sats = (n) => `${Number(n || 0).toLocaleString('en')} sat`;
   const when = (ms) => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') : '');
   let code = ''; try { code = localStorage.getItem('arena.feedback.admin') || ''; } catch { code = ''; }
+  // OPENED FROM THE GAME'S ADMIN LINK (Daniel 2026-11-10: "wenn ich auf das admin links unten klicke muss die aber die admin Seite aufgehen"): the code comes in
+  // the URL fragment (#code=..., never sent to a server), is kept as a typed code is, and leaves the address bar at once
+  { const m = /(?:^|[#&])code=([^&]+)/.exec(location.hash || '');
+    if (m) { try { code = decodeURIComponent(m[1]).trim(); localStorage.setItem('arena.feedback.admin', code); } catch { /* this tab only */ }
+      history.replaceState(history.state, '', location.pathname + location.search); } }
   const say = (t, bad = false) => { $('say').textContent = t; $('say').className = bad ? 'bad' : 'dim'; };
   async function call(path, body) {
     const r = await fetch(`${API}/${path}`, body ? { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-admin': code }, body: JSON.stringify(body) } : { headers: { 'x-arena-admin': code } });

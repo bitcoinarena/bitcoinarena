@@ -176,7 +176,12 @@
     #arena-feedback .fb-levels-table td { padding: 2px 6px 2px 0; vertical-align: top; }
     #arena-feedback .fb-levels-table td.n { white-space: nowrap; font-weight: 700; }
     #arena-feedback .fb-levels-table td.ex { opacity: .75; }
-    #arena-feedback .fb-budget { margin: 8px 0 2px; font-size: 12px; } #arena-feedback .fb-budget-line { margin-bottom: 4px; }
+    /* the ADMIN link (kanban #1342): in a game's own stamp only while that game is open - elsewhere that stamp lies over "Docs" bottom left */
+    body:not(.arena-own-client) #arena-build .arena-admin-link { display: none !important; }
+    #arena-feedback .fb-chips-head { font-size: 12px; color: #8b949e; margin: 6px 0 4px; }
+    #arena-feedback .fb-chips { display: flex; flex-wrap: wrap; gap: 4px; } #arena-feedback .fb-chip { font-size: 11px; padding: 2px 7px; border-radius: 10px; background: #21262d; border: 1px solid #30363d; color: #e6edf3; }
+    #arena-feedback .fb-chip b { color: #f7931a; }
+    #arena-feedback .fb-budget { margin: 6px 0 2px; font-size: 11px; color: #8b949e; } #arena-feedback .fb-budget-line { margin-bottom: 4px; }
     #arena-feedback .fb-budget-bar { height: 8px; border-radius: 4px; background: #21262d; overflow: hidden; } #arena-feedback .fb-budget-fill { height: 100%; background: #f7931a; }
     #arena-feedback .fb-join .icons { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 4px; }
     #arena-feedback .fb-join a.icon { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; padding: 0; border: 0; color: #e6edf3; font-size: 12px; font-weight: 600; text-decoration: none; }
@@ -1812,7 +1817,8 @@
     window.ARENA_BOUNTY_ON = window.ARENA_BOUNTY_BUILD === true;
     // THE BOUNTY'S RULES, SAID WHEREVER IT IS ON (Daniel 2026-11-07: "nach severity gezahlt ... nur fuer ernstgemeinte submissions ... Duplikate werden nicht gezaehlt ...
     // das dev team sich jede submission erst ansieht")
-    const BOUNTY_RULES = 'The dev team reviews every submission first. Rewards are paid by severity, and only for serious submissions; duplicates do not count. Testnet sats, no value.';
+    // SHORT (Daniel 2026-11-10: "viel zu viel Text. Kompakter machen")
+    const BOUNTY_RULES = 'Reviewed by the team; paid by severity, first report only.';
     const feedbackUrl = () => (window.ARENA_FAUCET_URL ? window.ARENA_FAUCET_URL.replace(/\/player$/, '/feedback') : '');
     const identitySign = (t) => ARENACLIENT.identitySignEvent(t, { storage: window.sessionStorage, random: () => { throw new Error('this tab has no wallet yet'); }, curve: window.ARENA_CURVE });
     const hasIdentity = () => !!(window.ARENA_IDENTITY && typeof window.ARENA_IDENTITY.pubkey === 'string');
@@ -1841,7 +1847,7 @@
       const tick = el('label', { cls: 'badge' }, el('input', { type: 'checkbox' }), el('span', { text: ' Send my public key for the Founding Tester badge' }));
       if (!me) tick.hidden = true;
       const say = el('div', { cls: 'say', role: 'status', text: window.ARENA_BOUNTY_ON
-        ? (me ? 'Signed with your key. ' + BOUNTY_RULES + ' If yours is accepted, its reward link (an LNURL) appears in My feedback.' : 'Open a wallet first to be rewarded: an unsigned report still reaches the team. ' + BOUNTY_RULES)
+        ? (me ? 'Signed with your key. ' + BOUNTY_RULES + ' A reward shows in My feedback.' : 'Open a wallet to be rewarded. ' + BOUNTY_RULES)
         : (me ? 'Signed with your key: My feedback shows what the team decides.' : 'It reaches the team. Open a wallet to follow it in My feedback.') });
       const off = el('button', { type: 'button', cls: 'off', text: 'Cancel' }), send = el('button', { type: 'button', cls: 'send', text: 'Send' });
       // THE REWARD TABLE IN THE FORM (kanban #1342, Daniel 2026-11-08): the amounts the payout uses, read from the faucet's one table
@@ -1851,15 +1857,16 @@
         fetch(feedbackUrl() + '/rewards').then((r) => r.json()).then((j) => {
           if (!j || !Array.isArray(j.levels)) return;
           const unit = j.network === 'mainnet' ? 'sats' : 'testnet sats';
-          const tbl = el('table', { cls: 'fb-levels-table' }, ...j.levels.map((l) => el('tr', {},
-            el('td', { text: l.label }), el('td', { cls: 'n', text: Number(l.sats).toLocaleString('en-US') + ' ' + unit }), el('td', { cls: 'ex', text: l.example || '' }))));
-          levels.append(tbl, el('p', { cls: 'fb-rule', text: j.rule + (j.network === 'mainnet' ? '' : ' Testnet sats, no value.') }));
+          // COMPACT (Daniel 2026-11-10: "Die Erklärung wieviel sats es gibt ist zu gross, viel zu viel Text. Kompakter machen"): one row of chips, the example in each chip's tooltip
+          const chips = el('div', { cls: 'fb-chips' }, ...j.levels.map((l) => { const c = el('span', { cls: 'fb-chip' }, el('b', { text: Number(l.sats).toLocaleString('en-US') }), el('span', { text: ' ' + String(l.label).replace(/^Bug, /, '') }));
+            if (l.example) c.title = l.example; return c; }));
+          levels.append(el('div', { cls: 'fb-chips-head', text: 'Rewards in ' + unit + ':' }), chips);
           // THIS WEEK'S BUDGET (Daniel 2026-11-10: "ein Budget von 100000 sats pro Woche das wird im Fenster angezeigt wie weit wir schon sind")
           if (j.budget && Number(j.budget.weeklyBudgetSats) > 0) {
             const used = Number(j.budget.weekApprovedSats) || 0, all = Number(j.budget.weeklyBudgetSats);
             const bar = el('div', { cls: 'fb-budget-bar' }, el('div', { cls: 'fb-budget-fill' }));
             bar.firstChild.style.width = Math.min(100, Math.round((used / all) * 100)) + '%';
-            levels.append(el('div', { cls: 'fb-budget' }, el('div', { cls: 'fb-budget-line', text: 'This week\u2019s reward budget: ' + used.toLocaleString('en-US') + ' of ' + all.toLocaleString('en-US') + ' ' + unit + ' given out' }), bar));
+            levels.append(el('div', { cls: 'fb-budget' }, el('div', { cls: 'fb-budget-line', text: 'This week: ' + used.toLocaleString('en-US') + ' / ' + all.toLocaleString('en-US') + ' sats' }), bar));
           }
         }).catch(() => {});
       }
@@ -2031,13 +2038,22 @@
         window.ARENA_ADMIN = !!kept && await hex(kept) === window.ARENA_ADMIN_SHA256;
       } catch (e) { window.ARENA_ADMIN = false; }
       if (window.ARENA_ADMIN) {
-        const mark = () => { const b = document.getElementById('arena-build'); if (b && !/admin/.test(b.textContent)) b.textContent += ' \u00b7 admin';
-          // THE ADMIN FLAG (the owner 2026-11-08: "Zeige ein kleines flag an im client wenn der admin node aktiviert ist"): a small badge in the corner, always on top
-          // A CLICK OPENS THE PAYOUT WINDOW (Daniel 2026-11-10: "Wenn ich auf admin klicke geht das auszahlt Fenster an"): the feedback review and payouts
-          if (!document.getElementById('arena-admin-flag')) { const f = document.createElement('a'); f.id = 'arena-admin-flag'; f.textContent = 'ADMIN'; f.title = 'Admin mode (your rounds are left out of the counts) - open the feedback payouts';
-            f.href = 'https://bitcoinarena.io/feedback-admin/'; f.target = '_blank'; f.rel = 'noopener';
-            f.style.cssText = 'position:fixed;left:6px;bottom:6px;z-index:2147483647;padding:4px 8px;border-radius:4px;background:#c0392b;color:#fff;font:700 11px/1.4 system-ui,sans-serif;letter-spacing:.06em;cursor:pointer;text-decoration:none;opacity:.95';
-            document.body.appendChild(f); } };
+        // THE ADMIN LINK, RIGHT BEFORE THE UI STAMP (the owner 2026-11-08: "Zeige ein kleines flag an im client wenn der admin node aktiviert ist"; Daniel
+        // 2026-11-10: "wenn ich auf das admin links unten klicke muss die aber die admin Seite aufgehen, nicht 2 links. Admin ist auch zu links, man kann es nicht
+        // klicken. Vor ui 592 soll es hin"): a red ADMIN link at the start of each build stamp (the games' footer and a game's own), clickable, opening the
+        // feedback review and payouts with this browser's admin code in the URL fragment - a fragment is never sent to a server; the admin page takes it once
+        const adminHref = () => { let c = ''; try { c = (store && store.getItem('arena.admin.code')) || ''; } catch { c = ''; } return 'https://bitcoinarena.io/feedback-admin/' + (c ? '#code=' + encodeURIComponent(c) : ''); };
+        const mark = () => {
+          for (const b of document.querySelectorAll('#arena-build, .build-line')) {
+            if (b.querySelector('.arena-admin-link')) continue;
+            const a = document.createElement('a'); a.className = 'arena-admin-link'; a.textContent = 'ADMIN'; a.title = 'Admin mode (your rounds are left out of the counts) - open the feedback payouts';
+            a.href = adminHref(); a.target = '_blank'; a.rel = 'noopener';
+            a.addEventListener('click', () => { a.href = adminHref(); });
+            a.style.cssText = 'pointer-events:auto;display:inline-block;margin-right:6px;padding:1px 6px;border-radius:4px;background:#c0392b;color:#fff;font:700 10px/1.5 system-ui,sans-serif;letter-spacing:.06em;cursor:pointer;text-decoration:none;vertical-align:middle';
+            b.insertBefore(a, b.firstChild);
+          }
+        };
+        setInterval(mark, 5000);   // a stamp redrawn later gets its link back
         if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', mark); else mark();
         // THE OWNER'S ROUNDS LEFT OUT OF THE COUNTS (kanban #1090: "tu da meine Runden RAUS NEHMEN. Indem es ein Flag im Frontend gibt"): every
         // entry this browser's wallet history holds (a stake row's entry - its transaction id in the explorer), told to the explorer once, with
