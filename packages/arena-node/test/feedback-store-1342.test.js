@@ -330,3 +330,18 @@ test('#1402 the faucet\'s node check runs one at a time and at most 10 an hour p
   assert.ok(src.includes("if (NODE_CHECK_BUSY) return send(429, { ok: false, why: 'a node check is running: try again in a minute' });"));
   assert.ok(src.includes("const who = ip.includes(':') ? ip.split(':').slice(0, 4).join(':') : ip;"), 'an IPv6 address counted per /64');
 });
+
+// Daniel 2026-11-10 (#1342): "Die lnd addresse muss validiert werden ob die funktioniert" and "ein Budget von 100000 sats pro Woche"
+test('#1342 a bounty Lightning address works only when its wallet answers a pay request; the weekly budget is 100,000', async () => {
+  const { lnAddressWorks, REWARD_DEFAULTS } = await import('../src/feedback-store.js');
+  assert.equal(REWARD_DEFAULTS.weeklyBudgetSats, 100000);
+  const asked = [];
+  const wallet = (answer, status = 200) => async (url) => { asked.push(url); if (answer instanceof Error) throw answer; return { ok: status === 200, status, json: async () => answer }; };
+  const good = await lnAddressWorks('Alice@Wallet.Example.com', { fetchFn: wallet({ tag: 'payRequest', callback: 'https://wallet.example.com/cb', minSendable: 1000, maxSendable: 100000000 }) });
+  assert.deepEqual([good.ok, asked[0]], [true, 'https://wallet.example.com/.well-known/lnurlp/alice']);
+  assert.match((await lnAddressWorks('bob@nowhere.example', { fetchFn: wallet(new TypeError('fetch failed')) })).why, /could not be reached/);
+  assert.match((await lnAddressWorks('bob@w.example', { fetchFn: wallet({ status: 'ERROR', reason: 'unknown user' }) })).why, /unknown user/);
+  assert.match((await lnAddressWorks('bob@w.example', { fetchFn: wallet({}, 404) })).why, /answered 404/);
+  assert.match((await lnAddressWorks('bob@w.example', { fetchFn: wallet({ tag: 'withdrawRequest', callback: 'https://w/cb' }) })).why, /does not take payments/);
+  assert.equal((await lnAddressWorks('not an address')).ok, false);
+});

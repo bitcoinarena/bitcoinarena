@@ -176,6 +176,12 @@
     #arena-feedback .fb-levels-table td { padding: 2px 6px 2px 0; vertical-align: top; }
     #arena-feedback .fb-levels-table td.n { white-space: nowrap; font-weight: 700; }
     #arena-feedback .fb-levels-table td.ex { opacity: .75; }
+    #arena-feedback .fb-budget { margin: 8px 0 2px; font-size: 12px; } #arena-feedback .fb-budget-line { margin-bottom: 4px; }
+    #arena-feedback .fb-budget-bar { height: 8px; border-radius: 4px; background: #21262d; overflow: hidden; } #arena-feedback .fb-budget-fill { height: 100%; background: #f7931a; }
+    #arena-feedback .fb-join .icons { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 4px; }
+    #arena-feedback .fb-join a.icon { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; padding: 0; border: 0; color: #e6edf3; font-size: 12px; font-weight: 600; text-decoration: none; }
+    #arena-feedback .fb-join a.icon span.i { display: flex; width: 52px; height: 52px; border-radius: 14px; align-items: center; justify-content: center; background: #21262d; border: 1px solid #30363d; }
+    #arena-feedback .fb-join a.icon svg { width: 28px; height: 28px; fill: #e6edf3; }
     #arena-feedback .fb-rule { font-size: 12px; margin: 0 0 6px; }
     #arena-feedback .fb-count { font-size: 12px; color: #8b949e; margin: 2px 0 0; text-align: right; } #arena-feedback .fb-count.short { color: #d29922; }
     #arena-feedback .fb-shot { display: block; margin: 8px 0 0; color: #8b949e; font-size: 13px; } #arena-feedback .fb-shot input { max-width: 100%; color: #e6edf3; }
@@ -1800,6 +1806,9 @@
     // THE BOUNTY IS OFF UNTIL THE OWNER SAYS SO (Daniel 2026-11-07): only the private build (deployed to an unlisted preview, never the public host)
     // sets window.ARENA_BOUNTY_BUILD; everywhere else the box, the signed reports and My feedback's states stay, with no word of a reward. The
     // faucet holds the money paths to the private page's origin besides (FAUCET_BOUNTY_ORIGINS).
+    // ON FOR TESTNET (Daniel 2026-11-10: "Tu die feedback option auf testnet deployen die zurückgehalten worden ist"): the testnet page, its stage and its
+    // previews; the faucet answers rewards only toward the origins it names (FAUCET_BOUNTY_ORIGINS)
+    if (/^(testnet|testnet-stage)\.bitcoinarena\.io$|(^|\.)bitcoin-arena-site\.pages\.dev$/.test(location.hostname)) window.ARENA_BOUNTY_BUILD = true;
     window.ARENA_BOUNTY_ON = window.ARENA_BOUNTY_BUILD === true;
     // THE BOUNTY'S RULES, SAID WHEREVER IT IS ON (Daniel 2026-11-07: "nach severity gezahlt ... nur fuer ernstgemeinte submissions ... Duplikate werden nicht gezaehlt ...
     // das dev team sich jede submission erst ansieht")
@@ -1845,6 +1854,13 @@
           const tbl = el('table', { cls: 'fb-levels-table' }, ...j.levels.map((l) => el('tr', {},
             el('td', { text: l.label }), el('td', { cls: 'n', text: Number(l.sats).toLocaleString('en-US') + ' ' + unit }), el('td', { cls: 'ex', text: l.example || '' }))));
           levels.append(tbl, el('p', { cls: 'fb-rule', text: j.rule + (j.network === 'mainnet' ? '' : ' Testnet sats, no value.') }));
+          // THIS WEEK'S BUDGET (Daniel 2026-11-10: "ein Budget von 100000 sats pro Woche das wird im Fenster angezeigt wie weit wir schon sind")
+          if (j.budget && Number(j.budget.weeklyBudgetSats) > 0) {
+            const used = Number(j.budget.weekApprovedSats) || 0, all = Number(j.budget.weeklyBudgetSats);
+            const bar = el('div', { cls: 'fb-budget-bar' }, el('div', { cls: 'fb-budget-fill' }));
+            bar.firstChild.style.width = Math.min(100, Math.round((used / all) * 100)) + '%';
+            levels.append(el('div', { cls: 'fb-budget' }, el('div', { cls: 'fb-budget-line', text: 'This week\u2019s reward budget: ' + used.toLocaleString('en-US') + ' of ' + all.toLocaleString('en-US') + ' ' + unit + ' given out' }), bar));
+          }
         }).catch(() => {});
       }
       d.append(el('div', { cls: 'card' }, el('h3', { text: 'Feedback' }), el('p', { text: 'Your words, the build and the game are sent. No amounts, and no private key.' }), type, t, count, x, ln, shotRow, tick, say, levels, el('div', { cls: 'row' }, off, send)));
@@ -1859,10 +1875,18 @@
         img.src = URL.createObjectURL(file);
       });
       // AFTER SENDING: THE COMMUNITY (Daniel 2026-11-07: "die Aufforderung ... die community zu joinen")
+      // AS ICONS, NOSTR TOO, BIGGER (Daniel 2026-11-10: "Die Icons danach mit Icons, nostr einfuegen und grösser")
+      const ICONS = {
+        X: 'M18.9 2H22l-6.8 7.8L23 22h-6.3l-4.9-6.4L6.1 22H3l7.3-8.3L1 2h6.4l4.4 5.9L18.9 2zm-1.1 18h1.7L6.3 3.9H4.5L17.8 20z',
+        Discord: 'M20.3 4.4A19.6 19.6 0 0 0 15.4 3l-.6 1.3a18.2 18.2 0 0 0-5.6 0L8.6 3a19.6 19.6 0 0 0-4.9 1.4C.6 9.1-.3 13.6.2 18.1a19.8 19.8 0 0 0 6 3l1.3-2.1a12.9 12.9 0 0 1-2-1l.5-.4a14.1 14.1 0 0 0 12 0l.5.4c-.6.4-1.3.7-2 1l1.3 2.1a19.7 19.7 0 0 0 6-3c.5-5.2-.9-9.7-3.5-13.7zM8.5 15.3c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4zm7 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4z',
+        Telegram: 'M21.9 3.4L18.6 19c-.2 1.1-.9 1.4-1.8.9l-5-3.7-2.4 2.3c-.3.3-.5.5-1 .5l.4-5.1 9.3-8.4c.4-.4-.1-.6-.6-.2L6 12.6 1 11c-1.1-.3-1.1-1.1.2-1.6L20.5 2c.9-.3 1.7.2 1.4 1.4z',
+        Nostr: 'M12 1.5c-5.8 0-10.5 4.7-10.5 10.5S6.2 22.5 12 22.5 22.5 17.8 22.5 12 17.8 1.5 12 1.5zm4.6 15.2h-2.2l-4.6-6.4v6.4H7.6V7.3h2.2l4.6 6.4V7.3h2.2v9.4z',
+      };
+      const icon = (name, href) => { const a = el('a', { cls: 'icon', href, target: '_blank', rel: 'noopener noreferrer', 'aria-label': name, title: name });
+        const box = el('span', { cls: 'i' }); box.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + ICONS[name] + '"/></svg>'; a.append(box, el('span', { text: name })); return a; };
       const community = () => el('div', { cls: 'fb-join' }, el('p', { text: 'Join the community, talk to the team and other testers:' }),
-        el('div', { cls: 'row' }, el('a', { href: 'https://x.com/bitcoinarena_io', target: '_blank', rel: 'noopener noreferrer', text: 'X' }),
-          el('a', { href: 'https://discord.gg/9zZbASZyue', target: '_blank', rel: 'noopener noreferrer', text: 'Discord' }),
-          el('a', { href: 'https://t.me/+KihHE8JhcVM3NDVi', target: '_blank', rel: 'noopener noreferrer', text: 'Telegram' })));
+        el('div', { cls: 'icons' }, icon('X', 'https://x.com/bitcoinarena_io'), icon('Discord', 'https://discord.gg/9zZbASZyue'),
+          icon('Telegram', 'https://t.me/+KihHE8JhcVM3NDVi'), icon('Nostr', 'https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2')));
       off.onclick = () => d.remove();
       send.onclick = async () => {
         if (t.value.trim().length < 50) { recount(); return; }
@@ -2009,8 +2033,10 @@
       if (window.ARENA_ADMIN) {
         const mark = () => { const b = document.getElementById('arena-build'); if (b && !/admin/.test(b.textContent)) b.textContent += ' \u00b7 admin';
           // THE ADMIN FLAG (the owner 2026-11-08: "Zeige ein kleines flag an im client wenn der admin node aktiviert ist"): a small badge in the corner, always on top
-          if (!document.getElementById('arena-admin-flag')) { const f = document.createElement('div'); f.id = 'arena-admin-flag'; f.textContent = 'ADMIN'; f.title = 'Admin mode: your rounds are left out of the counts';
-            f.style.cssText = 'position:fixed;left:6px;bottom:6px;z-index:2147483647;padding:2px 6px;border-radius:4px;background:#c0392b;color:#fff;font:700 10px/1.4 system-ui,sans-serif;letter-spacing:.06em;pointer-events:none;opacity:.9';
+          // A CLICK OPENS THE PAYOUT WINDOW (Daniel 2026-11-10: "Wenn ich auf admin klicke geht das auszahlt Fenster an"): the feedback review and payouts
+          if (!document.getElementById('arena-admin-flag')) { const f = document.createElement('a'); f.id = 'arena-admin-flag'; f.textContent = 'ADMIN'; f.title = 'Admin mode (your rounds are left out of the counts) - open the feedback payouts';
+            f.href = 'https://bitcoinarena.io/feedback-admin/'; f.target = '_blank'; f.rel = 'noopener';
+            f.style.cssText = 'position:fixed;left:6px;bottom:6px;z-index:2147483647;padding:4px 8px;border-radius:4px;background:#c0392b;color:#fff;font:700 11px/1.4 system-ui,sans-serif;letter-spacing:.06em;cursor:pointer;text-decoration:none;opacity:.95';
             document.body.appendChild(f); } };
         if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', mark); else mark();
         // THE OWNER'S ROUNDS LEFT OUT OF THE COUNTS (kanban #1090: "tu da meine Runden RAUS NEHMEN. Indem es ein Flag im Frontend gibt"): every

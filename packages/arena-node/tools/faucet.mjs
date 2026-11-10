@@ -27,7 +27,7 @@ import { timingSafeEqual, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
-import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS } from '../src/feedback-store.js';
+import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks } from '../src/feedback-store.js';
 import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { PLAYER_GRANTS } from '../src/faucet.js';
 const PLAYER_WELCOME_SATS = PLAYER_GRANTS.welcome.invoiceSats;
@@ -411,7 +411,9 @@ createServer((req, res) => {
   if (path === '/feedback/rewards' && req.method === 'GET') {
     // the amounts only toward the private page's origin (Daniel 2026-11-07: "Den bounty Funktion ausmachen bis ich es sage und nur auf einer privaten URL aktivieren")
     if (!(bountyOn() && BOUNTY_ORIGINS.includes(String(req.headers.origin || '')))) return send(200, { ok: true, on: false });
-    return send(200, { ok: true, on: true, network: BOUNTY_NETWORK, levels: REWARD_LEVELS, nodeBaseSats: NODE_BOUNTY_BASE_SATS, perKeyPerWeek: RULES.perKeyPerWeek,
+    // AND HOW FAR THIS WEEK'S BUDGET IS (Daniel 2026-11-10: "das wird im Fenster angezeigt wie weit wir schon sind"): approved this week of the weekly budget
+    let budget = null; try { const b = FEEDBACK ? FEEDBACK.budget({ rules: RULES }) : null; budget = b ? { weekApprovedSats: b.weekApprovedSats, weeklyBudgetSats: b.weeklyBudgetSats } : null; } catch { budget = null; }
+    return send(200, { ok: true, on: true, network: BOUNTY_NETWORK, levels: REWARD_LEVELS, nodeBaseSats: NODE_BOUNTY_BASE_SATS, perKeyPerWeek: RULES.perKeyPerWeek, budget,
       rule: 'A person reviews every report. Only the first report of a bug is paid. Nothing is paid for game results.' });
   }
   if (path === '/feedback/mine') {
@@ -452,6 +454,8 @@ createServer((req, res) => {
           b = { ...b0, text: `${String(words.happened || '')}${words.expected ? `\nExpected: ${String(words.expected)}` : ''}${words.lnAddress ? `\nBounty address: ${String(words.lnAddress).slice(0, 200)}` : ''}`, build: tagOf('build'), game: tagOf('game'), round: tagOf('round') };
           const pre = feedbackDecide({ ...b, ip }, REPORTS);
           if (!pre.ok) return send(200, pre);
+          // THE BOUNTY ADDRESS MUST WORK (Daniel 2026-11-10, #1342): asked before the report is kept, so a reward is never made for an address nothing pays to
+          if (words.lnAddress) { const w = await lnAddressWorks(words.lnAddress); if (!w.ok) return send(200, { ok: false, why: `That Lightning address does not work: ${w.why}. Check it, or leave it empty.` }); }
           kept = FEEDBACK.take(e, { hasShot: (h) => !!shotFile(h) });
           if (!kept.ok) return send(200, kept);
         }

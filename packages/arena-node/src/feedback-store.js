@@ -7,7 +7,7 @@
 // list is never read by its pubkey alone.
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes } from 'node:crypto';
-import { lnurlFor } from '../../arena-protocol/src/bech32.js';
+import { lnurlFor, urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { eventId, eventRefusal } from './nostr-relay.js';
 
 /** The report's kind: ephemeral (20000-29999), so no relay keeps it - it goes to the faucet only. */
@@ -22,7 +22,8 @@ export const STATES = Object.freeze({ NEW: 'new', ACCEPTED: 'accepted', REJECTED
 const NEXT = Object.freeze({ new: ['accepted', 'rejected', 'duplicate'], accepted: ['paid', 'rejected'], rejected: [], duplicate: [], paid: [] });
 export const TEXT_MOST = 4000;
 // THE REWARD RULES (kanban #1342 section 2): settings the owner can change; testnet sats in phase 1
-export const REWARD_DEFAULTS = Object.freeze({ perKeyPerWeek: 3, weeklyBudgetSats: 50000, mostSats: 20000, leastSats: 100 });
+// the weekly budget: 100,000 sats (Daniel 2026-11-10: "Wir haben auch ein Budget von 100000 sats pro Woche")
+export const REWARD_DEFAULTS = Object.freeze({ perKeyPerWeek: 3, weeklyBudgetSats: 100000, mostSats: 20000, leastSats: 100 });
 /**
  * THE REWARD LEVELS (Daniel 2026-11-08, final: "500 / 1,000 / 2,000 / 5,000 / 20,000"): one table the feedback form shows and the approval pays from,
  * so form and payout never differ. A critical bug is outside the weekly budget. A node bounty's base is its own pot (#1342 node bounty).
@@ -360,4 +361,27 @@ export function imageKind(bytes) {
   if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'jpg';
   if (b.length > 12 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return 'webp';
   return null;
+}
+
+/**
+ * DOES THIS LIGHTNING ADDRESS WORK (Daniel 2026-11-10, #1342: "Die lnd addresse muss validiert werden ob die funktioniert"): a Lightning address
+ * (name@domain, LUD-16) is asked at https://domain/.well-known/lnurlp/name, an LNURL (LUD-01) at the URL it encodes; it works when that answers a
+ * pay request (LUD-06: tag payRequest, a callback) within `timeoutMs`. `fetchFn` is the caller's fetch. Answers { ok } or { ok: false, why }.
+ */
+export async function lnAddressWorks(address, { fetchFn = fetch, timeoutMs = 8000 } = {}) {
+  const a = String(address || '').trim();
+  let url = null;
+  const m = /^([a-z0-9._+-]+)@([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/i.exec(a);
+  if (m) url = `https://${m[2].toLowerCase()}/.well-known/lnurlp/${encodeURIComponent(m[1].toLowerCase())}`;
+  else if (/^lnurl1[02-9ac-hj-np-z]+$/i.test(a)) { try { url = urlOfLnurl(a.toLowerCase()); } catch { url = null; } }
+  if (!url || !/^https:\/\//.test(url)) return { ok: false, why: 'that is not a Lightning address (name@wallet.com) or an LNURL' };
+  let j;
+  try {
+    const r = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } });
+    if (!r.ok) return { ok: false, why: `its wallet answered ${r.status}` };
+    j = await r.json();
+  } catch (e) { return { ok: false, why: /abort|timeout/i.test(String(e && e.name) + String(e && e.message)) ? 'its wallet did not answer in time' : 'its wallet could not be reached' }; }
+  if (!j || j.status === 'ERROR') return { ok: false, why: `its wallet said: ${String((j && j.reason) || 'error').slice(0, 120)}` };
+  if (j.tag !== 'payRequest' || typeof j.callback !== 'string' || !/^https:\/\//.test(j.callback)) return { ok: false, why: 'its wallet does not take payments at that address' };
+  return { ok: true, minSats: Math.ceil(Number(j.minSendable || 0) / 1000), maxSats: Math.floor(Number(j.maxSendable || 0) / 1000) };
 }
