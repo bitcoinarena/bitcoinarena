@@ -2092,7 +2092,9 @@
         try {
           const r = await fetch('https://explorer.bitcoinarena.io/api/' + (byAddress ? 'mark-ip' : 'mark'), { method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify(byAddress ? { keys: fresh } : { kind: 'owner', keys: fresh, code: adminCode }) });
-          if (r.ok) store.setItem('arena.admin.marked', JSON.stringify(sent.concat(fresh).slice(-5000)));
+          // by address the explorer takes only the entries it holds (kanban #1420): those count as sent, the rest are asked again next minute
+          if (r.ok) { let took = fresh; if (byAddress) { try { const j = await r.json(); took = Array.isArray(j.took) ? j.took : []; } catch { took = []; } }
+            store.setItem('arena.admin.marked', JSON.stringify(sent.concat(took).slice(-5000))); }
         } catch { /* the next minute asks again */ }
       };
       if (window.ARENA_ADMIN) {
