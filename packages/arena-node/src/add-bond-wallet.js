@@ -43,6 +43,11 @@ export function bondCliFrom(env = process.env) {
  */
 export const SAME_ACTION_MS = 30 * 60_000;
 const rebroadcast = (cli, hexes) => { for (const h of hexes) { try { cli('sendrawtransaction', h); } catch { /* in the mempool or mined already */ } } };
+// THE KEPT ACTION'S TRANSACTION IS REALLY THERE (audit 6, kanban #1423): the journal is written before the broadcast (#1374), so a broadcast that threw
+// left a row for a transaction no node holds, and the same ask answered "already" with nothing sent. After the rebroadcast it must be in this node's
+// mempool or mined (`confirmed`); else the row is stale and the action is built again
+const txThere = (cli, txid, confirmed = false) => { if (confirmed) return true; try { cli('getmempoolentry', txid); return true; } catch { /* not in the mempool */ }
+  try { const t = JSON.parse(cli('gettransaction', txid)); return Number(t.confirmations) > 0; } catch { return false; } };
 const sameAction = (was, { key, what, nowMs }) => !!was && (key ? was.key === key : (!was.key && was.what === what && nowMs - Number(was.atMs || 0) < SAME_ACTION_MS));
 
 export async function addBondFromWallet({ cli, wallet, network = 'testnet4', secret, pubkey, addSats, post = false, blockMs = 600000, now = Date.now(), key = null, journal = null }) {
@@ -58,7 +63,8 @@ export async function addBondFromWallet({ cli, wallet, network = 'testnet4', sec
     const was = journal.last('add-bond');
     if (sameAction(was, { key, what: String(add), nowMs: now }) && !bonds.some((b) => b.txid === was.bondTxid)) {
       rebroadcast(cli, was.hexes || []);
-      return { ok: true, plan: was.plan, bond: was.bond, already: true };
+      if (txThere(cli, was.bondTxid)) return { ok: true, plan: was.plan, bond: was.bond, already: true };
+      // never sent (kanban #1423): built and sent anew below
     }
   }
   const newest = bonds[0];
@@ -141,7 +147,7 @@ export async function changeRolesFromWallet({ cli, wallet, network = 'testnet4',
   // THE SAME CHANGE ASKED AGAIN (kanban #1374): a confirmed one reads as "already advertises" above; one sent and not confirmed is answered, not paid twice
   if (post && journal) {
     const was = journal.last('roles');
-    if (sameAction(was, { key, what: JSON.stringify(after), nowMs })) { rebroadcast(cli, was.hexes || []); return { ok: true, plan: was.plan, update: { txid: was.txid }, already: true }; }
+    if (sameAction(was, { key, what: JSON.stringify(after), nowMs })) { rebroadcast(cli, was.hexes || []); if (txThere(cli, was.txid)) return { ok: true, plan: was.plan, update: { txid: was.txid }, already: true }; }
   }
   let plan = null;
   const sent = sendUpdateFromWallet({ cli, rt, secret, bond, advert, post,
