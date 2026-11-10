@@ -21,7 +21,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { testConnection, TESTNET4_ELECTRUM } from './chain-test.js';
 import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS, emergencyOf, seedOfWords, seedOfNsec, newNsec, nodeKeyOf, signNostrEvent } from './seed.js';
-import { nextStep, doneOf, seatConf, ROLES, guardianSetupOf, ownCoreOf } from './state.js';
+import { nextStep, doneOf, seatConf, writeSeatConf, ROLES, guardianSetupOf, ownCoreOf } from './state.js';
 import { appsIn, appsView, chosenApps, hostedGameIdsOf } from './apps.js';
 import { installService, installProgram } from './service.js';
 import { control, followTunnelNow, nodeOf } from './node-services.js';
@@ -352,7 +352,7 @@ const serviceRun = async (b) => {
     stage('settings');
     // the hosted games again, from this release's apps (an installer updated since the apps step carries newer versions)
     try { const hg = await hostedGameIdsOf(release, chosenApps(s, releaseApps), releaseApps); if (hg.length) s = state.save({ hostedGames: hg }); } catch (e) { log(`apps: the hosted games could not be read: ${e.message}`); }
-    state.writeSecret('arena.conf', seatConf(conf, { home: state.home, release }));
+    writeSeatConf(state, conf, { home: state.home, release });
     const tunnel = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelUnit({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
     const tunnelArgs = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelArgsOf({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
     const installAt = Date.now();                                    // a restarted quick tunnel's name is the one logged after this
@@ -388,7 +388,7 @@ const serviceRun = async (b) => {
       if (url) {
         s = state.merge('reach', { url });
         const before = seatConf(conf, { home: state.home, release }), after = seatConf({ ...s, port, bridgePort }, { home: state.home, release });
-        state.writeSecret('arena.conf', after);
+        writeSeatConf(state, { ...s, port, bridgePort }, { home: state.home, release });
         // THE SEAT READS WHAT ITS SETTINGS NOW SAY (kanban #577, measured 2026-10-22 on the second machine: installer nodes 3-7 ran on the 15 settings
         // they started with - the quick tunnel's name, and with it the custody node's guardian and founding settings, came only after the start -
         // so they ran no guardian and could never be drawn into a founding): the seat alone restarted, never its tunnel (a new name)
