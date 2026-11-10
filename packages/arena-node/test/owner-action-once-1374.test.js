@@ -11,9 +11,10 @@ mock.module('../tools/regtest-bond.mjs', { namedExports: { regtest: () => ({ bon
 let BONDS = [B1];
 const { addBondFromWallet, changeRolesFromWallet, SAME_ACTION_MS } = await import('../src/add-bond-wallet.js');
 
-const world = () => {
+// `mempool`: the transaction ids this node's mempool holds (kanban #1423: an "already" answer needs the kept transaction to be there)
+const world = (mempool = new Set(['b2'.repeat(32), 'b3'.repeat(32), 'u1'.repeat(32)])) => {
   const calls = [], store = new Map();
-  const cli = (m, ...a) => { calls.push([m, ...a]); if (m === 'getblockcount') return '100'; throw new Error(`no ${m}`); };
+  const cli = (m, ...a) => { calls.push([m, ...a]); if (m === 'getblockcount') return '100'; if (m === 'getmempoolentry' && mempool.has(a[0])) return '{}'; throw new Error(`no ${m}`); };
   const journal = { last: (k) => store.get(k) || null, keep: (k, r) => store.set(k, r) };
   return { calls, store, cli, journal, sent: () => calls.filter((c) => c[0] === 'sendrawtransaction').map((c) => c[1]) };
 };
@@ -49,4 +50,19 @@ test('#1374 the same roles change again while its update is unconfirmed: answere
   assert.equal(r.update.txid, 'u1'.repeat(32));
   assert.deepEqual(w.sent(), ['c0', 'de']);
   await assert.rejects(changeRolesFromWallet({ cli: w.cli, network: 'regtest', secret: new Uint8Array(32).fill(1), pubkey: new Uint8Array(32), roles: ['settlement'], post: true, journal: w.journal, nowMs: 2000 }), /BUILD: a second update/);
+});
+
+// KANBAN #1423 (audit 6 for 2026.1.9.27): the journal is kept before the broadcast, so a broadcast that threw left a row for a transaction no node holds,
+// and the same ask answered "already" with nothing sent. Now the kept transaction must be in the mempool (or mined); else the action is built again.
+test('#1423 the same add or roles change again after a broadcast that never went out: built anew, not answered "already"', async () => {
+  const w = world(new Set());                                         // the earlier broadcast threw: the mempool holds nothing
+  const now = 1_800_000_000_000;
+  w.journal.keep('add-bond', { key: null, what: '50000', atMs: now - 60_000, hexes: ['f00d', 'b0nd'], bondTxid: 'b2'.repeat(32), bond: { txid: 'b2'.repeat(32) }, plan: { addSats: '50000' } });
+  const add = await addBondFromWallet({ cli: w.cli, network: 'regtest', secret: new Uint8Array(32).fill(1), pubkey: new Uint8Array(32), addSats: '50000', post: true, now, journal: w.journal }).then((r) => (r.already ? 'answered already' : 'other'), (e) => e.message);
+  const after = { roles: ['game', 'verify'], custody: false };
+  w.journal.keep('roles', { key: null, what: JSON.stringify(after), atMs: 1000, hexes: ['c0', 'de'], txid: 'u1'.repeat(32), plan: { after } });
+  const roles = await changeRolesFromWallet({ cli: w.cli, network: 'regtest', secret: new Uint8Array(32).fill(1), pubkey: new Uint8Array(32), roles: ['verify', 'game'], post: true, journal: w.journal, nowMs: 2000 }).then((r) => (r.already ? 'answered already' : 'other'), (e) => e.message);
+  console.log(`  MEASURED #1423: kept add-bond not in the mempool -> ${add}; kept roles update not in the mempool -> ${roles}`);
+  assert.match(add, /BUILD: a second bond would be funded/);
+  assert.match(roles, /BUILD: a second update would be funded/);
 });
