@@ -175,6 +175,8 @@ import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
 import { DrawnAttestor } from './drawn-attestor.js';
 import { relaySweep, createAuditDesk, agreedRunsOf, forwardDigest } from './audit-seat.js';
+import { createH2hAuditDesk, h2hAgreedResultsOf, h2hForwardDigest } from './h2h-audit-desk.js';
+import { decodeH2hAudit } from '../../arena-protocol/src/h2h-audit.js';
 import { RoundAuditor, auditorNet } from './round-auditor.js';
 import { buildObjectionBundle } from './objection-bundle.js';
 import { decodeObjectionBundle } from '../../arena-protocol/src/objection.js';
@@ -3331,6 +3333,36 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       fetch(`${String(seat).replace(/\/+$/, '')}/audit`, { method: 'POST', body, headers, signal: AbortSignal.timeout(8000) })
         .then(async (r) => { if (r.status !== 201 && r.status !== 200) console.log(`[audit] ${toHex(rid).slice(0, 16)}: ${seat} refused the forwarded AUDIT: ${r.status} ${(await r.text()).slice(0, 120)}`); },
           (e) => console.log(`[audit] ${toHex(rid).slice(0, 16)}: forwarding to ${seat}: ${e.message}`));
+    }
+  }
+  // THE HEAD-TO-HEAD AUDIT BEFORE FINAL (§13A.1 RULED 2026-11-10, kanban #1400, build #1412): a head-to-head round on the short window (60 s; 5 s on
+  // regtest) is FINAL in it only with two drawn auditors' H2H_AUDITs over this seat's own agreed results; the desk keeps them (h2h-audit-desk.js). Who may
+  // audit is the §13A.1 eligible set (auditSetFor) less the round's players; the window's start is its close less W (the contract's own).
+  const h2hShortRound = (c) => { if (!c) return false; const f = pluginForRound(c, hosted); return f.ok && f.headToHead === true && BigInt(c.objectionWindowMs) < 600_000n; };
+  const h2hDesk = createH2hAuditDesk({ db: round.db, now: () => round.now(), vrf: auditVrf, verify: verifyAudit,
+    contextFor: async (rid) => {
+      const c = contractOfRound(rid);
+      if (!c) return { ok: false, why: 'this seat holds no such round' };
+      if (!h2hShortRound(c)) return { ok: false, why: 'that round is no head-to-head round on the short window: it takes no H2H_AUDIT' };
+      if (!seatOf(rid)) return { ok: false, why: 'this node is no seat of that round' };
+      const set = auditSetFor(rid);
+      if (!set) return { ok: false, why: 'this seat reads no census for that round, so it cannot say who may audit it' };
+      const entries = auditEntries(rid);
+      const agreed = h2hAgreedResultsOf({ contract: c, committee: round.signerNodes(rid), entries: entries.map((e) => ({ entryId: e.entryId, results: round.results(rid, e.entryId).map((r) => r.bytes) })) });
+      if (!agreed.ok) return { ok: false, why: agreed.why };
+      const players = new Set(entries.map((e) => toHex(e.entry.playerPubkey)));
+      const eligible = new Map([...set.eligible].filter(([key]) => !players.has(key)));
+      let w; try { w = windowsOf(c); } catch (e) { return { ok: false, why: `the round's window: ${e.message}` }; }
+      return { ok: true, eligible, total: set.total, resultsHash: agreed.resultsHash, provisionalAtMs: BigInt(w.closeMs) - BigInt(c.objectionWindowMs) };
+    } });
+  function forwardH2hAudit(body, rid) {
+    let sig;
+    try { sig = schnorr.sign(h2hForwardDigest(body), round.identity.secret); } catch { return; }
+    const headers = { 'x-audit-seat': toHex(round.pubkey), 'x-audit-forward': toHex(sig) };
+    for (const seat of auditSeats(rid)) {
+      fetch(`${String(seat).replace(/\/+$/, '')}/h2h-audit`, { method: 'POST', body, headers, signal: AbortSignal.timeout(8000) })
+        .then(async (r) => { if (r.status !== 201 && r.status !== 200) console.log(`[h2h-audit] ${toHex(rid).slice(0, 16)}: ${seat} refused the forwarded H2H_AUDIT: ${r.status} ${(await r.text()).slice(0, 120)}`); },
+          (e) => console.log(`[h2h-audit] ${toHex(rid).slice(0, 16)}: forwarding to ${seat}: ${e.message}`));
     }
   }
   // A RESULT A VALID OBJECTION CONTRADICTED (§13A.1): every AUDIT this seat holds for its round vouched for it - a fraud proof against its
@@ -12604,6 +12636,36 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             .then((r) => console.log(`[audit] ${got.round.slice(0, 16)}: AUDIT of ${got.node.slice(0, 16)} relayed to ${r.sent} of ${relays.length} publication relay(s)${r.failed.length ? `; ${r.failed[0]}` : ''}`), () => {});
         }
         return text(res, got.kept ? 201 : 200, got.kept ? 'AUDIT kept' : 'already held');
+      }
+      // A HEAD-TO-HEAD AUDIT (§13A.1 RULED 2026-11-10, kanban #1412): its bytes and the auditor's signature, taken once when it stands and before the
+      // round's short window closed - directly, or forwarded by a seat of the round (x-audit-seat, its signature over the H2H_AUDIT's id); a new one goes on
+      if (req.method === 'POST' && url.pathname === '/h2h-audit') {
+        const body = new Uint8Array(await read(req));
+        const seatHex = String(req.headers['x-audit-seat'] || '').toLowerCase(), forwardSig = String(req.headers['x-audit-forward'] || '').toLowerCase();
+        let forwarded = false;
+        if (seatHex || forwardSig) {
+          if (!/^[0-9a-f]{64}$/.test(seatHex) || !/^[0-9a-f]{128}$/.test(forwardSig)) return text(res, 400, 'a forwarded H2H_AUDIT names its seat (x-audit-seat) and that seat\'s signature (x-audit-forward)');
+          let a;
+          try { a = decodeH2hAudit(body.subarray(0, body.length - 64)); } catch (e) { return text(res, 400, `that is not an H2H_AUDIT: ${e.message}`); }
+          if (!round.signerNodes(a.roundId).some((k) => toHex(k) === seatHex)) return text(res, 403, 'a forwarded H2H_AUDIT counts only from a seat of its round');
+          if (!verifyAudit(fromHex(forwardSig), h2hForwardDigest(body), fromHex(seatHex))) return text(res, 403, 'the forwarding seat\'s signature does not verify');
+          forwarded = true;
+        }
+        const got = await h2hDesk.take(body, { forwarded });
+        if (!got.ok) return text(res, got.status || 409, got.why);
+        if (got.kept) {
+          console.log(`[h2h-audit] ${got.round.slice(0, 16)}: H2H_AUDIT of ${got.node.slice(0, 16)} kept${forwarded ? ` (forwarded by ${seatHex.slice(0, 16)})` : ''}, handed on`);
+          forwardH2hAudit(body, fromHex(got.round));
+        }
+        return text(res, got.kept ? 201 : 200, got.kept ? 'H2H_AUDIT kept' : 'already held');
+      }
+      if (req.method === 'GET' && url.pathname === '/h2h-audits') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'the H2H_AUDITs are asked for by round id');
+        const w = await h2hDesk.windowOf(new Uint8Array(rid)).catch((e) => ({ ok: false, why: e.message }));
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ round: toHex(rid), audits: h2hDesk.list(new Uint8Array(rid)),
+          window: w.ok ? { window: w.window, final: w.final, atMs: w.atMs !== undefined ? Number(w.atMs) : null, audited: w.audited } : { why: w.why } }) + '\n');
       }
       // THE AUDITS THIS SEAT HOLDS FOR A ROUND, a contradicted one with its bytes and signature (the fraud proof's evidence)
       if (req.method === 'GET' && url.pathname === '/audits') {
