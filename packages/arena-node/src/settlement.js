@@ -1290,6 +1290,13 @@ export class LockSettlement {
     // seats' certified batches are read again (the read kept for the round may be older than a batch this seat missed), and with one
     // taken, the settlement is built again from the store
     if (txid && !entry && (!m.ok || String(txid).toLowerCase() !== String(m.txid).toLowerCase()) && (await this.bookResync(roundIdBytes))) m = await build();
+    // A FALLBACK BUILT ONCE IS NOT KEPT AGAINST THE ASKER'S (kanban #1044, measured 2026-11-10 on the MacBook devnet s44, 3 of 7 seats silent: seats 3-5 built
+    // fallback 14161803, seat 6 had kept 9f99a7bd from its own first build - every pass split 3 against 1 with 4 needed, and the locks ran out to their
+    // expiration): on a mismatch the kept fallback is dropped and built again from the store once, and what each side holds is said
+    if (fallback && txid && m.ok && String(txid).toLowerCase() !== String(m.txid).toLowerCase()) {
+      const was = m; this.fallbackBuilt.delete(toHex(roundIdBytes)); m = await build();
+      console.log(`[fallback] ${toHex(roundIdBytes).slice(0, 16)}: asked about ${String(txid).slice(0, 16)}, kept ${String(was.txid).slice(0, 16)} (payouts ${was.plan ? was.plan.payouts.length : '?'}, paid ${was.plan ? was.plan.paidMsat : '?'} msat), built again: ${m.ok ? `${String(m.txid).slice(0, 16)} (payouts ${m.plan.payouts.length}, paid ${m.plan.paidMsat} msat)` : m.why}`);
+    }
     if (!m.ok) return m;
     // A COMMITMENT ONLY TO THE BYTES THE ASKER BUILT (measured on a 5-of-7): a signer node that rebuilt another
     // settlement - it saw a run end differently - would otherwise commit, and its share over its own bytes spoils the
@@ -2726,6 +2733,8 @@ export class LockSettlement {
       if (!m.ok) return m;
       if (!m.named) return refuse('only an Arena lock has a fallback claim');
       const n = await this.#namedSigned(roundIdBytes, m, `round=${toHex(roundIdBytes)}&fallback=1`, 'fallback', { fallback: true });
+      // A PEER THAT BUILT OTHER BYTES (kanban #1044): this seat's kept fallback goes too, so its next turn builds it again from the store
+      if (!n.ok && /rebuilt settlement [0-9a-f]+, not [0-9a-f]+/.test(String(n.why || ''))) this.fallbackBuilt.delete(toHex(roundIdBytes));
       if (!n.ok) return n;
       let signature;
       ({ m, signature } = n);
