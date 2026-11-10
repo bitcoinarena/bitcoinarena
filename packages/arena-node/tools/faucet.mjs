@@ -476,11 +476,11 @@ createServer((req, res) => {
         // was taken): its "Bounty address:" line must work as well
         if (!b0.event) { const m = /\nBounty address: (\S+)/.exec(String(b0.text || '')); if (m) { const w = await lnAddressWorks(m[1]); if (!w.ok) return send(200, { ok: false, why: `That Lightning address does not work: ${w.why}. Check it, or leave it empty.` }); } }
         const key = readFileSync(env.FAUCET_CHAT_TOKEN_FILE, 'utf8').trim();
-        const r = await fetch(`${env.FAUCET_CHAT_URL}/api/channels/${env.FAUCET_CHAT_CHANNEL}/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` }, body: JSON.stringify({ text: d.text }), signal: AbortSignal.timeout(10000) });
+        const r = await fetch(`${env.FAUCET_CHAT_URL}/api/channels/${env.FAUCET_CHAT_CHANNEL}/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` }, body: JSON.stringify({ text: (kept && kept.label ? `${kept.label} · ` : '') + d.text }), signal: AbortSignal.timeout(10000) });
         if (!r.ok) return send(502, { ok: false, why: 'the report could not be kept just now' });
         REPORTS.push({ ip, atMs: Date.now() });
         if (d.player) appendFileSync(FOUNDING_FILE, `${JSON.stringify({ player: d.player, atMs: Date.now() })}\n`);
-        send(200, { ok: true, ...(kept ? { id: kept.id, kept: kept.kept } : {}) });
+        send(200, { ok: true, ...(kept ? { id: kept.id, kept: kept.kept, number: kept.number ?? null, label: kept.label || null } : {}) });   // its number (kanban #1413)
       } catch { send(400, { ok: false, why: 'not JSON' }); }
     });
     return undefined;

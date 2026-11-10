@@ -105,7 +105,7 @@
       const who = el('td', {}, el('code', { text: `${r.pubkey.slice(0, 12)}…` }), el('div', { cls: r.ours ? 'warn' : r.played ? 'dim' : 'bad', text: r.ours ? 'ours' : r.played ? 'played' : 'no finished round' }));
       // FRONTEND OR NODE (Daniel 2026-11-07: "in der admin ui wird angezeigt ob es frontend oder node war")
       const from = el('td', {}, el('span', { cls: `tag ${r.source === 'node' ? 's-accepted' : 's-new'}`, text: r.source === 'node' ? 'node' : 'frontend' }), r.node ? el('div', {}, el('code', { text: `${r.node.slice(0, 10)}…` })) : null);
-      const tr = el('tr', { cls: 'pick' }, el('td', { text: when(r.receivedMs) }), from, el('td', { text: r.type + (r.screenshot ? ' 🖼' : '') }), el('td', {}, el('span', { cls: `tag s-${r.state}`, text: r.state })),
+      const tr = el('tr', { cls: 'pick' }, el('td', {}, el('b', { text: r.label || '' }), el('div', { cls: 'dim', text: when(r.receivedMs) })), from,   // its number (kanban #1413) el('td', { text: r.type + (r.screenshot ? ' 🖼' : '') }), el('td', {}, el('span', { cls: `tag s-${r.state}`, text: r.state })),
         el('td', { cls: 'hide-s', text: r.game || '' }), el('td', { text: r.happened.length > 140 ? `${r.happened.slice(0, 140)}…` : r.happened }), who,
         el('td', { text: r.reward ? `${sats(r.reward.amountSats)} · ${r.reward.state}` : r.amountSats ? `${sats(r.amountSats)} approved` : '' }));
       tr.addEventListener('click', () => open(r.id));
@@ -118,7 +118,7 @@
     if (!j.ok) return say(j.why, true);
     const r = j.report, d = $('detail'); d.hidden = false; d.replaceChildren();
     const add = d.append.bind(d); d.append = (...k) => add(...k.filter(Boolean));   // an optional part left out is nothing, never the text "null"
-    d.append(el('h2', { text: `${r.type} · ${r.state}${r.severity ? ` · ${r.severity}` : ''}${r.ticket ? ` · ${r.ticket}` : ''}` }),
+    d.append(el('h2', { text: `${r.label ? `${r.label} · ` : ''}${r.type} · ${r.state}${r.severity ? ` · ${r.severity}` : ''}${r.ticket ? ` · ${r.ticket}` : ''}` }),
       el('div', { cls: 'dim', text: `Received ${when(r.receivedMs)} · from the ${r.source === 'node' ? 'node' : 'frontend'} · game ${r.game || 'none'} · round ${r.round || 'none'} · build ${r.build || 'none'}` }),
       r.node ? el('div', { cls: 'dim' }, el('span', { text: 'Node ' }), el('code', { text: r.node })) : null,
       el('div', { cls: 'dim' }, el('span', { text: 'Player ' }), el('code', { text: r.pubkey }), el('span', { cls: r.ours ? 'warn' : r.played ? '' : 'bad', text: r.ours ? ' · ours, never paid' : r.played ? ' · finished a round' : ' · no finished round on the network' })),
@@ -145,7 +145,7 @@
     const fill = () => { const l = LEVELS.find((x) => x.level === sev.value); if (l) amount.value = String(l.sats); };
     sev.addEventListener('change', fill); fill();
     const reason = el('input', { placeholder: 'reason the player reads', size: '30' });
-    const dupOf = el('input', { placeholder: 'earlier report id', size: '24' });
+    const dupOf = el('input', { placeholder: 'earlier report: #number or id', size: '24' });
     const ticket = el('input', { placeholder: '#ticket', size: '8' });
     const btn = (label, fn, go = false) => { const b = el('button', { text: label, ...(go ? { cls: 'go' } : {}) }); b.addEventListener('click', fn); return b; };
     if (r.state === 'new') {

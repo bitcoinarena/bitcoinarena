@@ -28,6 +28,8 @@ export const REWARD_DEFAULTS = Object.freeze({ perKeyPerWeek: 3, weeklyBudgetSat
  * THE REWARD LEVELS (Daniel 2026-11-08, final: "500 / 1,000 / 2,000 / 5,000 / 20,000"): one table the feedback form shows and the approval pays from,
  * so form and payout never differ. A critical bug is outside the weekly budget. A node bounty's base is its own pot (#1342 node bounty).
  */
+/** A report's number as people say it (kanban #1413): "Feedback #007"; three digits at least, more as the count grows. */
+export const feedbackLabel = (n) => (Number.isInteger(Number(n)) && Number(n) > 0 ? `Feedback #${String(Number(n)).padStart(3, '0')}` : null);
 export const REWARD_LEVELS = Object.freeze([
   Object.freeze({ level: 'useful', label: 'Useful feedback', sats: 500, example: 'A clear note on what confused you, with the screen and the step.' }),
   Object.freeze({ level: 'low', label: 'Bug, low', sats: 1000, example: 'A wrong text or a layout glitch that does not stop play.' }),
@@ -60,13 +62,19 @@ export function openFeedbackStore(path = ':memory:') {
     CREATE TABLE IF NOT EXISTS rewards (k1 TEXT PRIMARY KEY, report TEXT NOT NULL UNIQUE, pubkey TEXT NOT NULL, amount_sats INTEGER NOT NULL, network TEXT NOT NULL,
       created_ms INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'open', invoice TEXT, payment_hash TEXT, tried_ms INTEGER, paid_ms INTEGER, why TEXT);`);
   // COLUMNS ADDED AFTER THE FIRST FILE (kanban #1342 follow-up): a file from before gains them, null for its old rows
-  for (const [col, ddl] of [['source', 'TEXT'], ['node', 'TEXT'], ['screenshot', 'TEXT']])
+  for (const [col, ddl] of [['source', 'TEXT'], ['node', 'TEXT'], ['screenshot', 'TEXT'], ['number', 'INTEGER']])
     if (!db.prepare('PRAGMA table_info(reports)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE reports ADD COLUMN ${col} ${ddl}`);
+  // EVERY REPORT ITS NUMBER (kanban #1413, Daniel 2026-11-10: "Gib jedem feedback eine unique number also Feedback #001 etc wie eine Ticket Number die überall
+  // angezeigt wird"): 1, 2, 3 ... in the order the reports came, never reused; the reports of a file from before are numbered once, oldest first
+  { const unnumbered = db.prepare('SELECT id FROM reports WHERE number IS NULL ORDER BY received_ms, id').all();
+    if (unnumbered.length) { let n = Number(db.prepare('SELECT COALESCE(MAX(number), 0) AS n FROM reports').get().n);
+      const set = db.prepare('UPDATE reports SET number = ? WHERE id = ?'); for (const r of unnumbered) set.run(++n, r.id); } }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS reports_by_number ON reports (number)');
   const get = db.prepare('SELECT * FROM reports WHERE id = ?');
   const row = (r) => (r ? { id: r.id, pubkey: r.pubkey, type: r.type, signedAt: r.signed_at, receivedMs: r.received_ms, happened: r.happened, expected: r.expected,
     game: r.game || null, round: r.round || null, build: r.build || null, state: r.state, reason: r.reason || null, duplicateOf: r.duplicate_of || null,
     severity: r.severity || null, amountSats: r.amount_sats ?? null, ticket: r.ticket || null, changedMs: r.changed_ms ?? null,
-    source: r.source || 'frontend', node: r.node || null, screenshot: r.screenshot || null } : null);
+    source: r.source || 'frontend', node: r.node || null, screenshot: r.screenshot || null, number: r.number ?? null, label: feedbackLabel(r.number) } : null);
 
   /**
    * A REPORT IN: the signed event, checked as a relay checks one (id, signature), of the report kind, signed within a day. Kept once per event id
@@ -90,11 +98,12 @@ export function openFeedbackStore(path = ':memory:') {
     if (source === 'node' && !node) return { ok: false, why: 'node feedback names the node (its key, 64 hex)' };
     const shot = tag(e, 'screenshot');
     if (shot && (!/^[0-9a-f]{64}$/.test(shot) || !hasShot(shot))) return { ok: false, why: 'that screenshot was not uploaded here' };
-    if (get.get(e.id)) return { ok: true, id: e.id, kept: false };
-    db.prepare(`INSERT INTO reports (id, pubkey, type, signed_at, received_ms, happened, expected, game, round, build, event, source, node, screenshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    { const had = get.get(e.id); if (had) return { ok: true, id: e.id, kept: false, number: had.number, label: feedbackLabel(had.number) }; }
+    db.prepare(`INSERT INTO reports (id, pubkey, type, signed_at, received_ms, happened, expected, game, round, build, event, source, node, screenshot, number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(number), 0) + 1 FROM reports))`)
       .run(e.id, e.pubkey, type, e.created_at, nowMs, happened, expected, said(tag(e, 'game'), /^[a-z0-9-]{1,48}$/) || null,
         said(tag(e, 'round'), /^[0-9a-f]{8,64}$/) || null, said(tag(e, 'build'), /^[0-9a-zA-Z. -]{1,24}$/) || null, JSON.stringify(e), source, node || null, shot || null);
-    return { ok: true, id: e.id, kept: true };
+    const n = get.get(e.id).number;
+    return { ok: true, id: e.id, kept: true, number: n, label: feedbackLabel(n) };
   }
 
   /**
@@ -126,11 +135,15 @@ export function openFeedbackStore(path = ':memory:') {
     if (!(NEXT[r.state] || []).includes(to)) return { ok: false, why: `a ${r.state} report does not become ${to}` };
     if (to === STATES.ACCEPTED) return { ok: false, why: 'a report is accepted by approve(), with its amount and the reward rules' };
     if (to === STATES.REJECTED && !(reason && String(reason).trim().length >= 3)) return { ok: false, why: 'a rejection says why: the player reads it' };
+    let dupId = null;
     if (to === STATES.DUPLICATE) {
-      const of = duplicateOf ? get.get(String(duplicateOf)) : null;
+      // named by its id or by its number ("#7", "7", "Feedback #007")
+      const num = /^(?:feedback\s*)?#?0*(\d+)$/i.exec(String(duplicateOf || '').trim());
+      const of = duplicateOf ? (num ? db.prepare('SELECT * FROM reports WHERE number = ?').get(Number(num[1])) : get.get(String(duplicateOf))) : null;
       if (!of || of.id === r.id) return { ok: false, why: 'a duplicate names the earlier report it repeats' };
       if (of.state === STATES.DUPLICATE) return { ok: false, why: 'name the first report, not another duplicate' };
       if (of.received_ms > r.received_ms) return { ok: false, why: 'the report it repeats came later: the first report keeps its place' };
+      dupId = of.id;
     }
     // A REJECTION TAKES ITS REWARD LINK BACK (audit 5 #1402, reproduced: approve, make the link, reject - the link still paid, outside the week's budget):
     // an open link is voided (compare-and-set from open); one being paid or paid keeps the report as it is
@@ -141,7 +154,7 @@ export function openFeedbackStore(path = ':memory:') {
         return { ok: false, why: 'its reward is being paid: try again in a minute' };
     }
     db.prepare('UPDATE reports SET state = ?, reason = ?, duplicate_of = ?, changed_ms = ? WHERE id = ? AND state = ?')
-      .run(to, to === STATES.REJECTED ? String(reason).trim().slice(0, 500) : r.reason, to === STATES.DUPLICATE ? String(duplicateOf) : r.duplicate_of, nowMs, r.id, r.state);
+      .run(to, to === STATES.REJECTED ? String(reason).trim().slice(0, 500) : r.reason, to === STATES.DUPLICATE ? dupId : r.duplicate_of, nowMs, r.id, r.state);
     db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, to, nowMs, by, reason || duplicateOf || null);
     return { ok: true, report: row(get.get(r.id)) };
   }
@@ -300,10 +313,10 @@ export function openFeedbackStore(path = ':memory:') {
   /** THE CSV (the Monday scoreboard, #922): one line per report, with its reward if any. Text cells quoted; a leading =, +, - or @ neutralised. */
   function csv() {
     const cell = (v) => { let t = v === null || v === undefined ? '' : String(v); if (/^[=+\-@]/.test(t)) t = `'${t}`; return `"${t.replace(/"/g, '""')}"`; };
-    const head = ['report', 'received', 'pubkey', 'source', 'node', 'type', 'game', 'state', 'severity', 'amount_sats', 'ticket', 'reason', 'duplicate_of', 'reward_state', 'paid_at', 'payment_hash', 'network', 'happened'];
+    const head = ['number', 'report', 'received', 'pubkey', 'source', 'node', 'type', 'game', 'state', 'severity', 'amount_sats', 'ticket', 'reason', 'duplicate_of', 'reward_state', 'paid_at', 'payment_hash', 'network', 'happened'];
     const lines = [head.join(',')];
     for (const r of db.prepare('SELECT r.*, w.state AS w_state, w.paid_ms, w.payment_hash AS w_hash, w.network FROM reports r LEFT JOIN rewards w ON w.report = r.id ORDER BY r.received_ms').all())
-      lines.push([r.id, new Date(r.received_ms).toISOString(), r.pubkey, r.source || 'frontend', r.node, r.type, r.game, r.state, r.severity, r.amount_sats, r.ticket, r.reason, r.duplicate_of, r.w_state,
+      lines.push([feedbackLabel(r.number), r.id, new Date(r.received_ms).toISOString(), r.pubkey, r.source || 'frontend', r.node, r.type, r.game, r.state, r.severity, r.amount_sats, r.ticket, r.reason, r.duplicate_of, r.w_state,
         r.paid_ms ? new Date(r.paid_ms).toISOString() : '', r.w_hash, r.network, r.happened].map(cell).join(','));
     return `${lines.join('\n')}\n`;
   }
