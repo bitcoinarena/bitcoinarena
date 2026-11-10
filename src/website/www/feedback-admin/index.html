@@ -42,7 +42,9 @@
   <div class="panel" id="login">
     <div class="row"><input id="code" type="password" placeholder="Admin code" autocomplete="off" aria-label="Admin code">
       <button class="go" id="enter">Open</button><span class="dim">kept in this browser only</span></div>
+    <div id="loginsay" class="bad"></div>
   </div>
+  <p id="wait" class="dim" hidden>Opening the reports…</p>
 
   <div id="app" hidden>
     <div class="panel">
@@ -85,7 +87,10 @@
     if (r.status === 403) { show(false); throw new Error('not the admin code'); }
     return r.json();
   }
-  function show(on) { $('login').hidden = on; $('app').hidden = !on; }
+  function show(on) { $('wait').hidden = true; $('login').hidden = on; $('app').hidden = !on; }
+  // WHILE THE LIST LOADS (Daniel 2026-11-10: "this screen is there for quite a while until it loads the real list, it seems it is stuck"): the
+  // login form left up looked like the code was not taken; now a plain "Opening the reports…", and a failure shows on the login, not in the hidden list
+  const fail = (t) => { $('wait').hidden = true; if ($('app').hidden) { $('login').hidden = false; $('loginsay').textContent = t; } else say(t, true); };
   function budget(b) {
     const s = $('stats'); s.replaceChildren();
     const stat = (label, v) => el('div', { cls: 'stat' }, el('b', { text: v }), el('span', { text: label }));
@@ -97,15 +102,19 @@
   async function load() {
     const q = new URLSearchParams(); for (const [k, id] of [['state', 'f-state'], ['type', 'f-type'], ['source', 'f-source'], ['game', 'f-game'], ['pubkey', 'f-key']]) if ($(id).value.trim()) q.set(k, $(id).value.trim());
     say('Reading…');
-    let j; try { j = await call(`list?${q}`); } catch (e) { return say(e.message, true); }
-    if (!j.ok) return say(j.why || 'not read', true);
+    if ($('app').hidden) { $('login').hidden = true; $('loginsay').textContent = ''; $('wait').hidden = false; }
+    let j; try { j = await call(`list?${q}`); } catch (e) { return fail(e.message); }
+    if (!j.ok) return fail(j.why || 'not read');
     show(true); budget(j.budget); if (Array.isArray(j.levels)) LEVELS = j.levels;
     const tb = $('rows'); tb.replaceChildren();
     for (const r of j.reports) {
-      const who = el('td', {}, el('code', { text: `${r.pubkey.slice(0, 12)}…` }), el('div', { cls: r.ours ? 'warn' : r.played ? 'dim' : 'bad', text: r.ours ? 'ours' : r.played ? 'played' : 'no finished round' }));
+      const who = el('td', {}, el('code', { text: `${r.pubkey.slice(0, 12)}…` }), el('div', { cls: r.ours ? 'warn' : r.played ? 'dim' : 'bad', text: r.ours ? 'ours' : r.played ? 'has played before' : 'never finished a round' }));
       // FRONTEND OR NODE (Daniel 2026-11-07: "in der admin ui wird angezeigt ob es frontend oder node war")
       const from = el('td', {}, el('span', { cls: `tag ${r.source === 'node' ? 's-accepted' : 's-new'}`, text: r.source === 'node' ? 'node' : 'frontend' }), r.node ? el('div', {}, el('code', { text: `${r.node.slice(0, 10)}…` })) : null);
-      const tr = el('tr', { cls: 'pick' }, el('td', {}, el('b', { text: r.label || '' }), el('div', { cls: 'dim', text: when(r.receivedMs) })), from,   // its number (kanban #1413) el('td', { text: r.type + (r.screenshot ? ' 🖼' : '') }), el('td', {}, el('span', { cls: `tag s-${r.state}`, text: r.state })),
+      const tr = el('tr', { cls: 'pick' }, el('td', {}, el('b', { text: r.label || '' }), el('div', { cls: 'dim', text: when(r.receivedMs) })), from,
+        // its number (kanban #1413) heads the first cell; CATEGORY AND STATE are their own cells (Daniel 2026-11-10: "The table is off" - a comment
+        // written into this line hid both, so every later cell sat two columns left: the text under State, the player under Game)
+        el('td', { text: r.type + (r.screenshot ? ' 🖼' : '') }), el('td', {}, el('span', { cls: `tag s-${r.state}`, text: r.state })),
         el('td', { cls: 'hide-s', text: r.game || '' }), el('td', { text: r.happened.length > 140 ? `${r.happened.slice(0, 140)}…` : r.happened }), who,
         el('td', { text: r.reward ? `${sats(r.reward.amountSats)} · ${r.reward.state}` : r.amountSats ? `${sats(r.amountSats)} approved` : '' }));
       tr.addEventListener('click', () => open(r.id));
@@ -121,7 +130,7 @@
     d.append(el('h2', { text: `${r.label ? `${r.label} · ` : ''}${r.type} · ${r.state}${r.severity ? ` · ${r.severity}` : ''}${r.ticket ? ` · ${r.ticket}` : ''}` }),
       el('div', { cls: 'dim', text: `Received ${when(r.receivedMs)} · from the ${r.source === 'node' ? 'node' : 'frontend'} · game ${r.game || 'none'} · round ${r.round || 'none'} · build ${r.build || 'none'}` }),
       r.node ? el('div', { cls: 'dim' }, el('span', { text: 'Node ' }), el('code', { text: r.node })) : null,
-      el('div', { cls: 'dim' }, el('span', { text: 'Player ' }), el('code', { text: r.pubkey }), el('span', { cls: r.ours ? 'warn' : r.played ? '' : 'bad', text: r.ours ? ' · ours, never paid' : r.played ? ' · finished a round' : ' · no finished round on the network' })),
+      el('div', { cls: 'dim' }, el('span', { text: 'Player ' }), el('code', { text: r.pubkey }), el('span', { cls: r.ours ? 'warn' : r.played ? '' : 'bad', text: r.ours ? ' · ours, never paid' : r.played ? ' · this key has finished a round before (any game, any time) - so it may be rewarded' : ' · this key never finished a round on the network - no reward' })),
       el('h2', { text: 'What happened' }), el('pre', { text: r.happened }), r.expected ? el('h2', { text: 'Expected' }) : null, r.expected ? el('pre', { text: r.expected }) : null);
     // THE SCREENSHOT, fetched with the admin code (the faucet serves it to nobody else) and shown from its bytes
     if (r.screenshot) { const box = el('div', {}, el('h2', { text: 'Screenshot' })); d.append(box);
