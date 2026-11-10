@@ -38,7 +38,8 @@ export const REWARD_LEVELS = Object.freeze([
   // CRITICAL 10,000 (Daniel 2026-11-10: "Mach 20000 critical zu 10000 sats")
   Object.freeze({ level: 'critical', label: 'Bug, critical', sats: 10000, outsideBudget: true, example: 'Money can be lost or taken, or the result is wrong.' }),
 ]);
-export const NODE_BOUNTY_BASE_SATS = 20000;
+// 10,000 FOR A NODE (Daniel 2026-11-10: "Man kriegt 10000 sats extra wenn man eine node installiert hat + X sats für jeden bug")
+export const NODE_BOUNTY_BASE_SATS = 10000;
 /** THE NODE BOUNTY (#1342): its own pot - outside the bug budget, one per person, the first `NODE_BOUNTY_MOST` outside nodes; only a node report. */
 export const NODE_BOUNTY_MOST = 10;
 const NODE_LEVEL = Object.freeze({ level: 'node', label: 'Node bounty', sats: NODE_BOUNTY_BASE_SATS, outsideBudget: true, node: true });

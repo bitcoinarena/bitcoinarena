@@ -256,7 +256,7 @@ test('#1342 a report: bug or improvement, at least 50 characters, from the front
 // THE REWARD LEVELS (Daniel 2026-11-08, final): one table the form shows and approve pays from
 test('#1342 levels 500 / 1,000 / 2,000 / 5,000 / 10,000: an approval by level pays its amount; a critical one is outside the weekly budget', () => {
   assert.deepEqual(REWARD_LEVELS.map((l) => [l.level, l.sats]), [['useful', 500], ['low', 1000], ['medium', 2000], ['high', 5000], ['critical', 10000]]);
-  assert.equal(NODE_BOUNTY_BASE_SATS, 20000);
+  assert.equal(NODE_BOUNTY_BASE_SATS, 10000);
   const s = openFeedbackStore();
   const rules = { perKeyPerWeek: 3, weeklyBudgetSats: 3000, mostSats: 20000, leastSats: 100 };
   const one = (n, sev) => { const e = report(key(n), `Report ${n} about the ${sev} level of a bug in the lobby.`); s.take(e); return s.approve(e.id, null, { played: () => true, rules, severity: sev }); };
@@ -270,8 +270,8 @@ test('#1342 levels 500 / 1,000 / 2,000 / 5,000 / 10,000: an approval by level pa
   assert.match(more.why, /this week's budget: 3000 of 3000/);
 });
 
-// THE NODE BOUNTY (Daniel 2026-11-08): 20,000 sats, its own pot, one per person, a node report only; its checklist is the faucet's (node-bounty-check)
-test('#1342 a node bounty: 20,000 from its own pot for a node report; one per person; a frontend report cannot take it; a node operator need not have played', () => {
+// THE NODE BOUNTY (Daniel 2026-11-08; 10,000 since 2026-11-10): sats, its own pot, one per person, a node report only; its checklist is the faucet's (node-bounty-check)
+test('#1342 a node bounty: 10,000 from its own pot for a node report; one per person; a frontend report cannot take it; a node operator need not have played', () => {
   const s = openFeedbackStore();
   const rules = { perKeyPerWeek: 3, weeklyBudgetSats: 1000, mostSats: 20000, leastSats: 100 };
   const nodeReport = (n, text) => { const e = report(key(n), text, { type: 'bug', tags: [['source', 'node'], ['node', 'ee'.repeat(32)]] }); s.take(e); return e.id; };
@@ -283,7 +283,7 @@ test('#1342 a node bounty: 20,000 from its own pot for a node report; one per pe
   const front = s.approve(f.id, null, { played: () => true, rules, severity: 'node' });
   const bar = s.budget({ rules });
   console.log('  MEASURED #1342 node bounty:', JSON.stringify({ first: first.ok && first.report.amountSats, again: again.why, front: front.why, weekBudgetUsed: bar.weekApprovedSats }));
-  assert.equal(first.ok, true, first.why); assert.equal(first.report.amountSats, 20000);
+  assert.equal(first.ok, true, first.why); assert.equal(first.report.amountSats, 10000);
   assert.match(again.why, /one node bounty per person/);
   assert.match(front.why, /for a node report/);
   assert.equal(bar.weekApprovedSats, 0, 'the node bounty is not in the bug budget');

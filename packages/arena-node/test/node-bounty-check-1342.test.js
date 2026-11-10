@@ -21,16 +21,19 @@ const fake = ({ servedDays, owner }) => async (url) => {
 };
 const seats = ['https://seat1.example', 'https://node.example'];
 
-test('#1342 the node checklist: served all 7 days and owned by the reporter passes; one day short, another owner or a team node does not', async () => {
-  const all = await nodeBountyCheck({ node: NODE, npub: ME, seats, fetchJson: fake({ servedDays: [1, 2, 3, 4, 5, 6, 7], owner: ME }), nowMs: NOW });
-  const short = await nodeBountyCheck({ node: NODE, npub: ME, seats, fetchJson: fake({ servedDays: [1, 2, 3, 4, 5, 6], owner: ME }), nowMs: NOW });
+test('#1342 the node checklist: one day online in the last 7 passes, whoever owns it (Daniel 2026-11-10); never served or a team node does not', async () => {
+  const all = await nodeBountyCheck({ node: NODE, npub: ME, seats, fetchJson: fake({ servedDays: [3], owner: ME }), nowMs: NOW });
+  const today = await nodeBountyCheck({ node: NODE, seats, fetchJson: fake({ servedDays: [0], owner: ME }), nowMs: NOW });
+  const short = await nodeBountyCheck({ node: NODE, npub: ME, seats, fetchJson: fake({ servedDays: [], owner: ME }), nowMs: NOW });
   const theirs = await nodeBountyCheck({ node: NODE, npub: ME, seats, fetchJson: fake({ servedDays: [1, 2, 3, 4, 5, 6, 7], owner: OTHER }), nowMs: NOW });
   const team = await nodeBountyCheck({ node: NODE, npub: ME, seats, fetchJson: fake({ servedDays: [1, 2, 3, 4, 5, 6, 7], owner: ME }), nowMs: NOW, excluded: new Set([NODE]) });
   const failed = (r) => r.checks.filter((c) => !c.ok).map((c) => c.key);
   console.log('  MEASURED #1342 node checklist:', JSON.stringify({ all: [all.passes, all.checks.find((c) => c.key === 'committees').says], short: failed(short), theirs: failed(theirs), team: failed(team) }));
   assert.equal(all.passes, true);
-  assert.deepEqual(failed(short), ['online']);
-  assert.deepEqual(failed(theirs), ['owner']);
+  assert.equal(today.passes, true, 'today counts, and no owner key is needed');
+  assert.deepEqual(failed(short), ['census', 'online', 'committees']);
+  assert.equal(theirs.passes, true, 'another owner is no condition any more');
+  assert.deepEqual([all.owner.ok, theirs.owner.ok, theirs.owner.says], [true, false, 'the node names another owner']);
   assert.deepEqual(failed(team), ['outside']);
   assert.equal((await nodeBountyCheck({ node: 'x', npub: ME, seats, fetchJson: fake({ servedDays: [], owner: ME }) })).ok, false);
   const byHost = await nodeBountyCheck({ node: NODE, npub: ME, seats, fetchJson: fake({ servedDays: [1, 2, 3, 4, 5, 6, 7], owner: ME }), nowMs: NOW, teamHosts: ['node.example'] });
@@ -52,7 +55,7 @@ test('#1418 a seat naming itself owner of someone else\'s node does not pass: un
     staleReal: await nodeBountyCheck({ node: NODE, npub: ATT, seats: ['https://evil.example'], fetchJson: async (u) => (u.endsWith('/owner') ? said(ATT, NOW - 3 * DAY) : served(u)), nowMs: NOW }),
     realOwner: await nodeBountyCheck({ node: NODE, npub: ME, seats: seatsE, fetchJson: evil({ node: NODE, claimed: true, owner: ATT }), nowMs: NOW }),
   };
-  const ownerOk = Object.fromEntries(Object.entries(cases).map(([k, r]) => [k, r.checks.find((c) => c.key === 'owner').ok]));
+  const ownerOk = Object.fromEntries(Object.entries(cases).map(([k, r]) => [k, r.owner.ok]));
   console.log('  MEASURED #1418 owner check:', JSON.stringify(ownerOk), 'team check with the attacker answering last:', cases.unsigned.checks.find((c) => c.key === 'outside').ok);
   assert.deepEqual(ownerOk, { unsigned: false, forged: false, staleReal: false, realOwner: true });
   assert.equal(cases.unsigned.passes, false);

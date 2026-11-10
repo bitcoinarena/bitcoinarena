@@ -32,6 +32,9 @@
   code { font-size: 12px; word-break: break-all; }
   #say { min-height: 1.4em; margin: 8px 0; }
   @media (max-width: 640px) { .hide-s { display: none; } }
+.nb-tiles{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}.nb-tile{border:1px solid #30363d;border-radius:10px;padding:8px 12px;min-width:110px}.nb-tile b{display:block;font-size:20px}.nb-tile span{font-size:12px;color:#8b949e}.nb-tile.ok{border-color:#2ea04366}.nb-tile.no{border-color:#f8514966}
+.nb-days{display:flex;gap:4px;margin:4px 0 8px}.nb-day{width:18px;height:18px;border-radius:4px;background:#30363d}.nb-day.on{background:#3fb950}
+.nb-badges{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0}.nb-badge{border-radius:999px;padding:3px 10px;font-size:12.5px;border:1px solid #30363d}.nb-badge.ok{color:#3fb950;border-color:#2ea04366}.nb-badge.no{color:#f85149;border-color:#f8514966}
 </style>
 </head>
 <body>
@@ -147,8 +150,16 @@
     if (r.source === 'node' && r.node) { const box = el('div', {}, el('h2', { text: 'Node bounty checklist' }), el('div', { cls: 'dim', text: 'reading the seats …' })); d.append(box);
       call(`node-check/${r.id}`).then((c) => { box.replaceChildren(el('h2', { text: 'Node bounty checklist' }));
         if (!c || !Array.isArray(c.checks)) return box.append(el('div', { cls: 'bad', text: (c && c.why) || 'not read' }));
-        for (const x of c.checks) box.append(el('div', { cls: x.ok ? '' : 'bad', text: `${x.ok ? '✓' : '✗'} ${x.label} — ${x.says}` }));
-        box.append(el('div', { cls: c.passes ? '' : 'warn', text: c.passes ? 'Every condition holds: approve at level "node" (20,000).' : 'Not every condition holds: a node bounty is refused.' }));
+        // THE REQUIREMENTS AS NUMBERS (Daniel 2026-11-10: "wie lange der online ist und wieviel runden er erfolgreich gehostet hat"): days served of the last 7,
+        // committees sat on, rounds signed FINAL, then each condition as a badge and whether the reporter owns the node (a hint, no condition)
+        const days = Array.isArray(c.days) ? c.days : [], on = days.filter((x) => x.committees > 0).length;
+        const sat = days.reduce((t, x) => t + (x.committees || 0), 0), signed = days.reduce((t, x) => t + (x.signed || 0), 0);
+        const tile = (big, small, ok) => el('div', { cls: 'nb-tile' + (ok ? ' ok' : ' no') }, el('b', { text: big }), el('span', { text: small }));
+        // ONLINE SAID PLAINLY (Daniel 2026-11-10: "warum 3/7? Sag klar dass 1 day online ist"): one day is the rule; the days it sat on a committee are the detail
+        box.append(el('div', { cls: 'nb-tiles' }, tile(on >= 1 ? 'Online ✓' : 'Not yet', `1 day needed · on committees ${on} of the last ${days.length || 7} days`, on >= 1), tile(String(sat), 'committees', sat > 0), tile(String(signed), 'rounds signed', signed > 0)));
+        box.append(el('div', { cls: 'nb-badges' }, ...c.checks.map((x) => el('span', { cls: 'nb-badge' + (x.ok ? ' ok' : ' no'), text: `${x.ok ? '✓' : '✗'} ${x.label}` }))));
+        if (c.owner) box.append(el('div', { cls: c.owner.ok ? 'dim' : 'warn', text: `Owner: ${c.owner.says}` }));
+        box.append(el('div', { cls: c.passes ? '' : 'warn', text: c.passes ? 'Every condition holds: approve at level "node" (10,000).' : 'Not every condition holds: a node bounty is refused.' }));
       }, (e) => box.replaceChildren(el('h2', { text: 'Node bounty checklist' }), el('div', { cls: 'bad', text: e.message }))); }
     if (r.reason) d.append(el('div', { cls: 'bad', text: `Rejected: ${r.reason}` }));
     if (r.duplicateOf) d.append(el('div', { cls: 'dim', text: `Duplicate of ${r.duplicateOf.slice(0, 16)}…` }));

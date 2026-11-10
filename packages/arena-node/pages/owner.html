@@ -660,23 +660,53 @@ async function nodeFeedbackPanel() {
   };
 }
 async function nodeBountyBlock(box, el) {
+  // AT THE TOP, AND PRETTY (Daniel 2026-11-10: "das ist zuviel wall of text, mach das grafischer", "Und das muss grafisch viel viel besser werden, mach das
+  // hübsch", "und das ganz am anfang. Schreib auch, erster node feedback bekommt 10000 sats einmalig"; the rules: "1 tag online reicht", "npub muss nicht
+  // sein", "Jeder kriegt einmalig 10000 sats extra wenn er eine node startet" - other bugs only their level): a card above the form with the amount, the
+  // node's numbers, its last 7 days and the conditions as steps
   let j = null; try { j = await (await fetch(FEEDBACK_URL + '/rewards', { cache: 'no-store' })).json(); } catch { j = null; }
   if (!j || !j.on || !Array.isArray(j.levels)) return;
-  const unit = j.network === 'mainnet' ? 'sats' : 'testnet sats', n = (x) => Number(x).toLocaleString('en-US') + ' ' + unit;
-  const wrap = el('div', { cls: 'node-bounty' }, el('h3', { text: 'Node bounty' }),
-    el('p', { cls: 'sub', text: `${n(j.nodeBaseSats)} for running a node outside the team for 7 days and writing what worked and what broke; bugs found on top at these levels:` }),
-    el('table', {}, ...j.levels.map((l) => el('tr', {}, el('td', { text: l.label }), el('td', { text: n(l.sats) }), el('td', { cls: 'sub', text: l.example || '' })))),
-    el('p', { cls: 'sub', text: j.rule }));
-  const checks = el('ul', { cls: 'node-bounty-checks' }, el('li', { cls: 'sub', text: 'Reading this node from the seats (about 30 s) …' }));
-  wrap.append(el('h3', { text: 'Your conditions' }), checks);
-  box.append(wrap);
+  const unit = j.network === 'mainnet' ? 'sats' : 'testnet sats';
+  if (!document.getElementById('nb-css')) { const st = document.createElement('style'); st.id = 'nb-css';
+    st.textContent = [
+      '.nb{position:relative;margin:0 0 16px;border-radius:16px;padding:18px 18px 16px;background:linear-gradient(135deg,rgba(242,169,59,.16),rgba(242,169,59,.03) 55%,rgba(63,185,80,.06));border:1px solid rgba(242,169,59,.45);overflow:hidden}',
+      '.nb::after{content:"";position:absolute;right:-40px;top:-40px;width:140px;height:140px;border-radius:50%;background:radial-gradient(circle,rgba(242,169,59,.25),transparent 70%)}',
+      '.nb-top{display:flex;align-items:center;gap:14px;position:relative;z-index:1}',
+      '.nb-coin{flex:0 0 52px;height:52px;border-radius:50%;display:grid;place-items:center;font-size:26px;font-weight:800;color:#14171c;background:radial-gradient(circle at 35% 30%,#ffd27a,#f2a93b 60%,#c97a00);box-shadow:0 4px 14px rgba(242,169,59,.35)}',
+      '.nb-amt{font-size:26px;font-weight:800;line-height:1.1;color:#f2a93b}.nb-amt small{font-size:14px;font-weight:600;opacity:.85;margin-left:4px}',
+      '.nb-line{font-size:14.5px;margin-top:3px}.nb-sub{font-size:12.5px;opacity:.7;margin-top:2px}',
+      '.nb-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:16px 0 10px;position:relative;z-index:1}',
+      '.nb-stat{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:10px 12px}.nb-stat b{display:block;font-size:22px;line-height:1.1}.nb-stat span{font-size:12px;opacity:.7}',
+      '.nb-week{display:flex;align-items:center;gap:6px;margin:4px 0 14px;font-size:12px;opacity:.9}.nb-week i{width:22px;height:22px;border-radius:6px;background:var(--line);display:inline-block}.nb-week i.on{background:#3fb950;box-shadow:0 0 8px rgba(63,185,80,.5)}',
+      '.nb-steps{display:grid;gap:8px;margin:0;padding:0;list-style:none}.nb-steps li{display:flex;align-items:center;gap:10px;font-size:14px}',
+      '.nb-steps li::before{content:"";flex:0 0 22px;height:22px;border-radius:50%;border:2px solid var(--line)}',
+      '.nb-steps li.ok::before{content:"✓";display:grid;place-items:center;font-size:13px;font-weight:800;color:#0d1117;background:#3fb950;border-color:#3fb950}',
+      '.nb-steps li.no::before{content:"✕";display:grid;place-items:center;font-size:12px;font-weight:800;color:#f85149;border-color:#f85149}',
+      '.nb-ready{margin-top:14px;padding:10px 12px;border-radius:10px;font-weight:700;font-size:14px;text-align:center}.nb-ready.ok{background:rgba(63,185,80,.14);color:#3fb950}.nb-ready.no{background:rgba(210,153,34,.14);color:#d29922}',
+      '.nb-wait{font-size:13px;opacity:.75;margin-top:12px}',
+      '@media (max-width:520px){.nb-stats{grid-template-columns:repeat(3,1fr);gap:6px}.nb-stat{padding:8px}.nb-stat b{font-size:18px}.nb-amt{font-size:22px}}'].join('');
+    document.head.append(st); }
+  const amount = Number(j.nodeBaseSats).toLocaleString('en-US');
+  const wait = el('div', { cls: 'nb-wait', text: 'Reading your node from the network (about 30 s) …' });
+  const wrap = el('div', { cls: 'nb' },
+    el('div', { cls: 'nb-top' }, el('div', { cls: 'nb-coin', text: '₿' }),
+      el('div', {}, el('div', { cls: 'nb-amt' }, el('span', { text: '+' + amount }), el('small', { text: unit })),
+        el('div', { cls: 'nb-line', text: 'Your first node feedback earns ' + amount + ' sats, once.' }),
+        el('div', { cls: 'nb-sub', text: 'Every bug you find after that pays its own reward.' }))),
+    wait);
+  box.prepend(wrap);
   const node = String((state && state.node) || ''), owner = String((state && state.owner) || '');
-  if (!/^[0-9a-f]{64}$/.test(owner)) { checks.innerHTML = ''; checks.append(el('li', { text: 'Claim this node with your key first: the bounty is paid to its owner key.' })); return; }
-  let c = null; try { c = await (await fetch(`${FEEDBACK_URL}/node-check?node=${node}&npub=${owner}`, { cache: 'no-store' })).json(); } catch { c = null; }
-  checks.innerHTML = '';
-  if (!c || !Array.isArray(c.checks)) { checks.append(el('li', { text: 'The seats could not be read now: try again later.' })); return; }
-  for (const x of c.checks) checks.append(el('li', {}, el('b', { text: (x.ok ? '✓ ' : '✗ ') + x.label }), el('span', { cls: 'sub', text: ' — ' + x.says })));
-  checks.append(el('li', { text: c.passes ? 'Every condition holds: send your node feedback above.' : 'Not every condition holds yet.' }));
+  let c = null; try { c = await (await fetch(`${FEEDBACK_URL}/node-check?node=${node}${/^[0-9a-f]{64}$/.test(owner) ? '&npub=' + owner : ''}`, { cache: 'no-store' })).json(); } catch { c = null; }
+  if (!c || !Array.isArray(c.checks)) { wait.textContent = (c && c.why) || 'Your node could not be read right now. Try again later.'; return; }
+  const days = Array.isArray(c.days) ? c.days : [], on = days.filter((x) => x.committees > 0).length;
+  const sat = days.reduce((t, x) => t + (x.committees || 0), 0), signed = days.reduce((t, x) => t + (x.signed || 0), 0);
+  const stat = (big, small) => el('div', { cls: 'nb-stat' }, el('b', { text: big }), el('span', { text: small }));
+  // ONLINE SAID PLAINLY (Daniel 2026-11-10: "warum sind nicht alle cells grün und warum 3/7? Sag klar dass 1 day online ist"): no day squares, no x/7 - the
+  // days counted are the days the node sat on a committee, which is not the same as online; one is all it takes
+  wait.replaceWith(
+    el('div', { cls: 'nb-stats' }, stat(on >= 1 ? 'Online ✓' : 'Not yet', '1 day is enough'), stat(String(sat), 'committees'), stat(String(signed), 'rounds signed')),
+    el('ul', { cls: 'nb-steps' }, ...c.checks.map((x) => el('li', { cls: x.ok ? 'ok' : 'no', text: x.label }))),
+    el('div', { cls: 'nb-ready ' + (c.passes ? 'ok' : 'no'), text: c.passes ? 'Your node qualifies. Write your node feedback below.' : 'Not there yet. Keep your node online and check again tomorrow.' }));
 }
 // THE PORTED PANELS, EACH ONLY ITS REACT SCREEN (kanban #564, 2026-10-21: "no fall backs"): the page hands each the doors it
 // reads, its signed-request helpers and, where it reports to the Overview, the need() line

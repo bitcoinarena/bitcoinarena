@@ -409,7 +409,8 @@ createServer((req, res) => {
         if ((b.action === 'approve' || b.action === 'reward') && !bountyOn()) return send(403, { ok: false, why: 'rewards are off until the owner turns them on: reject, duplicate and notes still work' });
         if (b.action === 'approve') {
           await PLAYED.fresh().catch(() => 0);
-          // A NODE BOUNTY ONLY ON ITS CHECKLIST (kanban #1342): the node's census, 7 days, committees and signed rounds, owner = the reporter - read now
+          // A NODE BOUNTY ONLY ON ITS CHECKLIST (kanban #1342): the node's census, 1 day online in the last 7, committees and signed rounds, outside the team - read now
+          // (the owner key is no condition since Daniel 2026-11-10: "npub muss nicht sein"; the answer's `owner` tells the reviewer)
           if (String(b.severity || '').toLowerCase() === 'node') {
             const r = FEEDBACK.report(b.id);
             if (!r || !r.node) return send(200, { ok: false, why: 'a node bounty is for a node report naming its node' });
@@ -473,7 +474,7 @@ createServer((req, res) => {
     if (!(bountyOn() && BOUNTY_ORIGINS.includes(String(req.headers.origin || '')))) return send(200, { ok: true, on: false });
     const q = new URL(req.url, 'http://x').searchParams;
     const node = String(q.get('node') || '').toLowerCase(), npub = String(q.get('npub') || '').toLowerCase();
-    if (!/^[0-9a-f]{64}$/.test(node) || !/^[0-9a-f]{64}$/.test(npub)) return send(400, { ok: false, why: 'GET /feedback/node-check?node=<64 hex>&npub=<64 hex>' });
+    if (!/^[0-9a-f]{64}$/.test(node) || (npub && !/^[0-9a-f]{64}$/.test(npub))) return send(400, { ok: false, why: 'GET /feedback/node-check?node=<64 hex>[&npub=<64 hex>]' });
     const k = `${node}:${npub}`, kept = NODE_CHECKS.get(k);
     if (kept && Date.now() - kept.at < 600000) return send(200, { ...kept.answer, keptMs: Date.now() - kept.at });
     // A FRESH CHECK ASKS EVERY SEAT (~136 requests), so (audit 5 #1402): one at a time over all callers, and at most NODE_CHECKS_PER_HOUR per address

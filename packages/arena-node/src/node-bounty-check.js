@@ -22,12 +22,14 @@ const signerOf = (f) => {
   if (/^[0-9a-f]{64}$/.test(h)) return h;
   try { const bytes = fromHex(h); const { signature } = splitSignedFinalSig(bytes); return toHex(decodeFinalSig(bytes.subarray(0, bytes.length - signature.length)).signerPubkey); } catch { return null; }
 };
-export const NODE_BOUNTY_DAYS = 7;
+// ONE DAY ONLINE IS ENOUGH (Daniel 2026-11-10: "1 tag online reicht"), looked for in the last NODE_BOUNTY_WINDOW days, today included
+export const NODE_BOUNTY_DAYS = 1, NODE_BOUNTY_WINDOW = 7;
 
 // `teamHosts` hostnames the team runs its nodes on: a node whose own door answers there is a team node, never paid
-export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Date.now(), excluded = new Set(), days = NODE_BOUNTY_DAYS, teamHosts = [] }) {
+export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Date.now(), excluded = new Set(), days = NODE_BOUNTY_DAYS, window = NODE_BOUNTY_WINDOW, teamHosts = [] }) {
   const n = String(node || '').toLowerCase(), me = String(npub || '').toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(n) || !/^[0-9a-f]{64}$/.test(me)) return { ok: false, why: 'a node key and an owner key, 64 hex each' };
+  // THE OWNER KEY IS OPTIONAL (Daniel 2026-11-10: "npub muss nicht sein"): with one, the answer says whether it is the node's owner - a hint for the reviewer
+  if (!/^[0-9a-f]{64}$/.test(n) || (me && !/^[0-9a-f]{64}$/.test(me))) return { ok: false, why: 'a node key (and, if given, an owner key), 64 hex each' };
   const urls = [...new Set((seats || []).map((u) => String(u).replace(/\/+$/, '')))];
   // THE OWNER: the node's own word, SIGNED BY THE NODE (audit 6, kanban #1418): any listed seat can answer GET /owner naming any node, and the last
   // answer won - a seat of one's own named itself the owner of someone else's node. Only a statement the node key signed counts, at most a day old,
@@ -44,11 +46,11 @@ export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Da
     newest = atMs; at = u; owner = named || null; } catch { /* not answering */ } }));
   const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch { return ''; } };
   // a seat relaying a team node's signed word must not make it look outside: any team host among those that served it makes it a team node
-  const team = excluded.has(n) || excluded.has(me) || [...servedAt].some((u) => (teamHosts || []).map((h) => String(h).toLowerCase()).includes(hostOf(u)));
+  const team = excluded.has(n) || (me && excluded.has(me)) || [...servedAt].some((u) => (teamHosts || []).map((h) => String(h).toLowerCase()).includes(hostOf(u)));
   // THE LAST `days` UTC DAYS: each seat's rounds of that day, merged by round id
   const today = Math.floor(nowMs / DAY_MS) * DAY_MS;
   // the days in parallel (measured 2026-11-08 on 17 seats: one after another took 120 s)
-  const perDay = await Promise.all(Array.from({ length: days }, (_, i) => days - i).map(async (d) => {
+  const perDay = await Promise.all(Array.from({ length: window }, (_, i) => window - 1 - i).map(async (d) => {
     const from = today - d * DAY_MS, to = from + DAY_MS;
     const rounds = new Map();
     await Promise.all(urls.map(async (u) => {
@@ -63,11 +65,12 @@ export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Da
   const committees = perDay.reduce((t, x) => t + x.committees, 0), signed = perDay.reduce((t, x) => t + x.signed, 0);
   const daysOn = perDay.filter((x) => x.committees > 0).length;
   const checks = [
-    { key: 'census', label: 'In the census and bonded', ok: committees > 0, says: committees > 0 ? 'drawn into committees: only bonded census nodes are' : 'not drawn into any committee in the last 7 days' },
-    { key: 'online', label: `Online ${days} days`, ok: daysOn >= days, says: `served on ${daysOn} of the last ${days} days` },
+    { key: 'census', label: 'Bonded, in the census', ok: committees > 0, says: committees > 0 ? 'drawn into committees' : `not drawn into a committee in the last ${window} days` },
+    { key: 'online', label: `Online ${days} day${days === 1 ? '' : 's'}`, ok: daysOn >= days, says: `served on ${daysOn} of the last ${window} days` },
     { key: 'committees', label: 'Committees and signed rounds', ok: committees > 0 && signed > 0, says: `${committees} committees, ${signed} signed rounds` },
-    { key: 'owner', label: 'Owner key = your npub', ok: owner === me, says: owner === null ? 'the node did not name its owner (no seat lists it, or it is not claimed)' : owner === me ? 'its owner page is claimed by your key' : 'its owner is another key' },
     { key: 'outside', label: 'Not a team node', ok: !team, says: team ? `a team node is never paid${at ? ` (it answers at ${hostOf(at)})` : ''}` : 'outside the team' },
   ];
-  return { ok: true, node: n, npub: me, days: perDay, checks, passes: checks.every((c) => c.ok) };
+  // not a condition any more (Daniel 2026-11-10), shown to the reviewer: whether the reporter's key is the node's signed owner (kanban #1418)
+  const ownerHint = { ok: !!me && owner === me, says: !me ? 'no owner key given' : owner === null ? 'the node did not name its owner' : owner === me ? 'the reporter owns this node' : 'the node names another owner' };
+  return { ok: true, node: n, npub: me || null, days: perDay, checks, owner: ownerHint, passes: checks.every((c) => c.ok) };
 }
