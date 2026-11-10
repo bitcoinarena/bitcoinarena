@@ -89,7 +89,7 @@ const readPid = (name) => { try { return JSON.parse(readFileSync(pidFile(name), 
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 const groupAlive = (pgid) => { try { process.kill(-pgid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 const running = (name) => { const p = readPid(name); return p && alive(p.pid) ? p : null; };
-const PARTS = ['bitcoind', 'lnd-a', 'lnd-b', 'lnd-c', 'gateway-a', 'gateway-b', ...PLAN.nodes.map((_, k) => `node-${k + 1}`), 'runner', 'page', 'lnurl'];
+const PARTS = ['bitcoind', 'lnd-a', 'lnd-b', 'lnd-c', 'gateway-a', 'gateway-b', ...PLAN.nodes.map((_, k) => `node-${k + 1}`), ...PLAN.auditors.map((_, k) => `auditor-${k + 1}`), 'runner', 'page', 'lnurl'];
 const LND = env.LND_BIN || dirOnPath('lnd');
 /** Start a process in a new session (its own process group: `detached`), its output to its log, its pid to its file. */
 function startPart(name, cmd, args, { env: e = env, cwd = NODE_PKG } = {}) {
@@ -295,8 +295,15 @@ async function up() {
   // (`devnet.mjs auditors`), so no committee draws it and the §13A.1 lottery may
   for (const [k, port] of PLAN.auditors.entries()) {
     const name = `auditor-${k + 1}`;
+    mkdirSync(path('clients', name), { recursive: true });
     if (!running(name)) startPart(name, process.execPath, ['src/main.js', String(port), path('nodes', `${name}.db`)], { env: fedEnv({
-      ARENA_APPS: apps.join(','), ARENA_DONATION_NETWORK: 'regtest', [`ARENA_WSS_${port}`]: `ws://127.0.0.1:${port}` }) });
+      // A FEDERATION CLIENT LIKE EVERY NODE (measured 12:39Z: without one each answered a round "reaches no federation to read the guardians of")
+      ARENA_STAKE_LOCK_BIN: LOCK, ARENA_FEDERATION_CLIENT_DIR: path('clients', name), ARENA_FEDERATION_CLIENTS_DIR: path('clients', `${name}-others`),
+      ARENA_FEDERATION_INVITE: invite,
+      ARENA_APPS: apps.join(','), ARENA_DONATION_NETWORK: 'regtest', [`ARENA_WSS_${port}`]: `ws://127.0.0.1:${port}`,
+      // THE ROUNDS IT MAY HOLD, AS THE SEVEN READ THEM (measured 2026-11-10 12:36Z: without these each auditor answered every v2 round's
+      // post "402 this node stores nothing for a round nobody has funded", held no round, and so audited none)
+      ARENA_ATTACH_PROOF_DIR: path('runner', 'proof'), ARENA_FUNDED_ROUNDS_FILE: path('runner', 'funded.txt') }) });
   }
   for (const [k, port] of PLAN.auditors.entries()) {
     for (let i = 0; ; i++) {
@@ -308,7 +315,7 @@ async function up() {
   if (PLAN.auditors.length) say({ step: 'audit-only nodes', ports: PLAN.auditors });
 
   // ---- 4. A FEDERATION CLIENT FOR THE RUNNER AND EACH NODE (each its own data dir: one client database is one flock) ----
-  const clients = ['runner', ...PLAN.nodes.map((_, k) => `node-${k + 1}`)].map((n) => path('clients', n));
+  const clients = ['runner', ...PLAN.nodes.map((_, k) => `node-${k + 1}`), ...PLAN.auditors.map((_, k) => `auditor-${k + 1}`)].map((n) => path('clients', n));
   const t4 = Date.now();
   await Promise.all(clients.map(async (dir) => {
     mkdirSync(dir, { recursive: true });
@@ -635,7 +642,12 @@ async function runner() {
         // POST /open-paid?stakeMsat=&windowMs= opens a paid round
         if (req.method === 'POST' && u.pathname === '/open-paid') {
           const windowMs = Math.max(60000, Math.min(Number(u.searchParams.get('windowMs') || PAID_WINDOW_MS), 3600000));
-          const id = await open('paid', { stakeMsat: BigInt(u.searchParams.get('stakeMsat') || stake), entryAfterStartMs: windowMs });
+          // &game= a hosted game's round (kanban #1412: a head-to-head RPS round); &objectionMs= its objection window (under 600 s: the H2H short window)
+          const g = u.searchParams.get('game'), om = u.searchParams.get('objectionMs');
+          // a game whose plugin names its round fields (RPS_ROUND_FIELDS: run length, start deadline, min score) gets them
+          const own = g === 'rock-paper-scissors' ? (await import('../../rock-paper-scissors/plugin/rock-paper-scissors.js')).RPS_ROUND_FIELDS : {};
+          const fields = { ...(g ? { ...fieldsOf(g), ...own } : {}), ...(om ? { objectionWindowMs: BigInt(Math.max(5000, Math.min(Number(om), 3600000))) } : {}) };
+          const id = await open('paid', { stakeMsat: BigInt(u.searchParams.get('stakeMsat') || stake), entryAfterStartMs: windowMs, ...(Object.keys(fields).length ? { fields } : {}) });
           return send(201, state.rounds.find((r) => r.id === id));
         }
         // POST /open-grid?stakeMsat=&slots=&windowMs=&leadMs=&censusHeight= (kanban #1346, ARENA_GRID_REGTEST=1): a paid grid of series rounds - the
@@ -1007,8 +1019,8 @@ async function auditorsCmd() {
   const { regtest } = await import('./regtest-bond.mjs');
   const { DatabaseSync } = await import('node:sqlite');
   const { schnorr } = await import('@noble/curves/secp256k1.js');
-  const cli = (...a) => execFileSync(join(BTC, 'bitcoin-cli'), [`-rpcport=${PLAN.rpc}`, `-rpccookiefile=${COOKIE()}`, '-regtest', ...a], { encoding: 'utf8' }).trim();
-  const rt = regtest(cli, { network: 'regtest', wallet: 'arena' });
+  // the module cli: chain, cookie and the devnet wallet already in it (kanban #1412)
+  const rt = regtest(cli, { network: 'regtest', wallet: WALLET });
   const versions = Number(env.ARENA_PROTOCOL_VERSION || 1);
   // the games they may audit: what node 1's own bond advertises (the seven host the same games)
   const seatKey = new Uint8Array(await (await fetch(`${nodeUrl(0)}/identity`)).arrayBuffer());

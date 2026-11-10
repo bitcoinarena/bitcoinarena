@@ -456,7 +456,8 @@ function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now() 
         why: 'the round contract names no publication relay, so no result of it can become final: a seat signs FINAL only once its transcript is posted' };
     if (nowMs < win.finalAfterMs)
       return { ...common, state: PROVISIONALLY_FINAL, published: published.ok, posted: published.posted || 0, finalSigs: said, nextAtMs: win.finalAfterMs,
-        why: `the objection window closes at ${utc(win.closeMs)} (the round's end + 600 s); FINAL is signed from ${utc(win.finalAfterMs)}` };
+        // the window that applies (kanban #1412: a head-to-head round audited in time said "+ 600 s" over its 5 s close)
+        why: `the objection window closes at ${utc(win.closeMs)} (the round's end + ${Number(win.closeMs - win.openMs) / 1000} s); FINAL is signed from ${utc(win.finalAfterMs)}` };
     // PUBLISHED WITHIN THE WINDOW (§13A "Publication is a condition of finality ... posted by them to the round's
     // publication_relays[] within the window"; "a settlement seat that cannot retrieve the transcript within the result
     // window treats the entry as VOID"). Past final_after only the postings this seat held before it count: a
@@ -634,7 +635,7 @@ export function resultWindow(round, roundIdBytes, contract) {
   try { win = windowsOf(contract); } catch (e) { return { ok: false, why: e.message }; }
   const nowMs = BigInt(round.now());
   if (nowMs < win.finalAfterMs)
-    return { ok: false, closesAtMs: win.closeMs, why: `the result window closes at ${utc(win.closeMs)} (the round's end + 600 s); nothing is decided before ${utc(win.finalAfterMs)}` };
+    return { ok: false, closesAtMs: win.closeMs, why: `the result window closes at ${utc(win.closeMs)} (the round's end + ${Number(win.closeMs - win.openMs) / 1000} s); nothing is decided before ${utc(win.finalAfterMs)}` };
   return { ok: true, openMs: win.openMs, closesAtMs: win.closeMs, window: evidenceWindow(round, roundIdBytes, contract, win.finalAfterMs) };
 }
 
