@@ -140,7 +140,13 @@ async function nodeCheckNow(node, npub) {
   const seats = [...new Set([...bases, ...lists.flat()])];
   let excluded = new Set(); try { excluded = ourKeys(); } catch { excluded = new Set(); }
   // the hosts the team's own nodes answer at (kanban #1342: team nodes are never paid)
-  const teamHosts = String(env.FAUCET_TEAM_HOSTS || 'beelink.tail1723e2.ts.net,127.0.0.1,localhost,192.168.1.18').split(',').map((x) => x.trim()).filter(Boolean);
+  // THE TEAM'S OWN SEATS BY THEIR NODE KEYS (audit 7, kanban #1428: our-keys.txt held none of them, and the Mac seats' addresses were no team host):
+  // every seat this faucet is configured with, and every listed seat at a team host, is the team's - its /roles node key is excluded
+  const teamHosts = String(env.FAUCET_TEAM_HOSTS || 'beelink.tail1723e2.ts.net,127.0.0.1,localhost,192.168.1.18,100.85.86.106,100.99.158.103,192.168.1.68,tn4.bitcoin-arena.io').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch { return ''; } };
+  const ours = [...new Set([...bases, ...seats.filter((u) => teamHosts.includes(hostOf(u)))])];
+  const keys = await Promise.all(ours.map((u) => fetchJson1342(`${u}/roles`).then((j) => String((j && j.node) || '').toLowerCase(), () => '')));
+  for (const k of keys) if (/^[0-9a-f]{64}$/.test(k)) excluded.add(k);
   return nodeBountyCheck({ node, npub, seats, fetchJson: fetchJson1342, excluded, teamHosts });
 }
 const PLAYED = networkPlayers({ seats: String(env.FAUCET_SEASON_SEATS || '').split(',').filter(Boolean), games: String(env.FAUCET_SEASON_GAMES || 'rock-paper-scissors,nextblock,btc-updown').split(',').filter(Boolean) });
@@ -187,8 +193,10 @@ async function paymentFinal(payer, hash) {
   const r = await lncli(payer, ['trackpayment', hash], 10000);
   const text = `${r.out || ''}\n${r.err || ''}`;
   if (/isn't initiated|not initiated|not found|unknown payment/i.test(text)) return 'NONE';
-  const states = [...text.matchAll(/"status":\s*"([A-Z_]+)"/g)].map((m) => m[1]);
-  const last = states[states.length - 1] || null;
+  // LNCLI'S OWN WORDS (audit 7, kanban #1430): without --json lncli 0.21 prints a table and "Payment status: SUCCEEDED, preimage: ..." (the refill timer
+  // reads the same line) - the JSON match found nothing live, so a settled welcome read as no answer; the payment's line, the last one printed, decides
+  const said = [...text.matchAll(/Payment status:\s*([A-Z_]+)/g)].map((m) => m[1]);
+  const last = said[said.length - 1] || null;
   if (last === 'SUCCEEDED' || last === 'FAILED') return last;
   return r.timedOut || last ? 'IN_FLIGHT' : null;
 }
@@ -415,6 +423,8 @@ createServer((req, res) => {
             const r = FEEDBACK.report(b.id);
             if (!r || !r.node) return send(200, { ok: false, why: 'a node bounty is for a node report naming its node' });
             const chk = await nodeCheckNow(r.node, r.pubkey).catch((e) => ({ ok: false, why: e.message }));
+            // NOT TO A KEY THE NODE SAYS IS NOT ITS OWNER (audit 7, kanban #1429): with no owner named the npub stays no condition (Daniel 2026-11-10)
+            if (chk.ok && chk.owner && chk.owner.other) return send(200, { ok: false, why: 'the node names another owner: its bounty goes to that owner\'s report', checks: chk.checks, owner: chk.owner });
             if (!chk.ok || !chk.passes) return send(200, { ok: false, why: `the node checklist does not pass: ${(chk.checks || []).filter((c) => !c.ok).map((c) => `${c.label} (${c.says})`).join('; ') || chk.why}`, checks: chk.checks || null });
           }
           // A CRITICAL BUG ABOVE THE BANDS IS THE OWNER'S OWN CALL: critical: true lifts mostSats to the amount for this one approval

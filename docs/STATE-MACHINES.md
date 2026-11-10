@@ -1472,7 +1472,7 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 | from | to | by | guard |
 |---|---|---|---|
 | none | new | POST /feedback `{event}` (`take`) | kind 27842, signed within a day, bug or improvement, >= 50 characters, a node report names its node, a named screenshot exists; one row per event id; `number` = MAX + 1, unique (#1413) |
-| new | accepted | admin `approve` | not ours; a player (finished a round), except level node; <= 3 per key in 7 days; weekly budget 100,000 sat except critical and node; level node: a node report, one per key, one per node, the first 10; the level stored normalised (#1422) |
+| new | accepted | admin `approve` | not ours; a player (finished a round), except level node; <= 3 per key in 7 days; weekly budget 100,000 sat except critical and node; level node: a node report, one per key, one per node, the first 10, and the node checklist (SM-23) read fresh at the approve; the level stored normalised (#1422) |
 | new | rejected / duplicate | admin `move` | a reason; a duplicate names an earlier report by id or number |
 | accepted | rejected | admin `move` | its reward link voided by compare-and-set; refused while paying or paid (#1402) |
 | accepted | paid | `claim` / `settle` | its reward paid |
@@ -1483,13 +1483,13 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 
 #### SM-19 (change) Faucet book
 - Player grants and refills run in one queue (`one()`), admin actions in their own (`oneAdmin`) (#1419). A queued request whose connection closed takes nothing.
-- Invoice grant: the row is booked before paying; a verdict that is not final is booked as `pending` with its payers, a removed row whose payer may still pay is kept in `unsure`; a sweep in the queue reads each payer's `listpayments` every 2 min and sets the book to SUCCEEDED / FAILED (#1421).
+- Invoice grant: the row is booked before paying; a verdict that is not final is booked as `pending` with its payers, a removed row whose payer may still pay is kept in `unsure` (at most 500); a sweep outside the queue (`sweepPayments`, every `FAUCET_SWEEP_MS`, 2 min; one pass at a time) reads each payer's `trackpayment <hash>` and then applies only its own decisions to a freshly read book in one synchronous step: pending + any SUCCEEDED -> booked; pending + every payer FAILED or "not initiated" -> row removed; unsure + any SUCCEEDED -> booked again unless a row with that hash exists; unsure + all FAILED/none, or no IN_FLIGHT after 24 h -> forgotten (#1421, #1426). See SM-19b for what the sweep reads.
 - E-cash welcome: a note is taken by rename into `taken/`; the row keeps its file; the same caller (`ipKey`) asking again within 15 min gets the same note (#1419).
 - Limits: per address by `ipKey` (an IPv6 /64 is one), 2,000,000 sat an hour, 10,000,000 a day; screenshots by `ipKey`, a day byte cap and a free-disk floor (#1405).
 
 #### SM-C8 (change) Owner actions and the owner statement
 - Add-bond and roles changes are kept in `owner_actions` before the broadcast (#1374); the same ask again is answered "already" only while its transaction is in the mempool or mined, else built again (#1423).
-- GET /owner carries a statement signed by the node key over [node, owner, atMs]; the node bounty's checklist counts only such a statement, at most a day old, the newest (#1418).
+- GET /owner carries a statement signed by the node key over [node, owner, atMs]; the node bounty's checklist reads the owner only from such a statement, at most a day old, the newest (#1418). Since 2026-11-10 the owner is no condition of the bounty (SM-23).
 
 #### SM-X1 Explorer admin marks (`marked`, `admin_ips`)
 - POST /api/mark with the admin code marks keys and, for kind owner, keeps the caller's address (`admin_ips`, IPv6 by /64) (#1414).
@@ -1502,3 +1502,43 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 - Reserve payout: rows whose round this seat cannot read are `unknown` - taken as a co-signer, never picked as coordinator, never a SHORT while they could cover it (#1409).
 - Donation sets: a network's first set is its founding serial; a set's parent is the last set in force below it (#1407).
 
+## 14. State the 2026-11-10 evening range introduced or changed (audit 7, base eb7fd30fc, head c41b4ac4d)
+
+#### SM-23 Node bounty checklist (node-bounty-check.js, faucet.mjs `nodeCheckNow`, GET /feedback/node-check, admin approve at level node)
+Implicit, recomputed on every read; nothing is kept but the 10-minute answer cache `NODE_CHECKS` (memory, by `node:npub`, at most 200) for the public door. The admin approve reads it fresh.
+- Inputs: the seats (`FAUCET_SEASON_SEATS` plus every seat their `/network-games` lists), each seat's `GET /owner`, each seat's `GET /served?from&to&finals=1` for the last `NODE_BOUNTY_WINDOW` (7) UTC days, today included.
+- owner: the newest statement the node key signed (schnorr over `ownerStatementMessage`), at most 24 h from now; `servedAt` = every seat URL that served such a statement.
+- Checks (all must hold for `passes`):
+  | key | holds when |
+  |---|---|
+  | census | the node sat on at least one committee in the window |
+  | online | it sat on a committee on at least `NODE_BOUNTY_DAYS` (1) day of the window |
+  | committees | at least one committee and one round it signed FINAL |
+  | outside | the node key (and the owner key, if given) is not in `FAUCET_FEEDBACK_EXCLUDED`, and no URL in `servedAt` is on a team host (`FAUCET_TEAM_HOSTS`) |
+- `owner` (the answer's hint, no condition, Daniel 2026-11-10 "npub muss nicht sein"): the reporter's key = the signed owner / another owner / none named.
+- Approve at level node: checklist `passes` -> `FEEDBACK.approve` (SM-21: one per key, one per node, the first `NODE_BOUNTY_MOST` = 10; `NODE_BOUNTY_BASE_SATS` = 10,000, outside the weekly budget).
+- Known gaps (audit 7): `outside` is only as good as `servedAt`, which is empty for a node that does not sign the statement (every release up to 2026.1.9.26, most team seats) - finding A7-1; nothing ties the reporter to the node - finding A7-2.
+
+#### SM-19b Faucet payment's final word (faucet.mjs `paymentFinal`)
+- One `lncli trackpayment <hash>` per payer, 10 s: "isn't initiated" -> NONE; a final status SUCCEEDED / FAILED -> that; no answer in time -> IN_FLIGHT; anything else -> null (no decision).
+- The status is read from JSON (`"status": "..."`): lncli prints JSON only with `--json` (finding A7-3).
+
+#### SM-21 (add) Feedback report content
+- A signed report may carry `debug` (the page's state and console tail, at most 60,000 characters) in its content; the faucet reads a report post up to 96 KB, and `row()` answers the debug scrubbed as the words are. No state of its own.
+- Level amounts: critical 10,000 (outside the budget), node 10,000.
+- GET /feedback/lnaddress: the bounty address check (`lnAddressWorks`) for the page's own origin, at most 30 per address in 10 min (`LN_ASKS`, memory, at most 5,000 addresses). No state moves.
+
+#### SM-I3 (add) Node update: the settings step
+- Between BACKED_UP and UNITS_WRITTEN, arena.conf (when it exists) is rewritten once: release paths moved, keys renamed, stake lock paths, and `withNewAppVersions`: every registration of the new release (`appsSetting(state, newRelease)`) whose folder `apps=` already names is appended after the listed ones. An app with no path in `apps=` stays out; a listed path is never removed; a second run adds nothing.
+- A rollback (ROLLING_BACK, resume) puts arena.conf back from the backup, which holds it (`NODE_FILES`).
+
+#### SM-P3 (change) Head-to-head move: when the move is the tab's
+- The move is the tab's once as many seats as the round's `settlementSlots` (or `gameVerifySlots`) answered 201 (`submitPick` `onEntry`, kanban #1391), or when all seats answered; the slower seats are still waited on in the background and the name record loops skip the seats that refused the entry.
+
+#### SM-P5 (change) Market order and paid join at the tap
+- A paid round whose federation cannot cover the stake from this wallet's part there (`joinFundingPlan` answers swap or merge) is refused at the tap (`not-funded-here`) and says where the sats are; the order never starts.
+- A paid join waits for a pending welcome only when the round's own federation cannot pay the stake without it; the wait is a named stage.
+- The strip names the open step after 3 s (`ARENA_TX_STEPS`: the last `->` with no `<-`); a tap while another order is locking is noted (`busyTapAt`) and not taken.
+
+#### SM-T5 (change) Welcome on the page
+- The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
