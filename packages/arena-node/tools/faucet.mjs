@@ -461,6 +461,9 @@ createServer((req, res) => {
         }
         const d = feedbackDecide({ ...b, ip }, REPORTS);
         if (!d.ok) return send(200, d);
+        // AN UNSIGNED REPORT'S BOUNTY ADDRESS TOO (#1342, measured on testnet-stage: a report from a tab with no identity named an address nothing pays to and
+        // was taken): its "Bounty address:" line must work as well
+        if (!b0.event) { const m = /\nBounty address: (\S+)/.exec(String(b0.text || '')); if (m) { const w = await lnAddressWorks(m[1]); if (!w.ok) return send(200, { ok: false, why: `That Lightning address does not work: ${w.why}. Check it, or leave it empty.` }); } }
         const key = readFileSync(env.FAUCET_CHAT_TOKEN_FILE, 'utf8').trim();
         const r = await fetch(`${env.FAUCET_CHAT_URL}/api/channels/${env.FAUCET_CHAT_CHANNEL}/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` }, body: JSON.stringify({ text: d.text }), signal: AbortSignal.timeout(10000) });
         if (!r.ok) return send(502, { ok: false, why: 'the report could not be kept just now' });
