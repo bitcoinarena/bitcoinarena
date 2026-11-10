@@ -194,7 +194,9 @@ export function openFeedbackStore(path = ':memory:') {
     if (mine >= R.perKeyPerWeek) return { ok: false, why: `that key has ${mine} rewards this week: at most ${R.perKeyPerWeek}` };
     const week = db.prepare(`SELECT COALESCE(SUM(amount_sats), 0) AS s FROM reports WHERE state IN ('accepted', 'paid') AND changed_ms >= ? AND COALESCE(severity, '') NOT IN ('critical', 'node')`).get(since).s;   // a critical one is outside the budget
     if (!(lv && lv.outsideBudget) && week + sats > R.weeklyBudgetSats) return { ok: false, why: `this week's budget: ${week} of ${R.weeklyBudgetSats} sat approved, ${sats} more does not fit` };
-    db.prepare('UPDATE reports SET state = ?, amount_sats = ?, severity = ?, changed_ms = ? WHERE id = ? AND state = ?').run(STATES.ACCEPTED, sats, severity, nowMs, r.id, STATES.NEW);
+    // THE LEVEL AS THE GUARDS READ IT (audit 6, kanban #1422): stored normalised ('Node' was kept as given and missed by the guards' severity = 'node')
+    const level = lv ? lv.level : (severity ? String(severity).toLowerCase() : null);
+    db.prepare('UPDATE reports SET state = ?, amount_sats = ?, severity = ?, changed_ms = ? WHERE id = ? AND state = ?').run(STATES.ACCEPTED, sats, level, nowMs, r.id, STATES.NEW);
     db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, STATES.ACCEPTED, nowMs, by, `${sats} sat${severity ? `, ${severity}` : ''}`);
     return { ok: true, report: row(get.get(r.id)) };
   }
@@ -293,6 +295,9 @@ export function openFeedbackStore(path = ':memory:') {
     if (!r) return { ok: false, why: 'no such report' };
     if (ticket !== undefined && ticket !== null && !/^#?\d{1,6}$/.test(String(ticket))) return { ok: false, why: 'a ticket is its number, like #1342' };
     if (severity !== undefined && severity !== null && !['low', 'medium', 'high', 'critical', 'useful'].includes(String(severity))) return { ok: false, why: 'severity is low, medium, high, critical or useful' };
+    // AN APPROVED REPORT KEEPS ITS LEVEL (audit 6, kanban #1422): a note that moved an accepted node bounty to "critical" freed its node for a second
+    // bounty and took a report out of the week's budget sum - the level a reward was approved at is what the guards and the budget read
+    if (severity !== undefined && severity !== null && (r.state === STATES.ACCEPTED || r.state === 'paid')) return { ok: false, why: `that report is ${r.state}: the level it was approved at stays (${r.severity || 'none'})` };
     db.prepare('UPDATE reports SET ticket = COALESCE(?, ticket), severity = COALESCE(?, severity) WHERE id = ?')
       .run(ticket === undefined || ticket === null ? null : `#${String(ticket).replace(/^#/, '')}`, severity === undefined || severity === null ? null : String(severity), r.id);
     db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by, `note: ${ticket ? `ticket ${ticket}` : ''}${severity ? ` severity ${severity}` : ''}`.trim());
