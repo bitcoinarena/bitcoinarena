@@ -172,8 +172,10 @@ export class StakeSecrets {
           if (!book.filled) return { ok: false, why: 'that order never filled: its lock comes back whole, and its stake secret stays sealed' };
           return { ok: true, outcome: 'FILLED_ORDER' };
         }
+        if (book && book.wrongType) return { ok: false, why: `${book.wrongType}: its stake secret stays sealed` };
         if (entry.pick === f.outcome) return { ok: false, why: 'that entry picked the outcome: its lock is its own, and its stake secret stays sealed' };
-        const anyWinner = this.round.entriesOf(roundIdBytes).some(({ entryId, entry: e }) => e.pick === f.outcome && (!this.round.stakeSeen || this.round.stakeSeen(entryId)));
+        const anyWinner = this.round.entriesOf(roundIdBytes).some(({ entryId, entry: e }) => e.pick === f.outcome && (e.limitPrice === undefined || e.limitPrice === null)
+          && (!this.round.stakeSeen || this.round.stakeSeen(entryId)));
         if (!anyWinner) return { ok: false, why: 'nobody picked the outcome: every stake comes back, and no stake secret is handed out' };
         return { ok: true, outcome: 'LOST_PICK' };
       } }

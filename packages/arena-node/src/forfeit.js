@@ -239,6 +239,9 @@ export class Forfeit {
       }
     }
     if (!lock) return refuse('this signer node verified no stake lock for that entry, so it forfeits nothing');
+    // A PLAIN PICK IN A ROUND THAT BECAME AN ORDER BOOK (§0A.7b RULED 2026-11-10, kanban #1411/#1417): not an entry of that round - its lock is
+    // returned at once, as a refused round's stake is (§23.2), with no result and no window to wait for
+    if (!refused && kind === 'stake') { const b = this.bookStanding ? this.bookStanding(roundIdBytes, entryIdBytes) : null; if (b && !b.book && b.wrongType) refused = b.wrongType; }
     // THE REGTEST FAULT (test-named-offence.js, off by default): offence (b) - the forfeit of an entry this seat itself signed non-qualifying
     if (!refused && namedClaims(contract) && forfeitLostOn(entryIdBytes)) {
       const mine = (this.round.results ? this.round.results(roundIdBytes, entryIdBytes) : []).some((r) => {
