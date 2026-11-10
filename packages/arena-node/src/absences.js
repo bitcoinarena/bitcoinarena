@@ -85,7 +85,7 @@ export function createAbsences({ verify, max = 4096, store = null, nodeOf = null
     const had = held.get(k);
     if (had && had.height >= a.height) return { ok: true, kept: false };
     if (!had && members && countOf(held, fid) >= max) return { ok: false, why: 'this seat holds as many attestations of that federation as it keeps' };
-    if (!had && !members && (typeof guardiansOf === 'function' ? unknownCount(held) >= unknownMax : held.size >= max)) return { ok: false, why: 'this seat holds as many attestations as it keeps' };
+    if (!had && !members && (loading ? countOf(held, fid) >= max : (typeof guardiansOf === 'function' ? unknownCount(held) >= unknownMax : held.size >= max))) return { ok: false, why: 'this seat holds as many attestations as it keeps' };
     held.set(k, a);
     save();
     return { ok: true, kept: true };
@@ -108,7 +108,7 @@ export function createAbsences({ verify, max = 4096, store = null, nodeOf = null
     const had = notices.get(k);
     if (had && had.postedAt >= d.postedAt) return { ok: true, kept: false };
     if (!had && members && countOf(notices, fid) >= max) return { ok: false, why: 'this seat holds as many notices of that federation as it keeps' };
-    if (!had && !members && (typeof guardiansOf === 'function' ? unknownCount(notices) >= unknownMax : notices.size >= max)) return { ok: false, why: 'this seat holds as many notices as it keeps' };
+    if (!had && !members && (loading ? countOf(notices, fid) >= max : (typeof guardiansOf === 'function' ? unknownCount(notices) >= unknownMax : notices.size >= max))) return { ok: false, why: 'this seat holds as many notices as it keeps' };
     notices.set(k, d);
     save();
     return { ok: true, kept: true };
@@ -133,6 +133,10 @@ export function createAbsences({ verify, max = 4096, store = null, nodeOf = null
     { record, peerKey, departureNotice, height, verify });
   const listDepartures = (fidHex) => [...notices.entries()].filter(([k]) => !fidHex || k.startsWith(`${fidHex}:`)).map(([, d]) => departureHex(d));
   const list = (fidHex) => [...held.entries()].filter(([k]) => !fidHex || k.startsWith(`${fidHex}:`)).map(([, a]) => absenceHex(a));
+  // READ BACK WHOLE AT A RESTART (kanban #1404, audit 5 #1399): the store is read while the seat holds no federation record yet (server.js restores
+  // them later), so guardiansOf answered null for every kept entry and all of them went into the 512 bucket for unknown federations - the rest were
+  // dropped, and the next save wrote the cut set: ABANDONED proofs and departure notices lost at each restart. What this seat wrote was taken
+  // through every check when it came; read back, each signature is verified again and each federation is bounded by `max` as a held one is.
   if (store) {
     let had = null; try { had = store.read(); } catch { had = null; }
     loading = true;
