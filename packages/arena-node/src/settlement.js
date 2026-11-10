@@ -714,9 +714,16 @@ export class LockSettlement {
 
   async #attestedPlan(roundIdBytes, a, claimPk, held) {
     const { contract } = a;
+    // BOOK OR POOL BY THE CERTIFIED BATCHES (§0A.7b, kanban #1411/#1417): a round that took orders reads the other seats' batches first, so
+    // every seat decides on the same certified set; a round with no certified batch holding an order is a pool, and its orders are no entries of it
+    if (this.orderBook && this.orderBook.takesOrders && this.orderBook.takesOrders(roundIdBytes)) {
+      const synced = await this.orderBook.sync(roundIdBytes);
+      if (!synced.ok) return refuse(`not yet: reading the other seats' batches - ${synced.why}`, 409);
+    }
     if (this.orderBook && this.orderBook.isBook(roundIdBytes)) return this.#bookPlan(roundIdBytes, a, claimPk, held);
     if (this.round.cancelsOf) await this.#carryCancels(roundIdBytes);
     const entries = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.stakeSeen || !!this.round.stakeSeen(entryId))
+      .filter(({ entry }) => entry.limitPrice === undefined || entry.limitPrice === null)
       .map(({ entryId, entry }) => ({ entryId: toHex(entryId), pubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat,
         donationMsat: entry.donationMsat, pick: entry.pick, feePreimage: entry.feePreimage, entryIdBytes: entryId,
         ...(entry.frontendPk ? { frontendPk: entry.frontendPk } : {}) }));
@@ -1079,7 +1086,7 @@ export class LockSettlement {
     // AT MOST ONE READ A ROUND EVERY 30 S: an asker that keeps naming other bytes does not make an overloaded seat read every peer each time
     const last = this.#resyncedAt.get(key) || 0;
     if (Date.now() - last < 30000) return false;
-    if (!this.orderBook || !this.orderBook.isBook(roundIdBytes)) return false;
+    if (!this.orderBook || !(this.orderBook.takesOrders ? this.orderBook.takesOrders(roundIdBytes) : this.orderBook.isBook(roundIdBytes))) return false;
     this.#resyncedAt.set(key, Date.now());
     if (this.#resyncedAt.size > 4096) this.#resyncedAt.delete(this.#resyncedAt.keys().next().value);
     const got = await this.orderBook.sync(roundIdBytes, { force: true });

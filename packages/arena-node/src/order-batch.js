@@ -145,10 +145,22 @@ export class OrderBook {
       needed: receiptsNeeded(contract.gameVerifySlots), seats: contract.nodes.map(toHex) };
   }
 
-  /** Whether that round is an order book at this seat: a market whose entries are orders. */
+  /**
+   * WHETHER THAT ROUND IS AN ORDER BOOK, THE SAME AT EVERY SEAT (§0A.7b, RULED 2026-11-10 kanban #1417, audit 5 #1411): "a round is a book iff a
+   * threshold-certified batch holds an order". It was "an order this seat has seen the stake of" - a fact each seat learns at its own time, so a
+   * round holding backed orders and backed plain picks was planned as a book at one seat and a pool at another (no threshold), and one type's
+   * stakes waited for their lock timeout. A batch takes only orders whose locks its signers verified (#check), so a lockless order makes no book.
+   */
   isBook(roundIdBytes) {
     const m = this.market(roundIdBytes);
-    // an order this seat has seen the stake of (kanban #1270): a lockless order posted to a pool does not make it a book here
+    if (!m.ok) return false;
+    return this.db.prepare('SELECT record FROM market_batches WHERE round_id = ? AND certificate IS NOT NULL').all(Buffer.from(roundIdBytes))
+      .some((r) => { try { return (JSON.parse(r.record).orders || []).length > 0; } catch { return false; } });
+  }
+
+  /** Whether that round takes orders at this seat (an order whose stake it saw, kanban #1270): when its book is worth reading from the other seats. */
+  takesOrders(roundIdBytes) {
+    const m = this.market(roundIdBytes);
     return m.ok && this.round.entriesOf(roundIdBytes).some((x) => isOrder(x.entry) && (x.entry.stakeMsat === 0n || typeof this.round.stakeSeen !== 'function' || !!this.round.stakeSeen(x.entryId)));
   }
 
@@ -910,7 +922,9 @@ export class OrderBook {
    */
   standing(roundIdBytes, entryIdBytes) {
     const raw = this.round.entry(entryIdBytes);
-    if (!raw || !isOrder(decodeEntryContract(raw))) return { book: false };
+    if (!raw) return { book: false };
+    // A PLAIN PICK IN A ROUND THAT BECAME A BOOK (§0A.7b, kanban #1411/#1417): not an entry of that round - its lock comes back at once, whole
+    if (!isOrder(decodeEntryContract(raw))) return { book: false, wrongType: this.isBook(roundIdBytes) ? 'a plain pick in a round that is an order book (§0A.7b): not an entry of that round, its stake comes back' : null };
     const L = this.ledger(roundIdBytes);
     if (!L.ok) return { book: true, filled: true, cancelled: false, inPending: false, why: L.why };
     const p = L.positions.get(toHex(entryIdBytes));
