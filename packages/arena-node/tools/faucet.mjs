@@ -42,7 +42,16 @@ const readBook = () => { try { return JSON.parse(readFileSync(env.FAUCET_BOOK, '
 const saveBook = (b) => { writeFileSync(`${env.FAUCET_BOOK}.new`, JSON.stringify(b, null, 1)); renameSync(`${env.FAUCET_BOOK}.new`, env.FAUCET_BOOK); };
 const balanceSats = async () => Math.round(Number((await rpc('getbalances')).mine.trusted) * 1e8);
 // THE CALLER'S ADDRESS: the site's Worker names it (behind it x-forwarded-for is Cloudflare's), else the tunnel's header; no header, no limit by address
-const ipOf = (req) => String(req.headers['x-arena-ip'] || req.headers['x-forwarded-for'] || '').split(',')[0].trim() || null;
+// ONLY THE WORKER NAMES IT (audit 8, kanban #1434): x-arena-ip counts with the Worker's key (FAUCET_WORKER_KEY); any other caller - straight over
+// the tunnel - is the address the tunnel itself added last to x-forwarded-for, whatever the caller wrote before it
+const WORKER_KEY = String(env.FAUCET_WORKER_KEY || '');
+const fromWorker = (req) => { const k = String(req.headers['x-arena-worker'] || ''); return !!WORKER_KEY && k.length === WORKER_KEY.length && timingSafeEqual(Buffer.from(k), Buffer.from(WORKER_KEY)); };
+const ipOf = (req) => {
+  if (!WORKER_KEY) return String(req.headers['x-arena-ip'] || req.headers['x-forwarded-for'] || '').split(',')[0].trim() || null;
+  if (fromWorker(req)) return String(req.headers['x-arena-ip'] || '').trim() || null;
+  const hops = String(req.headers['x-forwarded-for'] || '').split(',').map((x) => x.trim()).filter(Boolean);
+  return hops.length ? hops[hops.length - 1] : (req.socket && req.socket.remoteAddress) || null;
+};
 
 let queue = Promise.resolve();
 const one = (fn) => { const run = queue.then(fn, fn); queue = run.catch(() => {}); return run; };
@@ -285,7 +294,7 @@ createServer((req, res) => {
     req.on('data', (c) => { raw += c; if (raw.length > 8192) req.destroy(); });
     req.on('end', async () => {
       try {
-        const b = JSON.parse(raw || '{}'), ip = req.headers['x-arena-ip'] || null, d = feedbackDecide({ ...b, ip }, REPORTS);
+        const b = JSON.parse(raw || '{}'), ip = ipOf(req), d = feedbackDecide({ ...b, ip }, REPORTS);
         if (!d.ok) return send(200, d);
         const key = readFileSync(env.FAUCET_CHAT_TOKEN_FILE, 'utf8').trim();
         const r = await fetch(`${env.FAUCET_CHAT_URL}/api/channels/${env.FAUCET_CHAT_CHANNEL}/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` }, body: JSON.stringify({ text: d.text }), signal: AbortSignal.timeout(10000) });
