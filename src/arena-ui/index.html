@@ -7906,9 +7906,19 @@
             // go in (this round's stake goes into a federation lock, and it was not made: the deposit was closed: nothing was paid) - tap again"): the client
             // put the seats' raw reason in its note; it now says the page's one sentence for it (ARENA_ORDER_WORDS, the same as the order strip)
             ["note('That tap did not go in (' + (rec.why || 'refused') + ') - tap again');", "note((() => { try { return window.parent.ARENA_ORDER_WORDS(rec.why); } catch { return 'Your order did not go in. Tap again.'; } })());"],
-            ["note('That tap did not go in (' + (j.why || 'refused') + ') - tap again'); return;", "note((() => { try { return window.parent.ARENA_ORDER_WORDS(j.why); } catch { return 'Your order did not go in. Tap again.'; } })()); return;"]];
+            ["note('That tap did not go in (' + (j.why || 'refused') + ') - tap again'); return;", "note((() => { try { return window.parent.ARENA_ORDER_WORDS(j.why); } catch { return 'Your order did not go in. Tap again.'; } })()); return;"],
+            // NO SHOW OVER THE NEXT ROUND (Daniel's playtest 2026-11-10: "wenn ich RPS aufmache rotiert erstmal die gegner-hand unkontrolliert für 5-10 sekunden",
+            // "While it is opening for a new round the animation goes crazy"; measured at 6x CPU: the round's show - both hands striking, then LOST - began 41 s
+            // after the tap and ran on over the next round's pick screen): the client played a round's show up to 30 s after its close and its big verdict
+            // up to 60 s, whatever round was open by then. Now a new round's pick ends a show still running, the show of the round before is not started
+            // once a new round is open or the stage waits for one, and a show and the big verdict come only within 12 s of the close (a page opened
+            // after a round closed never replays it)
+            ['    function show(s) {', "    function show(s) {\n      if (seq && s.phase === 'pick' && s.id && shownFor && s.id !== shownFor) seq.t = seq.end;"],
+            ["{ shownFor = done.id; console.log('[rps] the show: ' + NAMES[done.mine] + ' vs ' + NAMES[done.theirs]); shoot(done.mine, done.theirs); }",
+              "{ shownFor = done.id; if (((s.phase === 'pick' || s.phase === 'none') && done.id !== s.id) || ((c) => Date.now() - c > 12000 || c < performance.timeOrigin)(Number((done.id === s.id ? s.closeMs : s.prev && s.prev.closeMs) || 0))) console.log('[rps] the show of the round before is skipped: its moment has passed'); else { console.log('[rps] the show: ' + NAMES[done.mine] + ' vs ' + NAMES[done.theirs]); shoot(done.mine, done.theirs); } }"],
+            ['if (last.verdict && bannerFor !== h.roundIdHex && Date.now() - closeMs < 60000) {', 'if (last.verdict && bannerFor !== h.roundIdHex && Date.now() - closeMs < 12000 && closeMs >= performance.timeOrigin) {']];
           if (swaps.every(([x]) => html.split(x).length === 2)) { for (const [x, y] of swaps) html = html.replace(x, () => y); bytes = new TextEncoder().encode(html); window.ARENA_RPS_QUICK = true;
-            console.log('[arena] #1395 #1391 Rock Paper Scissors: the winner from the open moves, the show 1.6x faster, Wait to the close, notes in plain words'); }
+            console.log('[arena] #1395 #1391 Rock Paper Scissors: the winner from the open moves, the show 1.6x faster, Wait to the close, notes in plain words, no show over the next round'); }
         }
       } catch { bytes = file.bytes; }
       frame.src = URL.createObjectURL(new Blob([bytes], { type: 'text/html' }));
