@@ -105,7 +105,11 @@ async function keep(env, tx, had) {
   return env.DB.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, settled, hash, json, updated_ms, kind, fed_txid, txids) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET round = excluded.round, app = excluded.app, federation = excluded.federation, stored_ms = excluded.stored_ms,
     settled = excluded.settled, hash = excluded.hash, json = excluded.json, updated_ms = excluded.updated_ms, kind = excluded.kind, fed_txid = excluded.fed_txid,
-    txids = excluded.txids`)
+    txids = excluded.txids
+    WHERE txs.kind = excluded.kind OR excluded.kind = 'order'`)
+    // a write replaces only a row of its own kind (kanban #1599): one seat's GET /payments row named with an order's entry id (public on
+    // the explorer) no longer turns that order into its made-up gift - the round left /api/played, /api/totals and the volume. An order
+    // (merged across the seats, #1510) still takes back an id a payment row held first.
     .bind(tx.id, e.round || null, e.app || null, e.federation || null, tx.storedFirst ? Date.parse(tx.storedFirst) : Date.now(),
       tx.settlement ? tx.settlement.state : null, h, JSON.stringify(tx), Date.now(), tx.kind || 'order', tx.payment ? tx.payment.txid : null,
       Array.isArray(tx.txids) && tx.txids.length ? tx.txids.join(' ') : null);
