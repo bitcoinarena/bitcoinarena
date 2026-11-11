@@ -212,7 +212,12 @@ export function outcomeFinality(held, { windowMs, nowMs }) {
  * MAY AN ATTESTATION COME IN YET (§0A.7a slice 2): only once the round's entries have closed on the seat's clock, and only
  * for an outcome seen after that close - an outcome known while a pick could still be made is a pick to be copied.
  */
-export function attestationTimely(a, { entryCloseMs, nowMs, terms = null }) {
+export function attestationTimely(a, { entryCloseMs, nowMs, terms = null, window = null }) {
+  // A MARKET ON A GRID IS OBSERVED AT ITS OWN WINDOW'S END (kanban #1489): its attestors sign observed_at = the window's end
+  // (marketWindowOf), so an outcome observed at any other moment is the outcome of another window - one a seat listing the
+  // round with a shifted close could pick after watching the price. `window` is marketWindowOf(contract, manifest).window.
+  if (window && BigInt(a.observedAtMs) !== BigInt(window.endMs))
+    return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, and this round's window ends at ${new Date(Number(window.endMs)).toISOString()}: it is the outcome of another window` };
   // A MARKET WITH TERMS DECIDES AT ITS RESOLUTION TIME, and not before it: an outcome observed earlier is not
   // the outcome the market asked for (the price at 18:00 is not the price at 17:59)
   if (terms) {

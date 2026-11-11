@@ -14,6 +14,7 @@ import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
 import { stakeExpiryFits } from './lock-expiry.js';
 import { utf8Encode } from './utf8.js';
+import { onCurveX } from './guardian-payout.js';
 // THE RUN LENGTH IS THE CORE'S. `genesis.js` already reads it from the same
 // place and writes it into the config hash a contract's network_id commits to;
 // restating the number here would be the second clock letter 21 forbade.
@@ -593,6 +594,12 @@ export function contractIsForThisBuild(contract, { anchor, config } = {}) {
 
 const is32 = (v) => v instanceof Uint8Array && v.length === 32;
 
+// A WEBSITE PAYOUT KEY IS A POINT, NOT JUST A PREFIX (kanban #1489). The settlement pays it as an output of the round's ONE
+// settlement transaction (fee.js frontendShares), and the settlement tool parses every payout key as a secp256k1 point: an x
+// above the field prime, or one with no y, made that whole transaction unbuildable - every winner's payout and every fee claim
+// with it. Such an entry is refused at encode and at decode; no honest client can name such a key.
+const isCompressedPoint = (k) => (k[0] === 2 || k[0] === 3) && onCurveX(k.subarray(1));
+
 export function encodeEntryContract(e) {
   const w = new Writer();
   w.u8(TYPE_ENTRY_CONTRACT);
@@ -696,7 +703,7 @@ export function encodeEntryContract(e) {
   // stake at settlement (fee.js frontendShares). In the signed bytes, so no seat can swap it. WRITTEN ONLY WHEN IT NAMES ONE, last
   // of all, after its own marker: every other entry keeps exactly its bytes and its id.
   if (e.frontendPk !== undefined && e.frontendPk !== null) {
-    if (!(e.frontendPk instanceof Uint8Array) || e.frontendPk.length !== 33 || (e.frontendPk[0] !== 2 && e.frontendPk[0] !== 3))
+    if (!(e.frontendPk instanceof Uint8Array) || e.frontendPk.length !== 33 || !isCompressedPoint(e.frontendPk))
       throw new Error('an entry names the website that brought it by a 33-byte compressed payout key');
     w.u8(FRONTEND_MARKER);
     w.bytes(e.frontendPk, 33);
@@ -833,7 +840,7 @@ export function decodeEntryContract(bytes) {
   if (r.at < bytes.length && bytes[r.at] === FRONTEND_MARKER) {
     r.u8();
     e.frontendPk = r.bytes(33);
-    if (e.frontendPk[0] !== 2 && e.frontendPk[0] !== 3) throw new Error('an entry names the website that brought it by a 33-byte compressed payout key');
+    if (!isCompressedPoint(e.frontendPk)) throw new Error('an entry names the website that brought it by a 33-byte compressed payout key');
   }
   if (r.at < bytes.length && bytes[r.at] === ITEMS_ENTRY_MARKER) {
     r.u8();
