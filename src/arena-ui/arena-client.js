@@ -37757,7 +37757,7 @@ const downSave = (nowMs) => { try { const st = downStore(); if (!st) return; con
 const skippedNodes = (nowMs = Date.now()) => [...downMap()].filter(([, v]) => v > nowMs).map(([node, untilMs]) => ({ node, untilMs }));
 /** Forget every skip (tests). */
 const forgetSkippedNodes = () => { DOWN = new Map(); FAILS.clear(); try { const st = downStore(); if (st) st.removeItem(DOWN_KEY); } catch { /* nothing kept */ } };
-async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, verifyMany = null, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS, skipFailed = false, preferGames = null } = {}) {
+async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, verifyMany = null, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS, skipFailed = false, preferGames = null, rereadMs = 0 } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
   if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
   const refused = [];
@@ -37766,7 +37766,25 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
   const said = new Map();                                   // id -> [{ node, key, ... }]
   const soonest = new Map();                                // id -> its entry close, as a seat lists it
   const gameOf = new Map();                                 // id -> its game's id, as a seat lists it (preferGames)
-  const ask = answerWithin(fetcher, answerMs);
+  const asked = answerWithin(fetcher, answerMs);
+  // A SEAT'S LISTING READ AT MOST EVERY LOBBY_REREAD_MS (kanban #1451, measured on live page983 2026-11-11: the lobby paints every second and asked all
+  // 14 seats each time - 150-350 GET /rounds in 45 s from one idle page - while a seat keeps its listing 5 s and answers the same bytes until then):
+  // an answer is kept per URL and per fetcher for `rereadMs` (the page's lobby paint: LOBBY_REREAD_MS; 0, the default, keeps nothing - every read asks)
+  // and read again after it; a failed read is never kept, so a seat is asked again at once
+  const keptFor = LOBBY_KEPT.get(fetcher) || new Map(); LOBBY_KEPT.set(fetcher, keptFor);
+  const answer = (status, text) => ({ ok: status >= 200 && status < 300, status, json: async () => JSON.parse(text), text: async () => text });
+  const ask = async (url) => {
+    const k = keptFor.get(url);
+    // only a seat's listing is kept: every other ask (a round's contract, binary) goes through as before
+    if (!(rereadMs > 0) || !/\/rounds\?/.test(String(url))) return asked(url);
+    if (k && Date.now() - k.at < rereadMs) return answer(k.status, k.text);
+    const r = await asked(url);
+    if (!r || !r.ok) return r;
+    const text = await r.text();
+    keptFor.set(url, { at: Date.now(), status: r.status, text });
+    if (keptFor.size > 64) keptFor.delete(keptFor.keys().next().value);
+    return answer(r.status, text);
+  };
   // EVERY NODE AT ONCE, each within its limit: asked one after another, one silent node held the next one's answer back
   // and a lobby of two cost two limits. Answers are read in the order the nodes were named.
   const named = [...new Set(nodes)];
@@ -37978,6 +37996,9 @@ const FUNDED_JOIN_LEAD_MS = 15000;
 // A join whose deposit misses the entry close moves on to the next round (the page, ARENA_LOBBY_ACT.join).
 const JOIN_LEAD_MS = 0;
 const LOBBY_PER_SERIES = 8;
+/** How long a seat's listing answer is reused before the seat is asked again (kanban #1451): the seat keeps its own listing 5 s. */
+const LOBBY_REREAD_MS = 5000;
+const LOBBY_KEPT = new WeakMap();   // fetcher -> url -> { at, status, text }
 /**
  * A LOBBY READ THAT GOT NO ANSWER KEEPS ITS LAST ROWS (2026-10-01 15:25, HARD: "A player opening the page sees a
  * free row and a paid testnet4 row together. Do not drop free to show testnet4. Do not drop testnet4 to show free.").
