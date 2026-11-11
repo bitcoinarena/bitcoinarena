@@ -70,6 +70,14 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
     try { commit(next); } catch { return false; }
     return true;
   }
+  // ONE DEPOSIT, ONE PROPOSAL (kanban #1489, 27A.7.2 "a fixed price"): the deposit_txid a kept proposal names backs no other -
+  // a proposal naming a deposit another kept one (in any state, orphaned too) already names is refused at the door, so the first
+  // kept stays. A record kept before #1489 carries no depositTxid: it is read off its own bytes.
+  const depositTxidOf = (r) => {
+    if (r && typeof r.depositTxid === 'string') return r.depositTxid;
+    try { const b = fromHex(String(r.proposal)); return toHex(decodeConfigProposalBody(b.subarray(0, b.length - 64)).depositTxid); } catch { return null; }
+  };
+  const backedBy = (depositHex, id) => [...held.values()].find((r) => r.id !== id && depositTxidOf(r) === depositHex) || null;
   const api = {
     async add({ proposal: hex, blockHash }) {
       if (!/^[0-9a-f]+$/i.test(String(hex || '')) || String(hex).length < 130) return { ok: false, status: 400, why: 'a proposal is the hex of its body and its 64-byte signature' };
@@ -83,6 +91,7 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       const was = held.get(id);
       if (was && (stateOf(was) !== S.ORPHANED || was.blockHash === String(blockHash).toLowerCase())) return { ok: true, status: 200, ...was, already: true };
       const net = toHex(p.networkId);
+      const depositHex = toHex(p.depositTxid);
       const tx = await confirmedTx(toHex(Uint8Array.from(p.depositTxid).reverse()), String(blockHash).toLowerCase());
       if (!tx) return { ok: false, status: 422, why: 'that block of this seat\'s chain does not hold the deposit the proposal names' };
       // the network's donation set IN FORCE AT THE DEPOSIT'S HEIGHT (27A.4): the set the deposit had to pay
@@ -97,9 +106,12 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       const stands = proposalStands(p, { publishedAt: dep.publishedAt, depositSats: dep.depositSats, lowestBondMinSats: lowestBondMinSatsFor(net),
         schedule: (scheduleFor && scheduleFor(net)) || schedule, repealSchedule: (repealScheduleFor && repealScheduleFor(net)) || repealSchedule, verify, history });
       if (!stands.ok) return { ok: false, status: 422, why: stands.why };
+      // checked on a proposal that stands on its face and on the chain: refused by its own fault first, then by the deposit (#1489)
+      const other = backedBy(depositHex, id);
+      if (other) return { ok: false, status: 409, why: `that deposit (deposit_txid) already backs proposal ${other.id}: one deposit pays for one proposal` };
       const kept = { id, proposal: toHex(bytes), networkId: net, parent: toHex(p.parent), configHash: toHex(p.configHash), class: stands.class,
         proposer: toHex(p.proposer), publishedAt: dep.publishedAt, depositSats: String(dep.depositSats), votingFrom: stands.votingFrom,
-        votingUntil: stands.votingUntil, activationHeight: stands.activationHeight, repeal: stands.repeal,
+        votingUntil: stands.votingUntil, activationHeight: stands.activationHeight, repeal: stands.repeal, depositTxid: depositHex,
         // THE BLOCK IT WAS PUBLISHED IN: a reorg that takes it out unpublishes the proposal (ballot-tally.js)
         blockHash: String(blockHash).toLowerCase(), state: S.COUNTING };
       // TAKEN AGAIN FROM A NEW BLOCK: the orphaned record moves back to COUNTING with the record checked here
