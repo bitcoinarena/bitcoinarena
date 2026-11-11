@@ -348,6 +348,7 @@ export function gameMarkets({ round, plugins, committeeFor, verify, now = () => 
     const groups = new Map();
     for (const a of answers) {
       if (!a || !Number.isInteger(a.openCents) || !Number.isInteger(a.closeCents) || typeof a.key !== 'string' || typeof a.signature !== 'string') continue;
+      if (!/^[0-9a-f]{128}$/i.test(a.signature)) continue; // kanban #1489: a signature that is not 64 bytes is no answer
       const k = `${a.openCents}:${a.closeCents}`;
       if (!groups.has(k)) groups.set(k, { openCents: a.openCents, closeCents: a.closeCents, sigs: [] });
       groups.get(k).sigs.push({ key: a.key, signature: a.signature });
@@ -377,7 +378,9 @@ export function gameMarkets({ round, plugins, committeeFor, verify, now = () => 
     if (!c.ok) return { done: false, why: c.why };
     let last = `none of the ${c.asked} answer(s) of its committee stands`;
     for (const g of c.groups) {
-      const got = await hold(marketRoundIdBytes, g);
+      // kanban #1489: one group that throws does not stop the others from being checked
+      let got;
+      try { got = await hold(marketRoundIdBytes, g); } catch (e) { last = e.message; continue; }
       if (got.held) return { done: true, why: got.why, held: got };
       last = got.why;
     }
