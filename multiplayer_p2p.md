@@ -2132,7 +2132,15 @@ settlement stays a repeatable free bet.
 
 ```text
 StallNote   { round_id, stage, silent[] }, signed by a seat's node key, after a
-            failed round only. Nothing is noted in a round that worked.
+            failed round only. Nothing is noted in a round that worked, and
+            nothing in a round that had nothing to decide (RULED 2026-11-11,
+            kanban #1339): a round whose every entry is VOID by its own rules
+            for want of players - a head-to-head table with one stood reveal
+            or none (§0A.7, "nobody was played against"), a round with no
+            entry past its start deadline (§16) - is not a failed round at
+            any stage. No money depended on its result, so silence there is
+            no free bet; the 8-day replay showed it benching honest seats
+            under load for a lone player at an RPS table.
 stage       RESULT      an entry of the round went VOID by no quorum (§13C),
                         read once the round's re-run windows are over
             FINAL       an entry stands at a result's threshold and is short of
