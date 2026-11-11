@@ -194,8 +194,8 @@ const reservesOf = (w) => { const f = pluginForRound(w.c, (w.a || w.nodes[0]).ro
 // outputs are split over when the test names no `donation.target`
 const donationTargetOf = (w) => { const d = (w.a || w.nodes[0]); const t = d.settlements && d.settlements.donationTargetFor ? d.settlements.donationTargetFor(w.c) : null; return t && t.ok ? t.target : null; };
 // `order`: { price (PRICE_SCALE units), expiryMs } - a market order: the entry buys `pick` at that limit
-export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, unreached = [], expirySpan = null, frontendPk = null, lockHeaders = null } = {}) {
-  const session = ed25519.utils.randomSecretKey();
+export async function lockAndPlay(w, who, { session: fixedSession = null, feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, unreached = [], expirySpan = null, frontendPk = null, lockHeaders = null } = {}) {
+  const session = fixedSession || ed25519.utils.randomSecretKey();   // `session`: a fixed session key, for a test that enters twice with one (kanban #1479)
   const preimage = secretScalar();
   const e = rand(32);
   // PICK A: the fee locked to H(F), F handed over openly in the entry (F5).
