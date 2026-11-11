@@ -59,6 +59,36 @@ export function ownBondsOf(entries, me) {
   return { sats: String(n.bondSats), outputs: mine.map(ownOutput) };
 }
 
+/** One bond output as a census entry (kept or excluded) names it, in the owner's terms (as ownBondOf). */
+export function outputOfEntry(e) { return ownOutput(e); }
+
+/**
+ * EVERY OUTPUT OF THIS NODE'S BOND STILL ON THE CHAIN (kanban #1439, money audit 8 M8-2: the door spent the first output only, and an
+ * added output left alone below the floor dropped out of the census - no door spent it after). `outputs` are the candidates - the
+ * census's, the ones this seat saw in an earlier census, a census's excluded ones - and `txOut(txid, vout)` the chain's unspent output
+ * ({ sats, script } or null, main.js chainTxOut). Kept: an output still unspent whose script is this node's template-2 bond at its
+ * maturity (so an output is this node's by the chain, not by any record), with the chain's amount. Any other template's output (a
+ * template-3 bond is the owner key's, kanban #1093) is kept as named while unspent: the node's own spend refuses it by name, as before.
+ * Each output once.
+ */
+export async function ownOutputsOnChain({ outputs, nodeKey, network, txOut }) {
+  const seen = new Set(), kept = [];
+  for (const o of outputs || []) {
+    if (!o || !/^[0-9a-f]{64}$/.test(String(o.txid)) || !Number.isInteger(Number(o.vout))) continue;
+    const k = `${o.txid}:${Number(o.vout)}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const c = await txOut(String(o.txid), Number(o.vout));   // a chain that cannot be read throws: the caller says so
+    if (!c) continue;                                        // spent (or never there; a started bond's output is spent into its hold)
+    if (o.template !== BOND_TEMPLATE_V2) { kept.push({ ...o, vout: Number(o.vout) }); continue; }
+    if (!Number.isInteger(o.maturity)) continue;
+    const want = '5120' + toHex(bondKeyOf(nodeKey, o.maturity, network).outputKey);
+    if (String(c.script).toLowerCase() !== want) continue;   // not this node's bond at that maturity
+    kept.push({ ...o, vout: Number(o.vout), sats: String(c.sats) });
+  }
+  return kept;
+}
+
 /** The lock, said plainly, at a tip: { maturity, blocksLeft, estimatedMs, withdrawable }. */
 export function lockAt(bond, tip, nowMs = Date.now()) {
   if (!bond || !Number.isInteger(bond.maturity)) return null;
@@ -69,9 +99,14 @@ export function lockAt(bond, tip, nowMs = Date.now()) {
 /**
  * The spend of the whole bond to `script` (the owner's address as an output script) on the recovery leaf: locktime = maturity,
  * signed by the node's key - a template-2 bond. A template-3 bond's path A is the owner key's (kanban #1093 part 1): withdrawToSign.
- * `feeRate` sat/vB. Answers { hex, txid, fee, value } or throws why not.
+ * `feeRate` sat/vB. Answers { hex, txid, fee, value, spent } or throws why not.
+ *
+ * EVERY OUTPUT IN ONE SPEND (kanban #1439): `bonds` - this node's unlocked template-2 bond outputs - are spent together, one input each on
+ * its own recovery leaf (its own maturity), the locktime the latest of them, so no unlocked output is left behind below the floor. `bond`
+ * alone is the one-output spend, byte for byte as before.
  */
-export function withdrawSpend({ bond, nodeSecret, network, script, feeRate = 2 }) {
+export function withdrawSpend({ bond, bonds, nodeSecret, network, script, feeRate = 2 }) {
+  if (Array.isArray(bonds)) return withdrawSpendAll({ bonds, nodeSecret, network, script, feeRate });
   if (bond.template === BOND_TEMPLATE_V3) throw new Error('a template-3 bond is taken back with the owner key from the 24 words, not by the node: withdrawToSign');
   if (bond.template !== BOND_TEMPLATE_V2) throw new Error(`a template ${bond.template} bond is not withdrawn here (templates 2 and 3 only)`);
   if (bond.hold) throw new Error(`a slash was started on this bond at block ${bond.hold.height}: the money sits in its hold output now, which leaves by the return, not by this path`);
@@ -81,7 +116,49 @@ export function withdrawSpend({ bond, nodeSecret, network, script, feeRate = 2 }
   const sign = (digest) => schnorr.sign(digest, nodeSecret);
   const { make, fee, value } = sized({ bond, built, leaf, script, feeRate });
   const hex = make(fee, sign);
-  return { hex, txid: toHex(Uint8Array.from(parseTransaction(fromHex(hex)).txid).reverse()), fee: String(fee), value };
+  return { hex, txid: toHex(Uint8Array.from(parseTransaction(fromHex(hex)).txid).reverse()), fee: String(fee), value,
+    spent: [{ txid: bond.txid, vout: bond.vout, sats: String(bond.sats), maturity: bond.maturity }] };
+}
+
+/** Several template-2 outputs of this node in one spend (kanban #1439): an input each on its own recovery leaf, signed by the node's key. */
+function withdrawSpendAll({ bonds, nodeSecret, network, script, feeRate }) {
+  const list = bonds;
+  if (!list.length || list.some((b) => !b)) throw new Error('no bond output to withdraw');
+  for (const b of list) {
+    if (b.template === BOND_TEMPLATE_V3) throw new Error('a template-3 bond is taken back with the owner key from the 24 words, not by the node: withdrawToSign');
+    if (b.template !== BOND_TEMPLATE_V2) throw new Error(`a template ${b.template} bond is not withdrawn here (templates 2 and 3 only)`);
+    if (b.hold) throw new Error(`a slash was started on this bond at block ${b.hold.height}: the money sits in its hold output now, which leaves by the return, not by this path`);
+    if (!Number.isInteger(b.maturity)) throw new Error('a bond output without its maturity height is not withdrawn here');
+  }
+  if (new Set(list.map((b) => `${b.txid}:${b.vout}`)).size !== list.length) throw new Error('an output named twice');
+  const nodeKey = schnorr.getPublicKey(nodeSecret);
+  const locktime = Math.max(...list.map((b) => b.maturity));
+  const ins = list.map((b) => {
+    const built = bondKeyOf(nodeKey, b.maturity, network);
+    const leaf = recoveryLeaf(nodeKey, b.maturity);
+    return { b, built, leaf, spk: fromHex('5120' + toHex(built.outputKey)), sats: BigInt(b.sats) };
+  });
+  const sats = ins.reduce((a, i) => a + i.sats, 0n);
+  const make = (fee) => {
+    const tx = { version: 2, locktime, inputs: ins.map((i) => ({ txid: fromHex(i.b.txid).reverse(), vout: i.b.vout, sequence: 0xfffffffe })),
+      outputs: [{ value: sats - fee, script }] };
+    const prevouts = ins.map((i) => ({ value: i.sats, script: i.spk }));
+    const witnesses = ins.map((i, n) => {
+      const sig = schnorr.sign(tapSighash({ ...tx, prevouts, inputIndex: n, leafHash: tapLeafHash(i.leaf) }), nodeSecret);
+      return scriptPathWitness({ stack: [sig], script: i.leaf, controlBlock: controlBlockFor('recovery', i.built).controlBlock });
+    });
+    return toHex(serializeSpend({ ...tx, witnesses }));
+  };
+  // the size from a first build: one input on a script path each, one output
+  const first = fromHex(make(1000n));
+  const p = parseTransaction(first);
+  const wit = 2 + p.witnesses.reduce((a, w) => a + 1 + w.reduce((b, item) => b + (item.length < 0xfd ? 1 : 3) + item.length, 0), 0);
+  const vsize = Math.ceil((3 * (first.length - wit) + first.length) / 4);
+  const fee = BigInt(vsize * Math.max(1, Math.ceil(feeRate)) + 10);
+  if (sats - fee < 330n) throw new Error(`a bond of ${sats} sat leaves nothing after a fee of ${fee} sat`);
+  const hex = make(fee);
+  return { hex, txid: toHex(Uint8Array.from(parseTransaction(fromHex(hex)).txid).reverse()), fee: String(fee), value: String(sats - fee),
+    spent: ins.map((i) => ({ txid: i.b.txid, vout: i.b.vout, sats: String(i.sats), maturity: i.b.maturity })) };
 }
 
 /** The path-A spend of a bond, with the signature `sign(digest)` gives, and its fee from a first build at `feeRate`. */

@@ -26,7 +26,7 @@ import { timed } from './slow.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { resultFrom, signResult, verifiedFinal, runId } from './verdict.js';
 import { stoppedOutcome } from '../../arena-protocol/src/first-mark.js';
-import { noQuorumOutcome as noQuorumRule, FAILED } from '../../arena-protocol/src/payout.js';
+import { noQuorumOutcome as noQuorumRule, FAILED, VOID } from '../../arena-protocol/src/payout.js';
 import {
   provesEquivocation, SIGNED_CHECKPOINT_BYTES as SIGNED_MARK_BYTES, splitSigned as splitMark,
   decodeCheckpoint as decodeMark, checkpointId as markIdOf,
@@ -677,10 +677,14 @@ export class Verifier {
   #headToHeadClose(roundIdBytes, contract, found) {
     // AN ENTRY BELOW THE ROUND'S THRESHOLD IS NO MEMBER (§17, kanban #1071): it is not decided, played against or signed for
     const entries = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.entryVoid(entryId));
+    // AND IN A PAYING ROUND ONLY THE ENTRIES BACKED BY A LOCK ARE PLAYED (kanban #1437, audit 8 R3): one with no lock took no seat, is played against
+    // nobody and is signed VOID - its reveal cannot change the seated players' verdicts
+    const seated = new Set((typeof this.round.seatedEntriesOf === 'function' ? this.round.seatedEntriesOf(roundIdBytes, contract.stakeMsat) : entries).map(({ entryId }) => hex(entryId)));
     const decided = (async () => {
       await this.carryReveals(roundIdBytes, entries, found.plugin.manifest.moveCount);
       const held = new Map(this.round.revealsOf(roundIdBytes).map((r) => [hex(r.entryId), r]));
-      const list = entries.map(({ entryId }) => { const r = held.get(hex(entryId)); return { key: hex(entryId), move: r ? r.move : null }; });
+      const list = entries.filter(({ entryId }) => seated.has(hex(entryId)))
+        .map(({ entryId }) => { const r = held.get(hex(entryId)); return { key: hex(entryId), move: r ? r.move : null }; });
       // DECIDED IN THE CORE'S SANDBOX (§0A.6): the moves in as JSON, the verdicts out as JSON
       let box = null;
       try { box = found.core ? sandboxFor(found.core) : null; } catch (e) { throw new Error(`game "${found.plugin.manifest.gameName}"'s decide adapter does not load in its sandbox: ${e.message}`); }
@@ -688,7 +692,7 @@ export class Verifier {
       return { held, results: headToHeadResults(list, (moves, config) => box.call('decide', { moves, config }), found.config, { players: found.plugin.manifest.players }) };
     })();
     return entries.map(({ entryId, entry }) => decided.then(({ held, results }) => {
-      const r = results[hex(entryId)];
+      const r = results[hex(entryId)] || { outcome: VOID, score: 0 };
       const rv = held.get(hex(entryId));
       this.queued.push({ entryId, objected: false });
       console.log(`[h2h] ${hex(roundIdBytes).slice(0, 16)} ${hex(entryId).slice(0, 16)}: ${rv ? `move ${rv.move}` : 'no reveal'} -> ${r.outcome} ${r.score}`);

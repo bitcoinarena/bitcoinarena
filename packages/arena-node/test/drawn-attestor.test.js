@@ -23,25 +23,27 @@ const MANIFEST = {
 };
 const verify = (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } };
 
-function seats({ down = [] } = {}) {
+function seats({ down = [], bad = {} } = {}) {
   let clock = 0;
   const held = new Map();
   const list = KEYS.map((key, i) => new DrawnAttestor({
-    selfKey: key, sign: (d) => schnorr.sign(d, secretOf(i)), attestorsFor: () => KEYS,
+    selfKey: key, sign: (d) => schnorr.sign(d, secretOf(i)), verify, attestorsFor: () => KEYS,
     peersFor: () => KEYS.map((_, j) => `http://seat-${j}`).filter((_, j) => j !== i), due: () => [{ roundId: ROUND, window: WINDOW }],
     readPrice: () => (clock < 900000 ? 8000000 : { cents: 8001234, atMs: clock }), now: () => clock,
     hold: async (bytes) => { const st = attestationStands(decodeAttestation(bytes), { manifest: MANIFEST, roundIdBytes: ROUND, verify, drawn: KEYS }); if (st.ok) held.set(i, st); return st.ok; },
     fetcher: async (url) => {
       const j = Number(new URL(url).host.split('-')[1]);
-      const w = down.includes(j) ? null : list[j].served(ROUND);
+      let w = down.includes(j) ? null : list[j].served(ROUND);
+      // A BAD DRAWN SEAT (kanban #1487): the honest body with a junk signature, under its own key or an honest seat's
+      if (w && bad[j]) w = { ...w, signature: '00'.repeat(64), key: bad[j] === 'own' ? w.key : KEYS[bad[j]] };
       return w ? { status: 200, json: async () => w } : { status: 404, json: async () => null };
     },
   }));
   return { list, held, tick: async (ms) => { clock = ms; for (const [i, s] of list.entries()) if (!down.includes(i)) await s.read(); } };
 }
 
-async function run(down) {
-  const s = seats({ down });
+async function run(down, bad = {}) {
+  const s = seats({ down, bad });
   for (let t = 780000; t <= 1810000; t += 10000) await s.tick(t);
   for (let round = 0; round < 2; round++) for (const [i, a] of s.list.entries()) if (!down.includes(i)) await a.pass();
   return s;
@@ -65,7 +67,7 @@ test('two drawn seats down: it still stands; three down: no attestation', async 
 // A MARKET WITH ITS OWN SOURCE (kanban #920): the word comes from its source at the end of the round, a failed read is tried again, a "rises" market reads at its start
 test('a source market is signed from its source, once, and a failed read waits for the next pass', async () => {
   const roundId = new Uint8Array(32).fill(7), self = 'ab'.repeat(32); let answer = { ok: false, why: 'no' }, runs = 0; const seen = [];
-  const a = new DrawnAttestor({ readPrice: async () => null, selfKey: self, sign: () => new Uint8Array(64).fill(1), attestorsFor: () => [self], peersFor: () => [], due: () => [], hold: async () => true, threshold: 1, now: () => 10000000,
+  const a = new DrawnAttestor({ verify: () => true, readPrice: async () => null, selfKey: self, sign: () => new Uint8Array(64).fill(1), attestorsFor: () => [self], peersFor: () => [], due: () => [], hold: async () => true, threshold: 1, now: () => 10000000,
     runSource: async (source, market) => { runs++; seen.push(market); return answer; } });
   const r = { roundId, window: { startMs: 0n, endMs: 1000n }, source: { kind: 1, rule: 1 }, outcomes: ['Yes', 'No'] };
   assert.equal(await a.wordForSource(r), null);
@@ -76,14 +78,14 @@ test('a source market is signed from its source, once, and a failed read waits f
   assert.equal(w.body.outcome, 1); assert.equal(w.body.observedAtMs, 1000n);
   assert.equal(await a.wordForSource(r), w);
   assert.equal(runs, 3);
-  const early = new DrawnAttestor({ selfKey: self, attestorsFor: () => [self], sign: () => new Uint8Array(64), now: () => 500, runSource: async () => { throw new Error('too early'); } });
+  const early = new DrawnAttestor({ verify: () => true, selfKey: self, attestorsFor: () => [self], sign: () => new Uint8Array(64), now: () => 500, runSource: async () => { throw new Error('too early'); } });
   assert.equal(await early.wordForSource(r), null);
 });
 
 test('a rising market reads when its window opens and is compared to that', async () => {
   const roundId = new Uint8Array(32).fill(8), self = 'ab'.repeat(32); const asked = [];
   const r = { roundId, window: { startMs: 0n, endMs: 1000n }, source: { kind: 1, rule: 3 }, outcomes: ['Up', 'Down'] };
-  const a = new DrawnAttestor({ readPrice: async () => null, selfKey: self, sign: () => new Uint8Array(64), attestorsFor: () => [self], now: () => 10000000, opening: () => [r],
+  const a = new DrawnAttestor({ verify: () => true, readPrice: async () => null, selfKey: self, sign: () => new Uint8Array(64), attestorsFor: () => [self], now: () => 10000000, opening: () => [r],
     runSource: async (s, m) => { asked.push([s.rule, m.start]); return s.rule === 0 ? { ok: true, out: 100 } : { ok: true, out: 'Up' }; } });
   await a.read(); await a.read();
   assert.equal(asked.length, 1);
@@ -98,7 +100,7 @@ test('#1376 after a restart the source market\'s word is the one signed before, 
     start: (id) => (s.has(id) ? s.get(id) : undefined), keepStart: (id, v) => { if (!s.has(id)) s.set(id, v); } }; };
   const store = memStore();
   const r = { roundId: new Uint8Array(32).fill(9), window: { startMs: 0n, endMs: 1000n }, source: { kind: 1, rule: 1 }, outcomes: ['Yes', 'No'] };
-  const make = (out, runs) => new DrawnAttestor({ readPrice: async () => null, selfKey: self, sign: () => new Uint8Array(64).fill(1), attestorsFor: () => [self], peersFor: () => [],
+  const make = (out, runs) => new DrawnAttestor({ verify: () => true, readPrice: async () => null, selfKey: self, sign: () => new Uint8Array(64).fill(1), attestorsFor: () => [self], peersFor: () => [],
     due: () => [], hold: async () => true, threshold: 1, now: () => 10000000, store, runSource: async () => { runs.n++; return { ok: true, out }; } });
   const first = { n: 0 }, again = { n: 0 };
   const w1 = await make('Yes', first).wordForSource(r);
@@ -111,13 +113,26 @@ test('#1376 after a restart the source market\'s word is the one signed before, 
   assert.equal(restarted.served(r.roundId).body.outcome, 0);
   // A RISING MARKET: its opening value survives the restart
   const rise = { roundId: new Uint8Array(32).fill(10), window: { startMs: 0n, endMs: 1000n }, source: { kind: 1, rule: 3 }, outcomes: ['Up', 'Down'] };
-  const opener = new DrawnAttestor({ readPrice: async () => null, selfKey: self, sign: () => new Uint8Array(64), attestorsFor: () => [self], now: () => 10000000, opening: () => [rise], store,
+  const opener = new DrawnAttestor({ verify: () => true, readPrice: async () => null, selfKey: self, sign: () => new Uint8Array(64), attestorsFor: () => [self], now: () => 10000000, opening: () => [rise], store,
     runSource: async (s) => (s.rule === 0 ? { ok: true, out: 100 } : { ok: true, out: 'Up' }) });
   await opener.read();
   const asked = [];
-  const after = new DrawnAttestor({ readPrice: async () => null, selfKey: self, sign: () => new Uint8Array(64), attestorsFor: () => [self], now: () => 10000000, opening: () => [], store,
+  const after = new DrawnAttestor({ verify: () => true, readPrice: async () => null, selfKey: self, sign: () => new Uint8Array(64), attestorsFor: () => [self], now: () => 10000000, opening: () => [], store,
     runSource: async (s, m) => { asked.push([s.rule, m.start]); return { ok: true, out: 'Up' }; } });
   const wr = await after.wordForSource(rise);
   assert.ok(wr, 'a rising market signed nothing after a restart');
   assert.deepEqual(asked, [[3, 100]]);
+});
+
+// FEEDBACK #009 (Hexbox Tools 2026-11-11, kanban #1487): one drawn seat answering /attestation-word with the honest body and 64 zero bytes made every honest
+// seat's combination fail (held at 0); it may even name an honest seat's key. Only verified signatures count now, the first good one of a key stays.
+test('#1487 one drawn seat serving a junk signature, or an honest seat\'s key on its junk, does not stop the 5 of 7; two bad seats neither', async () => {
+  const one = await run([], { 6: 'own' });
+  const steal = await run([], { 6: 0 });
+  const two = await run([], { 5: 'own', 6: 1 });
+  console.log('  FACTS (#1487): one junk -> held at', one.held.size, '| junk under seat 0\'s key -> held at', steal.held.size, '| two bad -> held at', two.held.size);
+  assert.ok(one.held.size >= 6, `one junk signature held it at ${one.held.size} seats`);
+  assert.ok(steal.held.size >= 6, `junk under an honest key held it at ${steal.held.size} seats`);
+  assert.ok(two.held.size >= 5, `two bad seats held it at ${two.held.size} seats`);
+  for (const st of [...one.held.values(), ...steal.held.values(), ...two.held.values()]) { assert.equal(st.outcome, 0); assert.ok(st.signers >= 5); }
 });

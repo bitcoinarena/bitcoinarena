@@ -174,7 +174,7 @@ export class Forfeit {
    * federation (it hashes a contract the way the guardians do); `peersFor(rid)`
    * names the other settlement signer nodes' bases.
    */
-  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null, refusedNow = null, bookStanding = null,
+  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null, refusedNow = null, bookStanding = null, isBook = null,
     peerAskMs = PEER_ASK_MS, peerGraceMs = PEER_GRACE_MS } = {}) {
     this.round = round;
     // HOW LONG A SEAT IS WAITED FOR (peer-ask.js, kanban #1074 as #1061)
@@ -182,6 +182,8 @@ export class Forfeit {
     this.peerGraceMs = peerGraceMs;
     // AN ORDER OF AN ORDER BOOK (comment 1127): the book's word on it - filled, cancelled, in a batch not decided
     this.bookStanding = bookStanding;
+    // rid -> whether the round is an order book (order-batch.js isBook: a certified batch holds an order) - its orders are its entries, else its plain picks
+    this.isBook = isBook;
     // §23.2 REFUSED: rid -> why this node refuses the round, or null while it offers it
     this.refusedNow = refusedNow;
     // THE OTHER SIGNER NODES' PROOF OF TWO FIRST MARKS, pulled and checked here before a
@@ -421,16 +423,24 @@ export class Forfeit {
     // handed in late cannot turn the round into one that claims the locks returned here. FINAL never turns VOID either.
     const fin = marketStateOf(this.round, roundIdBytes, { contract, manifest: f.plugin.manifest, nowMs });
     if (fin.voided) return { ok: true, why: fin.why };
+    // ONLY THE ENTRIES THE SETTLEMENT COUNTS (kanban #1436, audit 8 R2; settlement.js #attestedPlan, stake-secret.js): those whose stake this seat
+    // saw, and of the round's kind - a pool's plain picks, an order book's orders (§0A.7b, #1411). One lockless entry naming the outcome (or an
+    // order, in a round that ended a pool) kept every real stake from coming back at once while the settlement - counting none of them - claimed
+    // nothing and never turned ACCEPTED: every stake and fee waited for its lock's expiry
+    const book = typeof this.isBook === 'function' && !!this.isBook(roundIdBytes);
+    const counted = this.round.entriesOf(roundIdBytes)
+      .filter(({ entryId }) => contract.stakeMsat === 0n || typeof this.round.stakeSeen !== 'function' || !!this.round.stakeSeen(entryId))
+      .filter(({ entry }) => (entry.limitPrice !== undefined && entry.limitPrice !== null) === book);
     // A SCALAR MARKET (feature 8) HAS NO PICK THAT MISSES: every side is paid by where the value lies. It is refunded
     // only when one side had nobody (scalar.js scalarOneSided - the table's own rule, so it claims nothing either)
     if (isScalar(f.plugin.manifest)) {
       if (!fin.final) return { ok: false };
       let one;
-      try { one = scalarOneSided(this.round.entriesOf(roundIdBytes).map(({ entryId, entry }) => ({ entryId, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat, pick: entry.pick }))); }
+      try { one = scalarOneSided(counted.map(({ entryId, entry }) => ({ entryId, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat, pick: entry.pick }))); }
       catch { return { ok: false }; }
       return one.refunded ? { ok: true, why: one.why } : { ok: false };
     }
-    if (fin.final && !this.round.entriesOf(roundIdBytes).some(({ entry }) => entry.pick === fin.outcome))
+    if (fin.final && !counted.some(({ entry }) => entry.pick === fin.outcome))
       return { ok: true, why: `nobody picked the outcome ${fin.outcome}: every stake comes back` };
     return { ok: false };
   }
