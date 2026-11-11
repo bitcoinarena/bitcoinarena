@@ -32,13 +32,13 @@ test('each page of the menu, the demo, the docs and the explorer draws the Arena
 test('the header is the start page\'s (kanban #1457, Daniel 2026-11-11: "Der Header muss überall gleich aussehen"): the stadium and the name to bitcoinarena.io, its links, the Nostr badge and App, all in the same tab', () => {
   assert.match(CHROME, /<a class="asc-brand" href="' \+ HOME \+ '" aria-label="Bitcoin Arena"><img class="asc-mark" src="' \+ mark \+ 'bitcoin-arena-mark-90\.webp"/);
   assert.match(CHROME, /var HOME = 'https:\/\/bitcoinarena\.io\/';/);
-  for (const [name, href] of [['Games', "HOME \\+ '#games'"], ['How it works', "HOME \\+ '#how'"], ['Nostr', "HOME \\+ '#nostr'"], ['Build &amp; run', "HOME \\+ '#build'"], ['Download', "HOME \\+ '#download'"],
+  for (const [name, href] of [['Games', "HOME \\+ '#games'"], ['How it works', "HOME \\+ '#how'"], ['Explorer', "'https://explorer\\.bitcoinarena\\.io/'"], ['Build &amp; run', "HOME \\+ '#build'"], ['Download', "HOME \\+ '#download'"],
     ['Proposals', "'https:\\/\\/testnet\\.bitcoinarena\\.io\\/proposals\\/'"], ['Security', "HOME \\+ 'security\\/'"], ['Docs', "'https:\\/\\/docs\\.bitcoinarena\\.io\\/'"]])
     assert.match(CHROME, new RegExp(`\\['${name}', ${href}`), name);
   // the same as the start page's own nav.top: the same links in the same order, App to the game page
   const home = read('src/website/www/index.html');
   const homeLinks = [...home.match(/<nav class="top">[\s\S]*?<\/nav>/)[0].matchAll(/<a (?:class="keep" )?href="[^"]*">([^<]+)<\/a>/g)].map((m) => m[1]);
-  assert.deepEqual(homeLinks, ['Games', 'How it works', 'Nostr', 'Build &amp; run', 'Download', 'Proposals', 'Security', 'Docs']);
+  assert.deepEqual(homeLinks, ['Games', 'How it works', 'Explorer', 'Build &amp; run', 'Download', 'Proposals', 'Security', 'Docs']);
   assert.match(CHROME, /<a class="asc-app" href="https:\/\/testnet\.bitcoinarena\.io\/">App &rarr;<\/a>/);
   // no link of the bar opens a new tab; only the footer's X, Discord and Telegram do (kanban #749, footer-social.test.js)
   assert.ok(!/target=/.test(CHROME.replace(/<span class="asc-social">.*?<\/span>/, '')), 'no other link opens a new tab');
