@@ -207,7 +207,7 @@ export async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
  * nobody replays - which is the fault this function exists to end, arriving by
  * another road. So this is the chain rule again, in the small: every node the
  * URL named is asked, and a disagreement is a refusal by name rather than a
- * majority or a first answer.
+ * first answer - unless more than half of the named nodes agree (kanban #1523).
  *
  * WHAT THIS IS NOT is proof that the hash is the block 5A.5 names. Deriving
  * the height from the chain is letter 32's work and the page does not do it;
@@ -247,12 +247,22 @@ async function readRandomness(id, nodes, fetcher) {
   if (!said.length)
     throw new Error('no node named this round\'s randomness: ' + refused.join('; '));
   const first = toHex(said[0].hash);
-  for (const s of said.slice(1)) {
-    if (toHex(s.hash) !== first)
-      throw new Error(`${said[0].node} says this round's randomness is ${first} and `
-        + `${s.node} says ${toHex(s.hash)}: a round whose nodes name two worlds is not one round`);
-  }
-  return { randomness: said[0].hash, height: said[0].height, agreed: said.length, refused };
+  const other = said.find((s) => toHex(s.hash) !== first);
+  if (!other) return { randomness: said[0].hash, height: said[0].height, agreed: said.length, refused };
+  // ONE SEAT OF SEVEN DOES NOT CLOSE EVERY WORLD IT SITS ON (kanban #1523): a disagreement threw at once, so one seat answering 32
+  // other bytes made no player's world seed for any round it was named on - after the stake was locked - while six seats read the
+  // same block hash. A value held by MORE THAN HALF OF THE NODES THE ROUND NAMED (not of those that answered: a seat that stays
+  // silent does not lower the bar) is the round's, and the seats that said otherwise are named as refused; with no such majority
+  // (a 2-of-2's one liar, a split) it is still the refusal by name it was.
+  const count = new Map();
+  for (const s of said) { const h = toHex(s.hash); count.set(h, (count.get(h) || 0) + 1); }
+  const [won, n] = [...count].sort((a, b) => b[1] - a[1])[0];
+  if (2 * n <= nodes.length)
+    throw new Error(`${said[0].node} says this round's randomness is ${first} and `
+      + `${other.node} says ${toHex(other.hash)}: a round whose nodes name two worlds is not one round`);
+  const kept = said.filter((s) => toHex(s.hash) === won);
+  for (const s of said) if (toHex(s.hash) !== won) refused.push(`${s.node}: named randomness ${toHex(s.hash)}, not the ${n} of ${nodes.length} nodes' ${won}`);
+  return { randomness: kept[0].hash, height: kept[0].height, agreed: kept.length, refused };
 }
 
 /**
