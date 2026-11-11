@@ -138,7 +138,9 @@ async function readPayments(env, since, limit) {
   const t0 = Date.now();
   const got = await Promise.all(SEATS.map(async (seat) => ({ seat, ...(await ask(`${seat}/payments?since=${since}&limit=${limit}`, READ_MS)) })));
   const byId = new Map();
-  // GOES ON FROM: the earliest last row of a list a seat filled to its limit (the rest of it after that), else nothing is left
+  // GOES ON FROM: the earliest last row of a list a seat filled to its limit (the rest of it after that), else nothing is left.
+  // Only a last row kept AFTER `since` moves the walk (kanban #1602): one seat's full page whose last keptMs is 0 (or any
+  // number not past since) set next back to the same start, and the walk asked the same first page every minute for ever
   let next = null;
   for (const g of got) {
     if (!g.body || !Array.isArray(g.body.gifts) || !Array.isArray(g.body.items)) continue;
@@ -146,7 +148,7 @@ async function readPayments(env, since, limit) {
       // ONE SEAT'S JUNK ROW DROPS ONLY THAT ROW (kanban #1600): a null (or any non-object) row threw at r.id / .keptMs, and the minute's
       // read of every seat's gifts, zaps and items stopped
       const lastRow = list[list.length - 1];
-      if (list.length >= limit && isRow(lastRow)) { const last = Number(lastRow.keptMs); if (Number.isFinite(last) && (next === null || last < next)) next = last; }
+      if (list.length >= limit && isRow(lastRow)) { const last = Number(lastRow.keptMs); if (Number.isFinite(last) && last > since && (next === null || last < next)) next = last; }
       for (const r of list) {
         if (!isRow(r) || !hex64.test(String(r.id)) || !hex64.test(String(r.txid))) continue;
         if (!byId.has(r.id)) byId.set(r.id, new Map());
