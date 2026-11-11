@@ -41,7 +41,7 @@ import {
 import {
   GENESIS, decodeTranscript, checkTranscript, transcriptBelongsToEntry, flatten,
 } from '../../arena-protocol/src/transcript.js';
-import { batchId, batchTicks, signBatch } from '../../arena-protocol/src/batch.js';
+import { batchId, batchTicks, signBatch, encodeInputBatch, joinSignedBatch, SIGNED_BATCH_SIGNATURE_BYTES } from '../../arena-protocol/src/batch.js';
 import { centsToTapeUnits } from '../../arena-protocol/src/price-sample.js';
 import { fromHex, toHex, sha256 } from '../../arena-protocol/src/hash.js';
 import {
@@ -286,6 +286,23 @@ const LOCK_ACCEPT_HEAD_MS = 3000;   // the lock client's acceptance first; the s
 const OPENED_ROUNDS = new Map();
 
 /**
+ * IS THIS THE SESSION KEY'S SIGNATURE (kanban #1567): Ed25519 through the platform's own WebCrypto - the browser's, the
+ * one the page's session key signs with, and Node's - so the bundle still carries no curve of its own. A page or a test
+ * may hand its own as `verifySession`. Answers false for anything it cannot check.
+ */
+const SESSION_KEYS = new Map();
+export async function verifySessionSignature(signature, message, publicKey) {
+  const subtle = globalThis.crypto && globalThis.crypto.subtle;
+  if (!subtle) return false;
+  try {
+    const hex = toHex(publicKey);
+    let key = SESSION_KEYS.get(hex);
+    if (!key) { key = await subtle.importKey('raw', publicKey, { name: 'Ed25519' }, false, ['verify']); SESSION_KEYS.set(hex, key); }
+    return !!(await subtle.verify({ name: 'Ed25519' }, key, signature, message));
+  } catch { return false; }
+}
+
+/**
  * THE CORE STEPPED THROUGH A TRANSCRIPT, as a seat replays it (arena-node replay.js, core adapter eventsOf): each tick's
  * tape, load, sample and liquidation BEFORE that tick, then its five words. The page's core after a reload is then the
  * state its marks were hashed from, and the run goes on from the tick the node is owed. `core` is the page's sim
@@ -327,7 +344,7 @@ export class Client {
    * the node's own fixtures talk to a process on localhost that has no bond
    * and never will - and a test that wants the real door calls this one.
    */
-  static async at(discovery, { core, sign, verify, contract, roundIdGiven, stakeLock }) {
+  static async at(discovery, { core, sign, verify, verifySession, contract, roundIdGiven, stakeLock }) {
     if (!contract || !contract.nodes)
       throw new Error('no round contract, so there is no committee to check against');
 
@@ -396,7 +413,7 @@ export class Client {
     }
 
     const client = new Client({
-      base: seen.endpoint.replace(/^ws/, 'http'), core, sign, verify,
+      base: seen.endpoint.replace(/^ws/, 'http'), core, sign, verify, ...(verifySession ? { verifySession } : {}),
     });
     // THE CHAIN THIS CALL PROVED, carried on the client so the page can open its NEXT round from it rather than
     // proving the same headers again at a boundary where a starved tab misses the ten seconds (2026-09-18).
@@ -434,10 +451,19 @@ export class Client {
     return this.peers;
   }
 
-  constructor({ base, core, sign, verify }) {
+  constructor({ base, core, sign, verify, verifySession = verifySessionSignature }) {
     this.base = base;
     this.core = core;
     this.sign = sign;
+    // THE SESSION KEY'S CURVE, to tell a batch this client signed from one a seat wrote into its own store (kanban #1567).
+    // `verify` is the seats' curve (receipts, adverts); this one is the session key's.
+    this.verifySession = verifySession;
+    // EVERY FRAME THIS CLIENT SIGNED, by batch id (kanban #1567): the only frames it ever publishes again. A resume used to
+    // sign whatever the home seat served past `published`, so a seat that appended a forged batch to its own store and
+    // refused the next one had the player's own client sign the forgery and feed it to the whole committee.
+    this.signedFrames = new Map();
+    // A SEAT THAT SERVED THIS ENTRY A BATCH THIS CLIENT NEVER SIGNED: { base, firstTick, why }, null while none has
+    this.nodeFault = null;
     // Verifying is injected for the same reason signing is: the curve belongs
     // to whoever runs the client, and this file should not decide it.
     this.verify = verify;
@@ -1373,6 +1399,8 @@ export class Client {
     // nobody who only knows this entry's public id can write ticks or a load into it. The same signed frame goes to
     // every peer below.
     const bytes = await signBatch(b, this.sign);
+    // KEPT BEFORE IT GOES OUT (kanban #1567): a batch the node took whose answer was lost is still this client's own
+    this.signedFrames.set(toHex(batchId(b)), bytes);
     const answer = await this.send(bytes);
 
     // The node answers how many ticks were NEW. A refusal is a named string
@@ -1699,6 +1727,12 @@ export class Client {
     if (!belongs.ok && t.batches.length)
       throw new Error(`the transcript is not this entry's run: ${belongs.why}`);
 
+    // EVERY SERVED BATCH IS ONE THIS CLIENT SIGNED, or none of it is taken (kanban #1567, feedback #013 by Hexbox Tools).
+    // Measured before: a home seat appended 120 forged ticks to its own store and refused the player's next batch; this
+    // resume signed the forgery and fed it to the honest peer, which stored it as the player's, and the player's real
+    // inputs went on 120 ticks late. Nothing served is signed here - ever.
+    const frames = await this.#ownFrames(t, entry, roundId, entryId);
+
     const before = this.nextTick;
     const last = t.batches[t.batches.length - 1];
     this.batchHead = last ? batchId(last) : GENESIS;
@@ -1722,10 +1756,10 @@ export class Client {
     }
     // AND THE PEERS ARE FED WHAT THIS NODE TOOK, including a batch whose answer
     // was lost, in the node's own order - a peer missing one refuses the rest.
+    // THE FRAMES THIS CLIENT SIGNED, as it signed them (kanban #1567) - never a fresh signature over what a seat served.
     for (let i = this.published.length; i < t.batches.length; i++) {
       const b = t.batches[i];
-      // signed here as at the first send (kanban #1503): a peer takes a batch only signed by the session key
-      this.published.push({ bytes: await signBatch(b, this.sign), through: batchTicks(b).at(-1) + 1 });
+      this.published.push({ bytes: frames[i], through: batchTicks(b).at(-1) + 1 });
     }
 
     // AND THE COUNT OF WHAT THIS CLIENT HAS ACCEPTED IS RECONCILED WITH IT.
@@ -1756,6 +1790,49 @@ export class Client {
     return { ticks: ok.ticks, batches: t.batches.length, nextTick: this.nextTick,
              batchHead: this.batchHead, head: this.head, receipts,
              live: adopted !== null, witnessed: adopted ? this.witnessed(adopted) : 0, transcript: t };
+  }
+
+  /**
+   * THIS CLIENT'S OWN SIGNED FRAME FOR EVERY BATCH A SEAT SERVED (kanban #1567), in the transcript's order: the frame it
+   * signed and kept, or - after a reload, when it kept nothing - the seat's copy of its signature (GET /batch-signatures),
+   * VERIFIED under this entry's session key. A served batch with neither is not this player's: the seat that served it
+   * wrote it itself. That is a node fault, named on `nodeFault`; the run ends there (VOID, the seat's fault, never the
+   * player's) and nothing of it is signed or handed to a peer.
+   */
+  async #ownFrames(t, entry, roundId, entryId) {
+    const frames = new Array(t.batches.length);
+    const missing = [];
+    t.batches.forEach((b, i) => {
+      const kept = this.signedFrames.get(toHex(batchId(b)));
+      if (kept) frames[i] = kept; else missing.push(i);
+    });
+    if (!missing.length) return frames;
+    let sigs = null;
+    let asked = null;
+    try {
+      const r = await readWithOneRetry(fetch, `${this.base}/batch-signatures?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
+      if (r.ok) sigs = new Uint8Array(await r.arrayBuffer());
+      else asked = `it answered ${r.status} for the batches' signatures`;
+    } catch (e) { asked = `it would not hand over the batches' signatures: ${e.message}`; }
+    const W = SIGNED_BATCH_SIGNATURE_BYTES;
+    for (const i of missing) {
+      const b = t.batches[i];
+      const id = batchId(b);
+      const sig = sigs && sigs.length >= (i + 1) * W ? sigs.slice(i * W, (i + 1) * W) : null;
+      if (sig && sig.some((x) => x !== 0) && await this.verifySession(sig, id, entry.sessionPubkey)) {
+        frames[i] = joinSignedBatch(encodeInputBatch(b), sig);
+        this.signedFrames.set(toHex(id), frames[i]);
+        continue;
+      }
+      const ticks = batchTicks(b);
+      const why = `the node at ${this.base} serves a batch at ticks ${b.firstTick}..${ticks.length ? ticks.at(-1) : b.firstTick} `
+        + `as this entry's that this client never signed (${sig ? 'its signature does not verify under the session key' : (asked || 'no signature beside it')}) `
+        + '- it is not signed or published again, and that node is not trusted with this run';
+      this.nodeFault = { base: this.base, firstTick: b.firstTick, batch: i, why };
+      this.endRun(`node fault: ${why}`);
+      throw Object.assign(new Error(why), { nodeFault: true });
+    }
+    return frames;
   }
 
   /**
@@ -1819,6 +1896,9 @@ export class Client {
    * from taste.
    */
   setRound({ roundId, entryId, blockTicks }) {
+    // ANOTHER ENTRY'S RUN STARTS WITH NONE OF THIS ONE'S FRAMES (kanban #1567); the same entry again keeps them
+    if (this.signedEntry !== toHex(entryId)) { this.signedFrames = new Map(); this.signedEntry = toHex(entryId); }
+    this.nodeFault = null;
     this.where = { roundId, entryId };
     // A LATE ENTRY'S FIRST TICK IS ITS JOIN TICK: the round's tick it joined at, so its run ends with the round's.
     // An entry at tick 0 starts where it always did.
