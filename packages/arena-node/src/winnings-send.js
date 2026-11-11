@@ -392,9 +392,19 @@ export class WinningsSend {
     return { expired: f.fate === CONTRACT_FATE.EXPIRED, fate: f.fate, blocksLeft: f.blocksLeft, height: f.height };
   }
 
-  /** The next gateway: the lowest live key the entry's earlier attempts did not use. */
-  nextGateway(roundIdBytes, entryHex, listed) {
-    const used = new Set(this.round.sendAttemptsOf(roundIdBytes).filter((r) => toHex(r.entryId) === entryHex).map((r) => r.gatewayUrl));
+  /**
+   * The gateways the entry's attempts up to `upTo` used (every attempt when null). KANBAN #1629: a peer checking another seat's attempt N+1
+   * counts only attempts <= N - its own kept attempt N+1 is the competitor, not an earlier attempt, and counting its gateway as used refused
+   * every competing offer through the same next gateway, so the #1241 lower-hash replace below was never reached.
+   */
+  usedGateways(roundIdBytes, entryHex, upTo = null) {
+    return new Set(this.round.sendAttemptsOf(roundIdBytes).filter((r) => toHex(r.entryId) === entryHex && (upTo === null || Number(r.attempt) <= upTo))
+      .map((r) => r.gatewayUrl));
+  }
+
+  /** The next gateway: the lowest live key the entry's earlier attempts (up to `upTo`, kanban #1629) did not use. */
+  nextGateway(roundIdBytes, entryHex, listed, upTo = null) {
+    const used = this.usedGateways(roundIdBytes, entryHex, upTo);
     return lowestLiveGateway(listed.filter((g) => !used.has(g.url)));
   }
 
@@ -402,7 +412,7 @@ export class WinningsSend {
   async proposeResend(roundIdBytes, prev, built) {
     const entryHex = toHex(prev.entryId);
     const g = await (await this.portFor(roundIdBytes)).gateways();
-    const gw = this.nextGateway(roundIdBytes, entryHex, g.gateways);
+    const gw = this.nextGateway(roundIdBytes, entryHex, g.gateways, prev.attempt);
     if (!gw) return refuse('no other live gateway to re-send through; the winning waits for one');
     const fees = await (await this.portFor(roundIdBytes)).fees();
     const out = largestPayoutMsat(fees, prev.payoutMsat - lnv2FeeMsat(fees, prev.payoutMsat));
@@ -461,15 +471,16 @@ export class WinningsSend {
     const ex = await this.expired(roundIdBytes, prev, built);
     if (!ex.expired) return refuse(`attempt ${prev.attempt} has not expired here: ${ex.why || `${ex.blocksLeft} block(s) left`}`);
     const g = await (await this.portFor(roundIdBytes)).gateways();
-    const gw = this.nextGateway(roundIdBytes, String(p.entry), g.gateways);
+    // ONLY ATTEMPTS UP TO prev COUNT (kanban #1629): a kept PLANNED attempt N+1 of another hash is what this offer competes with
+    const gw = this.nextGateway(roundIdBytes, String(p.entry), g.gateways, prev.attempt);
     if (!gw) return refuse('this signer node sees no other live gateway');
     const fees = await (await this.portFor(roundIdBytes)).fees();
     const out = largestPayoutMsat(fees, prev.payoutMsat - lnv2FeeMsat(fees, prev.payoutMsat));
     const pr = await this.invoiceFor(prev.address, sendableInvoiceMsat(out, gw.sendFeeDefault));
     if (!pr.ok) return refuse(`this signer node could not read the address's own invoice: ${pr.why}`);
     const others = g.gateways.filter((x) => x.url !== prev.gatewayUrl);
-    const stands = sendPlanStands({ plan: p, payoutMsat: out, gateways: others.filter((x) => !this.round.sendAttemptsOf(roundIdBytes)
-      .some((r) => toHex(r.entryId) === String(p.entry) && r.gatewayUrl === x.url)), height: g.height, metadata: pr.metadata, network: this.network,
+    const used = this.usedGateways(roundIdBytes, String(p.entry), prev.attempt);
+    const stands = sendPlanStands({ plan: p, payoutMsat: out, gateways: others.filter((x) => !used.has(x.url)), height: g.height, metadata: pr.metadata, network: this.network,
       payee: pr.payee, payeeOf });
     if (!stands.ok) return refuse(`the re-send does not stand here: ${stands.why}`);
     this.round.putSendPlan({ entryId: prev.entryId, roundId: roundIdBytes, attempt: prev.attempt + 1, address: prev.address, invoice: p.invoice,
@@ -478,8 +489,10 @@ export class WinningsSend {
     // THE ROW THAT STANDS IS THE ANSWER: another seat's attempt N+1 kept a moment before is not this one, and this one is not taken
     let kept = this.rowOf(roundIdBytes, String(p.entry), prev.attempt + 1);
     // A LOWER RE-SEND REPLACES A KEPT ONE NOTHING WAS SIGNED ON YET (kanban #1241): the peers meet on the lowest hash any seat offered
+    // ...and never one this seat already gave a share on (kanban #1629): a swap after signing could strand a funded attempt
+    const signedOn = ['resend', 'auth'].some((k) => { const x = this.pairs.get(`${k}:${toHex(roundIdBytes)}:${String(p.entry)}:${prev.attempt + 1}`); return !!(x && x.list); });
     if (kept && kept.paymentHash !== String(p.paymentHash).toLowerCase() && kept.state === 'PLANNED' && typeof this.round.replaceSendPlan === 'function'
-      && String(p.paymentHash).toLowerCase() < kept.paymentHash) {
+      && String(p.paymentHash).toLowerCase() < kept.paymentHash && !signedOn) {
       this.pairs.delete(`resend:${toHex(roundIdBytes)}:${String(p.entry)}:${prev.attempt + 1}`);
       this.round.replaceSendPlan({ roundId: roundIdBytes, entryId: prev.entryId, attempt: prev.attempt + 1, invoice: p.invoice, paymentHash: p.paymentHash,
         invoiceMsat: stands.invoiceMsat, payoutMsat: out, gatewayUrl: p.gatewayUrl, gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration), donation: !!prev.donation,
