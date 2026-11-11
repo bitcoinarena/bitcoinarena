@@ -1542,3 +1542,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### Seat e-cash exchange x liquidation halt: an asked reissue (ecash-exchange.js `step`) - kanban #1579
+- Invariant: a RECEIVING row that asked its reissue (`receive_asked` 1, or NULL from before #1204) is never stuck by a halt of `from` or `to`. The halt refusal (409, nothing written) holds for a new exchange and for a RECEIVING row that has not asked yet (`receive_asked` 0). An asked row asks the receive again: AlreadyReceived (its own reissue from before the halt) -> TAKEN -> SENDING -> PAID, the player paid in `to`; a fresh Success after the halt (the earlier ask never reached the federation) -> REFUSED, nothing paid, the notes held for the operator. TAKEN and SENDING rows are paid out after a halt as before (#1272).
