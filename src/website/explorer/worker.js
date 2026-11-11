@@ -16,7 +16,9 @@
 //   GET /api/health       the Network health page's kept copy (kanban #686): every door that page asks, asked every minute (its own cron)
 //   GET /api/played       played rounds per day, week and month, per game, real players apart from the owner and our bots (kanban #1090)
 //   GET /api/totals       every round since the first one this explorer holds, per game: rounds, rounds settled, entries (kanban #1197; a count that only grows)
-//   POST /api/mark        entry keys that are the owner's or a bot's, with the admin code (kanban #1090)
+//   POST /api/mark        entry keys that are the owner's or a bot's, with the admin code (kanban #1090); the owner's address is kept (kanban #1414)
+//   GET  /api/admin-ip    { admin }: whether the caller's address sent the admin code within 90 days (kanban #1414)
+//   POST /api/mark-ip     entry keys of a browser on an admin address, marked as the owner's without the code (kanban #1414)
 import { readHealth, HEALTH_CRON } from './health.js';
 
 const SEATS = [1, 2, 3, 4, 5, 6, 7].map((i) => `https://tn4.bitcoin-arena.io/guardian-${i}`)
@@ -331,15 +333,47 @@ async function metrics(env) {
 const ADMIN_SHA256 = '18fcacfac3164c5a5dc71e71d053c9061fea37403e63056eb9d11e602ab1bc79';
 const PLAYED_FROM_MS = Date.UTC(2026, 10, 1);
 const sha256Hex = async (t) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(t))))].map((b) => b.toString(16).padStart(2, '0')).join('');
+// ADMIN BY ADDRESS (kanban #1414): an address that sent the admin code within ADMIN_IP_DAYS is the admin's - a private window or a fresh browser there
+// is flagged too, and its entries are marked without the code. An IPv6 address counts by its /64 (its first four groups, written out).
+const ADMIN_IP_DAYS = 90;
+export function ipKey(ip) {
+  const s = String(ip || '').trim().toLowerCase().replace(/^\[|\]$/g, '').split('%')[0];
+  if (!s) return null;
+  const v4 = /^(?:::ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/.exec(s); if (v4) return v4[1];
+  if (!s.includes(':') || s.split('::').length > 2) return s;
+  const [head, tail = null] = s.split('::'); const a = head ? head.split(':') : [], b = tail ? tail.split(':') : [];
+  const groups = tail === null ? a : [...a, ...Array(Math.max(0, 8 - a.length - b.length)).fill('0'), ...b];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return s;
+  return `${groups.slice(0, 4).map((g) => g.padStart(4, '0')).join(':')}::/64`;
+}
+const callerIp = (request) => ipKey(request.headers.get('cf-connecting-ip'));
+async function adminIp(env, request) {
+  const ip = callerIp(request); if (!ip) return false;
+  const r = await env.DB.prepare('SELECT at_ms FROM admin_ips WHERE ip = ?').bind(ip).first().catch(() => null);
+  return !!(r && Date.now() - Number(r.at_ms) < ADMIN_IP_DAYS * DAY_MS);
+}
+async function putMarks(env, keys, kind) {
+  const at = Date.now();
+  for (let i = 0; i < keys.length; i += 50)
+    await env.DB.batch(keys.slice(i, i + 50).map((k) => env.DB.prepare('INSERT INTO marked (key, kind, at_ms) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET kind = excluded.kind, at_ms = excluded.at_ms').bind(k, kind, at)));
+}
+const keysOf = (b) => [...new Set((Array.isArray(b && b.keys) ? b.keys : []).map((k) => String(k).toLowerCase()).filter((k) => hex64.test(k)))].slice(0, 500);
+// POST /api/mark-ip { keys }: the entries of a browser on an admin address, marked as the owner's - no code; any other address is refused
+async function markByIp(env, request) {
+  let b; try { b = await request.json(); } catch { return json({ ok: false, why: 'a mark is JSON: { keys }' }, { status: 400 }); }
+  if (!(await adminIp(env, request))) return json({ ok: false, why: 'this address is not the admin\'s' }, { status: 403 });
+  const keys = keysOf(b); await putMarks(env, keys, 'owner');
+  return json({ ok: true, marked: keys.length, kind: 'owner', by: 'address' });
+}
 async function mark(env, request) {
   let b; try { b = await request.json(); } catch { return json({ ok: false, why: 'a mark is JSON: { keys, kind, code }' }, { status: 400 }); }
   if (!b || typeof b.code !== 'string' || await sha256Hex(b.code.trim()) !== (env.ADMIN_SHA256 || ADMIN_SHA256)) return json({ ok: false, why: 'not the admin code' }, { status: 403 });
   if (!['owner', 'bot'].includes(b.kind)) return json({ ok: false, why: 'kind is owner or bot' }, { status: 400 });
   // entry ids (transaction ids) or player keys, 64 hex each
-  const keys = [...new Set((Array.isArray(b.keys) ? b.keys : []).map((k) => String(k).toLowerCase()).filter((k) => hex64.test(k)))].slice(0, 500);
-  const at = Date.now();
-  for (let i = 0; i < keys.length; i += 50)
-    await env.DB.batch(keys.slice(i, i + 50).map((k) => env.DB.prepare('INSERT INTO marked (key, kind, at_ms) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET kind = excluded.kind, at_ms = excluded.at_ms').bind(k, b.kind, at)));
+  const keys = keysOf(b);
+  await putMarks(env, keys, b.kind);
+  // the owner's address is kept (kanban #1414): a fresh browser there is the admin's too. A bot's runner is not an admin address
+  if (b.kind === 'owner') { const ip = callerIp(request); if (ip) await env.DB.prepare('INSERT INTO admin_ips (ip, at_ms) VALUES (?, ?) ON CONFLICT(ip) DO UPDATE SET at_ms = excluded.at_ms').bind(ip, Date.now()).run().catch(() => null); }
   return json({ ok: true, marked: keys.length, kind: b.kind });
 }
 const weekOf = (ms) => { const d = new Date(Math.floor(ms / DAY_MS) * DAY_MS); const back = (d.getUTCDay() + 6) % 7; return new Date(d.getTime() - back * DAY_MS).toISOString().slice(0, 10); };
@@ -597,6 +631,9 @@ export default {
     if (url.pathname === '/api/totals') return json(await totals(env), { maxAge: 300 });
     if (url.pathname === '/api/mark' && request.method === 'OPTIONS') return new Response(null, { headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type' } });
     if (url.pathname === '/api/mark' && request.method === 'POST') return mark(env, request);
+    if (url.pathname === '/api/mark-ip' && request.method === 'OPTIONS') return new Response(null, { headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type' } });
+    if (url.pathname === '/api/mark-ip' && request.method === 'POST') return markByIp(env, request);
+    if (url.pathname === '/api/admin-ip') return json({ ok: true, admin: await adminIp(env, request) });
     if (url.pathname === '/api/health') {
       const kept = await env.EXPLORER.get('health');
       return kept ? new Response(kept, { headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=20' } })
