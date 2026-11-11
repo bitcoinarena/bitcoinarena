@@ -37,7 +37,7 @@ import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import {
   encodeRoundContract, decodeRoundContract, roundId, encodeEntryContract, entryId,
 } from '../../arena-protocol/src/contracts.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import {
   encodeCheckpointReceipt, receiptId, joinSignedReceipt, splitSignedReceipt,
@@ -119,7 +119,7 @@ async function played() {
     await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
     assumeAssigned(d.round, rid, c.nodes);
     await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-    assert.equal(await say(d.port, encodeInputBatch(input)), String(TICKS));
+    assert.equal(await say(d.port, signedBatchOf(input, (id) => ed25519.sign(id, session))), String(TICKS));
     const receipt = await say(d.port, signedMark);
     assert.equal(receipt.length, SIGNED_RECEIPT_BYTES, `the daemon did not receipt the mark: ${receipt}`);
   }

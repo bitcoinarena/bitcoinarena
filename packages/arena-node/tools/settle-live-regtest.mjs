@@ -33,7 +33,7 @@ import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { init, step } from '../../nextblock/src/sim.js';
@@ -536,7 +536,7 @@ async function round(stakeMsat) {
         handed.push(`lock ${lk.status}${fl ? `, fee-lock ${fl.status}` : ''}`);
         if (lk.status !== 201) throw new Error(`signer node ${d.port} answered the stake lock ${lk.status}: ${await lk.text()}`);
         if (fl && fl.status !== 201) throw new Error(`signer node ${d.port} answered the fee lock ${fl.status}: ${await fl.text()}`);
-        const took = await tell(d.port, encodeInputBatch(input));
+        const took = await tell(d.port, signedBatchOf(input, (id) => ed25519.sign(id, session)));
         if (took !== String(world.ticks)) throw new Error(`the batch was not taken by signer node ${d.port}: ${took}`);
         const receipt = await tell(d.port, signedMark);
         if (receipt.length !== SIGNED_RECEIPT_BYTES) throw new Error(`the mark at tick ${world.ticks} was not receipted by signer node ${d.port}: ${typeof receipt === 'string' ? receipt : `${receipt.length} bytes`}`);

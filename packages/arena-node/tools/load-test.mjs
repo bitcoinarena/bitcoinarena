@@ -27,7 +27,7 @@ import { feldmanGroup } from '../src/curve.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
@@ -125,7 +125,7 @@ async function play(p) {
     const due = start + (to * 1000) / 60 - performance.now();
     if (due > 0) await wait(due);
     await Promise.all(p.sockets.map(async (s) => {
-      const bt = await s.ask(encodeInputBatch(b)); batchMs.push(bt.ms);
+      const bt = await s.ask(signedBatchOf(b, (id) => ed25519.sign(id, p.session))); batchMs.push(bt.ms);
       const rc = await s.ask(signed); receiptMs.push(rc.ms);
       if (!(rc.answer instanceof Uint8Array) || rc.answer.length !== SIGNED_RECEIPT_BYTES) refused++;
     }));
