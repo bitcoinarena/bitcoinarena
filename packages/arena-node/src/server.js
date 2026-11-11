@@ -36,7 +36,7 @@ import { guardianThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
 import { nostrResults, publishRelays } from './nostr-results.js';
 import { createReachCheck } from './reach-check.js';
-import { ownBondOf, ownBondsOf, lockAt, withdrawSpend, withdrawToSign, withdrawWithOwnerSignature } from './bond-withdraw.js';
+import { ownBondOf, ownBondsOf, outputOfEntry, ownOutputsOnChain, lockAt, withdrawSpend, withdrawToSign, withdrawWithOwnerSignature } from './bond-withdraw.js';
 import { BOND_TEMPLATE_V2, BOND_TEMPLATE_V3 } from '../../arena-protocol/src/bond-script.js';
 import { latestReleaseReader } from './release-latest.js';
 import { createGatewayWatch } from './gateway-watch.js';
@@ -5038,7 +5038,49 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!started.length || !holdWatch) return [];
     return Promise.all(started.map(async (o) => ({ txid: o.txid, vout: o.vout, sats: o.sats, ...(await holdWatch.read(o).catch((e) => ({ startTxid: o.hold.txid, startHeight: o.hold.height, known: false, why: e.message }))) })));
   };
+  // THE BOND OUTPUTS THIS SEAT HAS SEEN OF ITS OWN NODE (kanban #1439): each output a census named, kept here, so an output that later
+  // drops out of every census (alone below the floor once the others are spent) is still found by the withdrawal - read against the
+  // chain there (ownOutputsOnChain), never trusted as written
+  const OWN_OUTPUTS_TABLE = 'CREATE TABLE IF NOT EXISTS own_bond_outputs (node TEXT NOT NULL, txid TEXT NOT NULL, vout INTEGER NOT NULL, sats TEXT NOT NULL, maturity INTEGER, template INTEGER, PRIMARY KEY (node, txid, vout))';
+  const rememberOwnOutputs = (me, outputs) => {
+    try {
+      round.db.exec(OWN_OUTPUTS_TABLE);
+      const put = round.db.prepare('INSERT OR IGNORE INTO own_bond_outputs (node, txid, vout, sats, maturity, template) VALUES (?, ?, ?, ?, ?, ?)');
+      for (const o of outputs || []) if (o && o.txid) put.run(me, String(o.txid), Number(o.vout), String(o.sats), Number.isInteger(o.maturity) ? o.maturity : null, Number.isInteger(o.template) ? o.template : null);
+    } catch { /* a store that cannot keep them: the census alone, as before */ }
+  };
+  // EVERY OTHER OUTPUT THIS NODE MAY STILL HOLD (kanban #1439): the ones kept above, and this node's outputs a held round's census
+  // excluded (below the floor on their sum) - candidates only; the chain says which are this node's and unspent
+  const ownOutputsBeyondCensus = (me) => {
+    const out = [];
+    try { round.db.exec(OWN_OUTPUTS_TABLE);
+      for (const r of round.db.prepare('SELECT txid, vout, sats, maturity, template FROM own_bond_outputs WHERE node = ?').all(me))
+        out.push({ txid: r.txid, vout: Number(r.vout), sats: String(r.sats), height: null, maturity: r.maturity === null ? null : Number(r.maturity), template: r.template === null ? null : Number(r.template) });
+    } catch { /* none kept */ }
+    for (const r of round.db.prepare('SELECT round_id FROM rounds ORDER BY opened_ms DESC LIMIT 60').all()) {
+      let census; try { census = roster.censusFor(new Uint8Array(r.round_id)); } catch { continue; }
+      for (const e of (census && census.excluded) || []) {
+        try { if (e && e.pubkey && e.txid && e.advert && toHex(e.pubkey) === me) out.push(outputOfEntry(e)); } catch { /* not an output */ }
+      }
+    }
+    return out;
+  };
+  const chainNetworkName = () => { let network = 'testnet4'; try { const id = chainNetworkId(); if (id) network = networkOf(fromHex(String(id))); } catch { /* testnet4 */ } return network; };
+  // THIS NODE'S BOND OUTPUTS ON THE CHAIN NOW (kanban #1439): the census's and every other candidate, each checked against the chain's
+  // unspent output (its script this node's bond at its maturity); without a chain reader, the census's outputs as they are
+  const ownOutputsNow = async (found) => {
+    const me = toHex(round.pubkey);
+    const named = found ? (found.all ? found.all.outputs : [found.bond]) : [];
+    const network = found ? found.network : chainNetworkName();
+    if (typeof chainTxOut !== 'function') return { network, outputs: named };
+    return { network, outputs: await ownOutputsOnChain({ outputs: [...named, ...ownOutputsBeyondCensus(me)], nodeKey: round.pubkey, network, txOut: chainTxOut }) };
+  };
   const ownBondNow = () => {
+    const r = ownBondRead();
+    if (r) rememberOwnOutputs(toHex(round.pubkey), r.all ? r.all.outputs : [r.bond]);
+    return r;
+  };
+  const ownBondRead = () => {
     const me = toHex(round.pubkey);
     // THE CHAIN'S CENSUS FIRST (2026-10-20, the owner page after a roll: "This is very wrong since the last update" - "No bond yet"):
     // the newest rounds' censuses are read over minutes after a restart, the chain's in seconds (kept across a restart since 5777ec70)
@@ -7963,7 +8005,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const found = ownBondNow();
           let tip = null; try { if (typeof chainTip === 'function') tip = Number(await chainTip()); } catch { tip = null; }
           const olds = oldBondsHere(tip).list;
-          if (!found) return answer(200, { node: toHex(round.pubkey), bond: null, tip, oldBonds: olds, says: 'no census this seat holds names a bond of this node' });
+          if (!found) {
+            // OUTPUTS NO CENSUS COUNTS ANY MORE (kanban #1439): this node's, unspent on the chain - the withdrawal spends them
+            let leftover = null;
+            try { const own = await ownOutputsNow(null);
+              if (own.outputs.length) { const last = Math.min(...own.outputs.map((o) => (Number.isInteger(o.maturity) ? o.maturity : Infinity)));   // open once the first is
+                leftover = { network: own.network, total: String(own.outputs.reduce((x, o) => x + BigInt(o.sats), 0n)), lock: tip === null || !Number.isFinite(last) ? null : lockAt({ maturity: last }, tip),
+                  outputs: own.outputs.map((o) => ({ ...o, lock: tip === null ? null : lockAt(o, tip) })) }; } } catch { leftover = null; }
+            return answer(200, { node: toHex(round.pubkey), bond: null, tip, oldBonds: olds, ...(leftover ? { leftover } : {}), says: 'no census this seat holds names a bond of this node' });
+          }
           const started = await ownHoldsNow(found);
           return answer(200, { node: toHex(round.pubkey), bond: found.bond, network: found.network, tip, lock: tip === null ? null : lockAt(found.bond, tip), oldBonds: olds, ...(started.length ? { started } : {}),
             // every output of this node and their sum (kanban #544), each with its own lock
@@ -8801,6 +8851,44 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const a = owner.authorize(body, 'bond-withdraw');
           if (!a.ok) return answer(a.status, a);
           const found = ownBondNow();
+          // EVERY OUTPUT OF THE BOND (kanban #1439, money audit 8 M8-2): the door spent the first output only, and an added output left
+          // alone below the floor dropped out of the next census, out of reach of this door. Asked with no `txid`, and unless the first output
+          // is a started bond (its return) or a template-3 one (the owner key's): every template-2 output this node still holds on the chain -
+          // the census's, and the ones no census counts any more - that is unlocked goes in one spend, signed by the node's key; one still
+          // locked stays findable here (kept, or a census's excluded) and is withdrawn once its own lock is over. Not held back by the latest
+          // maturity: anyone can pay to this node's bond script, so a stranger's far-locked output must not lock the owner's bond
+          if (!(body.args || {}).txid && (!found || (!found.bond.hold && found.bond.template !== BOND_TEMPLATE_V3))) {
+            if (typeof chainTip !== 'function' || typeof chainSend !== 'function') {
+              if (!found) return answer(409, { ok: false, why: 'no census this seat holds names a bond of this node' });
+              return answer(503, { ok: false, why: 'this seat reads no chain to send to' });
+            }
+            let own;
+            try { own = await ownOutputsNow(found); }
+            catch (e) { return answer(503, { ok: false, why: `the chain could not be read: ${String((e && e.message) || e).slice(0, 120)}` }); }
+            // the node's own spend takes template-2 outputs only; a template-3 output is the owner key's, taken back one by one by its txid
+            const mine = own.outputs.filter((o) => o.template === BOND_TEMPLATE_V2 && !o.hold);
+            const others = own.outputs.filter((o) => !mine.includes(o)).map((o) => ({ txid: o.txid, vout: o.vout, sats: o.sats, maturity: o.maturity, template: o.template }));
+            if (!mine.length) {
+              if (found && own.outputs.length && others.length) return answer(409, { ok: false, why: `this node's unspent bond outputs are not withdrawn by the node's key here (template ${others.map((o) => o.template).join(', ')}): name one by its txid`, others });
+              return answer(409, { ok: false, why: found ? 'no output of this node\'s bond is unspent on the chain' : 'no census this seat holds names a bond of this node' });
+            }
+            const tip = Number(await chainTip());
+            const open = mine.filter((o) => Number.isInteger(o.maturity) && tip >= o.maturity);
+            const stillLocked = mine.filter((o) => !open.includes(o)).map((o) => ({ txid: o.txid, vout: o.vout, sats: o.sats, maturity: o.maturity }));
+            if (!open.length) {
+              const first = mine.reduce((m, o) => (Number.isInteger(o.maturity) && (m === null || o.maturity < m) ? o.maturity : m), null);
+              const lock = first === null ? null : lockAt({ maturity: first }, tip);
+              return answer(409, { ok: false, why: `the bond is locked until block ${first ?? '?'}: ${lock ? lock.blocksLeft : '?'} blocks from now, about ${lock ? new Date(lock.estimatedMs).toISOString() : '?'}`, lock });
+            }
+            const script = addressScript((body.args || {}).address, HRP_OF[own.network] || 'tb');
+            if (!script) return answer(400, { ok: false, why: `that is not a ${own.network} address` });
+            let spend;
+            try { spend = withdrawSpend({ bonds: open, nodeSecret: round.identity.secret, network: own.network, script, feeRate: Number((body.args || {}).feeRate) || 2 }); }
+            catch (e) { return answer(400, { ok: false, why: e.message }); }
+            try { const txid = await chainSend(spend.hex); console.log(`[bond] withdrawn to ${(body.args || {}).address}: ${txid} (${spend.value} sat from ${spend.spent.length} output(s), fee ${spend.fee})`);
+              return answer(200, { ok: true, txid, value: spend.value, fee: spend.fee, spent: spend.spent, stillLocked, ...(others.length ? { others } : {}) }); }
+            catch (e) { return answer(400, { ok: false, why: e.message }); }
+          }
           if (!found) return answer(409, { ok: false, why: 'no census this seat holds names a bond of this node' });
           // ONE OUTPUT OF SEVERAL (kanban #544): `txid`, `vout` name it, else the first
           const asked = (body.args || {}).txid ? (found.all ? found.all.outputs : [found.bond]).find((o) => o.txid === String(body.args.txid) && o.vout === Number(body.args.vout || 0)) : found.bond;
