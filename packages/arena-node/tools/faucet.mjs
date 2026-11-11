@@ -28,7 +28,8 @@ import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressInvoice } from '../src/feedback-store.js';
-const LN_ASKS = new Map();   // ip -> times it asked GET /feedback/lnaddress (kanban #1342)
+const LN_ASKS = new Map();   // ip /64 -> times it asked GET /feedback/lnaddress (kanban #1342, #1537)
+const LN_ASKS_ALL = [], LN_ASKS_MINUTE = 120;   // every check of the last minute, all callers (kanban #1537)
 import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync, statfsSync } from 'node:fs';
 import { PLAYER_GRANTS } from '../src/faucet.js';
 const PLAYER_WELCOME_SATS = PLAYER_GRANTS.welcome.invoiceSats;
@@ -529,9 +530,14 @@ createServer((req, res) => {
   // check a report's address gets at Send (lnAddressWorks), asked by the dialog - only from the page's own origin, at most 30 an IP in 10 minutes
   if (path === '/feedback/lnaddress' && req.method === 'GET') {
     if (!BOUNTY_ORIGINS.includes(String(req.headers.origin || ''))) return send(200, { ok: false, why: 'not asked from the page' });
-    const ip = String(ipOf(req) || ''), now = Date.now();
+    // kanban #1537: counted by the caller's /64 (ipKey, as every other faucet limit) - one IPv6 line held 2^64 addresses of 30 checks each, and
+    // each check fetches a URL the caller names; and at most LN_ASKS_MINUTE checks a minute from everyone together, so the faucet is never an
+    // unlimited fetcher
+    const ip = String(ipKey(ipOf(req)) || ipOf(req) || ''), now = Date.now();
+    while (LN_ASKS_ALL.length && now - LN_ASKS_ALL[0] >= 60000) LN_ASKS_ALL.shift();
+    if (LN_ASKS_ALL.length >= LN_ASKS_MINUTE) return send(200, { ok: false, why: 'too many checks - it is checked again at Send' });
     const seen = (LN_ASKS.get(ip) || []).filter((t) => now - t < 600000); if (seen.length >= 30) return send(200, { ok: false, why: 'too many checks - it is checked again at Send' });
-    seen.push(now); LN_ASKS.set(ip, seen); if (LN_ASKS.size > 5000) LN_ASKS.delete(LN_ASKS.keys().next().value);
+    seen.push(now); LN_ASKS.delete(ip); LN_ASKS.set(ip, seen); LN_ASKS_ALL.push(now); if (LN_ASKS.size > 5000) LN_ASKS.delete(LN_ASKS.keys().next().value);
     lnAddressWorks(String(new URL(req.url, 'http://x').searchParams.get('a') || '').slice(0, 200)).then((w) => send(200, { ok: !!w.ok, why: w.ok ? null : w.why }), (e) => send(200, { ok: false, why: String((e && e.message) || e).slice(0, 120) }));
     return;
   }
