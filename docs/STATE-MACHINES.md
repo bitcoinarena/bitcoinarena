@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-19 (change) Faucet book: a grant row before its payment (#1627)
+- Invariant: a player grant row (welcome or refill) without `pending` stands only for a payment some payer reported SUCCEEDED. The row is booked `pending` with every payer that may be asked (`payers`: all indices) BEFORE the first payinvoice; SUCCEEDED clears `pending`, IN_FLIGHT narrows `payers` to those asked, no payer paying moves it to `unsure` (as before).
+- A faucet killed inside payinvoice leaves a pending row; after the restart the sweep reads it like any other: any SUCCEEDED -> booked, every payer NONE/FAILED -> removed (the welcome can be asked again). The sweep skips a row whose grant is still paying in this process (`GRANTING`), so a payer not asked yet ("not initiated") never removes a row mid-grant.
