@@ -52,3 +52,9 @@ test('the footer\'s line is the Arena page\'s UI number, filled when the page is
   assert.ok(!out.includes('{{{') && !out.includes('0.0.10'));
   assert.throws(() => fillChrome(CHROME + '\n// {{{ OTHER }}}', { pin: { productVersion: '1' }, ui: 1 }), /unfilled template token/);
 });
+
+test('the start page\'s navigation links Explorer, not Nostr (kanban #1464, ported to 2.0 by #1489)', () => {
+  const links = read('src/website/www/index.html').match(/<div class="links">.*?<\/div>/)[0];
+  assert.match(links, /<a href="#how">How it works<\/a><a href="https:\/\/explorer\.bitcoinarena\.io\/">Explorer<\/a><a href="#build">/);
+  assert.ok(!/>Nostr<\/a>/.test(links), 'no Nostr link in the navigation');
+});
