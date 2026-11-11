@@ -341,6 +341,30 @@ export function authorityAt({
  */
 export const DONATION_FIRST_SERIAL = Object.freeze({ [toHex(NETWORK_ID_TESTNET4)]: 1n });
 
+/**
+ * THE SETS THAT STAND BY THE AUTHORITY KEY ALONE, PER NETWORK (kanban #1447): a page that is served a set plainly - without its recipients'
+ * approvals - cannot see the chain below it, so it cannot tell a change that needed approvals (§27A.4.1 RULED 2026-11-07, #1337: "the
+ * authority key alone moves nothing") from one the authority made alone by right (the network's first serial; a set replacing an LNURL set,
+ * whose recipients cannot vote). Those are pinned here by body id, a reviewed list like the known games; any other serial served plainly
+ * on a pinned network is refused by the page. testnet4: serial 3, the key set that replaced the LNURL set 2 (measured 2026-11-11 on every
+ * seat of both federations). A network not named here is judged as before.
+ */
+export const DONATION_SETS_AUTHORITY_ALONE = Object.freeze({
+  [toHex(NETWORK_ID_TESTNET4)]: Object.freeze(['a23bf8a39455afa4887a67e3749c03f74a5d5b90aa22e7358a98f2d80fcbf910']),
+});
+
+/**
+ * A SET SERVED WITHOUT APPROVALS, ON ITS OWN (kanban #1447): { ok, why }. On a network with a pinned first serial, only that serial or a set
+ * in DONATION_SETS_AUTHORITY_ALONE stands without approvals; `pins` = { first: { netHex: serial }, alone: { netHex: [bodyIdHex] } } for tests.
+ */
+export function plainDonationSetStands(set, { first = DONATION_FIRST_SERIAL, alone = DONATION_SETS_AUTHORITY_ALONE } = {}) {
+  const net = toHex(set.networkId), pinned = first[net];
+  if (pinned === undefined) return { ok: true };
+  if (set.serial === pinned) return { ok: true };
+  if ((alone[net] || []).includes(toHex(donationSetBodyId(set)))) return { ok: true };
+  return { ok: false, why: `serial ${set.serial} is served without its recipients' approvals, and the authority key alone moves nothing (a change needs both keys)` };
+}
+
 export function donationSetInForce({
   networkId, authority, recovery, sets = [], rotations = [], height, verify, approved = [],
 }) {
