@@ -1542,3 +1542,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-M (change) Stake-share release in a scalar pool (kanban #1594)
+- Invariant: the share door counts exactly the entries the settlement counts. In a scalar market round that ended a pool (no certified batch holds an order, §0A.7b), `mayRelease` tables only the plain picks whose stake this seat saw - the set `#attestedPlan` and forfeit `#marketRefund` table (#1436) - so a lock is released exactly when the settlement claims it. An order in a pool is no entry of the round: its share stays sealed and its lock comes back whole. A scalar round that is a book goes to the book's rule (filled orders released, `FILLED_ORDER`). Book or pool is read from `isBook` (order-batch.js), wired in server.js as for the forfeit door.
