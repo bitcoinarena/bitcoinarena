@@ -3066,7 +3066,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // ARENA_EXCHANGE_HOUR_SAT set its limits (1,000 sat an exchange, 20,000 sat an hour)
   const ecashExchange = stakeLocks && process.env.ARENA_EXCHANGE !== '0' ? createEcashExchange({ db: round.db,
     // a federation this seat lists as liquidating is exchanged neither out of nor into (kanban #1244)
-    halted: (f) => { try { return liquidations ? liquidations.haltOf(String(f).toLowerCase()) : null; } catch { return null; } },
+    // no catch here (kanban #1577): a halt check that throws refuses the exchange (ecash-exchange.js), it never lets it through
+    halted: (f) => (liquidations ? liquidations.haltOf(String(f).toLowerCase()) : null),
     portOf: (f) => portOfFederation(fromHex(f)), maxMsat: BigInt(process.env.ARENA_EXCHANGE_MAX_SAT || 1000) * 1000n,
     perHourMsat: BigInt(process.env.ARENA_EXCHANGE_HOUR_SAT || 20000) * 1000n, log: (m) => console.log(m) }) : null;
   async function portOfFederation(fid) {
