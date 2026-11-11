@@ -27,7 +27,7 @@
  * msat was taken by nobody.
  */
 import {
-  decodeDonationSetBody, donationSetBodyId, decodeAuthorityRotation, authorityRotationId, authorityAt, donationSetInForce,
+  decodeDonationSetBody, donationSetBodyId, decodeAuthorityRotation, authorityRotationId, authorityAt, donationSetInForce, plainDonationSetStands,
   DONATION_SIGNATURE_BYTES,
 } from '../../arena-protocol/src/authority.js';
 import { donationSetMatchesRound, donationSetId, decodeDonationSet, vestedShares } from '../../arena-protocol/src/donation.js';
@@ -235,7 +235,7 @@ const donationWithinMs = (p, ms) => new Promise((resolve, reject) => {
 // bundle (page-curve.js verifyEcdsa, window.ARENA_CURVE), as every curve operation of this client is injected
 const pageSecp256k1Verify = (sig, digest, key) => { const c = globalThis.ARENA_CURVE; try { return !!(c && c.verifyEcdsa && c.verifyEcdsa(sig, digest, key)); } catch { return false; } };
 
-export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verifyEd25519, keys, keepBySet = false, verifySecp256k1 = pageSecp256k1Verify } = {}) {
+export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verifyEd25519, keys, keepBySet = false, verifySecp256k1 = pageSecp256k1Verify, plainPins = null } = {}) {
   if (!round || !(round.donationSetId instanceof Uint8Array)) return { ok: false, why: 'there is no round to fetch a donation set for' };
   if (typeof verifyEd25519 !== 'function') return { ok: false, why: 'checking a donation set needs an Ed25519 verifier, and none was injected' };
   const networkKeys = keys || donationKeysForNetworkId(round.networkId);
@@ -295,6 +295,9 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
   if (!approval) {
     const named = donationSetMatchesRound(round, set.recipients);
     if (!named.ok) return { ok: false, why: named.why };
+    // BOTH KEYS ON THE PLAIN PATH TOO (kanban #1447): a set served without approvals stands only if the authority could make it alone
+    const alone = plainDonationSetStands(set, plainPins || undefined);
+    if (!alone.ok) return { ok: false, why: alone.why };
   }
   if (!(set.validFrom <= round.censusHeight)) return { ok: false, why: 'that donation set is not in force at the round\'s height' };
 
