@@ -9722,7 +9722,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (toHex(refundKeyOf(held.handout.playerPubkey)) !== toHex(fields.refundPk))
           return text(res, 409, 'that lock\'s refund key is not the handout player\'s: it returns to nobody this round dealt');
         const player = toHex(held.handout.playerPubkey);
-        if (round.entriesOf(rid).some(({ entry }) => toHex(entry.playerPubkey) === player))
+        // ENTERED = AN ENTRY THIS SEAT HOLDS A STAKE FOR (kanban #1582, state audit 2026-11-12): the /entry door takes an entry before
+        // any lock (kanban #1437), so a player whose lock /lock refused (the last head-to-head seat taken, another entry of his key
+        // staked, a lock after close) has an entry here that the round never counts or settles - a bare held entry kept his lock to
+        // its expiry. Only an entry of his whose stake this seat saw or whose stake lock it holds (round.js seatedEntriesOf's rule)
+        // settles a stake with the round.
+        if (round.entriesOf(rid).some(({ entryId, entry }) => toHex(entry.playerPubkey) === player && (!!round.stakeSeen(entryId) || !!round.stakeLock(entryId))))
           return text(res, 409, 'that player entered the round at this signer node: the stake is settled with the round');
         const lport = (lockFed ? await portOfFederation(lockFed) : await portOfRid(rid)) || stakeLocks;
         const [st, id] = await Promise.all([lport.status(outpoint), lport.contractId(fields)]);
