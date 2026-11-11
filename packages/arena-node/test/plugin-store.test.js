@@ -138,7 +138,8 @@ test('the page\'s report lists every check, passed or not; the seat adds the tri
   // the trial run catches what the scan cannot see
   const m = ROCK_PAPER_SCISSORS.manifest;
   assert.equal(trialRun('export const DECIDE = { decide(m) { for (let i = 0; ; i++) {} } };', m).ok, false, 'an endless loop');
-  assert.match(trialRun('export const DECIDE = { decide(m) { return Object.fromEntries(m.map((x) => [x.key, Math.random() < 0.5 ? "WIN" : "LOSS"])); } };', m).why, /differently twice/);
+  // the trial runs in the core sandbox (kanban #1538), which has no Math.random: a counter kept between calls instead
+  assert.match(trialRun('let n = 0; export const DECIDE = { decide(m) { n++; return Object.fromEntries(m.map((x) => [x.key, n % 2 ? "WIN" : "LOSS"])); } };', m).why, /differently twice/);
   assert.match(trialRun('export const DECIDE = { decide(m) { return { cheat: "WIN" }; } };', m).why, /each player exactly once/);
   assert.match(trialRun('export const DECIDE = { decide(m) { throw new Error("boom"); } };', m).why, /boom/);
 });
