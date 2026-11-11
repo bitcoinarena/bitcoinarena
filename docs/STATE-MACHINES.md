@@ -1542,3 +1542,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-19 (change) Faucet book: players + unsure (kanban #1628)
+- Invariant: an account holds at most one welcome, whatever the order of payer answers. A grant parked in `unsure` (its payer timed out, lnd may still pay it) counts as taken until the sweep rebooks it (any payer SUCCEEDED) or forgets it (all FAILED/NONE, or no IN_FLIGHT after 24 h): `playerGrantDecide` refuses a welcome while the same account has an unsure welcome ("your welcome is still being checked"), and counts the account's unsure top-ups of the day toward `PLAYER_TOPUPS_PER_DAY`.
