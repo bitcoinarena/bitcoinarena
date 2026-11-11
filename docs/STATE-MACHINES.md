@@ -1542,3 +1542,10 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-C1 x SM-C2 (change) E-cash exchange: a seat's 4xx after it took the notes (kanban #1583)
+- Invariant: a page exchange record is `refused` (terminal, never asked again) only for notes that were never handed to a seat. While the seat's row is TAKEN or SENDING (or RECEIVING with `receive_asked`), the page record is `handed`, `reclaiming` or `answered`, never `refused`.
+- Seat (`ecash-exchange.js`): a row whose notes it took or may have taken (TAKEN, SENDING, RECEIVING asked before) is never answered 4xx for a passing condition: no client of a federation yet (a restart, guardians not answering at boot) or a halted federation answers 503 "ask again". The per-exchange cap is checked only for a new row. A new row, or a RECEIVING one never asked, may still be refused with 409.
+- Page (`ecash-transfer.js`): a Rejected take-back after a seat's refusal moves the record back to `handed` with `seatTook` (asked again, same seat, same notes), as after a silence. A record with `seatTook` that meets another refusal is asked again, never taken back from twice. Only `kept -> reclaiming` (`neverHanded`) goes to `refused` on Rejected.
