@@ -1542,3 +1542,11 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### Federation record kept per federation: the halt start (federation-records.js `halted`, kanban #1578)
+- Invariant: `halted[fid].height` is the lowest height of the current run of HALTED records, the same at every seat that holds the run's records, before and after a restart (§23A.5). The liquidation clocks (`liquidatesAt`, claim window, late-claim tail, remainder split) count from it.
+- Before: only memory held the run's start. The store keeps the newest record per federation, and `restore()` keep()s that one, so a restarted seat counted the halt from the newest HALTED record, later than a seat that did not restart.
+- Now: when `keep()` takes a HALTED record and no halt is held, the start is read from the record history (`historyOf`, which reads `store.loadAt` once): from the kept height down, height by height, while the record is HALTED. Any non-HALTED take still clears it.
+- Limit: a seat that first sees the federation by mirror after the run began holds no older records, so it counts from the first record it verified until those records reach its history.
