@@ -10,6 +10,7 @@ import { randomBytes } from 'node:crypto';
 import { lnurlFor, urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { eventId, eventRefusal } from './nostr-relay.js';
 import { BIP39_ENGLISH } from '../../arena-client/src/bip39-wordlist.js';
+import { readJsonBounded } from './lnurl-read.js';
 
 /** The report's kind: ephemeral (20000-29999), so no relay keeps it - it goes to the faucet only. */
 export const FEEDBACK_KIND = 27842;
@@ -485,8 +486,11 @@ export async function lnAddressWorks(address, { fetchFn = fetch, timeoutMs = 800
   try {
     const r = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } });
     if (!r.ok) return { ok: false, why: `its wallet answered ${r.status}` };
-    j = await r.json();
-  } catch (e) { return { ok: false, why: /abort|timeout/i.test(String(e && e.name) + String(e && e.message)) ? 'its wallet did not answer in time' : 'its wallet could not be reached' }; }
+    // read to at most LNURL_MAX_BYTES (kanban #1563): the address is named by anyone who posts a report, and r.json() took a stranger's
+    // whole answer - hundreds of MB ran the faucet (welcomes, node faucet, the mainnet bounty payer) out of memory
+    j = await readJsonBounded(r);
+  } catch (e) { if (/LNURL answer may be/.test(String(e && e.message))) return { ok: false, why: 'its wallet answered too much' };
+    return { ok: false, why: /abort|timeout/i.test(String(e && e.name) + String(e && e.message)) ? 'its wallet did not answer in time' : 'its wallet could not be reached' }; }
   if (!j || j.status === 'ERROR') return { ok: false, why: `its wallet said: ${String((j && j.reason) || 'error').slice(0, 120)}` };
   if (j.tag !== 'payRequest' || typeof j.callback !== 'string' || !/^https:\/\//.test(j.callback)) return { ok: false, why: 'its wallet does not take payments at that address' };
   return { ok: true, minSats: Math.ceil(Number(j.minSendable || 0) / 1000), maxSats: Math.floor(Number(j.maxSendable || 0) / 1000) };
@@ -503,7 +507,7 @@ export async function lnAddressInvoice(address, sats, comment = '', { fetchFn = 
   let url = m ? `https://${m[2].toLowerCase()}/.well-known/lnurlp/${encodeURIComponent(m[1].toLowerCase())}` : null;
   if (!url && /^lnurl1[02-9ac-hj-np-z]+$/i.test(a)) { try { url = urlOfLnurl(a.toLowerCase()); } catch { url = null; } }
   if (!url || !/^https:\/\//.test(url)) return { ok: false, why: 'not a Lightning address or an LNURL' };
-  const get = async (u) => { const r = await fetchFn(u, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } }); if (!r.ok) throw new Error(`answered ${r.status}`); return r.json(); };
+  const get = async (u) => { const r = await fetchFn(u, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } }); if (!r.ok) throw new Error(`answered ${r.status}`); return readJsonBounded(r).catch((e) => { throw /LNURL answer may be/.test(e.message) ? new Error('answered too much') : e; }); }; // bounded (kanban #1563)
   let p; try { p = await get(url); } catch (e) { return { ok: false, why: `its wallet: ${e.message}` }; }
   if (!p || p.status === 'ERROR' || p.tag !== 'payRequest' || !/^https:\/\//.test(String(p.callback || ''))) return { ok: false, why: `its wallet takes no payment there${p && p.reason ? `: ${String(p.reason).slice(0, 120)}` : ''}` };
   const msat = Number(sats) * 1000;
