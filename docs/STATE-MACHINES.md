@@ -1542,3 +1542,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-T2 x SM-L2 (change) Kept round wallets and the collect record (kanban #1585)
+- A tab's round wallets (`roundWallets`) and the empty note (`arena.tabempty.<key>`) are keyed by round and phrase (`walletKey`: `<round id>.<seed hex 16>`), as the round's lock database is (`arena.lockdb.<round16>.<sha(lockSecretFor(seed, round))16>`). A record is looked at, and marked done with its `tabMsat`, only through its own phrase's round wallet: a second phrase's record in the same round never reads the first phrase's wallet or empty note, so its own wallet is never tidied away unread. The browser lock (`arena.round.<round id>`) stays per round. An empty note under the old round-only key is no longer read; that round's wallet is joined and read once more.
