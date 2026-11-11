@@ -9285,8 +9285,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // a round's entries - its game's players, all in - has nothing its reveal deadline could still add: it closes the round
         // now, not at that deadline. A round short of a reveal still waits for its end (that entry's FORFEIT).
         if (closeAtEnd && fresh) {
-          // a paying round's seated players only - those backed by a lock (kanban #1437, audit 8 R3): a lockless entry neither holds the close nor counts toward it
-          const all = round.seatedEntriesOf(entry.roundId, c.stakeMsat);
+          // a paying round's played entries only - those whose stake this seat counted (kanban #1437, audit 8 R3; #1626): a lockless entry, or one whose
+          // stake lock still waits for its fee lock, neither holds the close nor counts toward it
+          const all = round.playedEntriesOf(entry.roundId, c.stakeMsat);
           const revealed = new Set(round.revealsOf(entry.roundId).map((r) => toHex(r.entryId)));
           if (all.length >= found.plugin.manifest.players && all.every(({ entryId }) => revealed.has(toHex(entryId))) && round.close(entry.roundId)) {
             console.log(`[close] ${toHex(entry.roundId).slice(0, 16)}: every move revealed - closed by this signer node before its end`);

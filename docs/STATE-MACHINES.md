@@ -1542,3 +1542,10 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-H2H-SEAT x SM-H2H-CLOSE x SM-H2H-SETTLE (change) Seated is not played (kanban #1626)
+- Seated (round.js `seatedEntriesOf`, #1437): in a paying round an entry with its stake seen OR its stake lock verified and waiting for its fee lock. It holds a seat at the /entry and /lock doors (`waitsForFeeLock` still blocks a third player).
+- Played (round.js `playedEntriesOf`): in a paying round only an entry whose stake this seat counted (`stake_seen`) - the same set the settlement takes (settlement.js `entriesOnRecord`). A free round plays every entry.
+- Invariant: an entry is signed DELIVERED / FAILED / FORFEIT in a paying head-to-head round only if it is in the settlement. `#headToHeadClose`, the reveal door's early close and the match record (match.js `matchOf`) read the played set. An entry still waiting for its fee lock at the close is signed VOID; its counted opponent, alone, is VOID too (fewer than the game's players) and gets its stake back.

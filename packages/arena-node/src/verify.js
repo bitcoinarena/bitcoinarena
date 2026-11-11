@@ -687,7 +687,9 @@ export class Verifier {
     const entries = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.entryVoid(entryId));
     // AND IN A PAYING ROUND ONLY THE ENTRIES BACKED BY A LOCK ARE PLAYED (kanban #1437, audit 8 R3): one with no lock took no seat, is played against
     // nobody and is signed VOID - its reveal cannot change the seated players' verdicts
-    const seated = new Set((typeof this.round.seatedEntriesOf === 'function' ? this.round.seatedEntriesOf(roundIdBytes, contract.stakeMsat) : entries).map(({ entryId }) => hex(entryId)));
+    // AND ONLY THOSE WHOSE STAKE THIS SEAT COUNTED (kanban #1626): a stake lock still waiting for its fee lock holds a seat but is not in the
+    // settlement (entriesOnRecord: stake_seen), so playing it booked a win or loss no money backs - it is signed VOID like a lockless one
+    const seated = new Set((typeof this.round.playedEntriesOf === 'function' ? this.round.playedEntriesOf(roundIdBytes, contract.stakeMsat) : entries).map(({ entryId }) => hex(entryId)));
     const decided = (async () => {
       await this.carryReveals(roundIdBytes, entries, found.plugin.manifest.moveCount);
       const held = new Map(this.round.revealsOf(roundIdBytes).map((r) => [hex(r.entryId), r]));
