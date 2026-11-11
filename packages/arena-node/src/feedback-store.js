@@ -73,10 +73,35 @@ export const scrubKeys = (t) => {
 };
 const tag = (e, k) => { const t = e.tags.find((x) => x[0] === k); return t ? String(t[1] ?? '') : ''; };
 const said = (x, re) => (re.test(String(x || '')) ? String(x) : '');
+// THE REPORT AS KEPT, NEVER AS RECEIVED (kanban #1590, a bypass of #1472): take() scrubbed 'happened' and 'expected' but wrote the whole signed event into
+// reports.event, so the seed phrase or nsec it removed from the words stayed in the SQLite file (its backups, its exports). The one place a report's event is
+// written now keeps only this: id, pubkey, kind, created_at and sig as received (the signature was checked when it came in; the kept copy is not re-verified),
+// the tags this store reads with their checked values (any other tag scrubbed), and a content rebuilt from the parsed body with every string scrubbed - the
+// debug, the lnAddress and any field nobody reads included. Files written before are rewritten once when opened (keptRewrite below).
+const KEPT_TAG = Object.freeze({ t: /^[a-z]{1,24}$/, source: /^[a-z]{1,24}$/, node: /^[0-9a-f]{64}$/, screenshot: /^[0-9a-f]{64}$/, round: /^[0-9a-f]{8,64}$/,
+  game: /^[a-z0-9-]{1,48}$/, build: /^[0-9a-zA-Z. -]{1,24}$/, lud16: /^(?:[a-z0-9._+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+|lnurl1[02-9ac-hj-np-z]+)$/i });
+const scrubDeep = (v, depth = 0) => (typeof v === 'string' ? scrubKeys(v)
+  : Array.isArray(v) ? (depth > 8 ? [] : v.map((x) => scrubDeep(x, depth + 1)))
+  : v && typeof v === 'object' ? (depth > 8 ? {} : Object.fromEntries(Object.entries(v).map(([k, x]) => [scrubKeys(k), scrubDeep(x, depth + 1)])))
+  : v);
+export function keptEvent(e) {
+  let body; try { body = JSON.parse(e && e.content); } catch { body = null; }
+  const tags = (Array.isArray(e && e.tags) ? e.tags : []).filter(Array.isArray).map((t) => {
+    const name = String(t[0] ?? '');
+    const re = Object.prototype.hasOwnProperty.call(KEPT_TAG, name) ? KEPT_TAG[name] : null;
+    // a known tag keeps its value only when it is of its shape and nothing in it is scrubbed (the hex ones are keys and hashes by shape: never scrubbed)
+    const v = String(t[1] ?? '');
+    if (re) return re.test(v) && (/^[0-9a-f]+$/.test(v) || scrubKeys(v) === v) ? [name, v] : null;
+    return t.map((x) => scrubKeys(String(x ?? '')));
+  }).filter(Boolean);
+  return { id: e && e.id, pubkey: e && e.pubkey, created_at: e && e.created_at, kind: e && e.kind, tags,
+    content: body && typeof body === 'object' ? JSON.stringify(scrubDeep(body)) : scrubKeys(String((e && e.content) ?? '')), sig: e && e.sig };
+}
 
 export function openFeedbackStore(path = ':memory:') {
   const db = new DatabaseSync(path);
-  db.exec(`PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;
+  // secure_delete (kanban #1590): the bytes of a rewritten event are zeroed, not left in a free page of the file
+  db.exec(`PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA secure_delete = ON;
     CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY, pubkey TEXT NOT NULL, type TEXT NOT NULL, signed_at INTEGER NOT NULL, received_ms INTEGER NOT NULL,
       happened TEXT NOT NULL, expected TEXT NOT NULL, game TEXT, round TEXT, build TEXT, event TEXT NOT NULL,
       state TEXT NOT NULL DEFAULT 'new', reason TEXT, duplicate_of TEXT, severity TEXT, amount_sats INTEGER, ticket TEXT, changed_ms INTEGER);
@@ -96,6 +121,12 @@ export function openFeedbackStore(path = ':memory:') {
     if (unnumbered.length) { let n = Number(db.prepare('SELECT COALESCE(MAX(number), 0) AS n FROM reports').get().n);
       const set = db.prepare('UPDATE reports SET number = ? WHERE id = ?'); for (const r of unnumbered) set.run(++n, r.id); } }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS reports_by_number ON reports (number)');
+  // A FILE FROM BEFORE #1590 (keptRewrite): every report's event rewritten to its kept form once; then the WAL is folded in and the file vacuumed, so the raw
+  // copies are gone from the file, not only from the rows
+  { const all = db.prepare('SELECT id, event FROM reports').all(); const set = db.prepare('UPDATE reports SET event = ? WHERE id = ?'); let changed = 0;
+    for (const r of all) { let e = null; try { e = JSON.parse(r.event); } catch { e = null; }
+      const kept = JSON.stringify(e ? keptEvent(e) : { content: '' }); if (kept !== r.event) { set.run(kept, r.id); changed++; } }
+    if (changed && path !== ':memory:') { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); db.exec('VACUUM'); db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } }
   const get = db.prepare('SELECT * FROM reports WHERE id = ?');
   const row = (r) => (r ? { id: r.id, pubkey: r.pubkey, type: r.type, signedAt: r.signed_at, receivedMs: r.received_ms, happened: r.happened, expected: r.expected,
     game: r.game || null, round: r.round || null, build: r.build || null, state: r.state, reason: r.reason || null, duplicateOf: r.duplicate_of || null,
@@ -129,7 +160,7 @@ export function openFeedbackStore(path = ':memory:') {
     { const had = get.get(e.id); if (had) return { ok: true, id: e.id, kept: false, number: had.number, label: feedbackLabel(had.number) }; }
     db.prepare(`INSERT INTO reports (id, pubkey, type, signed_at, received_ms, happened, expected, game, round, build, event, source, node, screenshot, number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(number), 0) + 1 FROM reports))`)
       .run(e.id, e.pubkey, type, e.created_at, nowMs, happened, expected, said(tag(e, 'game'), /^[a-z0-9-]{1,48}$/) || null,
-        said(tag(e, 'round'), /^[0-9a-f]{8,64}$/) || null, said(tag(e, 'build'), /^[0-9a-zA-Z. -]{1,24}$/) || null, JSON.stringify(e), source, node || null, shot || null);
+        said(tag(e, 'round'), /^[0-9a-f]{8,64}$/) || null, said(tag(e, 'build'), /^[0-9a-zA-Z. -]{1,24}$/) || null, JSON.stringify(keptEvent(e)), source, node || null, shot || null);
     const n = get.get(e.id).number;
     return { ok: true, id: e.id, kept: true, number: n, label: feedbackLabel(n) };
   }
