@@ -1558,22 +1558,7 @@
     #arena-games.compact .name { min-height: 2.2em; }
     #arena-games .more { margin-top: 0; }
     #arena-games .foot-row { margin-top: 6px; }
-      /* ONE HEADER ON THE GAME PAGE TOO (kanban #1457, Daniel 2026-11-11: "Der Header muss überall gleich aussehen" - "Both the owner page and the game page get the
-       shared header ... Balance, Deposit, Withdraw, and settings sit in the shared header or directly under it"): site-chrome.js draws the website's header on top
-       (57 px and the safe area); the wallet bar and Tick Tock's money row sit directly under it, without their own logo (the header carries the stadium), and every
-       layer that left room for the bar leaves room for both. A round being played keeps the whole window: no header then, as there was no bar */
-    body.arena-shared-hdr #arena-wb-home, body.arena-shared-hdr #arena-game-home { display: none !important; }
-    body.arena-shared-hdr.arena-picking #arena-wallet-bar, body.arena-shared-hdr.arena-own-client #arena-wallet-bar { top: calc(57px + env(safe-area-inset-top, 0px)); padding-top: 0; }
-    body.arena-shared-hdr #arena-money { top: calc(61px + env(safe-area-inset-top, 0px)) !important; }
-    body.arena-shared-hdr.arena-picking #arena-games { padding-top: calc(108px + env(safe-area-inset-top, 0px)) !important; }
-    html body.arena-shared-hdr.arena-own-client #arena-client { top: calc(98px + env(safe-area-inset-top, 0px)) !important;
-      height: calc(100% - 98px - 30px - env(safe-area-inset-top, 0px) - min(env(safe-area-inset-bottom, 0px), 4px)) !important; }
-    body.arena-shared-hdr #arena-ov-scrim, body.arena-shared-hdr #arena-donate { top: calc(98px + env(safe-area-inset-top, 0px)) !important; }
-    body.arena-shared-hdr.arena-unity-menu:not(.arena-clean) #canvas { top: calc(97px + env(safe-area-inset-top, 0px)) !important;
-      height: calc(100% - 127px - env(safe-area-inset-top, 0px) - min(env(safe-area-inset-bottom, 0px), 4px)) !important; }
-    body.arena-shared-hdr.arena-clean #asc-bar, body.arena-shared-hdr.arena-clean #asc-bar-space { display: none !important; }
-    #asc-bar-space { display: none !important; }   /* the page's layers are fixed: the flow needs no spacer */
-</style>
+  </style>
   <!-- UP/DOWN'S STYLE (kanban #521): the pick sheet's, from packages/btc-updown/page -->
   <link rel="stylesheet" href="games/btc-updown/market-page.css">
   <!-- TICK TOCK'S STYLE (kanban #521): the next round's box, from packages/nextblock/page -->
@@ -1634,8 +1619,6 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
 <style>/* kanban #1456 (Daniel 2026-11-11): the stadium on the wallet screen, above "Your wallet" */ .ws-box::before { content: ""; display: block; height: 40px; margin: 0 0 14px; background: no-repeat left center / auto 40px; background-image: image-set(url("arena-mark-80.webp") 2x, url("arena-mark-120.webp") 3x); }</style>
 </head>
 <body>
-<script src="site-chrome.js" data-foot="none"></script>
-<script>document.body.classList.add('arena-shared-hdr');   /* kanban #1457 */</script>
   <!-- §24B: the wallet's own line, in the LOBBY and never over the drive. `arena-money` is hidden while a
        round is being driven, so the balance, the federation and the pending line cannot follow a player
        into the game. -->
