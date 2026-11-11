@@ -77,6 +77,23 @@ async function testers(env) {
 // THE OLD DOMAIN (kanban #937): every (sub)domain of it sends to the same place on the new one, path and query kept
 const OLD_DOMAIN = /(^|\.)bitcoin-arena\.io$/;
 const moved = (url) => { if (!OLD_DOMAIN.test(url.hostname)) return null; const to = new URL(url); to.hostname = url.hostname.replace(/bitcoin-arena\.io$/, 'bitcoinarena.io'); return Response.redirect(to.toString(), 308); };
+// A FEW BENCH WRITES A DAY (kanban #1536): KV puts are the whole account's daily allowance (the explorer hit the 1,000 on 2026-10-26), so
+// POST /__bench stores at most BENCH_PER_CALLER runs a day per caller (cf-connecting-ip, an IPv6 address by its /64) and BENCH_PER_DAY in all
+// per isolate; past that a run is still logged for wrangler tail, only not kept
+const BENCH_PER_CALLER = 5, BENCH_PER_DAY = 50;
+let benchDay = '', benchTotal = 0, benchByCaller = new Map();
+function benchMayStore(request) {
+  const day = new Date().toISOString().slice(0, 10);
+  if (day !== benchDay) { benchDay = day; benchTotal = 0; benchByCaller = new Map(); }
+  const ip = request.headers.get('cf-connecting-ip') || '';
+  let caller = ip;
+  if (ip.includes(':')) { const [a, b = ''] = ip.toLowerCase().split('::'), head = a ? a.split(':') : [], tail = b ? b.split(':') : [];
+    caller = [...head, ...Array(Math.max(0, 8 - head.length - tail.length)).fill('0'), ...tail].slice(0, 4).map((g) => g.replace(/^0+(?=.)/, '')).join(':'); }
+  const n = benchByCaller.get(caller) || 0;
+  if (n >= BENCH_PER_CALLER || benchTotal >= BENCH_PER_DAY) return false;
+  benchByCaller.set(caller, n + 1); benchTotal++;
+  return true;
+}
 export default {
 async scheduled(event, env, ctx) {
   if (new Date(event.scheduledTime).getUTCMinutes() % 30 < 2) ctx.waitUntil(Promise.allSettled(SEASON_GAMES.map((g) => readSeason(env, g, 7))));
@@ -134,7 +151,7 @@ async fetch(request, env, ctx) {
     const body = (await request.text()).slice(0, 20000);
     console.log('[bench] ' + body);
     // KEPT, so a phone's run is not lost when no one is watching the log (the 01:45 gate found none)
-    if (env.BENCH) {
+    if (env.BENCH && benchMayStore(request)) {
       const country = (request.cf && request.cf.country) || '';
       await env.BENCH.put(`bench:${new Date().toISOString()}:${crypto.randomUUID().slice(0, 8)}`, body,
         { expirationTtl: 30 * 24 * 3600, metadata: { country, ua: (request.headers.get('User-Agent') || '').slice(0, 120) } });
