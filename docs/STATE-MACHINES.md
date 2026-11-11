@@ -1542,3 +1542,10 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### Per-federation settlement rows (kanban #1576)
+- Before a round that takes any federation signs anything in any federation, `#settleFederations` keeps the split's federations in `fed_lock_split` (one row per federation, never removed). A federation gets its `fed_lock_settlements` row only at its first SUBMITTING, so a part that fails before that (its port not reachable this pass, fewer than the threshold committed, a share withheld) used to leave no row.
+- Invariant: the round is ACCEPTED (`settlementState`), off the retry list (`closedLockRoundsUnsettled`) and open to late settlements (`lateSettlementCandidates`) only when every row is ACCEPTED **and** every federation in `fed_lock_split` holds an ACCEPTED row. A named federation with no row keeps the round SUBMITTING, so `retryUnsettled` asks it again.
+- A round with no `fed_lock_split` rows (settled before this change, or a seat that only took handed signatures) reads its rows as before.
