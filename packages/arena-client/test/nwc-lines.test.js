@@ -226,6 +226,7 @@ test('nwcCall answers every way a wallet can fail to answer, by name', async () 
   assert.deepEqual(await call(where(noReason.port)), { ok: false, why: 'the relay refused the request: no reason given' });
   await noReason.close();
   const garbage = await relay((sock, f) => { if (f[0] === 'EVENT') sock.send(JSON.stringify(['EVENT', 'sub', { content: 'no iv here' }])); });
-  assert.deepEqual(await call(where(garbage.port)), { ok: false, why: 'that answer carries no iv, so it is not NIP-04' });
+  // an event the relay made up - no id, no signature, not the wallet's - is not the answer (kanban #1471): it is passed over, and the wallet's own is waited for
+  assert.deepEqual(await call(where(garbage.port), { timeoutMs: 300 }), { ok: false, why: 'the wallet did not answer in 300 ms' });
   await garbage.close();
 });
