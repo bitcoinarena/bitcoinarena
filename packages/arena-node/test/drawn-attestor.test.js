@@ -23,25 +23,27 @@ const MANIFEST = {
 };
 const verify = (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } };
 
-function seats({ down = [] } = {}) {
+function seats({ down = [], bad = {} } = {}) {
   let clock = 0;
   const held = new Map();
   const list = KEYS.map((key, i) => new DrawnAttestor({
-    selfKey: key, sign: (d) => schnorr.sign(d, secretOf(i)), attestorsFor: () => KEYS,
+    selfKey: key, sign: (d) => schnorr.sign(d, secretOf(i)), verify, attestorsFor: () => KEYS,
     peersFor: () => KEYS.map((_, j) => `http://seat-${j}`).filter((_, j) => j !== i), due: () => [{ roundId: ROUND, window: WINDOW }],
     readPrice: () => (clock < 900000 ? 8000000 : { cents: 8001234, atMs: clock }), now: () => clock,
     hold: async (bytes) => { const st = attestationStands(decodeAttestation(bytes), { manifest: MANIFEST, roundIdBytes: ROUND, verify, drawn: KEYS }); if (st.ok) held.set(i, st); return st.ok; },
     fetcher: async (url) => {
       const j = Number(new URL(url).host.split('-')[1]);
-      const w = down.includes(j) ? null : list[j].served(ROUND);
+      let w = down.includes(j) ? null : list[j].served(ROUND);
+      // A BAD DRAWN SEAT (kanban #1487): the honest body with a junk signature, under its own key or an honest seat's
+      if (w && bad[j]) w = { ...w, signature: '00'.repeat(64), key: bad[j] === 'own' ? w.key : KEYS[bad[j]] };
       return w ? { status: 200, json: async () => w } : { status: 404, json: async () => null };
     },
   }));
   return { list, held, tick: async (ms) => { clock = ms; for (const [i, s] of list.entries()) if (!down.includes(i)) await s.read(); } };
 }
 
-async function run(down) {
-  const s = seats({ down });
+async function run(down, bad = {}) {
+  const s = seats({ down, bad });
   for (let t = 780000; t <= 1810000; t += 10000) await s.tick(t);
   for (let round = 0; round < 2; round++) for (const [i, a] of s.list.entries()) if (!down.includes(i)) await a.pass();
   return s;
@@ -60,4 +62,17 @@ test('two drawn seats down: it still stands; three down: no attestation', async 
   const three = await run([4, 5, 6]);
   console.log('  DOWN 2 -> held at', two.held.size, '| DOWN 3 -> held at', three.held.size);
   assert.equal(three.held.size, 0, 'four signatures made an attestation');
+});
+
+// FEEDBACK #009 (Hexbox Tools 2026-11-11, kanban #1487): one drawn seat answering /attestation-word with the honest body and 64 zero bytes made every honest
+// seat's combination fail (held at 0); it may even name an honest seat's key. Only verified signatures count now, the first good one of a key stays.
+test('#1487 one drawn seat serving a junk signature, or an honest seat\'s key on its junk, does not stop the 5 of 7; two bad seats neither', async () => {
+  const one = await run([], { 6: 'own' });
+  const steal = await run([], { 6: 0 });
+  const two = await run([], { 5: 'own', 6: 1 });
+  console.log('  FACTS (#1487): one junk -> held at', one.held.size, '| junk under seat 0\'s key -> held at', steal.held.size, '| two bad -> held at', two.held.size);
+  assert.ok(one.held.size >= 6, `one junk signature held it at ${one.held.size} seats`);
+  assert.ok(steal.held.size >= 6, `junk under an honest key held it at ${steal.held.size} seats`);
+  assert.ok(two.held.size >= 5, `two bad seats held it at ${two.held.size} seats`);
+  for (const st of [...one.held.values(), ...steal.held.values(), ...two.held.values()]) { assert.equal(st.outcome, 0); assert.ok(st.signers >= 5); }
 });
