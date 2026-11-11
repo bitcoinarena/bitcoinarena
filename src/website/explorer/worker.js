@@ -291,19 +291,34 @@ const keysOf = (b) => [...new Set((Array.isArray(b && b.keys) ? b.keys : []).map
 // ONLY ENTRIES THIS EXPLORER HOLDS, NEVER OVER ANOTHER MARK, AND SAYING WHO (audit 6, kanban #1420): any key was taken and a code or bot mark was
 // overwritten, with no record of the address - now a key must be an entry id in txs, a key already marked keeps its mark, and the row names the
 // address (by_ip) so it can be found and undone. Answers the keys it took: the page counts only those as sent
+// A TEST BROWSER CLOSES BEFORE ITS ENTRY IS HERE (kanban #1466, Daniel 2026-11-11: "Sind die Runden vom 11.11 heute von 22 echten spielern? Prüfe das" - all 22 were
+// playtest scripts on the admin's address: each placed an order and closed its browser within the minute, before the explorer's next read held the entry,
+// so every mark was refused and never asked again - "fix it in code so it won't happen again"): an entry id from an admin address that is not held yet is
+// kept in mark_pending and marked when the entry arrives (applyPendingMarks, each poll), for PENDING_MARK_MS. Still only from an admin address, never over
+// another mark, by_ip kept. A browser under automation (navigator.webdriver) sends kind 'bot'; every other admin browser 'owner'.
+const PENDING_MARK_MS = 2 * DAY_MS;
+const pendingTable = (env) => env.DB.prepare('CREATE TABLE IF NOT EXISTS mark_pending (key TEXT PRIMARY KEY, kind TEXT NOT NULL, at_ms INTEGER NOT NULL, by_ip TEXT)').run();
+export async function applyPendingMarks(env, now = Date.now()) {
+  await pendingTable(env);
+  await env.DB.batch([
+    env.DB.prepare('INSERT INTO marked (key, kind, at_ms, by_ip) SELECT p.key, p.kind, p.at_ms, p.by_ip FROM mark_pending p WHERE p.key IN (SELECT id FROM txs) ON CONFLICT(key) DO NOTHING'),
+    env.DB.prepare('DELETE FROM mark_pending WHERE key IN (SELECT id FROM txs) OR at_ms < ?').bind(now - PENDING_MARK_MS),
+  ]);
+}
 async function markByIp(env, request) {
   let b; try { b = await request.json(); } catch { return json({ ok: false, why: 'a mark is JSON: { keys }' }, { status: 400 }); }
   if (!(await adminIp(env, request))) return json({ ok: false, why: 'this address is not the admin\'s' }, { status: 403 });
+  const kind = b && b.kind === 'bot' ? 'bot' : 'owner';
   const ip = callerIp(request), asked = keysOf(b), at = Date.now(), took = [];
   for (let i = 0; i < asked.length; i += 50) {
     const part = asked.slice(i, i + 50);
     const held = await env.DB.prepare(`SELECT id FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all().then((r) => new Set((r.results || []).map((x) => x.id))).catch(() => new Set());
-    const fresh = part.filter((k) => held.has(k));
-    if (!fresh.length) continue;
-    await env.DB.batch(fresh.map((k) => env.DB.prepare('INSERT INTO marked (key, kind, at_ms, by_ip) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO NOTHING').bind(k, 'owner', at, ip)));
-    took.push(...fresh);   // marked now or already: the page need not send them again
+    const fresh = part.filter((k) => held.has(k)), later = part.filter((k) => !held.has(k));
+    if (fresh.length) await env.DB.batch(fresh.map((k) => env.DB.prepare('INSERT INTO marked (key, kind, at_ms, by_ip) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO NOTHING').bind(k, kind, at, ip)));
+    if (later.length) { await pendingTable(env); await env.DB.batch(later.map((k) => env.DB.prepare('INSERT INTO mark_pending (key, kind, at_ms, by_ip) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO NOTHING').bind(k, kind, at, ip))); }
+    took.push(...fresh, ...later);   // marked now, or kept until the entry is here: the page need not send them again
   }
-  return json({ ok: true, marked: took.length, took, kind: 'owner', by: 'address' });
+  return json({ ok: true, marked: took.length, took, kind, by: 'address' });
 }
 async function mark(env, request) {
   let b; try { b = await request.json(); } catch { return json({ ok: false, why: 'a mark is JSON: { keys, kind, code }' }, { status: 400 }); }
@@ -456,6 +471,7 @@ async function readWindow(env, since, limit, before) {
     if (w) writes.push(w);
   }
   for (let i = 0; i < writes.length; i += 50) await env.DB.batch(writes.slice(i, i + 50));
+  await applyPendingMarks(env).catch((e) => console.log(JSON.stringify({ pendingMarksError: String(e && e.message ? e.message : e) })));
   return { seats: [...answered.values()].filter(Boolean).length, txs: ids.length, written: writes.length, ms: Date.now() - t0 };
 }
 
