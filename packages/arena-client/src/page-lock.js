@@ -2053,20 +2053,30 @@ export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch }
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/stake-lock?round=${toHex(roundId)}&refund=${refund}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${name} ${r.status}`, got: [] };
-      const got = await r.json();
+      const raw = await r.json();
+      // ONE SEAT'S MALFORMED ANSWER STAYS ITS OWN (kanban #1489, audit WF1489 CLIENT-1): `{}` or `[null]` from one seat threw for the
+      // whole look, outside this try, and every honest seat's lock was dropped - no payout, stake or refund collected while it answered so.
+      // A seat's answer must be a list; an item that is not a lock (an object, a txid:index outpoint, fields the lock client reads) is skipped
+      if (!Array.isArray(raw)) return { said: `${name} malformed`, got: [] };
+      const got = [];
+      for (const l of raw) {
+        if (!l || typeof l !== 'object' || !/^[0-9a-f]{64}:\d+$/.test(String(l.outpoint))) continue;
+        const [txid, outIdx] = String(l.outpoint).split(':');
+        let lock;
+        try { lock = { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId }; } catch { continue; }
+        got.push({ l, lock });
+      }
       return { said: `${name} ${got.length}`, got, node };
     } catch (e) { return { said: `${name} ${String(e && e.message || e).slice(0, 40)}`, got: [] }; }
   }));
   const said = answers.map((a) => a.said);
   for (const { got } of answers) {
-    for (const l of got) {
-      const [txid, outIdx] = String(l.outpoint).split(':');
+    for (const { l, lock } of got) {
       // EVERY SEAT'S VERSION OF AN OUTPOINT, NOT ONLY THE FIRST (kanban #1273, audit 4 #1257 seats-5): one seat listed first answered the real
       // outpoint with a field changed (or a made-up entry id), and the honest copies were dropped - the stake read "gone" for good, or waited for
       // its expiry. Each distinct version is kept; the federation's stored contract (heldByGuardians) and the forfeit check pick the real one
       const key = `${l.outpoint}|${JSON.stringify(l.fields)}|${String(l.entryId || '').toLowerCase()}`;
-      if (!found.has(key))
-        found.set(key, { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId });
+      if (!found.has(key)) found.set(key, lock);
     }
   }
   const out = [...found.values()];
@@ -2246,6 +2256,9 @@ export async function redeemStake({ round, roundId, invite, seed, curve, LockCli
  * and one that pays it nothing is no answer - a seat omitting the player made the payout "none" and the round final. When `needed` seats
  * agree, their settlement is the answer, whatever a lone seat says.
  */
+// a settlement's payout list as the page reads it (kanban #1489): each an object with a string pk and an integer msat
+const wellFormedPayouts = (payouts) => Array.isArray(payouts) && payouts.every((p) => p && typeof p === 'object'
+  && typeof p.pk === 'string' && /^\d+$/.test(String(p.msat)));
 export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null } = {}) {
   // EVERY SIGNER NODE AT ONCE (kanban #593)
   const answers = await Promise.all([...new Set(nodes || [])].map(async (node) => {
@@ -2253,8 +2266,13 @@ export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${node}: ${r.status}` };
       const j = await r.json();
-      if (j.state === 'ACCEPTED' && j.moved && Array.isArray(j.moved.payouts)) return { ok: true, txid: j.txid, moved: j.moved, from: node };
-      return { said: `${node}: ${j.state}` };
+      if (j && j.state === 'ACCEPTED' && j.moved && Array.isArray(j.moved.payouts)) {
+        // EVERY PAYOUT WELL FORMED, OR THE ANSWER IS NOT COUNTED (kanban #1489, audit WF1489 CLIENT-1): a `null` payout threw in keyOf for
+        // every seat's answer, and the honest seats' agreeing settlement was lost with it
+        if (!wellFormedPayouts(j.moved.payouts)) return { said: `${node}: malformed` };
+        return { ok: true, txid: j.txid, moved: j.moved, from: node };
+      }
+      return { said: `${node}: ${j && j.state}` };
     } catch (e) { return { said: `${node}: ${e.message}` }; }
   }));
   const accepted = answers.filter((a) => a.ok);
@@ -2369,10 +2387,11 @@ export async function federationSettlementsOf({ roundId, nodes, fetcher = fetch 
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) { said.push(`${node}: ${r.status}`); continue; }
       const j = await r.json();
-      if (j.state === 'ACCEPTED' && Array.isArray(j.federations) && j.federations.length
-        && j.federations.every((f) => f.state === 'ACCEPTED' && f.moved && Array.isArray(f.moved.payouts)))
+      // (kanban #1489) a null federation or payout is a malformed answer, not a throw: the next seat is asked
+      if (j && j.state === 'ACCEPTED' && Array.isArray(j.federations) && j.federations.length
+        && j.federations.every((f) => f && f.state === 'ACCEPTED' && f.moved && wellFormedPayouts(f.moved.payouts)))
         return { ok: true, federations: j.federations, from: node };
-      said.push(`${node}: ${j.state}`);
+      said.push(`${node}: ${j && j.state}`);
     } catch (e) { said.push(`${node}: ${e.message}`); }
   }
   return { ok: false, why: `no signer node holds every federation's settlement of this round accepted yet (${said.join('; ')})` };
