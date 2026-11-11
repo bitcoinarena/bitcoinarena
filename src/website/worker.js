@@ -100,6 +100,13 @@ async fetch(request, env, ctx) {
   // TESTNET NIGHT'S LIVE COUNT (kanban #926 item 7, ruling #1081): how many have joined the rounds open or playing now, from the first seat that answers
   if (url.pathname === '/api/night') return (await nightOn(env)) ? nightCount() : new Response('{"ok":true,"on":false}', { headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' } });
   // A SHORT LINK PER CHANNEL (kanban #943): a profile shows bitcoinarena.io/x, the visit still arrives with its campaign, and the referrer stays
+  // SN.BITCOINARENA.IO (kanban #1458, Daniel 2026-11-11: "If we can't track the referrer refer to sn.bitcoinarena.io so we can track it" - "to the website"): Stacker
+  // News links strip the referrer (rel="noreferrer"), so a post links here and the visit lands on the website with the /sn campaign; a path is kept
+  if (url.hostname === 'sn.bitcoinarena.io' || url.hostname === 'sn.bitcoin-arena.io') {
+    const to = new URL(url.pathname + url.search, 'https://bitcoinarena.io');
+    if (!to.searchParams.has('utm_source')) for (const [k, v] of new URLSearchParams(CHANNEL_LINKS['/sn'])) to.searchParams.set(k, v);
+    return Response.redirect(to.toString(), 302);
+  }
   // TESTNET NIGHT SWITCHED OFF (kanban #926): its page and short link land on the home page
   if ((url.pathname === '/night' || url.pathname === '/night/') && !(await nightOn(env))) return Response.redirect(`${url.origin}/`, 302);
   // /night lands on the Testnet Night page (kanban #926 item 7), the others on the home page; a visit already carrying its campaign is served, not sent round again
