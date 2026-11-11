@@ -110,8 +110,12 @@ async function pay(ask) {
   const d = faucetDecide(ask, book, { balanceSats: await balanceSats() });
   if (!d.ok) return d;
   const txid = await rpc('sendtoaddress', { address: ask.address, amount: (d.sats / 1e8).toFixed(8), replaceable: true, fee_rate: feeRate });
-  book.paid.push({ address: ask.address, ip: ask.ip, sats: d.sats, atMs: Date.now(), txid });
-  saveBook(book);
+  // THE BOOK AS IT IS NOW (kanban #1573): the copy read before the awaits was saved whole, and a refill booked by POST /refill (outside the queue),
+  // the payment sweep's decisions and the refill timer's removals made meanwhile were undone - a paid refill no longer counted toward its day cap.
+  // The row goes onto a freshly read book in one synchronous step (read, push, save), as the sweep and the grant's later writes do
+  const now = readBook(); now.paid = now.paid || [];
+  now.paid.push({ address: ask.address, ip: ask.ip, sats: d.sats, atMs: Date.now(), txid });
+  saveBook(now);
   appendFileSync(env.FAUCET_PENDING, `${txid}\n`);
   console.log(`${new Date().toISOString()} paid ${d.sats} sat to ${ask.address} (${ask.ip || 'no ip'}): ${txid}`);
   return { ok: true, txid, sats: d.sats };
