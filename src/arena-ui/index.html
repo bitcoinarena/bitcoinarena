@@ -4374,7 +4374,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // and reserves' parts stayed spent): the handout, the lock and the entry need ARENA_H2H_LEAD_MS() before the close; with less, nothing is sent or locked
         if (!reuse && window.ARENA_HIDDEN_CHOSEN && window.ARENA_HIDDEN_CHOSEN.round === named.roundIdHex && thisJoin && !thisJoin.free
           && Number(named.round.entryCloseMs) - Date.now() < window.ARENA_H2H_LEAD_MS() + 1500) {
-          thisJoin.missed = true;
+          // NOT `missed` (measured 2026-11-11 on the MacBook, round 9f51edf1 -> 41432520): a missed join is retried in the next round, and that retry
+          // locked the stake and made no entry - the hidden move is the old round's. A late tap is refused; the player taps the next round
           window.ARENA_JOIN_REFUSED = 'the entry closed before it went in - nothing was locked';
           console.log('[arena] #1485 no handout, no lock: head-to-head round ' + named.roundIdHex.slice(0, 8) + ' closes in ' + ((Number(named.round.entryCloseMs) - Date.now()) / 1000).toFixed(1) + ' s');
           return;
@@ -4476,12 +4477,11 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             // hidden move's round is locked only while the lock and the entry can still land before the close (H2H_LOCK_LEAD_MS); later, nothing is locked
             const h2hHere = !!(window.ARENA_HIDDEN_CHOSEN && window.ARENA_HIDDEN_CHOSEN.round === named.roundIdHex);
             if (thisJoin && !thisJoin.free && h2hHere && Date.now() > Number(named.round.entryCloseMs) - window.ARENA_H2H_LEAD_MS()) {
-              thisJoin.missed = true;
               console.log('[arena] #1485 no lock: head-to-head round ' + named.roundIdHex.slice(0, 8) + ' closes in ' + ((Number(named.round.entryCloseMs) - Date.now()) / 1000).toFixed(1) + ' s');
               throw new Error('the entry closed before it went in - nothing was locked');
             }
             if (thisJoin && !thisJoin.free && Number.isFinite(lastEntryMs) && Date.now() > lastEntryMs) {
-              thisJoin.missed = true;
+              thisJoin.missed = !h2hHere;   // kanban #1485: a head-to-head order is never retried in another round - its hidden move is this round's
               throw new Error('the entry closed before the deposit arrived');
             }
             if (thisJoin) thisJoin.locking = true;   // from here it holds a lock (busy: finished, never replaced)
@@ -7846,7 +7846,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // move, told the bot "tapped" and set a reveal for a join the page then refused; and a tap on another round while a paid join was locking left
           // that join's hidden move replaced - a stake locked with no hidden entry. Both are refused here first, with nothing changed
           { const row = (window.ARENA_LOBBY_ROWS || []).find((r) => r && r.id === id), left = row ? Number(row.entryCloseMs) - Date.now() : null, j = window.ARENA_JOIN;
-            if (left !== null && left < Number(window.ARENA_ORDER_CUTOFF_MS || 3000)) {
+            // A PAID HEAD-TO-HEAD TAP NEEDS THE ORDER'S WHOLE LEAD (kanban #1485): refused here, before the opponent is told and before anything is dealt or locked
+            const need = row && !row.free && window.ARENA_H2H_LEAD_MS ? window.ARENA_H2H_LEAD_MS() + 1500 : Number(window.ARENA_ORDER_CUTOFF_MS || 3000);
+            if (left !== null && left < need) {
               if (!(j && j.state === 'joining')) window.ARENA_JOIN = { state: 'refused', stage: '', round: id, kindKnown: false, why: 'too late for this round - tap again for the next one' };
               return false; }
             // A TAP WHILE ANOTHER ORDER IS STILL LOCKING IS SAID, NOT DROPPED IN SILENCE (kanban #1391, Daniel 2026-11-10: 50+ s of taps that did nothing)
