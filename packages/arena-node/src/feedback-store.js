@@ -338,7 +338,22 @@ export function openFeedbackStore(path = ':memory:') {
   }
 
   const shotsInUse = () => new Set(db.prepare('SELECT screenshot FROM reports WHERE screenshot IS NOT NULL').all().map((x) => x.screenshot));
-  return { take, mine, move, approve, list, shotsInUse, note, moves, budget, csv, createReward, withdrawRequest, lnurlOf, claim, settle, rewards, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
+  /**
+   * WHETHER A NODE REPORT GETS THE ONE-TIME NODE BOUNTY (kanban #1453, Daniel 2026-11-11: "in der admin page damit ich das sehe dass er 10k kriegt, weil es sein
+   * erstes ticket ist, Tu es vorausfüllen"): by the same rules approve() holds it to - one per node, one per person, the first NODE_BOUNTY_MOST nodes -
+   * read before the admin decides. null for a frontend report. { first, sats, takenBy (the report that holds it for this node or key), full }
+   */
+  function nodeBountyFor(report) {
+    if (!report || (report.source || 'frontend') !== 'node' || !report.node) return null;
+    const held = db.prepare(`SELECT id, pubkey, node, number FROM reports WHERE severity = 'node' AND state IN ('accepted', 'paid')`).all().filter((x) => x.id !== report.id);
+    const self = db.prepare(`SELECT severity, state FROM reports WHERE id = ?`).get(report.id);
+    const taken = held.find((x) => x.node && String(x.node) === String(report.node)) || held.find((x) => x.pubkey === report.pubkey) || null;
+    const mine = !!(self && self.severity === 'node' && (self.state === 'accepted' || self.state === 'paid'));
+    return { first: mine || (!taken && held.length < NODE_BOUNTY_MOST), sats: NODE_BOUNTY_BASE_SATS, held: mine,
+      takenBy: taken ? { id: taken.id, label: feedbackLabel(taken.number), sameNode: !!(taken.node && String(taken.node) === String(report.node)) } : null,
+      full: !mine && !taken && held.length >= NODE_BOUNTY_MOST };
+  }
+  return { take, mine, move, approve, list, shotsInUse, note, moves, budget, csv, nodeBountyFor, createReward, withdrawRequest, lnurlOf, claim, settle, rewards, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
 }
 
 /**

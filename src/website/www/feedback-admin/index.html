@@ -35,6 +35,7 @@
 .nb-tiles{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}.nb-tile{border:1px solid #30363d;border-radius:10px;padding:8px 12px;min-width:110px}.nb-tile b{display:block;font-size:20px}.nb-tile span{font-size:12px;color:#8b949e}.nb-tile.ok{border-color:#2ea04366}.nb-tile.no{border-color:#f8514966}
 .nb-days{display:flex;gap:4px;margin:4px 0 8px}.nb-day{width:18px;height:18px;border-radius:4px;background:#30363d}.nb-day.on{background:#3fb950}
 .nb-badges{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0}.nb-badge{border-radius:999px;padding:3px 10px;font-size:12.5px;border:1px solid #30363d}.nb-badge.ok{color:#3fb950;border-color:#2ea04366}.nb-badge.no{color:#f85149;border-color:#f8514966}
+  .nb-first{margin:10px 0;padding:10px 12px;border-radius:10px;background:rgba(63,185,80,.14);color:#3fb950;font-weight:700}
 </style>
 </head>
 <body>
@@ -117,7 +118,10 @@
         // HOW MUCH AND WHAT (Daniel 2026-11-10: "wieviel runden der spieler gemacht hat und welche apps er genutzt hat")
         r.rounds && r.rounds.rounds ? el('div', { cls: 'dim', text: `${r.rounds.rounds} rounds · ${r.rounds.games.map(([g, n]) => `${g} ${n}`).join(', ')}` }) : null);
       // FRONTEND OR NODE (Daniel 2026-11-07: "in der admin ui wird angezeigt ob es frontend oder node war")
-      const from = el('td', {}, el('span', { cls: `tag ${r.source === 'node' ? 's-accepted' : 's-new'}`, text: r.source === 'node' ? 'node' : 'frontend' }), r.node ? el('div', {}, el('code', { text: `${r.node.slice(0, 10)}…` })) : null);
+      // THE ONE-TIME NODE BOUNTY SEEN IN THE LIST (kanban #1453, Daniel 2026-11-11: "damit ich das sehe dass er 10k kriegt, weil es sein erstes ticket ist")
+      const nbFirst = r.nodeBounty && r.nodeBounty.first && r.state === 'new';
+      const from = el('td', {}, el('span', { cls: `tag ${r.source === 'node' ? 's-accepted' : 's-new'}`, text: r.source === 'node' ? 'node' : 'frontend' }), r.node ? el('div', {}, el('code', { text: `${r.node.slice(0, 10)}…` })) : null,
+        nbFirst ? el('div', {}, el('span', { cls: 'tag s-paid', text: `+${sats(r.nodeBounty.sats)} first node feedback` })) : null);
       const tr = el('tr', { cls: 'pick' }, el('td', {}, el('b', { text: r.label || '' }), el('div', { cls: 'dim', text: when(r.receivedMs) })), from,
         // its number (kanban #1413) heads the first cell; CATEGORY AND STATE are their own cells (Daniel 2026-11-10: "The table is off" - a comment
         // written into this line hid both, so every later cell sat two columns left: the text under State, the player under Game)
@@ -137,6 +141,11 @@
     d.append(el('h2', { text: `${r.label ? `${r.label} · ` : ''}${r.type} · ${r.state}${r.severity ? ` · ${r.severity}` : ''}${r.ticket ? ` · ${r.ticket}` : ''}` }),
       el('div', { cls: 'dim', text: `Received ${when(r.receivedMs)} · from the ${r.source === 'node' ? 'node' : 'frontend'} · game ${r.game || 'none'} · round ${r.round || 'none'} · build ${r.build || 'none'}` }),
       r.node ? el('div', { cls: 'dim' }, el('span', { text: 'Node ' }), el('code', { text: r.node })) : null,
+      // WHY THIS ONE GETS 10,000 SAT, OR WHY NOT (kanban #1453): the one-time node bounty for a new node's first node feedback
+      r.nodeBounty ? el('div', { cls: r.nodeBounty.first ? 'nb-first' : 'warn', text: r.nodeBounty.held ? `This report holds the node's one-time node bounty: ${sats(r.nodeBounty.sats)}.`
+        : r.nodeBounty.first ? `First node feedback of this node: it gets the one-time node bounty of ${sats(r.nodeBounty.sats)}. Level "node" and the amount are filled in below.`
+        : r.nodeBounty.takenBy ? `No node bounty: ${r.nodeBounty.takenBy.sameNode ? 'this node' : 'this person'} already got the one-time ${sats(r.nodeBounty.sats)} (${r.nodeBounty.takenBy.label || r.nodeBounty.takenBy.id.slice(0, 12)}). Rate it at a normal level.`
+        : 'No node bounty: every node bounty is taken. Rate it at a normal level.' }) : null,
       r.rounds ? el('div', { cls: 'dim', text: r.rounds.rounds ? `Played ${r.rounds.rounds} round${r.rounds.rounds === 1 ? '' : 's'} in the last ${r.rounds.days} days: ${r.rounds.games.map(([g, n]) => `${g} ${n}`).join(', ')}` : `No finished round in the last ${r.rounds.days} days` }) : null,
       el('div', { cls: 'dim' }, el('span', { text: 'Player ' }), el('code', { text: r.pubkey }), el('span', { cls: r.ours ? 'warn' : r.played ? '' : 'bad', text: r.ours ? ' · ours, never paid' : r.played ? ' · this key has finished a round before (any game, any time) - so it may be rewarded' : ' · this key never finished a round on the network - no reward' })),
       el('h2', { text: 'What happened' }), el('pre', { text: r.happened }), r.expected ? el('h2', { text: 'Expected' }) : null, r.expected ? el('pre', { text: r.expected }) : null,
@@ -168,7 +177,9 @@
     if (r.reward) d.append(el('div', {}, el('b', { text: `Reward ${sats(r.reward.amountSats)} (${r.reward.network}) · ${r.reward.state}` }), r.reward.lnurl ? el('div', {}, el('code', { text: r.reward.lnurl })) : null));
     const act = async (body, ok) => { let a; try { a = await call('act', { id: r.id, ...body }); } catch (e) { return say(e.message, true); } if (!a.ok) return say(a.why, true); say(ok); await load(); await open(r.id); };
     const amount = el('input', { type: 'number', min: '100', step: '100', placeholder: 'sat', size: '8' });
-    const sev = el('select', {}, ...[...(r.source === 'node' ? ['node'] : []), 'useful', 'low', 'medium', 'high', 'critical'].map((x) => el('option', { text: x })));
+    // "node" first and pre-filled only when this report gets the one-time bounty (kanban #1453); a node report without one starts at a normal level
+    const nodeLevel = r.source === 'node' && (!r.nodeBounty || r.nodeBounty.first);
+    const sev = el('select', {}, ...[...(nodeLevel ? ['node'] : []), 'useful', 'low', 'medium', 'high', 'critical'].map((x) => el('option', { text: x })));
     const crit = el('input', { type: 'checkbox' });
     const fill = () => { const l = LEVELS.find((x) => x.level === sev.value); if (l) amount.value = String(l.sats); };
     sev.addEventListener('change', fill); fill();

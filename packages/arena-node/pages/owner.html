@@ -694,6 +694,7 @@ async function nodeBountyBlock(box, el) {
       '.nb-steps li.no::before{content:"✕";display:grid;place-items:center;font-size:12px;font-weight:800;color:#f85149;border-color:#f85149}',
       '.nb-ready{margin-top:14px;padding:10px 12px;border-radius:10px;font-weight:700;font-size:14px;text-align:center}.nb-ready.ok{background:rgba(63,185,80,.14);color:#3fb950}.nb-ready.no{background:rgba(210,153,34,.14);color:#d29922}',
       '.nb-wait{font-size:13px;opacity:.75;margin-top:12px}',
+      '.nb-once{display:inline-block;margin:4px 0 2px;padding:2px 9px;border-radius:999px;background:#f7931a;color:#0d1117;font-size:12px;font-weight:800;letter-spacing:.02em;text-transform:uppercase}',
       '@media (max-width:520px){.nb-stats{grid-template-columns:repeat(3,1fr);gap:6px}.nb-stat{padding:8px}.nb-stat b{font-size:18px}.nb-amt{font-size:22px}}'].join('');
     document.head.append(st); }
   const amount = Number(j.nodeBaseSats).toLocaleString('en-US');
@@ -701,7 +702,9 @@ async function nodeBountyBlock(box, el) {
   const wrap = el('div', { cls: 'nb' },
     el('div', { cls: 'nb-top' }, el('div', { cls: 'nb-coin', text: '₿' }),
       el('div', {}, el('div', { cls: 'nb-amt' }, el('span', { text: '+' + amount }), el('small', { text: unit })),
-        el('div', { cls: 'nb-line', text: 'Your first node feedback earns ' + amount + ' sats, once.' }),
+        // ONE-TIME, FOR A NEW NODE (kanban #1453, Daniel 2026-11-11: "Mach es in der UI deutlich dass 10000 sats erstmalig ausgezahlt werden" - "für eine neue node")
+        el('div', { cls: 'nb-once', text: 'One-time bonus for a new node' }),
+        el('div', { cls: 'nb-line', text: 'Your node\'s first node feedback earns ' + amount + ' sats. Paid once per node.' }),
         el('div', { cls: 'nb-sub', text: 'Every bug you find after that pays its own reward.' }))),
     wait);
   box.prepend(wrap);
