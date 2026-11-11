@@ -26,6 +26,7 @@ release commit and brings this file up to date with it - new machines added, cha
 11. [State the 2026-11-06 fixes introduced or changed](#11-state-the-2026-11-06-fixes-introduced-or-changed)
 12. [The page, its storage and its frames](#12-the-page-its-storage-and-its-frames)
 13. [State the 2026-11-10 audits (5, 6) introduced or changed](#13-state-the-2026-11-10-audits-5-6-introduced-or-changed)
+15. [State audit 2026-11-12](#15-state-audit-2026-11-12)
 
 ## 1. Rounds and settlement
 
@@ -1502,3 +1503,8 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 - Reserve payout: rows whose round this seat cannot read are `unknown` - taken as a co-signer, never picked as coordinator, never a SHORT while they could cover it (#1409).
 - Donation sets: a network's first set is its founding serial; a set's parent is the last set in force below it (#1407).
 
+## 14. State audit 2026-11-12
+
+#### SM-I4 (change) Auto-update record vs the update journal's resume (kanban #1581, audit #1489 sm1-node-2)
+- Invariant: every rollback of a release on this node is in auto-update.json (`rolledBack: true`, `to` = its VERSION, `commit` = its COMMIT) before the next check reads it - the updater's own (updateOnce), one that threw (#1440), and one the journal's resume made after its updater died (`resumeUpdate`, `resumed: true`; at the service's start through `resumeUnderLock`, or inside `updateNode`). So the #1369 day's wait applies to all of them.
+- `updateNode` with `retryRolledBack: false` (the auto updater, unless `bitcoinarena update` forces it) does not move to the release its own resume rolled back in the same call; it answers rolled back.
