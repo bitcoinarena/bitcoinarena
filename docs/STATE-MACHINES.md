@@ -1542,3 +1542,10 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-C-1 / SM-7 (change) Send attempt N+1: two seats proposing at once meet (kanban #1629)
+- A peer checking another seat's attempt N+1 (`checkResend`, `/resend-sends`) counts as used only the gateways of attempts <= N (`usedGateways(..., upTo)`), both for the next gateway and for the list `sendPlanStands` checks; its own kept PLANNED attempt N+1 is the competitor, not an earlier attempt. So two seats that each kept their own attempt N+1 through the same next gateway reach the #1241 lower-hash replace and end on one hash; before, each refused the other's offer ("no other live gateway") and no attempt N+1 reached the threshold.
+- `proposeResend` picks its gateway by the same bound.
+- A kept attempt N+1 this seat already gave a share on (a `resend` or `auth` pair with a list) is never replaced: a swap after signing cannot strand a funded attempt.
