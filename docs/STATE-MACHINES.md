@@ -1507,3 +1507,8 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 #### SM-19 (change) Faucet book: one JSON file, several writers (kanban #1573)
 
 - Every writer of the book that awaits anything (bitcoind, lncli) applies only its own change to a book read after its last await, in one synchronous step (readBook -> change -> saveBook). `pay()` (POST /faucet) reads the book for its decision, but pushes its `paid` row onto a freshly read copy after `sendtoaddress`; a refill row booked by POST /refill meanwhile, the sweep's keep/drop/rebook/forget decisions and the refill timer's removals stay in the book. Invariant: a paid refill always has its row in `book.refills` (its day cap counts it).
+
+#### SM-19 (change) Faucet book: the installer's POST /faucet (kanban #1572)
+- `pay()` books the address before `sendtoaddress`: a row `{ address, ip, sats, atMs, txid: null, pending: true }` is saved first; a send that answers sets its txid, drops `pending`, and appends the txid to `FAUCET_PENDING`.
+- On a failed send the row is removed only when bitcoind answered with an error (it refused the send) or the wallet's `listtransactions` holds no send to that address; a send found there is booked with its txid; anything else (a timeout, no answer, a crash) keeps the row `pending`.
+- Invariant: no coins go to an address without a row naming it in the book, so an address is paid at most once whatever the RPC or the process does between the send and the book.
