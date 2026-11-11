@@ -45,10 +45,11 @@ test('kept, tallied, approved at more than half, and the chain back to the admin
   assert.equal(b2.approved()[0].validFrom, 202);
 });
 
-test('a proposer outside the set is kept nowhere useful: refused by the tally', async () => {
+test('a proposer outside the set is not kept (kanban #1528)', async () => {
   const db = new DatabaseSync(':memory:');
   const b = createDonationBallots({ db, knownSets: () => [ROOT], verifySecp256k1 });
   const { hex } = prop(9);
-  await b.add('proposal', hex);
-  assert.equal(b.list()[0].state, 'refused');
+  const r = await b.add('proposal', hex);
+  assert.equal(r.ok, false); assert.equal(r.status, 403);
+  assert.equal(b.list().length, 0);
 });
