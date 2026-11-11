@@ -115,7 +115,7 @@
         // Next Block's screen. Only a link to a round (an old Tick Tock link) still starts on Next Block's.
         else if (!g && !/[?&]round=/.test(location.search)) {
           document.documentElement.classList.add('other-game', 'arena-root');
-          window.ARENA_SITE_TITLE = ['Bitcoin Arena', '\u26A1'];
+          window.ARENA_SITE_TITLE = ['Bitcoin Arena', '\u26A1', 'arena-mark-120.webp'];   // THE STADIUM (kanban #1460, Daniel 2026-11-11: "Die Arena auch im Loading screen von testnet")
         }
       } catch (e) { window.ARENA_SITE_GAME = null; }
     })();
@@ -145,6 +145,7 @@
     #site-splash .icons { display: flex; align-items: center; justify-content: center; width: 1.5em; height: 1.5em; flex: none; font-size: 1em; line-height: 1; }
     #site-splash .icons img { width: 100%; height: 100%; object-fit: contain; border-radius: 0.25em; }
     #site-splash .icons:empty { display: none; }
+    html.arena-root #site-splash .icons { width: 2.9em; } html.arena-root #site-splash .icons img { border-radius: 0; }   /* the stadium is wide (#1460) */
     #site-splash .name { line-height: 1.1; }
     html.other-game #bar { width: 30%; transform: translateX(-100%); transition: none; animation: other-load 1.3s ease-in-out infinite; }
     @keyframes other-load { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
