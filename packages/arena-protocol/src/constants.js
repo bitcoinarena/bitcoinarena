@@ -275,11 +275,12 @@ export const chainCensusSumPoint = (network) => {
   return Object.prototype.hasOwnProperty.call(CHAIN_CENSUS_SUM_HEIGHT, n) ? CHAIN_CENSUS_SUM_HEIGHT[n] : null;
 };
 /**
- * THE FIRST CENSUS HEIGHT A SETTLEMENT StallNote COUNTS AT (§5A.3 "Stalled in its rounds", RULED 2026-11-03, kanban #1069). RESULT and FINAL go on with the stall rule at STALL_HEIGHT (stall.js); at a
- * settlement the replay still benches one honest seat for a bug, #1068, so that stage stays off: the code stays, no seat signs such a note and no check counts one. ONE CONSTANT PER NETWORK, as
- * above; a network not named here, or null: never. Mainnet and testnet4: null, named only once #1068 is live and a replay of at least 8 days of new logs benches nobody at the ruled values.
+ * THE FIRST CENSUS HEIGHT A SETTLEMENT StallNote COUNTS AT (§5A.3 "Stalled in its rounds", RULED 2026-11-03, kanban #1069). RESULT and FINAL go on with the stall rule at STALL_HEIGHT (stall.js).
+ * The settlement stage stayed off until a replay of at least 8 days of logs since #1068 benched nobody: the replay of 11-03 to 11-11 over all 15 testnet4 seats, read under the rulings of
+ * 2026-11-11 (#1339, #1448), benches nobody, and the owner named it "ab sofort" (Daniel 2026-11-11): the stage goes on with the stall rule itself, at the same height - mainnet from genesis,
+ * testnet4 at STALL_HEIGHT's point, null until every seat runs the stall rule and that height is named. ONE CONSTANT PER NETWORK, as above; a network not named here, or null: never.
  */
-export const STALL_SETTLEMENT_HEIGHT = Object.freeze({ mainnet: null, testnet4: null, regtest: 0, devnet: 0 });
+export const STALL_SETTLEMENT_HEIGHT = Object.freeze({ mainnet: 0, testnet4: null, regtest: 0, devnet: 0 });
 /** The point of `network` (networkOf's name; 'testnet' is testnet4, as networkAnchor reads it), null on a network that names none. */
 export const stallSettlementPoint = (network) => {
   const n = network === 'testnet' ? 'testnet4' : String(network || '');
