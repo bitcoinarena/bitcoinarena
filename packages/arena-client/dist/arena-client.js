@@ -14441,9 +14441,14 @@ async function attestedClaimKey({ round, signerNodes, nodes, curve, fetcher = fe
   // kept identity (identityAt, asked once in IDENTITY_KEEP_MS) is a node the round did not draw is not asked. Nothing is fetched to decide it,
   // and a URL whose identity is not kept is asked as before, so no signer node is ever left out and the threshold check is unchanged.
   const drawn = new Set((signerNodes || []).map((k) => { try { return toHex(k); } catch { return ''; } }));
+  // A URL NOT YET KNOWN IS ASKED WHO IT IS, BESIDE (measured on page980: the kept identities alone changed nothing - the page had asked no
+  // /identity yet while it waited for its key, 632 refusals against 620): its identity is read in the background, not waited for, so this ask
+  // goes to it as before and the next poll (awaitAttestedClaimKey, every second) leaves it out if the round did not draw it.
   const asked = (nodes || []).filter((node) => {
-    const kept = IDENTITIES.get(String(node).replace(/\/+$/, ''));
-    return !(drawn.size && kept && Date.now() - kept.at < IDENTITY_KEEP_MS && !drawn.has(kept.key));
+    const base = String(node).replace(/\/+$/, '');
+    const kept = IDENTITIES.get(base);
+    if (!kept || Date.now() - kept.at >= IDENTITY_KEEP_MS) { if (drawn.size) identityAt(fetcher, base).catch(() => {}); return true; }
+    return !(drawn.size && !drawn.has(kept.key));
   });
   const early = await new Promise((resolve) => {
     let left = asked.length;

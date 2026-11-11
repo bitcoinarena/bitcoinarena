@@ -18,7 +18,7 @@ test('the claim key is asked only of URLs that are the round\'s signer nodes, or
     const u = String(url);
     const base = Object.keys(ids).find((b) => u.startsWith(b + '/identity'));
     if (base) return new Response(ids[base], { status: 200 });
-    asked.push(u.split('/claim-key')[0]);
+    if (u.includes('/claim-key')) asked.push(u.split('/claim-key')[0]);
     return new Response('this node is not assigned to that round', { status: 409 });
   };
   for (const b of Object.keys(ids)) await identityAt(fetcher, b);
@@ -30,13 +30,24 @@ test('the claim key is asked only of URLs that are the round\'s signer nodes, or
   forgetIdentities();
 });
 
-test('with no kept identities every URL is asked, as before (#1391)', async () => {
+test('with no kept identities every URL is asked once, and who each is is read beside it, so the next ask leaves out the seats not drawn (#1391)', async () => {
   forgetIdentities();
-  const asked = [];
-  const fetcher = async (url) => { asked.push(String(url).split('/claim-key')[0]); return new Response('no', { status: 409 }); };
-  await attestedClaimKey({ round: { id: key(9), settlementSlots: 2 }, signerNodes: [key(1), key(2)], nodes: ['https://a', 'https://b', 'https://c'],
+  const ids = { 'https://a': key(1), 'https://b': key(2), 'https://c': key(3) };
+  let asked = [];
+  const fetcher = async (url) => {
+    const u = String(url);
+    const base = Object.keys(ids).find((x) => u.startsWith(x + '/identity'));
+    if (base) return new Response(ids[base], { status: 200 });
+    if (u.includes('/claim-key')) asked.push(u.split('/claim-key')[0]); return new Response('no', { status: 409 });
+  };
+  const ask = () => attestedClaimKey({ round: { id: key(9), settlementSlots: 2 }, signerNodes: [key(1), key(2)], nodes: Object.keys(ids),
     curve: { verify: () => false }, fetcher, timeoutMs: 2000 });
-  assert.equal(asked.length >= 3, true);
-  assert.deepEqual([...new Set(asked)].sort(), ['https://a', 'https://b', 'https://c']);
+  await ask();
+  assert.deepEqual([...new Set(asked)].sort(), ['https://a', 'https://b', 'https://c'], 'the first ask goes to every URL: nobody is known yet');
+  await new Promise((r) => setTimeout(r, 20));   // the identities, read beside the first ask
+  asked = [];
+  await ask();
+  assert.deepEqual([...new Set(asked)].sort(), ['https://a', 'https://b'], 'the next ask leaves out c, which the round did not draw');
+  forgetIdentities();
   void hex;
 });
