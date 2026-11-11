@@ -2798,6 +2798,10 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
   const base = (n) => String(n).replace(/\/+$/, '');
   const skipOf = (s) => new Set(((knownBySeed && knownBySeed.get(toHex(s))) || (list.length === 1 ? known : [])).map((h) => String(h).toLowerCase()));
   const skips = list.map(skipOf);
+  // ONE SEAT'S WORD COSTS THE PAGE NO UNBOUNDED WORK (kanban #1489): every listed id costs ORDER_SCAN + 1 key derivations per kept
+  // phrase on the page's thread - one seat answering /settled with 3000 made-up ids froze the page 16.7 s at every load (99,033
+  // derivations). Now a seat's list is taken newest first up to OWED_SETTLED_MAX ids (a seat answers at most 500, round.js settledSince),
+  // each id once, and OWED_KEYS_PER_ROUND keys of a round: one seat costs the page at most OWED_SETTLED_MAX x (ORDER_SCAN + 1) a phrase.
   const listed = new Map();
   // EVERY SIGNER NODE AT ONCE, EACH WITHIN SEAT_READ_MS (kanban #1489): read one after another with no timeout, one seat that took
   // the request and never answered stalled the scan for good - a winner whose tab closed was never shown what the honest seats list.
@@ -2808,15 +2812,21 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
     return r.ok ? r.json() : null;
   })));
   for (const got of lists) {
-    // AT MOST OWED_LIST_MAX ROUNDS FROM ONE SEAT (kanban #1489): a seat answers at most 500 (round.js settledSince); every round
-    // listed costs ORDER_SCAN + 1 key derivations per phrase, so one seat listing thousands of made-up ids burned the page's thread
-    const rounds = got && Array.isArray(got.rounds) ? got.rounds.slice(0, OWED_LIST_MAX) : [];
-    for (const x of rounds) {
+    // AT MOST OWED_SETTLED_MAX ROUNDS FROM ONE SEAT, NEWEST FIRST, EACH ONCE (kanban #1489)
+    const all = got && Array.isArray(got.rounds) ? got.rounds.filter((x) => x && typeof x === 'object') : null;
+    if (!all) continue;
+    const cap = Math.min(OWED_SETTLED_MAX, OWED_LIST_MAX);
+    const newest = all.length > cap
+      ? all.map((x, i) => ({ x, i, ms: Number(x.madeMs) || 0 })).sort((a, b) => (b.ms - a.ms) || (b.i - a.i)).slice(0, cap).map((y) => y.x)
+      : all;
+    const seen = new Set();
+    for (const x of newest) {
       const id = String(x.id || '').toLowerCase();
-      if (!/^[0-9a-f]{64}$/.test(id)) continue;
+      if (!/^[0-9a-f]{64}$/.test(id) || seen.has(id)) continue;
+      seen.add(id);
       const l = listed.get(id) || { payouts: new Set(), refunds: new Set() };
-      for (const k of x.payouts || []) l.payouts.add(String(k).toLowerCase());
-      for (const k of x.refunds || []) l.refunds.add(String(k).toLowerCase());
+      for (const k of (Array.isArray(x.payouts) ? x.payouts : []).slice(0, OWED_KEYS_PER_ROUND)) l.payouts.add(String(k).toLowerCase());
+      for (const k of (Array.isArray(x.refunds) ? x.refunds : []).slice(0, OWED_KEYS_PER_ROUND)) l.refunds.add(String(k).toLowerCase());
       listed.set(id, l);
     }
   }
@@ -2871,6 +2881,8 @@ const OWED_ROUNDS = new Map();   // round id -> its contract, read and checked o
 export const forgetOwedRounds = () => OWED_ROUNDS.clear();
 // how many orders of one market round the seed scan reads keys for (orders 0 ... ORDER_SCAN)
 export const ORDER_SCAN = 32;
+// how many rounds of one seat's /settled one owed scan derives keys for (newest first), and keys of one round it takes from one seat (kanban #1489)
+export const OWED_SETTLED_MAX = 500, OWED_KEYS_PER_ROUND = 4096;
 
 /**
  * THE ROUND'S FEDERATION WALLET IN THIS TAB - the one the payout and the stake were
