@@ -271,7 +271,12 @@ export function openFeedbackStore(path = ':memory:') {
    * failed: true } (a payment that surely did not go) | { ok: false } (not known): only a sure failure opens the link again; an unknown stays
    * paying, for settle() to read. Answers LUD-03's { status: 'OK' } or { status: 'ERROR', reason }.
    */
-  async function claim(k1, invoice, { decode, pay, nowMs = Date.now() } = {}) {
+  // THE ADDRESS IS WRITTEN WITH THE PAYMENT IT NAMES (kanban #1575, state audit 2026-11-12, SM-22): `address` was set by payToAddress before claim()'s
+  // compare-and-set and stayed when that payment surely failed and the link opened again; the player's own wallet then claimed the link and the paid row
+  // named an address that got nothing. Now the address goes into the same UPDATE that takes the row to paying, for that invoice only: a claim through the
+  // withdraw link (the LNURL callback) writes NULL, and a payment that surely failed clears it as it opens the link again.
+  const claim = (k1, invoice, opts = {}) => claimFor(k1, invoice, opts, null);
+  async function claimFor(k1, invoice, { decode, pay, nowMs = Date.now() } = {}, address = null) {
     const w = rewardOf.get(String(k1));
     if (!w) return { status: 'ERROR', reason: 'no such reward' };
     if (w.state !== 'open') return { status: 'ERROR', reason: w.state === 'paid' ? 'this reward was claimed' : w.state === 'void' ? 'this reward was withdrawn: its report is not approved' : 'this reward is being paid' };
@@ -280,12 +285,12 @@ export function openFeedbackStore(path = ':memory:') {
     try { d = await decode(String(invoice || '')); } catch { d = { ok: false }; }
     if (!d || !d.ok) return { status: 'ERROR', reason: 'that invoice could not be read' };
     if (Number(d.amountSats) !== w.amount_sats) return { status: 'ERROR', reason: `the invoice must be for exactly ${w.amount_sats} sat` };
-    const took = db.prepare("UPDATE rewards SET state = 'paying', invoice = ?, payment_hash = ?, tried_ms = ? WHERE k1 = ? AND state = 'open'").run(String(invoice), d.paymentHash || null, nowMs, w.k1);
+    const took = db.prepare("UPDATE rewards SET state = 'paying', invoice = ?, payment_hash = ?, tried_ms = ?, address = ? WHERE k1 = ? AND state = 'open'").run(String(invoice), d.paymentHash || null, nowMs, address, w.k1);
     if (took.changes !== 1) return { status: 'ERROR', reason: 'this reward is being paid' };
     let p;
     try { p = await pay(String(invoice), d.amountSats); } catch (e) { p = { ok: false, why: e.message }; }   // the amount bounds the routing fee (kanban #1450)
     if (p && p.ok) { paidNow(w, p.paymentHash || d.paymentHash, nowMs); return { status: 'OK' }; }
-    if (p && p.failed) { db.prepare("UPDATE rewards SET state = 'open', why = ? WHERE k1 = ? AND state = 'paying'").run(String(p.why || 'the payment failed'), w.k1); return { status: 'ERROR', reason: 'the payment failed: try again' }; }
+    if (p && p.failed) { db.prepare("UPDATE rewards SET state = 'open', address = NULL, why = ? WHERE k1 = ? AND state = 'paying'").run(String(p.why || 'the payment failed'), w.k1); return { status: 'ERROR', reason: 'the payment failed: try again' }; }
     db.prepare("UPDATE rewards SET why = ? WHERE k1 = ?").run(String((p && p.why) || 'the payment\'s outcome is not known yet'), w.k1);
     return { status: 'ERROR', reason: 'the payment is not settled yet: it is checked again, do not claim twice' };
   }
@@ -310,7 +315,7 @@ export function openFeedbackStore(path = ':memory:') {
       let st = 'unknown';
       try { st = w.payment_hash ? await status(w.payment_hash) : 'unknown'; } catch { st = 'unknown'; }
       if (st === 'paid') paidNow(w, w.payment_hash, nowMs);
-      else if (st === 'failed') db.prepare("UPDATE rewards SET state = 'open', why = 'the payment failed' WHERE k1 = ? AND state = 'paying'").run(w.k1);
+      else if (st === 'failed') db.prepare("UPDATE rewards SET state = 'open', address = NULL, why = 'the payment failed' WHERE k1 = ? AND state = 'paying'").run(w.k1);
       out.push({ k1: w.k1, status: st });
     }
     return out;
@@ -338,8 +343,7 @@ export function openFeedbackStore(path = ':memory:') {
     if (!address) return { ok: false, why: 'the report names no Lightning address: send its withdraw link instead' };
     let inv; try { inv = await invoiceFor(address, w.amount_sats, w.comment || ''); } catch (e) { inv = { ok: false, why: e.message }; }
     if (!inv || !inv.ok) return { ok: false, why: `the address gave no invoice: ${(inv && inv.why) || 'no answer'}` };
-    db.prepare("UPDATE rewards SET address = ? WHERE k1 = ? AND state = 'open'").run(address, w.k1);
-    const r = await claim(w.k1, inv.invoice, { decode, pay, nowMs });
+    const r = await claimFor(w.k1, inv.invoice, { decode, pay, nowMs }, address);   // the address is written with its invoice's paying CAS (kanban #1575)
     return r.status === 'OK' ? { ok: true, status: 'paid', address, reward: rewardRow(rewardOf.get(w.k1)) } : { ok: false, why: r.reason, address, reward: rewardRow(rewardOf.get(w.k1)) };
   }
   const rewards = ({ pubkey = null } = {}) => (pubkey ? db.prepare('SELECT * FROM rewards WHERE pubkey = ? ORDER BY created_ms DESC').all(String(pubkey))

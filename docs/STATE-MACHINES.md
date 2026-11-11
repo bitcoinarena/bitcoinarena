@@ -1542,3 +1542,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-22 (add) Feedback reward link: the `address` column (#1575)
+- `address` is written only in the compare-and-set that takes the row open -> paying, together with that payment's invoice: payToAddress passes the report's Lightning address, a claim through the withdraw link (LNURL callback) writes NULL. paying -> open (a sure failure, or `settle` reading failed) clears it. Invariant: a `paid` reward names an address only when the invoice it paid came from that address.
