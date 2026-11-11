@@ -1542,3 +1542,10 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-E (change) Refused-lock return of a lock /lock refused (server.js POST /refused-lock, kanban #1582)
+- "The player entered the round here" now means an entry of that player whose stake this seat saw or whose stake lock it holds (round.js `seatedEntriesOf`'s rule), not any entry it holds: the /entry door takes an entry before any lock (#1437), and a lock /lock refused for it (head-to-head full, another entry of the key staked, a lock after close) is never counted or settled by the round.
+- Invariant: a stake lock every seat refused at /lock for an entry they hold is kept at /refused-lock once the entries closed and `unenteredGraceMs` passed, and its forfeit by handout id returns it before its expiry. A lock a seat verified (`stakeLockAt`) is still never kept as refused there, so the seats that settle it and the seats that return it stay disjoint.
+- Not covered: a fee lock verified before its stake lock was refused stays a verified fee lock (`feeLockAt`) and only expires.
