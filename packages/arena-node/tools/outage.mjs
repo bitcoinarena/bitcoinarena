@@ -33,7 +33,7 @@ import { awaitAttestedClaimKey, stakeFor, postHandout, entryFor, playerFor, fetc
 import { lockStake, fundPlayerWallet, handLock, redeemStake, forfeitOf } from '../../arena-client/src/page-lock.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
 import { encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { GENESIS } from '../../arena-protocol/src/transcript.js';
 import { seedWordForEntry } from '../../arena-protocol/src/seed.js';
@@ -138,7 +138,7 @@ try {
   const m2 = { roundId: rid, entryId: eid, tick: PAST, stateHash: hex32(st), inputChainHash: batchId(b2), previousHash: checkpointId(m1), sessionPubkey: ed25519.getPublicKey(session) };
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
   const A = round.nodes[0];
-  const saidA = [await ws(A, encodeInputBatch(b1)), (await ws(A, sign(m1))).length, await ws(A, encodeInputBatch(b2)), (await ws(A, sign(m2))).length];
+  const saidA = [await ws(A, signedBatchOf(b1, (id) => ed25519.sign(id, session))), (await ws(A, sign(m1))).length, await ws(A, signedBatchOf(b2, (id) => ed25519.sign(id, session))), (await ws(A, sign(m2))).length];
   let atA = { status: 404 };
   for (let t = Date.now(); Date.now() - t < 20000 && atA.outcome !== 'ENTRY_VOID'; await wait(500)) atA = await entryVoidAt(A, eid);
   say({ step: 'B down, the player plays at A', saidA, atA: { outcome: atA.outcome || atA.status, evidenceKind: atA.evidenceKind,

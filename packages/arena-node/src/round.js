@@ -15,7 +15,7 @@ import { createInterner } from './intern.js';
 import {
   encodeRoundContract, roundId, encodeEntryContract, entryId, decodeEntryContract,
   decodeRoundContract, roundWindowsAreValid, lastTickOfRun, sittingSeatsFitTheSlots } from '../../arena-protocol/src/contracts.js';
-import { decodeInputBatch, batchTicks, batchId } from '../../arena-protocol/src/batch.js';
+import { decodeInputBatch, batchTicks, batchId, splitSignedBatch } from '../../arena-protocol/src/batch.js';
 import { checkBatchPrices } from '../../arena-protocol/src/price-sample.js';
 import { LATE_JOIN_LAST_ENTRY_MS, entryItemDigest } from '../../arena-protocol/src/contracts.js';
 /** How long after a round's entry close an entry new to a seat is still taken (kanban #1216). */
@@ -40,6 +40,7 @@ import { entryFeeBpsForRound, entryPaysReserves, roundSplit, RESERVES_NODE_FEE_B
 import { itemOf } from '../../arena-protocol/src/items.js';
 import { itemPurchaseKept } from './item-purchase-seat.js';
 import { readTranscript } from './transcript-read.js';
+import { loadsRefusal } from './load-checks.js';
 // 27A.7's node fee. The rate lives in one place and `genesis.js` writes it into
 // the genesis parameters, so a round naming a config has committed to it.
 import { feeMatchesEntry, feeBpsOf, entryFeeBpsOf, donationInFee, donationBpsOf, NODE_FEE_BPS } from '../../arena-protocol/src/fee.js';
@@ -841,6 +842,61 @@ export class Round {
   }
 
   /**
+   * A PLAYER'S BATCH, SIGNED (kanban #1503, feedback #012 by Hexbox Tools): the only door a batch from outside comes in
+   * by. The signature is over the batch's id under the SESSION key of the entry it names - read off the Entry Contract
+   * this node stores, never off the frame - and it is checked before anything else, so a batch for somebody else's entry
+   * never reaches the chain rule (measured before: an anonymous socket stored 120 ticks and a load as the victim, the
+   * victim's own next batch no longer followed the chain head and its mark was refused - FORFEIT). Then `batch` as ever,
+   * on the bare batch's bytes: what is stored, chained and served is unchanged.
+   */
+  signedBatch(bytes) {
+    const { body, batch: b, id, signature } = splitSignedBatch(bytes);
+    if (!this.get(b.roundId)) throw new Error('no such round');
+    const contract = this.entry(b.entryId);
+    if (!contract) throw new Error('no such entry');
+    const sessionPubkey = decodeEntryContract(contract).sessionPubkey;
+    let ok = false;
+    try { ok = ed25519.verify(signature, id, sessionPubkey); } catch { ok = false; }
+    if (!ok) throw new Error('the batch\'s signature does not verify under the entry\'s session key');
+    return this.batch(body);
+  }
+
+  /**
+   * THE BATCHES A SIGNED MARK ENDORSES (kanban #1503): a first mark handed on by another seat (/first-mark) carries the
+   * batches it commits to, bare - a seat stores no player signatures over them. They are taken only when the mark's
+   * own signature verifies under its entry's session key and the batches are exactly that entry's chain from genesis
+   * to the mark's inputChainHash: then the player signed them, through the mark. Anything else stores nothing.
+   * Answers { ok, why } and stores the batches through `batch` when ok.
+   */
+  batchesEndorsedBy(markBytes, batchBytes) {
+    let c; let signature;
+    try { const s = splitSigned(markBytes); signature = s.signature; c = decodeCheckpoint(s.body); }
+    catch (e) { return { ok: false, why: `that is not a signed mark: ${e.message}` }; }
+    const contract = this.entry(c.entryId);
+    if (!contract) return { ok: false, why: 'no such entry' };
+    const e = decodeEntryContract(contract);
+    if (!same(e.roundId, c.roundId)) return { ok: false, why: 'entry is not in this round' };
+    let ok = false;
+    try { ok = ed25519.verify(signature, checkpointId(c), e.sessionPubkey); } catch { ok = false; }
+    if (!ok) return { ok: false, why: 'the mark\'s signature does not verify under the entry\'s session key' };
+    if (!batchBytes.length) return { ok: true, taken: 0 };
+    let prev = GENESIS;
+    const bodies = [];
+    for (const raw of batchBytes) {
+      let b;
+      try { b = decodeInputBatch(raw); } catch (x) { return { ok: false, why: `a batch will not decode: ${x.message}` }; }
+      if (!same(b.entryId, c.entryId) || !same(b.roundId, c.roundId)) return { ok: false, why: 'a batch handed on with the mark is not the mark\'s entry\'s' };
+      if (!same(b.previousHash, prev)) return { ok: false, why: 'the batches handed on with the mark are not one chain from its start' };
+      prev = batchId(b);
+      bodies.push(raw);
+    }
+    if (!same(prev, c.inputChainHash)) return { ok: false, why: 'the batches handed on with the mark do not end at its input chain hash' };
+    let taken = 0;
+    for (const raw of bodies) { try { this.batch(raw); taken++; } catch { /* held already, or refused: the mark says which */ } }
+    return { ok: true, taken };
+  }
+
+  /**
    * Takes a batch. Returns how many ticks were new.
    *
    * A repeat writes nothing and is not an error: the player has no way to know
@@ -949,6 +1005,16 @@ export class Round {
       const next = this.nextTick(b.roundId, b.entryId);
       if (at[0] !== next)
         throw new Error(`expected tick ${next}, got ${at[0]}`);
+    }
+
+    // AND THE LOAD IS ONE AN HONEST BED COULD HAVE DECLARED (kanban #1488): a room the parcels make, a fee for each of
+    // them, no more than 20 BTC, at a tick this batch carries and before the truck was ever driven (load-checks.js).
+    // A repeat of the head was checked when it first came.
+    if (!seen && b.loads && b.loads.length) {
+      const why = loadsRefusal(b, at, () => !!this.db.prepare(
+        'SELECT 1 FROM ticks WHERE round_id = ? AND entry_id = ? AND substr(words, 1, 16) != zeroblob(16) LIMIT 1')
+        .get(b.roundId, b.entryId));
+      if (why) throw new Error(why);
     }
 
     // ONE COMMIT FOR THE WHOLE BATCH, not one per row (2026-09-17 19:15, the ghost lag). Every `run` outside a

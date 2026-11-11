@@ -159,9 +159,9 @@ import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js'
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
 import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } from './send-plan-ask.js';
 import { objectionWindowAllowed } from '../../arena-protocol/src/constants.js';   // kanban #1398
-import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION } from '../../arena-protocol/src/constants.js';
+import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, TYPE_SIGNED_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
-import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
+import { MAX_SIGNED_INPUT_BATCH_BYTES, decodeInputBatch, splitSignedBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
 import { TYPE_CHECKPOINT_RECEIPT } from '../../arena-protocol/src/constants.js';
 import { bearsAuthority } from '../../arena-protocol/src/frames.js';
@@ -194,7 +194,7 @@ import { SIGNED_RESULT_BYTES, resultId, decodePlayerResult, splitSignedResult } 
  * decision rather than a measurement, so it is not made here.
  */
 export const MAX_FRAME_BYTES = Math.max(
-  MAX_INPUT_BATCH_BYTES, SIGNED_CHECKPOINT_BYTES, SIGNED_RECEIPT_BYTES);
+  MAX_SIGNED_INPUT_BATCH_BYTES, SIGNED_CHECKPOINT_BYTES, SIGNED_RECEIPT_BYTES);
 import { CLOSED } from './store.js';
 import { Round } from './round.js';
 import { Verifier } from './verify.js';
@@ -7645,6 +7645,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         catch (e) { return answer(400, { why: `that is not a signed mark: ${e.message}` }); }
         if (!c.previousHash.every((x) => x === 0)) return answer(400, { why: 'only a first mark is handed on' });
         if (!round.entry(c.entryId)) return answer(404, { why: 'this signer node holds no such entry' });
+        // THE MARK'S SIGNATURE BEFORE ANYTHING ELSE (kanban #1503, feedback #012 by Hexbox Tools): the batches handed with
+        // it were stored first and unchecked, each naming its own entry, so a mark with a bad signature for a decoy entry
+        // carried forged batches into any other entry and was 409'd only after they were stored. Now a mark that does not
+        // verify under its entry's session key stores nothing and is answered here; the batches are taken further down
+        // only as the chain that mark endorses (round.batchesEndorsedBy).
+        const markSigned = round.batchesEndorsedBy(bytes, []);
+        if (!markSigned.ok) return answer(409, { why: markSigned.why });
+        let handed;
+        try { handed = (Array.isArray(got.batches) ? got.batches : []).map((b) => fromHex(String(b))); }
+        catch { return answer(400, { why: 'the batches handed on are not hex' }); }
         let seen;
         try { seen = await stakeSeen(c.entryId); } catch (e) { seen = { ok: false, why: e.message }; }
         // A SIGNER NODE THAT IS UP AND REFUSES keeps what it refused (M3.3-34): the
@@ -7670,9 +7680,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (v) return answer(409, { entryVoid: true, why: v.why });
           } else if (got.entryVoid) return answer(409, { why: 'that ENTRY_VOID claim does not verify at this signer node' });
         }
-        for (const b of Array.isArray(got.batches) ? got.batches : []) {
-          try { round.batch(fromHex(String(b))); } catch { /* held already, or refused: the mark says which */ }
-        }
+        // ONLY THE BATCHES THE MARK ENDORSES (kanban #1503): its entry's chain from its start to the mark's input chain hash,
+        // every one or none - a batch naming another entry, or a chain the mark does not end on, stores nothing.
+        const endorsed = round.batchesEndorsedBy(bytes, handed);
+        if (!endorsed.ok) return answer(409, { why: endorsed.why });
         let receipt;
         try { receipt = round.checkpoint(bytes); }
         catch (e) {
@@ -11302,8 +11313,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // rather than a shape.
         const stands = timed('frame authority', () => bearsAuthority(bytes, 'an input'), { over: 20 });
         if (!stands.ok) return sock.send('error ' + stands.why);
+        // A BATCH IS TAKEN ONLY SIGNED BY ITS ENTRY'S SESSION KEY (kanban #1503, feedback #012 by Hexbox Tools): an unsigned
+        // one let anybody who knew a public entry id write ticks and a load into that entry - the victim's own batch was
+        // then refused at the chain head, its mark refused, the run FORFEIT, and /replay/transcript served the forged load.
+        if (bytes[0] === TYPE_INPUT_BATCH)
+          return sock.send('error an input batch is taken only signed by its entry\'s session key (a signed input batch frame)');
+        if (bytes[0] !== TYPE_SIGNED_INPUT_BATCH) return sock.send('error that frame is not an input this door takes');
 
-        const took = timed('batch stored', () => round.batch(bytes), { over: 20 });
+        const took = timed('batch stored', () => round.signedBatch(bytes), { over: 20 });
         timed('frame answered', () => sock.send(String(took)), { over: 20 });
 
         // A NEW TICK IS A NEW PICTURE. The batch that just landed moved
@@ -11312,7 +11329,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // itself, because `interestSet` drops the viewer by id.
         if (took > 0) {
           try {
-            const landed = decodeInputBatch(bytes);
+            const landed = splitSignedBatch(bytes).batch;
             showSoon(landed.roundId, landed.entryId);
           } catch (e) { console.error(`[ghosts] ${e.message}`); }
         }
@@ -11336,6 +11353,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try {
         if (bytes[0] === TYPE_CHECKPOINT) return decodeCheckpoint(splitSigned(bytes).body).entryId;
         if (bytes[0] === TYPE_INPUT_BATCH) return decodeInputBatch(bytes).entryId;
+        if (bytes[0] === TYPE_SIGNED_INPUT_BATCH) return splitSignedBatch(bytes).batch.entryId;
       } catch { /* the handler names what is wrong with it */ }
       return null;
     };

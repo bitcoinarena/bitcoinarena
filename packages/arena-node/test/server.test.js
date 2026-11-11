@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { serve, MAX_FRAME_BYTES } from '../src/server.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
-import { encodeInputBatch, batchId, MAX_INPUT_BATCH_BYTES } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, signedBatchOf, batchId, MAX_INPUT_BATCH_BYTES } from '../../arena-protocol/src/batch.js';
 import {
   encodeCheckpoint, decodeCheckpoint, checkpointId, NO_PREVIOUS,
   joinSigned, splitSigned, SIGNED_CHECKPOINT_BYTES, CHECKPOINT_BYTES,
@@ -110,7 +110,7 @@ test('a round is opened, joined, played and closed by one process', async () => 
         ticks: Array.from({ length: n }, (_, i) => [65536, first + i, 0, 0, 0]),
         liquidations: first === 0 ? [[1, 3 * 65536]] : [],
       };
-      return { bytes: encodeInputBatch(b), id: batchId(b) };
+      return { bytes: signedBatchOf(b, (id) => ed25519.sign(id, session)), id: batchId(b) };
     };
 
     const one = batch(0, 60);
@@ -177,7 +177,7 @@ test('checkpoints cross the wire, and the refusals cross it too', async () => {
       ticks: Array.from({ length: 200 }, (_, i) => [65536, i, 0, 0, 0]),
       liquidations: [],
     };
-    assert.equal(await sock.say(encodeInputBatch(b)), '200', 'the batch landed');
+    assert.equal(await sock.say(signedBatchOf(b, (id) => ed25519.sign(id, session))), '200', 'the batch landed');
     const inputs = batchId(b);
 
     const mark = (tick, state, previousHash) => ({
@@ -310,7 +310,7 @@ test('a batch longer than the round it belongs to is refused by name', async () 
       ticks: Array.from({ length: c.blockTicks + 1 }, (_, i) => [65536, i, 0, 0, 0]),
       liquidations: [],
     };
-    assert.match(await sock.say(encodeInputBatch(tooLong)),
+    assert.match(await sock.say(signedBatchOf(tooLong, (id) => ed25519.sign(id, session))),
       new RegExp(`a batch carries at most the round's ${c.blockTicks} ticks, got ${c.blockTicks + 1}`));
 
     // and the round is untouched by the refusal

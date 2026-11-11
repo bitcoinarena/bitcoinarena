@@ -25,7 +25,8 @@ import { serve, GHOST_BACKLOG_BYTES } from '../src/server.js';
 import { Ghosts } from '../src/ghosts.js';
 import { Round } from '../src/round.js';
 import { encodeRoundContract, encodeEntryContract, entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { decodeGhost, ghostBinds, GHOST_BYTES } from '../../arena-protocol/src/ghost.js';
 import { GENESIS, decodeTranscript } from '../../arena-protocol/src/transcript.js';
 import { seedWordForEntry } from '../../arena-protocol/src/seed.js';
@@ -50,8 +51,10 @@ const contract = (stakeMsat = 0n) => ({
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes: [b32(4)],
 });
+// each player's session key (kanban #1503: a batch is taken only signed by it)
+const sessionOf = (n) => new Uint8Array(32).fill(n + 1);
 const entryFor = (rid, n, stakeMsat = 0n) => ({
-  roundId: rid, playerPubkey: b32(n), sessionPubkey: b32(n + 1), stakeCommitment: b32(7),
+  roundId: rid, playerPubkey: b32(n), sessionPubkey: ed25519.getPublicKey(sessionOf(n)), stakeCommitment: b32(7),
   stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x50 + n), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
 });
 
@@ -125,7 +128,7 @@ async function twoIdentities(node, stakeMsat = 0n) {
       roundId: rid, entryId: eid, previousHash, firstTick: first,
       ticks: Array.from({ length: count }, (_, i) => words(first + i)), liquidations: [],
     };
-    return { bytes: encodeInputBatch(batch), id: batchId(batch) };
+    return { bytes: signedBatchOf(batch, (id) => ed25519.sign(id, sessionOf(n))), id: batchId(batch) };
   };
   return { rid, a, b, eidA, eidB, batchOf, joins: [joinA, joinB] };
 }

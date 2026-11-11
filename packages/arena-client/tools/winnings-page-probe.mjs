@@ -53,7 +53,7 @@ import { lockFromClient } from '../src/lock-result.js';
 import { encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { init, step } from '../../nextblock/src/sim.js';
 import { CORE } from '../../nextblock/src/adapter.js';
@@ -275,9 +275,9 @@ try {
     const l = await realFetch(`${base}/lock?entry=${toHex(lEid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(lk.fields)) });
     if (feeFields) await realFetch(`${base}/fee-lock?entry=${toHex(lEid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFields)) });
     lSaid.push([j.status, l.status, j.status === 201 ? '' : (await j.text()).trim().slice(0, 160), l.status === 201 ? '' : (await l.text()).trim().slice(0, 200)]);
-    await tell(d.port, encodeInputBatch(b1));
+    await tell(d.port, signedBatchOf(b1, (id) => ed25519.sign(id, session)));
     await tell(d.port, signedMark60);
-    await tell(d.port, encodeInputBatch(input));
+    await tell(d.port, signedBatchOf(input, (id) => ed25519.sign(id, session)));
     await tell(d.port, signedMark);
   }
   say_({ step: 'loser played', entry: toHex(lEid).slice(0, 16), said: lSaid });

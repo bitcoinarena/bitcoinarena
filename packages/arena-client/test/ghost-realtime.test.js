@@ -24,7 +24,7 @@ import { openStore } from '../../arena-node/src/store.js';
 import { serve } from '../../arena-node/src/server.js';
 import { Client } from '../src/client.js';
 import { watchGhosts, GHOST_BACKLOG, playersLine, newestPose } from '../../nextblock/page/ghost-field.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { GENESIS } from '../../arena-protocol/src/transcript.js';
 import { encodeEntryContract, entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../arena-protocol/src/constants.js';
@@ -42,6 +42,8 @@ const core = require('../../nextblock/dist/blwp-core.js');
 const b32 = (n) => new Uint8Array(32).fill(n);
 const session = ed25519.utils.randomSecretKey();
 const sign = (id) => ed25519.sign(id, session);
+// THE OTHER PLAYER'S SESSION KEY (kanban #1503): its batches are taken only signed by it
+const theirSession = new Uint8Array(32).fill(10);
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const BEACON = b32(0xbe);
@@ -80,7 +82,7 @@ async function rig() {
   // THE OTHER PLAYER, driven straight through the daemon's door: this file is
   // about what the PAGE does with what arrives.
   const theirs = {
-    ...mine, playerPubkey: b32(9), sessionPubkey: b32(10), worldSecret: b32(0x59), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
+    ...mine, playerPubkey: b32(9), sessionPubkey: ed25519.getPublicKey(theirSession), worldSecret: b32(0x59), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(theirs) });
   assumeStakeSeen(node.round, theirs);
@@ -114,7 +116,7 @@ test('a watcher is shown the driver\'s newest published tick, ten pictures a sec
     const t0 = Date.now();
     while (Date.now() - t0 < SECONDS * 1000) {
       const batch = { roundId: rid, entryId: theirEid, previousHash: head, firstTick: tick, ticks: Array.from({ length: 6 }, (_, i) => words(9)(tick + i)), liquidations: [] };
-      sock.send(encodeInputBatch(batch));
+      sock.send(signedBatchOf(batch, (id) => ed25519.sign(id, theirSession)));
       head = batchId(batch); tick += 6; sentAt.push([Date.now(), tick - 1]);
       const w = t0 + (tick / 6) * 100 - Date.now(); if (w > 0) await wait(w);
     }
@@ -141,7 +143,7 @@ test('a truck that drove before anybody watched is pictured at its newest tick, 
     let head = GENESIS, tick = 0;
     for (let n = 0; n < 20; n++) {
       const batch = { roundId: rid, entryId: theirEid, previousHash: head, firstTick: tick, ticks: Array.from({ length: 60 }, (_, i) => words(9)(tick + i)), liquidations: [] };
-      sock.send(encodeInputBatch(batch));
+      sock.send(signedBatchOf(batch, (id) => ed25519.sign(id, theirSession)));
       head = batchId(batch); tick += 60;
     }
     for (let i = 0; i < 100 && answers.length < 20; i++) await wait(20);
@@ -152,7 +154,7 @@ test('a truck that drove before anybody watched is pictured at its newest tick, 
     client.onGhost = (g) => { if (toHex(g.entryId) === toHex(theirEid)) got.push(g.tick); was(g); };
     await field.watching;
     const batch = { roundId: rid, entryId: theirEid, previousHash: head, firstTick: tick, ticks: Array.from({ length: 6 }, (_, i) => words(9)(tick + i)), liquidations: [] };
-    sock.send(encodeInputBatch(batch));
+    sock.send(signedBatchOf(batch, (id) => ed25519.sign(id, theirSession)));
     for (let i = 0; i < 100 && got[got.length - 1] !== tick + 5; i++) await wait(20);
     assert.ok(got.length, 'no picture of the truck that drove');
     assert.equal(got[0], tick - 1, `the first picture shown on watching was tick ${got[0]} of a truck that had published ${tick - 1}`);

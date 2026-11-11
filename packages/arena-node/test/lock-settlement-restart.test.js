@@ -40,7 +40,7 @@ import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, LOSER, GENESIS_HASH, w
 import { encodeRoundContract, decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { init, step } from '../../nextblock/src/sim.js';
@@ -87,7 +87,7 @@ async function joinWithout(w, who, { namesFeeLock }) {
       stored: !!d.round.entry(eid), seen: !!d.round.stakeSeen(eid) });
   }
   const input = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0, ticks: Array.from({ length: 60 }, (_, t) => wordsAt(t)), liquidations: [] };
-  const played = String(await say(w.a.port, encodeInputBatch(input)));
+  const played = String(await say(w.a.port, signedBatchOf(input, (id) => ed25519.sign(id, session))));
   return { eid, outpoint, at, played };
 }
 

@@ -358,6 +358,14 @@ export const TYPE_ABSENCE_ATTESTATION = 0x24;
 export const TYPE_DEPARTURE_NOTICE = 0x25;
 /** A leave request signed by a node's emergency key, for a node that is offline (§23A.5a). */
 export const TYPE_EMERGENCY_DEPARTURE = 0x35;
+/**
+ * AN INPUT BATCH SIGNED BY ITS ENTRY'S SESSION KEY (kanban #1503, feedback #012): the batch's own bytes, then 64 bytes of
+ * ed25519 over its id under the session key the Entry Contract names. The only form a player's batch is taken in on
+ * /play - an unsigned batch let anybody who knew a public entry id write ticks and loads into that entry. What a seat
+ * stores, hands to another seat and serves in a transcript stays the bare batch (TYPE_INPUT_BATCH): there the signed
+ * mark's input chain hash endorses it.
+ */
+export const TYPE_SIGNED_INPUT_BATCH = 0x36;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 export const TYPE_SPENT_SET = 0x26;
