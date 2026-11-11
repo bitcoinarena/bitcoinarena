@@ -6932,7 +6932,10 @@
     // nodes, so the seats still come from daily.json (it skipped it, and a game link opened an empty lobby)
     // A REFERRAL LINK NAMES NO LOBBY EITHER (kanban #678, measured 2026-10-26 on page697: /?game=rock-paper-scissors&ref=<key> - the referral
     // demo's own link - read no daily.json, found no seat and said "The game's nodes are not reachable right now")
-    const VIEW_ONLY_PARAMS = ['rps-demo', 'game', 'ref'];
+    // A FEEDBACK LINK NAMES NO LOBBY EITHER (kanban #1461, Daniel 2026-11-11: "Clicking feedback on any page outside testnet goes to ticktock next block ... It needs to go
+    // the main testnet page and not load ticktock next block, just open the feedback modal"): the footer of every other page links /?feedback=1 (and My Feedback ?feedback=mine);
+    // read as a lobby link it skipped daily.json and the games screen and started Tick Tock behind the dialog
+    const VIEW_ONLY_PARAMS = ['rps-demo', 'game', 'ref', 'feedback'];
     // THE GAME STAYS IN THE ADDRESS (measured on live UI 136: PLAY on a Tick Tock round ahead wrote the round's link
     // without game=, and a reload held the join to its start on the bare path - the game chooser came up, Unity not loaded): an
     // address that names a round, and the lobby's own address behind it, keep the game= the page is on.
