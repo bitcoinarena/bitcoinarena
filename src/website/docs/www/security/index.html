@@ -48,7 +48,6 @@
   svg .b { fill: var(--btc); } svg .f { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
 
   /* THE SITE'S HEADER, as on the home page */
-  body { padding-top: 64px; }
   nav.site { position: fixed; inset: 0 0 auto 0; z-index: 20; backdrop-filter: blur(10px); background: rgba(7,9,13,.82); border-bottom: 1px solid rgba(255,255,255,.06); }
   nav.site .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; display: flex; align-items: center; gap: 22px; height: 64px; }
   nav.site .brand { display: flex; align-items: center; gap: 10px; font: 700 19px system-ui; letter-spacing: -0.02em; text-decoration: none; white-space: nowrap; color: var(--text); }
@@ -87,11 +86,8 @@
 </style>
 </head>
 <body>
-<nav class="site"><div class="wrap">
-  <a class="brand" href="https://bitcoinarena.io/" aria-label="Bitcoin Arena"><i>₿</i><span>Bitcoin Arena</span></a>
-  <div class="links"><a href="https://bitcoinarena.io/#games">Games</a><a href="https://bitcoinarena.io/#how">How it works</a><a href="https://bitcoinarena.io/#build">Build &amp; run</a><a class="keep" href="https://testnet.bitcoinarena.io/proposals/">Proposals</a><a class="keep on" href="/security/" aria-current="page">Security</a><a class="keep" href="https://docs.bitcoinarena.io/">Docs</a></div>
-  <a class="play" href="https://testnet.bitcoinarena.io/">App <span aria-hidden="true">→</span></a>
-</div></nav>
+<!-- ONE HEADER FOR EVERY PAGE (kanban #1457, Daniel 2026-11-11: "Der Header muss überall gleich aussehen"): the start page's header, drawn by site-chrome.js -->
+<script src="https://testnet.bitcoinarena.io/site-chrome.js" data-foot="none"></script>
 <main>
   <h1>How your money is protected</h1>
   <p class="lead">The worst things that could happen, how likely each one is, what stops it, and what is left. Worst case first, in plain words.</p>
