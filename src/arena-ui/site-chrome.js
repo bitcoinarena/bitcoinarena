@@ -103,11 +103,11 @@
   // gleich aussehen" - "Ein Header für alles"): bitcoinarena.io's nav.top, drawn here for every page that loads this script - the stadium and the
   // name, the start page's links (to bitcoinarena.io), the Nostr badge and App →; links fold away at the start page's widths
   var HOME = 'https://bitcoinarena.io/';
-  var TOP = [['Games', HOME + '#games'], ['How it works', HOME + '#how'], ['Nostr', HOME + '#nostr'], ['Build &amp; run', HOME + '#build'], ['Download', HOME + '#download'],
+  var TOP = [['Games', HOME + '#games'], ['How it works', HOME + '#how'], ['Explorer', 'https://explorer.bitcoinarena.io/'], ['Build &amp; run', HOME + '#build'], ['Download', HOME + '#download'],
     ['Proposals', 'https://testnet.bitcoinarena.io/proposals/', 1], ['Security', HOME + 'security/', 1], ['Docs', 'https://docs.bitcoinarena.io/', 1]];
   var mark = 'https://bitcoinarena.io/img/logo/';
   bar.innerHTML = '<div class="asc-wrap"><a class="asc-brand" href="' + HOME + '" aria-label="Bitcoin Arena"><img class="asc-mark" src="' + mark + 'bitcoin-arena-mark-90.webp" srcset="' + mark + 'bitcoin-arena-mark-60.webp 2x, ' + mark + 'bitcoin-arena-mark-90.webp 3x" width="58" height="30" alt=""><span>Bitcoin Arena</span></a>'
-    + '<div class="asc-links">' + TOP.map(function (l) { return '<a' + (l[2] ? ' class="asc-keep"' : '') + (l[0] === 'Nostr' ? ' data-nostr="1"' : '') + ' href="' + l[1] + '"' + (here(l[1]) ? ' aria-current="page"' : '') + '>' + l[0] + '</a>'; }).join('') + '</div>'
+    + '<div class="asc-links">' + TOP.map(function (l) { return '<a' + (l[2] ? ' class="asc-keep"' : '') + ' href="' + l[1] + '"' + (here(l[1]) ? ' aria-current="page"' : '') + '>' + l[0] + '</a>'; }).join('') + '</div>'
     + '<a class="asc-nid" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)" aria-label="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)"><svg viewBox="48 44 167 167" aria-hidden="true" focusable="false"><path d="M210.8 199.4c0 3.1-2.5 5.7-5.7 5.7h-68c-3.1 0-5.7-2.5-5.7-5.7v-15.5c.3-19 2.3-37.2 6.5-45.5 2.5-5 6.7-7.7 11.5-9.1 9.1-2.7 24.9-.9 31.7-1.2 0 0 20.4.8 20.4-10.7s-9.1-8.6-9.1-8.6c-10 .3-17.7-.4-22.6-2.4-8.3-3.3-8.6-9.2-8.6-11.2-.4-23.1-34.5-25.9-64.5-20.1-32.8 6.2.4 53.3.4 116.1v8.4c0 3.1-2.6 5.6-5.7 5.6H57.7c-3.1 0-5.7-2.5-5.7-5.7v-144c0-3.1 2.5-5.7 5.7-5.7h31.7c3.1 0 5.7 2.5 5.7 5.7 0 4.7 5.2 7.2 9 4.5 11.4-8.2 26-12.5 42.4-12.5 36.6 0 64.4 21.4 64.4 68.7v83.2ZM150 99.3c0-6.7-5.4-12.1-12.1-12.1s-12.1 5.4-12.1 12.1 5.4 12.1 12.1 12.1S150 106 150 99.3Z"/></svg></a>'
     + '<a class="asc-app" href="https://testnet.bitcoinarena.io/">App &rarr;</a></div>';
   var topCss = document.createElement('style');
@@ -125,7 +125,7 @@
     '#asc-bar, #asc-bar * { letter-spacing: normal !important; text-transform: none !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important; }',
     '#asc-bar .asc-links a { color: #9d8d84 !important; text-decoration: none !important; white-space: nowrap; font-weight: 400; }',
     '#asc-bar .asc-links a:hover, #asc-bar .asc-links a[aria-current="page"] { color: #f3ebe4 !important; }',
-    '#asc-bar .asc-links a[data-nostr] { color: #b98cff !important; }',
+    // EXPLORER, NOT NOSTR, IN THE LINKS (kanban #1464, Daniel 2026-11-11: "Statt dem Nostr link in der navigation mach Explorer und verlinke zum explorer"); the Nostr icon stays
     '#asc-bar .asc-nid { display: inline-flex; align-items: center; gap: 6px; color: #b98cff !important; text-decoration: none !important; font-size: 14px; white-space: nowrap; }',
     '#asc-bar .asc-nid svg { display: block; width: 18px; height: 18px; fill: currentColor; }',
     '#asc-bar .asc-app { padding: 7px 12px; border-radius: 4px; background: #f7931a; color: #140a00 !important; font-weight: 600; font-size: 15px; text-decoration: none !important; white-space: nowrap; }',
