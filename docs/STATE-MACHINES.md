@@ -1542,3 +1542,10 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-19 (change) Faucet book: the installer's POST /faucet (kanban #1572)
+- `pay()` books the address before `sendtoaddress`: a row `{ address, ip, sats, atMs, txid: null, pending: true }` is saved first; a send that answers sets its txid, drops `pending`, and appends the txid to `FAUCET_PENDING`.
+- On a failed send the row is removed only when bitcoind answered with an error (it refused the send) or the wallet's `listtransactions` holds no send to that address; a send found there is booked with its txid; anything else (a timeout, no answer, a crash) keeps the row `pending`.
+- Invariant: no coins go to an address without a row naming it in the book, so an address is paid at most once whatever the RPC or the process does between the send and the book.
