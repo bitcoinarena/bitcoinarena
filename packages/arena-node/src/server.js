@@ -678,7 +678,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // AND NOT BEFORE THE LAST PICK (§0A.7a slice 2): the round's entries closed on this seat's clock, and the outcome seen after
     // AND NOT BEFORE THE MARKET'S RESOLUTION TIME, when its manifest names one
     // AND NOT AFTER THE MARKET'S DEADLINE (kanban #1151): a market with no outcome by then is VOID, its stakes back at once
-    const timely = attestationTimely(a, { entryCloseMs: c.entryCloseMs, nowMs: round.now(), terms: roundTermsOf(plugin.manifest, c) });
+    // AND OBSERVED AT THE ROUND'S OWN WINDOW END, for a market on a grid (kanban #1489): not at a close some seat listed for it
+    const grid = marketWindowOf(c, plugin.manifest);
+    const timely = attestationTimely(a, { entryCloseMs: c.entryCloseMs, nowMs: round.now(), terms: roundTermsOf(plugin.manifest, c), window: grid.ok ? grid.window : null });
     if (!timely.ok) return { held: false, status: 409, why: timely.why };
     // ONE HELD ONCE THE ROUND IS FINAL OR VOID (its persisted state, game-market.js marketStateOf) is kept as evidence only
     const decided = marketTerminal(marketStateOf(round, new Uint8Array(roundIdOf(c)), { contract: c, manifest: plugin.manifest, nowMs: round.now() }).state);
