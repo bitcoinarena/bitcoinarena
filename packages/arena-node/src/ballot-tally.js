@@ -30,7 +30,7 @@
 // already learned outran its slice on the slower machine and held seven seats at 105-170 % of a core): a pass reads at most
 // `maxBlocksPerPass` blocks over all proposals, each proposal keeps how far it has read, nothing already read or decided is
 // asked again, and the vote cache drops every height below the lowest phase still open.
-import { tally, CLASS } from '../../arena-protocol/src/ballot.js';
+import { tally, CLASS, decodeVote, voteMessage } from '../../arena-protocol/src/ballot.js';
 import { liveConfig, BALLOT_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
 import { decodeConfigProposalBody } from '../../arena-protocol/src/ballot.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -156,6 +156,26 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     return moved;
   }
 
+  /** A (signature, message, bond key) result, verified at most once per open proposal (kanban #1564). */
+  const pairKey = (sig, msg, pk) => `${toHex(sig)}:${toHex(msg)}:${toHex(pk)}`;
+  const checkedVerify = (o, sig, msg, pk) => {
+    const key = pairKey(sig, msg, pk);
+    if (o.checked.has(key)) return o.checked.get(key);
+    let good = false; try { good = !!verify(sig, msg, pk); } catch { good = false; }
+    o.checked.set(key, good);
+    return good;
+  };
+  /** 'kept' (its prefix, signed by a bond of the census), 'other' (not this proposal's), or 'junk' (no bond signed it). */
+  const keepVote = (p, o, v) => {
+    const d = decodeVote(v.payload);
+    if (!d || toHex(d.idPrefix) !== p.id.slice(0, 16).toLowerCase()) return 'other';
+    const msg = voteMessage(fromHex(p.id), d.choice);
+    const results = o.census.map((b) => { let good = false; try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; } return [pairKey(d.signature, msg, b.pubkey), good]; });
+    if (!results.some(([, good]) => good)) return 'junk';     // nothing remembered for junk: memory grows with kept votes only
+    for (const [key, good] of results) o.checked.set(key, good);
+    return 'kept';
+  };
+
   /** One pass: the tip, the reorg check, then for each undecided proposal in its voting phase its census once and its new blocks. */
   async function pass() {
     if (running) return { skipped: true };
@@ -175,7 +195,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         if (stateOf(p) !== S.COUNTING) { open.delete(p.id); continue; }       // decided, or orphaned: not counted
         if (tip < p.votingFrom) continue;                       // review: votes are not counted yet (27A.7.4)
         let o = open.get(p.id);
-        if (!o) { o = { readTo: p.votingFrom - 1, readHash: null, census: null, votes: [], result: null, dirty: true }; open.set(p.id, o); }
+        if (!o) { o = { readTo: p.votingFrom - 1, readHash: null, census: null, votes: [], checked: new Map(), result: null, dirty: true }; open.set(p.id, o); }
         // THE CENSUS AT ITS PUBLICATION (27A.7.3: "the census is snapshotted when the proposal is published"), read once
         if (!o.census) {
           let c = null;
@@ -194,12 +214,22 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
             votesByHeight.set(h, await votesAt(h, hash || undefined)); hashByHeight.set(h, hash ? String(hash).toLowerCase() : null); read++;
           }
           const got = votesByHeight.get(h);
-          if (got.length) { o.votes.push(...got); o.dirty = true; }
+          // ONLY ITS OWN VALID VOTES ARE KEPT (kanban #1564): a stranger who knows a public proposal id could fill blocks of its
+          // phase with vote outputs under its prefix and junk signatures, and every later block with a vote re-ran the tally over
+          // all of them against every bond. Now each vote is checked here once against the census - another proposal's vote
+          // is not kept, a vote no bond signed is dropped by count, and the (signature, bond) results of a kept vote are
+          // remembered so the tally below never verifies a pair again
+          let junk = 0;
+          for (const v of got) {
+            const k = keepVote(p, o, v);
+            if (k === 'kept') { o.votes.push(v); o.dirty = true; } else if (k === 'junk') junk++;
+          }
+          if (junk) log(`[ballot] ${p.id.slice(0, 16)}: ${junk} vote(s) at ${h} signed by no bond of its census: dropped`);
           o.readTo = h; o.readHash = hashByHeight.get(h) || null;
         }
         if (o.dirty) {
           o.result = tally({ proposal: { class: CLASS[p.class] }, standing: { id: fromHex(p.id), votingFrom: p.votingFrom, votingUntil: p.votingUntil },
-            census: o.census, votes: o.votes, verify });
+            census: o.census, votes: o.votes, verify: (sig, msg, pk) => checkedVerify(o, sig, msg, pk) });
           o.dirty = false;
         }
         // DECIDED ONCE: the whole phase read, and its last block deep enough - no later than the block before its activation

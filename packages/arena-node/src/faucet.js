@@ -132,12 +132,21 @@ export function feedbackDecide({ text, ip = null, build = '', game = '', round =
 }
 
 // WHO SITS ALONE AT A TABLE (kanban #926): the page says which head-to-head round it is looking at; the test opponent reads this. In memory, a few seconds' worth, one row per round.
-export const OPPONENT_WANT_MS = 12000, OPPONENT_WANTS_MOST = 64;
-export function opponentWant(wants, round, nowMs = Date.now(), tapped = false) {
+// ONE CALLER, AT MOST TWO TABLES (kanban #1535): the door is unsigned, and the test opponent reads only the newest few rows, so one address
+// re-posting made-up rounds every second pushed every real player's table out of its reading. Each row now names the callers (ipKey) that said
+// it; a caller's newest OPPONENT_WANTS_PER_CALLER rows stay theirs, a new one drops them from their oldest (a row nobody else said goes).
+export const OPPONENT_WANT_MS = 12000, OPPONENT_WANTS_MOST = 64, OPPONENT_WANTS_PER_CALLER = 2;
+export function opponentWant(wants, round, nowMs = Date.now(), tapped = false, who = null) {
   if (!/^[0-9a-f]{64}$/.test(String(round || ''))) return { ok: false, why: 'a round is 32 bytes of hex' };
   for (const [k, x] of wants) if (nowMs - x.at > OPPONENT_WANT_MS) wants.delete(k);
+  if (who) {
+    const mine = [...wants].filter(([k, x]) => k !== round && x.by && x.by.has(who)).sort((a, b) => b[1].at - a[1].at);
+    for (const [k, x] of mine.slice(OPPONENT_WANTS_PER_CALLER - 1)) { x.by.delete(who); if (!x.by.size) wants.delete(k); }
+  }
   if (!wants.has(round) && wants.size >= OPPONENT_WANTS_MOST) return { ok: false, why: 'too many tables just now' };
-  wants.set(round, { at: nowMs, tapped: tapped === true || wants.get(round)?.tapped === true });
+  const by = wants.get(round)?.by || new Set();
+  if (who) by.add(who);
+  wants.set(round, { at: nowMs, tapped: tapped === true || wants.get(round)?.tapped === true, by });
   return { ok: true };
 }
 export const opponentWants = (wants, nowMs = Date.now()) => [...wants].filter(([, x]) => nowMs - x.at <= OPPONENT_WANT_MS).sort((a, b) => b[1].at - a[1].at).map(([round, x]) => ({ round, agoMs: nowMs - x.at, tapped: x.tapped }));

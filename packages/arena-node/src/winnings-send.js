@@ -37,6 +37,7 @@ import { askPeers, askWithin, PEER_ASK_MS, PEER_GRACE_MS } from './peer-ask.js';
 import { invoicePayee } from '../../arena-protocol/src/bolt11.js';
 import { SEND } from './send-state.js';
 import { PLAN_ASK, sendPlanAskHeaders } from './send-plan-ask.js';
+import { readJsonBounded } from './lnurl-read.js';
 
 /** WHO AN INVOICE PAYS (kanban #1154): the node key its BOLT11 signature recovers to, hex; throws if none. */
 export const payeeOf = (invoice) => invoicePayee(invoice, (sig64, bit, digest) =>
@@ -93,12 +94,13 @@ export class WinningsSend {
     return (await p.forFederation(toHex(c.federationId))) || p;
   }
 
-  /** The address's LUD-06 pay request, as THIS signer node fetches it. */
+  /** The address's LUD-06 pay request, as THIS signer node fetches it. Its answer, and the callback's, is read to at most
+   *  LNURL_MAX_BYTES (kanban #1562): the address is the player's own server, asked by every seat of the committee at once. */
   async payRequest(address, amountMsat) {
     const ep = payRequestUrl(address);
     if (!ep.ok) return refuse(ep.why);
     let said;
-    try { said = await askWithin(async (signal) => (await this.lnurlFetch(ep.url, { signal })).json(), this.lnurlMs); } catch (e) { return refuse(`${ep.url} did not answer: ${e.message}`); }
+    try { said = await askWithin(async (signal) => readJsonBounded(await this.lnurlFetch(ep.url, { signal })), this.lnurlMs); } catch (e) { return refuse(`${ep.url} did not answer: ${e.message}`); }
     const pr = payRequestStands(said, amountMsat);
     return pr.ok ? { ok: true, ...pr } : refuse(pr.why);
   }
@@ -108,7 +110,7 @@ export class WinningsSend {
     const pr = await this.payRequest(address, amountMsat);
     if (!pr.ok) return pr;
     let said;
-    try { said = await askWithin(async (signal) => (await this.lnurlFetch(callbackFor({ callback: pr.callback, amountMsat }), { signal })).json(), this.lnurlMs); }
+    try { said = await askWithin(async (signal) => readJsonBounded(await this.lnurlFetch(callbackFor({ callback: pr.callback, amountMsat }), { signal })), this.lnurlMs); }
     catch (e) { return refuse(`the address's callback did not answer: ${e.message}`); }
     const inv = invoiceAnswersPayRequest({ invoice: said && said.pr, amountMsat, metadata: pr.metadata, network: this.network });
     if (!inv.ok) return refuse(inv.why);

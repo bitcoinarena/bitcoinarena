@@ -103,9 +103,15 @@ export const BATCH_MOVES = Object.freeze({
  * not kept. In memory: a restart reads again (safe).
  */
 export const SYNC_STATE = Object.freeze({ UNREAD: 'UNREAD', KEPT: 'KEPT', STALE: 'STALE' });
+/** How many sells of one order a seat keeps waiting for a batch (kanban #1526: unbounded, one order's sells stalled every leader). */
+export const MAX_UNBATCHED_SELLS = 16;
 /** How long a seat waits for one other seat's answer while it leads a batch (proposals, void asks, sets, certificates). */
 export const BATCH_FETCH_MS = 1000;
 class Conflict extends Error {}
+
+// kanban #1547: the sells one entry keeps waiting for a batch at a seat, and the verified sells a seat remembers
+export const SELL_PENDING_MAX = 16;
+const SELL_CHECKED_MAX = 65536;
 
 export class OrderBook {
   constructor(round, { plugins, peersFor = () => [], fetcher = (u, o) => fetch(u, o), now = () => Date.now(), intervalMs = Number(BATCH_MS), feesFor = null,
@@ -251,10 +257,22 @@ export class OrderBook {
     return { ok: true, id: toHex(id) };
   }
 
+  // A SELL IS VERIFIED ONCE (kanban #1547): the leader checked every pending sell's Ed25519 signature again for each seat's proposal and
+  // again in the ledger - 3000 sells of one entry on seven seats made lead() take 39 s and its own batch past the 2 s signing limit.
+  // A sell that stood is kept here by its whole body (round, fields and signature), at most SELL_CHECKED_MAX of them, oldest out first.
+  #sellChecked = new Map();
   /** A sell, checked: a whole cent, signed by its entry's session key over sellId (what it holds is the ledger's question). */
   #sellStands(roundIdBytes, s) {
     if (!s || !isHex(s.signature, 64) || !/^[0-9]{1,20}$/.test(String(s.price)) || !/^[0-9]{1,20}$/.test(String(s.sharesMsat)) || !/^[0-9]{1,20}$/.test(String(s.nonce)))
       return refuse('a sell is { entry, outcome, price, sharesMsat, nonce, signature }', 400);
+    const key = [toHex(roundIdBytes), s.entry, s.outcome, s.price, s.sharesMsat, s.nonce, s.signature].map(String).join('|');
+    const kept = this.#sellChecked.get(key);
+    if (kept) return { ok: true, id: kept.id, sell: { ...kept.sell } };
+    const x = this.#sellVerify(roundIdBytes, s);
+    if (x.ok) { this.#sellChecked.set(key, x); if (this.#sellChecked.size > SELL_CHECKED_MAX) this.#sellChecked.delete(this.#sellChecked.keys().next().value); }
+    return x.ok ? { ok: true, id: x.id, sell: { ...x.sell } } : x;
+  }
+  #sellVerify(roundIdBytes, s) {
     const o = this.#orderEntry(roundIdBytes, s.entry);
     if (!o.ok) return o;
     const price = BigInt(s.price);
@@ -273,9 +291,41 @@ export class OrderBook {
     if (BigInt(this.now()) >= m.contract.entryCloseMs) return refuse(`the market closed at ${new Date(Number(m.contract.entryCloseMs)).toISOString()}: no ${kind} after it`);
     const c = kind === 'cancel' ? this.#cancelStands(roundIdBytes, body) : this.#sellStands(roundIdBytes, body);
     if (!c.ok) return c;
+    if (kind === 'sell') {
+      // A SELL ONLY OF AN ORDER IN THE BOOK HERE, AND A FEW AT A TIME (kanban #1526: a stranger's lockless order - no sat spent - signed
+      // thousands of sells, each nonce a new row, and every leader's lead() went quadratic over them): its locks verified at this seat
+      // (tradable), and no more than MAX_UNBATCHED_SELLS of its sells waiting for a batch here
+      const rid = Buffer.from(roundIdBytes), tradable = this.db.prepare('SELECT 1 FROM market_orders WHERE order_id = ? AND round_id = ?');
+      if (!tradable.get(String(body.entry), rid)) { this.#syncTradable(roundIdBytes); if (!tradable.get(String(body.entry), rid)) return refuse('that order is not tradable at this seat: its locks are not verified here, it holds nothing to sell'); }
+      const held = this.db.prepare('SELECT 1 FROM market_book_events WHERE event_id = ?').get(c.id);
+      const waiting = this.db.prepare("SELECT count(*) AS n FROM market_book_events WHERE round_id = ? AND kind = 'sell' AND entry_id = ? AND batch IS NULL").get(rid, String(body.entry)).n;
+      if (!held && waiting >= MAX_UNBATCHED_SELLS) return refuse(`that order has ${waiting} sells waiting for a batch at this seat: at most ${MAX_UNBATCHED_SELLS}`, 429);
+      const b = this.#sellBacked(roundIdBytes, c); if (!b.ok) return b;   // kanban #1547: and its entry holds an unsold share of that outcome
+    }
     const fresh = this.db.prepare('INSERT OR IGNORE INTO market_book_events (event_id, round_id, kind, entry_id, body, received_ms, batch) VALUES (?, ?, ?, ?, ?, ?, NULL)')
       .run(c.id, Buffer.from(roundIdBytes), kind, String(body.entry), JSON.stringify(body), this.now()).changes === 1;
     return { ok: true, id: c.id, fresh };
+  }
+
+  /**
+   * A SELL AT THE DOOR (kanban #1547): ask() kept any signed sell - a fresh nonce a fresh sell, no bound per entry - and a sell its
+   * entry could not back was left out of every batch by the leader's ledger but stayed unbatched at every seat until the close, handed
+   * to the leader again in every proposal (3000 of one entry stalled every later batch of the market). Now a sell is refused here when
+   * the certified ledger shows its entry holds no unsold share of that outcome, and one entry keeps at most SELL_PENDING_MAX sells
+   * unbatched at this seat. A sell larger than what is unsold is still the leader's question (the ledger leaves it out), as before.
+   */
+  #sellBacked(roundIdBytes, c) {
+    const rid = Buffer.from(roundIdBytes);
+    if (this.db.prepare('SELECT 1 FROM market_book_events WHERE event_id = ?').get(c.id)) return { ok: true };
+    const pending = this.db.prepare("SELECT COUNT(*) AS n FROM market_book_events WHERE round_id = ? AND kind = 'sell' AND entry_id = ? AND batch IS NULL").get(rid, c.sell.entry).n;
+    if (pending >= SELL_PENDING_MAX) return refuse(`entry ${c.sell.entry.slice(0, 16)} has ${pending} sells waiting for a batch at this seat: at most ${SELL_PENDING_MAX}`, 429);
+    const L = this.ledger(roundIdBytes);
+    if (!L.ok) return { ok: true };
+    const p = L.positions.get(c.sell.entry);
+    const o = Number(c.sell.outcome);
+    const unsold = p && (o === 0 || o === 1) ? p.shares[o] - p.shares[1 - o] : 0n;
+    if (unsold <= 0n) return refuse(`entry ${c.sell.entry.slice(0, 16)} holds no unsold share of outcome ${c.sell.outcome} in the certified book: nothing to sell`);
+    return { ok: true };
   }
 
   /** GET /batch-proposal: this seat's unbatched orders, cancels and sells before batch k's cutoff, and its pending batches. */
@@ -713,10 +763,12 @@ export class OrderBook {
       for (const s of p.sells || []) { const x = this.#sellStands(roundIdBytes, s); if (x.ok && !sells.has(x.id) && !eventBatched(x.id)) sells.set(x.id, s); }
     }
     const record = { k: String(k), orders, cancels: [...cancels.values()], sells: [...sells.values()], leader: toHex(this.round.pubkey) };
-    // a sell beyond what its entry holds unsold is left out (the seats would refuse the whole set over it)
+    // a sell beyond what its entry holds unsold is left out (the seats would refuse the whole set over it) - by its id, once (kanban #1526:
+    // the refused list was searched with a fresh #sellStands per sell, quadratic in the sells)
     // and a cancel whose order neither the book nor this set holds waits for a later batch (kanban #1489: the seats refuse the set over it)
     { const L = this.ledger(roundIdBytes, record); if (L.ok && L.refused.length) {
-      record.sells = record.sells.filter((s) => !L.refused.some((r) => r.id === this.#sellStands(roundIdBytes, s).id));
+      const no = new Set(L.refused.map((r) => r.id));
+      record.sells = [...sells].filter(([id]) => !no.has(id)).map(([, s]) => s);
       record.cancels = record.cancels.filter((c) => !L.refused.some((r) => r.id === c.entry && r.why.startsWith('a cancel')));
     } }
     if (!record.orders.length && !record.cancels.length && !record.sells.length) return { ok: true, empty: true, decided };
@@ -895,9 +947,12 @@ export class OrderBook {
       done.set(k, false);
       // A BATCH HELD HERE WHOSE ORDER IS NOT WHOLE HERE (kanban #620, fed2-3 16:51Z: the entry and locks replayed, then "a loser's P could
       // not be opened: this node accepted no handout for that entry"): what is missing is replayed from this peer
+      // ONLY THE ORDERS OF THE CERTIFICATE HELD HERE (kanban #1560, audit #1489 r3 gossip: the peer's record is unsigned here - one seat
+      // listed a made-up order under a held k and its entry was imported into the round): the peer's list is never read for a held batch
       if (k !== null && held.has(k)) {
-        if (typeof this.replayOrder === 'function' && Array.isArray(cert.record.orders))
-          for (const o of cert.record.orders) if (isHex(String(o), 32) && !this.#orderWhole(String(o)))
+        const orders = typeof this.replayOrder === 'function' ? this.#heldOrders(roundIdBytes, k) : null;
+        if (orders)
+          for (const o of orders) if (isHex(String(o), 32) && !this.#orderWhole(String(o)))
             if (!(await this.#replay(rid, k, String(o), base))) { state.complete = false; done.set(k, null); }
         if (done.get(k) === false) done.set(k, true);
         continue;
@@ -907,7 +962,10 @@ export class OrderBook {
       // one order of batch 3585700432, refused its certificate here without a word, and rebuilt another settlement): the batch's orders
       // this seat lacks are replayed from the seat that handed it (replayOrder: the entry checked by its hash, its locks by the
       // federation), then the certificate is taken again. A refusal that stands is said.
-      if (!got.ok && /holds no entry/.test(String(got.why)) && typeof this.replayOrder === 'function' && Array.isArray(cert.record.orders)) {
+      // Only once the certificate's signatures verify over its record (kanban #1560): an order no threshold of seats certified is not
+      // replayed from one seat's answer.
+      if (!got.ok && /holds no entry/.test(String(got.why)) && typeof this.replayOrder === 'function' && Array.isArray(cert.record.orders)
+          && this.#certifiedSet(roundIdBytes, cert)) {
         for (const o of cert.record.orders) if (isHex(String(o), 32) && !this.#orderWhole(String(o))) await this.#replay(rid, k, String(o), base);
         got = this.certify(roundIdBytes, cert, { reading: true });
       }
@@ -920,6 +978,26 @@ export class OrderBook {
       if (next === undefined || k > next) next = k;
     }
     return next;
+  }
+
+  /** The orders of batch k as the certificate held here names them (kanban #1560); null when none is held or it does not read. */
+  #heldOrders(roundIdBytes, k) {
+    const row = this.db.prepare('SELECT record FROM market_batches WHERE round_id = ? AND k = ? AND certificate IS NOT NULL').get(Buffer.from(roundIdBytes), Number(k));
+    if (!row) return null;
+    try { const r = JSON.parse(row.record); return Array.isArray(r.orders) ? r.orders.map(String) : null; } catch { return null; }
+  }
+
+  /** Whether a certificate not held here carries the threshold's signatures over its record's id (kanban #1560) - before any of its
+   *  orders is replayed. */
+  #certifiedSet(roundIdBytes, cert) {
+    const m = this.market(roundIdBytes);
+    if (!m.ok || !cert || !cert.record) return false;
+    // the ids the record hashes (#idsOf: no entry needed - its orders are the ones not held here yet)
+    const ids = Array.isArray(cert.record.orders) && /^[0-9]{1,15}$/.test(String(cert.record.k)) ? this.#idsOf(roundIdBytes, cert.record) : null;
+    if (!ids) return false;
+    let id;
+    try { id = toHex(bookBatchId({ roundId: roundIdBytes, k: BigInt(cert.record.k), orderIds: ids })); } catch { return false; }
+    return this.#counted(m, id, Array.isArray(cert.sigs) ? cert.sigs : []).length >= m.needed;
   }
 
   async #replay(rid, k, o, base) {

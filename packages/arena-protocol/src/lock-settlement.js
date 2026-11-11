@@ -277,19 +277,32 @@ export function attestedLockSettlement({ roundId, table, entries, locks, fees, f
     .concat(losers.filter((r) => r.payoutMsat > 0n).map((r) => ({ r, owed: r.payoutMsat })));
   const owedTotal = shares.reduce((s, x) => s + x.owed, 0n);
   if (owedTotal !== poolMsat) return refuse(`the table hands the winners ${owedTotal} msat and the losing locks hold ${poolMsat}`);
-  const split = shares.map((x) => ({ ...x, msat: largestPayoutMsat(fees, (x.owed * spendableMsat) / poolMsat) }));
+  // A SHARE THAT CANNOT PAY ITS OWN OUTPUT FEE (kanban #1555): named unpaid and folded back - the rest split again by
+  // their owed weights, as lockSettlement and lateLockSettlement do - never dropped silently with its msat left unspent
+  // in the transaction for the federation. No share pays: nothing is claimed, each losing lock expires back.
+  const unpaid = [];
+  let paying = shares;
+  let split;
+  for (;;) {
+    const weight = paying.reduce((s, x) => s + x.owed, 0n);
+    split = paying.map((x) => ({ ...x, msat: weight > 0n ? largestPayoutMsat(fees, (x.owed * spendableMsat) / weight) : 0n }));
+    const small = split.filter((x) => x.msat === 0n);
+    if (!small.length) break;
+    for (const x of small) unpaid.push({ pubkey: byId.get(x.r.entryId).pubkey, owedMsat: x.owed, why: 'its share does not pay its own output fee' });
+    paying = paying.filter((x) => !small.some((y) => y.r === x.r));
+    if (!paying.length) return finish({ ...empty('no winner\'s share pays its own output fee, so no losing lock is claimed and each expires back to its player'), unpaid }, feePart);
+  }
   const gross = (msat) => msat + lnv2FeeMsat(fees, msat);
   const dust = spendableMsat - split.reduce((s, x) => s + gross(x.msat), 0n);
   if (dust > 0n) split[0].msat = largestPayoutMsat(fees, gross(split[0].msat) + dust);
   const payouts = [];
   for (const x of split) {
-    if (x.msat <= 0n) continue;
     const e = byId.get(x.r.entryId);
     const lock = locks.get(toHex(e.pubkey));
     const payoutPk = lock ? lock.refundPk : refundKeyOf(e.pubkey);
     payouts.push({ pubkey: e.pubkey, payoutPk, owedMsat: x.owed, msat: x.msat, feeMsat: lnv2FeeMsat(fees, x.msat), kind: 'qualifier' });
   }
-  return { ...finish({ roundId, claims, payouts, unpaid: [], forfeits: [], poolMsat, inputFeesMsat, spendableMsat, stakeWhy: null }, feePart),
+  return { ...finish({ roundId, claims, payouts, unpaid, forfeits: [], poolMsat, inputFeesMsat, spendableMsat, stakeWhy: null }, feePart),
     stakeShares: split.map((x) => ({ pubkey: byId.get(x.r.entryId).pubkey, msat: x.msat })) };
 }
 
