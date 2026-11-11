@@ -9,7 +9,7 @@
 //
 // THE REMAINDER RULE (§27A.9.1): every share is floored to the msat; a round's net stake takes what the floors leave, so the
 // parts always sum to the gross. An item's price is the sum of its parts.
-import { RESERVES_VERSION } from './constants.js';
+import { RESERVES_VERSION, GIFTS_IN_FEE_LOCK_VERSION } from './constants.js';
 import { donationOutputsExpected } from './donation.js';
 import { entryFeeBpsOf, donationInFee } from './fee.js';
 
@@ -117,9 +117,45 @@ export function reservesEntryExpected({ entry, recipients, reserveKey, split = R
 }
 
 /**
- * THE ENTRY FEE RATE OF A ROUND (§27A.9.1): a version-11 round of a game takes the nodes' mandatory 4 %; a market, and every
- * older round, the rate its manifest gives (entryFeeBpsOf: the network's 5 %, or a market's own).
+ * THE DEVELOPERS' AND THE RESERVES' PARTS IN THE FEE LOCK (protocol 27, kanban #1486, ruled 2026-11-11: "Er sollte keine fees entgegen
+ * nehmen wenn die order nicht angenommen wird"): a paid round of version 27 or later takes the whole 10 % in the entry's fee lock - nodes,
+ * developers and reserves - and no donation or reserve output, so a refused, void or refunded entry gets all of it back with its stake,
+ * and only a counted entry pays it, at settlement (lock-settlement.js feeSettlement `gifts`). A market already does (donationInFee).
  */
-export const entryFeeBpsForRound = (contract, manifest) => (paysReserves(contract) && !donationInFee(manifest) ? RESERVES_NODE_FEE_BPS : entryFeeBpsOf(manifest));
-/** Does this round's entry pay the reserves - a version-11 round of a game (a market's reserves are a later slice)? */
-export const entryPaysReserves = (contract, manifest) => paysReserves(contract) && !donationInFee(manifest);
+export const giftsInFeeLock = (contract) => paysReserves(contract) && Number(contract.protocolVersion) >= GIFTS_IN_FEE_LOCK_VERSION;
+/** The whole rate a protocol-27 game entry's fee lock holds, in bps of its stake: nodes + developers + reserves (10 % today). */
+export const giftsFeeBps = (split = ROUND_SPLIT_BPS) => split.nodes + split.protocolDevs + split.gameDevs + split.reserves;
+/** Does this round's entry carry the developers' and the reserves' parts in its fee lock - a version-27 round of a game? */
+export const entryGiftsInFee = (contract, manifest) => giftsInFeeLock(contract) && !donationInFee(manifest);
+
+/**
+ * WHAT A VERSION-27 GAME ENTRY MUST NAME (kanban #1486): a fee of the whole rate of its stake (giftsFeeBps, floored once - the
+ * rate every fee is, entryFeeMsat), a donation of 0 and no donation or reserve outpoint. Of that fee the nodes' part is their rate
+ * (floored) and the reserves' theirs (floored, roundSplit), and the developers' the rest - so the three are the fee to the msat.
+ * Answers { ok, fee, nodesMsat, devsMsat, reservesMsat } or why not, by name.
+ */
+export function giftsEntryExpected({ entry, split = ROUND_SPLIT_BPS }) {
+  if (!entry || typeof entry.stakeMsat !== 'bigint' || typeof entry.feeMsat !== 'bigint') return { ok: false, why: 'that entry names no stake and fee' };
+  if (entry.stakeMsat < 1n) return { ok: false, why: 'a paid entry stakes at least 1 msat' };
+  const parts = roundSplit(entry.stakeMsat, { split });
+  const fee = bps(entry.stakeMsat, giftsFeeBps(split));
+  const devsMsat = fee - parts.nodesMsat - parts.reservesMsat;
+  const v = GIFTS_IN_FEE_LOCK_VERSION;
+  if (entry.donationMsat !== 0n)
+    return { ok: false, why: `on protocol version ${v} the developers' and the reserves' parts are in the fee lock: that entry names a donation of ${entry.donationMsat} msat beside it` };
+  if ((entry.donationOutpoints || []).length || (entry.reserveOutpoint !== undefined && entry.reserveOutpoint !== null))
+    return { ok: false, why: `on protocol version ${v} an entry pays no donation or reserve output at its lock: they are in its fee lock, paid only if it is counted` };
+  if (entry.feeMsat !== fee)
+    return { ok: false, why: `on protocol version ${v} the fee lock holds the nodes' ${split.nodes / 100} %, the developers' ${(split.protocolDevs + split.gameDevs) / 100} % and the reserves' ${split.reserves / 100} %: ${fee} msat, not ${entry.feeMsat}` };
+  return { ok: true, fee, nodesMsat: parts.nodesMsat, devsMsat, reservesMsat: parts.reservesMsat };
+}
+
+/**
+ * THE ENTRY FEE RATE OF A ROUND (§27A.9.1): a version-11 round of a game takes the nodes' mandatory 4 %, and from version 27 the whole 10 %
+ * its fee lock holds (giftsFeeBps); a market, and every older round, the rate its manifest gives (entryFeeBpsOf: the network's 5 %, or a
+ * market's own).
+ */
+export const entryFeeBpsForRound = (contract, manifest) => (entryGiftsInFee(contract, manifest) ? giftsFeeBps()
+  : paysReserves(contract) && !donationInFee(manifest) ? RESERVES_NODE_FEE_BPS : entryFeeBpsOf(manifest));
+/** Does this round's entry pay the reserves BY AN OUTPUT AT ITS LOCK - a version-11 to 26 round of a game (from 27 they ride in the fee lock)? */
+export const entryPaysReserves = (contract, manifest) => paysReserves(contract) && !donationInFee(manifest) && !giftsInFeeLock(contract);
