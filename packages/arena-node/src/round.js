@@ -3509,6 +3509,22 @@ export class Round {
     return r ? { entryId: new Uint8Array(r.entry_id) } : null;
   }
 
+  /**
+   * THE ENTRY THAT FIRST NAMED THIS LOCK OUTPOINT HERE (kanban #1489): the id of the earliest entry of the round (by the time this seat took it)
+   * whose `kind` ('stake' | 'fee') lock outpoint is `outpoint`, or null. A lock is handed only for the entry that named it first.
+   */
+  firstEntryNamingLock(roundIdBytes, kind, outpoint) {
+    const field = kind === 'fee' ? 'feeLockOutpoint' : 'stakeLockOutpoint';
+    const rows = this.db.prepare(
+      'SELECT entry_id, contract FROM entries WHERE round_id = ? AND entry_id NOT IN (SELECT entry_id FROM market_cancels) ORDER BY joined_ms, rowid')
+      .all(roundIdBytes);
+    for (const r of rows) {
+      const o = decodeEntryContract(new Uint8Array(r.contract))[field];
+      if (o && same(o.txid, outpoint.txid) && o.outIdx === outpoint.outIdx) return new Uint8Array(r.entry_id);
+    }
+    return null;
+  }
+
   /** The entry a verified lock at this outpoint already stakes, or null: one lock is one entry. */
   stakeLockAt(outpoint) {
     const r = this.db.prepare('SELECT entry_id FROM stake_locks WHERE outpoint = ?')
