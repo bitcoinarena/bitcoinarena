@@ -14,21 +14,32 @@ import { SETTLEMENT_THRESHOLD } from '../../arena-protocol/src/payout.js';
 
 // AS MANY AS SETTLE THE ROUND (2026-10-30: "0 of 2 macht gar keinen sinn"): the two was the two-node test network's; a run fewer than five signer nodes hold cannot settle
 export const NODES_HOLDING = SETTLEMENT_THRESHOLD;
+// kanban #1508: EACH NODE GETS A BOUNDED WAIT. One seat that takes GET /transcript and never answers (or dribbles the body) held the
+// whole ask - and with it the page's "keep this tab open" - for ever, while the other seats held the run. A node that has not answered,
+// body read, within this many ms is counted as unanswered and the others decide.
+export const NODE_WAIT_MS = 8000;
 
 /**
  * `nodes` the committee's bases; `finalTick` the run's last tick (the client's own count); `mirror` an optional base. Answers
  * { safe, holders: [base], hash, ticks, mirrored, why }.
  */
-export async function secureTranscript({ roundId, entryId, nodes, finalTick, mirror = null, fetcher = fetch, need = NODES_HOLDING } = {}) {
+export async function secureTranscript({ roundId, entryId, nodes, finalTick, mirror = null, fetcher = fetch, need = NODES_HOLDING, waitMs = NODE_WAIT_MS } = {}) {
   const q = `round=${toHex(roundId)}&entry=${toHex(entryId)}`;
   const said = [];
   const held = await Promise.all([...new Set(nodes || [])].map(async (base) => {
+    // kanban #1508: the fetch and its body read race one timer; the abort also ends a fetcher that honours the signal
+    const ac = new AbortController();
+    let timer;
+    const late = new Promise((_, no) => { timer = setTimeout(() => { ac.abort(); no(new Error(`no answer in ${waitMs} ms`)); }, waitMs); });
     try {
-      const r = await fetcher(`${String(base).replace(/\/+$/, '')}/transcript?${q}`);
-      if (!r.ok) { said.push(`${base}: ${r.status}`); return null; }
-      const ticks = Number(r.headers.get('x-ticks')), hash = String(r.headers.get('x-transcript-hash') || '').toLowerCase();
-      return { base, ticks, hash, bytes: new Uint8Array(await r.arrayBuffer()) };
+      return await Promise.race([late, (async () => {
+        const r = await fetcher(`${String(base).replace(/\/+$/, '')}/transcript?${q}`, { signal: ac.signal });
+        if (!r.ok) { said.push(`${base}: ${r.status}`); return null; }
+        const ticks = Number(r.headers.get('x-ticks')), hash = String(r.headers.get('x-transcript-hash') || '').toLowerCase();
+        return { base, ticks, hash, bytes: new Uint8Array(await r.arrayBuffer()) };
+      })()]);
     } catch (e) { said.push(`${base}: ${e.message}`); return null; }
+    finally { clearTimeout(timer); }
   }));
   const groups = new Map();
   for (const h of held) {
