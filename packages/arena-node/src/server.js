@@ -9706,11 +9706,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!winnings) return text(res, 409, 'this signer node sends no winnings');
         // A LATE SETTLEMENT'S PLANS (C3b-2a), asked for by its late entry as well.
         const lateHex = url.searchParams.get('late');
-        const sender = lateHex ? settlements.lateWinningsFor(new Uint8Array(rid), new Uint8Array(Buffer.from(lateHex, 'hex'))) : winnings;
-        const kept = JSON.stringify(sender.keptPlan(new Uint8Array(rid)));
+        // A LATE ENTRY IS 32 BYTES, AND NO SENDER IS MADE FOR A LATE SETTLEMENT THIS SEAT DOES NOT HOLD (kanban #1518): a stranger's
+        // random ids built and kept one each, for good; an unheld one keeps no plan, so it answers the empty plan as before
+        if (lateHex && !/^[0-9a-f]{64}$/.test(lateHex)) return text(res, 400, 'a late settlement is named by a 32-byte entry id');
+        const late8 = lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null;
+        const sender = late8 ? settlements.lateWinningsHeld(new Uint8Array(rid), late8) : winnings;
+        const kept = JSON.stringify(sender ? sender.keptPlan(new Uint8Array(rid)) : []);
         // SIGNED BY THIS SEAT (kanban #1154): an asker that adopts it knows a seat of the round kept it
-        const late8 = /^[0-9a-f]{64}$/.test(lateHex || '') ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null;
-        const signed = !lateHex || late8 ? sendPlanAskHeaders(round, { kind: PLAN_ASK.KEPT, roundId: new Uint8Array(rid), lateEntryId: late8, body: kept }) : {};
+        const signed = sendPlanAskHeaders(round, { kind: PLAN_ASK.KEPT, roundId: new Uint8Array(rid), lateEntryId: late8, body: kept });
         res.writeHead(200, { 'content-type': 'application/json', ...CORS, ...signed });
         return res.end(kept);
       }
