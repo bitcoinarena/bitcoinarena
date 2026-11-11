@@ -219,8 +219,10 @@ test('a nonce pair still signs one list once: the same list gets the same share,
   const w = seven();
   const [a, b, c, d, e, f] = w.seats;
   const of = async (s) => (await s.commit(RID, { txid: TXID })).commitment;
-  const five = [await of(a), await of(b), await of(c), await of(d), await of(e)].sort((x, y) => x.id - y.id);
-  const other = [await of(a), await of(b), await of(c), await of(d), await of(f)].sort((x, y) => x.id - y.id);
+  const ofA = await of(a);
+  const five = [ofA, await of(b), await of(c), await of(d), await of(e)].sort((x, y) => x.id - y.id);
+  // the same commitment of a's on both lists: each commit hands out a pair of its own (kanban #1489), so a second list can only name the one already spent
+  const other = [ofA, await of(b), await of(c), await of(d), await of(f)].sort((x, y) => x.id - y.id);
   const shared = await a.share(RID, five);
   assert.equal(shared.ok, true);
   assert.equal((await a.share(RID, five)).share, shared.share, 'the same list is answered with the same share');
