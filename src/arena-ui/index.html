@@ -7,7 +7,7 @@
   <!-- THE GAME'S NAME AND MARK: Tick Tock, Next Block - its icon in every size a browser, a phone's home
        screen and a link preview ask for; the files are the game's client assets (nextblock's manifest lists them) -->
   <link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48">
-  <link rel="icon" href="nextblock-icon.svg" type="image/svg+xml">
+  <link rel="icon" href="arena-icon-32.png" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="manifest" href="site.webmanifest">
   <meta name="theme-color" content="#0d1014">
@@ -18,12 +18,12 @@
   <meta property="og:title" content="Bitcoin Arena">
   <meta property="og:description" content="Play for sats. Settle on Bitcoin. Tick Tock, Rock Paper Scissors, Up or Down - run by independent nodes.">
   <meta property="og:type" content="website">
-  <meta property="og:image" content="https://testnet.bitcoinarena.io/arena-og.png">
+  <meta property="og:image" content="https://testnet.bitcoinarena.io/arena-og-stadium.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Bitcoin Arena">
-  <meta name="twitter:image" content="https://testnet.bitcoinarena.io/arena-og.png">
+  <meta name="twitter:image" content="https://testnet.bitcoinarena.io/arena-og-stadium.png">
   <script id="arena-storage-move">
     // THE ONE-TIME MOVE OF THE BROWSER'S KEYS FROM blwp.* TO arena.*, before any other script reads
     // them: the seed, the kept phrases, the vault and the wallet stores were all kept under blwp.*, and every reader
@@ -739,6 +739,8 @@
     body.arena-game-chosen:not(.arena-own-client) #arena-game-home, body:has(#arena-season.show) #arena-game-home, body:has(#arena-shop.show) #arena-game-home, body:not(.arena-clean):has(#arena-settings:not([style*="none"])) #arena-game-home { display: inline-grid; flex: none; place-items: center; width: 29px; height: 29px; border-radius: 7px;
       text-decoration: none; font: 800 16px/1 system-ui, sans-serif; color: #1a0f00; background: conic-gradient(from 210deg, #f7931a, #ffd166, #f7931a); }
     #arena-game-home i { font-style: normal; }
+    /* THE STADIUM, NOT THE ₿ SQUARE (kanban #1465, Daniel 2026-11-12: "replace the logo with more depth everywhere on the website and in the apps"): 26 px high, as the square was */
+    #arena-wb-home img.arena-brand-mark, #arena-game-home img.arena-brand-mark { height: 26px; width: auto; flex: none; display: block; }
     /* THE LOGO STAYS ON THE SCREEN (kanban #827, 2026-10-31: "Auf dem iphone duo ist die header navigation kaputt, das Logo ist abgeschnitten"): the row ends at the right edge, so
        what did not fit ran off the left, the logo first (measured: left -115 at 600 px, -9 at 390 px). The name gives way first, then the row tightens */
     body #arena-money #arena-game-home { flex: 0 1 auto; min-width: 26px; overflow: hidden; margin-right: auto; }
@@ -1497,14 +1499,41 @@
     #arena-games.compact .name { min-height: 2.2em; }
     #arena-games .more { margin-top: 0; }
     #arena-games .foot-row { margin-top: 6px; }
-  </style>
+      /* ONE HEADER ON THE GAME PAGE TOO (kanban #1457, Daniel 2026-11-11: "Der Header muss überall gleich aussehen" - "Both the owner page and the game page get the
+       shared header ... Balance, Deposit, Withdraw, and settings sit in the shared header or directly under it"): site-chrome.js draws the website's header on top
+       (57 px and the safe area); the wallet bar and Tick Tock's money row sit directly under it, without their own logo (the header carries the stadium), and every
+       layer that left room for the bar leaves room for both. A round being played keeps the whole window: no header then, as there was no bar */
+    body.arena-shared-hdr #arena-wb-home, body.arena-shared-hdr #arena-game-home { display: none !important; }
+    body.arena-shared-hdr.arena-picking #arena-wallet-bar, body.arena-shared-hdr.arena-own-client #arena-wallet-bar { top: calc(57px + env(safe-area-inset-top, 0px)); padding-top: 0; }
+    body.arena-shared-hdr #arena-money { top: calc(61px + env(safe-area-inset-top, 0px)) !important; }
+    body.arena-shared-hdr.arena-picking #arena-games { padding-top: calc(108px + env(safe-area-inset-top, 0px)) !important; }
+    html body.arena-shared-hdr.arena-own-client #arena-client { top: calc(98px + env(safe-area-inset-top, 0px)) !important;
+      height: calc(100% - 98px - 30px - env(safe-area-inset-top, 0px) - min(env(safe-area-inset-bottom, 0px), 4px)) !important; }
+    body.arena-shared-hdr #arena-ov-scrim, body.arena-shared-hdr #arena-donate { top: calc(98px + env(safe-area-inset-top, 0px)) !important; }
+    body.arena-shared-hdr.arena-unity-menu:not(.arena-clean) #canvas { top: calc(97px + env(safe-area-inset-top, 0px)) !important;
+      height: calc(100% - 127px - env(safe-area-inset-top, 0px) - min(env(safe-area-inset-bottom, 0px), 4px)) !important; }
+    body.arena-shared-hdr.arena-clean #asc-bar, body.arena-shared-hdr.arena-clean #asc-bar-space { display: none !important; }
+    #asc-bar-space { display: none !important; }   /* the page's layers are fixed: the flow needs no spacer */
+</style>
   <!-- UP/DOWN'S STYLE (kanban #521): the pick sheet's, from packages/btc-updown/page -->
   <link rel="stylesheet" href="games/btc-updown/market-page.css">
   <!-- TICK TOCK'S STYLE (kanban #521): the next round's box, from packages/nextblock/page -->
   <link rel="stylesheet" href="games/nextblock/unity-page.css">
   <!-- its loading screen's markup is put in while the page is parsed (#boot): fetched from the start, beside the styles -->
   <link rel="preload" href="games/nextblock/loading-page.js" as="script">
-  <script>/* kanban #943: a visit from X arrives through t.co with no campaign in its link: named here, before the stats script reads the address */if(/^https?:\/\/t\.co(\/|$)/.test(document.referrer)&&!/[?&]utm_/.test(location.search))history.replaceState(history.state,'',location.pathname+(location.search?location.search+'&':'?')+'utm_source=x&utm_medium=social&utm_content=profile'+location.hash)</script>
+  <script id="arena-ref-source">/* THE SOURCE OF A VISIT (kanban #1458, Daniel 2026-11-11: "Make sure Stacker News is recognised through the referrer and the utm is set correctly, without us having to add it"): the same script inline on bitcoinarena.io, testnet. and docs., before the stats script reads the address. A link's own utm_ always wins. Without one, the referrer's host names the source (the map below), put into the address as utm_source/utm_medium so Umami counts it as if the link had carried it. The visit's first source is kept in this tab (sessionStorage, the source name only) and added to links to the other bitcoinarena.io hosts, so a visitor who goes on to the game keeps it. Stacker News sends no referrer on post links (rel="noreferrer", measured 2026-11-11): its links need their own utm. */(function(){try{
+var M=[[/(^|\.)stacker\.news$/,'stacker-news','community'],[/(^|\.)(x\.com|twitter\.com|t\.co)$/,'x','social'],[/(^|\.)(primal\.net|njump\.me|nostr\.com|iris\.to|coracle\.social|snort\.social|jumble\.social|yakihonne\.com|damus\.io|habla\.news|nostrudel\.ninja)$/,'nostr','social'],[/(^|\.)armada\.buzz$/,'armada','community'],[/(^|\.)reddit\.com$/,'reddit','social'],[/(^|\.)bitcointalk\.org$/,'bitcointalk','forum'],[/(^|\.)github\.com$/,'github','referral'],[/(^|\.)discord\.com$/,'discord','community'],[/(^|\.)(t\.me|telegram\.org)$/,'telegram','community'],[/^news\.ycombinator\.com$/,'hackernews','forum']];
+var OWN=/(^|\.)(bitcoinarena\.io|bitcoin-arena\.io)$/,K='arena.src',q=new URLSearchParams(location.search),src=null;
+if(q.get('utm_source')==='sn'){q.set('utm_source','stacker-news');q.set('utm_medium','community');history.replaceState(history.state,'',location.pathname+'?'+q.toString()+location.hash)}/* #1468: links posted 11-01..11-11 say utm_source=sn - one name for Stacker News */
+if(q.get('utm_source'))src=[q.get('utm_source'),q.get('utm_medium')||''];
+else{var h='';try{h=new URL(document.referrer).hostname.toLowerCase()}catch(e){}
+if(h&&!OWN.test(h)){src=[h.replace(/^www\./,''),'referral'];for(var i=0;i<M.length;i++)if(M[i][0].test(h)){src=[M[i][1],M[i][2]];break}}
+if(src){q.set('utm_source',src[0]);q.set('utm_medium',src[1]);history.replaceState(history.state,'',location.pathname+'?'+q.toString()+location.hash)}}
+var kept=null;try{kept=JSON.parse(sessionStorage.getItem(K)||'null')}catch(e){}
+if(!kept&&src){kept=src;try{sessionStorage.setItem(K,JSON.stringify(src))}catch(e){}}
+window.ARENA_SOURCE=kept?kept[0]:null;
+if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;if(!a)return;try{var u=new URL(a.href);if(u.hostname===location.hostname||!OWN.test(u.hostname)||/[?&]utm_/.test(u.search))return;u.searchParams.set('utm_source',kept[0]);if(kept[1])u.searchParams.set('utm_medium',kept[1]);a.href=u.toString()}catch(e){}},true)});
+}catch(e){}})();</script>
   <script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="024ff09e-c3a6-4dfd-bede-3163eb8be36a" data-domains="testnet.bitcoinarena.io" data-before-send="arenaTrackUrl"></script>
   <script>/* kanban #943: the campaign reached the stats when the script read the address; then it leaves the address, past the script's own history hook, so no second view */addEventListener('load',function(){var n=0,c=function(){if(!window.umami&&n++<50)return setTimeout(c,100);setTimeout(function(){var u=new URL(location.href),k=Array.from(u.searchParams.keys()).filter(function(x){return/^utm_/.test(x)});if(k.length){k.forEach(function(x){u.searchParams.delete(x)});History.prototype.replaceState.call(history,history.state,'',u.pathname+u.search+u.hash)}},500)};c()})</script>
   <script>
@@ -1533,7 +1562,7 @@
       const kind = () => { try { return window.localStorage.getItem('arena.nostr') ? 'nostr' : 'normal'; } catch { return 'normal'; } };
       // NOTHING FROM ADMIN PLAY (kanban #1110, the owner 2026-11-03: Umami's events must match the explorer's played rounds, admin and bot rounds left
       // out): a browser with the admin flag sends no event; the played rounds themselves are told to Umami by the explorer, from its own rows
-      return (name, data) => { if (window.ARENA_ADMIN === true) return; held.push([name, { ...(data || {}), user: kind() }]); if (held.length > MOST) held.shift(); keep(); send(); };
+      return (name, data) => { if (window.ARENA_ADMIN === true) return; held.push([name, { ...(data || {}), user: kind(), ...(window.ARENA_SOURCE ? { source: window.ARENA_SOURCE } : {}) /* source: kanban #1458 */ }]); if (held.length > MOST) held.shift(); keep(); send(); };
     })();
     window.ARENA_TRACK_SIZE = (sat) => { const n = Number(sat); return n < 1000 ? 'under 1k' : n < 10000 ? '1k-10k' : n < 100000 ? '10k-100k' : 'over 100k'; };
     // THE PAGE'S BUTTONS THAT LEAD SOMEWHERE
@@ -1548,6 +1577,8 @@
 <style>/* kanban #1456 (Daniel 2026-11-11): the stadium on the wallet screen, above "Your wallet" */ .ws-box::before { content: ""; display: block; height: 40px; margin: 0 0 14px; background: no-repeat left center / auto 40px; background-image: image-set(url("arena-mark-80.webp") 2x, url("arena-mark-120.webp") 3x); }</style>
 </head>
 <body>
+<script src="site-chrome.js" data-foot="none"></script>
+<script>document.body.classList.add('arena-shared-hdr');   /* kanban #1457 */</script>
   <!-- §24B: the wallet's own line, in the LOBBY and never over the drive. `arena-money` is hidden while a
        round is being driven, so the balance, the federation and the pending line cannot follow a player
        into the game. -->
@@ -1587,7 +1618,7 @@
   <div id="arena-build" aria-hidden="true">UI {{{ UI_VERSION }}}</div>
   <div id="arena-fps" role="button" title="tap: frame-rate test"><span id="arena-fps-now">– fps</span><span id="arena-fps-bench"></span></div>
   <div id="arena-money">
-    <a id="arena-game-home" href="https://bitcoinarena.io/" title="bitcoinarena.io" aria-label="Bitcoin Arena - bitcoinarena.io"><i aria-hidden="true">&#8383;</i><span>Bitcoin Arena</span></a>
+    <a id="arena-game-home" href="https://bitcoinarena.io/" title="bitcoinarena.io" aria-label="Bitcoin Arena - bitcoinarena.io"><img class="arena-brand-mark" src="arena-mark-52.webp" srcset="arena-mark-52.webp 1x, arena-mark-120.webp 2x" width="49" height="26" alt="" aria-hidden="true"><span>Bitcoin Arena</span></a>
     <button id="arena-games-back" type="button" title="Back to Bitcoin Arena" aria-label="Back to Bitcoin Arena"><span aria-hidden="true">&larr;</span><span class="word">Arena</span></button>
     <!-- BUILD ON BITCOIN ARENA, RUN A NODE (2026-10-08 11:38): the platform page, beside the gear -->
     <!-- THE WALLET IN EVERY HEADER (2026-10-19: "the header is missing balance, deposit and withdrawls"):
@@ -1613,7 +1644,7 @@
        Verify. -->
   <!-- THE WALLET BAR OVER A GAME'S OWN CLIENT: shown only while a game's client runs in the frame -->
   <div id="arena-wallet-bar" role="toolbar" aria-label="wallet">
-    <a id="arena-wb-home" href="https://bitcoinarena.io/" title="bitcoinarena.io" aria-label="Bitcoin Arena - bitcoinarena.io"><i aria-hidden="true">&#8383;</i><span>Bitcoin Arena</span></a>
+    <a id="arena-wb-home" href="https://bitcoinarena.io/" title="bitcoinarena.io" aria-label="Bitcoin Arena - bitcoinarena.io"><img class="arena-brand-mark" src="arena-mark-52.webp" srcset="arena-mark-52.webp 1x, arena-mark-120.webp 2x" width="49" height="26" alt="" aria-hidden="true"><span>Bitcoin Arena</span></a>
     <button id="arena-wb-back" type="button" title="Back to Bitcoin Arena" aria-label="Back to Bitcoin Arena"><span aria-hidden="true">&larr;</span><span class="word">Arena</span></button>
     <button class="wb-bal" type="button" title="Your balance by federation"><b id="arena-wb-sats">&ndash; sat</b><span id="arena-wb-pending"></span></button>
     <button id="arena-wb-deposit" type="button" title="Deposit" aria-label="Deposit"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v7.5M4.8 6.5 8 9.7l3.2-3.2M2.5 11.5v2h11v-2"/></svg><span class="word">Deposit</span></button>
@@ -1823,6 +1854,37 @@
         const kept = store && store.getItem('arena.admin.code');
         window.ARENA_ADMIN = !!kept && await hex(kept) === window.ARENA_ADMIN_SHA256;
       } catch (e) { window.ARENA_ADMIN = false; }
+      // 2.0 keeps one copy of the code (no IndexedDB twin): the admin's code, for the marks below (kanban #1414 port)
+      const adminCode = (window.ARENA_ADMIN && store) ? store.getItem('arena.admin.code') : null;
+      // THE OWNER'S ROUNDS, TOLD TO THE EXPLORER: by the admin code, or (kanban #1414) by the admin's address
+      let addressTold = false;
+      const markOwn = async (byAddress) => {
+        const S = (window.ARENA_BROWSER_STORE && window.ARENA_BROWSER_STORE()) || store;
+        const ids = new Set();
+        // every place this browser keeps an entry id (kanban #1090, measured on the owner's phone 11-03: its history held deposits only): the
+        // wallet history's stake rows, each kept lock's committedTo, each round note arena.pending.<round>.<entry>
+        const add = (x) => { if (/^[0-9a-f]{64}$/i.test(String(x || ''))) ids.add(String(x).toLowerCase()); };
+        for (let i = 0; i < S.length; i++) {
+          const k = S.key(i) || '';
+          try {
+            if (k.startsWith('arena.ledger.') && !k.startsWith('arena.ledger.read.')) { for (const r of JSON.parse(S.getItem(k) || '[]')) if (r) add(r.entry); }
+            else if (k.startsWith('arena.lock.saved.')) add((JSON.parse(S.getItem(k) || 'null') || {}).committedTo);
+            else if (k.startsWith('arena.pending.') && k !== 'arena.pending.mine') add(k.split('.').pop());
+          } catch { /* not ours */ }
+        }
+        let sent = []; try { sent = JSON.parse(store.getItem('arena.admin.marked') || '[]'); } catch { sent = []; }
+        const fresh = [...ids].filter((x) => !sent.includes(x)).slice(0, 500);
+        // the admin's address is told once a page load, entries or not (kanban #1414): a fresh admin browser registers it too
+        if (!fresh.length && (byAddress || addressTold)) return;
+        if (!byAddress) addressTold = true;
+        try {
+          const r = await fetch('https://explorer.bitcoinarena.io/api/' + (byAddress ? 'mark-ip' : 'mark'), { method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(byAddress ? { keys: fresh, kind: navigator.webdriver ? 'bot' : 'owner' } : { kind: 'owner', keys: fresh, code: adminCode }) });   // kanban #1466: a browser under automation is a bot
+          // by address the explorer takes only the entries it holds (kanban #1420): those count as sent, the rest are asked again next minute
+          if (r.ok) { let took = fresh; if (byAddress) { try { const j = await r.json(); took = Array.isArray(j.took) ? j.took : []; } catch { took = []; } }
+            store.setItem('arena.admin.marked', JSON.stringify(sent.concat(took).slice(-5000))); }
+        } catch { /* the next minute asks again */ }
+      };
       if (window.ARENA_ADMIN) {
         const mark = () => { const b = document.getElementById('arena-build'); if (b && !/admin/.test(b.textContent)) b.textContent += ' \u00b7 admin';
           // THE ADMIN FLAG (the owner 2026-11-08: "Zeige ein kleines flag an im client wenn der admin node aktiviert ist"): a small badge in the corner, always on top
@@ -1833,31 +1895,25 @@
         // THE OWNER'S ROUNDS LEFT OUT OF THE COUNTS (kanban #1090: "tu da meine Runden RAUS NEHMEN. Indem es ein Flag im Frontend gibt"): every
         // entry this browser's wallet history holds (a stake row's entry - its transaction id in the explorer), told to the explorer once, with
         // the admin code; again each minute for the rounds joined since
-        const report = async () => {
-          const S = (window.ARENA_BROWSER_STORE && window.ARENA_BROWSER_STORE()) || store;
-          const ids = new Set();
-          // every place this browser keeps an entry id (kanban #1090, measured on the owner's phone 11-03: its history held deposits only): the
-          // wallet history's stake rows, each kept lock's committedTo, each round note arena.pending.<round>.<entry>
-          const add = (x) => { if (/^[0-9a-f]{64}$/i.test(String(x || ''))) ids.add(String(x).toLowerCase()); };
-          for (let i = 0; i < S.length; i++) {
-            const k = S.key(i) || '';
-            try {
-              if (k.startsWith('arena.ledger.') && !k.startsWith('arena.ledger.read.')) { for (const r of JSON.parse(S.getItem(k) || '[]')) if (r) add(r.entry); }
-              else if (k.startsWith('arena.lock.saved.')) add((JSON.parse(S.getItem(k) || 'null') || {}).committedTo);
-              else if (k.startsWith('arena.pending.') && k !== 'arena.pending.mine') add(k.split('.').pop());
-            } catch { /* not ours */ }
-          }
-          let sent = []; try { sent = JSON.parse(store.getItem('arena.admin.marked') || '[]'); } catch { sent = []; }
-          const fresh = [...ids].filter((x) => !sent.includes(x)).slice(0, 500);
-          if (!fresh.length) return;
-          try {
-            const r = await fetch('https://explorer.bitcoinarena.io/api/mark', { method: 'POST', headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ kind: 'owner', keys: fresh, code: store.getItem('arena.admin.code') }) });
-            if (r.ok) store.setItem('arena.admin.marked', JSON.stringify(sent.concat(fresh).slice(-5000)));
-          } catch { /* the next minute asks again */ }
-        };
+        const report = () => markOwn(false);
         window.ARENA_ADMIN_REPORT = report;
         setTimeout(report, 5000); setInterval(report, 60000);
+      } else {
+        // ADMIN BY ADDRESS (kanban #1414, Daniel 2026-11-10: "Wenn ich einen anonymen browser aufmache von einer IP die davor einen admin key hatte müssen
+        // wir das auch erkennen und ihn als admin flaggen obwohl die session neu ist"): a browser with no code asks the explorer whether its address sent
+        // the admin code (within 90 days); if so it is flagged, sends no Umami event, and its rounds are left out of the counts by address
+        try {
+          const r = await fetch('https://explorer.bitcoinarena.io/api/admin-ip', { cache: 'no-store' });
+          const j = await r.json();
+          if (j && j.admin === true) {
+            window.ARENA_ADMIN_IP = true;
+            console.log('[admin] this address is the admin\'s: this browser\'s rounds are left out of the counts');
+            const byIp = () => markOwn(true);
+            window.ARENA_ADMIN_REPORT = byIp;
+            // A TEST BROWSER LIVES SECONDS (kanban #1466): under automation the entries are told every 5 s, before the script closes it
+            setTimeout(byIp, 5000); setInterval(byIp, navigator.webdriver ? 5000 : 60000);
+          }
+        } catch { /* not known: a player */ }
       }
     })();
     window.addEventListener('DOMContentLoaded', () => {
@@ -2305,7 +2361,7 @@
   <div id="arena-shop" role="dialog" aria-modal="true" aria-labelledby="arena-shop-title"><div class="box"><button type="button" class="back">&larr; Back</button><button type="button" class="sheet-close">&#10005; Close</button><div class="brand">Shop</div><h2 id="arena-shop-title">Shop</h2><div class="head">Bought once with your wallet, yours for good in every round of this game.</div><div class="items"></div><div class="state" role="status" aria-live="polite"></div></div></div>
   <div id="arena-zap" role="dialog" aria-modal="true" aria-label="Zap"></div>
   <div id="arena-pop" role="dialog" aria-modal="true" aria-labelledby="arena-pop-title"><div class="card"><div class="top"><h3 id="arena-pop-title"></h3><button type="button" aria-label="Close">&times;</button></div><div class="body"></div></div></div>
-  <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><div class="brand">Bitcoin Arena</div><h2>Choose an App</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="foot-row"><span class="build-line">UI {{{ UI_VERSION }}}</span><span class="arena-social"><a href="https://x.com/bitcoinarena_io" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on X" title="X"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"/></svg></a><a href="https://discord.gg/9zZbASZyue" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on Discord" title="Discord"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.211.375-.445.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 3.677 4.37a.07.07 0 0 0-.032.028C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.873-1.295 1.226-1.994a.076.076 0 0 0-.042-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .078-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.099.246.198.373.292a.077.077 0 0 1-.007.127 12.3 12.3 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.363 1.225 1.993a.076.076 0 0 0 .084.028 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03ZM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.956 2.418-2.157 2.418Zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.946 2.418-2.157 2.418Z"/></svg></a><a href="https://t.me/+KihHE8JhcVM3NDVi" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on Telegram" title="Telegram"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0Zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635Z"/></svg></a><a href="https://github.com/bitcoinarena" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on GitHub" title="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a></span><button type="button" class="donate-btn" title="Donate to the protocol developers" onclick="window.ARENA_DONATE_OPEN && window.ARENA_DONATE_OPEN(null)">&hearts; Donate</button></div></div></div>
+  <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><div class="brand"><img src="arena-mark-44.webp" srcset="arena-mark-44.webp 2x, arena-mark-66.webp 3x" alt="" style="height:22px;width:auto;vertical-align:-5px;margin-right:8px">Bitcoin Arena</div><h2>Choose an App</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="foot-row"><span class="build-line">UI {{{ UI_VERSION }}}</span><span class="arena-social"><a href="https://x.com/bitcoinarena_io" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on X" title="X"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"/></svg></a><a href="https://discord.gg/9zZbASZyue" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on Discord" title="Discord"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.211.375-.445.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 3.677 4.37a.07.07 0 0 0-.032.028C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.873-1.295 1.226-1.994a.076.076 0 0 0-.042-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .078-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.099.246.198.373.292a.077.077 0 0 1-.007.127 12.3 12.3 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.363 1.225 1.993a.076.076 0 0 0 .084.028 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03ZM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.956 2.418-2.157 2.418Zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.946 2.418-2.157 2.418Z"/></svg></a><a href="https://t.me/+KihHE8JhcVM3NDVi" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on Telegram" title="Telegram"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0Zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635Z"/></svg></a><a href="https://github.com/bitcoinarena" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on GitHub" title="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a></span><button type="button" class="donate-btn" title="Donate to the protocol developers" onclick="window.ARENA_DONATE_OPEN && window.ARENA_DONATE_OPEN(null)">&hearts; Donate</button></div></div></div>
   <div id="boot" data-build="{{{ PRODUCT_VERSION }}}">
     <div id="site-splash"><div class="icons" id="site-icons"></div><div class="name" id="site-name"></div></div>
     <script>

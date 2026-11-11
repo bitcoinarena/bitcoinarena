@@ -48,11 +48,11 @@
   svg .b { fill: var(--btc); } svg .f { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
 
   /* THE SITE'S HEADER, as on the home page */
-  body { padding-top: 64px; }
   nav.site { position: fixed; inset: 0 0 auto 0; z-index: 20; backdrop-filter: blur(10px); background: rgba(7,9,13,.82); border-bottom: 1px solid rgba(255,255,255,.06); }
   nav.site .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; display: flex; align-items: center; gap: 22px; height: 64px; }
   nav.site .brand { display: flex; align-items: center; gap: 10px; font: 700 19px system-ui; letter-spacing: -0.02em; text-decoration: none; white-space: nowrap; color: var(--text); }
   nav.site .brand i { width: 30px; height: 30px; border-radius: 8px; background: conic-gradient(from 210deg, var(--btc), #ffcf5c, var(--btc)); display: grid; place-items: center; font-style: normal; color: #1a0f00; font-weight: 800; }
+  nav.site .nid { display: inline-flex; align-items: center; color: #b98cff; } nav.site .nid svg { display: block; width: 22px; height: 22px; fill: currentColor; } nav.site .nid:hover { color: var(--text); }   /* kanban #1144 */
   nav.site .links { margin-left: auto; display: flex; gap: 22px; font-size: 15px; }
   nav.site .links a { color: var(--dim); text-decoration: none; } nav.site .links a:hover, nav.site .links a.on { color: var(--text); }
   nav.site .play { display: inline-flex; align-items: center; gap: 8px; padding: 9px 15px; border-radius: 11px; background: linear-gradient(135deg, var(--btc), #ffb347); color: #1a0f00; font: 600 15px/1 system-ui; text-decoration: none; white-space: nowrap; }
@@ -84,20 +84,21 @@
   details.acc > p { margin: 0 0 12px; color: var(--dim); }
   details.acc.section { margin-top: 22px; } details.acc.section > summary { font-size: 17px; }
   details.acc.section > .inner { padding-bottom: 6px; } details.acc.section > .inner > p { color: var(--text); }
+  /* NOSTR IS PURPLE EVERYWHERE (kanban #1344, Daniel 2026-11-07) */
+  footer a.nostr-id, a.nostr-id, nav.top .nid, nav.site .nid { color: #b98cff; }
+  footer a.nostr-id:hover, a.nostr-id:hover, nav.top .nid:hover, nav.site .nid:hover { color: #d4b8ff; }
 </style>
+<link rel="me" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2">
 </head>
 <body>
-<nav class="site"><div class="wrap">
-  <a class="brand" href="https://bitcoinarena.io/" aria-label="Bitcoin Arena"><i>₿</i><span>Bitcoin Arena</span></a>
-  <div class="links"><a href="https://bitcoinarena.io/#games">Games</a><a href="https://bitcoinarena.io/#how">How it works</a><a href="https://bitcoinarena.io/#build">Build &amp; run</a><a class="keep" href="https://testnet.bitcoinarena.io/proposals/">Proposals</a><a class="keep on" href="/security/" aria-current="page">Security</a><a class="keep" href="https://docs.bitcoinarena.io/">Docs</a></div>
-  <a class="play" href="https://testnet.bitcoinarena.io/">App <span aria-hidden="true">→</span></a>
-</div></nav>
+<!-- ONE HEADER FOR EVERY PAGE (kanban #1457, Daniel 2026-11-11: "Der Header muss überall gleich aussehen"): the start page's header, drawn by site-chrome.js -->
+<script src="https://testnet.bitcoinarena.io/site-chrome.js" data-foot="none"></script>
 <main>
   <h1>How your money is protected</h1>
   <p class="lead">The worst things that could happen, how likely each one is, what stops it, and what is left. Worst case first, in plain words.</p>
-  <div class="note"><b>Mainnet is not live.</b> Bitcoin Arena runs on testnet today, with test coins that have no value. This page describes <b>version 2.0</b> first: the protection Bitcoin Arena is built for. What the version running on testnet today, <b>1.9</b>, already does is in its own section below.</div>
+  <div class="note"><b>Mainnet is not live.</b> Bitcoin Arena runs on testnet today, with test coins that have no value. This page describes <b>version 2026.2.0</b> first: the protection Bitcoin Arena is built for. What the version running on testnet today, <b>1.9</b>, already does is in its own section below.</div>
 
-  <span class="ver v20">Version 2.0</span>
+  <span class="ver v20">Version 2026.2.0</span>
   <h2>Where your money is, and who guards it</h2>
   <div class="flow" role="img" aria-label="Three stages: in your wallet, locked in a round, paid out">
     <div class="stage">
@@ -307,17 +308,17 @@
 
   <div class="card"><div class="head">
     <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><path class="r" d="M14 16l16 12M30 16L14 28"/><path class="g" d="M12 34h20"/></svg>
-    <div><h3>A round's signers lie about the result</h3><span class="pill live">live on testnet</span> <span class="pill soon">slash: comes with 2.0</span></div></div>
+    <div><h3>A round's signers lie about the result</h3><span class="pill live">live on testnet</span> <span class="pill soon">slash: comes with 2026.2.0</span></div></div>
     <dl><dt>What could happen</dt><dd>The signers of a round sign a result that the game did not produce, to pay the wrong player.</dd>
     <dt>How likely</dt><dd>Low. It needs most of a randomly drawn group to agree to cheat, each with a bond at stake.</dd>
     <dt>What stops it</dt><dd>Every round can be replayed by anyone. Auditors replay it, there is a window to object, a disputed round is run again, and the signers who lied lose their bond.</dd>
     <dt class="left">What is left</dt><dd>If 5 of the 7 signers lie and nobody objects within 10 minutes, the wrong result stands. A proof later still costs them their bonds.</dd></dl>
-    <details><summary>Details</summary>Replay and objection: spec §13A, §13A.1. The slash for a false result: §5A.3, in 2.0.</details>
+    <details><summary>Details</summary>Replay and objection: spec §13A, §13A.1. The slash for a false result: §5A.3, in 2026.2.0.</details>
   </div>
 
   <div class="card"><div class="head">
     <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><path class="i" d="M14 22h16"/><path class="r" d="M16 14l12 16"/></svg>
-    <div><h3>A few seats stay silent to stop or void a round</h3><span class="pill soon">comes with 2.0</span></div></div>
+    <div><h3>A few seats stay silent to stop or void a round</h3><span class="pill soon">comes with 2026.2.0</span></div></div>
     <dl><dt>What could happen</dt><dd>Some seats stop answering so a round cannot finish, again and again.</dd>
     <dt>How likely</dt><dd>Medium. A seat only has to go quiet.</dd>
     <dt>What stops it</dt><dd>A round waits and is run again by its seats. A seat named silent in 3 failed rounds within 72 hours is left out of the draw for up to 72 hours. Your stake comes back if the round cannot finish.</dd>
@@ -327,7 +328,7 @@
 
   <div class="card"><div class="head">
     <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><path class="i" d="M12 14h20v16H12z"/><path class="r" d="M16 22h12"/></svg>
-    <div><h3>Settlement seats sign a different payout</h3><span class="pill soon">comes with 2.0</span></div></div>
+    <div><h3>Settlement seats sign a different payout</h3><span class="pill soon">comes with 2026.2.0</span></div></div>
     <dl><dt>What could happen</dt><dd>The seats that pay a round out sign a payout that differs from the result.</dd>
     <dt>How likely</dt><dd>Low. It needs a threshold of seats, each with a bond.</dd>
     <dt>What stops it</dt><dd>Every seat acknowledges the payout table it signs, and a false table is a proof that slashes those seats. The players get their real loss from the slashed bonds.</dd>
@@ -337,9 +338,9 @@
 
   <div class="card"><div class="head">
     <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><circle class="i" cx="15" cy="18" r="4"/><circle class="i" cx="29" cy="18" r="4"/><circle class="i" cx="22" cy="29" r="4"/><path class="r" d="M10 34l24-24"/></svg>
-    <div><h3>Guardians are hacked or work together to steal</h3><span class="pill plan">planned for 2.0</span></div></div>
+    <div><h3>Guardians are hacked or work together to steal</h3><span class="pill plan">planned for 2026.2.0</span></div></div>
     <dl><dt>What could happen</dt><dd>Enough guardians of a federation sign together and take the bitcoin it holds.</dd>
-    <dt>How likely</dt><dd>Low. It needs a majority of a federation's guardians. Today on testnet most guardians are run by the project; spreading them over different machines and providers comes with 2.0.</dd>
+    <dt>How likely</dt><dd>Low. It needs a majority of a federation's guardians. Today on testnet most guardians are run by the project; spreading them over different machines and providers comes with 2026.2.0.</dd>
     <dt>What stops it</dt><dd>A federation may only hold as much as its guardians' bonds can cover. A theft leaves a mark in the federation's own signed history: more e-cash paid out than was ever issued, or a reserve spent with no signed withdrawal. Any seat that sees it stops deposits at once, and every note is paid at face value from the bonds of all its guardians. Updates reach only a few guardians of a federation at a time.</dd>
     <dt class="left">What is left</dt><dd>Your claim: you have 3 months to present your notes, and they are paid at once. Deposits made outside our apps and gateways past the cap may not be covered.</dd></dl>
     <details><summary>Details</summary>Exposure cap, the reserve alarm, guardian bonds as insurance, staged updates and spread guardians: §23A.</details>
@@ -347,7 +348,7 @@
 
   <div class="card"><div class="head">
     <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><rect class="i" x="15" y="15" width="14" height="14" rx="2"/><path class="r" d="M12 32l20-20"/></svg>
-    <div><h3>A federation stops working</h3><span class="pill plan">planned for 2.0</span></div></div>
+    <div><h3>A federation stops working</h3><span class="pill plan">planned for 2026.2.0</span></div></div>
     <dl><dt>What could happen</dt><dd>A federation halts, is robbed, or its guardians leave.</dd>
     <dt>How likely</dt><dd>Low to medium over years.</dd>
     <dt>What stops it</dt><dd>The federation is wound up: every note presented is paid at face value, from the federation's escrow and its guardians' bonds. Your wallet claims for you automatically.</dd>
@@ -357,7 +358,7 @@
 
   <div class="card"><div class="head">
     <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><rect class="i" x="12" y="14" width="20" height="14" rx="2"/><path class="i" d="M18 32h8"/><path class="r" d="M20 18l4 6"/></svg>
-    <div><h3>A node is hacked</h3><span class="pill plan">planned for 2.0</span></div></div>
+    <div><h3>A node is hacked</h3><span class="pill plan">planned for 2026.2.0</span></div></div>
     <dl><dt>What could happen</dt><dd>Someone takes over the machine a node runs on.</dd>
     <dt>How likely</dt><dd>Medium: machines get hacked.</dd>
     <dt>What stops it</dt><dd>A node never holds a player's money, and its bond can only be taken back with its owner's 24 words, which are kept off the machine. A hacked node can sign no more than its own share of a round.</dd>
@@ -367,7 +368,7 @@
 
   <div class="card"><div class="head">
     <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><path class="i" d="M22 12v12"/><circle class="b" cx="22" cy="30" r="3"/></svg>
-    <div><h3>Someone slashes a node falsely</h3><span class="pill soon">comes with 2.0</span></div></div>
+    <div><h3>Someone slashes a node falsely</h3><span class="pill soon">comes with 2026.2.0</span></div></div>
     <dl><dt>What could happen</dt><dd>Someone tries to take a node's bond without a real offence.</dd>
     <dt>How likely</dt><dd>Low.</dd>
     <dt>What stops it</dt><dd>A slash first moves the bond to a hold where it still counts. Two independent panels must release it with a valid proof, and signing a release without one is itself slashable. If the proof does not hold up, the node takes its bond back by itself after about a day, never before its maturity.</dd>
@@ -441,11 +442,11 @@
   <div class="cases">
     <div class="case"><svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="14"/><path class="g" d="M15 22l5 5 9-10"/></svg><div><b>Live in 1.9</b><span>Every round can be replayed by anyone. A false result can be objected to for 10 minutes and the round is then run again. A round that cannot finish gives your stake back. Signers are drawn from a block hash nobody knows in advance. Every federation has two gateways. Game files load only when they match their published hashes. Your 24 words restore your wallet.</span></div></div>
     <div class="case"><svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="14"/><path d="M22 14v10M22 29v1" stroke="#d29922" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg><div><b>Slashing in 1.9: proofs only</b><span>Seats already file the proofs of a false result and publish them, and every seat checks them and writes down what the slash would owe. But no bond is taken: a 1.9 bond cannot be moved by a proof. A node that lies loses the round, not its bond.</span></div></div>
-    <div class="case"><svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="14"/><path class="r" d="M16 16l12 12M28 16L16 28"/></svg><div><b>Not yet in 1.9</b><span>Taking a bond, the hold and the two panels. Guardian bonds that pay the players after a theft. Leaving silent seats and absent nodes out of the draw. A cap on what a federation may hold. All of these come with version 2.0.</span></div></div>
+    <div class="case"><svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="14"/><path class="r" d="M16 16l12 12M28 16L16 28"/></svg><div><b>Not yet in 1.9</b><span>Taking a bond, the hold and the two panels. Guardian bonds that pay the players after a theft. Leaving silent seats and absent nodes out of the draw. A cap on what a federation may hold. All of these come with version 2026.2.0.</span></div></div>
   </div>
-  <div class="note">Until 2.0, Bitcoin Arena stays on testnet with coins that have no value. Mainnet starts with the protection of version 2.0, not with 1.9.</div>
+  <div class="note">Until 2026.2.0, Bitcoin Arena stays on testnet with coins that have no value. Mainnet starts with the protection of version 2026.2.0, not with 1.9.</div>
 
-  <footer><a href="https://bitcoinarena.io/">Bitcoin Arena</a> · <a href="https://docs.bitcoinarena.io/">Docs</a> · <a href="https://testnet.bitcoinarena.io/">Play on testnet</a></footer>
+  <footer><a href="https://bitcoinarena.io/">Bitcoin Arena</a> · <a href="https://docs.bitcoinarena.io/">Docs</a> · <a href="https://testnet.bitcoinarena.io/">Play on testnet</a> · <a class="nostr-id" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)">Nostr: bitcoinarena.io <span aria-label="verified">&#10003;</span></a></footer>
 </main>
 </body>
 </html>

@@ -29,18 +29,20 @@ test('each page of the menu, the demo, the docs and the explorer draws the Arena
   assert.ok(!read('packages/arena-web/src/explorer/main.jsx').includes('<i>₿</i>'), 'the explorer\'s bar has no logo of its own');
 });
 
-test('the header: the logo to bitcoinarena.io, "← Arena" back to the games, ☰ at the right end with the Arena page\'s links, all in the same tab', () => {
-  assert.match(CHROME, /<a class="asc-home" href="https:\/\/bitcoin-?arena\.io\/"/);
-  assert.match(CHROME, /<a class="asc-back" href="' \+ esc\(site\) \+ '"[^>]*><span aria-hidden="true">&larr;<\/span><span class="word">Arena<\/span><\/a>/);
-  assert.match(CHROME, /var LINKS = \[\['Proposals', site \+ 'proposals\/'\], \['Explorer', 'https:\/\/explorer\.bitcoin-?arena\.io\/'\], \['Health', site \+ 'health\/'\], \['Referral Program', site \+ 'referral\/'\]\];/);
-  // no link of the bar or the menu opens a new tab; only the footer's X, Discord and Telegram do (kanban #749, footer-social.test.js)
+test('the header is the start page\'s (kanban #1457, Daniel 2026-11-11: "Der Header muss überall gleich aussehen"): the stadium and the name to bitcoinarena.io, its links, the Nostr badge and App, all in the same tab', () => {
+  assert.match(CHROME, /<a class="asc-brand" href="' \+ HOME \+ '" aria-label="Bitcoin Arena"><img class="asc-mark" src="' \+ mark \+ 'bitcoin-arena-mark-90\.webp"/);
+  assert.match(CHROME, /var HOME = 'https:\/\/bitcoinarena\.io\/';/);
+  for (const [name, href] of [['Games', "HOME \\+ '#games'"], ['How it works', "HOME \\+ '#how'"], ['Nostr', "HOME \\+ '#nostr'"], ['Build &amp; run', "HOME \\+ '#build'"], ['Download', "HOME \\+ '#download'"],
+    ['Proposals', "'https:\\/\\/testnet\\.bitcoinarena\\.io\\/proposals\\/'"], ['Security', "HOME \\+ 'security\\/'"], ['Docs', "'https:\\/\\/docs\\.bitcoinarena\\.io\\/'"]])
+    assert.match(CHROME, new RegExp(`\\['${name}', ${href}`), name);
+  // the same as the start page's own nav.top: the same links in the same order, App to the game page
+  const home = read('src/website/www/index.html');
+  const homeLinks = [...home.match(/<nav class="top">[\s\S]*?<\/nav>/)[0].matchAll(/<a (?:class="keep" )?href="[^"]*">([^<]+)<\/a>/g)].map((m) => m[1]);
+  assert.deepEqual(homeLinks, ['Games', 'How it works', 'Nostr', 'Build &amp; run', 'Download', 'Proposals', 'Security', 'Docs']);
+  assert.match(CHROME, /<a class="asc-app" href="https:\/\/testnet\.bitcoinarena\.io\/">App &rarr;<\/a>/);
+  // no link of the bar opens a new tab; only the footer's X, Discord and Telegram do (kanban #749, footer-social.test.js)
   assert.ok(!/target=/.test(CHROME.replace(/<span class="asc-social">.*?<\/span>/, '')), 'no other link opens a new tab');
-  // the Arena page's two menus: the same links, the explorer in the same tab (#696)
   const page = read('src/arena-ui/index.html');
-  const menus = [...page.matchAll(/<nav id="arena-(?:wb-)?nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena">(.*?)<\/nav>/g)].map((m) => m[1]);
-  assert.equal(menus.length, 2);
-  for (const m of menus) assert.equal(m, '<a href="/proposals/">Proposals</a><a href="https://explorer.bitcoinarena.io/">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a>'
-    + '<a class="arena-nav-nostr" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)">Nostr: bitcoinarena.io &#10003;</a>');   // the verified Nostr profile last (kanban #1144)
   // the footer's Donate opens the Arena page's box
   assert.match(CHROME, /<a class="asc-donate" href="' \+ esc\(site\) \+ '#donate">&hearts; Donate<\/a>/);
   assert.match(page, /if \(location\.hash === '#donate'\) \{ try \{ history\.replaceState\(null, '', location\.pathname \+ location\.search\); \} catch \{ \/\* the box opens anyway \*\/ \} window\.ARENA_DONATE_OPEN\(\); \}/);

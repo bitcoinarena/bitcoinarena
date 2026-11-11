@@ -11,7 +11,19 @@
 <meta property="og:url" content="https://bitcoinarena.io/start/">
 <meta property="og:image" content="https://testnet.bitcoinarena.io/arena-og.png">
 <meta name="twitter:card" content="summary_large_image">
-<script>/* kanban #943: a visit from X arrives through t.co with no campaign in its link: named here, before the stats script reads the address */if(/^https?:\/\/t\.co(\/|$)/.test(document.referrer)&&!/[?&]utm_/.test(location.search))history.replaceState(history.state,'',location.pathname+(location.search?location.search+'&':'?')+'utm_source=x&utm_medium=social&utm_content=profile'+location.hash)</script>
+  <script id="arena-ref-source">/* THE SOURCE OF A VISIT (kanban #1458, Daniel 2026-11-11: "Make sure Stacker News is recognised through the referrer and the utm is set correctly, without us having to add it"): the same script inline on bitcoinarena.io, testnet. and docs., before the stats script reads the address. A link's own utm_ always wins. Without one, the referrer's host names the source (the map below), put into the address as utm_source/utm_medium so Umami counts it as if the link had carried it. The visit's first source is kept in this tab (sessionStorage, the source name only) and added to links to the other bitcoinarena.io hosts, so a visitor who goes on to the game keeps it. Stacker News sends no referrer on post links (rel="noreferrer", measured 2026-11-11): its links need their own utm. */(function(){try{
+var M=[[/(^|\.)stacker\.news$/,'stacker-news','community'],[/(^|\.)(x\.com|twitter\.com|t\.co)$/,'x','social'],[/(^|\.)(primal\.net|njump\.me|nostr\.com|iris\.to|coracle\.social|snort\.social|jumble\.social|yakihonne\.com|damus\.io|habla\.news|nostrudel\.ninja)$/,'nostr','social'],[/(^|\.)armada\.buzz$/,'armada','community'],[/(^|\.)reddit\.com$/,'reddit','social'],[/(^|\.)bitcointalk\.org$/,'bitcointalk','forum'],[/(^|\.)github\.com$/,'github','referral'],[/(^|\.)discord\.com$/,'discord','community'],[/(^|\.)(t\.me|telegram\.org)$/,'telegram','community'],[/^news\.ycombinator\.com$/,'hackernews','forum']];
+var OWN=/(^|\.)(bitcoinarena\.io|bitcoin-arena\.io)$/,K='arena.src',q=new URLSearchParams(location.search),src=null;
+if(q.get('utm_source')==='sn'){q.set('utm_source','stacker-news');q.set('utm_medium','community');history.replaceState(history.state,'',location.pathname+'?'+q.toString()+location.hash)}/* #1468: links posted 11-01..11-11 say utm_source=sn - one name for Stacker News */
+if(q.get('utm_source'))src=[q.get('utm_source'),q.get('utm_medium')||''];
+else{var h='';try{h=new URL(document.referrer).hostname.toLowerCase()}catch(e){}
+if(h&&!OWN.test(h)){src=[h.replace(/^www\./,''),'referral'];for(var i=0;i<M.length;i++)if(M[i][0].test(h)){src=[M[i][1],M[i][2]];break}}
+if(src){q.set('utm_source',src[0]);q.set('utm_medium',src[1]);history.replaceState(history.state,'',location.pathname+'?'+q.toString()+location.hash)}}
+var kept=null;try{kept=JSON.parse(sessionStorage.getItem(K)||'null')}catch(e){}
+if(!kept&&src){kept=src;try{sessionStorage.setItem(K,JSON.stringify(src))}catch(e){}}
+window.ARENA_SOURCE=kept?kept[0]:null;
+if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;if(!a)return;try{var u=new URL(a.href);if(u.hostname===location.hostname||!OWN.test(u.hostname)||/[?&]utm_/.test(u.search))return;u.searchParams.set('utm_source',kept[0]);if(kept[1])u.searchParams.set('utm_medium',kept[1]);a.href=u.toString()}catch(e){}},true)});
+}catch(e){}})();</script>
   <script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="4f00ff2b-032e-4683-890c-63458e0b178e" data-domains="bitcoinarena.io,www.bitcoinarena.io"></script>
   <script>/* kanban #943: the campaign reached the stats when the script read the address; then it leaves the address, past the script's own history hook, so no second view */addEventListener('load',function(){var n=0,c=function(){if(!window.umami&&n++<50)return setTimeout(c,100);setTimeout(function(){var u=new URL(location.href),k=Array.from(u.searchParams.keys()).filter(function(x){return/^utm_/.test(x)});if(k.length){k.forEach(function(x){u.searchParams.delete(x)});History.prototype.replaceState.call(history,history.state,'',u.pathname+u.search+u.hash)}},500)};c()})</script>
 <style>
@@ -23,11 +35,17 @@
   ul { color: var(--dim); padding-left: 20px; } li { margin-bottom: 8px; }
   .big { font: 700 56px/1 system-ui, sans-serif; color: var(--btc); } table { width: 100%; border-collapse: collapse; margin-top: 18px; background: var(--panel); border-radius: 10px; overflow: hidden; }
   th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; } th { color: var(--dim); font-size: 13px; font-weight: 600; } tr:last-child td { border-bottom: 0; }
+  footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--dim); font-size: 14px; }
+  /* NOSTR IS PURPLE EVERYWHERE (kanban #1344, Daniel 2026-11-07) */
+  footer a.nostr-id, a.nostr-id, nav.top .nid, nav.site .nid { color: #b98cff; }
+  footer a.nostr-id:hover, a.nostr-id:hover, nav.top .nid:hover, nav.site .nid:hover { color: #d4b8ff; }
 </style>
+<link rel="me" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2">
 </head>
 <body>
+<!-- ONE HEADER FOR EVERY PAGE (kanban #1457, Daniel 2026-11-11: "Der Header muss überall gleich aussehen"): the start page's header, drawn by site-chrome.js -->
+<script src="https://testnet.bitcoinarena.io/site-chrome.js" data-foot="none"></script>
 <main>
-  <p><a href="/">Bitcoin Arena</a></p>
   <h1>A game played for bitcoin. A federation of independent nodes holds the money, not a company.</h1>
   <p>Independent nodes hold the stakes in a federation, replay every run and pay the winners. Nobody runs it for you, and nobody can keep your stake.</p>
   <ul>
@@ -37,6 +55,7 @@
   </ul>
   <a class="go" href="https://testnet.bitcoinarena.io/?utm_source=landing&utm_medium=web&utm_content=start">Play on testnet</a>
   <p>Log in with your Nostr key or make a wallet in the page. Nothing here promises a reward.</p>
+  <footer><a href="/">Bitcoin Arena</a> &middot; <a class="nostr-id" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)">Nostr: bitcoinarena.io <span aria-label="verified">&#10003;</span></a></footer>
 </main>
 </body>
 </html>

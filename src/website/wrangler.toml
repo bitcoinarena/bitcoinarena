@@ -11,6 +11,9 @@ routes = [
   { pattern = "www.bitcoinarena.io", custom_domain = true },
   { pattern = "chatgpt.bitcoin-arena.io", custom_domain = true },
   { pattern = "chatgpt.bitcoinarena.io", custom_domain = true },
+  # kanban #1197: the new homepage beside the live one, until Daniel switches it
+  { pattern = "next.bitcoinarena.io", custom_domain = true },
+  { pattern = "sn.bitcoinarena.io", custom_domain = true },   # kanban #1458: Stacker News links, redirected with the /sn campaign
 ]
 
 [assets]
