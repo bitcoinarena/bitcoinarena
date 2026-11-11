@@ -690,7 +690,13 @@ export class Round {
         if (!accepted && typeof asks.entryCloseMs === 'bigint' && BigInt(this.now()) >= asks.entryCloseMs)
           throw new Error(`that round's entries closed at ${new Date(Number(asks.entryCloseMs)).toISOString()}: a head-to-head round takes no entry after it - the moves are being revealed`);
         // ONLY ENTRIES BACKED BY A LOCK TAKE A SEAT OF A PAYING ROUND (kanban #1437, audit 8 R3); a third lock is refused at /lock (stake-lock-signer-node.js)
-        const seated = this.seatedEntriesOf(contract.roundId, asks.stakeMsat).filter((x) => !same(x.entry.sessionPubkey, contract.sessionPubkey)).length;
+        // ONE ENTRY PER SESSION KEY (kanban #1479, feedback #007 by Hexbox Tools 2026-11-11: one session key stood three times, rock, paper and scissors, every one
+        // left out of the count because the count skipped the whole key, and revealed only the winner): the same entry again - its id - passes, as a resend after a
+        // reload does; another entry of the same session key is refused here, and the seats are counted by entry id. The lock door (#1437) refuses the extra lock too.
+        const me = entryId(contract);
+        if (!accepted && this.entriesOf(contract.roundId).some((x) => same(x.entry.sessionPubkey, contract.sessionPubkey) && !same(x.entryId, me)))
+          throw new Error(`that session key already has an entry in this round of game "${m.gameName}": one entry per session key`);
+        const seated = this.seatedEntriesOf(contract.roundId, asks.stakeMsat).filter((x) => !same(x.entryId, me)).length;
         if (seated >= m.players && !accepted) throw new Error(`that round already seats game "${m.gameName}"'s ${m.players} players`);
       } else if (hidden) throw new Error('that entry hides a move, and its round is not a head-to-head game\'s');
     }
