@@ -79,9 +79,21 @@
   section { border-top: 1px solid var(--line); }
   @media (max-width: 720px) { section, header.intro { padding: 44px 0; } }
 
-  /* top */
-  header.intro .facts { color: var(--soft); max-width: 66ch; }
-  header.intro .where { margin-top: 18px; font-size: 15px; color: var(--dim); }
+  /* top: the live page's mood image (img/hero.svg) behind the words, a plain dark fade for reading; on a phone the image above */
+  header.intro { position: relative; isolation: isolate; overflow: hidden; min-height: min(78svh, 640px); display: flex; align-items: center; padding: 80px 0; }
+  header.intro .bg { position: absolute; inset: 0; z-index: -2; }
+  header.intro .bg img { width: 100%; height: 100%; object-fit: cover; object-position: 66% 50%; display: block; }
+  header.intro::after { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(90deg, var(--bg) 0%, rgba(15,10,16,.9) 30%, rgba(15,10,16,.35) 58%, rgba(15,10,16,0) 78%), linear-gradient(180deg, rgba(15,10,16,0) 72%, var(--bg) 100%); }
+  header.intro .copy { max-width: 560px; }
+  header.intro .facts { color: var(--soft); max-width: 46ch; font-size: 18px; }
+  header.intro .where { margin-top: 16px; font-size: 15px; color: var(--dim); }
+  @media (max-width: 860px) {
+    header.intro { display: block; min-height: 0; padding: 0 0 40px; }
+    header.intro .bg { position: relative; inset: auto; height: 260px; }
+    header.intro .bg img { object-position: 70% 50%; }
+    header.intro::after { background: linear-gradient(180deg, rgba(15,10,16,0) 0, rgba(15,10,16,0) 170px, var(--bg) 260px); }
+    header.intro .copy { margin-top: -18px; }
+  }
 
   /* games */
   .games { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; margin-top: 30px; }
@@ -104,7 +116,7 @@
   .rows th { width: 34%; padding-right: 28px; font-weight: 600; font-size: 17px; }
   .rows td { color: var(--soft); font-size: 16px; }
   .rows thead th { font: 400 13px/1.4 var(--mono); color: var(--dim); padding: 10px 28px 10px 0; }
-  .rows.claims th { width: 52%; font-weight: 400; color: var(--text); font-size: 16px; }
+  .rows.claims th { width: 46%; font-weight: 600; color: var(--text); font-size: 16px; }
   .rows.claims th b { font-weight: 600; }
   .rows.claims td { font-size: 15px; }
   .rows code { color: var(--text); }
@@ -153,6 +165,17 @@
   }
   .showall { margin-top: 10px; font: 14px var(--sans); color: var(--text); background: none; border: 1px solid var(--line); border-radius: 4px; padding: 6px 12px; cursor: pointer; }
   .showall:hover { border-color: var(--dim); }
+
+  /* a section's words beside its picture; on a phone the picture below the words */
+  .media { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 44px; align-items: center; }
+  .media > * { min-width: 0; }
+  figure.pic { margin: 0; }
+  figure.pic img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 4px; background: #07060a; }
+  figure.pic svg { display: block; width: 100%; height: auto; }
+  figure.pic figcaption { margin-top: 8px; font: 13px/1.5 var(--mono); color: var(--dim); }
+  figure.wide img { aspect-ratio: 16 / 6; object-fit: cover; object-position: 50% 40%; }
+  figure.wide { margin-top: 26px; }
+  @media (max-width: 860px) { .media { grid-template-columns: minmax(0, 1fr); gap: 26px; } }
 
   /* build and run */
   .three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; margin-top: 28px; }
@@ -204,34 +227,37 @@
   <a class="app" href="https://testnet.bitcoinarena.io/" data-umami-event="site-app">App →</a>
 </div></nav>
 
-<header class="intro" id="top"><div class="wrap">
-  <h1>Games and prediction markets for bitcoin, run by independent nodes</h1>
-  <p class="facts">Many independent nodes run Bitcoin Arena. No company owns it. A federation of those nodes holds the sats, and no single node can move them. The nodes check every result before anyone is paid. You deposit and withdraw over Lightning in seconds, and your Nostr key is your login. The code is open: read it, or run your own node.</p>
-  <div class="actions">
-    <a class="btn primary" href="https://testnet.bitcoinarena.io/" data-umami-event="site-play">Play on Testnet</a>
-    <a class="btn" href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-umami-event="site-run-node">Run a node <span class="v" data-arena-release-version></span></a>
-    <a href="https://docs.bitcoinarena.io/" data-umami-event="site-docs">Read the docs</a>
-  </div>
-  <p class="where">On Bitcoin testnet4. You play with test sats at <a href="https://testnet.bitcoinarena.io/">testnet.bitcoinarena.io</a>. New here? <a href="/start/" data-umami-event="site-start">Start here</a>.</p>
-</div></header>
+<header class="intro" id="top">
+  <div class="bg"><img src="/img/hero.svg" alt="A bitcoin sun rising over a skyline of price candles, the road to the next block below" width="1600" height="900" fetchpriority="high"></div>
+  <div class="wrap"><div class="copy">
+    <h1>Games and prediction markets for bitcoin, run by independent nodes</h1>
+    <p class="facts">A federation of nodes holds the sats. 5 of 7 nodes sign every result. Lightning in and out, Nostr as your login, open source.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://testnet.bitcoinarena.io/" data-umami-event="site-play">Play on Testnet</a>
+      <a class="btn" href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-umami-event="site-run-node">Run a node <span class="v" data-arena-release-version></span></a>
+      <a href="https://docs.bitcoinarena.io/" data-umami-event="site-docs">Docs</a>
+    </div>
+    <p class="where">Bitcoin testnet4, free test sats. New here? <a href="/start/" data-umami-event="site-start">Start here</a>.</p>
+  </div></div>
+</header>
 
 <section id="games"><div class="wrap">
   <h2>Three games, live on testnet4</h2>
-  <p class="lead">Race the next block, outguess a rival, or call the price. Every game runs on Bitcoin testnet4 with free test sats, on the same nodes, federations and Lightning gateways as a real game.</p>
+  <p class="lead">Free test sats, no sign-up. Same nodes, federations and Lightning as a paid game.</p>
   <div class="games">
     <article class="game">
       <img src="/next/media/nextblock-v2.jpg" alt="Tick Tock, Next Block in play: a truck on the road to the miners, tanks and the price war ahead" width="960" height="540">
       <div class="kind">Skill game · rounds</div>
       <h3>Tick Tock, Next Block</h3>
-      <p>Haul mempool transactions to the miners through the bulls&rsquo; and bears&rsquo; price war. Stay close to the live price front to score. The best run takes the pot.</p>
+      <p>Haul mempool transactions to the miners. The best run takes the pot.</p>
       <p class="count"><b data-total="nextblock">–</b> rounds settled since <span data-since>launch</span></p>
-      <a class="btn primary" href="https://testnet.bitcoinarena.io/?game=nextblock" data-umami-event="site-play" data-umami-event-game="nextblock">Play Tick Tock, Next Block</a>
+      <a class="btn primary" href="https://testnet.bitcoinarena.io/?game=nextblock" data-umami-event="site-play" data-umami-event-game="nextblock">Play Tick Tock</a>
     </article>
     <article class="game">
       <img src="/next/media/rps-v2.jpg" alt="Rock Paper Scissors in play: pick rock, paper or scissors, eight seconds on the clock" width="960" height="540">
       <div class="kind">Head to head · 8 s rounds</div>
       <h3>Rock Paper Scissors</h3>
-      <p>Both players commit a hidden move, then reveal it. The winner takes the pot. A draw returns both stakes.</p>
+      <p>Hidden moves, then reveal. The winner takes the pot, a draw returns both stakes.</p>
       <p class="count"><b data-total="rock-paper-scissors">–</b> rounds settled since <span data-since>launch</span></p>
       <a class="btn primary" href="https://testnet.bitcoinarena.io/?game=rock-paper-scissors" data-umami-event="site-play" data-umami-event-game="rock-paper-scissors">Play Rock Paper Scissors</a>
     </article>
@@ -239,84 +265,98 @@
       <img src="/next/media/updown-v3.jpg" alt="Bitcoin Up or Down: the price chart around the price to beat, with Up and Down" width="960" height="540">
       <div class="kind">Prediction market · 15 min</div>
       <h3>Bitcoin Up or Down</h3>
-      <p>Will the bitcoin price be higher at the end of the 15-minute window? Pick Up or Down. The attestors sign the price, and the winning side shares the pot.</p>
+      <p>Higher or lower in 15 minutes? The winning side shares the pot.</p>
       <p class="count"><b data-total="btc-updown-15m">–</b> rounds settled since <span data-since>launch</span></p>
       <a class="btn primary" href="https://testnet.bitcoinarena.io/?game=btc-updown-15m" data-umami-event="site-play" data-umami-event-game="btc-updown-15m">Play Up or Down</a>
     </article>
   </div>
-  <div class="free">
-    <p><b>Free test sats, no sign-up.</b> Open the Arena, make a wallet in one tap and play all three.</p>
-    <a class="btn primary" href="https://testnet.bitcoinarena.io/" data-umami-event="site-play">Open testnet.bitcoinarena.io</a>
-  </div>
 </div></section>
 
-<section id="how"><div class="wrap">
+<section id="how"><div class="wrap media">
+  <div>
   <h2>A round has four steps, from deposit to payout</h2>
   <table class="rows">
     <tbody>
-      <tr><th scope="row">Deposit</th><td>Pay a Lightning invoice. Your sats arrive in the browser wallet as e-cash of a federation.</td></tr>
-      <tr><th scope="row">Stake</th><td>Join a round. Your stake is locked in the federation, not paid to an operator.</td></tr>
-      <tr><th scope="row">Verify</th><td>The round&rsquo;s committee of nodes replays the runs or checks the signed price. 5 of 7 must sign the same result.</td></tr>
-      <tr><th scope="row">Paid</th><td>Winnings land back in your wallet. Withdraw to any Lightning wallet.</td></tr>
+      <tr><th scope="row">Deposit</th><td>Pay a Lightning invoice. The sats arrive as federation e-cash in your browser wallet.</td></tr>
+      <tr><th scope="row">Stake</th><td>Join a round. Your stake is locked in the federation.</td></tr>
+      <tr><th scope="row">Verify</th><td>The round&rsquo;s nodes replay it. 5 of 7 must sign the same result.</td></tr>
+      <tr><th scope="row">Paid</th><td>Winnings land in your wallet. Withdraw over Lightning.</td></tr>
     </tbody>
   </table>
+  </div>
+  <figure class="pic"><img src="/next/media/lobby-apps.jpg" alt="The Arena right after a new wallet: 500 test sats on their way, the apps to choose from" width="1280" height="620" ><figcaption>A new wallet: 500 test sats, then pick an app.</figcaption></figure>
 </div></section>
 
 <section id="trust"><div class="wrap">
-  <h2>Your stake is locked in a federation, not held by us</h2>
-  <p class="lead">Each claim below, and where you can check it. Every node answers the same paths.</p>
+  <div class="media">
+  <div><h2>Your stake is locked in a federation, not held by us</h2><p class="lead">It leaves the lock one of two ways: 5 of 7 nodes sign the result, or the time runs out and it comes back to you.</p></div>
+  <figure class="pic"><svg viewBox="0 0 560 300" role="img" aria-labelledby="stakeT">
+    <title id="stakeT">Your stake is locked in a federation and leaves it one of two ways: 5 of 7 nodes sign the result, or the time runs out and it comes back to you.</title>
+    <g font-family="JetBrains Mono, monospace" font-size="13" fill="#ececec">
+      <rect x="10" y="118" width="110" height="64" rx="4" fill="none" stroke="#a3a3a8"/>
+      <text x="65" y="146" text-anchor="middle">you</text>
+      <text x="65" y="166" text-anchor="middle" fill="#a3a3a8" font-size="11">stake</text>
+      <line x1="120" y1="150" x2="196" y2="150" stroke="#a3a3a8"/><path d="M196 145 l8 5 -8 5z" fill="#a3a3a8"/>
+      <rect x="206" y="90" width="148" height="120" rx="4" fill="none" stroke="#f7931a"/>
+      <text x="280" y="122" text-anchor="middle">lock</text>
+      <text x="280" y="142" text-anchor="middle" fill="#a3a3a8" font-size="11">in the federation</text>
+      <g fill="#f7931a"><circle cx="232" cy="176" r="5"/><circle cx="250" cy="176" r="5"/><circle cx="268" cy="176" r="5"/><circle cx="286" cy="176" r="5"/><circle cx="304" cy="176" r="5"/></g>
+      <g fill="none" stroke="#6e6e74"><circle cx="322" cy="176" r="5"/><circle cx="340" cy="176" r="5"/></g>
+      <text x="280" y="200" text-anchor="middle" fill="#a3a3a8" font-size="11">7 guardians</text>
+      <path d="M354 120 C390 120 390 60 430 60" fill="none" stroke="#3fbf7f"/><path d="M428 55 l8 5 -8 5z" fill="#3fbf7f"/>
+      <path d="M354 180 C390 180 390 240 430 240" fill="none" stroke="#a3a3a8"/><path d="M428 235 l8 5 -8 5z" fill="#a3a3a8"/>
+      <text x="442" y="56">5 of 7 nodes</text><text x="442" y="74">sign the result</text>
+      <text x="442" y="94" fill="#3fbf7f" font-size="11">winners are paid</text>
+      <text x="442" y="236">time runs out</text>
+      <text x="442" y="256" fill="#a3a3a8" font-size="11">your stake comes</text><text x="442" y="272" fill="#a3a3a8" font-size="11">back to you</text>
+    </g>
+  </svg></figure>
+  </div>
   <table class="rows claims">
-    <thead><tr><th scope="col">Claim</th><th scope="col">What backs it</th></tr></thead>
+    <thead><tr><th scope="col">Claim</th><th scope="col">Check it</th></tr></thead>
     <tbody>
-      <tr><th scope="row"><b>No central server.</b> Rounds run on independent nodes. Any operator with a bond can host them; no company runs the game.</th>
-        <td>Each node&rsquo;s bond on Bitcoin testnet4. A node serves its bond with the proof into its block at <code>GET /bond</code>. The node table further down lists them all.</td></tr>
-      <tr><th scope="row"><b>No single custodian.</b> Your stake is locked in a federation of independent nodes, not paid to an operator. Taking it would need most of them acting together.</th>
-        <td>The federations, their guardians and how many must sign: <code>GET /federations</code> and <code>GET /reserves</code>. Whether a node has seen your stake in its lock: <code>GET /settlement?entry=…</code></td></tr>
-      <tr><th scope="row"><b>5 of 7 seats sign the same result.</b> The nodes replay every run. A result counts only when 5 of the round&rsquo;s 7 seats sign the same one.</th>
-        <td>Each seat&rsquo;s signed result: <code>GET /results?round=…&amp;entry=…</code>. The run itself, replayed in your browser: <code>GET /replay?round=…&amp;entry=…</code>. Who sits on the round: <code>GET /committee?round=…</code></td></tr>
-      <tr><th scope="row"><b>Anyone can object for 10 minutes</b> after a result.</th>
-        <td><code>POST /objection</code> at any node of the round. The window is 600,000 ms in the round&rsquo;s terms (<code>objectionWindowMs</code>).</td></tr>
-      <tr><th scope="row"><b>The nodes are found on Bitcoin.</b> Every node posts a bond and a signed advertisement on Bitcoin. Your browser finds the nodes there and checks them itself.</th>
-        <td>This page does it: the node table below proves each bond into its block and checks each signature in your browser (<a href="/js/chain-nodes.js">js/chain-nodes.js</a>).</td></tr>
+      <tr><th scope="row">No central server</th><td>Every node has a bond on Bitcoin: <code>GET /bond</code></td></tr>
+      <tr><th scope="row">No single custodian</th><td>Federations and signers: <code>GET /federations</code>, <code>GET /reserves</code></td></tr>
+      <tr><th scope="row">5 of 7 nodes sign each result</th><td><code>GET /results</code>, <code>GET /replay</code>, <code>GET /committee</code></td></tr>
+      <tr><th scope="row">10 minutes to object</th><td><code>POST /objection</code> at any node of the round</td></tr>
+      <tr><th scope="row">Nodes are found on Bitcoin</th><td>This page checks each bond and signature in your browser</td></tr>
     </tbody>
   </table>
-  <div class="after">
-    <p class="lead">No single person, company or node can take a player&rsquo;s money. From version 2.0, the guardians&rsquo; bonds stand behind the bitcoin a federation holds. The security page goes through every worst case: a hacked node, guardians who steal, a federation that stops, a lost phone. For each, what stops it and what is left.</p>
-    <a class="more" href="/security/" data-umami-event="site-security">How your money is protected →</a>
-  </div>
+  <a class="more" href="/security/" data-umami-event="site-security">Every worst case, and what stops it →</a>
 </div></section>
 
-<section id="nostr"><div class="wrap">
+<section id="nostr"><div class="wrap media">
+  <div>
   <h2>Your Nostr key is your account</h2>
-  <p class="lead">No sign-up, no email, no password. Log in to play with your Nostr key, restore your wallet from it on any device, pay from your own wallet over Nostr Wallet Connect, and run a node with the same key.</p>
+  <p class="lead">No email, no password.</p>
   <table class="rows">
     <tbody>
-      <tr><th scope="row">Log in with Nostr</th><td>An nsec, a NIP-07 browser extension, or a NIP-46 remote signer: a bunker link or a QR code for your phone signer.</td></tr>
-      <tr><th scope="row">Your wallet follows you</th><td>Your game wallet&rsquo;s seed is kept on Nostr, NIP-44 encrypted to your own key (NIP-78). Log in anywhere and it is back.</td></tr>
-      <tr><th scope="row">Nostr Wallet Connect</th><td>Connect your Lightning wallet once (NIP-47) to pay deposits and stakes, and to withdraw winnings into it.</td></tr>
-      <tr><th scope="row">Run a node with your key</th><td>Node owners claim and manage their node with a Nostr key. With an extension or remote signer, every owner action is a signed NIP-98 event (kind 27235) that the node checks.</td></tr>
-      <tr><th scope="row">The Arena relay</th><td><span class="mono">relay.bitcoin-arena.io</span> keeps profiles, relay lists and encrypted seeds, and carries remote signing and wallet requests. Nothing else.</td></tr>
-      <tr><th scope="row">Community on Nostr</th><td>The Bitcoin Arena community is on Armada, a Nostr chat app. Join with the same key.</td></tr>
+      <tr><th scope="row">Log in</th><td>nsec, browser extension (NIP-07) or phone signer (NIP-46).</td></tr>
+      <tr><th scope="row">Your wallet follows you</th><td>The seed is kept on Nostr, encrypted to your key.</td></tr>
+      <tr><th scope="row">Nostr Wallet Connect</th><td>Pay and withdraw with your own Lightning wallet (NIP-47).</td></tr>
+      <tr><th scope="row">Run a node with your key</th><td>Every owner action is a signed Nostr event.</td></tr>
+      <tr><th scope="row">The Arena relay</th><td><span class="mono">relay.bitcoin-arena.io</span>: profiles, encrypted seeds, signer requests.</td></tr>
+      <tr><th scope="row">Community</th><td>On Armada, a Nostr chat app. Same key.</td></tr>
     </tbody>
   </table>
   <a class="more" href="https://docs.bitcoinarena.io/#nostr">Nostr in the docs →</a>
+  </div>
+  <figure class="pic"><img src="/next/media/wallet-nostr.jpg" alt="The Arena's wallet screen: create a wallet, restore one, or log in with Nostr" width="640" height="480" ><figcaption>The first screen of the Arena.</figcaption></figure>
 </div></section>
 
 <section id="split"><div class="wrap">
   <h2>90 % of every stake is in play</h2>
-  <p class="lead">The split of a paid stake is fixed. It is the same in every round and every game.</p>
   <table class="split">
     <thead><tr><th class="p">Share</th><th>Goes to</th></tr></thead>
     <tbody>
-      <tr class="pool"><td class="p">90 %</td><td><span class="what">In play</span><span class="who">The pot the round pays out.</span></td></tr>
-      <tr><td class="p">4 %</td><td><span class="what">Node fee</span><span class="who">The nodes that verify the round and hold the money.</span></td></tr>
-      <tr><td class="p">2 %</td><td><span class="what">Game developer</span><span class="who">The game&rsquo;s developer.</span></td></tr>
-      <tr><td class="p">2 %</td><td><span class="what">Protocol developers</span><span class="who">The protocol developers.</span></td></tr>
-      <tr><td class="p">2 %</td><td><span class="what">Protocol reserves</span><span class="who">The network&rsquo;s own fund, below.</span></td></tr>
+      <tr class="pool"><td class="p">90 %</td><td><span class="what">The pot</span></td></tr>
+      <tr><td class="p">4 %</td><td><span class="what">Nodes</span></td></tr>
+      <tr><td class="p">2 %</td><td><span class="what">Game developer</span></td></tr>
+      <tr><td class="p">2 %</td><td><span class="what">Protocol developers</span></td></tr>
+      <tr><td class="p">2 %</td><td><span class="what">Protocol reserves</span></td></tr>
     </tbody>
   </table>
-  <p class="note">An item pays 40 % to the nodes and 20 % to the protocol reserves, plus the developers&rsquo; share you choose.</p>
-  <p class="note">2 % of every paid round and 20 % of every item go to the protocol reserves, locked to each federation&rsquo;s 5-of-7 key. Anyone can propose a payout. It is paid only if the bonded nodes vote for it. <a href="https://testnet.bitcoinarena.io/proposals/">Read and discuss the proposals →</a></p>
+  <p class="note">Items: 40 % nodes, 20 % reserves. The bonded nodes vote on every reserve payout. <a href="https://testnet.bitcoinarena.io/proposals/">Proposals →</a></p>
 
   <div id="network">
     <h3 class="t">The network, read live</h3>
@@ -328,7 +368,6 @@
         <tr><td class="r"><a id="relv" href="https://github.com/bitcoinarena/bitcoinarena/releases/latest">…</a></td><th scope="row">latest node release</th><td class="dim" id="reld"></td></tr>
       </tbody>
     </table></div>
-    <p class="src">Rounds and entries from <a href="https://explorer.bitcoinarena.io/">explorer.bitcoinarena.io</a>. The reserves count only when at least 5 nodes name the same total.</p>
 
     <h3 class="t">Federations holding protocol reserves</h3>
     <div class="tablewrap"><table class="data">
@@ -349,69 +388,67 @@
 
 <section id="build"><div class="wrap">
   <h2>Anyone can publish a game, open a market or run a node</h2>
-  <p class="lead">One engine runs all three. There is no approval step and no listing fee.</p>
+  <figure class="pic wide"><img src="/next/media/nextblock-art-1200.jpg" alt="Tick Tock, Next Block: trucks, tanks and the mempool, the first game on the engine" width="1200" height="675"></figure>
   <div class="three">
-    <div><h3>Make a game</h3><p>Write it and sign it, and any node can host it. The nodes replay every round with your rules.</p><a href="https://docs.bitcoinarena.io/#game">Build a game →</a></div>
-    <div><h3>Make a market</h3><p>Pick a question and its outcomes, and name who signs the result. Paying out the winners is built in.</p><a href="https://docs.bitcoinarena.io/#market">Build a market →</a></div>
-    <div><h3>Run a node</h3><p>Post a bond, take a seat, host games, sign results and earn a share of the fees. You manage it from the owner area.</p><a href="https://docs.bitcoinarena.io/#run">Run a node →</a></div>
+    <div><h3>Make a game</h3><p>Sign it, and any node can host it.</p><a href="https://docs.bitcoinarena.io/#game">Build a game →</a></div>
+    <div><h3>Make a market</h3><p>A question, its outcomes, who signs the result.</p><a href="https://docs.bitcoinarena.io/#market">Build a market →</a></div>
+    <div><h3>Run a node</h3><p>Post a bond, sign results, earn fees.</p><a href="https://docs.bitcoinarena.io/#run">Run a node →</a></div>
   </div>
 </div></section>
 
 <section id="download"><div class="wrap">
   <h2>Download the Bitcoin Arena node</h2>
-  <p class="lead">One package for your system: Node.js, the node, the installer, cloudflared and Tor. It opens a small window that walks you through the setup in your browser, on testnet4.</p>
+  <p class="lead">One package with everything. Setup runs in your browser.</p>
   <div class="actions"><a class="btn primary" href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-umami-event="site-download">Latest release <span class="v" data-arena-release-version style="color:#3a2400"></span></a></div>
   <div class="dl">
-    <div><h3>Windows</h3><p class="what">Windows 10 and 11, 64-bit. Installs into your user folder, no administrator.</p><ul>
+    <div><h3>Windows</h3><p class="what">10 and 11, 64-bit. No administrator.</p><ul>
       <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node-setup-{v}-windows-x64.exe">Installer<small>x64 · .exe</small></a></li>
       <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node-{v}-windows-x64.zip">Plain archive<small>x64 · .zip</small></a></li>
     </ul></div>
-    <div><h3>macOS</h3><p class="what">Drag Bitcoin Arena to Applications. The first time, right-click it and choose Open.</p><ul>
+    <div><h3>macOS</h3><p class="what">First start: right-click, Open.</p><ul>
       <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node-{v}-darwin-arm64.dmg">Apple silicon<small>arm64 · .dmg</small></a></li>
       <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node-{v}-darwin-x64.dmg">Intel<small>x64 · .dmg</small></a></li>
       <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node-{v}-darwin-arm64.tar.gz">Plain archive<small>arm64 · .tar.gz</small></a></li>
       <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node-{v}-darwin-x64.tar.gz">Plain archive<small>x64 · .tar.gz</small></a></li>
     </ul></div>
-    <div><h3>Linux</h3><p class="what">Debian, Ubuntu and their kin: <code>sudo apt install ./bitcoin-arena-node_*.deb</code>. Any other: the plain archive.</p><ul>
+    <div><h3>Linux</h3><p class="what"><code>sudo apt install ./bitcoin-arena-node_*.deb</code></p><ul>
       <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node_{v}_amd64.deb">Debian package<small>x64 · .deb</small></a></li>
       <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node_{v}_arm64.deb">Debian package<small>arm64 · .deb</small></a></li>
       <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node-{v}-linux-x64.tar.gz">Plain archive<small>x64 · .tar.gz</small></a></li>
       <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node-{v}-linux-arm64.tar.gz">Plain archive<small>arm64 · .tar.gz</small></a></li>
     </ul></div>
   </div>
-  <p class="dl-foot">How to install, set up and update it: <a href="https://docs.bitcoinarena.io/#run">Run a node</a> in the docs. Every file is in the release&rsquo;s <code>SHA256SUMS</code>, signed with the <a href="https://testnet.bitcoinarena.io/release-key.txt">Arena release key</a>. The source: <a href="https://github.com/bitcoinarena">all repositories</a>.</p>
+  <p class="dl-foot">Signed <code>SHA256SUMS</code> with the <a href="https://testnet.bitcoinarena.io/release-key.txt">release key</a> · <a href="https://docs.bitcoinarena.io/#run">Setup guide</a> · <a href="https://github.com/bitcoinarena">Source</a></p>
 </div></section>
 
 <section id="arch"><div class="wrap">
   <h2>Bonds, committees and payouts all rest on Bitcoin</h2>
   <table class="rows">
     <tbody>
-      <tr><th scope="row">Bonds</th><td>Every node posts a bond on Bitcoin. No bond, no seat.</td></tr>
-      <tr><th scope="row">Committees</th><td>Each round&rsquo;s committee is drawn from the bonded nodes by a Bitcoin block hash.</td></tr>
-      <tr><th scope="row">Replay</th><td>Games are deterministic. Nodes re-run every input and sign the result.</td></tr>
-      <tr><th scope="row">Custody</th><td>Stakes lock in a Fedimint federation whose guardians are the nodes, never in one company&rsquo;s wallet.</td></tr>
-      <tr><th scope="row">Settlement</th><td>Payouts and withdrawals move as sats over Lightning.</td></tr>
+      <tr><th scope="row">Bonds</th><td>No bond, no seat.</td></tr>
+      <tr><th scope="row">Committees</th><td>Drawn by a Bitcoin block hash.</td></tr>
+      <tr><th scope="row">Replay</th><td>Every input re-run, every result signed.</td></tr>
+      <tr><th scope="row">Custody</th><td>A Fedimint federation of the nodes.</td></tr>
+      <tr><th scope="row">Settlement</th><td>Sats over Lightning.</td></tr>
     </tbody>
   </table>
-  <a class="more" href="https://docs.bitcoinarena.io/#how">How Bitcoin Arena works →</a>
+  <a class="more" href="https://docs.bitcoinarena.io/#how">How it works →</a>
 </div></section>
 
 <section id="start"><div class="wrap tn">
   <div>
     <h2>Everything above is live on Bitcoin testnet4</h2>
-    <p class="lead">All three games, both federations and every node in the table above. Test sats have no value, so you can try everything without risk.</p>
+    <p class="lead">Test sats have no value. Try it all without risk.</p>
     <div class="actions">
       <a class="btn primary" href="https://testnet.bitcoinarena.io/" data-umami-event="site-play">Play on Testnet</a>
       <a class="btn" href="https://docs.bitcoinarena.io/#start">How to start</a>
     </div>
-    <span class="url">testnet.bitcoinarena.io</span>
   </div>
   <figure class="trailer" id="trailer">
     <button class="frame" id="playtrailer" type="button" aria-label="Play the trailer, 60 seconds, with sound">
       <img src="/next/media/poster-v2.jpg" alt="A frame from the trailer: a truck on the road to the miners in Tick Tock, Next Block" width="1280" height="532">
       <span class="label">▶ Trailer · 60 s</span>
     </button>
-    <figcaption>Tick Tock, Next Block, played on testnet4.</figcaption>
   </figure>
 </div></section>
 
