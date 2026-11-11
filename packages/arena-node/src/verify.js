@@ -1309,8 +1309,10 @@ export class Verifier {
     // AND EACH SIGNER NODE'S OWN WORD THAT IT DECIDED THE ENTRY BY §13C (x-no-quorum): not taken as the entry's
     // outcome here - it only says that signer node will sign nothing, which `shortPastWindow` counts.
     const noQuorumPeers = [];
-    // THE ROUND'S COMMITTEE, read once: a peer result counts only under one of its keys (kanban #1489).
-    const committee = this.round.signerNodes(roundIdBytes);
+    // THE ROUND'S COMMITTEE, read once: a peer result counts only under one of its keys (kanban #1489, #1502, #1512) - the
+    // contract's nodes where this node holds no signer list
+    const signers = this.round.signerNodes(roundIdBytes);
+    const committee = signers.length ? signers : contract.nodes || [];
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {

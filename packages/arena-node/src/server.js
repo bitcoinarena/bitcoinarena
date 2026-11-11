@@ -3767,9 +3767,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return row;
       }
       const tally = new Map();
+      // ONLY THE COMMITTEE'S WORD IS COUNTED (kanban #1512): a row under a key that is none of the round's signer nodes (a peer's
+      // fresh keys) never outvotes the committee in the event this node signs and publishes once; a node never assigned the round
+      // holds no signer list, so the contract's own nodes stand for it
+      const signers = round.signerNodes(rid);
+      const committee = new Set((signers.length ? signers : c.nodes || []).map(toHex));
       for (const r of round.results(rid, entryId)) {
         try {
           const x = decodePlayerResult(splitSignedResult(r.bytes).body);
+          if (!committee.has(toHex(x.nodePubkey))) continue;
           const k = `${x.outcome}:${x.score}`;
           tally.set(k, { outcome: x.outcome, score: x.score, n: ((tally.get(k) || {}).n || 0) + 1 });
         } catch { /* not a result */ }
