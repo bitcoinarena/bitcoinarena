@@ -1922,6 +1922,18 @@ export class Round {
   }
 
   /**
+   * THE ENTRIES A HEAD-TO-HEAD ROUND PLAYS (kanban #1626, state audit 2026-11-12): in a paying round only those whose stake this seat counted
+   * (stake_seen) - the settlement's own set (settlement.js entriesOnRecord). An entry whose stake lock is verified but whose fee lock never came
+   * holds a seat (seatedEntriesOf, #1437) and is still not played: decided WIN / LOSS it was paid nothing and claimed nothing. It is signed VOID,
+   * and a counted opponent left alone is VOID too (fewer than the game's players) and gets its stake back. A free round plays every entry.
+   */
+  playedEntriesOf(roundIdBytes, stakeMsat) {
+    const all = this.entriesOf(roundIdBytes);
+    if (stakeMsat === 0n) return all;
+    return all.filter(({ entryId }) => !!this.stakeSeen(entryId));
+  }
+
+  /**
    * KEEP A SIGNED RESULT. `bytes` is the protocol's signed record - the body
    * this node encoded and the signature over its id - stored whole, so what is
    * served later is what was signed and not a re-encoding of it.
