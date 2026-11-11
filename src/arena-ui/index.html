@@ -1874,7 +1874,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (!byAddress) addressTold = true;
         try {
           const r = await fetch('https://explorer.bitcoinarena.io/api/' + (byAddress ? 'mark-ip' : 'mark'), { method: 'POST', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(byAddress ? { keys: fresh } : { kind: 'owner', keys: fresh, code: adminCode }) });
+            body: JSON.stringify(byAddress ? { keys: fresh, kind: navigator.webdriver ? 'bot' : 'owner' } : { kind: 'owner', keys: fresh, code: adminCode }) });   // kanban #1466: a browser under automation is a bot
           // by address the explorer takes only the entries it holds (kanban #1420): those count as sent, the rest are asked again next minute
           if (r.ok) { let took = fresh; if (byAddress) { try { const j = await r.json(); took = Array.isArray(j.took) ? j.took : []; } catch { took = []; } }
             store.setItem('arena.admin.marked', JSON.stringify(sent.concat(took).slice(-5000))); }
@@ -1905,7 +1905,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             console.log('[admin] this address is the admin\'s: this browser\'s rounds are left out of the counts');
             const byIp = () => markOwn(true);
             window.ARENA_ADMIN_REPORT = byIp;
-            setTimeout(byIp, 5000); setInterval(byIp, 60000);
+            // A TEST BROWSER LIVES SECONDS (kanban #1466): under automation the entries are told every 5 s, before the script closes it
+            setTimeout(byIp, 5000); setInterval(byIp, navigator.webdriver ? 5000 : 60000);
           }
         } catch { /* not known: a player */ }
       }
