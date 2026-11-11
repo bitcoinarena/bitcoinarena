@@ -16,7 +16,8 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { encodeGhost } from '../../arena-protocol/src/ghost.js';
-import { encodeInputBatch } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, signedBatchOf } from '../../arena-protocol/src/batch.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { GENESIS } from '../../arena-protocol/src/transcript.js';
 import { HOSTED } from './plugins/hosted.js';
 
@@ -57,13 +58,14 @@ test('a ghost offered to the play socket is refused as a picture, by name', asyn
     const strange = await play.say(new Uint8Array([0x7f, 0, 1, 2]));
     assert.match(strange, /no frame of this protocol begins with 0x7f/);
 
-    // an InputBatch still reaches the handler - the door decides by type, it
+    // a signed InputBatch still reaches the handler - the door decides by type, it
     // does not simply refuse everything that is not a mark
-    const batch = await play.say(encodeInputBatch({
-      roundId: b32(1), entryId: b32(2), previousHash: GENESIS, firstTick: 0,
-      ticks: [[65536, 0, 0, 0, 0]], liquidations: [],
-    }));
+    const input = { roundId: b32(1), entryId: b32(2), previousHash: GENESIS, firstTick: 0,
+      ticks: [[65536, 0, 0, 0, 0]], liquidations: [] };
+    const batch = await play.say(signedBatchOf(input, (id) => ed25519.sign(id, ed25519.utils.randomSecretKey())));
     assert.match(batch, /no such round/, 'the batch was not read as a batch');
+    // AND AN UNSIGNED ONE IS REFUSED BY NAME (kanban #1503): no batch is taken without its entry's session key
+    assert.match(await play.say(encodeInputBatch(input)), /^error an input batch is taken only signed/);
 
     play.shut();
   } finally { await node.close(); }
