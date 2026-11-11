@@ -103,7 +103,8 @@ function splitPart({ claims, payouts, federationOf, feesOf, part, reserveKeyOf =
 
 /**
  * THE ROUND'S ONE PLAN AS ONE TRANSACTION PER FEDERATION. `plan`: a settlement's answer (lockSettlement and its kin) - its
- * `claims` (stake and fee, `kind`), `payouts`, and `signerNodePayouts` (the fee part's, a subset of `payouts`).
+ * `claims` (stake and fee, `kind`), `payouts`, and `signerNodePayouts` (the fee part's, a subset of `payouts`) - or `onePot`
+ * where every payout is drawn from the stake and fee locks together (a book plan).
  * `federationOf(outpoint)` -> the federation id (hex or bytes) a claimed lock is in; `feesOf(fidHex)` -> that federation's
  * { ppm, baseMsat }. Answers { ok, settlements: [{ federation, nonce, claims, payouts, ... }] } in federation id order.
  */
@@ -112,13 +113,19 @@ export function splitByFederation(plan, { roundId, federationOf, feesOf, reserve
   if (plan.nothing) return { ok: true, nothing: true, settlements: [] };
   if (typeof federationOf !== 'function' || typeof feesOf !== 'function') return refuse('the federations of the locks and their fee rules are named by the caller');
   const isFee = (c) => c.kind === 'fee';
-  // the fee part's payouts are the very objects `finish` lists in both `payouts` and `signerNodePayouts`
-  const nodePay = new Set(plan.signerNodePayouts || []);
+  // ONE POT (kanban #1438): a plan that pays every line out of its stake and fee locks together (bookLockSettlement - a part
+  // fill hands back part of its fee lock in its qualifier line, a sell fee comes out of the stake side) is split as one part,
+  // its fee locks with its stake locks; split by `signerNodePayouts`, which it never names, its fee locks were claimed and
+  // paid nobody. Every other plan keeps the two parts apart: the fee part's payouts are the very objects `finish` lists in
+  // both `payouts` and `signerNodePayouts`
+  const onePot = plan.onePot === true;
+  const nodePay = new Set(onePot ? [] : plan.signerNodePayouts || []);
   const feePayouts = plan.payouts.filter((p) => nodePay.has(p));
   const stakePayouts = plan.payouts.filter((p) => !feePayouts.includes(p));
-  const stake = splitPart({ claims: plan.claims.filter((c) => !isFee(c)), payouts: stakePayouts, federationOf, feesOf, part: 'stake', reserveKeyOf });
+  const stake = splitPart({ claims: onePot ? plan.claims : plan.claims.filter((c) => !isFee(c)), payouts: stakePayouts, federationOf, feesOf,
+    part: onePot ? 'stake and fee' : 'stake', reserveKeyOf });
   if (!stake.ok) return stake;
-  const fee = splitPart({ claims: plan.claims.filter(isFee), payouts: feePayouts, federationOf, feesOf, part: 'fee', reserveKeyOf });
+  const fee = splitPart({ claims: onePot ? [] : plan.claims.filter(isFee), payouts: feePayouts, federationOf, feesOf, part: 'fee', reserveKeyOf });
   if (!fee.ok) return fee;
   const feds = [...new Set([...stake.byFed.keys(), ...fee.byFed.keys()])].sort();
   const empty = { claims: [], payouts: [], poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, paidMsat: 0n, outputFeesMsat: 0n, unspentMsat: 0n, unpaid: [] };
