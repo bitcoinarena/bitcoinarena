@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-22 (change) Feedback reward link: a decision moves only the payment it read (kanban #1571)
+- Invariant: a reward is never `open` while a payment of it may still be in flight. `settle` reads each `paying` row again just before it decides it, and moves it (paying -> paid, paying -> open) by compare-and-set on the `payment_hash` it asked `status()` about (`WHERE k1 = ? AND state = 'paying' AND payment_hash = ?`); a row that was opened and claimed again under a new hash meanwhile is left `paying` for a later pass. claim()'s own sure failure reopens only under its own hash.
+- One settle pass at a time: the faucet's 60 s interval skips a tick while the previous pass is still running (`settling`, as `sweeping` does for the sweep).
