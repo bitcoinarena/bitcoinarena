@@ -339,6 +339,18 @@ export async function signEvent({ kind, tags, content, secret, curve, now }) {
  * between - on a fast relay, most of them. The event id is known before it is
  * sent, so the filter can name it.
  */
+/** IS THIS FRAME THE WALLET'S SIGNED ANSWER TO THIS REQUEST (kanban #1471)? `curve.verify(sig, id, pubkey)` is BIP-340 (page-curve.js). */
+export function answersThis(frame, { sub, requestId, walletHex, curve }) {
+  const e = frame && frame[2];
+  if (!e || typeof e !== 'object' || frame[1] !== sub) return false;
+  if (e.kind !== NWC_RESPONSE || e.pubkey !== walletHex || typeof e.id !== 'string' || typeof e.sig !== 'string') return false;
+  if (!Array.isArray(e.tags) || !e.tags.some((t) => Array.isArray(t) && t[0] === 'e' && t[1] === requestId)) return false;
+  let id;
+  try { id = toHex(sha256(utf8(JSON.stringify([0, e.pubkey, e.created_at, e.kind, e.tags, e.content])))); } catch { return false; }
+  if (id !== e.id || !curve || typeof curve.verify !== 'function') return false;
+  try { return curve.verify(fromHex(e.sig), fromHex(e.id), fromHex(e.pubkey)) === true; } catch { return false; }
+}
+
 export function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
   WebSocketImpl = typeof WebSocket !== 'undefined' ? WebSocket : null } = {}) {
   return new Promise((resolve) => {
@@ -363,8 +375,8 @@ export function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
     sock.addEventListener('close', () =>
       finish({ ok: false, why: 'that relay closed before the wallet answered' }));
 
+    let event = null, sub = null;   // this request's event and its subscription, read by the answer check below (kanban #1471)
     sock.addEventListener('open', async () => {
-      let event;
       try {
         const content = await nip04Encrypt(JSON.stringify(request), {
           secret: where.secret, theirPubkey: where.walletPubkey, curve, random,
@@ -377,7 +389,7 @@ export function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
         return finish({ ok: false, why: `this page could not build the request: ${e.message}` });
       }
 
-      const sub = 'blwp-' + event.id.slice(0, 16);
+      sub = 'blwp-' + event.id.slice(0, 16);
       sock.send(JSON.stringify(['REQ', sub, {
         kinds: [NWC_RESPONSE], authors: [toHex(where.walletPubkey)], '#e': [event.id],
       }]));
@@ -396,6 +408,11 @@ export function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
       if (frame[0] === 'OK' && frame[2] === false)
         return finish({ ok: false, why: `the relay refused the request: ${frame[3] || 'no reason given'}` });
       if (frame[0] !== 'EVENT' || !frame[2]) return;
+      // ONLY THE WALLET'S OWN ANSWER TO THIS REQUEST (kanban #1471, feedback #004 by Hexbox Tools 2026-11-11: any EVENT the relay sent was decrypted and
+      // taken - a relay could replay an earlier genuine answer, say an old pay_invoice success, as the answer to a new payment): the frame is on this
+      // request's subscription, the event is a response (23195) by the wallet's key, its e tag names this request, its id is the hash of its own fields and
+      // its signature is the wallet's. Anything else is not the answer and is passed over, so the real one is still waited for.
+      if (!event || !answersThis(frame, { sub, requestId: event.id, walletHex: toHex(where.walletPubkey), curve })) return;
 
       const opened = await nip04Decrypt(frame[2].content, {
         secret: where.secret, theirPubkey: where.walletPubkey, curve,

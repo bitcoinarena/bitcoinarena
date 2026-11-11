@@ -23,7 +23,7 @@ import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHeal
 import { adhocSign } from './tor.js';
 import { INSTANCE, PORT_OFFSET } from './instance.js';
 import { envToConfValues, formatConf, renameKeys, renameValues, setInConf } from '../../arena-node/src/arena-conf.js';
-import { stakeLockSetupOf, nodeState, atomicWrite } from './state.js';
+import { stakeLockSetupOf, nodeState, atomicWrite, appsSetting } from './state.js';
 import { ensureApps } from '../../arena-node/src/app-fetch.js';
 import { writeCommand } from './launchers.js';
 import { control } from './node-services.js';
@@ -82,6 +82,23 @@ const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { timeou
 export function withStakeLocks(text, locks) {
   if (!locks || /^\s*stake_lock_bin\s*=/m.test(text)) return text;
   return setInConf(setInConf(text, 'stake_lock_bin', locks.bin), 'federation_client_dir', locks.clientDir);
+}
+
+/**
+ * THE NEW RELEASE'S VERSIONS OF THE APPS THE NODE RUNS (kanban #1415, Daniel 2026-11-10: Update of Tick Tock v7 failed on his node - 2026.1.9.26 ships
+ * nextblock-v7.js, and his arena.conf, moved from the release it was installed with, named v1 to v6 only, so v7 was on disk and never loaded; the owner
+ * page then offered it from the store, where a source-tree core can not pass): every registration `release` holds for an app whose folder apps= already
+ * names is added after the ones listed. An app the owner left out stays out; a listed path is never taken away.
+ */
+export function withNewAppVersions(text, release, want) {
+  const lines = String(text).split('\n');
+  const i = lines.findIndex((l) => /^apps=/.test(l)); if (i < 0) return text;
+  const cr = lines[i].endsWith('\r') ? '\r' : '', have = lines[i].slice(5, cr ? -1 : undefined).split(',').filter(Boolean);
+  const dir = (f) => f.replace(/[\\/][^\\/]*$/, ''), dirs = new Set(have.map(dir));
+  const add = String(want || '').split(',').filter((f) => f && !have.includes(f) && dirs.has(dir(f)));
+  if (!add.length) return text;
+  lines[i] = 'apps=' + [...have, ...add].join(',') + cr;
+  return lines.join('\n');
 }
 
 /** node.env's paths into a release - the games, the custody binaries - moved to the new release, from EVERY older one, not only the
@@ -679,7 +696,8 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
   } else {
     const confText = readFileSync(confFile, 'utf8');
     // and a key that took a new name under it, once (kanban #569: games= is apps=)
-    const confNew = withStakeLocks(renameKeys(envForRelease(confText, newRelease)), locks);
+    let want = ''; try { want = appsSetting(state, newRelease); } catch { want = ''; }
+    const confNew = withNewAppVersions(withStakeLocks(renameKeys(envForRelease(confText, newRelease)), locks), newRelease, want);
     if (confNew !== confText) writeFileSync(confFile, confNew, { mode: 0o600 });
   }
   // A CHAIN BRIDGE THE NODE NO LONGER READS (the owner's services card on 2026.1.9.9: "Do I need electrum when I have bitcoin core installed
