@@ -23,6 +23,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 export const RELAY_KINDS = Object.freeze([0, 10002, 30078, 24133, 22242, 13194, 23194, 23195, 30762, 30009, 8, 9735]);   // + NIP-47 (wallet connect), + round results and NIP-58 badges, + NIP-57 zap receipts
 const MAX_EVENT_BYTES = 64 * 1024, MAX_SUBS = 20, MAX_FILTERS = 10, MAX_LIMIT = 500, FUTURE_S = 900;
+const SLOW_BYTES = 4 * 1024 * 1024;   // kanban #1542: the most one client may leave unread before it is dropped
 const hex = (n) => new RegExp(`^[0-9a-f]{${n}}$`);
 const HEX64 = hex(64), HEX128 = hex(128);
 const isReplaceable = (k) => k === 0 || k === 3 || (k >= 10000 && k < 20000);
@@ -115,6 +116,14 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     }
     return [...out.values()].sort((a, b) => b.created_at - a.created_at);
   };
+  // A SUBSCRIBER THAT DOES NOT READ IS DROPPED (kanban #1542): every matching subscription of every client gets its own copy of each
+  // event, and ws.send queues it in this process when the peer stops reading - ephemeral events too, which are never stored. A
+  // client whose unsent backlog has passed SLOW_BYTES is told so and cut off, so one stalled socket holds at most a few MB here.
+  const fanOut = (o, sid, e) => {
+    if (o.ws.readyState !== 1) return;
+    if (o.ws.bufferedAmount > SLOW_BYTES) { clients.delete(o); try { o.ws.send(JSON.stringify(['NOTICE', 'error: too slow, the relay stopped sending'])); } catch { /* gone */ } o.ws.terminate(); return; }
+    o.ws.send(JSON.stringify(['EVENT', sid, e]));
+  };
   wss.on('connection', (ws) => {
     const subs = new Map();
     const c = { ws, subs };
@@ -144,7 +153,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
           if (isReplaceable(e.kind) || isParam(e.kind)) drop.run(e.pubkey, e.kind, d, e.id);
         }
         send(['OK', e.id, true, '']);
-        for (const o of clients) for (const [sid, fs] of o.subs) if (fs.some((f) => matches(f, e))) { if (o.ws.readyState === 1) o.ws.send(JSON.stringify(['EVENT', sid, e])); }
+        for (const o of clients) for (const [sid, fs] of o.subs) if (fs.some((f) => matches(f, e))) fanOut(o, sid, e);
         return undefined;
       }
       if (m[0] === 'REQ') {
