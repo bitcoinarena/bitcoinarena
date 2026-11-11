@@ -180,7 +180,20 @@ export function writeCommand({ home, release, node, platform = process.platform,
   const what = `The ${name} command, written by the installer: ${name} status, ${name} restart lnd, ${name} doctor, ${name} help`;
   if (platform === 'win32') {
     const file = join(bin, `${name}.cmd`);
-    writeFileSync(file, ['@echo off', `rem ${what}`, `"${node}" "${script}" --home "${home}" --name ${name} %*`].join('\r\n') + '\r\n');
+    // REWRITTEN WHILE IT RUNS (kanban #1445, audit 8 O8-6): the auto update runs inside this file (the updater's loop CALLs it) and writes
+    // it again here. cmd.exe reads a batch file by its place in the file: after node.exe returns it reads on from the old file's length in
+    // the new one, and ran what was left there ("%*", "arena %*" after a longer release name) as a command - errorlevel 9009, and the
+    // updater's loop ended. So the node line ends the batch itself (`& exit /b`: no number keeps node.exe's exit code, 75 for the loop) -
+    // cmd.exe never reads the file again after it. A running command written before that (2026.1.9.27 and older) has no such end: while it
+    // runs, the new text is kept no longer than it by a shorter comment, so the place after its last line is the new file's end.
+    const nodeLine = `"${node}" "${script}" --home "${home}" --name ${name} %* & exit /b`;
+    let rem = `rem ${what}`;
+    let running = null; try { running = readFileSync(file); } catch { running = null; }
+    if (running && !/ & exit \/b\r?\n?$/.test(running.toString('utf8'))) {
+      const over = Buffer.byteLength(['@echo off', rem, nodeLine].join('\r\n') + '\r\n') - running.length;
+      if (over > 0) rem = rem.slice(0, Math.max(3, rem.length - over));
+    }
+    writeFileSync(file, ['@echo off', rem, nodeLine].join('\r\n') + '\r\n');
     const oldFile = join(bin, `${oldName}.cmd`);
     if (ours(oldFile)) writeFileSync(oldFile, legacyShim({ name: oldName, file, platform }));
     const d = bin.replace(/'/g, "''");

@@ -106,7 +106,7 @@ test('the updater as a service: it names the node\'s own bitcoinarena (no releas
     assert.match(unit, /^Restart=on-failure$/m, 'ending with 75 starts it again');
     await installUpdater({ home, installProgram, platform: 'win32', env: { APPDATA: join(root, 'appdata') }, sh });
     const cmd = readFileSync(join(home, 'arena-updater.cmd'), 'utf8');
-    assert.match(cmd, /:again\r\ncall ".*bitcoinarena\.cmd" "auto-update" >> ".*updater\.log" 2>&1\r\nif %errorlevel%==75 goto again\r\n$/);
+    assert.match(cmd, /:again\r\ncall ".*bitcoinarena\.cmd" "auto-update" >> ".*updater\.log" 2>&1\r\nif %errorlevel%==75 goto again\r\nif %errorlevel% neq 0 \(ping -n 31 127\.0\.0\.1 >nul & goto again\)\r\n$/, 'any other error exit: again after 30 s (kanban #1443)');
     const { readFileSync: rf } = await import('node:fs');
     // a Windows update does not end the auto update that runs it: its own process (#546: no longer every auto update - an old updater
     // beside a manual update is ended with its release, and the task runs it again from the new one)
