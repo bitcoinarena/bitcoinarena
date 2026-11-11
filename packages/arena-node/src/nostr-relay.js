@@ -110,6 +110,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const put = db.prepare('INSERT OR IGNORE INTO events (id, pubkey, kind, created_at, d, json) VALUES (?, ?, ?, ?, ?, ?)');
   const newest = db.prepare('SELECT id, created_at FROM events WHERE pubkey = ? AND kind = ? AND d = ? ORDER BY created_at DESC, id ASC LIMIT 1');
   const drop = db.prepare('DELETE FROM events WHERE pubkey = ? AND kind = ? AND d = ? AND id != ?');
+  const all = db.prepare('SELECT json FROM events ORDER BY created_at DESC');
   // kanban #1513: quotas (see AUTHOR_EVENTS above)
   const authorUse = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(json)), 0) AS b FROM events WHERE pubkey = ?');
   const authorOldest = db.prepare('SELECT id FROM events WHERE pubkey = ? ORDER BY created_at ASC, id DESC LIMIT 1');
