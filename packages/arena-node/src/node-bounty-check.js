@@ -7,7 +7,8 @@
 //   committees  every seat's GET /served?finals=1 for each of the last 7 UTC days: the rounds whose committee names the node, and those it signed FINAL
 //   in census   a node drawn into a committee is a bonded census node (only those are drawn); the days it served are its days online
 // Answers { ok, node, checks: [{ key, label, ok, says }], passes } - `passes` only when every check holds. Team nodes are refused by `excluded`.
-import { splitSignedFinalSig, decodeFinalSig } from '../../arena-protocol/src/final-sig.js';
+import { splitSignedFinalSig, decodeFinalSig, finalSigId } from '../../arena-protocol/src/final-sig.js';
+import { SEASON_NETWORK_AGREE } from '../../arena-protocol/src/season.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { ownerStatementMessage } from './owner.js';
@@ -16,12 +17,19 @@ import { ownerStatementMessage } from './owner.js';
 export const OWNER_STATEMENT_MAX_AGE_MS = 24 * 3600 * 1000;
 
 const DAY_MS = 24 * 3600 * 1000;
-// a held FINAL (hex of its signed bytes) -> its signer's node key hex; a key given as such is taken as it is (a test's)
-const signerOf = (f) => {
-  const h = String(f).toLowerCase();
-  if (/^[0-9a-f]{64}$/.test(h)) return h;
-  try { const bytes = fromHex(h); const { signature } = splitSignedFinalSig(bytes); return toHex(decodeFinalSig(bytes.subarray(0, bytes.length - signature.length)).signerPubkey); } catch { return null; }
+// a held FINAL (hex of its signed bytes) -> its signer's node key hex, or null. KANBAN #1489: the FINAL counts only when it is about this round and
+// its BIP-340 signature verifies under its signerPubkey over finalSigId (what finality.js signs) - a FINAL "signed" with 64 zero bytes was taken,
+// and so was a bare 64-hex key; neither is a signature any more
+const signerOf = (f, roundId) => {
+  try {
+    const bytes = fromHex(String(f).toLowerCase()), { body, signature } = splitSignedFinalSig(bytes), x = decodeFinalSig(body);
+    if (toHex(x.roundId) !== String(roundId).toLowerCase()) return null;
+    return schnorr.verify(signature, finalSigId(x), x.signerPubkey) ? toHex(x.signerPubkey) : null;
+  } catch { return null; }
 };
+// KANBAN #1489: a round counts only when this many listed seats hold it with the same committee - the season's own network rule (SEASON_NETWORK_AGREE,
+// season.js): one seat's /served answered rounds it made up, naming any key in the committee, and that alone passed the checklist (10,000 sat a node)
+export const NODE_BOUNTY_AGREE = SEASON_NETWORK_AGREE;
 // ONE DAY ONLINE IS ENOUGH (Daniel 2026-11-10: "1 tag online reicht"), looked for in the last NODE_BOUNTY_WINDOW days, today included
 export const NODE_BOUNTY_DAYS = 1, NODE_BOUNTY_WINDOW = 7;
 
@@ -56,15 +64,24 @@ export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Da
   // the days in parallel (measured 2026-11-08 on 17 seats: one after another took 120 s)
   const perDay = await Promise.all(Array.from({ length: window }, (_, i) => window - 1 - i).map(async (d) => {
     const from = today - d * DAY_MS, to = from + DAY_MS;
+    // round id + committee -> the seats holding it and the FINALs they hold (kanban #1489: counted only when NODE_BOUNTY_AGREE seats agree)
     const rounds = new Map();
     await Promise.all(urls.map(async (u) => {
       try {
         const j = await fetchJson(`${u}/served?from=${from}&to=${to}&finals=1`);
-        for (const r of (j && j.held) || []) if (!rounds.has(r.roundId)) rounds.set(r.roundId, r);
+        for (const r of (j && j.held) || []) {
+          const id = String(r && r.roundId).toLowerCase(), committee = (Array.isArray(r && r.committee) ? r.committee : []).map((k) => String(k).toLowerCase());
+          if (!/^[0-9a-f]{64}$/.test(id) || !committee.includes(n)) continue;
+          const key = `${id}:${[...committee].sort().join(',')}`;
+          const e = rounds.get(key) || { id, seats: new Set(), finals: [] };
+          if (e.seats.has(u)) continue;   // a seat answering one round twice is one seat
+          e.seats.add(u); if (Array.isArray(r.finals)) e.finals.push(...r.finals);
+          rounds.set(key, e);
+        }
       } catch { /* a seat that does not answer adds nothing */ }
     }));
-    const mine = [...rounds.values()].filter((r) => (r.committee || []).map((k) => String(k).toLowerCase()).includes(n));
-    return { from, committees: mine.length, signed: mine.filter((r) => (r.finals || []).map(signerOf).includes(n)).length };
+    const mine = [...new Map([...rounds.values()].filter((r) => r.seats.size >= NODE_BOUNTY_AGREE).map((r) => [r.id, r])).values()];   // one round, counted once
+    return { from, committees: mine.length, signed: mine.filter((r) => r.finals.some((f) => signerOf(f, r.id) === n)).length };
   }));
   const committees = perDay.reduce((t, x) => t + x.committees, 0), signed = perDay.reduce((t, x) => t + x.signed, 0);
   const daysOn = perDay.filter((x) => x.committees > 0).length;
