@@ -1287,6 +1287,10 @@ export class Verifier {
     // AND EACH SIGNER NODE'S OWN WORD THAT IT DECIDED THE ENTRY BY §13C (x-no-quorum): not taken as the entry's
     // outcome here - it only says that signer node will sign nothing, which `shortPastWindow` counts.
     const noQuorumPeers = [];
+    // THE ROUND'S SIGNER NODES (kanban #1512): a result is kept only under one of their keys, as a posting is
+    // (the contract's nodes where this node holds no signer list)
+    const signers = this.round.signerNodes(roundIdBytes);
+    const committee = signers.length ? signers : contract.nodes || [];
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
@@ -1309,7 +1313,7 @@ export class Verifier {
         // record by record, each its type's size
         for (const record of cutSignedResults(body)) {
           fetched++;
-          if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey)) kept++;
+          if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey, committee)) kept++;
         }
       }, { over: 20 });
     }
@@ -1830,7 +1834,7 @@ export class Verifier {
   }
 
   /** One record from a peer, believed only as far as it can be checked. */
-  #keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey) {
+  #keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey, committee) {
     let result, signature;
     try {
       const split = splitSignedResult(record);
@@ -1850,6 +1854,9 @@ export class Verifier {
     if (hex(result.roundId) !== hex(roundIdBytes)) return false;
     if (!(playerPubkey instanceof Uint8Array)
       || hex(result.playerPubkey) !== hex(playerPubkey)) return false;
+    // A RESULT UNDER A KEY THAT IS NONE OF THE ROUND'S SIGNER NODES IS NOT KEPT (kanban #1512): a peer could hand in rows signed by
+    // fresh keys of its own, and every read that counts round.results() (the Nostr result, the no-quorum signer count) would count them
+    if (!(committee || []).some((s) => hex(s) === hex(result.nodePubkey))) return false;
 
     const id = resultId(result);
     let ok = false;
