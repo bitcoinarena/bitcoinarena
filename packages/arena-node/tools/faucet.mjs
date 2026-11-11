@@ -60,7 +60,7 @@ const rpc = async (method, params = []) => {
   const r = await fetch(env.FAUCET_RPC_URL, { method: 'POST', headers: { authorization: `Basic ${auth}`, 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '1.0', id: 'faucet', method, params }), signal: AbortSignal.timeout(30000) });
   const j = await r.json();
-  if (j.error) throw new Error(j.error.message);
+  if (j.error) throw Object.assign(new Error(j.error.message), { rpcRefused: true });   // bitcoind answered and refused (kanban #1572)
   return j.result;
 };
 const REPORTS = [];   // this day's reports: their count and address, in memory
@@ -104,14 +104,43 @@ const oneAdmin = (fn) => { const run = adminQueue.then(fn, fn); adminQueue = run
 // a welcome answered again to the same caller (its address, an IPv6 /64) within this long: its first answer may never have reached the page
 const WELCOME_REISSUE_MS = 15 * 60 * 1000;
 
+// THE ADDRESS IS BOOKED BEFORE THE SEND (state audit 2026-11-12, kanban #1572): pay() sent first and booked after, so a sendtoaddress that bitcoind
+// committed but answered after the 30 s RPC timeout (a big wallet, a busy node) - or a crash between the send and saveBook - left coins sent to an
+// address with no row, and the installer's retry of the same address was paid again. The row is now written first (`pending`, no txid), as the
+// players' grant does. It is taken out again only when bitcoind refused the send, or the wallet shows no send to that address; any other failure
+// keeps it (the address is never paid twice; a row without its txid is the worst case).
+async function walletSentTo(address) {
+  // the wallet's own record: a txid when it sent to the address, 'none' when it holds no such send, null when it cannot say
+  try {
+    const txs = await rpc('listtransactions', ['*', 1000, 0, true]);
+    if (!Array.isArray(txs)) return null;
+    const t = txs.find((x) => x && x.category === 'send' && x.address === address);
+    return t ? String(t.txid) : 'none';
+  } catch { return null; }
+}
 async function pay(ask) {
   const book = readBook();
   const d = faucetDecide(ask, book, { balanceSats: await balanceSats() });
   if (!d.ok) return d;
-  const txid = await rpc('sendtoaddress', { address: ask.address, amount: (d.sats / 1e8).toFixed(8), replaceable: true, fee_rate: feeRate });
-  book.paid.push({ address: ask.address, ip: ask.ip, sats: d.sats, atMs: Date.now(), txid });
+  const row = { address: ask.address, ip: ask.ip, sats: d.sats, atMs: Date.now(), txid: null, pending: true };
+  book.paid.push(row);
   saveBook(book);
-  appendFileSync(env.FAUCET_PENDING, `${txid}\n`);
+  const settle = (txid) => {   // only this row changes, in a book read again
+    const b = readBook(); const r = b.paid.find((p) => p.address === ask.address && p.pending);
+    if (r) { r.txid = txid; delete r.pending; saveBook(b); }
+    appendFileSync(env.FAUCET_PENDING, `${txid}\n`);
+  };
+  let txid;
+  try {
+    txid = await rpc('sendtoaddress', { address: ask.address, amount: (d.sats / 1e8).toFixed(8), replaceable: true, fee_rate: feeRate });
+  } catch (e) {
+    const sent = e && e.rpcRefused ? 'none' : await walletSentTo(ask.address);
+    if (sent === 'none') { const b = readBook(); b.paid = b.paid.filter((p) => !(p.address === ask.address && p.pending)); saveBook(b); throw e; }
+    if (sent) { settle(sent); console.log(`${new Date().toISOString()} paid ${d.sats} sat to ${ask.address} (${ask.ip || 'no ip'}), found after "${e.message}": ${sent}`); return { ok: true, txid: sent, sats: d.sats }; }
+    console.log(`${new Date().toISOString()} send of ${d.sats} sat to ${ask.address} unsure ("${e && e.message}"): the address stays booked`);
+    throw e;
+  }
+  settle(txid);
   console.log(`${new Date().toISOString()} paid ${d.sats} sat to ${ask.address} (${ask.ip || 'no ip'}): ${txid}`);
   return { ok: true, txid, sats: d.sats };
 }
