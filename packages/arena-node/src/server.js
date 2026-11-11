@@ -881,7 +881,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   round.entryCloseGraceMs = entryCloseGraceMs === null || entryCloseGraceMs === undefined ? null : BigInt(entryCloseGraceMs);
   // AN OBJECTION'S CHECK DOES NOT OUTLIVE ITS PROCESS (kanban #1173): its pending row held the entry SUSPENDED while the replay ran; the replay is gone
   { const n = round.clearPendingObjections(); if (n) console.log(`#1173 [objection] ${n} check(s) cut short by the restart dropped: those objections are taken again when sent again`); }
-  const addressBook = createAddressBook({ db, verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } } });
+  // kanban #1533: POST /address-announcement takes only a node of the census last read for addresses (none read yet: bounded by the book)
+  let addressCensus = null;
+  const addressBook = createAddressBook({ db, verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
+    isCensusNode: (hex) => (addressCensus ? addressCensus.has(String(hex)) : null) });
   // EVERY COMMITTEE PEER AT ITS ANNOUNCED ADDRESS FIRST (kanban #757): roster.js endpointsOf with the address book's resolver -
   // a node whose quick tunnel restarted is dialed where its signed announcement says, not at its bond's dead endpoint
   const peerEndpointsOf = (committee, selfPubkey) => endpointsOf(committee, selfPubkey, addressBook.endpointOf);
@@ -10419,7 +10422,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'POST' && url.pathname === '/address-announcement') {
         let a; try { a = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'an address announcement as JSON { node, endpoint, atMs, sig }'); }
         const r = addressBook.take(a);
-        return r.ok ? json(res, 200, r) : text(res, 400, r.why);
+        return r.ok ? json(res, 200, r) : text(res, r.status || 400, r.why);
       }
       if (req.method === 'GET' && url.pathname === '/address-announcements') return json(res, 200, { announcements: addressBook.list() });
       if (req.method === 'POST' && url.pathname === '/founding') {
@@ -10920,6 +10923,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let list = null;
     try { if (ballot && typeof ballot.censusEntriesAt === 'function' && chainNetworkId()) list = await ballot.censusEntriesAt(chainNetworkId(), Number(await chainTip())); } catch { list = null; }
     if (!list) { try { const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null; list = cn ? cn.entries : null; } catch { list = null; } }
+    if (list && list.length) { try { addressCensus = new Set(list.map((e) => Buffer.from(e.pubkey).toString('hex'))); } catch { /* keep the last one */ } }
     return list;
   };
   // THE OTHERS' NEWEST ADDRESSES, PULLED as well (address-book.js pullAnnouncements, kanban #577): a node a push missed learns them here
