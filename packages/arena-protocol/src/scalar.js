@@ -125,6 +125,10 @@ export function valueAttestationStands(a, { manifest, roundIdBytes, verify }) {
     return { ok: false, why: `that value attestation is for round ${toHex(a.roundId).slice(0, 16)}, not this round ${scIs32(roundIdBytes) ? toHex(roundIdBytes).slice(0, 16) : ''}`.trim() };
   if (typeof verify !== 'function') return { ok: false, why: 'no verifier to check the attestors\' signatures' };
   const named = new Set(manifest.attestors.map(toHex));
+  // A LIST LONGER THAN THE ATTESTOR SET (kanban #1546) holds a key twice: refused before any signature is checked, so a public
+  // value attestation padded with one good signature repeated (u16 vec, up to 65,535) costs a seat no verification at all
+  if ((a.signatures || []).length > named.size)
+    return { ok: false, why: `that value attestation carries ${(a.signatures || []).length} signatures, more than the ${named.size} attestors game "${manifest.gameName}" names` };
   const signed = new Set();
   for (const s of a.signatures || []) {
     const k = toHex(s.key);
