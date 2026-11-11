@@ -104,8 +104,10 @@ async function paymentFinal(payer, hash) {
   const r = await lncli(payer, ['trackpayment', hash], 10000);
   const text = `${r.out || ''}\n${r.err || ''}`;
   if (/isn't initiated|not initiated|not found|unknown payment/i.test(text)) return 'NONE';
-  const states = [...text.matchAll(/"status":\s*"([A-Z_]+)"/g)].map((m) => m[1]);
-  const last = states[states.length - 1] || null;
+  // LNCLI'S OWN WORDS (audit 7, kanban #1430): without --json lncli 0.21 prints a table and "Payment status: SUCCEEDED, preimage: ..." (the refill timer
+  // reads the same line) - the JSON match found nothing live, so a settled welcome read as no answer; the payment's line, the last one printed, decides
+  const said = [...text.matchAll(/Payment status:\s*([A-Z_]+)/g)].map((m) => m[1]);
+  const last = said[said.length - 1] || null;
   if (last === 'SUCCEEDED' || last === 'FAILED') return last;
   return r.timedOut || last ? 'IN_FLIGHT' : null;
 }
