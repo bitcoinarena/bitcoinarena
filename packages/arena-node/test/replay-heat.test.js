@@ -57,6 +57,9 @@ const SEED = 1;
 // that reads exactly that: 17,314 sats of fees and 0.42 BTC.
 const FEE_SATS = 17314;
 const BTC_HUND = 42;
+// AND THE ROOM THE BED FILLS, which every page sends with its load (the seat refuses a load without one, kanban #1488):
+// seven parcels, 252,308 room units - a bed real pages declared (testnet4, 2026-10-06/07)
+const ROOM = 252308;
 
 const contract = () => ({
   networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7,
@@ -81,7 +84,7 @@ const wordsAt = () => [45875, 6000, 0, 0, 0];
 /** The player's own run: the load declared at roll-out, then the driving. */
 function played(ticks, { fee = FEE_SATS, btc = BTC_HUND } = {}) {
   const st = init(SEED);
-  submitLoad(st, fee, btc);
+  submitLoad(st, fee, btc, ROOM);
   for (let t = 0; t < ticks; t++) step(st, ...wordsAt(t));
   return st;
 }
@@ -102,7 +105,7 @@ function stored(ticks, { fee = FEE_SATS, btc = BTC_HUND, chunk = 100, withLoad =
       roundId: rid, entryId: eid, previousHash, firstTick: i, ticks: rows,
       liquidations: [],
       // At the first tick of the run, which is where roll-out declares it.
-      loads: (withLoad && i === 0) ? [[0, fee, btc]] : [],
+      loads: (withLoad && i === 0) ? [[0, fee, btc, ROOM]] : [],
     };
     assert.equal(r.batch(encodeInputBatch(b)), n, 'the node did not store every tick');
     previousHash = batchId(b);
@@ -151,7 +154,7 @@ test('the load is in the transcript, so a replay reaches the player\'s own state
   const { transcript, entry } = stored(TICKS);
 
   assert.equal(transcript.loads.length, 1, 'the node did not store the load');
-  assert.deepEqual(transcript.loads[0], [0, FEE_SATS, BTC_HUND]);
+  assert.deepEqual(transcript.loads[0], [0, FEE_SATS, BTC_HUND, ROOM]);
 
   const got = replay(transcript, entry, { seedWord: SEED });
   assert.equal(got.ok, true, got.why);
