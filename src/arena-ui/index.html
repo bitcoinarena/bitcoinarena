@@ -4003,6 +4003,16 @@
           return;
         }
         const reuse = use.use === 'reuse' ? use.kept : null;
+        // NO HANDOUT, SO NO LOCK, FOR A HEAD-TO-HEAD ROUND THAT CLOSES BEFORE THE ORDER CAN LAND (kanban #1485, Daniel 2026-11-11: "Make sure the reported bug cannot
+        // happen again"; feedback #010: the handout reached the seats 1.8 s after the close, the lock was made, the seats refused the entry and 6 sat of developers'
+        // and reserves' parts stayed spent): the handout, the lock and the entry need ARENA_H2H_LEAD_MS() before the close; with less, nothing is sent or locked
+        if (!reuse && window.ARENA_HIDDEN_CHOSEN && window.ARENA_HIDDEN_CHOSEN.round === named.roundIdHex && thisJoin && !thisJoin.free
+          && Number(named.round.entryCloseMs) - Date.now() < window.ARENA_H2H_LEAD_MS() + 1500) {
+          thisJoin.missed = true;
+          window.ARENA_JOIN_REFUSED = 'the entry closed before it went in - nothing was locked';
+          console.log('[arena] #1485 no handout, no lock: head-to-head round ' + named.roundIdHex.slice(0, 8) + ' closes in ' + ((Number(named.round.entryCloseMs) - Date.now()) / 1000).toFixed(1) + ' s');
+          return;
+        }
         const dealtAhead = reuse ? null : await takeStake(named.roundIdHex, player.pubkey, signerNodes.signerNodes);
         if (dealtAhead) console.log('[arena] join: the stake dealt ahead for this order is taken');
         stake = reuse ? reuse.stake : dealtAhead || await ARENACLIENT.stakeFor(
@@ -4099,7 +4109,7 @@
             // the close, its lock was made anyway - close + 10 s above is the other games' grace - and refunded 94 of 100 sat, 6 sat in federation fees): a
             // hidden move's round is locked only while the lock and the entry can still land before the close (H2H_LOCK_LEAD_MS); later, nothing is locked
             const h2hHere = !!(window.ARENA_HIDDEN_CHOSEN && window.ARENA_HIDDEN_CHOSEN.round === named.roundIdHex);
-            if (thisJoin && !thisJoin.free && h2hHere && Date.now() > Number(named.round.entryCloseMs) - 2500) {
+            if (thisJoin && !thisJoin.free && h2hHere && Date.now() > Number(named.round.entryCloseMs) - window.ARENA_H2H_LEAD_MS()) {
               thisJoin.missed = true;
               console.log('[arena] #1485 no lock: head-to-head round ' + named.roundIdHex.slice(0, 8) + ' closes in ' + ((Number(named.round.entryCloseMs) - Date.now()) / 1000).toFixed(1) + ' s');
               throw new Error('the entry closed before it went in - nothing was locked');
@@ -4119,11 +4129,13 @@
             // THE STAKE, FROM THE PLAYER WALLET: it asks for no deposit.
             // WRITTEN AHEAD AND KEPT BY lockStake ITSELF (kanban #1162, `keep`): the intent with room before the lock client is asked, the record
             // the moment it answers - a full browser refuses the join before anything is spent, never after
+            const lockT0 = Date.now();
             const made = await ARENACLIENT.lockStake(Object.assign({}, wallet, {
               roundId: ARENACLIENT.fromHex(named.roundIdHex), stake, claimKey, playerPubkey: player.pubkey,
               seating: signerNodes && signerNodes.signerNodes ? signerNodes.signerNodes : null,
               keep: true, federationId: named.round.federationId,
             }));
+            { const seen = (window.ARENA_LOCK_MS_SEEN || []).concat(Date.now() - lockT0).slice(-5); window.ARENA_LOCK_MS_SEEN = seen; }   // kanban #1485: the lead a head-to-head order needs
             // AND ITS FEE LOCK, ONLY WHEN THE GATE SAID IT CAN PAY A SIGNER NODE (Pick b):
             // a 100 sat round makes none, so the player is charged no lock that expires unused.
             stakeLock = { outpoint: made.outpoint, fields: made.fields, feeLock: made.feeLock || null, donations: made.donations || [], accepted: made.accepted || null,
@@ -9252,6 +9264,9 @@
       // away"): an order needs about 2 s to lock its stake, so one sent later lands after the close and is refused by the seats
       const ORDER_CUTOFF_MS = 3000;
       window.ARENA_ORDER_CUTOFF_MS = ORDER_CUTOFF_MS;
+      // THE TIME A HEAD-TO-HEAD LOCK AND ITS ENTRY NEED BEFORE THE CLOSE (kanban #1485): this page's slowest of its last locks plus 1.5 s, never under 4 s
+      // (measured 2026-11-11 at the seats: a lock 2.2-2.7 s)
+      window.ARENA_H2H_LEAD_MS = () => Math.max(4000, Math.max(0, ...(window.ARENA_LOCK_MS_SEEN || [])) + 1500);
       const notJoinableWhy = (id) => {
         const held = (window.ARENA_LOBBY_UNOFFERED || []).find((x) => x.id === id);
         // IN THE PLAYER'S WORDS (kanban #1393, Daniel 2026-11-09: "Make all messages human readable"): no committee, signer node or grid
