@@ -63,6 +63,15 @@
   .npc, .nps, .npj, .npt { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; min-width: 130px; flex: 1; }
   .npc.hl, .nps.hl { border-color: var(--btc); box-shadow: 0 0 0 1px var(--btc) inset; }
   .npic .npi { font-size: 28px; line-height: 1.1; } .npic b { color: var(--text); font-size: 15px; } .npic small { color: var(--dim); font-size: 13px; }
+  /* THE NODE ROLES (kanban #1125): tiles as the installer's role step draws them */
+  .roles { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 14px 0 8px; }
+  .role { border: 1px solid var(--line, #2a2f37); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 6px; background: var(--card, transparent); }
+  .role .ri { font-size: 30px; line-height: 1; } .role h3 { margin: 2px 0 0; font-size: 17px; }
+  .role .rdo { color: var(--text); font-weight: 600; } .role .rpill { align-self: flex-start; font-size: 12px; border-radius: 99px; padding: 2px 9px; border: 1px solid var(--line, #2a2f37); color: var(--dim); }
+  .role .rpill.opt { color: var(--btc); border-color: var(--btc); }
+  .role .chips { display: flex; flex-wrap: wrap; gap: 5px; } .role .chips span { font-size: 12px; border-radius: 6px; padding: 2px 7px; background: rgba(127,127,127,.12); }
+  .role dl { margin: 4px 0 0; font-size: 14px; } .role dt { color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; margin-top: 6px; } .role dd { margin: 0; }
+  .role.sub { border-style: dashed; }
   .njobs .npj { flex: 1 1 140px; } .npj em { font-style: normal; font: 700 18px "Space Grotesk"; margin-top: 4px; }
   .npj.v em { color: var(--bull); } .npj.s em { color: #c08cff; } .npj.c em { color: var(--cyan); } .npj.l em { color: var(--gold); }
   .nps .ndots { color: var(--btc); letter-spacing: 3px; font-size: 16px; } .nps .ndots i { font-style: normal; color: var(--line); }
@@ -174,6 +183,7 @@
   <a href="#bond">Bond and advertisement</a>
   <a href="#census">The census</a>
   <a href="#duty">Who posts the rounds</a>
+  <a href="#roles">Node roles</a>
   <a href="#run">Run a node</a>
   <a href="#bitcoinarena">The owner page</a>
   <a href="#dashboard">The dashboard</a>
@@ -644,6 +654,50 @@ node packages/arena-node/tools/devnet.mjs replay</pre>
     <li><b>Turning it off.</b> <code>duty_post=off</code> in <code>arena.conf</code>. The default, <code>auto</code>, posts while the wallet holds confirmed coins. <code>duty_wallet</code> names the wallet, <code>duty_fee_rate</code> and <code>duty_max_fee_rate</code> set the fees.</li>
   </ul>
   </details>
+  </div></details>
+  <details class="sec" open><summary><h2 id="roles">Node roles</h2></summary><div class="sec-body">
+  <!-- kanban #1125 (Daniel 2026-11-04: "In docs fehlt eine section welche node roles es gibt. Mach das grafisch, aehnlich wie im installer"):
+       the roles as the installer's role step shows them (arena-installer state.js ROLES, arena-web WizardSteps.jsx) -->
+  <p>A node takes on roles. You choose them in the installer, one switch each, and can change them later on the owner page. Each role earns its own 1 % of every paid round. <b>Game / verify</b> and <b>Settlement</b> are on by default; <b>Custody</b> and <b>Liquidity</b> you choose on purpose, because they need Lightning and coins.</p>
+  <div class="roles" role="list">
+    <div class="role" role="listitem">
+      <span class="ri">🎮</span><h3>Game / verify</h3><span class="rpill">on by default · 1 % of each round</span>
+      <span class="rdo">Replays and signs rounds</span>
+      <div class="chips"><span>🔒 bond</span><span>🌐 https address</span><span>💽 2 GB</span><span>⚙️ 1 CPU core</span></div>
+      <dl><dt>What it does</dt><dd>Replays each round it is seated on and signs who won. 5 of the round's 7 seated nodes must agree. For a prediction market such as Up/Down, the drawn nodes attest the outcome instead.</dd>
+      <dt>Earns</dt><dd>1 % of each round, shared by its 7 seated nodes.</dd></dl>
+    </div>
+    <div class="role" role="listitem">
+      <span class="ri">✍️</span><h3>Settlement</h3><span class="rpill">on by default · 1 % of each round</span>
+      <span class="rdo">Pays the winners out</span>
+      <div class="chips"><span>🔒 bond</span><span>🌐 https address</span><span>⏱️ online until paid</span></div>
+      <dl><dt>What it does</dt><dd>Once the result is signed, it co-signs the payment of the winners from the locked stakes, or the refunds if a round fails. 5 of the round's 7 seated nodes must sign.</dd>
+      <dt>Earns</dt><dd>1 % of each round, shared by its 7 seated nodes.</dd></dl>
+    </div>
+    <div class="role" role="listitem">
+      <span class="ri">🏦</span><h3>Custody</h3><span class="rpill opt">opt-in · needs coins + LND</span>
+      <span class="rdo">Holds the players' bitcoin</span>
+      <div class="chips"><span>₿ own Bitcoin Core</span><span>⚡ LND</span><span>🚪 port 9735</span><span>💽 +1 GB</span></div>
+      <dl><dt>What it does</dt><dd>Your node becomes one of a federation's guardians and holds the players' bitcoin together with the others. A federation pays out only when a two-thirds majority of its guardians agree.</dd>
+      <dt>Earns</dt><dd>1 % of each round of your federation: guardians share &#8532;, gateways &#8531;.</dd></dl>
+    </div>
+    <div class="role sub" role="listitem">
+      <span class="ri">⚡</span><h3>Gateway</h3><span class="rpill">part of custody</span>
+      <span class="rdo">Moves Lightning in and out</span>
+      <div class="chips"><span>⚡ LND</span><span>💰 channel coins</span></div>
+      <dl><dt>What it does</dt><dd>Turns players' Lightning payments into the federation's coins and back. Each federation has 2 gateways, drawn each day from its custody nodes.</dd>
+      <dt>Earns</dt><dd>&#8531; of the custody 1 % of its federation.</dd></dl>
+    </div>
+    <div class="role" role="listitem">
+      <span class="ri">💧</span><h3>Liquidity provider</h3><span class="rpill opt">opt-in · needs coins + LND</span>
+      <span class="rdo">Gives new nodes incoming Lightning</span>
+      <div class="chips"><span>₿ own Bitcoin Core</span><span>⚡ LND</span><span>💰 500,000 sat</span></div>
+      <dl><dt>What it does</dt><dd>Opens incoming Lightning channels of 100,000 sat to new nodes so they can take deposits. Any number of nodes can provide; each new node gets a channel from one or two of them, picked by a fair draw.</dd>
+      <dt>Earns</dt><dd>1 % of each round, shared by the providers: the more coins you hold for new nodes, the bigger your share.</dd></dl>
+    </div>
+  </div>
+  <p class="ncap">Every role except liquidity needs a <a href="#bond">bond</a>: coins you lock on Bitcoin that make your node count. In version 2.0 a node that signs something false loses its bond (it is <a href="https://bitcoinarena.io/security/">slashed</a>); version 1.9 on testnet does not slash yet.</p>
+
   </div></details>
   <details class="sec" open><summary><h2 id="run">Run a node</h2></summary><div class="sec-body">
   <!-- RUN A NODE IN PICTURES (kanban #812, 2026-10-30: "Run a Node in docs is way too much text. Make it easier, more pictures and less
