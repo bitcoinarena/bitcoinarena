@@ -29,6 +29,8 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
  * `historyFor(net, height)` -> the live history at that height ([{ config }], liveConfig's), or null while it cannot be known yet;
  * none given: no proposal is read as a repeal (the first slice's behaviour). `censusAt(networkIdHex, height)` -> [{ pubkey }] or
  * null: the bonds active at that height (the tally's census, ballot-tally.js); given, a proposer outside it is refused (kanban #1489).
+ * `tipHeight()` -> this seat's tip (or set later by the tally, `useTip`); given, a proposal first posted once its voting has begun is
+ * refused (kanban #1608).
  */
 export const PROPOSAL_STATE = Object.freeze({ COUNTING: 'COUNTING', PASSED: 'PASSED', FAILED: 'FAILED', ORPHANED: 'ORPHANED' });
 const S = PROPOSAL_STATE;
@@ -39,7 +41,8 @@ const MOVES = Object.freeze({ [S.COUNTING]: [S.PASSED, S.FAILED, S.ORPHANED], [S
 export const stateOf = (r) => (r && S[r.state] ? r.state : r && r.orphaned ? S.ORPHANED : r && r.decided ? (r.decided.passed ? S.PASSED : S.FAILED) : S.COUNTING);
 
 export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsFor, verify, store, schedule = SCHEDULES.mainnet, scheduleFor = null,
-  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, censusAt = null }) {
+  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, censusAt = null, tipHeight = null }) {
+  let tipOf = typeof tipHeight === 'function' ? tipHeight : null;
   const held = new Map((store && store.read ? store.read() || [] : []).map((x) => [x.id, { ...x, state: stateOf(x) }]));
   /** WRITTEN FIRST: the store takes `next` (or throws), and only then this seat's memory. */
   const commit = (next) => {
@@ -107,6 +110,18 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       const stands = proposalStands(p, { publishedAt: dep.publishedAt, depositSats: dep.depositSats, lowestBondMinSats: lowestBondMinSatsFor(net),
         schedule: (scheduleFor && scheduleFor(net)) || schedule, repealSchedule: (repealScheduleFor && repealScheduleFor(net)) || repealSchedule, verify, history });
       if (!stands.ok) return { ok: false, status: 422, why: stands.why };
+      // SEEN BEFORE ITS VOTING (kanban #1608): the deposit commits to nothing of the proposal and a vote names only
+      // proposal_id[0:8], so a proposer could confirm a deposit, vote YES alone, and post the proposal only after its voting phase
+      // and activation - counted on his own vote, and live retroactively under rounds this seat served. Taken only while this
+      // seat's tip is below its first voting block (a review-0 repeal, whose voting starts at its own block: at that block).
+      // Mainnet's review is 1008 blocks, time enough for every seat to hear of it (POST or the peer pull). A tip not read is a 503.
+      if (tipOf) {
+        let tip = NaN;
+        try { tip = Number(await tipOf()); } catch { tip = NaN; }
+        if (!Number.isFinite(tip)) return { ok: false, status: 503, why: 'this seat could not read its tip: ask again shortly' };
+        if (tip >= Math.max(stands.votingFrom, dep.publishedAt + 1))
+          return { ok: false, status: 422, why: `its voting began at ${stands.votingFrom} and this seat's tip is ${tip}: a proposal must be posted before its voting phase` };
+      }
       // THE PROPOSER IS A BONDED NODE (27A.7.2 "node pubkey with an active bond", kanban #1489): its key is in the census at the
       // publication height - the census the tally counts with. A fresh key with a 1-sat deposit took the ballot before; now refused
       // at the door. A census not readable yet is a 503 (ask again), never a guess.
@@ -138,6 +153,8 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       return { ok: true, status: 201, ...kept };
     },
     list: () => [...held.values()].sort((a, b) => b.publishedAt - a.publishedAt),
+    /** THE TIP add() reads (kanban #1608), handed by the tally when none was given here. */
+    useTip(fn) { if (!tipOf && typeof fn === 'function') tipOf = fn; },
     transition,
     /** THE OUTCOME, WRITTEN ONCE (ballot-tally.js): COUNTING -> PASSED | FAILED - not tallied again, across restarts too. */
     decide: (id, outcome) => transition(id, S.COUNTING, outcome && outcome.passed ? S.PASSED : S.FAILED, { outcome }),
