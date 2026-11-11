@@ -285,17 +285,21 @@ export function openFeedbackStore(path = ':memory:') {
     let p;
     try { p = await pay(String(invoice), d.amountSats); } catch (e) { p = { ok: false, why: e.message }; }   // the amount bounds the routing fee (kanban #1450)
     if (p && p.ok) { paidNow(w, p.paymentHash || d.paymentHash, nowMs); return { status: 'OK' }; }
-    if (p && p.failed) { db.prepare("UPDATE rewards SET state = 'open', why = ? WHERE k1 = ? AND state = 'paying'").run(String(p.why || 'the payment failed'), w.k1); return { status: 'ERROR', reason: 'the payment failed: try again' }; }
+    if (p && p.failed) { db.prepare("UPDATE rewards SET state = 'open', why = ? WHERE k1 = ? AND state = 'paying' AND payment_hash IS ?").run(String(p.why || 'the payment failed'), w.k1, d.paymentHash || null); return { status: 'ERROR', reason: 'the payment failed: try again' }; }   // only its own payment (kanban #1571)
     db.prepare("UPDATE rewards SET why = ? WHERE k1 = ?").run(String((p && p.why) || 'the payment\'s outcome is not known yet'), w.k1);
     return { status: 'ERROR', reason: 'the payment is not settled yet: it is checked again, do not claim twice' };
   }
-  function paidNow(w, paymentHash, nowMs) {
-    db.prepare("UPDATE rewards SET state = 'paid', payment_hash = COALESCE(?, payment_hash), paid_ms = ?, why = NULL WHERE k1 = ?").run(paymentHash || null, nowMs, w.k1);
+  // `onHash` (kanban #1571): settle() marks paid only the payment it asked about - the row must still be paying under that hash
+  function paidNow(w, paymentHash, nowMs, { onHash = undefined } = {}) {
+    if (onHash !== undefined) {
+      if (db.prepare("UPDATE rewards SET state = 'paid', paid_ms = ?, why = NULL WHERE k1 = ? AND state = 'paying' AND payment_hash = ?").run(nowMs, w.k1, onHash).changes !== 1) return false;
+    } else db.prepare("UPDATE rewards SET state = 'paid', payment_hash = COALESCE(?, payment_hash), paid_ms = ?, why = NULL WHERE k1 = ?").run(paymentHash || null, nowMs, w.k1);
     const r = get.get(w.report);
     if (r && r.state === STATES.ACCEPTED) {
       db.prepare('UPDATE reports SET state = ?, changed_ms = ? WHERE id = ?').run(STATES.PAID, nowMs, r.id);
       db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, STATES.PAID, nowMs, 'lnurlw', paymentHash || null);
     }
+    return true;
   }
   /**
    * A PAYMENT WHOSE OUTCOME WAS NOT KNOWN (a restart mid-pay, a timeout): `status(paymentHash)` -> 'paid' | 'failed' | 'unknown', the payer's own
@@ -305,13 +309,19 @@ export function openFeedbackStore(path = ':memory:') {
   // claim()'s payinvoice still ran (75 s) - with a hold invoice the holder claimed again and was paid twice. Read only after `freshMs`.
   async function settle({ status, nowMs = Date.now(), freshMs = 180000 } = {}) {
     const out = [];
-    for (const w of db.prepare("SELECT * FROM rewards WHERE state = 'paying'").all()) {
+    // A DECISION HOLDS ONLY FOR THE PAYMENT IT READ (kanban #1571): status() may wait 20 s a row and two passes may overlap, so a row read at the
+    // start of a pass can be opened, claimed again and paying under a NEW hash by the time it is decided. Each row is read again before its
+    // decision, and the move is a compare-and-set on the hash that was asked about - an answer about an old payment never touches a new one.
+    for (const { k1 } of db.prepare("SELECT k1 FROM rewards WHERE state = 'paying'").all()) {
+      const w = rewardOf.get(k1);
+      if (!w || w.state !== 'paying') continue;
       if (Number(w.tried_ms || 0) > nowMs - freshMs) { out.push({ k1: w.k1, status: 'unknown', fresh: true }); continue; }
       let st = 'unknown';
       try { st = w.payment_hash ? await status(w.payment_hash) : 'unknown'; } catch { st = 'unknown'; }
-      if (st === 'paid') paidNow(w, w.payment_hash, nowMs);
-      else if (st === 'failed') db.prepare("UPDATE rewards SET state = 'open', why = 'the payment failed' WHERE k1 = ? AND state = 'paying'").run(w.k1);
-      out.push({ k1: w.k1, status: st });
+      let moved = false;
+      if (st === 'paid') moved = paidNow(w, w.payment_hash, nowMs, { onHash: w.payment_hash });
+      else if (st === 'failed') moved = db.prepare("UPDATE rewards SET state = 'open', why = 'the payment failed' WHERE k1 = ? AND state = 'paying' AND payment_hash = ?").run(w.k1, w.payment_hash).changes === 1;
+      out.push(st === 'unknown' || moved ? { k1: w.k1, status: st } : { k1: w.k1, status: 'unknown', stale: true });
     }
     return out;
   }
