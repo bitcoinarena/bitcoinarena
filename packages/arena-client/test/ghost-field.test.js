@@ -27,7 +27,7 @@ import { openStore } from '../../arena-node/src/store.js';
 import { serve } from '../../arena-node/src/server.js';
 import { Client } from '../src/client.js';
 import { watchGhosts, GHOST_BACKLOG, SILENT_MS, playersLine, newestPose } from '../../nextblock/page/ghost-field.js';
-import { encodeInputBatch } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, signedBatchOf } from '../../arena-protocol/src/batch.js';
 import { GENESIS } from '../../arena-protocol/src/transcript.js';
 import { encodeEntryContract, entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../arena-protocol/src/constants.js';
@@ -45,6 +45,8 @@ const core = require('../../nextblock/dist/blwp-core.js');
 const b32 = (n) => new Uint8Array(32).fill(n);
 const session = ed25519.utils.randomSecretKey();
 const sign = (id) => ed25519.sign(id, session);
+// THE OTHER PLAYER'S SESSION KEY (kanban #1503): its batches are taken only signed by it
+const theirSession = new Uint8Array(32).fill(10);
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const BEACON = b32(0xbe);
@@ -83,7 +85,7 @@ async function rig() {
   // THE OTHER PLAYER, driven straight through the daemon's door: this file is
   // about what the PAGE does with what arrives.
   const theirs = {
-    ...mine, playerPubkey: b32(9), sessionPubkey: b32(10), worldSecret: b32(0x59), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
+    ...mine, playerPubkey: b32(9), sessionPubkey: ed25519.getPublicKey(theirSession), worldSecret: b32(0x59), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(theirs) });
   assumeStakeSeen(node.round, theirs);
@@ -571,10 +573,10 @@ test('through a real daemon\'s subscribe burst, the other player\'s abandoned en
     const sock = new WebSocket(`ws://127.0.0.1:${node.port}/play`);
     await new Promise((r) => sock.on('open', r));
     const answered = new Promise((r) => sock.once('message', r));
-    sock.send(encodeInputBatch({
+    sock.send(signedBatchOf({
       roundId: rid, entryId: theirEid, previousHash: node.round.head(rid, theirEid), firstTick: 60,
       ticks: Array.from({ length: 30 }, (_, i) => words(9)(60 + i)), liquidations: [],
-    }));
+    }, (id) => ed25519.sign(id, theirSession)));
     await answered;
     await wait(120);
     sock.close();

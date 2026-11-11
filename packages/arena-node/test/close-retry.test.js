@@ -29,7 +29,7 @@ import { rand, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, opts,
 import { testNow, skipTo } from './test-clock.js';
 import { roundEndMs } from '../../arena-protocol/src/first-mark.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { init, step } from '../../nextblock/src/sim.js';
@@ -91,7 +91,7 @@ async function signerNode(w, playerPubkey) {
   for (let t = 60; t < 120; t++) step(st, ...wordsAt(t));
   const b2 = { roundId: w.rid, entryId: eid, previousHash: batchId(b1), firstTick: 60, ticks: Array.from({ length: 60 }, (_, t) => wordsAt(60 + t)), liquidations: [] };
   const m2 = { roundId: w.rid, entryId: eid, tick: 120, stateHash: hashNow(), inputChainHash: batchId(b2), previousHash: checkpointId(m1), sessionPubkey: entry.sessionPubkey };
-  return { eid, start: [encodeInputBatch(b1), sign(m1)], more: [encodeInputBatch(b2), sign(m2)] };
+  return { eid, start: [signedBatchOf(b1, (id) => ed25519.sign(id, session)), sign(m1)], more: [signedBatchOf(b2, (id) => ed25519.sign(id, session)), sign(m2)] };
 }
 
 const look = (w, d, run) => ({

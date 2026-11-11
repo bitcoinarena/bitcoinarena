@@ -37,7 +37,7 @@ import { feldmanGroup } from '../src/curve.js';
 import { assumeAssigned, assumeStakeSeen } from './assignment.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import {
   SIGNED_RECEIPT_BYTES, encodeCheckpointReceipt, receiptId, joinSignedReceipt,
@@ -351,7 +351,7 @@ export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false
       // (`/invoice`, `/stake` on the node's own Lightning) went with THRESHOLD_LN (§23.6).
       assumeStakeSeen(d.round, entry);
     }
-    assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
+    assert.equal(await say(d.port, signedBatchOf(input, (id) => ed25519.sign(id, session))), String(who.ticks));
     assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
   }
   // `otherFirstMark`: the player's SECOND first mark of this entry - the same tick, another state - signed by its session
