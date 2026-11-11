@@ -3,8 +3,8 @@
 // EVERY GUARDIAN A FEDERATION'S INVITES NAME, ONE INVITE FOR A JOIN THAT COULD NOT READ THE CONFIG (2026-10-20 18:0xZ: "Fix the issue that it
 // connects to a wallet/guardian that is offline" - federation 4dc88be7's invite named only fed2-8, whose guardian had stopped at 07:56Z, so
 // every new wallet there failed with "Failed to download client config" while 6 of its 7 guardians ran). Every invite this client sees -
-// a round's, a remembered one, each seat's federation record (read here even before the record can be verified: only the config is
-// fetched with it, and the wallet checks that config against the federation id, its hash) - adds its guardians; a join that cannot read
+// a round's, a remembered one, each seat's federation record once it verifies (kanban #1556: an unverified record's hosts took every
+// peer slot and the browser joined through them) - adds its guardians; a join that cannot read
 // the config is tried once more with an invite naming all of them, so one guardian down no longer keeps a player out.
 import { readInvite, inviteForGuardians } from '../../arena-node/src/invite.js';
 import { splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
@@ -20,7 +20,7 @@ export function noteInvite(invite) {
   return true;
 }
 
-/** A seat's signed federation record (hex), verified or not: its invite's guardians are noted. */
+/** A seat's signed federation record (hex), verified by the caller (kanban #1556): its invite's guardians are noted. */
 // A RECORD NOTED ONCE (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; profiled on stage UI 603: 1.75 s of every minute of an RPS page
 // decoded the same signed records again - each seat's, each federation's, on every read): a record already noted is not decoded again
 const NOTED_RECORDS = new Set();
@@ -42,7 +42,9 @@ export function wholeInvite(invite) {
   noteInvite(invite);
   const m = seen.get(r.federationId);
   if (!m || m.size <= new Set(r.guardians.map((g) => g.peer)).size) return null;
-  const guardians = [...m].map(([peer, url]) => ({ peer, url })).sort((a, b) => a.peer - b.peer);
+  // THE INVITE'S OWN URLS WIN (kanban #1556): a peer the join's own invite names is joined at that url, whatever was noted for it before
+  const own = new Map(r.guardians.map((g) => [g.peer, g.url]));
+  const guardians = [...m].map(([peer, url]) => ({ peer, url: own.get(peer) ?? url })).sort((a, b) => a.peer - b.peer);
   const id = Uint8Array.from(r.federationId.match(/../g).map((x) => parseInt(x, 16)));
   try { return inviteForGuardians(id, guardians); } catch { return null; }
 }
