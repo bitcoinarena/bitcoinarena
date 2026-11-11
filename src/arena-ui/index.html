@@ -6958,7 +6958,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     async function dailySearch() {
       // a parameter only a game's client reads (?rps-demo=all) leaves the root bare: it names no lobby
       const named = new URLSearchParams(location.search); for (const k of [...named.keys()]) if (VIEW_ONLY_PARAMS.includes(k) || /^utm_|clid$/.test(k)) named.delete(k);   // kanban #926: a campaign link names no lobby either
-      if (named.toString() !== '' || !ARENACLIENT.dailyLobbySearch) return null;
+      // ONLY A LOBBY OR A ROUND LINK NAMES A LOBBY (kanban #1467): a lobby link always carries node= (dailyLobbySearch writes node, bond, advert, federation,
+      // gateway) and a round link round=; any other parameter - a cache-buster ?v=1, a tag a share adds - read as a lobby link skipped daily.json and the
+      // games screen and started Tick Tock (as ?feedback=1 did, #1461)
+      if (named.has('node') || named.has('round') || !ARENACLIENT.dailyLobbySearch) return null;
       try {
         const r = await fetch('daily.json', { cache: 'no-store' });
         return r.ok ? ARENACLIENT.dailyLobbySearch(await r.json()) : null;
