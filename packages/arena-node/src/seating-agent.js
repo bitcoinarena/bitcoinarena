@@ -39,6 +39,9 @@ export const NO_SEATING_REST_MS = Number(process.env.ARENA_NO_SEATING_REST_MS ||
 export const UNREACHABLE_REST_MS = Number(process.env.ARENA_UNREACHABLE_REST_MS || 30000);
 /** Failed requests in a row after which a drawn node counts as not answering (kanban #979): one lost request says nothing, two with a 30 s rest between them do. */
 export const UNANSWERED_TRIES = 2;
+/** How long a seated member may hold back its seating signature (kanban #1509): one that signed no seating at all this long after this node signed its own is
+ * left out like a silent node (#979), and the next present reserve takes its place. Well inside the 120 s from seating_close to the start. */
+export const WITHHELD_SIG_MS = Number(process.env.ARENA_WITHHELD_SIG_MS || 30000);
 /** How long after its start a table's first round without a certificate is still read, and joined late (kanban #803): its table plays all day. */
 export const TABLE_LATE_MS = BigInt(process.env.ARENA_TABLE_LATE_MS || 24 * 3600000);
 /** A table's check-in (kanban #1020): the first round of the table in each of these periods of UTC time exchanges PRESENTs. */
@@ -434,9 +437,11 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
           if (cert) keepCert(w.t.rid, w.role, fromHex(cert));
           const sig = a.sig && a.sig[w.role];
           if (sig && w.closed && !w.late) keepSig(w, sig);
-          else if (sig && w.joins) sigs.push(sig);
+          if (sig && (w.joins || (w.closed && !w.late && !mySignature(w.t.rid, w.role)))) sigs.push(sig);
         }
         if (w.joins && w.closed) { joinLate(w, sigs); for (const s of sigs) keepSig(w, s); await certify(w); }
+        // A RESERVE TAKEN IN FOR A WITHHOLDING MEMBER (kanban #1509): not seated by its own seating, it signs the one every other member of it signed already
+        if (w.closed && !w.late && !w.joins && !mySignature(w.t.rid, w.role)) { joinLate(w, sigs, { everyOther: true }); for (const s of sigs) keepSig(w, s); }
         if (w.closed && !w.late) {
           // A SEATING THAT CAN NEVER STAND (kanban #738): the PRESENTs the others held at the close are taken late, here only
           if (canNeverStand(w)) for (const a of said) for (const x of a.presents || []) if (x.role === w.role) takePresent(fromHex(x.present), { afterClose: true });
@@ -557,6 +562,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const id = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated }));
     rememberSeating(w.t.rid, w.role, id, list);
     db.prepare('INSERT OR IGNORE INTO seat_sigs (round_id, role, seating, node, signature) VALUES (?, ?, ?, ?, ?)').run(w.t.rid, w.role, id, me, sig);
+    signedAt.set(`${w.ridHex}:${w.role}`, nowMs());   // a withholder of this seating is counted from now (kanban #1509)
   }
 
   // ONE OVERLOADED SEAT SIGNED A SMALLER SEATING AND NO CERTIFICATE FORMED (kanban #738, measured 2026-10-27 23:30Z, Up/Down round
@@ -579,7 +585,21 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const r = rankOf(w);
     return a.every((k, i) => r.has(k) && r.has(b[i]) && r.get(b[i]) <= r.get(k));
   }
-  /** The member of this node's seating that signed a seating not before it (kanban #738), or null while the seating may still stand. */
+  // A MEMBER THAT ANSWERS BUT NEVER SIGNS (kanban #1509, wf1489 r1 census-1): a drawn seat that hands out its PRESENT and answers every read, with its seating
+  // signature always null, is never silent (#979) and signs no other seating (#738), so every honest seat waited for it until the start - no certificate, no
+  // entries, one free seat voiding every round it was drawn into. A member of this node's seating of whom no signature over any seating is held
+  // WITHHELD_SIG_MS after this node signed it withholds: the seating can never stand without it, and the seats move on to the seating of the PRESENTs held
+  // less the withholders (resign), never below the threshold; the reserve it takes in signs once every other member did (joinLate everyOther).
+  const signedAt = new Map();     // `${ridHex}:${role}` -> when this node signed its present seating (ms; first seen after a restart)
+  function withholdersOf(w) {
+    const signed = mySignature(w.t.rid, w.role);
+    if (!signed) return [];
+    const key = `${w.ridHex}:${w.role}`;
+    if (!signedAt.has(key)) signedAt.set(key, nowMs());
+    if (nowMs() < signedAt.get(key) + WITHHELD_SIG_MS) return [];
+    return signed.seated.filter((k) => k !== me && !db.prepare('SELECT 1 FROM seat_sigs WHERE round_id = ? AND role = ? AND node = ?').get(w.t.rid, w.role, k));
+  }
+  /** The member of this node's seating that signed a seating not before it (kanban #738), or one that withholds its signature (#1509), or null while the seating may still stand. */
   function canNeverStand(w) {
     if (db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(w.t.rid, w.role)) return null;
     const signed = mySignature(w.t.rid, w.role);
@@ -590,7 +610,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       const other = seatings.get(`${w.ridHex}:${w.role}:${r.seating}`);
       if (other && !seatingBefore(w, other, signed.seated)) return r.node;
     }
-    return null;
+    return withholdersOf(w)[0] || null;
   }
   /** This node's second seating, when its first can never stand (kanban #738): the rule above. */
   function resign(w) {
@@ -606,6 +626,30 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     // (it comes after this node's seating, seats this node, another node signed it), and of those the one most nodes signed is taken, by id on a tie.
     const heldSet = new Set(held);
     const candidates = new Map();      // seating id -> seated (hex, score order)
+    // MEMBERS THAT WITHHOLD THEIR SIGNATURE (kanban #1509) are left out of every candidate: the seating of the PRESENTs held less them, never below the threshold.
+    // Leaving a member out does not come after this node's seating in #738's order and nobody may have signed it yet, so the two checks below are not asked of it -
+    // the withholder signed nothing, so no seating of it can stand that an honest member left; it is this node's own seating and another node's alike.
+    const withheld = new Set(withholdersOf(w));
+    if (withheld.size) {
+      const less = held.filter((k) => !withheld.has(k));
+      if (less.length < receiptsNeeded(w.slots)) return;
+      let best = null;
+      const own = seatedFrom({ drawn: w.drawnKeys, present: less, slots: w.slots }).map(toHex);
+      const pick = new Map([[toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: own.map(fromHex) })), own]]);
+      for (const r of db.prepare('SELECT DISTINCT seating FROM seat_sigs WHERE round_id = ? AND role = ? AND node != ?').all(w.t.rid, w.role, me)) {
+        const other = seatings.get(`${w.ridHex}:${w.role}:${r.seating}`);
+        if (other && other.every((k) => heldSet.has(k))) pick.set(r.seating, other);
+      }
+      for (const [id, list] of pick) {
+        if (!list.includes(me) || list.some((k) => withheld.has(k)) || list.length < receiptsNeeded(w.slots) || list.join(',') === signed.seated.join(',')) continue;
+        const n = db.prepare('SELECT COUNT(*) AS n FROM seat_sigs WHERE round_id = ? AND role = ? AND seating = ? AND node != ?').get(w.t.rid, w.role, id, me).n;
+        if (!best || n > best.n || (n === best.n && id < best.id)) best = { id, list, n };
+      }
+      if (!best) return;
+      signSeatingOf(w, best.list.map(fromHex), held);
+      log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: re-signed the seating of ${best.list.length} (member(s) ${[...withheld].map((k) => k.slice(0, 8)).join(', ')} signed nothing in ${WITHHELD_SIG_MS / 1000} s)`);
+      return;
+    }
     const own = seatedFrom({ drawn: w.drawnKeys, present: held, slots: w.slots }).map(toHex);
     candidates.set(toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: own.map(fromHex) })), own);
     for (const r of db.prepare('SELECT DISTINCT seating FROM seat_sigs WHERE round_id = ? AND role = ? AND node != ?').all(w.t.rid, w.role, me)) {
@@ -631,7 +675,9 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
    * seated member signed - one that seats this node, all of whose members' PRESENTs this node holds - and no other. It adds no seating
    * of its own, and it is this node's one signature, so the rule of the ordered seatings (#738) holds as before.
    */
-  function joinLate(w, got) {
+  // everyOther (kanban #1509): a reserve taken in for a withholding member, on a round not yet started, joins only a seating every other member of it signed -
+  // its signature completes the certificate, and no single node can spend it on a seating the others did not move to
+  function joinLate(w, got, { everyOther = false } = {}) {
     if (leftNode(me) || certOf(w.t.rid, w.role) || mySignature(w.t.rid, w.role)) return;
     const held = new Set(db.prepare('SELECT node FROM seat_presents WHERE round_id = ? AND role = ?').all(w.t.rid, w.role).map((r) => r.node));
     const r = rankOf(w);
@@ -645,9 +691,9 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       const id = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: list.map(fromHex) }));
       let good = false; try { good = verify(fromHex(g.signature), fromHex(id), fromHex(node)); } catch { good = false; }
       if (!good) continue;
-      const e = by.get(id) || by.set(id, { list, n: 0 }).get(id); e.n++;
+      const e = by.get(id) || by.set(id, { list, n: 0, by: new Set() }).get(id); if (!e.by.has(node)) { e.by.add(node); e.n++; }   // each signer once (kanban #1509)
     }
-    const best = [...by.values()].sort((a, b) => b.n - a.n)[0];
+    const best = [...by.values()].filter((e) => !everyOther || e.n >= e.list.length - 1).sort((a, b) => b.n - a.n)[0];
     if (!best) return;
     signSeatingOf(w, best.list.map(fromHex), [...held]);
     log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: joined late - signed the seating of ${best.list.length} that ${best.n} seated member(s) signed (table's first round, started without its certificate)`);
