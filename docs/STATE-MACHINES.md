@@ -1605,3 +1605,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T2 x SM-L2 (change) Kept round wallets and the collect record (kanban #1585)
 - A tab's round wallets (`roundWallets`) and the empty note (`arena.tabempty.<key>`) are keyed by round and phrase (`walletKey`: `<round id>.<seed hex 16>`), as the round's lock database is (`arena.lockdb.<round16>.<sha(lockSecretFor(seed, round))16>`). A record is looked at, and marked done with its `tabMsat`, only through its own phrase's round wallet: a second phrase's record in the same round never reads the first phrase's wallet or empty note, so its own wallet is never tidied away unread. The browser lock (`arena.round.<round id>`) stays per round. An empty note under the old round-only key is no longer read; that round's wallet is joined and read once more.
+
+#### SM-L1 (change) Stake lock record: a refused record is kept aside (kanban #1584)
+- `refused` is decided from three "not stored" reads 2 s apart on a reload (reconcileKeptLock), not from the guardians' word: their consensus can still accept that transaction afterwards.
+- refused -> intent (a new PLAY, keptLockStake) now first copies the refused record to `arena.lock.orphan.<tag>.<refusedMs>` (putRoomy); with no room for the copy the PLAY is refused before anything is spent.
+- Invariant: no lock record this browser wrote with an outpoint is overwritten without a copy - every transaction the page submitted stays named (outpoint, fields, stake) in `arena.lock.saved`, `arena.lock.intent` or `arena.lock.orphan`.
