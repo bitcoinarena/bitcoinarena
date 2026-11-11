@@ -614,13 +614,21 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27]);
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
 const BOND_SUM_VERSION = 19;
 /** Under capacity pressure the guardians' custody share is weighted by bond up to B*, squared (§23A.3a part 1, kanban #559/#543). */
 const PRESSURE_WEIGHT_VERSION = 20;
+/**
+ * 2026.0.27 - NO DEVELOPER OR RESERVE MONEY FOR AN ENTRY THAT IS NOT ACCEPTED (kanban #1486, ruled 2026-11-11: "Er sollte keine fees
+ * entgegen nehmen wenn die order nicht angenommen wird"; FEDERATION.md "Amended 2026-11-11"). A paid game round of this version takes the
+ * developers' 4 % and the reserves' 2 % in the entry's FEE LOCK, beside the nodes' 4 % (fee 10 %, donation 0, no donation or reserve
+ * output), and pays them at settlement for counted entries only - a refused, void or refunded entry gets them back with its stake. 21 is the
+ * drawn attestors' label (#630) and 22-26 are taken on the 2.0 branches, so this is 27; versions are cumulative, keep them in step.
+ */
+const GIFTS_IN_FEE_LOCK_VERSION = 27;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -12933,12 +12941,50 @@ function reservesEntryExpected({ entry, recipients, reserveKey, split = ROUND_SP
 }
 
 /**
- * THE ENTRY FEE RATE OF A ROUND (§27A.9.1): a version-11 round of a game takes the nodes' mandatory 4 %; a market, and every
- * older round, the rate its manifest gives (entryFeeBpsOf: the network's 5 %, or a market's own).
+ * THE DEVELOPERS' AND THE RESERVES' PARTS IN THE FEE LOCK (protocol 27, kanban #1486, ruled 2026-11-11: "Er sollte keine fees entgegen
+ * nehmen wenn die order nicht angenommen wird"): a paid round of version 27 or later takes the whole 10 % in the entry's fee lock - nodes,
+ * developers and reserves - and no donation or reserve output, so a refused, void or refunded entry gets all of it back with its stake,
+ * and only a counted entry pays it, at settlement (lock-settlement.js feeSettlement `gifts`). A market already does (donationInFee).
  */
-const entryFeeBpsForRound = (contract, manifest) => (paysReserves(contract) && !donationInFee(manifest) ? RESERVES_NODE_FEE_BPS : entryFeeBpsOf(manifest));
-/** Does this round's entry pay the reserves - a version-11 round of a game (a market's reserves are a later slice)? */
-const entryPaysReserves = (contract, manifest) => paysReserves(contract) && !donationInFee(manifest);
+const giftsInFeeLock = (contract) => paysReserves(contract) && Number(contract.protocolVersion) >= GIFTS_IN_FEE_LOCK_VERSION;
+/** The whole rate a protocol-27 game entry's fee lock holds, in bps of its stake: nodes + developers + reserves (10 % today). */
+const giftsFeeBps = (split = ROUND_SPLIT_BPS) => split.nodes + split.protocolDevs + split.gameDevs + split.reserves;
+/** Does this round's entry carry the developers' and the reserves' parts in its fee lock - a version-27 round of a game? */
+const entryGiftsInFee = (contract, manifest) => giftsInFeeLock(contract) && !donationInFee(manifest);
+
+/**
+ * WHAT A VERSION-27 GAME ENTRY MUST NAME (kanban #1486): a fee of the whole rate of its stake (giftsFeeBps, floored once - the
+ * rate every fee is, entryFeeMsat), a donation of 0 and no donation or reserve outpoint. Of that fee the nodes' part is their rate
+ * (floored) and the reserves' theirs (floored, roundSplit), and the developers' the rest - so the three are the fee to the msat.
+ * Answers { ok, fee, nodesMsat, devsMsat, reservesMsat } or why not, by name.
+ */
+function giftsEntryExpected({ entry, split = ROUND_SPLIT_BPS }) {
+  if (!entry || typeof entry.stakeMsat !== 'bigint' || typeof entry.feeMsat !== 'bigint') return { ok: false, why: 'that entry names no stake and fee' };
+  if (entry.stakeMsat < 1n) return { ok: false, why: 'a paid entry stakes at least 1 msat' };
+  const parts = roundSplit(entry.stakeMsat, { split });
+  const fee = bps(entry.stakeMsat, giftsFeeBps(split));
+  const devsMsat = fee - parts.nodesMsat - parts.reservesMsat;
+  const v = GIFTS_IN_FEE_LOCK_VERSION;
+  if (entry.donationMsat !== 0n)
+    return { ok: false, why: `on protocol version ${v} the developers' and the reserves' parts are in the fee lock: that entry names a donation of ${entry.donationMsat} msat beside it` };
+  if ((entry.donationOutpoints || []).length || (entry.reserveOutpoint !== undefined && entry.reserveOutpoint !== null))
+    return { ok: false, why: `on protocol version ${v} an entry pays no donation or reserve output at its lock: they are in its fee lock, paid only if it is counted` };
+  if (entry.feeMsat !== fee)
+    return { ok: false, why: `on protocol version ${v} the fee lock holds the nodes' ${split.nodes / 100} %, the developers' ${(split.protocolDevs + split.gameDevs) / 100} % and the reserves' ${split.reserves / 100} %: ${fee} msat, not ${entry.feeMsat}` };
+  return { ok: true, fee, nodesMsat: parts.nodesMsat, devsMsat, reservesMsat: parts.reservesMsat };
+}
+
+/**
+ * THE ENTRY FEE RATE OF A ROUND (§27A.9.1): a version-11 round of a game takes the nodes' mandatory 4 %, and from version 27 the whole 10 %
+ * its fee lock holds (giftsFeeBps); a market, and every older round, the rate its manifest gives (entryFeeBpsOf: the network's 5 %, or a
+ * market's own).
+ */
+// `split`: the round's split in force at its census height (fee-proposal.js roundSplitBps of GET /fees?height=) - read by a protocol-27
+// round only, so the door, the gates and the settlement size its fee lock alike (kanban #1486); a round below 27 is as before
+const entryFeeBpsForRound = (contract, manifest, split = undefined) => (entryGiftsInFee(contract, manifest) ? giftsFeeBps(split || ROUND_SPLIT_BPS)
+  : paysReserves(contract) && !donationInFee(manifest) ? RESERVES_NODE_FEE_BPS : entryFeeBpsOf(manifest));
+/** Does this round's entry pay the reserves BY AN OUTPUT AT ITS LOCK - a version-11 to 26 round of a game (from 27 they ride in the fee lock)? */
+const entryPaysReserves = (contract, manifest) => paysReserves(contract) && !donationInFee(manifest) && !giftsInFeeLock(contract);
 
 // ---- arena-protocol/src/final-sig.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
@@ -13145,21 +13191,38 @@ function servedNodesDiffer(claimed, mine) {
 /**
  * ONE SET OF ROUNDS FROM WHAT SEVERAL SEATS HOLD (measured 2026-10-15 17:3xZ: each seat holds only the FINALs of the
  * rounds it sat on - 14 seats gave 7 roots for one window). `held` is a list of seats' answers, each [{ roundId, committee, finals }];
- * a round's FINALs are joined (each signed FINAL once), and a round two seats name with different committees is left out and
- * named in `conflicts` - servedNodes then checks every FINAL itself, so a seat that hands over a forged one adds nothing.
+ * a round's FINALs are joined (each signed FINAL once) and servedNodes then checks every FINAL itself, so a seat that hands over a
+ * forged one adds nothing.
+ *
+ * ONE SEAT'S ANSWER DOES NOT DECIDE WHO IS PAID (kanban #1522, measured: one seat answering an invented round whose "committee" was
+ * 20 keys it made up, each with a FINAL, took 217,380 msat of a 500-sat item; naming a real round with another committee dropped the
+ * round, and the nodes that served it were paid nothing):
+ *   - a committee larger than any round may name is refused: genesis binds 7 slots, and a round names at most its draw, 9
+ *     (contracts.js sittingSeatsFitTheSlots, sortition.js drawnForRole);
+ *   - each seat's answer is read up to SERVED_HELD_MAX rounds;
+ *   - two seats naming one round with different committees no longer drop the round: the committee most seats name stands, and
+ *     between equally many the one held first (the caller's own record first, then the seats in the order it lists them).
  */
+const SERVED_COMMITTEE_MAX = 9;
+const SERVED_HELD_MAX = 20000;
 function mergeServedRounds(held) {
   const hx = (b) => toHex(b);
   const rounds = new Map(), conflicts = new Set();
-  for (const seat of held || []) for (const r of seat || []) {
-    if (!r || !snIs32(r.roundId) || !Array.isArray(r.committee)) continue;
-    const k = hx(r.roundId), committee = r.committee.map(hx).sort().join();
-    if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, committee: r.committee, key: committee, finals: new Map() });
-    const into = rounds.get(k);
-    if (into.key !== committee) { conflicts.add(k); continue; }
-    for (const f of r.finals || []) if (f instanceof Uint8Array) into.finals.set(hx(f), f);
+  for (const seat of held || []) {
+    if (!Array.isArray(seat)) continue;
+    for (const r of seat.slice(0, SERVED_HELD_MAX)) {
+      if (!r || !snIs32(r.roundId) || !Array.isArray(r.committee) || !r.committee.length || r.committee.length > SERVED_COMMITTEE_MAX || !r.committee.every(snIs32)) continue;
+      const k = hx(r.roundId), committee = [...new Set(r.committee.map(hx))].sort().join();
+      if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map() });
+      const into = rounds.get(k);
+      if (!into.copies.has(committee)) into.copies.set(committee, { committee: r.committee, seats: 0 });
+      into.copies.get(committee).seats++;
+      if (into.copies.size > 1) conflicts.add(k);
+      for (const f of r.finals || []) if (f instanceof Uint8Array) into.finals.set(hx(f), f);
+    }
   }
-  return { rounds: [...rounds.entries()].filter(([k]) => !conflicts.has(k)).map(([, r]) => ({ roundId: r.roundId, committee: r.committee, finals: [...r.finals.values()] })),
+  const pick = (copies) => { let best = null; for (const c of copies.values()) if (!best || c.seats > best.seats) best = c; return best.committee; };
+  return { rounds: [...rounds.values()].map((r) => ({ roundId: r.roundId, committee: pick(r.copies), finals: [...r.finals.values()] })),
     conflicts: [...conflicts] };
 }
 
@@ -14202,8 +14265,14 @@ const knownEntryBps = (gameId) => { const k = feeOfKnownGame(gameId); return k ?
 // A VERSION-11 GAME ROUND'S NODES TAKE 4 % (§27A.9.1); a market keeps its own (its fee lock holds its donation too)
 const knownIsMarket = (gameId) => { const k = feeOfKnownGame(gameId); return !!(k && k.donationBps !== undefined && k.donationBps !== null); };
 const roundPaysReserves = (round) => !!round && paysReserves(round) && !knownIsMarket(round.gameId);
+// FROM PROTOCOL 27 (kanban #1486) A GAME ROUND'S FEE LOCK HOLDS THE DEVELOPERS' AND THE RESERVES' PARTS beside the nodes': the whole 10 %,
+// no donation and no reserve output at the lock - a refused or void entry gets them back with its stake, an accepted one pays them at settlement
+const roundGiftsInFee = (round) => roundPaysReserves(round) && giftsInFeeLock(round);
+/** A protocol-27 round's split in force at its census height, as the page read it (GET /fees?height=); undefined (today's) without one. */
+const splitForRound = (round) => (round && round.feeSet ? roundSplitBps(round.feeSet) : undefined);
 // `round.feeSet`: the fees in force at the round's census height, as the page read them from the nodes (GET /fees?height=)
 const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps) ? round.feeBps
+  : roundGiftsInFee(round) ? giftsFeeBps(round.feeSet ? roundSplitBps(round.feeSet) : undefined)
   : roundPaysReserves(round) ? (round.feeSet ? roundSplitBps(round.feeSet).nodes : RESERVES_NODE_FEE_BPS) : knownEntryBps(round && round.gameId));
 
 
@@ -14359,7 +14428,7 @@ async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
  * nobody replays - which is the fault this function exists to end, arriving by
  * another road. So this is the chain rule again, in the small: every node the
  * URL named is asked, and a disagreement is a refusal by name rather than a
- * majority or a first answer.
+ * first answer - unless more than half of the named nodes agree (kanban #1523).
  *
  * WHAT THIS IS NOT is proof that the hash is the block 5A.5 names. Deriving
  * the height from the chain is letter 32's work and the page does not do it;
@@ -14399,12 +14468,22 @@ async function readRandomness(id, nodes, fetcher) {
   if (!said.length)
     throw new Error('no node named this round\'s randomness: ' + refused.join('; '));
   const first = toHex(said[0].hash);
-  for (const s of said.slice(1)) {
-    if (toHex(s.hash) !== first)
-      throw new Error(`${said[0].node} says this round's randomness is ${first} and `
-        + `${s.node} says ${toHex(s.hash)}: a round whose nodes name two worlds is not one round`);
-  }
-  return { randomness: said[0].hash, height: said[0].height, agreed: said.length, refused };
+  const other = said.find((s) => toHex(s.hash) !== first);
+  if (!other) return { randomness: said[0].hash, height: said[0].height, agreed: said.length, refused };
+  // ONE SEAT OF SEVEN DOES NOT CLOSE EVERY WORLD IT SITS ON (kanban #1523): a disagreement threw at once, so one seat answering 32
+  // other bytes made no player's world seed for any round it was named on - after the stake was locked - while six seats read the
+  // same block hash. A value held by MORE THAN HALF OF THE NODES THE ROUND NAMED (not of those that answered: a seat that stays
+  // silent does not lower the bar) is the round's, and the seats that said otherwise are named as refused; with no such majority
+  // (a 2-of-2's one liar, a split) it is still the refusal by name it was.
+  const count = new Map();
+  for (const s of said) { const h = toHex(s.hash); count.set(h, (count.get(h) || 0) + 1); }
+  const [won, n] = [...count].sort((a, b) => b[1] - a[1])[0];
+  if (2 * n <= nodes.length)
+    throw new Error(`${said[0].node} says this round's randomness is ${first} and `
+      + `${other.node} says ${toHex(other.hash)}: a round whose nodes name two worlds is not one round`);
+  const kept = said.filter((s) => toHex(s.hash) === won);
+  for (const s of said) if (toHex(s.hash) !== won) refused.push(`${s.node}: named randomness ${toHex(s.hash)}, not the ${n} of ${nodes.length} nodes' ${won}`);
+  return { randomness: kept[0].hash, height: kept[0].height, agreed: kept.length, refused };
 }
 
 /**
@@ -16174,14 +16253,16 @@ function settlementNonce(roundId) {
 // table the locks are claimed and paid by is `lockActions`' over it, so a split round settles by the split and nothing
 // else here changes: the payouts are the table's rows, scaled to the claimed locks as any table's are.
 function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null,
-  sends = new Map(), addressed = null, requireSends = false, donationSet = null, payoutShares = null, feeBps = undefined, websitePct = undefined }) {
+  sends = new Map(), addressed = null, requireSends = false, donationSet = null, payoutShares = null, feeBps = undefined, websitePct = undefined, gifts = null }) {
   // `feeBps` / `websitePct`: the fees in force at the round (fee-proposal.js) - a version-11 round's node fee and the
   // website's share of it; unset, today's (4 % and 20 %)
+  // `gifts`: a protocol-27 game round's { recipients, reserveKey, split } - its fee locks hold the developers' and the reserves' parts too
+  // (kanban #1486), paid here for the counted entries (feeSettlement)
   if (!(locks instanceof Map)) return refuse('the verified stake locks are a Map by player key');
   if (!(feeLocks instanceof Map)) return refuse('the verified fee locks are a Map by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
     return refuse('the guardians\' fee rule is BigInt ppm and base msat, 0 or more');
-  const feePart = feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps, websitePct });
+  const feePart = feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps, websitePct, gifts, rid: roundId });
   if (!feePart.ok) return feePart;
   // THE STAKE PART'S VERDICT IS `lockActions`'. A round with losers and nobody to
   // pay is refused there ("the operator would keep ..."), and so its stakes are not
@@ -16483,7 +16564,7 @@ function lateSettlementNonce(roundId, entryId) {
  * the first settlement paid nobody, nothing is claimed.
  */
 function lateLockSettlement({ roundId, entryId, entry, lock, feeLock = null, shares, winnerLocks = new Map(), fees,
-  signerNodes = null, contract = null, sends = new Map(), requireSends = false, feeBps = undefined, websitePct = undefined }) {
+  signerNodes = null, contract = null, sends = new Map(), requireSends = false, feeBps = undefined, websitePct = undefined, gifts = null }) {
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
     return refuse('the guardians\' fee rule is BigInt ppm and base msat, 0 or more');
   if (!entry) return refuse('there is no late entry to settle');
@@ -16532,7 +16613,7 @@ function lateLockSettlement({ roundId, entryId, entry, lock, feeLock = null, sha
   }
 
   const feePart = feeLock
-    ? feeSettlement({ entries: [entry], feeLocks: new Map([[toHex(entry.pubkey), feeLock]]), signerNodes, contract, fees, feeBps, websitePct })
+    ? feeSettlement({ entries: [entry], feeLocks: new Map([[toHex(entry.pubkey), feeLock]]), signerNodes, contract, fees, feeBps, websitePct, gifts, rid: roundId })
     : feeSettlement({ entries: [entry], feeLocks: new Map(), signerNodes, contract, fees, feeBps, websitePct });
   if (!feePart.ok) return feePart;
   const done = finish({ roundId, claims: [{ pubkey: entry.pubkey, outpoint: lock.outpoint, amountMsat: net, kind: 'stake' }], payouts,
@@ -16582,9 +16663,14 @@ function finish(stake, fee) {
  * not a signer node's word.
  */
 // `feeBps`: the round's game's node fee (fee.js feeBpsOf - a market's own, 0.5 % by default), the network's if none
-function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, feeBps = undefined } = {}) {
+// `split`: a protocol-27 round's split in force at its census height (kanban #1486); unset, today's
+function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, feeBps = undefined, split = undefined } = {}) {
   if (!contract) return { pays: false, why: 'no round to size the fee lock for' };
   if (feeBps === undefined && paysReserves(contract)) feeBps = RESERVES_NODE_FEE_BPS;   // version 11: 4 %
+  // A PROTOCOL-27 GAME ENTRY'S FEE LOCK (kanban #1486): sized on the whole 10 % it holds, and it mints only if every sitting signer node's
+  // part of it - the nodes' 4 % - pays more than nothing; the developers' and the reserves' lines are not what the gate asks
+  const giftSplit = split || ROUND_SPLIT_BPS;
+  const gifted = giftsInFeeLock(contract) && feeBps === giftsFeeBps(giftSplit);
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint')
     return { pays: false, why: 'the federation\'s fee rule is not known, so no fee lock is minted' };
   const stakeMsat = BigInt(contract.stakeMsat || 0n);
@@ -16598,15 +16684,24 @@ function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, feeBps =
   const pools = { [GAME_VERIFY]: sitting, [SETTLEMENT]: sitting };
   const entries = Array.from({ length: players }, (_, i) => ({ pubkey: key(0xb0, i), stakeMsat, feeMsat: lockMsat, donationMsat: 0n, outcome: FAILED, score: 0 }));
   const feeLocks = new Map(entries.map((e, i) => [toHex(e.pubkey), { outpoint: { txid: key(0xc0, i), outIdx: BigInt(i) }, amountMsat: lockMsat, preimage: key(0xd0, i) }]));
-  const part = feeSettlement({ entries, feeLocks, signerNodes: pools, contract, fees, feeBps });
+  const gift = gifted ? { recipients: GATE_GIFT_TARGET, reserveKey: GATE_GIFT_KEY, split: giftSplit } : null;
+  const part = feeSettlement({ entries, feeLocks, signerNodes: pools, contract, fees, feeBps: gifted ? giftSplit.nodes : feeBps, gifts: gift, rid: gifted ? new Uint8Array(32) : null });
   if (!part.ok) return { ...base, pays: false, why: part.why };
+  const nodePays = part.payouts.filter((p) => !GIFT_KINDS.has(p.kind));
+  const nodeUnpaid = part.unpaid.filter((u) => !u.gift);
   const out = { ...base, inputFeesMsat: part.inputFeesMsat, outputFeesMsat: part.outputFeesMsat,
-    perSignerNodeNetMsat: part.payouts.map((p) => p.msat), unpaidSignerNodes: part.unpaid.length };
+    perSignerNodeNetMsat: nodePays.map((p) => p.msat), unpaidSignerNodes: nodeUnpaid.length };
   if (part.hole) return { ...out, pays: false, why: part.hole.why };
-  if (part.unpaid.length) return { ...out, pays: false, why: `${part.unpaid.length} entitled signer node(s) would be paid nothing after the federation's fees` };
-  if (!part.payouts.length || part.payouts.some((p) => p.msat <= 0n)) return { ...out, pays: false, why: 'a signer node would be paid nothing after the federation\'s fees' };
-  return { ...out, pays: true, why: `every one of ${part.payouts.length} signer nodes is paid more than nothing after the federation's fees` };
+  if (nodeUnpaid.length) return { ...out, pays: false, why: `${nodeUnpaid.length} entitled signer node(s) would be paid nothing after the federation's fees` };
+  if (!nodePays.length || nodePays.some((p) => p.msat <= 0n)) return { ...out, pays: false, why: 'a signer node would be paid nothing after the federation\'s fees' };
+  return { ...out, pays: true, why: `every one of ${nodePays.length} signer nodes is paid more than nothing after the federation's fees` };
 }
+
+// the gate's stand-in donation target and reserve key: it asks only whether the nodes' part pays, never where the gifts go
+const GATE_GIFT_KEY = Uint8Array.from([0x02, ...new Uint8Array(32).fill(0x47)]);
+const GATE_GIFT_TARGET = [{ recipientPk: Uint8Array.from([0x02, ...new Uint8Array(32).fill(0x46)]), shareBps: 10000, label: 'gate' }];
+// the fee part's lines that are no signer node's: a donation key's and the reserves'
+const GIFT_KINDS = new Set(['donation key', 'reserve']);
 
 /**
  * THE FEE PART: every counted entry's fee lock in, each sitting signer node's §22A share
@@ -16617,7 +16712,13 @@ function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, feeBps =
 // `donation`: { recipients } - a market's donation target (two sets: the protocol devs' and the game dev's, key sets), whose
 // donation rides in its fee locks (fee.js entryFeeBpsOf): what the fee locks hold above the node table is that
 // donation, split by `splitDonation` and paid to each key by a pre-expired payout contract, as a walk-away's 25 % is.
-function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps = undefined, donation = null, websitePct = undefined }) {
+// `gifts`: { recipients, reserveKey, split } - A PROTOCOL-27 GAME ROUND (kanban #1486): each counted entry's fee lock holds the nodes', the
+// developers' and the reserves' parts of its stake (reserves.js giftsEntryExpected). The nodes' table is as for any round; each entry's
+// reserves part, summed, is one line to `reserveKey` (RESERVE_LATER_PK on a round that takes any federation: splitByFederation names each
+// federation's own); the rest above the nodes' table is the developers', split over `recipients` as a market's donation is. An entry not
+// counted (a refund outcome) brings no fee lock in, so it pays none of it - its lock comes back to its player.
+// `rid`: the round's id, which a protocol-27 round's donation lines are named under (donationSendId); the gate's is a stand-in
+function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps = undefined, donation = null, websitePct = undefined, gifts = null, rid: ridGiven = null }) {
   const none = { ok: true, claims: [], payouts: [], unpaid: [], poolMsat: 0n, inputFeesMsat: 0n, paidMsat: 0n, outputFeesMsat: 0n, unspentMsat: 0n, unallocatedMsat: 0n };
   if (!feeLocks.size) return none;
   if (!contract || !signerNodes || !Array.isArray(signerNodes[GAME_VERIFY]) || !Array.isArray(signerNodes[SETTLEMENT]))
@@ -16638,7 +16739,9 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   for (const k of signerNodes.conflicted || []) eligible.delete(String(k).toLowerCase());
   let table;
   // A VERSION-11 GAME ROUND'S NODES TAKE 4 % (§27A.9.1): its fee locks hold that, and the table owes that
-  const rate = feeBps !== undefined ? feeBps : (paysReserves(contract) ? RESERVES_NODE_FEE_BPS : undefined);
+  if (gifts && donation) return refuse('a round\'s fee locks hold a market\'s donation or a game\'s gifts, never both');
+  const giftSplit = gifts ? (gifts.split || ROUND_SPLIT_BPS) : null;
+  const rate = feeBps !== undefined ? feeBps : gifts ? giftSplit.nodes : (paysReserves(contract) ? RESERVES_NODE_FEE_BPS : undefined);
   // the liquidity providers' weights (2026.0.16, §23A.10): `signerNodes.liquidityWeights` node hex -> sat, from the standing liquidity seating
   // and, from 2026.0.20 under capacity pressure, the guardians' weights (§23A.3a part 1): `signerNodes.guardianWeights` node hex -> min(bond, B*)^2
   // and the gateways' weights under peg-in pressure (§23A.3a part 2): `signerNodes.gatewayWeights` node hex -> min(proved peg-in, P*)^2
@@ -16648,17 +16751,34 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible, weights, ...(rate !== undefined ? { feeBps: rate } : {}) }); } catch (e) { return refuse(e.message); }
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
   // A MARKET'S FEE LOCKS HOLD ITS DONATION TOO: the rest above the node table is the donation set's, never the nodes'
-  const donationOwedMsat = donation ? poolMsat - table.fee : 0n;
-  if (donationOwedMsat < 0n) return refuse(`the fee table owes the signer nodes ${table.fee} msat and the fee locks hold only ${poolMsat}`);
-  if (table.fee + donationOwedMsat !== poolMsat) return refuse(`the fee table owes the signer nodes ${table.fee} msat and the fee locks hold ${poolMsat}`);
+  // AND A PROTOCOL-27 GAME ROUND'S HOLD THE DEVELOPERS' AND THE RESERVES' PARTS (kanban #1486): each counted entry's fee is exactly its three
+  // parts, and its reserves part is the reserves' - the rest above the nodes' table the developers'
+  let reservesOwedMsat = 0n;
+  const giftParts = [];
+  if (gifts) {
+    for (const e of counted) {
+      const g = giftsEntryExpected({ entry: { ...e, donationMsat: e.donationMsat ?? 0n }, split: giftSplit });
+      if (!g.ok) return refuse(`no fee lock is claimed: ${g.why}`);
+      reservesOwedMsat += g.reservesMsat;
+      if (e.entryId) giftParts.push({ entryId: typeof e.entryId === 'string' ? e.entryId : toHex(e.entryId), playerPubkey: toHex(e.pubkey), feeMsat: g.devsMsat + g.reservesMsat });
+    }
+  }
+  const donationOwedMsat = donation || gifts ? poolMsat - table.fee - reservesOwedMsat : 0n;
+  if (donationOwedMsat < 0n) return refuse(`the fee table owes the signer nodes ${table.fee} msat${reservesOwedMsat ? ` and the reserves ${reservesOwedMsat}` : ''}, and the fee locks hold only ${poolMsat}`);
+  if (table.fee + reservesOwedMsat + donationOwedMsat !== poolMsat) return refuse(`the fee table owes the signer nodes ${table.fee} msat and the fee locks hold ${poolMsat}`);
   if (table.unallocated > 0n) return refuse(`${table.unallocated} msat of the fee has no eligible signer node in its pool, so no fee lock is claimed`);
+  if (reservesOwedMsat > 0n && !(gifts.reserveKey instanceof Uint8Array && gifts.reserveKey.length === 33))
+    return refuse('this round\'s fee locks hold the reserves\' part, and no reserve key is known for its federation, so no fee lock is claimed');
   let donated = [];
   if (donationOwedMsat > 0n) {
-    const split = splitDonation({ donationMsat: donationOwedMsat, recipients: donation.recipients });
-    if (!split.owed) return refuse(`the market's donation set does not stand, so no fee lock is claimed: ${split.why}`);
+    const whose = gifts ? 'the developers\'' : 'the market\'s';
+    const target = gifts ? gifts.recipients : donation.recipients;
+    if (!target) return refuse(`this round's fee locks hold ${whose} donation, and no donation target is known for it, so no fee lock is claimed`);
+    const split = splitDonation({ donationMsat: donationOwedMsat, recipients: target });
+    if (!split.owed) return refuse(`${whose} donation set does not stand, so no fee lock is claimed: ${split.why}`);
     if (split.shares.some((x) => x.amountMsat > 0n && !(x.recipientPk instanceof Uint8Array)))
-      return refuse('a market\'s donation is paid to keys in the federation, and its set names a recipient without one');
-    const rid = roundId(contract);
+      return refuse(`${whose} donation is paid to keys in the federation, and its set names a recipient without one`);
+    const rid = gifts && ridGiven instanceof Uint8Array ? ridGiven : roundId(contract);
     donated = split.shares.map((x, i) => ({ ...x, id: donationSendId(rid, i), index: i })).filter((x) => x.amountMsat > 0n);
   }
   // ONE PAYOUT PER SIGNER NODE KEY: a signer node in both pools is owed both shares (§22A), paid together. A GUARDIAN SHARE OF A
@@ -16719,9 +16839,15 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   // THE DONATION'S SHARES, scaled to what the claimed locks pay as the nodes' are, each to its own key
   for (const d of donated) {
     const got = largestPayoutMsat(fees, (d.amountMsat * spendable) / poolMsat);
-    if (got === 0n) { unpaid.push({ pubkey: d.id, owedMsat: d.amountMsat, why: `the donation share for ${d.label || 'a key'} does not pay its own output fee` }); continue; }
+    if (got === 0n) { unpaid.push({ pubkey: d.id, owedMsat: d.amountMsat, why: `the donation share for ${d.label || 'a key'} does not pay its own output fee`, ...(gifts ? { gift: true } : {}) }); continue; }
     payouts.push({ pubkey: d.id, payoutPk: d.recipientPk, owedMsat: d.amountMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'donation key',
-      donation: { id: d.id, index: d.index, recipientPk: d.recipientPk, label: d.label } });
+      donation: { id: d.id, index: d.index, recipientPk: d.recipientPk, label: d.label, ...(giftParts.length ? { parts: giftParts } : {}) } });
+  }
+  // THE RESERVES' PART (protocol 27): one line to the federation's reserve key, scaled as the rest
+  if (reservesOwedMsat > 0n) {
+    const got = largestPayoutMsat(fees, (reservesOwedMsat * spendable) / poolMsat);
+    if (got === 0n) unpaid.push({ pubkey: gifts.reserveKey.subarray(1), owedMsat: reservesOwedMsat, why: 'the reserves\' part does not pay its own output fee', gift: true });
+    else payouts.push({ pubkey: gifts.reserveKey.subarray(1), payoutPk: gifts.reserveKey, owedMsat: reservesOwedMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'reserve', reserve: true });
   }
   // A FEE THAT CANNOT REACH A SIGNER NODE IS NOT CLAIMED. Measured under the guardians'
   // real rule (1000 msat per input and per output): two 2000 msat fee locks bring
@@ -17814,7 +17940,7 @@ async function locksFor(round, client, donationMsat, donationRecipients = null) 
     throw new Error(`no stake is locked to this round: its federation charges a base fee of ${feeRule.baseMsat} msat `
       + 'on every input and output - a federation for BLWP runs with disable_base_fees (FEDERATION.md)');
   // its fee lock on what this entry stakes: an order's own amount, else the round's
-  const feeGate = feeLockPays({ contract: { ...round, stakeMsat: stakeOf(round) }, fees: feeRule, feeBps: feeBpsForRound(round) });
+  const feeGate = feeLockPays({ contract: { ...round, stakeMsat: stakeOf(round) }, fees: feeRule, feeBps: feeBpsForRound(round), split: splitForRound(round) });
   // A FEDERATION WITH NO FEES (0/0) quotes every lock exactly - its amount in whole notes - so the stake check needs no
   // allowance on top (2026-10-01: the 2 sat "reserve" made one 100 sat round ask 100.352 + 2.006)
   const zeroFees = !!feeRule && feeRule.baseMsat === 0n && feeRule.ppm === 0n;
@@ -24819,42 +24945,10 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
     // A READ THAT NEVER GOT AN ANSWER (kanban #803: "Load failed" on a phone) is a node that did not answer, as one past ANSWER_MS is
     } catch (e) { return { node: base, why: e.message, late: true }; }
   }), nodes.map((node) => String(node).replace(/\/+$/, '')))).filter((a) => a.bytes || !a.late);
-  const missing = answers.filter((a) => !a.bytes);
-  if (missing.length)
-    return { ok: false, why: `not every signer node of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
-  if (!kept && answers.length * 2 < nodes.length)
-    return { ok: false, why: `only ${answers.length} of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
-  const served = toHex(answers[0].bytes);
-  if (answers.some((a) => toHex(a.bytes) !== served)) return { ok: false, why: 'the signer nodes of this round serve different donation sets' };
-  // A SET ITS DEVELOPERS APPROVED (§27A.4.1): the nodes serve, as JSON, the admin key's set it replaces (signed,
-  // checked below as any set), the proposals and approvals since, and the admin key's signature over the approved set (`admin`, kanban
-  // #1337); this page tallies them itself
-  let approval = null;
-  let bytes = answers[0].bytes;
-  if (bytes.length && bytes[0] === 0x7b) {
-    try { approval = JSON.parse(new TextDecoder().decode(bytes)); } catch { approval = null; }
-    if (!approval || approval.approved !== true || typeof approval.root !== 'string' || !Array.isArray(approval.chain))
-      return { ok: false, why: 'the nodes serve a set its developers approved, and not the proof of it' };
-    try { bytes = fromHex(approval.root); } catch { return { ok: false, why: 'the admin key\'s set behind the approved set is not hex' }; }
-  }
-  if (bytes.length <= DONATION_SIGNATURE_BYTES) return { ok: false, why: 'that is no signed donation set' };
-  let set;
-  try { set = { ...decodeDonationSetBody(bytes.slice(0, -DONATION_SIGNATURE_BYTES)), signature: bytes.slice(-DONATION_SIGNATURE_BYTES) }; }
-  catch (e) { return { ok: false, why: `that is no donation set: ${e.message}` }; }
-  if (toHex(set.networkId) !== toHex(round.networkId)) return { ok: false, why: 'that donation set is for another network' };
-  if (!approval) {
-    const named = donationSetMatchesRound(round, set.recipients);
-    if (!named.ok) return { ok: false, why: named.why };
-    // BOTH KEYS ON THE PLAIN PATH TOO (kanban #1447): a set served without approvals stands only if the authority could make it alone
-    const alone = plainDonationSetStands(set, plainPins || undefined);
-    if (!alone.ok) return { ok: false, why: alone.why };
-  }
-  if (!(set.validFrom <= round.censusHeight)) return { ok: false, why: 'that donation set is not in force at the round\'s height' };
-
   // EVERY SIGNER NODE'S ROTATIONS, EACH CHECKED HERE against the network's recovery
   // key: a signer node that hides a rotation cannot hide it from the other signer nodes.
   const offered = new Map();
-  for (const a of answers) for (const r of a.rotations) {
+  for (const a of answers) for (const r of a.rotations || []) {
     try { offered.set(`${r.body}:${r.signature}`, { ...decodeAuthorityRotation(fromHex(String(r.body))), signature: fromHex(String(r.signature)) }); }
     catch { /* not a rotation: nothing to apply */ }
   }
@@ -24864,41 +24958,99 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
     if (await verifyEd25519(rot.signature, authorityRotationId(rot), networkKeys.recovery) === true) signedRotations.add(toHex(rot.signature));
   const inForce = authorityAt({ networkId: round.networkId, authority: networkKeys.authority, recovery: networkKeys.recovery,
     rotations, height: round.censusHeight, verify: (sig) => signedRotations.has(toHex(sig)) });
-  if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
-    return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
-  if (approval) {
-    // the ballots oldest first, each checked against the set it replaces; the set in force at the round's height must be the one it names
-    let ballots;
-    try {
-      ballots = approval.chain.slice().reverse().map((c) => {
-        const pb = fromHex(String(c.proposal));
-        return { proposal: { ...decodeDonationProposal(pb.slice(0, -64)), signature: pb.slice(-64) },
-          approvals: (c.approvals || []).map((h) => { const ab = fromHex(String(h)); return { ...decodeDonationApproval(ab.slice(0, -64)), signature: ab.slice(-64) }; }) };
-      });
-    } catch (e) { return { ok: false, why: `the developers' ballots served do not decode: ${e.message}` }; }
-    const got = await approvedDonationSets({ networkId: round.networkId, known: [set], ballots, verifySecp256k1 });
-    // A CHANGE NEEDS BOTH KEYS (§27A.4.1 RULED 2026-11-07, kanban #1337, 8a94d6cbf: "the authority key alone moves nothing" - and the
-    // recipients alone neither): the approved serial is in force only beside the authority's signature over the same serial and recipients.
-    // The nodes hand it as `admin` (body + signature, like `root`), checked here against the authority in force; without it the approvals
-    // alone make no set in force, and this page used to refuse every approved split for that reason (kanban #1415).
-    const signedSets = [set];
-    if (typeof approval.admin === 'string') {
-      try {
-        const ab = fromHex(approval.admin);
-        if (ab.length > DONATION_SIGNATURE_BYTES) {
-          const admin = { ...decodeDonationSetBody(ab.slice(0, -DONATION_SIGNATURE_BYTES)), signature: ab.slice(-DONATION_SIGNATURE_BYTES) };
-          if (await verifyEd25519(admin.signature, donationSetBodyId(admin), inForce.authority) === true) signedSets.push(admin);
-        }
-      } catch { /* not a signed set: the approvals alone, refused below */ }
+
+  // ONE SEAT CANNOT TAKE THE ROUND'S SET AWAY (kanban #1524): every answering seat had to serve the set byte for byte, so one seat
+  // answering a 4xx or another validly signed set refused every paid join of every round it sat on while six of seven served the
+  // set. The set proves itself (signed by the authority in force, named by round.donationSetId): the answers are grouped by their
+  // bytes, and when the seats disagree a group served by more than half of ALL the round's nodes is taken if it passes every check
+  // below; the seats that said otherwise are reported (`dissent`), not obeyed. With no such group the refusal is said as before.
+  const checkServed = async (served) => {
+    // A SET ITS DEVELOPERS APPROVED (§27A.4.1): the nodes serve, as JSON, the admin key's set it replaces (signed,
+    // checked below as any set), the proposals and approvals since, and the admin key's signature over the approved set (`admin`, kanban
+    // #1337); this page tallies them itself
+    let approval = null;
+    let bytes = served;
+    if (bytes.length && bytes[0] === 0x7b) {
+      try { approval = JSON.parse(new TextDecoder().decode(bytes)); } catch { approval = null; }
+      if (!approval || approval.approved !== true || typeof approval.root !== 'string' || !Array.isArray(approval.chain))
+        return { ok: false, why: 'the nodes serve a set its developers approved, and not the proof of it' };
+      try { bytes = fromHex(approval.root); } catch { return { ok: false, why: 'the admin key\'s set behind the approved set is not hex' }; }
     }
-    const signedSigs = new Set(signedSets.map((x) => toHex(x.signature)));
-    const now = donationSetInForce({ networkId: round.networkId, authority: inForce.authority, recovery: networkKeys.recovery, sets: signedSets, rotations: [],
-      height: round.censusHeight, verify: (sig) => signedSigs.has(toHex(sig)), approved: got.sets });
-    const said = [...got.refused, ...now.refused];
-    if (!now.ok || !now.approvedBy) return { ok: false, why: `the developers' approvals served do not make a set in force at the round's height${said.length ? ': ' + said[0] : ''}` };
-    const named = donationSetMatchesRound(round, now.recipients);
-    if (!named.ok) return { ok: false, why: named.why };
-    set = { networkId: set.networkId, serial: now.serial, validFrom: now.validFrom, recipients: now.recipients, approvedBy: now.approvedBy };
+    if (bytes.length <= DONATION_SIGNATURE_BYTES) return { ok: false, why: 'that is no signed donation set' };
+    let set;
+    try { set = { ...decodeDonationSetBody(bytes.slice(0, -DONATION_SIGNATURE_BYTES)), signature: bytes.slice(-DONATION_SIGNATURE_BYTES) }; }
+    catch (e) { return { ok: false, why: `that is no donation set: ${e.message}` }; }
+    if (toHex(set.networkId) !== toHex(round.networkId)) return { ok: false, why: 'that donation set is for another network' };
+    if (!approval) {
+      const named = donationSetMatchesRound(round, set.recipients);
+      if (!named.ok) return { ok: false, why: named.why };
+      // BOTH KEYS ON THE PLAIN PATH TOO (kanban #1447): a set served without approvals stands only if the authority could make it alone
+      const alone = plainDonationSetStands(set, plainPins || undefined);
+      if (!alone.ok) return { ok: false, why: alone.why };
+    }
+    if (!(set.validFrom <= round.censusHeight)) return { ok: false, why: 'that donation set is not in force at the round\'s height' };
+    if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
+      return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
+    if (approval) {
+      // the ballots oldest first, each checked against the set it replaces; the set in force at the round's height must be the one it names
+      let ballots;
+      try {
+        ballots = approval.chain.slice().reverse().map((c) => {
+          const pb = fromHex(String(c.proposal));
+          return { proposal: { ...decodeDonationProposal(pb.slice(0, -64)), signature: pb.slice(-64) },
+            approvals: (c.approvals || []).map((h) => { const ab = fromHex(String(h)); return { ...decodeDonationApproval(ab.slice(0, -64)), signature: ab.slice(-64) }; }) };
+        });
+      } catch (e) { return { ok: false, why: `the developers' ballots served do not decode: ${e.message}` }; }
+      const got = await approvedDonationSets({ networkId: round.networkId, known: [set], ballots, verifySecp256k1 });
+      // A CHANGE NEEDS BOTH KEYS (§27A.4.1 RULED 2026-11-07, kanban #1337, 8a94d6cbf: "the authority key alone moves nothing" - and the
+      // recipients alone neither): the approved serial is in force only beside the authority's signature over the same serial and recipients.
+      // The nodes hand it as `admin` (body + signature, like `root`), checked here against the authority in force; without it the approvals
+      // alone make no set in force, and this page used to refuse every approved split for that reason (kanban #1415).
+      const signedSets = [set];
+      if (typeof approval.admin === 'string') {
+        try {
+          const ab = fromHex(approval.admin);
+          if (ab.length > DONATION_SIGNATURE_BYTES) {
+            const admin = { ...decodeDonationSetBody(ab.slice(0, -DONATION_SIGNATURE_BYTES)), signature: ab.slice(-DONATION_SIGNATURE_BYTES) };
+            if (await verifyEd25519(admin.signature, donationSetBodyId(admin), inForce.authority) === true) signedSets.push(admin);
+          }
+        } catch { /* not a signed set: the approvals alone, refused below */ }
+      }
+      const signedSigs = new Set(signedSets.map((x) => toHex(x.signature)));
+      const now = donationSetInForce({ networkId: round.networkId, authority: inForce.authority, recovery: networkKeys.recovery, sets: signedSets, rotations: [],
+        height: round.censusHeight, verify: (sig) => signedSigs.has(toHex(sig)), approved: got.sets });
+      const said = [...got.refused, ...now.refused];
+      if (!now.ok || !now.approvedBy) return { ok: false, why: `the developers' approvals served do not make a set in force at the round's height${said.length ? ': ' + said[0] : ''}` };
+      const named = donationSetMatchesRound(round, now.recipients);
+      if (!named.ok) return { ok: false, why: named.why };
+      set = { networkId: set.networkId, serial: now.serial, validFrom: now.validFrom, recipients: now.recipients, approvedBy: now.approvedBy };
+    }
+    return { ok: true, set };
+  };
+  const missing = answers.filter((a) => !a.bytes);
+  const groups = new Map();
+  for (const a of answers) if (a.bytes) { const k = toHex(a.bytes); groups.set(k, [...(groups.get(k) || []), a]); }
+  let chosen = null, set = null, dissent = [];
+  if (!missing.length && groups.size === 1) {
+    if (!kept && answers.length * 2 < nodes.length)
+      return { ok: false, why: `only ${answers.length} of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
+    const got = await checkServed(answers[0].bytes);
+    if (!got.ok) return got;
+    chosen = answers; set = got.set;
+  } else if (!missing.length && !groups.size) {
+    return { ok: false, why: `only 0 of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
+  } else {
+    for (const g of [...groups.values()].sort((x, y) => y.length - x.length)) {
+      if (g.length * 2 <= nodes.length) break;
+      const got = await checkServed(g[0].bytes);
+      if (got.ok) { chosen = g; set = got.set; break; }
+    }
+    if (!chosen) {
+      if (missing.length)
+        return { ok: false, why: `not every signer node of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
+      return { ok: false, why: 'the signer nodes of this round serve different donation sets' };
+    }
+    dissent = answers.filter((a) => !chosen.includes(a)).map((a) => ({ node: a.node, why: a.bytes ? 'serves another donation set' : a.why }));
   }
 
   // AND THE GAME DEV'S SET (§0A.8): every signer node serves the one its round's game's manifest names, and it
@@ -24929,10 +25081,10 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
     if (!gameSet) return { ok: false, why: `no signer node of this round serves its game's donation set: ${tried.join('; ')}` };
     GAME_SETS_FETCHED.set(wantGame, gameSet);
   }
-  if (keepBySet && !kept) DONATION_SETS_FETCHED.set(setKey, answers);
+  if (keepBySet && !kept) DONATION_SETS_FETCHED.set(setKey, chosen);
   // A SET THAT VESTS (§27A.4.1) pays its shares at the round's census height, as the seats split it
-  return { ok: true, set, gameSet, target: { network: vestedShares(set.recipients, round.censusHeight), game: gameSet }, signerNodes: answers.length, rotated: inForce.rotated,
-    why: `${answers.length} signer node(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
+  return { ok: true, set, gameSet, target: { network: vestedShares(set.recipients, round.censusHeight), game: gameSet }, signerNodes: chosen.length, dissent, rotated: inForce.rotated,
+    why: `${chosen.length} signer node(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
 }
 
 // ---- arena-client/src/client.js
@@ -31381,21 +31533,32 @@ async function roundVerdict({ roundId, nodes, committee, verify, threshold = nul
 
 // AS MANY AS SETTLE THE ROUND (2026-10-30: "0 of 2 macht gar keinen sinn"): the two was the two-node test network's; a run fewer than five signer nodes hold cannot settle
 const NODES_HOLDING = SETTLEMENT_THRESHOLD;
+// kanban #1508: EACH NODE GETS A BOUNDED WAIT. One seat that takes GET /transcript and never answers (or dribbles the body) held the
+// whole ask - and with it the page's "keep this tab open" - for ever, while the other seats held the run. A node that has not answered,
+// body read, within this many ms is counted as unanswered and the others decide.
+const NODE_WAIT_MS = 8000;
 
 /**
  * `nodes` the committee's bases; `finalTick` the run's last tick (the client's own count); `mirror` an optional base. Answers
  * { safe, holders: [base], hash, ticks, mirrored, why }.
  */
-async function secureTranscript({ roundId, entryId, nodes, finalTick, mirror = null, fetcher = fetch, need = NODES_HOLDING } = {}) {
+async function secureTranscript({ roundId, entryId, nodes, finalTick, mirror = null, fetcher = fetch, need = NODES_HOLDING, waitMs = NODE_WAIT_MS } = {}) {
   const q = `round=${toHex(roundId)}&entry=${toHex(entryId)}`;
   const said = [];
   const held = await Promise.all([...new Set(nodes || [])].map(async (base) => {
+    // kanban #1508: the fetch and its body read race one timer; the abort also ends a fetcher that honours the signal
+    const ac = new AbortController();
+    let timer;
+    const late = new Promise((_, no) => { timer = setTimeout(() => { ac.abort(); no(new Error(`no answer in ${waitMs} ms`)); }, waitMs); });
     try {
-      const r = await fetcher(`${String(base).replace(/\/+$/, '')}/transcript?${q}`);
-      if (!r.ok) { said.push(`${base}: ${r.status}`); return null; }
-      const ticks = Number(r.headers.get('x-ticks')), hash = String(r.headers.get('x-transcript-hash') || '').toLowerCase();
-      return { base, ticks, hash, bytes: new Uint8Array(await r.arrayBuffer()) };
+      return await Promise.race([late, (async () => {
+        const r = await fetcher(`${String(base).replace(/\/+$/, '')}/transcript?${q}`, { signal: ac.signal });
+        if (!r.ok) { said.push(`${base}: ${r.status}`); return null; }
+        const ticks = Number(r.headers.get('x-ticks')), hash = String(r.headers.get('x-transcript-hash') || '').toLowerCase();
+        return { base, ticks, hash, bytes: new Uint8Array(await r.arrayBuffer()) };
+      })()]);
     } catch (e) { said.push(`${base}: ${e.message}`); return null; }
+    finally { clearTimeout(timer); }
   }));
   const groups = new Map();
   for (const h of held) {
@@ -34213,19 +34376,22 @@ function itemPriceOn(manifest, priceSat, devsPct) {
 /** The served list of the 24 h before `toMs`, from every seat that answers. Answers { ok, served, seats } or { ok: false, why }. */
 async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000 }) {
   const fromMs = BigInt(toMs) - BigInt(SERVED_WINDOW_MS);
+  // kept in the order the seats are listed, not the order they answer (kanban #1522): between two committees named by equally many
+  // seats the one held first stands (mergeServedRounds), and that must not be whichever seat answered fastest
   const held = [];
-  await Promise.all((seats || []).map(async (s) => {
+  await Promise.all((seats || []).map(async (s, i) => {
     try {
       const r = await fetch(`${String(s).replace(/\/$/, '')}/served?to=${toMs}&finals=1`, { signal: AbortSignal.timeout(timeoutMs) });
       if (!r.ok) return;
       const a = await r.json();
-      held.push((a.held || []).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) })));
+      held[i] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
     } catch { /* a seat that does not answer adds nothing */ }
   }));
-  if (!held.length) return { ok: false, why: 'no seat answered who served a round in the last 24 hours' };
-  const served = servedNodes({ rounds: mergeServedRounds(held).rounds, fromMs, toMs: BigInt(toMs), verify });
+  const answered = held.filter(Boolean).length;
+  if (!answered) return { ok: false, why: 'no seat answered who served a round in the last 24 hours' };
+  const served = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean)).rounds, fromMs, toMs: BigInt(toMs), verify });
   if (!served.nodes.length) return { ok: false, why: 'no node served a round in the last 24 hours: the nodes\' half has nobody to go to' };
-  return { ok: true, served, seats: held.length };
+  return { ok: true, served, seats: answered };
 }
 
 /**
@@ -37637,7 +37803,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          awaitAttestedClaimKey: awaitAttestedClaimKey,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
-         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, referralOf: referralOf, referralNameFor: referralNameFor, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
+         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, referralOf: referralOf, referralNameFor: referralNameFor, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves, roundGiftsInFee: roundGiftsInFee,
          playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, faucetEcashRowOnce: faucetEcashRowOnce, forgetPhraseWallets: forgetPhraseWallets, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, reopenUncheckedDone: reopenUncheckedDone, releaseUntakenEntry: releaseUntakenEntry, keptLockUse: keptLockUse,
