@@ -32,8 +32,9 @@ export class DrawnAttestor {
    * (this seat's left out); `due()` the rounds to attest now, [{ roundId (bytes), window { startMs, endMs } }]; `hold(bytes, roundId)`
    * takes a combined attestation (this seat's intake, then every seat); `threshold` 5.
    */
-  constructor({ readPrice, selfKey, sign, attestorsFor, peersFor, due, hold, threshold = 5, fetcher = (u, o) => fetch(u, o), now = () => Date.now() }) {
-    Object.assign(this, { readPrice, selfKey, sign, attestorsFor, peersFor, due, hold, threshold, fetcher, now });
+  constructor({ readPrice, selfKey, sign, verify, attestorsFor, peersFor, due, hold, threshold = 5, fetcher = (u, o) => fetch(u, o), now = () => Date.now() }) {
+    if (typeof verify !== 'function') throw new Error('a drawn attestor needs verify(signature, bodyId, key): the drawn keys\' BIP-340 check (kanban #1487)');
+    Object.assign(this, { readPrice, selfKey, sign, verify, attestorsFor, peersFor, due, hold, threshold, fetcher, now });
     this.samples = [];          // [{ atMs, price }] BigInt, this seat's own readings
     this.words = new Map();     // round hex -> this seat's word
     this.held = new Set();      // round hex: an attestation of it is held - nothing more to do
@@ -83,7 +84,8 @@ export class DrawnAttestor {
           return res.status === 200 ? wordFromJson(await res.json()) : null;
         } catch { return null; }
       }));
-      const got = combine([mine, ...theirs], { attestors: drawn, threshold: this.threshold });
+      // each word checked with the drawn attestors' scheme (BIP-340, kanban #1487): a junk signature counts for nothing and never replaces a good one
+      const got = combine([mine, ...theirs], { attestors: drawn, threshold: this.threshold, verify: this.verify });
       if (!got) continue;
       try { if (await this.hold(got.bytes, r.roundId)) { this.held.add(id); done.push({ round: id, signers: got.signers, outcome: got.body.outcome }); } } catch { /* asked again next pass */ }
     }
