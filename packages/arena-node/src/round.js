@@ -1914,11 +1914,15 @@ export class Round {
    * THE ENTRIES THAT TAKE A SEAT OF A HEAD-TO-HEAD ROUND (kanban #1437, audit 8 R3): in a paying round only those backed by a lock here - its stake
    * seen, or its stake lock verified and waiting for its fee lock - since the /entry door takes an entry before any lock is verified, and two
    * lockless entries took both seats of a paying round at no cost. `stakeMsat` is the round's: a free round's every entry takes one, as before.
+   *
+   * `played` (kanban #1544): the entries the close plays and decides - its stake SEEN only, the set the settlement counts (settlement.js
+   * entriesOnRecord). A stake lock still waiting for its fee lock holds its seat at the door but is played against nobody and signed VOID:
+   * played, it lost into no settlement - its stake came back by refund and the honest winner was paid nothing (a free option).
    */
-  seatedEntriesOf(roundIdBytes, stakeMsat) {
+  seatedEntriesOf(roundIdBytes, stakeMsat, { played = false } = {}) {
     const all = this.entriesOf(roundIdBytes);
     if (stakeMsat === 0n) return all;
-    return all.filter(({ entryId }) => !!this.stakeSeen(entryId) || !!this.stakeLock(entryId));
+    return all.filter(({ entryId }) => !!this.stakeSeen(entryId) || (!played && !!this.stakeLock(entryId)));
   }
 
   /**
