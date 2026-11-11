@@ -225,7 +225,7 @@ import { hostedPlugins, pluginForRound, advertisedAppsCheck } from './plugins.js
 import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, marketFinalityOf, marketStateOf, VALUE_HELD_OUTCOME } from './game-market.js';
 import { isHeadToHead, marketOfRound, isGameMarket, isScalar, isDrawnAttest, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
 import { decodeValueAttestation, valueAttestationStands, valueAttestationBodyId, isValueAttestationBytes } from '../../arena-protocol/src/scalar.js';
-import { encodeManifest, decodeManifest, gameIdOf, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
+import { encodeManifest, decodeManifest, gameIdOf, manifestStands, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { gameTypeOf, gameInfoStands } from '../../arena-protocol/src/game-info.js';
 import { genesisFor, committeesStand } from '../../arena-protocol/src/genesis.js';
 import { nonceGen as musigNonceGen, bondSigningContext as musigBondContext, bondPartialSign as musigBondPartial } from './musig2.js';
@@ -1175,7 +1175,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   // AUTOMATIC UPDATES (the owner's setting): every 10 minutes the source seats are asked for a newer version of each game
   // hosted here - same developer, the hosted one as its parent, a higher version - and it is taken as an update would be
+  // ONE SWEEP AT A TIME (kanban #1552): a sweep still waiting on a slow seat is not joined by the next one, so stalled sweeps and
+  // their open fetches never pile up
+  let autoUpdating = false;
   const autoUpdate = async () => {
+    if (autoUpdating) return;
+    autoUpdating = true;
+    try { await autoUpdateSweep(); } finally { autoUpdating = false; }
+  };
+  const autoUpdateSweep = async () => {
     if (!owner || !pluginsDir) return;
     // ALWAYS ON (2026-10-26, the owner on the Apps section's switch "Update apps automatically": "Should always be enabled")
     const set = owner.storeSettings();
@@ -1183,15 +1191,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const sources = set.sources.length ? set.sources : networkSeats();
     for (const from of sources) {
       let got; try { got = await jsonUpTo(await fetch(`${from}/games`, { signal: AbortSignal.timeout(10000) }), PEER_LISTING_BYTES); } catch { got = { games: [] }; }
+      // A LISTING IS A SEAT'S CLAIM, CHECKED HERE BEFORE ANY /plugin IS ASKED (kanban #1552): the listed manifest must stand
+      // (its developer signed it, its parent the hosted one) and hash to the id beside it - a made-up id never costs a fetch -
+      // and each parent is tried once per source per sweep, and a source whose /plugin fails once is not asked again this sweep
+      const tried = new Set();
       for (const g of listedGames(got)) {
-        if (hosted.has(g.id)) continue;
+        if (typeof g?.id !== 'string' || hosted.has(g.id)) continue;
         let m; try { m = decodeManifest(fromHex(g.manifest)); } catch { continue; }
         const parent = toHex(m.parentManifestId);
-        if (!hosted.has(parent) || superseded.has(parent)) continue;
+        if (!hosted.has(parent) || superseded.has(parent) || tried.has(parent)) continue;
+        let id; try { id = toHex(gameIdOf(m)); } catch { continue; }
+        if (id !== g.id) continue;
+        if (!manifestStands(m, { verify: verifyEd25519, parentOf: hostedParent }).ok) continue;
         const u = checkUpdate(installedInfo(parent), { devKey: toHex(m.gameDevPubkey), parent, version: m.version });
         if (!u.ok) continue;
+        tried.add(parent);
         const r = await takeGame({ game: g.id, from, replaces: parent });
         console.log(`[plugins] automatic update of ${parent.slice(0, 16)} from ${from}: ${r.ok ? 'taken' : r.why}`);
+        if (!r.ok && r.status === 502) break;
       }
       // AND EACH INSTALLED NETWORK: a newer package of it at a source seat - another package id, the same
       // federation - is taken as an update would be (checked, tried, never a lower donation serial). A package naming ANOTHER
