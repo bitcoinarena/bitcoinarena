@@ -146,7 +146,8 @@ test('#1342 networkPlayers reads each game\'s network board from the first seat 
   console.log('  FACTS #1342 players:', JSON.stringify({ n, A: np.played(A), B: np.played(B), C: np.played(C), asked: asked.length }));
   assert.equal(n, 2);
   assert.deepEqual([np.played(A), np.played(B), np.played(C)], [true, true, false]);
-  assert.match(asked[1], /scope=network&game=rock-paper-scissors&days=90/);
+  // the games are read in parallel since kanban #1484: each went past the seat that is down to the one that answers
+  for (const g of ['rock-paper-scissors', 'nextblock']) assert.ok(asked.includes(`https://seat.example/season?scope=network&game=${g}&days=90`), JSON.stringify(asked));
 });
 
 // ---- slice 3: one LNURL-withdraw per approved report, exact amount, single use, never expiring ----

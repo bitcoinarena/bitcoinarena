@@ -3573,6 +3573,24 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       }
     };
     function warmRound(id, c, nodes) { if (ROUND_PREP.has(id) || warmQueue.has(id)) return; warmQueue.set(id, { c, nodes }); warmNext(); }
+    function prefetchOrderReads(round, nodes) {
+      if (round.censusHeight !== undefined && ARENACLIENT.fetchFees) {
+        const k = String(round.censusHeight), kept = window.ARENA_FEES_KEPT || (window.ARENA_FEES_KEPT = new Map()), fly = window.ARENA_FEES_FLY || (window.ARENA_FEES_FLY = new Map());
+        if (!kept.has(k) && !fly.has(k)) {
+          const pr = ARENACLIENT.fetchFees({ nodes, height: Number(round.censusHeight) }).then((fs) => { if (fs && fs.ok) kept.set(k, fs); return fs; }).finally(() => fly.delete(k));
+          fly.set(k, pr); pr.catch(() => {});
+        }
+      }
+      if (round.federationId && ARENACLIENT.fetchReserveKey) {
+        const k = Array.from(round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
+        const kept = window.ARENA_RESERVE_KEY_KEPT || (window.ARENA_RESERVE_KEY_KEPT = new Map()), fly = window.ARENA_RESERVE_KEY_FLY || (window.ARENA_RESERVE_KEY_FLY = new Map());
+        const had = kept.get(k);
+        if (!(had && Date.now() - had.atMs < 540000) && !fly.has(k)) {
+          const pr = ARENACLIENT.fetchReserveKey({ federationId: round.federationId, nodes }).then((rk) => { if (rk && rk.ok) kept.set(k, { rk, atMs: Date.now() }); return rk; }).finally(() => fly.delete(k));
+          fly.set(k, pr); pr.catch(() => {});
+        }
+      }
+    }
     function prepRound(roundIdHex, round, nodes) {
       const known = ROUND_PREP.get(roundIdHex);
       if (known) return known;
@@ -3625,6 +3643,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       }, {}));
       // AND ITS DONATION SET (0.43 s of the funded join measured on 0.0.2474), the same read the join makes
       const donation = ARENACLIENT.fetchDonationSet({ round, nodes, verifyEd25519: pageEd25519Verify, keepBySet: true });
+      // THE FEES AND THE RESERVE KEY BEFORE THE TAP (kanban #1485, feedback #010: a new wallet's first order spent 2.8 s in fetchFees and 2.8 s in
+      // fetchReserveKey while the seats answered each in 0.1-0.6 s - asked of 14 seats on a busy page, after the tap): read here, kept where the join looks
+      try { prefetchOrderReads(round, nodes); } catch { /* the join reads them itself */ }
       const p = { signer, claim, donation };
       donation.then((d) => { if (!d || !d.ok) delete p.donation; }, () => { delete p.donation; });
       ROUND_PREP.set(roundIdHex, p);
@@ -4007,6 +4028,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // kept per height once the seats agreed, every next order of this page takes them at once
         const feesKey = String(named.round.censusHeight);
         const fs = (window.ARENA_FEES_KEPT || (window.ARENA_FEES_KEPT = new Map())).get(feesKey)
+          || (window.ARENA_FEES_FLY && window.ARENA_FEES_FLY.has(feesKey) ? await joinStep('fetchFees (started before the tap)', () => window.ARENA_FEES_FLY.get(feesKey)) : null)
           || await joinStep('fetchFees', () => ARENACLIENT.fetchFees({ nodes: named.nodes, height: Number(named.round.censusHeight) }));
         if (fs.ok) window.ARENA_FEES_KEPT.set(feesKey, fs);
         if (!fs.ok) { window.ARENA_JOIN_REFUSED = 'the fees at this round could not be read: ' + fs.why; console.error('[arena] join refused before any lock: ' + window.ARENA_JOIN_REFUSED); return; }
@@ -4022,7 +4044,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // A FEDERATION'S RESERVE KEY, kept 10 minutes (kanban #601): a reserve epoch lasts far longer, and every order asked the seats again
         const rkKey = Array.from(fid || [], (b) => b.toString(16).padStart(2, '0')).join('');
         const rkKept = (window.ARENA_RESERVE_KEY_KEPT || (window.ARENA_RESERVE_KEY_KEPT = new Map())).get(rkKey);
-        const rk = rkKept && Date.now() - rkKept.atMs < 600000 ? rkKept.rk : await joinStep('fetchReserveKey', () => ARENACLIENT.fetchReserveKey({ federationId: fid, nodes: named.nodes }));
+        const rkFly = window.ARENA_RESERVE_KEY_FLY && window.ARENA_RESERVE_KEY_FLY.get(rkKey);
+        const rk = rkKept && Date.now() - rkKept.atMs < 600000 ? rkKept.rk : rkFly ? await joinStep('fetchReserveKey (started before the tap)', () => rkFly) : await joinStep('fetchReserveKey', () => ARENACLIENT.fetchReserveKey({ federationId: fid, nodes: named.nodes }));
         if (rk.ok && !(rkKept && rkKept.rk === rk)) window.ARENA_RESERVE_KEY_KEPT.set(rkKey, { rk, atMs: Date.now() });
         if (!rk.ok) { window.ARENA_JOIN_REFUSED = 'this round pays the protocol reserves, and ' + rk.why; console.error('[arena] join refused before any lock: ' + window.ARENA_JOIN_REFUSED); return; }
         const rd = ARENACLIENT.reservesDonationForRound(named.round);
@@ -4101,10 +4124,23 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (keptUseOf(keptEarly).use === 'new') funding = (async () => {
           const wasm = await window.ARENA_LOCK_WASM();
           await wasm.default();
+          // THE COUNTDOWN FROM THE PRESS, THE LOCK IN PLAIN WORDS (kanban #1483, Daniel 2026-11-11: "when clicking Join sometimes the countdown does not appear, only
+          // lock messages, that may work or not. Make it more efficient and clear that we're in process of joining the round"): while the stake is locked the line
+          // says when the round starts, counted down each second, and what is happening in words a player reads ("preparing your sats", "locking your stake") -
+          // not "stake lock: exchanging at tn4.bitcoin-arena.io/guardian-1", and never a frozen line while an exchange takes its time. The steps stay in the console.
+          const startAtMs = Number(named && named.round && named.round.startTimeMs) || 0;
+          const plainStep = (st) => (/exchang|reissu|split|change/i.test(st) ? 'preparing your sats' : /lock|commit|submit|accept/i.test(st) ? 'locking your stake' : 'securing your stake');
+          let stepNow = 'securing your stake';
+          const joinLine = () => { const s = Math.max(0, Math.ceil((startAtMs - Date.now()) / 1000));
+            return (startAtMs ? 'round starts in ' + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0') + ' \u00b7 ' : '') + stepNow; };
+          const lockTicker = setInterval(() => { const j = window.ARENA_JOIN;
+            if (!j || j.loaded || j.state !== 'joining' || !/securing|preparing|locking/.test(String(j.stage || ''))) { clearInterval(lockTicker); return; }
+            j.stage = joinLine(); }, 1000);
           const onStep = (step) => {
-            if (stageEl) window.ArenaText.say(stageEl, 'Stake lock: ' + step + ' …');
+            stepNow = plainStep(String(step));
+            if (stageEl) window.ArenaText.say(stageEl, joinLine());
             // A ROUND ALREADY SHOWN LOADED keeps its countdown on the line; the lock's steps go to the console
-            if (window.ARENA_JOIN && !window.ARENA_JOIN.loaded) window.ARENA_JOIN.stage = 'stake lock: ' + step;
+            if (window.ARENA_JOIN && !window.ARENA_JOIN.loaded) window.ARENA_JOIN.stage = joinLine();
             console.log('[arena] stake lock: ' + step);
           };
           const wallet = {
@@ -4333,6 +4369,17 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           return;
         }
         const reuse = use.use === 'reuse' ? use.kept : null;
+        // NO HANDOUT, SO NO LOCK, FOR A HEAD-TO-HEAD ROUND THAT CLOSES BEFORE THE ORDER CAN LAND (kanban #1485, Daniel 2026-11-11: "Make sure the reported bug cannot
+        // happen again"; feedback #010: the handout reached the seats 1.8 s after the close, the lock was made, the seats refused the entry and 6 sat of developers'
+        // and reserves' parts stayed spent): the handout, the lock and the entry need ARENA_H2H_LEAD_MS() before the close; with less, nothing is sent or locked
+        if (!reuse && window.ARENA_HIDDEN_CHOSEN && window.ARENA_HIDDEN_CHOSEN.round === named.roundIdHex && thisJoin && !thisJoin.free
+          && Number(named.round.entryCloseMs) - Date.now() < window.ARENA_H2H_LEAD_MS() + 1500) {
+          // NOT `missed` (measured 2026-11-11 on the MacBook, round 9f51edf1 -> 41432520): a missed join is retried in the next round, and that retry
+          // locked the stake and made no entry - the hidden move is the old round's. A late tap is refused; the player taps the next round
+          window.ARENA_JOIN_REFUSED = 'the entry closed before it went in - nothing was locked';
+          console.log('[arena] #1485 no handout, no lock: head-to-head round ' + named.roundIdHex.slice(0, 8) + ' closes in ' + ((Number(named.round.entryCloseMs) - Date.now()) / 1000).toFixed(1) + ' s');
+          return;
+        }
         const dealtAhead = reuse ? null : await takeStake(named.roundIdHex, player.pubkey, signerNodes.signerNodes);
         if (dealtAhead) console.log('[arena] join: the stake dealt ahead for this order is taken');
         stake = reuse ? reuse.stake : dealtAhead || await ARENACLIENT.stakeFor(
@@ -4425,8 +4472,16 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             const lastEntryMs = ARENACLIENT.isLateJoinRound(named.round)
               ? ARENACLIENT.lateJoinLastEntryMs(named.round) - ARENACLIENT.LATE_JOIN_JOIN_MS
               : Number(named.round.entryCloseMs) + 15000 - 5000;
+            // A HEAD-TO-HEAD ROUND TAKES NO ENTRY AFTER ITS CLOSE (kanban #1485, feedback #010 2026-11-11, round 77bd9609: the order reached the seats 3 s after
+            // the close, its lock was made anyway - close + 10 s above is the other games' grace - and refunded 94 of 100 sat, 6 sat in federation fees): a
+            // hidden move's round is locked only while the lock and the entry can still land before the close (H2H_LOCK_LEAD_MS); later, nothing is locked
+            const h2hHere = !!(window.ARENA_HIDDEN_CHOSEN && window.ARENA_HIDDEN_CHOSEN.round === named.roundIdHex);
+            if (thisJoin && !thisJoin.free && h2hHere && Date.now() > Number(named.round.entryCloseMs) - window.ARENA_H2H_LEAD_MS()) {
+              console.log('[arena] #1485 no lock: head-to-head round ' + named.roundIdHex.slice(0, 8) + ' closes in ' + ((Number(named.round.entryCloseMs) - Date.now()) / 1000).toFixed(1) + ' s');
+              throw new Error('the entry closed before it went in - nothing was locked');
+            }
             if (thisJoin && !thisJoin.free && Number.isFinite(lastEntryMs) && Date.now() > lastEntryMs) {
-              thisJoin.missed = true;
+              thisJoin.missed = !h2hHere;   // kanban #1485: a head-to-head order is never retried in another round - its hidden move is this round's
               throw new Error('the entry closed before the deposit arrived');
             }
             if (thisJoin) thisJoin.locking = true;   // from here it holds a lock (busy: finished, never replaced)
@@ -4440,10 +4495,12 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             // THE STAKE, FROM THE PLAYER WALLET: it asks for no deposit.
             // WRITTEN AHEAD AND KEPT BY lockStake ITSELF (kanban #1162, `keep`): the intent with room before the lock client is asked, the record
             // the moment it answers - a full browser refuses the join before anything is spent, never after
+            const lockT0 = Date.now();
             const made = await ARENACLIENT.lockStake(Object.assign({}, wallet, {
               roundId: ARENACLIENT.fromHex(named.roundIdHex), stake, claimKey, playerPubkey: player.pubkey,
               keep: true, federationId: named.round.federationId,
             }));
+            { const seen = (window.ARENA_LOCK_MS_SEEN || []).concat(Date.now() - lockT0).slice(-5); window.ARENA_LOCK_MS_SEEN = seen; }   // kanban #1485: the lead a head-to-head order needs
             // AND ITS FEE LOCK, ONLY WHEN THE GATE SAID IT CAN PAY A SIGNER NODE (Pick b):
             // a 100 sat round makes none, so the player is charged no lock that expires unused.
             stakeLock = { outpoint: made.outpoint, fields: made.fields, feeLock: made.feeLock || null, donations: made.donations || [], accepted: made.accepted || null,
@@ -6246,7 +6303,11 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const WHAT = (r, sat) => r.kind === 'deposit' ? 'Deposit' : r.kind === 'winnings' ? `Winnings${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}` : r.kind === 'donation' ? (String(r.to || '').startsWith('player:') ? 'Zap' : `Donation${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : String(r.to || '').startsWith('app:') ? ' \u00b7 ' + gameTitleOf(String(r.to).slice(4)) + ' developers' : r.to === 'network' ? ' \u00b7 protocol developers' : ''}`)
           // WHAT CAME IN TO THIS PLAYER'S KEY (kanban #681): 10 % of the nodes' fee on an entry its referral link brought; a zap from another player
           : r.kind === 'referral' ? `Referral${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}` : r.kind === 'zap-in' ? 'Zap received'
-          : r.kind === 'refund' ? `Refund \u00b7 round ${String(r.round || '').slice(0, 8)} \u00b7 stake back`
+          // WHAT CAME BACK OF HOW MUCH (kanban #1481, Daniel 2026-11-11: "Dass 90 von 100 sats zurück kommen ist gewollt, weil das sind die Fees. Aber wir müssen es besser
+          // darstellen"): the round's stake row says what went in; what is missing is the round's fee, kept for a round that was played
+          : r.kind === 'refund' ? (() => { const st = (typeof rows !== 'undefined' ? rows : []).find((x) => x.kind === 'stake' && x.round === r.round);
+              const inMsat = st ? (BigInt(st.msat || 0) < 0n ? -BigInt(st.msat || 0) : BigInt(st.msat || 0)) : 0n, back = BigInt(r.msat || 0), fee = inMsat > back ? inMsat - back : 0n;
+              return `Refund \u00b7 round ${String(r.round || '').slice(0, 8)} \u00b7 stake back${inMsat > 0n ? ` (${sat(inMsat)} staked${fee > 0n ? `, ${sat(fee)} fee kept` : ''})` : ''}`; })()
           : r.kind === 'slash-payout' ? `Slash payout \u00b7 round ${String(r.round || '').slice(0, 8)}`
           : r.kind === 'withdrawal' ? `Withdrawal${r.state && r.state !== 'Success' ? ' (' + r.state + ')' : ''}`
           // A MOVE BETWEEN FEDERATIONS IS NO STAKE (18:4xZ: the 1,000 sat moved out of the CRITICAL b18947f0 showed "Stake · round undefine · not
@@ -7785,11 +7846,21 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // move, told the bot "tapped" and set a reveal for a join the page then refused; and a tap on another round while a paid join was locking left
           // that join's hidden move replaced - a stake locked with no hidden entry. Both are refused here first, with nothing changed
           { const row = (window.ARENA_LOBBY_ROWS || []).find((r) => r && r.id === id), left = row ? Number(row.entryCloseMs) - Date.now() : null, j = window.ARENA_JOIN;
-            if (left !== null && left < Number(window.ARENA_ORDER_CUTOFF_MS || 3000)) {
+            // A PAID HEAD-TO-HEAD TAP NEEDS THE ORDER'S WHOLE LEAD (kanban #1485): refused here, before the opponent is told and before anything is dealt or locked
+            const need = row && !row.free && window.ARENA_H2H_LEAD_MS ? window.ARENA_H2H_LEAD_MS() + 1500 : Number(window.ARENA_ORDER_CUTOFF_MS || 3000);
+            if (left !== null && left < need) {
               if (!(j && j.state === 'joining')) window.ARENA_JOIN = { state: 'refused', stage: '', round: id, kindKnown: false, why: 'too late for this round - tap again for the next one' };
               return false; }
             // A TAP WHILE ANOTHER ORDER IS STILL LOCKING IS SAID, NOT DROPPED IN SILENCE (kanban #1391, Daniel 2026-11-10: 50+ s of taps that did nothing)
-            if (j && j.state === 'joining' && j.locking && j.round !== id) { j.busyTapAt = Date.now(); return false; } }
+            if (j && j.state === 'joining' && j.locking && j.round !== id) { j.busyTapAt = Date.now(); return false; }
+            // NO PAID STAKE WITHOUT A TAP (kanban #1481, playtest 2026-11-11, Daniel: "Und fix es"): one tap on Rock made two stakes - the first round had no opponent
+            // in time (VOID, its stake on its way back), and ten seconds later the game client carried the same move into the next round by itself, a second 100 sat.
+            // A paid round is entered only while the player's tap is fresh (the browser's user activation, which a tap inside the game's frame gives this page too);
+            // the client's own carry has none and is refused, with nothing locked. A free round is not touched.
+            if (row && !row.free && navigator.userActivation && !navigator.userActivation.isActive) {
+              if (!(j && j.state === 'joining')) window.ARENA_JOIN = { state: 'refused', stage: '', round: id, kindKnown: false, why: 'a paid round is entered only by your tap - nobody joined the last round in time, its stake comes back; tap a move to play this one' };
+              console.log('[arena] #1481 no paid stake without a tap: round ' + String(id).slice(0, 8) + ' refused (no fresh user activation)');
+              return false; } }
           window.ARENA_HIDDEN_CHOSEN = { round: id, move };
           // UNCOVERED AS THE COUNTDOWN ENDS (kanban #947, the owner 2026-11-01: "Das Ergebnis sollte angezeigt werden wenn der countdown auf 0:00 geht"): not at the client's next once-a-second look
           { const row = (window.ARENA_LOBBY_ROWS || []).find((r) => r && r.id === id), left = row ? Number(row.entryCloseMs) - Date.now() : -1;
@@ -9621,6 +9692,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // away"): an order needs about 2 s to lock its stake, so one sent later lands after the close and is refused by the seats
       const ORDER_CUTOFF_MS = 3000;
       window.ARENA_ORDER_CUTOFF_MS = ORDER_CUTOFF_MS;
+      // THE TIME A HEAD-TO-HEAD LOCK AND ITS ENTRY NEED BEFORE THE CLOSE (kanban #1485): this page's slowest of its last locks plus 1.5 s, never under 4 s
+      // (measured 2026-11-11 at the seats: a lock 2.2-2.7 s)
+      window.ARENA_H2H_LEAD_MS = () => Math.max(4000, Math.max(0, ...(window.ARENA_LOCK_MS_SEEN || [])) + 1500);
       const notJoinableWhy = (id) => {
         const held = (window.ARENA_LOBBY_UNOFFERED || []).find((x) => x.id === id);
         // IN THE PLAYER'S WORDS (kanban #1393, Daniel 2026-11-09: "Make all messages human readable"): no committee, signer node or grid
@@ -10400,7 +10474,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (!document.body.classList.contains('arena-own-client') || window.ARENA_CLIENT_SAYS_JOIN) { box.classList.remove('on'); return; }
         const j = window.ARENA_JOIN; if (!j || !j.round) { box.classList.remove('on'); return; }
         let line, cls;
-        if (j.state === 'refused') { line = refusedWords(j.why); cls = 'bad'; }
+        if (j.state === 'refused') { line = refusedWords(j.why) + (j.round ? ' (round ' + String(j.round).slice(0, 8) + ')' : ''); cls = 'bad'; }
         else if (j.state === 'joined' || j.state === 'entered' || j.state === 'playing' || j.state === 'picked') { line = '✓ Order placed' + (j.stakeSats ? ' · ' + Number(j.stakeSats).toLocaleString('en-US') + ' sat' : ''); cls = 'ok'; }
         else if (j.state === 'joining' && /round starts in ([0-9:]+)/.test(String(j.stage || ''))) {
           line = '✓ Order locked · the window starts in ' + /round starts in ([0-9:]+)/.exec(j.stage)[1]; cls = 'held'; }

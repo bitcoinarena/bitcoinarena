@@ -166,6 +166,7 @@ async function nodeCheckNow(node, npub) {
   return nodeBountyCheck({ node, npub, seats, fetchJson: fetchJson1342, excluded, teamHosts });
 }
 const PLAYED = networkPlayers({ seats: String(env.FAUCET_SEASON_SEATS || '').split(',').filter(Boolean), games: String(env.FAUCET_SEASON_GAMES || 'rock-paper-scissors,nextblock,btc-updown').split(',').filter(Boolean) });
+PLAYED.fresh().catch(() => 0);   // kanban #1484: the list is read at start, so the admin page never waits for it
 if (FEEDBACK && BOUNTY_PAYER) setInterval(() => FEEDBACK.settle({ status: bountyStatus }).catch(() => {}), 60000).unref();
 
 /** A player's grant: read the invoice, decide, keep it in the book BEFORE paying (a crash pays nobody twice), and take it out again if no payer could pay. */

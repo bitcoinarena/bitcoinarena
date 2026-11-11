@@ -88,6 +88,7 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
   let node, control = null;
   try {
     node = await serve(db, {
+      h2hHandoutLeadMs: 2000,   // kanban #1485: a live node refuses a head-to-head handout under 2 s before the close (serve() defaults to 0 for the fixtures' 1.5 s windows)
       ...options,
       ...(guardian.running ? { guardian: as(guardian, plan.own === 'setup') } : plan.own ? { guardian: { ...as({ apiPort: guardianPorts(options.port).api, p2pPort: guardianPorts(options.port).p2p }, plan.own === 'setup'), stopped: true } } : {}),
       ...(next.running ? { guardianNext: as(next, plan.next === 'setup') } : {}),

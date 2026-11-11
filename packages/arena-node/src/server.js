@@ -272,7 +272,11 @@ import { keptRead } from './kept-read.js';
 const presenceByRound = new WeakMap();
 const presenceTables = (round) => { let t = presenceByRound.get(round); if (!t) { t = new Map(); presenceByRound.set(round, t); } return t; };
 
-const read = (req, max = Infinity) => new Promise((resolve, reject) => {
+// EVERY BODY HAS A LIMIT (kanban #1469, feedback #001 by Hexbox Tools 2026-11-11: read() kept a body of any size, and ~57 doors anyone may call buffered
+// it whole before any check - one large POST filled a seat's memory): BODY_MOST by default (8 MiB, ARENA_BODY_MOST), far above the few kilobytes a door's
+// message takes; a door that needs less passes its own `max`. Past it the body is dropped, the request ended, and the door answers 413.
+const BODY_MOST = Number(process.env.ARENA_BODY_MOST) > 0 ? Number(process.env.ARENA_BODY_MOST) : 8 * 1024 * 1024;
+const read = (req, max = BODY_MOST) => new Promise((resolve, reject) => {
   const parts = []; let size = 0;
   // A DOOR'S OWN LIMIT (kanban #1271): past `max` bytes the body is not kept, the request ends, and the door answers 413
   req.on('data', (c) => { size += c.length; if (size > max) { parts.length = 0; const e = new Error(`a body of more than ${max} bytes`); e.tooLarge = true; reject(e); try { req.destroy(); } catch { /* gone */ } return; } parts.push(c); });
@@ -406,7 +410,7 @@ export function playerBalance({ entry, best, won, settled, nobodyWon, minScore }
   return { result: 'lost', netMsat: String(-BigInt(entry.stakeMsat)) };
 }
 
-export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED, seatingOn = null,
+export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED, seatingOn = null, h2hHandoutLeadMs = 0,
   // THE NEWEST RELEASE'S READER (release-latest.js), for a test; none given, the Arena site's, checked with the installer's release key
   latestRelease: givenLatestRelease = null,
   // THE GENESIS THIS SEAT BINDS CONTRACTS TO, for a test: none given, the chain's own (genesisFor)
@@ -2524,6 +2528,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   let drawnAfterRowid = 0;             // the rounds row read last (kanban #791)
   const drawnAttestor = drawnHosted ? new DrawnAttestor({
     readPrice: () => prices.readPrice(), selfKey: toHex(round.pubkey), sign: (d) => schnorr.sign(d, round.identity.secret),
+    verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } },   // kanban #1487: every peer's word checked before it counts
     attestorsFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? got.attestors.map((e) => toHex(e.pubkey)) : null; },
     peersFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? peerEndpointsOf(got.attestors, round.pubkey) : []; },
     due: () => {
@@ -3415,6 +3420,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // (measured 2026-11-03 on a restarted seat: "Cannot access 'headToHeadRound' before initialization" from afterClose, and the seat exited); until then a round is
   // closed as before #1071, without first learning who is in it.
   let headToHeadRound = () => null, headToHeadReady = false, relayedRound = () => null;
+  const H2H_HANDOUT_LEAD_MS = h2hHandoutLeadMs;   // kanban #1485: a head-to-head handout this close to the entry close is refused (takeHandout); a lock alone takes 2.2-2.7 s
   function afterClose(roundIdBytes) {
     // §16 AT THE CLOSE: an entry whose on-time first mark is still short of the
     // threshold, the signer nodes it is short of offered it and silent, is ENTRY_VOID
@@ -4415,6 +4421,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const roundContract = decodeRoundContract(new Uint8Array(forRound.contract));
     // NO STAKE IS DEALT FOR A ROUND THIS NODE REFUSES: nothing may be locked for it
     { const why = accepted ? null : offerRefusal(roundContract); if (why) return { ok: false, status: 409, why: `handout refused: ${why}` }; }
+    // NO HANDOUT FOR A HEAD-TO-HEAD ROUND THAT CLOSES BEFORE ITS ORDER CAN LAND (kanban #1485, Daniel 2026-11-11: "Er sollte keine fees entgegen nehmen wenn
+    // die order nicht angenommen wird"; feedback #010, round 77bd9609: this door took a handout 1.8 s after the close, the player's page locked the stake, and
+    // every seat refused the entry - the developers' and reserves' parts of that lock stayed spent). A head-to-head round takes no entry from its close, and a
+    // lock takes 2.2-2.7 s at the seats: a handout with less than H2H_HANDOUT_LEAD_MS left is refused, so the page locks nothing
+    if (!accepted && headToHeadReady && headToHeadRound(handout.roundId) && BigInt(round.now()) > roundContract.entryCloseMs - BigInt(H2H_HANDOUT_LEAD_MS))
+      return { ok: false, status: 409, why: `handout refused: that round's entries close at ${new Date(Number(roundContract.entryCloseMs)).toISOString()}, and a head-to-head order needs ${H2H_HANDOUT_LEAD_MS / 1000} s before it to lock and enter - nothing is locked, tap the next round` };
     let threshold;
     try { threshold = roundThreshold(roundContract.settlementSlots); } catch (e) { return { ok: false, status: 409, why: e.message }; }
     if (handout.needed !== threshold)
@@ -6191,6 +6203,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     } catch (e) {
       // The message is the reason - "the round is closed", "no such entry" -
       // because a node that answers "400" to everything makes a client guess.
+      if (e && e.tooLarge) { try { return text(res, 413, e.message); } catch { return undefined; } }   // kanban #1469
       return text(res, 400, e.message);
     }
   });
