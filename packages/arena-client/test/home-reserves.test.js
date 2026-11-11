@@ -43,16 +43,20 @@ test('four agreeing, or no answers: no number, and it says why', async () => {
 });
 
 test('the panel sits under the fees on bitcoinarena.io, and the games screen carries no reserves box and no footer home link', () => {
-  const fees = HTML.indexOf('<section id="split"'), panel = HTML.indexOf('id="reserves"'), next = HTML.indexOf('<section id="build"');
+  // since #1197 the homepage is the new page: the fee split ("Where every stake goes") is followed by the download section, and the script is root-relative
+  const fees = HTML.indexOf('<section id="split"'), panel = HTML.indexOf('id="reserves"'), next = HTML.indexOf('<section', fees + 1);
   assert.ok(fees > 0 && panel > fees && panel < next, 'the reserves panel is inside the fees section');
-  assert.ok(HTML.includes('<script src="js/reserves.js" defer></script>'));
+  assert.ok(HTML.includes('<script src="/js/reserves.js" defer></script>'));
   assert.equal(GAMES.includes('class="reserves"'), false, 'no reserves box on the games screen');
   assert.equal(/more-sep"> · <\/span><a href="https:\/\/bitcoinarena.io\/">/.test(GAMES), false, 'no "← bitcoinarena.io" in the footer links');
 });
 
 test('the website and the docs say the current split, the reserves and that anyone may propose a payout', () => {
   const DOCS = readFileSync(new URL('../../../src/website/docs/www/index.html', import.meta.url), 'utf8');
-  assert.match(HTML, /aria-label="A paid stake: 90 % in play, 4 % node fee, 2 % game developer, 2 % protocol developers, 2 % protocol reserves"/);
+  // the new homepage (#1197, #1206) shows the split as a table: 90 % the pot, 4 % nodes, 2 % reserves, 2 % + 2 % developer donations
+  const split = HTML.slice(HTML.indexOf('<section id="split"'), HTML.indexOf('</section>', HTML.indexOf('<section id="split"')));
+  for (const [p, what] of [['90 %', 'The pot'], ['4 %', 'Nodes'], ['2 %', 'Protocol reserves'], ['2 %', 'Game developer'], ['2 %', 'Protocol developers']])
+    assert.match(split, new RegExp('<td class="p">' + p + '</td><td><span class="what">' + what), what);
   assert.match(HTML, /<b>Anyone<\/b> can propose a payout/);
   for (const id of ['money', 'reserves', 'proposals']) assert.ok(DOCS.includes(`id="${id}"`), `docs section #${id}`);
   assert.match(DOCS, /<b>Anyone can propose a payout<\/b>/);
