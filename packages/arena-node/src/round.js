@@ -3139,7 +3139,25 @@ export class Round {
     if (one) return one.state;
     const feds = this.fedLockSettlementsOf(roundIdBytes);
     if (!feds.length) return null;
-    return feds.every((r) => r.state === 'ACCEPTED') ? 'ACCEPTED' : 'SUBMITTING';
+    // EVERY FEDERATION OF THE SPLIT, NOT ONLY THE ROWS THERE ARE (kanban #1576): a federation the split names with no row yet (its part never built) keeps it SUBMITTING
+    const accepted = new Set(feds.filter((r) => r.state === 'ACCEPTED').map((r) => r.federation));
+    return feds.every((r) => r.state === 'ACCEPTED') && this.fedLockSplitOf(roundIdBytes).every((f) => accepted.has(f)) ? 'ACCEPTED' : 'SUBMITTING';
+  }
+
+  /**
+   * THE FEDERATIONS A ROUND'S SPLIT NAMES (kanban #1576), kept before anything is signed: the round is settled only once each holds an ACCEPTED row.
+   * Never removed; a federation already kept is kept once.
+   */
+  putFedLockSplit(roundIdBytes, federations) {
+    const have = new Set(this.fedLockSplitOf(roundIdBytes));
+    const fresh = [...new Set(federations.map((f) => String(f).toLowerCase()))].filter((f) => !have.has(f));
+    if (!fresh.length) return;
+    const put = this.db.prepare('INSERT OR IGNORE INTO fed_lock_split (round_id, federation_id) VALUES (?, ?)');
+    durably(this.db, () => { for (const f of fresh) put.run(Buffer.from(roundIdBytes), f); });
+  }
+
+  fedLockSplitOf(roundIdBytes) {
+    return this.db.prepare('SELECT federation_id FROM fed_lock_split WHERE round_id = ? ORDER BY federation_id').all(Buffer.from(roundIdBytes)).map((r) => r.federation_id);
   }
 
   /** A series' proven publication fee (§5A.5): kept once; { txid, feeSats } or null. */
@@ -3176,7 +3194,8 @@ export class Round {
 
   /**
    * THE CLOSED ROUNDS WITH A STAKE LOCK AND NO ACCEPTED SETTLEMENT HERE, closed between two times (kanban #803): what a settlement's
-   * retry reads. A round that takes any federation counts until every row it holds is ACCEPTED.
+   * retry reads. A round that takes any federation counts until every row it holds is ACCEPTED, and every federation its split names
+   * holds one (kanban #1576: a federation whose part was never built has no row and kept the round off this list).
    */
   closedLockRoundsUnsettled(fromMs, toMs) {
     // FROM THE LOCKS, NEVER FROM THE ROUNDS (kanban #927, measured 2026-11-01): left to choose, SQLite walked all 122,591 rounds with their contracts and held a seat's loop for 398 s, every minute. There are 4,736 locks
@@ -3185,7 +3204,9 @@ export class Round {
         AND NOT EXISTS (SELECT 1 FROM lock_settlements l WHERE l.round_id = r.round_id AND l.state = 'ACCEPTED')
         AND NOT EXISTS (SELECT 1 FROM settle_retries t WHERE t.round_id = r.round_id AND t.scope = '' AND t.state IN ('SETTLED', 'EXPIRED'))
         AND NOT (EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id)
-          AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id AND f.state <> 'ACCEPTED'))`)
+          AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id AND f.state <> 'ACCEPTED')
+          AND NOT EXISTS (SELECT 1 FROM fed_lock_split p WHERE p.round_id = r.round_id AND NOT EXISTS
+            (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = p.round_id AND f.federation_id = p.federation_id AND f.state = 'ACCEPTED')))`)
       .all(CLOSED, fromMs, toMs).map((r) => new Uint8Array(r.round_id));
   }
 
@@ -3377,7 +3398,9 @@ export class Round {
         AND (EXISTS (SELECT 1 FROM lock_settlements s WHERE s.round_id = o.round_id AND s.state = 'ACCEPTED')
           OR (NOT EXISTS (SELECT 1 FROM lock_settlements s WHERE s.round_id = o.round_id)
             AND EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id)
-            AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id AND f.state <> 'ACCEPTED')))`).all()
+            AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id AND f.state <> 'ACCEPTED')
+            AND NOT EXISTS (SELECT 1 FROM fed_lock_split p WHERE p.round_id = o.round_id AND NOT EXISTS
+              (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = p.round_id AND f.federation_id = p.federation_id AND f.state = 'ACCEPTED'))))`).all()
       .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id) }));
   }
 
