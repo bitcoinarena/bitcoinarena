@@ -28,7 +28,7 @@ import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt,
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { init, step } from '../../nextblock/src/sim.js';
@@ -107,7 +107,7 @@ async function joinAndBuild(w) {
   const b2 = batchOf(60, END, batchId(b1));
   const m2 = markOf(END, hashAt(END, 60), b2, checkpointId(m1));
   return { eid, outpoint, fields, firstId: checkpointId(m1),
-    start: [encodeInputBatch(b1), sign(m1)], rest: [encodeInputBatch(b2), sign(m2)] };
+    start: [signedBatchOf(b1, (id) => ed25519.sign(id, session)), sign(m1)], rest: [signedBatchOf(b2, (id) => ed25519.sign(id, session)), sign(m2)] };
 }
 
 const answer = (s) => (typeof s === 'string' ? (s.length > 30 && !s.startsWith('error') ? 'receipt' : s.replace(/^(error [A-Z_]+).*/, '$1').slice(0, 70)) : 'receipt');

@@ -38,7 +38,7 @@ import { awaitAttestedClaimKey, stakeFor, postHandout, entryFor, playerFor, fetc
 import { lockStake, fundPlayerWallet, handLock, redeemStake, findLock, forfeitOf } from '../../arena-client/src/page-lock.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
 import { encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { GENESIS } from '../../arena-protocol/src/transcript.js';
 import { seedWordForEntry } from '../../arena-protocol/src/seed.js';
@@ -224,8 +224,8 @@ try {
     const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
     const played = [];
     for (const b of round.nodes) {
-      played.push([await ws(b, encodeInputBatch(first)), (await ws(b, sign(firstMark))).length,
-        await ws(b, encodeInputBatch(input)), (await ws(b, sign(mark))).length]);
+      played.push([await ws(b, signedBatchOf(first, (id) => ed25519.sign(id, session))), (await ws(b, sign(firstMark))).length,
+        await ws(b, signedBatchOf(input, (id) => ed25519.sign(id, session))), (await ws(b, sign(mark))).length]);
     }
     players[role] = { seed, player, lock, eid, entry };
     say({ step: 'locked and played', role, outpoint: `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`,

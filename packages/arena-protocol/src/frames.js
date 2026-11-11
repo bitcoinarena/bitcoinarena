@@ -27,7 +27,7 @@ import {
   TYPE_CLAIM_KEY_ATTESTATION, TYPE_DKG_AGREEMENT, TYPE_TRANSCRIPT_POSTING, TYPE_RERUN_RESULT, TYPE_FINAL_SIGNATURE,
   TYPE_GAME_MANIFEST, TYPE_OUTCOME_ATTESTATION, TYPE_PRICE_SAMPLE, TYPE_PRICE_TAPE, TYPE_FEDERATION_RECORD, TYPE_PRESENT, TYPE_SEATING,
   TYPE_CONFIG_PROPOSAL, TYPE_ABSENCE_ATTESTATION, TYPE_DEPARTURE_NOTICE, TYPE_EMERGENCY_DEPARTURE, TYPE_SPENT_SET, TYPE_ROUND_RESULT, TYPE_RESULT_FRONT, TYPE_HALT_OBSERVATION,
-  TYPE_VALUE_ATTESTATION, TYPE_DONATION_PROPOSAL, TYPE_DONATION_APPROVAL, TYPE_DONATION_SET_KEYS_VESTING,
+  TYPE_VALUE_ATTESTATION, TYPE_DONATION_PROPOSAL, TYPE_DONATION_APPROVAL, TYPE_DONATION_SET_KEYS_VESTING, TYPE_SIGNED_INPUT_BATCH,
 } from './constants.js';
 
 /**
@@ -50,6 +50,8 @@ export const FRAMES = new Map([
   [TYPE_RESULT, { name: 'Result', authority: true }],
   [TYPE_PAYOUT_TABLE, { name: 'PayoutTable', authority: true }],
   [TYPE_INPUT_BATCH, { name: 'InputBatch', authority: true }],
+  // a batch with its session key's signature (kanban #1503): the only form a player's batch is taken in on /play
+  [TYPE_SIGNED_INPUT_BATCH, { name: 'SignedInputBatch', authority: true }],
   [TYPE_TRANSCRIPT, { name: 'Transcript', authority: true }],
   [TYPE_CHECKPOINT_RECEIPT, { name: 'CheckpointReceipt', authority: true }],
   [TYPE_OBJECTION, { name: 'Objection', authority: true }],
