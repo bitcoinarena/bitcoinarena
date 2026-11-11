@@ -348,6 +348,8 @@ export function gameMarkets({ round, plugins, committeeFor, verify, now = () => 
     const groups = new Map();
     for (const a of answers) {
       if (!a || !Number.isInteger(a.openCents) || !Number.isInteger(a.closeCents) || typeof a.key !== 'string' || typeof a.signature !== 'string') continue;
+      // kanban #1566: a signature that is not 128 hex characters is no answer - refused at the door, before it is counted
+      if (!/^[0-9a-fA-F]{64}$/.test(a.key) || !/^[0-9a-fA-F]{128}$/.test(a.signature)) continue;
       const k = `${a.openCents}:${a.closeCents}`;
       if (!groups.has(k)) groups.set(k, { openCents: a.openCents, closeCents: a.closeCents, sigs: [] });
       groups.get(k).sigs.push({ key: a.key, signature: a.signature });
