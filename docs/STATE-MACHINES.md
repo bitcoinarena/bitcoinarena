@@ -1610,3 +1610,7 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 - `refused` is decided from three "not stored" reads 2 s apart on a reload (reconcileKeptLock), not from the guardians' word: their consensus can still accept that transaction afterwards.
 - refused -> intent (a new PLAY, keptLockStake) now first copies the refused record to `arena.lock.orphan.<tag>.<refusedMs>` (putRoomy); with no room for the copy the PLAY is refused before anything is spent.
 - Invariant: no lock record this browser wrote with an outpoint is overwritten without a copy - every transaction the page submitted stays named (outpoint, fields, stake) in `arena.lock.saved`, `arena.lock.intent` or `arena.lock.orphan`.
+
+#### Round close at start: no close before the seat can learn who is in a round (server.js `afterClose`, kanban #1587)
+- Invariant: no close logic (entry-void at the close, settleRound, the stakes, the finality watch) runs before serve() has set `headToHeadReady`; a close asked for earlier - the start's synchronous close sweep, a round overdue while the seat was down - waits for it, so a head-to-head round always goes through membersKnown (#1071) first. A seat restarted past a round's end signs what the threshold signs, never VOID over the entries it alone holds.
+- One round's close logic runs once at a time (`closingNow`): the start's sweep and resumingCloses no longer close one round twice in parallel; a second ask while one runs gets the running one's promise.
