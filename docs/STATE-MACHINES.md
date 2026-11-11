@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### Round close at start: no close before the seat can learn who is in a round (server.js `afterClose`, kanban #1587)
+- Invariant: no close logic (entry-void at the close, settleRound, the stakes, the finality watch) runs before serve() has set `headToHeadReady`; a close asked for earlier - the start's synchronous close sweep, a round overdue while the seat was down - waits for it, so a head-to-head round always goes through membersKnown (#1071) first. A seat restarted past a round's end signs what the threshold signs, never VOID over the entries it alone holds.
+- One round's close logic runs once at a time (`closingNow`): the start's sweep and resumingCloses no longer close one round twice in parallel; a second ask while one runs gets the running one's promise.
