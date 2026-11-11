@@ -17,8 +17,9 @@
 //   GET /api/played       played rounds per day, week and month, per game, real players apart from the owner and our bots (kanban #1090)
 //   GET /api/totals       every round since the first one this explorer holds, per game: rounds, rounds settled, entries (kanban #1197; a count that only grows)
 //   POST /api/mark        entry keys that are the owner's or a bot's, with the admin code (kanban #1090); the owner's address is kept (kanban #1414)
-//   GET  /api/admin-ip    { admin }: whether the caller's address sent the admin code within 90 days (kanban #1414)
-//   POST /api/mark-ip     entry keys of a browser on an admin address, marked as the owner's without the code (kanban #1414)
+//   GET  /api/admin-ip    { admin }: whether the caller's address sent the admin code within 48 hours (kanban #1414, #1420)
+//   POST /api/mark-ip     entry keys of a browser on an admin address, marked as the owner's without the code - only entries held here, never
+//                         over another mark, with the address recorded (kanban #1414, #1420)
 import { readHealth, HEALTH_CRON } from './health.js';
 
 const SEATS = [1, 2, 3, 4, 5, 6, 7].map((i) => `https://tn4.bitcoin-arena.io/guardian-${i}`)
@@ -335,7 +336,9 @@ const PLAYED_FROM_MS = Date.UTC(2026, 10, 1);
 const sha256Hex = async (t) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(t))))].map((b) => b.toString(16).padStart(2, '0')).join('');
 // ADMIN BY ADDRESS (kanban #1414): an address that sent the admin code within ADMIN_IP_DAYS is the admin's - a private window or a fresh browser there
 // is flagged too, and its entries are marked without the code. An IPv6 address counts by its /64 (its first four groups, written out).
-const ADMIN_IP_DAYS = 90;
+// AN ADDRESS IS THE ADMIN'S FOR 48 HOURS AFTER ITS LAST CODE MARK (audit 6, kanban #1420; was 90 days): a shared address - a carrier's CGNAT, a hotel's
+// Wi-Fi - did not stay flagged for months; the admin's own browser, which marks with the code each minute it plays, keeps it fresh
+const ADMIN_IP_HOURS = 48;
 export function ipKey(ip) {
   const s = String(ip || '').trim().toLowerCase().replace(/^\[|\]$/g, '').split('%')[0];
   if (!s) return null;
@@ -350,7 +353,7 @@ const callerIp = (request) => ipKey(request.headers.get('cf-connecting-ip'));
 async function adminIp(env, request) {
   const ip = callerIp(request); if (!ip) return false;
   const r = await env.DB.prepare('SELECT at_ms FROM admin_ips WHERE ip = ?').bind(ip).first().catch(() => null);
-  return !!(r && Date.now() - Number(r.at_ms) < ADMIN_IP_DAYS * DAY_MS);
+  return !!(r && Date.now() - Number(r.at_ms) < ADMIN_IP_HOURS * 3600000);
 }
 async function putMarks(env, keys, kind) {
   const at = Date.now();
@@ -358,12 +361,23 @@ async function putMarks(env, keys, kind) {
     await env.DB.batch(keys.slice(i, i + 50).map((k) => env.DB.prepare('INSERT INTO marked (key, kind, at_ms) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET kind = excluded.kind, at_ms = excluded.at_ms').bind(k, kind, at)));
 }
 const keysOf = (b) => [...new Set((Array.isArray(b && b.keys) ? b.keys : []).map((k) => String(k).toLowerCase()).filter((k) => hex64.test(k)))].slice(0, 500);
-// POST /api/mark-ip { keys }: the entries of a browser on an admin address, marked as the owner's - no code; any other address is refused
+// POST /api/mark-ip { keys }: the entries of a browser on an admin address, marked as the owner's - no code; any other address is refused.
+// ONLY ENTRIES THIS EXPLORER HOLDS, NEVER OVER ANOTHER MARK, AND SAYING WHO (audit 6, kanban #1420): any key was taken and a code or bot mark was
+// overwritten, with no record of the address - now a key must be an entry id in txs, a key already marked keeps its mark, and the row names the
+// address (by_ip) so it can be found and undone. Answers the keys it took: the page counts only those as sent
 async function markByIp(env, request) {
   let b; try { b = await request.json(); } catch { return json({ ok: false, why: 'a mark is JSON: { keys }' }, { status: 400 }); }
   if (!(await adminIp(env, request))) return json({ ok: false, why: 'this address is not the admin\'s' }, { status: 403 });
-  const keys = keysOf(b); await putMarks(env, keys, 'owner');
-  return json({ ok: true, marked: keys.length, kind: 'owner', by: 'address' });
+  const ip = callerIp(request), asked = keysOf(b), at = Date.now(), took = [];
+  for (let i = 0; i < asked.length; i += 50) {
+    const part = asked.slice(i, i + 50);
+    const held = await env.DB.prepare(`SELECT id FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all().then((r) => new Set((r.results || []).map((x) => x.id))).catch(() => new Set());
+    const fresh = part.filter((k) => held.has(k));
+    if (!fresh.length) continue;
+    await env.DB.batch(fresh.map((k) => env.DB.prepare('INSERT INTO marked (key, kind, at_ms, by_ip) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO NOTHING').bind(k, 'owner', at, ip)));
+    took.push(...fresh);   // marked now or already: the page need not send them again
+  }
+  return json({ ok: true, marked: took.length, took, kind: 'owner', by: 'address' });
 }
 async function mark(env, request) {
   let b; try { b = await request.json(); } catch { return json({ ok: false, why: 'a mark is JSON: { keys, kind, code }' }, { status: 400 }); }
