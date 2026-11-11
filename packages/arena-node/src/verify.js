@@ -284,6 +284,8 @@ export class Verifier {
     this.objectionReplays = new Map();
     this.objectionReplayCount = 0;
     this.latePostingSaid = new Set();
+    // ONE RETRY IN FLIGHT PER RUN (kanban #1569): a retry asked for while one for the same run is replaying gets that one.
+    this.retrying = new Map();
     /** The last close's whole sequence: replays, then the asking. */
     this.settling = Promise.resolve([]);
   }
@@ -1971,6 +1973,15 @@ export class Verifier {
    */
   retry(roundIdBytes, entryIdBytes) {
     if (this.round.hasResult(roundIdBytes, entryIdBytes, this.round.pubkey)) return null;
+    // NOT A SECOND REPLAY OF THE SAME RUN WHILE ONE IS QUEUED OR RUNNING (kanban #1569): each /play receipt used to queue
+    // its own whole-run replay, unbounded. Asked again while one is in flight, ONE more follows it (a receipt that came
+    // during the replay may be what completes the run) and every further ask shares that one - at most two per run.
+    const runKey = `${hex(roundIdBytes)}:${hex(entryIdBytes)}`;
+    const flying = this.retrying.get(runKey);
+    if (flying) {
+      if (!flying.next) flying.next = flying.work.catch(() => null).then(() => this.retry(roundIdBytes, entryIdBytes));
+      return flying.next;
+    }
     const row = this.round.get(roundIdBytes);
     if (!row) return null;
     const contract = decodeRoundContract(new Uint8Array(row.contract));
@@ -1991,7 +2002,8 @@ export class Verifier {
       options: { roundRandomness: beacon.hash },
     }).then((answer) => this.#keep({
       roundIdBytes, entryId: entryIdBytes, entry: found.entry, contract, answer,
-    }));
+    })).finally(() => { this.retrying.delete(runKey); });
+    this.retrying.set(runKey, { work, next: null });
     this.done = [...this.done, work];
     return work;
   }
