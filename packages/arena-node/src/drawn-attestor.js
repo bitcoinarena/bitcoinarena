@@ -38,10 +38,11 @@ export class DrawnAttestor {
    * takes a combined attestation (this seat's intake, then every seat); `threshold` 5. A due round with `source` and `outcomes` is a market with its own source:
    * `runSource(source, market)` answers { ok, out }, and `opening()` names the source rounds whose window has just opened.
    */
-  constructor({ readPrice, selfKey, sign, attestorsFor, peersFor, due, hold, threshold = 5, fetcher = (u, o) => fetch(u, o), now = () => Date.now(), runSource = null, opening = () => [], store = null }) {
+  constructor({ readPrice, selfKey, sign, verify, attestorsFor, peersFor, due, hold, threshold = 5, fetcher = (u, o) => fetch(u, o), now = () => Date.now(), runSource = null, opening = () => [], store = null }) {
+    if (typeof verify !== 'function') throw new Error('a drawn attestor needs verify(signature, bodyId, key): the drawn keys\' BIP-340 check (kanban #1487)');
     // `store` (kanban #1376, audit 2 #1204 MKT-3): { word(id), keepWord(id, json) -> the json now kept, start(id), keepStart(id, value) } - the seat's
     // database, so a restart serves the word it signed and never signs another from a later read of the source
-    Object.assign(this, { readPrice, selfKey, sign, attestorsFor, peersFor, due, hold, threshold, fetcher, now, runSource, opening, store });
+    Object.assign(this, { readPrice, selfKey, sign, verify, attestorsFor, peersFor, due, hold, threshold, fetcher, now, runSource, opening, store });
     this.starts = new Map();    // round hex -> a "rises" market's value when its window opened
     this.samples = [];          // [{ atMs, price }] BigInt, this seat's own readings
     this.words = new Map();     // round hex -> this seat's word
@@ -139,7 +140,8 @@ export class DrawnAttestor {
           return res.status === 200 ? wordFromJson(await res.json()) : null;
         } catch { return null; }
       }));
-      const got = combine([mine, ...theirs], { attestors: drawn, threshold: this.threshold });
+      // each word checked with the drawn attestors' scheme (BIP-340, kanban #1487): a junk signature counts for nothing and never replaces a good one
+      const got = combine([mine, ...theirs], { attestors: drawn, threshold: this.threshold, verify: this.verify });
       if (!got) continue;
       try { if (await this.hold(got.bytes, r.roundId)) { this.held.add(id); done.push({ round: id, signers: got.signers, outcome: got.body.outcome }); } } catch { /* asked again next pass */ }
     }

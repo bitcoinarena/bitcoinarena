@@ -35,6 +35,7 @@ import { namedClaims, namedClaimKeys, arenaLockContractId, arenaLockMatchesEntry
 import { networkOf } from '../../arena-protocol/src/constants.js';
 import { toHex as hexOf } from '../../arena-protocol/src/hash.js';
 import { claimReadInput } from '../../arena-protocol/src/named-claim-proof.js';
+import { pluginForRound } from './plugins.js';
 
 /**
  * WHETHER THIS ROUND'S GATE MINTS FEE LOCKS (Pick b), by the federation's own fee rule
@@ -269,6 +270,20 @@ export function keepLockSessionFloor({ round, port, roundId, federationId, outpo
   return run;
 }
 
+/**
+ * A HEAD-TO-HEAD ROUND ALREADY SEATING ITS GAME'S PLAYERS ON LOCKS (kanban #1437, audit 8 R3): the door counts only lock-backed entries
+ * (round.js seatedEntriesOf), so several entries may stand while their locks are on the way - the lock that would seat one player more is refused.
+ */
+function headToHeadFull(round, contract, roundIdBytes, entryIdBytes) {
+  if (typeof round.seatedEntriesOf !== 'function' || !round.plugins) return null;
+  const g = pluginForRound(contract, round.plugins);
+  if (!g.ok || !g.headToHead) return null;
+  const me = Buffer.from(entryIdBytes);
+  const others = round.seatedEntriesOf(roundIdBytes, contract.stakeMsat).filter((x) => !Buffer.from(x.entryId).equals(me)).length;
+  const m = g.plugin.manifest;
+  return others >= m.players ? `that round already seats game "${m.gameName}"'s ${m.players} players: this lock seats no one` : null;
+}
+
 /** Another entry of the same player key in this round holding a verified lock of `kind` ('stake' | 'fee') here (kanban #1215). */
 function otherStakedUnderKey(round, entry, entryIdBytes, kind) {
   if (typeof round.entriesOf !== 'function') return false;
@@ -344,7 +359,9 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
     if (now && !Buffer.from(now.entryId).equals(Buffer.from(entryIdBytes)))
       return { ok: false, why: 'that stake lock already stakes another entry in this round: one lock is one entry' };
     if (otherStakedUnderKey(round, entry, entryIdBytes, 'stake'))
-      return { ok: false, why: 'another entry of that player key is already staked in this round: one player key stakes one entry' }; }
+      return { ok: false, why: 'another entry of that player key is already staked in this round: one player key stakes one entry' };
+    const full = headToHeadFull(round, contract, entry.roundId, entryIdBytes);
+    if (full) return { ok: false, why: full }; }
   round.putStakeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
   // IN A ROUND WHOSE GATE MINTS, THE STAKE COUNTS ONLY WITH ITS FEE LOCK (pick a): kept,
   // verified, and not seen - no play, no place in the settlement - until the fee lock is.

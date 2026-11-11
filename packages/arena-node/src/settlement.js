@@ -645,8 +645,13 @@ export class LockSettlement {
    * claimed, the winners paid their shares of the losing pool, the seats their §22A fee.
    */
   // THE CANCELS THE OTHER SEATS HOLD, pulled before a market is settled so every seat builds its table from
-  // the same entries: each kept only if its player's session key signed it - a seat cannot forge one for anybody
-  async #carryCancels(roundIdBytes) {
+  // the same entries: each kept only if its player's session key signed it - a seat cannot forge one for anybody.
+  // ONLY BEFORE THE ENTRY CLOSE ON THIS SEAT'S OWN CLOCK (kanban #1435, audit 8 R1): a cancel's signed message is (round, entry) and carries
+  // no time, so a loser could sign one after the outcome and a single colluding seat list it; from the close on, a seat holds only the
+  // cancels its own door took in time (a seat's door hands each on to the round's other seats when it takes it: server.js POST /cancel)
+  async #carryCancels(roundIdBytes, contract) {
+    // the round store's clock, as the door's (round.now) and the outcome's finality read it
+    if (!contract || BigInt(Math.floor(Number(this.round.now ? this.round.now() : this.now()))) >= BigInt(contract.entryCloseMs)) return;
     if (!cancelCarryDue(this.#cancelsCarried, toHex(roundIdBytes), this.now(), this.round.entriesOf(roundIdBytes).length)) return;
     // EVERY SEAT IS READ, there is no threshold to a cancel; a seat that does not answer in time is as one that is down
     const asked = await askPeers(this.peersFor(roundIdBytes), async (peer, signal) => {
@@ -833,7 +838,7 @@ export class LockSettlement {
       if (!synced.ok) return refuse(`not yet: reading the other seats' batches - ${synced.why}`, 409);
     }
     if (this.orderBook && this.orderBook.isBook(roundIdBytes)) return this.#bookPlan(roundIdBytes, a, claimPk, held);
-    if (this.round.cancelsOf) await this.#carryCancels(roundIdBytes);
+    if (this.round.cancelsOf) await this.#carryCancels(roundIdBytes, contract);
     const entries = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.stakeSeen || !!this.round.stakeSeen(entryId))
       .filter(({ entry }) => entry.limitPrice === undefined || entry.limitPrice === null)
       .map(({ entryId, entry }) => ({ entryId: toHex(entryId), pubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat,
