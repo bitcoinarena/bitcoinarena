@@ -61,7 +61,7 @@ import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { explorerAgrees } from '../../arena-client/src/explorer-check.js';
 import { rulesStand } from '../../arena-protocol/src/rules.js';
 import { stakeWithinCeiling, isTestNetwork } from '../../arena-protocol/src/census-health.js';
-import { pruneTranscripts, pruneUnusedRounds, PRUNE_EVERY_MS } from './transcript-prune.js';
+import { pruneTranscripts, pruneRelayed, pruneUnusedRounds, PRUNE_EVERY_MS } from './transcript-prune.js';
 import { maxPlayersPerRound } from '../../arena-protocol/src/replay-budget.js';
 import { bondWeightedMedian } from '../../arena-protocol/src/census-median.js';
 import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
@@ -219,6 +219,7 @@ import { outageOutcome } from '../../arena-protocol/src/entry-void.js';
 import { ENTRY_VOID, netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
+import { decodeTranscript } from '../../arena-protocol/src/transcript.js';   // the relay door's check (kanban #1532)
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedAppsCheck } from './plugins.js';
 import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, marketFinalityOf, marketStateOf, VALUE_HELD_OUTCOME } from './game-market.js';
@@ -276,6 +277,10 @@ const presenceTables = (round) => { let t = presenceByRound.get(round); if (!t) 
 // it whole before any check - one large POST filled a seat's memory): BODY_MOST by default (8 MiB, ARENA_BODY_MOST), far above the few kilobytes a door's
 // message takes; a door that needs less passes its own `max`. Past it the body is dropped, the request ended, and the door answers 413.
 const BODY_MOST = Number(process.env.ARENA_BODY_MOST) > 0 ? Number(process.env.ARENA_BODY_MOST) : 8 * 1024 * 1024;
+// WHAT A SEAT KEEPS AS A RELAY IS BOUNDED (kanban #1532, audit #1489 gossip: PUT /transcript and PUT /slash kept any bytes from anyone,
+// for ever - a stranger filled the disk with random blobs under their own hash). At most RELAY_MOST bytes in `relayed` over both doors
+// (256 MiB, ARENA_RELAY_MOST); past it a door answers 507 and keeps nothing.
+const RELAY_MOST = Number(process.env.ARENA_RELAY_MOST) > 0 ? Number(process.env.ARENA_RELAY_MOST) : 256 * 1024 * 1024;
 const read = (req, max = BODY_MOST) => new Promise((resolve, reject) => {
   const parts = []; let size = 0;
   // A DOOR'S OWN LIMIT (kanban #1271): past `max` bytes the body is not kept, the request ends, and the door answers 413
@@ -3683,6 +3688,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     try { transcriptsLast = { atMs: Date.now(), ...pruneTranscripts({ db, nowMs: Number(round.now()) }) };
       if (transcriptsLast.pruned.length) console.log(`[transcripts] ${transcriptsLast.pruned.length} round(s) past their claim window: ${transcriptsLast.rows} rows deleted, ${transcriptsLast.kept} kept`); }
     catch (e) { console.error(`[transcripts] prune: ${e.message}`); }
+    // and the transcripts it keeps as a relay, with the same windows (kanban #1532)
+    try { const r = pruneRelayed({ db, nowMs: Number(round.now()) }); if (r.deleted) console.log(`[transcripts] ${r.deleted} relayed transcript(s) past their claim window deleted`); }
+    catch (e) { console.error(`[transcripts] relayed prune: ${e.message}`); }
   };
   const transcriptPruneClock = setInterval(transcriptPrune, PRUNE_EVERY_MS);
   transcriptPruneClock.unref();
@@ -10621,6 +10629,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try { rerunNamed = toHex(rerunResultId(decodeRerunResult(splitSignedRerun(rr.signedRerun).body))); }
           catch (e) { return text(res, 409, `the evidence is not a signed re-run result: ${e.message}`); }
           if (rerunNamed !== toHex(rr.proof.signedResultId)) return text(res, 409, 'the evidence is not the re-run the proof names');
+          if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');   // kanban #1532
           round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
           return text(res, 201, 'kept');
         }
@@ -10631,6 +10640,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { named = toHex(resultId(decodePlayerResult(splitSignedResult(got.signedResult).body))); }
         catch (e) { return text(res, 409, `the evidence is not a signed result: ${e.message}`); }
         if (named !== toHex(got.proof.signedResultId)) return text(res, 409, 'the evidence is not the result the proof names');
+        if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');   // kanban #1532
         round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
         return text(res, 201, 'kept');
       }
@@ -10649,6 +10659,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const bytes = await read(req);
         if (toHex(transcriptBytesHash(new Uint8Array(bytes))) !== relayed[1])
           return text(res, 409, 'those bytes are not the transcript that hash names');
+        // ONLY A TRANSCRIPT OF AN ENTRY THIS SEAT HOLDS (kanban #1532): the bytes decode as a transcript (decodeTranscript) whose entry is
+        // in this seat's store under the round it names, or are a head-to-head reveal record (entry id || move || 32-byte salt, or
+        // entry id || 0xff, verify.js #revealRecord) of an entry it holds. Random bytes, and transcripts of runs nobody entered here, are refused.
+        const u8 = new Uint8Array(bytes), roundOfEntry = (eid) => { const r = round.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(eid); return r ? toHex(new Uint8Array(r.round_id)) : null; };
+        let ours = false;
+        try { const t = decodeTranscript(u8); ours = roundOfEntry(t.entryId) === toHex(t.roundId); }
+        catch { ours = (u8.length === 65 || (u8.length === 33 && u8[32] === 0xff)) && roundOfEntry(u8.subarray(0, 32)) !== null; }
+        if (!ours) return text(res, 422, 'this relay keeps only the transcript of an entry it holds');
+        if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');
         round.relayPut(Buffer.from(relayed[1], 'hex'), bytes);
         return text(res, 201, 'kept');
       }
