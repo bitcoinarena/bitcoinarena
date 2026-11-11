@@ -4506,6 +4506,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A STAKE'S HANDOUT, CHECKED AND KEPT: what POST /handout does, and what a seat does for the handout of an order a certified batch names
   // that never reached it (replayOrder). The round's threshold, not the player's (M3.3-26); one polynomial; this seat's own share opens.
   // Answers { ok, id, signerNode } or { ok: false, status, why }.
+  const HANDOUTS_UNENTERED_MAX = Number(process.env.ARENA_HANDOUTS_UNENTERED_MAX || 256);   // kanban #1605
   const takeHandout = async (bytes, { accepted = false } = {}) => {
     let handout;
     try { handout = decodeHandout(bytes); } catch (e) { return { ok: false, status: 400, why: 'that is not a handout: ' + e.message }; }
@@ -4529,6 +4530,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const mine = await openMyShare(handout, { pubkey: round.pubkey, secret: round.identity.secret, curve: feldmanGroup });
     if (!mine.ok) return { ok: false, status: 409, why: mine.why };
     const id = handoutId(handout);
+    // A ROUND KEEPS A BOUNDED NUMBER OF HANDOUTS NO ENTRY NAMES (kanban #1605): a handout needs no entry, no lock and no known key, so a
+    // stranger dealing fresh player keys stored 320 of 320 for one round (the disk, and every POST /refused-lock decodes them all). Past
+    // HANDOUTS_UNENTERED_MAX handouts beyond the round's entries a new one is refused; one already kept, and a certified batch's
+    // order (accepted), still go through
+    if (!accepted && !round.handout(id) && round.handoutCount(handout.roundId) - round.entriesOf(handout.roundId).length >= HANDOUTS_UNENTERED_MAX)
+      return { ok: false, status: 429, why: `handout refused: this round already holds ${HANDOUTS_UNENTERED_MAX} handouts that no entry names - nothing is locked, try the next round` };
     round.rememberHandout({ id, roundId: handout.roundId, bytes: encodeHandout(handout) });
     return { ok: true, id, signerNode: mine.signerNode };
   };
