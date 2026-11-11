@@ -4888,12 +4888,13 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // while another tab of this browser holds the round.
     async function roundWallet(r) {
       if (!(await holdRound(r.roundIdHex))) return null;
-      if (!roundWallets.has(r.roundIdHex)) {
+      const key = walletKey(r);
+      if (!roundWallets.has(key)) {
         const wasm = await window.ARENA_LOCK_WASM();
         await wasm.default();
-        roundWallets.set(r.roundIdHex, { LockClient: wasm.LockClient, client: await ARENACLIENT.tabLockWallet(roundAsk(r, wasm.LockClient)) });
+        roundWallets.set(key, { LockClient: wasm.LockClient, client: await ARENACLIENT.tabLockWallet(roundAsk(r, wasm.LockClient)) });
       }
-      return roundWallets.get(r.roundIdHex);
+      return roundWallets.get(key);
     }
     // A LOOK WITHOUT JOINING THE ROUND'S OWN WALLET (comment 567): the join decodes the federation's BLS keys
     // in one wasm task (measured 270 ms desktop, 1.1 s phone at 4x CPU) and it froze the lobby on every load of a tab with an
@@ -4902,11 +4903,20 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // when something is owed, or while this browser has not yet read it empty (TAB_EMPTY: ecash an older build left in a
     // round wallet is still found once).
     const TAB_EMPTY = 'arena.tabempty.';
+    // A ROUND'S WALLET IS THE ROUND'S AND THE PHRASE'S (kanban #1585, audit #1489 sm1-page-3): tabLockWallet keys its database by
+    // round and lockSecretFor(seed, round), so the tab's kept wallets and the empty note are keyed the same way - keyed by the round
+    // alone, a second phrase's record in the same round was looked at with the first phrase's wallet (or its empty note), marked
+    // done with tabMsat '0', and its own wallet, never read, was tidied away with the e-cash in it. The browser lock stays per round.
+    function walletKey(r) {
+      const s = r && r.seed;
+      if (!s) return r.roundIdHex;
+      return r.roundIdHex + '.' + (typeof s === 'string' ? s : ARENACLIENT.toHex(s)).slice(0, 16);
+    }
     // THE NOTE GOES WHEREVER THE ROUND'S WALLET MAY HOLD ECASH (comment 574): a zero read through the player
     // wallet is never proof that the round's own wallet is empty
-    const dropTabEmpty = (id) => { try { vault().removeItem(TAB_EMPTY + id); } catch { /* read with its wallet next time */ } };
+    const dropTabEmpty = (r) => { try { vault().removeItem(TAB_EMPTY + walletKey(r)); } catch { /* read with its wallet next time */ } };
     async function lookRound(r) {
-      let empty = false; try { empty = vault().getItem(TAB_EMPTY + r.roundIdHex) === '1'; } catch { empty = false; }
+      let empty = false; try { empty = vault().getItem(TAB_EMPTY + walletKey(r)) === '1'; } catch { empty = false; }
       // the player wallet not opening yet: this tick looks at nothing (the next one does), for the page's first 30 s; after
       // that a round is looked at with its own wallet, as before
       if (empty && !window.ARENA_WALLET_WARM && performance.now() < 30000) return { look: null, held: true, LockClient: null };
@@ -4919,7 +4929,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const w = await roundWallet(r);
       if (!w) return { look: null, held: false, LockClient: null };
       const look = await ARENACLIENT.lookOwed(Object.assign(roundAsk(r, w.LockClient), { client: w.client }));
-      try { if (look.inTabMsat === 0n) vault().setItem(TAB_EMPTY + r.roundIdHex, '1'); else vault().removeItem(TAB_EMPTY + r.roundIdHex); } catch { /* looked at with its wallet again next time */ }
+      try { if (look.inTabMsat === 0n) vault().setItem(TAB_EMPTY + walletKey(r), '1'); else vault().removeItem(TAB_EMPTY + walletKey(r)); } catch { /* looked at with its wallet again next time */ }
       return { look, held: true, LockClient: w.LockClient };
     }
     // CLAIMED LATER (2026-09-14): the newest kept round that is not final, so an older
@@ -5422,7 +5432,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const ask = roundAsk(r, own.LockClient);
       // THE ROUND'S WALLET IS ABOUT TO HOLD WHAT IS COLLECTED (comment 574): its empty note goes before the
       // collect, so a pay that fails - or throws before the last look below - leaves the next load joining this wallet
-      dropTabEmpty(r.roundIdHex);
+      dropTabEmpty(r);
       payoutAsking = true;
       // WHILE IT RUNS THE SCREEN SAYS SO (live, run A3: a Withdraw ran ~5 min with no line, the tab
       // was closed mid-way and what it had collected was lost with the tab's wallet).
@@ -5455,7 +5465,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         window.ARENA_OWED = await ARENACLIENT.lookOwed(Object.assign({}, ask, { client: own.client }));
         window.ARENA_WITHDRAWABLE = window.ARENA_OWED.inTabMsat;
         // STILL ECASH IN THE ROUND'S WALLET AFTER THE PAY (it failed): no empty note for it - the warning stays
-        if (window.ARENA_WITHDRAWABLE > 0n) dropTabEmpty(r.roundIdHex);
+        if (window.ARENA_WITHDRAWABLE > 0n) dropTabEmpty(r);
       } finally { payoutAsking = false; window.ARENA_WITHDRAWING = false; }
       console.log('[arena] withdraw: ' + ARENACLIENT.withdrawLine(window.ARENA_WITHDRAWN, window.ARENA_WITHDRAWABLE));
       window.ARENA_TRACK('withdraw-sent', { from: 'round' });
