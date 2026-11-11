@@ -109,6 +109,9 @@ async fetch(request, env, ctx) {
   if (url.pathname === '/api/faucet/player' || url.pathname === '/api/faucet/opponent' || url.pathname === '/api/faucet/feedback' || url.pathname === '/api/faucet/founding' || url.pathname === '/api/faucet/refill') {
     if (!env.FAUCET_ORIGIN) return new Response('{"ok":false,"why":"the faucet is off"}', { status: 503, headers: { 'content-type': 'application/json' } });
     const headers = new Headers({ 'content-type': 'application/json', 'x-arena-ip': request.headers.get('cf-connecting-ip') || '' });
+    // THE FAUCET BELIEVES THAT ADDRESS ONLY WITH THIS WORKER'S KEY (audit 8, kanban #1434): x-arena-ip was taken from any caller, also straight
+    // over the tunnel, so one machine could pass for many and empty the day's welcome pot
+    if (env.FAUCET_WORKER_KEY) headers.set('x-arena-worker', env.FAUCET_WORKER_KEY);
     const origin = request.headers.get('origin'); if (origin) headers.set('origin', origin);
     return fetch(`${env.FAUCET_ORIGIN}${url.pathname.slice('/api/faucet'.length)}${url.search}`, { method: request.method, headers, body: request.method === 'POST' ? await request.text() : undefined });
   }

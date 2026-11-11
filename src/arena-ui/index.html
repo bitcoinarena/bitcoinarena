@@ -5760,7 +5760,11 @@
       let key = null, rec = null;
       try { key = Object.keys(L).find((k) => k.startsWith(prefix) && k.endsWith('.welcome')) || null; rec = key ? ARENACLIENT.readEcashTransfer(L, key) : null; } catch { key = null; rec = null; }
       if (!rec || rec.state !== 'kept') {
-        const got = await ARENACLIENT.askFaucet({ url: window.ARENA_FAUCET_URL, kind: 'welcome', seed, ecash: fedHex });
+        // ASKED ONCE MORE AFTER A TIMEOUT (audit 6 re-check, kanban #1426 / #1419): a faucet that answered after this page had stopped waiting booked the
+        // welcome - the faucet now answers the same caller's second ask with that same note, so the page asks again once instead of losing it
+        const ask = () => ARENACLIENT.askFaucet({ url: window.ARENA_FAUCET_URL, kind: 'welcome', seed, ecash: fedHex });
+        let got;
+        try { got = await ask(); } catch (e) { console.warn('[faucet] the welcome ask got no answer (' + ((e && e.message) || e) + '): asked once more'); got = await ask(); }
         if (!got.ecash) return null;
         key = prefix + Date.now() + '.welcome';
         const tag = { fed: fedHex, to: ARENACLIENT.toHex(seed).slice(0, 16), at: Date.now(), from: 'faucet welcome' };
