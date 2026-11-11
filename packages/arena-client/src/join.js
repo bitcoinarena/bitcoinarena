@@ -415,10 +415,19 @@ export async function attestedClaimKey({ round, signerNodes, nodes, curve, fetch
     return { claimPk, said: claimKeyIsAttested({ roundId: round.id, claimPk, signatures, signerNodes,
       settlementSlots: round.settlementSlots, verify: (s, m, kk) => curve.verify(s, m, kk) }) };
   };
+  // ONLY THE ROUND'S OWN SIGNER NODES ARE ASKED (kanban #1391, measured on live page979 2026-11-11: a page waiting for its key asked all 14 seats
+  // every second, and the 8 outside the committee answered 409 "this node is not assigned to that round" 78 times each in 5 minutes): a URL whose
+  // kept identity (identityAt, asked once in IDENTITY_KEEP_MS) is a node the round did not draw is not asked. Nothing is fetched to decide it,
+  // and a URL whose identity is not kept is asked as before, so no signer node is ever left out and the threshold check is unchanged.
+  const drawn = new Set((signerNodes || []).map((k) => { try { return toHex(k); } catch { return ''; } }));
+  const asked = (nodes || []).filter((node) => {
+    const kept = IDENTITIES.get(String(node).replace(/\/+$/, ''));
+    return !(drawn.size && kept && Date.now() - kept.at < IDENTITY_KEEP_MS && !drawn.has(kept.key));
+  });
   const early = await new Promise((resolve) => {
-    let left = (nodes || []).length;
+    let left = asked.length;
     if (!left) { resolve(null); return; }
-    for (const node of nodes) {
+    for (const node of asked) {
       (async () => {
         try {
           const r = await readWithOneRetry(fetcher, node.replace(/\/+$/, '') + '/claim-key?round=' + id, timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : undefined);
