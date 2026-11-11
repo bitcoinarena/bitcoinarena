@@ -138,7 +138,7 @@ function deathOf(sup, id) {
  * from then on.
  */
 export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry,
-  arrayBudget = ARRAY_BUDGET, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP } = {}) {
+  arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP } = {}) {
   const sup = supervisorOf();
   const id = sup.next++;
   const ctrl = new Int32Array(new SharedArrayBuffer(8 * 4));
@@ -147,7 +147,7 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
   // THE TRIGGER sits BACKSTOP_MARGIN below the backstop: sampled every 2 ms, and the core keeps allocating until its isolate
   // stops, so the line it must never cross is the backstop itself, not the trigger
   const triggerMb = Math.max(1, Math.round(rssBackstop / 1048576) - BACKSTOP_MARGIN_MB);
-  sup.worker.postMessage({ type: 'spawn', id, files: [...files], entry, name, port: port2, ctrl: ctrl.buffer, arrayBudget,
+  sup.worker.postMessage({ type: 'spawn', id, files: [...files], entry, name, port: port2, ctrl: ctrl.buffer, arrayBudget, liveCap,
     heap: { ...heap }, triggerMb }, [port2]);
   let ended = null;
   let lastEnd = null;
