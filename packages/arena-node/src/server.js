@@ -2147,6 +2147,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // HAS THE START DEADLINE PASSED, as far as THIS signer node can check, for a first
   // mark it has never held? Its own record, its own round closed, or the
   // player's own signed mark past the line - never a peer's word alone.
+  /** kanban #1549: has the round's end (protocol roundEndMs, else entry close) passed on THIS seat's clock? */
+  function roundOverHere(rid) {
+    const row = round.get(rid);
+    if (!row) return false;
+    try {
+      const rc = decodeRoundContract(new Uint8Array(row.contract));
+      let end; try { end = Number(roundEndMs(rc)); } catch { end = Number(rc.entryCloseMs); }
+      return Number.isFinite(end) && round.now() >= end;
+    } catch { return false; }
+  }
   function lateEvidenceHere(c, claim, claimReceipt = null) {
     const line = round.startLine(c.roundId, c.entryId);
     if (!line || c.tick > line.lastTick) return null;             // a late START is FORFEIT's
@@ -2158,7 +2168,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // the threshold. This signer node records only what it knows: it never took the
     // first mark. A signer node that holds it never gets here, so a run that started
     // cannot be voided this way; the lock goes back to the player, never to anyone else.
-    if (claim && claim.kind === 'closed' && claimReceipt && round.receiptVerifies(claimReceipt, checkpointId(c), c.roundId))
+    // ONLY ONCE THE ROUND IS OVER ON THIS SEAT'S OWN CLOCK (kanban #1549): the claimer's receipt shows only that it saw
+    // the mark, never that the round closed. Measured before: one seat posted /first-mark with its own receipt and
+    // "closed" 60 s before the end, and the open seat recorded ENTRY_VOID and refused the player's on-time first mark.
+    if (claim && claim.kind === 'closed' && claimReceipt && roundOverHere(c.roundId)
+      && round.receiptVerifies(claimReceipt, checkpointId(c), c.roundId))
       return { kind: 'closed', evidence: null };
     if (claim && claim.kind === 'mark' && claim.evidence) {
       try {
