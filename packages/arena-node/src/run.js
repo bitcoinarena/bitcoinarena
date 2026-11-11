@@ -35,5 +35,17 @@ if (['verbose', 'debug'].includes(String(values.log_level || process.env.ARENA_L
   const apps = await ensureApps({ release: fileURLToPath(new URL('../../../', import.meta.url)), home: dirname(file), log: (l) => console.log(`[apps] ${l}`) });
   if (!apps.ok) { console.error(`[apps] the apps could not be fetched: ${apps.why}`); process.exit(3); }
 }
+// THE RELEASE'S NEW VERSIONS OF THE APPS THIS NODE RUNS, AT EVERY START (kanban #1415, measured in the release gate's VM 2026-11-10: a node
+// updated from 2026.1.9.26 by ITS OWN updater kept apps= at nextblock v1-v6 - the 1.9.27 updater's withNewAppVersions never ran for it - so
+// Tick Tock v7 was on disk and never loaded): every registration this release holds for an app whose folder ARENA_APPS already names is
+// added after the ones listed. An app the owner left out stays out; nothing listed is taken away; arena.conf itself is not written.
+if (process.env.ARENA_APPS) {
+  try {
+    const { withReleaseAppVersions } = await import('./app-fetch.js');
+    const { appsIn } = await import('../../arena-installer/src/apps.js');
+    const r = withReleaseAppVersions(process.env.ARENA_APPS, appsIn(fileURLToPath(new URL('../../../', import.meta.url))));
+    if (r.added.length) { process.env.ARENA_APPS = r.value; console.log(`[apps] this release's newer versions of the apps this node runs, added: ${r.added.map((f) => f.split(/[\\/]/).pop()).join(', ')}`); }
+  } catch (e) { console.log(`[apps] the release's app versions were not read (${e.message}): apps= as written`); }
+}
 process.argv = [process.argv[0], fileURLToPath(new URL('./main.js', import.meta.url)), String(run.port), run.database];
 await import('./main.js');

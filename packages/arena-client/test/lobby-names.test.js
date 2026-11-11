@@ -193,3 +193,18 @@ test('an order is named under its own key (order n) and the same identity as the
   assert.equal(toHex(rec.identityPubkey), toHex(zero.identityPubkey), 'one identity for every order');
   assert.ok(verify(fromHex(two.sig), lobbyNameId(rec), rec.playerPubkey), 'signed by the order\'s own key');
 });
+
+// KANBAN #1278 (RULED #1276): a round books to an identity on the season only with that identity's own signature over (round id, round key)
+test('#1278 the name record comes with the identity\'s own consent: its key signs (round id, round key), matchProofId\'s shape', async () => {
+  const { matchProofId } = await import('../../arena-protocol/src/match.js');
+  const storage = tab();
+  const signed = nameRecordFor(ROUND, { storage, random, curve: pageCurve });
+  const rec = decodeLobbyName(fromHex(signed.record));
+  const ok = typeof signed.identitySig === 'string' && schnorr.verify(fromHex(signed.identitySig), matchProofId({ roundId: rec.roundId, entryId: rec.playerPubkey, identityKey: rec.identityPubkey }), rec.identityPubkey);
+  // another round key's proof does not stand for this one
+  const other = nameRecordFor({ id: b32(0x5b) }, { storage, random, curve: pageCurve });
+  const crossed = schnorr.verify(fromHex(other.identitySig), matchProofId({ roundId: rec.roundId, entryId: rec.playerPubkey, identityKey: rec.identityPubkey }), rec.identityPubkey);
+  console.log('  FACTS #1278 page:', JSON.stringify({ identitySig: !!signed.identitySig, verifies: ok, anotherRoundsProofStands: crossed }));
+  assert.equal(ok, true);
+  assert.equal(crossed, false);
+});

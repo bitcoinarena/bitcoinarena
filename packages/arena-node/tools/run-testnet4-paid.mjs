@@ -433,15 +433,43 @@ if (env.PAID_DUTY_DAILY === '1') {
     }
     return feds;
   };
+  // THE SERIES' CREATORS AS THE LOCAL SEATS HOLD THEM (kanban #1168): read again at most every 2 min, and at once for a series not seen yet
+  const { schnorr: { getPublicKey: schnorrPub } } = await import('@noble/curves/secp256k1.js');
+  let seatCreators = new Map(), seatCreatorsAt = 0;
+  const readSeatCreators = async () => {
+    const m = new Map();
+    for (const u of localSeats()) {
+      for (const path of ['/series', '/expected']) {
+        try {
+          const r = await fetch(`${u}${path}`, { signal: AbortSignal.timeout(15000) });
+          if (!r.ok) continue;
+          const j = await r.json();
+          for (const x of (path === '/series' ? j.series : j.expected) || []) if (x && x.series && /^[0-9a-f]{64}$/.test(String(x.creator || ''))) m.set(String(x.series), String(x.creator));
+        } catch { /* the next seat */ }
+      }
+      if (m.size) break;
+    }
+    return m;
+  };
+  const dutyCreatorOf = async (idHex) => {
+    if (!seatCreators.has(idHex) && Date.now() - seatCreatorsAt > 120000) { seatCreators = await readSeatCreators(); seatCreatorsAt = Date.now(); }
+    return seatCreators.get(idHex) || null;
+  };
   // THE DAY'S DUTY ITSELF (src/duty-day.js, kanban #702): the node's own duty poster runs the same engine
   const duty = createDayDuty({ game, item, networkId: round.contract.networkId, local, dir: join(home, 'paid', 'duty-day'),
     chain: round.dutyChain, chainCall, walletRpc: rpc, gridBase, openGrid: (kind, opts) => round.openGrid(kind, opts),
     postSeries: (line) => round.postSeries(line), fedsNow, seatCatalog, devOf: DEV_OF, creator: CREATOR, stakeMsat,
+    // A DAY OF RPS NAMES THE HEAD-TO-HEAD 60 s WINDOW (§13A, RULED 2026-11-10, kanban #1398) with RPS_H2H_WINDOW=1, set once every seat runs it
+    extraFields: (g) => (g === 'rps' && env.RPS_H2H_WINDOW === '1' ? { objectionWindowMs: 60_000n } : {}),
     feeRate: Number(env.DUTY_FEE_RATE || 0.1), maxFeeRate: Number(env.DUTY_MAX_FEE_RATE || 1), dry: env.DUTY_DRY === '1', gridDry: env.ARENA_GRID_DRY === '1',
     fromDay: Number(env.DUTY_FROM_DAY || 0), committeeLeadMs, rankCap, drawableByMs, emergencyOn,
     emergencyCommitteeLeadMs: Number(env.DUTY_EMERGENCY_COMMITTEE_LEAD_MS || guard.DUTY_EMERGENCY_COMMITTEE_LEAD_MS), seedWaitMs: Number(env.DUTY_SEED_WAIT_MS || guard.DUTY_SEED_WAIT_MS),
     drawSeats: Number(env.DUTY_DRAW_SEATS || 12), dryRank0: env.DUTY_DRY_RANK0 === '1',
-    seatsAgreeOn: async (hash) => agreementOf(hash, await seatChains()), say });
+    seatsAgreeOn: async (hash) => agreementOf(hash, await seatChains()), say,
+    // WHO A DAY MARKER IS FROM (kanban #1168, duty-day.js MARKER): the creator of a series a local seat holds (GET /series) or was announced
+    // (GET /expected), its line's signature checked there; this runner's own creator key and DUTY_CREATORS count beside the day's duty order
+    creatorOf: dutyCreatorOf, creators: [...(CREATOR.creatorSecret ? [toHex(schnorrPub(CREATOR.creatorSecret))] : []),
+      ...String(env.DUTY_CREATORS || '').split(',').map((x) => x.trim()).filter(Boolean)] });
   const look = () => duty.look();
   look(); setInterval(look, 60000);
 }
@@ -551,7 +579,9 @@ if (env.PAID_RPS_GRID === '1') {
         fedPick = openingFederation({ listed: fl.federations || [], serves, own });
       } catch { /* its own, said above */ }
       say({ rpsGrid: 'federation', ...fedPick, serves: serves.map((f) => f.slice(0, 16)) });
-      const got = await round.openGrid({ ...CREATOR, fields: { ...base.fields, censusHeight: base.censusHeight, donationSetId, federationId: fromHex(fedPick.federationId) }, stakeMsat, mustDraw: true }, { slots, tables, feeRate, maxFeeRate, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
+      // A HEAD-TO-HEAD ROUND'S 60 s WINDOW (§13A, RULED 2026-11-10, kanban #1398): named only with RPS_H2H_WINDOW=1, once every seat takes it
+      const h2hWindow = env.RPS_H2H_WINDOW === '1' ? { objectionWindowMs: 60_000n } : {};
+      const got = await round.openGrid({ ...CREATOR, fields: { ...base.fields, ...h2hWindow, censusHeight: base.censusHeight, donationSetId, federationId: fromHex(fedPick.federationId) }, stakeMsat, mustDraw: true }, { slots, tables, feeRate, maxFeeRate, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
         onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `rps-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ rpsGrid: 'published', ...p }); }, onPosted: (p) => say({ rpsGrid: 'posted', ...p }) });
       if (got.dry) { say({ rpsGrid: 'dry', ...got }); return; }
       say({ rpsGrid: got.ok ? 'up' : 'not up', ok: got.ok, why: got.why, txid: got.txid, publishedAt: got.publishedAt, beacon: got.beacon,

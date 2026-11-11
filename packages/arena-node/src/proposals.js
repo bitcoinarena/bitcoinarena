@@ -11,9 +11,12 @@
 // A REPEAL (§27A.7.6) is read against the history live AT THE PROPOSAL'S PUBLICATION HEIGHT (`historyFor(net, height)`, the
 // tally's - ballot-tally.js): the same answer at every seat, whenever it is asked. Until this seat has decided every proposal
 // that activates at or before that height, it cannot know that history, and says so (503) rather than guess a schedule.
-// A proposal's outcome is written into its record once (`decide`), and tallied again only when the chain it was counted on
-// changed below it (`undecide`, ballot-tally.js: a reorg). A proposal whose publication block left this seat's chain is
-// forgotten (`forget`): it was never published on the chain the seat now follows, and is taken again when posted again.
+// ITS STATE, ONE ENUM AND ONE TRANSITION FUNCTION (kanban #1152): COUNTING (kept, in review or voting, or counted again) -> PASSED |
+// FAILED (the outcome, written once at its depth, ballot-tally.js) -> COUNTING again only when the chain it was counted on changed
+// below its anchor (a hash that differs, never an RPC error); and ORPHANED when its publication block left this seat's chain:
+// kept with its bytes and its old outcome, never deleted, and COUNTING again when that block is back or the proposal is posted
+// again from a new block. Each move is a compare-and-set on the state it leaves, and is written to the store BEFORE this
+// seat's memory takes it: a write that fails leaves the proposal where it was.
 import { decodeConfigProposalBody, proposalId, proposalStands, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
 import { depositOf } from '../../arena-protocol/src/ballot-chain.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -26,11 +29,48 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
  * `historyFor(net, height)` -> the live history at that height ([{ config }], liveConfig's), or null while it cannot be known yet;
  * none given: no proposal is read as a repeal (the first slice's behaviour).
  */
+export const PROPOSAL_STATE = Object.freeze({ COUNTING: 'COUNTING', PASSED: 'PASSED', FAILED: 'FAILED', ORPHANED: 'ORPHANED' });
+const S = PROPOSAL_STATE;
+/** The only moves there are: anything else is refused. */
+const MOVES = Object.freeze({ [S.COUNTING]: [S.PASSED, S.FAILED, S.ORPHANED], [S.PASSED]: [S.COUNTING, S.ORPHANED], [S.FAILED]: [S.COUNTING, S.ORPHANED],
+  [S.ORPHANED]: [S.COUNTING] });
+/** A kept record's state - a record written before kanban #1152 carries none, and reads as its `decided` says. */
+export const stateOf = (r) => (r && S[r.state] ? r.state : r && r.orphaned ? S.ORPHANED : r && r.decided ? (r.decided.passed ? S.PASSED : S.FAILED) : S.COUNTING);
+
 export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsFor, verify, store, schedule = SCHEDULES.mainnet, scheduleFor = null,
   repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null }) {
-  const held = new Map((store && store.read ? store.read() || [] : []).map((x) => [x.id, x]));
-  const save = () => { if (store && store.write) store.write([...held.values()]); };
-  return {
+  const held = new Map((store && store.read ? store.read() || [] : []).map((x) => [x.id, { ...x, state: stateOf(x) }]));
+  /** WRITTEN FIRST: the store takes `next` (or throws), and only then this seat's memory. */
+  const commit = (next) => {
+    if (store && store.write) store.write([...held.values()].filter((x) => x.id !== next.id).concat([next]));
+    held.set(next.id, next);
+  };
+  /**
+   * THE ONE TRANSITION: `id` from state `from` to state `to` - false when it is not in `from` (compare-and-set), the move is not
+   * one there is, or the store did not take it. `outcome` (to PASSED / FAILED: the tally, its `passed` agreeing with `to`),
+   * `record` (ORPHANED -> COUNTING from a new block: the record add() checked), `at` (the tip), `why`.
+   */
+  function transition(id, from, to, { outcome = null, record = null, at = null, why = '' } = {}) {
+    const had = held.get(id);
+    if (!had || stateOf(had) !== from || !MOVES[from] || !MOVES[from].includes(to)) return false;
+    let next;
+    if (to === S.PASSED || to === S.FAILED) {
+      if (!outcome || outcome.passed !== (to === S.PASSED)) return false;
+      next = { ...had, state: to, decided: outcome };
+    } else if (to === S.ORPHANED) {
+      const { decided, ...rest } = had;
+      next = { ...rest, state: S.ORPHANED, orphaned: { at, why, was: from, ...(decided ? { outcome: decided } : {}) } };
+    } else if (from === S.ORPHANED) {
+      const { orphaned, ...rest } = record ? { ...record, orphaned: had.orphaned } : had;
+      next = { ...rest, state: S.COUNTING, restored: { at, why, was: orphaned ? orphaned.was : null } };
+    } else {
+      const { decided, ...rest } = had;
+      next = { ...rest, state: S.COUNTING, undecided: { at: decided ? decided.decidedAt : null, was: from, why } };
+    }
+    try { commit(next); } catch { return false; }
+    return true;
+  }
+  const api = {
     async add({ proposal: hex, blockHash }) {
       if (!/^[0-9a-f]+$/i.test(String(hex || '')) || String(hex).length < 130) return { ok: false, status: 400, why: 'a proposal is the hex of its body and its 64-byte signature' };
       if (!/^[0-9a-f]{64}$/i.test(String(blockHash || ''))) return { ok: false, status: 400, why: 'name the block its deposit confirmed in (blockHash, 64 hex)' };
@@ -39,7 +79,9 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       try { p = { ...decodeConfigProposalBody(bytes.subarray(0, bytes.length - 64)), signature: bytes.slice(bytes.length - 64) }; }
       catch (e) { return { ok: false, status: 400, why: `that is no config proposal: ${e.message}` }; }
       const id = toHex(proposalId(p));
-      if (held.has(id)) return { ok: true, status: 200, ...held.get(id), already: true };
+      // KEPT ALREADY - unless orphaned and named from another block: then it is checked again, and taken from that block
+      const was = held.get(id);
+      if (was && (stateOf(was) !== S.ORPHANED || was.blockHash === String(blockHash).toLowerCase())) return { ok: true, status: 200, ...was, already: true };
       const net = toHex(p.networkId);
       const tx = await confirmedTx(toHex(Uint8Array.from(p.depositTxid).reverse()), String(blockHash).toLowerCase());
       if (!tx) return { ok: false, status: 422, why: 'that block of this seat\'s chain does not hold the deposit the proposal names' };
@@ -59,32 +101,48 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         proposer: toHex(p.proposer), publishedAt: dep.publishedAt, depositSats: String(dep.depositSats), votingFrom: stands.votingFrom,
         votingUntil: stands.votingUntil, activationHeight: stands.activationHeight, repeal: stands.repeal,
         // THE BLOCK IT WAS PUBLISHED IN: a reorg that takes it out unpublishes the proposal (ballot-tally.js)
-        blockHash: String(blockHash).toLowerCase() };
-      held.set(id, kept); save();
+        blockHash: String(blockHash).toLowerCase(), state: S.COUNTING };
+      // TAKEN AGAIN FROM A NEW BLOCK: the orphaned record moves back to COUNTING with the record checked here
+      if (was) {
+        if (!transition(id, S.ORPHANED, S.COUNTING, { record: kept, at: dep.publishedAt, why: 'posted again from a block of this chain' }))
+          return held.has(id) ? { ok: true, status: 200, ...held.get(id), already: true } : { ok: false, status: 409, why: 'that proposal moved while it was checked: ask again' };
+        return { ok: true, status: 201, ...held.get(id) };
+      }
+      if (held.has(id)) return { ok: true, status: 200, ...held.get(id), already: true };   // taken by another ask while this one read the chain
+      try { commit(kept); } catch (e) { return { ok: false, status: 503, why: `this seat could not keep it: ${e.message}` }; }
       return { ok: true, status: 201, ...kept };
     },
     list: () => [...held.values()].sort((a, b) => b.publishedAt - a.publishedAt),
-    /** THE OUTCOME, WRITTEN ONCE (ballot-tally.js): a decided proposal is not tallied again, across restarts too - unless `undecide`. */
-    decide(id, outcome) {
-      const had = held.get(id);
-      if (!had || had.decided) return false;
-      held.set(id, { ...had, decided: outcome }); save();
-      return true;
+    transition,
+    /** THE OUTCOME, WRITTEN ONCE (ballot-tally.js): COUNTING -> PASSED | FAILED - not tallied again, across restarts too. */
+    decide: (id, outcome) => transition(id, S.COUNTING, outcome && outcome.passed ? S.PASSED : S.FAILED, { outcome }),
+    /** A REORG BELOW ITS DECISION - a hash that differs (ballot-tally.js): PASSED | FAILED -> COUNTING, counted again on the chain now. */
+    undecide(id, why = 'the chain under its outcome changed') {
+      const from = stateOf(held.get(id));
+      return (from === S.PASSED || from === S.FAILED) && transition(id, from, S.COUNTING, { why });
     },
-    /** A REORG BELOW ITS DECISION (ballot-tally.js): the outcome is taken back, and the proposal is counted again on the chain now. */
-    undecide(id) {
-      const had = held.get(id);
-      if (!had || !had.decided) return false;
-      const { decided, ...rest } = had;
-      held.set(id, { ...rest, undecided: { at: decided.decidedAt, was: decided.passed ? 'PASSED' : 'FAILED' } }); save();
-      return true;
+    /** ITS PUBLICATION BLOCK LEFT THE CHAIN (ballot-tally.js): kept with its bytes and its old outcome, counted for nothing, never deleted. */
+    orphan(id, { at = null, why = 'its publication block left this chain' } = {}) {
+      if (!held.has(id)) return false;
+      const from = stateOf(held.get(id));
+      return from !== S.ORPHANED && transition(id, from, S.ORPHANED, { at, why });
     },
-    /** ITS PUBLICATION LEFT THE CHAIN (ballot-tally.js): not kept any more - posted again, it is taken again, from its new block. */
-    forget(id) {
-      if (!held.delete(id)) return false;
-      if (store && store.remove) store.remove(id);
-      save();
-      return true;
+    /** ITS PUBLICATION BLOCK IS ON THIS CHAIN AGAIN (ballot-tally.js): ORPHANED -> COUNTING, from the same record. */
+    restore: (id, { at = null, why = 'its publication block is on this chain again' } = {}) => transition(id, S.ORPHANED, S.COUNTING, { at, why }),
+    /**
+     * THE PEER PULL (server.js: GET /proposals of the census seats): each record a peer keeps is checked by add, as if posted
+     * here - nothing a peer says is taken on trust. Answers how many were taken.
+     */
+    async pull(records) {
+      let took = 0;
+      for (const r of (Array.isArray(records) ? records : []).slice(0, 256)) {
+        if (!r || typeof r.proposal !== 'string' || typeof r.blockHash !== 'string') continue;
+        const mine = typeof r.id === 'string' ? held.get(r.id.toLowerCase()) : null;
+        if (mine && stateOf(mine) !== S.ORPHANED) continue;             // kept and counted here: nothing to learn
+        try { const got = await api.add({ proposal: r.proposal, blockHash: r.blockHash }); if (got.ok && got.status === 201) took++; } catch { /* not one */ }
+      }
+      return took;
     },
   };
+  return api;
 }

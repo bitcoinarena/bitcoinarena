@@ -1,0 +1,19 @@
+{
+  "label": "2026.1.9.26",
+  "commit": "650581bd6",
+  "plays": 10,
+  "seconds": 2239.84,
+  "cpuSeconds": 1639.27,
+  "cpuPerPlay": 163.93,
+  "cores": 0.73,
+  "cpuByProgram": {
+    "fedimintd": 1056.06,
+    "node": 529.83,
+    "gatewayd": 44.2,
+    "bitcoind": 6.59,
+    "lnd": 2.59
+  },
+  "rssMaxMb": 5836.5,
+  "diskGrowthMb": 176.21,
+  "diskPerPlayMb": 17.62
+}

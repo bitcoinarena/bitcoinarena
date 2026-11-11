@@ -167,11 +167,16 @@ export function backupPostDue({ nowMs, slot, rank, posted, postedPrimary = false
 }
 /**
  * WHICH ROUNDS OF ONE WINDOW ARE PLAYED (the rule above), from what a seat sees of the rounds of one game, federation and start: `rows`
- * [{ id, backup: bool|null, drawn: bool, entries: n }] -> the Set of ids offered. A row whose role is not known yet (its publication not
- * read) counts as not a backup.
+ * [{ id, backup: bool|null, drawn: bool, entries: n, unseated?: bool }] -> the Set of ids offered. A row whose role is not known yet (its
+ * publication not read) counts as not a backup.
+ *
+ * A PRIMARY WHOSE ENTRY OPENED WITHOUT ITS SEATING CERTIFICATE IS NOT DRAWN FOR THIS RULE (kanban #1119, measured 2026-11-04 10:43Z: primary b3f22953
+ * stood uncertified all window, backup 7ac5dbc0 was seated, and every seat answered the backup played: false). `unseated`: the round's entry has
+ * opened on this seat's clock and this seat holds no certificate of both its roles - then the backup is played, unless the primary is certified after
+ * all before the backup takes an entry.
  */
 export function playedOfWindow(rows) {
-  const primaryDrawn = rows.some((r) => !r.backup && r.drawn);
+  const primaryDrawn = rows.some((r) => !r.backup && r.drawn && !r.unseated);
   const backupTaken = rows.some((r) => r.backup && r.entries > 0);
   const out = new Set();
   for (const r of rows) if (r.backup ? !primaryDrawn || r.entries > 0 : !backupTaken || r.entries > 0) out.add(r.id);

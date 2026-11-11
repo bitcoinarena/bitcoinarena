@@ -25,7 +25,7 @@ import { timed } from './slow.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { resultFrom, signResult, verifiedFinal, runId } from './verdict.js';
 import { stoppedOutcome } from '../../arena-protocol/src/first-mark.js';
-import { noQuorumOutcome as noQuorumRule } from '../../arena-protocol/src/payout.js';
+import { noQuorumOutcome as noQuorumRule, VOID } from '../../arena-protocol/src/payout.js';
 import {
   provesEquivocation, SIGNED_CHECKPOINT_BYTES as SIGNED_MARK_BYTES, splitSigned as splitMark,
   decodeCheckpoint as decodeMark, checkpointId as markIdOf,
@@ -668,10 +668,14 @@ export class Verifier {
   #headToHeadClose(roundIdBytes, contract, found) {
     // AN ENTRY BELOW THE ROUND'S THRESHOLD IS NO MEMBER (§17, kanban #1071): it is not decided, played against or signed for
     const entries = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.entryVoid(entryId));
+    // AND IN A PAYING ROUND ONLY THE ENTRIES BACKED BY A LOCK ARE PLAYED (kanban #1437, audit 8 R3): one with no lock took no seat, is played against
+    // nobody and is signed VOID - its reveal cannot change the seated players' verdicts
+    const seated = new Set((typeof this.round.seatedEntriesOf === 'function' ? this.round.seatedEntriesOf(roundIdBytes, contract.stakeMsat) : entries).map(({ entryId }) => hex(entryId)));
     const decided = (async () => {
       await this.carryReveals(roundIdBytes, entries, found.plugin.manifest.moveCount);
       const held = new Map(this.round.revealsOf(roundIdBytes).map((r) => [hex(r.entryId), r]));
-      const list = entries.map(({ entryId }) => { const r = held.get(hex(entryId)); return { key: hex(entryId), move: r ? r.move : null }; });
+      const list = entries.filter(({ entryId }) => seated.has(hex(entryId)))
+        .map(({ entryId }) => { const r = held.get(hex(entryId)); return { key: hex(entryId), move: r ? r.move : null }; });
       // DECIDED IN THE CORE'S SANDBOX (§0A.6): the moves in as JSON, the verdicts out as JSON
       let box = null;
       try { box = found.core ? sandboxFor(found.core) : null; } catch (e) { throw new Error(`game "${found.plugin.manifest.gameName}"'s decide adapter does not load in its sandbox: ${e.message}`); }
@@ -679,7 +683,7 @@ export class Verifier {
       return { held, results: headToHeadResults(list, (moves, config) => box.call('decide', { moves, config }), found.config, { players: found.plugin.manifest.players }) };
     })();
     return entries.map(({ entryId, entry }) => decided.then(({ held, results }) => {
-      const r = results[hex(entryId)];
+      const r = results[hex(entryId)] || { outcome: VOID, score: 0 };
       const rv = held.get(hex(entryId));
       this.queued.push({ entryId, objected: false });
       console.log(`[h2h] ${hex(roundIdBytes).slice(0, 16)} ${hex(entryId).slice(0, 16)}: ${rv ? `move ${rv.move}` : 'no reveal'} -> ${r.outcome} ${r.score}`);
@@ -758,6 +762,10 @@ export class Verifier {
           const entryId = new Uint8Array(Buffer.from(r.entry, 'hex')), key = new Uint8Array(Buffer.from(r.identity.key, 'hex')), sig = new Uint8Array(Buffer.from(r.identity.sig, 'hex'));
           let good = false;
           try { good = schnorr.verify(sig, matchProofId({ roundId: roundIdBytes, entryId, identityKey: key }), key); } catch { good = false; }
+          // and only the identity the player's name record names, where it is held (kanban #1224)
+          if (good && typeof this.round.namedIdentityOf === 'function') { const named = this.round.namedIdentityOf(roundIdBytes, entry.playerPubkey); if (named && named !== hex(key)) good = false; }
+          // and only one the player consented to at the join, as at the reveal door (audit 5 #1401): none held here, none kept
+          if (good && typeof this.round.consentedIdentityOf === 'function' && this.round.consentedIdentityOf(roundIdBytes, entry.playerPubkey) !== hex(key)) good = false;
           if (good) this.round.putIdentity({ roundId: roundIdBytes, entryId, identity: key, sig });
         }
       }
@@ -1444,6 +1452,13 @@ export class Verifier {
     //     replayed, kept in flight and after, so copies of one bundle share one answer;
     //   - AND IN THE ORDINARY CLASS: a check is not yet an objection, so it does not go ahead of a close. The re-run a held
     //     objection starts is still first (rerun, objected: true).
+    // A CHECK QUEUED OR RUNNING HERE HOLDS ITS ENTRY (kanban #1225, audit 2 #1204 SETTLEMENT-3): a pending objection held the entry SUSPENDED
+    // for 120 s only, but checks of one entry run one at a time - a valid objection behind enough junk bundles (or on a loaded seat) waited past
+    // that, the seat signed FINAL, released P and acked, and the objection was re-dated late. finality.js reads this count: while it is above 0
+    // the pending row holds whatever its age (a restart clears both).
+    const live = this.round.objectionChecks || (this.round.objectionChecks = new Map());
+    const liveKey = hex(entryIdBytes);
+    live.set(liveKey, (live.get(liveKey) || 0) + 1);
     const tail = this.objectionTurns.get(hex(entryIdBytes)) || Promise.resolve();
     let release;
     const turn = new Promise((r) => { release = r; });
@@ -1475,6 +1490,7 @@ export class Verifier {
     } finally {
       release();
       if (this.objectionTurns.get(hex(entryIdBytes)) === mine) this.objectionTurns.delete(hex(entryIdBytes));
+      { const n = (live.get(liveKey) || 1) - 1; if (n > 0) live.set(liveKey, n); else live.delete(liveKey); }
     }
   }
 

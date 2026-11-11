@@ -15,7 +15,7 @@ import { walletOf, coinsOf } from './wallet.js';
 import { testLnd } from './lnd.js';
 import { setUpOwnLnd, lndReady } from './lnd-setup.js';
 import { installProgram } from './service.js';
-import { nodeState, seatConf, LIQUIDITY_PROVIDER_PORT, ownCoreOf } from './state.js';
+import { nodeState, writeSeatConf, LIQUIDITY_PROVIDER_PORT, ownCoreOf } from './state.js';
 
 /** The deposit's fee allowance: the send the custody agent builds (one input or a few, one output and change). */
 export const DEPOSIT_FEE_SATS = 1000;
@@ -74,6 +74,6 @@ export async function addLiquidityOnNode({ home, release, post = false, state = 
     st.save({ custodyAgent: { installedMs: nowMs } });
   }
   const next = st.save({ roles: [...(s.roles || []), 'liquidity'], liquidityAdded: { atMs: nowMs } });
-  st.writeSecret('arena.conf', seatConf({ ...next, port: next.port || (next.reach || {}).port, bridgePort: next.bridgePort }, { home: st.home || home, release }));
+  writeSeatConf(st, { ...next, port: next.port || (next.reach || {}).port, bridgePort: next.bridgePort }, { home: st.home || home, release });
   return { ok: true, plan, done: { roles: next.roles, claimFile: st.path('liquidity-claim.json') } };
 }

@@ -128,3 +128,15 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   if (!r.ok) { console.error(`the apps could not be fetched: ${r.why}`); process.exit(1); }
   console.log(`apps: ${r.fetched.length} placed, ${r.kept.length} already there`);
 }
+
+/**
+ * THE RELEASE'S NEW VERSIONS OF THE APPS A NODE RUNS (kanban #1415): `value` is ARENA_APPS as written (comma-joined registration paths),
+ * `apps` the release's apps (arena-installer apps.js appsIn: { id, registrations: [absolute path] }). Every registration of an app whose
+ * folder `value` already names, and that `value` does not list, is added after the listed ones. Answers { value, added }.
+ */
+export function withReleaseAppVersions(value, apps) {
+  const have = String(value || '').split(',').filter(Boolean);
+  const dir = (f) => String(f).replace(/[\\/][^\\/]*$/, ''), dirs = new Set(have.map(dir));
+  const added = (apps || []).flatMap((a) => a.registrations || []).filter((f) => !have.includes(f) && dirs.has(dir(f)));
+  return { value: [...have, ...added].join(','), added };
+}

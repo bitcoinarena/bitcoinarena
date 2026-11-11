@@ -18,7 +18,7 @@ import { encodePlayerResult, joinSignedResult, resultId } from '../../arena-prot
 import { encodeLobbyName } from '../../arena-protocol/src/lobby-name.js';
 import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { seasonRoundsToJson } from '../../arena-protocol/src/season.js';
+import { seasonRoundsToJson, seasonRoundsFromJson, seasonContractOf, seasonAccountOf } from '../../arena-protocol/src/season.js';
 import { HOSTED, NEXTBLOCK_GAME_ID } from './plugins/hosted.js';
 
 const STAKE = 100000n, FEE = 2000n, DONATION = 2000n, NET = STAKE - FEE - DONATION;
@@ -57,7 +57,7 @@ function writeRound(round, n, players, { stakeMsat = STAKE, startMs, gameId = NE
       db.prepare('INSERT INTO final_sigs (round_id, entry_id, run_id, signer_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)')
         .run(rid, eid, run, SEATS[s], new Uint8Array(1), 3);
     if (p.lock) round.putStakeLock({ entryId: eid, roundId: rid, outpoint: { txid: b32(0xa0 + i), outIdx: 0 }, fields: { amountMsat: String(NET) }, contractId: 'c' });
-    if (p.record) round.putLobbyName({ roundId: rid, playerPubkey: p.key, signature: new Uint8Array(64), atMs: 5,
+    if (p.record) round.putLobbyName({ roundId: rid, playerPubkey: p.key, signature: new Uint8Array(64), identitySig: new Uint8Array(64), atMs: 5,
       record: encodeLobbyName({ roundId: rid, playerPubkey: p.key, identityPubkey: p.record.identity, name: p.record.name || '', atMs: 5 }) });
   });
   if (settlement) {
@@ -170,6 +170,16 @@ test('GET /season-rounds: this seat\'s rounds of a season, every msat a decimal 
     assert.equal(j.roundKeys, true);
     assert.deepEqual(j.rounds.flatMap((x) => x.entries.filter((e) => e.player === toHex(I1)).map((e) => e.roundKey)).sort(),
       [toHex(b32(0x51)), toHex(b32(0x53))], 'the identity\'s two round keys, not the identity');
+    // SIGNED (kanban #1153): every round's contract, its id the round's; this seat's signature over the account of the one round whose
+    // every entry is settled here (round 1) - none over the free round with an entry not FINAL, none over the one not ACCEPTED
+    assert.equal(j.signed, true);
+    const back = seasonRoundsFromJson(j.rounds);
+    assert.ok(back.every((x) => seasonContractOf(x).ok), 'each contract checks by id');
+    const signedOnes = back.filter((x) => x.sigs.length);
+    assert.equal(signedOnes.length, 1);
+    assert.deepEqual(signedOnes[0].sigs.map((s) => s.node), [toHex(d.round.pubkey)]);
+    const acc = seasonAccountOf(signedOnes[0], seasonContractOf(signedOnes[0]).body);
+    assert.equal(schnorr.verify(Buffer.from(signedOnes[0].sigs[0].sig, 'hex'), acc.id, d.round.pubkey), true, 'its signature verifies over the account');
     // the id, and the list of ids a network season asks with, are the same rounds; a list is not taken as a name on /season
     assert.deepEqual((await (await ask(`?game=${toHex(NEXTBLOCK_GAME_ID)}`)).json()).rounds, j.rounds);
     const two = await (await ask(`?game=${toHex(NEXTBLOCK_GAME_ID)},${toHex(b32(0x77))}&days=7`)).json();
@@ -246,16 +256,15 @@ test('GET /season?scope=network: the other seats\' rounds merged, a round counte
   } finally { await d.close(); }
 });
 
-// THE WEEKLY BOARD BADGE READS THE NETWORK: a node with badges on, one free round of the last closed week with
-// three identities in it, and three other seats - two that hand in the same rounds with their round keys, one on a build
-// from before them (no `roundKeys`), which is not counted. Three seats agree (this one and two): the podium is awarded,
-// its evidence naming the week, the place, the 3 seats and the 3 that had to agree.
-test('a real node: the weekly top-3 badge is awarded from the network\'s merged week, a seat without round keys not counted', async () => {
+// THE WEEKLY BOARD BADGE READS THE NETWORK, SIGNED (kanban #1153): a node with badges on, one free round of the last closed week with
+// three identities in it, and three other seats that hand in byte-identical UNSIGNED accounts of it. Before, three that agreed (this
+// one and two) awarded the podium. Now an account counts only when the threshold of the round's own draw signed it: no podium.
+test('a real node: byte-identical unsigned accounts from six seats award no weekly top-3 badge', async () => {
   const { lastClosedWeek } = await import('../../arena-protocol/src/badges.js');
   const { BOARD_GRACE_MS, BOARD_NETWORK_GRACE_MS } = await import('../src/nostr-badges.js');
   const key = (n) => toHex(schnorr.getPublicKey(b32(n)));
   const base = (x) => `http://127.0.0.1:9/seat-${x}`;
-  const peers = ['a', 'b', 'c'].map(base);
+  const peers = ['a', 'b', 'c', 'd', 'e'].map(base);
   const game = toHex(NEXTBLOCK_GAME_ID);
   const answers = new Map();
   const asked = [];
@@ -277,23 +286,22 @@ test('a real node: the weekly top-3 badge is awarded from the network\'s merged 
   const held = seasonRoundsToJson(seasonRounds(pre, { games: new Set([game]), fromMs: week.fromMs, toMs: week.toMs }));
   assert.equal(held.length, 1);
   assert.equal(held[0].entries.length, 3);
-  answers.set(base('a'), { node: key(0xa1), roundKeys: true, rounds: held });
-  answers.set(base('b'), { node: key(0xa2), roundKeys: true, rounds: held });
-  answers.set(base('c'), { node: key(0xa3), rounds: held });          // a build from before the round keys: no `roundKeys`
+  // FIVE OTHER SEATS, each naming a node of its own, every one handing in the same unsigned account: six byte-identical accounts
+  for (const [i, x] of ['a', 'b', 'c', 'd', 'e'].entries()) answers.set(base(x), { node: key(0xa1 + i), roundKeys: true, rounds: held });
   const d = await serve(store, { plugins: HOSTED, port: 0, peers, seasonFetch, ...opts, nostrBadgesOn: true, nostrBadgesTickMs: 100 });
   try {
     const mine = await (await fetch(`http://127.0.0.1:${d.port}/season-rounds?game=${game}&days=14`)).json();
-    assert.deepEqual(mine.rounds, held, 'what the seats hand in is what this node holds');
+    assert.deepEqual(mine.rounds.map(({ contract, sigs, ...r }) => r), held, 'what the seats hand in is what this node holds');
+    assert.equal(mine.signed, true);
+    assert.equal(mine.rounds[0].sigs.length, 1, 'this node signs its own settled account, once');
     const of = async (p) => (await (await fetch(`http://127.0.0.1:${d.port}/badges?player=${toHex(p)}`)).json()).awards;
-    let got = [];
-    for (let i = 0; i < 100 && !got.length; i++) { got = await of(ids[0]); if (!got.length) await new Promise((r) => setTimeout(r, 50)); }
-    const label = new Date(week.fromMs).toISOString().slice(0, 10);
+    for (let i = 0; i < 100 && asked.filter((u) => u.includes(`game=${game}&`)).length < 5; i++) await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 300));
     const places = await Promise.all(ids.map(async (p) => (await of(p)).map((a) => [a.d, a.scope, a.evidence])));
-    assert.deepEqual(places, [1, 2, 3].map((rank) => [['arena-season-top-3', `nextblock@${label}`,
-      { window: { fromMs: week.fromMs, toMs: week.toMs }, rank, seats: 3, agree: 3 }]]), 'seat c (no round keys) is not among the 3');
+    assert.deepEqual(places, [[], [], []], 'six identical unsigned accounts are no signed round: no podium');
     // EVERY SEAT ASKED FOR WHOLE DAYS BACK FROM ITS CLOCK, reaching past the week's start
     const nb = asked.filter((u) => u.includes(`game=${game}&`));
-    assert.ok(nb.length >= 3);
+    assert.ok(nb.length >= 5);
     for (const u of nb) {
       const days = Number(/days=(\d+)$/.exec(u)[1]);
       assert.ok(days * DAY_MS > Date.now() - week.fromMs && days <= 90, u);

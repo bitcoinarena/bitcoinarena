@@ -4,7 +4,9 @@
 // offline note check's parsing, and the client that presents its notes - the federation's validation stubbed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { secp256k1, schnorr } from '@noble/curves/secp256k1.js';
+import { eventMessage } from '../../arena-protocol/src/arbitration-event.js';
+import { toHex } from '../../arena-protocol/src/hash.js';
 import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
 import { notesOfDecoded, fedimintNoteValidator } from '../src/note-validate.js';
 import { serveArbiter } from '../src/arbiter.js';
@@ -16,6 +18,13 @@ const P1 = '02' + '11'.repeat(32), P2 = '02' + '22'.repeat(32);
 const NOTES = { e1: [{ nonce: '02' + 'a1'.repeat(32), amountMsat: 512000n }, { nonce: '02' + 'a2'.repeat(32), amountMsat: 256000n }],
   e2: [{ nonce: '02' + 'b1'.repeat(32), amountMsat: 1024000n }], e3: [{ nonce: '02' + 'a1'.repeat(32), amountMsat: 512000n }],
   e4: [{ nonce: '02' + 'c1'.repeat(32), amountMsat: 128000n }] };
+// THE ARBITRATION SET a client checks the liquidation against (kanban #1148): three keys, two signatures
+const SET = (() => {
+  const secrets = [1, 2, 3].map((n) => new Uint8Array(32).fill(n));
+  const keys = secrets.map((x) => toHex(schnorr.getPublicKey(x)));
+  return { terms: { keys, k: 2 }, verify: (sig, msg, key) => schnorr.verify(sig, msg, key),
+    sign: (event) => ({ event, signatures: secrets.slice(0, 2).map((x, i) => ({ key: keys[i], sig: toHex(schnorr.sign(eventMessage(event), x)) })) }) };
+})();
 const LIQ = { federation: FED, haltHeight: 1000, liquidatesAt: 1010, claimWindowCloses: 1020, lateClaimsUntil: 1100, spentNonces: ['02' + 'c1'.repeat(32)] };
 
 function book({ escrowMsat = 10_000_000n } = {}) {
@@ -94,20 +103,24 @@ test('decoded notes: each nonce is its spend key\'s compressed public key, in ei
   assert.match((await said({ federation_id: FED, ours: true, amount_msat: 4096, valid: true, notes: [n1, n2] })(FED, 'e')).why, /come to 3072 msat/);
 });
 
-test('the client presents its whole wallet once, keeps the e-cash until it is taken, and presents the same string again after a failure', async () => {
+test('the client presents its whole wallet once at the signed door, keeps the e-cash until the set lists it, and presents the same string again after a failure (kanban #1148)', async () => {
   const store = new Map(); const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
   let sends = 0, up = false; const posted = [];
   const walletFor = async () => ({ sendAllEcash: async () => { sends++; return JSON.stringify({ msat: 768000, ecash: 'e1' }); } });
   const fetcher = async (url, o) => { posted.push([url, JSON.parse(o.body).ecash]); if (!up) throw new Error('fetch failed'); return { ok: true, json: async () => ({ accepted: [1, 2], inWindow: true }) }; };
-  const liq = [{ ...LIQ, claims: 'https://arb.example/' }];
-  const first = await presentNotes({ liquidations: liq, held: [FED], walletFor, payoutPk: P1, height: 1012, storage, fetcher });
-  assert.deepEqual([first[0].ok, first[0].kept, store.get(pendingClaimKey(FED))], [false, true, 'e1'], 'kept when the post failed');
+  const signed = (extra = {}) => [SET.sign({ kind: 'liquidation', network: 'regtest', federation: FED, status: 'claims open', halt: { height: 1000, proof: null }, door: 'http://arb.example', firstMs: 1, atMs: 1, ...extra })];
+  const o = { network: 'regtest', arbitration: SET.terms, verify: SET.verify, held: [FED], walletFor, payoutPk: P1, height: 1012, storage, fetcher };
+  const first = await presentNotes({ ...o, events: signed() });
+  assert.deepEqual([first[0].ok, first[0].kept, JSON.parse(store.get(pendingClaimKey(FED))).state, JSON.parse(store.get(pendingClaimKey(FED))).ecash], [false, true, 'kept', 'e1'], 'kept when the post failed');
   up = true;
-  const again = await presentNotes({ liquidations: liq, held: [FED], walletFor, payoutPk: P1, height: 1012, storage, fetcher });
-  assert.deepEqual([again[0].ok, again[0].kept, sends, store.has(pendingClaimKey(FED))], [true, false, 1, false], 'the same string, sent from storage');
-  assert.deepEqual(posted.map((p) => p[0]), ['https://arb.example/liquidation-claims', 'https://arb.example/liquidation-claims']);
-  assert.equal((await presentNotes({ liquidations: liq, held: ['ef'.repeat(32)], walletFor, payoutPk: P1, height: 1012, storage, fetcher })).length, 0, 'a federation this browser holds nothing in');
-  assert.match((await presentNotes({ liquidations: liq, held: [FED], walletFor, payoutPk: P1, height: 1005, storage, fetcher }))[0].why, /claims open at 1010/);
+  const again = await presentNotes({ ...o, events: signed() });
+  assert.deepEqual([again[0].ok, again[0].kept, sends, JSON.parse(store.get(pendingClaimKey(FED))).state], [true, true, 1, 'posted'], 'the same string, sent from storage, and kept: an answer is no receipt');
+  assert.deepEqual(posted.map((p) => p[0]), ['http://arb.example/liquidation-claims', 'http://arb.example/liquidation-claims']);
+  // TAKEN only when the set's signed event lists this payout key as accepted
+  const listed = await presentNotes({ ...o, events: signed({ atMs: 2, claims: { accepted: [{ nonce: 'n1', amountMsat: '768000', height: 1012, payoutPk: P1 }], refused: [], msat: '768000' } }) });
+  assert.deepEqual([listed[0].taken, store.has(pendingClaimKey(FED))], [true, false]);
+  assert.equal((await presentNotes({ ...o, events: signed(), held: ['ef'.repeat(32)] })).length, 0, 'a federation this browser holds nothing in');
+  assert.match((await presentNotes({ ...o, events: signed(), height: 1005 }))[0].why, /claims open at 1010/);
 });
 
 test('the table paid: nothing before the window closes; then the escrow into the safe federation, every note once, a late one by a later pass', async () => {
@@ -176,26 +189,131 @@ test('the claim key comes from the seed per federation; the payouts naming it ar
   finally { await doors.close(); }
 });
 
-test('the client presents its outputs still in issuance too: once, kept until taken, and "claimed before" counts as taken', async () => {
+test('the client presents its outputs still in issuance too: once, at the signed door, kept until the set lists the claim (kanban #1148)', async () => {
   const { presentNotes, pendingRequestsKey } = await import('../../arena-client/src/liquidation-claim.js');
   const store = new Map(); const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
   let asked = 0; const posts = [];
   const walletFor = async () => ({ sendAllEcash: async () => JSON.stringify({ msat: 0, ecash: null }),
     pendingOutputs: async () => { asked++; return JSON.stringify([{ nonce: '02aa', amount_msat: 8192, request: 'r1' }, { nonce: '03bb', amount_msat: 4096, request: 'r2' }]); } });
   let mode = 'down';
-  const fetcher = async (url, o) => { const b = JSON.parse(o.body); posts.push(b); if (mode === 'down') throw new Error('fetch failed');
+  const fetcher = async (url, o) => { const b = JSON.parse(o.body); posts.push([url, b]); if (mode === 'down') throw new Error('fetch failed');
     return mode === 'ok' ? { ok: true, json: async () => ({ accepted: b.pending.map((r) => ({ request: r })) }) }
       : { ok: false, json: async () => ({ refused: b.pending.map(() => ({ why: 'that output was claimed before' })) }) }; };
-  const liq = [{ ...LIQ, claims: 'https://arb.example/' }];
-  const run = () => presentNotes({ liquidations: liq, held: [FED], walletFor, payoutPk: '02' + '11'.repeat(32), height: LIQ.liquidatesAt, storage, fetcher });
+  const PK = '02' + '11'.repeat(32);
+  const ev = (extra = {}) => [SET.sign({ kind: 'liquidation', network: 'regtest', federation: FED, status: 'claims open', halt: { height: 1000, proof: null }, door: 'http://arb.example', firstMs: 1, atMs: 1, ...extra })];
+  const run = (events = ev()) => presentNotes({ events, network: 'regtest', arbitration: SET.terms, verify: SET.verify, held: [FED], walletFor, payoutPk: PK, height: LIQ.liquidatesAt, storage, fetcher });
   const first = (await run()).find((x) => x.pending);
-  assert.equal(first.ok, false); assert.deepEqual(JSON.parse(store.get(pendingRequestsKey(FED))), ['r1', 'r2'], 'kept before it left the page');
+  assert.equal(first.ok, false); assert.deepEqual(JSON.parse(store.get(pendingRequestsKey(FED))).reqs, ['r1', 'r2'], 'kept before it left the page');
   mode = 'ok';
   const second = (await run()).find((x) => x.pending);
-  assert.equal(second.ok, true); assert.equal(store.has(pendingRequestsKey(FED)), false, 'taken: forgotten');
+  assert.equal(second.ok, true); assert.equal(JSON.parse(store.get(pendingRequestsKey(FED))).state, 'posted', 'an answer is no receipt: kept until the set lists it');
   assert.equal(asked, 1, 'the kept requests were presented again, not read again');
-  assert.deepEqual(posts.filter((p) => p.pending).map((p) => p.pending), [['r1', 'r2'], ['r1', 'r2']]);
-  mode = 'refused';
-  const third = (await run()).find((x) => x.pending);
-  assert.equal(third.kept, false, 'claimed before: nothing left to keep');
+  assert.deepEqual(posts.filter((p) => p[1].pending).map((p) => [p[0], p[1].pending]), [['http://arb.example/liquidation-claims', ['r1', 'r2']], ['http://arb.example/liquidation-claims', ['r1', 'r2']]]);
+  await run(ev({ atMs: 2, claims: { accepted: [{ nonce: '02aa', amountMsat: '8192', height: 1010, payoutPk: PK }], refused: [], msat: '8192' } }));
+  assert.equal(store.has(pendingRequestsKey(FED)), false, 'taken: the set listed this key');
+});
+
+// ---- kanban #1174: THE TABLE'S PAYOUTS, ONCE, WHATEVER STOPS ----
+// THE TOOL AS IT IS NOW: a keyed pay submits once per key and answers it again; pay-sent reads it back. `lose` answers are lost after the tool
+// paid (a crash, a timeout); `old` a tool from before #1174 (no key, no pay-sent). The state `v` is reloaded from what keep() wrote, as a restart does
+function liqTool({ lose = 0, old = false, heldMsat = 9_000_000 } = {}) {
+  const pays = [], byKey = new Map();
+  let lost = lose;
+  const rows = (arg) => arg.split(',').map((x, i) => ({ refund_pk: x.split(':')[0], amount_msat: Number(x.split(':')[1]), out_idx: i }));
+  const run = async (args) => {
+    const at = (k) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : null; };
+    if (args[1] === 'pegin-address') return { address: 'tb1qsafe' };
+    if (args[1] === 'pegin-claim') return { balance_before_msat: 0, balance_after_msat: 9_000_000 };
+    if (args[1] === 'balance') return { msat: heldMsat - pays.reduce((a, p) => a + p.msat, 0) };
+    if (args[1] === 'pay-sent') {
+      if (old) return { error: 'no mode pay-sent' };
+      const k = at('--key');
+      return byKey.has(k) ? { mode: 'pay-sent', found: true, txid: byKey.get(k), payouts: rows(at('--payouts')) } : { mode: 'pay-sent', found: false };
+    }
+    if (args[1] === 'pay') {
+      const key = old ? null : at('--key');
+      if (key && byKey.has(key)) return { txid: byKey.get(key), payouts: rows(at('--payouts')), again: true };
+      const txid = `pay${pays.length + 1}`;
+      pays.push({ payouts: at('--payouts'), msat: rows(at('--payouts')).reduce((a, x) => a + x.amount_msat, 0) });
+      if (key) byKey.set(key, txid);
+      if (lost > 0) { lost--; return { error: 'the tool did not answer in 300 s (killed)' }; }
+      return { txid, payouts: rows(at('--payouts')) };
+    }
+    return {};
+  };
+  return { run, pays };
+}
+
+test('kanban #1174: a note batch and the remainder whose tool paid and whose answer was lost are paid once - ASKED on disk first, read back by its key', async () => {
+  const facts = {};
+  // `restart`: every pass starts from what keep() last wrote
+  const passes = ({ b, tool, h, remainderPayees = null, n, start = '{}' }) => {
+    let disk = start, v = {};
+    const keep = () => { disk = JSON.stringify(v); };
+    const said = [];
+    const go = async () => { for (let i = 0; i < n; i++) { v = JSON.parse(disk); const r = await payOutLiquidation({ fid: FED, v, claims: b.claims, height: async () => h(), run: tool.run,
+      spendEscrow: async () => ({ txid: 'escrow-into-safe' }), remainderPayees, keep }); if (r.why) said.push(r.why.replace(/liq-[a-z]+:[0-9a-f]+(:\d+)?/g, '<key>').slice(0, 240)); } return { v: JSON.parse(disk), said: [...new Set(said)], disk }; };
+    return go();
+  };
+  for (const [name, o] of [['notesLost', { lose: 1 }], ['notesOldTool', { lose: 1, old: true }]]) {
+    const b = book(); b.at(1012);
+    await b.claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+    const tool = liqTool(o);
+    const r = await passes({ b, tool, h: () => 1021, n: 3 });   // on this line the notes are paid once the claim window closed
+    facts[name] = { pays: tool.pays.length, paidNonces: (r.v.paidNonces || []).length, payoutsKept: (r.v.payouts || []).length, said: r.said };
+  }
+  // THE REMAINDER: every note paid, the window over, its pay's answer lost
+  {
+    const b = book(); b.at(1012);
+    await b.claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+    const remainderPayees = async (_fid, msat) => [{ key: 'aa'.repeat(32), msat, part: 'reserves' }];
+    let h = 1021;
+    const first = await passes({ b, tool: liqTool(), h: () => h, remainderPayees, n: 1 });
+    b.at(1101); h = 1101;
+    const tool = liqTool({ lose: 1, heldMsat: 9_000_000 - 768_000 });
+    const r = await passes({ b, tool, h: () => h, remainderPayees, n: 3, start: first.disk });
+    facts.remainderLost = { remainderPays: tool.pays.length, remainderTxid: r.v.remainderTxid || null, said: r.said };
+  }
+  console.log('  MEASURED #1174 liquidation:', JSON.stringify(facts));
+  assert.deepEqual([facts.notesLost.pays, facts.notesLost.paidNonces, facts.notesLost.payoutsKept], [1, 2, 1], 'a lost answer paid the notes again');
+  assert.equal(facts.notesOldTool.pays, 1, 'a tool that cannot read a key back paid the notes again');
+  assert.ok(facts.notesOldTool.said.some((x) => /held, never paid twice/.test(x)), JSON.stringify(facts.notesOldTool.said));
+  assert.deepEqual([facts.remainderLost.remainderPays, !!facts.remainderLost.remainderTxid], [1, true], 'a lost answer paid the remainder again');
+});
+
+test('kanban #1232: an escrow spend whose answer was lost is recorded first and taken by the next pass - the escrow spent once, the peg-in still claimed', async () => {
+  const b = book(); b.at(1012);
+  await b.claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+  const runs = []; let v = {}; let spent = 0; let disk = '{}';
+  const run = async (args) => { runs.push(args[1]);
+    if (args[1] === 'pegin-address') return { address: 'tb1qsafe' };
+    if (args[1] === 'pegin-claim') return { balance_before_msat: 0, balance_after_msat: 9_000_000 };
+    if (args[1] === 'pay') return { txid: `pay${runs.length}`, payouts: args[3].split(',').map((x, i) => ({ refund_pk: x.split(':')[0], amount_msat: Number(x.split(':')[1]), out_idx: i })) };
+    return {}; };
+  // the broadcast went out and its answer was lost (bitcoind restarted, the unit stopped): only what was kept before it is on disk
+  const lost = async (addr, record) => { spent++; record({ txid: 'escrow-into-safe', hex: '02ab', input: { txid: 'cd'.repeat(32), vout: 1 }, sats: '10000' }); throw new Error('socket hang up'); };
+  const again = async () => { spent++; return { why: 'the escrow output is spent or unknown' }; };
+  const resumed = [];
+  const keep = () => { disk = JSON.stringify(v); };
+  const pass = (spendEscrow) => { v = JSON.parse(disk); return payOutLiquidation({ fid: FED, v, claims: b.claims, height: async () => 1021, run, spendEscrow, keep,
+    resume: async (i) => { resumed.push(i.txid); return { ok: true, inferred: true }; } }); };
+  await assert.rejects(pass(lost), /socket hang up/);
+  assert.equal(JSON.parse(disk).escrowIntent.txid, 'escrow-into-safe', 'kept before the broadcast');
+  const second = await pass(again);
+  console.log('  MEASURED #1232 liquidation:', JSON.stringify({ spent, resumed, escrowTxid: v.escrowTxid, intentLeft: !!v.escrowIntent, paid: second.paid, claimedMsat: v.claimedMsat }));
+  assert.deepEqual([spent, resumed, v.escrowTxid, v.pegInAddress, v.escrowIntent, v.claimedMsat], [1, ['escrow-into-safe'], 'escrow-into-safe', 'tb1qsafe', undefined, '9000000']);
+});
+
+test('kanban #1237: the client is told a taken claim waits for the federation\'s spent set', async () => {
+  const store = new Map(); const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
+  const walletFor = async () => ({ sendAllEcash: async () => JSON.stringify({ msat: 768000, ecash: 'e1' }) });
+  const answer = (spentSetPublished) => async () => ({ ok: true, json: async () => ({ accepted: [1, 2], inWindow: true, spentSetPublished }) });
+  const events = [SET.sign({ kind: 'liquidation', network: 'regtest', federation: FED, status: 'claims open', halt: { height: 1000, proof: null }, door: 'http://arb.example', firstMs: 1, atMs: 1 })];
+  const o = { network: 'regtest', arbitration: SET.terms, verify: SET.verify, held: [FED], walletFor, payoutPk: P1, height: 1012, storage, events };
+  const waits = await presentNotes({ ...o, fetcher: answer(false) });
+  store.clear();
+  const stands = await presentNotes({ ...o, fetcher: answer(true) });
+  console.log('  MEASURED #1237 client:', JSON.stringify({ noSet: waits[0].waitsForSpentSet || false, withSet: stands[0].waitsForSpentSet || false }));
+  assert.equal(waits[0].ok, true); assert.equal(waits[0].waitsForSpentSet, true);
+  assert.equal(stands[0].waitsForSpentSet, undefined);
 });

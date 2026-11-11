@@ -57,12 +57,21 @@ export function lowestLiveGateway(listed) {
  * the payout it rebuilt (`payoutMsat`), the gateways it sees, the federation height it reads, and the LNURL
  * metadata it fetched from the address itself.
  *
+ * AND WHO IT PAYS (kanban #1154): the amount and the description hash are public - anyone mints an invoice of their own that has both,
+ * and a plan carrying it once redirected a donation share to whoever posted it. So the checker fetches an invoice of its own from the
+ * address's callback, for the same amount, and the plan's invoice must be signed by the same node key (`payee`, that invoice's,
+ * read by `payeeOf`). A plan whose payee is not checked does not stand.
+ *
  * @param plan      { invoice, paymentHash, gatewayUrl, gatewayPk, expiration }
  * @param gateways  this node's `gateways()` list (with sendFeeDefault and the expiration deltas)
+ * @param payee     hex node key of the invoice THIS checker fetched from the address for the same amount
+ * @param payeeOf   (invoice) => hex node key its signature recovers to (bolt11.js `invoicePayee` with the caller's curve); throws if none
  * @returns {{ ok: true, invoiceMsat: bigint, gateway: object } | { ok: false, why: string }}
  */
-export function sendPlanStands({ plan, payoutMsat, gateways, height, metadata, network }) {
+export function sendPlanStands({ plan, payoutMsat, gateways, height, metadata, network, payee, payeeOf }) {
   if (!plan || typeof plan.invoice !== 'string') return refuse('the send plan carries no invoice');
+  if (typeof payee !== 'string' || !payee || typeof payeeOf !== 'function')
+    return refuse('this signer node holds no invoice of its own from that address, so who the plan pays is not checked');
   const gw = lowestLiveGateway(gateways);
   if (!gw) return refuse('this signer node sees no live gateway on the round\'s federation');
   if (String(plan.gatewayUrl) !== String(gw.url))
@@ -75,6 +84,10 @@ export function sendPlanStands({ plan, payoutMsat, gateways, height, metadata, n
   if (!said.ok) return refuse(`the invoice does not stand: ${said.why}`);
   if (toHex(said.paymentHash) !== String(plan.paymentHash).toLowerCase())
     return refuse('the plan\'s payment hash is not the invoice\'s');
+  let signer;
+  try { signer = String(payeeOf(plan.invoice)).toLowerCase(); } catch (e) { return refuse(`the plan's invoice names no payee: ${e.message}`); }
+  if (signer !== String(payee).toLowerCase())
+    return refuse(`the plan's invoice pays node ${signer.slice(0, 16)}, and the address's own callback answers this signer node with invoices of node ${String(payee).toLowerCase().slice(0, 16)}`);
   const min = BigInt(height) + BigInt(gw.expirationDeltaMinimum);
   const max = BigInt(height) + BigInt(gw.expirationDeltaDefault) + 36n;
   const exp = BigInt(plan.expiration);

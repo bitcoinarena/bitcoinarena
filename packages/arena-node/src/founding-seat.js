@@ -27,7 +27,7 @@ import { departureStands } from '../../arena-protocol/src/absence.js';
 import { statusFor } from '../../arena-protocol/src/federation-record.js';
 import { createFounding } from './founding.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 
 const opOf = (e) => String((e && e.advert && e.advert.operatorId) || toHex(e.pubkey));
 const lower = (x) => String(x || '').toLowerCase();
@@ -148,11 +148,49 @@ export function execCli(execFileCb, bin, args, { timeout = 120000 } = {}) {
 }
 
 /**
+ * WHAT THIS NODE'S GUARDIAN IS, AS READ (kanban #1177): three answers from its setup API, and a fourth only the node itself can verify.
+ *   RUNNING  its federation runs (the setup API says ConsensusIsRunning) - or its directory holds a federation's key files, whatever the API says
+ *   SETUP    the setup API answers a setup state (AwaitingLocalParams, SharingConnectionCodes, ...)
+ *   DOWN     no federation key in its directory and its process verified gone (the node's own word, node-start.js guardianControl.local)
+ *   UNKNOWN  anything else: no answer, an error, a timeout. Nothing is set aside on an unknown reading.
+ */
+export const GUARDIAN = Object.freeze({ RUNNING: 'running', SETUP: 'setup', DOWN: 'down', UNKNOWN: 'unknown' });
+
+/**
+ * THE ONE STEP OF A FRESH SETUP (kanban #1177): whether this node's guardian is set aside and started again in a fresh setup for a founding
+ * that names it. `named` the draw seats it or names it an alternate; `reading` GUARDIAN; `tried` a fresh setup was already asked for this
+ * founding (kept on disk). Answers { act: 'fresh' | 'wait' | 'leave', why }. Only a verified DOWN starts one; UNKNOWN waits and asks again.
+ */
+export function freshSetupStep({ named, reading, tried }) {
+  if (!named) return { act: 'leave', why: 'not named in this draw' };
+  if (tried) return { act: 'leave', why: 'its guardian was already started again in a fresh setup for this founding' };
+  if (reading === GUARDIAN.RUNNING) return { act: 'leave', why: 'its guardian runs a federation (or holds its key): never set aside' };
+  if (reading === GUARDIAN.SETUP) return { act: 'leave', why: 'its guardian waits in setup: it takes part as it is' };
+  if (reading === GUARDIAN.DOWN) return { act: 'fresh', why: 'its guardian holds no federation key and is not running: started again in a fresh setup' };
+  return { act: 'wait', why: 'its guardian\'s state is not known (no answer from its setup API): nothing is set aside on an unknown reading; asked again on the next tick' };
+}
+
+/** THE FOUNDINGS A FRESH SETUP WAS ASKED FOR, KEPT IN A FILE (kanban #1177): `add` writes it before the guardian is touched, and throws if it cannot. */
+export function fileKeySet(file) {
+  let keys = null;
+  const load = () => { if (keys) return keys; try { const j = JSON.parse(readFileSync(file, 'utf8')); keys = new Set(Array.isArray(j) ? j.map(String) : []); } catch { keys = new Set(); } return keys; };
+  return {
+    has: (k) => load().has(String(k)),
+    add: (k) => {
+      const next = new Set(load()); next.add(String(k));
+      const tmp = `${file}.tmp`;
+      writeFileSync(tmp, JSON.stringify([...next].slice(-256)), { mode: 0o600 }); renameSync(tmp, file);
+      keys = next;
+    },
+  };
+}
+
+/**
  * The guardian's setup, through the stock CLI: `run(args)` runs fedimint-cli and answers its stdout. The code is the
  * set-local-params output without its JSON quotes. `codeFile` (beside the guardian's data) keeps the code this node posted and its
  * founding id, so a node started again posts that same code (founding.js postOwn).
  */
-export function cliSetup({ run, apiPort, password, guardianName, freshSetup = null, codeFile = null }) {
+export function cliSetup({ run, apiPort, password, guardianName, freshSetup = null, codeFile = null, local = null }) {
   const setup = (...a) => run(['--password', password, 'admin', 'setup', `ws://127.0.0.1:${apiPort}`, ...a]);
   const unq = (s) => String(s).trim().replace(/^"|"$/g, '');
   return {
@@ -173,6 +211,14 @@ export function cliSetup({ run, apiPort, password, guardianName, freshSetup = nu
     inSetup: async () => { try { const st = unq(await setup('status')); return !!st && st !== 'ConsensusIsRunning'; } catch { return false; } },
     // THE FEDERATION RUNS (§23A.2: the founding is void only "if the window passes without a federation"): its DKG done, consensus running
     done: async () => { try { return unq(await setup('status')) === 'ConsensusIsRunning'; } catch { return false; } },
+    // ITS STATE AS ONE OF GUARDIAN (kanban #1177): `local()` the node's own word { keyed, alive } - a held federation key is RUNNING whatever
+    // the API says; an API that does not answer is DOWN only when the node verified the process gone, else UNKNOWN
+    status: async () => {
+      let l = null; try { l = local ? await local() : null; } catch { l = null; }
+      if (l && l.keyed === true) return GUARDIAN.RUNNING;
+      let st; try { st = unq(await setup('status')); } catch { return l && l.alive === false ? GUARDIAN.DOWN : GUARDIAN.UNKNOWN; }
+      return st === 'ConsensusIsRunning' ? GUARDIAN.RUNNING : st ? GUARDIAN.SETUP : GUARDIAN.UNKNOWN;
+    },
   };
 }
 
@@ -186,14 +232,17 @@ export function cliSetup({ run, apiPort, password, guardianName, freshSetup = nu
  * records, except })` the operators guarding an OPEN federation (by default guardingOpenOf over the census and the held records).
  */
 export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = null, notices = () => [], emergencies = () => [], next = null, nominal,
-  bondMinGuardian, clocks, ownKey, sign, verify, post = async () => {}, postTo = null, peers = () => [], fetchJson = null, endpointOf = (e) => e.advert.endpoint, say = () => {}, keep = 4096 }) {
+  bondMinGuardian, clocks, ownKey, sign, verify, post = async () => {}, postTo = null, peers = () => [], fetchJson = null, endpointOf = (e) => e.advert.endpoint, say = () => {}, keep = 4096,
+  freshTried = null }) {
   let current = null;                        // { key, founding }
   // HOW FAR BACK A SEAT'S FIRST TICK READS THE RUN OF FREE OPERATORS: a cohort draws at the newest multiple of founding_window + 1 below
   // the tip once its run began at or before it, so two steps and one block decide the same height on every seat (kanban #577, measured
   // 2026-10-22 21:30Z: reading back 288 heights - each a census from the chain - held a restarted installer out of the draw for 15 min+)
   const LOOKBACK = clocks && Number.isInteger(clocks.foundingWindow) && clocks.foundingWindow > 0 ? 2 * (clocks.foundingWindow + 1) + 1 : 288;
   const voided = new Set();                  // keys of foundings whose window passed without a federation: the next trigger draws again
-  const freshTried = new Set();              // keys of foundings for which this node's guardian was started again in a fresh setup
+  // keys of foundings for which this node's guardian was started again in a fresh setup: kept on disk when the seat hands a store (kanban #1177,
+  // server.js fileKeySet beside the guardian's directory), so a restarted seat never sets the same guardian aside twice for one founding
+  const tried = freshTried && typeof freshTried.has === 'function' && typeof freshTried.add === 'function' ? freshTried : new Set();
   // THE HISTORY THE GENESIS AND LOAD TRIGGERS READ (§23A.2), one row per chain height this seat ticked at:
   //   capable  { height, operators }: the distinct operators of guardian-capable census nodes with an endpoint (the draw's own rule)
   //   loads    { height, federations: [{ federation, status, load }] }: every held record's status and load (reserve over exposure cap)
@@ -283,7 +332,8 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     // 2026-10-22 on founding a27706f2: n495-1/2's guardians were started again in a fresh setup, asked at once - before fedimintd's
     // setup API answered - and the founding was kept with no guardian; both seated, both no-shows while their guardians waited in
     // setup). The codes taken so far are read again from the drawn seats on this tick.
-    if (!current || current.key !== key || (!current.via && await guardianInSetup())) {
+    // ... and a draw whose fresh setup waited on an unknown reading of the guardian is read again (kanban #1177)
+    if (!current || current.key !== key || (!current.via && (current.freshWait || await guardianInSetup()))) {
       const seed = await beaconAt(t.height + 1);
       if (!seed) return { ok: false, why: `the beacon after ${t.height} is not in this seat's chain yet (tip ${h})` };
       const entries = await entriesAt(t.height);
@@ -300,23 +350,32 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       // founding 53be35a3's peers, and after 5716ac58's checksum failure the guardians had exited - neither in setup, so these nodes,
       // seated, posted no code): named in this draw, seated or an alternate, with no guardian in setup and none running a federation, the
       // node starts its guardian again in a fresh setup (its old setup kept beside it), once per founding
-      if (!use && setup && typeof setup.freshSetup === 'function' && !freshTried.has(key)) {
+      // NEVER ON AN UNKNOWN READING (kanban #1177): a node that started in setup and finished its DKG in this process, its setup API timing out
+      // once, was read "not running" and its live guardian's database was set aside. Now only a verified DOWN (GUARDIAN) starts one, the
+      // founding is written as tried before the guardian is touched, and node-start.js checks the key files once more before it moves anything
+      let freshWait = false;
+      if (!use && setup && typeof setup.freshSetup === 'function' && !tried.has(key)) {
         const probe = createFounding({ seed, triggerHeight: t.height, entries, nominal: Number.isInteger(t.nominal) && t.nominal > 0 ? t.nominal : nominal, bondMinGuardian,
           guardingOpen: out, seatedFirst, foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: null });
         const ps = probe.state(), me = toHex(ownKey);
         const named = (ps.seated || []).some((x) => String(x.node || x).toLowerCase() === me) || (ps.alternates || []).some((x) => String(x).toLowerCase() === me);
-        let running = false; try { running = typeof setup.done === 'function' && await setup.done(); } catch { running = false; }
-        if (named && !running) {
-          freshTried.add(key);
-          let r; try { r = await setup.freshSetup(); } catch (e) { r = { ok: false, why: e.message }; }
-          say({ founding: probe.id.slice(0, 16), freshSetup: r.ok ? 'the guardian was not in setup: started again in a fresh setup (its old setup kept)' : r.why });
-          if (r.ok && await guardianInSetup()) { use = setup; via = 'guardian'; }
+        let reading = GUARDIAN.UNKNOWN;
+        if (named) { try { reading = typeof setup.status === 'function' ? await setup.status() : GUARDIAN.UNKNOWN; } catch { reading = GUARDIAN.UNKNOWN; } }
+        const step = freshSetupStep({ named, reading, tried: false });
+        if (step.act === 'wait') { freshWait = true; say({ founding: probe.id.slice(0, 16), freshSetup: step.why }); }
+        if (step.act === 'fresh') {
+          let kept = false; try { tried.add(key); kept = true; } catch (e) { say({ founding: probe.id.slice(0, 16), freshSetup: `not started: the founding could not be kept as tried (${e.message})` }); }
+          if (kept) {
+            let r; try { r = await setup.freshSetup(); } catch (e) { r = { ok: false, why: e.message }; }
+            say({ founding: probe.id.slice(0, 16), freshSetup: r.ok ? 'the guardian was not running and held no federation key: started again in a fresh setup (its old setup kept)' : r.why });
+            if (r.ok && await guardianInSetup()) { use = setup; via = 'guardian'; }
+          }
         }
       }
       // A SUCCESSOR HAS ITS PREDECESSOR'S SIZE: the held record's nominal (federation B: 7) - genesis's federation_nominal
       // is 4 on testnet4 and regtest, and B's successor drawn at 4 would seat four of B and draw nobody
       const size = Number.isInteger(t.nominal) && t.nominal > 0 ? t.nominal : nominal;
-      current = { key, trigger: t, via, entries, founding: createFounding({ seed, triggerHeight: t.height, entries, nominal: size, bondMinGuardian, guardingOpen: out, seatedFirst,
+      current = { key, trigger: t, via, freshWait, entries, founding: createFounding({ seed, triggerHeight: t.height, entries, nominal: size, bondMinGuardian, guardingOpen: out, seatedFirst,
         foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: use, post, say }) };
       say({ founding: current.founding.id.slice(0, 16), trigger: t.kind, height: t.height, why: t.why, nominal: size, seatedFirst: seatedFirst.length,
         leftOut: [...out], takesPart: !!use, via });
@@ -325,10 +384,21 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     // endpoints (kanban #495, measured 2026-10-21 on the 10-node cohort 8fbeab5e at 157,174: the seven new seats hold no round, so
     // peers() - the configured seats and the newest held round's census - never named one another; each seat held only its own code
     // and every draw went void, "more no-shows than alternates")
+    // ... AND WHETHER THE FEDERATION RUNS, counted only from a seated node's own seat at its census endpoint (kanban #1161): founding.js
+    // runs it once a threshold of the seated say so; a root that is no drawn node's, or answers in another node's name, counts nothing
+    const rootNode = new Map();
+    for (const e of current.entries || []) {
+      let u = null; try { u = e && e.advert ? endpointOf(e) : null; } catch { u = null; }
+      if (u) rootNode.set(String(u).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''), toHex(e.pubkey));
+    }
     if (fetchJson) for (const root of [...new Set([...peers(), ...drawnRoots()])]) {
       try {
         const s = await fetchJson(`${root}/founding`);
-        if (s && s.id === current.founding.id) { current.founding.takeAll(s.codes); if (s.federation === true) current.founding.federationSeen(); }
+        if (s && s.id === current.founding.id) {
+          current.founding.takeAll(s.codes);
+          const node = rootNode.get(String(root).replace(/\/+$/, ''));
+          if (s.federation === true && node && (!s.node || lower(s.node) === node)) current.founding.federationSeen(node);
+        }
       } catch { /* the next tick */ }
     }
     const st = await current.founding.advance(h);
@@ -389,6 +459,8 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     membersCache = { atMs: nowMs, value };
     return value;
   }
-  return { tick: async () => (lastTick = await tick()), readiness, members, take: (m) => (current ? current.founding.take(m) : { ok: false, status: 404, why: 'no founding runs' }),
+  /** The node keys (hex) the founding in progress seats, for the P2P tunnels' port rule (kanban #1358): none when no founding runs. */
+  const seatedKeys = () => { try { const st = current && current.founding.state ? current.founding.state() : null; return st && !st.void && !st.federation ? st.seated.map((x) => x.node) : []; } catch { return []; } };
+  return { tick: async () => (lastTick = await tick()), readiness, members, seatedKeys, take: (m) => (current ? current.founding.take(m) : { ok: false, status: 404, why: 'no founding runs' }),
     state: () => (current ? { trigger: current.trigger, via: current.via, ...current.founding.state() } : null) };
 }

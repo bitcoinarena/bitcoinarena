@@ -198,3 +198,48 @@ test('a connection reset while its tunnel is still opening ends that connection,
   assert.deepEqual(thrown.map((e) => e.code), [], 'nothing thrown');
   assert.equal(terminated, 1, 'the opening websocket was closed with it');
 });
+
+// KANBAN #1226 (audit 2 #1204 INSTALLER-DOORS-7): a port is the node key's hash mod 10,000, and the last census entry on a port won - a key
+// ground to a guardian's port (about 10,000 tries), bonded, took that guardian's P2P route on every seat. Now a node a held federation record
+// names as a guardian keeps its port against one no record names, in either census order.
+test('#1226 two keys on one port: the record-named guardian keeps it, whichever comes last in the census', async () => {
+  const { randomBytes } = await import('node:crypto');
+  const seen = new Map(); let pair = null;
+  while (!pair) { const k = randomBytes(32).toString('hex'); const p = p2pTunnelPort(k, 'guardian'); if (seen.has(p) && seen.get(p) !== k) pair = [seen.get(p), k, p]; else seen.set(p, k); }
+  const [guardianKey, attacker, port] = pair;
+  const entryOf = (k, root) => ({ pubkey: Buffer.from(k, 'hex'), advert: { guardianCapable: true, endpoint: root } });
+  for (const order of ['attacker last', 'attacker first']) {
+    const t = createP2pTunnels({ ownKey: 'ee'.repeat(32), say: () => {} });
+    try {
+      const g = entryOf(guardianKey, 'wss://guardian.example'), a = entryOf(attacker, 'wss://attacker.example');
+      t.sync(order === 'attacker last' ? [g, a] : [a, g], { prefer: (k) => k === guardianKey });
+      const row = t.state().find((r) => r.port === port);
+      assert.equal(row && row.node, guardianKey, `${order}: the port went to the key no record names`);
+    } finally { t.close(); }
+  }
+});
+
+// KANBAN #1358 (audit 4 fixesA-7): during a founding no federation record names its guardians, so `prefer` was false for both keys and the later
+// census entry took the port - a bonded key ground onto a founding guardian's port hung the founding's DKG on every seat. A founding's seated
+// guardian is now preferred (server.js adds foundingSeat.seatedKeys()), and between keys equally preferred the older bond keeps the port.
+test('#1257 a founding guardian keeps its port', async () => {
+  const { randomBytes } = await import('node:crypto');
+  const seen = new Map(); let pair = null;
+  while (!pair) { const k = randomBytes(32).toString('hex'); const p = p2pTunnelPort(k, 'guardian'); if (seen.has(p) && seen.get(p) !== k) pair = [seen.get(p), k, p]; else seen.set(p, k); }
+  const [founder, attacker, port] = pair;
+  const entryOf = (k, root, height) => ({ pubkey: Buffer.from(k, 'hex'), height, advert: { guardianCapable: true, endpoint: root } });
+  const got = {};
+  for (const [name, prefer] of [['founding seats the founder', (k) => k === founder], ['nobody preferred', () => false]]) {
+    for (const order of ['attacker last', 'attacker first']) {
+      const t = createP2pTunnels({ ownKey: 'ee'.repeat(32), say: () => {} });
+      try {
+        const g = entryOf(founder, 'wss://founder.example', 1000), a = entryOf(attacker, 'wss://attacker.example', 1200);
+        t.sync(order === 'attacker last' ? [g, a] : [a, g], { prefer });
+        const row = t.state().find((r) => r.port === port);
+        got[`${name}, ${order}`] = row && row.node === founder ? 'founder' : 'attacker';
+      } finally { t.close(); }
+    }
+  }
+  console.log('  MEASURED #1358 port owner:', JSON.stringify(got));
+  for (const [k, v] of Object.entries(got)) assert.equal(v, 'founder', k);
+});
