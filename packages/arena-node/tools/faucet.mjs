@@ -27,7 +27,7 @@ import { timingSafeEqual, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
-import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks } from '../src/feedback-store.js';
+import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressInvoice } from '../src/feedback-store.js';
 const LN_ASKS = new Map();   // ip -> times it asked GET /feedback/lnaddress (kanban #1342)
 import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync, statfsSync } from 'node:fs';
 import { PLAYER_GRANTS } from '../src/faucet.js';
@@ -392,7 +392,7 @@ createServer((req, res) => {
     if (!isAdmin(req)) return send(403, { ok: false, why: 'not the admin code' });
     const q = new URL(req.url, 'http://x').searchParams;
     const withReward = (r, ours) => { const w = FEEDBACK.rewards({ pubkey: r.pubkey }).find((x) => x.report === r.id);
-      return { ...r, ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), rounds: PLAYED.history ? PLAYED.history(r.pubkey) : null, nodeBounty: FEEDBACK.nodeBountyFor(r), reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
+      return { ...r, lnAddress: FEEDBACK.addressOf(r.id), ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), rounds: PLAYED.history ? PLAYED.history(r.pubkey) : null, nodeBounty: FEEDBACK.nodeBountyFor(r), reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
     if (path === '/feedback/admin/list' && req.method === 'GET') {
       PLAYED.fresh().catch(() => 0).then(() => { const ours = ourKeys();
         send(200, { ok: true, reports: FEEDBACK.list({ state: q.get('state'), type: q.get('type'), game: q.get('game'), pubkey: q.get('pubkey'), source: q.get('source') }).map((r) => withReward(r, ours)), budget: { ...FEEDBACK.budget({ rules: RULES }), network: BOUNTY_NETWORK },   // the payout network, for the admin's wording (kanban #1450)
@@ -449,8 +449,15 @@ createServer((req, res) => {
         }
         if (b.action === 'reject') return send(200, FEEDBACK.move(b.id, 'rejected', { reason: b.reason, by }));
         if (b.action === 'duplicate') return send(200, FEEDBACK.move(b.id, 'duplicate', { duplicateOf: b.of, by }));
-        if (b.action === 'reward') { const w = FEEDBACK.createReward(b.id, { network: BOUNTY_NETWORK, by });
-          return send(200, w.ok ? { ...w, lnurl: FEEDBACK.lnurlOf(w.reward.k1, { base: PUBLIC_BASE }) } : w); }
+        if (b.action === 'reward') { const w = FEEDBACK.createReward(b.id, { network: BOUNTY_NETWORK, comment: b.comment ?? null, by });
+          if (!w.ok) return send(200, w);
+          const lnurl = FEEDBACK.lnurlOf(w.reward.k1, { base: PUBLIC_BASE });
+          // STRAIGHT TO THE REPORT'S LIGHTNING ADDRESS, WITH THE COMMENT (kanban #1474): when it names one and the admin did not ask for the link only; the
+          // withdraw link stays the fallback (a wallet that gives no invoice, a failed route) and is answered too
+          if (b.payTo === 'link' || !FEEDBACK.addressOf(b.id) || w.reward.state !== 'open') return send(200, { ...w, lnurl, address: FEEDBACK.addressOf(b.id) });
+          if (!BOUNTY_PAYER || !bountyOn()) return send(200, { ...w, lnurl, paid: { ok: false, why: 'rewards are off' } });
+          return one(() => FEEDBACK.payToAddress(w.reward.k1, { invoiceFor: (a, sats, c) => lnAddressInvoice(a, sats, c), decode: bountyDecode, pay: bountyPay }))
+            .then((paid) => send(200, { ...w, reward: paid.reward || w.reward, lnurl: paid.ok ? null : lnurl, paid }), (e) => send(200, { ...w, lnurl, paid: { ok: false, why: e.message } })); }
         if (b.action === 'note') return send(200, FEEDBACK.note(b.id, { ticket: b.ticket, severity: b.severity, by }));
         return send(400, { ok: false, why: 'an action is approve, reject, duplicate, reward or note' });
       }).catch(() => send(500, { ok: false, why: 'try again' })));
@@ -548,7 +555,7 @@ createServer((req, res) => {
       if (m.ok && !(bountyOn() && BOUNTY_ORIGINS.includes(String(req.headers.origin || '')))) return send(200, { ...m, reports: m.reports.map((r) => ({ ...r, amountSats: null, reward: null })) });
       if (m.ok) { const byReport = new Map(FEEDBACK.rewards({ pubkey: m.pubkey }).map((w) => [w.report, w]));
         return send(200, { ...m, reports: m.reports.map((r) => { const w = byReport.get(r.id);
-          return { ...r, reward: w ? { sats: w.amountSats, network: w.network, state: w.state, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }) } : null }; }) }); }
+          return { ...r, reward: w ? { sats: w.amountSats, network: w.network, state: w.state, comment: w.comment, address: w.address, paidMs: w.paidMs, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }) } : null }; }) }); }   // comment, address: kanban #1474
       last = m; }
     return send(401, { ok: false, why: last ? last.why : 'that sign-in does not stand' });
   }
