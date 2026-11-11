@@ -1,0 +1,1 @@
+{ "name": "Bitcoin Arena", "short_name": "Bitcoin Arena", "icons": [ { "src": "/img/logo/favicon-192.png", "sizes": "192x192", "type": "image/png" }, { "src": "/img/logo/bitcoin-arena-favicon.svg", "sizes": "any", "type": "image/svg+xml" } ], "theme_color": "#0f0a10", "background_color": "#0f0a10", "display": "browser" }
