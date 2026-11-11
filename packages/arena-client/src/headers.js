@@ -225,6 +225,13 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask
   // blocks deep, so nothing a client decides sits in the split. A provider that leaves it deeper is a fork, refused as before.
   const bestAt = new Map(best.hashes.map((h, i) => [h, i]));
   let cut = best.hashes.length;
+  // ONE FORKING SOURCE IS DROPPED, NOT OBEYED (kanban #1529): a seat answering the real chain cut 13 blocks below the tip plus
+  // headers of its own - mined at the easiest target it claims, so free - refused every join that picked it, although the other
+  // three sources agreed on the chain with the most work. A source that forks off the most-work chain deeper than a tip split is
+  // now set aside by name, and the chain stands only while at least `least` sources (and never fewer than two, the most-work one
+  // among them) still agree on it; with fewer the fork is refused as before: two sources that fork are two of whom one is lying.
+  const forked = [];
+  let firstFork = null;
   for (const a of good) {
     // ANSWERS ABOUT DIFFERENT PARTS OF THE CHAIN used to be told apart from a
     // fork here, and that branch is gone rather than left unreachable: every
@@ -237,14 +244,15 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask
     const stray = a.hashes[i];
     const shared = i > 0 ? bestAt.get(a.hashes[i - 1]) : undefined;
     if (a.hashes.length - i > TIP_SPLIT_BLOCKS || shared === undefined) {
-      return {
-        ok: false,
-        why: `providers ${best.at} and ${a.at} do not agree on the chain: `
-          + `${stray} is not in the one with the most work`,
-      };
+      const why = `providers ${best.at} and ${a.at} do not agree on the chain: `
+        + `${stray} is not in the one with the most work`;
+      if (!firstFork) firstFork = why;
+      forked.push({ at: a.at, why });
+      continue;
     }
     cut = Math.min(cut, shared + 1);
   }
+  if (forked.length && good.length - forked.length < Math.max(least, 2)) return { ok: false, why: firstFork };
 
   return {
     ok: true,
@@ -252,8 +260,8 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask
     headers: best.headers.slice(0, cut),
     work: best.work,
     from: best.at,
-    agreed: good.length,
-    refused: bad.map((b) => `provider ${b.at}: ${b.why}`),
+    agreed: good.length - forked.length,
+    refused: [...bad, ...forked].map((b) => `provider ${b.at}: ${b.why}`),
   };
 }
 
