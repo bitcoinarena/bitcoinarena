@@ -14,6 +14,9 @@ import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 const SIG_BYTES = 64;
+// kanban #1528: what one seat keeps is bounded - every row is re-read and re-checked on each tally
+const MAX_ROWS = 4096;
+const MAX_APPROVALS_PER_PROPOSAL = 256;
 
 /** `db` a better-sqlite3 handle; `knownSets()` the admin key's sets this seat holds; `verifySecp256k1(sig, digest, pubkey)`. */
 export function createDonationBallots({ db, knownSets, verifySecp256k1, log = () => {} }) {
@@ -65,13 +68,24 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
       try { const { body, signature } = split(String(hex || '').toLowerCase()); obj = kind === 'proposal' ? { ...decodeDonationProposal(body), signature } : { ...decodeDonationApproval(body), signature }; }
       catch (e) { return { ok: false, status: 400, why: `that is no donation ${kind}: ${e.message}` }; }
       const digestKey = kind === 'proposal' ? toHex(donationProposalId(obj)) : toHex(obj.proposalId);
-      if (kind === 'approval' && !ballots().has(digestKey)) return { ok: false, status: 404, why: 'this seat holds no such proposal: send the proposal first' };
+      const held = kind === 'approval' ? ballots().get(digestKey) : null;
+      if (kind === 'approval' && !(held && held.proposal)) return { ok: false, status: 404, why: 'this seat holds no such proposal: send the proposal first' };
+      // kanban #1528: kept only when signed by a recipient of a parent set this seat holds (the admin key's, or one approved
+      // before) - before, any self-signed object from a key minted at will was kept for good, answered fresh and so forwarded
+      // to every seat, and re-tallied on every add
+      const parentId = toHex(kind === 'proposal' ? obj.parentSetId : held.proposal.parentSetId);
+      const parent = [...(knownSets() || []), ...approvedSets].find((s) => toHex(donationSetId(s.recipients)) === parentId);
+      if (!parent) return { ok: false, status: 403, why: 'its parent set is not one this seat holds' };
+      const signerHex = toHex(kind === 'proposal' ? obj.proposer : obj.signer);
+      if (!parent.recipients.some((r) => toHex(r.recipientPk) === signerHex)) return { ok: false, status: 403, why: 'its signer is no recipient of the parent set' };
+      if (kind === 'approval' && held.approvals.length >= MAX_APPROVALS_PER_PROPOSAL) return { ok: false, status: 429, why: 'this proposal holds as many approvals as a seat keeps' };
       // the signature now, so nothing unsigned is ever kept or forwarded
       const digest = kind === 'proposal' ? donationProposalId(obj) : donationApprovalDigest(obj);
       const signer = kind === 'proposal' ? obj.proposer : obj.signer;
       if (!(await verifySecp256k1(obj.signature, digest, signer))) return { ok: false, status: 400, why: 'the signature does not verify' };
       const id = toHex(digest);
       if (db.prepare('SELECT 1 FROM donation_ballots WHERE id = ?').get(id)) return { ok: true, fresh: false, id };
+      if (db.prepare('SELECT COUNT(*) AS n FROM donation_ballots').get().n >= MAX_ROWS) return { ok: false, status: 429, why: 'this seat keeps no more ballots' };
       db.prepare('INSERT INTO donation_ballots (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, digestKey, String(hex).toLowerCase(), Date.now());
       await retally();
       return { ok: true, fresh: true, id, proposal: digestKey };

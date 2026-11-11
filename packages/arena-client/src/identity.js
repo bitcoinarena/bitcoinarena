@@ -262,32 +262,67 @@ export async function collectZaps({ storage, keep = storage, random, curve, clie
   let done = [];
   try { done = JSON.parse((keep && keep.getItem(ZAPS_COLLECTED_KEY)) || '[]'); } catch { done = []; }
   const seen = new Set(Array.isArray(done) ? done : []);
+  // kanban #1557: a /donations row is not signed, so one seat answering first with the real outpoint and a changed amountMsat /
+  // playerKey / senderOnContract must not stand for that outpoint. Every distinct version is kept (outpoint -> version -> the seats
+  // that said it; one version per seat and outpoint, so a seat cannot flood an outpoint), and each is tried - most seats first - until
+  // one is collected or reads as spent, as lookOwed keeps every version since #1273.
   const found = new Map();
-  await Promise.all((seats || []).map(async (s) => {
+  const versionOf = (d) => JSON.stringify([String(d.federationId).toLowerCase(), String(d.amountMsat), !!d.senderOnContract, String(d.playerKey || ''), String(d.item || '')]);
+  await Promise.all((seats || []).map(async (s, si) => {
     try {
       const r = await fetcher(`${String(s).replace(/\/$/, '')}/donations?key=${pk}&since=0`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
       if (!r.ok) return;
-      for (const d of ((await r.json()).donations || [])) if (d && d.outpoint && !found.has(d.outpoint)) found.set(d.outpoint, d);
+      for (const d of ((await r.json()).donations || [])) {
+        if (!d || !d.outpoint) continue;
+        let byVersion = found.get(d.outpoint);
+        if (!byVersion) found.set(d.outpoint, byVersion = new Map());
+        if ([...byVersion.values()].some((v) => v.seats.has(si))) continue;
+        const k = versionOf(d);
+        if (!byVersion.has(k)) byVersion.set(k, { d, seats: new Set() });
+        byVersion.get(k).seats.add(si);
+      }
     } catch { /* another seat answers for it */ }
   }));
   const collected = [], spent = [], failed = [], waiting = [];
-  for (const d of found.values()) {
-    if (seen.has(d.outpoint)) continue;
+  const accepted = new Map(); // outpoint -> the version a refund accepted
+  for (const [outpoint, byVersion] of found) {
+    if (seen.has(outpoint)) continue;
+    const versions = [...byVersion.values()].sort((a, b) => b.seats.size - a.seats.size).map((v) => v.d);
+    const tried = [], waits = [];
+    let settled = false;
+    for (const d of versions) {
+      const r = await collectOne(d);
+      if (r === 'waiting') { waits.push(d); continue; }
+      if (r === 'skip') continue;
+      if (r && r.why !== undefined) { tried.push(r); continue; }
+      if (r === 'collected') accepted.set(outpoint, d);
+      seen.add(outpoint);
+      settled = true;
+      break;
+    }
+    if (!settled) { failed.push(...tried); if (waits.length) waiting.push(waits[0]); }
+  }
+  async function collectOne(d) {
     const client = clients && clients.get ? clients.get(String(d.federationId).toLowerCase()) : null;
-    if (!client || typeof client.refund !== 'function') { waiting.push(d); continue; }
+    if (!client || typeof client.refund !== 'function') return 'waiting';
     const m = /^([0-9a-f]{64}):(\d+)$/.exec(String(d.outpoint));
-    if (!m) continue;
+    if (!m || !/^\d+$/.test(String(d.amountMsat))) return 'skip';
     const image = d.senderOnContract && /^[0-9a-f]{64}$/.test(String(d.playerKey || '')) ? d.playerKey : '00'.repeat(32);
     const fields = JSON.stringify({ paymentImage: { kind: 'hash', bytes: image }, amountMsat: String(d.amountMsat), claimPk: pk, refundPk: pk, expiration: 0 });
     let said;
-    try { said = JSON.parse(await client.refund(m[1], Number(m[2]), fields, toHex(secret))); } catch (e) { failed.push({ ...d, why: String(e && e.message || e) }); continue; }
-    if (said.accepted === true) collected.push({ outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat), item: d.item || null, roundId: d.roundId || null });
-    else if (said.stored_before === null || said.stored_before === undefined) spent.push(d);
-    else { failed.push({ ...d, why: said.error || 'the federation did not accept the collect' }); continue; }
-    seen.add(d.outpoint);
+    try { said = JSON.parse(await client.refund(m[1], Number(m[2]), fields, toHex(secret))); } catch (e) { return { ...d, why: String(e && e.message || e) }; }
+    if (said.accepted === true) { collected.push({ outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat), item: d.item || null, roundId: d.roundId || null }); return 'collected'; }
+    if (said.stored_before === null || said.stored_before === undefined) { spent.push(d); return 'spent'; }
+    return { ...d, why: said.error || 'the federation did not accept the collect' };
   }
   try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-500))); } catch { /* not kept: asked again, then found spent */ }
-  const web = [...found.values()].filter((d) => d.item === 'website');
+  // kanban #1557: the referral total counts an outpoint's row only when a refund accepted that version or every seat that listed the
+  // outpoint gave the same one - a seat's changed amount neither inflates nor hides it.
+  const web = [];
+  for (const [outpoint, byVersion] of found) {
+    const d = accepted.get(outpoint) || (byVersion.size === 1 ? [...byVersion.values()][0].d : null);
+    if (d && d.item === 'website' && /^\d+$/.test(String(d.amountMsat))) web.push(d);
+  }
   return { key: pk, collected, spent, failed, waiting, totalMsat: String(collected.reduce((t, c) => t + BigInt(c.amountMsat), 0n)),
     referral: { msat: String(web.reduce((t, d) => t + BigInt(d.amountMsat || 0), 0n)), payouts: web.length } };
 }

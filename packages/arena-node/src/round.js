@@ -123,6 +123,9 @@ export class Round {
   static OPEN_HELD_MS = 250;
   /** How many closed rounds closedSince remembers (kanban #791). */
   static CLOSED_LOG = 4096;
+  // kanban #1548: refused marks kept per entry (keepOffered) - the first 64, then at most 8 that contradict the chain.
+  static OFFERED_KEEP = 64;
+  static OFFERED_PROOF_KEEP = 8;
   constructor(db, now = () => Date.now(), { plugins = [] } = {}) {
     this.db = db;
     this.now = now;
@@ -268,6 +271,18 @@ export class Round {
    * member for the same mark is that member contradicting itself, and it is
    * refused by name rather than stored beside the first.
    */
+  /**
+   * THIS VERY RECEIPT, BYTE FOR BYTE, ALREADY HELD (kanban #1569): the /play door asks before it takes one, so a public
+   * receipt sent again and again starts no new replay - only a receipt that adds something can complete a run.
+   */
+  holdsReceipt(bytes) {
+    if (!(bytes instanceof Uint8Array) || bytes.length !== SIGNED_RECEIPT_BYTES) return false;
+    let r;
+    try { r = decodeCheckpointReceipt(splitSignedReceipt(bytes).body); } catch { return false; }
+    const row = this.db.prepare('SELECT bytes FROM receipts WHERE checkpoint_id = ? AND node_pubkey = ?').get(r.checkpointId, r.nodePubkey);
+    return !!row && Buffer.from(row.bytes).equals(Buffer.from(bytes));
+  }
+
   takeReceipt(bytes) {
     if (bytes.length !== SIGNED_RECEIPT_BYTES)
       throw new Error(`a signed receipt is ${SIGNED_RECEIPT_BYTES} bytes, got ${bytes.length}`);
@@ -1017,6 +1032,39 @@ export class Round {
       if (why) throw new Error(why);
     }
 
+    // AND ONE EVENT PER TICK, THE SAME IN THE TABLES AS IN THE BYTES (kanban #1568). The tables below keep the FIRST
+    // liquidation, load, sample or tape at a tick (INSERT OR IGNORE); the batch bytes go unchanged into the canonical
+    // transcript, whose flatten() and the core's eventsOf keep the LAST. Two different events at one tick - in one batch
+    // or across two - made every seat replay one run and sign the hash of another, and an objection then held against
+    // every honest seat. A second event at a tick is refused unless it is the very same event (a harmless repeat).
+    if (!seen) {
+      const kinds = [
+        ['liquidation', b.liquidations || [], ([, size]) => String(size),
+          'SELECT size FROM liquidations WHERE round_id = ? AND entry_id = ? AND tick = ?', (r) => String(r.size)],
+        ['load', b.loads || [], ([, fee, btc, room]) => `${fee},${btc},${room === undefined ? null : room}`,
+          'SELECT fee_sats, btc_hund, room FROM loads WHERE round_id = ? AND entry_id = ? AND tick = ?',
+          (r) => `${r.fee_sats},${r.btc_hund},${r.room}`],
+        ['sample', b.samples || [], ([, price]) => String(price),
+          'SELECT price FROM samples WHERE round_id = ? AND entry_id = ? AND tick = ?', (r) => String(r.price)],
+        ['tape', b.tapes || [], ([, ...prices]) => Buffer.from(new Int32Array(prices).buffer).toString('hex'),
+          'SELECT prices FROM tapes WHERE round_id = ? AND entry_id = ? AND tick = ?',
+          (r) => Buffer.from(r.prices).toString('hex')],
+      ];
+      for (const [name, events, keyOf, sql, storedKey] of kinds) {
+        const mine = new Map();
+        const stored = this.db.prepare(sql);
+        for (const ev of events) {
+          const tick = ev[0], key = keyOf(ev);
+          if (mine.has(tick) && mine.get(tick) !== key)
+            throw new Error(`that batch carries two different ${name}s at tick ${tick}: one event per tick`);
+          mine.set(tick, key);
+          const row = stored.get(b.roundId, b.entryId, tick);
+          if (row && storedKey(row) !== key)
+            throw new Error(`a different ${name} is already stored at tick ${tick}: one event per tick`);
+        }
+      }
+    }
+
     // ONE COMMIT FOR THE WHOLE BATCH, not one per row (2026-09-17 19:15, the ghost lag). Every `run` outside a
     // transaction is its own commit, so a batch of six ticks with a sample and a tape cost seven disk syncs on the
     // thread that also pushes other players' trucks: measured live on the Daily, `batch stored` held the loop 24-46 ms
@@ -1736,6 +1784,25 @@ export class Round {
    * `provesEquivocation`'s answer.
    */
   keepOffered(c, id, bytes) {
+    // AND NOT WITHOUT BOUND (kanban #1548): the player holds its own session key, so every refused frame was one more
+    // offered_marks row and one more evidence_blocks row at every seat, read back on every GET /equivocation, every
+    // first mark at the door and every close. A fork needs one pair, not thousands. The first OFFERED_KEEP refused marks
+    // of an entry are kept as before (one of them may pair with a mark the chain only takes later); past that only a mark
+    // that already contradicts the stored chain (same tick, or a parent that has a child here) is kept, and only
+    // OFFERED_PROOF_KEEP of those. The rest is refused without a write.
+    const held = this.db.prepare('SELECT COUNT(*) n FROM offered_marks WHERE round_id = ? AND entry_id = ?')
+      .get(c.roundId, c.entryId).n;
+    if (held >= Round.OFFERED_KEEP) {
+      if (held >= Round.OFFERED_KEEP + Round.OFFERED_PROOF_KEEP) return;
+      const head = this.checkpointHead(c.roundId, c.entryId);
+      const pairsNow = !!this.db.prepare(
+        'SELECT 1 FROM checkpoints WHERE round_id = ? AND entry_id = ? AND tick = ? AND checkpoint_id != ?')
+        .get(c.roundId, c.entryId, c.tick, id)
+        || (head.tick !== null && !same(c.previousHash, head.id) && (same(c.previousHash, NO_PREVIOUS)
+          || !!this.db.prepare('SELECT 1 FROM checkpoints WHERE round_id = ? AND entry_id = ? AND checkpoint_id = ?')
+            .get(c.roundId, c.entryId, c.previousHash)));
+      if (!pairsNow) return;
+    }
     this.db.prepare(
       'INSERT OR IGNORE INTO offered_marks '
       + '(round_id, entry_id, tick, checkpoint_id, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)')
@@ -1914,11 +1981,15 @@ export class Round {
    * THE ENTRIES THAT TAKE A SEAT OF A HEAD-TO-HEAD ROUND (kanban #1437, audit 8 R3): in a paying round only those backed by a lock here - its stake
    * seen, or its stake lock verified and waiting for its fee lock - since the /entry door takes an entry before any lock is verified, and two
    * lockless entries took both seats of a paying round at no cost. `stakeMsat` is the round's: a free round's every entry takes one, as before.
+   *
+   * `played` (kanban #1544): the entries the close plays and decides - its stake SEEN only, the set the settlement counts (settlement.js
+   * entriesOnRecord). A stake lock still waiting for its fee lock holds its seat at the door but is played against nobody and signed VOID:
+   * played, it lost into no settlement - its stake came back by refund and the honest winner was paid nothing (a free option).
    */
-  seatedEntriesOf(roundIdBytes, stakeMsat) {
+  seatedEntriesOf(roundIdBytes, stakeMsat, { played = false } = {}) {
     const all = this.entriesOf(roundIdBytes);
     if (stakeMsat === 0n) return all;
-    return all.filter(({ entryId }) => !!this.stakeSeen(entryId) || !!this.stakeLock(entryId));
+    return all.filter(({ entryId }) => !!this.stakeSeen(entryId) || (!played && !!this.stakeLock(entryId)));
   }
 
   /**
@@ -3604,6 +3675,11 @@ export class Round {
   relayPut(hashBytes, bytes) {
     return this.db.prepare('INSERT OR IGNORE INTO relayed (hash, bytes, seen_ms) VALUES (?, ?, ?)')
       .run(hashBytes, bytes, this.now()).changes;
+  }
+
+  /** The bytes this node keeps as a relay, all doors together (kanban #1532: the doors refuse past a cap). */
+  relayedBytes() {
+    return Number(this.db.prepare('SELECT COALESCE(SUM(LENGTH(bytes)), 0) AS n FROM relayed').get().n);
   }
 
   relayGet(hashBytes) {
