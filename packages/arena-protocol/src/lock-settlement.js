@@ -825,6 +825,9 @@ export function bookLockSettlement({ roundId, table, entries, locks, feeLocks, f
   if (unspentMsat < 0n) return refuse('the payouts and their fees come to more than the claimed locks pay for');
   return { ok: true, nothing: false, claims: claims.sort(byOutpoint), payouts: payouts.sort(byPayoutPk), unpaid, forfeits: [],
     nonce: settlementNonce(roundId), stakeWhy: null, poolMsat, inputFeesMsat, spendableMsat, paidMsat, outputFeesMsat, unspentMsat,
+    // ONE POT (kanban #1438): every line above is paid out of the stake and fee locks together, so a round that takes any
+    // federation splits them as one part (federation-settlement.js splitByFederation), never by `signerNodePayouts`
+    onePot: true,
     book: { claimed: table.claimed.length, feesDueMsat: table.feesDueMsat, nodesMsat, giftMsat, reserveMsat, websitesMsat: sites.totalMsat },
     // WHAT IT PAID EACH WINNER (measured 2026-10-17: the Up/Down season read 0 wins and a whole loss for every order -
     // a book claims every filled lock, the winners' too, and kept no shares, so a season read 0 paid): each qualifier's out, by its
