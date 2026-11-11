@@ -114,7 +114,8 @@ export function refillDecide({ invoiceSats, nowMs = Date.now() }, book) {
 // A PLAYER'S REPORT (kanban #926 item 9, #949): one box in the page, a message in Arena Chat's #feedback. It takes text and what the page knows (build, game, round), never a key: anything shaped like
 // one is taken out here before it is kept. The text is a stranger's and is marked so.
 export const FEEDBACK_MOST = 4000, FEEDBACK_PER_IP_PER_DAY = 50, FEEDBACK_PER_DAY = 1000;   // #1397: were 5 and 100
-const scrubKeys = (t) => t.replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]').replace(/\b(?:[a-z]{3,8}\s+){11,23}[a-z]{3,8}\b/g, '[removed]');
+// the same seed scrubber as the feedback store (kanban #1472)
+import { scrubKeys } from './feedback-store.js';
 export function feedbackDecide({ text, ip = null, build = '', game = '', round = '', player = null, nowMs = Date.now() }, log) {
   const clean = scrubKeys(String(text || '').trim()).slice(0, FEEDBACK_MOST);
   if (clean.length < 3) return { ok: false, why: 'say what happened' };
