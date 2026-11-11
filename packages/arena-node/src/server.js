@@ -351,6 +351,28 @@ export const GHOST_BACKLOG_BYTES = 262144;
 // HOW LONG AFTER THE ENTRY CLOSE A SEAT STILL TAKES A CANCEL ANOTHER SEAT TOOK IN TIME AND HANDED ON (kanban #1520): the hand-on's own
 // bound (4 s, handCancelOn) plus a margin - far shorter than any market's outcome, so no cancel is signed knowing it (kanban #1435)
 export const CANCEL_HANDON_GRACE_MS = 5000;
+// ANOTHER SEAT'S ANSWER IS READ ONLY UP TO A BOUND (kanban #1553): a game package (GET /plugin) is its manifest, chain, cores and
+// clients - a few hundred kB to a few MB for the real apps - and a GET /games listing far less. r.json() took any length: a seat
+// streaming hundreds of MB inside the timeout was buffered and parsed whole on this seat's main thread, on every automatic-update
+// sweep. Past the bound the stream is cancelled and the answer refused.
+export const PACKAGE_ANSWER_MAX_BYTES = 16 * 1024 * 1024;
+export const LISTING_ANSWER_MAX_BYTES = 4 * 1024 * 1024;
+export async function readTextCapped(r, maxBytes) {
+  const len = Number(r.headers.get('content-length'));
+  if (Number.isFinite(len) && len > maxBytes) { try { await r.body?.cancel(); } catch {} throw new Error(`its answer of ${len} bytes is over ${maxBytes}`); }
+  if (!r.body) return '';
+  const reader = r.body.getReader(), parts = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) { try { await reader.cancel(); } catch {} throw new Error(`its answer is over ${maxBytes} bytes`); }
+    parts.push(value);
+  }
+  return Buffer.concat(parts, total).toString('utf8');
+}
+export const readJsonCapped = async (r, maxBytes) => JSON.parse(await readTextCapped(r, maxBytes));
 
 export const NOTHING_IS_FUNDED = () => false;
 
@@ -1066,7 +1088,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // /plugin or /network with hundreds of MB, and `await r.json()` held all of it and its parsed objects at once (measured: one
   // 120 MB /games listing grew the reading seat's heap 218 MB and held its event loop 3.6 s). The body is read chunk by chunk
   // and refused, the connection dropped, as soon as it passes `maxBytes`.
-  const PEER_LISTING_BYTES = 4 * 1048576, PEER_LISTING_GAMES = 64, PEER_PACKAGE_BYTES = 32 * 1048576;
+  // a package is bounded at the tighter of the two audit bounds: 16 MB (kanban #1553), not 32 MB (kanban #1540)
+  const PEER_LISTING_BYTES = LISTING_ANSWER_MAX_BYTES, PEER_LISTING_GAMES = 64, PEER_PACKAGE_BYTES = PACKAGE_ANSWER_MAX_BYTES;
   const textUpTo = async (r, maxBytes) => {
     const said = Number(r.headers.get('content-length'));
     if (said > maxBytes) { try { await r.body?.cancel(); } catch { /* dropped */ } throw new Error(`its answer is ${said} bytes, more than ${maxBytes}`); }
@@ -1197,16 +1220,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const tried = new Set();
       for (const g of listedGames(got)) {
         if (typeof g?.id !== 'string' || hosted.has(g.id)) continue;
-        let m; try { m = decodeManifest(fromHex(g.manifest)); } catch { continue; }
+        let m; try { m = decodeManifest(fromHex(String(g?.manifest || ''))); } catch { continue; }
         const parent = toHex(m.parentManifestId);
         if (!hosted.has(parent) || superseded.has(parent) || tried.has(parent)) continue;
         let id; try { id = toHex(gameIdOf(m)); } catch { continue; }
-        if (id !== g.id) continue;
+        // the game asked for is the manifest's own id (kanban #1553) - a listing naming another id beside it is not asked at all (#1552)
+        if (id !== g.id || hosted.has(id)) continue;
         if (!manifestStands(m, { verify: verifyEd25519, parentOf: hostedParent }).ok) continue;
         const u = checkUpdate(installedInfo(parent), { devKey: toHex(m.gameDevPubkey), parent, version: m.version });
         if (!u.ok) continue;
         tried.add(parent);
-        const r = await takeGame({ game: g.id, from, replaces: parent });
+        const r = await takeGame({ game: id, from, replaces: parent });
         console.log(`[plugins] automatic update of ${parent.slice(0, 16)} from ${from}: ${r.ok ? 'taken' : r.why}`);
         if (!r.ok && r.status === 502) break;
       }
