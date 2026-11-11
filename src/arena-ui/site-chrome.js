@@ -30,7 +30,8 @@
   var LINKS = [['Proposals', site + 'proposals/'], ['Explorer', 'https://explorer.bitcoinarena.io/'], ['Health', site + 'health/'], ['Referral Program', site + 'referral/']];
   var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
   // the page this is, marked in the menu: same host and the path starts with the link's (any page of the explorer is the Explorer)
-  var here = function (href) { var u = new URL(href); return u.host === location.host && location.pathname.indexOf(u.pathname) === 0; };
+  // A START-PAGE ANCHOR (bitcoinarena.io/#games) IS NEVER THE PAGE HERE, and '/' marks only the start page itself (#1457: every link to #... showed white on /security)
+  var here = function (href) { var u = new URL(href); if (u.host !== location.host || u.hash) return false; return u.pathname === '/' ? location.pathname === '/' : location.pathname.indexOf(u.pathname) === 0; };
 
   // THE LOOK: index.html's bar, button and menu rules, under names of their own (asc-) so no page's rules reach them and theirs reach no page;
   // every property the pages set on a bare a, button or nav is set here
@@ -46,6 +47,7 @@
     '  color: #e8eaed; font: 700 16px/1 system-ui, sans-serif; letter-spacing: -0.01em; white-space: nowrap; background: none; }',
     '#asc-bar .asc-home i { flex: none; width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font-style: normal; font-weight: 800;',
     '  color: #1a0f00; background: conic-gradient(from 210deg, #f7931a, #ffd166, #f7931a); }',
+    '#asc-bar .asc-home img.asc-mark { flex: none; height: 26px; width: auto; display: block; }' +
     '#asc-bar .asc-home span { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: inherit; }',
     '#asc-bar .asc-home:hover span { color: #f7931a; }',
     '#asc-bar .asc-back, #asc-bar .asc-nav-go, #asc-bar .asc-lead { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 4px; height: 32px;',
@@ -95,13 +97,43 @@
   // THE HEADER, where this script stands (first thing in <body>), so it is drawn before the page below it
   var bar = document.createElement('header');
   bar.id = 'asc-bar';
-  bar.innerHTML = '<a class="asc-home" href="https://bitcoinarena.io/" title="bitcoinarena.io" aria-label="Bitcoin Arena - bitcoinarena.io"><i aria-hidden="true">&#8383;</i><span>Bitcoin Arena</span></a>'
-    + '<a class="asc-back" href="' + esc(site) + '" title="Back to Bitcoin Arena" aria-label="Back to Bitcoin Arena"><span aria-hidden="true">&larr;</span><span class="word">Arena</span></a>'
-    + '<a class="asc-nostr" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)" aria-label="Bitcoin Arena on Nostr, verified as bitcoinarena.io"><span class="d">bitcoinarena.io &#10003;</span><svg viewBox="48 44 167 167" aria-hidden="true" focusable="false"><path d="M210.8 199.4c0 3.1-2.5 5.7-5.7 5.7h-68c-3.1 0-5.7-2.5-5.7-5.7v-15.5c.3-19 2.3-37.2 6.5-45.5 2.5-5 6.7-7.7 11.5-9.1 9.1-2.7 24.9-.9 31.7-1.2 0 0 20.4.8 20.4-10.7s-9.1-8.6-9.1-8.6c-10 .3-17.7-.4-22.6-2.4-8.3-3.3-8.6-9.2-8.6-11.2-.4-23.1-34.5-25.9-64.5-20.1-32.8 6.2.4 53.3.4 116.1v8.4c0 3.1-2.6 5.6-5.7 5.6H57.7c-3.1 0-5.7-2.5-5.7-5.7v-144c0-3.1 2.5-5.7 5.7-5.7h31.7c3.1 0 5.7 2.5 5.7 5.7 0 4.7 5.2 7.2 9 4.5 11.4-8.2 26-12.5 42.4-12.5 36.6 0 64.4 21.4 64.4 68.7v83.2ZM150 99.3c0-6.7-5.4-12.1-12.1-12.1s-12.1 5.4-12.1 12.1 5.4 12.1 12.1 12.1S150 106 150 99.3Z"/></svg><span>Nostr</span></a>'
-    + '<div class="asc-nav"><button class="asc-nav-go" type="button" aria-label="Menu" aria-expanded="false" aria-controls="asc-nav-menu">&#9776;</button>'
-    + '<div id="asc-nav-menu" class="asc-nav-menu" role="navigation" aria-label="Bitcoin Arena">'
-    + LINKS.map(function (l) { return '<a href="' + esc(l[1]) + '"' + (here(l[1]) ? ' aria-current="page"' : '') + '>' + esc(l[0]) + '</a>'; }).join('')
-    + '</div></div>';
+  // THE SAME HEADER AS THE START PAGE (kanban #1457, Daniel 2026-11-11: "Alle Seiten, auch Security müssen angepasst werden. Der Header muss überall
+  // gleich aussehen" - "Ein Header für alles"): bitcoinarena.io's nav.top, drawn here for every page that loads this script - the stadium and the
+  // name, the start page's links (to bitcoinarena.io), the Nostr badge and App →; links fold away at the start page's widths
+  var HOME = 'https://bitcoinarena.io/';
+  var TOP = [['Games', HOME + '#games'], ['How it works', HOME + '#how'], ['Nostr', HOME + '#nostr'], ['Build &amp; run', HOME + '#build'], ['Download', HOME + '#download'],
+    ['Proposals', 'https://testnet.bitcoinarena.io/proposals/', 1], ['Security', HOME + 'security/', 1], ['Docs', 'https://docs.bitcoinarena.io/', 1]];
+  var mark = 'https://bitcoinarena.io/img/logo/';
+  bar.innerHTML = '<div class="asc-wrap"><a class="asc-brand" href="' + HOME + '" aria-label="Bitcoin Arena"><img class="asc-mark" src="' + mark + 'bitcoin-arena-mark-90.webp" srcset="' + mark + 'bitcoin-arena-mark-60.webp 2x, ' + mark + 'bitcoin-arena-mark-90.webp 3x" width="58" height="30" alt=""><span>Bitcoin Arena</span></a>'
+    + '<div class="asc-links">' + TOP.map(function (l) { return '<a' + (l[2] ? ' class="asc-keep"' : '') + (l[0] === 'Nostr' ? ' data-nostr="1"' : '') + ' href="' + l[1] + '"' + (here(l[1]) ? ' aria-current="page"' : '') + '>' + l[0] + '</a>'; }).join('') + '</div>'
+    + '<a class="asc-nid" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)" aria-label="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)"><svg viewBox="48 44 167 167" aria-hidden="true" focusable="false"><path d="M210.8 199.4c0 3.1-2.5 5.7-5.7 5.7h-68c-3.1 0-5.7-2.5-5.7-5.7v-15.5c.3-19 2.3-37.2 6.5-45.5 2.5-5 6.7-7.7 11.5-9.1 9.1-2.7 24.9-.9 31.7-1.2 0 0 20.4.8 20.4-10.7s-9.1-8.6-9.1-8.6c-10 .3-17.7-.4-22.6-2.4-8.3-3.3-8.6-9.2-8.6-11.2-.4-23.1-34.5-25.9-64.5-20.1-32.8 6.2.4 53.3.4 116.1v8.4c0 3.1-2.6 5.6-5.7 5.6H57.7c-3.1 0-5.7-2.5-5.7-5.7v-144c0-3.1 2.5-5.7 5.7-5.7h31.7c3.1 0 5.7 2.5 5.7 5.7 0 4.7 5.2 7.2 9 4.5 11.4-8.2 26-12.5 42.4-12.5 36.6 0 64.4 21.4 64.4 68.7v83.2ZM150 99.3c0-6.7-5.4-12.1-12.1-12.1s-12.1 5.4-12.1 12.1 5.4 12.1 12.1 12.1S150 106 150 99.3Z"/></svg></a>'
+    + '<a class="asc-app" href="https://testnet.bitcoinarena.io/">App &rarr;</a></div>';
+  var topCss = document.createElement('style');
+  topCss.id = 'asc-top-style';
+  topCss.textContent = [
+    '#asc-bar { height: 56px !important; background: #0f0a10 !important; border-bottom: 1px solid #2f2229 !important; display: block !important; padding: env(safe-area-inset-top, 0px) 0 0 !important;',
+    '  font: 400 15px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important; color: #f3ebe4 !important; }',
+    '#asc-bar-space { height: 57px !important; }',
+    '#asc-bar .asc-wrap { width: min(1080px, calc(100% - 32px)); margin: 0 auto; display: flex; align-items: center; gap: 22px; height: 56px; }',
+    '#asc-bar .asc-lead { flex: none; margin-right: -8px; }',
+    '#asc-bar .asc-brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; color: #f3ebe4 !important; text-decoration: none !important; white-space: nowrap; }',
+    '#asc-bar .asc-brand img.asc-mark { height: 30px; width: auto; display: block; }',
+    '#asc-bar .asc-links { margin-left: auto; display: flex; gap: 20px; font-size: 15px; }',
+    // A PAGE'S OWN RULES NEVER REACH THE BAR (#1457: /security's a { color } and letter-spacing made its links white and tight)
+    '#asc-bar, #asc-bar * { letter-spacing: normal !important; text-transform: none !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important; }',
+    '#asc-bar .asc-links a { color: #9d8d84 !important; text-decoration: none !important; white-space: nowrap; font-weight: 400; }',
+    '#asc-bar .asc-links a:hover, #asc-bar .asc-links a[aria-current="page"] { color: #f3ebe4 !important; }',
+    '#asc-bar .asc-links a[data-nostr] { color: #b98cff !important; }',
+    '#asc-bar .asc-nid { display: inline-flex; align-items: center; gap: 6px; color: #b98cff !important; text-decoration: none !important; font-size: 14px; white-space: nowrap; }',
+    '#asc-bar .asc-nid svg { display: block; width: 18px; height: 18px; fill: currentColor; }',
+    '#asc-bar .asc-app { padding: 7px 12px; border-radius: 4px; background: #f7931a; color: #140a00 !important; font-weight: 600; font-size: 15px; text-decoration: none !important; white-space: nowrap; }',
+    '#asc-bar .asc-app:hover { background: #ffa53d; color: #140a00; }',
+    '@media (max-width: 1140px) { #asc-bar .asc-links a:not(.asc-keep) { display: none; } #asc-bar .asc-links { gap: 16px; } #asc-bar .asc-wrap { gap: 16px; } }',
+    '@media (max-width: 1279px) { #asc-bar .asc-nid span { display: none; } #asc-bar .asc-nid svg { width: 20px; height: 20px; } }',
+    '@media (max-width: 480px) { #asc-bar .asc-links a[href*="proposals"] { display: none; } #asc-bar .asc-wrap { gap: 12px; } #asc-bar .asc-links { gap: 12px; font-size: 14px; } #asc-bar .asc-brand { font-size: 16px; } }',
+    '@media (max-width: 420px) { #asc-bar .asc-brand span { display: none; } }'
+  ].join('\n');
+  (document.head || document.documentElement).appendChild(topCss);
   if (!document.querySelector('link[rel="me"][href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2"]')) { var me1144 = document.createElement('link'); me1144.rel = 'me'; me1144.href = 'https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2'; (document.head || document.documentElement).appendChild(me1144); }
   var space = document.createElement('div');
   space.id = 'asc-bar-space';
@@ -112,21 +144,17 @@
     var id = me.getAttribute('data-lead'), el = id && document.getElementById(id);
     if (!el || bar.contains(el)) return;
     el.classList.add('asc-lead');
-    bar.insertBefore(el, bar.firstChild);
+    var row = bar.querySelector('.asc-wrap') || bar; row.insertBefore(el, row.firstChild);
   };
   placeLead();
 
-  // THE ☰ MENU, as the Arena page's: opens and closes on its button, closes on a click anywhere else or on Escape
-  var nav = bar.querySelector('.asc-nav'), go = bar.querySelector('.asc-nav-go');
-  var set = function (open) { nav.classList.toggle('open', open); go.setAttribute('aria-expanded', String(open)); };
-  go.addEventListener('click', function (e) { e.stopPropagation(); set(!nav.classList.contains('open')); });
-  document.addEventListener('click', function (e) { if (!nav.contains(e.target)) set(false); });
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') set(false); });
+  // (no ☰ menu since #1457: the start page's header has none - its links fold away at narrow widths as there)
 
   // THE FOOTER, at the end of the page once it is read
   var foot = function () {
-    if (document.getElementById('asc-foot')) return;
     placeLead();
+    // a page with a footer of its own takes only the header (kanban #1457: the website's subpages, data-foot="none")
+    if (document.getElementById('asc-foot') || me.getAttribute('data-foot') === 'none') return;
     var f = document.createElement('footer');
     f.id = 'asc-foot';
     f.innerHTML = '<span class="asc-build" aria-hidden="true">' + (/\{{3}/.test(STAMP) ? '' : esc(STAMP)) + '</span>'

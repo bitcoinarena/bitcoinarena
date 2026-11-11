@@ -48,11 +48,11 @@
   svg .b { fill: var(--btc); } svg .f { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
 
   /* THE SITE'S HEADER, as on the home page */
-  body { padding-top: 64px; }
   nav.site { position: fixed; inset: 0 0 auto 0; z-index: 20; backdrop-filter: blur(10px); background: rgba(7,9,13,.82); border-bottom: 1px solid rgba(255,255,255,.06); }
   nav.site .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; display: flex; align-items: center; gap: 22px; height: 64px; }
   nav.site .brand { display: flex; align-items: center; gap: 10px; font: 700 19px system-ui; letter-spacing: -0.02em; text-decoration: none; white-space: nowrap; color: var(--text); }
   nav.site .brand i { width: 30px; height: 30px; border-radius: 8px; background: conic-gradient(from 210deg, var(--btc), #ffcf5c, var(--btc)); display: grid; place-items: center; font-style: normal; color: #1a0f00; font-weight: 800; }
+  nav.site .nid { display: inline-flex; align-items: center; color: #b98cff; } nav.site .nid svg { display: block; width: 22px; height: 22px; fill: currentColor; } nav.site .nid:hover { color: var(--text); }   /* kanban #1144 */
   nav.site .links { margin-left: auto; display: flex; gap: 22px; font-size: 15px; }
   nav.site .links a { color: var(--dim); text-decoration: none; } nav.site .links a:hover, nav.site .links a.on { color: var(--text); }
   nav.site .play { display: inline-flex; align-items: center; gap: 8px; padding: 9px 15px; border-radius: 11px; background: linear-gradient(135deg, var(--btc), #ffb347); color: #1a0f00; font: 600 15px/1 system-ui; text-decoration: none; white-space: nowrap; }
@@ -88,13 +88,11 @@
   footer a.nostr-id, a.nostr-id, nav.top .nid, nav.site .nid { color: #b98cff; }
   footer a.nostr-id:hover, a.nostr-id:hover, nav.top .nid:hover, nav.site .nid:hover { color: #d4b8ff; }
 </style>
+<link rel="me" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2">
 </head>
 <body>
-<nav class="site"><div class="wrap">
-  <a class="brand" href="https://bitcoinarena.io/" aria-label="Bitcoin Arena"><i>₿</i><span>Bitcoin Arena</span></a>
-  <div class="links"><a href="https://bitcoinarena.io/#games">Games</a><a href="https://bitcoinarena.io/#how">How it works</a><a href="https://bitcoinarena.io/#build">Build &amp; run</a><a class="keep" href="https://testnet.bitcoinarena.io/proposals/">Proposals</a><a class="keep on" href="/security/" aria-current="page">Security</a><a class="keep" href="https://docs.bitcoinarena.io/">Docs</a></div>
-  <a class="play" href="https://testnet.bitcoinarena.io/">App <span aria-hidden="true">→</span></a>
-</div></nav>
+<!-- ONE HEADER FOR EVERY PAGE (kanban #1457, Daniel 2026-11-11: "Der Header muss überall gleich aussehen"): the start page's header, drawn by site-chrome.js -->
+<script src="https://testnet.bitcoinarena.io/site-chrome.js" data-foot="none"></script>
 <main>
   <h1>How your money is protected</h1>
   <p class="lead">The worst things that could happen, how likely each one is, what stops it, and what is left. Worst case first, in plain words.</p>
@@ -448,7 +446,7 @@
   </div>
   <div class="note">Until 2026.2.0, Bitcoin Arena stays on testnet with coins that have no value. Mainnet starts with the protection of version 2026.2.0, not with 1.9.</div>
 
-  <footer><a href="https://bitcoinarena.io/">Bitcoin Arena</a> · <a href="https://docs.bitcoinarena.io/">Docs</a> · <a href="https://testnet.bitcoinarena.io/">Play on testnet</a></footer>
+  <footer><a href="https://bitcoinarena.io/">Bitcoin Arena</a> · <a href="https://docs.bitcoinarena.io/">Docs</a> · <a href="https://testnet.bitcoinarena.io/">Play on testnet</a> · <a class="nostr-id" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)">Nostr: bitcoinarena.io <span aria-label="verified">&#10003;</span></a></footer>
 </main>
 </body>
 </html>

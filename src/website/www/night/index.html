@@ -25,11 +25,17 @@
   .when { font: 700 22px/1.3 system-ui, sans-serif; color: var(--text); }
   .count { font: 700 44px/1.1 system-ui, sans-serif; color: var(--btc); font-variant-numeric: tabular-nums; margin: 6px 0; }
   .live { color: var(--live); font-weight: 700; }
+  footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--dim); font-size: 14px; }
+  /* NOSTR IS PURPLE EVERYWHERE (kanban #1344, Daniel 2026-11-07) */
+  footer a.nostr-id, a.nostr-id, nav.top .nid, nav.site .nid { color: #b98cff; }
+  footer a.nostr-id:hover, a.nostr-id:hover, nav.top .nid:hover, nav.site .nid:hover { color: #d4b8ff; }
 </style>
+<link rel="me" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2">
 </head>
 <body>
+<!-- ONE HEADER FOR EVERY PAGE (kanban #1457, Daniel 2026-11-11: "Der Header muss überall gleich aussehen"): the start page's header, drawn by site-chrome.js -->
+<script src="https://testnet.bitcoinarena.io/site-chrome.js" data-foot="none"></script>
 <main>
-  <p><a href="/">Bitcoin Arena</a></p>
   <h1>Testnet Night</h1>
   <p>Every Thursday, 18:00 to 20:00 UTC. Play the games on testnet together, ask the team anything, and help us find what breaks.</p>
 
@@ -48,6 +54,7 @@
     <li><b>The team is there</b> to watch, answer and fix.</li>
     <li>The time is fixed in UTC and shown here in your own time. If it ever moves, this page says so two weeks before.</li>
   </ul>
+  <footer><a href="/">Bitcoin Arena</a> &middot; <a class="nostr-id" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)">Nostr: bitcoinarena.io <span aria-label="verified">&#10003;</span></a></footer>
 </main>
 <script>
 (function () {
