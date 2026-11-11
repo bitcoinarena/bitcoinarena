@@ -185,6 +185,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         }
         // ITS VOTING PHASE'S BLOCKS, from where it stopped, up to the tip - each height read once for every proposal
         const last = Math.min(tip, p.votingUntil - 1);
+        const fromTo = o.readTo, fromHash = o.readHash;
         while (o.readTo < last && read < maxBlocksPerPass) {
           const h = o.readTo + 1;
           if (!votesByHeight.has(h)) {
@@ -196,6 +197,26 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
           const got = votesByHeight.get(h);
           if (got.length) { o.votes.push(...got); o.dirty = true; }
           o.readTo = h; o.readHash = hashByHeight.get(h) || null;
+        }
+        // THE BLOCKS OF ONE PASS ARE ONE CHAIN (kanban #1633): each block's hash was asked on its own, a few RPC awaits apart, so
+        // a reorg landing between two reads left the abandoned branch's votes in the count while readHash (the last block, on
+        // the new branch) said nothing moved - and the outcome was written on them, with an anchor no later check ever doubts.
+        // Every height this pass added (and the block it went on from) is asked once more: one that differs, or is above the
+        // tip now, means the count is not this chain's - it is dropped with the vote cache and its phase is read again next pass
+        if (typeof blockHashAt === 'function' && o.readTo > fromTo) {
+          let broken = false;
+          for (let h = fromHash ? fromTo : fromTo + 1; h <= o.readTo && !broken; h++) {
+            const want = h === fromTo ? fromHash : hashByHeight.get(h);
+            const now = await blockHashAt(h);                 // throws on an RPC error: the pass stops, nothing written
+            if (!now || !want || String(now).toLowerCase() !== want) broken = true;
+          }
+          if (broken) {
+            open.delete(p.id); votesByHeight.clear(); hashByHeight.clear(); reorged++;
+            const what = 'the chain changed while its phase was read: its votes are read again';
+            reorgs.push({ id: p.id, at: tip, what }); if (reorgs.length > 16) reorgs.shift();
+            log(`[ballot] reorg: proposal ${p.id.slice(0, 16)}: ${what}`);
+            continue;
+          }
         }
         if (o.dirty) {
           o.result = tally({ proposal: { class: CLASS[p.class] }, standing: { id: fromHex(p.id), votingFrom: p.votingFrom, votingUntil: p.votingUntil },

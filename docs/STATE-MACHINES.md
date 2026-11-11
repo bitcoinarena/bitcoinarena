@@ -1542,3 +1542,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### Ballot tally per proposal (ballot-tally.js `open`, `readHash`; kanban #1633)
+- The votes a count holds come from one chain: every height a pass read for a proposal (and the block it went on from) is asked again before the count is tallied or decided. A hash that differs, or a height above the tip now, drops the proposal's open count and the vote cache; its phase is read again from its first block on the next pass. A decided outcome never counts a vote from a block that is not below its anchor on this seat's chain.
