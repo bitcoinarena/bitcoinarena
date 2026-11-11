@@ -947,9 +947,12 @@ export class OrderBook {
       done.set(k, false);
       // A BATCH HELD HERE WHOSE ORDER IS NOT WHOLE HERE (kanban #620, fed2-3 16:51Z: the entry and locks replayed, then "a loser's P could
       // not be opened: this node accepted no handout for that entry"): what is missing is replayed from this peer
+      // ONLY THE ORDERS OF THE CERTIFICATE HELD HERE (kanban #1560, audit #1489 r3 gossip: the peer's record is unsigned here - one seat
+      // listed a made-up order under a held k and its entry was imported into the round): the peer's list is never read for a held batch
       if (k !== null && held.has(k)) {
-        if (typeof this.replayOrder === 'function' && Array.isArray(cert.record.orders))
-          for (const o of cert.record.orders) if (isHex(String(o), 32) && !this.#orderWhole(String(o)))
+        const orders = typeof this.replayOrder === 'function' ? this.#heldOrders(roundIdBytes, k) : null;
+        if (orders)
+          for (const o of orders) if (isHex(String(o), 32) && !this.#orderWhole(String(o)))
             if (!(await this.#replay(rid, k, String(o), base))) { state.complete = false; done.set(k, null); }
         if (done.get(k) === false) done.set(k, true);
         continue;
@@ -959,7 +962,10 @@ export class OrderBook {
       // one order of batch 3585700432, refused its certificate here without a word, and rebuilt another settlement): the batch's orders
       // this seat lacks are replayed from the seat that handed it (replayOrder: the entry checked by its hash, its locks by the
       // federation), then the certificate is taken again. A refusal that stands is said.
-      if (!got.ok && /holds no entry/.test(String(got.why)) && typeof this.replayOrder === 'function' && Array.isArray(cert.record.orders)) {
+      // Only once the certificate's signatures verify over its record (kanban #1560): an order no threshold of seats certified is not
+      // replayed from one seat's answer.
+      if (!got.ok && /holds no entry/.test(String(got.why)) && typeof this.replayOrder === 'function' && Array.isArray(cert.record.orders)
+          && this.#certifiedSet(roundIdBytes, cert)) {
         for (const o of cert.record.orders) if (isHex(String(o), 32) && !this.#orderWhole(String(o))) await this.#replay(rid, k, String(o), base);
         got = this.certify(roundIdBytes, cert, { reading: true });
       }
@@ -972,6 +978,26 @@ export class OrderBook {
       if (next === undefined || k > next) next = k;
     }
     return next;
+  }
+
+  /** The orders of batch k as the certificate held here names them (kanban #1560); null when none is held or it does not read. */
+  #heldOrders(roundIdBytes, k) {
+    const row = this.db.prepare('SELECT record FROM market_batches WHERE round_id = ? AND k = ? AND certificate IS NOT NULL').get(Buffer.from(roundIdBytes), Number(k));
+    if (!row) return null;
+    try { const r = JSON.parse(row.record); return Array.isArray(r.orders) ? r.orders.map(String) : null; } catch { return null; }
+  }
+
+  /** Whether a certificate not held here carries the threshold's signatures over its record's id (kanban #1560) - before any of its
+   *  orders is replayed. */
+  #certifiedSet(roundIdBytes, cert) {
+    const m = this.market(roundIdBytes);
+    if (!m.ok || !cert || !cert.record) return false;
+    // the ids the record hashes (#idsOf: no entry needed - its orders are the ones not held here yet)
+    const ids = Array.isArray(cert.record.orders) && /^[0-9]{1,15}$/.test(String(cert.record.k)) ? this.#idsOf(roundIdBytes, cert.record) : null;
+    if (!ids) return false;
+    let id;
+    try { id = toHex(bookBatchId({ roundId: roundIdBytes, k: BigInt(cert.record.k), orderIds: ids })); } catch { return false; }
+    return this.#counted(m, id, Array.isArray(cert.sigs) ? cert.sigs : []).length >= m.needed;
   }
 
   async #replay(rid, k, o, base) {
