@@ -2165,7 +2165,15 @@ silent[]    RESULT      the round's seats that gave this seat no signed result f
             FINAL       the round's seats that did not sign FINAL for that run
             SETTLEMENT  the round's seats silent at the step where this seat's
                         last settlement pass stopped: no signed word there, or a
-                        refusal after signing FINAL (RULED 2026-11-03, #1066)
+                        refusal after signing FINAL (RULED 2026-11-03, #1066) -
+                        except a refusal whose stated reason the noting seat can
+                        check against the federation and finds true (RULED
+                        2026-11-11, kanban #1448): "no loser's lock is claimed",
+                        "the lock the plan claims is not held" and the like are
+                        dissent about the plan, not silence, when the federation
+                        indeed holds no such lock; a refusal whose reason does
+                        not check is silence as before. The replay showed loaded
+                        honest seats refusing plans they could not claim
             never the seat itself
 named       at least STALL_NOTE_QUORUM = 4 of the round's seats signed notes
             listing the node, none of them itself. The lists need not be equal
