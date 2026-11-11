@@ -15,6 +15,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { eventId } from '../src/nostr-relay.js';
 import { FEEDBACK_KIND, HTTP_AUTH_KIND } from '../src/feedback-store.js';
 import { ownerStatementMessage } from '../src/owner.js';
+import { signFinalSig } from '../../arena-protocol/src/final-sig.js';
 
 const hex = (b) => Buffer.from(b).toString('hex');
 const key = (n) => { const secret = new Uint8Array(32).fill(n); return { secret, pubkey: hex(schnorr.getPublicKey(secret)) }; };
@@ -295,18 +296,28 @@ test('#1342 a node report: the review list reads its checklist from the seats; "
   const dave = key(4), erin = key(5);
   // the node signs its owner statement (kanban #1418): a node key with its secret
   const NODE_SECRET = new Uint8Array(32).fill(0x4d), NODE = Buffer.from(schnorr.getPublicKey(NODE_SECRET)).toString('hex'), NODE2 = 'cd'.repeat(32);
-  let seatBase = '';
-  const seat = createServer((req, res) => {
+  // THE SEATS ANSWER AS REAL SEATS DO (kanban #1492, after #1489): a round counts only when NODE_BOUNTY_AGREE (3) listed seats hold it with the same
+  // committee, and a FINAL only with the node's own valid BIP-340 signature over that round - so three seats hold each day's round (a 64-hex id),
+  // the committee is the same at all three, and the FINAL is one the node signed (a live round sits in 4 to 11 listed seats' stores, measured 2026-11-12)
+  let seatBases = [];
+  const roundOf = (from) => createHash('sha256').update(`round ${from}`).digest();
+  const finalOf = (from) => Buffer.from(signFinalSig({ roundId: roundOf(from), entryId: new Uint8Array(32).fill(2), runId: new Uint8Array(32).fill(3),
+    signerPubkey: schnorr.getPublicKey(NODE_SECRET), signedAtMs: BigInt(Number(from) + 1000) }, (digest) => schnorr.sign(digest, NODE_SECRET))).toString('hex');
+  const answer = (req, res) => {
     const u = new URL(req.url, 'http://x'); res.writeHead(200, { 'content-type': 'application/json' });
-    if (u.pathname === '/network-games') return res.end(JSON.stringify({ seats: [{ seat: seatBase }], games: [] }));
+    if (u.pathname === '/network-games') return res.end(JSON.stringify({ seats: seatBases.map((s) => ({ seat: s })), games: [] }));
     if (u.pathname === '/owner') { const atMs = Date.now(); return res.end(JSON.stringify({ node: NODE, claimed: true, owner: dave.pubkey,
       statement: { atMs, sig: Buffer.from(schnorr.sign(ownerStatementMessage({ node: NODE, owner: dave.pubkey, atMs }), NODE_SECRET)).toString('hex') } })); }
-    if (u.pathname === '/served') { const from = u.searchParams.get('from'); return res.end(JSON.stringify({ held: [{ roundId: `r${from}`, committee: [NODE, NODE2], finals: [NODE] }] })); }
+    if (u.pathname === '/served') { const from = u.searchParams.get('from');
+      return res.end(JSON.stringify({ held: [{ roundId: roundOf(from).toString('hex'), committee: [NODE, NODE2], finals: [finalOf(from)] }] })); }
     return res.end(JSON.stringify({ rows: [] }));
-  });
+  };
+  const seatServers = [createServer(answer), createServer(answer), createServer(answer)];
   const chat = createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(200); res.end('{}'); }); });
-  await new Promise((r) => seat.listen(0, '127.0.0.1', r)); await new Promise((r) => chat.listen(0, '127.0.0.1', r));
-  seatBase = `http://127.0.0.1:${seat.address().port}`;
+  for (const s of seatServers) await new Promise((r) => s.listen(0, '127.0.0.1', r));
+  await new Promise((r) => chat.listen(0, '127.0.0.1', r));
+  seatBases = seatServers.map((s) => `http://127.0.0.1:${s.address().port}`);
+  const seatBase = seatBases[0];
   writeFileSync(join(dir, 'token'), 'x'); writeFileSync(join(dir, 'ours.txt'), '\n');
   const CODE = 'the-owners-code', port = 20000 + Math.floor(Math.random() * 9000);
   const faucet = spawn(process.execPath, [fileURLToPath(new URL('../tools/faucet.mjs', import.meta.url))], { stdio: ['ignore', 'pipe', 'pipe'],
@@ -339,5 +350,5 @@ test('#1342 a node report: the review list reads its checklist from the seats; "
     assert.equal(facts.daveApproved, 10000);
     assert.equal(facts.erinApproved, false, 'a node naming another owner is paid to that owner\'s report only');
     assert.match(facts.erinRefused, /the node names another owner: its bounty goes to that owner's report/);
-  } finally { faucet.kill(); seat.close(); chat.close(); rmSync(dir, { recursive: true, force: true }); }
+  } finally { faucet.kill(); for (const s of seatServers) s.close(); chat.close(); rmSync(dir, { recursive: true, force: true }); }
 });
