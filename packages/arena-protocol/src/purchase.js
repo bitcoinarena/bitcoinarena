@@ -44,6 +44,20 @@ export const PURCHASE_WINDOW_SLACK_MS = 3600000;
  * game version's id it was bought under (32 bytes) and the reserve key it paid (33 bytes): the 5-of-7 key of the payment's federation.
  */
 export const PURCHASE_RESERVES_LAYOUT = 12;
+/**
+ * THE PAYMENT NAMES THE ITEM (kanban #1180): the image of every output's payout contract is this commitment - the buyer, the game (its
+ * developer and name), the item, its price and the served window - not the buyer's key alone. Each field is known before the payment
+ * and is in the record, so a seat rebuilds it. With the key alone one payment fitted any item of the same price: a record for item A
+ * sent to one seat and one for item B to another both stood, and the committee read two owners of one payment.
+ */
+export const TAG_ITEM_PURCHASE_IMAGE = 'ARENA/v1/ItemPurchaseImage';
+export function purchaseImage(p) {
+  if (!pIs32(p.playerPubkey) || !pIs32(p.gameDevPubkey)) throw new Error('a purchase\'s image names the buyer and the game\'s developer by 32 bytes each');
+  const w = new Writer();
+  w.bytes32(p.playerPubkey); w.bytes32(p.gameDevPubkey); w.str(p.gameName); w.str(p.itemId); w.u64(BigInt(p.priceSat));
+  w.u64(BigInt(p.servedFromMs)); w.u64(BigInt(p.servedToMs));
+  return taggedHash(TAG_ITEM_PURCHASE_IMAGE, w.finish());
+}
 const pIs32 = (b) => b instanceof Uint8Array && b.length === 32;
 const pIs33 = (b) => b instanceof Uint8Array && b.length === 33 && (b[0] === 2 || b[0] === 3);
 

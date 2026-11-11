@@ -7,7 +7,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { taggedHash, toHex } from '../../arena-protocol/src/hash.js';
-import { createHalts, wsSessionCount } from '../src/halts.js';
+import { createHalts, wsSessionCount, sessionReading, clockStep } from '../src/halts.js';
+import { signHaltObservation, encodeHaltObservation, decodeHaltObservation } from '../../arena-protocol/src/halt-proof.js';
 import { createLiquidations } from '../src/liquidations.js';
 
 const key = (s) => { const secret = taggedHash('TEST/halt', new TextEncoder().encode(s)); return { secret, pub: schnorr.getPublicKey(secret) }; };
@@ -76,7 +77,7 @@ test('a restart keeps the observations and the clock: a seat restarted mid-way s
     post: async (o) => { world.posted.push(o); }, load: () => (disk === null ? [] : JSON.parse(disk)), save: (v) => { disk = JSON.stringify(v); } });
   const a = seat();
   await a.observe();                                       // 41 first seen at 341
-  assert.deepEqual(JSON.parse(disk).seen[fid], { session: 41, firstHeight: 341, heard: true, at: JSON.parse(disk).seen[fid].at });
+  assert.deepEqual(JSON.parse(disk).seen[fid], { session: 41, firstHeight: 341, heard: true, rule: 2, at: JSON.parse(disk).seen[fid].at });
   world.tip = 346;
   const b = seat();                                        // restarted at 346: the clock is the one seen at 341
   assert.deepEqual([b.seen(fid).session, b.seen(fid).firstHeight], [41, 341]);
@@ -97,7 +98,8 @@ test('a restart keeps the observations and the clock: a seat restarted mid-way s
     ownKey: seats[1].pub, height: async () => world.tip, ask: async () => { throw new Error('down'); }, post: async () => {},
     load: () => JSON.parse(disk), save: () => {} });
   world.tip = 360;
-  assert.deepEqual((await old.observe()).map((r) => [r.session, r.firstHeight]), [[41, 345]]);
+  // ONE PEER'S OBSERVATION IS NOT TAKEN (kanban #1158): a seat that heard nothing names a session only when need - 1 of its peers do
+  assert.deepEqual((await old.observe()).map((r) => [r.session, r.firstHeight]), [[0, 345]], 'one peer\'s 41 is not taken');
 });
 
 // A SEAT THAT NEVER HEARD A GUARDIAN (kanban #326, measured 2026-10-21 23:5xZ): T2's guardians exit once consensus times out, so a
@@ -150,4 +152,99 @@ test('POST /halt-observations reads its JSON body: a malformed observation is re
     assert.equal(r.status, 400);
     assert.match(why, /not a halt observation/, why);
   } finally { await seat.close(); }
+});
+
+// KANBAN #1158: ONE GUARDIAN'S SESSION COUNT PROVES NO HALT. Seven guardians, one of them answering session 2^31; the six honest ones move
+// one session a block. Before, every seat took the highest answer, its clock froze at 2^31, and after abandon_blocks every seat signed
+// an observation at it: the quorum met, "slow, not halted" never fired, a running federation proven HALTED.
+const fid7 = toHex(taggedHash('TEST/fed', Uint8Array.of(7)));
+const record7 = { federationId: taggedHash('TEST/fed', Uint8Array.of(7)), guardians: [0, 1, 2, 3, 4, 5, 6].map((i) => ({ peerKey: peer(i), endpoint: `wss://g${i}` })) };
+const records7 = { list: () => [{ federation: fid7 }], recordOf: (f) => (f === fid7 ? { record: record7, status: 'OPEN', height: 1, bytes: Uint8Array.of(1) } : null), haltOf: () => null, haltedFederations: () => [] };
+const LIE = 2 ** 31;
+function seat7(s, world, { load = () => [] } = {}) {
+  return createHalts({ records: records7, censusSeats: () => seats.map((x) => x.pub), clocks, verify, sign: (h) => schnorr.sign(h, s.secret), ownKey: s.pub,
+    height: async () => world.tip, load, save: () => {},
+    ask: async (ep) => { const i = Number(ep.slice(-1)); if (world.down.has(i)) throw new Error('down'); return world.liar === i ? LIE : world.session; },
+    post: async (o) => { world.posted.push(o); } });
+}
+
+test('#1158 one guardian answering session 2^31 proves no halt of a running federation', async () => {
+  const world = { tip: 330, session: 500, down: new Set(), posted: [], liar: 6 };
+  const all = seats.map((s) => seat7(s, world));
+  for (let i = 0; i < 15; i++) { for (const h of all) await h.observe(); world.tip++; world.session++; }
+  for (const o of world.posted) all[0].take(o);
+  const p = all[0].proofOf(fid7);
+  console.log(`#1158 measure: 7 guardians, 1 answers 2^31, the federation runs 15 blocks (abandon_blocks 10) -> seat clock at ${all[0].seen(fid7).session}, ${world.posted.length} observations signed, halt ${p ? `PROVEN at session ${p.session}` : 'not proven'}`);
+  assert.equal(world.posted.length, 0, 'no seat signs an observation');
+  assert.equal(p, null);
+  assert.equal(all[0].seen(fid7).session, 514, 'the clock follows the six honest guardians');
+});
+
+test('#1158 a seat that never heard a guardian does not take one lying seat\'s session, and a seat that hears them voids a proof above its reading', async () => {
+  const world = { tip: 330, session: 500, down: new Set(), posted: [], liar: null };
+  const heard = seat7(seats[0], world);
+  await heard.observe();
+  const liar = seats[8];
+  const lie = signHaltObservation({ federationId: record7.federationId, session: LIE, firstHeight: 300, height: 330, answering: [], observer: liar.pub }, (h) => schnorr.sign(h, liar.secret));
+  const lieJson = { observation: toHex(encodeHaltObservation(lie)), signature: toHex(lie.signature) };
+  // four seats that reach no guardian take the lie
+  const deaf = { ...world, down: new Set([0, 1, 2, 3, 4, 5, 6]), posted: world.posted };
+  const quiet = seats.slice(4, 8).map((s) => seat7(s, deaf));
+  for (const q of quiet) { q.take(lieJson); await q.observe(); }
+  deaf.tip = 341;
+  for (const q of quiet) await q.observe();
+  for (const o of [lieJson, ...world.posted]) heard.take(o);
+  world.tip = 341; await heard.observe();
+  const atLie = world.posted.map((o) => decodeHaltObservation(Buffer.from(o.observation, 'hex'))).filter((o) => o.session === LIE).length;
+  const p = heard.proofOf(fid7);
+  console.log(`#1158 measure: one lying seat's observation at 2^31, four seats that hear no guardian -> ${atLie} of them sign 2^31; a seat hearing the guardians at ${heard.seen(fid7).session}: halt ${p ? `PROVEN at ${p.session}` : 'not proven'}`);
+  assert.equal(atLie, 0, 'the deaf seats do not take one peer\'s session');
+  assert.equal(p, null);
+});
+
+test('#1158 sessionReading and clockStep: the (f + 1)-th highest; a view of the old rule read again; a halted federation\'s clock kept', () => {
+  assert.equal(sessionReading([500, 500, 500, 500, 500, 500, LIE], 7), 500, 'f = 2: the third highest');
+  assert.equal(sessionReading([LIE, 500], 4), 500, 'f = 1: the second highest');
+  assert.equal(sessionReading([693], 4), null, 'one answer of four reads nothing');
+  assert.equal(sessionReading([], 4), null);
+  // a view stored under the old rule at a liar's session is read again at the first reading
+  assert.deepEqual(clockStep({ session: LIE, firstHeight: 300, heard: true }, { reading: 510, tip: 340 }), { session: 510, firstHeight: 340, heard: true, rule: 2 });
+  // a halted federation (T2: no guardian answers; T: one of four) keeps its session and first_height under the new rule
+  const t2 = { session: 783, firstHeight: 157262, heard: true };
+  assert.equal(clockStep(t2, { reading: null, tip: 159383 }), t2);
+  // the old rule's view at the reading's own session keeps its first_height
+  assert.deepEqual(clockStep({ session: 783, firstHeight: 157262, heard: true }, { reading: 783, tip: 159383 }), { session: 783, firstHeight: 157262, heard: true, rule: 2 });
+  // a seat that never heard: need - 1 peers at 783 name it; fewer name nothing
+  assert.equal(clockStep(null, { reading: null, peerSessions: Array(46).fill(783), need: 23, tip: 159000 }).session, 783);
+  assert.equal(clockStep(null, { reading: null, peerSessions: [LIE], need: 5, tip: 159000 }).session, 0);
+});
+
+// KANBAN #1223 (audit 2 #1204 FED-A2): the "slow, not halted" void (#1158) applied only while EVERY kept observation was below the session
+// this seat saw - so one census seat's observation at a huge session switched it off, and a federation that had stalled and recovered was
+// proven HALTED again from its old halt height (liquidation listed, spent sets published). Now a proof at session S is void whenever this
+// seat itself saw the federation past S, whatever else is held.
+test('#1223 a recovered federation stays not halted when one seat posts an observation at a huge session', async () => {
+  const { haltObservationId } = await import('../../arena-protocol/src/halt-proof.js');
+  const world = { tip: 330, session: 40, down: new Set(), posted: [] };
+  const all = seats.map((s) => seatOf(s, world));
+  for (const h of all) await h.observe();
+  world.session = 41; world.tip = 341; world.down = new Set([2, 3]);
+  for (const h of all) await h.observe();
+  world.tip = 351;
+  for (const h of all.slice(0, 5)) await h.observe();
+  const me = all[0];
+  for (const o of world.posted.slice(1, 5)) me.take(o);
+  assert.ok(me.proofOf(fid), 'the stall at 41 is proven');
+  // the federation recovers: sessions move again, and this seat sees them
+  world.session = 45; world.down = new Set(); world.tip = 360;
+  await me.observe();
+  assert.equal(me.proofOf(fid), null, 'a later session seen here voids it (#1158)');
+  // one census seat posts an observation at a huge session, for both variants of the number
+  for (const session of [0x7fffffff, 46]) {
+    const liar = seats[8];
+    const o = { federationId: record.federationId, session, firstHeight: 0, height: 360, answering: [], observer: liar.pub };
+    const signed = { observation: toHex(encodeHaltObservation(o)), signature: toHex(schnorr.sign(haltObservationId(o), liar.secret)) };
+    me.take(signed);
+    assert.equal(me.proofOf(fid), null, `a recovered federation proven halted again by one observation at session ${session}`);
+  }
 });

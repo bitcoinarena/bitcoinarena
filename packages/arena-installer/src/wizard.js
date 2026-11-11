@@ -21,7 +21,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { testConnection, TESTNET4_ELECTRUM } from './chain-test.js';
 import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS, emergencyOf, seedOfWords, seedOfNsec, newNsec, nodeKeyOf, signNostrEvent } from './seed.js';
-import { nextStep, doneOf, seatConf, ROLES, guardianSetupOf, ownCoreOf } from './state.js';
+import { nextStep, doneOf, seatConf, writeSeatConf, ROLES, guardianSetupOf, ownCoreOf } from './state.js';
 import { appsIn, appsView, chosenApps, hostedGameIdsOf } from './apps.js';
 import { installService, installProgram } from './service.js';
 import { control, followTunnelNow, nodeOf } from './node-services.js';
@@ -30,7 +30,8 @@ import { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncSt
 import { createHash } from 'node:crypto';
 import * as reachKit from './reach.js';
 import { DatabaseSync } from 'node:sqlite';
-import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
+import { walletOf, payoutKeyOf, coinsOf, broadcast, txSeen } from './wallet.js';
+import { onchainAction, resumeOpen } from './onchain-action.js';
 import { buildBond, buildAdvertUpdate, buildSend, advertFor, lockOf, BOND_MIN_SATS, EMERGENCY_IN_ADVERT } from './bond.js';
 import { installMinimum } from './install-minimum.js';
 import { writeLaunchers, installUpdater } from './launchers.js';
@@ -142,7 +143,7 @@ export async function repairCorePorts({ state, network, coreKit = { freeCorePort
 export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_PORT, bridgePort = null, test = testConnection, install = installService,
   // tailscale: the test host app's own CLI when it is installed, else the one in PATH
   fetcher = fetch, reach = reachKit, cloudflared = 'cloudflared', tailscale = process.env.ARENA_TAILSCALE || (process.platform === 'darwin' && existsSync('/Applications/Tailscale.app/Contents/MacOS/Tailscale') ? '/Applications/Tailscale.app/Contents/MacOS/Tailscale' : 'tailscale'),
-  tailscaleSh = undefined, workersKit = workersKitDefault, chainKit = { coinsOf, broadcast },
+  tailscaleSh = undefined, workersKit = workersKitDefault, chainKit = { coinsOf, broadcast, seen: txSeen },
   coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, freeCorePorts, installProgram },
   lndKit = { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, installProgram, lndFunds, lndOpenChannel, lndChannels },
   gwKit = { findGatewayd, configureGateway, testGateway, joinFederation, installProgram }, launch = writeLaunchers, nowMs = () => Date.now(), onDone = () => {}, log = () => {},
@@ -202,7 +203,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   };
   // THE RELEASE'S APPS (kanban #569): read once - the release folder does not change under a running wizard
   const releaseApps = (() => { try { return appsIn(release); } catch (e) { log(`apps: ${e.message}`); return []; } })();
-  const mark = (step, patch = {}) => { const s = state.read(); return state.save({ ...patch, done: { ...(s.done || {}), [step]: Date.now() } }); };
+  const mark = (step, patch = {}) => state.update((n) => ({ ...patch, done: { ...(n.done || {}), [step]: Date.now() } }));   // the done map as it stands (kanban #1178)
   // A FUNDAMENTAL CHANGED ON AN INSTALLED NODE (kanban #734, the owner: "when re-running the install script and changing fundamental options
   // like bitcoin, lightning, roles, reach, the new setting should reflect in the owners page correctly instead of raising errors"): the
   // node's settings (arena.conf) are written only by "Install and start", which stayed done on a re-run - so a new Bitcoin source or new
@@ -351,7 +352,7 @@ const serviceRun = async (b) => {
     stage('settings');
     // the hosted games again, from this release's apps (an installer updated since the apps step carries newer versions)
     try { const hg = await hostedGameIdsOf(release, chosenApps(s, releaseApps), releaseApps); if (hg.length) s = state.save({ hostedGames: hg }); } catch (e) { log(`apps: the hosted games could not be read: ${e.message}`); }
-    state.writeSecret('arena.conf', seatConf(conf, { home: state.home, release }));
+    writeSeatConf(state, conf, { home: state.home, release });
     const tunnel = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelUnit({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
     const tunnelArgs = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelArgsOf({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
     const installAt = Date.now();                                    // a restarted quick tunnel's name is the one logged after this
@@ -385,9 +386,9 @@ const serviceRun = async (b) => {
     if (s.reach.mode === 'quick') {
       const url = await reach.quickTunnelUrl({ home: state.home, sinceMs: installAt });
       if (url) {
-        s = state.save({ reach: { ...s.reach, url } });
+        s = state.merge('reach', { url });
         const before = seatConf(conf, { home: state.home, release }), after = seatConf({ ...s, port, bridgePort }, { home: state.home, release });
-        state.writeSecret('arena.conf', after);
+        writeSeatConf(state, { ...s, port, bridgePort }, { home: state.home, release });
         // THE SEAT READS WHAT ITS SETTINGS NOW SAY (kanban #577, measured 2026-10-22 on the second machine: installer nodes 3-7 ran on the 15 settings
         // they started with - the quick tunnel's name, and with it the custody node's guardian and founding settings, came only after the start -
         // so they ran no guardian and could never be drawn into a founding): the seat alone restarted, never its tunnel (a new name)
@@ -404,7 +405,7 @@ const serviceRun = async (b) => {
       if (!target) return { ok: false, why: 'the node runs, but its quick tunnel gave no name for the Worker to forward to', identity: r.identity };
       const d = await workersKit.deployForwarder({ token: state.readSecret('cf-workers-token'), accountId: s.reach.accountId, name: s.reach.workerName, target, fetcher });
       if (!d.ok) return { ok: false, why: `the node runs, but ${d.why}`, identity: r.identity };
-      s = state.save({ reach: { ...s.reach, target, targetAtMs: Date.now() } });
+      s = state.merge('reach', { target, targetAtMs: Date.now() });
       const k = await gwKit.installProgram({ id: 'workers', description: 'Bitcoin Arena: keeper of the workers.dev address', home: state.home, boot,
         args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'workers-keeper.mjs'), '--home', state.home] });
       if (!k.ok) return { ok: false, why: `the Worker forwards, but its keeper did not start: ${k.why}`, identity: r.identity };
@@ -415,7 +416,7 @@ const serviceRun = async (b) => {
       const t = await (reach.testWithNewTunnels || reachKit.testWithNewTunnels)({ url: s.reach.url, identity: r.identity, fetcher, log, test: reach.testPublicUrl,
         newTunnel: async () => { const rt = await restartTunnel(state.home); return rt && rt.tunnel ? rt.tunnel.url : null; } });
       reachTest = t.reachTest;
-      if (t.url !== s.reach.url) s = state.save({ reach: { ...state.read().reach, url: t.url } });
+      if (t.url !== s.reach.url) s = state.merge('reach', { url: t.url });
     } else if (s.reach.mode !== 'direct') reachTest = s.reach.url ? await reach.testPublicUrl({ url: s.reach.url, identity: r.identity, fetcher }) : { ok: false, why: 'the quick tunnel gave no name' };
     let login = null;
     if (s.owner.mode === 'seed') { stage('login'); login = await ownerLogin(signedBySeed(r.identity)); }
@@ -879,7 +880,7 @@ const serviceRun = async (b) => {
       const j = await gwKit.joinFederation({ ...s.gateway, invite: b.invite });
       if (!j.ok) return j;
       const t = await gwKit.testGateway(s.gateway);
-      if (t.ok) state.save({ gateway: { ...state.read().gateway, federations: t.federations } });
+      if (t.ok) state.merge('gateway', { federations: t.federations });
       return { ok: true, federationId: j.federationId, federations: t.ok ? t.federations : null };
     },
     // THE FEDERATION (2026-10-18: "it should be its own point and the default is find a new federation with 9 other nodes or
@@ -917,7 +918,7 @@ const serviceRun = async (b) => {
       const total = coins.reduce((a, c) => a + c.sats, 0);
       const custody = (s.roles || []).includes('custody');
       const pegInSats = custody ? Math.max(0, Math.floor(Number((b && b.pegInSats) ?? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS))) : 0;
-      if (custody) state.save({ custody: { ...(state.read().custody || {}), pegInSats } });
+      if (custody) state.merge('custody', { pegInSats });
       // THE MINIMUM ASKED OF THE SEATS (kanban #543): a new node bonds at least the network's target, so it is useful from the start
       if (!laterCustody(s)) { const m = await installMinimum({ fetcher }); state.save({ bondMinimum: { sats: m.sats, from: m.from, why: m.why, atMs: nowMs() } }); }
       const parts = withOtherNodes(state.read(), depositParts(state.read(), pegInSats), { further: !!fundFrom });
@@ -929,11 +930,19 @@ const serviceRun = async (b) => {
         if (!baseSeed) fundWhy = 'the first node has no wallet yet';
         else {
           try {
+            // AN ON-CHAIN ACTION OF NODE 1'S WALLET, ONCE PER NODE PAID FOR (kanban #1165): kept in node 1's state before it is sent, so a
+            // check asked again after a crash or a lost answer sends the same payment again, never a second one
             const bw = walletOf(fromHex(baseSeed));
-            const got = await chainKit.coinsOf(s.chain, bw.spk);
-            const tx = buildSend({ wallet: bw, coins: got.coins, script: w.spk, sats: needSats - total, feeRate: 2 });
-            const txid = await chainKit.broadcast(s.chain, tx.hex);
-            fundedFrom = { txid, sats: needSats - total, atMs: nowMs() };
+            const sats = needSats - total;
+            const r = await onchainAction({ state: fundFrom, kind: `fund-node ${state.home}`, once: true, chainKit, chain: s.chain,
+              build: async (n) => {
+                const got = await chainKit.coinsOf(n.chain || s.chain, bw.spk);
+                let tx;
+                try { tx = buildSend({ wallet: bw, coins: got.coins, script: w.spk, sats, feeRate: 2 }); } catch (e) { return { ok: false, why: e.message }; }
+                return { ok: true, tip: got.tip, txs: [{ name: 'send', hex: tx.hex }], ops: [], result: { txid: tx.txid, sats } };
+              } });
+            if (!r.ok) throw new Error(r.why);
+            fundedFrom = { txid: r.result.txid, sats: r.result.sats, atMs: nowMs() };
             state.save({ fundedFrom });
           } catch (e) { fundWhy = `the first node's wallet could not pay this node's part: ${e.message}`; }
         }
@@ -959,46 +968,69 @@ const serviceRun = async (b) => {
       return { ok: true, txid: r.txid, sats: r.sats };
     },
     'POST /api/bond/post': async (b) => {
+      // THE BOND IS AN ON-CHAIN ACTION (kanban #1165, onchain-action.js): its bytes written before they are sent; a post asked again after a
+      // crash, a lost answer or a double click sends the SAME bytes again and records them, never a second bond. One sent and not recorded
+      // yet is finished first - here or by the owner page's Bond panel (add-bond.js firstBond, the same kind)
+      const resumed = await resumeOpen(state, { chainKit });
+      if (resumed.open) return { ok: false, pending: true, why: resumed.why };
+      const just = resumed.done && (resumed.done.kind === 'first-bond' || resumed.done.kind.startsWith('custody-advert ')) ? resumed.done : null;
       const s = state.read();
       if (!(s.done || {}).service) return { ok: false, why: 'install the node first' };
       if (!(s.done || {}).promise) return { ok: false, why: 'read the bond\'s rules first and type I UNDERSTAND' };
-      if (s.bond && s.bond.txid && !(laterCustody(s) && !s.bond.custodyAdvert)) return { ok: false, why: `this node's bond is posted already (${s.bond.txid})` };
+      if (!just && s.bond && s.bond.txid && !(laterCustody(s) && !s.bond.custodyAdvert)) return { ok: false, why: `this node's bond is posted already (${s.bond.txid})` };
       const seed = fromHex(state.readSecret('seed.hex'));
       const w = walletOf(seed);
-      const { tip, coins } = await chainKit.coinsOf(s.chain, w.spk);
-      const db = new DatabaseSync(state.path('node.db'), { readOnly: true });
-      let nodeSecret;
-      try { nodeSecret = new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
+      const nodeSecretNow = () => {
+        const db = new DatabaseSync(state.path('node.db'), { readOnly: true });
+        try { return new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
+      };
       // custody added to a node with a bond: the bond's advertisement is updated to name custody and the guardian's endpoint (§5A.2)
-      if (laterCustody(s)) {
-        const advert = advertFor({ hostedGames: s.hostedGames, nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles, endpoint: s.reach.url,
-          payoutPubkey: payoutKeyOf(seed), maturity: s.bond.maturity, softwareHash: commitOf(), guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
-          emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });   // the census reads the newest advertisement: the key kept
-        let u;
-        try { u = buildAdvertUpdate({ wallet: w, nodeSecret, coins, bond: { txid: s.bond.txid, vout: s.bond.vout || 0 }, advert }); }
-        catch (e) { return { ok: false, why: e.message }; }
-        await chainKit.broadcast(s.chain, u.funding.hex);
-        const txid = await chainKit.broadcast(s.chain, u.update.hex);
-        const bond = { ...s.bond, custodyAdvert: { txid, advertId: u.advertId, atTip: tip, atMs: Date.now() } };
-        mark('bond', { bond, advertProtocols: [...SUPPORTED_PROTOCOL_VERSIONS] });   // what its advertisement declares (change-roles refreshHostedGames)
+      if (just ? just.kind.startsWith('custody-advert ') : laterCustody(s)) {
+        const r = just ? { ok: true, result: just.result } : await onchainAction({ state, kind: `custody-advert ${s.bond.txid}`, once: true, chainKit,
+          build: async (n) => {
+            if (!laterCustody(n) || n.bond.txid !== s.bond.txid) return { ok: false, why: 'the bond changed meanwhile: ask again' };
+            const { tip, coins } = await chainKit.coinsOf(n.chain, w.spk);
+            const nodeSecret = nodeSecretNow();
+            const advert = advertFor({ hostedGames: n.hostedGames, nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${n.owner.pubkey.slice(0, 12)}`, roles: n.roles, endpoint: n.reach.url,
+              payoutPubkey: payoutKeyOf(seed), maturity: n.bond.maturity, softwareHash: commitOf(), guardianEndpoint: (guardianSetupOf(n, { release }) || {}).endpoint || null,
+              emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });   // the census reads the newest advertisement: the key kept
+            let u;
+            try { u = buildAdvertUpdate({ wallet: w, nodeSecret, coins, bond: { txid: n.bond.txid, vout: n.bond.vout || 0 }, advert }); }
+            catch (e) { return { ok: false, why: e.message }; }
+            const custodyAdvert = { txid: u.update.txid, advertId: u.advertId, atTip: tip, atMs: Date.now() };
+            // what its advertisement declares (change-roles refreshHostedGames), and the step done - with the bond as it stands then
+            return { ok: true, tip, txs: [{ name: 'funding', hex: u.funding.hex }, { name: 'update', hex: u.update.hex }],
+              ops: [{ op: 'merge', key: 'bond', value: { custodyAdvert } }, { op: 'set', key: 'advertProtocols', value: [...SUPPORTED_PROTOCOL_VERSIONS] }, { op: 'done', step: 'bond' }],
+              result: { txid: u.update.txid } };
+          } });
+        if (!r.ok) return r;
         await installAgent();
-        return { ok: true, bond, update: txid };
+        return { ok: true, bond: state.read().bond, update: r.result.txid };
       }
       const minimum = BigInt(bondMinimumOf(s));
       const bondSats = b.bondSats ? BigInt(b.bondSats) : minimum;
-      if (bondSats < minimum) return { ok: false, why: minimum > BOND_MIN_SATS ? `a new node bonds at least ${minimum} sat now: the network's bond target (${(s.bondMinimum || {}).why || 'GET /capacity'})` : `a bond is at least ${BOND_MIN_SATS} sat` };
-      let built;
-      try {
-        built = buildBond({ hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
-          endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash: commitOf(), feeRate: 2,
-          guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
-          emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
-      } catch (e) { return { ok: false, why: e.message }; }
-      const fundingTxid = await chainKit.broadcast(s.chain, built.funding.hex);
-      const bondTxid = await chainKit.broadcast(s.chain, built.bond.hex);
-      const bond = { txid: bondTxid, vout: 0, fundingTxid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
-        lock: lockOf(tip, { maturity: built.maturity }), atMs: Date.now() };
-      mark('bond', { bond, advertProtocols: [...SUPPORTED_PROTOCOL_VERSIONS] });   // what its advertisement declares (change-roles refreshHostedGames)
+      if (!just && bondSats < minimum) return { ok: false, why: minimum > BOND_MIN_SATS ? `a new node bonds at least ${minimum} sat now: the network's bond target (${(s.bondMinimum || {}).why || 'GET /capacity'})` : `a bond is at least ${BOND_MIN_SATS} sat` };
+      const r = just ? { ok: true, result: just.result } : await onchainAction({ state, kind: 'first-bond', chainKit,
+        build: async (n) => {
+          // compare-and-set on the state read now: a bond recorded meanwhile (the owner page, another tab) is never posted a second time
+          if (n.bond && n.bond.txid) return { ok: false, why: `this node's bond is posted already (${n.bond.txid})` };
+          const { tip, coins } = await chainKit.coinsOf(n.chain, w.spk);
+          let built;
+          try {
+            built = buildBond({ hostedGames: n.hostedGames, wallet: w, nodeSecret: nodeSecretNow(), coins, tip, bondSats, operatorId: `op-${n.owner.pubkey.slice(0, 12)}`, roles: n.roles,
+              endpoint: n.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash: commitOf(), feeRate: 2,
+              guardianEndpoint: (guardianSetupOf(n, { release }) || {}).endpoint || null,
+              emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
+          } catch (e) { return { ok: false, why: e.message }; }
+          const bond = { txid: built.bond.txid, vout: 0, fundingTxid: built.funding.txid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
+            lock: lockOf(tip, { maturity: built.maturity }), atMs: Date.now() };
+          // the wizard's mark('bond') with it: the step done, and what its advertisement declares (change-roles refreshHostedGames)
+          return { ok: true, tip, txs: [{ name: 'funding', hex: built.funding.hex }, { name: 'bond', hex: built.bond.hex }],
+            ops: [{ op: 'set', key: 'bond', value: bond }, { op: 'set', key: 'advertProtocols', value: [...SUPPORTED_PROTOCOL_VERSIONS] }, { op: 'done', step: 'bond' }], result: { bond } };
+        } });
+      if (!r.ok) return r;
+      const bond = r.result.bond;
+      const nodeSecret = nodeSecretNow();
       // a custody node's agent: guardian_of, the gateway's own federation and the peg-in, once a founding has drawn it (custody-agent.js)
       if ((s.roles || []).includes('custody') || (s.roles || []).includes('liquidity')) await installAgent();
       // THE LIQUIDITY PROVIDER SERVICE (§23A.10): its node key for its claims (0600 beside the node's other secrets), its LND, its claim
@@ -1011,7 +1043,7 @@ const serviceRun = async (b) => {
       }
       return { ok: true, bond };
     },
-    'POST /api/bond/later': async () => { const s = state.read(); mark('bond', { bond: s.bond && s.bond.txid ? s.bond : null }); return { ok: true }; },   // a posted bond stays
+    'POST /api/bond/later': async () => { state.update((n) => ({ bond: n.bond && n.bond.txid ? n.bond : null, done: { ...(n.done || {}), bond: Date.now() } })); return { ok: true }; },   // a posted bond stays - the one recorded now, not one read before (kanban #1178)
 
     'POST /api/finish': async () => {
       saveLaunchers();

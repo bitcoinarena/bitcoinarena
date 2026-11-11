@@ -9,7 +9,7 @@
 //     stake locks not claimed;
 //   - nobody right: only the fee locks are claimed;
 //   - no attestation at all: nothing is claimed;
-//   - a contradiction after the settlement is held as proof and undoes nothing.
+//   - a contradiction after the settlement is held as proof and undoes nothing: the round stays FINAL (kanban #1151).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { lockRound, openLockRound, lockAndPlay, closeRound, standing } from './lock-round-fixture.js';
@@ -136,10 +136,11 @@ test('the door, the window, the table paid by the seats\' own sweep, and a contr
     const late = await post(w.a, w.rid, signedBy({ roundId: w.rid, outcome: 2, observedAtMs: w.c.entryCloseMs + 5n }, [A1, A2]));
     const afterLate = await outcome(w.a, w.rid);
     const still = await standing(w.a, w);
-    console.log('  LATE CONTRADICTION:', JSON.stringify({ answer: late.slice(0, 3), state: afterLate.state, proof: (afterLate.proof || []).length, settlement: still.state, txid: still.txid === got.txid }));
+    console.log('  LATE CONTRADICTION:', JSON.stringify({ answer: late.slice(0, 3), state: afterLate.state, market: afterLate.market, proof: ((afterLate.contradicted || {}).proof || []).length, settlement: still.state, txid: still.txid === got.txid }));
     assert.equal(late.slice(0, 3), '201');
-    assert.equal(afterLate.state, 'DISPUTED');
-    assert.equal(afterLate.proof.length, 2);
+    // THE ROUND IS FINAL AND STAYS FINAL (kanban #1151): the contradiction is kept as proof beside its outcome, never a DISPUTED
+    assert.deepEqual([afterLate.state, afterLate.market, afterLate.final, afterLate.outcome], ['ATTESTED', 'FINAL', true, 0]);
+    assert.equal(afterLate.contradicted.proof.length, 2);
     assert.equal(still.state, 'ACCEPTED');
     assert.equal(still.txid, got.txid, 'the settlement changed after the contradiction');
   } finally { await w.close(); }
@@ -254,16 +255,18 @@ test('a cancel before entry close is free: out of the table at every seat, its s
     const free = { stake: await back(played[3]), fee: await back(played[3], '&lock=fee') };
     // A FEE LOCK OF AN ENTRY STILL IN THE ROUND DOES NOT COME BACK: it is due when the market resolves
     const kept = await back(played[0], '&lock=fee');
-    // ENTRY 2 CANCELS AT SEAT A ONLY: its return waits for seat B, which pulls the cancel before it settles
+    // ENTRY 2 CANCELS AT SEAT A ONLY: seat A's door hands it on to seat B's before the entry close (kanban #1435) - no seat carries
+    // another seat's cancel from the close on, so it must reach every seat while the doors are open
     const one = await cancel(w.a, played[2]);
-    const oneBack = await back(played[2]);
-    console.log('  CANCEL:', JSON.stringify({ forged, both, free, kept, one, oneBack }));
+    let handed = false;
+    for (const stop = Date.now() + 8000; Date.now() < stop && !handed; await wait(100)) handed = w.b.round.cancelled(played[2].eid);
+    console.log('  CANCEL:', JSON.stringify({ forged, both, free, kept, one, handed }));
     assert.match(forged, /^403 that cancel is not signed by the entry's session key/);
     assert.deepEqual(both.map((x) => x.slice(0, 3)), ['201', '201', '200']);
     assert.deepEqual(free, { stake: '200', fee: '200' });
     assert.match(kept, /^409 a fee lock comes back at once only for a cancelled order or a refunded market/);
     assert.equal(one.slice(0, 3), '201');
-    assert.notEqual(oneBack, '200', 'a cancel one seat holds returned a lock without the other');
+    assert.equal(handed, true, 'seat A did not hand the cancel it took on to seat B before the entry close');
     // AFTER ENTRY CLOSE: the order is in the round, its fee is due - no cancel
     await closeRound(w);
     const late = await cancel(w.a, played[0]);
@@ -283,6 +286,6 @@ test('a cancel before entry close is free: out of the table at every seat, its s
       assert.ok((await w.port.status(e.outpoint)).stored, 'a cancelled entry\'s stake lock was claimed');
       assert.ok((await w.port.status(e.feeOutpoint)).stored, 'a cancelled entry\'s fee lock was claimed');
     }
-    assert.equal(facts.carried, '200', 'seat B did not pull the cancel it was never sent');
+    assert.equal(facts.carried, '200', 'the cancel seat A handed on did not bring entry 2\'s stake back');
   } finally { await w.close(); }
 });

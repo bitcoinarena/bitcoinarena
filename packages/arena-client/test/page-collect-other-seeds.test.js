@@ -23,7 +23,7 @@ const Keeper = pageFunction(PAGE, [], html.slice(kFrom, kTo), '; return arenaSee
 const slice = (start, end) => { const a = html.indexOf(start), b = html.indexOf(end, a); assert.ok(a > 0 && b > a, `no slice ${start}`); return html.slice(a, b); };
 const readers = pageFunction(PAGE, ['ARENACLIENT', 'vault', 'collectSeed', 'sessionStorage', 'navigator', 'window'], [
   slice('    function withMarketTerms(round) {', '    // ONE TAB AT A TIME USES A KEPT ROUND'),   // roundAsk calls withMarketTerms
-  slice('    function keptRecords() {', '    function newestKept() {'),
+  slice('    function keptRecords() {', '    function newestKept('),
 ], '; return { roundAsk, keptRecords, withRecordPhrase };');
 
 // a real contract: the federation the wallets are kept for - in the Arena layout since: the live bytes with
@@ -46,8 +46,8 @@ const join = (L, seed, rid) => PL.saveCollect(L, { roundIdHex: rid, round, invit
 const walletOf = (L, seed, n) => { const s = PL.walletSecretFor(seed, round.federationId); L.setItem('arena.ledger.' + FED, '[]');
   for (let i = 0; i < n; i++) L.setItem(`arena.walletdb.${FED.slice(0, 16)}.${toHex(sha256(s)).slice(0, 16)}.${i}`, 'x'); };
 // the page's readers in tab `tab`, with a fake browser lock manager (`taken`: phrase locks another tab holds)
-function pageOf(L, tab, taken = new Set()) {
-  const navigator = { locks: { request: (name, opts, fn) => Promise.resolve(fn(taken.has(name) ? null : { name })) } };
+function pageOf(L, tab, taken = new Set(), { noLocks = false } = {}) {
+  const navigator = noLocks ? {} : { locks: { request: (name, opts, fn) => Promise.resolve(fn(taken.has(name) ? null : { name })) } };
   const BL = { toHex, fromHex, savedCollects: PL.savedCollects, recordsToCollect: PL.recordsToCollect, browserSeedHexes: PL.browserSeedHexes };
   return readers(BL, () => L, () => tab.seed, tab.T, navigator, { ARENA_CURVE: null });
 }
@@ -84,8 +84,10 @@ test('case 2, held: a kept phrase another open tab holds is not collected here (
   const b = openTab(L);                                        // a is still open and beating
   const rec = pageOf(L, b).keptRecords().collectable.find((r) => r.roundIdHex === rid);
   assert.ok(rec && !rec.own);
-  assert.equal(await collectOne(pageOf(L, b), rec), null, 'a held phrase was collected by a second tab');
-  assert.equal(await collectOne(pageOf(L, b, new Set(['arena.phrase.' + a.hex.slice(0, 16)])), Object.assign(rec, {})), null);
+  // THE OPEN TAB HOLDS ITS PHRASE'S LOCK: the lock alone decides (kanban #1164: never a heartbeat's age before it)
+  assert.equal(await collectOne(pageOf(L, b, new Set(['arena.phrase.' + a.hex.slice(0, 16)])), Object.assign(rec, {})), null, 'a held phrase was collected by a second tab');
+  // and a browser without Web Locks still skips a phrase whose tab beat in the last 12 s
+  assert.equal(await collectOne(pageOf(L, b, new Set(), { noLocks: true }), rec), null, 'a held phrase was collected by a second tab (no Web Locks)');
 });
 
 test('case 3: a record whose seed no saved phrase holds is named uncollectable and is not redeemed by the preferred wallet', async () => {

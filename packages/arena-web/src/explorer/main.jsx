@@ -49,7 +49,7 @@ const resultCls = (r) => (r && r.state === 'won' ? 'ok' : r && r.state === 'lost
 // A PAGE AT A TIME, FILTERED IN THE STORE (kanban #683, 2026-10-26: "I don't see other apps in the explorer. Add paging to the explorer to
 // display more than a 1000"): the Worker answers the page the filters and the cursor ask for - newest first, Older and Newer from a row -
 // and every app, kind and federation it holds with its count, so an app below the newest rows is one choice away
-const FILTER_KEYS = ['app', 'kind', 'fed', 'since', 'q'];
+const FILTER_KEYS = ['app', 'kind', 'fed', 'since', 'q', 'marked'];
 const PAGE_KEYS = ['before', 'after'];
 const PERIODS = [['', 'Any time'], ['900', 'Last 15 min'], ['3600', 'Last hour'], ['86400', 'Last 24 h'], ['604800', 'Last 7 days']];
 const paramsOf = (search) => { const u = new URLSearchParams(search); return Object.fromEntries([...FILTER_KEYS, ...PAGE_KEYS].map((k) => [k, u.get(k) || ''])); };
@@ -105,6 +105,8 @@ export function List({ data = null }) {
         {feds.map(([x, c]) => <option key={x} value={x}>Federation {x.slice(0, 8)}{n(c)}</option>)}</select>
       <select value={p.since} onChange={(e) => set('since', e.target.value)}>{PERIODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
       <input placeholder="part of an id or round" value={q} onChange={(e) => setQ(e.target.value.trim().toLowerCase())} autoComplete="off" />
+      {/* OUR BOTS' AND THE OWNER'S OWN TRANSACTIONS (kanban #1107): left out unless this is ticked */}
+      <label className="dim" id="show-marked"><input type="checkbox" checked={p.marked === '1'} onChange={(e) => set('marked', e.target.checked ? '1' : '')} /> Show bot and admin transactions</label>
       <span className="dim">{busy ? 'Loading…' : count(txs.length) + (page.total !== null && page.total !== undefined ? ' of ' + count(page.total) : '')}</span>
     </div>
     <div className="card"><table className="rows"><thead><tr><th>Transaction</th><th>App</th><th>Kind</th><th className="n">Amount</th><th>Result</th><th>Federation</th><th>Round</th><th>Stored</th></tr></thead><tbody>
@@ -480,7 +482,7 @@ export function Played({ data = null }) {
     <div className="card">
       <p>
         {['day', 'week', 'month'].map((k) => <button key={k} type="button" className={by === k ? 'on' : undefined} onClick={() => setBy(k)} style={{ marginRight: 6, opacity: by === k ? 1 : 0.45 }}>{{ day: 'Days', week: 'Weeks', month: 'Months' }[k]}</button>)}
-        <label style={{ marginLeft: 12 }}><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> include the owner's and our bots' rounds</label>
+        <label style={{ marginLeft: 12 }}><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> include the developer's and our bots' rounds</label>
       </p>
       <p><b>{total.toLocaleString('en-US')}</b> {all ? 'rounds in all' : 'rounds with real players'} since {p.from}</p>
       {rows.length ? <StackedBars name={'Played rounds per ' + by} series={games.map((g, i) => ({ key: g, label: gameName(g), color: gameColor(g, i) }))}
@@ -489,9 +491,9 @@ export function Played({ data = null }) {
         {rows.map((r) => <tr key={r.period}><td className="nw">{by === 'month' ? r.period : shortDay(r.period)}</td><td><b>{n(r.all).toLocaleString('en-US')}</b></td>
           {games.map((g) => <td key={g}>{n(r.games[g]).toLocaleString('en-US')}</td>)}
           <td>{(all ? r.all.entries : r.all.realPlayers).toLocaleString('en-US')}</td>
-          <td className="dim" title={`${r.all.owner} owner, ${r.all.bot} bot entries`}>{(r.all.owner + r.all.bot).toLocaleString('en-US')}</td></tr>)}
+          <td className="dim" title={`${r.all.owner} developer, ${r.all.bot} bot entries`}>{(r.all.owner + r.all.bot).toLocaleString('en-US')}</td></tr>)}
       </tbody></table></div>) : <p className="dim">No paid rounds yet.</p>}
-      <p className="dim">A round counts for real players when at least one of its entries is not the owner's (his page's admin flag) and not one of our bots'. RPS = Rock Paper Scissors. Players: {all ? 'entries' : 'distinct real players'}. Left out: the owner's and our bots' entries. {p.marked ? `Marked: ${p.marked.owner || 0} owner, ${p.marked.bot || 0} bot entries.` : ''}</p>
+      <p className="dim">A round counts for real players when at least one of its entries is not the developer's (the page's admin flag) and not one of our bots'. RPS = Rock Paper Scissors. Players: {all ? 'entries' : 'distinct real players'}. Left out: the developer's and our bots' entries. {p.marked ? `Marked: ${p.marked.owner || 0} developer, ${p.marked.bot || 0} bot entries.` : ''}</p>
     </div>
   </>);
 }

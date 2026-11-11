@@ -174,9 +174,12 @@ export function lockPort({ height = 1000, gateways = TWO_GATEWAYS } = {}) {
       if (!preimage) return { ...said, sent: false, why: 'the recipient knows no such invoice' };
       if (!port.gatewayPayments.some((x) => x.contractId === contractId)) port.gatewayPayments.push({ contractId, gateway, paymentHash, amountMsat });
       // AND THE GATEWAY CLAIMS THE CONTRACT with the preimage: it is no longer held.
-      for (const [k, v] of locks) if (v.fields.paymentHash === String(paymentHash)) locks.delete(k);
+      for (const [k, v] of locks) if (v.fields.paymentHash === String(paymentHash)) { locks.delete(k); port.claimedSends.add(k); }
       return { ...said, sent: true, preimage };
     },
+    // THE GATEWAY'S CLAIM, AS THE GUARDIANS KEEP IT (kanban #1185): the outpoints of outgoing contracts a gateway claimed with their preimage
+    claimedSends: new Set(),
+    async sendClaimed(outpoint) { return { claimed: port.claimedSends.has(`${toHex(outpoint.txid)}:${outpoint.outIdx}`) }; },
     asked: 0, height, locks,
     async status(outpoint) {
       port.asked++;
@@ -259,7 +262,8 @@ export function lockPort({ height = 1000, gateways = TWO_GATEWAYS } = {}) {
       });
       port.accepted.add(toHex(message));
       void claimPk;
-      return { ...said, accepted: true };
+      // AS THE TOOL ANSWERS (tools/stake-lock main.rs): what the guardians hold afterwards - each payout stored, each claimed lock gone (kanban #1171)
+      return { ...said, accepted: true, payoutsStored: payouts.map((p, i) => ({ id: `payout-${i}` })), locksAfter: [...claims, ...refunds].map(() => null) };
     },
     accepted: new Set(),
   };

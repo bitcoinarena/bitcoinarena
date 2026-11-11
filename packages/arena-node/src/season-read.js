@@ -30,9 +30,26 @@ import { decodeLobbyName } from '../../arena-protocol/src/lobby-name.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { verifiedFinal, runId } from './verdict.js';
 import { stateOf } from './settlement-state.js';
+import { seasonRoundsToJson, signSeasonAccount } from '../../arena-protocol/src/season.js';
 
 const ACCEPTED = 'ACCEPTED';
 const hex = (b) => toHex(new Uint8Array(b));
+
+/**
+ * THE ROUNDS AS GET /season-rounds HANDS THEM ON, SIGNED (kanban #1153): each round's wire JSON with its contract (hex, as this seat
+ * stores it) and this seat's signature over its account once every entry of it is settled here (protocol signSeasonAccount: round keys
+ * in, names out) - `sigs` empty while it is not. What a leaderboard payout and the weekly board badge count a round on: the threshold
+ * of the round's own draw signing the same account. `sign(digest)` -> 64 bytes under this seat's node key.
+ */
+export function signedSeasonRoundsJson(round, rounds, sign) {
+  const json = seasonRoundsToJson(rounds);
+  return json.map((j, i) => {
+    let row = null; try { row = round.get(Buffer.from(j.roundId, 'hex')); } catch { row = null; }
+    const contract = row && row.contract ? hex(row.contract) : null;
+    const sig = contract ? signSeasonAccount({ ...rounds[i], contract }, round.pubkey, sign) : null;
+    return { ...j, contract, sigs: sig ? [sig] : [] };
+  });
+}
 
 /**
  * The rounds of `games` (a Set of game id hex) this node holds with entries, started in [fromMs, toMs), read into the
@@ -81,14 +98,18 @@ function entriesOf(round, rid, contract, { paid, market }) {
   // THE ROUND KEYS' SIGNED NAME RECORDS: the identity each names, and the name the player chose
   const named = new Map();
   for (const n of round.lobbyNames(rid)) {
-    try { const r = decodeLobbyName(n.record); named.set(hex(r.playerPubkey), { identity: hex(r.identityPubkey), name: r.name || null }); } catch { /* not a record */ }
+    // its identity counts only with that identity's own consent, checked at the door (kanban #1278, RULED #1276); the name is shown either way
+    try { const r = decodeLobbyName(n.record); named.set(hex(r.playerPubkey), { identity: hex(r.identityPubkey), consented: !!n.identitySig, name: r.name || null }); } catch { /* not a record */ }
   }
 
   return round.entriesOf(rid).map(({ entryId, entry }) => {
     const key = hex(entry.playerPubkey);
     const proven = typeof round.identityOf === 'function' ? round.identityOf(entryId) : null;
     const record = named.get(key) || null;
-    const player = proven ? hex(proven.identity) : record ? record.identity : key;
+    // A ROUND BOOKS TO AN IDENTITY ONLY WITH ITS CONSENT (kanban #1278, RULED #1276): the record's identity with its proof, or a head-to-head reveal's
+    // proof (the identity key over round and entry); two different identities proven over one round key book it to neither; else the bare round key
+    const consented = record && record.consented ? record.identity : null;
+    const player = proven && consented && hex(proven.identity) !== consented ? key : proven ? hex(proven.identity) : consented || key;
     // `roundKey` beside the player: the key the entry joined under, so a reader can tell an identity from a bare round key
     // (the badges award only an identity, protocol badges.js). season() reads no such field; /season-rounds sends it, for the
     // weekly board badge, which merges the seats' accounts on it (mergeSeasonAccounts `keys`).

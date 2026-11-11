@@ -26,6 +26,7 @@ const dealt = (secret) => { const G = evenGroupSecret(secret, curve); return tru
 const DX = dealt(0x7777n), DY = dealt(0x8888n);
 const nodeKeys = (k) => Array.from({ length: 7 }, (_, i) => toHex(schnorr.getPublicKey(Uint8Array.from({ length: 32 }, (_, j) => (j === 31 ? i + 1 : k))))).sort();
 const KX = nodeKeys(1), KY = nodeKeys(2);
+const SECRET_OF = new Map([1, 2].flatMap((k) => Array.from({ length: 7 }, (_, i) => { const sk = Uint8Array.from({ length: 32 }, (_, j) => (j === 31 ? i + 1 : k)); return [toHex(schnorr.getPublicKey(sk)), sk]; })));
 const FEES = { ppm: 100n, baseMsat: 1000n };
 const GW = { url: 'https://gw.example/', lightningPublicKey: '02' + 'ab'.repeat(32), modulePublicKey: '03' + 'cd'.repeat(32), live: true,
   sendFeeDefault: { baseMsat: 2000, ppm: 1000 }, expirationDeltaDefault: 144, expirationDeltaMinimum: 10 };
@@ -103,11 +104,12 @@ function world({ statusX = 'DRAINING', gatewayFails = false, downY = [], noGatew
     },
   });
   const seats = [];
+  const chain = { tip: null };
   const mk = (fed, keys, D, i, down) => {
     const me = keys[i];
     const s = { me, fed, down, inbox: [] };
     const rowsFor = (f) => [...rows.filter((r) => r.fed === f), ...w.kept.filter((k) => k.seat === s && k.fed === f).map((k) => k.row)];
-    s.api = createReservePayouts({ db: openStore(':memory:'), me, curve, random: rand, network: 'testnet4', passed: () => [],
+    s.api = createReservePayouts({ db: openStore(':memory:'), me, heightNow: () => chain.tip, curve, random: rand, network: 'testnet4', passed: () => [], sign: (d) => schnorr.sign(d, SECRET_OF.get(me)),
       reserveRows: (f) => rowsFor(f), portOf: async (f) => port(f), payRequest: async () => ({ ok: false }), invoiceFor: async () => ({ ok: false }),
       keepRow: (row) => { const o = `${toHex(row.outpoint.txid)}:${row.outpoint.outIdx}`, f = toHex(row.federationId);
         if (!w.kept.some((k) => k.seat === s && k.row.outpoint === o)) w.kept.push({ seat: s, fed: f, row: { outpoint: o, amountMsat: String(row.amountMsat), verifiedMs: 99 } }); },
@@ -117,6 +119,8 @@ function world({ statusX = 'DRAINING', gatewayFails = false, downY = [], noGatew
       guardians: () => new Map([[X, KX, DX], [Y, KY, DY]].map(([f, ks, d]) => [f, { members: ks, key: d.groupPublicKey, needed: 5,
         signer: f === fed ? { id: i + 1, share: d.shares[i].share } : null,
         peers: f === fed ? seats.filter((o) => o !== s && o.fed === fed).map((o) => ({ commit: async (b) => (o.down ? { ok: false, why: 'down' } : o.api.commit(b)), share: async (b) => (o.down ? { ok: false, why: 'down' } : o.api.share(b)) })) : [] }])) });
+    // ONE CHAIN (kanban #1159): every seat reads the height the last pass ran at, as a seat reads its tip
+    { const pass = s.api.round; s.api.round = (o = {}) => { chain.tip = o.height; return pass(o); }; }
     return s;
   };
   for (let i = 0; i < 7; i++) seats.push(mk(X, KX, DX, i, false));
@@ -207,7 +211,8 @@ test('an open or a halted federation does not move', async () => {
 
 test('a move that cannot start says why (kanban #326: it was skipped without a word): the drained federation has no live gateway', async () => {
   const { w, xCoord } = world({ noGatewayX: true });
-  assert.deepEqual(await xCoord.api.round({ height: 1000 }), [{ id: MOVE, ok: false, why: 'the drained federation has no live gateway to pay through' }]);
+  // at the drain's height, X's coordinator's turn to open the move (kanban #1159: only the turn's seat opens a plan)
+  assert.deepEqual(await xCoord.api.round({ height: 500 }), [{ id: MOVE, ok: false, why: 'the drained federation has no live gateway to pay through' }]);
   assert.deepEqual([w.invoices, w.submits.length, w.payments.length], [0, 0, 0], 'nothing invoiced, nothing paid');
 });
 

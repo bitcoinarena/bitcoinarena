@@ -21,8 +21,48 @@
 //            "Consensus session timed out", so seats rolled after it saw no session at all and would sign session 0 beside the
 //            others' 783) names the highest session its peers' signed observations name - it saw no guardian past it either - from
 //            its own first_height; a session it hears itself restarts the clock as before.
-import { signHaltObservation, decodeHaltObservation, encodeHaltObservation, haltProof, haltObservationId } from '../../arena-protocol/src/halt-proof.js';
+//   ONE ANSWER IS NOT BELIEVED (kanban #1158): the session a seat reads is the (f + 1)-th highest its guardians answer (sessionReading) -
+//            at least f + 1 of them name it or higher, so one honest guardian at least has reached it; before, the highest of any one
+//            answer was taken, and one guardian answering 2^31 froze every seat's clock there and proved a running federation HALTED.
+//            A seat that never heard a guardian takes its peers' session only when need - 1 of their signed observations name it or
+//            higher (need: the halt quorum), never one peer's word. And a proof at S is void at a seat whose own reading, this pass,
+//            is below S: f + 1 guardians answer that they never reached it. The clock's one transition is clockStep.
+import { signHaltObservation, decodeHaltObservation, encodeHaltObservation, haltProof, haltObservationId, haltQuorum } from '../../arena-protocol/src/halt-proof.js';
+import { faultsOf } from '../../arena-protocol/src/federation-record.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+
+/** The k-th highest of `values` (whole numbers), or null with fewer than k. */
+export function kthHighest(values, k) {
+  const v = (values || []).filter(Number.isInteger).sort((a, b) => b - a);
+  return Number.isInteger(k) && k >= 1 && v.length >= k ? v[k - 1] : null;
+}
+/** THE SESSION A SEAT READS of a federation of `nominal` guardians from their answers [session]: the (f + 1)-th highest, or null. */
+export const sessionReading = (sessions, nominal) => kthHighest(sessions, faultsOf(Math.max(1, nominal)) + 1);
+
+/** The clock's rule version kept with it: a view stored before (the highest single answer) is read again from the next reading. */
+export const CLOCK_RULE = 2;
+/**
+ * THE CLOCK'S ONE TRANSITION (kanban #1158). `was` { session, firstHeight, heard, rule } or null; `reading` this pass's sessionReading or
+ * null; `peerSessions` the sessions of the peers' signed observations held; `need` the halt quorum of this seat's census; `tip`.
+ *   no view                   -> the reading (0 when none) from tip
+ *   reading above the session -> the reading from tip (the federation moved: the clock starts again)
+ *   a view of the old rule    -> the reading from tip once one differs (a single guardian's answer is not kept)
+ *   never heard, no reading   -> the session need - 1 peers name or exceed, from its own first_height, when one is higher
+ *   else                      -> unchanged (sessions only grow: a lower reading, some guardians gone quiet, moves nothing)
+ * Answers the new view (the same object when unchanged).
+ */
+export function clockStep(was, { reading, peerSessions = [], need = 1, tip }) {
+  let now;
+  if (!was) now = { session: reading === null ? 0 : reading, firstHeight: tip, heard: reading !== null, ...(reading !== null ? { rule: CLOCK_RULE } : {}) };
+  else if (reading !== null && (reading > was.session || (was.rule !== CLOCK_RULE && reading !== was.session))) now = { session: reading, firstHeight: tip, heard: true, rule: CLOCK_RULE };
+  else if (reading !== null && was.rule !== CLOCK_RULE) now = { ...was, heard: true, rule: CLOCK_RULE };
+  else now = was;
+  if (reading === null && !now.heard) {
+    const named = kthHighest(peerSessions, Math.max(1, need - 1));
+    if (named !== null && named > now.session) now = { session: named, firstHeight: now.firstHeight, heard: false, ...(now.rule ? { rule: now.rule } : {}) };
+  }
+  return now;
+}
 
 export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey, height, ask, post = async () => {}, load = () => [], save = () => {}, say = () => {} }) {
   const seen = new Map();                    // federation hex -> { session, firstHeight, answering: [peer key], at }
@@ -31,7 +71,7 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
   const storedObs = Array.isArray(stored) ? stored : (stored && stored.observations) || [];
   for (const o of storedObs) { try { keep(decodeWithSig(o)); } catch { /* a stored observation that no longer reads */ } }
   for (const [fid, w] of Object.entries((stored && !Array.isArray(stored) && stored.seen) || {})) {
-    if (Number.isInteger(w.session) && Number.isInteger(w.firstHeight)) seen.set(fid, { session: w.session, firstHeight: w.firstHeight, heard: w.heard === undefined ? w.session > 0 : !!w.heard, answering: [], at: Number(w.at) || 0 });
+    if (Number.isInteger(w.session) && Number.isInteger(w.firstHeight)) seen.set(fid, { session: w.session, firstHeight: w.firstHeight, heard: w.heard === undefined ? w.session > 0 : !!w.heard, ...(w.rule === CLOCK_RULE ? { rule: CLOCK_RULE } : {}), answering: [], at: Number(w.at) || 0, reading: null });
   }
 
   function decodeWithSig(o) { return { ...decodeHaltObservation(fromHex(String(o.observation))), signature: fromHex(String(o.signature)) }; }
@@ -45,7 +85,7 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
     return true;
   }
   const persist = () => save({ observations: [...kept.values()].flatMap((m) => [...m.values()].map(asJson)),
-    seen: Object.fromEntries([...seen].map(([fid, w]) => [fid, { session: w.session, firstHeight: w.firstHeight, heard: !!w.heard, at: w.at }])) });
+    seen: Object.fromEntries([...seen].map(([fid, w]) => [fid, { session: w.session, firstHeight: w.firstHeight, heard: !!w.heard, ...(w.rule ? { rule: w.rule } : {}), at: w.at }])) });
 
   /** One pass over every federation this seat holds a record of; answers what it saw and signed. */
   async function observe() {
@@ -58,17 +98,15 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
         try { const s = await ask(String(g.endpoint || '')); return Number.isInteger(s) ? { peerKey: g.peerKey, session: s } : null; } catch { return null; }
       }));
       const ok = answers.filter(Boolean);
-      const top = ok.length ? Math.max(...ok.map((a) => a.session)) : null;
+      // A NEW SESSION RESTARTS THE CLOCK; a federation too few of whose guardians answer keeps the last session it was seen at (clockStep)
+      const reading = sessionReading(ok.map((a) => a.session), (held.record.guardians || []).length);
       const was = seen.get(fid);
-      // A NEW SESSION RESTARTS THE CLOCK; a federation none of whose guardians answers keeps the last session it was seen at
-      let now = !was || (top !== null && top > was.session) ? { session: top === null ? (was ? was.session : 0) : top, firstHeight: tip, heard: top !== null || !!(was && was.heard) } : was;
-      if (top === null && !now.heard) {
-        const peers = [...(kept.get(fid) || new Map()).values()].filter((o) => toHex(o.observer) !== toHex(ownKey)).map((o) => o.session);
-        const named = peers.length ? Math.max(...peers) : null;
-        if (named !== null && named > now.session) now = { session: named, firstHeight: now.firstHeight, heard: false };
-      }
-      const moved = now !== was;
-      now.answering = ok.map((a) => a.peerKey); now.at = Date.now();
+      const peerSessions = [...(kept.get(fid) || new Map()).values()].filter((o) => toHex(o.observer) !== toHex(ownKey)).map((o) => o.session);
+      let now = clockStep(was ? { session: was.session, firstHeight: was.firstHeight, heard: was.heard, ...(was.rule ? { rule: was.rule } : {}) } : null,
+        { reading, peerSessions, need: haltQuorum(new Set((censusSeats() || []).map(toHex)).size), tip });
+      const moved = !was || now.session !== was.session || now.firstHeight !== was.firstHeight || now.heard !== was.heard || now.rule !== was.rule;
+      if (!moved) now = was;
+      now.answering = ok.map((a) => a.peerKey); now.at = Date.now(); now.reading = reading;
       seen.set(fid, now);
       if (moved) persist();
       const row = { federation: fid.slice(0, 16), session: now.session, firstHeight: now.firstHeight, height: tip, answering: ok.length, of: (held.record.guardians || []).length };
@@ -106,13 +144,20 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
     const laterSession = mine ? mine.session : null;       // a session this seat saw after S voids a proof at S
     const p = haltProof(all, { record: held.record, censusSeats: censusSeats(), abandonBlocks: clocks.abandonBlocks, verify,
       laterSession: laterSession !== null && all.every((o) => o.session < laterSession) ? laterSession : null });
-    return p.ok ? p : null;
+    if (!p.ok) return null;
+    // A SESSION THIS SEAT SAW PAST THE PROOF'S VOIDS IT, WHATEVER ELSE IS HELD (kanban #1223, audit 2 #1204 FED-A2): the void above is passed
+    // only while every kept observation is below the session seen, so one census seat's observation at a huge session switched it off and a
+    // federation that had stalled and recovered was proven HALTED again from its old halt height
+    if (mine && Number.isInteger(mine.session) && mine.session > p.session) return null;
+    // f + 1 OF ITS GUARDIANS ANSWER THIS SEAT NOW BELOW S (kanban #1158): they never reached the session the halt is said to stop at
+    if (mine && Number.isInteger(mine.reading) && mine.reading < p.session) return null;
+    return p;
   }
   const haltedFederations = () => [...kept.keys()].filter((fid) => proofOf(fid));
   /** The halt a liquidation counts from: { height, proof } or null. */
   const haltOf = (fid) => { const p = proofOf(fid); return p ? { height: p.haltHeight, proof: p } : null; };
   const list = (fid) => [...(kept.get(String(fid).toLowerCase()) || new Map()).values()].map(asJson);
-  return { observe, take, proofOf, haltOf, haltedFederations, list, seen: (fid) => seen.get(fid) || null };
+  return { observe, take, proofOf, haltOf, haltedFederations, list, seen: (fid) => seen.get(fid) || null, CLOCK_RULE };
 }
 
 /**

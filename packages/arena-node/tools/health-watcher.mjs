@@ -32,7 +32,7 @@ import { dirname } from 'node:path';
 import { execFile } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { roundSeating, NOW_ROUNDS } from '../../../src/arena-ui/health/network.js';
-import { pubsConfig, gatherPubs, assessPubs, pubMemTxs, doResend, doCpfp, doPublicMine, lookScript, parseLook, callsScript, parseCalls, opsPublished } from './health-watcher-pubs.mjs';
+import { pubsConfig, gatherPubs, assessPubs, pubMemTxs, doResend, doCpfp, doPublicMine, lookScript, parseLook, callsScript, parseCalls, opsPublished, esploraCalls } from './health-watcher-pubs.mjs';
 
 const H = process.env.HOME || '/home/arena';
 const range = (host, from, to) => { const out = []; for (let p = from; p <= to; p += 10) out.push(`http://${host}:${p}`); return out; };
@@ -122,6 +122,8 @@ export async function gather(io, cfg, state, nowMs) {
   // f. every round publication of ours, on our branch and on the public chain
   if (io.chainLook) {
     const ex = await io.get(cfg.pendingSeats[0] || cfg.testHost[0], '/expected', 20000); f.expected = ex.ok ? [ex.body] : [];
+    // the series a publication carries, for the time its rounds are (kanban #1124)
+    const se = await io.get(cfg.pendingSeats[0] || cfg.testHost[0], '/series', 20000); f.series = se.ok ? [se.body] : [];
     await gatherPubs(io, cfg.pubs, state, f);
   }
   const memPubs = pubMemTxs(f, state.pubs).map((t) => t.txid);
@@ -424,8 +426,9 @@ const run = (cmd, args, { timeout = 30000, input } = {}) => new Promise((ok, no)
 });
 export function realIo(cfg) {
   // a chain's bitcoin-cli in a bash script: ours here, the public chain's over one ssh to the test host (its login shell is zsh: bash -s)
+  // (kanban #1124: the ssh bitcoind is the public chain's second source only, and never longer than HW_PUBLIC_SSH_S)
   const onChain = (chain, script, timeout = 120000) => (chain === 'public'
-    ? run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', cfg.pubs.publicHost, 'bash -s'], { timeout, input: script })
+    ? run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', cfg.pubs.publicHost, 'bash -s'], { timeout: Math.min(timeout, cfg.pubs.publicSshMs), input: script })
     : run('bash', ['-s'], { timeout, input: script }));
   const cliOf = (chain) => (chain === 'public' ? cfg.pubs.publicCli : cfg.pubs.oursCli.join(' '));
   const get = async (base, path, ms = 10000) => {
@@ -434,6 +437,23 @@ export function realIo(cfg) {
       if (!r.ok) return { ok: false, why: `HTTP ${r.status}` };
       return { ok: true, body: await r.json() };
     } catch (e) { return { ok: false, why: e.name === 'TimeoutError' ? `no answer in ${ms / 1000} s` : e.message }; }
+  };
+  // the public chain by Esplora (kanban #1124): each base in turn, HW_ESPLORA_MS each; a base that failed steps back for 10 min.
+  // { ok, status (0: no answer), text, base }
+  const benched = new Map();
+  const publicHttp = async (method, path, body) => {
+    const bases = cfg.pubs.esplora.slice().sort((a, b) => (benched.get(a) || 0) - (benched.get(b) || 0));
+    let last = { ok: false, status: 0, text: 'no Esplora base' };
+    for (const base of bases) {
+      try {
+        const r = await fetch(base + path, { method, body, headers: body != null ? { 'content-type': 'text/plain' } : undefined, signal: AbortSignal.timeout(cfg.pubs.esploraMs) });
+        const text = await r.text();
+        if (r.status >= 500 || r.status === 429) { benched.set(base, Date.now() + 600000); last = { ok: false, status: r.status, text, base }; continue; }
+        if ((benched.get(base) || 0) < Date.now()) benched.delete(base);
+        return { ok: r.ok, status: r.status, text, base };
+      } catch (e) { benched.set(base, Date.now() + 600000); last = { ok: false, status: 0, text: e.name === 'TimeoutError' ? `${base}: no answer in ${cfg.pubs.esploraMs / 1000} s` : `${base}: ${e.message}`, base }; }
+    }
+    return last;
   };
   const ssh = (cmd, input) => run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', cfg.minerc.host, cmd], { timeout: 60000, input });
   return {
@@ -472,7 +492,14 @@ export function realIo(cfg) {
     },
     // as ops/pending-to-minerc.sh / minerc-727.sh: a backup, the txids appended once each, then the miner stopped - loop-c.sh starts it again with the list
     chainLook: async (chain, opts) => parseLook(await onChain(chain, lookScript(cliOf(chain), opts), 300000)),
-    chainCalls: async (chain, calls) => (calls.length ? parseCalls(await onChain(chain, callsScript(cliOf(chain), calls)), calls.length) : []),
+    publicHttp: cfg.pubs.esplora.length ? publicHttp : undefined,
+    chainCalls: async (chain, calls) => {
+      if (!calls.length) return [];
+      if (chain === 'public' && cfg.pubs.esplora.length) {
+        try { return await esploraCalls(publicHttp, calls); } catch (e) { if (!cfg.pubs.publicSsh) return calls.map(() => ({ ok: false, out: '', err: e.message })); }
+      }
+      return parseCalls(await onChain(chain, callsScript(cliOf(chain), calls)), calls.length);
+    },
     run: (cmd, args, timeout) => run(cmd, args, { timeout }),
     // the ops grids of the last HW_PUB_SOURCE_H: ~/blwp-testnet4/emergency-*.log
     opsPublished: async () => {

@@ -135,7 +135,7 @@ export class BondPanel extends React.Component {
     // THE SETUP ONLY ON THE OVERVIEW (2026-10-26, the owner on the Bond section: "Inside bond, this is a duplicate. It should only show the
     // setup stuff in Overview"): the Overview's setup card (OwnerArea setup-place) shows the setup, the peg-in and the founding
     const sb = this.state.setup && this.state.setup.bond ? this.state.setup.bond : null;
-    if (!b.bond) return <div><BondState state={bondStateOf(b, sb)} />{sb ? this.confirming(sb) : this.firstBond()}{this.oldBonds()}</div>;
+    if (!b.bond) return <div><BondState state={bondStateOf(b, sb)} />{sb ? this.confirming(sb) : this.firstBond()}{this.leftover()}{this.oldBonds()}</div>;
     const l = b.lock;
     const outs = Array.isArray(b.outputs) && b.outputs.length > 1 ? b.outputs : null;
     const nowMs = this.props.nowMs ? this.props.nowMs() : Date.now();
@@ -165,6 +165,22 @@ export class BondPanel extends React.Component {
         {this.oldBonds()}
       </div>
     );
+  }
+  // BOND OUTPUTS NO CENSUS COUNTS ANY MORE (kanban #1439): this node's, still on the chain - withdrawn through the same door
+  leftover() {
+    const lo = this.state.bond && this.state.bond.leftover;
+    if (!lo || !Array.isArray(lo.outputs) || !lo.outputs.length) return null;
+    const { address, busy, message } = this.state, open = !!(lo.lock && lo.lock.withdrawable);
+    return (
+      <div className="leftover-bond" id="leftover-bond">
+        <h3 className="sh">Left on the chain</h3>
+        <p className="sub">{n(lo.total)} sat of this node's bond in {lo.outputs.length} output(s) that no longer count. {open ? 'Withdraw them to an address you type.' : lo.lock ? `Locked for ${n(lo.lock.blocksLeft)} more blocks.` : 'Locked.'}</p>
+        {open ? <div className="inline">
+          <input placeholder={`your ${lo.network || 'testnet4'} address`} value={address} onChange={(e) => this.setState({ address: e.target.value })} />
+          <Button disabled={busy} onClick={this.withdraw}>Withdraw</Button>
+        </div> : null}
+        {message ? <p className="sub">{message}</p> : null}
+      </div>);
   }
   // OLD BONDS AFTER A KEY SWITCH (kanban #650): each with its lock; at maturity taken back with the old key to an address the owner names
   oldBonds() {

@@ -45,6 +45,7 @@ test('a seat answers who served from the FINALs it holds; an outsider\'s FINAL a
     assert.equal(got.root, want.root);
     assert.equal((await fetch(`http://127.0.0.1:${d.port}/served?to=abc`)).status, 400);
     assert.equal((await fetch(`http://127.0.0.1:${d.port}/served?to=${now}&from=${now - 8 * 86400000}`)).status, 400);
+    assert.equal((await fetch(`http://127.0.0.1:${d.port}/served`)).status, 400, 'no to: a 400 that says so, not a 500 for a window before 1970');
     console.log(`  SERVED DOOR: ${got.nodes.map((n) => n.key.slice(0, 8) + '=' + n.rounds).join(' ')} root ${got.root.slice(0, 16)}`);
   } finally { await d.close(); }
 });

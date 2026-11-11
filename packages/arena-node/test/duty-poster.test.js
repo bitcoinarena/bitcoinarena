@@ -6,7 +6,7 @@
 // grid, and every reorg and fork of 2026-10-26 posted again.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -18,7 +18,7 @@ import { dutyOrder, dutyMarkerOutput, backupMarkerOutput, dayStartMs, itemTag, p
   DUTY_BACKUP_COMMITTEE_LEAD_MS } from '../../arena-protocol/src/duty.js';
 import { serializeUnsigned } from '../src/fund-at-rate.js';
 import { createDayDuty, createGridBase } from '../src/duty-day.js';
-import { walletVerdict, dutySetting, planFederations, posterOf, dayTemplate, DUTY_TEMPLATE } from '../src/duty-poster.js';
+import { walletVerdict, dutySetting, planFederations, posterOf, dayTemplate, DUTY_TEMPLATE, esploraSender } from '../src/duty-poster.js';
 import { catalogOf } from '../src/duty-guard.js';
 
 const H = 3600000, MIN = 60000;
@@ -27,6 +27,8 @@ const T0 = dayStartMs(DAY);
 const KEYS = [1, 2, 3, 4, 5].map((n) => new Uint8Array(32).fill(n));
 const ORDER = dutyOrder({ networkId: NETWORK_ID_TESTNET4, slot: DAY, nodeKeys: KEYS });
 const ORDER_Y = dutyOrder({ networkId: NETWORK_ID_TESTNET4, slot: DAY - 1, nodeKeys: KEYS });
+// kanban #1219: a marker counts only from its creator's own hour - these worlds' markers are the day's duty node's (rank 0, due at once)
+const RANK0 = async () => toHex(ORDER[0]);
 const GID = 'c4'.repeat(32);
 const DEV = 'ab'.repeat(32);
 const FED = '33'.repeat(32);
@@ -46,14 +48,17 @@ const header = (timeS, n) => { const h = new Uint8Array(80); h[0] = n & 0xff; h[
  */
 function world({ nowMs = T0 + 10 * MIN, local = [ORDER[0]], inBlocks = [], mempool = [], wallet = {}, blockHash = {}, seats = ['http://s1'], seatRounds = null,
   canPay = async () => ({ ok: true }), role = 'primary', postedPrimary = async () => false, game = 'nextblock', view = null, dir = null,
-  census = async () => KEYS, mempoolFails = false } = {}) {
+  census = async () => KEYS, mempoolFails = false, hexes = {},
+  // WHO A MARKER'S SERIES IS FROM (kanban #1168: only a posting by a node of the day's duty order counts): every series here is held, its
+  // creator the census key its first byte names
+  creatorOf = async (id) => toHex(KEYS[parseInt(String(id).slice(0, 2), 16) % KEYS.length]) } = {}) {
   const firstHeight = 1000;
   const blocks = [];
   for (let t = T0 - 40 * H, i = 0; t <= nowMs; t += 10 * MIN, i++) blocks.push({ header: header(Math.floor(t / 1000), i), transactions: [], t });
   for (const { atMs, raw } of inBlocks) { const b = blocks.find((x) => x.t >= atMs); b.transactions.push(raw); }
   const tip = firstHeight + blocks.length - 1;
   const pool = new Map(mempool.map((x) => [x.txid, x.raw]));
-  const did = { published: [], bumped: [], gridBase: [] };
+  const did = { published: [], bumped: [], gridBase: [], sent: [] };
   const opts = {
     game, item: `${game}-day`, role, postedPrimary, networkId: NETWORK_ID_TESTNET4, local: new Set(local.map(toHex)), dir: dir || mkdtempSync(join(tmpdir(), 'duty-')),
     chain: { view: view || (async () => ({ blocks, firstHeight })), censusKeysAt: census, seatUrls: async () => seats },
@@ -61,11 +66,12 @@ function world({ nowMs = T0 + 10 * MIN, local = [ORDER[0]], inBlocks = [], mempo
       if (m === 'getrawmempool') { if (mempoolFails) throw new Error('bitcoind did not answer getrawmempool'); return [...pool.keys()]; }
       if (m === 'getrawtransaction') { if (!pool.has(p[0])) throw new Error('gone'); return toHex(pool.get(p[0])); }
       if (m === 'getblockhash') return blockHash[p[0]] || `hash-${p[0]}`;
+      if (m === 'sendrawtransaction') { const id = toHex(Uint8Array.from(parseTransaction(fromHex(p[0])).txid).reverse()); did.sent.push(id); if (pool.has(id)) throw new Error('txn-already-in-mempool'); pool.set(id, fromHex(p[0])); return id; }
       if (m === 'getblockcount') return tip;
       throw new Error(`no ${m}`);
     },
     walletRpc: async (m, p) => {
-      if (m === 'gettransaction') { if (!(p[0] in wallet)) throw new Error('not the wallet\'s'); return { confirmations: wallet[p[0]] }; }
+      if (m === 'gettransaction') { if (!(p[0] in wallet)) throw new Error('not the wallet\'s'); return { confirmations: wallet[p[0]], ...(hexes[p[0]] ? { hex: hexes[p[0]] } : {}) }; }
       if (m === 'bumpfee') { did.bumped.push(p[0]); return { txid: 'b'.repeat(64) }; }
       throw new Error(`no ${m}`);
     },
@@ -83,7 +89,7 @@ function world({ nowMs = T0 + 10 * MIN, local = [ORDER[0]], inBlocks = [], mempo
     // THE SEATS DRAW TODAY'S ROUNDS (the day before this duty's is covered), unless a test says otherwise
     fetchFn: async (url) => ({ ok: true, json: async () => (seatRounds ? seatRounds(url) : { rounds: [0, 1, 2].map((i) => ({ game: { id: GID },
       startTime: new Date(Math.max(T0, nowMs) + 10 * MIN + i * 90000).toISOString(), committee: { drawn: { game: ['k'], settlement: ['k'] } } })) }) }),
-    canPay, now: () => nowMs, say: () => {},
+    canPay, now: () => nowMs, say: () => {}, creatorOf,
   };
   return { opts, did, tip, blocks, firstHeight };
 }
@@ -124,10 +130,10 @@ test('a missed day falls to the next node: rank 2 posts it an hour into the day 
 
 test('no double posting: the day marker in the mempool, or in a block, stops the duty node', async () => {
   const marked = txOf([dutyMarkerOutput(DAY, 'nextblock-day'), seriesPublicationOutput(new Uint8Array(32).fill(9))]);
-  const inPool = world({ local: [ORDER[0]], nowMs: T0 + 70 * MIN, mempool: [marked] });
+  const inPool = world({ creatorOf: RANK0, local: [ORDER[0]], nowMs: T0 + 70 * MIN, mempool: [marked] });
   await createDayDuty(inPool.opts).look();
   assert.equal(inPool.did.published.length, 0);
-  const inChain = world({ local: [ORDER[0]], nowMs: T0 + 70 * MIN, inBlocks: [{ atMs: T0 + 20 * MIN, raw: marked.raw }] });
+  const inChain = world({ creatorOf: RANK0, local: [ORDER[0]], nowMs: T0 + 70 * MIN, inBlocks: [{ atMs: T0 + 20 * MIN, raw: marked.raw }] });
   const st = await createDayDuty(inChain.opts).look();
   assert.equal(inChain.did.published.length, 0);
   assert.equal(st.posted, true);
@@ -194,7 +200,7 @@ test('the backup grid: rank 2 posts it from 02:00 even when rank 1 is down, with
   await createDayDuty(first.opts).look(); assert.equal(first.did.published.length, 0);
   const own = world({ local: [ORDER[1]], nowMs: T0 + 3 * H, role: 'backup', postedPrimary: async () => true });
   await createDayDuty(own.opts).look(); assert.equal(own.did.published.length, 0);
-  const seen = txOf([backupMarkerOutput(DAY, 'nextblock-day')]);
+  const seen = txOf([backupMarkerOutput(DAY, 'nextblock-day'), seriesPublicationOutput(new Uint8Array(32).fill(4))]);
   const twice = world({ local: [ORDER[2]], nowMs: T0 + 4 * H, role: 'backup', mempool: [seen] });
   await createDayDuty(twice.opts).look(); assert.equal(twice.did.published.length, 0);
   // and the primary engine does not take a backup marker for the day's own
@@ -215,6 +221,16 @@ test('one grid played per window: primary while drawn, backup when the primary i
   assert.deepEqual(ids([{ id: 'p', backup: false, drawn: true, entries: 0 }, { id: 'b', backup: true, drawn: true, entries: 2 }]), ['b']);
   // a role not read yet counts as a primary
   assert.deepEqual(ids([{ id: 'p', backup: null, drawn: true, entries: 0 }, { id: 'b', backup: true, drawn: true, entries: 0 }]), ['p']);
+});
+
+test('kanban #1119: a primary whose entry opened without its seating certificate leaves the window to its seated backup, at every seat alike', () => {
+  const ids = (rows) => [...playedOfWindow(rows)].sort();
+  // 2026-11-04 10:30Z: primary b3f22953 drawn but never certified, backup 7ac5dbc0 seated - every seat answered the backup played: false
+  assert.deepEqual(ids([{ id: 'p', backup: false, drawn: true, entries: 0, unseated: true }, { id: 'b', backup: true, drawn: true, entries: 0, unseated: false }]), ['b', 'p']);
+  // before its entry opens an uncertified primary still holds the window (its seating may close yet)
+  assert.deepEqual(ids([{ id: 'p', backup: false, drawn: true, entries: 0, unseated: false }, { id: 'b', backup: true, drawn: true, entries: 0, unseated: false }]), ['p']);
+  // once the backup took an entry it keeps the window, even if the primary is certified late
+  assert.deepEqual(ids([{ id: 'p', backup: false, drawn: true, entries: 0, unseated: false }, { id: 'b', backup: true, drawn: true, entries: 1, unseated: false }]), ['b']);
 });
 
 // THE REORGS AND FORKS OF 2026-10-26 (the owner: "The hardened round poster must also check for reorgs and forks and repost automatically as
@@ -295,13 +311,13 @@ test('seat 4: a census at the anchor that does not read gives no order, says why
 
 test('seat 4: no emergency grid on the word of seats that did not answer, nor before the mempool was read; an empty answer is not kept', async () => {
   // today's grid posted by another node, its rounds drawn - but no seat answers yet: no emergency grid, and the next pass asks again
-  const pub = txOf([dutyMarkerOutput(DAY - 1, 'nextblock-day')]);
+  const pub = txOf([dutyMarkerOutput(DAY - 1, 'nextblock-day'), seriesPublicationOutput(new Uint8Array(32).fill(8))]);
   let answering = false, asked = 0;
-  const w = world({ local: [ORDER[0]], nowMs: T0 + 30 * MIN, inBlocks: [{ atMs: T0 - 20 * H, raw: pub.raw }], seats: ['http://s1', 'http://s2', 'http://s3'],
+  const w = world({ creatorOf: RANK0, local: [ORDER[0]], nowMs: T0 + 30 * MIN, inBlocks: [{ atMs: T0 - 20 * H, raw: pub.raw }], seats: ['http://s1', 'http://s2', 'http://s3'],
     seatRounds: () => { asked++; if (!answering) throw new Error('fetch failed'); return { rounds: [0, 1, 2].map((i) => ({ game: { id: GID }, startTime: new Date(T0 + H + i * 90000).toISOString(),
       committee: { drawn: { game: ['k'], settlement: ['k'] } } })) }; } });
   // tomorrow's posted too, so the only thing a pass could post is an emergency grid
-  w.opts.chain.view = (await (async () => { const v = await w.opts.chain.view(); v.blocks[v.blocks.length - 3].transactions.push(txOf([dutyMarkerOutput(DAY, 'nextblock-day')]).raw); return async () => v; })());
+  w.opts.chain.view = (await (async () => { const v = await w.opts.chain.view(); v.blocks[v.blocks.length - 3].transactions.push(txOf([dutyMarkerOutput(DAY, 'nextblock-day'), seriesPublicationOutput(new Uint8Array(32).fill(10))]).raw); return async () => v; })());
   const d = createDayDuty(w.opts);
   const st = await d.look();
   assert.equal(w.did.published.length, 0, JSON.stringify(st.days));
@@ -314,7 +330,7 @@ test('seat 4: no emergency grid on the word of seats that did not answer, nor be
   assert.equal(st2.ready.ok, true);
   assert.equal(st2.days[new Date(T0).toISOString().slice(0, 10)].state, 'drawable');
   // a pass that cannot read the mempool posts no day
-  const m = world({ local: [ORDER[0]], mempoolFails: true });
+  const m = world({ creatorOf: RANK0, local: [ORDER[0]], mempoolFails: true });
   const sm = await createDayDuty(m.opts).look();
   assert.equal(m.did.published.length, 0);
   assert.match(sm.wouldPost[0].why, /mempool could not be read/);
@@ -401,16 +417,16 @@ test('the node\'s poster: off says so on GET /duty and runs nothing; auto on an 
 // kanban #791: the chain index is made once per chain view and shared by every day duty; a view grown in place is indexed anew
 test('one chain view, two day duties: both see the posted marker; a block appended to the same view in place is indexed again', async () => {
   const marked = txOf([dutyMarkerOutput(DAY, 'nextblock-day'), seriesPublicationOutput(new Uint8Array(32).fill(9))]);
-  const base = world({ local: [ORDER[0]], nowMs: T0 + 70 * MIN });
+  const base = world({ creatorOf: RANK0, local: [ORDER[0]], nowMs: T0 + 70 * MIN });
   const shared = { blocks: base.blocks, firstHeight: base.firstHeight };       // one object, as the duty poster's chainView hands out
-  const a = world({ local: [ORDER[0]], nowMs: T0 + 70 * MIN, view: async () => shared });
+  const a = world({ creatorOf: RANK0, local: [ORDER[0]], nowMs: T0 + 70 * MIN, view: async () => shared });
   const st0 = await createDayDuty(a.opts).look();
   assert.equal(a.did.published.length, 1, 'no marker yet: the duty node posts');
   assert.equal(st0.markers.filter((m) => m.slot === DAY && m.txid === marked.txid).length, 0);
   // the marker arrives in a new block, appended to the same view object
   shared.blocks.push({ header: header(Math.floor((T0 + 71 * MIN) / 1000), shared.blocks.length), transactions: [marked.raw], t: T0 + 71 * MIN });
-  const b = world({ local: [ORDER[0]], nowMs: T0 + 72 * MIN, view: async () => shared });
-  const c = world({ local: [ORDER[1]], nowMs: T0 + 72 * MIN, view: async () => shared });
+  const b = world({ creatorOf: RANK0, local: [ORDER[0]], nowMs: T0 + 72 * MIN, view: async () => shared });
+  const c = world({ creatorOf: RANK0, local: [ORDER[1]], nowMs: T0 + 72 * MIN, view: async () => shared });
   const sb = await createDayDuty(b.opts).look(), sc = await createDayDuty(c.opts).look();
   for (const [s, who] of [[sb, 'rank 0'], [sc, 'rank 1']]) {
     assert.equal(s.posted, true, `${who} sees the day posted`);
@@ -425,3 +441,86 @@ test('dayTemplate: named relays replace a held template\'s and the built-in one 
   assert.deepEqual(dayTemplate({ held: [], family: new Set(), networkId: new Uint8Array(32), game: 'rps', ownRelay: 'http://own', relays: [] }).contract.publicationRelays, ['http://own']);
 });
 
+
+// ---------------------------------------------------------------- kanban #1126: a fee raise re-announced, a dropped publication sent again
+/** A transaction spending `parent` (display txid) with `outputs`: its hex and txid. */
+function spendOf(parent, outputs = [{ value: 1000, script: Uint8Array.from([0x51]) }]) {
+  const hex = serializeUnsigned([{ txid: parent, vout: 0 }], outputs.map(outBytes), null);
+  return { hex, raw: fromHex(hex), txid: toHex(Uint8Array.from(parseTransaction(fromHex(hex)).txid).reverse()) };
+}
+
+test('kanban #1126: a fee raise is announced again with its new txid, to the seats the first announcement reached, until every seat took it', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'duty-'));
+  const pub = txOf([dutyMarkerOutput(DAY, 'nextblock-day')]);
+  const bumped = spendOf('77'.repeat(32), [dutyMarkerOutput(DAY, 'nextblock-day')]);
+  let nowMs = T0 + 10 * H;
+  const w = world({ local: [ORDER[0]], nowMs, dir, mempool: [pub], wallet: { [pub.txid]: 0, [bumped.txid]: 0 }, hexes: { [bumped.txid]: bumped.hex } });
+  w.opts.walletRpc = ((inner) => async (m, p) => (m === 'bumpfee' ? (w.did.bumped.push(p[0]), { txid: bumped.txid }) : inner(m, p)))(w.opts.walletRpc);
+  w.opts.now = () => nowMs;
+  const said = []; w.opts.say = (o) => said.push(o);
+  const announced = []; let takes = [3, 4];
+  w.opts.announce = async (a) => { announced.push(a); return { took: takes.shift(), of: 4 }; };
+  keptPosting(dir, { slot: DAY, txid: pub.txid, committeeMs: dayStartMs(DAY + 1) - 12 * H, firstStartMs: dayStartMs(DAY + 1), announcedTxid: pub.txid, announcedTo: ['http://s1', 'http://s2'] });
+  const d = createDayDuty(w.opts);
+  await d.look();
+  assert.deepEqual(w.did.bumped, [pub.txid]);
+  assert.equal(announced.length, 1, 'the new txid announced in the pass that raised the fee');
+  assert.deepEqual([announced[0].tx, announced[0].lines, announced[0].targets], [bumped.hex, ['line'], ['http://s1', 'http://s2']]);
+  const line = said.find((o) => o.dutyDay === 're-announced');
+  assert.deepEqual([line.txid, line.replaced, line.seats], [bumped.txid.slice(0, 16), [pub.txid.slice(0, 16)], '3/4']);
+  // one seat did not take it: not asked again within 10 min, asked again after - then all took it and it is not asked again
+  nowMs += 5 * MIN; await d.look(); assert.equal(announced.length, 1);
+  nowMs += 6 * MIN; await d.look(); assert.equal(announced.length, 2);
+  nowMs += 11 * MIN; await d.look(); assert.equal(announced.length, 2);
+  const kept = JSON.parse(readFileSync(join(dir, `nextblock-day-${DAY}.json`), 'utf8'));
+  assert.deepEqual([kept.txid, kept.announcedTxid, kept.replaced, kept.announce.took], [bumped.txid, bumped.txid, [pub.txid], 4]);
+});
+
+test('kanban #1126: a publication in no block and no mempool is sent again, parents first, to our bitcoind and to the public chain, once per 10 min', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'duty-'));
+  const parent = spendOf('66'.repeat(32));                               // the unconfirmed funding it spends
+  const pub = spendOf(parent.txid, [dutyMarkerOutput(DAY, 'nextblock-day')]);
+  let nowMs = T0 + 2 * H;
+  const w = world({ local: [ORDER[0]], nowMs, dir, mempool: [], wallet: { [pub.txid]: 0, [parent.txid]: 0, ['66'.repeat(32)]: 3 },
+    hexes: { [pub.txid]: pub.hex, [parent.txid]: parent.hex, ['66'.repeat(32)]: '00' } });
+  w.opts.now = () => nowMs;
+  const said = []; w.opts.say = (o) => said.push(o);
+  const pub2 = [];
+  w.opts.publicSend = async (hex) => { pub2.push(hex); return hex === parent.hex ? { ok: false, status: 400, text: 'sendrawtransaction RPC error: {"code":-27,"message":"Transaction already in block chain"}', base: 'https://mempool.space/testnet4/api' }
+    : { ok: true, status: 200, text: pub.txid, base: 'https://mempool.space/testnet4/api' }; };
+  keptPosting(dir, { slot: DAY, txid: pub.txid, committeeMs: dayStartMs(DAY + 1) - 12 * H, firstStartMs: dayStartMs(DAY + 1) });
+  const d = createDayDuty(w.opts);
+  await d.look(); await d.settled();
+  assert.deepEqual(w.did.sent, [parent.txid, pub.txid], 'parents first, the confirmed grandparent not sent');
+  assert.deepEqual(pub2, [parent.hex, pub.hex]);
+  const local = said.find((o) => o.dutyDay === 'rebroadcast'), web = said.find((o) => o.dutyDay === 'sent to the public chain');
+  assert.deepEqual(local.answers.map((a) => a.ok), [true, true]);
+  assert.deepEqual(web.answers.map((a) => [a.ok, a.status]), [[false, 400], [true, 200]]);
+  assert.match(web.answers[0].answer, /already in block chain/);
+  // in the mempool now: within 10 min nothing is sent; after it, only the public chain is asked (our bitcoind holds it)
+  nowMs += 5 * MIN; await d.look(); await d.settled();
+  assert.equal(w.did.sent.length, 2); assert.equal(pub2.length, 2);
+  nowMs += 6 * MIN; await d.look(); await d.settled();
+  assert.equal(w.did.sent.length, 2); assert.equal(pub2.length, 4);
+  // a dead posting (conflicted) is never sent
+  const dir2 = mkdtempSync(join(tmpdir(), 'duty-'));
+  const w2 = world({ local: [ORDER[0]], nowMs: T0 + 2 * H, dir: dir2, wallet: { [pub.txid]: -1 }, hexes: { [pub.txid]: pub.hex } });
+  const sent2 = []; w2.opts.publicSend = async (h) => { sent2.push(h); return { ok: true, status: 200, text: '' }; };
+  keptPosting(dir2, { slot: DAY, txid: pub.txid, committeeMs: dayStartMs(DAY + 1) - 12 * H, firstStartMs: dayStartMs(DAY + 1) });
+  const d2 = createDayDuty(w2.opts); await d2.look(); await d2.settled();
+  assert.deepEqual([w2.did.sent.filter((x) => x === pub.txid), sent2], [[], []]);
+});
+
+test('kanban #1126: the Esplora sender tries mempool.space, then blockstream.info, and benches a base that does not answer', async () => {
+  const asked = [];
+  let t = 0;
+  const send = esploraSender({ bases: ['https://a/api', 'https://b/api'], now: () => t, fetchFn: async (url, o) => {
+    asked.push(url);
+    if (url.startsWith('https://a')) throw Object.assign(new Error('timeout'), { name: 'TimeoutError' });
+    assert.equal(o.method, 'POST'); return { ok: true, status: 200, text: async () => 'ab'.repeat(32) };
+  } });
+  const r = await send('0200');
+  assert.deepEqual([r.ok, r.status, r.base], [true, 200, 'https://b/api']);
+  await send('0200');
+  assert.deepEqual(asked, ['https://a/api/tx', 'https://b/api/tx', 'https://b/api/tx'], 'a benched base is asked last');
+});

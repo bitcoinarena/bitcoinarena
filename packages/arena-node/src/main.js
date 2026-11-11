@@ -37,6 +37,7 @@
 // sends a pool payout: that was the withdrawn custody's, §23.6, RULED 2026-09-25.)
 //
 // HOW FAR BACK A CENSUS IS READ: census.js censusFirstBlock (kanban #820).
+import { ENTRY_CLOSE_GRACE_MS } from './round.js';
 import { TESTNET4_DONATION_SET } from '../../arena-protocol/src/testnet4-donation-set.js';
 import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
 import { openStore } from './store.js';
@@ -58,6 +59,7 @@ import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { votesInBlock } from '../../arena-protocol/src/ballot-chain.js';
+import { chainHashReader } from './ballot-tally.js';
 import { PROTOCOL_VERSION, networkOf } from '../../arena-protocol/src/constants.js';
 import { censusOfView, censusReplacer, censusReviver } from './roster.js';
 import { censusFirstBlock } from '../../arena-protocol/src/census.js';
@@ -67,13 +69,13 @@ import { TEST_DONATION_SET_KEYS_REGTEST } from '../../arena-protocol/src/test-do
 import { installFetchRoutes } from './fetch-routes.js';
 import { serviceLog } from './log-level.js';
 // THE SEAT'S OWN FETCHES ROUTED AND CAPPED, before anything is asked of a peer (fetch-routes.js)
-{ const f = installFetchRoutes(process.env); console.log(`[fetch] ${f.routes} route(s), at most ${f.maxPerOrigin} request(s) in flight per origin, ${f.timeoutMs} ms timeout`); }
+{ const f = installFetchRoutes(process.env); console.log(`[fetch] ${f.routes} route(s), at most ${f.maxPerOrigin} request(s) in flight per origin, ${f.timeoutMs} ms timeout, idle connections kept ${f.keepAliveMs} ms`); }
 // HOW MUCH THE SEAT LOGS (kanban #693, 2026-10-26: "add a --debug and --verbose flag that shows more info on what its doing, what is going
 // wrong etc"): ARENA_LOG_LEVEL - arena.conf log_level becomes it (run.js) - read once, here. info: as always. verbose: its failed requests
 // and the settings that shaped its start; debug: every request it makes and answers, and every program it runs with its exit code
 const seatLog = serviceLog({ env: process.env, tag: 'log' });
 seatLog.tag('log').env(['ARENA_BITCOIND_URL', 'ARENA_BITCOIND_COOKIE', 'ARENA_LNCLI', 'ARENA_LND_DIR', 'ARENA_LND_RPC', 'ARENA_LND_NETWORK', 'ARENA_STAKE_LOCK_BIN',
-  'ARENA_FEDERATION_CLIENT_DIR', 'ARENA_FEDIMINTD', 'ARENA_FOUNDING', 'ARENA_APPS', 'ARENA_DONATION_NETWORK', 'ARENA_BIND', 'ARENA_TLS_CERT', 'ARENA_CLOSE_AT_END', 'ARENA_PRICE_FEED'],
+  'ARENA_FEDERATION_CLIENT_DIR', 'ARENA_FEDIMINTD', 'ARENA_FOUNDING', 'ARENA_APPS', 'ARENA_DONATION_NETWORK', 'ARENA_BIND', 'ARENA_TLS_CERT', 'ARENA_CLOSE_AT_END', 'ARENA_CENSUS_EXPLORERS', 'ARENA_PRICE_FEED'],
   'the settings that decide how this seat starts (chain, Lightning, custody, apps, network, address)');
 
 const port = Number(process.argv[2] || 8080);
@@ -200,6 +202,8 @@ if (process.env.ARENA_SERIES_FILE) {
 }
 // THE GRID SERIES POSTED TO THIS SEAT (POST /series), kept beside its store so a restart holds them again
 options.gridSeriesFile = process.env.ARENA_GRID_SERIES_FILE || `${path}.grid-series`;
+// AN ENTRY NEW TO THIS SEAT IS TAKEN UNTIL ITS ROUND'S ENTRY CLOSE + 15 s (kanban #1216, round.js ENTRY_CLOSE_GRACE_MS), every game
+options.entryCloseGraceMs = process.env.ARENA_ENTRY_CLOSE_GRACE_MS !== undefined ? Number(process.env.ARENA_ENTRY_CLOSE_GRACE_MS) : Number(ENTRY_CLOSE_GRACE_MS);
 // WHERE THE OTHER SIGNER NODES ANSWER, as the operator knows it (serve's `peers`; ORDER-2116, measured on the free pair):
 // with none named, a node finds its peers off the round's census - the bond adverts at its census height - and a seat
 // whose address moved since answers there no more. The free pair's nodes run as their own units (2026-10-01) and
@@ -405,6 +409,10 @@ if (url) {
       tipHeight: async () => Number(await call('getblockcount')),
       // the block at a height by its hash - the tally holds a count to the hashes it read (a reorg is followed); null above the tip
       blockHashAt: async (height) => { try { return String(await call('getblockhash', [height])); } catch { return null; } },
+      // AND THE SAME READ FOR THE TALLY, WITH ITS THREE ANSWERS (kanban #1152): the hash; null only when the height is above
+      // the tip (bitcoind's -8 "Block height out of range", or a tip below it); and an RPC that did not answer THROWS - a work
+      // queue that is full, a timeout, a reindex is no reorg, and the tally skips that pass instead of forgetting anything
+      chainHashAt: chainHashReader(call),
       votesAt: async (height, hash) => {
         const raw = fromHex(String(await call('getblock', [hash || await call('getblockhash', [height]), 0])));
         return votesInBlock(raw, height);
@@ -473,6 +481,8 @@ if (url) {
     },
     // THE CHAIN'S MEDIAN TIME AT A HEIGHT: a funding signal's active window, read alike by every seat
     blockTimeAt: async (h) => Number((await call('getblockheader', [await call('getblockhash', [h])])).mediantime) * 1000,
+    // AND ITS OWN HEADER TIME: when a funding signal period ended, alike for every seat (kanban #1410)
+    blockHeaderTimeAt: async (h) => Number((await call('getblockheader', [await call('getblockhash', [h])])).time) * 1000,
     // ONE VIEW PER WHAT IT DEPENDS ON - census height, committee_time, confirmation depth - NOT PER ROUND, AND ONE READ
     // OF IT IN FLIGHT (2026-09-30, measured on testnet4): a node holding series 3cfbe516 lists ~508 rounds that
     // all name the same census and beacon, and a view read per round id - ~100 blocks each, re-asked on every listing

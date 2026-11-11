@@ -24,6 +24,7 @@
 import { decodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
 import { takesAnyFederation, FRONTEND_FEE_VERSION, ITEMS_VERSION } from '../../arena-protocol/src/constants.js';
 import { OBJECTION_WINDOW_MS } from '../../arena-protocol/src/window.js';
+import { objectionWindowAllowed } from '../../arena-protocol/src/constants.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { advertInTransaction } from '../../arena-protocol/src/census.js';
 import { httpProvider, headerSources, HEADER_SOURCES_ASKED } from './headers.js';
@@ -176,8 +177,10 @@ export async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
       }
       // §13A, WINDOW-10-SPEC (RULED 2026-10-01): a round whose objection window is not exactly 600 000 ms is
       // invalid - the page lists it nowhere and joins it never, whatever a node answers.
-      if (contract.objectionWindowMs !== OBJECTION_WINDOW_MS)
-        throw new Error(`round ${id} names an objection window of ${contract.objectionWindowMs} ms, not ${OBJECTION_WINDOW_MS}: that contract is invalid and the page does not join it`);
+      // ...OR A HEAD-TO-HEAD ROUND'S 60 s (5 s on a regtest; §13A RULED 2026-11-10, kanban #1398). Audit 5 (#1399): this read still refused anything
+      // but 600 s, so a day of 60 s RPS rounds would have left the page with no round to list or join
+      if (!objectionWindowAllowed(contract.objectionWindowMs))
+        throw new Error(`round ${id} names an objection window of ${contract.objectionWindowMs} ms, not one a round may name (${OBJECTION_WINDOW_MS} ms, or a head-to-head round's): that contract is invalid and the page does not join it`);
       ROUNDS_KEPT.set(id, { contract, from: node });
       if (ROUNDS_KEPT.size > ROUNDS_KEPT_MAX) ROUNDS_KEPT.delete(ROUNDS_KEPT.keys().next().value);
       return { contract, from: node, refused };
@@ -412,10 +415,24 @@ export async function attestedClaimKey({ round, signerNodes, nodes, curve, fetch
     return { claimPk, said: claimKeyIsAttested({ roundId: round.id, claimPk, signatures, signerNodes,
       settlementSlots: round.settlementSlots, verify: (s, m, kk) => curve.verify(s, m, kk) }) };
   };
+  // ONLY THE ROUND'S OWN SIGNER NODES ARE ASKED (kanban #1391, measured on live page979 2026-11-11: a page waiting for its key asked all 14 seats
+  // every second, and the 8 outside the committee answered 409 "this node is not assigned to that round" 78 times each in 5 minutes): a URL whose
+  // kept identity (identityAt, asked once in IDENTITY_KEEP_MS) is a node the round did not draw is not asked. Nothing is fetched to decide it,
+  // and a URL whose identity is not kept is asked as before, so no signer node is ever left out and the threshold check is unchanged.
+  const drawn = new Set((signerNodes || []).map((k) => { try { return toHex(k); } catch { return ''; } }));
+  // A URL NOT YET KNOWN IS ASKED WHO IT IS, BESIDE (measured on page980: the kept identities alone changed nothing - the page had asked no
+  // /identity yet while it waited for its key, 632 refusals against 620): its identity is read in the background, not waited for, so this ask
+  // goes to it as before and the next poll (awaitAttestedClaimKey, every second) leaves it out if the round did not draw it.
+  const asked = (nodes || []).filter((node) => {
+    const base = String(node).replace(/\/+$/, '');
+    const kept = IDENTITIES.get(base);
+    if (!kept || Date.now() - kept.at >= IDENTITY_KEEP_MS) { if (drawn.size) identityAt(fetcher, base).catch(() => {}); return true; }
+    return !(drawn.size && !drawn.has(kept.key));
+  });
   const early = await new Promise((resolve) => {
-    let left = (nodes || []).length;
+    let left = asked.length;
     if (!left) { resolve(null); return; }
-    for (const node of nodes) {
+    for (const node of asked) {
       (async () => {
         try {
           const r = await readWithOneRetry(fetcher, node.replace(/\/+$/, '') + '/claim-key?round=' + id, timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : undefined);
@@ -948,12 +965,18 @@ export function importSeed(text, { storage, key = 'arena.player.seed' } = {}) {
  * tab; a wrong word (by name); a seed another open tab holds (its heartbeat 'arena.seed.held.<id>' under 12 s old - the
  * keeper's lock would otherwise drop it after the reload). Returns { ok, hex, from, previous } or { ok: false, why }.
  */
-export function restoreSeed({ text, session, kept, now = Date.now(), liveRun = false } = {}) {
+// `heldElsewhere(hex)` (kanban #1164): whether another tab holds that phrase's lock now, read from the browser's locks - a heartbeat's age
+// is a clock, and a hidden tab beats late; either refuses
+export function restoreSeed({ text, session, kept, now = Date.now(), liveRun = false, heldElsewhere = null } = {}) {
   if (liveRun) return { ok: false, why: 'leave the round first: the seed cannot change during a run' };
   const got = seedHexFromInput(text);
   if (!got.ok) return { ok: false, why: got.why };
   const hex = got.hex;
   const previous = session ? session.getItem(TAB_SEED_KEY) : null;
+  if (typeof heldElsewhere === 'function' && hex !== previous) {
+    let held = false; try { held = !!heldElsewhere(hex); } catch { held = false; }
+    if (held) return { ok: false, why: 'that seed is open in another tab: close it there first' };
+  }
   if (kept) {
     let held = null;
     try { held = JSON.parse(kept.getItem('arena.seed.held.' + hex.slice(0, 16)) || 'null'); } catch { held = null; }

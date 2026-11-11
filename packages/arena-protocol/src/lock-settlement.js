@@ -691,7 +691,8 @@ export function bookLockSettlement({ roundId, table, entries, locks, feeLocks, f
   if (!(locks instanceof Map) || !(feeLocks instanceof Map)) return refuse('the verified locks are Maps by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint') return refuse('the guardians\' fee rule is BigInt ppm and base msat');
   if (!table || !Array.isArray(table.claimed)) return refuse('an order book is settled from its settlement table');
-  if (!table.claimed.length) return { ok: true, nothing: true, why: 'no order filled: nothing is claimed - every lock comes back whole' };
+  // `noFill` (kanban #1186): the seats' sweep reads this refusal as one that cannot change by this field, not by its text
+  if (!table.claimed.length) return { ok: true, nothing: true, noFill: true, why: 'no order filled: nothing is claimed - every lock comes back whole' };
   const byId = new Map(entries.map((e) => [typeof e.entryId === 'string' ? e.entryId : toHex(e.entryId), e]));
   const claims = [];
   const owed = [];
@@ -779,6 +780,9 @@ export function bookLockSettlement({ roundId, table, entries, locks, feeLocks, f
   if (unspentMsat < 0n) return refuse('the payouts and their fees come to more than the claimed locks pay for');
   return { ok: true, nothing: false, claims: claims.sort(byOutpoint), payouts: payouts.sort(byPayoutPk), unpaid, forfeits: [],
     nonce: settlementNonce(roundId), stakeWhy: null, poolMsat, inputFeesMsat, spendableMsat, paidMsat, outputFeesMsat, unspentMsat,
+    // ONE POT (kanban #1438): every line above is paid out of the stake and fee locks together, so a round that takes any
+    // federation splits them as one part (federation-settlement.js splitByFederation), never by `signerNodePayouts`
+    onePot: true,
     book: { claimed: table.claimed.length, feesDueMsat: table.feesDueMsat, nodesMsat, giftMsat, reserveMsat, websitesMsat: sites.totalMsat },
     // WHAT IT PAID EACH WINNER (measured 2026-10-17: the Up/Down season read 0 wins and a whole loss for every order -
     // a book claims every filled lock, the winners' too, and kept no shares, so a season read 0 paid): each qualifier's out, by its

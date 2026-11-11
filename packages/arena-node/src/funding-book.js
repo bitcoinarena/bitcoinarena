@@ -19,6 +19,7 @@ import { feeProposalStands, feeProposalOutcome, feesAt as feesAtOf, FEES, FEES_T
 import { leaderboardVotePeriod, leaderboardPasses } from '../../arena-protocol/src/leaderboard-payout.js';
 
 export const FUNDING_SQL = `CREATE TABLE IF NOT EXISTS funding_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL, proposal TEXT NOT NULL, hex TEXT NOT NULL, at_ms INTEGER NOT NULL);
+  CREATE TABLE IF NOT EXISTS funding_signal_ends (proposal TEXT PRIMARY KEY, seen_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_outcomes (proposal TEXT PRIMARY KEY, outcome TEXT NOT NULL, decided_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_vote_census (proposal TEXT PRIMARY KEY, height INTEGER NOT NULL, census TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_vote_blocks (proposal TEXT NOT NULL, height INTEGER NOT NULL, hash TEXT, votes TEXT NOT NULL, PRIMARY KEY (proposal, height));
@@ -28,6 +29,46 @@ export const FUNDING_SQL = `CREATE TABLE IF NOT EXISTS funding_items (id TEXT PR
 
 /** A payment's id: the proposal's own for a single payment (rule 5), else one per tranche. */
 export const trancheIdOf = (pid, k, of) => (of === 1 ? pid : createHash('sha256').update(`ARENA/v1/FundingTranche:${pid}:${k}`).digest('hex'));
+
+/**
+ * HOW MANY PARTS A PASSED PROPOSAL PAYS IN (§27A.9.5 rule 5, kanban #1175): a function of the proposal's own amount, which every seat
+ * reads alike. It was fixed from the reserves this seat held at its first ask - rows that differ between seats (and can be forged) - so
+ * seats fixed different counts, named different part ids, and a payout plan was "no passed vote" at its peers: it never reached its
+ * 5 signatures. Every payout now goes in FUNDING_TRANCHES monthly parts; an amount too small to split (under one sat a part) in one.
+ */
+export const trancheCountOf = (amountSats) => (BigInt(amountSats) >= BigInt(FUNDING_TRANCHES) ? FUNDING_TRANCHES : 1);
+/** Every id a proposal's payment can have had (one part, or FUNDING_TRANCHES): what counts as paid by that proposal (rule 4). */
+export const paymentIdsOf = (pid) => [pid, ...Array.from({ length: FUNDING_TRANCHES }, (_, k) => trancheIdOf(pid, k, FUNDING_TRANCHES))];
+
+/**
+ * A PROPOSAL'S PAYMENT ROW, ONE STATE AND ONE TRANSITION FUNCTION (kanban #1175): FIXED (its part count) -> CANCELLED (from part k,
+ * for good). `row` the stored { tranches, cancelled, cancelled_k } or null; `ev` one of
+ *   { kind: 'fix', tranches }                        null -> FIXED
+ *   { kind: 'refix', tranches, payable: false }      FIXED -> FIXED with the derived count, only while no part is payable yet (no part
+ *                                                    can have gone under the old ids): a row the old reserve rule fixed
+ *   { kind: 'cancel', k, why }                       FIXED -> CANCELLED; a CANCELLED row never changes
+ * Answers { ok: true, row } or { ok: false, why }.
+ */
+export const FUNDING_PAYMENT_STATE = Object.freeze({ FIXED: 'FIXED', CANCELLED: 'CANCELLED' });
+export const fundingPaymentStateOf = (row) => (!row ? null : row.cancelled !== null && row.cancelled !== undefined ? FUNDING_PAYMENT_STATE.CANCELLED : FUNDING_PAYMENT_STATE.FIXED);
+export function fundingPaymentStep(row, ev) {
+  const state = fundingPaymentStateOf(row);
+  const count = (n) => n === 1 || n === FUNDING_TRANCHES;
+  if (ev.kind === 'fix') return state === null && count(ev.tranches) ? { ok: true, row: { tranches: ev.tranches, cancelled: null, cancelled_k: null } }
+    : { ok: false, why: state ? 'its parts are fixed already' : 'no such part count' };
+  if (ev.kind === 'refix') {
+    if (state !== FUNDING_PAYMENT_STATE.FIXED) return { ok: false, why: state ? 'a cancelled proposal keeps its parts' : 'nothing fixed to change' };
+    if (ev.payable !== false) return { ok: false, why: 'a part is payable already: it may have gone under its id' };
+    if (!count(ev.tranches) || ev.tranches === row.tranches) return { ok: false, why: 'no other part count' };
+    return { ok: true, row: { ...row, tranches: ev.tranches } };
+  }
+  if (ev.kind === 'cancel') {
+    if (state !== FUNDING_PAYMENT_STATE.FIXED) return { ok: false, why: state ? 'cancelled already, for good' : 'nothing fixed to cancel' };
+    if (!Number.isInteger(ev.k) || ev.k < 0 || ev.k >= row.tranches) return { ok: false, why: 'no such part' };
+    return { ok: true, row: { ...row, cancelled: String(ev.why || 'cancelled'), cancelled_k: ev.k } };
+  }
+  return { ok: false, why: 'no such step' };
+}
 
 /**
  * `db` a better-sqlite3 handle; `verify(sig, digest, key32)` BIP340; `isBonded(nodeHex)` true / false, or null when this seat cannot
@@ -41,7 +82,7 @@ export const trancheIdOf = (pid, k, of) => (of === 1 ? pid : createHash('sha256'
 // proposal is decided whole (feeProposalOutcome) against the fees in force before its activation; feesAt(height) answers the set
 // in force at a height - what a round of that census height settles with.
 export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedule = FUNDING_SCHEDULES.spec, log = () => {}, now = () => Date.now(),
-  voteChain = null, maxBlocksPerPass = 64, seasonedNodes = null, devKeysOf = null }) {
+  voteChain = null, maxBlocksPerPass = 64, seasonedNodes = null, devKeysOf = null, pull = null, endTimeAt = null }) {
   db.exec(FUNDING_SQL);
   const rows = (kind) => db.prepare('SELECT id, proposal, hex, kind FROM funding_items WHERE kind = ? ORDER BY at_ms, id').all(kind);
   // the proposals the signal and the vote run over: funding proposals and fee proposals
@@ -52,7 +93,9 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   const ruleOf = (kind, count) => (kind === 'leaderboard' && count ? leaderboardPasses(count) : count);
   const read = (kind, hex) => readSignedFunding(kind, fromHex(hex), verify);
   const outcomeOf = (pid) => { const r = db.prepare('SELECT outcome FROM funding_outcomes WHERE proposal = ?').get(pid); return r ? JSON.parse(r.outcome) : null; };
-  const signalsOf = (pid) => db.prepare("SELECT hex FROM funding_items WHERE kind = 'signal' AND proposal = ?").all(pid)
+  // `beforeMs` (kanban #1279, RULED #1277 A): only the signals some seat held before the signal period ended (at_ms is the earliest time a seat held it)
+  const signalsOf = (pid, beforeMs = null) => db.prepare("SELECT hex, at_ms FROM funding_items WHERE kind = 'signal' AND proposal = ?").all(pid)
+    .filter((r) => beforeMs === null || Number(r.at_ms) <= Number(beforeMs))
     .map((r) => read('signal', r.hex)).filter((x) => x.ok).map((x) => ({ node: toHex(x.obj.node), atHeight: x.obj.atHeight }));
   // THE VOTE (§27A.9.3 stage 2): opened only by a signal this seat decided passed; the census taken ONCE at the
   // vote's start (signalEnd); each voting block read once for this proposal's votes, held to by its hash; the outcome written once
@@ -97,6 +140,8 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         const onChain = await hashAt(period.last);
         if (onChain && decided.lastHash && onChain !== decided.lastHash) {
           db.prepare('DELETE FROM funding_vote_outcomes WHERE proposal = ?').run(row.id);
+          // AND A FEE PROPOSAL'S OUTCOME WITH IT (ruled on #1245, kanban #1231): decided again from the set held then
+          db.prepare('DELETE FROM fee_outcomes WHERE proposal = ?').run(row.id);
           // the blocks read past the counted one (a passed vote's veto window) hang on the old branch: read again
           db.prepare('DELETE FROM funding_vote_blocks WHERE proposal = ? AND height >= ?').run(row.id, period.last);
           log(`[funding] ${row.id.slice(0, 16)}: the counted last voting block ${period.last} was reorged away - the vote is counted again`);
@@ -143,25 +188,48 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     return done;
   }
   /**
-   * THE PAYMENTS A PASSED PROPOSAL MAY MAKE NOW (§27A.9.5 rule 5): its tranches (fixed once, from `reservesSatsOf(pid)` - its paying
-   * reserves when first asked), each payable when its due block is `decideDepth` deep and a re-count of every vote up to it still
-   * passes. A failed re-count cancels that payment and every later one, for good. Answers [{ id, proposal, k, of, lnurl, amountSats,
-   * proposalSats, dueAt, decidableAt }] and, in `cancelled`, the proposals stopped.
+   * THE PAYMENTS A PASSED PROPOSAL MAY MAKE NOW (§27A.9.5 rule 5): its parts (trancheCountOf: from its own amount, so every seat names
+   * the same part ids - kanban #1175; `reservesSatsOf` is no longer read), each payable when its due block is `decideDepth` deep and a
+   * re-count of every vote up to it still passes. A failed re-count cancels that payment and every later one, for good. Answers [{ id,
+   * proposal, k, of, lnurl, amountSats, proposalSats, dueAt, decidableAt }].
    */
-  function payments({ tip, reservesSatsOf = () => 0n } = {}) {
+  // every write of a payment row is one fundingPaymentStep, kept by compare-and-set on the row as it was read
+  const paymentRow = (pid) => db.prepare('SELECT tranches, cancelled, cancelled_k FROM funding_payments WHERE proposal = ?').get(pid) || null;
+  function stepPayment(pid, ev) {
+    const was = paymentRow(pid);
+    const s = fundingPaymentStep(was, ev); if (!s.ok) return { ...s, row: was };
+    const r = s.row;
+    const ch = was === null
+      ? db.prepare('INSERT OR IGNORE INTO funding_payments (proposal, tranches, cancelled, cancelled_k) VALUES (?, ?, ?, ?)').run(pid, r.tranches, r.cancelled, r.cancelled_k).changes
+      : db.prepare('UPDATE funding_payments SET tranches = ?, cancelled = ?, cancelled_k = ? WHERE proposal = ? AND tranches = ? AND cancelled IS ? AND cancelled_k IS ?')
+        .run(r.tranches, r.cancelled, r.cancelled_k, pid, was.tranches, was.cancelled, was.cancelled_k).changes;
+    return ch === 1 ? { ok: true, row: r } : { ok: false, why: 'the row moved meanwhile', row: paymentRow(pid) };
+  }
+  // `recorded(id)`: whether a reserve payout record exists under that payment id (any state) - a refix never moves a proposal
+  // one of whose ids has gone out, or may have (kanban #1235, audit 3 FIXES-11)
+  function payments({ tip, recorded = null } = {}) {
     const out = [];
     for (const row of rows('proposal')) {
       const decided = voteOutcome(row.id); if (!decided || !decided.passed) continue;
       const p = read('proposal', row.hex); if (!p.ok) continue;
       const period = votePeriodOf({ proposal: p.obj, signal: outcomeOf(row.id), schedule }); if (!period) continue;
-      let fixed = db.prepare('SELECT tranches, cancelled, cancelled_k FROM funding_payments WHERE proposal = ?').get(row.id);
-      if (!fixed) {
-        const n = trancheSchedule({ amountSats: p.obj.amountSats, reservesSats: BigInt(reservesSatsOf(row.id) || 0n), last: period.last, schedule }).length;
-        db.prepare('INSERT OR IGNORE INTO funding_payments (proposal, tranches, cancelled) VALUES (?, ?, NULL)').run(row.id, n);
-        fixed = { tranches: n, cancelled: null, cancelled_k: null };
+      const n = trancheCountOf(p.obj.amountSats);
+      const scheduleOf = (parts) => trancheSchedule({ amountSats: p.obj.amountSats, reservesSats: parts === 1 ? 0n : p.obj.amountSats, last: period.last, schedule });
+      let fixed = paymentRow(row.id);
+      if (!fixed) fixed = stepPayment(row.id, { kind: 'fix', tranches: n }).row;
+      // A REFIX ONLY ON A KNOWN TIP AND WITH NOTHING RECORDED (kanban #1235): with the tip unknown (a seat's first 120 s, a failed chain read)
+      // "no part is payable yet" was read as true, and a row fixed at 1 part and paid was refixed to 4 new ids and paid again
+      else if (fixed.tranches !== n && fundingPaymentStateOf(fixed) === FUNDING_PAYMENT_STATE.FIXED && Number.isInteger(tip)
+        && !(typeof recorded === 'function' && paymentIdsOf(row.id).some((id) => recorded(id)))) {
+        // a row the old reserve rule fixed: set right while no part of either count is payable yet, else it stands (a part may have gone)
+        const payable = [scheduleOf(fixed.tranches)[0], scheduleOf(n)[0]].some((t) => Number.isInteger(tip) && tip >= t.payableAt);
+        const s = stepPayment(row.id, { kind: 'refix', tranches: n, payable });
+        if (s.ok) log(`[funding] ${row.id.slice(0, 16)}: its payment goes in ${n} part(s), not the ${fixed.tranches} this seat's reserve rows once gave`);
+        fixed = s.row;
       }
+      if (!fixed) continue;
       const held = voteBlocks(row.id); const readTo = held.length ? held[held.length - 1].height : -1;
-      const plan = trancheSchedule({ amountSats: p.obj.amountSats, reservesSats: fixed.tranches === 1 ? 0n : p.obj.amountSats, last: period.last, schedule });
+      const plan = scheduleOf(fixed.tranches);
       for (const t of plan) {
         // a cancelled proposal keeps listing the payments due before the cancelling one: they may have gone, and their records stand
         if (fixed.cancelled_k !== null && t.k >= fixed.cancelled_k) break;
@@ -169,8 +237,8 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         const again = countOf(row.id, period, p.obj, t.dueAt + 1);
         if (!again || !again.passed) {
           const why = `payment ${t.k + 1} of ${t.of} cancelled at its due block ${t.dueAt}: YES ${again ? again.approvalPct : '?'} % of YES + NO, ${again ? again.yesOfAllPct : '?'} % of everyone who could vote`;
-          db.prepare('UPDATE funding_payments SET cancelled = ?, cancelled_k = ? WHERE proposal = ?').run(why, t.k, row.id);
-          log(`[funding] ${row.id.slice(0, 16)}: ${why}`);
+          // compare-and-set from FIXED: a re-count after a reorg never moves a cancellation already kept
+          if (stepPayment(row.id, { kind: 'cancel', k: t.k, why }).ok) log(`[funding] ${row.id.slice(0, 16)}: ${why}`);
           break;
         }
         out.push({ id: trancheIdOf(row.id, t.k, t.of), proposal: row.id, k: t.k, of: t.of, lnurl: p.obj.lnurl, amountSats: t.amountSats,
@@ -207,6 +275,13 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       if (donationChanges(o, feesAt(o.activationHeight - 1)).length) {
         devKeys = typeof devKeysOf === 'function' ? await Promise.resolve(devKeysOf(toHex(o.networkId))).catch(() => null) : null;
         if (!Array.isArray(devKeys)) { log(`[fees] ${pid.slice(0, 16)}: the protocol developers' keys not read yet`); continue; }
+      }
+      // THE PEERS' APPROVALS AND SIGNALS FIRST (ruled 2026-11-07 on #1245, kanban #1231): the census seats this seat reaches are asked for theirs and
+      // every one that verifies is taken, so seats decide from the same set; what arrives after the decision is kept and not read
+      if (typeof pull === 'function') {
+        let got = []; try { got = await pull(pid); } catch { got = []; }
+        let took = 0; for (const it of Array.isArray(got) ? got : []) { try { const r = await book.add(it.kind, it.hex, { heldAtMs: it.atMs === undefined ? null : Number(it.atMs) }); if (r && r.ok && r.fresh) took++; } catch { /* the next */ } }
+        if (took) log(`[fees] ${pid.slice(0, 16)}: ${took} approval(s) or signal(s) pulled from the peers before deciding`);
       }
       const out = feeProposalOutcome({ proposal: o, current: feesAt(o.activationHeight - 1), signal, tally: vote, approvals: approvalsOf(pid), devKeys, verify, schedule });
       db.prepare('INSERT OR IGNORE INTO fee_outcomes (proposal, outcome, activation, decided_ms) VALUES (?, ?, ?, ?)').run(pid, JSON.stringify(out), o.activationHeight, now());
@@ -245,7 +320,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     }).filter(Boolean).sort((a, b) => b.publishedHeight - a.publishedHeight);
   }
   const cancelledOf = (pid) => { const r = db.prepare('SELECT cancelled FROM funding_payments WHERE proposal = ?').get(pid); return r ? r.cancelled : null; };
-  return {
+  const book = {
     schedule,
     voteRound,
     decideFees,
@@ -256,11 +331,17 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     devMajorityOf: (pid, devKeys) => devMajority({ proposalId: fromHex(pid), approvals: approvalsOf(pid), devKeys, verify }),
     payments,
     cancelledOf,
-    async add(kind, hex) {
+    // `heldAtMs` (kanban #1279): when a peer says it first held the object (GET /funding-items' atMs) - a signal or an approval is kept as of the
+    // earliest time any seat held it, never later than now
+    async add(kind, hex, { heldAtMs = null } = {}) {
       const r = (() => { try { return read(kind, String(hex || '').toLowerCase()); } catch (e) { return { ok: false, why: e.message }; } })();
       if (!r.ok) return { ok: false, status: 400, why: r.why };
       const id = toHex(r.id);
-      if (db.prepare('SELECT 1 FROM funding_items WHERE id = ?').get(id)) return { ok: true, fresh: false, id };
+      const atMs = Number.isFinite(Number(heldAtMs)) && heldAtMs !== null ? Math.min(now(), Number(heldAtMs)) : now();
+      if (db.prepare('SELECT 1 FROM funding_items WHERE id = ?').get(id)) {
+        if ((kind === 'signal' || kind === 'fee-approval') && heldAtMs !== null) db.prepare('UPDATE funding_items SET at_ms = ? WHERE id = ? AND at_ms > ?').run(atMs, id, atMs);
+        return { ok: true, fresh: false, id };
+      }
       const height = await Promise.resolve(tip()).catch(() => null);
       // A PLAYER'S NAME (PIP, player-name.js): the newest per player is kept, the one it replaces dropped; one dated
       // more than the skew ahead of this seat's clock is refused, so nobody pins a name by dating it in the future
@@ -299,7 +380,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       if (kind === 'fee-approval') {
         proposal = toHex(r.obj.proposalId);
         if (!db.prepare("SELECT 1 FROM funding_items WHERE kind = 'fee' AND id = ?").get(proposal)) return { ok: false, status: 404, why: 'this seat holds no such fee proposal: send the proposal first' };
-        db.prepare('INSERT OR IGNORE INTO funding_items (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, proposal, String(hex).toLowerCase(), now());
+        db.prepare('INSERT OR IGNORE INTO funding_items (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, proposal, String(hex).toLowerCase(), atMs);
         return { ok: true, fresh: true, id, proposal };
       }
       if (kind === 'proposal') {
@@ -316,7 +397,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
           if (bonded === false) return { ok: false, status: 422, why: 'a signal is given by a bonded node' };
         }
       }
-      db.prepare('INSERT OR IGNORE INTO funding_items (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, proposal, String(hex).toLowerCase(), now());
+      db.prepare('INSERT OR IGNORE INTO funding_items (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, proposal, String(hex).toLowerCase(), kind === 'signal' ? atMs : now());
       return { ok: true, fresh: true, id, proposal };
     },
     list(height = null) {
@@ -350,6 +431,29 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         const p = read(row.kind, row.hex); if (!p.ok) continue;
         const end = p.obj.publishedHeight + schedule.signal;
         if (height < end) continue;
+        // THE SIGNAL DECIDED AFTER A PULL, ON WHAT SOME SEAT HELD BEFORE THE END (kanban #1279, RULED #1277 A, the interim until signals are read from
+        // the chain; audit 4 #1257 seats-4): each seat decided at the period's end from its own rows, so a signal posted to three seats just before the
+        // end passed there and failed elsewhere - two fee sets from activation. When this seat first saw the end is kept; it decides once the end is
+        // `decideDepth` deep, after asking the seats it reaches, and counts a signal only when some seat held it before then
+        db.prepare('INSERT OR IGNORE INTO funding_signal_ends (proposal, seen_ms) VALUES (?, ?)').run(row.id, now());
+        if (height < end + Math.max(1, Number(schedule.decideDepth) || 1) - 1) continue;
+        if (typeof pull === 'function') {
+          let got = []; try { got = await pull(row.id); } catch { got = []; }
+          let took = 0; for (const it of Array.isArray(got) ? got : []) { try { const x = await book.add(it.kind, it.hex, { heldAtMs: it.atMs === undefined ? null : Number(it.atMs) }); if (x && x.ok && x.fresh) took++; } catch { /* the next */ } }
+          if (took) log(`[funding] ${row.id.slice(0, 16)}: ${took} signal(s) or approval(s) pulled from the peers before deciding the signal`);
+        }
+        // ONE CUTOFF FOR EVERY SEAT (audit 5, kanban #1410): the end was "when this seat first saw it" - a seat restarting or catching up hours later counted
+        // every signal held before then, a live seat did not, and one period had two outcomes. With `endTimeAt(height)` (the end block's header time, the
+        // same on every seat that holds that chain) a signal counts when some seat held it by the time the end block was made; without it, as before
+        let endSeen = db.prepare('SELECT seen_ms FROM funding_signal_ends WHERE proposal = ?').get(row.id).seen_ms;
+        if (typeof endTimeAt === 'function') {
+          let t = null; try { t = Number(await endTimeAt(end)); } catch { t = null; }
+          if (!Number.isFinite(t) || t <= 0) { log(`[funding] ${row.id.slice(0, 16)}: the signal ended at ${end}, that block's time not read yet`); continue; }
+          // A HEADER TIME AHEAD OF THIS SEAT'S CLOCK (audit 6 re-check N5, kanban #1426): a miner may date a block up to 2 h ahead; deciding before that
+          // moment, a seat missed signals other seats still counted until it - two outcomes again. It decides once its own clock has passed it
+          if (t > now()) { log(`[funding] ${row.id.slice(0, 16)}: the end block is dated ${Math.round((t - now()) / 1000)} s ahead of this seat's clock: decided after it`); continue; }
+          endSeen = t;
+        }
         const a = await activeAt(end).catch((e) => ({ ok: false, why: e.message }));
         if (!a || !a.ok) { log(`[funding] ${row.id.slice(0, 16)}: the signal ended at ${end}, its active nodes not read yet: ${a ? a.why : '?'}`); continue; }
         // THE SIGNAL RULE: only nodes with a bond 3 months old count, among the active and among the signals
@@ -359,12 +463,18 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
           const s = new Set(seasoned.map((k) => String(k).toLowerCase()));
           a.nodes = a.nodes.filter((k) => s.has(String(k).toLowerCase()));
         }
-        const out = { ...signalOutcome({ proposal: p.obj, signals: signalsOf(row.id), active: a.nodes, tip: height, schedule }), activeFrom: a.fromHeight ?? null, activeTo: end };
+        const out = { ...signalOutcome({ proposal: p.obj, signals: signalsOf(row.id, endSeen), active: a.nodes, tip: height, schedule }), activeFrom: a.fromHeight ?? null, activeTo: end };
         db.prepare('INSERT OR IGNORE INTO funding_outcomes (proposal, outcome, decided_ms) VALUES (?, ?, ?)').run(row.id, JSON.stringify(out), now());
         log(`[funding] ${row.id.slice(0, 16)}: signal ${out.state} - ${out.supporters} of ${out.active} active nodes (${out.pct} %, ${out.needed} needed)`);
         done.push({ id: row.id, ...out });
       }
       return done;
     },
+    /** The signals and fee approvals this seat holds for a proposal, as signed (GET /funding-items, a peer's pull before it decides; kanban #1231). */
+    itemsOf(pid) {
+      return db.prepare("SELECT kind, hex, at_ms FROM funding_items WHERE kind IN ('signal', 'fee-approval') AND proposal = ? ORDER BY id").all(String(pid).toLowerCase())
+        .map((r) => ({ kind: r.kind, hex: r.hex, atMs: String(r.at_ms) }));   // when this seat first held it (kanban #1279)
+    },
   };
+  return book;
 }

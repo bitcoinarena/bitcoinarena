@@ -219,6 +219,10 @@ export function attestationTimely(a, { entryCloseMs, nowMs, terms = null }) {
     const t = marketTimes({ entryCloseMs, terms });
     if (BigInt(a.observedAtMs) < t.resolveAtMs)
       return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, before the market's resolution time ${new Date(Number(t.resolveAtMs)).toISOString()}` };
+    // AND NOT AFTER ITS DEADLINE (kanban #1151): at the deadline a market with no outcome is VOID and its stakes go back at
+    // once; an attestation withheld until then and handed in late would turn it ATTESTED over locks already returned
+    if (BigInt(nowMs) >= t.deadlineMs)
+      return { ok: false, why: `that market's deadline was ${new Date(Number(t.deadlineMs)).toISOString()}: no outcome is taken after it (a market with none by then is VOID, every stake back)` };
   }
   if (BigInt(nowMs) < BigInt(entryCloseMs))
     return { ok: false, why: `that round's entries are still open (they close at ${new Date(Number(entryCloseMs)).toISOString()}): no outcome is taken before the last pick` };
@@ -261,6 +265,59 @@ export function marketVoided(held, { entryCloseMs, terms, nowMs }) {
   if (standing.state === 'OPEN' && BigInt(nowMs) >= deadlineMs)
     return { voided: true, why: `no outcome was attested by the market's deadline ${new Date(Number(deadlineMs)).toISOString()}: every stake goes back` };
   return { voided: false };
+}
+
+/**
+ * A MARKET ROUND'S STATE (kanban #1151): one enum, one transition function. OPEN (nothing held) -> ATTESTED (one standing
+ * outcome, inside its objection window) -> FINAL; OPEN -> VOID (no outcome by the deadline, or a market on a game's held VOID);
+ * ATTESTED -> VOID (a contradiction, or a held VOID, inside the window). FINAL and VOID are TERMINAL: a seat persists them
+ * (store.js market_states, compare-and-set) and never changes them, so nothing that comes later - a withheld attestation handed
+ * in after the deadline, a contradiction after the window, a game VOID after an outcome stood - turns a round whose stakes went
+ * back into one that claims them, or one that settled into one that returns them. What comes later is kept as evidence only.
+ */
+export const MARKET_STATE = Object.freeze({ OPEN: 'OPEN', ATTESTED: 'ATTESTED', FINAL: 'FINAL', VOID: 'VOID' });
+export const marketTerminal = (state) => state === MARKET_STATE.FINAL || state === MARKET_STATE.VOID;
+const sameStanding = (a, s) => (typeof s.value === 'bigint' ? typeof a.value === 'bigint' && a.value === s.value : typeof a.value !== 'bigint' && a.outcome === s.outcome);
+const saidOf = (a) => (typeof a.value === 'bigint' ? `value ${a.value}` : `outcome ${a.outcome}`);
+
+/**
+ * THE ONE TRANSITION: from `prev` (a persisted state, or null for OPEN) and the evidence a seat holds - `held` every standing
+ * outcome in an attestation's shape with its `receivedMs` (game-market.js heldOutcomes), `voids` a market on a game's held
+ * VOIDs [{ receivedMs, why }] - to the state on the seat's clock `nowMs`. Pure; the caller persists what it answers.
+ *  - A terminal `prev` is answered as it is.
+ *  - Only evidence RECEIVED BEFORE THE DEADLINE counts (`deadlineMs`, null for a market with no terms: none); evidence received at
+ *    or after the window's end (`firstMs + windowMs`) of a standing outcome counts neither: both are kept as evidence only.
+ *  - Evidence is read in the order it came (a VOID before an outcome received in the same millisecond).
+ * Answers { state, outcome?, value?, observedAtMs?, firstMs?, finalAtMs?, atMs?, reason?, why?, said? } - `reason` of a VOID:
+ * 'deadline', 'dispute' or 'game'.
+ */
+export function marketTransition(prev, held, { deadlineMs = null, windowMs, nowMs, voids = [] }) {
+  if (prev && marketTerminal(prev.state)) return prev;
+  const D = deadlineMs === null || deadlineMs === undefined ? Infinity : Number(deadlineMs);
+  const W = Number(windowMs), now = Number(nowMs);
+  const events = [...voids.map((v) => ({ at: Number(v.receivedMs), void: v })), ...held.map((h) => ({ at: Number(h.receivedMs), h }))]
+    .filter((e) => e.at < D).sort((x, y) => x.at - y.at || (x.void ? -1 : 0) - (y.void ? -1 : 0));
+  let s = prev && prev.state === MARKET_STATE.ATTESTED ? { ...prev } : { state: MARKET_STATE.OPEN };
+  for (const e of events) {
+    if (s.state === MARKET_STATE.OPEN) {
+      if (e.void) return { state: MARKET_STATE.VOID, atMs: e.at, reason: 'game', why: e.void.why || 'its source round\'s result refunds this market: every stake goes back' };
+      s = { state: MARKET_STATE.ATTESTED, ...(typeof e.h.value === 'bigint' ? { value: e.h.value } : { outcome: e.h.outcome }),
+        observedAtMs: e.h.observedAtMs !== undefined ? BigInt(e.h.observedAtMs) : undefined, firstMs: e.at, finalAtMs: e.at + W };
+      continue;
+    }
+    if (e.at >= s.finalAtMs) break;                          // after the window: evidence only, and so is all that follows
+    if (e.void) return { state: MARKET_STATE.VOID, atMs: e.at, reason: 'game', said: [saidOf(s), 'a refund'],
+      why: `the source round's committee contradicted itself: ${saidOf(s)} and a refund (${e.void.why || 'VOID'}) - the round settles on neither, every stake goes back` };
+    if (!sameStanding(e.h, s)) {
+      const said = [saidOf(s), saidOf(e.h)];
+      return { state: MARKET_STATE.VOID, atMs: e.at, reason: 'dispute', said,
+        why: `the attestors contradicted themselves: two standing attestations name ${said.join(' and ')}: the pair is proof the attestors contradicted themselves, and the round settles on neither` };
+    }
+  }
+  if (s.state === MARKET_STATE.ATTESTED && now >= s.finalAtMs) return { ...s, state: MARKET_STATE.FINAL, atMs: s.finalAtMs };
+  if (s.state === MARKET_STATE.OPEN && now >= D)
+    return { state: MARKET_STATE.VOID, atMs: D, reason: 'deadline', why: `no outcome was attested by the market's deadline ${new Date(D).toISOString()}: every stake goes back` };
+  return s;
 }
 
 /**

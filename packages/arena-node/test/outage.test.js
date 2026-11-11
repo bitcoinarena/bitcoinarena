@@ -95,14 +95,14 @@ async function signerNodes({ endIn = 9000 } = {}) {
   };
 }
 
-async function joinAndBuild(w, { firstAt = 60 } = {}) {
+async function joinAndBuild(w, { firstAt = 60, key = WINNER.key } = {}) {
   // THE WINNER UNDER THIS ROUND'S OWN BEACON (window-fixture playFor): the recorded tape misses there.
   await warmPlay(WINNER, w.randomness);
   const play = playFor(WINNER, w.randomness);
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
-  const dealt = await dealHandout({ preimage, signerNodes: w.c.nodes, roundId: w.rid, playerPubkey: WINNER.key,
+  const dealt = await dealHandout({ preimage, signerNodes: w.c.nodes, roundId: w.rid, playerPubkey: key,
     ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e), coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
   const outpoint = { txid: rand(32), outIdx: 0n };
   // AND IT BRINGS ITS FEE LOCK (2026-09-21). `lock-fixture`'s federation is legal now - no base fee, as §22A
@@ -111,7 +111,7 @@ async function joinAndBuild(w, { firstAt = 60 } = {}) {
   const feeSecret = rand(32);
   const feeOutpoint = { txid: rand(32), outIdx: 1n };
   const entry = {
-    roundId: w.rid, playerPubkey: WINNER.key, sessionPubkey: ed25519.getPublicKey(session),
+    roundId: w.rid, playerPubkey: key, sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
     joinTick: 0, worldSecret: play.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
     feePreimage: feeSecret, stakeLockOutpoint: outpoint, feeLockOutpoint: feeOutpoint,
@@ -119,10 +119,10 @@ async function joinAndBuild(w, { firstAt = 60 } = {}) {
   };
   const eid = entryId(entry);
   const fields = { paymentImage: { kind: 'point', bytes: entry.stakePoint }, amountMsat: netStakeMsat(entry), claimPk: w.claimPk,
-    refundPk: refundKeyOf(WINNER.key), expiration: w.port.height + 200 };
+    refundPk: refundKeyOf(key), expiration: w.port.height + 200 };
   await w.port.put(outpoint, fields);
   const feeFields = { paymentImage: { kind: 'hash', bytes: sha256(feeSecret) }, amountMsat: entry.feeMsat,
-    claimPk: w.claimPk, refundPk: refundKeyOf(WINNER.key), expiration: w.port.height + 200 };
+    claimPk: w.claimPk, refundPk: refundKeyOf(key), expiration: w.port.height + 200 };
   await w.port.put(feeOutpoint, feeFields);
   for (const d of [w.a, w.b]) {
     const base = `http://127.0.0.1:${d.port}`;
@@ -246,7 +246,8 @@ test('(c) a late first mark is still FORFEIT at both signer nodes - never Void, 
     const late = await joinAndBuild(w, { firstAt: END });
     for (const m of late.messages) await say(w.a.port, m);
     await until(() => w.b.round.startForfeit(late.eid));
-    const none = await joinAndBuild(w);
+    // another player's entry (kanban #1215: one player key stakes one entry in a round - the page enters a game round under order 0, once)
+    const none = await joinAndBuild(w, { key: schnorr.getPublicKey(schnorr.utils.randomSecretKey()) });
     await closeAndSettle(w, late);
     // WAITED ON, NOT RACED: the late start is now signed and final at once, so
     // the wait above ends before the no-mark entry need be FINAL at both signer nodes
