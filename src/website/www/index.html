@@ -138,7 +138,15 @@
   .split .what { display: block; color: var(--text); }
   .split .who { display: block; margin-top: 2px; font-family: var(--sans); color: var(--soft); font-size: 15px; }
   .split tr.pool td.p, .split tr.pool .what { color: var(--accent); }
+  .split tr.don td.p, .split tr.don .what { color: var(--dim); font-weight: 400; }
+  .split .tag { display: inline-block; margin-left: 10px; padding: 1px 7px; border: 1px solid var(--line); border-radius: 3px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); vertical-align: 2px; }
   .note { color: var(--soft); max-width: 66ch; margin-top: 18px; }
+  .tabs { display: flex; gap: 6px; margin-top: 22px; flex-wrap: wrap; }
+  .tabs button { font: inherit; font-size: 14px; color: var(--soft); background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 7px 14px; cursor: pointer; }
+  .tabs button:hover { color: var(--text); }
+  .tabs button[aria-selected="true"] { color: var(--text); border-color: var(--accent); }
+  .tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tabpanel .split { margin-top: 14px; }
 
   /* the network, read live */
   h3.t { margin: 36px 0 10px; font-size: 17px; }
@@ -385,18 +393,48 @@
 </div></section>
 
 <section id="split"><div class="wrap">
-  <h2>90 % of every stake is in play</h2>
+  <h2>Where every stake goes</h2>
+  <div class="tabs" role="tablist" aria-label="Fee split">
+    <button type="button" role="tab" id="tab-games" aria-controls="split-games" aria-selected="true">Games</button>
+    <button type="button" role="tab" id="tab-markets" aria-controls="split-markets" aria-selected="false" tabindex="-1">Prediction markets</button>
+  </div>
+  <div class="tabpanel" id="split-games" role="tabpanel" aria-labelledby="tab-games">
   <table class="split">
     <thead><tr><th class="p">Share</th><th>Goes to</th></tr></thead>
     <tbody>
       <tr class="pool"><td class="p">90 %</td><td><span class="what">The pot</span></td></tr>
       <tr><td class="p">4 %</td><td><span class="what">Nodes</span></td></tr>
-      <tr><td class="p">2 %</td><td><span class="what">Game developer</span></td></tr>
-      <tr><td class="p">2 %</td><td><span class="what">Protocol developers</span></td></tr>
       <tr><td class="p">2 %</td><td><span class="what">Protocol reserves</span></td></tr>
+      <tr class="don"><td class="p">2 %</td><td><span class="what">Game developer <span class="tag">donation</span></span></td></tr>
+      <tr class="don"><td class="p">2 %</td><td><span class="what">Protocol developers <span class="tag">donation</span></span></td></tr>
     </tbody>
   </table>
-  <p class="note">Items: 40 % nodes, 20 % reserves. The bonded nodes vote on every reserve payout. <a href="https://testnet.bitcoinarena.io/proposals/">Proposals →</a></p>
+  <p class="note">Items: 40 % nodes, 20 % reserves.</p>
+  </div>
+  <div class="tabpanel" id="split-markets" role="tabpanel" aria-labelledby="tab-markets" hidden>
+  <table class="split">
+    <thead><tr><th class="p">Share</th><th>Goes to</th></tr></thead>
+    <tbody>
+      <tr class="pool"><td class="p">99 %</td><td><span class="what">The pot</span></td></tr>
+      <tr><td class="p">0.4 %</td><td><span class="what">Nodes</span></td></tr>
+      <tr><td class="p">0.2 %</td><td><span class="what">Protocol reserves</span></td></tr>
+      <tr class="don"><td class="p">0.2 %</td><td><span class="what">Market developer <span class="tag">donation</span></span></td></tr>
+      <tr class="don"><td class="p">0.2 %</td><td><span class="what">Protocol developers <span class="tag">donation</span></span></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <script>
+  // THE FEE SPLIT'S TABS (kanban #1206), inline so they work before the page's module scripts load
+  (() => {
+    const tabs = [...document.querySelectorAll('#split [role="tab"]')];
+    const pick = (t) => { for (const x of tabs) { const on = x === t; x.setAttribute('aria-selected', String(on)); x.tabIndex = on ? 0 : -1; document.getElementById(x.getAttribute('aria-controls')).hidden = !on; } };
+    tabs.forEach((t, i) => {
+      t.addEventListener('click', () => pick(t));
+      t.addEventListener('keydown', (e) => { const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0; if (!d) return; const n = tabs[(i + d + tabs.length) % tabs.length]; pick(n); n.focus(); e.preventDefault(); });
+    });
+  })();
+  </script>
+  <p class="note">The bonded nodes vote on every reserve payout. <a href="https://testnet.bitcoinarena.io/proposals/">Proposals →</a></p>
 
   <div id="network">
     <h3 class="t">The network, read live</h3>
