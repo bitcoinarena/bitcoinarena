@@ -64,13 +64,13 @@ test('no page names a release number of its own; every release link is releases/
     'src/website/docs/www/index.html', 'src/website/www/docs/index.html', 'src/website/www/js/release-latest.js']) {
     const src = read(p).replace(/<!--[\s\S]*?-->/g, '');
     // the one past release the docs name on purpose: "Until release 2026.1.9.8 the command was called arenanode"
-    const nums = (src.match(/\b20\d\d\.\d+\.\d+(?:\.\d+)?\b/g) || []).filter((x) => x !== '2026.1.9.8');
+    const nums = (src.match(/\b20\d\d\.\d+\.\d+(?:\.\d+)?\b/g) || []).filter((x) => x !== '2026.1.9.8' && x !== '2026.2.0');   // 2026.2.0: the planned release's name, not a number of its own (kanban #1362)
     assert.deepEqual(nums, [], `${p}: no release number`);
     for (const m of src.matchAll(/github\.com\/bitcoinarena\/bitcoinarena\/releases(\/[^"' )]*)?/g))
       assert.ok(!m[1] || m[1] === '/latest', `${p}: ${m[0]}`);
   }
   // the pages that show the number load the one script
-  assert.match(read('src/website/www/index.html'), /<script src="js\/release-latest\.js" defer><\/script>/);
+  assert.match(read('src/website/www/index.html'), /<script src="\/?js\/release-latest\.js" defer><\/script>/);
   for (const p of ['src/website/docs/docs-template.html', 'src/website/docs/www/index.html', 'src/website/docs/repos-template.html', 'src/website/docs/www/repos/index.html'])
     assert.match(read(p), /<script src="https:\/\/bitcoin-?arena\.io\/js\/release-latest\.js" defer><\/script>/, p);
   // the docs: the repository is open now, the latest release linked with its number
