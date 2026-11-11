@@ -29,12 +29,26 @@ import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressInvoice } from '../src/feedback-store.js';
 const LN_ASKS = new Map();   // ip -> times it asked GET /feedback/lnaddress (kanban #1342)
+// A REPORT'S BOUNTY ADDRESS IS CHECKED ON A BUDGET (kanban #1511): POST /feedback fetched the address's URL before the report was counted, and a report
+// whose address failed was never counted - so one caller made the faucet fetch any HTTPS URL it named (an LNURL can name an internal host), without
+// limit. Each check is now counted against the caller's ipKey (an IPv6 /64 as one) before it is made, whether the address works or not, at most
+// FEEDBACK_PER_IP_PER_DAY a day, and one caller has one check running at a time.
+const ADDR_CHECKS = new Map();   // ipKey -> { day, n, busy }
+async function addressCheckFor(ip, address) {
+  const k = ipKey(ip) || String(ip || ''), day = Math.floor(Date.now() / DAY_MS);
+  let c = ADDR_CHECKS.get(k);
+  if (!c || c.day !== day) { c = { day, n: 0, busy: false }; ADDR_CHECKS.set(k, c); if (ADDR_CHECKS.size > 5000) for (const [x, v] of ADDR_CHECKS) { if (ADDR_CHECKS.size <= 5000) break; if (!v.busy && x !== k) ADDR_CHECKS.delete(x); } }
+  if (c.busy) return { ok: false, why: 'another address from you is still being checked' };
+  if (c.n >= FEEDBACK_PER_IP_PER_DAY) return { ok: false, why: 'this address checked all it can today' };
+  c.n += 1; c.busy = true;
+  try { return await lnAddressWorks(address); } finally { c.busy = false; }
+}
 import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync, statfsSync } from 'node:fs';
 import { PLAYER_GRANTS } from '../src/faucet.js';
 const PLAYER_WELCOME_SATS = PLAYER_GRANTS.welcome.invoiceSats;
 import { join as pathJoin } from 'node:path';
 import { ipKey } from '../src/faucet.js';
-import { refillDecide, feedbackDecide, faucetDecide, playerGrantDecide, playerGrantTotals, opponentWant, opponentWants, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
+import { refillDecide, feedbackDecide, FEEDBACK_PER_IP_PER_DAY, faucetDecide, playerGrantDecide, playerGrantTotals, opponentWant, opponentWants, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
 
 const env = process.env;
 const port = Number(env.FAUCET_PORT || 18866);
@@ -529,7 +543,7 @@ createServer((req, res) => {
   // check a report's address gets at Send (lnAddressWorks), asked by the dialog - only from the page's own origin, at most 30 an IP in 10 minutes
   if (path === '/feedback/lnaddress' && req.method === 'GET') {
     if (!BOUNTY_ORIGINS.includes(String(req.headers.origin || ''))) return send(200, { ok: false, why: 'not asked from the page' });
-    const ip = String(ipOf(req) || ''), now = Date.now();
+    const ip = ipKey(ipOf(req)) || String(ipOf(req) || ''), now = Date.now();   // an IPv6 caller by its /64 (kanban #1511)
     const seen = (LN_ASKS.get(ip) || []).filter((t) => now - t < 600000); if (seen.length >= 30) return send(200, { ok: false, why: 'too many checks - it is checked again at Send' });
     seen.push(now); LN_ASKS.set(ip, seen); if (LN_ASKS.size > 5000) LN_ASKS.delete(LN_ASKS.keys().next().value);
     lnAddressWorks(String(new URL(req.url, 'http://x').searchParams.get('a') || '').slice(0, 200)).then((w) => send(200, { ok: !!w.ok, why: w.ok ? null : w.why }), (e) => send(200, { ok: false, why: String((e && e.message) || e).slice(0, 120) }));
@@ -571,6 +585,8 @@ createServer((req, res) => {
     req.on('end', async () => {
       try {
         const b0 = JSON.parse(raw || '{}'), ip = ipOf(req);
+        // every address check below goes through the caller's budget (kanban #1511): this name stands for addressCheckFor(ip, ...) here
+        const lnAddressWorks = (a) => addressCheckFor(ip, a);
         // A SIGNED REPORT (kanban #1342): its own words go to the chat, and it is kept for review - only if it stands
         let b = b0, kept = null, counted = false;
         if (b0.event) {

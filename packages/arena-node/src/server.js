@@ -25,7 +25,7 @@ import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT }
 import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid, findSeriesPublication, seriesPublicationOutput } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js';
 import { blockRandom, blockRandomReady } from '../../arena-protocol/src/block-random.js';
-import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS } from '../../arena-protocol/src/served-nodes.js';
+import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS, SERVED_HELD_MAX } from '../../arena-protocol/src/served-nodes.js';
 import { decodePurchase } from '../../arena-protocol/src/purchase.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
 import { keepItemPurchase, itemsOwned, purchasesSince } from './item-purchase-seat.js';
@@ -343,6 +343,9 @@ const hexOf = (b) => Buffer.from(b).toString('hex');
  * thing instead of each having a taste of its own.
  */
 export const GHOST_BACKLOG_BYTES = 262144;
+// HOW LONG AFTER THE ENTRY CLOSE A SEAT STILL TAKES A CANCEL ANOTHER SEAT TOOK IN TIME AND HANDED ON (kanban #1520): the hand-on's own
+// bound (4 s, handCancelOn) plus a margin - far shorter than any market's outcome, so no cancel is signed knowing it (kanban #1435)
+export const CANCEL_HANDON_GRACE_MS = 5000;
 
 export const NOTHING_IS_FUNDED = () => false;
 
@@ -682,6 +685,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const grid = marketWindowOf(c, plugin.manifest);
     const timely = attestationTimely(a, { entryCloseMs: c.entryCloseMs, nowMs: round.now(), terms: roundTermsOf(plugin.manifest, c), window: grid.ok ? grid.window : null });
     if (!timely.ok) return { held: false, status: 409, why: timely.why };
+    // AND OBSERVED AT ITS WINDOW'S END (kanban #1515): a market on a period is signed at the end of the round's own window
+    // (observed_at = the window's end, its terms; attestor.js and drawn-attestor.js both sign window.endMs). One seat listing the
+    // round with a later close made the fixed attestors sign another window's outcome, held here as timely - refused now
+    const mw = marketWindowOf(c, plugin.manifest);
+    if (mw.ok && mw.window && BigInt(a.observedAtMs) !== mw.window.endMs)
+      return { held: false, status: 409, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, and this round's window ends at ${new Date(Number(mw.window.endMs)).toISOString()}: a market on a period is attested at its window's end` };
     // ONE HELD ONCE THE ROUND IS FINAL OR VOID (its persisted state, game-market.js marketStateOf) is kept as evidence only
     const decided = marketTerminal(marketStateOf(round, new Uint8Array(roundIdOf(c)), { contract: c, manifest: plugin.manifest, nowMs: round.now() }).state);
     // a value is kept in the same table under its own body id, its outcome column -1 (no index: the value is in its bytes)
@@ -1759,15 +1768,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const servedRoundsBetween = async (from, to) => {
     const held = [round.finalSigsBetween(from, to).map((r) => ({ ...r, committee: round.signerNodes(r.roundId) }))];
     let seats = []; try { seats = networkSeats(); } catch { seats = []; }
-    await Promise.all(seats.map(async (s) => {
+    // kanban #1522: held in this seat's own order (its own record first, then the seats as listed), not the order they answer -
+    // between two committees named by equally many seats the one held first stands (protocol mergeServedRounds)
+    await Promise.all(seats.map(async (s, i) => {
       try {
         const r = await seasonFetch(`${s}/served?to=${to}&from=${from}&finals=1`, { signal: AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS) });
         if (!r.ok) return;
         const a = await r.json();
-        held.push((a.held || []).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) })));
+        held[i + 1] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
       } catch { /* a seat that does not answer adds nothing */ }
     }));
-    return mergeServedRounds(held).rounds;
+    return mergeServedRounds(held.filter(Boolean)).rounds;
   };
   const fundingBook = round.db ? createFundingBook({ db: round.db, schedule: fundingSchedule, log: (l) => console.log(l),
     endTimeAt: typeof blockHeaderTimeAt === 'function' ? blockHeaderTimeAt : null,
@@ -3756,9 +3767,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return row;
       }
       const tally = new Map();
+      // ONLY THE COMMITTEE'S WORD IS COUNTED (kanban #1512): a row under a key that is none of the round's signer nodes (a peer's
+      // fresh keys) never outvotes the committee in the event this node signs and publishes once; a node never assigned the round
+      // holds no signer list, so the contract's own nodes stand for it
+      const signers = round.signerNodes(rid);
+      const committee = new Set((signers.length ? signers : c.nodes || []).map(toHex));
       for (const r of round.results(rid, entryId)) {
         try {
           const x = decodePlayerResult(splitSignedResult(r.bytes).body);
+          if (!committee.has(toHex(x.nodePubkey))) continue;
           const k = `${x.outcome}:${x.score}`;
           tally.set(k, { outcome: x.outcome, score: x.score, n: ((tally.get(k) || {}).n || 0) + 1 });
         } catch { /* not a result */ }
@@ -4308,6 +4325,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (said.length) console.log(`[cancel] ${toHex(roundId).slice(0, 16)} ${toHex(eid).slice(0, 16)}: handed on, ${said.filter((x) => x === 201).length} of ${said.length} seats took it fresh`);
     }, Math.max(0, Math.min(700 + Math.random() * 500, Number.isFinite(left) ? left : Infinity)));
     if (t.unref) t.unref();
+  };
+  // DOES ANOTHER SEAT OF THE ROUND HOLD THIS CANCEL (kanban #1520): asked only for a handed-on cancel that arrives in the grace after the close
+  const aSeatHoldsCancel = async (roundId, eid) => {
+    const want = toHex(eid);
+    const said = await Promise.all(settlementPeers(roundId).map(async (peer) => {
+      try {
+        const r = await fetch(`${String(peer).replace(/\/+$/, '')}/cancels?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(2000) });
+        const body = r.ok ? await r.json() : null;
+        return !!(body && Array.isArray(body.cancels) && body.cancels.some((x) => x && x.entry === want));
+      } catch { return false; }
+    }));
+    return said.some(Boolean);
   };
   const entryRelay = createEntryRelay({
     peersOf: (rid) => verifier.peersOf(rid),
@@ -8176,15 +8205,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE SERVED LIST OF THE RECORD'S WINDOW, merged from this seat's FINALs and every other seat's
         const from = Number(p.servedFromMs), to = Number(p.servedToMs);
         const held = [round.finalSigsBetween(from, to).map((r) => ({ ...r, committee: round.signerNodes(r.roundId) }))];
-        await Promise.all(networkSeats().map(async (s) => {
+        // kanban #1522: held in this seat's own order (its own record first, then the seats as listed), not the order they answer -
+        // between two committees named by equally many seats the one held first stands (protocol mergeServedRounds)
+        await Promise.all(networkSeats().map(async (s, i) => {
           try {
             const r = await seasonFetch(`${s}/served?to=${to}&from=${from}&finals=1`, { signal: AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS) });
             if (!r.ok) return;
             const a = await r.json();
-            held.push((a.held || []).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) })));
+            held[i + 1] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
           } catch { /* a seat that does not answer adds nothing */ }
         }));
-        const merged = servedNodes({ rounds: mergeServedRounds(held).rounds, fromMs: from, toMs: to, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
+        const merged = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean)).rounds, fromMs: from, toMs: to, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
         const got = await keepItemPurchase({ p, manifest: game.manifest, networkSet: vestedShares(forced.recipients, height), gameSet: game.donationSet,
           served: { fromMs: merged.fromMs, toMs: merged.toMs, nodes: merged.nodes, root: merged.root }, port: await portOfFederation(p.federationId), db: round.db,
           verify: (sg, m, k) => schnorr.verify(sg, m, k), reserveKey: itemReserveKey, keepReserve: (row) => round.putDonationOutputs([row]), keepDonations: (rows) => round.putDonationOutputs(rows), fees: feesAtHeight(height),
@@ -9373,9 +9404,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { good = ed25519.verify(signature, cancelId({ roundId: entry.roundId, entryId: new Uint8Array(eid) }), entry.sessionPubkey); } catch { good = false; }
         if (!good) return text(res, 403, 'that cancel is not signed by the entry\'s session key');
         if (round.cancelled(eid)) { res.writeHead(200, { 'content-type': 'application/json', ...CORS }); return res.end(JSON.stringify({ cancelled: true, fresh: false })); }
-        if (BigInt(round.now()) >= c.entryCloseMs)
+        // A CANCEL HANDED ON ACROSS THE CLOSE (kanban #1520): a player's cancel taken by one seat a few ms before the close reached the others
+        // after it, they refused it, and the round kept two tables - no settlement met its threshold and every lock of the market waited for
+        // its expiry. Up to CANCEL_HANDON_GRACE_MS after the close a seat still takes a handed-on cancel, but only one a round seat already
+        // holds (it asks their GET /cancels), so a seat's own door, closed at the close, is where every cancel starts: a player who posts one
+        // late himself, with or without the hand-on mark, finds no seat holding it and is refused. Such a take is not handed on again.
+        const closed = BigInt(round.now()) >= c.entryCloseMs;
+        if (closed && !(req.headers[RELAY_HEADER] === '1' && BigInt(round.now()) < c.entryCloseMs + BigInt(CANCEL_HANDON_GRACE_MS)
+            && await aSeatHoldsCancel(entry.roundId, new Uint8Array(eid))))
           return text(res, 409, `entries closed at ${new Date(Number(c.entryCloseMs)).toISOString()}: that order is in the round now, and its fee is due`);
-        if (round.putCancel({ roundId: entry.roundId, entryId: new Uint8Array(eid), signature, receivedMs: round.now() }))
+        if (round.putCancel({ roundId: entry.roundId, entryId: new Uint8Array(eid), signature, receivedMs: round.now() }) && !closed)
           handCancelOn(entry.roundId, new Uint8Array(eid), signature, c.entryCloseMs);   // to the round's other seats, before the close (kanban #1435)
         console.log(`[cancel] ${toHex(entry.roundId).slice(0, 16)} ${toHex(eid).slice(0, 16)}: cancelled by its player`);
         res.writeHead(201, { 'content-type': 'application/json', ...CORS });
@@ -9706,11 +9744,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!winnings) return text(res, 409, 'this signer node sends no winnings');
         // A LATE SETTLEMENT'S PLANS (C3b-2a), asked for by its late entry as well.
         const lateHex = url.searchParams.get('late');
-        const sender = lateHex ? settlements.lateWinningsFor(new Uint8Array(rid), new Uint8Array(Buffer.from(lateHex, 'hex'))) : winnings;
-        const kept = JSON.stringify(sender.keptPlan(new Uint8Array(rid)));
+        // A LATE ENTRY IS 32 BYTES, AND NO SENDER IS MADE FOR A LATE SETTLEMENT THIS SEAT DOES NOT HOLD (kanban #1518): a stranger's
+        // random ids built and kept one each, for good; an unheld one keeps no plan, so it answers the empty plan as before
+        if (lateHex && !/^[0-9a-f]{64}$/.test(lateHex)) return text(res, 400, 'a late settlement is named by a 32-byte entry id');
+        const late8 = lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null;
+        const sender = late8 ? settlements.lateWinningsHeld(new Uint8Array(rid), late8) : winnings;
+        const kept = JSON.stringify(sender ? sender.keptPlan(new Uint8Array(rid)) : []);
         // SIGNED BY THIS SEAT (kanban #1154): an asker that adopts it knows a seat of the round kept it
-        const late8 = /^[0-9a-f]{64}$/.test(lateHex || '') ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null;
-        const signed = !lateHex || late8 ? sendPlanAskHeaders(round, { kind: PLAN_ASK.KEPT, roundId: new Uint8Array(rid), lateEntryId: late8, body: kept }) : {};
+        const signed = sendPlanAskHeaders(round, { kind: PLAN_ASK.KEPT, roundId: new Uint8Array(rid), lateEntryId: late8, body: kept });
         res.writeHead(200, { 'content-type': 'application/json', ...CORS, ...signed });
         return res.end(kept);
       }
