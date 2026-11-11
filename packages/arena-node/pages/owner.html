@@ -3,7 +3,8 @@
 <script>/* kanban #943: a visit from X arrives through t.co with no campaign in its link: named here, before the stats script reads the address */if(/^https?:\/\/t\.co(\/|$)/.test(document.referrer)&&!/[?&]utm_/.test(location.search))history.replaceState(history.state,'',location.pathname+(location.search?location.search+'&':'?')+'utm_source=x&utm_medium=social&utm_content=profile'+location.hash)</script>
   <script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="024ff09e-c3a6-4dfd-bede-3163eb8be36a" data-domains="testnet.bitcoinarena.io"></script>
   <script>/* kanban #943: the campaign reached the stats when the script read the address; then it leaves the address, past the script's own history hook, so no second view */addEventListener('load',function(){var n=0,c=function(){if(!window.umami&&n++<50)return setTimeout(c,100);setTimeout(function(){var u=new URL(location.href),k=Array.from(u.searchParams.keys()).filter(function(x){return/^utm_/.test(x)});if(k.length){k.forEach(function(x){u.searchParams.delete(x)});History.prototype.replaceState.call(history,history.state,'',u.pathname+u.search+u.hash)}},500)};c()})</script>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23f7931a'/%3E%3Ctext x='16' y='23' font-size='21' font-weight='700' font-family='system-ui,sans-serif' text-anchor='middle' fill='%23fff'%3E%E2%82%BF%3C/text%3E%3C/svg%3E">
+<!-- kanban #1456 (Daniel 2026-11-11): the stadium as the tab icon -->
+<link rel="icon" type="image/png" sizes="32x32" href="https://testnet.bitcoinarena.io/arena-icon-32.png">
 <!-- THE OWNER AREA OF A NODE: /Dashboard/owner. The owner is a key made from 24 words this browser keeps;
      every request it sends is signed with it (src/owner.js). Nothing here is a password, and nothing leaves the browser
      but public keys and signatures. -->
@@ -192,9 +193,10 @@ select:focus{outline:2px solid var(--st);outline-offset:1px}
    moving - "Needs a progress bar while it's loading from the node"): the answers the page waits for, counted, under the title */
 .loadbar{display:flex;flex-direction:column;gap:6px;max-width:420px;margin:6px 0 10px}.loadbar[hidden]{display:none}#loadbar-t{color:var(--dim);font-size:13px}
 .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+h1 .brandmark{height:26px;width:auto;vertical-align:-5px;margin-right:10px}
 </style></head><body>
 <main>
-<h1>Bitcoin Arena · Node Owner <span class="ver" id="ver"></span></h1>
+<h1><img class="brandmark" src="https://testnet.bitcoinarena.io/arena-mark-52.webp" srcset="https://testnet.bitcoinarena.io/arena-mark-52.webp 2x, https://testnet.bitcoinarena.io/arena-mark-78.webp 3x" alt="" width="50" height="26">Bitcoin Arena · Node Owner <span class="ver" id="ver"></span></h1>
 <div class="sub" id="who"><div class="boot" id="boot"><span class="boot-bar"><i id="boot-i" style="width:5%"></i></span><span id="boot-t">Finding your node…</span></div></div>
 <div class="loadbar" id="loadbar" hidden><span class="boot-bar"><i id="loadbar-i"></i></span><span id="loadbar-t"></span></div>
 <h2 class="vh">Your node</h2>

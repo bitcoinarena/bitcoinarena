@@ -46,6 +46,7 @@
     '  color: #e8eaed; font: 700 16px/1 system-ui, sans-serif; letter-spacing: -0.01em; white-space: nowrap; background: none; }',
     '#asc-bar .asc-home i { flex: none; width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font-style: normal; font-weight: 800;',
     '  color: #1a0f00; background: conic-gradient(from 210deg, #f7931a, #ffd166, #f7931a); }',
+    '#asc-bar .asc-home img.asc-mark { flex: none; height: 26px; width: auto; display: block; }' +
     '#asc-bar .asc-home span { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: inherit; }',
     '#asc-bar .asc-home:hover span { color: #f7931a; }',
     '#asc-bar .asc-back, #asc-bar .asc-nav-go, #asc-bar .asc-lead { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 4px; height: 32px;',
@@ -97,7 +98,7 @@
   // THE HEADER, where this script stands (first thing in <body>), so it is drawn before the page below it
   var bar = document.createElement('header');
   bar.id = 'asc-bar';
-  bar.innerHTML = '<a class="asc-home" href="https://bitcoinarena.io/" title="bitcoinarena.io" aria-label="Bitcoin Arena - bitcoinarena.io"><i aria-hidden="true">&#8383;</i><span>Bitcoin Arena</span></a>'
+  bar.innerHTML = '<a class="asc-home" href="https://bitcoinarena.io/" title="bitcoinarena.io" aria-label="Bitcoin Arena - bitcoinarena.io"><img class="asc-mark" src="https://testnet.bitcoinarena.io/arena-mark-52.webp" srcset="https://testnet.bitcoinarena.io/arena-mark-52.webp 2x, https://testnet.bitcoinarena.io/arena-mark-78.webp 3x" alt="" width="50" height="26"><span>Bitcoin Arena</span></a>'
     + '<a class="asc-back" href="' + esc(site) + '" title="Back to Bitcoin Arena" aria-label="Back to Bitcoin Arena"><span aria-hidden="true">&larr;</span><span class="word">Arena</span></a>'
     + '<a class="asc-nostr" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)" aria-label="Bitcoin Arena on Nostr, verified as bitcoinarena.io"><span class="d">bitcoinarena.io &#10003;</span><svg viewBox="48 44 167 167" aria-hidden="true" focusable="false"><path d="M210.8 199.4c0 3.1-2.5 5.7-5.7 5.7h-68c-3.1 0-5.7-2.5-5.7-5.7v-15.5c.3-19 2.3-37.2 6.5-45.5 2.5-5 6.7-7.7 11.5-9.1 9.1-2.7 24.9-.9 31.7-1.2 0 0 20.4.8 20.4-10.7s-9.1-8.6-9.1-8.6c-10 .3-17.7-.4-22.6-2.4-8.3-3.3-8.6-9.2-8.6-11.2-.4-23.1-34.5-25.9-64.5-20.1-32.8 6.2.4 53.3.4 116.1v8.4c0 3.1-2.6 5.6-5.7 5.6H57.7c-3.1 0-5.7-2.5-5.7-5.7v-144c0-3.1 2.5-5.7 5.7-5.7h31.7c3.1 0 5.7 2.5 5.7 5.7 0 4.7 5.2 7.2 9 4.5 11.4-8.2 26-12.5 42.4-12.5 36.6 0 64.4 21.4 64.4 68.7v83.2ZM150 99.3c0-6.7-5.4-12.1-12.1-12.1s-12.1 5.4-12.1 12.1 5.4 12.1 12.1 12.1S150 106 150 99.3Z"/></svg><span>Nostr</span></a>'
     + '<div class="asc-nav"><button class="asc-nav-go" type="button" aria-label="Menu" aria-expanded="false" aria-controls="asc-nav-menu">&#9776;</button>'
