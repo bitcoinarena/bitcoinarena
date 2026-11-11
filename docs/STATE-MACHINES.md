@@ -1547,3 +1547,7 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### Ballot tally memory (ballot-tally.js `lives` / `spansAll`) vs the kept outcome (kanban #1570)
 - Invariant: the serving rule (`spans`, configServesRound) and GET /config (`live`) always answer from every PASSED record in `ballot_proposals`, from the tally's construction on. `refreshLive()` runs when the tally is made (a restart reads the kept outcomes at once) and on every pass that read a tip, including one skipped because the chain did not answer the reorg check (#1152). A restarted seat never serves a round naming the config its own kept outcome replaced.
+
+#### SM-22 (change) Feedback reward link: a decision moves only the payment it read (kanban #1571)
+- Invariant: a reward is never `open` while a payment of it may still be in flight. `settle` reads each `paying` row again just before it decides it, and moves it (paying -> paid, paying -> open) by compare-and-set on the `payment_hash` it asked `status()` about (`WHERE k1 = ? AND state = 'paying' AND payment_hash = ?`); a row that was opened and claimed again under a new hash meanwhile is left `paying` for a later pass. claim()'s own sure failure reopens only under its own hash.
+- One settle pass at a time: the faucet's 60 s interval skips a tick while the previous pass is still running (`settling`, as `sweeping` does for the sweep).
