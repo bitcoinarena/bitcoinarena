@@ -187,10 +187,10 @@ test('a seat\'s settlement commit is signed by its node key, names the transacti
   assert.match(checkSettlementCommit(signSettlementCommit(commit, key(1), signBy(2)), { seats, commit, verify }).why, /does not verify/);
 });
 
-test('a SETTLEMENT note counts only from its own height, off on mainnet and testnet4 until the replay (#1069); RESULT and FINAL do not wait for it', () => {
-  assert.deepEqual({ ...STALL_SETTLEMENT_HEIGHT }, { mainnet: null, testnet4: null, regtest: 0, devnet: 0 });
-  assert.equal(stallSettlementPoint('mainnet'), null);
-  assert.equal(stallSettlementPoint('testnet'), null);
+test('a SETTLEMENT note counts only from its own height: on with the stall rule since the owner named it (#1339, "ab sofort"), mainnet from genesis, testnet4 at STALL_HEIGHT once named; RESULT and FINAL do not wait for it', () => {
+  assert.deepEqual({ ...STALL_SETTLEMENT_HEIGHT }, { mainnet: 0, testnet4: null, regtest: 0, devnet: 0 });
+  assert.equal(stallSettlementPoint('mainnet'), STALL_HEIGHT.mainnet, 'the settlement stage goes on with the stall rule itself');
+  assert.equal(stallSettlementPoint('testnet'), STALL_HEIGHT.testnet4, 'testnet4: the same point as the stall rule');
   assert.equal(stallSettlementPoint('elsewhere'), null);
   assert.equal(settlementNotesCount(contractAt({ networkId: NETWORK_ID_TESTNET4 })), false);
   assert.equal(settlementNotesCount(contractAt()), true, 'a regtest runs the code');
