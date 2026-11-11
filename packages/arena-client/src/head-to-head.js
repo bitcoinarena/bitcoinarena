@@ -32,15 +32,32 @@ export async function revealMove({ entryIdHex, move, salt, nodes, identity = nul
 }
 
 /** Every reveal the round's seats hold, merged by entry: { [entryIdHex]: move }. */
+// A MOVE COUNTS ONLY WHEN THE SEATS AGREE ON IT (kanban #1489): the merge was last-answer-wins, so one seat answering late with
+// an opponent's move changed flipped the provisional verdict the page shows before any seat signs. Each seat now gives one
+// vote per entry; an entry's move is the one at least two seats (or every seat, on a one-seat list) name, and more seats than
+// name any other move. A tie, or a move only one seat of several names, leaves the entry undecided here.
 export async function revealsOfRound({ roundIdHex, nodes, fetcher = fetch }) {
-  const out = {};
+  const votes = new Map();   // entry -> Map(move -> seats naming it)
   await Promise.all(nodes.map(async (node) => {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/reveals?round=${roundIdHex}`);
       if (!r.ok) return;
       const j = await r.json();
-      for (const x of (j && Array.isArray(j.reveals) ? j.reveals : [])) if (Number.isInteger(x.move)) out[x.entry] = x.move;
+      const mine = new Map();   // this seat's one move per entry: the first it lists
+      for (const x of (j && Array.isArray(j.reveals) ? j.reveals : [])) {
+        if (Number.isInteger(x.move) && typeof x.entry === 'string' && !mine.has(x.entry)) mine.set(x.entry, x.move);
+      }
+      for (const [entry, move] of mine) {
+        if (!votes.has(entry)) votes.set(entry, new Map());
+        const m = votes.get(entry); m.set(move, (m.get(move) || 0) + 1);
+      }
     } catch { /* a seat that is down says nothing */ }
   }));
+  const need = Math.min(2, nodes.length);
+  const out = {};
+  for (const [entry, m] of votes) {
+    const ranked = [...m].sort((a, b) => b[1] - a[1]);
+    if (ranked[0][1] >= need && (ranked.length === 1 || ranked[0][1] > ranked[1][1])) out[entry] = ranked[0][0];
+  }
   return out;
 }
