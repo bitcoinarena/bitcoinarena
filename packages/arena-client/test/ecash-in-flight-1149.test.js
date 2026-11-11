@@ -104,7 +104,9 @@ test('a silent seat past ten minutes: the notes are taken back; if the seat took
   }
 });
 
-test('a seat that refused and whose notes are spent anyway: kept as refused, naming the seat - not handed to another', async () => {
+// kanban #1583: a seat's 4xx is not proof it took nothing (a restarted seat answered 409 for a row it had taken) - a Rejected take-back after a
+// refusal goes back to asking that same seat (handed, seatTook), never the terminal `refused`; a later refusal is not taken back from again
+test('a seat that refused and whose notes are spent anyway: kept handed to that seat (it may hold them), naming it - not handed to another', async () => {
   const store = new Map();
   const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
   const key = 'arena.ecash.exchange.2.0';
@@ -112,8 +114,13 @@ test('a seat that refused and whose notes are spent anyway: kept as refused, nam
   storage.setItem(key, JSON.stringify(rec));
   const fetcher = async () => ({ ok: false, status: 409, text: async () => 'too little' });
   const r = await advanceEcashExchange({ storage, key, rec, walletFrom: { receiveEcash: async () => '{"state":"Rejected"}' }, walletTo: async () => null, fetcher, put: (s, k, v) => s.setItem(k, v) });
-  assert.equal(r.lost, true);
-  assert.equal(readEcashTransfer(storage, key).state, 'refused');
+  assert.equal(r.pending, true);
+  const after = readEcashTransfer(storage, key);
+  assert.deepEqual([after.state, after.seat, after.seatTook], ['handed', 'http://s1', true]);
+  let asked = 0;
+  const again = await advanceEcashExchange({ storage, key, rec: after, walletFrom: { receiveEcash: async () => { asked++; return '{"state":"Rejected"}'; } }, walletTo: async () => null, fetcher, put: (s, k, v) => s.setItem(k, v) });
+  assert.equal(again.pending, true); assert.equal(asked, 0, 'not taken back from twice');
+  assert.equal(readEcashTransfer(storage, key).state, 'handed');
 });
 
 test('an intent left by a closed tab: the 2.0 lock client\'s log gives the string back; no send in its log - dropped; an older client - kept, named', async () => {
