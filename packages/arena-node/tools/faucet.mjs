@@ -181,7 +181,9 @@ async function nodeCheckNow(node, npub) {
 }
 const PLAYED = networkPlayers({ seats: String(env.FAUCET_SEASON_SEATS || '').split(',').filter(Boolean), games: String(env.FAUCET_SEASON_GAMES || 'rock-paper-scissors,nextblock,btc-updown').split(',').filter(Boolean) });
 PLAYED.fresh().catch(() => 0);   // kanban #1484: the list is read at start, so the admin page never waits for it
-if (FEEDBACK && BOUNTY_PAYER) setInterval(() => FEEDBACK.settle({ status: bountyStatus }).catch(() => {}), 60000).unref();
+// ONE SETTLE PASS AT A TIME (kanban #1571): a pass waits up to 20 s a paying row on lncli, so passes overlapped and decided on stale rows
+let settling = false;
+if (FEEDBACK && BOUNTY_PAYER) setInterval(() => { if (settling) return; settling = true; FEEDBACK.settle({ status: bountyStatus }).catch(() => {}).finally(() => { settling = false; }); }, 60000).unref();
 
 /** A player's grant: read the invoice, decide, keep it in the book BEFORE paying (a crash pays nobody twice), and take it out again if no payer could pay. */
 /** Each payer's own node key, read once (lncli getinfo); a payer whose node is the invoice's destination goes last. */
