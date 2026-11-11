@@ -1542,3 +1542,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### Ballot tally memory (ballot-tally.js `lives` / `spansAll`) vs the kept outcome (kanban #1570)
+- Invariant: the serving rule (`spans`, configServesRound) and GET /config (`live`) always answer from every PASSED record in `ballot_proposals`, from the tally's construction on. `refreshLive()` runs when the tally is made (a restart reads the kept outcomes at once) and on every pass that read a tip, including one skipped because the chain did not answer the reorg check (#1152). A restarted seat never serves a round naming the config its own kept outcome replaced.
