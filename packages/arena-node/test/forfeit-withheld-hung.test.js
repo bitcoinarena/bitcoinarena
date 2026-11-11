@@ -180,8 +180,10 @@ test('a nonce pair still signs one list once: the same list gets the same share,
   const w = seven();
   const [a, b, c, d, e, f] = w.seats;
   const of = async (s) => (await s.commit(RID, ENTRY)).commitment;
-  const five = [await of(a), await of(b), await of(c), await of(d), await of(e)].sort((x, y) => x.id - y.id);
-  const other = [await of(a), await of(b), await of(c), await of(d), await of(f)].sort((x, y) => x.id - y.id);
+  // ONE ASKER'S COMMITMENT FROM a ON BOTH LISTS: since kanban #1521 every ask draws its own pair, so the second list must carry the same one
+  const ca = await of(a);
+  const five = [ca, await of(b), await of(c), await of(d), await of(e)].sort((x, y) => x.id - y.id);
+  const other = [ca, await of(b), await of(c), await of(d), await of(f)].sort((x, y) => x.id - y.id);
   const shared = await a.share(RID, ENTRY, five);
   assert.equal(shared.ok, true);
   assert.equal((await a.share(RID, ENTRY, five)).share, shared.share, 'the same list is answered with the same share');
