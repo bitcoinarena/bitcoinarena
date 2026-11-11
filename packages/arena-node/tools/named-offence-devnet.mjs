@@ -22,6 +22,8 @@
 //   SCENARIO=stall3        nothing armed (kanban #1044 hole 1): three of the round's seats (the contract's last three) are stopped (SIGSTOP) once both
 //                          entries are published; the four left reach FINAL and cannot settle (5 of 7); after STALL_HOLD_S the loser takes its locks back
 //                          at their expiration (REFUND_AFTER_PLAY), then the three come back (SIGCONT) and the settlement is watched (ruling #1146 A: F')
+//                          WINNER_REFUND=1 (kanban #1044, 4 silent): the winner too takes its locks back at their expiration (REFUND_AFTER_PLAY) -
+//                          with four of seven settlement seats silent no settlement can be signed, so the winner's stake must come back as the loser's does
 //   SCENARIO=stop-s        nothing armed: a member of S is stopped (SIGSTOP) as soon as a seat keeps the signed batch; the sends must still be paid
 //
 // The three last name a Lightning address for both players (PAYOUT_ADDRESS): an https LNURL door on base + 9 answering with lnd C's invoices, its
@@ -157,7 +159,7 @@ const players = [0, 1].map((i) => {
   const fd = openSync(log, 'a');
   const child = spawn(process.execPath, [join(HERE, 'tn4-live-run.mjs')], { detached: true, stdio: ['ignore', fd, fd],
     env: { ...env, ARENA_TN4_NETWORK: 'regtest', ARENA_REGTEST_CENSUS_KEY_0: join(D, 'census', 'key0.json'), ROUND, PORTS: PLAN.nodes.join(','), KEYS_FILE: keysFile, COLLECT_MS: String(env.COLLECT_MS || 900000),
-      ...(SCENARIO === 'nobody-won' ? { LOSE: '1', FORFEIT_RETRY_S: env.FORFEIT_RETRY_S || '600' } : SCENARIO === 'donation-resend' ? (i === 1 ? { NO_MARKS: '1' } : { LOSE: '1' }) : i === 0 ? { SEARCH: '1', QUALIFY: '1' } : SCENARIO === 'forfeit-lost' ? { LOSE: '1' } : SCENARIO === 'stall3' ? { LOSE: '1', REFUND_AFTER_PLAY: '1', REFUND_GO_FILE: goFile } : {}), ...(SCENARIO === 'forfeit-lost' ? { EARLY_FORFEIT: '1' } : {}),
+      ...(SCENARIO === 'nobody-won' ? { LOSE: '1', FORFEIT_RETRY_S: env.FORFEIT_RETRY_S || '600' } : SCENARIO === 'donation-resend' ? (i === 1 ? { NO_MARKS: '1' } : { LOSE: '1' }) : i === 0 ? { SEARCH: '1', QUALIFY: '1', ...(SCENARIO === 'stall3' && env.WINNER_REFUND === '1' ? { REFUND_AFTER_PLAY: '1', REFUND_GO_FILE: goFile } : {}) } : SCENARIO === 'forfeit-lost' ? { LOSE: '1' } : SCENARIO === 'stall3' ? { LOSE: '1', REFUND_AFTER_PLAY: '1', REFUND_GO_FILE: goFile } : {}), ...(SCENARIO === 'forfeit-lost' ? { EARLY_FORFEIT: '1' } : {}),
       ...(ADDRESS ? { PAYOUT_ADDRESS: ADDRESS } : {}), ...(SCENARIO === 'send-refund' ? { REFUND_C: '1' } : {}) } });
   return { i, log, child };
 });
