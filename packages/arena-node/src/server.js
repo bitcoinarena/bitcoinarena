@@ -1043,6 +1043,29 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const hostedParent = (id) => { const g = hosted.get(toHex(id)); return g ? g.manifest : null; };
   const installedInfo = (id) => { const g = hosted.get(id); return g ? { gameId: id, devKey: toHex(g.manifest.gameDevPubkey), version: g.manifest.version, parent: toHex(g.manifest.parentManifestId) } : null; };
+  // ANOTHER SEAT'S ANSWER, READ UP TO A BOUND (kanban #1540): a seat in the census or the peers list could answer GET /games,
+  // /plugin or /network with hundreds of MB, and `await r.json()` held all of it and its parsed objects at once (measured: one
+  // 120 MB /games listing grew the reading seat's heap 218 MB and held its event loop 3.6 s). The body is read chunk by chunk
+  // and refused, the connection dropped, as soon as it passes `maxBytes`.
+  const PEER_LISTING_BYTES = 4 * 1048576, PEER_LISTING_GAMES = 64, PEER_PACKAGE_BYTES = 32 * 1048576;
+  const textUpTo = async (r, maxBytes) => {
+    const said = Number(r.headers.get('content-length'));
+    if (said > maxBytes) { try { await r.body?.cancel(); } catch { /* dropped */ } throw new Error(`its answer is ${said} bytes, more than ${maxBytes}`); }
+    if (!r.body) return '';
+    const reader = r.body.getReader();
+    const chunks = []; let n = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      n += value.length;
+      if (n > maxBytes) { reader.cancel().catch(() => {}); throw new Error(`its answer passed ${maxBytes} bytes`); }
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks.map((x) => Buffer.from(x.buffer, x.byteOffset, x.byteLength))).toString('utf8');
+  };
+  const jsonUpTo = async (r, maxBytes) => JSON.parse(await textUpTo(r, maxBytes));
+  // a seat's games, at most PEER_LISTING_GAMES of them: the rest of a longer list is not read (kanban #1540)
+  const listedGames = (got) => (got && Array.isArray(got.games) ? got.games.slice(0, PEER_LISTING_GAMES) : []);
   async function takeGame({ game, from, replaces = null }) {
     if (!pluginsDir) return { ok: false, status: 409, why: 'this seat keeps no installed games (no plugins directory)' };
     from = String(from || '').replace(/\/+$/, '');
@@ -1050,7 +1073,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (hosted.has(game)) return { ok: false, status: 409, why: 'this seat already hosts that game' };
     if (replaces !== null && !hosted.has(replaces)) return { ok: false, status: 409, why: 'this seat does not host the game that version would replace' };
     let pkg;
-    try { const r = await fetch(`${from}/plugin?game=${game}`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(`${r.status} ${(await r.text()).trim()}`); pkg = await r.json(); }
+    try { const r = await fetch(`${from}/plugin?game=${game}`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(`${r.status} ${(await textUpTo(r, 4096).catch(() => '')).slice(0, 300).trim()}`); pkg = await jsonUpTo(r, PEER_PACKAGE_BYTES); }
     catch (e) { return { ok: false, status: 502, why: `that seat did not hand the game over: ${e.message}` }; }
     return adoptPackage(pkg, { game, from, replaces });
   }
@@ -1137,8 +1160,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // NAMED SOURCES, ELSE THE NETWORK'S OWN SEATS (found by this seat, not typed in)
     const sources = set.sources.length ? set.sources : networkSeats();
     for (const from of sources) {
-      let got; try { got = await (await fetch(`${from}/games`, { signal: AbortSignal.timeout(10000) })).json(); } catch { got = { games: [] }; }
-      for (const g of got.games || []) {
+      let got; try { got = await jsonUpTo(await fetch(`${from}/games`, { signal: AbortSignal.timeout(10000) }), PEER_LISTING_BYTES); } catch { got = { games: [] }; }
+      for (const g of listedGames(got)) {
         if (hosted.has(g.id)) continue;
         let m; try { m = decodeManifest(fromHex(g.manifest)); } catch { continue; }
         const parent = toHex(m.parentManifestId);
@@ -1153,7 +1176,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // federation is not taken automatically: it would make this seat's federation draining (succession), which is the
       // owner's own act from the owner page
       for (const [nid, held] of networksHeld) {
-        let pkg; try { const r = await fetch(`${from}/network?network=${nid}`, { signal: AbortSignal.timeout(10000) }); if (!r.ok) continue; pkg = await r.json(); } catch { continue; }
+        let pkg; try { const r = await fetch(`${from}/network?network=${nid}`, { signal: AbortSignal.timeout(10000) }); if (!r.ok) continue; pkg = await jsonUpTo(r, PEER_PACKAGE_BYTES); } catch { continue; }
         if (!pkg || !pkg.manifest || pkg.id === held.report.id) continue;
         if (pkg.manifest.federationId !== held.report.federationId) {
           console.log(`[networks] automatic update of ${nid.slice(0, 16)} from ${from}: not taken - it names federation ${String(pkg.manifest.federationId).slice(0, 16)}, a succession is the owner's to take`);
@@ -1206,9 +1229,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const asked = [];
     await Promise.all(seats.map(async (from) => {
       let got = null;
-      try { const r = await fetch(`${from}/games`, { signal: AbortSignal.timeout(8000) }); got = r.ok ? await r.json() : null; } catch { got = null; }
-      asked.push({ seat: from, answered: !!got, games: got && Array.isArray(got.games) ? got.games.length : 0 });
-      for (const g of (got && got.games) || []) {
+      try { const r = await fetch(`${from}/games`, { signal: AbortSignal.timeout(8000) }); got = r.ok ? await jsonUpTo(r, PEER_LISTING_BYTES) : null; } catch { got = null; }
+      const listed = listedGames(got);
+      asked.push({ seat: from, answered: !!got, games: listed.length });
+      for (const g of listed) {
         let m; try { m = decodeManifest(fromHex(String(g.manifest))); } catch { continue; }
         const id = toHex(gameIdOf(m));
         if (id !== String(g.id).toLowerCase()) continue;              // a listing whose manifest is another game is not read
@@ -1225,8 +1249,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     Object.assign(networkApps, { atMs: Date.now(), seats: asked.sort((a, b) => a.seat.localeCompare(b.seat)), games });
     return networkApps;
   };
+  // ?fresh=1 is public: it reads again only when the last read is NETWORK_APPS_FRESH_MS old, so a stranger cannot make this seat
+  // read every other seat's listing on every ask (kanban #1540)
+  const NETWORK_APPS_FRESH_MS = 30000;
   const networkAppsNow = async ({ fresh = false } = {}) => {
-    if (!fresh && Date.now() - networkApps.atMs < NETWORK_APPS_MS) return networkApps;
+    const age = Date.now() - networkApps.atMs;
+    if (age < (fresh ? NETWORK_APPS_FRESH_MS : NETWORK_APPS_MS)) return networkApps;
     if (!networkApps.reading) networkApps.reading = readNetworkApps().finally(() => { networkApps.reading = null; });
     return networkApps.reading;
   };
@@ -5656,7 +5684,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!update && networksHeld.has(network)) return { ok: false, status: 409, why: 'this seat already holds a package of that network: update it' };
     if (update && !networksHeld.has(network)) return { ok: false, status: 409, why: 'this seat holds no package of that network to update' };
     let pkg;
-    try { const r = await fetch(`${from}/network?network=${network}`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(`${r.status} ${(await r.text()).trim()}`); pkg = await r.json(); }
+    try { const r = await fetch(`${from}/network?network=${network}`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(`${r.status} ${(await textUpTo(r, 4096).catch(() => '')).slice(0, 300).trim()}`); pkg = await jsonUpTo(r, PEER_PACKAGE_BYTES); }
     catch (e) { return { ok: false, status: 502, why: `that seat did not hand the network over: ${e.message}` }; }
     const v = checkOnSeat(pkg);
     // the report as JSON: its lines and ids, not the decoded sets and series (BigInts)
