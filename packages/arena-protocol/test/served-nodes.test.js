@@ -79,5 +79,12 @@ test('seats that each hold only their own rounds merge into one list: the same r
   const partial = servedNodes({ rounds: seat1, fromMs: FROM, toMs: TO, verify });
   assert.notEqual(partial.root, one.root, 'one seat alone sees less');
   const clash = mergeServedRounds([[{ ...rA, finals: fA }], [{ ...rA, committee: NODES.slice(1, 4).map((n) => n.pub), finals: [] }]]);
-  assert.deepEqual([clash.rounds.length, clash.conflicts.length], [0, 1]);
+  // kanban #1522: a second seat naming another committee no longer drops the round (the nodes that served it were paid nothing):
+  // between equally many seats the committee held first stands, and the clash is still named
+  assert.deepEqual([clash.rounds.length, clash.conflicts.length], [1, 1]);
+  assert.deepEqual(clash.rounds[0].committee.map((k) => Buffer.from(k).toString('hex')), rA.committee.map((k) => Buffer.from(k).toString('hex')));
+  const most = mergeServedRounds([[{ ...rA, committee: NODES.slice(1, 4).map((n) => n.pub), finals: [] }], [{ ...rA, finals: fA }], [{ ...rA, finals: [] }]]);
+  assert.deepEqual(most.rounds[0].committee.map((k) => Buffer.from(k).toString('hex')), rA.committee.map((k) => Buffer.from(k).toString('hex')), 'the committee most seats name');
+  const tooBig = mergeServedRounds([[{ roundId: b32(0x23), committee: Array.from({ length: 10 }, (_, i) => b32(0x40 + i)), finals: [] }]]);
+  assert.equal(tooBig.rounds.length, 0, 'no round names more than its draw, 9');
 });
