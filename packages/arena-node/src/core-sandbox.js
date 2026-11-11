@@ -199,10 +199,11 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
   const loaded = wait(loadMs, 'loading');
   if (!loaded.ok) { end(loaded.why); throw new Error(loaded.why); }
 
-  const call = (op, input = {}) => {
+  // `within`: a shorter deadline for this one call (kanban #1538: the plugin trial run gives all its calls one deadline in total)
+  const call = (op, input = {}, within = null) => {
     if (ended) throw new Error(ended);
     port1.postMessage({ op: String(op), json: plain(input) });
-    const ms = { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'];
+    const ms = Number.isFinite(within) ? Math.max(1, Math.min(within, { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'])) : { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'];
     const a = wait(ms, op);
     // A CORE AT ITS ARRAY BUDGET IS ENDED, not asked again: it could catch the refusal and keep going, and what it holds goes
     // with its thread
