@@ -6,9 +6,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeEntryContract, decodeEntryContract, entryId, ITEMS_ENTRY_MARKER, ENTRY_ITEMS_MAX, entryItemDigest } from '../src/contracts.js';
 import { toHex } from '../src/hash.js';
+import { onCurveX } from '../src/guardian-payout.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const site = (n) => { const k = new Uint8Array(33).fill(n); k[0] = 2; return k; };
+// a website payout key is a point (kanban #1489): fill x with n, then step its last byte until it is on the curve
+const site = (n) => { const k = new Uint8Array(33).fill(n); k[0] = 2; while (!onCurveX(k.subarray(1))) k[32]++; return k; };
 const ENTRY = {
   roundId: b32(1), playerPubkey: b32(2), sessionPubkey: b32(3), stakeCommitment: b32(4), stakeMsat: 2000000n, feeMsat: 100000n, donationMsat: 100000n,
   joinTick: 0, worldSecret: b32(5), vssSharesRef: b32(6), stakePoint: new Uint8Array(33).fill(7), feePreimage: b32(8),

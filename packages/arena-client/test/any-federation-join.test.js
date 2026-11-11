@@ -9,6 +9,7 @@ import { entryFor, inFederation, roundLocks } from '../src/join.js';
 import { lockFederation } from '../src/federations.js';
 import { decodeEntryContract, encodeEntryContract, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { onCurveX } from '../../arena-protocol/src/guardian-payout.js';
 import { feldmanGroup } from '../../arena-node/src/curve.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 import { TRUCK_68E2_HASH } from '../../nextblock/plugin/truck-cores.js';   // the truck versions 1-4 name (kanban #523: the tree now builds a5c5766a)
@@ -66,7 +67,8 @@ test('a declared operator rides as the entry\'s tail; none declared leaves the e
 });
 
 test('the page\'s website key rides on an entry only into a round of 2026.0.9 or later', () => {
-  const site = new Uint8Array(33).fill(0x5e); site[0] = 3;
+  // a website payout key is a point (kanban #1489): x of 0x5e bytes, its last byte stepped until it is on the curve
+  const site = new Uint8Array(33).fill(0x5e); site[0] = 3; while (!onCurveX(site.subarray(1))) site[32]++;
   const make = (version, more) => ({ sessionPubkey: new Uint8Array(32).fill(3), roundId: ANY.id,
     ...entryFor({ ...ANY, protocolVersion: version, federationId: fromHex(A) }, { seed: new Uint8Array(32).fill(5), curve: feldmanGroup, random: (n) => new Uint8Array(n).fill(9), ...lockedFor(), ...more }) });
   assert.equal(make(8, { frontendPk: site }).frontendPk, undefined, 'a round below 9 pays no website: none is named');
