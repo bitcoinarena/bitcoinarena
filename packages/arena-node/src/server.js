@@ -9666,15 +9666,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!st || !st.stored) return text(res, 409, 'the federation holds no lock at that outpoint: spent, or never made');
         if (String(id) !== String(st.stored.contractId)) return text(res, 409, 'the lock at that outpoint is not the contract handed over: its id is another');
         if (fields.expiration !== st.blockCount + st.stored.blocksLeft) return text(res, 409, 'that contract\'s expiration is not the one the federation holds');
-        // ONE LOCK PER HANDOUT, THE FIRST KEPT (kanban #1489): a second, other lock with the same public image, refund key and
-        // claim key - anyone's, 1 sat - is refused here and never replaces the kept one; the same lock handed again is kept as it was.
+        // EVERY VERIFIED LOCK OF THE HANDOUT IS KEPT, EACH UNDER ITS OWN ID (kanban #1489, #1604): the handout's A0, the player's refund
+        // key and the round's claim key are public, so anyone can lock 1 sat with them. Replacing the kept lock (#1498) let the last one
+        // hand over win; keeping only the first let an attacker who hands its 1 sat lock first shut the player's real stake out of its
+        // return (#1604). Every such lock refunds to the handout player's key, so returning each is safe: each is kept under
+        // H(handout id || outpoint) - the same id at every seat, whatever order the locks came in - and the first one also under the
+        // handout's own id, as before, which never changes once kept. The same lock handed again is kept as it was.
         const opHex = `${toHex(outpoint.txid)}:${outpoint.outIdx}`;
-        const before = round.refusedLock(held.id);
-        if (before && before.outpoint !== opHex)
-          return text(res, 409, `this signer node already keeps another lock for that handout (${before.outpoint}): the first kept lock stands`);
-        round.putRefusedLock({ handoutId: held.id, roundId: rid, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
+        const keepId = sha256(new Uint8Array([...held.id, ...new TextEncoder().encode(`lock ${opHex}`)]));
+        const keptLock = { roundId: rid, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) };
+        round.putRefusedLock({ ...keptLock, handoutId: held.id });
+        round.putRefusedLock({ ...keptLock, handoutId: keepId });
         console.log(`[refused-lock] ${toHex(rid).slice(0, 16)}: ${String(fields.amountMsat)} msat kept for its return (${String(refusedWhy).slice(0, 80)})`);
-        return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(held.id)}`);
+        const first = round.refusedLock(held.id);
+        const named = first && first.outpoint === opHex ? held.id : keepId;
+        return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(named)}`);
       }
 
       if (req.method === 'GET' && url.pathname === '/stake-lock') {
