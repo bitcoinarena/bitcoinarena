@@ -15,12 +15,12 @@ const getJson = async (url, ms = 15000) => { const r = await fetch(url, { signal
 (() => {
   const hero = $('#hero'), bg = $('#bgvideo'), watch = $('#watch'), close = $('#closetrailer');
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (reduce) { const img = document.createElement('img'); img.className = 'poster'; img.src = '/next/media/poster.jpg'; img.alt = ''; hero.insertBefore(img, hero.firstChild); bg.removeAttribute('autoplay'); bg.pause(); }
+  if (reduce) { const img = document.createElement('img'); img.className = 'poster'; img.src = '/next/media/poster-v2.jpg'; img.alt = ''; hero.insertBefore(img, hero.firstChild); bg.removeAttribute('autoplay'); bg.pause(); }
   let full = null;
   const open = () => {
     if (full) return;
     full = document.createElement('video');
-    full.src = '/next/media/trailer.mp4'; full.controls = true; full.playsInline = true; full.autoplay = true; full.poster = '/next/media/poster.jpg';
+    full.src = '/next/media/trailer-v2.mp4'; full.controls = true; full.playsInline = true; full.autoplay = true; full.poster = '/next/media/poster-v2.jpg';
     full.setAttribute('aria-label', 'Bitcoin Arena trailer, 60 seconds');
     hero.insertBefore(full, hero.firstChild);
     bg.pause(); bg.style.display = 'none';
@@ -39,7 +39,7 @@ const getJson = async (url, ms = 15000) => { const r = await fetch(url, { signal
   bg.addEventListener('click', open);
 })();
 
-// TESTNET NIGHT in the visitor's own time (Wednesday 18 November 2026, 20:00 Zürich = 19:00 UTC)
+// TESTNET NIGHT in the visitor's own time (Wednesday 18 November 2026, 20:00 CET, UTC+1 = 19:00 UTC)
 (() => {
   const at = new Date('2026-11-18T19:00:00Z');
   const local = at.toLocaleString(undefined, { weekday: 'long', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
