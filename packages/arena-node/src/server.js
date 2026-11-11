@@ -11864,8 +11864,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!row) return text(res, 404, 'this node holds no such round');
         const served = donationSetFor(decodeRoundContract(new Uint8Array(row.contract)));
         if (!served.ok) return text(res, 404, served.why);
-        // A SET ITS DEVELOPERS APPROVED (§27A.4.1): no admin key signed it, so the page is handed what did - the
-        // proposals and approvals back to the admin key's set they replace, and that set as signed - and checks them itself
+        // A SET ITS DEVELOPERS APPROVED (§27A.4.1): the page is handed the proposals and approvals back to the admin key's set they
+        // replace, that set as signed, and the admin key's own signature over the approved set (a change needs both, kanban #1337) - and checks them itself
         if (served.approved) {
           const chain = donationBallots.chainOf(served.set);
           const last = chain.length ? chain[chain.length - 1] : null;
@@ -11876,8 +11876,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (r) { const b = encodeDonationSetBody(r); root = toHex(b) + toHex(r.signature); }
           } catch { root = null; }
           if (!root) return text(res, 404, 'this node cannot show the admin key\'s set this approved set replaces');
+          // AND THE ADMIN KEY'S SIGNATURE OVER THE APPROVED SET (§27A.4.1 RULED 2026-11-07, kanban #1337: a change needs both keys, so the
+          // page counts the approvals beside it; kanban #1415): the same serial and recipients, as signed
+          let admin = null;
+          try {
+            const a = donationSets.find((x) => x.serial === served.set.serial && toHex(donationSetId(x.recipients)) === toHex(donationSetId(served.set.recipients)));
+            if (a) admin = toHex(encodeDonationSetBody(a)) + toHex(a.signature);
+          } catch { admin = null; }
           res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-          return res.end(JSON.stringify({ approved: true, root, chain }));
+          return res.end(JSON.stringify({ approved: true, root, chain, ...(admin ? { admin } : {}) }));
         }
         const body = encodeDonationSetBody(served.set);
         const out = new Uint8Array(body.length + served.set.signature.length);
