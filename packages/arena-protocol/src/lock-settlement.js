@@ -514,12 +514,14 @@ function finish(stake, fee) {
  * not a signer node's word.
  */
 // `feeBps`: the round's game's node fee (fee.js feeBpsOf - a market's own, 0.5 % by default), the network's if none
-export function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, feeBps = undefined } = {}) {
+// `split`: a protocol-27 round's split in force at its census height (kanban #1486); unset, today's
+export function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, feeBps = undefined, split = undefined } = {}) {
   if (!contract) return { pays: false, why: 'no round to size the fee lock for' };
   if (feeBps === undefined && paysReserves(contract)) feeBps = RESERVES_NODE_FEE_BPS;   // version 11: 4 %
   // A PROTOCOL-27 GAME ENTRY'S FEE LOCK (kanban #1486): sized on the whole 10 % it holds, and it mints only if every sitting signer node's
   // part of it - the nodes' 4 % - pays more than nothing; the developers' and the reserves' lines are not what the gate asks
-  const gifted = giftsInFeeLock(contract) && feeBps === giftsFeeBps(ROUND_SPLIT_BPS);
+  const giftSplit = split || ROUND_SPLIT_BPS;
+  const gifted = giftsInFeeLock(contract) && feeBps === giftsFeeBps(giftSplit);
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint')
     return { pays: false, why: 'the federation\'s fee rule is not known, so no fee lock is minted' };
   const stakeMsat = BigInt(contract.stakeMsat || 0n);
@@ -533,8 +535,8 @@ export function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, f
   const pools = { [GAME_VERIFY]: sitting, [SETTLEMENT]: sitting };
   const entries = Array.from({ length: players }, (_, i) => ({ pubkey: key(0xb0, i), stakeMsat, feeMsat: lockMsat, donationMsat: 0n, outcome: FAILED, score: 0 }));
   const feeLocks = new Map(entries.map((e, i) => [toHex(e.pubkey), { outpoint: { txid: key(0xc0, i), outIdx: BigInt(i) }, amountMsat: lockMsat, preimage: key(0xd0, i) }]));
-  const gift = gifted ? { recipients: GATE_GIFT_TARGET, reserveKey: GATE_GIFT_KEY, split: ROUND_SPLIT_BPS } : null;
-  const part = feeSettlement({ entries, feeLocks, signerNodes: pools, contract, fees, feeBps: gifted ? ROUND_SPLIT_BPS.nodes : feeBps, gifts: gift, rid: gifted ? new Uint8Array(32) : null });
+  const gift = gifted ? { recipients: GATE_GIFT_TARGET, reserveKey: GATE_GIFT_KEY, split: giftSplit } : null;
+  const part = feeSettlement({ entries, feeLocks, signerNodes: pools, contract, fees, feeBps: gifted ? giftSplit.nodes : feeBps, gifts: gift, rid: gifted ? new Uint8Array(32) : null });
   if (!part.ok) return { ...base, pays: false, why: part.why };
   const nodePays = part.payouts.filter((p) => !GIFT_KINDS.has(p.kind));
   const nodeUnpaid = part.unpaid.filter((u) => !u.gift);

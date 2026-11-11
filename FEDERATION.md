@@ -654,6 +654,14 @@ The 10 % stays in the player's wallet. At 10 % the gate mints for smaller stakes
 - **Why 27:** 21 is the drawn attestors' label (#630). 22-26 are taken on the 2.0 branches (auditor, source hosts, founding pressure,
   census key, stall). Versions are cumulative (`>=`), so the 2.0 line must keep 27 for this rule or renumber both together.
 
+**Ruled 2026-11-12 ("Ja" to all three):**
+- 27 stays, and the 2.0 line keeps 27 for this rule.
+- The small-stake caveat above is accepted.
+- **Every check reads the same split:** on a protocol-27 round the door (round.js `feesFor`), both fee-lock gates (the seats' and the
+  page's `split`) and the settlement (`giftsFor`) all use the split in force at the round's census height. That is the fee set `GET /fees?height=`
+  serves and the page already reads. They never use the default. A fee proposal that changes the split therefore changes the entry's fee,
+  its lock and its payouts alike at every seat. Rounds below 27 are unchanged.
+
 ## Rulings (2026-09-21)
 
 - **The player wallet** (§24A.1): the round wallet is one wallet

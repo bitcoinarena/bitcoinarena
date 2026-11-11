@@ -155,7 +155,9 @@ export function giftsEntryExpected({ entry, split = ROUND_SPLIT_BPS }) {
  * its fee lock holds (giftsFeeBps); a market, and every older round, the rate its manifest gives (entryFeeBpsOf: the network's 5 %, or a
  * market's own).
  */
-export const entryFeeBpsForRound = (contract, manifest) => (entryGiftsInFee(contract, manifest) ? giftsFeeBps()
+// `split`: the round's split in force at its census height (fee-proposal.js roundSplitBps of GET /fees?height=) - read by a protocol-27
+// round only, so the door, the gates and the settlement size its fee lock alike (kanban #1486); a round below 27 is as before
+export const entryFeeBpsForRound = (contract, manifest, split = undefined) => (entryGiftsInFee(contract, manifest) ? giftsFeeBps(split || ROUND_SPLIT_BPS)
   : paysReserves(contract) && !donationInFee(manifest) ? RESERVES_NODE_FEE_BPS : entryFeeBpsOf(manifest));
 /** Does this round's entry pay the reserves BY AN OUTPUT AT ITS LOCK - a version-11 to 26 round of a game (from 27 they ride in the fee lock)? */
 export const entryPaysReserves = (contract, manifest) => paysReserves(contract) && !donationInFee(manifest) && !giftsInFeeLock(contract);
