@@ -123,14 +123,24 @@ async function enter(c, rid, ready) {
   const me = evenPlayer();
   const s = { p: scalar(), player: me.pubkey };
   s.point = feldmanGroup.pointFromScalar(scalarFrom32(s.p) % FIELD);
-  // SUBMITTED, NOT WAITED FOR (as market-bot.mjs, kanban #601): the guardians' agreement took over 30 s from the test host, in an 8 s round. The entry goes in at once, its locks after it
-  const locks = await lockEntry({ lc: w.lc, c, split, stakePoint: s.point, player: s.player, claimPk: att.claimPk, gate, rand, expiry: Number(c.stakeExpiryBlocks), submitOnly: true });
-  const accepted = (locks.accepted || Promise.resolve()).then(() => { steps.accepted = ms(t0); });
-  steps.locked = ms(t0);
   const needed = receiptsNeeded(c.settlementSlots ?? c.gameVerifySlots);
   const e = rand(32);
   const dealt = await dealHandout({ preimage: s.p, signerNodes: c.nodes, roundId: rid, playerPubkey: s.player, ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
     coefficients: Array.from({ length: needed - 1 }, () => scalarFrom32(rand(32)) % FIELD), needed, curve: feldmanGroup });
+  // THE HANDOUT FIRST, THE LOCK ONLY ONCE ENOUGH SEATS TOOK IT (kanban #1596, the #1489 audit of #1485), as the page does: the bot locked first and posted
+  // the handout after, so a head-to-head seat's late-handout refusal (2 s before the close, node-start.js h2hHandoutLeadMs) came after its money - every
+  // order with 0.4-2 s left had its stake and fee locked and every seat refused it. Now a refused handout costs nothing: no lock is made
+  const handouts = nodes.map((n) => fetch(`${n}/handout`, { method: 'POST', signal: AbortSignal.timeout(POST_MS), body: encodeHandout(dealt.handout) })
+    .then(async (h) => ({ status: h.status, why: h.status === 201 ? '' : (await h.text().catch(() => '')).trim().slice(0, 120) }), () => ({ status: 0, why: 'no answer' })));
+  const dealtTo = [];
+  await new Promise((done) => { for (const p of handouts) p.then((x) => { dealtTo.push(x); if (dealtTo.filter((y) => y.status === 201).length >= needed || dealtTo.length === nodes.length) done(); }); });
+  steps.handout = ms(t0);
+  if (dealtTo.filter((y) => y.status === 201).length < needed)
+    return { ok: false, why: `handout taken by ${dealtTo.filter((y) => y.status === 201).length} of ${nodes.length} seats (${needed} needed), nothing locked: ${[...new Set(dealtTo.map((y) => y.why).filter(Boolean))].join('; ').slice(0, 200)}` };
+  // SUBMITTED, NOT WAITED FOR (as market-bot.mjs, kanban #601): the guardians' agreement took over 30 s from the test host, in an 8 s round. The entry goes in at once, its locks after it
+  const locks = await lockEntry({ lc: w.lc, c, split, stakePoint: s.point, player: s.player, claimPk: att.claimPk, gate, rand, expiry: Number(c.stakeExpiryBlocks), submitOnly: true });
+  const accepted = (locks.accepted || Promise.resolve()).then(() => { steps.accepted = ms(t0); });
+  steps.locked = ms(t0);
   const session = ed25519.utils.randomSecretKey();
   const entry = { roundId: rid, playerPubkey: s.player, sessionPubkey: ed25519.getPublicKey(session), stakeCommitment: sha256(s.p), stakeMsat: BigInt(c.stakeMsat), feeMsat: split.feeMsat,
     donationMsat: split.donationMsat, joinTick: 0, worldSecret: worldIsShared(c, sharedWorldOf(c.gameId)) ? new Uint8Array(32) : rand(32), vssSharesRef: handoutId(dealt.handout),
@@ -142,9 +152,9 @@ async function enter(c, rid, ready) {
     stake: `${toHex(locks.stake.outpoint.txid)}:${locks.stake.outpoint.outIdx}`, fee: locks.fee ? `${toHex(locks.fee.outpoint.txid)}:${locks.fee.outpoint.outIdx}` : null })}\n`);
   const hand = locks.fee ? locks.fee.fields : null;
   // ENOUGH SEATS, NOT ALL OF THEM: a seat that is restarting never answered and held the bot for minutes (measured 2026-11-01). The rest go on behind
-  const posts = nodes.map(async (n) => {
+  const posts = nodes.map(async (n, i) => {
     const o = () => ({ method: 'POST', signal: AbortSignal.timeout(POST_MS) });
-    const h = await fetch(`${n}/handout`, { ...o(), body: encodeHandout(dealt.handout) }).catch(() => ({ status: 0 }));
+    const h = await handouts[i];   // posted above, before the lock (kanban #1596)
     const en = await fetch(`${n}/entry`, { ...o(), body: encodeEntryContract(entry) }).catch(() => ({ status: 0, text: async () => 'no answer' }));
     return { node: n, handout: h.status, entry: en.status, why: en.text ? (await en.text().catch(() => '')).trim().slice(0, 120) : '' };
   });
