@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-19 (change) Faucet book: one JSON file, several writers (kanban #1573)
+
+- Every writer of the book that awaits anything (bitcoind, lncli) applies only its own change to a book read after its last await, in one synchronous step (readBook -> change -> saveBook). `pay()` (POST /faucet) reads the book for its decision, but pushes its `paid` row onto a freshly read copy after `sendtoaddress`; a refill row booked by POST /refill meanwhile, the sweep's keep/drop/rebook/forget decisions and the refill timer's removals stay in the book. Invariant: a paid refill always has its row in `book.refills` (its day cap counts it).
