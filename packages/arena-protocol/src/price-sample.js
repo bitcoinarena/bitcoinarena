@@ -68,6 +68,8 @@ export function priceAttestationStands({ id, sigs, committee, threshold, verify 
     let key, sig;
     try { key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key); } catch { continue; }
     if (!members.has(key) || signed.has(key)) continue;
+    // kanban #1530: the signature and key are decoded inside the checks below - a peer's odd-length or 1-char hex ('a')
+    // made match() return null and threw out of the whole check, so one bad seat hid the result the others signed.
     if (typeof s.signature === 'string') { if (!/^[0-9a-f]{128}$/i.test(s.signature)) continue; sig = fromHex(s.signature.toLowerCase()); }
     else if (s.signature instanceof Uint8Array && s.signature.length === 64) sig = s.signature;
     else continue;
