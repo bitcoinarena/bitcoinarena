@@ -28,6 +28,7 @@ import { assumeAssigned } from './assignment.js';
 import { encodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { transcriptBytesHash } from '../../arena-protocol/src/posting.js';
+import { encodeTranscript } from '../../arena-protocol/src/transcript.js';
 import {
   b32, rand, WINDOW_MS, wait, WINNER, LOSER, contractFor, say, joinAndPlay, opts, sevenSignerNodes,
 } from './window-fixture.js';
@@ -130,9 +131,16 @@ test('seven signer nodes: a contract that names no relay is never final, whateve
 });
 
 test('a daemon\'s relay door keeps a transcript only under the hash its bytes have', async () => {
-  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts });
+  const db = openStore(':memory:');
+  const d = await serve(db, { plugins: HOSTED, port: 0, ...opts });
   try {
-    const bytes = rand(300);
+    // kanban #1532: the door keeps only a transcript of an entry this seat holds - so the store holds one, and random bytes are refused
+    const rid = rand(32), eid = rand(32);
+    db.prepare('INSERT INTO rounds (round_id, contract, opened_ms) VALUES (?, ?, 0)').run(rid, rand(8));
+    db.prepare('INSERT INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, 0)').run(eid, rid, rand(8));
+    const junk = rand(300);
+    assert.equal((await fetch(`http://127.0.0.1:${d.port}/transcript/${toHex(transcriptBytesHash(junk))}`, { method: 'PUT', body: junk })).status, 422);
+    const bytes = encodeTranscript({ roundId: rid, entryId: eid, batches: [], marks: [] });
     const name = toHex(transcriptBytesHash(bytes));
     const wrong = await fetch(`http://127.0.0.1:${d.port}/transcript/${'ab'.repeat(32)}`, { method: 'PUT', body: bytes });
     assert.equal(wrong.status, 409);
