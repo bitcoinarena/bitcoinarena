@@ -3217,6 +3217,24 @@
       }
     };
     function warmRound(id, c, nodes) { if (ROUND_PREP.has(id) || warmQueue.has(id)) return; warmQueue.set(id, { c, nodes }); warmNext(); }
+    function prefetchOrderReads(round, nodes) {
+      if (round.censusHeight !== undefined && ARENACLIENT.fetchFees) {
+        const k = String(round.censusHeight), kept = window.ARENA_FEES_KEPT || (window.ARENA_FEES_KEPT = new Map()), fly = window.ARENA_FEES_FLY || (window.ARENA_FEES_FLY = new Map());
+        if (!kept.has(k) && !fly.has(k)) {
+          const pr = ARENACLIENT.fetchFees({ nodes, height: Number(round.censusHeight) }).then((fs) => { if (fs && fs.ok) kept.set(k, fs); return fs; }).finally(() => fly.delete(k));
+          fly.set(k, pr); pr.catch(() => {});
+        }
+      }
+      if (round.federationId && ARENACLIENT.fetchReserveKey) {
+        const k = Array.from(round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
+        const kept = window.ARENA_RESERVE_KEY_KEPT || (window.ARENA_RESERVE_KEY_KEPT = new Map()), fly = window.ARENA_RESERVE_KEY_FLY || (window.ARENA_RESERVE_KEY_FLY = new Map());
+        const had = kept.get(k);
+        if (!(had && Date.now() - had.atMs < 540000) && !fly.has(k)) {
+          const pr = ARENACLIENT.fetchReserveKey({ federationId: round.federationId, nodes }).then((rk) => { if (rk && rk.ok) kept.set(k, { rk, atMs: Date.now() }); return rk; }).finally(() => fly.delete(k));
+          fly.set(k, pr); pr.catch(() => {});
+        }
+      }
+    }
     function prepRound(roundIdHex, round, nodes) {
       const known = ROUND_PREP.get(roundIdHex);
       if (known) return known;
@@ -3270,6 +3288,9 @@
       }, {}));
       // AND ITS DONATION SET (0.43 s of the funded join measured on 0.0.2474), the same read the join makes
       const donation = ARENACLIENT.fetchDonationSet({ round, nodes, verifyEd25519: pageEd25519Verify, keepBySet: true });
+      // THE FEES AND THE RESERVE KEY BEFORE THE TAP (kanban #1485, feedback #010: a new wallet's first order spent 2.8 s in fetchFees and 2.8 s in
+      // fetchReserveKey while the seats answered each in 0.1-0.6 s - asked of 14 seats on a busy page, after the tap): read here, kept where the join looks
+      try { prefetchOrderReads(round, nodes); } catch { /* the join reads them itself */ }
       const p = { signer, claim, donation };
       donation.then((d) => { if (!d || !d.ok) delete p.donation; }, () => { delete p.donation; });
       ROUND_PREP.set(roundIdHex, p);
@@ -3641,6 +3662,7 @@
         // kept per height once the seats agreed, every next order of this page takes them at once
         const feesKey = String(named.round.censusHeight);
         const fs = (window.ARENA_FEES_KEPT || (window.ARENA_FEES_KEPT = new Map())).get(feesKey)
+          || (window.ARENA_FEES_FLY && window.ARENA_FEES_FLY.has(feesKey) ? await joinStep('fetchFees (started before the tap)', () => window.ARENA_FEES_FLY.get(feesKey)) : null)
           || await joinStep('fetchFees', () => ARENACLIENT.fetchFees({ nodes: named.nodes, height: Number(named.round.censusHeight) }));
         if (fs.ok) window.ARENA_FEES_KEPT.set(feesKey, fs);
         if (!fs.ok) { window.ARENA_JOIN_REFUSED = 'the fees at this round could not be read: ' + fs.why; console.error('[arena] join refused before any lock: ' + window.ARENA_JOIN_REFUSED); return; }
@@ -3656,7 +3678,8 @@
         // A FEDERATION'S RESERVE KEY, kept 10 minutes (kanban #601): a reserve epoch lasts far longer, and every order asked the seats again
         const rkKey = Array.from(fid || [], (b) => b.toString(16).padStart(2, '0')).join('');
         const rkKept = (window.ARENA_RESERVE_KEY_KEPT || (window.ARENA_RESERVE_KEY_KEPT = new Map())).get(rkKey);
-        const rk = rkKept && Date.now() - rkKept.atMs < 600000 ? rkKept.rk : await joinStep('fetchReserveKey', () => ARENACLIENT.fetchReserveKey({ federationId: fid, nodes: named.nodes }));
+        const rkFly = window.ARENA_RESERVE_KEY_FLY && window.ARENA_RESERVE_KEY_FLY.get(rkKey);
+        const rk = rkKept && Date.now() - rkKept.atMs < 600000 ? rkKept.rk : rkFly ? await joinStep('fetchReserveKey (started before the tap)', () => rkFly) : await joinStep('fetchReserveKey', () => ARENACLIENT.fetchReserveKey({ federationId: fid, nodes: named.nodes }));
         if (rk.ok && !(rkKept && rkKept.rk === rk)) window.ARENA_RESERVE_KEY_KEPT.set(rkKey, { rk, atMs: Date.now() });
         if (!rk.ok) { window.ARENA_JOIN_REFUSED = 'this round pays the protocol reserves, and ' + rk.why; console.error('[arena] join refused before any lock: ' + window.ARENA_JOIN_REFUSED); return; }
         const rd = ARENACLIENT.reservesDonationForRound(named.round);
@@ -3735,10 +3758,23 @@
         if (keptUseOf(keptEarly).use === 'new') funding = (async () => {
           const wasm = await window.ARENA_LOCK_WASM();
           await wasm.default();
+          // THE COUNTDOWN FROM THE PRESS, THE LOCK IN PLAIN WORDS (kanban #1483, Daniel 2026-11-11: "when clicking Join sometimes the countdown does not appear, only
+          // lock messages, that may work or not. Make it more efficient and clear that we're in process of joining the round"): while the stake is locked the line
+          // says when the round starts, counted down each second, and what is happening in words a player reads ("preparing your sats", "locking your stake") -
+          // not "stake lock: exchanging at tn4.bitcoin-arena.io/guardian-1", and never a frozen line while an exchange takes its time. The steps stay in the console.
+          const startAtMs = Number(named && named.round && named.round.startTimeMs) || 0;
+          const plainStep = (st) => (/exchang|reissu|split|change/i.test(st) ? 'preparing your sats' : /lock|commit|submit|accept/i.test(st) ? 'locking your stake' : 'securing your stake');
+          let stepNow = 'securing your stake';
+          const joinLine = () => { const s = Math.max(0, Math.ceil((startAtMs - Date.now()) / 1000));
+            return (startAtMs ? 'round starts in ' + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0') + ' \u00b7 ' : '') + stepNow; };
+          const lockTicker = setInterval(() => { const j = window.ARENA_JOIN;
+            if (!j || j.loaded || j.state !== 'joining' || !/securing|preparing|locking/.test(String(j.stage || ''))) { clearInterval(lockTicker); return; }
+            j.stage = joinLine(); }, 1000);
           const onStep = (step) => {
-            if (stageEl) window.ArenaText.say(stageEl, 'Stake lock: ' + step + ' …');
+            stepNow = plainStep(String(step));
+            if (stageEl) window.ArenaText.say(stageEl, joinLine());
             // A ROUND ALREADY SHOWN LOADED keeps its countdown on the line; the lock's steps go to the console
-            if (window.ARENA_JOIN && !window.ARENA_JOIN.loaded) window.ARENA_JOIN.stage = 'stake lock: ' + step;
+            if (window.ARENA_JOIN && !window.ARENA_JOIN.loaded) window.ARENA_JOIN.stage = joinLine();
             console.log('[arena] stake lock: ' + step);
           };
           const wallet = {
@@ -4059,6 +4095,15 @@
             const lastEntryMs = ARENACLIENT.isLateJoinRound(named.round)
               ? ARENACLIENT.lateJoinLastEntryMs(named.round) - ARENACLIENT.LATE_JOIN_JOIN_MS
               : Number(named.round.entryCloseMs) + 15000 - 5000;
+            // A HEAD-TO-HEAD ROUND TAKES NO ENTRY AFTER ITS CLOSE (kanban #1485, feedback #010 2026-11-11, round 77bd9609: the order reached the seats 3 s after
+            // the close, its lock was made anyway - close + 10 s above is the other games' grace - and refunded 94 of 100 sat, 6 sat in federation fees): a
+            // hidden move's round is locked only while the lock and the entry can still land before the close (H2H_LOCK_LEAD_MS); later, nothing is locked
+            const h2hHere = !!(window.ARENA_HIDDEN_CHOSEN && window.ARENA_HIDDEN_CHOSEN.round === named.roundIdHex);
+            if (thisJoin && !thisJoin.free && h2hHere && Date.now() > Number(named.round.entryCloseMs) - 2500) {
+              thisJoin.missed = true;
+              console.log('[arena] #1485 no lock: head-to-head round ' + named.roundIdHex.slice(0, 8) + ' closes in ' + ((Number(named.round.entryCloseMs) - Date.now()) / 1000).toFixed(1) + ' s');
+              throw new Error('the entry closed before it went in - nothing was locked');
+            }
             if (thisJoin && !thisJoin.free && Number.isFinite(lastEntryMs) && Date.now() > lastEntryMs) {
               thisJoin.missed = true;
               throw new Error('the entry closed before the deposit arrived');
@@ -9936,7 +9981,7 @@
         if (!document.body.classList.contains('arena-own-client') || window.ARENA_CLIENT_SAYS_JOIN) { box.classList.remove('on'); return; }
         const j = window.ARENA_JOIN; if (!j || !j.round) { box.classList.remove('on'); return; }
         let line, cls;
-        if (j.state === 'refused') { line = refusedWords(j.why); cls = 'bad'; }
+        if (j.state === 'refused') { line = refusedWords(j.why) + (j.round ? ' (round ' + String(j.round).slice(0, 8) + ')' : ''); cls = 'bad'; }
         else if (j.state === 'joined' || j.state === 'entered' || j.state === 'playing' || j.state === 'picked') { line = '✓ Order placed' + (j.stakeSats ? ' · ' + Number(j.stakeSats).toLocaleString('en-US') + ' sat' : ''); cls = 'ok'; }
         else if (j.state === 'joining' && /round starts in ([0-9:]+)/.test(String(j.stage || ''))) {
           line = '✓ Order locked · the window starts in ' + /round starts in ([0-9:]+)/.exec(j.stage)[1]; cls = 'held'; }
