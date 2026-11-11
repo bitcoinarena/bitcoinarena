@@ -13,14 +13,14 @@
 # files under the name releases before 2026.1.8 had, for the update channel a node before 2026.1.8 reads (auto-update.js).
 set -euo pipefail
 VER="$1"; OS="$2"; ARCH="$3"; OUT="$(mkdir -p "$4" && cd "$4" && pwd)"; REF="${5:-HEAD}"
-NODE_VER=24.22.1   # kanban #574: the 2026-10-21 security release (Brotli RCE, TLS hostname bypasses); hashes from nodejs.org SHASUMS256.txt
+NODE_VER=24.22.3   # kanban #1482: the 2026-11-10 security release (llhttp, undici, sqlite; Daniel 2026-11-11); hashes from nodejs.org SHASUMS256.txt, its signature checked (release key 5BE8A3F6...B168D356, Antoine du Hamel). Before: 24.22.1 (#574)
 CF_VER=2026.9.1
 # the runtimes, by os-arch: Node's file and SHA-256 (nodejs.org SHASUMS256.txt), cloudflared's (its release notes)
 declare -A NODE_FILE=([linux-x64]=node-v$NODE_VER-linux-x64.tar.xz [linux-arm64]=node-v$NODE_VER-linux-arm64.tar.xz
   [darwin-x64]=node-v$NODE_VER-darwin-x64.tar.gz [darwin-arm64]=node-v$NODE_VER-darwin-arm64.tar.gz [windows-x64]=node-v$NODE_VER-win-x64.zip)
-declare -A NODE_SHA=([linux-x64]=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6 [linux-arm64]=dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
-  [darwin-x64]=d132557e7ee2b85af08b0c8c34338e65c6430f2238d01f727728ef42dc83b035 [darwin-arm64]=89c682593d76cd44233fa53b1563264e7de9cbb189cad169135c5b4fadfbc0a7
-  [windows-x64]=d2046d28c2c3dcd211ac5145c0bf30e2047ef9dfb306693c8c6e2eccd8b95fa5)
+declare -A NODE_SHA=([linux-x64]=4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb [linux-arm64]=6e51a2ada00f0011cc266f65d98922b403d7ad88f809ca2aa615a5fe1ce6e86c
+  [darwin-x64]=977614af0504c81045e7fd85596dbca0e5f951b96681516dadafedcca8c447f7 [darwin-arm64]=ff6e17d4874b76d272212b908cc020d6e815fba5a6c7eaaa06add725840307fd
+  [windows-x64]=e612af99f626ab415ea225af6bce5c971feb448cb5cae250bb1c3fa50c5f7d9f)
 declare -A CF_FILE=([linux-x64]=cloudflared-linux-amd64 [linux-arm64]=cloudflared-linux-arm64 [darwin-x64]=cloudflared-darwin-amd64.tgz
   [darwin-arm64]=cloudflared-darwin-arm64.tgz [windows-x64]=cloudflared-windows-amd64.exe)
 declare -A CF_SHA=([linux-x64]=03f1f25d1cc93b9ad6c60569d44060bc4f17ed97075760ed8cfca4b12dcd68cc [linux-arm64]=3d97437c71848bd8df68041e12436b484a661d95073ea1937f01a845ce88faa3
