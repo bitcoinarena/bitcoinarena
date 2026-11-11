@@ -4446,6 +4446,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A STAKE'S HANDOUT, CHECKED AND KEPT: what POST /handout does, and what a seat does for the handout of an order a certified batch names
   // that never reached it (replayOrder). The round's threshold, not the player's (M3.3-26); one polynomial; this seat's own share opens.
   // Answers { ok, id, signerNode } or { ok: false, status, why }.
+  // WHETHER ONE OF THE ROUND'S OTHER SEATS ALREADY HOLDS THIS VERY HANDOUT (kanban #1595, #1485): its GET /handout answers the same bytes
+  const aPeerHoldsHandout = async (rid, handout) => {
+    const want = encodeHandout(handout), id = toHex(handoutId(handout));
+    let peers;
+    try { peers = verifier.peersOf(rid).map((p) => String(p).replace(/\/+$/, '')); } catch { return false; }
+    const said = await Promise.all(peers.map(async (base) => {
+      try {
+        const r = await fetch(`${base}/handout?id=${id}`, { signal: AbortSignal.timeout(1500) });
+        return r.ok && Buffer.from(await r.arrayBuffer()).equals(Buffer.from(want));
+      } catch { return false; }
+    }));
+    return said.some(Boolean);
+  };
   const takeHandout = async (bytes, { accepted = false } = {}) => {
     let handout;
     try { handout = decodeHandout(bytes); } catch (e) { return { ok: false, status: 400, why: 'that is not a handout: ' + e.message }; }
@@ -4458,7 +4471,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // die order nicht angenommen wird"; feedback #010, round 77bd9609: this door took a handout 1.8 s after the close, the player's page locked the stake, and
     // every seat refused the entry - the developers' and reserves' parts of that lock stayed spent). A head-to-head round takes no entry from its close, and a
     // lock takes 2.2-2.7 s at the seats: a handout with less than H2H_HANDOUT_LEAD_MS left is refused, so the page locks nothing
-    if (!accepted && headToHeadReady && headToHeadRound(handout.roundId) && BigInt(round.now()) > roundContract.entryCloseMs - BigInt(H2H_HANDOUT_LEAD_MS))
+    // BUT ONLY A HANDOUT NO SEAT OF THE ROUND HAS TAKEN YET (kanban #1595, the #1489 audit of #1485): the seat-to-seat relay (entry-relay.js) hands an
+    // entry's handout on 0.7-1.2 s after the first seat took it, through this same door, and the lead refused it there - the entry a client sent in
+    // time then never reached the seat its post missed, too few seats held it, and the lock already made was spent for nothing: the very loss #1485
+    // stops. A handout one of the round's own seats already holds was dealt before that seat's lead - the page's lock is made or on its way - so it is
+    // taken here until the close itself. The proof is the peer's copy, read here (GET /handout, as replayOrder reads it), byte for byte this one;
+    // never a header a client could send. A handout no peer holds is a client's first one and still refused inside the lead.
+    const nowMs = BigInt(round.now());
+    if (!accepted && headToHeadReady && headToHeadRound(handout.roundId) && nowMs > roundContract.entryCloseMs - BigInt(H2H_HANDOUT_LEAD_MS)
+      && (nowMs >= roundContract.entryCloseMs || !(await aPeerHoldsHandout(handout.roundId, handout))))
       return { ok: false, status: 409, why: `handout refused: that round's entries close at ${new Date(Number(roundContract.entryCloseMs)).toISOString()}, and a head-to-head order needs ${H2H_HANDOUT_LEAD_MS / 1000} s before it to lock and enter - nothing is locked, tap the next round` };
     let threshold;
     try { threshold = roundThreshold(roundContract.settlementSlots); } catch (e) { return { ok: false, status: 409, why: e.message }; }
