@@ -19,7 +19,7 @@ const SPAN_MS = Number(msForTicks(2 * START_DEADLINE + BLOCK_TICKS).ms);
 const ROUND = { gameId: RPS_GAME_ID, simCoreHash: RPS_CORE_HASH, configHash: RPS_CONFIG_HASH, blockTicks: BLOCK_TICKS, startDeadlineTicks: START_DEADLINE };
 const mk = (n) => ({ name: `p${n}`, key: b32(0x70 + n), worldSecret: new Uint8Array(32), ticks: 0, words: () => [0, 0, 0, 0, 0], session: ed25519.utils.randomSecretKey() });
 const enter = async (w, who) => {
-  try { await lockAndPlay(w, who, { session: who.session, hidden: { move: 0, salt: new Uint8Array(randomBytes(32)) }, noMarks: true, only: [], feeLock: false }); return 'taken'; }
+  try { await lockAndPlay(w, who, { session: who.session, hidden: { move: 0, salt: new Uint8Array(randomBytes(32)) }, noMarks: true, only: [], feeLock: false, lockFirst: false }); return 'taken'; }   // the page's order: the handout before any lock (kanban #1596)
   catch (e) { return String(e.message).split('\n').join(' ').slice(0, 300); }
 };
 
