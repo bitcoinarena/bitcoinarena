@@ -5866,7 +5866,11 @@
       const WHAT = (r, sat) => r.kind === 'deposit' ? 'Deposit' : r.kind === 'winnings' ? `Winnings${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}` : r.kind === 'donation' ? (String(r.to || '').startsWith('player:') ? 'Zap' : `Donation${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : String(r.to || '').startsWith('app:') ? ' \u00b7 ' + gameTitleOf(String(r.to).slice(4)) + ' developers' : r.to === 'network' ? ' \u00b7 protocol developers' : ''}`)
           // WHAT CAME IN TO THIS PLAYER'S KEY (kanban #681): 10 % of the nodes' fee on an entry its referral link brought; a zap from another player
           : r.kind === 'referral' ? `Referral${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}` : r.kind === 'zap-in' ? 'Zap received'
-          : r.kind === 'refund' ? `Refund \u00b7 round ${String(r.round || '').slice(0, 8)} \u00b7 stake back`
+          // WHAT CAME BACK OF HOW MUCH (kanban #1481, Daniel 2026-11-11: "Dass 90 von 100 sats zurück kommen ist gewollt, weil das sind die Fees. Aber wir müssen es besser
+          // darstellen"): the round's stake row says what went in; what is missing is the round's fee, kept for a round that was played
+          : r.kind === 'refund' ? (() => { const st = (typeof rows !== 'undefined' ? rows : []).find((x) => x.kind === 'stake' && x.round === r.round);
+              const inMsat = st ? (BigInt(st.msat || 0) < 0n ? -BigInt(st.msat || 0) : BigInt(st.msat || 0)) : 0n, back = BigInt(r.msat || 0), fee = inMsat > back ? inMsat - back : 0n;
+              return `Refund \u00b7 round ${String(r.round || '').slice(0, 8)} \u00b7 stake back${inMsat > 0n ? ` (${sat(inMsat)} staked${fee > 0n ? `, ${sat(fee)} fee kept` : ''})` : ''}`; })()
           : r.kind === 'slash-payout' ? `Slash payout \u00b7 round ${String(r.round || '').slice(0, 8)}`
           : r.kind === 'withdrawal' ? `Withdrawal${r.state && r.state !== 'Success' ? ' (' + r.state + ')' : ''}`
           // A MOVE BETWEEN FEDERATIONS IS NO STAKE (18:4xZ: the 1,000 sat moved out of the CRITICAL b18947f0 showed "Stake · round undefine · not
@@ -7394,7 +7398,15 @@
             if (left !== null && left < Number(window.ARENA_ORDER_CUTOFF_MS || 3000)) {
               if (!(j && j.state === 'joining')) window.ARENA_JOIN = { state: 'refused', stage: '', round: id, kindKnown: false, why: 'too late for this round - tap again for the next one' };
               return false; }
-            if (j && j.state === 'joining' && j.locking && j.round !== id) return false; }
+            if (j && j.state === 'joining' && j.locking && j.round !== id) return false;
+            // NO PAID STAKE WITHOUT A TAP (kanban #1481, playtest 2026-11-11, Daniel: "Und fix es"): one tap on Rock made two stakes - the first round had no opponent
+            // in time (VOID, its stake on its way back), and ten seconds later the game client carried the same move into the next round by itself, a second 100 sat.
+            // A paid round is entered only while the player's tap is fresh (the browser's user activation, which a tap inside the game's frame gives this page too);
+            // the client's own carry has none and is refused, with nothing locked. A free round is not touched.
+            if (row && !row.free && navigator.userActivation && !navigator.userActivation.isActive) {
+              if (!(j && j.state === 'joining')) window.ARENA_JOIN = { state: 'refused', stage: '', round: id, kindKnown: false, why: 'a paid round is entered only by your tap - nobody joined the last round in time, its stake comes back; tap a move to play this one' };
+              console.log('[arena] #1481 no paid stake without a tap: round ' + String(id).slice(0, 8) + ' refused (no fresh user activation)');
+              return false; } }
           window.ARENA_HIDDEN_CHOSEN = { round: id, move };
           // UNCOVERED AS THE COUNTDOWN ENDS (kanban #947, the owner 2026-11-01: "Das Ergebnis sollte angezeigt werden wenn der countdown auf 0:00 geht"): not at the client's next once-a-second look
           { const row = (window.ARENA_LOBBY_ROWS || []).find((r) => r && r.id === id), left = row ? Number(row.entryCloseMs) - Date.now() : -1;
