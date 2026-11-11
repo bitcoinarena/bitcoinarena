@@ -57,3 +57,17 @@ test('#1479 the key rule itself: an attacker who enters first, while a seat is f
     assert.equal(honest, 'taken', 'the real second player kept the seat');
   } finally { await w.close(); }
 });
+
+test('#1479 every game, not only head-to-head (Daniel: "Auch bei allen anderen Spielen"): a Tick Tock entry cannot stand twice under one session key', async () => {
+  const w = await lockRound({ stakeMsat: 0n, minScore: 2 });
+  try {
+    skipTo(Number(w.c.committeeTimeMs) + 20);
+    const one = mk(5);
+    const enter = async () => { try { await lockAndPlay(w, one, { session: one.session, noMarks: true, only: [], feeLock: false }); return 'taken'; } catch (e) { return String(e.message).split('\n')[0].slice(0, 200); } };
+    const first = await enter(), second = await enter(), other = await (async () => { try { await lockAndPlay(w, mk(6), { session: mk(6).session, noMarks: true, only: [], feeLock: false }); return 'taken'; } catch (e) { return String(e.message).slice(0, 160); } })();
+    console.log('  FACTS (#1479 every game):', JSON.stringify({ first, second, other }));
+    assert.equal(first, 'taken');
+    assert.match(second, /one entry per session key/);
+    assert.equal(other, 'taken', 'another player with their own key still enters');
+  } finally { await w.close(); }
+});
