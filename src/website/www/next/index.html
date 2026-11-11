@@ -84,7 +84,7 @@
   header.intro .bg { position: absolute; inset: 0; z-index: -2; }
   header.intro .bg img { width: 100%; height: 100%; object-fit: cover; object-position: 66% 50%; display: block; }
   header.intro::after { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(90deg, var(--bg) 0%, rgba(15,10,16,.9) 30%, rgba(15,10,16,.35) 58%, rgba(15,10,16,0) 78%), linear-gradient(180deg, rgba(15,10,16,0) 72%, var(--bg) 100%); }
-  header.intro .copy { max-width: 560px; }
+  header.intro .copy { max-width: 720px; }
   header.intro .facts { color: var(--soft); max-width: 46ch; font-size: 18px; }
   header.intro .where { margin-top: 16px; font-size: 15px; color: var(--dim); }
   @media (max-width: 860px) {
@@ -216,6 +216,27 @@
   footer .social a { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 4px; color: var(--soft); }
   footer .social a:hover, footer .social a:focus-visible { color: var(--accent); background: var(--panel); }
   footer .social svg { width: 20px; height: 20px; fill: currentColor; }
+
+  /* STRUCTURE (Daniel 2026-11-06: "Die sections verschmelzen zu sehr"): every section its own band, a mark above each heading,
+     lists and blocks in flat panels */
+  h1.big { font-size: clamp(40px, 6.2vw, 74px); line-height: 1.02; letter-spacing: -0.02em; max-width: none; }
+  h1.big .accent { color: var(--accent); }
+  section { padding: 88px 0; border-top: 0; }
+  section:nth-of-type(even) { background: #1a121b; }
+  section:nth-of-type(odd) { background: var(--bg); }
+  @media (max-width: 720px) { section { padding: 56px 0; } }
+  section h2 { font-size: clamp(26px, 3.4vw, 38px); margin-bottom: 18px; }
+  section h2::before { content: ""; display: block; width: 36px; height: 3px; background: var(--accent); margin-bottom: 18px; }
+  .rows { border: 1px solid var(--line); border-radius: 4px; background: rgba(0,0,0,.22); border-collapse: separate; border-spacing: 0; overflow: hidden; }
+  .rows th, .rows td { padding: 14px 18px; }
+  .rows thead th { padding: 10px 18px; }
+  .rows tr:last-child th, .rows tr:last-child td { border-bottom: 0; }
+  @media (max-width: 700px) { .rows tr { padding: 14px 16px; } .rows tr:last-child { border-bottom: 0; } .rows th, .rows td, .rows.claims th { padding: 0; } }
+  .three > *, .dl > div { border: 1px solid var(--line); border-radius: 4px; padding: 18px 20px; background: rgba(0,0,0,.22); }
+  .three > * { border-top: 1px solid var(--line); }
+  .split { border: 1px solid var(--line); border-radius: 4px; background: rgba(0,0,0,.22); border-collapse: separate; border-spacing: 0; }
+  .split th, .split td { padding-left: 18px; }
+  .split tr:last-child td { border-bottom: 0; }
 </style>
 <script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="4f00ff2b-032e-4683-890c-63458e0b178e" data-domains="bitcoinarena.io,www.bitcoinarena.io"></script>
 </head>
@@ -230,8 +251,8 @@
 <header class="intro" id="top">
   <div class="bg"><img src="/img/hero.svg" alt="A bitcoin sun rising over a skyline of price candles, the road to the next block below" width="1600" height="900" fetchpriority="high"></div>
   <div class="wrap"><div class="copy">
-    <h1>Games and prediction markets for bitcoin, run by independent nodes</h1>
-    <p class="facts">A federation of nodes holds the sats. 5 of 7 nodes sign every result. Lightning in and out, Nostr as your login, open source.</p>
+    <h1 class="big">Play for sats.<br><span class="accent">Settle on Bitcoin.</span></h1>
+    <p class="facts">Games and markets on a federated network: many independent nodes, no single owner.</p>
     <div class="actions">
       <a class="btn primary" href="https://testnet.bitcoinarena.io/" data-umami-event="site-play">Play on Testnet</a>
       <a class="btn" href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-umami-event="site-run-node">Run a node <span class="v" data-arena-release-version></span></a>
