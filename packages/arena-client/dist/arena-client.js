@@ -28998,6 +28998,28 @@ const BOND_TERMS = Object.freeze({
 const CHAIN_KEPT_MS = 180000;
 const COMPARE_GRACE_MS = 400;
 const SEATING_ASK_MS = 6000;
+/**
+ * A TABLE'S SEATING IS READ ONCE, NOT ONCE PER ROUND (§5A.7, RULED 2026-11-11, kanban #1449; measured on the live page: one idle page sent the seats 616
+ * seating asks in 45 s - 22 rounds of 4 tables x 2 roles x 14 seats - 5.5x the distinct (seat, table, role) triples). Each seat's answer is kept per
+ * (seat, table, role) with the committee this page drew itself when it was kept, and is reused for the table's later rounds while the page's own draw for
+ * the new round (census and beacon, §5A.6) is the same seats and the answer is under `seating_keep_ms`. A different draw or the age asks again; so does
+ * the read of every seat after a seat differs (`every`). The check stays what it was: every round's committee is still built here and compared with a
+ * signed seating; only the asking is shared.
+ */
+const SEATING_KEEP_MS = 60000;
+const SEATINGS = new Map();
+const forgetSeatings = () => SEATINGS.clear();
+/** The kept answer of (seat, table, role) when it may stand for this round: the same draw, under SEATING_KEEP_MS, and not a read of every seat - else null. */
+function keptSeating(keyOf, drawnKey, { every = false, now = Date.now() } = {}) {
+  const kept = SEATINGS.get(keyOf);
+  return !every && kept && now - kept.at < SEATING_KEEP_MS && kept.drawn === drawnKey ? kept.said : null;
+}
+/** Keep a seat's answer: a certificate (ok) or "no seating certificate" (404); a failed read is not kept. */
+function keepSeatingAnswer(keyOf, drawnKey, said, { now = Date.now() } = {}) {
+  if (!said || !(said.ok || said.status === 404)) return;
+  SEATINGS.delete(keyOf); SEATINGS.set(keyOf, { said, at: now, drawn: drawnKey });
+  if (SEATINGS.size > 2048) SEATINGS.delete(SEATINGS.keys().next().value);
+}
 /** Resolves once every promise settled, or `graceMs` after more than half did - whichever is first (kanban #625: no wait for the slowest seat). */
 function majorityThenGrace(promises, graceMs) {
   return new Promise((resolve) => {
@@ -29212,9 +29234,15 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
     // EVERY SEAT ASKED AT ONCE, EACH WITHIN SEATING_ASK_MS (kanban #625, measured 2026-10-24 20:07Z: asked one after the other with no
     // limit, a restarting seat held an order's committee 20 s): read in the seats' order once more than half answered and the grace passed
     const said = new Array(nodes.length).fill(null);
+    const drawnKey = (got.drawn[role] || []).map((k) => toHex(k)).join(',');
     const asked = nodes.map(async (u, i) => {
-      try { const r = await fetcher(`${baseOf(u)}/seating?round=${seatHex}&role=${role}${anchor ? `&at=${toHex(roundId)}` : ''}`, { signal: AbortSignal.timeout(SEATING_ASK_MS) }); said[i] = { status: r.status, ok: r.ok, body: await r.text() }; }
-      catch { said[i] = null; }
+      const keyOf = `${baseOf(u)}|${seatHex}|${role}`, kept = keptSeating(keyOf, drawnKey, { every });
+      if (kept) { said[i] = kept; return; }
+      try {
+        const r = await fetcher(`${baseOf(u)}/seating?round=${seatHex}&role=${role}${anchor ? `&at=${toHex(roundId)}` : ''}`, { signal: AbortSignal.timeout(SEATING_ASK_MS) });
+        said[i] = { status: r.status, ok: r.ok, body: await r.text() };
+        keepSeatingAnswer(keyOf, drawnKey, said[i]);
+      } catch { said[i] = null; }
     });
     if (every) await Promise.all(asked); else await majorityThenGrace(asked, COMPARE_GRACE_MS);
     for (const [i, u] of nodes.entries()) {
