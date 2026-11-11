@@ -478,6 +478,9 @@ export async function lnAddressWorks(address, { fetchFn = fetch, timeoutMs = 800
   if (m) url = `https://${m[2].toLowerCase()}/.well-known/lnurlp/${encodeURIComponent(m[1].toLowerCase())}`;
   else if (/^lnurl1[02-9ac-hj-np-z]+$/i.test(a)) { try { url = urlOfLnurl(a.toLowerCase()); } catch { url = null; } }
   if (!url || !/^https:\/\//.test(url)) return { ok: false, why: 'that is not a Lightning address (name@wallet.com) or an LNURL' };
+  // NEVER AN INTERNAL HOST (kanban #1511): an LNURL can name any URL, so an IP literal, localhost or a local-only name is refused before any fetch
+  let host = ''; try { host = new URL(url).hostname.toLowerCase().replace(/\.$/, ''); } catch { host = ''; }
+  if (!host || /^\[|^\d+(\.\d+){3}$|^\d+$|^0x/i.test(host) || !host.includes('.') || /(^|\.)(localhost|local|internal|lan|home|arpa|localdomain|intranet)$/.test(host)) return { ok: false, why: 'its wallet must be on a public name' };
   let j;
   try {
     const r = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } });

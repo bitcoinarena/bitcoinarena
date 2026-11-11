@@ -1765,6 +1765,37 @@ function stakeExpiryFits(contract, { manifest = null } = {}) {
   return { ok: true, blocks: contract.stakeExpiryBlocks, need: need.blocks };
 }
 
+// ---- arena-protocol/src/guardian-payout.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A GUARDIAN IS PAID TO THE PAYOUT KEY OF ITS CENSUS ADVERTISEMENT (§22A v4.6.4: "paid as one payout contract per guardian in the
+// round's settlement transaction to the payout_pubkey of his census advertisement"; gap 2). From SEATED_GUARDIAN_VERSION.
+// Measured 2026-10-17 on the 13 census adverts of round 32cfad1c: every one names 32 bytes of 0x03 - a placeholder, not a key a
+// guardian holds. Such a key, or any x that is not on the curve, is no payout key: that guardian is paid at its node key, as before,
+// so no share is ever sent to a key nobody can spend.
+
+const P = 0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2fn;
+const modpow = (b, e, m) => { let r = 1n; b %= m; while (e > 0n) { if (e & 1n) r = (r * b) % m; b = (b * b) % m; e >>= 1n; } return r; };
+
+/** Is `x` (32 bytes) the x coordinate of a secp256k1 point (BIP340 lift_x)? */
+function onCurveX(x) {
+  if (!(x instanceof Uint8Array) || x.length !== 32) return false;
+  const v = BigInt('0x' + Buffer.from(x).toString('hex'));
+  if (v >= P) return false;
+  const c = (modpow(v, 3n, P) + 7n) % P;
+  const y = modpow(c, (P + 1n) / 4n, P);
+  return (y * y) % P === c;
+}
+
+/** The placeholder every advert carried until real keys: 32 bytes of 0x03. */
+const isPlaceholderKey = (x) => x instanceof Uint8Array && x.length === 32 && x.every((b) => b === 0x03);
+
+/** The 33-byte payout key of an advert's x-only payout_pubkey (BIP340: the even point), or null when it is none. */
+function guardianPayoutKeyOf(payoutPubkey) {
+  if (!(payoutPubkey instanceof Uint8Array) || payoutPubkey.length !== 32 || isPlaceholderKey(payoutPubkey) || !onCurveX(payoutPubkey)) return null;
+  return Uint8Array.from([0x02, ...payoutPubkey]);
+}
+
 // ---- arena-protocol/src/contracts.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -1777,6 +1808,7 @@ function stakeExpiryFits(contract, { manifest = null } = {}) {
 // Field order is protocol. Adding a field means a new version, not an append -
 // an old implementation reading a new contract must fail rather than silently
 // mis-parse, which is why the version comes second, right after the type.
+
 
 
 
@@ -2353,6 +2385,12 @@ function contractIsForThisBuild(contract, { anchor, config } = {}) {
 
 const is32 = (v) => v instanceof Uint8Array && v.length === 32;
 
+// A WEBSITE PAYOUT KEY IS A POINT, NOT JUST A PREFIX (kanban #1489). The settlement pays it as an output of the round's ONE
+// settlement transaction (fee.js frontendShares), and the settlement tool parses every payout key as a secp256k1 point: an x
+// above the field prime, or one with no y, made that whole transaction unbuildable - every winner's payout and every fee claim
+// with it. Such an entry is refused at encode and at decode; no honest client can name such a key.
+const isCompressedPoint = (k) => (k[0] === 2 || k[0] === 3) && onCurveX(k.subarray(1));
+
 function encodeEntryContract(e) {
   const w = new Writer();
   w.u8(TYPE_ENTRY_CONTRACT);
@@ -2456,7 +2494,7 @@ function encodeEntryContract(e) {
   // stake at settlement (fee.js frontendShares). In the signed bytes, so no seat can swap it. WRITTEN ONLY WHEN IT NAMES ONE, last
   // of all, after its own marker: every other entry keeps exactly its bytes and its id.
   if (e.frontendPk !== undefined && e.frontendPk !== null) {
-    if (!(e.frontendPk instanceof Uint8Array) || e.frontendPk.length !== 33 || (e.frontendPk[0] !== 2 && e.frontendPk[0] !== 3))
+    if (!(e.frontendPk instanceof Uint8Array) || e.frontendPk.length !== 33 || !isCompressedPoint(e.frontendPk))
       throw new Error('an entry names the website that brought it by a 33-byte compressed payout key');
     w.u8(FRONTEND_MARKER);
     w.bytes(e.frontendPk, 33);
@@ -2593,7 +2631,7 @@ function decodeEntryContract(bytes) {
   if (r.at < bytes.length && bytes[r.at] === FRONTEND_MARKER) {
     r.u8();
     e.frontendPk = r.bytes(33);
-    if (e.frontendPk[0] !== 2 && e.frontendPk[0] !== 3) throw new Error('an entry names the website that brought it by a 33-byte compressed payout key');
+    if (!isCompressedPoint(e.frontendPk)) throw new Error('an entry names the website that brought it by a 33-byte compressed payout key');
   }
   if (r.at < bytes.length && bytes[r.at] === ITEMS_ENTRY_MARKER) {
     r.u8();
@@ -3713,12 +3751,16 @@ function priceAttestationStands({ id, sigs, committee, threshold, verify }) {
   const members = new Set((committee || []).map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))));
   const signed = new Set();
   for (const s of sigs || []) {
-    const key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key);
+    // kanban #1489: a signature that is not 64 bytes (as 128 hex or bytes) counts nothing - it never throws. `"".match(/../g)`
+    // is null, and one seat answering GET /round-result with signature "" threw here, so no market on its game ever resolved.
+    let key, sig;
+    try { key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key); } catch { continue; }
     if (!members.has(key) || signed.has(key)) continue;
-    const sig = typeof s.signature === 'string' ? Uint8Array.from(s.signature.match(/../g).map((x) => parseInt(x, 16))) : s.signature;
-    const pk = Uint8Array.from(key.match(/../g).map((x) => parseInt(x, 16)));
+    if (typeof s.signature === 'string') { if (!/^[0-9a-f]{128}$/i.test(s.signature)) continue; sig = fromHex(s.signature.toLowerCase()); }
+    else if (s.signature instanceof Uint8Array && s.signature.length === 64) sig = s.signature;
+    else continue;
     let good = false;
-    try { good = !!verify(sig, id, pk); } catch { good = false; }
+    try { good = !!verify(sig, id, fromHex(key)); } catch { good = false; }
     if (good) signed.add(key);
   }
   return signed.size >= threshold ? { ok: true, signed: [...signed] }
@@ -13258,12 +13300,25 @@ function decodeVote(payload) {
  * `votes`: the vote outputs found on chain - [{ payload, height, txid }]. A vote counts for every bond whose key its signature
  * verifies under, only inside the voting phase; per bond outpoint the last by height wins (ties inside a block: lower txid).
  * ABSTAIN counts for turnout, not approval. Weight is the bond amount. Answers the weights, the percentages and `passed`.
+ *
+ * A REPLAYED VOTE COUNTS ONCE, AT ITS FIRST OCCURRENCE (kanban #1489): the signature covers H(proposal_id || choice) only, not
+ * the transaction or the height, so anyone could copy a bond's old 77 bytes into a later transaction of his own and make them
+ * that bond's "last vote" - undoing its change of mind for a tx fee. Byte-identical payloads are one vote: only the copy that
+ * ranks lowest under the rule above (lowest height; inside one block the higher txid) is kept, whatever order `votes` comes
+ * in, so a copy can never move a vote later. The vote bytes and their signature are unchanged; a bond that changes its mind
+ * signs anew (BIP-340 with fresh aux randomness gives new bytes).
  */
 function tally({ proposal, standing, census, votes, verify }) {
   const id = standing.id;
   const prefix = toHex(id.subarray(0, 8));
-  const latest = new Map();                          // outpoint -> { choice, height, txid, weight }
+  const first = new Map();                           // payload hex -> the occurrence of those bytes that ranks lowest
   for (const v of votes || []) {
+    if (!(v?.payload instanceof Uint8Array)) continue;
+    const k = toHex(v.payload), had = first.get(k);
+    if (!had || v.height < had.height || (v.height === had.height && String(v.txid) > String(had.txid))) first.set(k, v);
+  }
+  const latest = new Map();                          // outpoint -> { choice, height, txid, weight }
+  for (const v of first.values()) {
     const d = decodeVote(v.payload);
     if (!d || toHex(d.idPrefix) !== prefix) continue;
     if (v.height < standing.votingFrom || v.height >= standing.votingUntil) continue;
@@ -19116,20 +19171,30 @@ async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) 
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/stake-lock?round=${toHex(roundId)}&refund=${refund}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${name} ${r.status}`, got: [] };
-      const got = await r.json();
+      const raw = await r.json();
+      // ONE SEAT'S MALFORMED ANSWER STAYS ITS OWN (kanban #1489, audit WF1489 CLIENT-1): `{}` or `[null]` from one seat threw for the
+      // whole look, outside this try, and every honest seat's lock was dropped - no payout, stake or refund collected while it answered so.
+      // A seat's answer must be a list; an item that is not a lock (an object, a txid:index outpoint, fields the lock client reads) is skipped
+      if (!Array.isArray(raw)) return { said: `${name} malformed`, got: [] };
+      const got = [];
+      for (const l of raw) {
+        if (!l || typeof l !== 'object' || !/^[0-9a-f]{64}:\d+$/.test(String(l.outpoint))) continue;
+        const [txid, outIdx] = String(l.outpoint).split(':');
+        let lock;
+        try { lock = { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId }; } catch { continue; }
+        got.push({ l, lock });
+      }
       return { said: `${name} ${got.length}`, got, node };
     } catch (e) { return { said: `${name} ${String(e && e.message || e).slice(0, 40)}`, got: [] }; }
   }));
   const said = answers.map((a) => a.said);
   for (const { got } of answers) {
-    for (const l of got) {
-      const [txid, outIdx] = String(l.outpoint).split(':');
+    for (const { l, lock } of got) {
       // EVERY SEAT'S VERSION OF AN OUTPOINT, NOT ONLY THE FIRST (kanban #1273, audit 4 #1257 seats-5): one seat listed first answered the real
       // outpoint with a field changed (or a made-up entry id), and the honest copies were dropped - the stake read "gone" for good, or waited for
       // its expiry. Each distinct version is kept; the federation's stored contract (heldByGuardians) and the forfeit check pick the real one
       const key = `${l.outpoint}|${JSON.stringify(l.fields)}|${String(l.entryId || '').toLowerCase()}`;
-      if (!found.has(key))
-        found.set(key, { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId });
+      if (!found.has(key)) found.set(key, lock);
     }
   }
   const out = [...found.values()];
@@ -19309,6 +19374,9 @@ async function redeemStake({ round, roundId, invite, seed, curve, LockClient, st
  * and one that pays it nothing is no answer - a seat omitting the player made the payout "none" and the round final. When `needed` seats
  * agree, their settlement is the answer, whatever a lone seat says.
  */
+// a settlement's payout list as the page reads it (kanban #1489): each an object with a string pk and an integer msat
+const wellFormedPayouts = (payouts) => Array.isArray(payouts) && payouts.every((p) => p && typeof p === 'object'
+  && typeof p.pk === 'string' && /^\d+$/.test(String(p.msat)));
 async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null } = {}) {
   // EVERY SIGNER NODE AT ONCE (kanban #593)
   const answers = await Promise.all([...new Set(nodes || [])].map(async (node) => {
@@ -19316,8 +19384,13 @@ async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${node}: ${r.status}` };
       const j = await r.json();
-      if (j.state === 'ACCEPTED' && j.moved && Array.isArray(j.moved.payouts)) return { ok: true, txid: j.txid, moved: j.moved, from: node };
-      return { said: `${node}: ${j.state}` };
+      if (j && j.state === 'ACCEPTED' && j.moved && Array.isArray(j.moved.payouts)) {
+        // EVERY PAYOUT WELL FORMED, OR THE ANSWER IS NOT COUNTED (kanban #1489, audit WF1489 CLIENT-1): a `null` payout threw in keyOf for
+        // every seat's answer, and the honest seats' agreeing settlement was lost with it
+        if (!wellFormedPayouts(j.moved.payouts)) return { said: `${node}: malformed` };
+        return { ok: true, txid: j.txid, moved: j.moved, from: node };
+      }
+      return { said: `${node}: ${j && j.state}` };
     } catch (e) { return { said: `${node}: ${e.message}` }; }
   }));
   const accepted = answers.filter((a) => a.ok);
@@ -19432,10 +19505,11 @@ async function federationSettlementsOf({ roundId, nodes, fetcher = fetch } = {})
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) { said.push(`${node}: ${r.status}`); continue; }
       const j = await r.json();
-      if (j.state === 'ACCEPTED' && Array.isArray(j.federations) && j.federations.length
-        && j.federations.every((f) => f.state === 'ACCEPTED' && f.moved && Array.isArray(f.moved.payouts)))
+      // (kanban #1489) a null federation or payout is a malformed answer, not a throw: the next seat is asked
+      if (j && j.state === 'ACCEPTED' && Array.isArray(j.federations) && j.federations.length
+        && j.federations.every((f) => f && f.state === 'ACCEPTED' && f.moved && wellFormedPayouts(f.moved.payouts)))
         return { ok: true, federations: j.federations, from: node };
-      said.push(`${node}: ${j.state}`);
+      said.push(`${node}: ${j && j.state}`);
     } catch (e) { said.push(`${node}: ${e.message}`); }
   }
   return { ok: false, why: `no signer node holds every federation's settlement of this round accepted yet (${said.join('; ')})` };
@@ -19825,6 +19899,14 @@ const owedKeyOf = (seed, id, order, curve) => {
   }
   return v;
 };
+// ONE READ OF THE OWED SCAN, GIVEN UP AFTER SEAT_READ_MS (kanban #1489): null when the seat failed, refused or did not answer in time
+const OWED_LIST_MAX = 500, OWED_NEXT_MS = 2000;
+const owedRead = (read) => {
+  const signal = AbortSignal.timeout(SEAT_READ_MS);
+  let t;
+  const late = new Promise((resolve) => { t = setTimeout(() => resolve(null), SEAT_READ_MS); });
+  return Promise.race([read(signal).catch(() => null), late]).finally(() => clearTimeout(t));
+};
 async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [], knownBySeed = null } = {}) {
   // EVERY SAVED PHRASE AT ONCE (2026-10-07): each signer node's /settled is read once and matched against
   // every phrase's keys - 7 asks on 7 signer nodes, not 7 per phrase. One `seed` (with `known`) is the one-phrase scan as before.
@@ -19834,16 +19916,35 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
   const base = (n) => String(n).replace(/\/+$/, '');
   const skipOf = (s) => new Set(((knownBySeed && knownBySeed.get(toHex(s))) || (list.length === 1 ? known : [])).map((h) => String(h).toLowerCase()));
   const skips = list.map(skipOf);
+  // ONE SEAT'S WORD COSTS THE PAGE NO UNBOUNDED WORK (kanban #1489): every listed id costs ORDER_SCAN + 1 key derivations per kept
+  // phrase on the page's thread - one seat answering /settled with 3000 made-up ids froze the page 16.7 s at every load (99,033
+  // derivations). Now a seat's list is taken newest first up to OWED_SETTLED_MAX ids (a seat answers at most 500, round.js settledSince),
+  // each id once, and OWED_KEYS_PER_ROUND keys of a round: one seat costs the page at most OWED_SETTLED_MAX x (ORDER_SCAN + 1) a phrase.
   const listed = new Map();
-  for (const node of nodes) {
-    let got = null;
-    try { const r = await fetcher(`${base(node)}/settled?since=${Math.max(0, Math.floor(Number(sinceMs) || 0))}`); if (r.ok) got = await r.json(); } catch { got = null; }
-    for (const x of (got && Array.isArray(got.rounds) ? got.rounds : [])) {
+  // EVERY SIGNER NODE AT ONCE, EACH WITHIN SEAT_READ_MS (kanban #1489): read one after another with no timeout, one seat that took
+  // the request and never answered stalled the scan for good - a winner whose tab closed was never shown what the honest seats list.
+  // The deadline holds the answer's body too, and holds even for a fetcher that ignores the signal.
+  const since = Math.max(0, Math.floor(Number(sinceMs) || 0));
+  const lists = await Promise.all(nodes.map((node) => owedRead(async (signal) => {
+    const r = await fetcher(`${base(node)}/settled?since=${since}`, { signal });
+    return r.ok ? r.json() : null;
+  })));
+  for (const got of lists) {
+    // AT MOST OWED_SETTLED_MAX ROUNDS FROM ONE SEAT, NEWEST FIRST, EACH ONCE (kanban #1489)
+    const all = got && Array.isArray(got.rounds) ? got.rounds.filter((x) => x && typeof x === 'object') : null;
+    if (!all) continue;
+    const cap = Math.min(OWED_SETTLED_MAX, OWED_LIST_MAX);
+    const newest = all.length > cap
+      ? all.map((x, i) => ({ x, i, ms: Number(x.madeMs) || 0 })).sort((a, b) => (b.ms - a.ms) || (b.i - a.i)).slice(0, cap).map((y) => y.x)
+      : all;
+    const seen = new Set();
+    for (const x of newest) {
       const id = String(x.id || '').toLowerCase();
-      if (!/^[0-9a-f]{64}$/.test(id)) continue;
+      if (!/^[0-9a-f]{64}$/.test(id) || seen.has(id)) continue;
+      seen.add(id);
       const l = listed.get(id) || { payouts: new Set(), refunds: new Set() };
-      for (const k of x.payouts || []) l.payouts.add(String(k).toLowerCase());
-      for (const k of x.refunds || []) l.refunds.add(String(k).toLowerCase());
+      for (const k of (Array.isArray(x.payouts) ? x.payouts : []).slice(0, OWED_KEYS_PER_ROUND)) l.payouts.add(String(k).toLowerCase());
+      for (const k of (Array.isArray(x.refunds) ? x.refunds : []).slice(0, OWED_KEYS_PER_ROUND)) l.refunds.add(String(k).toLowerCase());
       listed.set(id, l);
     }
   }
@@ -19860,14 +19961,30 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
       if (!contracts.has(id)) {
         // A CONTRACT READ ONCE IS KEPT: the id is its hash, so it is the round for good - not read again at every scan
         let round = OWED_ROUNDS.get(id) || null;
-        for (const node of round ? [] : nodes) {
-          try {
-            const r = await fetcher(`${base(node)}/round?id=${id}`);
-            if (!r.ok) continue;
-            const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
-            if (toHex(roundIdOf(c)) === id && roundLocks(c)) { round = c; break; }
-          } catch { /* this signer node did not answer, or not with the round */ }
-        }
+        // ONE SIGNER NODE AT A TIME, BUT NONE HOLDS THE SCAN (kanban #1489): each read gives up after SEAT_READ_MS, and a seat
+        // silent for OWED_NEXT_MS has the next one asked beside it - the first answer that is the round wins (its id is the
+        // contract's hash, so any seat's is as good); seats that answer at once are still asked one read per round
+        if (!round) round = await new Promise((resolve) => {
+          let open = 0, next = 0, done = false, t = null;
+          const ask = () => {
+            clearTimeout(t);
+            if (done) return;
+            if (next >= nodes.length) { if (!open) { done = true; resolve(null); } return; }
+            const node = nodes[next++]; open += 1;
+            t = setTimeout(ask, OWED_NEXT_MS);
+            owedRead(async (signal) => {
+              const r = await fetcher(`${base(node)}/round?id=${id}`, { signal });
+              if (!r.ok) return null;
+              const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
+              return toHex(roundIdOf(c)) === id && roundLocks(c) ? c : null;
+            }).then((c) => {
+              open -= 1;
+              if (done) return;
+              if (c) { done = true; clearTimeout(t); resolve(c); } else ask();
+            });
+          };
+          ask();
+        });
         if (round && !OWED_ROUNDS.has(id)) { OWED_ROUNDS.set(id, round); if (OWED_ROUNDS.size > 2000) OWED_ROUNDS.delete(OWED_ROUNDS.keys().next().value); }
         contracts.set(id, round);
       }
@@ -19882,6 +19999,8 @@ const OWED_ROUNDS = new Map();   // round id -> its contract, read and checked o
 const forgetOwedRounds = () => OWED_ROUNDS.clear();
 // how many orders of one market round the seed scan reads keys for (orders 0 ... ORDER_SCAN)
 const ORDER_SCAN = 32;
+// how many rounds of one seat's /settled one owed scan derives keys for (newest first), and keys of one round it takes from one seat (kanban #1489)
+const OWED_SETTLED_MAX = 500, OWED_KEYS_PER_ROUND = 4096;
 
 /**
  * THE ROUND'S FEDERATION WALLET IN THIS TAB - the one the payout and the stake were
@@ -34708,7 +34827,12 @@ function outcomeFinality(held, { windowMs, nowMs }) {
  * MAY AN ATTESTATION COME IN YET (§0A.7a slice 2): only once the round's entries have closed on the seat's clock, and only
  * for an outcome seen after that close - an outcome known while a pick could still be made is a pick to be copied.
  */
-function attestationTimely(a, { entryCloseMs, nowMs, terms = null }) {
+function attestationTimely(a, { entryCloseMs, nowMs, terms = null, window = null }) {
+  // A MARKET ON A GRID IS OBSERVED AT ITS OWN WINDOW'S END (kanban #1489): its attestors sign observed_at = the window's end
+  // (marketWindowOf), so an outcome observed at any other moment is the outcome of another window - one a seat listing the
+  // round with a shifted close could pick after watching the price. `window` is marketWindowOf(contract, manifest).window.
+  if (window && BigInt(a.observedAtMs) !== BigInt(window.endMs))
+    return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, and this round's window ends at ${new Date(Number(window.endMs)).toISOString()}: it is the outcome of another window` };
   // A MARKET WITH TERMS DECIDES AT ITS RESOLUTION TIME, and not before it: an outcome observed earlier is not
   // the outcome the market asked for (the price at 18:00 is not the price at 17:59)
   if (terms) {
@@ -36440,16 +36564,33 @@ async function revealMove({ entryIdHex, move, salt, nodes, identity = null, fetc
 }
 
 /** Every reveal the round's seats hold, merged by entry: { [entryIdHex]: move }. */
+// A MOVE COUNTS ONLY WHEN THE SEATS AGREE ON IT (kanban #1489): the merge was last-answer-wins, so one seat answering late with
+// an opponent's move changed flipped the provisional verdict the page shows before any seat signs. Each seat now gives one
+// vote per entry; an entry's move is the one at least two seats (or every seat, on a one-seat list) name, and more seats than
+// name any other move. A tie, or a move only one seat of several names, leaves the entry undecided here.
 async function revealsOfRound({ roundIdHex, nodes, fetcher = fetch }) {
-  const out = {};
+  const votes = new Map();   // entry -> Map(move -> seats naming it)
   await Promise.all(nodes.map(async (node) => {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/reveals?round=${roundIdHex}`);
       if (!r.ok) return;
       const j = await r.json();
-      for (const x of (j && Array.isArray(j.reveals) ? j.reveals : [])) if (Number.isInteger(x.move)) out[x.entry] = x.move;
+      const mine = new Map();   // this seat's one move per entry: the first it lists
+      for (const x of (j && Array.isArray(j.reveals) ? j.reveals : [])) {
+        if (Number.isInteger(x.move) && typeof x.entry === 'string' && !mine.has(x.entry)) mine.set(x.entry, x.move);
+      }
+      for (const [entry, move] of mine) {
+        if (!votes.has(entry)) votes.set(entry, new Map());
+        const m = votes.get(entry); m.set(move, (m.get(move) || 0) + 1);
+      }
     } catch { /* a seat that is down says nothing */ }
   }));
+  const need = Math.min(2, nodes.length);
+  const out = {};
+  for (const [entry, m] of votes) {
+    const ranked = [...m].sort((a, b) => b[1] - a[1]);
+    if (ranked[0][1] >= need && (ranked.length === 1 || ranked[0][1] > ranked[1][1])) out[entry] = ranked[0][0];
+  }
   return out;
 }
 

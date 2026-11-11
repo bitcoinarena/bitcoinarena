@@ -17,7 +17,6 @@ import { windowsOf } from '../../arena-protocol/src/window.js';
 import { dissentsOn, dissentsFirstOn, postsLateOn, LATE_POSTING_AFTER_MS } from './test-dissent.js';
 import { ReplayPool } from './pool.js';
 import { checkObjectionBundle } from './objection-check.js';
-import { decodeObjectionBundle } from '../../arena-protocol/src/objection.js';
 import { sha256 } from '../../arena-protocol/src/hash.js';
 import { stateOf } from './settlement-state.js';
 import { verifyKept } from './verify-kept.js';
@@ -170,6 +169,23 @@ export const NO_RANDOMNESS_SOURCE = () => undefined;
 /** How long a signer node waits on a peer's `/results` before it treats that peer as down for this pass. */
 const PEER_WAIT_MS = 2500;
 
+/**
+ * A PEER'S BODY, READ UP TO A CAP (kanban #1507): a seat that answers 200 and trickles its body, or sends a huge one, is
+ * cut off - by the caller's AbortSignal for time, by `maxBytes` for memory - and treated as down for this pass.
+ */
+async function capped(answer, maxBytes) {
+  const reader = answer.body.getReader();
+  const parts = []; let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > maxBytes) { try { await reader.cancel(); } catch { /* gone already */ } throw new Error(`body over ${maxBytes} bytes`); }
+    parts.push(value);
+  }
+  return Buffer.concat(parts);
+}
+
 export class Verifier {
   constructor(round, {
     randomnessFor = NO_RANDOMNESS_SOURCE, chainFor = null, pool = new ReplayPool(), peers = [],
@@ -313,7 +329,8 @@ export class Verifier {
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
-        const answer = await fetch(`${peer}/receipts?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
+        // BOUNDED IN TIME (kanban #1507): one seat that never ends its body held every close behind it
+        const answer = await fetch(`${peer}/receipts?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
         if (!answer.ok) { report.down.push(`${peer}: answered ${answer.status}`); continue; }
         body = new Uint8Array(await answer.arrayBuffer());
         report.answered++;
@@ -337,7 +354,7 @@ export class Verifier {
     report.refusedMarks = [];
     for (const peer of this.peersOf(roundIdBytes)) {
       try {
-        const r = await fetch(`${peer}/refused-first-mark?entry=${hex(entryIdBytes)}`);
+        const r = await fetch(`${peer}/refused-first-mark?entry=${hex(entryIdBytes)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
         if (r.status !== 200) continue;
         const got = await r.json();
         const c = this.round.onTimeFirstMark(Uint8Array.from(Buffer.from(String(got.mark || ''), 'hex')));
@@ -744,9 +761,14 @@ export class Verifier {
       if (allHeld()) break;
       let body;
       try {
-        const answer = await fetch(`${peer}/reveals?round=${hex(roundIdBytes)}`);
+        // BOUNDED IN TIME AND SIZE (kanban #1507): a seat that answered 200 and trickled its body a byte at a time held
+        // #headToHeadClose forever (undici's body timeout restarts on every chunk), so no head-to-head round was signed and
+        // the peers after it, which may hold the missing reveal, were never asked. Now PEER_WAIT_MS covers the body too,
+        // and the body is read up to about 1 KiB per entry plus 64 KiB of slack (a reveal with its identity is ~350 bytes; the
+        // array is not cut to the entry count, since a peer also sends reveals of entries this seat holds void).
+        const answer = await fetch(`${peer}/reveals?round=${hex(roundIdBytes)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
         if (!answer.ok) continue;
-        body = await answer.json();
+        body = JSON.parse((await capped(answer, 65536 + byId.size * 1024)).toString('utf8'));
       } catch { continue; }
       for (const r of (body && Array.isArray(body.reveals) ? body.reveals : [])) {
         const entry = byId.get(String(r.entry));
@@ -1287,8 +1309,10 @@ export class Verifier {
     // AND EACH SIGNER NODE'S OWN WORD THAT IT DECIDED THE ENTRY BY §13C (x-no-quorum): not taken as the entry's
     // outcome here - it only says that signer node will sign nothing, which `shortPastWindow` counts.
     const noQuorumPeers = [];
-    // THE ROUND'S COMMITTEE, read once: a peer result counts only under one of its keys (kanban #1489).
-    const committee = this.round.signerNodes(roundIdBytes);
+    // THE ROUND'S COMMITTEE, read once: a peer result counts only under one of its keys (kanban #1489, #1502, #1512) - the
+    // contract's nodes where this node holds no signer list
+    const signers = this.round.signerNodes(roundIdBytes);
+    const committee = signers.length ? signers : contract.nodes || [];
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
@@ -1450,8 +1474,8 @@ export class Verifier {
     // full replay, ~1.4 s measured live, first in the pool - a flood of copies would have starved the closes):
     //   - ONE CHECK IN FLIGHT PER ENTRY: the next bundle for that entry waits its turn (its arrival is already stamped at
     //     the door, so waiting never makes an objection late);
-    //   - THE SAME RUN IS REPLAYED ONCE: a replay is keyed by the bytes it replays (transcript and inputs) and the length
-    //     replayed, kept in flight and after, so copies of one bundle share one answer;
+    //   - THE SAME RUN IS REPLAYED ONCE: a replay is keyed by the input it replays (the parsed form and marks, kanban
+    //     #1517), kept in flight and after, so copies of one bundle share one answer;
     //   - AND IN THE ORDINARY CLASS: a check is not yet an objection, so it does not go ahead of a close. The re-run a held
     //     objection starts is still first (rerun, objected: true).
     // A CHECK QUEUED OR RUNNING HERE HOLDS ITS ENTRY (kanban #1225, audit 2 #1204 SETTLEMENT-3): a pending objection held the entry SUSPENDED
@@ -1468,14 +1492,23 @@ export class Verifier {
     this.objectionTurns.set(hex(entryIdBytes), mine);
     await tail;
     try {
-      let content = '';
-      try { const p = decodeObjectionBundle(bundle); content = hex(sha256(new Uint8Array([...p.transcript, ...(p.inputs || [])]))); } catch { content = ''; }
       return await checkObjectionBundle({
         bundle, roundId: roundIdBytes, entryId: entryIdBytes, entry: found.entry, contract,
         committee: this.round.signerNodes(roundIdBytes), signedResultId, core, roundRandomness: beacon.hash,
         verify: (sig, msg, key) => verifyKept(sig, msg, key),
         replayRun: (form, entry, options) => {
-          const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${content}:${form.ticks.length}`;
+          // KEYED BY WHAT IS REPLAYED, NOT BY THE BYTES POSTED (kanban #1517): the raw transcript + inputs bytes let a
+          // stranger make every copy of one run a fresh key (whitespace or an unknown key in a live run's inputs, or an
+          // inputs part beside a batch transcript, never read) - each a full replay, the entry held SUSPENDED behind
+          // them. The parsed replay form (replayFormOf / inputsFormOf: fixed fields, integers only) and the marks it
+          // must reproduce are the replay's whole input for this entry, so any bytes giving the same input share one job.
+          let content = '';
+          try {
+            content = hex(sha256(new TextEncoder().encode(JSON.stringify([
+              [form.ticks.map((x) => [x.tick, x.words]), form.liquidations, form.loads, form.samples, form.tapes],
+              (options.marks || []).map((m) => [m.tick, hex(m.stateHash)])]))));
+          } catch { content = ''; }
+          const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${content}`;
           const had = content && this.objectionReplays.get(key);
           if (had) return had;
           this.objectionReplayCount++;
