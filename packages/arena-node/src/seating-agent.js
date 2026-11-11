@@ -273,13 +273,24 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   };
 
   // ---- the doors ----
-  function takePresent(bytes, { afterClose = false } = {}) {
+  // PRESENT BYTES WHOSE SIGNATURE FAILED are remembered and never checked again (kanban #1565, #1489 r3 census-2): a refused PRESENT was
+  // not kept, so the same junk naming a drawn node was verified again at every tick. Bounded: the oldest is forgotten first
+  const badPresents = new Set();
+  const BAD_PRESENTS_KEPT = 8192;
+  function takePresent(bytes, { afterClose = false, once = null } = {}) {
     // ONE HELD ALREADY, byte for byte, is not checked again (every batch answer repeats a round's PRESENTs,
     // and verifying each at each tick was thousands of signature checks per tick at grid density)
     try {
       const d = decodePresent(bytes);
       const had = db.prepare('SELECT bytes FROM seat_presents WHERE round_id = ? AND role = ? AND node = ?').get(d.roundId, d.role, toHex(d.nodePubkey));
       if (had && Buffer.compare(Buffer.from(had.bytes), Buffer.from(bytes)) === 0) return { ok: true, held: true };
+      // AND A NODE WHOSE PRESENT IS HELD ALREADY in other bytes is not checked either (kanban #1565): the first valid one stands
+      // (INSERT OR IGNORE below), so a second could change nothing - only cost a signature check
+      if (had) return { ok: true, held: true };
+      // ONE PRESENT PER (round, role, node) IN ONE ANSWER OR ONE POST /presents BODY (kanban #1565): a seat's answer or a stranger's body
+      // carried thousands of PRESENTs naming one drawn key with junk signatures, each a BIP-340 check; now one each at most
+      if (once) { const k = `${toHex(d.roundId)}|${d.role}|${toHex(d.nodePubkey)}`; if (once.has(k)) return { ok: false, why: 'one PRESENT per node and role in one batch' }; once.add(k); }
+      if (badPresents.has(toHex(bytes))) return { ok: false, why: 'that PRESENT\'s signature was refused already' };
       // A ROUND WHOSE SEATING HAS CLOSED takes no PRESENT, and is refused before the signature is checked (kanban #587, measured
       // 2026-10-23 13:2xZ: seat 7 spent 41 % of a core on verifyPresent while idle - PRESENTs of closed rounds, refused after the
       // check and so never kept, checked again on every tick from every peer that sent them)
@@ -294,7 +305,11 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       if (!c0.drawn.some((e) => toHex(e.pubkey) === toHex(d.nodePubkey))) return { ok: false, why: 'that node is not drawn for that round and role' };
     } catch { /* not decodable: verifyPresent says why */ }
     const v = verifyPresent(bytes, { verify });
-    if (!v.ok) return v;
+    if (!v.ok) {
+      badPresents.add(toHex(bytes));
+      if (badPresents.size > BAD_PRESENTS_KEPT) badPresents.delete(badPresents.values().next().value);
+      return v;
+    }
     const { roundId, role, nodePubkey } = v.present;
     if (leftNode(toHex(nodePubkey))) return { ok: false, why: 'that node\'s owner took it out of the seating (emergency departure, §23A.5a)' };
     const c = roster.committeeFor(roundId, role);
@@ -432,7 +447,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
           if (!a) continue;
           said.push(a);
           // a round already started is read for its certificate only: its PRESENTs are not taken (b5e8b412's late read)
-          if (!w.late) for (const x of a.presents || []) if (x.role === w.role) takePresent(fromHex(x.present));
+          if (!w.late) { const once = new Set(); for (const x of a.presents || []) if (x.role === w.role) takePresent(fromHex(x.present), { once }); }
           const cert = a.cert && a.cert[w.role];
           if (cert) keepCert(w.t.rid, w.role, fromHex(cert));
           const sig = a.sig && a.sig[w.role];
@@ -444,7 +459,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         if (w.closed && !w.late && !w.joins && !mySignature(w.t.rid, w.role)) { joinLate(w, sigs, { everyOther: true }); for (const s of sigs) keepSig(w, s); }
         if (w.closed && !w.late) {
           // A SEATING THAT CAN NEVER STAND (kanban #738): the PRESENTs the others held at the close are taken late, here only
-          if (canNeverStand(w)) for (const a of said) for (const x of a.presents || []) if (x.role === w.role) takePresent(fromHex(x.present), { afterClose: true });
+          if (canNeverStand(w)) for (const a of said) { const once = new Set(); for (const x of a.presents || []) if (x.role === w.role) takePresent(fromHex(x.present), { afterClose: true, once }); }
           signMine(w); resign(w); await certify(w);
         }
       }
@@ -748,8 +763,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (!bytes.length || bytes.length % PRESENT_BYTES !== 0) return { ok: false, why: `a batch of PRESENTs is a whole number of ${PRESENT_BYTES}-byte PRESENTs` };
     // AT MOST AS MANY AS POST /presence takes (kanban #1271): a batch is a round's seating, never more than a few hundred
     if (bytes.length / PRESENT_BYTES > MAX_PRESENTS_PER_BATCH) return { ok: false, status: 413, why: `a batch holds at most ${MAX_PRESENTS_PER_BATCH} PRESENTs` };
-    let taken = 0; const refused = [];
-    for (let i = 0; i < bytes.length; i += PRESENT_BYTES) { const r = takePresent(bytes.subarray(i, i + PRESENT_BYTES)); if (r.ok) taken++; else refused.push(r.why); }
+    let taken = 0; const refused = []; const once = new Set();   // one PRESENT per (round, role, node) in one body (kanban #1565)
+    for (let i = 0; i < bytes.length; i += PRESENT_BYTES) { const r = takePresent(bytes.subarray(i, i + PRESENT_BYTES), { once }); if (r.ok) taken++; else refused.push(r.why); }
     return { ok: true, taken, refused: refused.slice(0, 8) };
   }
   /** GET /seating-batch: for each named round, the PRESENTs held, this node's seating signatures and the certificates. */
