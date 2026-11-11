@@ -51,10 +51,25 @@ export function eventRefusal(e, { kinds = RELAY_KINDS, nowS = Math.floor(Date.no
 }
 
 /** Whether an event matches one NIP-01 filter. */
+// A FILTER IS WHAT NIP-01 SAYS IT IS (kanban #1470, feedback #002 by Hexbox Tools 2026-11-11: a REQ with {"ids":5} called (5).includes, threw in the socket's
+// message handler and took the relay down; the filter also stayed in the subscription and threw again on every later EVENT): ids and authors lists of hex
+// (up to 64 characters, a prefix as NIP-01 allows), kinds a list of whole numbers, since, until and limit whole numbers, a #<letter> tag a list of strings.
+// Answers null for a good filter, else why it is not one; a REQ with one bad filter is CLOSED.
+const LIST_MOST = 500;
+export function filterRefusal(f) {
+  if (!f || typeof f !== 'object' || Array.isArray(f)) return 'a filter is an object';
+  const hexList = (v) => Array.isArray(v) && v.length <= LIST_MOST && v.every((x) => typeof x === 'string' && /^[0-9a-f]{1,64}$/.test(x));
+  if (f.ids !== undefined && !hexList(f.ids)) return 'ids is a list of hex';
+  if (f.authors !== undefined && !hexList(f.authors)) return 'authors is a list of hex';
+  if (f.kinds !== undefined && !(Array.isArray(f.kinds) && f.kinds.length <= LIST_MOST && f.kinds.every((k) => Number.isInteger(k) && k >= 0 && k <= 65535))) return 'kinds is a list of whole numbers';
+  for (const k of ['since', 'until', 'limit']) if (f[k] !== undefined && !(Number.isInteger(f[k]) && f[k] >= 0)) return `${k} is a whole number`;
+  for (const [k, v] of Object.entries(f)) if (k[0] === '#' && !(k.length === 2 && Array.isArray(v) && v.length <= LIST_MOST && v.every((x) => typeof x === 'string'))) return `${k.slice(0, 8)} is a list of strings`;
+  return null;
+}
 export function matches(f, e) {
-  if (f.ids && !f.ids.includes(e.id)) return false;
-  if (f.authors && !f.authors.includes(e.pubkey)) return false;
-  if (f.kinds && !f.kinds.includes(e.kind)) return false;
+  if (f.ids && !(Array.isArray(f.ids) && f.ids.includes(e.id))) return false;
+  if (f.authors && !(Array.isArray(f.authors) && f.authors.includes(e.pubkey))) return false;
+  if (f.kinds && !(Array.isArray(f.kinds) && f.kinds.includes(e.kind))) return false;
   if (f.since !== undefined && e.created_at < f.since) return false;
   if (f.until !== undefined && e.created_at > f.until) return false;
   for (const [k, vals] of Object.entries(f)) {
@@ -107,7 +122,8 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     let budget = 60, refill = setInterval(() => { budget = Math.min(60, budget + 20); }, 10000);
     const send = (m) => { if (ws.readyState === 1) ws.send(JSON.stringify(m)); };
     ws.on('close', () => { clients.delete(c); clearInterval(refill); });
-    ws.on('message', (raw) => {
+    ws.on('message', (raw) => { try { onMessage(raw); } catch (err) { try { send(['NOTICE', 'error: that message could not be handled']); } catch { /* the socket is gone */ } } });   // kanban #1470: no message takes the relay down
+    const onMessage = (raw) => {
       if (raw.length > MAX_EVENT_BYTES * 2) return send(['NOTICE', 'message too large']);
       if (--budget < 0) return send(['NOTICE', 'rate-limited: slow down']);
       let m; try { m = JSON.parse(String(raw)); } catch { return send(['NOTICE', 'invalid: not JSON']); }
@@ -136,6 +152,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
         const filters = m.slice(2).filter((f) => f && typeof f === 'object');
         if (!sid || sid.length > 64) return send(['CLOSED', sid, 'invalid: subscription id']);
         if (!filters.length || filters.length > MAX_FILTERS) return send(['CLOSED', sid, `invalid: 1 to ${MAX_FILTERS} filters`]);
+        { const bad = filters.map(filterRefusal).find(Boolean); if (bad) return send(['CLOSED', sid, `invalid: ${bad}`]); }   // kanban #1470
         if (!subs.has(sid) && subs.size >= MAX_SUBS) return send(['CLOSED', sid, `blocked: at most ${MAX_SUBS} subscriptions`]);
         subs.set(sid, filters);
         for (const e of stored(filters)) send(['EVENT', sid, e]);
@@ -143,7 +160,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
       }
       if (m[0] === 'CLOSE') { subs.delete(String(m[1] || '')); return undefined; }
       return send(['NOTICE', `unknown message ${String(m[0]).slice(0, 20)}`]);
-    });
+    };
   });
   await new Promise((r) => server.listen(port, host, r));
   return {
