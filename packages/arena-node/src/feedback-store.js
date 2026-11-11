@@ -398,7 +398,10 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
   let keys = new Set(), at = 0, reading = null, perGame = new Map();
   async function refresh() {
     const next = new Set(), counts = new Map();
-    for (const g of games) {
+    // ONE SEAT'S NETWORK VIEW PER GAME, THE GAMES AT ONCE (kanban #1484, Daniel 2026-11-11: "Is VERY slow, speed it up"): scope=network is the whole network's
+    // season merged by the seat asked, so the first seat that answers is the list - reading all 14 one after another (20 s each at most) held the admin page,
+    // and 42 at once overloaded the seats' own merge. Per game the seats are asked in turn until one answers
+    await Promise.all(games.map(async (g) => {
       for (const seat of seats) {
         try {
           const r = await fetcher(`${String(seat).replace(/\/$/, '')}/season?scope=network&game=${encodeURIComponent(g)}&days=${days}`, { signal: AbortSignal.timeout(20000) });
@@ -407,10 +410,10 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
           for (const row of b.rows || []) if (Number(row.rounds) > 0 && /^[0-9a-f]{64}$/i.test(String(row.player || ''))) {
             const k = String(row.player).toLowerCase(); next.add(k);
             const m = counts.get(k) || {}; m[g] = (m[g] || 0) + Number(row.rounds); counts.set(k, m); }
-          break;
-        } catch { /* the next seat */ }
+          return;
+        } catch { /* that seat does not answer: the next one */ }
       }
-    }
+    }));
     keys = next; perGame = counts; at = Date.now();
     return keys.size;
   }
@@ -420,7 +423,8 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
     // { rounds, games: [[game, rounds], ...] } in the network season of `days`, the most played first; none: rounds 0
     history: (pubkey) => { const m = perGame.get(String(pubkey || '').toLowerCase()) || {}; const games = Object.entries(m).sort((a, b) => b[1] - a[1]);
       return { rounds: games.reduce((t, [, n]) => t + n, 0), games, days }; },
-    async fresh() { if (Date.now() - at > keepMs) { reading = reading || refresh().finally(() => { reading = null; }); await reading; } return keys.size; },
+    // A LIST IN HAND IS ANSWERED AT ONCE (kanban #1484): a stale one is refreshed in the background; only the very first read is waited for
+    async fresh() { if (Date.now() - at > keepMs) { reading = reading || refresh().finally(() => { reading = null; }); if (!at) await reading; } return keys.size; },
   };
 }
 
