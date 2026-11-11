@@ -230,7 +230,7 @@ test('a round with no randomness shows nobody anything, in the same words as bef
  * watcher was shown a truck driven with an empty bed while its driver was
  * being hunted for a full one, and the two part further with every tick.
  */
-const BED = [[0, 17314, 42]];      // an AUTO load; reads 57229 in the core
+const BED = [[0, 17314, 42, 252308]];      // an AUTO load (seven parcels' room, which the seat requires - kanban #1488); reads 57229 in the core
 
 test('a live picture of a loaded run is the pose a full replay produces', () => {
   const world = driving(600, { loads: BED });
