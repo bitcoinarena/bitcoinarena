@@ -51,7 +51,7 @@ import { publicationPayload } from '../../arena-protocol/src/publication.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../arena-protocol/src/constants.js';
 import { worldIsShared } from '../../arena-protocol/src/seed.js';
 import { sharedWorldOf } from '../../arena-protocol/src/known-game.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
@@ -247,7 +247,7 @@ try {
     for (let from = 0; from < N;) {
       const to = from === 0 ? FIRST : Math.min(N, from + 600);
       const b = { roundId: fromHex(rid), entryId: fromHex(eid), previousHash, firstTick: from, ticks: drive.tape.slice(from, to), liquidations: [], loads: from === 0 ? loads0 : [] };
-      msgs.push([encodeInputBatch(b), `batch ${from}`]);
+      msgs.push([signedBatchOf(b, (id) => ed25519.sign(id, session)), `batch ${from}`]);
       previousHash = batchId(b);
       if (to === FIRST || to === N) {
         const m = { roundId: fromHex(rid), entryId: fromHex(eid), tick: to, stateHash: fromHex(stateAt[to]), inputChainHash: previousHash, previousHash: previousMark, sessionPubkey: entry.sessionPubkey };

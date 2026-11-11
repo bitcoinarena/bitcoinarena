@@ -21,7 +21,7 @@ import { encodeRoundContract, decodeRoundContract, roundId, encodeEntryContract,
 import * as constants from '../../arena-protocol/src/constants.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { init, step } from '../../nextblock/src/sim.js';
@@ -107,7 +107,7 @@ async function joinAndBuild(w) {
   const mark2 = { roundId: w.rid, entryId: eid, tick: END, stateHash: hashAt(END, FIRST), inputChainHash: batchId(batch2), previousHash: checkpointId(mark1), sessionPubkey: entry.sessionPubkey };
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
   return { entry, eid, outpoint, committed, mark1Id: checkpointId(mark1),
-    messages: [encodeInputBatch(batch1), sign(mark1), encodeInputBatch(batch2), sign(mark2)] };
+    messages: [signedBatchOf(batch1, (id) => ed25519.sign(id, session)), sign(mark1), signedBatchOf(batch2, (id) => ed25519.sign(id, session)), sign(mark2)] };
 }
 
 /** What one signer node holds of the first mark: when it stored it, who receipted it. */
