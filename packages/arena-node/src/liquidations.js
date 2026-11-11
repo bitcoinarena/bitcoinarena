@@ -59,5 +59,7 @@ export function createLiquidations({ records, clocks, verify, claimsUrl = null, 
       };
     });
   }
-  return { offer, list };
+  // the halt is asked by the e-cash exchange too (server.js `halted`): without haltOf here that check threw, was read as "not halted",
+  // and a HALTED federation's notes were exchanged as well as claimed at the liquidation (kanban #1577)
+  return { offer, list, haltOf, haltedFederations };
 }
