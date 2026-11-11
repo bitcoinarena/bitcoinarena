@@ -82,20 +82,37 @@ export function servedNodesDiffer(claimed, mine) {
 /**
  * ONE SET OF ROUNDS FROM WHAT SEVERAL SEATS HOLD (measured 2026-10-15 17:3xZ: each seat holds only the FINALs of the
  * rounds it sat on - 14 seats gave 7 roots for one window). `held` is a list of seats' answers, each [{ roundId, committee, finals }];
- * a round's FINALs are joined (each signed FINAL once), and a round two seats name with different committees is left out and
- * named in `conflicts` - servedNodes then checks every FINAL itself, so a seat that hands over a forged one adds nothing.
+ * a round's FINALs are joined (each signed FINAL once) and servedNodes then checks every FINAL itself, so a seat that hands over a
+ * forged one adds nothing.
+ *
+ * ONE SEAT'S ANSWER DOES NOT DECIDE WHO IS PAID (kanban #1522, measured: one seat answering an invented round whose "committee" was
+ * 20 keys it made up, each with a FINAL, took 217,380 msat of a 500-sat item; naming a real round with another committee dropped the
+ * round, and the nodes that served it were paid nothing):
+ *   - a committee larger than any round may name is refused: genesis binds 7 slots, and a round names at most its draw, 9
+ *     (contracts.js sittingSeatsFitTheSlots, sortition.js drawnForRole);
+ *   - each seat's answer is read up to SERVED_HELD_MAX rounds;
+ *   - two seats naming one round with different committees no longer drop the round: the committee most seats name stands, and
+ *     between equally many the one held first (the caller's own record first, then the seats in the order it lists them).
  */
+export const SERVED_COMMITTEE_MAX = 9;
+export const SERVED_HELD_MAX = 20000;
 export function mergeServedRounds(held) {
   const hx = (b) => toHex(b);
   const rounds = new Map(), conflicts = new Set();
-  for (const seat of held || []) for (const r of seat || []) {
-    if (!r || !snIs32(r.roundId) || !Array.isArray(r.committee)) continue;
-    const k = hx(r.roundId), committee = r.committee.map(hx).sort().join();
-    if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, committee: r.committee, key: committee, finals: new Map() });
-    const into = rounds.get(k);
-    if (into.key !== committee) { conflicts.add(k); continue; }
-    for (const f of r.finals || []) if (f instanceof Uint8Array) into.finals.set(hx(f), f);
+  for (const seat of held || []) {
+    if (!Array.isArray(seat)) continue;
+    for (const r of seat.slice(0, SERVED_HELD_MAX)) {
+      if (!r || !snIs32(r.roundId) || !Array.isArray(r.committee) || !r.committee.length || r.committee.length > SERVED_COMMITTEE_MAX || !r.committee.every(snIs32)) continue;
+      const k = hx(r.roundId), committee = [...new Set(r.committee.map(hx))].sort().join();
+      if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map() });
+      const into = rounds.get(k);
+      if (!into.copies.has(committee)) into.copies.set(committee, { committee: r.committee, seats: 0 });
+      into.copies.get(committee).seats++;
+      if (into.copies.size > 1) conflicts.add(k);
+      for (const f of r.finals || []) if (f instanceof Uint8Array) into.finals.set(hx(f), f);
+    }
   }
-  return { rounds: [...rounds.entries()].filter(([k]) => !conflicts.has(k)).map(([, r]) => ({ roundId: r.roundId, committee: r.committee, finals: [...r.finals.values()] })),
+  const pick = (copies) => { let best = null; for (const c of copies.values()) if (!best || c.seats > best.seats) best = c; return best.committee; };
+  return { rounds: [...rounds.values()].map((r) => ({ roundId: r.roundId, committee: pick(r.copies), finals: [...r.finals.values()] })),
     conflicts: [...conflicts] };
 }
