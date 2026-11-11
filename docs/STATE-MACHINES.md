@@ -26,6 +26,7 @@ release commit and brings this file up to date with it - new machines added, cha
 11. [State the 2026-11-06 fixes introduced or changed](#11-state-the-2026-11-06-fixes-introduced-or-changed)
 12. [The page, its storage and its frames](#12-the-page-its-storage-and-its-frames)
 13. [State the 2026-11-10 audits (5, 6) introduced or changed](#13-state-the-2026-11-10-audits-5-6-introduced-or-changed)
+15. [State audit 2026-11-12](#15-state-audit-2026-11-12)
 
 ## 1. Rounds and settlement
 
@@ -1542,3 +1543,10 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-L1 (change) Stake lock record: a refused record is kept aside (kanban #1584)
+- `refused` is decided from three "not stored" reads 2 s apart on a reload (reconcileKeptLock), not from the guardians' word: their consensus can still accept that transaction afterwards.
+- refused -> intent (a new PLAY, keptLockStake) now first copies the refused record to `arena.lock.orphan.<tag>.<refusedMs>` (putRoomy); with no room for the copy the PLAY is refused before anything is spent.
+- Invariant: no lock record this browser wrote with an outpoint is overwritten without a copy - every transaction the page submitted stays named (outpoint, fields, stake) in `arena.lock.saved`, `arena.lock.intent` or `arena.lock.orphan`.
