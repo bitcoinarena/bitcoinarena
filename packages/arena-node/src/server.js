@@ -2451,7 +2451,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const namesHeld = (rid) => round.lobbyNames(rid).map((n) => ({ record: toHex(n.record), sig: toHex(n.signature), ...(n.identitySig ? { identitySig: toHex(n.identitySig) } : {}) }));
 
   const forfeits = new Forfeit(round, {
-    bookStanding: (rid, eid) => orderBook.standing(rid, eid),
+    bookStanding: (rid, eid) => orderBook.standing(rid, eid), isBook: (rid) => orderBook.isBook(rid),
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
     // §23.2 REFUSED: asked at the forfeit - does this node still refuse that round? (null: it offers it)
     refusedNow: (rid) => unenteredReturnOfRound(rid),
@@ -10919,7 +10919,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // a round's entries - its game's players, all in - has nothing its reveal deadline could still add: it closes the round
         // now, not at that deadline. A round short of a reveal still waits for its end (that entry's FORFEIT).
         if (closeAtEnd && fresh) {
-          const all = round.entriesOf(entry.roundId);
+          // a paying round's seated players only - those backed by a lock (kanban #1437, audit 8 R3): a lockless entry neither holds the close nor counts toward it
+          const all = round.seatedEntriesOf(entry.roundId, c.stakeMsat);
           const revealed = new Set(round.revealsOf(entry.roundId).map((r) => toHex(r.entryId)));
           if (all.length >= found.plugin.manifest.players && all.every(({ entryId }) => revealed.has(toHex(entryId))) && round.close(entry.roundId)) {
             console.log(`[close] ${toHex(entry.roundId).slice(0, 16)}: every move revealed - closed by this signer node before its end`);
