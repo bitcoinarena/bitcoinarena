@@ -3432,11 +3432,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    * (M3.3-33) are the same work and must not become two paths.
    */
   // WHICH ROUND IS HEAD-TO-HEAD (kanban #1068, #1071): declared here, filled in below. A close sweep can fire while the server is still being set up
-  // (measured 2026-11-03 on a restarted seat: "Cannot access 'headToHeadRound' before initialization" from afterClose, and the seat exited); until then a round is
-  // closed as before #1071, without first learning who is in it.
+  // (measured 2026-11-03 on a restarted seat: "Cannot access 'headToHeadRound' before initialization" from afterClose, and the seat exited); until then a close
+  // waits (kanban #1587, below) - it is no longer closed as before #1071.
   let headToHeadRound = () => null, headToHeadReady = false, relayedRound = () => null;
+  // NO CLOSE LOGIC RUNS BEFORE THE SEAT CAN LEARN WHO IS IN A ROUND (kanban #1587): the start's own close sweep runs inside serve(), before
+  // `headToHeadReady`, and a seat restarted past a head-to-head round's end signed VOID 0 over the one entry it held while the threshold signed
+  // FAILED / DELIVERED - final, one result per entry. A close asked for before then waits for it; and one round's close logic runs once at a time
+  // (the start's sweep and resumingCloses each closed the same round, in parallel): a second ask while one runs is answered by the one running.
+  let headToHeadReadyGo = () => {};
+  const headToHeadReadyAt = new Promise((go) => { headToHeadReadyGo = go; });
+  const closingNow = new Map();
   const H2H_HANDOUT_LEAD_MS = h2hHandoutLeadMs;   // kanban #1485: a head-to-head handout this close to the entry close is refused (takeHandout); a lock alone takes 2.2-2.7 s
   function afterClose(roundIdBytes) {
+    const key = toHex(roundIdBytes);
+    const running = closingNow.get(key);
+    if (running) return running;
+    const p = (headToHeadReady ? closeLogic(roundIdBytes) : headToHeadReadyAt.then(() => closeLogic(roundIdBytes)))
+      .finally(() => { if (closingNow.get(key) === p) closingNow.delete(key); });
+    closingNow.set(key, p);
+    stakes = p;
+    return p;
+  }
+  function closeLogic(roundIdBytes) {
     // §16 AT THE CLOSE: an entry whose on-time first mark is still short of the
     // threshold, the signer nodes it is short of offered it and silent, is ENTRY_VOID
     // with "closed" as the evidence - and the other signer nodes are shown it.
@@ -3449,7 +3466,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     })().catch((e) => console.error(`[entry-void] ${e.message}`));
     // A HEAD-TO-HEAD SEAT FIRST LEARNS WHO IS IN THE ROUND (kanban #1071), and with a wait that ran out it signs nothing
     const h2h = headToHeadReady ? headToHeadRound(roundIdBytes) : null;
-    stakes = (h2h ? membersKnown(roundIdBytes, h2h).catch((e) => { console.error(`[entry] ${e.message}`); return true; }) : Promise.resolve(true))
+    return (h2h ? membersKnown(roundIdBytes, h2h).catch((e) => { console.error(`[entry] ${e.message}`); return true; }) : Promise.resolve(true))
       .then((known) => (known ? timed(`close ${toHex(roundIdBytes).slice(0, 8)} settleRound`, () => verifier.settleRound(roundIdBytes)) : null))
       .then(async (closed) => {
         if (!closed) return { ok: false, why: 'this seat could not learn who is in the round: it signs nothing for it' };
@@ -3461,7 +3478,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return money;
       })
       .catch((e) => { console.error(`[verify] ${e.message}`); return { ok: false, why: e.message }; });
-    return stakes;
   }
 
   async function settleTheStakes(roundIdBytes, closed) {
@@ -4443,6 +4459,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
   };
   headToHeadReady = true;   // both headToHeadRound and membersKnown stand from here (kanban #1068)
+  headToHeadReadyGo();       // and a close asked for before now runs (kanban #1587)
   // A STAKE'S HANDOUT, CHECKED AND KEPT: what POST /handout does, and what a seat does for the handout of an order a certified batch names
   // that never reached it (replayOrder). The round's threshold, not the player's (M3.3-26); one polynomial; this seat's own share opens.
   // Answers { ok, id, signerNode } or { ok: false, status, why }.
