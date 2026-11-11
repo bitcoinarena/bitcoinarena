@@ -37,8 +37,8 @@ export function matchOf(round, plugins, roundIdBytes, depth = 0) {
   const c = decodeRoundContract(new Uint8Array(row.contract));
   const found = pluginForRound(c, plugins);
   if (!found.ok || !found.headToHead) return null;
-  // the round's seated players: in a paying round only the entries backed by a lock (kanban #1437, audit 8 R3)
-  const entries = typeof round.seatedEntriesOf === 'function' ? round.seatedEntriesOf(roundIdBytes, c.stakeMsat) : round.entriesOf(roundIdBytes);
+  // the round's played players: in a paying round only the entries whose stake was counted (kanban #1437, audit 8 R3; #1626 - the set the close decides)
+  const entries = typeof round.playedEntriesOf === 'function' ? round.playedEntriesOf(roundIdBytes, c.stakeMsat) : round.entriesOf(roundIdBytes);
   if (entries.length !== 2) return null;
   // EACH SIDE'S IDENTITY: its reveal's, else the one its consented name record names (audit 5 #1401) - a loser who left the identity off his reveal, or
   // forfeited, broke the chain and the next round's score started at 0-0; the consent is fixed at the join, before anything is known
