@@ -63,16 +63,18 @@ export function priceAttestationStands({ id, sigs, committee, threshold, verify 
   const members = new Set((committee || []).map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))));
   const signed = new Set();
   for (const s of sigs || []) {
-    // kanban #1489: a signature that is not 64 bytes (as 128 hex or bytes) counts nothing - it never throws. `"".match(/../g)`
-    // is null, and one seat answering GET /round-result with signature "" threw here, so no market on its game ever resolved.
-    let key, sig;
-    try { key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key); } catch { continue; }
-    if (!members.has(key) || signed.has(key)) continue;
-    // kanban #1530: the signature and key are decoded inside the checks below - a peer's odd-length or 1-char hex ('a')
-    // made match() return null and threw out of the whole check, so one bad seat hid the result the others signed.
-    if (typeof s.signature === 'string') { if (!/^[0-9a-f]{128}$/i.test(s.signature)) continue; sig = fromHex(s.signature.toLowerCase()); }
-    else if (s.signature instanceof Uint8Array && s.signature.length === 64) sig = s.signature;
-    else continue;
+    // kanban #1489 / #1530: a signature that is not 64 bytes (as 128 hex or bytes), an odd-length or 1-char hex, counts nothing -
+    // `"".match(/../g)` was null and threw, so one bad seat hid the result the others signed. Both checks below hold that.
+    // kanban #1566: a malformed entry (a key or signature that is not hex of its size, a non-string, a missing field) counts
+    // nothing, as a signature that does not verify - it never throws out of here and so never refuses the others' signatures.
+    let key, sig, pk;
+    try {
+      key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key);
+      if (!/^[0-9a-f]{64}$/.test(key) || !members.has(key) || signed.has(key)) continue;
+      sig = typeof s.signature === 'string' ? s.signature.toLowerCase() : toHex(s.signature);
+      if (!/^[0-9a-f]{128}$/.test(sig)) continue;
+      sig = fromHex(sig); pk = fromHex(key);
+    } catch { continue; }
     let good = false;
     try { good = !!verify(sig, id, fromHex(key)); } catch { good = false; }
     if (good) signed.add(key);
