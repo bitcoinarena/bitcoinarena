@@ -1551,3 +1551,7 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 #### SM-22 (change) Feedback reward link: a decision moves only the payment it read (kanban #1571)
 - Invariant: a reward is never `open` while a payment of it may still be in flight. `settle` reads each `paying` row again just before it decides it, and moves it (paying -> paid, paying -> open) by compare-and-set on the `payment_hash` it asked `status()` about (`WHERE k1 = ? AND state = 'paying' AND payment_hash = ?`); a row that was opened and claimed again under a new hash meanwhile is left `paying` for a later pass. claim()'s own sure failure reopens only under its own hash.
 - One settle pass at a time: the faucet's 60 s interval skips a tick while the previous pass is still running (`settling`, as `sweeping` does for the sweep).
+
+#### SM-19 (change) Faucet book: one JSON file, several writers (kanban #1573)
+
+- Every writer of the book that awaits anything (bitcoind, lncli) applies only its own change to a book read after its last await, in one synchronous step (readBook -> change -> saveBook). `pay()` (POST /faucet) reads the book for its decision, but pushes its `paid` row onto a freshly read copy after `sendtoaddress`; a refill row booked by POST /refill meanwhile, the sweep's keep/drop/rebook/forget decisions and the refill timer's removals stay in the book. Invariant: a paid refill always has its row in `book.refills` (its day cap counts it).
