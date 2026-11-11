@@ -9376,6 +9376,8 @@
         // when the round's threshold of its own signer nodes say open and assigned.
         // skipFailed (kanban #1133): a node whose read failed is not asked again for 5 min (FAILED_NODE_SKIP_MS), kept across reloads
         const read = (nodes) => ARENACLIENT.fetchLobby({ nodes, skipFailed: true, preferGames: window.ARENA_GAME_IDS || (window.ARENA_GAME_ID ? [window.ARENA_GAME_ID] : null), verifyMany: window.ARENA_VERIFY_MANY,
+          // a seat's listing read at most every 5 s - the seat keeps it 5 s; the paint itself stays every second (kanban #1451: 150-350 GET /rounds in 45 s, one idle page)
+          rereadMs: 5000,
           verify: (s, m, k) => !!(window.ARENA_CURVE && window.ARENA_CURVE.verify && window.ARENA_CURVE.verify(s, m, k)) })
           .catch((e) => ({ rows: [], refused: [e.message], unanswered: [], failed: (nodes || []).map(String), asked: (nodes || []).length }));
         // EACH SIDE DRAWN AS SOON AS IT ANSWERS (2026-10-01: both rows, always): measured on the live page, a paint
