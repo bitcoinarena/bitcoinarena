@@ -11260,6 +11260,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // gossip. The first byte says so, the same way it says a mark is a
         // mark, so gossip needs no second port and no envelope.
         if (bytes[0] === TYPE_CHECKPOINT_RECEIPT) {
+          // A REPEAT ADDS NOTHING, SO IT REPLAYS NOTHING (kanban #1569): a byte-identical receipt is answered 'held' without a
+          // check (#1204's fast path), and every copy used to queue a whole-run replay - one public receipt from GET /receipts,
+          // sent N times, kept the replay pool busy for hours. Only a receipt this seat did not hold before can complete a run.
+          const repeat = round.holdsReceipt(bytes);
           const answer = round.takeReceipt(bytes);
           // A RECEIPT CAN COMPLETE WHAT A REPLAY COULD NOT SIGN. 13C's
           // canonical prefix grows as receipts arrive, so a run replayed
@@ -11269,7 +11273,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try {
             const run = round.runOf(decodeCheckpointReceipt(splitSignedReceipt(bytes).body).checkpointId);
             const held = run && round.get(run.roundId);
-            if (run && held && held.state === CLOSED) {
+            if (!repeat && run && held && held.state === CLOSED) {
               const again = verifier.retry(run.roundId, run.entryId);
               if (again) again.then((d) => (d && d.stored
                 ? verifier.gather(run.roundId, run.entryId) : null))
