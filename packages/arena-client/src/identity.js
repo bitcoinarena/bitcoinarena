@@ -255,6 +255,8 @@ export function referralNameFor({ name, storage, random, curve, nowMs = Date.now
  * collected the same way; `referral` is every one the seats list - { msat, payouts } - collected or not.
  */
 export const ZAPS_COLLECTED_KEY = 'arena.zaps.collected';
+export const ZAPS_ROWS_PER_SEAT = 200;
+export const ZAPS_REFUNDS_PER_PASS = 50;
 export async function collectZaps({ storage, keep = storage, random, curve, clients, seats, fetcher = fetch } = {}) {
   if (!curve || typeof curve.pointX !== 'function') throw new Error('a zap is collected with the identity key, and no curve was injected');
   const secret = identitySecretFor(tabSeed({ storage, random }));
@@ -267,14 +269,28 @@ export async function collectZaps({ storage, keep = storage, random, curve, clie
     try {
       const r = await fetcher(`${String(s).replace(/\/$/, '')}/donations?key=${pk}&since=0`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
       if (!r.ok) return;
-      for (const d of ((await r.json()).donations || [])) if (d && d.outpoint && !found.has(d.outpoint)) found.set(d.outpoint, d);
+      // kanban #1618: one seat's list is read only to its first ZAPS_ROWS_PER_SEAT well-formed rows (outpoint txid:vout, a 64-hex
+      // federation id, a positive whole msat amount) - a seat listing 20,000 made-up outpoints no longer drives 20,000 Refund calls.
+      let taken = 0;
+      const list = (await r.json()).donations;
+      for (const d of (Array.isArray(list) ? list : [])) {
+        if (taken >= ZAPS_ROWS_PER_SEAT) break;
+        if (!d || !/^[0-9a-f]{64}:\d+$/.test(String(d.outpoint)) || !/^[0-9a-f]{64}$/i.test(String(d.federationId))
+          || !/^[1-9]\d{0,20}$/.test(String(d.amountMsat))) continue;
+        taken++;
+        if (!found.has(d.outpoint)) found.set(d.outpoint, d);
+      }
     } catch { /* another seat answers for it */ }
   }));
   const collected = [], spent = [], failed = [], waiting = [];
+  let asked = 0;
   for (const d of found.values()) {
     if (seen.has(d.outpoint)) continue;
     const client = clients && clients.get ? clients.get(String(d.federationId).toLowerCase()) : null;
     if (!client || typeof client.refund !== 'function') { waiting.push(d); continue; }
+    // kanban #1618: at most ZAPS_REFUNDS_PER_PASS Refund calls a pass; the rest wait for the next pass (the page runs one a minute).
+    if (asked >= ZAPS_REFUNDS_PER_PASS) { waiting.push(d); continue; }
+    asked++;
     const m = /^([0-9a-f]{64}):(\d+)$/.exec(String(d.outpoint));
     if (!m) continue;
     const image = d.senderOnContract && /^[0-9a-f]{64}$/.test(String(d.playerKey || '')) ? d.playerKey : '00'.repeat(32);
