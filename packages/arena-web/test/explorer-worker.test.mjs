@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import worker from '../../../src/website/explorer/worker.js';
+import worker, { sendPlayed } from '../../../src/website/explorer/worker.js';
 
 const MIG = new URL('../../../src/website/explorer/migrations/', import.meta.url);
 function store() {
@@ -99,4 +99,71 @@ test('the gifts, zaps and items bought are rows of their own kind, each found by
   const m = await ask(env, '/api/metrics');
   assert.deepEqual(m.volume, [], 'gifts and items are no stakes: the day\'s volume is the orders\'');
   assert.deepEqual(page.facets.kinds.map((k) => k.kind).sort(), ['donation', 'item', 'zap']);
+});
+
+// OUR BOTS' AND THE OWNER'S TRANSACTIONS (kanban #1107): left out of the list by default - a marked order, and the rest of a round whose orders
+// are all marked; a round with one real player stays whole; ?marked=1 shows everything
+test('the list leaves out bot and admin transactions unless ?marked=1', async () => {
+  const { db, env } = store();
+  const put = db.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, kind, settled, hash, json, updated_ms) VALUES (?, ?, 'nextblock', ?, ?, ?, NULL, 'h', ?, 0)`);
+  const P = (n) => '02' + String(n).repeat(64).slice(0, 64);
+  // round R1: two bot orders and its settlement; round R2: a bot order and a real player's, and its settlement; an owner's order by player key
+  put.run(hex(1), hex(101), 'fe'.repeat(32), 1_800_000_000_001, 'order', JSON.stringify({ entry: { player: P(1), stakeMsat: '1000' } }));
+  put.run(hex(2), hex(101), 'fe'.repeat(32), 1_800_000_000_002, 'order', JSON.stringify({ entry: { player: P(2), stakeMsat: '1000' } }));
+  put.run(hex(3), hex(101), 'fe'.repeat(32), 1_800_000_000_003, 'settlement', JSON.stringify({}));
+  put.run(hex(4), hex(102), 'fe'.repeat(32), 1_800_000_000_004, 'order', JSON.stringify({ entry: { player: P(3), stakeMsat: '1000' } }));
+  put.run(hex(5), hex(102), 'fe'.repeat(32), 1_800_000_000_005, 'order', JSON.stringify({ entry: { player: P(4), stakeMsat: '1000' } }));
+  put.run(hex(6), hex(102), 'fe'.repeat(32), 1_800_000_000_006, 'settlement', JSON.stringify({}));
+  put.run(hex(7), hex(103), 'fe'.repeat(32), 1_800_000_000_007, 'order', JSON.stringify({ entry: { player: P(5), stakeMsat: '1000' } }));
+  const mark = db.prepare('INSERT INTO marked (key, kind, at_ms) VALUES (?, ?, 0)');
+  mark.run(hex(1), 'bot'); mark.run(hex(2), 'bot'); mark.run(hex(4), 'bot'); mark.run(P(5), 'owner');
+  const ids = (r) => r.txs.map((t) => t.id).sort();
+  const shown = await ask(env, '/api/recent');
+  assert.deepEqual(ids(shown), [hex(5), hex(6)], 'the real player\'s order and its round\'s settlement; the bots\' round and the owner\'s order gone');
+  assert.equal(shown.total, 2, 'the count says what is shown');
+  assert.equal((await ask(env, '/api/recent?marked=1')).txs.length, 7);
+});
+
+test('a whole 64-hex id is found (instr, not a LIKE pattern D1 refuses over 50 bytes), and a part of one too', async () => {
+  const { db, env } = store();
+  db.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, settled, hash, json, updated_ms) VALUES (?, ?, 'nextblock', ?, 1, NULL, 'h', '{}', 0)`).run('4b'.repeat(32), hex(77), 'fe'.repeat(32));
+  assert.deepEqual((await ask(env, '/api/recent?q=' + '4b'.repeat(32))).txs.map((t) => t.id), ['4b'.repeat(32)]);
+  assert.equal((await ask(env, '/api/recent?q=4b4b4b')).total, 1);
+  assert.equal((await ask(env, '/api/recent?q=' + hex(77))).total, 1, 'by its round');
+});
+
+// THE PLAYED ROUNDS TOLD TO UMAMI (kanban #1110): the same real orders /api/played counts, each entry once and each round with a real entry once,
+// at the time played, only an hour after storing; bots and the owner never
+test('Umami is told each real entry and each real round once, at its time, an hour late; bot and admin entries never', async () => {
+  const { db, env } = store();
+  const T = Date.UTC(2026, 10, 2, 12), put = db.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, kind, settled, hash, json, updated_ms) VALUES (?, ?, ?, 'fe', ?, 'order', NULL, 'h', ?, 0)`);
+  const P = (n) => '02' + String(n).repeat(64).slice(0, 64);
+  put.run(hex(1), hex(201), 'rock-paper-scissors', T, JSON.stringify({ entry: { player: P(1) } }));        // real
+  put.run(hex(2), hex(201), 'rock-paper-scissors', T + 1000, JSON.stringify({ entry: { player: P(2) } })); // the bot opponent
+  put.run(hex(3), hex(202), 'nextblock', T + 2000, JSON.stringify({ entry: { player: P(3) } }));           // the owner, by player key
+  put.run(hex(4), hex(203), 'nextblock', T + 3000, JSON.stringify({ entry: { player: P(4) } }));           // real
+  put.run(hex(5), hex(204), 'nextblock', T + 3600000 + 5000, JSON.stringify({ entry: { player: P(5) } })); // real, but stored less than an hour ago
+  db.prepare('INSERT INTO marked (key, kind, at_ms) VALUES (?, ?, 0)').run(hex(2), 'bot');
+  db.prepare('INSERT INTO marked (key, kind, at_ms) VALUES (?, ?, 0)').run(P(3), 'owner');
+  const told = []; const post = async (url, o) => { told.push(JSON.parse(o.body).payload); return { ok: true }; };
+  const r = await sendPlayed(env, T + 3600000 + 10000, post);
+  assert.deepEqual(told.map((x) => [x.name, x.data.game, x.timestamp]), [['played-round', 'rock-paper-scissors', Math.floor(T / 1000)], ['played-entry', 'rock-paper-scissors', Math.floor(T / 1000)],
+    ['played-round', 'nextblock', Math.floor((T + 3000) / 1000)], ['played-entry', 'nextblock', Math.floor((T + 3000) / 1000)]]);
+  assert.equal(r.sent, 4);
+  assert.equal(told[0].website, '024ff09e-c3a6-4dfd-bede-3163eb8be36a');
+  told.length = 0;
+  await sendPlayed(env, T + 3600000 + 20000, post);
+  assert.deepEqual(told, [], 'nothing twice');
+  await sendPlayed(env, T + 2 * 3600000 + 10000, post);
+  assert.deepEqual(told.map((x) => x.name), ['played-round', 'played-entry'], 'the late one, an hour after it was stored');
+  assert.deepEqual((await sendPlayed({ ...env, UMAMI_SEND: 'off' }, T + 9e9, post)).off, true);
+});
+
+test('two runs at once tell Umami each entry and round only once (kanban #1110: a long run overlapped the next minute\'s)', async () => {
+  const { db, env } = store();
+  const T = Date.UTC(2026, 10, 2, 12), put = db.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, kind, settled, hash, json, updated_ms) VALUES (?, ?, 'nextblock', 'fe', ?, 'order', NULL, 'h', '{}', 0)`);
+  for (let i = 0; i < 10; i++) put.run(hex(300 + i), hex(400 + (i % 4)), T + i * 1000);
+  const told = []; const post = async (url, o) => { await new Promise((r) => setTimeout(r, 2)); told.push(JSON.parse(o.body).payload.name); return { ok: true }; };
+  await Promise.all([sendPlayed(env, T + 7200000, post), sendPlayed(env, T + 7200000, post)]);
+  assert.deepEqual([told.filter((n) => n === 'played-round').length, told.filter((n) => n === 'played-entry').length], [4, 10]);
 });

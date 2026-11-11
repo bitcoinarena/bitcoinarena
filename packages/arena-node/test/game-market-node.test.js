@@ -107,7 +107,9 @@ test('a seat answers FLAT as a refund (VOID), a late market as VOID, and refuses
 });
 
 test('the door: POST /game-outcome reaches the hook - 400 without a round or a JSON result, 404 for a round not held, and the roster asked for the source round\'s committee', async () => {
-  const d = await serve(openStore(':memory:'), { plugins: [MARKET.registration], port: 0, ...opts });
+  // THE SEAT'S CLOCK AFTER THE SOURCE'S END (S + 200 s) and inside the market's deadline (kanban #1151: nothing is taken after the
+  // deadline, and this fixture's rounds are in 2026-08, before the wall clock)
+  const d = await serve(openStore(':memory:'), { plugins: [MARKET.registration], port: 0, ...opts, roundClock: () => Number(S) + 200000 });
   try {
     const base = `http://127.0.0.1:${d.port}`;
     const post = async (q, body) => { const r = await fetch(`${base}/game-outcome${q}`, { method: 'POST', body }); return { status: r.status, text: (await r.text()).trim() }; };

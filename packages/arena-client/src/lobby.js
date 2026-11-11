@@ -162,8 +162,37 @@ export const UNREADABLE_MS = 30000;
 /** How long after its entry closes a round the seats still list is named among the lobby's `closed`. */
 export const CLOSED_KEPT_MS = 2n * 3600n * 1000n;
 
-export const LOBBY_CONTRACTS_PER_READ = 64;
-export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, verifyMany = null, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS } = {}) {
+// 32 A READ (kanban #1391, measured on stage UI 601: with the open rounds asked first the first read made its rows, but its 64 contracts took 7-8 s in four
+// batches of 16; the next reads bring the rest, a second apart)
+export const LOBBY_CONTRACTS_PER_READ = 32;
+export const LOBBY_OTHER_CONTRACTS_PER_READ = 16;
+
+// A NODE WHOSE READ FAILED IS NOT ASKED AGAIN FOR FAILED_NODE_SKIP_MS (kanban #1133: every lobby read on the owner's iPhone asked the 7 stopped
+// T3 seats and the dead quick tunnels its kept list holds, 11 nodes, and paid for them each second). Failed means the read failed outright -
+// it could not load, or answered a status that is not OK; a node that is only slow (silent) is asked as before. Kept in the browser's storage
+// (key arena.nodes.down: node -> until, ms), so a reload skips them too; a node that answers is out of the list at once; when every node of a
+// read would be skipped, all of them are asked. Only for a caller that asks for it (`skipFailed`, the page's lobby).
+export const FAILED_NODE_SKIP_MS = 300000;
+// A SEAT THAT FAILED ONCE IS ASKED AGAIN SOON (kanban #1391, measured 2026-11-10 00:53-00:58Z on the live page: while the page collected 36 rounds' payouts,
+// some seats' reads failed once and were skipped for the full 5 min; the rounds then lacked their seats' agreement and no round was joinable for 5 min):
+// the first skip is FAILED_NODE_FIRST_SKIP_MS and each failure in a row doubles it, up to FAILED_NODE_SKIP_MS - a dead node still reaches 5 min after six
+export const FAILED_NODE_FIRST_SKIP_MS = 15000;
+const FAILS = new Map();
+const DOWN_KEY = 'arena.nodes.down';
+let DOWN = null;
+const downStore = () => { try { return typeof globalThis.localStorage === 'object' && globalThis.localStorage ? globalThis.localStorage : null; } catch { return null; } };
+const downMap = () => {
+  if (DOWN) return DOWN;
+  DOWN = new Map();
+  try { const st = downStore(); const kept = st ? JSON.parse(st.getItem(DOWN_KEY) || '{}') : {}; for (const [k, v] of Object.entries(kept || {})) if (Number.isFinite(Number(v))) DOWN.set(k, Number(v)); } catch { /* none kept */ }
+  return DOWN;
+};
+const downSave = (nowMs) => { try { const st = downStore(); if (!st) return; const o = {}; for (const [k, v] of downMap()) if (v > nowMs) o[k] = v; st.setItem(DOWN_KEY, JSON.stringify(o)); } catch { /* not kept */ } };
+/** The nodes skipped now, each with the ms it is skipped until (for a page's diagnostics and tests). */
+export const skippedNodes = (nowMs = Date.now()) => [...downMap()].filter(([, v]) => v > nowMs).map(([node, untilMs]) => ({ node, untilMs }));
+/** Forget every skip (tests). */
+export const forgetSkippedNodes = () => { DOWN = new Map(); FAILS.clear(); try { const st = downStore(); if (st) st.removeItem(DOWN_KEY); } catch { /* nothing kept */ } };
+export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, verifyMany = null, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS, skipFailed = false, preferGames = null, rereadMs = 0 } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
   if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
   const refused = [];
@@ -171,19 +200,45 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
   const failed = [];                                        // signer nodes whose read failed outright: none answered = none reached
   const said = new Map();                                   // id -> [{ node, key, ... }]
   const soonest = new Map();                                // id -> its entry close, as a seat lists it
-  const ask = answerWithin(fetcher, answerMs);
+  const gameOf = new Map();                                 // id -> its game's id, as a seat lists it (preferGames)
+  const asked = answerWithin(fetcher, answerMs);
+  // A SEAT'S LISTING READ AT MOST EVERY LOBBY_REREAD_MS (kanban #1451, measured on live page983 2026-11-11: the lobby paints every second and asked all
+  // 14 seats each time - 150-350 GET /rounds in 45 s from one idle page - while a seat keeps its listing 5 s and answers the same bytes until then):
+  // an answer is kept per URL and per fetcher for `rereadMs` (the page's lobby paint: LOBBY_REREAD_MS; 0, the default, keeps nothing - every read asks)
+  // and read again after it; a failed read is never kept, so a seat is asked again at once
+  const keptFor = LOBBY_KEPT.get(fetcher) || new Map(); LOBBY_KEPT.set(fetcher, keptFor);
+  const answer = (status, text) => ({ ok: status >= 200 && status < 300, status, json: async () => JSON.parse(text), text: async () => text });
+  const ask = async (url) => {
+    const k = keptFor.get(url);
+    // only a seat's listing is kept: every other ask (a round's contract, binary) goes through as before
+    if (!(rereadMs > 0) || !/\/rounds\?/.test(String(url))) return asked(url);
+    if (k && Date.now() - k.at < rereadMs) return answer(k.status, k.text);
+    const r = await asked(url);
+    if (!r || !r.ok) return r;
+    const text = await r.text();
+    keptFor.set(url, { at: Date.now(), status: r.status, text });
+    if (keptFor.size > 64) keptFor.delete(keptFor.keys().next().value);
+    return answer(r.status, text);
+  };
   // EVERY NODE AT ONCE, each within its limit: asked one after another, one silent node held the next one's answer back
   // and a lobby of two cost two limits. Answers are read in the order the nodes were named.
-  const unique = [...new Set(nodes)];
+  const named = [...new Set(nodes)];
+  // the nodes whose read failed within FAILED_NODE_SKIP_MS are not asked (kanban #1133); if that leaves none, all are
+  const down = downMap();
+  const skipped = skipFailed ? named.filter((n) => (down.get(String(n)) || 0) > nowMs) : [];
+  const unique = skipped.length < named.length ? named.filter((n) => !skipped.includes(n)) : named;
   // ONCE HALF HAVE ANSWERED, THE REST GET LOBBY_LAST_MS MORE (measured on testnet4 2026-10-16: seven seats answered in
   // 0.3-1.7 s and federation B's seven in 19-45 s, and the first lobby waited the full limit for them): the lobby is drawn from
   // the seats that answered; a late one is in the next read, a second later
   let settle = null; let answeredCount = 0;
   const settled = new Promise((resolve) => { settle = resolve; });
+  // ONLY THE OPENED GAME'S ROUNDS (kanban #1391, measured on live UI 605: a game screen read every seat's whole listing, 600-800 KB of every game, every few
+  // seconds): with `preferGames` the seats are asked for those games alone (GET /rounds?games=); a seat before it answers every game, as before
+  const gamesQuery = Array.isArray(preferGames) && preferGames.length && preferGames.length <= 16 ? `&games=${preferGames.map((g) => String(g).toLowerCase()).join(',')}` : '';
   const answers = await Promise.all(unique.map((node) => {
     // AT MOST 8 UPCOMING ROUNDS OF EACH SERIES (`next`): a node holding two series lists ~1150 rounds otherwise - 63 s,
     // past what the lobby waits for a node. A lobby shows one round per kind; eight leaves the lead's choice its room.
-    const one = ask(`${String(node).replace(/\/+$/, '')}/rounds?next=${LOBBY_PER_SERIES}`).then((r) => ({ r }), (e) => ({ e }));
+    const one = ask(`${String(node).replace(/\/+$/, '')}/rounds?next=${LOBBY_PER_SERIES}&compact=1${gamesQuery}`).then((r) => ({ r }), (e) => ({ e }));
     one.then(() => { answeredCount += 1; if (answeredCount * 2 >= unique.length && unique.length > 2) setTimeout(settle, LOBBY_LAST_MS); });
     return Promise.race([one, settled.then(() => ({ e: Object.assign(new Error(`did not answer within ${LOBBY_LAST_MS} ms of half the seats`), { silent: true }) }))]);
   }));
@@ -200,6 +255,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
         if (!/^[0-9a-f]{64}$/.test(id)) { refused.push(`${node}: listed something that is not a round id`); continue; }
         if (!said.has(id)) said.set(id, []);
         if (Number(x.entryCloseMs) > 0) soonest.set(id, Number(x.entryCloseMs));
+        if (x && x.game && x.game.id) gameOf.set(id, String(x.game.id).toLowerCase());
         // THE SIGNATURE CHECKED WHEN IT IS FIRST ASKED, ONCE (kanban #573, playtest 2026-10-21: "the Rps game is lagging a bit on an iPhone
         // 16" - measured with its client open: 12,761 BIP-340 checks in 10 s, 3.7 s of the main thread on an M1 Max, one for every seat's
         // listing of every round on each paint, while only a round's own signer nodes count): `signed` is read only for a listing that
@@ -221,13 +277,34 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     } catch (e) { refused.push(`${node}: ${e.message}`); failed.push(String(node)); if (e && e.silent) unanswered.push(String(node)); }
   }
   const rows = [], closed = [];
+  // WHY NO ROW (kanban #1133): listings read, rounds named, contracts known, listings stale or with a false signature, rounds short of agreement
+  const why = { listings: 0, rounds: said.size, contracts: 0, stale: 0, sigFalse: 0, notEnough: 0 };
+  for (const counts of said.values()) why.listings += counts.length;
   // A ROUND'S CONTRACT FROM A NODE THAT ANSWERED FIRST, so a silent one costs its limit once per paint, not once per row.
-  const answeredFirst = [...unique.filter((n) => !unanswered.includes(String(n))), ...unique.filter((n) => unanswered.includes(String(n)))];
+  // AND A NODE WHOSE READ FAILED OUTRIGHT GOES LAST TOO (kanban #1133, the owner's iPhone 2026-11-05 09:10 local: "raw 0 ... ref 11" - the page's
+  // kept list began with dead quick tunnels and the stopped T3 seats; fetchRound asked each of them twice, in order, before a live seat, so
+  // every contract came late or not at all, and a round that failed is held unreadable for UNREADABLE_MS: the lobby showed no window).
+  // Order: answered, then silent, then failed.
+  const failedSet = new Set(failed.map(String)), silentSet = new Set(unanswered.map(String));
+  const answeredFirst = [...unique.filter((n) => !failedSet.has(String(n))), ...unique.filter((n) => silentSet.has(String(n))),
+    ...unique.filter((n) => failedSet.has(String(n)) && !silentSet.has(String(n)))];
   // KEPT BY ID, FETCHED 16 AT A TIME (2026-09-30, testnet4 series 3cfbe516: ~450 rounds listed, each contract
   // fetched one after another on every paint). A round's id is its contract's hash, so a kept contract cannot go stale.
   // THE SOONEST FIRST, A FEW AT A READ (kanban #946, measured 2026-11-01: 304 contracts before the first paint, 3.6 of 7.7 s): a lobby shows the next round of each kind; the far ones come with the next reads
-  const wanted = [...said.keys()].filter((id) => !CONTRACTS.has(id) && !(nowMs - (UNREADABLE.get(id) ?? -Infinity) < UNREADABLE_MS))
-    .sort((a, b) => (soonest.get(a) ?? Infinity) - (soonest.get(b) ?? Infinity)).slice(0, LOBBY_CONTRACTS_PER_READ);
+  // THE OPENED GAME'S CONTRACTS FIRST (kanban #1133, the owner's iPhone on UI 549: client 3.1 s, the lobby's first answer 13.2 s - its first read
+  // listed 157 rounds of every game and fetched 64 contracts, soonest first, mostly another game's, before it answered): with `preferGames`
+  // (the page's chosen game's version ids), that game's rounds are fetched first and every one of them, the rest of the read at most
+  // LOBBY_OTHER_CONTRACTS_PER_READ; the others follow on the next reads, a second apart
+  const open = [...said.keys()].filter((id) => !CONTRACTS.has(id) && !(nowMs - (UNREADABLE.get(id) ?? -Infinity) < UNREADABLE_MS))
+    // A ROUND STILL TAKING ENTRIES FIRST (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; measured on live UI 600: the seats list the
+    // rounds closed in the last 2 h too, RPS 8 s apart, and the first read fetched its 64 contracts soonest first - every one already closed - so it made
+    // no row and the game said "The next round opens in a moment" until the second read, 13-14 s after the game opened): the open ones, soonest first,
+    // then the closed ones, soonest first
+    .sort((a, b) => (((soonest.get(a) ?? Infinity) <= nowMs) - ((soonest.get(b) ?? Infinity) <= nowMs)) || ((soonest.get(a) ?? Infinity) - (soonest.get(b) ?? Infinity)));
+  const prefer = Array.isArray(preferGames) && preferGames.length ? new Set(preferGames.map((g) => String(g).toLowerCase())) : null;
+  const wanted = prefer
+    ? [...open.filter((id) => prefer.has(gameOf.get(id))), ...open.filter((id) => !prefer.has(gameOf.get(id))).slice(0, LOBBY_OTHER_CONTRACTS_PER_READ)].slice(0, LOBBY_CONTRACTS_PER_READ)
+    : open.slice(0, LOBBY_CONTRACTS_PER_READ);
   for (let i = 0; i < wanted.length; i += 16)
     await Promise.all(wanted.slice(i, i + 16).map((id) => fetchRound(id, answeredFirst, { fetcher: ask })
       .then(({ contract }) => { CONTRACTS.set(id, contract); UNREADABLE.delete(id); }, (e) => { UNREADABLE.set(id, nowMs); refused.push(`${id.slice(0, 16)}: ${e.message}`); })));
@@ -273,6 +350,8 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     for (const c of counts) {
       c.counts = !!(c.fresh && signerNodes.has(c.key) && c.phase === 'open' && c.assignedHere && c.signed);   // the signature last: it is the costly part
       if (c.counts) agreeing.add(c.key);
+      // why a listing did not count (kanban #1133, for a page's diagnostics)
+      if (!c.fresh) why.stale++; else if (signerNodes.has(c.key) && c.phase === 'open' && c.assignedHere && !c.signed) why.sigFalse++;
     }
     // THE SEATED (§5A.7): where the seats seat, the row lists who a certificate seats - and is not joined before one stands
     const seatingSaid = counts.map((c) => c.committee).filter((x) => x && x.seated);
@@ -314,7 +393,12 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     });
   }
   rows.sort((x, y) => (x.phase === y.phase ? x.entryCloseMs - y.entryCloseMs : (x.phase === 'open' ? -1 : 1)));
-  return { rows, closed, refused, unanswered, failed, asked: unique.length };
+  // FAILED NOW: skipped from here on for FAILED_NODE_SKIP_MS; ANSWERED NOW: out of the list (kanban #1133)
+  if (skipFailed) { const silentNow = new Set(unanswered.map(String)), failedNow = new Set(failed.map(String));
+    for (const n of unique) { const k = String(n); if (failedNow.has(k) && !silentNow.has(k)) { const times = (FAILS.get(k) || 0) + 1; FAILS.set(k, times); down.set(k, nowMs + Math.min(FAILED_NODE_SKIP_MS, FAILED_NODE_FIRST_SKIP_MS * 2 ** (times - 1))); } else if (!failedNow.has(k)) { down.delete(k); FAILS.delete(k); } }
+    downSave(nowMs); }
+  return { rows, closed, refused, unanswered, failed, asked: unique.length, skipped: unique === named ? [] : skipped, why: { ...why, contracts: [...said.keys()].filter((id) => CONTRACTS.has(id)).length, unreadable: [...said.keys()].filter((id) => UNREADABLE.has(id)).length,
+    contractError: (refused.find((r) => /^[0-9a-f]{16}: /.test(r)) || '').slice(0, 160) } };
 }
 
 /**
@@ -347,6 +431,9 @@ export const FUNDED_JOIN_LEAD_MS = 15000;
 // A join whose deposit misses the entry close moves on to the next round (the page, ARENA_LOBBY_ACT.join).
 export const JOIN_LEAD_MS = 0;
 export const LOBBY_PER_SERIES = 8;
+/** How long a seat's listing answer is reused before the seat is asked again (kanban #1451): the seat keeps its own listing 5 s. */
+export const LOBBY_REREAD_MS = 5000;
+const LOBBY_KEPT = new WeakMap();   // fetcher -> url -> { at, status, text }
 /**
  * A LOBBY READ THAT GOT NO ANSWER KEEPS ITS LAST ROWS (2026-10-01 15:25, HARD: "A player opening the page sees a
  * free row and a paid testnet4 row together. Do not drop free to show testnet4. Do not drop testnet4 to show free.").

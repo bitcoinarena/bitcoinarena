@@ -20,6 +20,8 @@
  * and posts nothing: the day falls to the next node an hour later (duty.js dayPostDue). arena.conf duty_post: auto (the default: on while the
  * wallet holds confirmed coins), on, off.
  */
+import { OBJECTION_WINDOW_MS, OBJECTION_WINDOW_H2H_MS, OBJECTION_WINDOW_H2H_REGTEST_MS } from '../../arena-protocol/src/constants.js';   // #1399
+import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';   // #1399
 import { join } from 'node:path';
 import { appendFileSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -246,9 +248,26 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
       try { seat.nameFunded(toHex(id)); } catch { /* none */ }
       if (env.ARENA_FUNDED_ROUNDS_FILE) { try { appendFileSync(env.ARENA_FUNDED_ROUNDS_FILE, `${toHex(id)}\n`); } catch (e) { say({ dutyDay: 'funded file not written', why: e.message }); } }
     }
-    announceGrid({ lines: built.lines, tx: sent.hex, targets: await seatUrls(), fetchFn })
+    const targets = await seatUrls();
+    announceGrid({ lines: built.lines, tx: sent.hex, targets, fetchFn })
       .then((s) => say({ dutyDay: 'announced', txid: sent.txid.slice(0, 16), seats: `${s.took}/${s.of}` })).catch(() => {});
-    return { ok: true, published: true, txid: sent.txid, series: built.ids.map(toHex), lines: built.lines, rounds: built.rounds, lastCloseMs: built.lastCloseMs, firstStartMs: built.start };
+    // the seats it went to are kept with the posting: a fee raise is announced to the same ones (kanban #1126)
+    return { ok: true, published: true, txid: sent.txid, series: built.ids.map(toHex), lines: built.lines, rounds: built.rounds, lastCloseMs: built.lastCloseMs, firstStartMs: built.start,
+      announcedTo: targets };
+  };
+  // A FEE RAISE ANNOUNCED AGAIN (kanban #1126): to the seats the first announcement went to and every seat known now
+  const announce = async ({ lines, tx, targets = [] }) => announceGrid({ lines, tx, targets: [...new Set([...targets, ...(await seatUrls())])], fetchFn });
+  // THE PUBLIC CHAIN (kanban #1126): a publication our chain has not confirmed is sent there too - on testnet4 only, unless
+  // ARENA_DUTY_ESPLORA names the bases ('0' none)
+  let chainName = null;
+  const publicSender = esploraSender({ bases: String(env.ARENA_DUTY_ESPLORA || DUTY_ESPLORA_TESTNET4).split(/[\s,]+/).filter((x) => x && x !== '0'),
+    ms: Number(env.ARENA_DUTY_ESPLORA_MS || 8000), fetchFn, now });
+  const publicSend = async (hex) => {
+    if (!env.ARENA_DUTY_ESPLORA) {
+      if (chainName === null) { try { chainName = String((await call('getblockchaininfo', [])).chain); } catch { return { ok: false, status: 0, text: 'the chain\'s name could not be read' }; } }
+      if (chainName !== 'testnet4') return { ok: false, status: 0, text: `not sent: the chain is ${chainName}, not testnet4 (ARENA_DUTY_ESPLORA names bases)` };
+    }
+    return publicSender(hex);
   };
   const postSeries = async (line) => postSeriesLine(line, (await seatUrls()).map((u) => [u.replace(/^https?:\/\//, ''), u]), { fetchFn });
   const fedsNow = async () => {
@@ -268,14 +287,51 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     if (engines.has(key)) return engines.get(key);
     const nid = networkIdHex();
     const e = createDayDuty({ game, role, item: String(env[`ARENA_DUTY_ITEM_${game.toUpperCase()}`] || `${game}-day`), networkId: fromHex(nid),
+      // A DAY OF RPS NAMES THE HEAD-TO-HEAD WINDOW (§13A, RULED 2026-11-10, kanban #1398): every seat takes it from audit36 on, and the day's duty
+      // node posts it - the template otherwise carries the 600 s of the last day forward for good. Audit 5 (#1399): a regtest's is 5 s (60 s there is
+      // refused by every regtest seat), and ARENA_H2H_WINDOW=0 names 600 s outright (an empty override let a held 60 s template carry on)
+      // OFF UNTIL OTHER NODES AUDIT THE RESULT (Daniel 2026-11-10 ~07:20Z: "When the objection window is just 60 seconds, some other node need to
+      // check audit the result not just the 5 of 7"): only with ARENA_H2H_WINDOW=1; otherwise an RPS day names 600 s outright, whatever its template held
+      extraFields: (g) => (g !== 'rps' ? {} : env.ARENA_H2H_WINDOW !== '1' ? { objectionWindowMs: OBJECTION_WINDOW_MS }
+        : { objectionWindowMs: nid === toHex(NETWORK_ID_REGTEST) ? OBJECTION_WINDOW_H2H_REGTEST_MS : OBJECTION_WINDOW_H2H_MS }),
       postedPrimary: async (slot) => { const p = engines.get(game); return !!p && (p.state().mine || []).some((x) => x.slot === slot && !x.emergency); },
       local: new Set([toHex(seat.nodeKey)]), dir: join(dir, role === 'backup' ? `${game}-backup` : game),
       chain: { view: chainView, widen, censusKeysAt: async (h) => { const es = await censusEntriesAt(nid, h); remember(es); return es ? es.map((x) => x.pubkey) : null; }, seatUrls },
       chainCall: call, walletRpc: (m, p) => walletCall(wallet.wallet || '')(m, p), gridBase: gb.gridBase, openGrid: openGrid(game), postSeries, fedsNow,
       seatCatalog: gb.seatCatalog, devOf: new Proxy({}, { get: (_, k) => devOf[k] }), creator: { creatorSecret: nodeSecret }, stakeMsat: undefined, feeRate, maxFeeRate,
-      emergencyOn: env.ARENA_DUTY_EMERGENCY !== '0', seatsAgreeOn: async (hash) => gb.agreementOf(hash, await gb.seatChains()), canPay, fetchFn, say, now });
+      emergencyOn: env.ARENA_DUTY_EMERGENCY !== '0', seatsAgreeOn: async (hash) => gb.agreementOf(hash, await gb.seatChains()), canPay, fetchFn, say, now,
+      announce, publicSend: env.ARENA_DUTY_ESPLORA === '0' ? null : publicSend,
+      // WHO A DAY MARKER IS FROM (kanban #1168): the creator of a series this seat holds or was announced; ARENA_DUTY_CREATORS the creator
+      // keys (hex, comma-separated) the operator counts as duty posters beside the day's duty order - a runner whose key is not a census node
+      creatorOf, seriesInfoOf, creators: String(env.ARENA_DUTY_CREATORS || '').split(',').map((x) => x.trim()).filter(Boolean) });
     engines.set(key, e);
     return e;
+  };
+  // THE CREATOR OF A SERIES THIS SEAT HOLDS (its line's signature checked when it was taken), else of one announced to it (POST /expected)
+  let creators = new Map(), creatorsAt = -1;
+  const creatorOf = (idHex) => {
+    const held = seat.heldTemplates();
+    if (held.length !== creatorsAt) {
+      creators = new Map();
+      for (const t of held) { if (!(t && t.creatorPubkey instanceof Uint8Array)) continue; try { creators.set(toHex(seriesId(t)), toHex(t.creatorPubkey)); } catch { /* not a series */ } }
+      creatorsAt = held.length;
+    }
+    return creators.get(String(idHex)) || (typeof seat.announcedCreatorOf === 'function' ? seat.announcedCreatorOf(String(idHex)) : null);
+  };
+  // WHAT A MARKER'S SERIES IS (kanban #1204 FED-C1): its creator, its game and when its first round closes - a day marker counts only
+  // for a series of its own app that plays the day it posts, so a copied id of yesterday's (or another app's) series does not
+  let infos = new Map(), infosAt = -1;
+  const seriesInfoOf = (idHex) => {
+    const held = seat.heldTemplates();
+    if (held.length !== infosAt) {
+      infos = new Map();
+      for (const t of held) { if (!(t && t.creatorPubkey instanceof Uint8Array)) continue;
+        try { infos.set(toHex(seriesId(t)), { creator: toHex(t.creatorPubkey), gameId: t.gameId ? toHex(t.gameId) : null, firstCloseMs: Number(t.entryCloseMs) }); } catch { /* not a series */ } }
+      infosAt = held.length;
+    }
+    const h = infos.get(String(idHex)); if (h) return h;
+    const a = typeof seat.announcedOf === 'function' ? seat.announcedOf(String(idHex)) : null;
+    return a && a.creator ? { creator: String(a.creator), gameId: a.gameId || null, firstCloseMs: Number(a.firstCloseMs) } : null;
   };
   let gridBases = null;
   const gridBaseOf = () => gridBases || (gridBases = createGridBase({ chainCall: call,
@@ -357,6 +413,31 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     pass, status,
     // for the tests: one pass at once
     get engines() { return engines; },
+  };
+}
+
+/** The public testnet4 Esplora bases, in order (as the health watcher reads them, kanban #1124). */
+export const DUTY_ESPLORA_TESTNET4 = 'https://mempool.space/testnet4/api,https://blockstream.info/testnet4/api';
+
+/**
+ * A TRANSACTION SENT TO THE PUBLIC CHAIN BY ESPLORA (kanban #1126): POST /tx to each base in turn, `ms` each; a base that failed (no
+ * answer, 5xx, 429) steps back for 10 min. -> { ok, status (0: no answer), text, base }. Never throws.
+ */
+export function esploraSender({ bases, ms = 8000, fetchFn = fetch, now = Date.now }) {
+  const benched = new Map();
+  return async (hex) => {
+    const order = bases.slice().sort((a, b) => (benched.get(a) || 0) - (benched.get(b) || 0));
+    let last = { ok: false, status: 0, text: 'no Esplora base', base: null };
+    for (const base of order) {
+      try {
+        const r = await fetchFn(`${base}/tx`, { method: 'POST', body: String(hex), headers: { 'content-type': 'text/plain' }, signal: AbortSignal.timeout(ms) });
+        const text = await r.text();
+        if (r.status >= 500 || r.status === 429) { benched.set(base, now() + 600000); last = { ok: false, status: r.status, text, base }; continue; }
+        if ((benched.get(base) || 0) < now()) benched.delete(base);
+        return { ok: r.ok, status: r.status, text, base };
+      } catch (e) { benched.set(base, now() + 600000); last = { ok: false, status: 0, text: e.name === 'TimeoutError' ? `no answer in ${ms / 1000} s` : e.message, base }; }
+    }
+    return last;
   };
 }
 

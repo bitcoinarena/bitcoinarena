@@ -4,11 +4,13 @@
 // 2026-10-05). index.html's combineWallets is lifted out of the page by its text and run as it is, against fake wallets: the
 // browser's kept phrases (arena.seeds), each with its own e-cash; the current phrase's wallet `main`. Each other wallet with
 // e-cash sends it all once, the e-cash is kept in the browser BEFORE it is received, received once into `main`, and the kept
-// copy dropped only once the federation reissued it (Success, AlreadyReceived, Rejected). No balance moved twice, none stranded.
+// copy dropped only once the federation reissued it in full (Success, AlreadyReceived; a Rejected is kept as refused, kanban #1149). No balance
+// moved twice, none stranded. The page's records are moved by ecash-transfer.js, the bundle's (ARENACLIENT carries it).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
+import * as TRANSFER from '../src/ecash-transfer.js';
 
 const PAGE = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
 const SRC = (() => {
@@ -22,20 +24,24 @@ const SEEDS = { cur: hex(1), rich: hex(2), poor: hex(3), none: hex(4), held: hex
 const FED = 'fe'.repeat(32);
 
 // a browser: storage, kept phrases, one fake wallet per phrase (e-cash notes it can send once), and the current tab's main
-function browser({ balances, receive = () => 'Success', heldLocks = [], pending = [], blwp = {}, handover = null } = {}) {
+function browser({ balances, receive = () => 'Success', heldLocks = [], pending = [], blwp = {}, handover = null, failWrite = null } = {}) {
   const store = new Map();
   // a tab that holds a phrase writes its heartbeat; a lock without one is taken over (kanban #803)
   for (const h of heldLocks) store.set('arena.seed.held.' + h.slice(0, 16), JSON.stringify({ at: Date.now() }));
-  const L = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
+  const L = { getItem: (k) => (store.has(k) ? store.get(k) : null), removeItem: (k) => store.delete(k),
+    setItem: (k, v) => { if (failWrite && failWrite(k, String(v))) { const e = new Error('The quota has been exceeded.'); e.name = 'QuotaExceededError'; throw e; } store.set(k, String(v)); } };
   const proxy = new Proxy(L, { ownKeys: () => [...store.keys()], getOwnPropertyDescriptor: (t, k) => (store.has(k) ? { enumerable: true, configurable: true, value: store.get(k) } : undefined) });
   L.setItem('arena.seeds', JSON.stringify(Object.values(SEEDS).map((h) => ({ hex: h }))));
   for (const p of pending) L.setItem(p.key, JSON.stringify(p.rec));
   const log = [];
+  const received = new Set();
   const wallets = new Map();
   for (const [name, h] of Object.entries(SEEDS)) {
     const w = { name, msat: BigInt(balances[name] ?? 0), entries: name === 'none' ? 0 : 3 };
     w.balanceMsat = async () => String(w.msat);
     w.sendAllEcash = async () => { log.push(`send ${name} ${w.msat}`); if (w.msat === 0n) return JSON.stringify({ ecash: '' }); const msat = w.msat; w.msat = 0n; return JSON.stringify({ ecash: `ecash:${name}:${msat}`, msat: String(msat) }); };
+    // ITS OWN NOTES TAKEN BACK (kanban #1149: a browser that cannot keep them after the send)
+    w.receiveEcash = async (ecash) => { if (received.has(ecash)) return JSON.stringify({ state: 'Rejected' }); received.add(ecash); w.msat += BigInt(ecash.split(':')[2]); log.push(`receive back ${ecash}`); return JSON.stringify({ state: 'Success', msat: ecash.split(':')[2] }); };
     wallets.set(h, w);
   }
   // EACH PHRASE'S BLWP-ERA WALLET: its own e-cash, its own store entries (none unless `blwp` names a balance)
@@ -46,17 +52,16 @@ function browser({ balances, receive = () => 'Success', heldLocks = [], pending 
     w.sendAllEcash = async () => { log.push(`send ${w.name} ${w.msat}`); if (w.msat === 0n) return JSON.stringify({ ecash: '' }); const msat = w.msat; w.msat = 0n; return JSON.stringify({ ecash: `ecash:${name}-blwp:${msat}`, msat: String(msat) }); };
     ancestors.set(h, w);
   }
-  const received = new Set();
   const main = { msat: 0n };
   main.receiveEcash = async (ecash) => {
     const state = receive(ecash, received);
     log.push(`receive ${ecash} ${state}`);
     if (state === 'Success') { if (received.has(ecash)) throw new Error('received twice'); received.add(ecash); main.msat += BigInt(ecash.split(':')[2]); }
     if (state === 'throw') throw new Error('the federation did not answer');
-    return JSON.stringify({ state });
+    return JSON.stringify({ state, msat: ecash.split(':')[2] });   // the face value, as the 2.0 lock client's receive says it
   };
   const opened = [];
-  const ARENACLIENT = {
+  const ARENACLIENT = { ...TRANSFER,
     toHex: (b) => (typeof b === 'string' ? b : Buffer.from(b).toString('hex')),
     fromHex: (h) => h,
     phraseWalletEntries: (_L, h, _f, { ancestor = false } = {}) => { const w = (ancestor ? ancestors : wallets).get(h); return w ? w.entries : 0; },
@@ -130,15 +135,16 @@ test('the e-cash is kept before it is received: a receive that fails leaves the 
   assert.equal(b.log.filter((l) => l.startsWith('send rich')).length, 1, 'sent once in all');
 });
 
-test('a kept copy is dropped on Success, AlreadyReceived and Rejected - and kept on any other state', async () => {
-  for (const [state, dropped] of [['Success', true], ['AlreadyReceived', true], ['Rejected', true], ['Pending', false], ['Created', false]]) {
+test('a kept copy is dropped on Success and AlreadyReceived - kept as refused on Rejected (kanban #1149), kept as it is on any other state', async () => {
+  for (const [state, dropped] of [['Success', true], ['AlreadyReceived', true], ['Rejected', false], ['Pending', false], ['Created', false]]) {
     const b = browser({ balances: {}, receive: () => state, pending: [{ key: 'arena.ecash.pending.1.abcd', rec: { ecash: 'ecash:old:7000', msat: '7000', from: 'abcd' } }] });
     await b.run();
     assert.equal(b.pendingKeys().length === 0, dropped, state);
+    if (state === 'Rejected') assert.equal(JSON.parse(b.store.get('arena.ecash.pending.1.abcd')).state, 'refused', 'the evidence stays');
   }
   const bad = browser({ balances: {}, pending: [{ key: 'arena.ecash.pending.2.x', rec: { msat: '1' } }] });
   await bad.run();
-  assert.deepEqual(bad.pendingKeys(), [], 'a kept record with no e-cash is dropped');
+  assert.ok(!bad.log.some((l) => l.startsWith('receive ')), 'a kept record with no e-cash is received nothing from');
 });
 
 test('a second call while one runs is the same run - nothing swept twice; a phrase another tab holds is skipped', async () => {
@@ -219,4 +225,43 @@ test('money handed over to another tab is not taken by this one - until two minu
   const stale = browser({ balances: {}, pending: [{ key: `arena.ecash.pending.${FED.slice(0, 16)}.1.x`, rec: rec(Date.now() - 130000) }] });
   await stale.runIn(FED);
   assert.equal(stale.main.msat, 7000n, 'stranded for two minutes: merged here');
+});
+
+test('the browser refuses the kept copy after the send (storage full): the notes go back into the wallet they left, never lost (kanban #1149)', async () => {
+  const b = browser({ balances: { rich: 300000 }, failWrite: (k, v) => k.startsWith('arena.ecash.pending.') && v.includes('ecash:') });
+  const before = b.total();
+  await b.run();
+  assert.equal(b.total(), before, 'every msat is in a wallet: nothing lost');
+  assert.equal(b.wallets.get(SEEDS.rich).msat, 300000n, 'back in the wallet they left');
+  assert.ok(b.log.includes('receive back ecash:rich:300000'));
+  assert.deepEqual(b.pendingKeys(), [], 'the intent is dropped once the notes are back');
+});
+
+test('a browser that cannot write the intent sends nothing (kanban #1149)', async () => {
+  const b = browser({ balances: { rich: 300000 }, failWrite: (k) => k.startsWith('arena.ecash.pending.') });
+  await b.run();
+  assert.equal(b.wallets.get(SEEDS.rich).msat, 300000n);
+  assert.ok(!b.log.some((l) => l.startsWith('send rich')), 'the wallet was never asked to send');
+});
+
+// KANBAN #1388 (audit 2 #1204 CLIENT-13): a merge's send committed (the intent written, the notes spent into a string in the wallet's log) and the tab
+// closed before the string was kept. Next load that wallet reads 0: it was marked empty and never opened again, the intent never resolved - its
+// notes counted nowhere. Now the intent is resolved before the balance is read, and the wallet is not marked empty while one stays open.
+test('#1388 an intent left by a closed tab on a wallet that now reads 0: resolved from the wallet\'s log and merged; not marked empty while it stays open', async () => {
+  const key = `arena.ecash.pending.${FED.slice(0, 16)}.5.${SEEDS.rich.slice(0, 8)}`;
+  const intent = { v: 3, state: 'intent', kind: 'merge', msat: '5000', from: 'rich', fromKey: SEEDS.rich.slice(0, 16), fed: FED, atMs: 1 };
+  const b = browser({ balances: { rich: 0n }, pending: [{ key, rec: intent }] });
+  b.wallets.get(SEEDS.rich).sentEcash = async (k) => JSON.stringify(k === key ? { ecash: 'ecash:rich:5000', msat: '5000' } : {});
+  await b.run();
+  console.log(`  MEASURED #1388: main ${b.main.msat} msat; records left ${JSON.stringify(b.pendingKeys())}; empty mark ${b.store.has('arena.wallet.empty.' + FED.slice(0, 16) + '.' + SEEDS.rich.slice(0, 16))}`);
+  assert.equal(b.main.msat, 5000n, 'the notes of the left intent were not merged');
+  assert.deepEqual(b.pendingKeys(), []);
+  // a lock client that cannot read its log: the intent stays, and the wallet is not marked empty, so the next pass opens it again
+  const c = browser({ balances: { rich: 0n }, pending: [{ key, rec: intent }] });
+  await c.run();
+  assert.deepEqual(c.pendingKeys(), [key], 'the open intent was dropped');
+  assert.equal(c.store.has('arena.wallet.empty.' + FED.slice(0, 16) + '.' + SEEDS.rich.slice(0, 16)), false, 'marked empty while its intent is open');
+  c.opened.length = 0;
+  await c.run();
+  assert.ok(c.opened.includes('rich'), 'the wallet with an open intent was not opened again');
 });

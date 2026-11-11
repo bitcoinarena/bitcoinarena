@@ -67,8 +67,13 @@ test('in force for new rounds only: before validFrom the parent, from it the app
   const { sets } = await approvedDonationSets({ networkId: NET, known, ballots: [{ proposal: p, approvals: [approval(p, 1, 156762)] }], verifySecp256k1 });
   assert.equal(sets.length, 1); assert.equal(sets[0].validFrom, 156763);
   const authority = new Uint8Array(32), recovery = new Uint8Array(32).fill(1);
-  const inForce = (height, extra = []) => donationSetInForce({ networkId: NET, authority, recovery, sets: extra, height, verify: () => false, approved: [...sets] });
-  assert.equal(inForce(156762).ok, false, 'no admin set given here: before validFrom nothing approved is in force');
+  // the authority's signature over the same serial and recipients (kanban #1337: a change needs both), and the parent it replaces
+  const signed = (x) => ({ ...x, signature: new Uint8Array(64).fill(1) });
+  const base = signed({ networkId: NET, serial: 3n, validFrom: 156038, recipients: PARENT });
+  const theirs = signed({ networkId: NET, serial: 4n, validFrom: 156000, recipients: NEW });
+  const inForce = (height, extra = [base, theirs]) => donationSetInForce({ networkId: NET, authority, recovery, sets: extra, height, verify: () => true, approved: [...sets] });
+  assert.equal(inForce(156762).serial, 3n, 'before validFrom the parent');
+  assert.equal(inForce(156763, [base]).serial, 3n, 'approved by its recipients alone: not in force');
   const now = inForce(156763);
   assert.equal(now.ok, true); assert.equal(now.serial, 4n); assert.deepEqual(now.recipients.map((r) => r.shareBps), [6000, 3000, 1000]);
   assert.ok(now.approvedBy);
@@ -82,6 +87,24 @@ test('a proposer who denies their own proposal withdraws it: refused, whoever ha
   assert.equal(late.state, 'refused', 'an acceptance after the withdrawal changes nothing');
   const other = await tallyDonationProposal({ proposal: p, approvals: [approval(p, 1, 157289, false)], parent: PARENT, verifySecp256k1 });
   assert.equal(other.state, 'refused', 'dev a (66.67 %) denying refuses it as before');
+  // dev b proposed its own cut (3333 -> 3000), its signature on the proposal; dev a's (6667 -> 6000) is cut with its acceptance (kanban #1337)
   const before = await tallyDonationProposal({ proposal: p, approvals: [approval(p, 1, 157288), approval(p, 2, 157289, false)], parent: PARENT, verifySecp256k1 });
   assert.equal(before.state, 'approved', 'approved before the proposer turned on it stays approved');
+});
+
+// KANBAN #1337: a recipient's share is cut only with its own signature or the cold admin key.
+test('#1337 a share is cut only with its recipient\'s own approval or the cold admin key', async () => {
+  const p = proposal(1);                                      // dev a proposes 60 / 30 / 10: dev b's 33.33 % is cut to 30 %
+  const aOnly = await tallyDonationProposal({ proposal: p, approvals: [approval(p, 1, 100)], parent: PARENT, verifySecp256k1 });
+  const both = await tallyDonationProposal({ proposal: p, approvals: [approval(p, 1, 100), approval(p, 2, 105)], parent: PARENT, verifySecp256k1 });
+  const cold = await tallyDonationProposal({ proposal: p, approvals: [approval(p, 1, 100)], parent: PARENT, verifySecp256k1, coldCut: async () => true });
+  const grow = [{ recipientPk: pk(1), shareBps: 6667, label: 'dev a' }, { recipientPk: pk(2), shareBps: 3333, label: 'dev b' }];
+  const keep0 = { networkId: NET, serial: 4n, parentSetId: donationSetId(PARENT), proposer: pk(1), recipients: grow };
+  const keep = { ...keep0, signature: sign(donationProposalId(keep0), 1) };
+  const noCut = await tallyDonationProposal({ proposal: keep, approvals: [approval(keep, 1, 100)], parent: PARENT, verifySecp256k1 });
+  console.log('  MEASURED #1337 cut:', JSON.stringify({ majorityWithoutTheCut: [aOnly.state, aOnly.why], withItsApproval: [both.state, both.validFrom], coldKey: cold.state, nothingCut: noCut.state }));
+  assert.equal(aOnly.state, 'open'); assert.match(aOnly.why, /share it cuts/);
+  assert.equal(both.state, 'approved'); assert.equal(both.validFrom, 106);
+  assert.equal(cold.state, 'approved');
+  assert.equal(noCut.state, 'approved', 'a change that cuts nobody needs only the majority');
 });

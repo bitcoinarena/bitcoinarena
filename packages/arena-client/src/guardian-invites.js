@@ -21,10 +21,17 @@ export function noteInvite(invite) {
 }
 
 /** A seat's signed federation record (hex), verified or not: its invite's guardians are noted. */
+// A RECORD NOTED ONCE (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; profiled on stage UI 603: 1.75 s of every minute of an RPS page
+// decoded the same signed records again - each seat's, each federation's, on every read): a record already noted is not decoded again
+const NOTED_RECORDS = new Set();
 export function noteRecordInvite(recordHex) {
+  const k = String(recordHex);
+  if (NOTED_RECORDS.has(k)) return true;
   try {
-    const bytes = Uint8Array.from(String(recordHex).match(/../g).map((x) => parseInt(x, 16)));
-    return noteInvite(splitSignedRecord(bytes).record.invite);
+    const bytes = Uint8Array.from(k.match(/../g).map((x) => parseInt(x, 16)));
+    const ok = noteInvite(splitSignedRecord(bytes).record.invite);
+    if (ok) { if (NOTED_RECORDS.size >= 2000) NOTED_RECORDS.clear(); NOTED_RECORDS.add(k); }
+    return ok;
   } catch { return false; }
 }
 
@@ -40,4 +47,4 @@ export function wholeInvite(invite) {
   try { return inviteForGuardians(id, guardians); } catch { return null; }
 }
 
-export const forgetGuardianInvites = () => seen.clear();   // tests
+export const forgetGuardianInvites = () => { seen.clear(); NOTED_RECORDS.clear(); };   // tests

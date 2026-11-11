@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bitcoin Arena · Play for sats. Settle on Bitcoin.</title>
+<meta property="og:site_name" content="Bitcoin Arena">
+<meta property="og:title" content="Bitcoin Arena · Play for sats. Settle on Bitcoin.">
+<meta property="og:description" content="Games and markets on a federated network of independent nodes, on testnet. No single company or node holds the money. Free test sats, no account.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://bitcoinarena.io/">
+<meta property="og:image" content="https://testnet.bitcoinarena.io/arena-og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Bitcoin Arena · Play for sats. Settle on Bitcoin.">
+<meta name="twitter:description" content="Games and markets on a federated network of independent nodes, on testnet. No single company or node holds the money.">
+<meta name="twitter:image" content="https://testnet.bitcoinarena.io/arena-og.png">
+<meta name="description" content="Games and prediction markets for bitcoin, run by independent nodes. Tick Tock, Next Block · Rock Paper Scissors · Bitcoin Up or Down. Held by a federation, fully Nostr native, live on Bitcoin testnet4.">
+<meta name="theme-color" content="#0f0a10">
+<!-- kanban #1455: the new stadium logo, PREVIEW on next.bitcoinarena.io only (production keeps /favicon.ico until Daniel's OK) -->
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" type="image/svg+xml" href="/img/logo/bitcoin-arena-favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/img/logo/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/img/logo/favicon-16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/img/logo/favicon-180.png">
+<link rel="manifest" href="/img/logo/site.webmanifest">
+<link rel="me" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2">
+<!-- #1197 (Daniel 2026-11-06, after an A/B test where 8 of 8 preferred the calm page): the live page's order and content, without the
+     template look. One system typeface, monospace for every number, id and table; flat panels with 1 px borders and 4 px corners;
+     no gradients, no glass, no scroll-reveal, no kickers, no bullets or step numbers, no illustrations. -->
+<style>
+  :root {
+    --bg: #0f0a10; --panel: #160f14; --line: #2f2229; --text: #f3ebe4; --soft: #d4c7be; --dim: #9d8d84; --accent: #f7931a; --nostr: #b98cff;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-padding-top: 64px; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 400 17px/1.6 var(--sans); }
+  a { color: var(--text); text-underline-offset: 3px; text-decoration-color: rgba(243,235,228,.35); }
+  a:hover { color: var(--accent); text-decoration-color: currentColor; }
+  img { max-width: 100%; }
+  .wrap { width: min(1080px, calc(100% - 32px)); margin: 0 auto; }
+  .mono, code, table { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  code { font-size: .86em; color: var(--soft); overflow-wrap: anywhere; }
+  h1, h2, h3 { font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
+  h1 { font-size: clamp(30px, 4.4vw, 46px); line-height: 1.12; margin: 0 0 18px; max-width: 24ch; }
+  h2 { font-size: clamp(24px, 3vw, 32px); line-height: 1.18; margin: 0 0 14px; max-width: 30ch; }
+  h3 { font-size: 19px; line-height: 1.3; margin: 0 0 6px; }
+  p { margin: 0 0 14px; }
+  .lead { color: var(--soft); max-width: 66ch; }
+  .dim { color: var(--dim); }
+
+  /* the bar */
+  nav.top { position: sticky; top: 0; z-index: 20; background: var(--bg); border-bottom: 1px solid var(--line); }
+  nav.top .wrap { display: flex; align-items: center; gap: 22px; height: 56px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; text-decoration: none; white-space: nowrap; }
+  .brand img.mark { height: 30px; width: auto; display: block; }
+.brand i { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 4px; background: var(--accent); color: #140a00; font-style: normal; font-weight: 800; }
+  nav.top .links { margin-left: auto; display: flex; gap: 20px; font-size: 15px; }
+  nav.top .links a { color: var(--dim); text-decoration: none; white-space: nowrap; }
+  nav.top .links a:hover { color: var(--text); }
+  nav.top .nid { display: inline-flex; align-items: center; gap: 6px; color: var(--nostr); text-decoration: none; font-size: 14px; white-space: nowrap; }
+  nav.top .nid svg { display: block; width: 18px; height: 18px; fill: currentColor; }
+  nav.top .nid:hover { color: #d4b8ff; }
+  /* NOSTR IS PURPLE EVERYWHERE (kanban #1344, Daniel 2026-11-07: "nostr links überall wieder purple") */
+  nav.top .links a[href="#nostr"], #nostr h2, #nostr .more, footer .social a[href^="https://njump.me/"] { color: var(--nostr); }
+  footer .social a[href^="https://njump.me/"]:hover, footer .social a[href^="https://njump.me/"]:focus-visible, #nostr .more:hover { color: #d4b8ff; }
+  nav.top .app { padding: 7px 12px; border-radius: 4px; background: var(--accent); color: #140a00; font-weight: 600; font-size: 15px; text-decoration: none; white-space: nowrap; }
+  nav.top .app:hover { background: #ffa53d; color: #140a00; }
+  @media (max-width: 1140px) { nav.top .links a:not(.keep) { display: none; } nav.top .links { gap: 16px; } nav.top .wrap { gap: 16px; } }
+  @media (max-width: 1279px) { nav.top .nid span { display: none; } nav.top .nid svg { width: 20px; height: 20px; } }
+  @media (max-width: 480px) { nav.top .links a[href*="proposals"] { display: none; } nav.top .wrap { gap: 12px; } nav.top .links { gap: 12px; font-size: 14px; } .brand { font-size: 16px; } }
+  @media (max-width: 420px) { .brand span { display: none; } }
+
+  /* buttons: flat, 4 px corners */
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 4px; border: 1px solid var(--line); font: 600 16px/1.2 var(--sans); color: var(--text); text-decoration: none; white-space: nowrap; }
+  .btn:hover { border-color: var(--dim); color: var(--text); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #140a00; }
+  .btn.primary:hover { background: #ffa53d; border-color: #ffa53d; color: #140a00; }
+  .btn .v { font: 500 13px/1 var(--mono); color: var(--dim); }
+  .btn .v:empty { display: none; }
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 14px; margin: 22px 0 0; }
+
+  section, header.intro { padding: 64px 0; }
+  section { border-top: 1px solid var(--line); }
+  @media (max-width: 720px) { section, header.intro { padding: 44px 0; } }
+
+  /* top: the live page's mood image (img/hero.svg) behind the words, a plain dark fade for reading; on a phone the image above */
+  header.intro { position: relative; isolation: isolate; overflow: hidden; min-height: min(78svh, 640px); display: flex; align-items: center; padding: 80px 0; }
+  header.intro .bg { position: absolute; inset: 0; z-index: -2; }
+  header.intro .bg img { width: 100%; height: 100%; object-fit: cover; object-position: 66% 50%; display: block; }
+  header.intro::after { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(90deg, var(--bg) 0%, rgba(15,10,16,.9) 30%, rgba(15,10,16,.35) 58%, rgba(15,10,16,0) 78%), linear-gradient(180deg, rgba(15,10,16,0) 72%, var(--bg) 100%); }
+  header.intro .copy { max-width: 720px; }
+  header.intro .facts { color: var(--soft); max-width: 46ch; font-size: 18px; }
+  header.intro .where { margin-top: 16px; font-size: 15px; color: var(--dim); }
+  @media (max-width: 860px) {
+    header.intro { display: block; min-height: 0; padding: 0 0 40px; }
+    header.intro .bg { position: relative; inset: auto; height: 260px; }
+    header.intro .bg img { object-position: 70% 50%; }
+    header.intro::after { background: linear-gradient(180deg, rgba(15,10,16,0) 0, rgba(15,10,16,0) 170px, var(--bg) 260px); }
+    header.intro .copy { margin-top: -18px; }
+  }
+
+  /* games */
+  .games { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; margin-top: 30px; }
+  .games > * { min-width: 0; }
+  .game { display: flex; flex-direction: column; }
+  .game img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: cover; border: 1px solid var(--line); border-radius: 4px; background: #07060a; }
+  .game .kind { font: 13px/1.4 var(--mono); color: var(--dim); margin: 14px 0 4px; }
+  .game p { color: var(--soft); font-size: 16px; }
+  .game .count { font: 13px/1.5 var(--mono); color: var(--dim); margin: 0 0 14px; }
+  .game .count b { color: var(--text); font-weight: 600; }
+  .game .btn { margin-top: auto; align-self: flex-start; font-size: 15px; padding: 9px 14px; }
+  @media (max-width: 900px) { .games { grid-template-columns: minmax(0, 1fr); max-width: 620px; gap: 40px; } }
+  .free { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px; margin-top: 36px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); }
+  .free p { margin: 0; color: var(--soft); max-width: 62ch; }
+  .free b { color: var(--text); }
+
+  /* two-column rows: a term and what it means (round steps, trust, Nostr, under the hood) */
+  .rows { width: 100%; border-collapse: collapse; margin-top: 26px; font-family: var(--sans); border-top: 1px solid var(--line); }
+  .rows th, .rows td { text-align: left; vertical-align: top; padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .rows th { width: 34%; padding-right: 28px; font-weight: 600; font-size: 17px; }
+  .rows td { color: var(--soft); font-size: 16px; }
+  .rows thead th { font: 400 13px/1.4 var(--mono); color: var(--dim); padding: 10px 28px 10px 0; }
+  .rows.claims th { width: 46%; font-weight: 600; color: var(--text); font-size: 16px; }
+  .rows.claims th b { font-weight: 600; }
+  .rows.claims td { font-size: 15px; }
+  .rows code { color: var(--text); }
+  @media (max-width: 700px) {
+    .rows, .rows tbody, .rows tr, .rows th, .rows td { display: block; width: 100%; }
+    .rows thead { display: none; }
+    .rows tr { padding: 14px 0; border-bottom: 1px solid var(--line); }
+    .rows th, .rows td, .rows.claims th { width: 100%; padding: 0; border: 0; }
+    .rows td { margin-top: 6px; }
+  }
+  .more { display: inline-block; margin-top: 20px; font-weight: 600; }
+  .after { margin-top: 26px; }
+
+  /* economics */
+  .split { width: 100%; max-width: 640px; border-collapse: collapse; margin-top: 24px; font-size: 15px; }
+  .split th, .split td { text-align: left; padding: 11px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .split thead th { color: var(--dim); font-weight: 400; font-size: 13px; }
+  .split .p { text-align: right; width: 5.5em; padding-right: 24px; white-space: nowrap; }
+  .split td.p { color: var(--text); font-weight: 600; }
+  .split .what { display: block; color: var(--text); }
+  .split .who { display: block; margin-top: 2px; font-family: var(--sans); color: var(--soft); font-size: 15px; }
+  .split tr.pool td.p, .split tr.pool .what { color: var(--accent); }
+  .split tr.don td.p, .split tr.don .what { color: var(--dim); font-weight: 400; }
+  .split .tag { display: inline-block; margin-left: 10px; padding: 1px 7px; border: 1px solid var(--line); border-radius: 3px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); vertical-align: 2px; }
+  .note { color: var(--soft); max-width: 66ch; margin-top: 18px; }
+  .tabs { display: flex; gap: 6px; margin-top: 22px; flex-wrap: wrap; }
+  .tabs button { font: inherit; font-size: 14px; color: var(--soft); background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 7px 14px; cursor: pointer; }
+  .tabs button:hover { color: var(--text); }
+  .tabs button[aria-selected="true"] { color: var(--text); border-color: var(--accent); }
+  .tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tabpanel .split { margin-top: 14px; }
+
+  /* the network, read live */
+  h3.t { margin: 36px 0 10px; font-size: 17px; }
+  .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); }
+  .data { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .data th, .data td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .data thead th { color: var(--dim); font-weight: 400; }
+  .data tbody th { font-weight: 400; color: var(--soft); }
+  .data td.r, .data th.r { text-align: right; }
+  .data tr:last-child td, .data tr:last-child th { border-bottom: 0; }
+  .data td a { color: var(--soft); }
+  .data tr.hid { display: none; }
+  .data.sum td:first-child { color: var(--accent); font-weight: 600; }
+  .src { font: 12px/1.5 var(--mono); color: var(--dim); margin: 8px 0 0; }
+  @media (max-width: 560px) {
+    .data { font-size: 12px; }
+    .data th, .data td { padding: 8px 8px; }
+    .data thead th { white-space: normal; vertical-align: bottom; }
+    .data.sum tr { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+    .data.sum tr:last-child { border-bottom: 0; }
+    .data.sum td, .data.sum th { padding: 0; border: 0; white-space: normal; text-align: left; }
+    .data.sum td:last-child { grid-column: 1 / -1; margin-top: 2px; }
+  }
+  .showall { margin-top: 10px; font: 14px var(--sans); color: var(--text); background: none; border: 1px solid var(--line); border-radius: 4px; padding: 6px 12px; cursor: pointer; }
+  .showall:hover { border-color: var(--dim); }
+
+  /* a section's words beside its picture; on a phone the picture below the words */
+  .media { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 44px; align-items: center; }
+  .media > * { min-width: 0; }
+  figure.pic { margin: 0; }
+  figure.pic img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 4px; background: #07060a; }
+  figure.pic svg { display: block; width: 100%; height: auto; }
+  figure.pic figcaption { margin-top: 8px; font: 13px/1.5 var(--mono); color: var(--dim); }
+  figure.wide img { aspect-ratio: 16 / 6; object-fit: cover; object-position: 50% 40%; }
+  figure.wide { margin-top: 26px; }
+  @media (max-width: 860px) { .media { grid-template-columns: minmax(0, 1fr); gap: 26px; } }
+
+  /* build and run */
+  .three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; margin-top: 28px; }
+  .three > * { min-width: 0; border-top: 1px solid var(--line); padding-top: 16px; }
+  .three p { color: var(--soft); font-size: 16px; }
+  @media (max-width: 860px) { .three { grid-template-columns: minmax(0, 1fr); gap: 24px; } }
+
+  /* download */
+  .dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; margin-top: 28px; }
+  .dl > div { min-width: 0; }
+  .dl .what { color: var(--soft); font-size: 15px; min-height: 3.2em; }
+  .dl ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+  .dl li a { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); text-decoration: none; font-size: 15px; }
+  .dl li a small { font: 13px/1.6 var(--mono); color: var(--dim); white-space: nowrap; }
+  .dl li a:hover small { color: var(--accent); }
+  .dl-foot { margin-top: 24px; color: var(--soft); font-size: 15px; max-width: 76ch; }
+  @media (max-width: 860px) { .dl { grid-template-columns: minmax(0, 1fr); gap: 26px; } .dl .what { min-height: 0; } }
+
+  /* testnet, with the trailer beside it */
+  .tn { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; align-items: center; }
+  .tn > * { min-width: 0; }
+  .tn .url { display: block; margin-top: 14px; font: 14px var(--mono); color: var(--dim); }
+  .trailer { margin: 0; }
+  .trailer .frame { position: relative; display: block; width: 100%; padding: 0; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; background: #000; cursor: pointer; }
+  .trailer img, .trailer video { display: block; width: 100%; height: auto; aspect-ratio: 1280 / 532; object-fit: cover; }
+  .trailer .label { position: absolute; left: 12px; bottom: 12px; padding: 6px 10px; border-radius: 4px; background: rgba(10,7,10,.82); color: var(--text); font: 600 14px/1.2 var(--sans); }
+  .trailer .frame:hover .label { color: var(--accent); }
+  .trailer figcaption { margin-top: 8px; font: 13px/1.5 var(--mono); color: var(--dim); }
+  @media (max-width: 860px) { .tn { grid-template-columns: minmax(0, 1fr); gap: 26px; } }
+
+  /* the footer, as Daniel asked for it on 2026-11-06 */
+  footer { border-top: 1px solid var(--line); padding: 28px 0 40px; font-size: 14px; color: var(--dim); }
+  footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px 22px; }
+  footer a { color: var(--soft); }
+  footer .os { margin: 0; }
+  footer .os b { color: var(--text); font-weight: 600; }
+  /* THE PROTOCOL RESERVES, LIVE (kanban #1344, Daniel 2026-11-07: "Füge wieder den reserve section ein") - js/reserves.js fills it */
+  .reserves { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: clamp(18px, 4vw, 48px); align-items: center; margin: 32px 0 8px; padding: clamp(20px, 4vw, 36px); border-radius: 18px; border: 1px solid rgba(185,140,255,.4); background: radial-gradient(120% 140% at 0% 0%, rgba(185,140,255,.16), transparent 60%), rgba(15,10,16,.55); }
+  .reserves .kicker { margin-bottom: 6px; color: var(--nostr); font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .r-total { display: flex; align-items: baseline; gap: 10px; font: 700 clamp(40px, 7vw, 68px)/1 var(--sans); color: var(--accent); font-variant-numeric: tabular-nums; }
+  .r-total small { font-size: .38em; color: #ffd166; }
+  .r-line { margin-top: 10px; font-size: 14px; color: var(--soft); }
+  .r-what { margin: 0; font-size: 16px; color: var(--soft); }
+  .r-what b { color: var(--text); }
+  .r-link { display: inline-block; margin-top: 8px; color: #ffd166; font-weight: 600; }
+  .reserves[data-state="reading"] .r-total span { opacity: .4; }
+  @media (max-width: 760px) { .reserves { grid-template-columns: 1fr; } }
+  footer .social { display: flex; gap: 6px; }
+  footer .social a { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 4px; color: var(--soft); }
+  footer .social a:hover, footer .social a:focus-visible { color: var(--accent); background: var(--panel); }
+  footer .social svg { width: 20px; height: 20px; fill: currentColor; }
+
+  /* STRUCTURE (Daniel 2026-11-06: "Die sections verschmelzen zu sehr"): every section its own band, a mark above each heading,
+     lists and blocks in flat panels */
+  h1.big { font-size: clamp(40px, 6.2vw, 74px); line-height: 1.02; letter-spacing: -0.02em; max-width: none; }
+  h1.big .accent { color: var(--accent); }
+  section { padding: 88px 0; border-top: 0; }
+  section:nth-of-type(even) { background: #1a121b; }
+  section:nth-of-type(odd) { background: var(--bg); }
+  @media (max-width: 720px) { section { padding: 56px 0; } }
+  section h2 { font-size: clamp(26px, 3.4vw, 38px); margin-bottom: 18px; }
+  section h2::before { content: ""; display: block; width: 36px; height: 3px; background: var(--accent); margin-bottom: 18px; }
+  .rows { border: 1px solid var(--line); border-radius: 4px; background: rgba(0,0,0,.22); border-collapse: separate; border-spacing: 0; overflow: hidden; }
+  .rows th, .rows td { padding: 14px 18px; }
+  .rows thead th { padding: 10px 18px; }
+  .rows tr:last-child th, .rows tr:last-child td { border-bottom: 0; }
+  @media (max-width: 700px) { .rows tr { padding: 14px 16px; } .rows tr:last-child { border-bottom: 0; } .rows th, .rows td, .rows.claims th { padding: 0; } }
+  .three > *, .dl > div { border: 1px solid var(--line); border-radius: 4px; padding: 18px 20px; background: rgba(0,0,0,.22); }
+  .three > * { border-top: 1px solid var(--line); }
+  .split { border: 1px solid var(--line); border-radius: 4px; background: rgba(0,0,0,.22); border-collapse: separate; border-spacing: 0; }
+  .split th, .split td { padding-left: 18px; }
+  .split tr:last-child td { border-bottom: 0; }
+
+  .cta .stack { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; }
+  .cta .ver { font: 12px/1 var(--mono); color: var(--dim); }
+  .cta .ver:empty { display: none; }
+  .cta { align-items: flex-start; }
+  @media (max-width: 860px) {
+    header.intro .bg { height: 170px; }
+    header.intro::after { background: linear-gradient(180deg, rgba(15,10,16,0) 0, rgba(15,10,16,0) 100px, var(--bg) 170px); }
+    h1.big { font-size: 38px; margin-bottom: 12px; }
+    header.intro .facts { font-size: 17px; margin-bottom: 0; }
+    .cta { margin-top: 18px; }
+  }
+  @media (max-width: 480px) { .cta { gap: 10px 8px; } .cta .btn { padding: 10px 13px; font-size: 15px; } }
+</style>
+<script id="arena-ref-source">/* THE SOURCE OF A VISIT (kanban #1458, Daniel 2026-11-11: "Make sure Stacker News is recognised through the referrer and the utm is set correctly, without us having to add it"): the same script inline on bitcoinarena.io, testnet. and docs., before the stats script reads the address. A link's own utm_ always wins. Without one, the referrer's host names the source (the map below), put into the address as utm_source/utm_medium so Umami counts it as if the link had carried it. The visit's first source is kept in this tab (sessionStorage, the source name only) and added to links to the other bitcoinarena.io hosts, so a visitor who goes on to the game keeps it. Stacker News sends no referrer on post links (rel="noreferrer", measured 2026-11-11): its links need their own utm. */(function(){try{
+var M=[[/(^|\.)stacker\.news$/,'stacker-news','community'],[/(^|\.)(x\.com|twitter\.com|t\.co)$/,'x','social'],[/(^|\.)(primal\.net|njump\.me|nostr\.com|iris\.to|coracle\.social|snort\.social|jumble\.social|yakihonne\.com|damus\.io|habla\.news|nostrudel\.ninja)$/,'nostr','social'],[/(^|\.)armada\.buzz$/,'armada','community'],[/(^|\.)reddit\.com$/,'reddit','social'],[/(^|\.)bitcointalk\.org$/,'bitcointalk','forum'],[/(^|\.)github\.com$/,'github','referral'],[/(^|\.)discord\.com$/,'discord','community'],[/(^|\.)(t\.me|telegram\.org)$/,'telegram','community'],[/^news\.ycombinator\.com$/,'hackernews','forum']];
+var OWN=/(^|\.)(bitcoinarena\.io|bitcoin-arena\.io)$/,K='arena.src',q=new URLSearchParams(location.search),src=null;
+if(q.get('utm_source')==='sn'){q.set('utm_source','stacker-news');q.set('utm_medium','community');history.replaceState(history.state,'',location.pathname+'?'+q.toString()+location.hash)}/* #1468: links posted 11-01..11-11 say utm_source=sn - one name for Stacker News */
+if(q.get('utm_source'))src=[q.get('utm_source'),q.get('utm_medium')||''];
+else{var h='';try{h=new URL(document.referrer).hostname.toLowerCase()}catch(e){}
+if(h&&!OWN.test(h)){src=[h.replace(/^www\./,''),'referral'];for(var i=0;i<M.length;i++)if(M[i][0].test(h)){src=[M[i][1],M[i][2]];break}}
+if(src){q.set('utm_source',src[0]);q.set('utm_medium',src[1]);history.replaceState(history.state,'',location.pathname+'?'+q.toString()+location.hash)}}
+var kept=null;try{kept=JSON.parse(sessionStorage.getItem(K)||'null')}catch(e){}
+if(!kept&&src){kept=src;try{sessionStorage.setItem(K,JSON.stringify(src))}catch(e){}}
+window.ARENA_SOURCE=kept?kept[0]:null;
+if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;if(!a)return;try{var u=new URL(a.href);if(u.hostname===location.hostname||!OWN.test(u.hostname)||/[?&]utm_/.test(u.search))return;u.searchParams.set('utm_source',kept[0]);if(kept[1])u.searchParams.set('utm_medium',kept[1]);a.href=u.toString()}catch(e){}},true)});
+}catch(e){}})();</script>
+<script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="4f00ff2b-032e-4683-890c-63458e0b178e" data-domains="bitcoinarena.io,www.bitcoinarena.io"></script>
+</head>
+<body>
+<nav class="top"><div class="wrap">
+  <a class="brand" href="#top" aria-label="Bitcoin Arena"><img class="mark" src="/img/logo/bitcoin-arena-mark-90.webp" srcset="/img/logo/bitcoin-arena-mark-60.webp 2x, /img/logo/bitcoin-arena-mark-90.webp 3x" width="45" height="30" alt=""><span>Bitcoin Arena</span></a>
+  <div class="links"><a href="#games">Games</a><a href="#how">How it works</a><a href="https://explorer.bitcoinarena.io/">Explorer</a><a href="#build">Build &amp; run</a><a href="#download">Download</a><a class="keep" href="https://testnet.bitcoinarena.io/proposals/">Proposals</a><a class="keep" href="/security/">Security</a><a class="keep" href="https://docs.bitcoinarena.io/">Docs</a></div>
+  <a class="nid" href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" rel="me" title="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)" aria-label="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)"><svg viewBox="48 44 167 167" aria-hidden="true" focusable="false"><path d="M210.8 199.4c0 3.1-2.5 5.7-5.7 5.7h-68c-3.1 0-5.7-2.5-5.7-5.7v-15.5c.3-19 2.3-37.2 6.5-45.5 2.5-5 6.7-7.7 11.5-9.1 9.1-2.7 24.9-.9 31.7-1.2 0 0 20.4.8 20.4-10.7s-9.1-8.6-9.1-8.6c-10 .3-17.7-.4-22.6-2.4-8.3-3.3-8.6-9.2-8.6-11.2-.4-23.1-34.5-25.9-64.5-20.1-32.8 6.2.4 53.3.4 116.1v8.4c0 3.1-2.6 5.6-5.7 5.6H57.7c-3.1 0-5.7-2.5-5.7-5.7v-144c0-3.1 2.5-5.7 5.7-5.7h31.7c3.1 0 5.7 2.5 5.7 5.7 0 4.7 5.2 7.2 9 4.5 11.4-8.2 26-12.5 42.4-12.5 36.6 0 64.4 21.4 64.4 68.7v83.2ZM150 99.3c0-6.7-5.4-12.1-12.1-12.1s-12.1 5.4-12.1 12.1 5.4 12.1 12.1 12.1S150 106 150 99.3Z"/></svg><span>bitcoinarena.io &#10003;</span></a>
+  <a class="app" href="https://testnet.bitcoinarena.io/" data-umami-event="site-app">App →</a>
+</div></nav>
+
+<header class="intro" id="top">
+  <div class="bg"><img src="/img/hero.svg" alt="A bitcoin sun rising over a skyline of price candles, the road to the next block below" width="1600" height="900" fetchpriority="high"></div>
+  <div class="wrap"><div class="copy">
+    <h1 class="big">Play for sats.<br><span class="accent">Settle on Bitcoin.</span></h1>
+    <p class="facts">Games and markets on a federated network: many independent nodes, no single owner.</p>
+    <div class="actions cta">
+      <a class="btn primary" href="https://testnet.bitcoinarena.io/" data-umami-event="site-play">Play on Testnet</a>
+      <span class="stack"><a class="btn" href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-umami-event="site-run-node">Run a node</a><small class="ver" data-arena-release-version></small></span>
+      <a class="btn" href="https://docs.bitcoinarena.io/" data-umami-event="site-docs">Docs</a>
+    </div>
+    <p class="where">Free test sats, no sign-up.</p>
+  </div></div>
+</header>
+
+<section id="games"><div class="wrap">
+  <h2>Three games, live on testnet4</h2>
+  <p class="lead">Same nodes, federations and Lightning as a paid game.</p>
+  <div class="games">
+    <article class="game">
+      <img src="/media/nextblock-v2.jpg" alt="Tick Tock, Next Block in play: a truck on the road to the miners, tanks and the price war ahead" width="960" height="540">
+      <div class="kind">Skill game · rounds</div>
+      <h3>Tick Tock, Next Block</h3>
+      <p>Haul mempool transactions to the miners. The best run takes the pot.</p>
+      <p class="count"><b data-total="nextblock">–</b> rounds settled since <span data-since>launch</span></p>
+      <a class="btn primary" href="https://testnet.bitcoinarena.io/?game=nextblock" data-umami-event="site-play" data-umami-event-game="nextblock">Play Tick Tock</a>
+    </article>
+    <article class="game">
+      <img src="/media/rps-v2.jpg" alt="Rock Paper Scissors in play: pick rock, paper or scissors, eight seconds on the clock" width="960" height="540">
+      <div class="kind">Head to head · 8 s rounds</div>
+      <h3>Rock Paper Scissors</h3>
+      <p>Hidden moves, then reveal. The winner takes the pot, a draw returns both stakes.</p>
+      <p class="count"><b data-total="rock-paper-scissors">–</b> rounds settled since <span data-since>launch</span></p>
+      <a class="btn primary" href="https://testnet.bitcoinarena.io/?game=rock-paper-scissors" data-umami-event="site-play" data-umami-event-game="rock-paper-scissors">Play Rock Paper Scissors</a>
+    </article>
+    <article class="game">
+      <img src="/media/updown-v4.jpg" alt="Bitcoin Up or Down: the price line against the price to beat, Up 71 %, Down 29 %, 9:30 left" width="960" height="540">
+      <div class="kind">Prediction market · 15 min</div>
+      <h3>Bitcoin Up or Down</h3>
+      <p>Higher or lower in 15 minutes? The winning side shares the pot.</p>
+      <p class="count"><b data-total="btc-updown-15m">–</b> rounds settled since <span data-since>launch</span></p>
+      <a class="btn primary" href="https://testnet.bitcoinarena.io/?game=btc-updown-15m" data-umami-event="site-play" data-umami-event-game="btc-updown-15m">Play Up or Down</a>
+    </article>
+  </div>
+</div></section>
+
+<section id="build"><div class="wrap">
+  <h2>Anyone can publish a game, open a market or run a node</h2>
+  <figure class="pic wide"><img src="/img/nextblock-art-1200.jpg" alt="Tick Tock, Next Block: trucks, tanks and the mempool, the first game on the engine" width="1200" height="675"></figure>
+  <div class="three">
+    <div><h3>Make a game</h3><p>Sign it, and any node can host it.</p><a href="https://docs.bitcoinarena.io/#game">Build a game →</a></div>
+    <div><h3>Make a market</h3><p>A question, its outcomes, who signs the result.</p><a href="https://docs.bitcoinarena.io/#market">Build a market →</a></div>
+    <div><h3>Run a node</h3><p>Post a bond, sign results, earn fees.</p><a href="https://docs.bitcoinarena.io/#run">Run a node →</a></div>
+  </div>
+</div></section>
+
+<section id="how"><div class="wrap">
+  <div>
+  <h2>A round has four steps, from deposit to payout</h2>
+  <table class="rows">
+    <tbody>
+      <tr><th scope="row">Deposit</th><td>Pay a Lightning invoice. The sats arrive as federation e-cash in your browser wallet.</td></tr>
+      <tr><th scope="row">Stake</th><td>Join a round. Your stake is locked in the federation.</td></tr>
+      <tr><th scope="row">Verify</th><td>The round&rsquo;s nodes replay it. 5 of 7 must sign the same result.</td></tr>
+      <tr><th scope="row">Win</th><td>Winnings land in your wallet. Withdraw over Lightning.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</div></section>
+
+<section id="trust"><div class="wrap">
+  <div class="media">
+  <div><h2>Your stake is locked in a federation, not held by us</h2><p class="lead">It leaves the lock one of two ways: 5 of 7 nodes sign the result, or the time runs out and it comes back to you.</p></div>
+  <figure class="pic"><svg viewBox="0 0 560 300" role="img" aria-labelledby="stakeT">
+    <title id="stakeT">Your stake is locked in a federation and leaves it one of two ways: 5 of 7 nodes sign the result, or the time runs out and it comes back to you.</title>
+    <g font-family="JetBrains Mono, monospace" font-size="13" fill="#ececec">
+      <rect x="10" y="118" width="110" height="64" rx="4" fill="none" stroke="#a3a3a8"/>
+      <text x="65" y="146" text-anchor="middle">you</text>
+      <text x="65" y="166" text-anchor="middle" fill="#a3a3a8" font-size="11">stake</text>
+      <line x1="120" y1="150" x2="196" y2="150" stroke="#a3a3a8"/><path d="M196 145 l8 5 -8 5z" fill="#a3a3a8"/>
+      <rect x="206" y="90" width="148" height="120" rx="4" fill="none" stroke="#f7931a"/>
+      <text x="280" y="122" text-anchor="middle">lock</text>
+      <text x="280" y="142" text-anchor="middle" fill="#a3a3a8" font-size="11">in the federation</text>
+      <g fill="#f7931a"><circle cx="232" cy="176" r="5"/><circle cx="250" cy="176" r="5"/><circle cx="268" cy="176" r="5"/><circle cx="286" cy="176" r="5"/><circle cx="304" cy="176" r="5"/></g>
+      <g fill="none" stroke="#6e6e74"><circle cx="322" cy="176" r="5"/><circle cx="340" cy="176" r="5"/></g>
+      <text x="280" y="200" text-anchor="middle" fill="#a3a3a8" font-size="11">7 guardians</text>
+      <path d="M354 120 C390 120 390 60 430 60" fill="none" stroke="#3fbf7f"/><path d="M428 55 l8 5 -8 5z" fill="#3fbf7f"/>
+      <path d="M354 180 C390 180 390 240 430 240" fill="none" stroke="#a3a3a8"/><path d="M428 235 l8 5 -8 5z" fill="#a3a3a8"/>
+      <text x="442" y="56">5 of 7 nodes</text><text x="442" y="74">sign the result</text>
+      <text x="442" y="94" fill="#3fbf7f" font-size="11">winners are paid</text>
+      <text x="442" y="236">time runs out</text>
+      <text x="442" y="256" fill="#a3a3a8" font-size="11">your stake comes</text><text x="442" y="272" fill="#a3a3a8" font-size="11">back to you</text>
+    </g>
+  </svg></figure>
+  </div>
+  <table class="rows claims">
+    <thead><tr><th scope="col">Claim</th><th scope="col">Check it</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">No central server</th><td>Every node has a bond on Bitcoin: <code>GET /bond</code></td></tr>
+      <tr><th scope="row">No single custodian</th><td>Federations and signers: <code>GET /federations</code>, <code>GET /reserves</code></td></tr>
+      <tr><th scope="row">5 of 7 nodes sign each result</th><td><code>GET /results</code>, <code>GET /replay</code>, <code>GET /committee</code></td></tr>
+      <tr><th scope="row">10 minutes to object</th><td><code>POST /objection</code> at any node of the round</td></tr>
+      <tr><th scope="row">Nodes are found on Bitcoin</th><td>This page checks each bond and signature in your browser</td></tr>
+    </tbody>
+  </table>
+  <a class="more" href="/security/" data-umami-event="site-security">Every worst case, and what stops it →</a>
+</div></section>
+
+<section id="nostr"><div class="wrap media">
+  <div>
+  <h2>Your Nostr key is your account</h2>
+  <p class="lead">No email, no password.</p>
+  <table class="rows">
+    <tbody>
+      <tr><th scope="row">Log in</th><td>nsec, browser extension (NIP-07) or phone signer (NIP-46).</td></tr>
+      <tr><th scope="row">Your wallet follows you</th><td>The seed is kept on Nostr, encrypted to your key.</td></tr>
+      <tr><th scope="row">Nostr Wallet Connect</th><td>Pay and withdraw with your own Lightning wallet (NIP-47).</td></tr>
+      <tr><th scope="row">Run a node with your key</th><td>Every owner action is a signed Nostr event.</td></tr>
+    </tbody>
+  </table>
+  <a class="more" href="https://docs.bitcoinarena.io/#nostr">Nostr in the docs →</a>
+  </div>
+  <figure class="pic"><img src="/media/wallet-nostr.jpg" alt="The Arena's wallet screen: create a wallet, restore one, or log in with Nostr" width="640" height="480" ><figcaption>The first screen of the Arena.</figcaption></figure>
+</div></section>
+
+<section id="split"><div class="wrap">
+  <h2>Where every stake goes</h2>
+  <div class="tabs" role="tablist" aria-label="Fee split">
+    <button type="button" role="tab" id="tab-games" aria-controls="split-games" aria-selected="true">Games</button>
+    <button type="button" role="tab" id="tab-markets" aria-controls="split-markets" aria-selected="false" tabindex="-1">Prediction markets</button>
+  </div>
+  <div class="tabpanel" id="split-games" role="tabpanel" aria-labelledby="tab-games">
+  <table class="split">
+    <thead><tr><th class="p">Share</th><th>Goes to</th></tr></thead>
+    <tbody>
+      <tr class="pool"><td class="p">90 %</td><td><span class="what">The pot</span></td></tr>
+      <tr><td class="p">4 %</td><td><span class="what">Nodes</span></td></tr>
+      <tr><td class="p">2 %</td><td><span class="what">Protocol reserves</span></td></tr>
+      <tr class="don"><td class="p">2 %</td><td><span class="what">Game developer <span class="tag">donation</span></span></td></tr>
+      <tr class="don"><td class="p">2 %</td><td><span class="what">Protocol developers <span class="tag">donation</span></span></td></tr>
+    </tbody>
+  </table>
+  <p class="note">Items: 40 % nodes, 20 % reserves.</p>
+  </div>
+  <div class="tabpanel" id="split-markets" role="tabpanel" aria-labelledby="tab-markets" hidden>
+  <table class="split">
+    <thead><tr><th class="p">Share</th><th>Goes to</th></tr></thead>
+    <tbody>
+      <tr class="pool"><td class="p">99 %</td><td><span class="what">The pot</span></td></tr>
+      <tr><td class="p">0.4 %</td><td><span class="what">Nodes</span></td></tr>
+      <tr><td class="p">0.2 %</td><td><span class="what">Protocol reserves</span></td></tr>
+      <tr class="don"><td class="p">0.2 %</td><td><span class="what">Market developer <span class="tag">donation</span></span></td></tr>
+      <tr class="don"><td class="p">0.2 %</td><td><span class="what">Protocol developers <span class="tag">donation</span></span></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <script>
+  // THE FEE SPLIT'S TABS (kanban #1206), inline so they work before the page's module scripts load
+  (() => {
+    const tabs = [...document.querySelectorAll('#split [role="tab"]')];
+    const pick = (t) => { for (const x of tabs) { const on = x === t; x.setAttribute('aria-selected', String(on)); x.tabIndex = on ? 0 : -1; document.getElementById(x.getAttribute('aria-controls')).hidden = !on; } };
+    tabs.forEach((t, i) => {
+      t.addEventListener('click', () => pick(t));
+      t.addEventListener('keydown', (e) => { const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0; if (!d) return; const n = tabs[(i + d + tabs.length) % tabs.length]; pick(n); n.focus(); e.preventDefault(); });
+    });
+  })();
+  </script>
+  <div class="reserves" id="reserves" data-state="reading">
+    <div class="r-head">
+      <div class="kicker">Protocol reserves · live</div>
+      <div class="r-total"><span data-r="total">…</span><small>sat</small></div>
+      <div class="r-line" data-r="line">Reading the nodes…</div>
+    </div>
+    <p class="r-what"><b>2&nbsp;%</b> of every paid round and <b>20&nbsp;%</b> of every item go to the protocol reserves, locked to each federation&rsquo;s 5-of-7 key. <b>Anyone</b> can propose a payout; it is paid only if the bonded nodes vote for it. <a class="r-link" href="https://testnet.bitcoinarena.io/proposals/">Read and discuss the proposals &rarr;</a></p>
+  </div>
+
+  <div id="network">
+    <h3 class="t">The network, read live</h3>
+    <div class="tablewrap"><table class="data sum">
+      <tbody>
+        <tr><td class="r" id="restotal">…</td><th scope="row">sats in the protocol reserves</th><td id="resline" class="dim">asking the nodes…</td></tr>
+        <tr><td class="r" data-total="all">…</td><th scope="row">rounds settled</th><td class="dim">since <span data-since>launch</span></td></tr>
+        <tr><td class="r" id="entries">…</td><th scope="row">entries</th><td class="dim">since <span data-since>launch</span></td></tr>
+        <tr><td class="r"><a id="relv" href="https://github.com/bitcoinarena/bitcoinarena/releases/latest">…</a></td><th scope="row">latest node release</th><td class="dim" id="reld"></td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 class="t">Federations holding protocol reserves</h3>
+    <div class="tablewrap"><table class="data">
+      <thead><tr><th>federation</th><th class="r">guardians</th><th class="r">signatures needed</th><th class="r">reserves, sats</th><th class="r">payments</th></tr></thead>
+      <tbody id="feds"><tr><td colspan="5">asking the nodes…</td></tr></tbody>
+    </table></div>
+    <p class="src" id="fedsnote"></p>
+
+    <h3 class="t">Nodes, from their bonds on Bitcoin testnet4</h3>
+    <div class="tablewrap"><table class="data">
+      <thead><tr><th>node key</th><th class="r">bond, sats</th><th>bond transaction</th><th class="r">bond block</th></tr></thead>
+      <tbody id="nodes"><tr><td colspan="4">reading Bitcoin testnet4…</td></tr></tbody>
+    </table></div>
+    <button class="showall" id="morenodes" type="button" hidden>Show all nodes</button>
+    <p class="src" id="nodesnote"></p>
+  </div>
+</div></section>
+
+
+<section id="download"><div class="wrap">
+  <h2>Download the Bitcoin Arena node</h2>
+  <p class="lead">One package with everything. Setup runs in your browser.</p>
+  <div class="actions"><a class="btn primary" href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-umami-event="site-download">Latest release <span class="v" data-arena-release-version style="color:#3a2400"></span></a></div>
+  <div class="dl">
+    <div><h3>Windows</h3><p class="what">10 and 11, 64-bit. No administrator.</p><ul>
+      <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node-setup-{v}-windows-x64.exe">Installer<small>x64 · .exe</small></a></li>
+      <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node-{v}-windows-x64.zip">Plain archive<small>x64 · .zip</small></a></li>
+    </ul></div>
+    <div><h3>macOS</h3><p class="what">First start: right-click, Open.</p><ul>
+      <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node-{v}-darwin-arm64.dmg">Apple silicon<small>arm64 · .dmg</small></a></li>
+      <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node-{v}-darwin-x64.dmg">Intel<small>x64 · .dmg</small></a></li>
+      <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node-{v}-darwin-arm64.tar.gz">Plain archive<small>arm64 · .tar.gz</small></a></li>
+      <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node-{v}-darwin-x64.tar.gz">Plain archive<small>x64 · .tar.gz</small></a></li>
+    </ul></div>
+    <div><h3>Linux</h3><p class="what"><code>sudo apt install ./bitcoin-arena-node_*.deb</code></p><ul>
+      <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node_{v}_amd64.deb">Debian package<small>x64 · .deb</small></a></li>
+      <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node_{v}_arm64.deb">Debian package<small>arm64 · .deb</small></a></li>
+      <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node-{v}-linux-x64.tar.gz">Plain archive<small>x64 · .tar.gz</small></a></li>
+      <li><a href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-arena-release-asset="bitcoin-arena-node-{v}-linux-arm64.tar.gz">Plain archive<small>arm64 · .tar.gz</small></a></li>
+    </ul></div>
+  </div>
+  <p class="dl-foot">Signed <code>SHA256SUMS</code> with the <a href="https://testnet.bitcoinarena.io/release-key.txt">release key</a> · <a href="https://docs.bitcoinarena.io/#run">Setup guide</a> · <a href="https://github.com/bitcoinarena">Source</a></p>
+</div></section>
+
+
+<section id="start"><div class="wrap tn">
+  <div>
+    <h2>Everything above is live on Bitcoin testnet4</h2>
+    <p class="lead">Test sats have no value. Try it all without risk.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://testnet.bitcoinarena.io/" data-umami-event="site-play">Play on Testnet</a>
+      <a class="btn" href="https://docs.bitcoinarena.io/#start">How to start</a>
+    </div>
+  </div>
+  <figure class="trailer" id="trailer">
+    <button class="frame" id="playtrailer" type="button" aria-label="Play the trailer, 60 seconds, with sound">
+      <img src="/media/poster-v2.jpg" alt="A frame from the trailer: a truck on the road to the miners in Tick Tock, Next Block" width="1280" height="532">
+      <span class="label">▶ Trailer · 60 s</span>
+    </button>
+  </figure>
+</div></section>
+
+<footer><div class="wrap">
+  <p class="os"><b>Open source.</b> Every line the nodes and the apps run is on <a href="https://github.com/bitcoinarena">GitHub</a>. <a href="/security/">Security</a> · <a href="/privacy/">Privacy</a> · <a href="https://docs.bitcoinarena.io/">Docs</a> · <a href="https://testnet.bitcoinarena.io/?feedback=1">Feedback</a> · <a href="https://docs.bitcoinarena.io/#faq">FAQ</a></p>
+  <nav class="social" aria-label="Bitcoin Arena elsewhere"><a href="https://x.com/bitcoinarena_io" rel="noopener" aria-label="Bitcoin Arena on X" title="X"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"/></svg></a><a href="https://discord.gg/9zZbASZyue" rel="noopener" aria-label="Bitcoin Arena on Discord" title="Discord"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.211.375-.445.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 3.677 4.37a.07.07 0 0 0-.032.028C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.873-1.295 1.226-1.994a.076.076 0 0 0-.042-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .078-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.099.246.198.373.292a.077.077 0 0 1-.007.127 12.3 12.3 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.363 1.225 1.993a.076.076 0 0 0 .084.028 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03ZM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.956 2.418-2.157 2.418Zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.946 2.418-2.157 2.418Z"/></svg></a><a href="https://t.me/+KihHE8JhcVM3NDVi" rel="noopener" aria-label="Bitcoin Arena on Telegram" title="Telegram"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0Zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635Z"/></svg></a><a href="https://github.com/bitcoinarena" rel="noopener" aria-label="Bitcoin Arena on GitHub" title="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a><a href="https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2" target="_blank" rel="me noopener noreferrer" aria-label="Bitcoin Arena on Nostr - verified as bitcoinarena.io (NIP-05)" title="Nostr: bitcoinarena.io &#10003;"><svg viewBox="48 44 167 167" aria-hidden="true" focusable="false"><path d="M210.8 199.4c0 3.1-2.5 5.7-5.7 5.7h-68c-3.1 0-5.7-2.5-5.7-5.7v-15.5c.3-19 2.3-37.2 6.5-45.5 2.5-5 6.7-7.7 11.5-9.1 9.1-2.7 24.9-.9 31.7-1.2 0 0 20.4.8 20.4-10.7s-9.1-8.6-9.1-8.6c-10 .3-17.7-.4-22.6-2.4-8.3-3.3-8.6-9.2-8.6-11.2-.4-23.1-34.5-25.9-64.5-20.1-32.8 6.2.4 53.3.4 116.1v8.4c0 3.1-2.6 5.6-5.7 5.6H57.7c-3.1 0-5.7-2.5-5.7-5.7v-144c0-3.1 2.5-5.7 5.7-5.7h31.7c3.1 0 5.7 2.5 5.7 5.7 0 4.7 5.2 7.2 9 4.5 11.4-8.2 26-12.5 42.4-12.5 36.6 0 64.4 21.4 64.4 68.7v83.2ZM150 99.3c0-6.7-5.4-12.1-12.1-12.1s-12.1 5.4-12.1 12.1 5.4 12.1 12.1 12.1S150 106 150 99.3Z"/></svg></a><a href="https://armada.buzz/invite/naddr1qvzqqqyzz5pzpt3qdj9s02tf33v6t5epfuxgk90eklx42cg2ftatwmuzznkww6anqqqqf5522e#BAEU9DouYIxVptZrIZWPrgMF" rel="noopener" aria-label="The Bitcoin Arena community on Armada" title="Community on Armada"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11 2.5v13H4.2L11 2.5Zm2 3 6.8 10H13v-10ZM2 17.5h20l-2.6 4H4.6L2 17.5Z"/></svg></a></nav>
+</div></footer>
+
+<script src="/js/reserves.js" defer></script>
+<script src="/js/arena-curve.js" defer></script>
+<script src="/js/release-latest.js" defer></script>
+<script src="/js/site-track.js" defer></script>
+<script type="module" src="/js/home.js"></script>
+</body>
+</html>

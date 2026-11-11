@@ -7,9 +7,16 @@
 // `arena-install --add-bond <sats>` and the owner page's "Add to bond" show the plan (the amount, the fees, the new total, the
 // maturity); with --yes / the confirm it is posted and recorded in the state's `bonds`.
 import { DatabaseSync } from 'node:sqlite';
-import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
+import { walletOf, payoutKeyOf, coinsOf, broadcast, txSeen } from './wallet.js';
 import { buildBond, lockOf, MARKER_SATS, EMERGENCY_IN_ADVERT } from './bond.js';
 import { bondsOf } from './state.js';
+import { onchainAction, resumeOpen, openActionOf } from './onchain-action.js';
+
+/** The same "Add" asked again within this long - the owner page's double click, an answer lost - is the one done, not a second output
+ *  (kanban #1165); a page that names its own `key` for each confirm is told apart by it instead. */
+export const ADD_BOND_SAME_MS = 10 * 60000;
+/** The transactions' bytes stay on the machine: a plan as the owner page is answered. */
+const planWithoutBytes = ({ funding, bondTx, ...plan }) => plan;
 import { emergencyOf } from './seed.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 
@@ -17,16 +24,39 @@ import { fromHex } from '../../arena-protocol/src/hash.js';
  * Plan (and with `post`, broadcast) an added bond output of `addSats`. `guardianOf` the node's guardian seats as its newest
  * advertisement names them - from protocol 19 the newest advertisement over all a node's outputs decides, so the added one repeats
  * them. Answers { ok, plan } / { ok, plan, bond, bonds } or { ok: false, why }.
+ * THE POST IS AN ON-CHAIN ACTION (kanban #1165, onchain-action.js): written before it is sent, finished - never built again - when asked
+ * again; the same add asked again (`key`, else the same amount within ADD_BOND_SAME_MS) answers the one done; the output is added to
+ * the bonds as they are when it is through (the outputs read before the broadcast are never written back).
  */
-export async function addBond({ state, addSats, post = false, chainKit = { coinsOf, broadcast }, softwareHash, feeRate = 2, guardianEndpoint = null,
-  guardianOf = [], nowMs = Date.now() }) {
-  const s = state.read();
-  const outputs = bondsOf(s);
-  if (!outputs.length) return { ok: false, why: 'this node has no bond yet: set up its first bond in the owner area (Bond)' };
+export async function addBond({ state, addSats, post = false, chainKit = { coinsOf, broadcast, seen: txSeen }, softwareHash, feeRate = 2, guardianEndpoint = null,
+  guardianOf = [], nowMs = Date.now(), key = null }) {
   let add;
   try { add = BigInt(addSats); } catch { return { ok: false, why: `not an amount of sat: ${addSats}` }; }
   // the dust floor of a taproot output, the only floor an added output has: the round's bond_min is the sum's (protocol 19)
   if (add < MARKER_SATS) return { ok: false, why: `an added bond output is at least ${MARKER_SATS} sat` };
+  if (!post) {
+    await resumeOpen(state, { chainKit });   // an add sent before and not through yet: finished first, so the plan reads the coins after it
+    const p = await addBondPlan({ state, s: state.read(), add, chainKit, softwareHash, feeRate, guardianEndpoint, guardianOf, nowMs });
+    return p.ok ? { ok: true, plan: p.plan } : p;
+  }
+  const r = await onchainAction({ state, kind: 'add-bond', key: key ? `key ${key}` : `${add} sat`, sameWithinMs: key ? 0 : ADD_BOND_SAME_MS, chainKit,
+    build: async (s) => {
+      const p = await addBondPlan({ state, s, add, chainKit, softwareHash, feeRate, guardianEndpoint, guardianOf, nowMs });
+      if (!p.ok) return p;
+      const { built, tip, plan } = p;
+      const bond = { txid: built.bond.txid, vout: 0, fundingTxid: built.funding.txid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
+        lock: plan.lock, atMs: Date.now(), added: true };
+      return { ok: true, tip, txs: [{ name: 'funding', hex: built.funding.hex }, { name: 'bond', hex: built.bond.hex }],
+        ops: [{ op: 'push', key: 'bonds', values: [bond] }], result: { plan: planWithoutBytes(plan), bond } };
+    } });
+  if (!r.ok) return r;
+  return { ok: true, plan: r.result.plan, bond: r.result.bond, bonds: bondsOf(state.read()), ...(r.already ? { already: true } : {}) };
+}
+
+/** The plan of an added output on the state `s`: { ok, plan, built, tip } or { ok: false, why }. */
+async function addBondPlan({ state, s, add, chainKit, softwareHash, feeRate, guardianEndpoint, guardianOf, nowMs }) {
+  const outputs = bondsOf(s);
+  if (!outputs.length) return { ok: false, why: 'this node has no bond yet: set up its first bond in the owner area (Bond)' };
   const seedHex = state.readSecret('seed.hex');
   if (!seedHex) return { ok: false, why: 'the wallet seed is not in this node\'s home' };
   const seed = fromHex(seedHex);
@@ -47,14 +77,7 @@ export async function addBond({ state, addSats, post = false, chainKit = { coins
     changeSats: String(built.changeSats), fees: { funding: String(built.fees.funding), bond: String(built.fees.bond), total: String(built.fees.funding + built.fees.bond) },
     maturity: built.maturity, lock: lockOf(tip, { maturity: built.maturity }), tip, countsAfter: 6,
     funding: { txid: built.funding.txid, hex: built.funding.hex }, bondTx: { txid: built.bond.txid, hex: built.bond.hex } };
-  if (!post) return { ok: true, plan };
-  const fundingTxid = await chainKit.broadcast(s.chain, built.funding.hex);
-  const bondTxid = await chainKit.broadcast(s.chain, built.bond.hex);
-  const bond = { txid: bondTxid, vout: 0, fundingTxid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
-    lock: plan.lock, atMs: Date.now(), added: true };
-  const bonds = [...outputs, bond];
-  state.save({ bonds });
-  return { ok: true, plan, bond, bonds };
+  return { ok: true, plan, built, tip };
 }
 
 /**
@@ -62,7 +85,7 @@ export async function addBond({ state, addSats, post = false, chainKit = { coins
  * COMMIT, its guardian endpoint and (a custody node's) guardian seat for the added output's advertisement, as the wizard's bond has
  * them. Used by `arena-install --add-bond` and the owner page (POST /owner/add-bond).
  */
-export async function addBondOnNode({ home, release, addSats, post = false, chainKit, state = null }) {
+export async function addBondOnNode({ home, release, addSats, post = false, chainKit, state = null, key = null }) {
   const { readFileSync } = await import('node:fs');
   const { join } = await import('node:path');
   const { sha256 } = await import('../../arena-protocol/src/hash.js');
@@ -78,7 +101,7 @@ export async function addBondOnNode({ home, release, addSats, post = false, chai
       if (g) guardianOf = [{ federationId: fromHex(g.federationId), guardianKey: fromHex(g.guardianKey) }];
     } catch { /* no guardian seat to repeat */ }
   }
-  return addBond({ state: st, addSats, post, softwareHash, guardianOf, guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
+  return addBond({ state: st, addSats, post, key, softwareHash, guardianOf, guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
     ...(chainKit ? { chainKit } : {}) });
 }
 
@@ -92,8 +115,11 @@ export async function addBondOnNode({ home, release, addSats, post = false, chai
  * liquidity node its agent started, as the wizard starts it. `askMinimum` asks the seats the network's minimum (install-minimum.js), at
  * most every 10 minutes. Answers { ok, plan } / { ok, plan, bond } / { ok, done: true, bond } when a bond is posted already, or { ok: false, why }.
  */
-export async function firstBond({ state, post = false, chainKit = { coinsOf, broadcast }, softwareHash, guardianEndpoint = null, askMinimum = null,
+export async function firstBond({ state, post = false, chainKit = { coinsOf, broadcast, seen: txSeen }, softwareHash, guardianEndpoint = null, askMinimum = null,
   startAgent = null, feeRate = 2, nowMs = Date.now() }) {
+  // A FIRST BOND SENT AND NOT RECORDED (kanban #1165: a crash, a lost answer, the wizard's post beside this one): finished first - the Bond
+  // panel asks every 30 s, so a bond broadcast before a crash is recorded within the minute - and never built a second time
+  if (openActionOf(state.read())) await resumeOpen(state, { chainKit });
   let s = state.read();
   if (bondsOf(s).length) return { ok: true, done: true, bond: s.bond || bondsOf(s)[0] };
   if (!(s.done || {}).service) return { ok: false, why: 'this node is not installed yet: its bond is signed with its own key' };
@@ -105,35 +131,53 @@ export async function firstBond({ state, post = false, chainKit = { coinsOf, bro
   }
   const seed = fromHex(seedHex);
   const w = walletOf(seed);
-  // THE PLAN IS A LIGHT READ (the 2026.1.9.11 install test: the Bond panel asks it every 30 s and each answer took 14-18 s): the UTXO scan of
-  // this tip is used again (wallet.js coinsOf reuseScan), the mempool still read; the post reads the chain afresh
-  const { tip, coins } = await chainKit.coinsOf(s.chain, w.spk, ...(post ? [] : [{ reuseScan: true }]));
-  const custody = (s.roles || []).includes('custody');
-  const parts = depositParts(s, custody ? Math.max(0, Math.floor(Number((s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS))) : 0);
-  const needSats = Object.values(parts).reduce((a, x) => a + Number(x), 0);
-  const walletSats = coins.reduce((a, c) => a + Number(c.sats), 0);
-  const confirmingSats = coins.filter((c) => !(Number(c.height) > 0)).reduce((a, c) => a + Number(c.sats), 0);
-  const bondSats = BigInt(bondMinimumOf(s));
-  const plan = { address: w.address, bondSats: String(bondSats), minimumWhy: (s.bondMinimum || {}).why || null, parts, needSats, walletSats, confirmingSats,
-    shortSats: Math.max(0, needSats - walletSats), enough: walletSats >= needSats, tip, lock: lockOf(tip), countsAfter: 6 };
-  if (!post) return { ok: true, plan };
-  if (!plan.enough) return { ok: false, why: `the wallet holds ${walletSats} sat: send ${plan.shortSats} sat more to ${w.address} first`, plan };
-  const db = new DatabaseSync(state.path('node.db'), { readOnly: true });
-  let nodeSecret;
-  try { nodeSecret = new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
-  let built;
-  try {
-    built = buildBond({ hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
-      endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint, nowMs,
-      emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
-  } catch (e) { return { ok: false, why: e.message, plan }; }
-  const fundingTxid = await chainKit.broadcast(s.chain, built.funding.hex);
-  const bondTxid = await chainKit.broadcast(s.chain, built.bond.hex);
-  const bond = { txid: bondTxid, vout: 0, fundingTxid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
-    lock: lockOf(tip, { maturity: built.maturity }), atMs: nowMs, fromOwnerArea: true };
+  const planOf = async (s, light) => {
+    // THE PLAN IS A LIGHT READ (the 2026.1.9.11 install test: the Bond panel asks it every 30 s and each answer took 14-18 s): the UTXO scan of
+    // this tip is used again (wallet.js coinsOf reuseScan), the mempool still read; the post reads the chain afresh
+    const { tip, coins } = await chainKit.coinsOf(s.chain, w.spk, ...(light ? [{ reuseScan: true }] : []));
+    const custody = (s.roles || []).includes('custody');
+    const parts = depositParts(s, custody ? Math.max(0, Math.floor(Number((s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS))) : 0);
+    const needSats = Object.values(parts).reduce((a, x) => a + Number(x), 0);
+    const walletSats = coins.reduce((a, c) => a + Number(c.sats), 0);
+    const confirmingSats = coins.filter((c) => !(Number(c.height) > 0)).reduce((a, c) => a + Number(c.sats), 0);
+    const bondSats = BigInt(bondMinimumOf(s));
+    return { tip, coins, bondSats, plan: { address: w.address, bondSats: String(bondSats), minimumWhy: (s.bondMinimum || {}).why || null, parts, needSats, walletSats, confirmingSats,
+      shortSats: Math.max(0, needSats - walletSats), enough: walletSats >= needSats, tip, lock: lockOf(tip), countsAfter: 6 } };
+  };
+  if (!post) {
+    const { plan } = await planOf(s, true);
+    const open = openActionOf(state.read());
+    return { ok: true, plan: open ? { ...plan, sending: { kind: open.kind, txids: open.txs.map((t) => t.txid), why: open.why || null } } : plan };
+  }
+  let planned = null;
   const { SUPPORTED_PROTOCOL_VERSIONS } = await import('../../arena-protocol/src/constants.js');
-  // the wizard's mark('bond'): the step done, and what its advertisement declares (change-roles refreshHostedGames)
-  state.save({ bond, advertProtocols: [...SUPPORTED_PROTOCOL_VERSIONS], done: { ...(state.read().done || {}), bond: nowMs } });
+  // THE FIRST BOND IS AN ON-CHAIN ACTION OF ITS OWN KIND (kanban #1165), built only on a state with no bond (compare-and-set): the wizard's bond step posts the same kind ('first-bond')
+  const r = await onchainAction({ state, kind: 'first-bond', chainKit,
+    build: async (s2) => {
+      if (bondsOf(s2).length) return { ok: false, alreadyBond: s2.bond || bondsOf(s2)[0] };   // recorded meanwhile (an older wizard, another tab)
+      const { tip, coins, bondSats, plan } = await planOf(s2, false);
+      planned = plan;
+      if (!plan.enough) return { ok: false, why: `the wallet holds ${plan.walletSats} sat: send ${plan.shortSats} sat more to ${w.address} first`, plan };
+      const db = new DatabaseSync(state.path('node.db'), { readOnly: true });
+      let nodeSecret;
+      try { nodeSecret = new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
+      let built;
+      try {
+        built = buildBond({ hostedGames: s2.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s2.owner.pubkey.slice(0, 12)}`, roles: s2.roles,
+          endpoint: s2.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint, nowMs,
+          emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
+      } catch (e) { return { ok: false, why: e.message, plan }; }
+      const bond = { txid: built.bond.txid, vout: 0, fundingTxid: built.funding.txid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
+        lock: lockOf(tip, { maturity: built.maturity }), atMs: nowMs, fromOwnerArea: true };
+      // the wizard's mark('bond'): the step done, and what its advertisement declares (change-roles refreshHostedGames)
+      return { ok: true, tip, txs: [{ name: 'funding', hex: built.funding.hex }, { name: 'bond', hex: built.bond.hex }],
+        ops: [{ op: 'set', key: 'bond', value: bond }, { op: 'set', key: 'advertProtocols', value: [...SUPPORTED_PROTOCOL_VERSIONS] }, { op: 'done', step: 'bond' }], result: { plan, bond } };
+    } });
+  if (r.alreadyBond) return { ok: true, done: true, bond: r.alreadyBond };
+  if (!r.ok) return r.plan || !planned ? r : { ...r, plan: planned };
+  const plan = r.result.plan, bond = r.result.bond;
+  s = state.read();
+  const custody = (s.roles || []).includes('custody');
   // A CUSTODY OR LIQUIDITY NODE'S AGENT, as the wizard's bond step starts it (custody-agent.js: guardian_of, the peg-in, the deposit)
   let agent = null;
   if ((custody || (s.roles || []).includes('liquidity')) && startAgent && !((state.read().custodyAgent || {}).installedMs)) {

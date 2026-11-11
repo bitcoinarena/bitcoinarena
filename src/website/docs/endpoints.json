@@ -2627,7 +2627,7 @@
     "name": "scope",
     "required": false,
     "type": "string",
-    "description": "network: ask every seat this node knows for its rounds (GET /season-rounds) and merge them with its own. A round counts only when 3 distinct seats hand in byte-identical accounts of it, so no single seat can forge a row. Omitted: this node's own rounds.",
+    "description": "network: ask every seat this node knows for its rounds (GET /season-rounds) and merge them with its own. A round counts only when 3 distinct seats hand in byte-identical accounts of it, so no single seat can forge a row. Omitted: this node's own rounds. The leaderboard payouts and the weekly badge do not count on agreement: they count signed accounts only (kanban #1153).",
     "example": "network"
    }
   ],
@@ -2664,8 +2664,8 @@
   "path": "/season-rounds",
   "params": "query game (hosted game name, 64-hex game id, or a comma list of up to 16 game ids), days (1..90, default 7)",
   "auth": "none",
-  "returns": "200 JSON {node, game {ids}, days, fromMs, toMs, roundKeys: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}]}]} - msat and startMs as decimal strings, payoutMsat null while not settled here, roundKey the key the entry joined under (cache 30 s); 400/404",
-  "purpose": "The rounds this node's own leaderboard is built from: FINAL results and the amounts its ACCEPTED settlements paid. Another node merges them into its network leaderboard. The weekly top-3 badge merges on the round keys too.",
+  "returns": "200 JSON {node, game {ids}, days, fromMs, toMs, roundKeys: true, signed: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}], contract, sigs:[{node, sig}]}]} - msat and startMs as decimal strings, payoutMsat null while not settled here, roundKey the key the entry joined under, contract the round contract (hex), sigs this seat's BIP-340 signature over the round's account once every entry is settled here (empty before) (cache 30 s); 400/404",
+  "purpose": "The rounds this node's own leaderboard is built from: FINAL results and the amounts its ACCEPTED settlements paid. Another node merges them into its network leaderboard. A leaderboard payout and the weekly top-3 badge count a round only when the threshold of the round's own draw (5 of 7) signed the same account of it, its contract checked by id (kanban #1153).",
   "audience": "player/page",
   "line": 4440,
   "summary": "Leaderboard rounds held by this node",
@@ -2690,7 +2690,7 @@
    {
     "status": "200",
     "contentType": "application/json",
-    "description": "{node, game:{ids}, days, fromMs, toMs, roundKeys: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}]}]} (cache 30 s)."
+    "description": "{node, game:{ids}, days, fromMs, toMs, roundKeys: true, signed: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}], contract, sigs:[{node, sig}]}]} (cache 30 s)."
    },
    {
     "status": "400",
@@ -4482,8 +4482,8 @@
  {
   "method": "POST",
   "path": "/price-sign",
-  "params": "body JSON {round, kind:\"tape\", prices[]} or {round, kind:\"sample\", k, priceCents}",
-  "auth": "none; signed only if within 0.05 % of this seat's own reading for that moment, a reading no older than 5 s",
+  "params": "body JSON {round, kind:\"tape\", prices[], leaderSig} or {round, kind:\"sample\", k, priceCents, leaderSig}",
+  "auth": "the moment's leader's signature (leaderSig: seat k mod n, the tape's seat 0); signed only if within 0.05 % of this seat's own reading for that moment, a reading no older than 5 s, one value per moment (kanban #1181)",
   "returns": "200 JSON {ok, key, signature}; 400/404/409",
   "purpose": "Asks this seat to sign a price sample or opening tape it read too.",
   "audience": "node-to-node",
@@ -8527,6 +8527,42 @@
  },
  {
   "method": "GET",
+  "path": "/funding-items",
+  "params": "query proposal (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {proposal, items[{kind, hex, atMs}]}; 400",
+  "purpose": "The signals and fee approvals this seat holds for one funding proposal, as signed, each with when this seat first held it (atMs). A seat pulls them from every network seat it reaches before it decides a fee proposal or a signal, so every seat decides on the same set (kanban #1231, #1279).",
+  "audience": "node-to-node",
+  "line": 10118,
+  "summary": "A proposal's signals and fee approvals",
+  "query": [
+   {
+    "name": "proposal",
+    "required": true,
+    "type": "string",
+    "description": "Proposal id, 64 hex (32 bytes)."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{proposal, items: [{kind: signal|fee-approval, hex: the signed record, atMs}]}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "No proposal id, or not 64 hex."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
   "path": "/funding",
   "params": "none",
   "auth": "none",
@@ -8616,6 +8652,48 @@
     "status": "200",
     "contentType": "application/json",
     "description": "{node, totalMsat, entries, federations, paidIn, payouts}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/leaderboard-winners",
+  "params": "query proposal (64-hex leaderboard payout id)",
+  "auth": "none",
+  "returns": "200 JSON {ok, proposal, state (OPEN|FROZEN|PLANNED), winnersId, winners:[{player, payoutPk, msat, places}], pairs:[[roundId, accountId]], evidence:[{roundId, accountId, contract, round, sigs:[{node, sig}]}]}; 400; 501 on a node that pays no reserves",
+  "purpose": "A leaderboard payout's winners at this seat: its own frozen read of the season's signed accounts, or the list it planned for, with every signed account it stands on. The coordinator merges the guardians' records into its plan; a co-signer checks a plan's rounds against them (kanban #1153).",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "Leaderboard payout winners",
+  "query": [
+   {
+    "name": "proposal",
+    "required": true,
+    "type": "string",
+    "description": "The leaderboard payout id, 64 hex.",
+    "example": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok, proposal, state, winnersId, winners, pairs, evidence}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "No proposal id, or not 64 hex."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "This node pays no reserves."
    }
   ],
   "headers": [],

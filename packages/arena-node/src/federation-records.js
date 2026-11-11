@@ -61,6 +61,44 @@ export function federationsOf(census) {
 /** The leave statement a node signs beside its record signature: (record id || 0x01 leaving | 0x00 staying). */
 const leaveMessage = (id, leaving) => Uint8Array.from([...id, leaving ? 1 : 0]);
 
+/**
+ * A LEAVE STATEMENT HANDED ALONG (kanban #1157): the gatherer passes each leaving guardian's own signed word to every guardian seat it asks
+ * to sign the body with that guardian gone, as `left=<peer key 33 hex><signature 64 hex>,...`. A guardian named gone with no statement,
+ * notice, emergency request or attestation set is not signed gone.
+ */
+export const leftHex = (peerKey, leaveSig) => `${toHex(peerKey)}${String(leaveSig).toLowerCase()}`;
+export function readLeftHex(s) {
+  const x = String(s || '').toLowerCase();
+  if (!/^[0-9a-f]{194}$/.test(x)) throw new Error('a leave statement is a peer key (33 bytes) and a signature (64 bytes), in hex');
+  return { peerKey: x.slice(0, 66), signature: x.slice(66) };
+}
+/** Whether `sig` is `nodePubkey`'s signed word that it leaves, over the body whose id is `id`. */
+export function leaveStands(sig, id, nodePubkey) {
+  try { return schnorr.verify(fromHex(String(sig)), leaveMessage(id, true), nodePubkey) === true; } catch { return false; }
+}
+
+/**
+ * THE STATUS ORDER AT ONE HEIGHT (kanban #1157): OPEN < DRAINING < CRITICAL < HALTED, worse to the right. CLOSED stands apart: it is final.
+ * recordStep is the one transition of the record a seat keeps for a federation: `had` the kept { height, status } or null, `next` the
+ * verified { height, status }, `from` 'gather' (this seat's own threshold of signatures), 'mirror' (a record another node serves) or 'restore'.
+ *   older than kept                      -> refused
+ *   same height, kept CLOSED, next not   -> refused (CLOSED is final, kanban #577)
+ *   same height, from a mirror, worse    -> refused: a node serving a worse body at the height this seat holds moves nothing; the next
+ *                                           height's record does, when a threshold signs it
+ *   else                                 -> taken
+ * Answers { take, why }.
+ */
+export const STATUS_RANK = Object.freeze({ OPEN: 0, DRAINING: 1, CRITICAL: 2, HALTED: 3 });
+export function recordStep(had, next, from = 'gather') {
+  if (!had) return { take: true, why: 'none kept' };
+  if (had.height > next.height) return { take: false, why: `a record at ${next.height} is older than the one kept at ${had.height}` };
+  if (had.height < next.height) return { take: true, why: 'newer' };
+  if (had.status === 'CLOSED' && next.status !== 'CLOSED') return { take: false, why: 'the record kept at that height is CLOSED, and CLOSED is final' };
+  if (from === 'mirror' && next.status !== 'CLOSED' && (STATUS_RANK[next.status] ?? 0) > (STATUS_RANK[had.status] ?? 0))
+    return { take: false, why: `a mirrored ${next.status} record does not replace the ${had.status} one kept at the same height ${next.height}` };
+  return { take: true, why: 'the same height' };
+}
+
 // `successorOf(fidHex)`: the successor this seat was told of (hex) or null; `closedOf(fidHex)`: whether the drain is over
 // (§23A.6 steps 2 and 4) - both read into the body every guardian seat builds the same way
 export function federationRecords({ round, roster, inviteFor, networkId, leavingAtMs = () => null, fetcher = fetch, nowMs = () => Date.now(), newest = null,
@@ -97,19 +135,22 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   const history = new Map();                 // fid -> Map(height -> record)
   const remember = (fid, rec) => { if (!history.has(fid)) history.set(fid, new Map()); history.get(fid).set(Number(rec.height), rec);
     if (store && store.saveAt) { try { store.saveAt(fid, Number(rec.height), rec.__hex); } catch { /* in memory */ } } };
-  function keep(fid, bytes, v) {
-    remember(fid, Object.assign(Object.create(null), v.record, { __hex: toHex(bytes), __status: v.status }));
-    const had = kept.get(fid);
-    if (had && had.height > v.record.height) return;
+  function keep(fid, bytes, v, from = 'gather') {
     // A CLOSED RECORD IS FINAL (kanban #577, measured 2026-10-22 on federation 89ce310e: n495-1 held it CLOSED with 7 of 10 signatures, set its
     // guardian aside, and every other seat kept the OPEN record of the same height - one guardian fewer, they could never sign the closed
     // body again): at the same height a record that is not CLOSED never replaces one that is
-    if (had && had.height === v.record.height && had.status === 'CLOSED' && v.status !== 'CLOSED') return;
+    // AND A MIRROR NEVER WORSENS THE STATUS AT ONE HEIGHT (kanban #1157): recordStep. An older record still goes into the history, as
+    // before; one refused at the kept height does not overwrite that height's
+    const had = kept.get(fid);
+    const step = recordStep(had ? { height: had.height, status: had.status } : null, { height: v.record.height, status: v.status }, from);
+    if (step.take || (had && had.height > v.record.height)) remember(fid, Object.assign(Object.create(null), v.record, { __hex: toHex(bytes), __status: v.status }));
+    if (!step.take) return false;
     kept.set(fid, { bytes, record: v.record, status: v.status, height: v.record.height, signers: v.signers, atMs: nowMs() });
     if (store) { try { store.save(fid, toHex(bytes)); } catch { /* kept in memory */ } }
     if (['DRAINING', 'CRITICAL', 'CLOSED', 'HALTED'].includes(v.status)) draining.set(fid, v.status); else draining.delete(fid);
     if (v.status !== 'HALTED') halted.delete(fid);
     else if (!halted.has(fid) || halted.get(fid).height > v.record.height) halted.set(fid, { height: v.record.height, bytes });
+    return true;
   }
 
   // ROUNDS BY CENSUS HEIGHT, each read once (measured on testnet4 2026-10-12: a seat holds thousands of rounds,
@@ -302,10 +343,11 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // WHO SAYS IT IS LEAVING, each by its own key over the plain body's id
     const plainId = federationRecordId(plain.record);
     const gone = [];
+    // ... and the statements themselves go along on the second ask (kanban #1157): a guardian seat signs one gone only on its own word
+    const left = [];
     for (const { g, said } of asked) {
       if (!said || !said.ok || !said.leaving) continue;
-      let good = false; try { good = schnorr.verify(fromHex(said.leaveSig), leaveMessage(plainId, true), g.nodePubkey); } catch { good = false; }
-      if (good) gone.push({ peerKey: g.peerKey, sinceHeight: b.height, kind: GONE.DEPARTED, proofRef: plainId });
+      if (leaveStands(said.leaveSig, plainId, g.nodePubkey)) { gone.push({ peerKey: g.peerKey, sinceHeight: b.height, kind: GONE.DEPARTED, proofRef: plainId }); left.push(leftHex(g.peerKey, said.leaveSig)); }
     }
     // WHO IS PROVEN ABANDONED (§23A.4): 2f + 1 guardians' absence attestations this seat holds, for at least
     // abandon_blocks - gone ABANDONED since the proof's height, under the proof's id; the attestations go along on the second
@@ -337,7 +379,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       answers = await Promise.all(plain.guardians.map(async (g) => {
         if (toHex(g.nodePubkey) === toHex(round.pubkey)) return { g, said: signBody(final.record) };
         const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
-        try { const r = await fetcher(`${base}/federation-record?federation=${toHex(federationId)}&height=${b.height}&reserve=${reserveSats}&gone=${gone.map((x) => toHex(x.peerKey)).join(',')}${absent.length ? `&absent=${absent.map(absenceHex).join(',')}` : ''}${departed.length ? `&departed=${departed.map(departureHex).join(',')}` : ''}${emergent.length ? `&emergency=${emergent.map(emergencyHex).join(',')}` : ''}`, { signal: AbortSignal.timeout(8000) }); return { g, said: r.ok ? await r.json() : null }; }
+        try { const r = await fetcher(`${base}/federation-record?federation=${toHex(federationId)}&height=${b.height}&reserve=${reserveSats}&gone=${gone.map((x) => toHex(x.peerKey)).join(',')}${absent.length ? `&absent=${absent.map(absenceHex).join(',')}` : ''}${departed.length ? `&departed=${departed.map(departureHex).join(',')}` : ''}${emergent.length ? `&emergency=${emergent.map(emergencyHex).join(',')}` : ''}${left.length ? `&left=${left.join(',')}` : ''}`, { signal: AbortSignal.timeout(8000) }); return { g, said: r.ok ? await r.json() : null }; }
         catch { return { g, said: null }; }
       }));
     }
@@ -413,8 +455,11 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
             }
           }
           if (!v.ok) { why = v.why; continue; }
-          // the newest; at the same height a CLOSED one (final - see keep)
-          if (!best || v.record.height > best.v.record.height || (v.record.height === best.v.record.height && v.status === 'CLOSED' && best.v.status !== 'CLOSED')) best = { v, bytes: fromHex(String(x.record)) };
+          // the newest; at the same height a CLOSED one (final - see keep), else the better status (kanban #1157: one node serving a worse body
+          // at a height others serve better does not set the pick)
+          const sameH = best && v.record.height === best.v.record.height;
+          if (!best || v.record.height > best.v.record.height || (sameH && v.status === 'CLOSED' && best.v.status !== 'CLOSED')
+            || (sameH && best.v.status !== 'CLOSED' && v.status !== 'CLOSED' && (STATUS_RANK[v.status] ?? 0) < (STATUS_RANK[best.v.status] ?? 0))) best = { v, bytes: fromHex(String(x.record)) };
         }
       } catch { /* the next guardian */ }
     }));
@@ -429,7 +474,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       }
     }
     if (!best) return { ok: false, why, mirrored: false };
-    keep(fid, best.bytes, best.v);
+    if (!keep(fid, best.bytes, best.v, 'mirror')) { const k = kept.get(fid); return { ok: true, mirrored: false, status: k.status, signers: k.signers, height: k.height, why: recordStep(k, { height: best.v.record.height, status: best.v.status }, 'mirror').why }; }
     return { ok: true, mirrored: true, status: best.v.status, signers: best.v.signers, height: best.v.record.height };
   }
 
@@ -454,7 +499,11 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   }
 
   /** GET /federation-record with `gone` named: the same body with those peer keys gone, signed - if they are its guardians. */
-  async function mySignatureWithGone(federationIdHex, goneHex, atHeight = null, reserveNamed = null, absentHex = [], departedHex = [], emergencyHexes = []) {
+  // A GUARDIAN IS SIGNED GONE ONLY ON A PROOF THIS SEAT CHECKS (kanban #1157): its own signed leave statement over this seat's plain body
+  // (`left`), a standing notice, an emergency request this seat took itself, or 2f + 1 absence attestations for abandon_blocks - never on
+  // the gatherer's word alone. And THIS SEAT'S OWN GUARDIAN by a leave statement only while this node is leaving: never by one it does not
+  // stand behind now. Its owner's notice or emergency request, and 2f + 1 attestations (a threshold of observers), stand for it as for any
+  async function mySignatureWithGone(federationIdHex, goneHex, atHeight = null, reserveNamed = null, absentHex = [], departedHex = [], emergencyHexes = [], { left = [] } = {}) {
     await chainReady(atHeight);
     const b = basisFor(federationIdHex, atHeight);
     if (!b.ok) return b;
@@ -470,8 +519,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const plainId = federationRecordId(plain.record);
     // a peer the attestations handed along are about is ABANDONED - only if they prove it to this seat, on its own record
     let absent; let notices;
-    let requests;
-    try { absent = absentHex.map(readAbsenceHex); notices = departedHex.map(readDepartureHex); requests = emergencyHexes.map(readEmergencyHex); } catch (e) { return { ok: false, why: e.message }; }
+    let requests; let statements;
+    try { absent = absentHex.map(readAbsenceHex); notices = departedHex.map(readDepartureHex); requests = emergencyHexes.map(readEmergencyHex); statements = (left || []).map(readLeftHex); } catch (e) { return { ok: false, why: e.message }; }
+    const me = toHex(round.pubkey);
     const sv = (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } };
     const gone = [];
     for (const g of plain.guardians.filter((x) => goneHex.includes(toHex(x.peerKey)))) {
@@ -495,8 +545,16 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         if (!d.ok) return { ok: false, why: `that departure does not stand here: ${d.why}` };
         gone.push({ peerKey: g.peerKey, sinceHeight: d.sinceHeight, kind: GONE.DEPARTED, proofRef: d.id }); continue;
       }
+      const self = toHex(g.nodePubkey) === me;
+      // its own word that it leaves, over exactly the plain body this seat built: DEPARTED from this height, under that body's id
+      const said = statements.find((x) => x.peerKey === toHex(g.peerKey));
+      if (said) {
+        if (!leaveStands(said.signature, plainId, g.nodePubkey)) return { ok: false, why: `the leave statement of guardian ${toHex(g.peerKey).slice(0, 16)} is not its node's signature over this body` };
+        if (self && leavingAtMs() === null) return { ok: false, why: 'this node is not leaving: it does not sign itself gone' };
+        gone.push({ peerKey: g.peerKey, sinceHeight: b.height, kind: GONE.DEPARTED, proofRef: plainId }); continue;
+      }
       const about = absent.filter((a) => toHex(a.peerKey) === toHex(g.peerKey));
-      if (!about.length) { gone.push({ peerKey: g.peerKey, sinceHeight: b.height, kind: GONE.DEPARTED, proofRef: plainId }); continue; }
+      if (!about.length) return { ok: false, why: `guardian ${toHex(g.peerKey).slice(0, 16)} is named gone with no proof: no leave statement, notice, emergency request or absence attestations` };
       if (!Number.isInteger(abandonBlocks)) return { ok: false, why: 'this seat runs no abandon_blocks clock' };
       const p = abandonmentProof(about, { record: plain.record, peerKey: g.peerKey, abandonBlocks, verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } } });
       if (!p.ok) return { ok: false, why: `that abandonment does not stand here: ${p.why}` };

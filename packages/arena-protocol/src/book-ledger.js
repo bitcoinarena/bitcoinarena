@@ -29,6 +29,8 @@ export function bookLedger({ batches, feeBps }) {
   const positions = new Map();
   const buys = new Map();               // entry -> its resting buy (the rest of its budget)
   const sells = new Map();              // sell id -> its resting sell (the rest of its shares)
+  // EVERY SELL ONCE (kanban #1150): a signed sell carried by a later batch too was set again at its full size - one signature, two sales
+  const seenSells = new Set();
   const refused = [];
   const out = [];
   const position = (o) => {
@@ -61,6 +63,8 @@ export function bookLedger({ batches, feeBps }) {
     for (const s of [...(b.sells || [])].sort((x, y) => byIdOrder(x.id, y.id))) {
       const p = positions.get(s.entry);
       if (!p) { refused.push({ id: s.id, why: 'a sell of an entry the book does not hold' }); continue; }
+      if (seenSells.has(s.id)) { refused.push({ id: s.id, why: 'that sell is in the book already: a signed sell is sold once' }); continue; }
+      seenSells.add(s.id);
       const offered = [...sells.values()].filter((x) => x.entry === s.entry && x.outcome === s.outcome).reduce((t, x) => t + x.sharesMsat, 0n);
       const unsold = p.shares[s.outcome] - p.shares[1 - s.outcome] - offered;
       if (s.sharesMsat > unsold) { refused.push({ id: s.id, why: `that sell offers ${s.sharesMsat} of outcome ${s.outcome} and its entry holds ${unsold > 0n ? unsold : 0n} unsold` }); continue; }

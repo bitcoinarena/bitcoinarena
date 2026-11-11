@@ -28,7 +28,7 @@
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { isGameMarket, isScalar, marketOfRound, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
 import { gameMarketResolution, gameMarketVoided, gameMarketFitsSource } from '../../arena-protocol/src/game-market.js';
-import { decodeAttestation, marketVoided, marketTimes, roundTermsOf, pariMutuelTable } from '../../arena-protocol/src/attested.js';
+import { decodeAttestation, marketTimes, roundTermsOf, pariMutuelTable, marketTransition, marketTerminal, MARKET_STATE } from '../../arena-protocol/src/attested.js';
 import { decodeValueAttestation, isValueAttestationBytes, scalarPayoutTable } from '../../arena-protocol/src/scalar.js';
 import { encodeRoundResult, roundResultId, decodeRoundResult, frontOf, frontName } from '../../arena-protocol/src/round-result.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -80,15 +80,79 @@ export function gameVoidOf(round, roundIdBytes) {
   return (round.gameOutcomes ? round.gameOutcomes(roundIdBytes) : []).find((g) => g.outcome === GAME_MARKET_REFUND) || null;
 }
 
+/** The deadline of a market round (attested.js marketTimes), or null for a market whose manifest names no terms. */
+export function marketDeadlineOf(manifest, contract) {
+  const terms = roundTermsOf(manifest, contract);
+  return terms ? marketTimes({ entryCloseMs: contract.entryCloseMs, terms }).deadlineMs : null;
+}
+
+// A ROUND WHOSE SETTLEMENT WENT IN under a store made before market_states (a seat restarted on this build): its money moved on
+// the outcome its held evidence named, so that is its FINAL state - never a VOID that would open the return door on spent locks
+const settledHere = (round, rid) => {
+  try {
+    const one = round.lockSettlement ? round.lockSettlement(rid) : null;
+    if (one && one.state === 'ACCEPTED') return true;
+    return !!(round.fedLockSettlementsOf && (round.fedLockSettlementsOf(rid) || []).some((r) => r.state === 'ACCEPTED'));
+  } catch { return false; }
+};
+
 /**
- * IS A MARKET ROUND VOID ON THIS SEAT'S RECORD (attested.js marketVoided), with a market on a game's early VOID
- * (feature 6): a held VOID - its source ended on a value the market refunds, or can never fit it - voids the round
- * AT ONCE; otherwise as any market: a contradiction, or no standing outcome by its deadline. Answers { voided, why, early? }.
+ * A MARKET ROUND'S STATE ON THIS SEAT'S RECORD (kanban #1151): the persisted state (store.js market_states) moved on by the one
+ * transition (attested.js marketTransition) over the evidence held here - the attestations and a market on a game's held source
+ * results (heldOutcomes) and VOIDs (gameVoidOf) - on the seat's clock. A move is PERSISTED (compare-and-set) BEFORE IT IS
+ * ANSWERED, so every door that acts on the answer - the settlement, the return door, the stake-share handout - acts only on a
+ * persisted state; a terminal state (FINAL, VOID) is answered as it was stored and never read from the evidence again.
+ * Answers { state, outcome?, value?, observedAtMs?, firstMs?, finalAtMs?, reason?, why?, final, voided, persisted }.
+ * A store without market_states (a test's fake) reads the same transition, nothing persisted.
+ */
+export function marketStateOf(round, roundIdBytes, { contract, manifest, nowMs }) {
+  const persisting = typeof round.marketState === 'function' && typeof round.casMarketState === 'function';
+  const answer = (s, persisted) => ({ ...s, final: s.state === MARKET_STATE.FINAL, voided: s.state === MARKET_STATE.VOID, persisted });
+  for (let tries = 0; tries < 3; tries++) {
+    const prev = persisting ? round.marketState(roundIdBytes) : null;
+    if (prev && marketTerminal(prev.state)) return answer(prev, true);
+    const held = heldOutcomes(round, roundIdBytes);
+    const voids = (round.gameOutcomes ? round.gameOutcomes(roundIdBytes) : []).filter((g) => g.outcome === GAME_MARKET_REFUND).map((g) => ({ receivedMs: g.receivedMs, why: g.why }));
+    let next = marketTransition(prev, held, { deadlineMs: marketDeadlineOf(manifest, contract), windowMs: contract.objectionWindowMs, nowMs, voids });
+    // THE MIGRATION'S ONE CASE: no persisted state yet, a settlement that went in, and the evidence read now naming no FINAL
+    // (a pre-#1151 store whose settlement took a late attestation): FINAL on the first outcome it held, as the old reading paid it
+    if (!prev && next.state !== MARKET_STATE.FINAL && held.length && settledHere(round, roundIdBytes)) {
+      const h = held[0];
+      next = { state: MARKET_STATE.FINAL, ...(typeof h.value === 'bigint' ? { value: h.value } : { outcome: h.outcome }), observedAtMs: BigInt(h.observedAtMs),
+        firstMs: Number(h.receivedMs), finalAtMs: Number(h.receivedMs) + Number(contract.objectionWindowMs), atMs: Number(nowMs), reason: 'settled',
+        why: 'its settlement went in before this seat kept a market state: FINAL on the outcome it settled' };
+    }
+    const moved = next.state !== (prev ? prev.state : MARKET_STATE.OPEN);
+    if (!persisting || !moved) return answer(next, persisting && !!prev && !moved);
+    if (round.casMarketState(roundIdBytes, prev ? prev.state : null, next, prev ? (prev.firstMs ?? null) : null)) return answer(next, true);
+    // another reader moved it first: read it again and go on from what it persisted
+  }
+  const last = round.marketState(roundIdBytes);
+  return answer(last || { state: MARKET_STATE.OPEN }, !!last);
+}
+
+/**
+ * THE STATE IN outcomeFinality'S SHAPE, for the readers that took it (settlement.js, forfeit.js, stake-secret.js, server.js): `state`
+ * ATTESTED for an ATTESTED or FINAL round (with `final`), OPEN, DISPUTED for a VOID by contradiction, VOID for any other; `market`
+ * the state itself.
+ */
+export function marketFinalityOf(round, roundIdBytes, { contract, manifest, nowMs }) {
+  const s = marketStateOf(round, roundIdBytes, { contract, manifest, nowMs });
+  const state = s.state === MARKET_STATE.FINAL || s.state === MARKET_STATE.ATTESTED ? 'ATTESTED' : s.state === MARKET_STATE.VOID ? (s.reason === 'dispute' ? 'DISPUTED' : 'VOID') : 'OPEN';
+  return { ...s, market: s.state, state };
+}
+
+/**
+ * IS A MARKET ROUND VOID ON THIS SEAT'S RECORD: its persisted state (marketStateOf) - a market on a game's held VOID (its source
+ * ended on a value the market refunds, or can never fit it) voids it AT ONCE, any market a contradiction inside the objection
+ * window or no standing outcome by its deadline - and only while it is not FINAL. Answers { voided, why, early? }. `held` is
+ * no longer read (the state reads its own evidence); kept for its callers.
  */
 export function marketVoidOf(round, roundIdBytes, { contract, manifest, held = null, nowMs }) {
-  const v = gameVoidOf(round, roundIdBytes);
-  if (v) return { voided: true, early: true, why: v.why || 'its source round\'s result refunds this market: every stake goes back' };
-  return marketVoided(held || heldOutcomes(round, roundIdBytes), { entryCloseMs: contract.entryCloseMs, terms: roundTermsOf(manifest, contract), nowMs });
+  void held;
+  const s = marketStateOf(round, roundIdBytes, { contract, manifest, nowMs });
+  if (!s.voided) return { voided: false };
+  return { voided: true, why: s.why, ...(s.reason === 'game' ? { early: true } : {}) };
 }
 
 /** What a page or a seat re-verifies a held game outcome from (GET /outcome): the RoundResult, its signatures, the source. */
@@ -230,10 +294,20 @@ export function gameMarkets({ round, plugins, committeeFor, verify, now = () => 
     const fits = gameMarketFitsSource({ market: m.market, manifest: m.manifest, source: src.source, sourceHeld: src.held, sourceSeries: seriesHeld() || [] });
     if (!fits.ok && !fits.void) return refuse(fits.why);
     const sid = m.market.sourceRoundId;
+    // NOTHING IS TAKEN AFTER THE MARKET'S DEADLINE (kanban #1151): a market with no result by then is VOID and its stakes went back at
+    // once; a source result withheld until then and handed in late would turn it ATTESTED over returned locks
+    const deadlineMs = marketDeadlineOf(m.manifest, m.market);
+    if (deadlineMs !== null && BigInt(now()) >= deadlineMs)
+      return refuse(`that market's deadline was ${new Date(Number(deadlineMs)).toISOString()}: no source result is taken after it (a market with none by then is VOID, every stake back)`);
+    // EACH HOLD MOVES THE ROUND'S PERSISTED STATE (marketStateOf) before it is answered; one held after a terminal state is evidence only
+    const stateNow = () => marketStateOf(round, marketRoundIdBytes, { contract: m.market, manifest: m.manifest, nowMs: now() });
+    const decidedBefore = marketTerminal(stateNow().state);
     if (!fits.ok) {
       const fresh = round.putGameOutcome({ roundId: marketRoundIdBytes, resultId: NO_RESULT_ID, sourceRoundId: sid, outcome: GAME_MARKET_REFUND,
         why: `its source does not fit it: ${fits.why}`, result: new Uint8Array(0), sigs: [], source: src.bytes, observedMs: now(), receivedMs: now() });
-      return { ok: false, void: true, why: fits.why, source: toHex(sid), voided: true, voidWhy: `its source does not fit it: ${fits.why}`, held: true, fresh };
+      const st = stateNow();
+      return { ok: false, void: true, why: fits.why, source: toHex(sid), voided: st.voided, voidWhy: st.voided ? st.why : `its source does not fit it: ${fits.why}`, held: true, fresh,
+        market: st.state, ...(decidedBefore ? { evidenceOnly: true } : {}) };
     }
     if (!result) return refuse('no source round result to hold: { openCents, closeCents, front?, sigs }', 400);
     if (BigInt(now()) < fits.sourceEndMs)
@@ -249,7 +323,9 @@ export function gameMarkets({ round, plugins, committeeFor, verify, now = () => 
       why: got.refund ? got.why : null, result: resultBytes, sigs: standingSigs(rid, result.sigs, got.committee), source: src.bytes,
       observedMs: Number(fits.sourceEndMs), receivedMs: now() });
     const { committee, ...answer } = got;
-    return { ...answer, held: true, fresh, ...(got.refund ? { voided: true, voidWhy: got.why } : {}) };
+    // what the round IS now, on its persisted state: a result held after it turned FINAL or VOID changed nothing (evidence only)
+    const st = stateNow();
+    return { ...answer, held: true, fresh, market: st.state, voided: st.voided, ...(st.voided ? { voidWhy: st.why } : {}), ...(decidedBefore ? { evidenceOnly: true } : {}) };
   }
 
   /**

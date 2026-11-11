@@ -42,7 +42,9 @@ export function createLiquidations({ records, clocks, verify, claimsUrl = null, 
       const when = liquidationSchedule({ haltHeight: halt.height, clocks });
       const all = [...(copies.get(fid) || new Map()).values()];
       // a copy is checked again against the record held now - a guardian the newest record no longer lists does not count
-      const pick = held ? newestSpentSet(all, { record: held.record, verify }) : { copy: null, why: 'no record held' };
+      // the halt's bound (kanban #1262): no session above the halt proof's session + 1
+      const maxSession = halt.proof && Number.isInteger(halt.proof.session) ? halt.proof.session + 1 : null;
+      const pick = held ? newestSpentSet(all, { record: held.record, verify, maxSession }) : { copy: null, why: 'no record held' };
       return {
         federation: fid, haltHeight: halt.height, haltRecord: halt.bytes ? toHex(halt.bytes) : null,
         haltProof: halt.proof ? { session: halt.proof.session, observers: halt.proof.observers, abandoned: halt.proof.abandoned.map(toHex), id: toHex(halt.proof.id) } : null,

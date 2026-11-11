@@ -59,10 +59,11 @@ import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { drivenTape, say as sayTo, bedFrom, GENESIS_HASH } from '../test/window-fixture.js';
-import { NEXTBLOCK_CORES_V3, NEXTBLOCK_CORES_V5 } from '../../nextblock/plugin/truck-cores.js';
-// EVERY CORE A ROUND MAY NAME: v3's and v5's (v6 plays v5's 0847, measured 2026-10-27 10:18Z - the run stopped after the locks with
-// "the round names core 0847c99f60e694e1, which nextblock does not hold")
-const NEXTBLOCK_CORES = new Map([...NEXTBLOCK_CORES_V3, ...NEXTBLOCK_CORES_V5]);
+import * as truckCores from '../../nextblock/plugin/truck-cores.js';
+// EVERY CORE A ROUND MAY NAME: every NEXTBLOCK_CORES_* map the app exports (v6 plays v5's 0847, measured 2026-10-27 10:18Z; kanban #1123,
+// measured 2026-11-04: a list of v3 and v5 only stopped a v7 round after the locks - "the round names core 8cbc74b27bee7872, which
+// nextblock does not hold" - and the deposit was lost)
+const NEXTBLOCK_CORES = new Map(Object.entries(truckCores).filter(([k, v]) => /^NEXTBLOCK_CORES/.test(k) && v instanceof Map).flatMap(([, m]) => [...m]));
 import { MANIFEST_V3, GAME_ID_V3 } from '../../nextblock/plugin/nextblock-v3.js';
 import { itemsKeyFor, ownedItems, entryItemsFor, entryUnlocks } from '../../arena-client/src/item-buy.js';
 const env = process.env;
@@ -230,6 +231,8 @@ try {
   const net = split.netMsat;
   log({ step: 'joined', feeRule: rule, feeLock: gate.pays, netStakeMsat: net, feeMsat: split.feeMsat, donationMsat: split.donationMsat, reserveKey: split.reserveKey ? toHex(split.reserveKey).slice(0, 16) : null });
 
+  // THE CORE IS CHECKED BEFORE ANYTHING IS PAID (kanban #1123): a round whose core this tool cannot drive stops here, not after the deposit
+  if (!NEXTBLOCK_CORES.has(toHex(c.simCoreHash))) throw new Error(`the round names core ${toHex(c.simCoreHash).slice(0, 16)}, which nextblock does not hold here (place the app at its pin) - nothing is paid`);
   // THE DEPOSIT: the stake plus the entry fee and what the federation takes, through whichever gateway the client picks
   const depositMsat = STAKE + entryFeeMsat(STAKE) + 200000n;
   const t = Date.now();
@@ -258,6 +261,10 @@ try {
   const locks = await lockEntry({ lc, c, split, stakePoint: s.point, player: s.player, claimPk: att.claimPk, gate, rand });
   const lk = locks.stake;
   log({ step: 'locked', outpoint: `${toHex(lk.outpoint.txid)}:${lk.outpoint.outIdx}`, msat: net, ms: Date.now() - t2, ...(locks.txid ? { tx: locks.txid.slice(0, 16), donationOutputs: (locks.entryFields.donationOutpoints || []).length, reserveOutput: !!locks.entryFields.reserveOutpoint } : {}) });
+  // THE KEYS AS SOON AS THE LOCKS STAND (kanban #1123): a run that stops after this line can still refund its locks
+  if (env.KEYS_FILE) appendFileSync(env.KEYS_FILE, `${JSON.stringify({ at: new Date().toISOString(), round: toHex(rid), entry: null, step: 'locked',
+    secret: toHex(me.secret), stake: `${toHex(lk.outpoint.txid)}:${lk.outpoint.outIdx}`,
+    fee: locks.fee ? `${toHex(locks.fee.outpoint.txid)}:${locks.fee.outpoint.outIdx}` : null })}\n`);
   const fee = locks.fee, hand = fee ? fee.fields : null;
   if (fee) log({ step: 'fee locked', outpoint: `${toHex(fee.outpoint.txid)}:${fee.outpoint.outIdx}` });
   const needed = receiptsNeeded(c.gameVerifySlots);

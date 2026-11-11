@@ -23,6 +23,8 @@ import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { DELIVERED, FAILED } from '../../arena-protocol/src/payout.js';
 import { collectZaps } from '../../arena-client/src/identity.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { createWinnersBook, FREEZE_GRACE_MS } from '../src/leaderboard-freeze.js';
+import { contractRound, answersOf, drawOf } from './signed-season-fixture.js';
 
 const verify = (s, m, k) => schnorr.verify(s, m, k);
 const sk = (n) => { const b = new Uint8Array(32); b[0] = 7; b[31] = n; return b; };
@@ -91,6 +93,8 @@ const ROUNDS = [
   { roundId: hx(0x12), gameId: GAME, startMs: T0 + 7200000, entries: [en(C, 300000n, hx(0xc1)), en(D, 200000n, hx(0xd1)), en(E, 200000n, hx(0xe1))] },
 ];
 const WIN = { rounds: ROUNDS, games: [GAME], fromMs: T0, toMs: T0 + 7 * 86400000, top: 3, amountMsat: 3000000n };
+// THE SAME ROUNDS WITH THEIR CONTRACTS, as the seats sign them (kanban #1153): what the payout counts
+const SIGNED = ROUNDS.map((r, i) => contractRound({ gameId: r.gameId, startMs: r.startMs, n: 100 + i, entries: r.entries }));
 
 test('the winners: rows without an identity skipped, the next moving up; a tie at the cut shares its place', () => {
   const w = leaderboardWinners(WIN);
@@ -118,6 +122,7 @@ const G = evenGroupSecret(0x7654321n, curve);
 const DEAL = trustedDealerSplit({ secret: G.secret, max: 7, min: 5, coefficients: [3n, 5n, 7n, 11n], curve });
 const KEY = DEAL.groupPublicKey;
 const NODE_KEYS = Array.from({ length: 7 }, (_, i) => toHex(schnorr.getPublicKey(Uint8Array.from({ length: 32 }, (_, j) => (j === 31 ? i + 1 : 8))))).sort();
+const SECRET_OF = new Map(Array.from({ length: 7 }, (_, i) => { const sk = Uint8Array.from({ length: 32 }, (_, j) => (j === 31 ? i + 1 : 8)); return [toHex(schnorr.getPublicKey(sk)), sk]; }));
 const FEES = { ppm: 100n, baseMsat: 1000n };
 const LB = 'cc'.repeat(32);
 
@@ -128,6 +133,7 @@ function world({ reserves = [20000000n, 20000000n] } = {}) {
   const msgOf = (o) => sha256(new TextEncoder().encode(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v))));
   const port = {
     fees: async () => FEES,
+    status: async (at) => { const c = fed.contracts.get(`${toHex(at.txid)}:${at.outIdx}`); return { blockCount: 0, stored: c && !c.spent ? { contractId: 'c', blocksLeft: 0 } : null }; },
     settle: async ({ claimPk, refunds, payouts, nonce, signature = null }) => {
       if (!(nonce instanceof Uint8Array) || nonce.length !== 8) throw new Error('--nonce is 8 bytes');   // as the stake-lock tool
       const message = msgOf({ k: claimPk, r: refunds.map((x) => [toHex(x.outpoint.txid), String(x.outpoint.outIdx), x.amountMsat]), p: payouts, n: nonce });
@@ -144,17 +150,24 @@ function world({ reserves = [20000000n, 20000000n] } = {}) {
   const state = { kept: [] };
   const due = [{ id: LB, federation: FED, amountSats: 3000n, paymentHeight: 600, decidableAt: 520 }];
   const seats = [];
+  const chain = { tip: null };
   for (let i = 0; i < 7; i++) {
     const s = { inbox: [] };
-    s.api = createReservePayouts({ db: openStore(':memory:'), me: NODE_KEYS[i], curve, random: rand, network: 'testnet4', passed: () => [],
-      leaderboards: () => due, winnersOf: async () => leaderboardWinners(WIN),
+    // THE WINNERS (kanban #1153): each seat's winners book over the season's rounds as five seats of each round's draw signed them
+    const db = openStore(':memory:');
+    s.book = createWinnersBook({ db, paramsOf: async () => ({ ok: true, ...WIN, rounds: undefined }), collect: async () => answersOf(SIGNED),
+      seatsOf: drawOf(new Map(), [1, 2, 3, 4, 5, 6, 7, 8, 9]), verify, now: () => WIN.toMs + FREEZE_GRACE_MS });
+    s.api = createReservePayouts({ db, me: NODE_KEYS[i], heightNow: () => chain.tip, curve, random: rand, network: 'testnet4', passed: () => [], sign: (d) => schnorr.sign(d, SECRET_OF.get(NODE_KEYS[i])),
+      leaderboards: () => due, winners: s.book,
       reserveRows: () => [...reserveRows, ...state.kept.filter((k) => k.seat === i && k.row.recipientPk === toHex(KEY)).map((k) => ({ outpoint: k.row.outpoint, amountMsat: k.row.amountMsat, verifiedMs: 99 }))],
       portOf: async () => port, payRequest: async () => ({ ok: false }), invoiceFor: async () => ({ ok: false }),
       keepRow: (row) => { const o = `${toHex(row.outpoint.txid)}:${row.outpoint.outIdx}`; if (!state.kept.some((k) => k.seat === i && k.row.outpoint === o))
         state.kept.push({ seat: i, row: { outpoint: o, amountMsat: String(row.amountMsat), recipientPk: toHex(row.recipientPk), federationId: toHex(row.federationId), senderOnContract: !!row.senderOnContract, item: row.item } }); },
       broadcast: (rec) => { for (const o of seats) if (o !== s) o.inbox.push(rec); },
       guardians: () => new Map([[FED, { members: NODE_KEYS, key: KEY, needed: 5, signer: { id: i + 1, share: DEAL.shares[i].share },
-        peers: seats.filter((o) => o !== s).map((o) => ({ commit: (b) => o.api.commit(b), share: (b) => o.api.share(b) })) }]]) });
+        peers: seats.filter((o) => o !== s).map((o) => ({ commit: (b) => o.api.commit(b), share: (b) => o.api.share(b), winners: async (id) => o.book.recordOf(id) })) }]]) });
+    // ONE CHAIN (kanban #1159): every seat reads the height the last pass ran at, as a seat reads its tip
+    { const pass = s.api.round; s.api.round = (o = {}) => { chain.tip = o.height; return pass(o); }; }
     seats.push(s);
   }
   const deliver = async () => { for (const s of seats) { while (s.inbox.length) await s.api.learn(s.inbox.shift()); } };

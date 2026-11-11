@@ -6,103 +6,13 @@
 // refunds and records, and nothing is paid twice.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '@noble/curves/secp256k1.js';
-import { openStore } from '../src/store.js';
-import { createReservePayouts, contractForInvoice, PAYOUT, planIdOf, heldBeforeOwnPayment } from '../src/reserve-payout.js';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
+import { contractForInvoice, PAYOUT, planIdOf, heldBeforeOwnPayment } from '../src/reserve-payout.js';
 import { capStands } from '../../arena-protocol/src/funding.js';
-import { feldmanGroup, tweakPoint } from '../src/curve.js';
-import { trustedDealerSplit } from '../../arena-protocol/src/frost.js';
-import { evenGroupSecret, signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
+import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
 import { lnv2FeeMsat, largestPayoutMsat } from '../../arena-protocol/src/lock-settlement.js';
-import { bech32Encode, convertBits } from '../../arena-protocol/src/bech32.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
-import { randomBytes } from 'node:crypto';
-
-const curve = { ...feldmanGroup, tweakPoint };
-const rand = (n) => new Uint8Array(randomBytes(n));
-const FED = 'b1'.repeat(32);
-const G = evenGroupSecret(0x1234567n, curve);
-const DEAL = trustedDealerSplit({ secret: G.secret, max: 7, min: 5, coefficients: [11n, 22n, 33n, 44n], curve });
-const KEY = DEAL.groupPublicKey;                                     // the reserve key, 33 bytes, even
-const NODE_KEYS = Array.from({ length: 7 }, (_, i) => toHex(schnorr.getPublicKey(Uint8Array.from({ length: 32 }, (_, j) => (j === 31 ? i + 1 : 9))))).sort();
-const FEES = { ppm: 100n, baseMsat: 1000n };
-const GW = { url: 'https://gw.example/', lightningPublicKey: '02' + 'ab'.repeat(32), modulePublicKey: '03' + 'cd'.repeat(32), live: true,
-  sendFeeDefault: { baseMsat: 2000, ppm: 1000 }, expirationDeltaDefault: 144, expirationDeltaMinimum: 10 };
-const LNURL = 'dev@bitcoin-arena.io', METADATA = '[["text/plain","Bitcoin Arena development"]]';
-const PROPOSAL = 'aa'.repeat(32);
-
-// A BOLT11 INVOICE as the reader takes it (the node's signature is not read: zeros)
-function invoiceOf(msat, paymentHash, metadata) {
-  const words = [];
-  let ts = 1792200000; const t = []; for (let i = 0; i < 7; i++) { t.unshift(ts % 32); ts = Math.floor(ts / 32); } words.push(...t);
-  const field = (type, bytes) => { const w = convertBits([...bytes], 8, 5, true); words.push(type, Math.floor(w.length / 32), w.length % 32, ...w); };
-  field(1, paymentHash); field(23, sha256(new TextEncoder().encode(metadata)));
-  words.push(...new Array(104).fill(0));
-  return bech32Encode(`lntb${msat * 10n}p`, words);
-}
-
-function world({ rows = [60000000n, 40000000n, 50000000n], amountSats = 70000n, gatewayFails = false, down = [] } = {}) {
-  const fed = { height: 1000, contracts: new Map(), submits: [], payments: [], preimages: new Map(), invoiceAsks: 0, gatewayFails };
-  const reserveRows = rows.map((m, i) => ({ outpoint: `${String(i + 1).padStart(2, '0').repeat(32)}:0`, amountMsat: String(m), verifiedMs: i + 1 }));
-  for (const r of reserveRows) fed.contracts.set(r.outpoint, { key: toHex(KEY), msat: BigInt(r.amountMsat), expiration: 0, spent: false });
-  const msgOf = (o) => sha256(new TextEncoder().encode(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v))));
-  const port = {
-    fees: async () => FEES,
-    gateways: async () => ({ gateways: [GW], height: fed.height }),
-    status: async (at) => { const c = fed.contracts.get(`${toHex(at.txid)}:${at.outIdx}`); return { blockCount: fed.height, stored: c && !c.spent ? { contractId: 'c', blocksLeft: c.expiration - fed.height } : null }; },
-    settle: async ({ claimPk, refunds, payouts, nonce, signature = null }) => {
-      if (!(nonce instanceof Uint8Array) || nonce.length !== 8) throw new Error('--nonce is 8 bytes');   // as the stake-lock tool
-      const message = msgOf({ k: claimPk, r: refunds.map((x) => [toHex(x.outpoint.txid), String(x.outpoint.outIdx), x.amountMsat]), p: payouts, n: nonce });
-      if (!signature) return { message: toHex(message) };
-      if (!schnorr.verify(signature, message, claimPk.subarray(1))) return { accepted: false, error: 'the signature does not verify' };
-      for (const x of refunds) { const c = fed.contracts.get(`${toHex(x.outpoint.txid)}:${x.outpoint.outIdx}`);
-        if (!c || c.spent || c.key !== toHex(claimPk) || c.msat !== x.amountMsat || c.expiration > fed.height) return { accepted: false, error: 'an input is not spendable' }; }
-      for (const x of refunds) fed.contracts.get(`${toHex(x.outpoint.txid)}:${x.outpoint.outIdx}`).spent = true;
-      const txid = toHex(message);
-      payouts.forEach((p, i) => fed.contracts.set(`${txid}:${i}`, { key: toHex(p.payoutPk), msat: p.msat, expiration: p.sent ? Number(p.sent.expiration) : 0, spent: false, sent: p.sent || null }));
-      fed.submits.push({ txid, refunds: refunds.length, payouts: payouts.map((p) => p.msat) });
-      return { txid, accepted: true, message: txid };
-    },
-    send: async ({ outpoint, paymentHash, refundPk, auth = null }) => {
-      const at = `${toHex(outpoint.txid)}:${outpoint.outIdx}`;
-      const message = msgOf({ auth: at, h: paymentHash });
-      if (!auth) return { message };
-      if (!schnorr.verify(auth, message, refundPk.subarray(1))) return { sent: false, why: 'the auth does not verify' };
-      if (fed.gatewayFails) return { sent: false, why: 'the gateway is down' };
-      const c = fed.contracts.get(at);
-      if (fed.payments.some((p) => p.hash === paymentHash)) return { sent: true, preimage: fed.preimages.get(paymentHash) };   // paid already: the same preimage
-      if (!c || c.spent) return { sent: false, why: 'no contract' };
-      c.spent = true; fed.payments.push({ hash: paymentHash, msat: c.msat });
-      return { sent: true, preimage: fed.preimages.get(paymentHash) };
-    },
-  };
-  const lnurl = {
-    payRequest: async (address) => (address === LNURL ? { ok: true, metadata: METADATA, callback: 'https://x/cb' } : { ok: false, why: 'no such address' }),
-    invoiceFor: async (address, msat) => { fed.invoiceAsks++;
-      if (address !== LNURL) return { ok: false, why: 'no such address' };
-      const pre = rand(32), hash = sha256(pre); fed.preimages.set(toHex(hash), pre);
-      return { ok: true, invoice: invoiceOf(msat, hash, METADATA), paymentHash: toHex(hash), metadata: METADATA }; },
-  };
-  const state = { passed: [{ id: PROPOSAL, lnurl: LNURL, amountSats, decidableAt: 500 }], kept: [] };
-  const seats = [];
-  for (let i = 0; i < 7; i++) {
-    const me = NODE_KEYS[i];
-    const s = { me, down: down.includes(i), inbox: [] };
-    s.api = createReservePayouts({ db: openStore(':memory:'), me, curve, random: rand, network: 'testnet4',
-      passed: () => state.passed, reserveRows: () => [...reserveRows, ...state.kept.filter((k) => k.seat === i).map((k) => k.row)],
-      portOf: async () => port, payRequest: lnurl.payRequest, invoiceFor: lnurl.invoiceFor,
-      // as putDonationOutputs: one row per outpoint (INSERT OR REPLACE)
-      keepRow: (row) => { const o = `${toHex(row.outpoint.txid)}:${row.outpoint.outIdx}`; if (!state.kept.some((k) => k.seat === i && k.row.outpoint === o)) state.kept.push({ seat: i, row: { outpoint: o, amountMsat: String(row.amountMsat), verifiedMs: 99 } }); },
-      broadcast: (rec) => { for (const o of seats) if (o !== s) o.inbox.push(rec); },
-      guardians: () => new Map([[FED, { members: NODE_KEYS, key: KEY, needed: 5, signer: { id: i + 1, share: DEAL.shares[i].share },
-        peers: seats.filter((o) => o !== s).map((o) => ({ commit: async (b) => (o.down ? { ok: false, why: 'down' } : o.api.commit(b)), share: async (b) => (o.down ? { ok: false, why: 'down' } : o.api.share(b)) })) }]]) });
-    seats.push(s);
-  }
-  const deliver = async () => { for (const s of seats) { while (s.inbox.length) await s.api.learn(s.inbox.shift()); } };
-  const held = (i) => { const spent = seats[i].api.spent(); return [...reserveRows, ...state.kept.filter((k) => k.seat === i).map((k) => k.row)].filter((r) => !spent.has(r.outpoint))
-    .reduce((t, r) => t + BigInt(r.amountMsat), 0n); };
-  return { fed, seats, state, deliver, held, reserveRows };
-}
+import { world, invoiceOf, curve, rand, DEAL, KEY, FEES, GW, LNURL, METADATA, PROPOSAL } from './reserve-payout-fixture.js';
 
 test('a pass pays once: one plan, one transaction, one gateway payment for X; the preimage checked; all 7 hold the same PAID; the reserves drop by X plus fees', async () => {
   const w = world();
@@ -221,4 +131,48 @@ test('a payment\'s cap reads the reserves as they were before it: its own plan d
   assert.equal(heldBeforeOwnPayment(1980n, null), 1980n);
   assert.equal(heldBeforeOwnPayment(1980n, { state: PAYOUT.PAID, plan }), 1980n);
   assert.equal(heldBeforeOwnPayment(1980n, { state: PAYOUT.SHORT, plan: null }), 1980n);
+});
+
+test('kanban #1154 on the reserves: a plan whose invoice another node signed is refused by every co-signer - nothing signed, nothing paid', async () => {
+  // the coordinator's address answers it with invoices of an outsider's node (a coordinator that swaps in its own invoice): the
+  // description hash and the amount are right, the payee is not the one the address answers every other seat with
+  const OUT = new Uint8Array(32).fill(0x77);
+  const evil = {
+    invoiceFor: async (address, msat) => { const pre = rand(32), hash = sha256(pre); return { ok: true, invoice: invoiceOf(msat, hash, METADATA, OUT), paymentHash: toHex(hash), metadata: METADATA }; },
+    payeeFor: async () => ({ ok: true, payee: toHex(secp256k1.getPublicKey(OUT, true)) }),
+  };
+  const w = world({ more: (i) => (i === 0 ? evil : {}) });
+  const out = await w.seats[0].api.round({ height: 500 });
+  await w.deliver();
+  assert.equal(w.fed.submits.length, 0, 'no transaction');
+  assert.equal(w.fed.payments.length, 0, 'no gateway payment');
+  assert.ok(out.every((r) => r.state !== PAYOUT.PAID), JSON.stringify(out));
+  assert.ok(w.fed.payeeAsks >= 4, `the co-signers read the address's own invoice (${w.fed.payeeAsks})`);
+  // and the honest world still pays, each co-signer having read its own invoice's payee
+  const ok = world();
+  const [r] = await ok.seats[0].api.round({ height: 500 });
+  assert.equal(r.state, PAYOUT.PAID, r.why);
+  assert.ok(ok.fed.payeeAsks >= 4, `${ok.fed.payeeAsks} payee reads`);
+});
+
+// KANBAN #1259 (audit 3 #1210 FIXES-21): payerFor skipped a federation with no key, no port or no live gateway, and the round then wrote SHORT - terminal
+// and broadcast - so a passing read (both gateways live:false for a block) ended a payment the reserves could make. Now a federation not read this pass
+// is no shortfall: nothing is written, and the next pass pays.
+test('#1259 no live gateway for one pass, or a read that fails, is no SHORT: nothing written, and the next pass pays', async () => {
+  for (const [name, outage] of [['no live gateway', (p) => { p.gateways = async () => ({ gateways: [{ ...GW, live: false }], height: 1000 }); }],
+                                ['a failed read', (p) => { p.fees = async () => { throw new Error('connection reset'); }; }]]) {
+    const w = world();
+    const keep = { gateways: w.port.gateways, fees: w.port.fees };
+    outage(w.port);
+    const first = await w.seats[0].api.round({ height: 500 });
+    await w.deliver();
+    const during = w.seats.map((s) => (s.api.stateOf(PROPOSAL) || {}).state || null);
+    Object.assign(w.port, keep);
+    const [r] = await w.seats[0].api.round({ height: 500 });
+    await w.deliver();
+    console.log(`  FACTS #1259 ${name}:`, JSON.stringify({ firstPass: first.map((x) => x.state || (x.ok === false ? 'asked again' : '?')), heldDuring: [...new Set(during)], nextPass: r && r.state, payments: w.fed.payments.length }));
+    assert.ok(during.every((x) => x === null), `${name}: a record was written on a passing read: ${during}`);
+    assert.equal(r.state, PAYOUT.PAID, r.why);
+    assert.equal(w.fed.payments.length, 1);
+  }
 });

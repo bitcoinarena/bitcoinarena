@@ -547,6 +547,8 @@ export const TAG = {
   marketSell: 'ARENA/v1/MarketSell',
   // a seat's word that it did not sign a batch and never will (a batch is void once 5 can no longer be reached)
   marketBatchDecline: 'ARENA/v1/MarketBatchDecline',
+  // a round seat's ask that the others answer whether they signed a batch past its signing window, or decline it (kanban #1167)
+  marketBatchVoidAsk: 'ARENA/v1/MarketBatchVoidAsk',
   // a player's identity key naming its head-to-head entry, and a seat's signed running score of two identities
   matchProof: 'ARENA/v1/MatchProof',
   matchRecord: 'ARENA/v1/MatchRecord',
@@ -760,6 +762,25 @@ export const OBJECTION_WINDOW_REFERENCE_MS = 600000n;
  * objection_window_W is anything else is invalid. It replaces the six-hour cap (MAX_OBJECTION_WINDOW_MS, withdrawn).
  */
 export const OBJECTION_WINDOW_MS = 600_000n;
+/**
+ * §13A'S ONE EXCEPTION, HEAD-TO-HEAD ROUNDS (RULED 2026-11-10, kanban #1398): a head-to-head round's result is a pure function of two
+ * signed commitments and two signed reveals, so its window is 60 s (`objection_window_h2h`), 5 s on a regtest; replayed games keep 600 s.
+ * A contract may name one of these; which one its round may name is its game's kind, checked where the game is known (objectionWindowFits).
+ */
+export const OBJECTION_WINDOW_H2H_MS = 60_000n;
+export const OBJECTION_WINDOW_H2H_REGTEST_MS = 5_000n;
+/** A window some round may name: 600 s, or a head-to-head round's 60 s (5 s on a regtest). */
+export const objectionWindowAllowed = (w) => w === OBJECTION_WINDOW_MS || w === OBJECTION_WINDOW_H2H_MS || w === OBJECTION_WINDOW_H2H_REGTEST_MS;
+/**
+ * The window a round of this kind may name: a replayed game exactly 600 s; a head-to-head game its short window (60 s, a regtest's 5 s) - or
+ * 600 s, as every head-to-head round published before the ruling names. `regtest`: the contract names the regtest network.
+ */
+export function objectionWindowFits(w, { headToHead = false, regtest = false } = {}) {
+  if (w === OBJECTION_WINDOW_MS) return { ok: true };
+  if (!headToHead) return { ok: false, why: `that round's objection window is ${w} ms; a replayed game's is exactly ${OBJECTION_WINDOW_MS} ms (§13A)` };
+  const short = regtest ? OBJECTION_WINDOW_H2H_REGTEST_MS : OBJECTION_WINDOW_H2H_MS;
+  return w === short ? { ok: true } : { ok: false, why: `that round's objection window is ${w} ms; a head-to-head game's is ${short} ms or ${OBJECTION_WINDOW_MS} ms (§13A, kanban #1398)` };
+}
 /** The clock tolerance (§13A, RULED with WINDOW-10-SPEC): a seat signs FINAL at window close + 5 s, and counts a signed time only within 5 s of its own clock. */
 export const FINAL_TOLERANCE_MS = 5_000n;
 

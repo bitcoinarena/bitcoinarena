@@ -16,12 +16,15 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, renameSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
 import { checkAsset } from './release-verify.js';
-import { updateNode } from './update.js';
+import { updateNode, resumeUpdate, readJournal, openJournal, takeUpdateLock, roomForUpdate, freeBytesAt } from './update.js';
 import { nodeOf } from './node-services.js';
 import { QUIET } from '../../arena-node/src/log-level.js';
 import { within, mbOf, progressBar } from './update-progress.js';
+import { moveAgentsInteractive } from './launchd-interactive.js';
+
+const run = (cmd, args) => new Promise((ok) => execFile(cmd, args, { timeout: 60000 }, (e, out, err) => ok({ ok: !e, code: e ? e.code : 0, out: String(out || ''), err: String(err || '') })));
 
 /** The release files' name (kanban #635, 2026-10-25: "Es muss bitcoin-arena-node heissen"); before 2026.1.8, arena-node. */
 export const ASSET_PREFIX = 'bitcoin-arena-node';
@@ -33,6 +36,11 @@ export const assetNameFor = (version, platform = process.platform, arch = proces
 /** auto_update in arena.conf: on unless 0 / off / no / false. */
 export const autoUpdateOn = (values) => !['0', 'off', 'no', 'false'].includes(String(values.auto_update ?? '1').trim().toLowerCase());
 
+/** The room a release takes before it is moved to (kanban #1440): its archive (about 210 MB) and its unpacked tree (about 550 MB), rounded up. */
+export const RELEASE_ROOM_BYTES = 2 ** 30;
+/** A RELEASE THIS NODE ROLLED BACK IS TRIED AGAIN ONCE A DAY, not every check (kanban #1369, audit 2 #1204 INSTALLER-DOORS-9). */
+export const ROLLED_BACK_RETRY_MS = 24 * 3600_000;
+const recorded = (home) => { try { return JSON.parse(readFileSync(join(home, 'auto-update.json'), 'utf8')); } catch { return null; } };
 const record = (home, r) => { try { writeFileSync(join(home, 'auto-update.json'), JSON.stringify({ atMs: Date.now(), ...r }, null, 2) + '\n', { mode: 0o600 }); } catch { /* the log has it */ } };
 
 /**
@@ -53,7 +61,7 @@ export async function checkOnce({ progress = () => {}, ...o }) {
 }
 
 async function updateOnce({ home, latest, fetcher = fetch, platform = process.platform, arch = process.arch, apply = updateNode, force = false, log = () => {},
-  verifyAsset = checkAsset, trace: given = QUIET, say = () => {}, moved = () => {},
+  verifyAsset = checkAsset, trace: given = QUIET, say = () => {}, moved = () => {}, freeBytes = freeBytesAt,
   unpack = (archive, dir) => execFileSync('tar', [archive.endsWith('.zip') ? '-xf' : '-xzf', archive, '-C', dir]) }) {
   // EACH STEP OF THE UPDATE SAID AT --verbose (kanban #693): what is read, fetched and checked, with its time; the decisions at --debug
   const trace = given.tag('update');
@@ -69,12 +77,25 @@ async function updateOnce({ home, latest, fetcher = fetch, platform = process.pl
   if (!l.latest) return { ok: false, why: l.why || 'the newest release could not be read' };
   if (!l.newer) return { ok: true, upToDate: true, version: node.version, latest: l.latest.version };
   const v = l.latest.version;
+  // THE RELEASE ROLLED BACK HERE (kanban #1369): every try stops the node, copies its database and waits up to 7 min before it rolls back
+  // again - each 30 min check doing that kept a node down a fifth of the time and filled its disk with backups. The same release (version and,
+  // where both name one, commit) is tried again only a day after its rollback; `bitcoinarena update` (force) tries it at once.
+  const last = recorded(home);
+  const commit = l.latest.commit || null;
+  if (!force && last && last.rolledBack && last.to === v && (!last.commit || !commit || last.commit === commit) && Date.now() - Number(last.atMs || 0) < ROLLED_BACK_RETRY_MS)
+    return { ok: true, skipped: `release ${v} was rolled back on this node at ${new Date(Number(last.atMs)).toISOString()}: tried again after ${new Date(Number(last.atMs) + ROLLED_BACK_RETRY_MS).toISOString()} (or now with bitcoinarena update)` };
   // the new name first; a release that still carries the old one (its update channel, for nodes before 2026.1.8) under that
   const name = [assetNameFor(v, platform, arch), assetNameFor(v, platform, arch, LEGACY_ASSET_PREFIX)].find((n) => (l.latest.assets || {})[n]) || assetNameFor(v, platform, arch);
   trace.debug(`this system's asset: ${name} (${platform}-${arch}; ${name.startsWith(`${ASSET_PREFIX}-`) ? 'the new name' : 'the release carries only the name before 2026.1.8'}); the release names ${Object.keys(l.latest.assets || {}).length} asset(s)`);
   const want = (l.latest.assets || {})[name];
   const d = l.latest.download;
   if (!want || !d || !d.base || !d.parts || !Array.isArray(d.parts[name]) || !d.parts[name].length) return { ok: false, why: `release ${v} names no download of ${name} for this system` };
+  // ROOM FOR THE RELEASE AND THE BACKUP, BEFORE ANYTHING IS FETCHED (kanban #1440): a release already unpacked whole needs only the backup's
+  const base0 = name.replace(/\.(tar\.gz|zip)$/, '');
+  const unpackedBefore = (() => { try { return existsSync(join(home, 'releases', base0)) && readFileSync(join(home, 'releases', `.unpacked-${base0}`), 'utf8').trim() === want; } catch { return false; } })();
+  const room = roomForUpdate(home, { extra: unpackedBefore ? 0 : RELEASE_ROOM_BYTES, freeBytes });
+  trace.debug(`free disk space: ${room.free === null ? 'not said by this system' : `${room.free} bytes, ${room.need} needed`}`);
+  if (!room.ok) return { ok: false, why: room.why };
   log(`release ${v} is out (this node runs ${node.version}): fetching ${name} in ${d.parts[name].length} piece(s)`);
   const dir = join(home, 'releases', 'downloads', v);
   mkdirSync(dir, { recursive: true });
@@ -141,9 +162,31 @@ async function updateOnce({ home, latest, fetcher = fetch, platform = process.pl
   const releases = join(home, 'releases');
   t0 = performance.now();
   say(53, `Unpacking ${v}`);
-  if (!existsSync(join(releases, base))) { unpack(file, releases); trace.verbose(`unpacked into ${join(releases, base)} (${trace.since(t0)})`); }
-  else trace.verbose(`${join(releases, base)} is there already: not unpacked again`);
   const newRelease = join(releases, base);
+  // UNPACKED WHOLE OR NOT AT ALL (kanban #1166): a tar killed half way into releases/<base> left a partial tree that every later check
+  // reused ("there already"), only the archive's hash ever checked. Now the archive goes into releases/.tmp-<base>-<pid> and is renamed
+  // into place whole, then marked (.unpacked-<base>: the archive's SHA-256). A folder there without its mark - a partial one, or one an
+  // older updater unpacked - is moved aside and unpacked again, unless it is the release this node runs.
+  const mark = join(releases, `.unpacked-${base}`);
+  const marked = () => { try { return readFileSync(mark, 'utf8').trim() === want; } catch { return false; } };
+  if (existsSync(newRelease) && !marked() && newRelease !== node.release) {
+    const aside = join(releases, `.stale-${base}-${Date.now()}`);
+    renameSync(newRelease, aside);
+    try { rmSync(aside, { recursive: true, force: true }); } catch { /* a file still open (Windows): the next check tries again */ }
+    trace.verbose(`${newRelease} was there without its mark (a partial unpack, or an older updater's): moved aside, unpacked again`);
+  }
+  if (!existsSync(newRelease)) {
+    const tmp = join(releases, `.tmp-${base}-${process.pid}`);
+    rmSync(tmp, { recursive: true, force: true });
+    mkdirSync(tmp, { recursive: true });
+    try {
+      unpack(file, tmp);
+      if (!existsSync(join(tmp, base))) return { ok: false, why: `${name} holds no ${base} folder: not used` };
+      renameSync(join(tmp, base), newRelease);
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
+    writeFileSync(mark, `${want}\n`);
+    trace.verbose(`unpacked into ${newRelease} (${trace.since(t0)})`);
+  } else trace.verbose(`${newRelease} is there already, whole (its mark names this archive): not unpacked again`);
   log(`${name} checked and unpacked: updating the node ${node.version} -> ${v}`);
   // the auto update service comes with the update where the node has none yet (a node updated by `bitcoinarena update` keeps updating itself)
   const installUpdaterFn = async (o) => {
@@ -153,11 +196,22 @@ async function updateOnce({ home, latest, fetcher = fetch, platform = process.pl
   };
   t0 = performance.now();
   say(60, `Updating your node to ${v}`);
-  const r = await apply({ home, newRelease, port: node.port, node: join(newRelease, 'runtime', platform === 'win32' ? 'node.exe' : 'node'), installUpdaterFn, trace: given, progress: moved });
+  let r;
+  // AN UPDATE THAT THREW IS RECORDED AS ROLLED BACK TOO (kanban #1440, audit 8 O8-1): without the record the #1369 day's wait never applied, and
+  // every 30 min check stopped the node again
+  try { r = await apply({ home, newRelease, port: node.port, node: join(newRelease, 'runtime', platform === 'win32' ? 'node.exe' : 'node'), installUpdaterFn, trace: given, progress: moved }); }
+  catch (e) { record(home, { ok: false, from: node.version, to: v, why: e.message, rolledBack: true, threw: true, ...(l.latest.commit ? { commit: l.latest.commit } : {}) }); throw e; }
   trace.verbose(`the node moved: ${r.ok ? 'ok' : r.rolledBack ? 'rolled back' : 'not updated'} (${trace.since(t0)})`);
-  const out = r.ok ? { ok: true, from: node.version, to: v, backup: r.backup } : { ok: false, from: node.version, to: v, why: r.why, rolledBack: !!r.rolledBack };
+  const out = r.ok ? { ok: true, from: node.version, to: v, backup: r.backup } : { ok: false, from: node.version, to: v, why: r.why, rolledBack: !!r.rolledBack, ...(l.latest.commit ? { commit: l.latest.commit } : {}) };
   record(home, out);
   return out;
+}
+
+/** The journal's unfinished update finished under the update lock (kanban #1166); null when none is open. */
+export async function resumeUnderLock({ home, log = () => {} }) {
+  if (!openJournal(readJournal(home))) return null;
+  const held = await takeUpdateLock(home);
+  try { return await resumeUpdate({ home, log }); } finally { held.release(); }
 }
 
 /**
@@ -165,8 +219,17 @@ async function updateOnce({ home, latest, fetcher = fetch, platform = process.pl
  * starts it again from the new release. `sleep` and `exit` injectable for the tests.
  */
 export async function runAutoUpdate({ home, latest, everyMs = 30 * 60_000, firstMs = 10 * 60_000, log = (l) => console.log(`${new Date().toISOString()} ${l}`),
-  sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), exit = (code) => process.exit(code), once = checkOnce, rounds = Infinity, trace = QUIET }) {
+  sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), exit = (code) => process.exit(code), once = checkOnce, rounds = Infinity, trace = QUIET,
+  interactive = (o) => moveAgentsInteractive({ ...o, sh: run }), resume = resumeUnderLock }) {
   log(`auto update: on for ${home}; first check in ${Math.round(firstMs / 60000)} min, then every ${Math.round(everyMs / 60000)} min`);
+  // THE AGENTS AN OLDER UPDATER WROTE (kanban #1128): this service starts from the new release after every update, so the new release moves
+  // this node's agents to Interactive itself, once (launchd-interactive.js; macOS only) - not at the update after
+  try { const m = await interactive({ home, log }); if (m && m.set) log(`#1128 agents set Interactive: ${m.set.join(', ') || 'none'}; reloaded: ${m.reloaded.join(', ') || 'none'}${m.failed.length ? `; failed: ${m.failed.map((f) => `${f.id} (${f.why})`).join(', ')}` : ''}`); }
+  catch (e) { log(`#1128 the agents were not moved to Interactive: ${e.message}`); }
+  // AN UPDATE THAT DID NOT FINISH (kanban #1166): this service is started again when its updater died - the journal's update is finished
+  // now (kept or rolled back), not left on unverified units until the next release
+  try { const r = await resume({ home, log }); if (r) log(`#1166 the unfinished update ${r.from} -> ${r.to}: ${r.resumed} (${r.why})`); }
+  catch (e) { log(`#1166 the unfinished update could not be finished: ${e.message}`); }
   await sleep(firstMs);
   for (let i = 0; i < rounds; i++) {
     let r;

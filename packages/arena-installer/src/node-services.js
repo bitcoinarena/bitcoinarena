@@ -392,6 +392,51 @@ export async function followTunnelNow({ home, platform = process.platform, env =
 }
 
 /**
+ * A QUICK TUNNEL THAT DIED AND NEVER CAME BACK (kanban #1120, measured 2026-11-04 on an installer node, 2026.1.9.24): from 11-02 16:45Z
+ * its tunnel.log said "Register tunnel error from server side error=\"Unauthorized: Tunnel not found\"" 7,924 times - cloudflared
+ * kept asking for a tunnel Cloudflare had dropped and never asked for a new one, so the node was unreachable for 42 h while drawn into
+ * live rounds (its seatings never stood). Dead: at least TUNNEL_DEAD_ERRORS such lines after the tunnel's last registered connection
+ * (or its last request for a new name). Read from the log's tail only - the log grows without end.
+ */
+export const TUNNEL_DEAD_ERRORS = 3;
+export function quickTunnelDead(text) {
+  const lines = String(text).split('\n');
+  let notFound = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/Registered tunnel connection|Requesting new quick Tunnel/.test(lines[i])) break;
+    if (/Tunnel not found/.test(lines[i])) notFound++;
+  }
+  return notFound >= TUNNEL_DEAD_ERRORS;
+}
+const tailOf = (file, bytes = 262144) => {
+  const fd = openSync(file, 'r');
+  try { const size = fstatSync(fd).size, n = Math.min(size, bytes), buf = Buffer.alloc(n); readSync(fd, buf, 0, n, size - n); return buf.toString('utf8'); } finally { closeSync(fd); }
+};
+/**
+ * The dead quick tunnel restarted (kanban #1120): cloudflared then asks for a new name, and followTunnelNow (the custody agent's next
+ * pass) takes it into the node's files and restarts the node. Answers { dead: false } or { dead: true, restarted, why }.
+ */
+export async function reviveDeadTunnel({ home, platform = process.platform, env = process.env, sh = run, readTail = tailOf } = {}) {
+  const node = nodeOf(home);
+  if (!(node.state.reach && node.state.reach.mode === 'quick')) return { dead: false };
+  const svcs = installedServices({ home, platform, env });
+  const tunnel = svcs.find((s) => s.id === 'tunnel');
+  // ON LINUX THE TUNNEL LOGS TO THE JOURNAL, NOT tunnel.log (measured 11-04 in the 2026.1.9.25 install test: no tunnel.log in either
+  // test home, so the revive never fired there) - read as reach.js quickTunnelUrl reads its name
+  let text = '';
+  if (platform === 'linux') {
+    const unit = tunnel && tunnel.name ? tunnel.name : `${unitName('tunnel')}`;
+    try { text = (await sh('journalctl', ['--user', '-u', unit, '-o', 'cat', '--no-pager', '-n', '300'])).out || ''; } catch { return { dead: false }; }
+  } else {
+    try { text = readTail(join(home, 'tunnel.log')); } catch { return { dead: false }; }
+  }
+  if (!quickTunnelDead(text)) return { dead: false };
+  if (!tunnel) return { dead: true, restarted: false, why: 'this node has no tunnel service' };
+  const r = await act('restart', tunnel, { platform, sh, home });
+  return { dead: true, restarted: !!r.ok, why: r.ok ? null : r.why || 'the restart failed' };
+}
+
+/**
  * START AT BOOT, one service at a time (kanban #563, 2026-10-21): Linux - its user unit enabled (`systemctl --user is-enabled`);
  * macOS - its launch agent's RunAtLoad; Windows - the Arena Node launcher starts the node's services together at login, so not one by
  * one. bootOf answers { atBoot: true | false | null, settable, why }; setBoot(word, on) changes it - without starting or stopping it now.

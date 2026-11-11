@@ -47,6 +47,22 @@ export function renameToSignerNodes(db) {
   return done;
 }
 
+/**
+ * A WRITE-AHEAD RECORD, ON THE DISK BEFORE ITS EFFECT (kanban #1243, audit 3 #1210 CRASH-2): the store runs synchronous = NORMAL, so a commit is
+ * durable only at the next WAL sync - and a power loss could take the very record a write-ahead fix stands on (an exchange's RECEIVING row while
+ * the federation already holds the notes, a deal, an epoch contribution, a settlement SUBMITTING, a send FUNDING). `fn` runs with synchronous =
+ * FULL, so its commit fsyncs the WAL (measured on the Beelink: 6.2 ms a write, 0.015 ms at NORMAL); every other write stays NORMAL. Inside an
+ * open transaction nothing is switched (the transaction's own commit decides).
+ */
+export function durably(db, fn) {
+  if (!db || typeof db.exec !== 'function' || db.isTransaction === true) return fn();
+  let was = null;
+  try { const r = db.prepare('PRAGMA synchronous').get(); was = r ? Number(Object.values(r)[0]) : null; } catch { was = null; }
+  if (was !== null && was >= 2) return fn();
+  try { db.exec('PRAGMA synchronous = FULL'); } catch { return fn(); }
+  try { return fn(); } finally { try { db.exec(`PRAGMA synchronous = ${was === null ? 1 : was}`); } catch { /* the next open sets it again */ } }
+}
+
 export function openStore(path = ':memory:') {
   const db = new DatabaseSync(path);
   // WHERE THIS STORE IS, kept on the handle (2026-09-17 19:15, the ghost lag): a replay worker opens the same
@@ -750,6 +766,29 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, result_id)
     );
 
+    -- A MARKET ROUND'S STATE (kanban #1151; attested.js MARKET_STATE, marketTransition): no row is OPEN; ATTESTED (one standing
+    -- outcome inside its objection window, first_ms and final_at_ms fixed), then FINAL or VOID - TERMINAL, never changed
+    -- after: the triggers below refuse any update or delete of a terminal row, and the node moves a row only by compare-and-set
+    -- (round.js casMarketState). outcome is the outcome index, value a scalar market's signed value (decimal), reason a VOID's
+    -- ('deadline', 'dispute', 'game'), at_ms when the state was reached on this seat's clock. A store made before this table
+    -- has no rows: each round's state is derived once from its held evidence and persisted on its first read.
+    CREATE TABLE IF NOT EXISTS market_states (
+      round_id     BLOB PRIMARY KEY,
+      state        TEXT NOT NULL CHECK (state IN ('ATTESTED', 'FINAL', 'VOID')),
+      outcome      INTEGER,
+      value        TEXT,
+      observed_ms  INTEGER,
+      first_ms     INTEGER,
+      final_at_ms  INTEGER,
+      reason       TEXT,
+      why          TEXT,
+      at_ms        INTEGER NOT NULL
+    );
+    CREATE TRIGGER IF NOT EXISTS market_states_terminal_update BEFORE UPDATE ON market_states
+      WHEN OLD.state IN ('FINAL', 'VOID') BEGIN SELECT RAISE(ABORT, 'a terminal market state is never changed'); END;
+    CREATE TRIGGER IF NOT EXISTS market_states_terminal_delete BEFORE DELETE ON market_states
+      WHEN OLD.state IN ('FINAL', 'VOID') BEGIN SELECT RAISE(ABORT, 'a terminal market state is never deleted'); END;
+
     -- A HEAD-TO-HEAD ENTRY'S REVEALED MOVE: the (move, salt) that hashed to the commitment its entry named,
     -- taken by this seat's door inside the reveal window or pulled from a peer at the round's close. One per entry; never
     -- deleted - it is what the round's results were decided from.
@@ -792,6 +831,12 @@ export function openStore(path = ':memory:') {
     CREATE INDEX IF NOT EXISTS market_batches_open ON market_batches (round_id) WHERE certificate IS NULL;
     -- A BATCH THIS SEAT DECLINED: it did not sign it and never will, so a leader can show the batch can no longer be certified.
     CREATE TABLE IF NOT EXISTS market_batch_declines (
+      round_id    BLOB NOT NULL,
+      k           INTEGER NOT NULL,
+      PRIMARY KEY (round_id, k)
+    );
+    -- A BATCH SHOWN VOID (kanban #1150, order-batch.js BATCH.VOID): enough seats declined it that it can never be certified - for good.
+    CREATE TABLE IF NOT EXISTS market_batch_voids (
       round_id    BLOB NOT NULL,
       k           INTEGER NOT NULL,
       PRIMARY KEY (round_id, k)
@@ -923,9 +968,53 @@ export function openStore(path = ':memory:') {
       claims       TEXT NOT NULL,
       payouts      INTEGER NOT NULL
     );
+    -- EVERY SETTLEMENT TXID THIS SEAT SIGNED OR WAS HANDED FOR A ROUND (kanban #1171): two askers with other bytes are two transactions; only one lands.
+    -- Each with what it moves, so the federation is asked about every one before the round's row says REFUSED, and a landed one is found after a restart
+    CREATE TABLE IF NOT EXISTS lock_settlement_txids (
+      round_id     BLOB NOT NULL,
+      txid         TEXT NOT NULL,
+      message      BLOB NOT NULL,
+      signature    BLOB NOT NULL,
+      claims       TEXT NOT NULL,
+      payouts      INTEGER NOT NULL,
+      made_ms      INTEGER NOT NULL,
+      PRIMARY KEY (round_id, txid)
+    );
     -- A LATE LOSER'S SECOND SETTLEMENT (§13A, RULED 2026-09-24, slice C3b-1): one per (round, entry), never a second
     -- row under the round's key - an entry the round's settlement left out while it was in its re-run window, which
     -- then ended FAILED or FORFEIT. The same intent and state as the round's own settlement row.
+    -- AN OBJECTION BEING CHECKED (kanban #1173): written at its arrival, before its replay runs, and gone once the check answered. While one that
+    -- arrived before final_after stands, this seat holds the entry SUSPENDED: no FINAL signature, no P, no ack.
+    CREATE TABLE IF NOT EXISTS pending_objections (
+      round_id   BLOB NOT NULL,
+      entry_id   BLOB NOT NULL,
+      arrived_ms INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id, arrived_ms)
+    );
+    -- AN ENTRY FINAL AT THIS SEAT (kanban #1173): kept once reached, never undone - the run it is FINAL on, the final_after it was FINAL past, and
+    -- whether that run is an agreed re-run. An objection that reaches this seat afterwards is evidence, never a suspension.
+    CREATE TABLE IF NOT EXISTS entry_finals (
+      round_id       BLOB NOT NULL,
+      entry_id       BLOB NOT NULL,
+      run_id         TEXT NOT NULL,
+      final_after_ms INTEGER NOT NULL,
+      on_rerun       INTEGER NOT NULL,
+      at_ms          INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id)
+    );
+    -- EVERY TXID OF A FEDERATION'S OR A LATE ENTRY'S SETTLEMENT (kanban #1172), as lock_settlement_txids is the round's own: scope 'fed:<hex>' or
+    -- 'late:<hex>', what each moves, so the federation is asked about every one before a row is REFUSED.
+    CREATE TABLE IF NOT EXISTS scoped_settlement_txids (
+      round_id     BLOB NOT NULL,
+      scope        TEXT NOT NULL,
+      txid         TEXT NOT NULL,
+      message      BLOB NOT NULL,
+      signature    BLOB NOT NULL,
+      claims       TEXT NOT NULL,
+      payouts      INTEGER NOT NULL,
+      made_ms      INTEGER NOT NULL,
+      PRIMARY KEY (round_id, scope, txid)
+    );
     CREATE TABLE IF NOT EXISTS late_lock_settlements (
       round_id  BLOB NOT NULL,
       entry_id  BLOB NOT NULL,
@@ -977,6 +1066,32 @@ export function openStore(path = ':memory:') {
       signature    BLOB NOT NULL,
       claim_pk     BLOB NOT NULL,
       made_ms      INTEGER NOT NULL
+    );
+
+    -- WHEN A CLOSED LOCK ROUND NOBODY SETTLED IS ASKED AGAIN (kanban #1186), per (round, scope) - scope '' the round's own settlement: its tries and the
+    -- chain height before which it is not asked again, kept across restarts, and a terminal state: SETTLED (ACCEPTED here) or EXPIRED (every stake
+    -- lock of the round past its expiration: nothing can be claimed any more, each lock returns to its player). Moved only by settle-retry.js.
+    CREATE TABLE IF NOT EXISTS settle_retries (
+      round_id        BLOB NOT NULL,
+      scope           TEXT NOT NULL,
+      state           TEXT NOT NULL,
+      tries           INTEGER NOT NULL,
+      next_at_height  INTEGER,
+      why             TEXT NOT NULL,
+      updated_ms      INTEGER NOT NULL,
+      PRIMARY KEY (round_id, scope)
+    );
+
+    -- WHAT THIS SEAT COMMITTED A LOCK TO (kanban #1184): CLAIMING once it acked, shared, was handed or kept a settlement that claims the
+    -- outpoint; RETURNING once it gave a share of, took or kept a forfeit of it. Written once (compare-and-set: INSERT OR IGNORE, then read
+    -- back), before the ack, share or forfeit leaves this seat; a lock is never both - two valid spends of one lock, the faster wins.
+    CREATE TABLE IF NOT EXISTS lock_fates (
+      outpoint  TEXT PRIMARY KEY,
+      round_id  BLOB NOT NULL,
+      state     TEXT NOT NULL,
+      txid      TEXT,
+      why       TEXT NOT NULL,
+      made_ms   INTEGER NOT NULL
     );
 
     -- AN ENTRY THIS SIGNER NODE HOLDS FORFEIT FOR A LATE START (§15, §13C): its first
@@ -1162,6 +1277,10 @@ export function openStore(path = ':memory:') {
   // made before it gets the column; a row there carries none, and replays at the 0.7 every run had.
   if (!db.prepare('PRAGMA table_info(loads)').all().some((c) => c.name === 'room'))
     db.exec('ALTER TABLE loads ADD COLUMN room INTEGER');
+  // THE IDENTITY'S CONSENT BESIDE A NAME RECORD (kanban #1278, RULED #1276): the identity key over (round id, round key), checked at the door; a row from
+  // before carries none, and books its round to nobody
+  if (!db.prepare('PRAGMA table_info(lobby_names)').all().some((c) => c.name === 'identity_sig'))
+    db.exec('ALTER TABLE lobby_names ADD COLUMN identity_sig BLOB');
   for (const t of ['objections', 'rerun_objections'])
     if (!db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'block_hash'))
       db.exec(`ALTER TABLE ${t} ADD COLUMN block_hash BLOB`);

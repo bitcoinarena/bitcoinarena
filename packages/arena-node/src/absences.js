@@ -49,7 +49,14 @@ export function dueDeparture(notices, { record, peerKey, departureNotice, height
   return best ? { ok: true, notice: best, sinceHeight: best.leaveAfterHeight, id: departureId(best) } : { ok: false, why };
 }
 
-export function createAbsences({ verify, max = 4096, store = null }) {
+// `nodeOf(fidHex, peerHex)`: the node key (hex) the federation record this seat holds names for that guardian, or null (kanban #1222)
+// `guardiansOf(fidHex)`: the node keys (hex) of the guardians the federation record this seat holds names, or null when it holds none (kanban #1384)
+// NOT FILLED BY ANYONE (kanban #1384, audit 2 #1204 FED-B4): 4096 self-signed attestations from random keys made every seat refuse a real guardian's
+// first one ("as many as it keeps") - a dead guardian was never proven ABANDONED. Now an attestation about a federation whose record this seat holds
+// is taken only from a guardian of that record about a peer of it, bounded per federation; one about a federation it holds no record of (a seat
+// just restarted, a founding) goes into a small bucket of its own, so what fills that bucket never crowds out a held federation's guardians.
+export const UNKNOWN_FEDERATION_MAX = 512;
+export function createAbsences({ verify, max = 4096, store = null, nodeOf = null, guardiansOf = null, unknownMax = UNKNOWN_FEDERATION_MAX }) {
   const notices = new Map();                 // `${fid}:${peer}` -> departure notice (one per guardian: the latest posted)
   const emergencies = new Map();             // node key -> the owner's emergency leave request (one per node: the EARLIEST posted)
   const held = new Map();                    // `${fid}:${peer}:${attester}` -> attestation (the newest height)
@@ -60,13 +67,25 @@ export function createAbsences({ verify, max = 4096, store = null }) {
   const save = () => { if (!store || loading) return; try { store.write({ departures: [...notices.values()].map(departureHex), absences: [...held.values()].map(absenceHex),
     emergencies: [...emergencies.values()].map(emergencyHex) }); } catch { /* kept in memory */ } };
 
-  /** Takes one attestation; it must be signed by its attester (whether that is a guardian is the record's to say). */
+  // the guardians a held record names for `fidHex` (a Set of node key hex), or null: no record held (or no way to ask)
+  const membersOf = (fidHex) => { if (typeof guardiansOf !== 'function') return null; let g = null; try { g = guardiansOf(fidHex); } catch { g = null; } return Array.isArray(g) ? new Set(g.map((x) => String(x).toLowerCase())) : null; };
+  const countOf = (map, fidHex) => { let n = 0; for (const k of map.keys()) if (k.startsWith(`${fidHex}:`)) n++; return n; };
+  const unknownCount = (map) => { let n = 0; for (const k of map.keys()) if (membersOf(k.split(':')[0]) === null) n++; return n; };
+  /** Takes one attestation, signed by its attester - from a guardian of the federation's held record about a peer of it (kanban #1384). */
   function offer(a) {
     if (!verify(a.signature, absenceId(a), a.attester)) return { ok: false, why: 'the attestation is not signed by its attester' };
-    const k = `${toHex(a.federationId)}:${toHex(a.peerKey)}:${toHex(a.attester)}`;
+    const fid = toHex(a.federationId);
+    const members = membersOf(fid);
+    if (members) {
+      if (!members.has(toHex(a.attester))) return { ok: false, why: 'the attester is no guardian of the federation record this seat holds' };
+      let peerNode = null; try { peerNode = typeof nodeOf === 'function' ? nodeOf(fid, toHex(a.peerKey)) : null; } catch { peerNode = null; }
+      if (typeof nodeOf === 'function' && !peerNode) return { ok: false, why: 'the attestation is about a peer the federation record this seat holds does not name' };
+    }
+    const k = `${fid}:${toHex(a.peerKey)}:${toHex(a.attester)}`;
     const had = held.get(k);
     if (had && had.height >= a.height) return { ok: true, kept: false };
-    if (!had && held.size >= max) return { ok: false, why: 'this seat holds as many attestations as it keeps' };
+    if (!had && members && countOf(held, fid) >= max) return { ok: false, why: 'this seat holds as many attestations of that federation as it keeps' };
+    if (!had && !members && (loading ? countOf(held, fid) >= max : (typeof guardiansOf === 'function' ? unknownCount(held) >= unknownMax : held.size >= max))) return { ok: false, why: 'this seat holds as many attestations as it keeps' };
     held.set(k, a);
     save();
     return { ok: true, kept: true };
@@ -77,10 +96,19 @@ export function createAbsences({ verify, max = 4096, store = null }) {
   /** Takes a guardian's departure notice, signed by the node key it names (whether that is the peer's is the record's to say). */
   function offerDeparture(d) {
     if (!verify(d.signature, departureId(d), d.nodePubkey)) return { ok: false, why: 'the notice is not signed by the node key it names' };
-    const k = `${toHex(d.federationId)}:${toHex(d.peerKey)}`;
+    // ONE NOTICE PER GUARDIAN'S NODE KEY (kanban #1222, audit 2 #1204 FED-B1): keyed by (federation, peer) alone and the newest winning, a
+    // notice anyone signed with a key of their own and a later posted_at displaced the guardian's real one - and the leaver was recorded
+    // ABANDONED. Now a notice from another node key than the record names for that guardian is refused, and each node key keeps its own.
+    let named = null; try { named = typeof nodeOf === 'function' ? nodeOf(toHex(d.federationId), toHex(d.peerKey)) : null; } catch { named = null; }
+    if (named && String(named).toLowerCase() !== toHex(d.nodePubkey)) return { ok: false, why: 'the notice is signed by another node key than the federation record names for that guardian' };
+    // ABOUT A HELD RECORD, ONLY ITS OWN GUARDIANS (kanban #1384): a record this seat holds that does not name that peer refuses the notice
+    const fid = toHex(d.federationId), members = membersOf(fid);
+    if (members && !named) return { ok: false, why: 'the notice is about a peer the federation record this seat holds does not name' };
+    const k = `${fid}:${toHex(d.peerKey)}:${toHex(d.nodePubkey)}`;
     const had = notices.get(k);
     if (had && had.postedAt >= d.postedAt) return { ok: true, kept: false };
-    if (!had && notices.size >= max) return { ok: false, why: 'this seat holds as many notices as it keeps' };
+    if (!had && members && countOf(notices, fid) >= max) return { ok: false, why: 'this seat holds as many notices of that federation as it keeps' };
+    if (!had && !members && (loading ? countOf(notices, fid) >= max : (typeof guardiansOf === 'function' ? unknownCount(notices) >= unknownMax : notices.size >= max))) return { ok: false, why: 'this seat holds as many notices as it keeps' };
     notices.set(k, d);
     save();
     return { ok: true, kept: true };
@@ -101,10 +129,14 @@ export function createAbsences({ verify, max = 4096, store = null }) {
   }
   const emergencyFor = (nodeKey) => emergencies.get(typeof nodeKey === 'string' ? nodeKey.toLowerCase() : toHex(nodeKey)) || null;
   const listEmergencies = () => [...emergencies.values()].map(emergencyHex);
-  const departureFor = (record, peerKey, departureNotice, height) => dueDeparture([notices.get(`${toHex(record.federationId)}:${toHex(peerKey)}`)].filter(Boolean),
+  const departureFor = (record, peerKey, departureNotice, height) => dueDeparture([...notices.entries()].filter(([k]) => k.startsWith(`${toHex(record.federationId)}:${toHex(peerKey)}:`)).map(([, d]) => d),
     { record, peerKey, departureNotice, height, verify });
   const listDepartures = (fidHex) => [...notices.entries()].filter(([k]) => !fidHex || k.startsWith(`${fidHex}:`)).map(([, d]) => departureHex(d));
   const list = (fidHex) => [...held.entries()].filter(([k]) => !fidHex || k.startsWith(`${fidHex}:`)).map(([, a]) => absenceHex(a));
+  // READ BACK WHOLE AT A RESTART (kanban #1404, audit 5 #1399): the store is read while the seat holds no federation record yet (server.js restores
+  // them later), so guardiansOf answered null for every kept entry and all of them went into the 512 bucket for unknown federations - the rest were
+  // dropped, and the next save wrote the cut set: ABANDONED proofs and departure notices lost at each restart. What this seat wrote was taken
+  // through every check when it came; read back, each signature is verified again and each federation is bounded by `max` as a held one is.
   if (store) {
     let had = null; try { had = store.read(); } catch { had = null; }
     loading = true;
@@ -113,5 +145,7 @@ export function createAbsences({ verify, max = 4096, store = null }) {
     for (const h of (had && had.emergencies) || []) { try { offerEmergency(readEmergencyHex(h)); } catch { /* not one */ } }
     loading = false;
   }
-  return { offer, proofFor, list, offerDeparture, departureFor, listDepartures, offerEmergency, emergencyFor, listEmergencies };
+  /** Whether this seat keeps a notice of node `nodeHex` for (federation, peer) - the leaver's own check that its notice is made (kanban #1379). */
+  const heldDeparture = (fidHex, peerHex, nodeHex) => notices.has(`${String(fidHex).toLowerCase()}:${String(peerHex).toLowerCase()}:${String(nodeHex).toLowerCase()}`);
+  return { offer, proofFor, list, offerDeparture, departureFor, listDepartures, heldDeparture, offerEmergency, emergencyFor, listEmergencies };
 }

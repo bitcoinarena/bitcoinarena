@@ -22,7 +22,7 @@ import {
   GAME_MARKET_VERSION,
   SCALAR_TEMPLATE_VERSION,
   CUSTODY, custodyByte, custodyName, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
-  STAKE_EXPIRY_BLOCKS, START_DEADLINE_TICKS, OBJECTION_WINDOW_MS,
+  STAKE_EXPIRY_BLOCKS, START_DEADLINE_TICKS, OBJECTION_WINDOW_MS, objectionWindowAllowed,
   SCORE_SCALE,
 } from './constants.js';
 
@@ -1013,7 +1013,8 @@ export function roundWindowsAreValid(c) {
   // entry for it." The field was contract-defined with a 10-minute reference and a 6-hour cap; neither stands.
   if (typeof c.objectionWindowMs !== 'bigint')
     return { ok: false, opensAt, why: 'that round names no objection window, so nothing says when a result may become final' };
-  if (c.objectionWindowMs !== OBJECTION_WINDOW_MS)
+  // ...OR A HEAD-TO-HEAD ROUND'S 60 s (5 s on a regtest; RULED 2026-11-10, kanban #1398) - which one a round may name is its game's, checked by a node that holds it
+  if (!objectionWindowAllowed(c.objectionWindowMs))
     return {
       ok: false,
       opensAt,

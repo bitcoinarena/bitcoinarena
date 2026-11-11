@@ -44,7 +44,7 @@ function stubRound() {
 /** The seven seats; `hungAt(k, path)` says seat k does not answer that path; `wire` logs what is sent, as bytes. */
 function seven({ hungAt = () => false, wire = [], seed = 0x61, boundMs = BOUND_MS } = {}) {
   const seats = [];
-  const port = { settled: [], settle: async (x) => { port.settled.push(x); return { accepted: true }; } };
+  const port = { settled: [], settle: async (x) => { port.settled.push(x); return { accepted: true, payoutsStored: [{ id: 'payout-0' }], locksAfter: [null] }; } };   // as the tool answers (kanban #1171)
   for (let k = 0; k < 7; k++) {
     let drawn = 0;
     // A FIXED STREAM PER SEAT: the same nonces whichever order the peers are asked in, so the bytes on the wire can be compared

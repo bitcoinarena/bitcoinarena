@@ -63,9 +63,9 @@ test('a stolen authority is revoked by the cold key, and the theft ends at a hei
     networkId: NETWORK, ...keys, sets: [honest, stolen], rotations, height, verify,
   });
 
-  // THE THEFT WORKS, and saying so is the point: the higher serial wins and
-  // the thief is paid until somebody notices. A test that could not show the
-  // damage could not show that the remedy removes it.
+  // THE THEFT WORKS HERE, and saying so is the point: these recipients are LNURLs, no key among them can refuse a change, so the higher
+  // serial wins and the thief is paid until somebody notices. (A set that pays keys needs its recipients' approval for any change since
+  // kanban #1337 - test/donation-authority.test.js "#1337" - so there the stolen key alone moves nothing.)
   const during = at(200);
   assert.equal(during.ok, true, during.why);
   assert.equal(during.serial, 500n);

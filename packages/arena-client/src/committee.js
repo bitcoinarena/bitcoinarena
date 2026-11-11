@@ -38,6 +38,28 @@ export const BOND_TERMS = Object.freeze({
 const CHAIN_KEPT_MS = 180000;
 export const COMPARE_GRACE_MS = 400;
 const SEATING_ASK_MS = 6000;
+/**
+ * A TABLE'S SEATING IS READ ONCE, NOT ONCE PER ROUND (§5A.7, RULED 2026-11-11, kanban #1449; measured on the live page: one idle page sent the seats 616
+ * seating asks in 45 s - 22 rounds of 4 tables x 2 roles x 14 seats - 5.5x the distinct (seat, table, role) triples). Each seat's answer is kept per
+ * (seat, table, role) with the committee this page drew itself when it was kept, and is reused for the table's later rounds while the page's own draw for
+ * the new round (census and beacon, §5A.6) is the same seats and the answer is under `seating_keep_ms`. A different draw or the age asks again; so does
+ * the read of every seat after a seat differs (`every`). The check stays what it was: every round's committee is still built here and compared with a
+ * signed seating; only the asking is shared.
+ */
+export const SEATING_KEEP_MS = 60000;
+const SEATINGS = new Map();
+export const forgetSeatings = () => SEATINGS.clear();
+/** The kept answer of (seat, table, role) when it may stand for this round: the same draw, under SEATING_KEEP_MS, and not a read of every seat - else null. */
+export function keptSeating(keyOf, drawnKey, { every = false, now = Date.now() } = {}) {
+  const kept = SEATINGS.get(keyOf);
+  return !every && kept && now - kept.at < SEATING_KEEP_MS && kept.drawn === drawnKey ? kept.said : null;
+}
+/** Keep a seat's answer: a certificate (ok) or "no seating certificate" (404); a failed read is not kept. */
+export function keepSeatingAnswer(keyOf, drawnKey, said, { now = Date.now() } = {}) {
+  if (!said || !(said.ok || said.status === 404)) return;
+  SEATINGS.delete(keyOf); SEATINGS.set(keyOf, { said, at: now, drawn: drawnKey });
+  if (SEATINGS.size > 2048) SEATINGS.delete(SEATINGS.keys().next().value);
+}
 /** Resolves once every promise settled, or `graceMs` after more than half did - whichever is first (kanban #625: no wait for the slowest seat). */
 export function majorityThenGrace(promises, graceMs) {
   return new Promise((resolve) => {
@@ -116,12 +138,24 @@ async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, expl
   return got;
 }
 
-async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Set() }) {
+/** How many independent providers a bond list must come from before the client pays (§25.1 RULED 2026-11-07, kanban #1312/#1333). */
+export const CENSUS_PROVIDERS_TO_LOCK = 2;
+/**
+ * THE BOND LIST FROM TWO PROVIDERS, AS THEIR UNION (§25.1 RULED 2026-11-07, kanban #1312/#1333): "Omission is the attack, so the second source is
+ * normative: a client that pays takes bond lists from at least two independent providers and uses the union ... A list that one provider serves
+ * alone is enough to look, not to lock." Each provider is a distinct node (its endpoint root); the entries are joined by bond outpoint, so a bond
+ * one of them left out is back in the union - and a union that no longer matches the round's census_root is then refused by the root check.
+ * One provider alone answers { ok: false, lookOnly: true }. Not yet here: §25.1's completeness from BIP158 filters since a census checkpoint
+ * (no filter source in the browser yet).
+ */
+async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Set(), providers = CENSUS_PROVIDERS_TO_LOCK }) {
   const key = toHex(contract.censusRoot);
   if (keptCensus.has(key) && !skip.size) return { ok: true, entries: keptCensus.get(key), from: 'kept' };
-  const refused = [];
+  const refused = [], got = [], roots = new Set();
   for (const u of nodes) {
-    if (skip.has(u)) continue;
+    if (skip.has(u) || got.length >= providers) continue;
+    const root = String(baseOf(u)).toLowerCase();
+    if (roots.has(root)) continue;
     try {
       const r = await readWithOneRetry(fetcher, `${baseOf(u)}/census?round=${roundIdHex}`);
       if (!r.ok) { refused.push(`${u}: ${r.status}`); continue; }
@@ -129,11 +163,31 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
       if (!j || !Array.isArray(j.entries)) { refused.push(`${u}: no entries`); continue; }
       // the nodes this seat left out for their protocol version: shown, never counted
       if (Array.isArray(j.tooOld)) keptTooOld.set(key, j.tooOld.filter((x) => x && /^[0-9a-f]{64}$/.test(String(x.node))));
-      return { ok: true, entries: j.entries, from: u, refused };
+      roots.add(root); got.push({ from: u, entries: j.entries });
     } catch (e) { refused.push(`${u}: ${e.message}`); }
   }
-  return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
+  if (!got.length) return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
+  if (got.length < providers) return { ok: false, lookOnly: true, from: got[0].from, entries: got[0].entries, refused,
+    why: `only ${got.length} provider handed over the census - a bond list one provider serves alone is enough to look, not to lock (${refused.join('; ') || 'no other answered'})` };
+  return { ok: true, entries: unionOfEntries(got.map((g) => g.entries)), from: got.map((g) => g.from).join(' + '), fromNodes: got.map((g) => g.from), refused };
 }
+/**
+ * Census entries from several providers, joined by bond; the first copy of each bond is kept. A seat's GET /census entry is the bond's evidence
+ * ({ transaction, position, branch, update }), so a bond is its raw transaction there; an entry naming txid and vout is keyed by them (#1333:
+ * keyed by txid:vout alone, the 18 live entries all became "undefined:undefined" - one entry, a root that never matched).
+ */
+const bondKeyOf = (e) => (e && e.txid !== undefined && e.vout !== undefined
+  ? `o:${Array.isArray(e.txid) || e.txid instanceof Uint8Array ? toHex(Uint8Array.from(e.txid)) : String(e.txid)}:${e.vout}`
+  : `t:${typeof e?.transaction === 'string' ? e.transaction : JSON.stringify(e)}`);
+export function unionOfEntries(lists) {
+  const byBond = new Map();
+  for (const list of lists) for (const e of list || []) {
+    const k = bondKeyOf(e);
+    if (!byBond.has(k)) byBond.set(k, e);
+  }
+  return [...byBond.values()];
+}
+export { evidenceFor as censusEvidenceFor };
 
 /**
  * THIS ROUND'S COMMITTEES, AS THIS CLIENT DERIVES THEM. `curve`: the page's (ARENA_CURVE: bondTweakPoint, bondCombine, verify).
@@ -141,6 +195,16 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
  * agrees, why }] } or { ok: false, why }. `compare: false` skips asking the nodes' /committee.
  */
 // `anchorAt` ({ hash, height }) is for a test's own chain only: a page never passes it, and takes the network's compiled-in one.
+// A SEATING CERTIFICATE CHECKED ONCE (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; profiled on live UI 604: 2.1 s of every minute of an
+// RPS page went to verifySeating - every seat hands the same table certificate, for every round of the table): its answer kept under everything it was
+// checked with - the certificate, the round, the role, the drawn keys, the slots
+const SEATING_CHECKED = new Map(), SEATING_CHECKED_MAX = 5000;
+const seatingChecked = (certHex, o) => {
+  const k = [String(certHex), toHex(o.roundId), o.role, (o.drawn || []).map((x) => toHex(x.key || x)).join(','), JSON.stringify(o.slots)].join('|');
+  let v = SEATING_CHECKED.get(k);
+  if (!v) { v = verifySeating(fromHex(certHex), o); if (SEATING_CHECKED.size >= SEATING_CHECKED_MAX) SEATING_CHECKED.delete(SEATING_CHECKED.keys().next().value); SEATING_CHECKED.set(k, v); }
+  return v;
+};
 export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = fetch, least = 2, compare = true, nowMs = Date.now(),
   roles = ['game', 'settlement'], anchorAt = null, explorer = null, genesis = null } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'no node to ask for the chain and the census' };
@@ -184,7 +248,8 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
       verify: curve.verify, census: skip.size ? null : keptChecked.get(toHex(contract.censusRoot)) || null });
     if (got.ok || evidence.from === 'kept' || !/^the census the seats handed over hashes to /.test(String(got.why))) break;
     censusRefused.push({ node: evidence.from, why: `its census ${String(got.why).replace(/^the census the seats handed over /, '')}` });
-    skip.add(evidence.from);
+    // each provider of a union that did not hash to the root is skipped (#1333: skipping the joined "a + b" skipped nobody, and the same pair came back forever)
+    for (const n of evidence.fromNodes || [evidence.from]) skip.add(n);
     evidence = await evidenceFor(roundIdHex, contract, nodes, { fetcher, skip });
   }
   if (!got.ok) return { ...got, censusRefused };
@@ -202,13 +267,23 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   // ONE READ OF A ROLE'S SEATING. `every`: wait for every seat, not for a majority and the grace.
   const askSeating = async (role, every = false) => {
     let spoke = false; const refused = [];
+    // A CERTIFICATE OF ANOTHER ROUND (kanban #1389, Daniel's playtest 2026-11-09 ~11:05Z, UI 594: the old test host's seats, on an older tree, seated each
+    // round of an RPS table on its own and answered that round's certificate, where the table's first round seats it): no lie about this round's
+    // seating, so it does not refuse the round when a checked certificate stands - it is said in the console; with none standing it still counts
+    const other = [];
     let found = null;
     // EVERY SEAT ASKED AT ONCE, EACH WITHIN SEATING_ASK_MS (kanban #625, measured 2026-10-24 20:07Z: asked one after the other with no
     // limit, a restarting seat held an order's committee 20 s): read in the seats' order once more than half answered and the grace passed
     const said = new Array(nodes.length).fill(null);
+    const drawnKey = (got.drawn[role] || []).map((k) => toHex(k)).join(',');
     const asked = nodes.map(async (u, i) => {
-      try { const r = await fetcher(`${baseOf(u)}/seating?round=${seatHex}&role=${role}${anchor ? `&at=${toHex(roundId)}` : ''}`, { signal: AbortSignal.timeout(SEATING_ASK_MS) }); said[i] = { status: r.status, ok: r.ok, body: await r.text() }; }
-      catch { said[i] = null; }
+      const keyOf = `${baseOf(u)}|${seatHex}|${role}`, kept = keptSeating(keyOf, drawnKey, { every });
+      if (kept) { said[i] = kept; return; }
+      try {
+        const r = await fetcher(`${baseOf(u)}/seating?round=${seatHex}&role=${role}${anchor ? `&at=${toHex(roundId)}` : ''}`, { signal: AbortSignal.timeout(SEATING_ASK_MS) });
+        said[i] = { status: r.status, ok: r.ok, body: await r.text() };
+        keepSeatingAnswer(keyOf, drawnKey, said[i]);
+      } catch { said[i] = null; }
     });
     if (every) await Promise.all(asked); else await majorityThenGrace(asked, COMPARE_GRACE_MS);
     for (const [i, u] of nodes.entries()) {
@@ -222,19 +297,20 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
         const { cert, index = 0 } = JSON.parse(body);
         // A TABLE'S LATER SEATING (kanban #1020): a check-in of this table at or before this round; of those a seat hands, the newest stands
         if (anchor && index > contract.roundIndex) { refused.push(`${u}: a seating of a later round of the table`); continue; }
-        const v = verifySeating(fromHex(cert), { roundId: anchor && index > 0 ? seriesRoundIdOf(contract.seriesId, index) : seatId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
+        const v = seatingChecked(cert, { roundId: anchor && index > 0 ? seriesRoundIdOf(contract.seriesId, index) : seatId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
         if (v.ok) {
           if (!found || index > found.index) found = { seated: v.seating.seated, from: u, index };
           if (!anchor) break;
           continue;
         }
-        refused.push(`${u}: ${v.why}`);
+        if (/names another round/.test(String(v.why))) other.push(`${u}: ${v.why}`); else refused.push(`${u}: ${v.why}`);
       } catch { /* that seat says nothing */ }
     }
     // A CERTIFICATE THAT DID NOT CHECK IS KEPT BESIDE THE ONE THAT DID (measured 2026-10-16 on live testnet4: guardian-1 handing a
     // seating with another node seated was refused here, and guardian-2's standing certificate dropped that refusal - the lying seat
     // went unnamed); settlementSignerNodesFrom refuses the round on it
-    return { found, spoke, refused, answered: said.some(Boolean) };
+    if (found && other.length) console.warn(`[arena] #1389 ${role} seating of ${seatHex.slice(0, 8)}: ${other.length} seat(s) answered another round's certificate (an older seat): ${other.join('; ')}`);
+    return { found, spoke, refused: found ? refused : [...refused, ...other], other, answered: said.some(Boolean) };
   };
   const keepSeating = (role, s) => {
     // NO ANSWER AT ALL IS NOT "NO SEATING" (kanban #1036, the owner's Android 2026-11-02 ~17:05Z: every seat refused, and the client's list held the offline b36828fa; reproduced

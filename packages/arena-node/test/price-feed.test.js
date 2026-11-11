@@ -44,20 +44,25 @@ function network({ readings, now, dbs = null }) {
     peersFor: () => keys.map((_, j) => `seat${j}`).filter((u) => u !== `seat${i}`) }); return seats[i]; };
   return { seats, rid, keys, contract, seatOf, restart };
 }
+// AN ASK AS ITS LEADER SENDS IT (kanban #1181): signed by sample k's leader, the round's seat k mod n; `others` the seats that do not lead it
+const askOf = (net, k, priceCents) => ({ round: toHex(net.rid), kind: 'sample', k, priceCents,
+  leaderSig: toHex(schnorr.sign(priceSampleId({ roundId: net.rid, tick: sampleTick(k), priceCents }), net.seatOf(k % 7).round.identity.secret)) });
+const othersOf = (net, k) => net.seats.filter((s) => s !== net.seatOf(k % 7));
 
 test('sample k is led by seat k mod 7: its reading, signed by every seat that read the same within 0.5 %, held by all', async () => {
   let t = START + 1 * 5000 + 300;   // sample 2 reads the price of round time 5 s, one period ahead of its tick
   const prices = [8297193, 8297200, 8296900, 8298000, 8297193, 8297000, 8301000];
   const net = network({ readings: prices.map((p) => () => p), now: () => t });
   for (const s of net.seats) await s.read();
-  const lead = net.seats[2];
+  const lead = net.seatOf(2);
   const got = await lead.leadSample(net.rid, 2);
-  assert.equal(got.ok, true, got.why); assert.equal(got.priceCents, 8296900, 'the leader\'s own reading');
+  const mine = prices[net.seats.indexOf(lead)];
+  assert.equal(got.ok, true, got.why); assert.equal(got.priceCents, mine, 'the leader\'s own reading');
   assert.equal(got.signed, 7, 'all seven read within 0.5 %');
   for (const s of net.seats) {
     const held = s.list(toHex(net.rid)).samples;
-    assert.equal(held.length, 1); assert.equal(held[0].tick, sampleTick(2)); assert.equal(held[0].priceCents, 8296900);
-    const stands = priceAttestationStands({ id: priceSampleId({ roundId: net.rid, tick: held[0].tick, priceCents: 8296900 }), sigs: held[0].sigs,
+    assert.equal(held.length, 1); assert.equal(held[0].tick, sampleTick(2)); assert.equal(held[0].priceCents, mine);
+    const stands = priceAttestationStands({ id: priceSampleId({ roundId: net.rid, tick: held[0].tick, priceCents: mine }), sigs: held[0].sigs,
       committee: net.keys.map((k) => k.pubkey), threshold: 5, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
     assert.equal(stands.ok, true);
   }
@@ -65,17 +70,19 @@ test('sample k is led by seat k mod 7: its reading, signed by every seat that re
 
 test('a leader that proposes a price the others did not see gets no attestation; a seat signs one price per sample, and only now', async () => {
   let t = START + 0 * 5000 + 100;   // sample 1 reads round time 0
-  const prices = [8297000, 9000000, 8297000, 8297000, 8297000, 8297000, 8297000];  // seat 1 reads 8.5 % off
-  const net = network({ readings: prices.map((p) => () => p), now: () => t });
+  let liar = -1;   // sample 1's leader reads 8.5 % off
+  const net = network({ readings: [0, 1, 2, 3, 4, 5, 6].map((i) => () => (i === liar ? 9000000 : 8297000)), now: () => t });
+  liar = net.seats.indexOf(net.seatOf(1));
   for (const s of net.seats) await s.read();
-  const lying = net.seats[1];
+  const lying = net.seatOf(1);
   const got = await lying.leadSample(net.rid, 1);
   assert.equal(got.ok, false); assert.match(got.why, /1 of the committee signed it, 5 are needed/);
   assert.equal(net.seats[3].list(toHex(net.rid)).samples.length, 0, 'nothing held anywhere');
   const rh = toHex(net.rid);
-  assert.equal(net.seats[4].sign({ round: rh, kind: 'sample', k: 1, priceCents: 8297100 }).ok, true);
-  assert.match(net.seats[4].sign({ round: rh, kind: 'sample', k: 1, priceCents: 8297050 }).why, /signed another price/);
-  assert.match(net.seats[4].sign({ round: rh, kind: 'sample', k: 9, priceCents: 8297000 }).why, /not now/);
+  const four = othersOf(net, 1).find((s) => s !== net.seatOf(9 % 7));
+  assert.equal(four.sign(askOf(net, 1, 8297100)).ok, true);
+  assert.match(four.sign(askOf(net, 1, 8297050)).why, /signed another price/);
+  assert.match(four.sign(askOf(net, 9, 8297000)).why, /not now/);
   const forged = { round: rh, kind: 'sample', k: 1, priceCents: 1, sigs: [] };
   assert.equal(net.seats[4].hold(forged).ok, false, 'an unattested sample is not held');
 });
@@ -166,12 +173,11 @@ test('C: a reading older than one period (5 s) is no reading - a seat that holds
   // every seat's price is a trade 6 s old when it is read (the cached-feed case): not kept
   const net = network({ readings: [0, 1, 2, 3, 4, 5, 6].map(() => () => ({ cents: 8297000, atMs: t - 6000 })), now: () => t });
   for (const s of net.seats) assert.equal(await s.read(), null, 'a price older than one period is not read');
-  const rh = toHex(net.rid);
-  assert.match(net.seats[4].sign({ round: rh, kind: 'sample', k: 1, priceCents: 8297000 }).why, /no reading of its own/);
+  assert.match(othersOf(net, 1)[3].sign(askOf(net, 1, 8297000)).why, /no reading of its own/);
   // a fresh trade (1 s old) is a reading, and is signed
   const fresh = network({ readings: [0, 1, 2, 3, 4, 5, 6].map(() => () => ({ cents: 8297000, atMs: t - 1000 })), now: () => t });
   for (const s of fresh.seats) await s.read();
-  assert.equal(fresh.seats[4].sign({ round: toHex(fresh.rid), kind: 'sample', k: 1, priceCents: 8297000 }).ok, true);
+  assert.equal(othersOf(fresh, 1)[3].sign(askOf(fresh, 1, 8297000)).ok, true);
 });
 
 test('C: a reading more than one period away from the moment a sample reads is not used for it', async () => {
@@ -188,10 +194,10 @@ test('D: a proposed price outside 0.05 % of the seat\'s own reading is refused; 
   const own = 8297000;
   const net = network({ readings: [0, 1, 2, 3, 4, 5, 6].map(() => () => own), now: () => t });
   for (const s of net.seats) await s.read();
-  const rh = toHex(net.rid);
   const out = Math.round(own * 1.00051), edge = Math.floor(own * 1.0005), below = Math.ceil(own * 0.9995);
-  assert.match(net.seats[3].sign({ round: rh, kind: 'sample', k: 1, priceCents: out }).why, /not within 0.05 %/);
-  assert.match(net.seats[5].sign({ round: rh, kind: 'sample', k: 1, priceCents: Math.round(own * 1.005) }).why, /not within 0.05 %/, 'what 0.5 % let through is refused');
-  assert.equal(net.seats[2].sign({ round: rh, kind: 'sample', k: 1, priceCents: edge }).ok, true);
-  assert.equal(net.seats[6].sign({ round: rh, kind: 'sample', k: 1, priceCents: below }).ok, true);
+  const o = othersOf(net, 1);
+  assert.match(o[0].sign(askOf(net, 1, out)).why, /not within 0.05 %/);
+  assert.match(o[1].sign(askOf(net, 1, Math.round(own * 1.005))).why, /not within 0.05 %/, 'what 0.5 % let through is refused');
+  assert.equal(o[2].sign(askOf(net, 1, edge)).ok, true);
+  assert.equal(o[3].sign(askOf(net, 1, below)).ok, true);
 });

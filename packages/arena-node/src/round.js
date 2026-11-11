@@ -10,6 +10,7 @@
 // It does not step the core. There is no `step` in this package and no import
 // of one; a round is a list of inputs until something verifies it, and that
 // something is the checkpoints in step 3.
+import { durably } from './store.js';
 import { createInterner } from './intern.js';
 import {
   encodeRoundContract, roundId, encodeEntryContract, entryId, decodeEntryContract,
@@ -17,6 +18,8 @@ import {
 import { decodeInputBatch, batchTicks, batchId } from '../../arena-protocol/src/batch.js';
 import { checkBatchPrices } from '../../arena-protocol/src/price-sample.js';
 import { LATE_JOIN_LAST_ENTRY_MS, entryItemDigest } from '../../arena-protocol/src/contracts.js';
+/** How long after a round's entry close an entry new to a seat is still taken (kanban #1216). */
+export const ENTRY_CLOSE_GRACE_MS = 15000n;
 import { LATE_JOIN_MS } from '../../arena-protocol/src/series.js';
 import { ticksForMs } from '../../arena-protocol/src/tick.js';
 import { worldSecretFits } from '../../arena-protocol/src/seed.js';
@@ -31,7 +34,8 @@ import {
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION, ITEMS_VERSION } from '../../arena-protocol/src/constants.js';
+import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION, ITEMS_VERSION, objectionWindowFits } from '../../arena-protocol/src/constants.js';
+import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { entryFeeBpsForRound, entryPaysReserves, roundSplit, RESERVES_NODE_FEE_BPS } from '../../arena-protocol/src/reserves.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
 import { itemPurchaseKept } from './item-purchase-seat.js';
@@ -51,6 +55,7 @@ import { pluginForRound, hostedPlugins, runLengthFits } from './plugins.js';
 import { chainIndex } from './finality.js';
 import { withinTolerance } from '../../arena-protocol/src/window.js';
 import { decodeRerunResult, splitSignedRerun } from '../../arena-protocol/src/rerun.js';
+import { statesBefore } from './send-state.js';
 
 /**
  * 5-of-7 unless the round's contract is the 2-slot test genesis.
@@ -108,6 +113,10 @@ const sendRow = (r) => ({ entryId: new Uint8Array(r.entry_id), attempt: r.attemp
 /** A transcript (transcript.js) frames each batch with a u16 length: no batch longer than this can be in one. */
 export const TRANSCRIPT_BATCH_MAX_BYTES = 65535;
 
+/** Foreign receipts kept (kanban #1274): at most this many, none older than a day. */
+export const FOREIGN_RECEIPTS_KEPT = 4096;
+export const FOREIGN_RECEIPTS_MAX_AGE_MS = 24 * 3600000;
+
 export class Round {
   /** How long openHeld trusts its last count of the open rows when this store wrote none (kanban #786). */
   static OPEN_HELD_MS = 250;
@@ -140,6 +149,8 @@ export class Round {
     // could not sign would have to answer a checkpoint with something other
     // than a receipt, and there is no such answer.
     this.identity = nodeIdentity(db);
+    // the moves of rows made ACCEPTED on a history txid before #1249, put right once at open (kanban #1275)
+    try { const fixed = this.repairAcceptedMoves(); if (fixed) console.log(`#1275 [settlement] ${fixed} ACCEPTED row(s) had another txid's moves: rewritten from the history`); } catch { /* a store without those tables */ }
   }
 
   /**
@@ -277,6 +288,12 @@ export class Round {
         'INSERT OR IGNORE INTO foreign_receipts '
         + '(checkpoint_id, node_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?)')
         .run(r.checkpointId, r.nodePubkey, bytes, this.now());
+      // AND NOT FOREVER, NOT WITHOUT BOUND (kanban #1274, audit 4 #1257 outsider-2): the receipt's key is any key that signs it, and its checkpoint
+      // id any 32 bytes, so a /play client wrote a row per frame for as long as it liked - never pruned, every row served at GET /foreign-receipts.
+      // At most FOREIGN_RECEIPTS_KEPT are kept, none older than a day; the oldest go first (measured live: 224 rows on seat A1)
+      this.db.prepare('DELETE FROM foreign_receipts WHERE seen_ms < ?').run(Number(this.now()) - FOREIGN_RECEIPTS_MAX_AGE_MS);
+      const over = this.db.prepare('SELECT COUNT(*) AS n FROM foreign_receipts').get().n - FOREIGN_RECEIPTS_KEPT;
+      if (over > 0) this.db.prepare('DELETE FROM foreign_receipts WHERE rowid IN (SELECT rowid FROM foreign_receipts ORDER BY seen_ms LIMIT ?)').run(over);
       throw new Error('a receipt for a mark this node has not got');
     }
 
@@ -407,6 +424,11 @@ export class Round {
     }
     // A HEAD-TO-HEAD ROUND HAS NO RUN: its end is its reveal deadline, which may lie no further from its entry
     // close than its game's reveal window
+    // AND ITS OBJECTION WINDOW IS ITS GAME'S (§13A, RULED 2026-11-10, kanban #1398): a replayed game exactly 600 s; a head-to-head game 60 s
+    // (5 s on a regtest) or 600 s
+    { const regtest = contract.networkId instanceof Uint8Array && contract.networkId.length === NETWORK_ID_REGTEST.length && contract.networkId.every((b, i) => b === NETWORK_ID_REGTEST[i]);
+      const fits = objectionWindowFits(contract.objectionWindowMs, { headToHead: !!runs.headToHead, regtest });
+      if (!fits.ok) throw new Error(fits.why); }
     if (runs.headToHead) {
       const span = BigInt(roundEndMs(contract)) - contract.entryCloseMs;
       if (span < H2H_REVEAL_MIN_MS || span > runs.plugin.manifest.revealWindowMs)
@@ -596,6 +618,15 @@ export class Round {
       }
     }
 
+    // NO ENTRY NEW TO THIS SEAT AFTER ITS ROUND'S ENTRY CLOSE, FOR EVERY GAME (kanban #1216, audit 3 #1210 CONSENSUS-1): a replayed game's grid round
+    // took an entry new to a seat until the round closed, so a player could post an entry and its lock to 4 seats only, play there, and post it to a
+    // 5th once the run had won (paid), or not (VOID: the stake back) - a free option in every paid round. ENTRY_CLOSE_GRACE_MS lets a join held to
+    // the start land (measured over 7 days at the 7 fed A seats: of 7,608 paid entries the latest reached its seat 5 s after the entry close).
+    // A late-join series has its own door above; an entry the round accepted (entry-relay) and the same entry posted again are still taken.
+    const grace = this.entryCloseGraceMs === undefined ? null : this.entryCloseGraceMs;   // set by serve (main.js gives every seat ENTRY_CLOSE_GRACE_MS)
+    if (grace !== null && !lateJoin && !accepted && now > asks.entryCloseMs + grace && !this.db.prepare('SELECT 1 FROM entries WHERE entry_id = ?').get(Buffer.from(entryId(contract))))
+      throw new Error(`that round's entry closed at ${asks.entryCloseMs} (and ${grace} ms for a join on its way) and it is ${now}: an entry new to this seat is not taken`);
+
     // AND NO WORLD OF THE PLAYER'S OWN ON A SHARED-WORLD ROUND (2026-10-04: "the player chooses nothing about
     // the world"): under a config that makes one world per round (config v4) the entry's world secret must be 32 zero
     // bytes - the field is kept so every stored entry keeps its id, and a secret there could only be a player picking.
@@ -629,9 +660,13 @@ export class Round {
         // at least 5 shares at its limit out of its stake less its fee, an expiry not past. A round is a book or a pool: it
         // takes orders or plain picks, never both, so its settlement is one or the other.
         const order = contract.limitPrice !== undefined && contract.limitPrice !== null;
-        const others = this.entriesOf(contract.roundId).filter((x) => !same(x.entry.sessionPubkey, contract.sessionPubkey));
-        if (others.some((x) => (x.entry.limitPrice !== undefined && x.entry.limitPrice !== null) !== order))
-          throw new Error(order ? 'that round takes plain picks (pari-mutuel): it takes no order' : 'that round is an order book: it takes orders, not a plain pick');
+        // ONLY ENTRIES BACKED BY A LOCK DECIDE IT (kanban #1270, audit 4 #1257 PLAYER-4): the door takes an entry before any lock is verified, so one
+        // free plain pick with no lock behind it made a seat refuse every order of an Up/Down round - anyone could stop a market trading at no cost
+        // (and a lockless order a pool's picks). An entry counts here once this seat has seen its stake
+        // AND THE KIND IS THE CERTIFIED BATCHES' (§0A.7b, kanban #1411/#1417): a plain pick is refused once a certified batch holds an order here; an
+        // order is taken while no batch is certified - a round that ends with none is a pool, and its orders' stakes come back
+        if (!order && typeof this.isBookRound === 'function' && this.isBookRound(contract.roundId))
+          throw new Error('that round is an order book: it takes orders, not a plain pick');
         if (order) {
           // A SCALAR MARKET TRADES ITS TWO SIDES TOO (§0A.7e): a share is worth its side's part of a sat at the value
           // (book-ledger.js bookSettlement `scalar`); a round is still a book or a pool, never both
@@ -654,7 +689,8 @@ export class Round {
         if (!hidden) throw new Error(`an entry into a round of head-to-head game "${m.gameName}" hides its move: it carries no commitment`);
         if (!accepted && typeof asks.entryCloseMs === 'bigint' && BigInt(this.now()) >= asks.entryCloseMs)
           throw new Error(`that round's entries closed at ${new Date(Number(asks.entryCloseMs)).toISOString()}: a head-to-head round takes no entry after it - the moves are being revealed`);
-        const seated = this.entriesOf(contract.roundId).filter((x) => !same(x.entry.sessionPubkey, contract.sessionPubkey)).length;
+        // ONLY ENTRIES BACKED BY A LOCK TAKE A SEAT OF A PAYING ROUND (kanban #1437, audit 8 R3); a third lock is refused at /lock (stake-lock-signer-node.js)
+        const seated = this.seatedEntriesOf(contract.roundId, asks.stakeMsat).filter((x) => !same(x.entry.sessionPubkey, contract.sessionPubkey)).length;
         if (seated >= m.players && !accepted) throw new Error(`that round already seats game "${m.gameName}"'s ${m.players} players`);
       } else if (hidden) throw new Error('that entry hides a move, and its round is not a head-to-head game\'s');
     }
@@ -1800,6 +1836,17 @@ export class Round {
   }
 
   /**
+   * THE ENTRIES THAT TAKE A SEAT OF A HEAD-TO-HEAD ROUND (kanban #1437, audit 8 R3): in a paying round only those backed by a lock here - its stake
+   * seen, or its stake lock verified and waiting for its fee lock - since the /entry door takes an entry before any lock is verified, and two
+   * lockless entries took both seats of a paying round at no cost. `stakeMsat` is the round's: a free round's every entry takes one, as before.
+   */
+  seatedEntriesOf(roundIdBytes, stakeMsat) {
+    const all = this.entriesOf(roundIdBytes);
+    if (stakeMsat === 0n) return all;
+    return all.filter(({ entryId }) => !!this.stakeSeen(entryId) || !!this.stakeLock(entryId));
+  }
+
+  /**
    * KEEP A SIGNED RESULT. `bytes` is the protocol's signed record - the body
    * this node encoded and the signature over its id - stored whole, so what is
    * served later is what was signed and not a re-encoding of it.
@@ -2019,7 +2066,8 @@ export class Round {
       .get(Buffer.from(epochId));
     const flat = new Uint8Array(signerNodes.length * 32);
     signerNodes.forEach((k, i) => flat.set(k, i * 32));
-    this.db.prepare(
+    // AN EPOCH'S OWN CONTRIBUTION IS ON THE DISK BEFORE IT IS HANDED OUT (kanban #1243)
+    durably(this.db, () => this.db.prepare(
       'INSERT OR REPLACE INTO dkg_epochs (epoch_id, signer_nodes, mine, share, signer_node_no, '
       + 'group_pubkey, negated, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(epochId), Buffer.from(flat),
@@ -2028,7 +2076,7 @@ export class Round {
         signerNodeNo === null ? (had ? had.signer_node_no : null) : signerNodeNo,
         groupPubkey ? Buffer.from(groupPubkey) : (had && had.group_pubkey) || null,
         negated === null ? (had ? had.negated : 0) : (negated ? 1 : 0),
-        this.now());
+        this.now()));
     return true;
   }
 
@@ -2351,20 +2399,45 @@ export class Round {
   putSendPlan({ entryId, roundId, attempt = 0, address, invoice, paymentHash, invoiceMsat, payoutMsat, owedMsat, gatewayUrl, gatewayPk,
     expiration, state = 'PLANNED', why, donation = false }) {
     const now = this.now();
-    this.db.prepare(`INSERT INTO ${donation ? 'donation_sends' : 'winnings_sends'} (entry_id, attempt, round_id, address, invoice, payment_hash, invoice_msat, payout_msat, `
+    return this.db.prepare(`INSERT INTO ${donation ? 'donation_sends' : 'winnings_sends'} (entry_id, attempt, round_id, address, invoice, payment_hash, invoice_msat, payout_msat, `
       + 'owed_msat, gateway_url, gateway_pk, expiration, state, why, planned_ms, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
       + 'ON CONFLICT(entry_id, attempt) DO NOTHING')
       .run(Buffer.from(entryId), attempt, Buffer.from(roundId), String(address), String(invoice), String(paymentHash).toLowerCase(),
         Number(invoiceMsat), Number(payoutMsat), Number(owedMsat), String(gatewayUrl), String(gatewayPk).toLowerCase(), Number(expiration),
-        state, String(why), now, now);
+        state, String(why), now, now).changes > 0;   // false: that (entry, attempt) was kept already, and the first row stands
   }
 
-  /** Where a send stands: its contract (txid, output), its preimage once the gateway paid, and its state. */
-  markSend({ entryId, attempt = 0, state, why, txid = null, outIdx = null, preimage = null }) {
+  /**
+   * A KEPT RE-SEND GIVES WAY TO A LOWER ONE (kanban #1241, audit 3 FIXES-9: attempt 0's rule for attempt N+1): two seats on turn each kept their
+   * own attempt N+1 and the peers split between them for good. A row still PLANNED (nothing signed on it, nothing funded) is replaced by a
+   * seat's re-send whose payment hash is lower; true if it was.
+   */
+  replaceSendPlan({ entryId, attempt, invoice, paymentHash, invoiceMsat, payoutMsat, gatewayUrl, gatewayPk, expiration, why, donation = false }) {
+    if (!(attempt > 0)) return false;
+    return this.db.prepare(`UPDATE ${donation ? 'donation_sends' : 'winnings_sends'} SET invoice = ?, payment_hash = ?, invoice_msat = ?, payout_msat = ?, gateway_url = ?, `
+      + "gateway_pk = ?, expiration = ?, why = ?, updated_ms = ? WHERE entry_id = ? AND attempt = ? AND state = 'PLANNED' AND payment_hash > ?")
+      .run(String(invoice), String(paymentHash).toLowerCase(), Number(invoiceMsat), Number(payoutMsat), String(gatewayUrl), String(gatewayPk).toLowerCase(),
+        Number(expiration), String(why), this.now(), Buffer.from(entryId), attempt, String(paymentHash).toLowerCase()).changes > 0;
+  }
+
+  /**
+   * Where a send stands: its contract (txid, output), its preimage once the gateway paid, and its state - MOVED ONLY AS send-state.js
+   * ALLOWS (kanban #1154): a compare-and-set on the row's state, so a final row never moves and nothing jumps a step. True if it moved.
+   */
+  markSend(args) {
+    // A SEND MARKED FUNDING IS ON THE DISK BEFORE ITS FUNDING (kanban #1243): a lost FUNDING row funded the send a second time
+    return args && args.state === 'FUNDING' ? durably(this.db, () => this.#markSendRow(args)) : this.#markSendRow(args);
+  }
+
+  #markSendRow({ entryId, attempt = 0, state, why, txid = null, outIdx = null, preimage = null }) {
+    const from = statesBefore(state);
+    if (!from.length) return false;
+    let moved = 0;
     for (const table of ['winnings_sends', 'donation_sends'])
-      this.db.prepare(`UPDATE ${table} SET state = ?, why = ?, txid = COALESCE(?, txid), out_idx = COALESCE(?, out_idx), `
-        + 'preimage = COALESCE(?, preimage), updated_ms = ? WHERE entry_id = ? AND attempt = ?')
-        .run(state, String(why), txid, outIdx === null ? null : Number(outIdx), preimage, this.now(), Buffer.from(entryId), attempt);
+      moved += this.db.prepare(`UPDATE ${table} SET state = ?, why = ?, txid = COALESCE(?, txid), out_idx = COALESCE(?, out_idx), `
+        + `preimage = COALESCE(?, preimage), updated_ms = ? WHERE entry_id = ? AND attempt = ? AND state IN (${from.map(() => '?').join(', ')})`)
+        .run(state, String(why), txid, outIdx === null ? null : Number(outIdx), preimage, this.now(), Buffer.from(entryId), attempt, ...from).changes;
+    return moved > 0;
   }
 
   /** A round's send rows, the winners' and the donation set's, in entry (send id) then attempt order. */
@@ -2688,17 +2761,28 @@ export class Round {
   }
 
   /** A joined player's signed name record for a round (M3.3-34). A newer one replaces it; an older one does not. */
-  putLobbyName({ roundId, playerPubkey, record, signature, atMs }) {
-    return this.db.prepare('INSERT INTO lobby_names (round_id, player_pubkey, record, signature, at_ms) VALUES (?, ?, ?, ?, ?) '
+  // `identitySig` (kanban #1278, RULED #1276): the identity's own consent, checked at the door. A newer record naming the same identity keeps the proof held;
+  // a proof for the record held (not newer) is still taken
+  putLobbyName({ roundId, playerPubkey, record, signature, atMs, identitySig = null }) {
+    const had = this.db.prepare('SELECT record, identity_sig, at_ms FROM lobby_names WHERE round_id = ? AND player_pubkey = ?').get(Buffer.from(roundId), Buffer.from(playerPubkey));
+    const idOf = (b) => Buffer.from(b).subarray(64, 96).toString('hex');
+    const sig = identitySig ? Buffer.from(identitySig) : null;
+    if (had && !(Number(atMs) > Number(had.at_ms))) {
+      if (sig && !had.identity_sig && idOf(had.record) === idOf(record))
+        return this.db.prepare('UPDATE lobby_names SET identity_sig = ? WHERE round_id = ? AND player_pubkey = ?').run(sig, Buffer.from(roundId), Buffer.from(playerPubkey)).changes > 0;
+      return false;
+    }
+    const keep = sig || (had && had.identity_sig && idOf(had.record) === idOf(record) ? had.identity_sig : null);
+    return this.db.prepare('INSERT INTO lobby_names (round_id, player_pubkey, record, signature, at_ms, identity_sig) VALUES (?, ?, ?, ?, ?, ?) '
       + 'ON CONFLICT (round_id, player_pubkey) DO UPDATE SET record = excluded.record, signature = excluded.signature, '
-      + 'at_ms = excluded.at_ms WHERE excluded.at_ms > lobby_names.at_ms')
-      .run(roundId, playerPubkey, record, signature, Number(atMs)).changes > 0;
+      + 'at_ms = excluded.at_ms, identity_sig = excluded.identity_sig WHERE excluded.at_ms > lobby_names.at_ms')
+      .run(roundId, playerPubkey, record, signature, Number(atMs), keep).changes > 0;
   }
 
   /** Every name record this signer node keeps for a round, as the players signed them. */
   lobbyNames(roundIdBytes) {
-    return this.db.prepare('SELECT record, signature FROM lobby_names WHERE round_id = ? ORDER BY player_pubkey')
-      .all(roundIdBytes).map((r) => ({ record: new Uint8Array(r.record), signature: new Uint8Array(r.signature) }));
+    return this.db.prepare('SELECT record, signature, identity_sig FROM lobby_names WHERE round_id = ? ORDER BY player_pubkey')
+      .all(roundIdBytes).map((r) => ({ record: new Uint8Array(r.record), signature: new Uint8Array(r.signature), ...(r.identity_sig ? { identitySig: new Uint8Array(r.identity_sig) } : {}) }));
   }
 
   /** The entry's first mark as this signer node stores it (the chain's first link), or null. */
@@ -2788,6 +2872,61 @@ export class Round {
       .run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(message), Buffer.from(signature), Buffer.from(claimPk), this.now());
   }
 
+  /** A round's retry row (kanban #1186): { state, tries, nextAtHeight, why } or null. */
+  settleRetry(roundIdBytes, scope = '') {
+    const r = this.db.prepare('SELECT state, tries, next_at_height, why FROM settle_retries WHERE round_id = ? AND scope = ?').get(Buffer.from(roundIdBytes), String(scope));
+    return r ? { state: r.state, tries: Number(r.tries), nextAtHeight: r.next_at_height === null ? null : Number(r.next_at_height), why: r.why } : null;
+  }
+
+  /** A retry row moved, compare-and-set on the state it was read in (`from`: null for none): true if it moved. */
+  putSettleRetry({ roundId, scope = '', from = null, state, tries, nextAtHeight = null, why }) {
+    const args = [String(state), Number(tries), nextAtHeight === null ? null : Number(nextAtHeight), String(why), this.now()];
+    if (from === null)
+      return this.db.prepare('INSERT OR IGNORE INTO settle_retries (state, tries, next_at_height, why, updated_ms, round_id, scope) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(...args, Buffer.from(roundId), String(scope)).changes > 0;
+    return this.db.prepare('UPDATE settle_retries SET state = ?, tries = ?, next_at_height = ?, why = ?, updated_ms = ? WHERE round_id = ? AND scope = ? AND state = ?')
+      .run(...args, Buffer.from(roundId), String(scope), String(from)).changes > 0;
+  }
+
+  /** The highest expiration (block height) of the round's stake locks this seat verified, or null with none (kanban #1186). */
+  lastLockExpiration(roundIdBytes) {
+    let most = null;
+    for (const r of this.db.prepare('SELECT fields FROM stake_locks WHERE round_id = ?').all(Buffer.from(roundIdBytes))) {
+      let e;
+      try { e = Number(JSON.parse(r.fields).expiration); } catch { return null; }
+      if (!Number.isSafeInteger(e)) return null;
+      most = most === null ? e : Math.max(most, e);
+    }
+    return most;
+  }
+
+  /** What this seat committed a lock to (kanban #1184): { state, roundId, txid, why } or null. */
+  lockFate(outpoint) {
+    const r = this.db.prepare('SELECT round_id, state, txid, why FROM lock_fates WHERE outpoint = ?').get(String(outpoint));
+    return r ? { state: r.state, roundId: new Uint8Array(r.round_id), txid: r.txid, why: r.why } : null;
+  }
+
+  /** A lock's fate, written once (kanban #1184): true if this row is now the one held, i.e. it was written or it was already this state. */
+  putLockFate({ outpoint, roundId, state, txid = null, why }) {
+    this.db.prepare('INSERT OR IGNORE INTO lock_fates (outpoint, round_id, state, txid, why, made_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(String(outpoint), Buffer.from(roundId), String(state), txid === null ? null : String(txid), String(why), this.now());
+    const held = this.lockFate(outpoint);
+    return !!held && held.state === state;
+  }
+
+  /**
+   * EVERY OUTPOINT A SETTLEMENT OF THE ROUND CLAIMS, AS THIS SEAT KEPT IT (kanban #1184): the round's moves, every txid it signed or was handed
+   * (lock_settlement_txids). A Set of "txid:idx".
+   */
+  claimedOutpointsOf(roundIdBytes) {
+    const rid = Buffer.from(roundIdBytes);
+    const out = new Set();
+    const add = (claims) => { try { for (const c of JSON.parse(claims)) out.add(String(c)); } catch { /* a row with no claims list claims nothing */ } };
+    for (const r of this.db.prepare('SELECT claims FROM lock_settlement_moves WHERE round_id = ?').all(rid)) add(r.claims);
+    for (const r of this.db.prepare('SELECT claims FROM lock_settlement_txids WHERE round_id = ?').all(rid)) add(r.claims);
+    return out;
+  }
+
   forfeit(entryIdBytes) {
     const r = this.db.prepare('SELECT message, signature, claim_pk, made_ms FROM forfeits WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
     return r ? { message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claimPk: new Uint8Array(r.claim_pk), madeMs: Number(r.made_ms) } : null;
@@ -2807,8 +2946,21 @@ export class Round {
 
   /** The round's one settlement of its losers' locks (W4): its intent, then where it stands. */
   putLockSettlement({ roundId, txid, message, signature, state, why }) {
-    this.db.prepare('INSERT OR REPLACE INTO lock_settlements (round_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    // A SUBMITTING ROW IS ON THE DISK BEFORE ITS SUBMIT (kanban #1243)
+    const write = () => this.db.prepare('INSERT OR REPLACE INTO lock_settlements (round_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(roundId), String(txid), Buffer.from(message), Buffer.from(signature), state, why, this.now());
+    const done = state === 'SUBMITTING' ? durably(this.db, write) : write();
+    // ACCEPTED ON A TXID OF THE HISTORY CARRIES THAT TXID'S MOVES (kanban #1249, audit 2 SETTLEMENT-1): a row made ACCEPTED on another seat's landed
+    // transaction (recordSubmit, the kept pass, recover) kept the moves of this seat's own txid - its claims, its payouts - so the own-claim guard,
+    // the sends, the index of the landed outputs and the late splits all read a transaction that never landed
+    if (state === 'ACCEPTED') {
+      const m = this.lockSettlementMoves(roundId);
+      if (!m || m.txid !== String(txid)) {
+        const h = typeof this.settlementTxidsOf === 'function' ? this.settlementTxidsOf(roundId).find((x) => x.txid === String(txid)) : null;
+        if (h && Array.isArray(h.claims)) this.putLockSettlementMoves({ roundId, txid: String(txid), claims: h.claims, payouts: h.payouts });
+      }
+    }
+    return done;
   }
 
   lockSettlement(roundIdBytes) {
@@ -2818,8 +2970,10 @@ export class Round {
 
   /** One federation's settlement of a round that takes any federation (2026.0.3): the same row as a round's own. */
   putFedLockSettlement({ roundId, federation, txid, message, signature, state, why }) {
-    this.db.prepare('INSERT OR REPLACE INTO fed_lock_settlements (round_id, federation_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    // A SUBMITTING ROW IS ON THE DISK BEFORE ITS SUBMIT (kanban #1243)
+    const write = () => this.db.prepare('INSERT OR REPLACE INTO fed_lock_settlements (round_id, federation_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(roundId), String(federation).toLowerCase(), String(txid), Buffer.from(message), Buffer.from(signature), state, why, this.now());
+    return state === 'SUBMITTING' ? durably(this.db, write) : write();
   }
 
   fedLockSettlement(roundIdBytes, federation) {
@@ -2881,6 +3035,7 @@ export class Round {
     return this.db.prepare(`SELECT r.round_id FROM (SELECT DISTINCT round_id FROM stake_locks) s CROSS JOIN rounds r ON r.round_id = s.round_id
       WHERE r.state = ? AND r.closed_ms >= ? AND r.closed_ms < ?
         AND NOT EXISTS (SELECT 1 FROM lock_settlements l WHERE l.round_id = r.round_id AND l.state = 'ACCEPTED')
+        AND NOT EXISTS (SELECT 1 FROM settle_retries t WHERE t.round_id = r.round_id AND t.scope = '' AND t.state IN ('SETTLED', 'EXPIRED'))
         AND NOT (EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id)
           AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id AND f.state <> 'ACCEPTED'))`)
       .all(CLOSED, fromMs, toMs).map((r) => new Uint8Array(r.round_id));
@@ -2890,6 +3045,41 @@ export class Round {
   putLockSettlementMoves({ roundId, txid, claims, payouts }) {
     this.db.prepare('INSERT OR REPLACE INTO lock_settlement_moves (round_id, txid, claims, payouts) VALUES (?, ?, ?, ?)')
       .run(Buffer.from(roundId), String(txid), JSON.stringify(claims), Number(payouts));
+  }
+
+  /** A settlement txid of the round (kanban #1171): kept once with what it moves; its signature filled in when it is known. */
+  putSettlementTxid({ roundId, txid, message, signature = null, claims = null, payouts = null }) {
+    const had = this.db.prepare('SELECT 1 FROM lock_settlement_txids WHERE round_id = ? AND txid = ?').get(Buffer.from(roundId), String(txid));
+    if (!had) {
+      if (claims === null || payouts === null) return;
+      this.db.prepare('INSERT INTO lock_settlement_txids (round_id, txid, message, signature, claims, payouts, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(Buffer.from(roundId), String(txid), Buffer.from(message || new Uint8Array(0)), Buffer.from(signature || new Uint8Array(0)), JSON.stringify(claims), Number(payouts), this.now());
+    } else if (signature && signature.length) {
+      this.db.prepare('UPDATE lock_settlement_txids SET signature = ? WHERE round_id = ? AND txid = ? AND length(signature) = 0').run(Buffer.from(signature), Buffer.from(roundId), String(txid));
+    }
+  }
+
+  /**
+   * ROWS MADE ACCEPTED ON A HISTORY TXID BEFORE #1249 KEEP ANOTHER TXID'S MOVES (kanban #1275, audit 4 fixesB-4): once, at open, each ACCEPTED row whose
+   * moves name another txid and whose own txid the history holds gets that txid's moves. Answers how many were repaired.
+   */
+  repairAcceptedMoves() {
+    let n = 0;
+    let rows = [];
+    try {
+      rows = this.db.prepare(`SELECT ls.round_id AS round_id, ls.txid AS txid FROM lock_settlements ls JOIN lock_settlement_moves mv ON mv.round_id = ls.round_id
+        WHERE ls.state = 'ACCEPTED' AND mv.txid != ls.txid`).all();
+    } catch { return 0; }
+    for (const r of rows) {
+      const h = this.settlementTxidsOf(r.round_id).find((x) => x.txid === String(r.txid));
+      if (h && Array.isArray(h.claims)) { this.putLockSettlementMoves({ roundId: new Uint8Array(r.round_id), txid: String(r.txid), claims: h.claims, payouts: h.payouts }); n++; }
+    }
+    return n;
+  }
+
+  settlementTxidsOf(roundIdBytes) {
+    return this.db.prepare('SELECT txid, message, signature, claims, payouts FROM lock_settlement_txids WHERE round_id = ? ORDER BY made_ms').all(Buffer.from(roundIdBytes))
+      .map((r) => ({ txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claims: JSON.parse(r.claims), payouts: Number(r.payouts) }));
   }
 
   lockSettlementMoves(roundIdBytes) {
@@ -2908,10 +3098,43 @@ export class Round {
     return r ? JSON.parse(r.shares).map((x) => ({ pubkey: new Uint8Array(Buffer.from(x.pubkey, 'hex')), msat: BigInt(x.msat) })) : null;
   }
 
+  /** A txid of a federation's or a late entry's settlement (kanban #1172), `scope` 'fed:<hex>' | 'late:<hex>': kept once with what it moves; its signature filled in. */
+  putScopedSettlementTxid({ roundId, scope, txid, message, signature = null, claims = null, payouts = null }) {
+    const had = this.db.prepare('SELECT 1 FROM scoped_settlement_txids WHERE round_id = ? AND scope = ? AND txid = ?').get(Buffer.from(roundId), String(scope), String(txid));
+    if (!had) {
+      if (claims === null || payouts === null) return;
+      this.db.prepare('INSERT INTO scoped_settlement_txids (round_id, scope, txid, message, signature, claims, payouts, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(Buffer.from(roundId), String(scope), String(txid), Buffer.from(message || new Uint8Array(0)), Buffer.from(signature || new Uint8Array(0)), JSON.stringify(claims), Number(payouts), this.now());
+    } else if (signature && signature.length) {
+      this.db.prepare('UPDATE scoped_settlement_txids SET signature = ? WHERE round_id = ? AND scope = ? AND txid = ? AND length(signature) = 0')
+        .run(Buffer.from(signature), Buffer.from(roundId), String(scope), String(txid));
+    }
+  }
+
+  scopedSettlementTxidsOf(roundIdBytes, scope) {
+    return this.db.prepare('SELECT txid, message, signature, claims, payouts FROM scoped_settlement_txids WHERE round_id = ? AND scope = ? ORDER BY made_ms, txid')
+      .all(Buffer.from(roundIdBytes), String(scope))
+      .map((r) => ({ txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claims: JSON.parse(r.claims), payouts: Number(r.payouts) }));
+  }
+
+  /** Every (round, federation) row in `state` (kanban #1172: SUBMITTING and REFUSED rows are asked again at start). */
+  fedLockSettlementsIn(state) {
+    return this.db.prepare('SELECT round_id, federation_id FROM fed_lock_settlements WHERE state = ? ORDER BY made_ms').all(state)
+      .map((r) => ({ roundId: new Uint8Array(r.round_id), federation: r.federation_id }));
+  }
+
+  /** Every (round, late entry) row in `state` (kanban #1172). */
+  lateLockSettlementsIn(state) {
+    return this.db.prepare('SELECT round_id, entry_id FROM late_lock_settlements WHERE state = ? ORDER BY made_ms').all(state)
+      .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id) }));
+  }
+
   /** A late loser's second settlement (slice C3b-1): its intent, then where it stands. One per (round, entry). */
   putLateLockSettlement({ roundId, entryId, txid, message, signature, state, why }) {
-    this.db.prepare('INSERT OR REPLACE INTO late_lock_settlements (round_id, entry_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    // A SUBMITTING ROW IS ON THE DISK BEFORE ITS SUBMIT (kanban #1243)
+    const write = () => this.db.prepare('INSERT OR REPLACE INTO late_lock_settlements (round_id, entry_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(roundId), Buffer.from(entryId), String(txid), Buffer.from(message), Buffer.from(signature), state, why, this.now());
+    return state === 'SUBMITTING' ? durably(this.db, write) : write();
   }
 
   lateLockSettlement(roundIdBytes, entryIdBytes) {
@@ -2936,20 +3159,32 @@ export class Round {
       .all(Buffer.from(roundIdBytes), late);
     return Object.assign(Object.create(base), {
       lateEntryId: new Uint8Array(late),
+      replaceSendPlan({ roundId, entryId, attempt, invoice, paymentHash, invoiceMsat, payoutMsat, gatewayUrl, gatewayPk, expiration, why }) {
+        if (!(attempt > 0)) return false;
+        return base.db.prepare('UPDATE late_winnings_sends SET invoice = ?, payment_hash = ?, invoice_msat = ?, payout_msat = ?, gateway_url = ?, gateway_pk = ?, '
+          + "expiration = ?, why = ?, updated_ms = ? WHERE round_id = ? AND late_entry_id = ? AND entry_id = ? AND attempt = ? AND state = 'PLANNED' AND payment_hash > ?")
+          .run(String(invoice), String(paymentHash).toLowerCase(), Number(invoiceMsat), Number(payoutMsat), String(gatewayUrl), String(gatewayPk).toLowerCase(),
+            Number(expiration), String(why), base.now(), Buffer.from(roundId), late, Buffer.from(entryId), attempt, String(paymentHash).toLowerCase()).changes > 0;
+      },
       putSendPlan({ entryId, roundId, attempt = 0, address, invoice, paymentHash, invoiceMsat, payoutMsat, owedMsat, gatewayUrl, gatewayPk,
         expiration, state = 'PLANNED', why }) {
         const now = base.now();
-        base.db.prepare('INSERT INTO late_winnings_sends (round_id, late_entry_id, entry_id, attempt, address, invoice, payment_hash, invoice_msat, '
+        return base.db.prepare('INSERT INTO late_winnings_sends (round_id, late_entry_id, entry_id, attempt, address, invoice, payment_hash, invoice_msat, '
           + 'payout_msat, owed_msat, gateway_url, gateway_pk, expiration, state, why, planned_ms, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
           + 'ON CONFLICT(round_id, late_entry_id, entry_id, attempt) DO NOTHING')
           .run(Buffer.from(roundId), late, Buffer.from(entryId), attempt, String(address), String(invoice), String(paymentHash).toLowerCase(),
             Number(invoiceMsat), Number(payoutMsat), Number(owedMsat), String(gatewayUrl), String(gatewayPk).toLowerCase(), Number(expiration),
-            state, String(why), now, now);
+            state, String(why), now, now).changes > 0;
       },
+      // AS THE ROUND'S OWN (kanban #1154): a compare-and-set by send-state.js, true if it moved
       markSend({ entryId, attempt = 0, state, why, txid = null, outIdx = null, preimage = null }) {
-        base.db.prepare('UPDATE late_winnings_sends SET state = ?, why = ?, txid = COALESCE(?, txid), out_idx = COALESCE(?, out_idx), '
-          + 'preimage = COALESCE(?, preimage), updated_ms = ? WHERE late_entry_id = ? AND entry_id = ? AND attempt = ?')
-          .run(state, String(why), txid, outIdx === null ? null : Number(outIdx), preimage, base.now(), late, Buffer.from(entryId), attempt);
+        const from = statesBefore(state);
+        if (!from.length) return false;
+        // FUNDING on the disk before its funding (kanban #1243)
+        const write = () => base.db.prepare('UPDATE late_winnings_sends SET state = ?, why = ?, txid = COALESCE(?, txid), out_idx = COALESCE(?, out_idx), '
+          + `preimage = COALESCE(?, preimage), updated_ms = ? WHERE late_entry_id = ? AND entry_id = ? AND attempt = ? AND state IN (${from.map(() => '?').join(', ')})`)
+          .run(state, String(why), txid, outIdx === null ? null : Number(outIdx), preimage, base.now(), late, Buffer.from(entryId), attempt, ...from).changes > 0;
+        return state === 'FUNDING' ? durably(base.db, write) : write();
       },
       sendAttemptsOf(roundIdBytes) { return all(roundIdBytes).map(rowOf); },
       sendPlansOf(roundIdBytes) {
@@ -2987,10 +3222,14 @@ export class Round {
    * holds it in its re-run window, so nothing else can be one.
    */
   lateSettlementCandidates() {
+    // A ROUND THAT TAKES ANY FEDERATION HAS NO ROW OF ITS OWN (kanban #1172): its late losers are asked about once every federation's row is ACCEPTED
     return this.db.prepare(`SELECT o.round_id, o.entry_id FROM objections o
-      JOIN lock_settlements s ON s.round_id = o.round_id AND s.state = 'ACCEPTED'
       LEFT JOIN late_lock_settlements l ON l.round_id = o.round_id AND l.entry_id = o.entry_id
-      WHERE l.state IS NULL OR l.state <> 'ACCEPTED'`).all()
+      WHERE (l.state IS NULL OR l.state <> 'ACCEPTED')
+        AND (EXISTS (SELECT 1 FROM lock_settlements s WHERE s.round_id = o.round_id AND s.state = 'ACCEPTED')
+          OR (NOT EXISTS (SELECT 1 FROM lock_settlements s WHERE s.round_id = o.round_id)
+            AND EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id)
+            AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id AND f.state <> 'ACCEPTED')))`).all()
       .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id) }));
   }
 
@@ -3019,6 +3258,25 @@ export class Round {
         Array.isArray(r.parts) && r.parts.length ? JSON.stringify(r.parts.slice(0, 500)) : null);
   }
 
+  /**
+   * DERIVED RESERVE ROWS, KEPT ONCE (kanban #1156): a payout's change, refund, claim or winners' outputs. A row already kept at that
+   * outpoint with the same federation, key, amount and contract is left as it is; one with other fields is never replaced - this throws,
+   * and the payout step that asked for it is undone (reserve-payout.js transition).
+   */
+  putDonationOutputsOnce(rows) {
+    const had = this.db.prepare('SELECT federation_id, recipient_pk, amount_msat, contract_id FROM donation_outputs WHERE outpoint = ?');
+    const fresh = [];
+    for (const r of rows) {
+      const o = `${Buffer.from(r.outpoint.txid).toString('hex')}:${r.outpoint.outIdx}`;
+      const h = had.get(o);
+      if (!h) { if (!fresh.some((x) => `${Buffer.from(x.outpoint.txid).toString('hex')}:${x.outpoint.outIdx}` === o)) fresh.push(r); continue; }
+      const same = Buffer.from(h.federation_id).equals(Buffer.from(r.federationId)) && h.recipient_pk === Buffer.from(r.recipientPk).toString('hex')
+        && String(h.amount_msat) === String(r.amountMsat) && h.contract_id === r.contractId;
+      if (!same) throw new Error(`${o.slice(0, 16)}… is kept already with other fields: not replaced`);
+    }
+    if (fresh.length) this.putDonationOutputs(fresh);
+  }
+
   /** How many donation-key outputs of this round's settlement are indexed. */
   settlementDonationOutputs(roundIdBytes) {
     return this.db.prepare("SELECT COUNT(*) AS n FROM donation_outputs WHERE round_id = ? AND contract_id LIKE 'settlement:%'").get(Buffer.from(roundIdBytes)).n;
@@ -3039,6 +3297,42 @@ export class Round {
     return this.db.prepare('INSERT OR IGNORE INTO game_outcomes (round_id, result_id, source_round_id, outcome, why, result, sigs, source, observed_ms, received_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(roundId), Buffer.from(resultId), Buffer.from(sourceRoundId), outcome, why, Buffer.from(result), JSON.stringify(sigs),
         Buffer.from(source), Number(observedMs), Number(receivedMs)).changes === 1;
+  }
+
+  /**
+   * A MARKET ROUND'S PERSISTED STATE (kanban #1151, store.js market_states): { state, outcome?, value?, observedAtMs?, firstMs?,
+   * finalAtMs?, reason?, why?, atMs } - or null: OPEN, nothing persisted yet.
+   */
+  marketState(roundIdBytes) {
+    const r = this.db.prepare('SELECT state, outcome, value, observed_ms, first_ms, final_at_ms, reason, why, at_ms FROM market_states WHERE round_id = ?').get(Buffer.from(roundIdBytes));
+    if (!r) return null;
+    const out = { state: r.state, atMs: Number(r.at_ms) };
+    if (r.outcome !== null) out.outcome = Number(r.outcome);
+    if (r.value !== null) out.value = BigInt(r.value);
+    if (r.observed_ms !== null) out.observedAtMs = BigInt(r.observed_ms);
+    if (r.first_ms !== null) out.firstMs = Number(r.first_ms);
+    if (r.final_at_ms !== null) out.finalAtMs = Number(r.final_at_ms);
+    if (r.reason !== null) out.reason = r.reason;
+    if (r.why !== null) out.why = r.why;
+    return out;
+  }
+
+  /**
+   * COMPARE-AND-SET a market round's state: `from` the state the caller read (null: no row, OPEN; 'ATTESTED' with the `fromFirstMs`
+   * it read), `next` the state attested.js marketTransition answered. Answers true only if this write moved it; a row that moved
+   * meanwhile, or a terminal one (never written again - the store's triggers refuse it too), answers false.
+   */
+  casMarketState(roundIdBytes, from, next, fromFirstMs = null) {
+    if (from === 'FINAL' || from === 'VOID' || next.state === 'OPEN') return false;
+    const cols = [next.state, Number.isInteger(next.outcome) ? next.outcome : null, typeof next.value === 'bigint' ? String(next.value) : null,
+      next.observedAtMs !== undefined && next.observedAtMs !== null ? Number(next.observedAtMs) : null,
+      Number.isFinite(next.firstMs) ? next.firstMs : null, Number.isFinite(next.finalAtMs) ? next.finalAtMs : null,
+      next.reason || null, next.why || null, Number.isFinite(next.atMs) ? next.atMs : this.now()];
+    if (from === null || from === undefined || from === 'OPEN')
+      return this.db.prepare('INSERT OR IGNORE INTO market_states (state, outcome, value, observed_ms, first_ms, final_at_ms, reason, why, at_ms, round_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(...cols, Buffer.from(roundIdBytes)).changes === 1;
+    return this.db.prepare("UPDATE market_states SET state = ?, outcome = ?, value = ?, observed_ms = ?, first_ms = ?, final_at_ms = ?, reason = ?, why = ?, at_ms = ? WHERE round_id = ? AND state = 'ATTESTED' AND first_ms IS ?")
+      .run(...cols, Buffer.from(roundIdBytes), fromFirstMs).changes === 1;
   }
 
   /** Every game outcome this seat holds for a market round, oldest first: [{ resultId, sourceRoundId, outcome, why, result, sigs, source, observedMs, receivedMs }]. */
@@ -3062,6 +3356,40 @@ export class Round {
   cancelsOf(roundIdBytes) {
     return this.db.prepare('SELECT entry_id, signature, received_ms FROM market_cancels WHERE round_id = ? ORDER BY entry_id')
       .all(Buffer.from(roundIdBytes)).map((r) => ({ entryId: new Uint8Array(r.entry_id), signature: new Uint8Array(r.signature), receivedMs: Number(r.received_ms) }));
+  }
+
+  /**
+   * THE IDENTITY A PLAYER'S NAME RECORD NAMES IN A ROUND (kanban #1224): the record is signed by the entry's own round key and, since #1213,
+   * fixed at the entry close - so a head-to-head reveal's identity is the player's only when it is this one. Hex, or null with no record held.
+   */
+  /** When this seat first took an entry of that player in that round (entries.joined_ms, this seat's clock), or null (kanban #1267). */
+  joinedMsOfPlayer(roundIdBytes, playerPubkeyBytes) {
+    const want = Buffer.from(playerPubkeyBytes).toString('hex');
+    let at = null;
+    for (const r of this.db.prepare('SELECT contract, joined_ms FROM entries WHERE round_id = ?').iterate(Buffer.from(roundIdBytes))) {
+      let e; try { e = decodeEntryContract(new Uint8Array(r.contract)); } catch { continue; }
+      if (Buffer.from(e.playerPubkey).toString('hex') === want && (at === null || Number(r.joined_ms) < at)) at = Number(r.joined_ms);
+    }
+    return at;
+  }
+
+  namedIdentityOf(roundIdBytes, playerPubkeyBytes) {
+    const r = this.db.prepare('SELECT record FROM lobby_names WHERE round_id = ? AND player_pubkey = ?').get(Buffer.from(roundIdBytes), Buffer.from(playerPubkeyBytes));
+    if (!r) return null;
+    // the record's layout (lobby-name.js encodeLobbyName): round id (32), player key (32), identity key (32), ...
+    const b = new Uint8Array(r.record);
+    return b.length >= 96 ? Buffer.from(b.subarray(64, 96)).toString('hex') : null;
+  }
+
+  /**
+   * THE IDENTITY A PLAYER CONSENTED TO FOR A ROUND (kanban #1278; audit 5 #1401): the identity its name record names, only where that record carries
+   * the identity's own signature (identity_sig) - taken at the join, before the entry close (#1213/#1263/#1267). Hex, or null.
+   */
+  consentedIdentityOf(roundIdBytes, playerPubkeyBytes) {
+    const r = this.db.prepare('SELECT record, identity_sig FROM lobby_names WHERE round_id = ? AND player_pubkey = ?').get(Buffer.from(roundIdBytes), Buffer.from(playerPubkeyBytes));
+    if (!r || !r.identity_sig) return null;
+    const b = new Uint8Array(r.record);
+    return b.length >= 96 ? Buffer.from(b.subarray(64, 96)).toString('hex') : null;
   }
 
   /** A head-to-head entry's identity, kept once: the key and its signature over matchProofId. */
@@ -3256,6 +3584,40 @@ export class Round {
       'SELECT seen_ms FROM objections WHERE round_id = ? AND entry_id = ?')
       .get(roundIdBytes, entryIdBytes);
     return row ? row.seen_ms : null;
+  }
+
+  /** An objection being checked (kanban #1173): kept at its arrival, before its replay runs. */
+  putPendingObjection(roundIdBytes, entryIdBytes, arrivedMs) {
+    this.db.prepare('INSERT OR IGNORE INTO pending_objections (round_id, entry_id, arrived_ms) VALUES (?, ?, ?)')
+      .run(Buffer.from(roundIdBytes), Buffer.from(entryIdBytes), Number(arrivedMs));
+  }
+
+  /** Its check answered (taken or refused): the pending row goes. */
+  dropPendingObjection(roundIdBytes, entryIdBytes, arrivedMs) {
+    this.db.prepare('DELETE FROM pending_objections WHERE round_id = ? AND entry_id = ? AND arrived_ms = ?')
+      .run(Buffer.from(roundIdBytes), Buffer.from(entryIdBytes), Number(arrivedMs));
+  }
+
+  /** The earliest arrival of an objection still being checked, no older than `sinceMs` - or null. */
+  pendingObjectionAt(roundIdBytes, entryIdBytes, sinceMs = 0) {
+    const r = this.db.prepare('SELECT MIN(arrived_ms) AS at FROM pending_objections WHERE round_id = ? AND entry_id = ? AND arrived_ms >= ?')
+      .get(Buffer.from(roundIdBytes), Buffer.from(entryIdBytes), Number(sinceMs));
+    return r && r.at !== null && r.at !== undefined ? Number(r.at) : null;
+  }
+
+  /** A restarted seat's checks are gone with its process: their pending rows go too (kanban #1173). Answers how many. */
+  clearPendingObjections() { return this.db.prepare('DELETE FROM pending_objections').run().changes; }
+
+  /** The entry FINAL at this seat (kanban #1173): kept once, the first that stood; true when this call kept it. */
+  putEntryFinal({ roundId, entryId, runId, finalAfterMs, onRerun = false, atMs }) {
+    return this.db.prepare('INSERT OR IGNORE INTO entry_finals (round_id, entry_id, run_id, final_after_ms, on_rerun, at_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(roundId), Buffer.from(entryId), String(runId), Number(finalAfterMs), onRerun ? 1 : 0, Number(atMs)).changes === 1;
+  }
+
+  entryFinal(roundIdBytes, entryIdBytes) {
+    const r = this.db.prepare('SELECT run_id, final_after_ms, on_rerun, at_ms FROM entry_finals WHERE round_id = ? AND entry_id = ?')
+      .get(Buffer.from(roundIdBytes), Buffer.from(entryIdBytes));
+    return r ? { runId: r.run_id, finalAfterMs: Number(r.final_after_ms), onRerun: r.on_rerun === 1, atMs: Number(r.at_ms) } : null;
   }
 
   /**

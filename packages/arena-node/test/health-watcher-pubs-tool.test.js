@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { config, pass } from '../tools/health-watcher.mjs';
-import { pubSources, opsPublished, lookScript, parseLook, callsScript, parseCalls } from '../tools/health-watcher-pubs.mjs';
+import { pubSources, opsPublished, lookScript, parseLook, callsScript, parseCalls, esploraCalls, esploraErr, decodePayload, spanText } from '../tools/health-watcher-pubs.mjs';
 
 const NOW = Date.UTC(2026, 9, 28, 11, 0, 0);
 const T = (c) => c.repeat(64).slice(0, 64);
@@ -21,7 +21,7 @@ function chain(tip) { return { tip, blocks: new Map(), mem: new Set(), spent: ne
 function makeWorld({ at = NOW } = {}) {
   const txs = new Map([[UD, tx(UD)], [RPS, tx(RPS, { vin: [PARENT], vsize: 193, fee: 193 })], [NB, tx(NB)], [PARENT, tx(PARENT)], [OLD, tx(OLD)]]);
   const w = { now: at, txs, ours: chain(157835), public: chain(157881), minerList: new Set(), adds: [], posts: [], runs: [],
-    pending: { tip: 157835, txs: [], grids: [UD, RPS, NB].map((t, i) => ({ game: ['btc-updown-15m', 'rock-paper-scissors', 'nextblock'][i], lastCloseMs: String(NOW + 12 * 3600000), publication: { txid: t } })) },
+    pending: { tip: 157835, txs: [], grids: [UD, RPS, NB].map((t, i) => ({ game: ['btc-updown-15m', 'rock-paper-scissors', 'nextblock'][i], firstWindowMs: String(NOW - 2 * 3600000), lastCloseMs: String(NOW + 12 * 3600000), publication: { txid: t } })) },
     duty: { days: [] }, ops: [], childN: 0 };
   const block = (c, h, ids) => { c.blocks.set(h, { hash: T(String(h % 10)).replace(/^./, 'a') + '', ids: new Set(ids) }); for (const t of ids) c.mem.delete(t); };
   w.block = block;
@@ -84,9 +84,9 @@ test('today: 3 grids confirmed on our branch, only in the public mempool - alert
   let { r, st } = await go(w, {});
   assert.equal(pubAlerts(w).length, 1);
   assert.equal(pubAlerts(w)[0], ['[health-watcher] #759 @owner PROBLEM: round publication not confirmed',
-    '• Up/Down 71eac027: ours confirmed (4), public mempool, 30 min',
-    '• RPS dd9a81ca: ours confirmed (4), public mempool, 0 min',
-    '• Next Block fde7abcc: ours confirmed (3), public mempool, 0 min',
+    '• Up/Down grid for 10-28 09:00-23:00Z, txid 71eac027: ours confirmed (4), public mempool, 30 min',
+    '• RPS grid for 10-28 09:00-23:00Z, txid dd9a81ca: ours confirmed (4), public mempool, 0 min',
+    '• Next Block grid for 10-28 09:00-23:00Z, txid fde7abcc: ours confirmed (3), public mempool, 0 min',
     'Tried: nothing yet', 'Needs: public mining (HW_PUBLIC_CONFIRM off), see #759'].join('\n'));
   // three children: each spends its publication's change, pays 2 sat/vB over parent + child (146-193 + 110 vB) minus the parent's fee
   const kids = r.did.filter((x) => x.kind === 'cpfp');
@@ -120,7 +120,7 @@ test('a publication the public chain lacks is sent to it, parents first, once pe
   assert.deepEqual(w.public.sent.slice(3), [PARENT], 'the parent next; the grids not again within 30 min');
   // (an alert's lines are read before the pass's fixes: the refusal shows from the next pass)
   const p = r.problems.find((x) => x.key === 'publications');
-  assert.ok(p.lines.includes('Next Block fde7abcc: ours confirmed (3), public missing, 3 min (public: bad-txns-inputs-missingorspent)'), p.lines.join('\n'));
+  assert.ok(p.lines.includes('Next Block grid for 10-28 09:00-23:00Z, txid fde7abcc: ours confirmed (3), public missing, 3 min; rebroadcast 11:00Z refused: bad-txns-inputs-missingorspent'), p.lines.join('\n'));
   assert.deepEqual(p.tried, ['rebroadcast']);
   assert.equal(st.pubs[UD].public.s, 'mempool');
   ({ st } = await go(w, st, CFG({ HW_CPFP: '0' }), 10));      // 30 min later: the refused one tried again
@@ -135,7 +135,7 @@ test('our branch: a publication in our mempool joins miner C\'s list; listed and
   w.ours.tip += 2;
   const { r } = await go(w, st, CFG({ HW_CPFP: '0' }));
   const lines = r.problems.find((x) => x.key === 'publications').lines;
-  assert.ok(lines.some((l) => /^Next Block fde7abcc: ours mempool, public confirmed \(2\), 3 min$/.test(l)), lines.join('\n'));
+  assert.ok(lines.some((l) => /^Next Block grid for 10-28 09:00-23:00Z, txid fde7abcc: ours mempool, public confirmed \(2\), 3 min$/.test(l)), lines.join('\n'));
 });
 
 test('CPFP guards: a change spent on our branch, a child already in the public mempool, a fee over the cap - no child; HW_CPFP=0 none', async () => {
@@ -149,7 +149,7 @@ test('CPFP guards: a change spent on our branch, a child already in the public m
   assert.equal(w.ours.sent.length, 1);
   assert.equal(st.pubs[UD].bumps.length, 1, 'a bump that cannot be made counts as the try: once per hour');
   ({ r, st } = await go(w, st, CFG({ HW_CPFP_MAX_SAT: '420' })));
-  assert.match(r.problems.find((x) => x.key === 'publications').lines[0], /^Up\/Down 71eac027: .*, \d+ min \(cpfp: its change is spent already \(bump the spender\)\)$/);
+  assert.match(r.problems.find((x) => x.key === 'publications').lines[0], /^Up\/Down grid for 10-28 09:00-23:00Z, txid 71eac027: .*, \d+ min; CPFP 11:00Z refused: its change is spent already \(bump the spender\)$/);
   assert.equal(r.did.filter((x) => x.kind === 'cpfp').length, 0);
   const w2 = makeWorld(); w2.public.mem.delete(UD);
   const capped = await go(w2, {}, CFG({ HW_CPFP_MAX_SAT: '100' }));
@@ -195,4 +195,139 @@ test('sources, the ops log, the chain scripts\' answers', () => {
   assert.match(callsScript('cli', [['submitpackage', '["aa","bb"]']]), /\$C 'submitpackage' '\["aa","bb"\]' 2>&1/);
   assert.deepEqual(parseCalls('@@begin 0\nabc\n@@rc 0 0\n@@begin 1\nerror code: -26\nerror message:\nmin relay fee not met\n@@rc 1 26\n', 3),
     [{ ok: true, out: 'abc' }, { ok: false, out: '', err: 'error code: -26\nerror message:\nmin relay fee not met' }, { ok: false, out: '', err: 'no answer' }]);
+});
+
+// ---------------------------------------------------------------- kanban #1124: the public chain by Esplora, replaced publications, when
+// THE THREE REAL CASES of 2026-11-04 (scripts from the live watcher state and from public testnet4): each publication's input was spent on
+// the public chain by another tx carrying the SAME OP_RETURN scripts (outputs in another order), confirmed - the round's payload landed;
+// the watcher alerted "not confirmed" for hours. Now: replaced, resolved, the new txid tracked.
+const NOV4 = Date.UTC(2026, 10, 4, 17, 20, 0);
+const SER = (id) => `6a2441524e53${id}`, DAY = (x) => `6a0c41524e44${x}`;
+const CASES = [
+  { txid: '9e022f7c770865657884a34d30b4c5b892122e91757393cc5e7659afb2a1483b', game: 'RPS', source: 'grid', input: ['c34af59c513153d5e722ee583ea1a61372fbc7f212dc9300762c3db92d93996c', 0],
+    payload: [SER('ba68579a119743102b2675c1634aabb36390d5239583a5ede9db3de7bdb45762'), SER('0b94d74f172b8171f0fee3038c01af237f7db40d943b5913195c81efc7b6c7a1'), DAY('00005118c831a73a')],
+    by: 'ce44eecb6589923da0941bf40e99b46916018b37dc217e4b6c75ae5ff9a95db8', h: 158940, change: '00144858e47b0627b3dc3ee4803c8cb19c00dd9e3f21', sendErr: 'bad-txns-inputs-missingorspent' },
+  { txid: '9773c4f6a50678180b82318c9623f3394ace2e6402da449db3c6599bcb4a32ce', game: 'Next Block', source: 'duty 11-04 primary emergency', input: ['01692505a020ed6ca5d0431a6f5e9a95a6404895a8431c4434b4d025bde8fe9b', 2],
+    payload: [SER('5e36750a826524f97bb0b1ba9a38ab0b88239db6ecf2a4ca1da914edeee122a1'), DAY('000051188dca9d1c')],
+    by: 'cfdb5d0bfd3a237350d4013132ccb6cf6c7a861cf13ca5b8c1607cf25be00bc5', h: 158797, change: '00148f08973815aad318f7a1eb470d8fad625ee894f4', sendErr: 'insufficient fee, rejecting replacement 9773c4f6a50678180b82' },
+  { txid: '3078d4d268ebf99f75ed5111fc6db5ab97f9a1b26b62e2863bfde1f99d1a6d72', game: 'RPS', source: 'duty 11-04 primary emergency', input: ['432ad496efd7aeb3fccc43e990a9f0a18e3c9485fa1654867594b541828cc917', 2],
+    payload: [SER('3d3dd78dc8d3987beb399b5d7830e4a81ef0d500ccf81e9e3365385790bed391'), SER('7221d139edbb086a9164558005df14bb39ad01f1ab8cd36736c29bd9c7411d87'), DAY('00005118c831a73a')],
+    by: '5c2f6dbaca5d775dd2790b279a8cc9c498acf6c0a7680bf9bf57420a07a5e304', h: 158797, change: '0014f6e957973c0d83f8fbba7e745697342b6cbf68fc', sendErr: 'insufficient fee, rejecting replacement 3078d4d268ebf99f75ed' },
+];
+/** A public chain behind a fake Esplora (the same paths and answers as mempool.space), our branch behind a fake bitcoin-cli. */
+function esploraWorld({ cases = CASES, spenderPayload = null, down = false } = {}) {
+  const w = { now: NOV4, posts: [], http: [], sent: [], tip: 158998, txs: new Map(), outspend: new Map(), mem: new Set(), conf: new Map(), oursConf: new Map() };
+  for (const c of cases) {
+    // the replacement: its change first, then the payload (the real ones' order) - or another payload
+    const vout = [{ scriptpubkey: c.change, value: 1000 }, ...(spenderPayload || c.payload).map((x) => ({ scriptpubkey: x, value: 0 }))];
+    w.txs.set(c.by, { txid: c.by, weight: 905, fee: 227, vin: [{ txid: c.input[0], vout: c.input[1] }], vout, hex: `02${c.by}` });
+    w.conf.set(c.by, [c.h, T('b')]); w.conf.set(c.input[0], [158700, T('a')]);
+    w.outspend.set(`${c.input[0]}:${c.input[1]}`, c.by);
+    w.oursConf.set(c.by, c.h);
+  }
+  const status = (t) => (w.conf.has(t) ? { confirmed: true, block_height: w.conf.get(t)[0], block_hash: w.conf.get(t)[1] } : { confirmed: false });
+  w.httpFn = async (method, path, body) => {
+    w.http.push(`${method} ${path}`);
+    if (down) return { ok: false, status: 0, text: 'no answer in 8 s' };
+    const r = (status, text) => ({ ok: status === 200, status, text: typeof text === 'string' ? text : JSON.stringify(text) });
+    let m;
+    if (path === '/blocks/tip/height') return r(200, String(w.tip));
+    if ((m = /^\/tx\/([0-9a-f]{64})\/status$/.exec(path))) return w.conf.has(m[1]) || w.mem.has(m[1]) ? r(200, status(m[1])) : r(404, 'Transaction not found');
+    if ((m = /^\/tx\/([0-9a-f]{64})\/outspend\/(\d+)$/.exec(path))) { const by = w.outspend.get(`${m[1]}:${m[2]}`); return r(200, by ? { spent: true, txid: by, vin: 0, status: status(by) } : { spent: false }); }
+    if ((m = /^\/tx\/([0-9a-f]{64})\/hex$/.exec(path))) return w.txs.has(m[1]) ? r(200, w.txs.get(m[1]).hex) : r(404, 'Transaction not found');
+    if ((m = /^\/tx\/([0-9a-f]{64})$/.exec(path))) { const x = w.txs.get(m[1]); return x ? r(200, { ...x, status: status(m[1]) }) : r(404, 'Transaction not found'); }
+    if (method === 'POST' && path === '/tx') { w.sent.push(body); return r(400, 'sendrawtransaction RPC error: {"code":-25,"message":"bad-txns-inputs-missingorspent"}'); }
+    return r(404, 'not found');
+  };
+  const byHex = new Map(cases.map((c) => [`02${c.txid}`, c]));
+  w.io = {
+    now: () => w.now, loadavg: async () => [1, 1, 1], identity: async () => ({ ok: true, key: T('5') }), units: async () => ({}),
+    get: async (base, path) => (path === '/series' ? { ok: true, body: { series: [{ series: 'ba68579a119743102b2675c1634aabb36390d5239583a5ede9db3de7bdb45762', startTimeMs: String(Date.UTC(2026, 10, 4, 16, 10, 56)), horizonMs: '10800000' }] } }
+      : path === '/duty' ? { ok: true, body: { days: [] } } : path === '/pending' ? { ok: true, body: { txs: [], grids: [] } } : path === '/expected' ? { ok: true, body: { expected: [] } } : { ok: false, why: 'HTTP 404' }),
+    minercCheck: async (ids) => ({ listed: ids, missing: [] }), minercAdd: async () => {}, post: async (text) => { w.posts.push(text); }, opsPublished: async () => [],
+    // our branch: the replacements in its blocks (the same blocks), the replaced ones in none
+    chainLook: async (name, { txids }) => ({ tip: 158998, mem: [], found: txids.filter((t) => w.oursConf.has(t)).map((t) => ({ txid: t, h: w.oursConf.get(t), hash: T('b') })), stale: [], scannedTo: 158998 }),
+    chainCalls: async (name, calls) => (name === 'public' ? esploraCalls(w.httpFn, calls) : calls.map((c) => (c[0] === 'decoderawtransaction' && byHex.has(c[1])
+      ? { ok: true, out: JSON.stringify({ vin: [{ txid: byHex.get(c[1]).input[0], vout: byHex.get(c[1]).input[1] }] }) } : { ok: false, out: '', err: 'error message:\nno' }))),
+    publicHttp: w.httpFn,
+  };
+  // the watcher's state at 17:10Z: the three kept from earlier passes (no prevouts kept before #1124), missing on both chains, alerted
+  const pubs = {};
+  for (const c of cases) pubs[c.txid] = { game: c.game, source: c.source, firstMs: NOV4 - 6 * 3600000, live: NOV4 - 60000, hex: `02${c.txid}`, vsize: 227, fee: null, vin: [c.input[0]],
+    vout: [...c.payload.map((x, n) => ({ n, sat: 0, spk: x })), { n: c.payload.length, sat: 1000, spk: c.change, address: 'tb1qx' }],
+    ours: { s: 'missing' }, public: { s: 'missing' }, sent: { ours: { atMs: NOV4 - 6 * 3600000, ok: false }, public: { atMs: NOV4 - 10 * 60000, ok: false } },
+    sendErr: { ours: c.sendErr, public: c.sendErr }, dead: { ours: c.sendErr } };
+  w.state = { pubs, scan: {}, fixes: {}, alerts: { publications: { firstMs: NOV4 - 6 * 3600000, lastMs: NOV4 - 30 * 60000, title: 'round publication not confirmed', ticket: '759', absent: 0 } } };
+  return w;
+}
+const CFGE = (env = {}) => CFG({ HW_PUBLIC_SSH: '0', HW_PUBLIC_MIN: '30', ...env });
+
+test('#1124 the three real replaced publications: payload landed in another tx - resolved, not alerted; the new txid tracked', async () => {
+  const w = esploraWorld();
+  let { r, st } = await go(w, w.state, CFGE());
+  assert.equal(r.problems.find((p) => p.key === 'publications'), undefined, r.problems.map((p) => `${p.key}: ${(p.lines || []).join(' | ')}`).join('\n'));
+  const landed = r.problems.find((p) => p.key === 'publications-replaced');
+  assert.equal(landed.alert, false);
+  assert.deepEqual(landed.lines, [
+    'RPS series ba68579a +1 for 11-04 16:10-19:10Z, txid 9e022f7c: replaced by ce44eecb with the same payload, confirmed at 158940',
+    'Next Block series 5e36750a, txid 9773c4f6: replaced by cfdb5d0b with the same payload, confirmed at 158797',
+    'RPS series 3d3dd78d +1, txid 3078d4d2: replaced by 5c2f6dba with the same payload, confirmed at 158797',
+  ]);
+  for (const c of CASES) {
+    assert.equal(st.pubs[c.txid], undefined, `${c.txid.slice(0, 8)} no longer tracked`);
+    assert.equal(st.replaced[c.txid].by, c.by);
+    assert.equal(st.pubs[c.by].replaces, c.txid);
+    assert.ok(w.http.includes(`GET /tx/${c.input[0]}/outspend/${c.input[1]}`));
+  }
+  assert.equal(w.sent.length, 0, 'nothing rebroadcast: the payload is on the chain');
+  // the next passes: the replacements read on the public chain, 59 and 202 deep there and confirmed on ours - done with; the old alert
+  // RESOLVED; the replaced txids not tracked again
+  ({ r, st } = await go(w, st, CFGE(), 2));
+  for (const c of CASES) { assert.ok(w.http.includes(`GET /tx/${c.by}/status`)); assert.equal(st.pubs[c.by], undefined); assert.equal(st.pubs[c.txid], undefined); }
+  assert.equal(w.posts.filter((t) => /RESOLVED: round publication not confirmed/.test(t)).length, 1, w.posts.join('\n'));
+  assert.equal(w.posts.filter((t) => /PROBLEM|STILL/.test(t)).length, 0);
+});
+
+test('#1124 a spent input whose spender lacks the payload: alerted "republish needed" with app, series and time, what was tried', async () => {
+  const w = esploraWorld({ cases: [CASES[0]], spenderPayload: ['6a0c41524e44000051180000beef'] });
+  const { r, st } = await go(w, w.state, CFGE());
+  const p = r.problems.find((x) => x.key === 'publications');
+  assert.ok(p && p.alert, r.problems.map((x) => x.key).join(','));
+  assert.equal(p.lines[0], 'RPS series ba68579a +1 for 11-04 16:10-19:10Z, txid 9e022f7c: ours missing, public missing, 360 min; rebroadcast 17:10Z refused: bad-txns-inputs-missingorspent'
+    + '; input c34af59c:0 spent by ce44eecb (confirmed at 158940) without this payload: republish needed');
+  assert.match(p.needs, /^republish needed/);
+  assert.ok(st.pubs[CASES[0].txid], 'still tracked');
+  assert.equal(st.pubs[CASES[0].by], undefined, 'the other tx is not ours to track');
+});
+
+test('#1124 Esplora: a publication the public chain lacks is rebroadcast there, the refusal named; no base answering - the chain unread, alerted', async () => {
+  const w = esploraWorld({ cases: [] });
+  const fresh = T('f00d');
+  w.state = { pubs: { [fresh]: { game: 'Up/Down', source: 'grid', firstMs: NOV4 - 3600000, live: NOV4, hex: `02${fresh}`, vin: [], prev: [], vout: [{ n: 0, sat: 0, spk: SER('ba68579a119743102b2675c1634aabb36390d5239583a5ede9db3de7bdb45762') }] } }, scan: {}, fixes: {}, alerts: {} };
+  let { r, st } = await go(w, w.state, CFGE());
+  assert.deepEqual(w.sent, [`02${fresh}`]);
+  assert.equal(st.pubs[fresh].sendErr.public, 'bad-txns-inputs-missingorspent');
+  ({ r } = await go(w, st, CFGE()));
+  assert.equal(r.problems.find((x) => x.key === 'publications').lines[0],
+    'Up/Down series ba68579a for 11-04 16:10-19:10Z, txid f00df00d: ours missing, public missing, 63 min; rebroadcast 17:20Z refused: bad-txns-inputs-missingorspent');
+  const d = esploraWorld({ cases: [], down: true });
+  ({ r } = await go(d, { pubs: { [fresh]: { game: 'RPS', source: 'grid', firstMs: NOV4, hex: 'aa' } } }, CFGE()));
+  assert.match(r.problems.find((x) => x.key === 'chain-unread:public').lines[0], /^esplora: no tip/);
+});
+
+test('#1124 the Esplora call adapter, payload decoding, time spans', async () => {
+  const replies = { 'POST /v1/txs/package': { ok: false, status: 400, text: '{"error":"submitpackage RPC error: {\\"code\\":-1}"}' }, 'POST /tx': { ok: true, status: 200, text: T('ab') },
+    'GET /fee-estimates': { ok: true, status: 200, text: '{"1":3.5,"2":2.1,"144":1}' }, 'GET /v1/fees/recommended': { ok: true, status: 200, text: '{"minimumFee":1}' } };
+  const http = async (m, p) => replies[`${m} ${p}`] || { ok: false, status: 404, text: 'not found' };
+  const [pkg, est, info, none] = await esploraCalls(http, [['submitpackage', '["aa","bb"]'], ['estimatesmartfee', '2'], ['getmempoolinfo'], ['getmempoolentry', T('9')]]);
+  assert.deepEqual(pkg, { ok: true, out: T('ab') }, 'the package endpoint refused: each tx alone, parents first');
+  assert.equal(JSON.parse(est.out).feerate, 2.1 / 1e5);
+  assert.equal(JSON.parse(info.out).mempoolminfee, 1e-5);
+  assert.equal(none.err, 'Transaction not in mempool');
+  await assert.rejects(esploraCalls(async () => ({ ok: false, status: 0, text: 'timeout' }), [['sendrawtransaction', 'aa']]), /no Esplora base answered/);
+  assert.equal(esploraErr('sendrawtransaction RPC error: {"code":-26,"message":"min relay fee not met, 0 < 110"}'), 'min relay fee not met, 0 < 110');
+  assert.equal(esploraErr('sendrawtransaction RPC error -25: bad-txns-inputs-missingorspent'), 'bad-txns-inputs-missingorspent');
+  assert.deepEqual(decodePayload(CASES[0].payload), { series: ['ba68579a119743102b2675c1634aabb36390d5239583a5ede9db3de7bdb45762', '0b94d74f172b8171f0fee3038c01af237f7db40d943b5913195c81efc7b6c7a1'], rounds: [], days: [Date.UTC(2026, 10, 4)] });
+  assert.equal(spanText(Date.UTC(2026, 10, 5), Date.UTC(2026, 10, 6)), '11-05 00:00-24:00Z');
+  assert.equal(spanText(Date.UTC(2026, 10, 4, 10, 41), Date.UTC(2026, 10, 5, 22)), '11-04 10:41Z-11-05 22:00Z');
 });

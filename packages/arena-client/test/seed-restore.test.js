@@ -82,7 +82,7 @@ test('Settings has the restore field wired to restoreSeed; the round page has no
   const card = src.slice(src.indexOf('export class SeedCard'));
   assert.match(card, /<input type="password" autoComplete="off" placeholder="your 24 words, or your seed \(64 hex\)"/);
   assert.match(card, /<button type="button" onClick=\{\(\) => this\.restore\(\)\}>use my seed<\/button>/);
-  assert.match(page, /ARENACLIENT\.restoreSeed\(\{ text, session: window\.sessionStorage, kept, now: Date\.now\(\), liveRun \}\)/);
+  assert.match(page, /ARENACLIENT\.restoreSeed\(\{ text, session: window\.sessionStorage, kept, now: Date\.now\(\), liveRun, heldElsewhere \}\)/);
   assert.match(page, /onRestore: \(t\) => window\.ARENA_RESTORE_SEED\(t\)/);
   // the round page's refund line is React's too (kanban #564, PageBits RefundKey): neither it nor the page's block has a restore field
   const roundPage = page.slice(page.indexOf("const refundEl = document.getElementById('arena-refund')"), page.indexOf('window.ArenaBits.refundKey(refundEl') + 300);

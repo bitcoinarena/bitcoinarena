@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Feedback review</title>
+<!-- kanban #1342 section 4: the owner's review list of player feedback. Every call carries the admin code (x-arena-admin), checked by the faucet
+     against its hash; the code is kept in this browser only. A player's words are a stranger's text: only ever set with textContent. -->
+<style>
+  :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --dim: #8b949e; --btc: #f7931a; --ok: #3fb950; --bad: #f85149; --warn: #d29922; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, sans-serif; padding: 24px 16px 56px; }
+  main { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 24px; margin: 0 0 4px; } h2 { font-size: 17px; margin: 18px 0 8px; }
+  .sub { color: var(--dim); margin: 0 0 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  input, select, textarea, button { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+  button { cursor: pointer; background: #21262d; font-weight: 600; } button.go { background: var(--btc); color: #1a1000; border-color: var(--btc); }
+  button:disabled { opacity: .5; cursor: default; }
+  .bar { height: 10px; background: var(--bg); border-radius: 6px; overflow: hidden; margin: 6px 0; } .bar > i { display: block; height: 100%; background: var(--btc); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .stat b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; } .stat span { color: var(--dim); font-size: 13px; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; } th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-size: 13px; font-weight: 600; } tr.pick { cursor: pointer; } tr.pick:hover { background: #1c2330; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); }
+  .s-new { color: var(--btc); } .s-accepted { color: var(--ok); } .s-paid { color: var(--ok); } .s-rejected { color: var(--bad); } .s-duplicate { color: var(--dim); }
+  .warn { color: var(--warn); } .bad { color: var(--bad); } .dim { color: var(--dim); }
+  pre { white-space: pre-wrap; word-break: break-word; margin: 6px 0; font: inherit; }
+  code { font-size: 12px; word-break: break-all; }
+  #say { min-height: 1.4em; margin: 8px 0; }
+  @media (max-width: 640px) { .hide-s { display: none; } }
+.nb-tiles{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}.nb-tile{border:1px solid #30363d;border-radius:10px;padding:8px 12px;min-width:110px}.nb-tile b{display:block;font-size:20px}.nb-tile span{font-size:12px;color:#8b949e}.nb-tile.ok{border-color:#2ea04366}.nb-tile.no{border-color:#f8514966}
+.nb-days{display:flex;gap:4px;margin:4px 0 8px}.nb-day{width:18px;height:18px;border-radius:4px;background:#30363d}.nb-day.on{background:#3fb950}
+.nb-badges{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0}.nb-badge{border-radius:999px;padding:3px 10px;font-size:12.5px;border:1px solid #30363d}.nb-badge.ok{color:#3fb950;border-color:#2ea04366}.nb-badge.no{color:#f85149;border-color:#f8514966}
+  .nb-first{margin:10px 0;padding:10px 12px;border-radius:10px;background:rgba(63,185,80,.14);color:#3fb950;font-weight:700}
+</style>
+</head>
+<body>
+<!-- ONE HEADER FOR EVERY PAGE (kanban #1457, Daniel 2026-11-11: "Der Header muss überall gleich aussehen"): the start page's header, drawn by site-chrome.js -->
+<script src="https://testnet.bitcoinarena.io/site-chrome.js" data-foot="none"></script>
+<main>
+  <h1>Feedback review</h1>
+  <p class="sub" data-payouts>Player reports, the reward rules and the payouts. Nothing is paid without an approval here.</p>
+
+  <div class="panel" id="login">
+    <div class="row"><input id="code" type="password" placeholder="Admin code" autocomplete="off" aria-label="Admin code">
+      <button class="go" id="enter">Open</button><span class="dim">kept in this browser only</span></div>
+    <div id="loginsay" class="bad"></div>
+  </div>
+  <p id="wait" class="dim" hidden>Opening the reports…</p>
+
+  <div id="app" hidden>
+    <div class="panel">
+      <div class="stats" id="stats"></div>
+      <div class="bar" aria-hidden="true"><i id="weekbar" style="width:0"></i></div>
+      <div class="dim" id="weektext"></div>
+    </div>
+    <div class="panel">
+      <div class="row">
+        <select id="f-state"><option value="">every state</option><option>new</option><option>accepted</option><option>rejected</option><option>duplicate</option><option>paid</option></select>
+        <select id="f-type"><option value="">every category</option><option>bug</option><option>improvement</option></select>
+        <select id="f-source"><option value="">frontend and node</option><option value="frontend">frontend</option><option value="node">node</option></select>
+        <input id="f-game" placeholder="game" size="14"><input id="f-key" placeholder="player key (hex)" size="20">
+        <button id="reload">Show</button><button id="csv">Export CSV</button><button id="logout">Forget code</button>
+      </div>
+      <div id="say" role="status"></div>
+      <div class="scroll"><table><thead><tr><th>Received</th><th>From</th><th>Category</th><th>State</th><th class="hide-s">Game</th><th>What happened</th><th>Player</th><th>Reward</th></tr></thead><tbody id="rows"></tbody></table></div>
+    </div>
+    <div class="panel" id="detail" hidden></div>
+  </div>
+</main>
+<script>
+(() => {
+  const API = '/api/faucet/feedback/admin';
+  // the sats each level pays, from the faucet's own table (the list answers them): picking a level fills the amount in (Daniel 2026-11-10)
+  let LEVELS = [];
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (k === 'text') e.textContent = v; else if (k === 'cls') e.className = v; else e.setAttribute(k, v); } for (const c of kids) if (c) e.append(c); return e; };
+  const sats = (n) => `${Number(n || 0).toLocaleString('en')} sat`;
+  const when = (ms) => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') : '');
+  let code = ''; try { code = localStorage.getItem('arena.feedback.admin') || ''; } catch { code = ''; }
+  // OPENED FROM THE GAME'S ADMIN LINK (Daniel 2026-11-10: "wenn ich auf das admin links unten klicke muss die aber die admin Seite aufgehen"): the code comes in
+  // the URL fragment (#code=..., never sent to a server), is kept as a typed code is, and leaves the address bar at once
+  { const m = /(?:^|[#&])code=([^&]+)/.exec(location.hash || '');
+    if (m) { try { code = decodeURIComponent(m[1]).trim(); localStorage.setItem('arena.feedback.admin', code); } catch { /* this tab only */ }
+      history.replaceState(history.state, '', location.pathname + location.search); } }
+  const say = (t, bad = false) => { $('say').textContent = t; $('say').className = bad ? 'bad' : 'dim'; };
+  async function call(path, body) {
+    const r = await fetch(`${API}/${path}`, body ? { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-admin': code }, body: JSON.stringify(body) } : { headers: { 'x-arena-admin': code } });
+    if (r.status === 403) { show(false); throw new Error('not the admin code'); }
+    return r.json();
+  }
+  function show(on) { $('wait').hidden = true; $('login').hidden = on; $('app').hidden = !on; }
+  // WHILE THE LIST LOADS (Daniel 2026-11-10: "this screen is there for quite a while until it loads the real list, it seems it is stuck"): the
+  // login form left up looked like the code was not taken; now a plain "Opening the reports…", and a failure shows on the login, not in the hidden list
+  const fail = (t) => { $('wait').hidden = true; if ($('app').hidden) { $('login').hidden = false; $('loginsay').textContent = t; } else say(t, true); };
+  function budget(b) {
+    const s = $('stats'); s.replaceChildren();
+    const stat = (label, v) => el('div', { cls: 'stat' }, el('b', { text: v }), el('span', { text: label }));
+    s.append(stat('approved this week', `${sats(b.weekApprovedSats)} of ${sats(b.weeklyBudgetSats)}`), stat('approved in all', sats(b.allApprovedSats)), stat('paid', sats(b.paidSats)),
+      stat('links not yet claimed', `${b.openRewards.n} · ${sats(b.openRewards.s)}`), stat('new reports', String((b.counts && b.counts.new) || 0)));
+    $('weekbar').style.width = `${Math.min(100, (100 * b.weekApprovedSats) / Math.max(1, b.weeklyBudgetSats))}%`;
+    // REAL SATS ON MAINNET (kanban #1450, Daniel 2026-11-11: bounties are real Lightning payments on mainnet): said by the faucet's payout network
+    $('weektext').textContent = (b.network === 'mainnet' ? 'Mainnet sats: real money, paid over Lightning from the bounty wallet.' : 'Testnet sats, no value.') + ' The weekly budget and the per-player limit are the faucet\'s reward rules.';
+    const sub = document.querySelector('p.sub[data-payouts]'); if (sub) sub.textContent = `Player reports, the reward rules and the ${b.network === 'mainnet' ? 'mainnet Lightning' : 'testnet'} payouts. Nothing is paid without an approval here.`;
+  }
+  async function load() {
+    const q = new URLSearchParams(); for (const [k, id] of [['state', 'f-state'], ['type', 'f-type'], ['source', 'f-source'], ['game', 'f-game'], ['pubkey', 'f-key']]) if ($(id).value.trim()) q.set(k, $(id).value.trim());
+    say('Reading…');
+    if ($('app').hidden) { $('login').hidden = true; $('loginsay').textContent = ''; $('wait').hidden = false; }
+    let j; try { j = await call(`list?${q}`); } catch (e) { return fail(e.message); }
+    if (!j.ok) return fail(j.why || 'not read');
+    show(true); budget(j.budget); if (Array.isArray(j.levels)) LEVELS = j.levels;
+    const tb = $('rows'); tb.replaceChildren();
+    for (const r of j.reports) {
+      const who = el('td', {}, el('code', { text: `${r.pubkey.slice(0, 12)}…` }), el('div', { cls: r.ours ? 'warn' : r.played ? 'dim' : 'bad', text: r.ours ? 'ours' : r.played ? 'has played before' : 'never finished a round' }),
+        // HOW MUCH AND WHAT (Daniel 2026-11-10: "wieviel runden der spieler gemacht hat und welche apps er genutzt hat")
+        r.rounds && r.rounds.rounds ? el('div', { cls: 'dim', text: `${r.rounds.rounds} rounds · ${r.rounds.games.map(([g, n]) => `${g} ${n}`).join(', ')}` }) : null);
+      // FRONTEND OR NODE (Daniel 2026-11-07: "in der admin ui wird angezeigt ob es frontend oder node war")
+      // THE ONE-TIME NODE BOUNTY SEEN IN THE LIST (kanban #1453, Daniel 2026-11-11: "damit ich das sehe dass er 10k kriegt, weil es sein erstes ticket ist")
+      const nbFirst = r.nodeBounty && r.nodeBounty.first && r.state === 'new';
+      const from = el('td', {}, el('span', { cls: `tag ${r.source === 'node' ? 's-accepted' : 's-new'}`, text: r.source === 'node' ? 'node' : 'frontend' }), r.node ? el('div', {}, el('code', { text: `${r.node.slice(0, 10)}…` })) : null,
+        nbFirst ? el('div', {}, el('span', { cls: 'tag s-paid', text: `+${sats(r.nodeBounty.sats)} first node feedback` })) : null);
+      const tr = el('tr', { cls: 'pick' }, el('td', {}, el('b', { text: r.label || '' }), el('div', { cls: 'dim', text: when(r.receivedMs) })), from,
+        // its number (kanban #1413) heads the first cell; CATEGORY AND STATE are their own cells (Daniel 2026-11-10: "The table is off" - a comment
+        // written into this line hid both, so every later cell sat two columns left: the text under State, the player under Game)
+        el('td', { text: r.type + (r.screenshot ? ' 🖼' : '') }), el('td', {}, el('span', { cls: `tag s-${r.state}`, text: r.state })),
+        el('td', { cls: 'hide-s', text: r.game || '' }), el('td', { text: r.happened.length > 140 ? `${r.happened.slice(0, 140)}…` : r.happened }), who,
+        el('td', { text: r.reward ? `${sats(r.reward.amountSats)} · ${r.reward.state}` : r.amountSats ? `${sats(r.amountSats)} approved` : '' }));
+      tr.addEventListener('click', () => open(r.id));
+      tb.append(tr);
+    }
+    say(`${j.reports.length} report${j.reports.length === 1 ? '' : 's'}`);
+  }
+  async function open(id) {
+    let j; try { j = await call(`report/${id}`); } catch (e) { return say(e.message, true); }
+    if (!j.ok) return say(j.why, true);
+    const r = j.report, d = $('detail'); d.hidden = false; d.replaceChildren();
+    const add = d.append.bind(d); d.append = (...k) => add(...k.filter(Boolean));   // an optional part left out is nothing, never the text "null"
+    d.append(el('h2', { text: `${r.label ? `${r.label} · ` : ''}${r.type} · ${r.state}${r.severity ? ` · ${r.severity}` : ''}${r.ticket ? ` · ${r.ticket}` : ''}` }),
+      el('div', { cls: 'dim', text: `Received ${when(r.receivedMs)} · from the ${r.source === 'node' ? 'node' : 'frontend'} · game ${r.game || 'none'} · round ${r.round || 'none'} · build ${r.build || 'none'}` }),
+      r.node ? el('div', { cls: 'dim' }, el('span', { text: 'Node ' }), el('code', { text: r.node })) : null,
+      // WHY THIS ONE GETS 10,000 SAT, OR WHY NOT (kanban #1453): the one-time node bounty for a new node's first node feedback
+      r.nodeBounty ? el('div', { cls: r.nodeBounty.first ? 'nb-first' : 'warn', text: r.nodeBounty.held ? `This report holds the node's one-time node bounty: ${sats(r.nodeBounty.sats)}.`
+        : r.nodeBounty.first ? `First node feedback of this node: it gets the one-time node bounty of ${sats(r.nodeBounty.sats)}. Level "node" and the amount are filled in below.`
+        : r.nodeBounty.takenBy ? `No node bounty: ${r.nodeBounty.takenBy.sameNode ? 'this node' : 'this person'} already got the one-time ${sats(r.nodeBounty.sats)} (${r.nodeBounty.takenBy.label || r.nodeBounty.takenBy.id.slice(0, 12)}). Rate it at a normal level.`
+        : 'No node bounty: every node bounty is taken. Rate it at a normal level.' }) : null,
+      r.rounds ? el('div', { cls: 'dim', text: r.rounds.rounds ? `Played ${r.rounds.rounds} round${r.rounds.rounds === 1 ? '' : 's'} in the last ${r.rounds.days} days: ${r.rounds.games.map(([g, n]) => `${g} ${n}`).join(', ')}` : `No finished round in the last ${r.rounds.days} days` }) : null,
+      el('div', { cls: 'dim' }, el('span', { text: 'Player ' }), el('code', { text: r.pubkey }), el('span', { cls: r.ours ? 'warn' : r.played ? '' : 'bad', text: r.ours ? ' · ours, never paid' : r.played ? ' · this key has finished a round before (any game, any time) - so it may be rewarded' : ' · this key never finished a round on the network - no reward' })),
+      el('h2', { text: 'What happened' }), el('pre', { text: r.happened }), r.expected ? el('h2', { text: 'Expected' }) : null, r.expected ? el('pre', { text: r.expected }) : null,
+      // THE CLIENT'S DEBUG (kanban #1391): the page's order, steps, wallet, lobby and console as the report carried them
+      // FOLDED AWAY (Daniel 2026-11-10: "Mach den Client debug in einem accordion so dass ich ihn nicht sehe"): opened by a click on its line
+      r.debug ? el('details', { cls: 'debug' }, el('summary', { text: `Client debug (${Math.round(r.debug.length / 100) / 10}k characters)` }), el('pre', { text: r.debug, style: 'max-height:480px;overflow:auto;font-size:12px' })) : null);
+    // THE SCREENSHOT, fetched with the admin code (the faucet serves it to nobody else) and shown from its bytes
+    if (r.screenshot) { const box = el('div', {}, el('h2', { text: 'Screenshot' })); d.append(box);
+      fetch(`${API}/screenshot/${r.screenshot}`, { headers: { 'x-arena-admin': code } }).then((x) => (x.ok ? x.blob() : null)).then((b) => {
+        if (!b) return box.append(el('div', { cls: 'dim', text: 'the image is not there any more' }));
+        const u = URL.createObjectURL(b); box.append(el('a', { href: u, target: '_blank', rel: 'noopener' }, el('img', { src: u, alt: 'screenshot of the report', style: 'max-width:100%;max-height:420px;border:1px solid #30363d;border-radius:8px' }))); }); }
+    // A NODE REPORT'S BOUNTY CHECKLIST (kanban #1342, Daniel 2026-11-08): read live from the seats (about 30 s); approve at level "node" goes through only when it passes
+    if (r.source === 'node' && r.node) { const box = el('div', {}, el('h2', { text: 'Node bounty checklist' }), el('div', { cls: 'dim', text: 'reading the seats …' })); d.append(box);
+      call(`node-check/${r.id}`).then((c) => { box.replaceChildren(el('h2', { text: 'Node bounty checklist' }));
+        if (!c || !Array.isArray(c.checks)) return box.append(el('div', { cls: 'bad', text: (c && c.why) || 'not read' }));
+        // THE REQUIREMENTS AS NUMBERS (Daniel 2026-11-10: "wie lange der online ist und wieviel runden er erfolgreich gehostet hat"): days served of the last 7,
+        // committees sat on, rounds signed FINAL, then each condition as a badge and whether the reporter owns the node (a hint, no condition)
+        const days = Array.isArray(c.days) ? c.days : [], on = days.filter((x) => x.committees > 0).length;
+        const sat = days.reduce((t, x) => t + (x.committees || 0), 0), signed = days.reduce((t, x) => t + (x.signed || 0), 0);
+        const tile = (big, small, ok) => el('div', { cls: 'nb-tile' + (ok ? ' ok' : ' no') }, el('b', { text: big }), el('span', { text: small }));
+        // ONLINE SAID PLAINLY (Daniel 2026-11-10: "warum 3/7? Sag klar dass 1 day online ist"): one day is the rule; the days it sat on a committee are the detail
+        box.append(el('div', { cls: 'nb-tiles' }, tile(on >= 1 ? 'Online ✓' : 'Not yet', `1 day needed · on committees ${on} of the last ${days.length || 7} days`, on >= 1), tile(String(sat), 'committees', sat > 0), tile(String(signed), 'rounds signed', signed > 0)));
+        box.append(el('div', { cls: 'nb-badges' }, ...c.checks.map((x) => el('span', { cls: 'nb-badge' + (x.ok ? ' ok' : ' no'), text: `${x.ok ? '✓' : '✗'} ${x.label}` }))));
+        if (c.owner) box.append(el('div', { cls: c.owner.ok ? 'dim' : 'warn', text: `Owner: ${c.owner.says}` }));
+        box.append(el('div', { cls: c.passes ? '' : 'warn', text: c.passes ? 'Every condition holds: approve at level "node" (10,000).' : 'Not every condition holds: a node bounty is refused.' }));
+      }, (e) => box.replaceChildren(el('h2', { text: 'Node bounty checklist' }), el('div', { cls: 'bad', text: e.message }))); }
+    if (r.reason) d.append(el('div', { cls: 'bad', text: `Rejected: ${r.reason}` }));
+    if (r.duplicateOf) d.append(el('div', { cls: 'dim', text: `Duplicate of ${r.duplicateOf.slice(0, 16)}…` }));
+    if (r.reward) d.append(el('div', {}, el('b', { text: `Reward ${sats(r.reward.amountSats)} (${r.reward.network}) · ${r.reward.state}${r.reward.address ? ` · to ${r.reward.address}` : ''}` }),
+      r.reward.comment ? el('div', { cls: 'dim', text: `Comment: ${r.reward.comment}` }) : null, r.reward.why && r.reward.state !== 'paid' ? el('div', { cls: 'warn', text: r.reward.why }) : null,
+      r.reward.lnurl ? el('div', {}, el('code', { text: r.reward.lnurl })) : null));
+    const act = async (body, ok) => { let a; try { a = await call('act', { id: r.id, ...body }); } catch (e) { return say(e.message, true); } if (!a.ok) return say(a.why, true); say(ok); await load(); await open(r.id); };
+    const amount = el('input', { type: 'number', min: '100', step: '100', placeholder: 'sat', size: '8' });
+    // "node" first and pre-filled only when this report gets the one-time bounty (kanban #1453); a node report without one starts at a normal level
+    const nodeLevel = r.source === 'node' && (!r.nodeBounty || r.nodeBounty.first);
+    const sev = el('select', {}, ...[...(nodeLevel ? ['node'] : []), 'useful', 'low', 'medium', 'high', 'critical'].map((x) => el('option', { text: x })));
+    const crit = el('input', { type: 'checkbox' });
+    const fill = () => { const l = LEVELS.find((x) => x.level === sev.value); if (l) amount.value = String(l.sats); };
+    sev.addEventListener('change', fill); fill();
+    const reason = el('input', { placeholder: 'reason the player reads', size: '30' });
+    const dupOf = el('input', { placeholder: 'earlier report: #number or id', size: '24' });
+    const ticket = el('input', { placeholder: '#ticket', size: '8' });
+    const btn = (label, fn, go = false) => { const b = el('button', { text: label, ...(go ? { cls: 'go' } : {}) }); b.addEventListener('click', fn); return b; };
+    if (r.state === 'new') {
+      d.append(el('h2', { text: 'Decide' }),
+        el('div', { cls: 'row' }, amount, sev, el('label', {}, crit, el('span', { text: ' critical, above the bands' })), btn('Approve', () => act({ action: 'approve', amountSats: amount.value.trim() ? Number(amount.value) : null, severity: sev.value, critical: crit.checked }, 'Approved'), true)),
+        el('div', { cls: 'row' }, reason, btn('Reject', () => act({ action: 'reject', reason: reason.value }, 'Rejected'))),
+        el('div', { cls: 'row' }, dupOf, btn('Duplicate of', () => act({ action: 'duplicate', of: dupOf.value.trim() }, 'Marked duplicate'))));
+    }
+    // PAY TO THE REPORT'S LIGHTNING ADDRESS, WITH A COMMENT (kanban #1474, Daniel 2026-11-11: "Do we have a function to give a comment when we pay?" - "1, ja. Und zeig
+    // es auch in my feedback"): the comment goes with the payment (LUD-12) and shows in the player's My Feedback; without an address, or by choice, the withdraw link
+    if (r.state === 'accepted' && (!r.reward || r.reward.state === 'open')) {
+      const num = r.number ? `Feedback #${String(r.number).padStart(3, '0')}` : 'your report';
+      const comment = el('input', { size: '48', maxlength: '200', value: (r.reward && r.reward.comment) || `Bitcoin Arena bounty for ${num} - thank you!` });
+      const payAct = async (payTo) => { let a; try { a = await call('act', { id: r.id, action: 'reward', comment: comment.value, payTo }); } catch (e) { return say(e.message, true); }
+        if (!a.ok) return say(a.why, true);
+        if (a.paid) say(a.paid.ok ? `Paid ${sats(a.reward.amountSats)} to ${a.paid.address}` : `Not paid to the address: ${a.paid.why}. The withdraw link is ready instead.`, !a.paid.ok);
+        else say('Reward link made'); await load(); await open(r.id); };
+      d.append(el('h2', { text: 'Reward' }),
+        el('div', { cls: 'dim', text: r.lnAddress ? `Lightning address of the report: ${r.lnAddress}` : 'The report names no Lightning address: the player claims a withdraw link in My Feedback.' }),
+        el('div', { cls: 'row' }, el('span', { text: 'Comment ' }), comment),
+        el('div', { cls: 'row' }, ...(r.lnAddress ? [btn(`Pay ${sats(r.amountSats)} to ${r.lnAddress}`, () => payAct('address'), true), btn('Link only', () => payAct('link'))]
+          : [btn(r.reward ? 'Save the comment' : 'Make the reward link', () => payAct('link'), true)])));
+    }
+    if (r.state === 'accepted') d.append(el('div', { cls: 'row' }, el('input', { placeholder: 'reason the player reads', size: '30', id: 'rej2' }), btn('Reject', () => act({ action: 'reject', reason: document.getElementById('rej2').value }, 'Rejected'))));
+    d.append(el('div', { cls: 'row' }, ticket, btn('Link ticket', () => act({ action: 'note', ticket: ticket.value.trim() }, 'Ticket linked'))));
+    d.append(el('h2', { text: 'History' }), ...j.moves.map((m) => el('div', { cls: 'dim', text: `${when(m.atMs)} · ${m.from} → ${m.to}${m.by ? ` · ${m.by}` : ''}${m.note ? ` · ${m.note}` : ''}` })));
+    if (j.earlier.length) d.append(el('h2', { text: `Earlier reports by this player (${j.earlier.length})` }), ...j.earlier.map((x) => el('div', { cls: 'dim', text: `${when(x.receivedMs)} · ${x.state} · ${x.happened.slice(0, 100)}` })));
+    d.scrollIntoView({ behavior: 'smooth' });
+  }
+  $('enter').addEventListener('click', () => { code = $('code').value.trim(); try { localStorage.setItem('arena.feedback.admin', code); } catch { /* this tab only */ } load(); });
+  $('reload').addEventListener('click', load);
+  $('logout').addEventListener('click', () => { code = ''; try { localStorage.removeItem('arena.feedback.admin'); } catch { /* none */ } show(false); });
+  $('csv').addEventListener('click', async () => { const r = await fetch(`${API}/export.csv`, { headers: { 'x-arena-admin': code } }); if (!r.ok) return say('not read', true);
+    const a = el('a', { href: URL.createObjectURL(await r.blob()), download: 'arena-feedback.csv' }); document.body.append(a); a.click(); a.remove(); });
+  if (code) load();
+})();
+</script>
+</body>
+</html>

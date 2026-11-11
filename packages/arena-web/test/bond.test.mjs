@@ -120,3 +120,14 @@ test('kanban #734: the Overview hears where the bond stands - no bond red, poste
   assert.match(text, /^Bond 50,000 sat posted, 2 of 6 confirmations\.$/);
   assert.deepEqual(await run({ ok: true, bond: { sats: '50000' }, total: '50000' }, null), [[null, '']], 'a bond that counts: nothing to do');
 });
+
+test('kanban #1439: outputs no census counts any more - listed with their total, a Withdraw once unlocked, none while locked', () => {
+  const leftover = { network: 'testnet4', total: '32000', outputs: [{ txid: '0a'.repeat(32), vout: 2, sats: '32000', maturity: 157100 }], lock: { withdrawable: true, blocksLeft: 0 } };
+  const html = renderToStaticMarkup(React.createElement(BondPanel, { nowMs: () => T, initial: { loaded: true, bond: { bond: null, oldBonds: [], leftover } } }));
+  assert.match(html, /id="leftover-bond"[\s\S]*Left on the chain[\s\S]*32,000 sat of this node&#x27;s bond in 1 output\(s\) that no longer count\. Withdraw them to an address you type\.[\s\S]*Withdraw<\/button>/);
+  const shut = renderToStaticMarkup(React.createElement(BondPanel, { nowMs: () => T, initial: { loaded: true, bond: { bond: null, oldBonds: [], leftover: { ...leftover, lock: { withdrawable: false, blocksLeft: 40 } } } } }));
+  assert.match(shut, /Locked for 40 more blocks\./);
+  assert.doesNotMatch(shut, /Withdraw<\/button>/);
+  const none = renderToStaticMarkup(React.createElement(BondPanel, { nowMs: () => T, initial: { loaded: true, bond: { bond: null, oldBonds: [] } } }));
+  assert.doesNotMatch(none, /leftover-bond/);
+});

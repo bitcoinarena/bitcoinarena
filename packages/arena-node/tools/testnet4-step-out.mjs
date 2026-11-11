@@ -17,6 +17,9 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 const env = process.env;
 const publish = process.argv.includes('--publish');
+// THE RETURN (kanban #397, the owner 2026-11-03: "t3-1 .. t3-7 get the RETURN update and go back into the live draw"): ARENA_SERVING=true writes
+// the newest advertisement again with serving = true - the same update in the other direction, bond untouched
+const SERVING = env.ARENA_SERVING === 'true';
 const datadir = env.ARENA_TN4_DATADIR || '/mnt/bitcoin/tn4';
 const wallet = env.ARENA_TN4_BOND_WALLET || 'blwp-tn4-bonds';
 const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli',
@@ -37,12 +40,12 @@ for (const store of stores) {
   const bonds = rt.bondsOf(secret);
   if (!bonds.length) { say({ store, nodeKey: toHex(pubkey).slice(0, 16), skipped: 'no confirmed unspent bond' }); continue; }
   const bond = [...bonds].sort((x, y) => (y.sats - x.sats) || (y.height - x.height))[0];
-  if (bond.advert.serving === false) { say({ store, nodeKey: toHex(pubkey).slice(0, 16), skipped: 'already stepped out' }); continue; }
-  const advert = { ...bond.advert, serving: false, timestamp: BigInt(Date.now()) };
+  if ((bond.advert.serving !== false) === SERVING) { say({ store, nodeKey: toHex(pubkey).slice(0, 16), skipped: SERVING ? 'already serving' : 'already stepped out' }); continue; }
+  const advert = { ...bond.advert, serving: SERVING, timestamp: BigInt(Date.now()) };
   say({ store, nodeKey: toHex(pubkey).slice(0, 16), bond: `${bond.txid}:${bond.vout}`, sats: bond.sats, games: (bond.advert.hostedGames || []).length });
   plans.push({ n: toHex(pubkey).slice(0, 8), secret, bond, advert, prepared: rt.prepareAdvertUpdate(secret, advert) });
 }
-if (!plans.length) { say({ done: 'nothing to step out' }); process.exit(0); }
+if (!plans.length) { say({ done: SERVING ? 'nothing to return' : 'nothing to step out' }); process.exit(0); }
 
 const keysPath = `${env.CARRIER_KEYS_DIR || '.'}/step-out-carriers-${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}.json`;
 writeFileSync(keysPath, JSON.stringify(plans.map((p) => ({ node: p.n, bond: `${p.bond.txid}:${p.bond.vout}`,
@@ -69,7 +72,7 @@ const updates = await Promise.all(plans.map(async (p) => {
   const checked = read.ok ? await checkAgainstBond(read, { txid: fromHex(p.bond.txid).reverse(), vout: p.bond.vout,
     nodePubkey: p.advert.nodePubkey }, (sig, msg, key) => schnorr.verify(sig, msg, key)) : read;
   if (!checked.ok) throw new Error(`node ${p.n}: the update does not read back: ${checked.why}`);
-  if (checked.advert.serving !== false) throw new Error(`node ${p.n}: read back still serving`);
+  if ((checked.advert.serving !== false) !== SERVING) throw new Error(`node ${p.n}: read back ${SERVING ? 'not serving' : 'still serving'}`);
   return { ...p, ...u };
 }));
 const accept = JSON.parse(cli('testmempoolaccept', JSON.stringify([final.hex, ...updates.map((u) => u.hex)])));

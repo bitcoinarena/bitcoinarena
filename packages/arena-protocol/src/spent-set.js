@@ -3,6 +3,10 @@
 // A HALTED FEDERATION'S SPENT-NOTE SET (spec §23A.5 liquidation step 1, RULED 2026-09-21): "The guardians
 // still seated publish, signed, their copy of the federation's spent-note set (the nonces the consensus has already redeemed)
 // as of the last session they hold. Any one copy suffices; the newest session wins."
+// RULED AGAIN 2026-11-07 (kanban #1262, audit 4 #1257 seats-1): one guardian's copy at session 0xffffffff with no nonces won everywhere, and its
+// own redeemed notes were paid from the escrow first. The spent set is the content of the NEWEST SESSION THAT AT LEAST n - t + 1 DISTINCT GUARDIANS
+// of the record signed a copy of (n - t = f is the most a halted federation can have gone wrong, so one honest guardian is among them), the content
+// most of them signed; no session above the halt's bound (the halt proof's session + 1) is read; with no such session there is no spent set yet.
 //
 //   COPY  (federation_id, session, nonces sorted and distinct, signer node key) signed by a guardian of the federation's record
 //   PICK  of the copies that stand, the newest session; copies of one session that disagree are named, and the one most
@@ -14,6 +18,7 @@
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { TAG, PROTOCOL_VERSION, TYPE_SPENT_SET } from './constants.js';
+import { thresholdOf } from './federation-record.js';
 
 const is32 = (b) => b instanceof Uint8Array && b.length === 32;
 const NONCE = 33;
@@ -67,19 +72,37 @@ export function spentSetStands(s, { record, verify }) {
  * in `disagree` and the content the most distinct guardians signed is kept (ties: the smaller set - a nonce not proven spent
  * is the player's). Answers { copy, session, signers, disagree, refused } or { copy: null, why } when none stands.
  */
-export function newestSpentSet(copies, { record, verify }) {
-  const refused = []; const bySession = new Map();
+/** How many distinct guardians of `record` a session needs (kanban #1262): n - t + 1, n the record's nominal size and t its threshold. */
+export function spentSetQuorum(record) {
+  const n = Number.isInteger(record && record.nominal) ? record.nominal : ((record && record.guardians) || []).length;
+  const t = Number.isInteger(record && record.threshold) ? record.threshold : thresholdOf(Math.max(1, n));
+  return Math.max(1, n - t + 1);
+}
+export function newestSpentSet(copies, { record, verify, maxSession = null }) {
+  const refused = []; const bySession = new Map(); const signersAt = new Map();
+  const need = spentSetQuorum(record);
   for (const c of copies || []) {
     const st = spentSetStands(c, { record, verify });
     if (!st.ok) { refused.push(st.why); continue; }
+    // ABOVE THE HALT'S BOUND, whoever signed it (kanban #1262): the consensus never reached that session
+    if (Number.isInteger(maxSession) && c.session > maxSession) { refused.push(`a copy names session ${c.session}, above the halt's bound ${maxSession}`); continue; }
+    if (!signersAt.has(c.session)) signersAt.set(c.session, new Set());
+    signersAt.get(c.session).add(toHex(c.signer));
     const content = toHex(taggedHash(TAG.spentSet, encodeSpentSet({ ...c, signer: new Uint8Array(32) })));
     const s = bySession.get(c.session) || new Map(); bySession.set(c.session, s);
     const k = s.get(content) || { copy: c, signers: new Set() }; s.set(content, k);
     k.signers.add(toHex(c.signer));
   }
   if (!bySession.size) return { copy: null, why: refused.length ? `no copy stands: ${refused[0]}` : 'no guardian published a spent set', refused };
-  const session = Math.max(...bySession.keys());
-  const kinds = [...bySession.get(session).values()]
-    .sort((a, b) => b.signers.size - a.signers.size || a.copy.nonces.length - b.copy.nonces.length);
-  return { copy: kinds[0].copy, session, signers: kinds[0].signers.size, disagree: kinds.length - 1, refused };
+  // THE NEWEST SESSION WHERE ONE CONTENT HAS n - t + 1 DISTINCT SIGNERS (kanban #1262; audit 5 #1408, reproduced): counted per session over
+  // all contents, f lying guardians at a session one or two honest ones had reached (the rest still a session behind) made up the quorum
+  // and their empty copy won the plurality or the tie - the liars' redeemed notes paid from the escrow again. n - t + 1 > f, so no content
+  // the liars sign alone reaches it; honest guardians at one session sign one content.
+  const reachedBy = (kinds) => kinds.filter((k) => k.signers.size >= need);
+  const reached = [...bySession.entries()].filter(([, kinds]) => reachedBy([...kinds.values()]).length).map(([at]) => at);
+  if (!reached.length) return { copy: null, why: `no session has one content from ${need} distinct guardians yet (n - t + 1): no spent set`, need, refused };
+  const session = Math.max(...reached);
+  const all = [...bySession.get(session).values()];
+  const kinds = reachedBy(all).sort((a, b) => b.signers.size - a.signers.size || b.copy.nonces.length - a.copy.nonces.length);
+  return { copy: kinds[0].copy, session, signers: kinds[0].signers.size, disagree: all.length - 1, need, refused };
 }

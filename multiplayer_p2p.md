@@ -7605,8 +7605,23 @@ carry no weight in any count.
     pay; the expired contract was spent back to the reserve key). SHORT: the reserves cannot cover it; nothing is paid, for
     good.
     - A silent LNURL or a wrong invoice signs nothing, and the next pass asks again.
+    - *(2026-11-06, kanban #1159)* A seat's own steps: SUBMITTING (the signed transaction kept before it goes in), REFUNDING
+      (the same for the refund), EXPIRED (a plan with no transaction 12 blocks after the seat first held it).
+    - After a stop, a SUBMITTING or REFUNDING seat hands in the same transaction again, or finds its output 0 held.
+    - A plan expires only when the seat's port shows every input unspent. Its inputs are then free, and the next attempt
+      is a new plan with its own nonce.
+    - Only the guardian whose turn it is opens a plan (one turn per 2 blocks, in key order, starting again after the last).
+      Every commit and share it asks for is signed by its node key. A plan a seat already holds goes on with any guardian.
+    - The invoice's, gateway's and expiration's window is checked once, at the seat's first commit.
   - **Records:** one record per proposal on every seat (`reserve_payouts`). A second plan for a proposal is refused, and a
     spent output is never planned again.
+    - *(2026-11-06, kanban #1156)* A record handed to another seat is signed by the sender's node key. A seat keeps it only
+      from a guardian seat of the federation whose step it is (the destination's for a move's claim).
+    - SHORT is kept only when the seat's own reserves cannot pay either. A step past PLANNED is kept only when the seat's
+      own port shows the plan's transaction and its spent inputs (a seat with no port keeps the signed record and the
+      preimage).
+    - Every write is one compare-and-set step along one transition table. The inputs and the rows it makes (change, refund,
+      winners, claim) go in the same step. A kept row is never replaced by one with other fields.
   - **Shown:** `GET /reserves` lists `payouts` and no longer counts spent outputs; `GET /reserve-payouts`.
   - **Not built:** a re-try after a refund, a payout split over federations, giving up on an LNURL silent for days.
 
@@ -7645,8 +7660,12 @@ capital for all of the reserves.
   has no vote.
 - "Age" is the age of the node's current bond. An advertisement update keeps it; a new bond starts again at zero.
 - A passed vote is read on through its last payment's due block.
-- The number of parts is fixed the first time the seat asks: the amount over 1 % of the reserves it holds then. Each part is its
-  own payout (id: the proposal's for a single payment, else a tagged hash of the proposal and the part).
+- **The number of parts is the same on every seat** *(kanban #1175, 2026-11-06; awaiting a ruling)*: every payout goes in 4 parts,
+  an amount under 4 sat in one. The count was the amount over 1 % of the reserves the seat held at its first ask. Seats hold different
+  reserve rows, so they named different part ids and a payout plan was "no passed vote" at its peers. No figure of the protocol
+  reserves is read alike by every seat, so rule 5's 1 % is not applied. Each part is its own payout (id: the proposal's for a single
+  payment, else a tagged hash of the proposal and the part). A row the old rule fixed is set right while no part is payable yet, and
+  rule 4 counts a proposal's payouts under either id. A cancellation is kept once (compare-and-set) and never moves.
 - A stopped proposal keeps listing the parts due before the stopping one, so their records still stand on every seat.
 - The payout's signers apply the same caps and re-count to their own records before they sign. A seat without the chain tip pays
   nothing.

@@ -72,6 +72,16 @@ fi
 # share-by-share check, as before. The earlier variants (ARENA_NOTE_YIELDS, ARENA_NOTE_BATCH) patch the same lines.
 if [ -n "${ARENA_NOTE_YIELDS:-}${ARENA_NOTE_BATCH:-}" ]; then echo "ARENA_NOTE_YIELDS/ARENA_NOTE_BATCH: replaced by the batch every build applies (#196)" >&2; exit 2; fi
 patch -p1 < $HERE/fedimint-mintv2-note-batch2.patch; grep -q "static COMBINED" modules/fedimint-mintv2-client/src/api.rs
+# A NEW WALLET'S FIRST RECEIVE IS AS QUICK AS A TOP-UP (kanban #1381, Daniel 2026-11-09 "it is very slow on new accounts"; measured: the welcome's 500 sat
+# credited 15-20 s after the faucet paid, a 300 sat top-up into the same wallet 1.6-1.9 s). Every transaction's rebalance stocks the wallet up to
+# TARGET_PER_DENOMINATION (3) notes of every denomination from 1 msat up; an empty wallet's first receive asked ~50 notes (its claim 8432 bytes, the
+# top-up's 1670), each needing a ground tweak (~65536 SHA-256 tries) the grinder had not made yet - 9.5 s before the claim, then 5.5 s of share checks.
+# The stock is only for later spends: it now takes at most half the tweaks already ground; the notes the amount needs are made as before.
+F=modules/fedimint-mintv2-client/src/lib.rs
+grep -q "let n_missing = TARGET_PER_DENOMINATION.saturating_sub(n_denomination as usize);" $F
+perl -pi -e 's/^(\s*)let n_denominations = self\.get_count_by_denomination_dbtx\(dbtx\)\.await;$/$1let n_denominations = self.get_count_by_denomination_dbtx(dbtx).await;\n$1let mut blwp_stock_budget = self.tweak_receiver.len() \/ 2;   \/\/ kanban #1381/' $F
+perl -pi -e 's/let n_missing = TARGET_PER_DENOMINATION\.saturating_sub\(n_denomination as usize\);/let n_missing = TARGET_PER_DENOMINATION.saturating_sub(n_denomination as usize).min(blwp_stock_budget);\n            blwp_stock_budget -= n_missing;/' $F
+grep -q "let mut blwp_stock_budget = self.tweak_receiver.len() / 2;" $F && grep -q "blwp_stock_budget -= n_missing;" $F
 if [ -n "${ARENA_AWAIT_PARALLEL:-}" ]; then patch -p1 < $HERE/fedimint-client-await-parallel.patch; grep -q "drop(tx_submitted)" fedimint-client-module/src/transaction/sm.rs; fi
 grep -n "(0..42).map(Denomination)" modules/fedimint-mintv2-common/src/config.rs | wc -l | tr -d ' ' | grep -qx 2
 # PENDING OUTPUTS (spec 23A.5 "Notes still in issuance at the halt"): the wallet names what was issued to its seed
@@ -83,6 +93,18 @@ grep -q "fn blwp_issuing_msat" modules/fedimint-mintv2-client/src/lib.rs || cat 
 grep -q "fn blwp_issuing_detail" modules/fedimint-mintv2-client/src/lib.rs || cat $HERE/mintv2-issuing-detail.rs >> modules/fedimint-mintv2-client/src/lib.rs
 # STUCK OUTPUTS (kanban #910): a machine whose transaction state was lost can be asked at the federation and ended, and what the seed was issued comes back
 grep -q "fn blwp_recover_stuck" modules/fedimint-mintv2-client/src/lib.rs || cat $HERE/mintv2-recover-stuck.rs >> modules/fedimint-mintv2-client/src/lib.rs
+# TWEAKS FROM THE PAGE'S WORKERS (kanban #1391, Daniel 2026-11-09 "Yes fork it"): the module keeps a sender beside its tweak queue, the queue holds 256
+# (a lock takes up to 22, the welcome's re-issue as many), and blwp_add_tweaks takes ground tweaks in, each checked with the grinder's own filter
+F2=modules/fedimint-mintv2-client/src/lib.rs
+grep -q "fn blwp_add_tweaks" $F2 || {
+  perl -pi -e 's/let \(tweak_sender, tweak_receiver\) = async_channel::bounded\(\d+\);/let (tweak_sender, tweak_receiver) = async_channel::bounded(256);\n        let blwp_tweak_sender = tweak_sender.clone();/' $F2
+  perl -pi -e 's/^(\s*)tweak_receiver: async_channel::Receiver<\[u8; 16\]>,$/$1tweak_receiver: async_channel::Receiver<[u8; 16]>,\n$1blwp_tweak_sender: async_channel::Sender<[u8; 16]>,/' $F2
+  perl -pi -e 's/^(\s*)tweak_receiver,$/$1tweak_receiver,\n$1blwp_tweak_sender,/' $F2
+  cat $HERE/mintv2-add-tweaks.rs >> $F2
+  perl -0pi -e 's/(\n(\s*)let mut tries: u32 = 0;\n\s*loop \{\n)/$1$2    if BLWP_FED.load(std::sync::atomic::Ordering::Relaxed) && tweak_sender.len() >= BLWP_FED_FLOOR {\n$2        fedimint_core::task::sleep(Duration::from_millis(250)).await;\n$2        continue;\n$2    }\n/' $F2
+}
+grep -q "tweak_sender.len() >= BLWP_FED_FLOOR" $F2
+grep -q "async_channel::bounded(256)" $F2 && grep -q "blwp_tweak_sender: async_channel::Sender" $F2 && grep -q "^\s*blwp_tweak_sender,$" $F2 && grep -q "fn blwp_add_tweaks" $F2
 grep -q "BLWP_GIVEN_UP" modules/fedimint-mintv2-client/src/output.rs || perl -0pi -e 'BEGIN { open F, "<", shift @ARGV; local $/; $r = <F>; } s/global_context\s*\.await_tx_accepted\(range\.txid\)\s*\.await\?;/$r/' $HERE/mintv2-stuck-output.txt modules/fedimint-mintv2-client/src/output.rs
 grep -q "BLWP_GIVEN_UP" modules/fedimint-mintv2-client/src/output.rs
 ln -sfn $HERE blwp-lock-client

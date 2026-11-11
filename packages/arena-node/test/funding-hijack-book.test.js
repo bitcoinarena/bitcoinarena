@@ -35,7 +35,8 @@ async function passedVote(w) {
   await w.b.add('proposal', hexOf(encodeFundingProposal(P), ID, 42));
   const s = { proposalId: ID, node: pk(2), atHeight: 100 };
   await w.b.add('signal', hexOf(encodeFundingSignal(s), fundingSignalId(s), 2));
-  w.chain.tip = 101; const [d] = await w.b.decide();
+  w.chain.tip = 101; await w.b.decide(); w.chain.tip = 101 + FUNDING_SCHEDULES.short.decideDepth - 1;   // decided decideDepth deep (kanban #1279)
+  const [d] = await w.b.decide();
   w.at(101).votes.push(vote(10, CHOICE.YES), vote(11, CHOICE.YES));
   return d;
 }
@@ -49,7 +50,7 @@ test('D6: a signal from an active node without a seasoned bond does not count; w
   assert.deepEqual([d.state, d.supporters, d.active], ['passed', 1, 2]);
 });
 
-test('D5: nothing is paid before the delay; then one payment', async () => {
+test('D5: nothing is paid before the delay; then its first part (kanban #1175: every payout in 4 parts)', async () => {
   const w = world(); await passedVote(w);
   await roundTo(w, 111);
   assert.equal(w.b.list(111)[0].vote.state, 'passed');
@@ -58,7 +59,7 @@ test('D5: nothing is paid before the delay; then one payment', async () => {
   assert.deepEqual(w.b.payments({ tip: 116 }), [], 'due at 112, payable once 6 deep (117)');
   await roundTo(w, 117);
   const [p] = w.b.payments({ tip: 117 });
-  assert.deepEqual([p.id, p.k, p.of, p.amountSats, p.lnurl, p.decidableAt], [IDH, 0, 1, 1000n, 'anyone@example.org', 117]);
+  assert.deepEqual([p.id, p.k, p.of, p.amountSats, p.lnurl, p.decidableAt], [trancheIdOf(IDH, 0, 4), 0, 4, 250n, 'anyone@example.org', 117]);
 });
 
 test('D5 veto: a YES turned NO inside the delay cancels the payment for good', async () => {
@@ -69,14 +70,14 @@ test('D5 veto: a YES turned NO inside the delay cancels the payment for good', a
   await roundTo(w, 117);
   assert.deepEqual(w.b.payments({ tip: 117 }), []);
   const listed = w.b.list(117)[0];
-  assert.match(listed.cancelled, /payment 1 of 1 cancelled at its due block 112: YES 30 % of YES \+ NO/);
+  assert.match(listed.cancelled, /payment 1 of 4 cancelled at its due block 112: YES 30 % of YES \+ NO/);
   assert.deepEqual(w.b.payments({ tip: 200 }), [], 'and it stays cancelled');
 });
 
-test('D5 tranches: more than 1 % of the reserves goes in 4 tranches; a NO after the second cancels the third and fourth', async () => {
+test('D5 tranches: a payout goes in 4 tranches whatever the reserves (kanban #1175); a NO after the second cancels the third and fourth', async () => {
   const w = world(); await passedVote(w);
   await roundTo(w, 111);
-  assert.deepEqual(w.b.payments({ tip: 111, reservesSatsOf: () => 50_000n }), [], 'the tranche count is fixed at the first ask: 1000 > 1 % of 50000');
+  assert.deepEqual(w.b.payments({ tip: 111, reservesSatsOf: () => 50_000n }), [], 'the part count follows the amount alone');
   await roundTo(w, 123);
   const two = w.b.payments({ tip: 123 });
   assert.deepEqual(two.map((t) => [t.k, t.of, t.amountSats, t.dueAt]), [[0, 4, 250n, 112], [1, 4, 250n, 118]]);

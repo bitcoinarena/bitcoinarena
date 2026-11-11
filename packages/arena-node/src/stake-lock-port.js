@@ -239,7 +239,14 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
   // asks every question the old way, one run each.
   const server = serve && readDataDir !== dataDir ? stakeLockServer({ bin, dataDir: readDataDir, timeoutMs: Math.min(timeoutMs, 10000), spawnFn, now }) : null;
   const read = async (flags) => {
-    if (server) { try { return await server.ask(flags[1], argsOf(flags.slice(2).filter((x, i, a) => !(x === '--data-dir' || a[i - 1] === '--data-dir')))); } catch { /* the old way below */ } }
+    if (server) {
+      try { return await server.ask(flags[1], argsOf(flags.slice(2).filter((x, i, a) => !(x === '--data-dir' || a[i - 1] === '--data-dir')))); } catch (e) {
+        // SEND-CLAIMED ON A TOOL BUILT BEFORE IT (kanban #1185): its server answers every mode the one run does, so a server that does not
+        // know it is a binary that does not - the one run would wait on the read directory the server holds before it says so; said at once
+        if (flags[1] === 'send-claimed' && /serve answers .* - not send-claimed/.test(String(e && e.message))) throw e;
+        /* the old way below */
+      }
+    }
     // (a question that opens no client - the contract id - needs no turn)
     if (!flags.includes('--data-dir')) return run(bin, flags, Math.min(timeoutMs, READ_TIMEOUT_MS));
     return runInLane(readDataDir, bin, flags, Math.min(timeoutMs, READ_TIMEOUT_MS));
@@ -266,6 +273,17 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
     async contractId(fields) {
       const j = await read(['--mode', 'id', ...contractArgs(fields)]);
       return String(j.contract_id);
+    },
+    /**
+     * DID A GATEWAY CLAIM THE OUTGOING CONTRACT AT THIS OUTPOINT (kanban #1185, the tool's send-claimed): the preimage the guardians
+     * stored when its Claim(preimage) input was accepted. { claimed, state: 'claimed' | 'stored' | 'gone', preimage? } - 'gone' is
+     * refunded or never made, which the guardians do not tell apart. A tool without the mode throws: settlement reads that as 'mixed'.
+     */
+    async sendClaimed(outpoint) {
+      const j = await read(['--mode', 'send-claimed', '--data-dir', readDataDir, '--outpoint', outpointArg(outpoint)]);
+      if (j.mode !== 'send-claimed' || typeof j.claimed !== 'boolean') throw new Error(`this stake-lock tool cannot read a gateway's claim: ${j.error || JSON.stringify(j).slice(0, 120)}`);
+      return { claimed: j.claimed === true && typeof j.preimage === 'string' && j.preimage.length === 64, state: String(j.state),
+        preimage: j.preimage ? fromHex(String(j.preimage)) : null };
     },
     /**
      * THE FEDERATION'S GUARDIANS, off its own config (§23.6; 2026-09-15 07:33): its id, each
@@ -307,15 +325,29 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
       const j = await run(bin, ['--mode', 'balance', '--data-dir', dataDir], timeoutMs);
       return BigInt(j.msat);
     },
-    /** E-cash reissued into the seat's client here: { state: 'Success' | 'Rejected' | 'AlreadyReceived', msat } (kanban #614). */
+    /**
+     * E-cash reissued into the seat's client here: { state: 'Success' | 'Rejected' | 'AlreadyReceived', msat } (kanban #614). An
+     * AlreadyReceived from a tool of kanban #1160 also says how the earlier receive of that string ended (`earlier`) and what it carried
+     * (`carriedMsat`); an older tool says neither.
+     */
     async ecashReceive(ecash) {
       const j = await run(bin, ['--mode', 'ecash-receive', '--data-dir', dataDir, '--ecash', String(ecash)], timeoutMs);
-      return { state: String(j.state), msat: BigInt(j.msat || 0) };
+      return { state: String(j.state), msat: BigInt(j.msat || 0), earlier: j.earlier === undefined ? null : String(j.earlier),
+        carriedMsat: j.carried_msat === undefined || j.carried_msat === null ? null : BigInt(j.carried_msat) };
     },
-    /** Exactly `amountMsat` of the seat's notes here, as e-cash another wallet of this federation receives (kanban #614). */
-    async ecashSend(amountMsat) {
-      const j = await run(bin, ['--mode', 'ecash-send', '--data-dir', dataDir, '--amount-msat', String(amountMsat)], timeoutMs);
-      return { ecash: String(j.ecash), msat: BigInt(j.msat) };
+    /**
+     * Exactly `amountMsat` of the seat's notes here, as e-cash another wallet of this federation receives (kanban #614). With `key`
+     * (kanban #1160) the send is named in the client's operation log, and a send of that key made before is answered again, not repeated.
+     */
+    async ecashSend(amountMsat, { key = null } = {}) {
+      const j = await run(bin, ['--mode', 'ecash-send', '--data-dir', dataDir, '--amount-msat', String(amountMsat), ...(key ? ['--key', String(key)] : [])], timeoutMs);
+      return { ecash: String(j.ecash), msat: BigInt(j.msat), again: j.again === true };
+    },
+    /** THE KEYED SEND READ BACK (kanban #1160): { found, ecash, msat } - found false: this client never spent for `key`. A tool from before #1160 throws. */
+    async ecashSent(key) {
+      const j = await run(bin, ['--mode', 'ecash-sent', '--data-dir', dataDir, '--key', String(key)], timeoutMs);
+      if (j.mode !== 'ecash-sent' || typeof j.found !== 'boolean') throw new Error(`this stake-lock tool cannot read a keyed send back: ${j.error || JSON.stringify(j).slice(0, 120)}`);
+      return j.found ? { found: true, ecash: String(j.ecash), msat: BigInt(j.msat) } : { found: false };
     },
     async send({ gateway, outpoint = null, paymentHash, amountMsat, expiration, claimPk, refundPk, invoice, auth = null }) {
       const args = ['--mode', 'send', '--data-dir', dataDir, '--hash', String(paymentHash), '--amount-msat', String(amountMsat),

@@ -18,9 +18,11 @@
 //                 changed. Each pass asks it: a decided proposal's anchor (moved: the outcome is taken back, proposals.js
 //                 undecide, and the proposal is counted again from its phase's first block), an open proposal's last block read
 //                 (moved: its votes are read again from the start of its phase), and a proposal not read yet its publication
-//                 block. Whichever moved, the publication block is asked too: gone from this chain, the proposal is forgotten
-//                 (proposals.js forget) - it was never published on the chain the seat now follows. Cost with no reorg: one
-//                 getblockhash per kept proposal a pass
+//                 block. Whichever moved, the publication block is asked too: another block there, the proposal is ORPHANED
+//                 (proposals.js orphan) - kept with its bytes, counted for nothing, never deleted, and counted again when that
+//                 block is back (restore) or it is posted again from a new block. Only a hash that DIFFERS moves anything
+//                 (kanban #1152): an RPC that did not answer skips the pass, and a height above this seat's tip waits. Cost
+//                 with no reorg: one getblockhash per kept proposal a pass
 //   GOING LIVE    ballot-chain.js liveConfig over the passed proposals of a network (§27A.7.5): `live(net)` at the tip for
 //                 GET /config, `spans(net)` over every passed proposal for the serving rule (configServesRound)
 //
@@ -32,6 +34,24 @@ import { tally, CLASS } from '../../arena-protocol/src/ballot.js';
 import { liveConfig, BALLOT_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
 import { decodeConfigProposalBody } from '../../arena-protocol/src/ballot.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { stateOf, PROPOSAL_STATE as S } from './proposals.js';
+
+/** THE FEWEST CONFIRMATIONS AN OUTCOME IS WRITTEN AT (kanban #1152): a one- or two-block reorg never moves a decided proposal - a repeal's included. */
+export const MIN_DECIDE_DEPTH = 3;
+
+/**
+ * A BLOCK'S HASH AT A HEIGHT, WITH ITS THREE ANSWERS (kanban #1152), over a bitcoind `call(method, params)` (chain-rpc.js): the
+ * hash; null only when the height is above the tip (bitcoind's -8 "Block height out of range", or a tip below it); and an
+ * RPC that did not answer THROWS - a full work queue, a timeout, a reindex is no reorg, and the tally skips that pass.
+ */
+export const chainHashReader = (call) => async (height) => {
+  try { return String(await call('getblockhash', [height])); } catch (e) {
+    if (/out of range|"code":\s*-8\b/i.test(String(e && e.message))) return null;
+    let top; try { top = Number(await call('getblockcount')); } catch { throw e; }
+    if (Number.isInteger(top) && height > top) return null;
+    throw e;
+  }
+};
 
 const str = (x) => (typeof x === 'bigint' ? String(x) : x);
 /** A tally as JSON carries it: the sats as strings, the percentages as numbers. */
@@ -39,14 +59,16 @@ const tallyJson = (t) => ({ totalSats: str(t.totalSats), yesSats: str(t.yesSats)
   bondsVoted: t.bondsVoted, turnoutPct: t.turnoutPct, approvalPct: t.approvalPct, quorum: t.quorum, approved: t.approved, passed: t.passed });
 
 /**
- * `proposals`: proposals.js (list, decide, undecide, forget). `blockHashAt(height)` -> the hash of this seat's block at that
- * height, or null above the tip (none given: no reorg is followed - the first slice's behaviour, kept for a harness). `tipHeight()` -> this seat's tip; `votesAt(height)` -> [{ payload, height, txid }];
+ * `proposals`: proposals.js (list, decide, undecide, orphan, restore). `blockHashAt(height)` -> the hash of this seat's block at that
+ * height, null above the tip, and THROWS when the chain did not answer (none given: no reorg is followed - the first slice's
+ * behaviour, kept for a harness). `tipHeight()` -> this seat's tip; `votesAt(height)` -> [{ payload, height, txid }];
  * `censusAt(networkIdHex, height)` -> [{ pubkey, outpoint, bondSats }] or null (not readable yet); `verify(sig, msg, pubkey)`;
  * `genesisFor(net)` -> { configHash, config }; `decideDepthFor(net)` -> confirmations of the last voting block before the outcome
- * is written (a reorg below it is followed through the anchor: the outcome is taken back and counted again).
+ * is written (a reorg below it is followed through the anchor: the outcome is taken back and counted again), held to at least
+ * `minDecideDepthFor(net)` (MIN_DECIDE_DEPTH; regtest's seat passes 1).
  */
 export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, verify, blockHashAt = null, genesisFor = () => BALLOT_GENESIS,
-  decideDepthFor = () => 6, maxBlocksPerPass = 64, log = () => {} }) {
+  decideDepthFor = () => 6, minDecideDepthFor = () => MIN_DECIDE_DEPTH, maxBlocksPerPass = 64, log = () => {} }) {
   const votesByHeight = new Map();          // height -> the vote outputs of that block (shared by every proposal voting there)
   const hashByHeight = new Map();           // height -> the hash of the block those votes were read from
   const open = new Map();                   // proposal id -> { readTo, readHash, census, votes: [], result } while undecided
@@ -66,7 +88,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     }
     return b;
   };
-  const passedOf = (net) => proposals.list().filter((p) => p.networkId === net && p.decided && p.decided.passed)
+  const passedOf = (net) => proposals.list().filter((p) => p.networkId === net && stateOf(p) === S.PASSED)
     .map((p) => { const b = bodyOf(p); return { id: fromHex(p.id), parent: b.parent, configHash: b.configHash, config: b.config, activationHeight: p.activationHeight }; });
   const networks = () => new Set(proposals.list().map((p) => p.networkId));
   /** Recomputed when something was decided or the tip moved: a few proposals, so a few comparisons. */
@@ -87,23 +109,45 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
    */
   async function followReorgs() {
     if (typeof blockHashAt !== 'function') return 0;
-    const hashAt = async (h) => { try { const x = await blockHashAt(h); return x ? String(x).toLowerCase() : null; } catch { return null; } };
-    let moved = 0;
+    // THREE ANSWERS, NEVER TWO (kanban #1152): the hash (`same` or `other`), `above` this seat's tip (bitcoind said so: null), or
+    // an RPC that did not answer (it threw). Only `other` is evidence of a reorg. A failed read is no answer at all: the
+    // whole pass stops before anything moves (an exception, ballot-tally pass), and the next pass asks again
+    const at = async (h, want) => {
+      const x = await blockHashAt(h);                      // throws on an RPC error: the pass is skipped
+      if (!x) return 'above';
+      return String(x).toLowerCase() === want ? 'same' : 'other';
+    };
+    // ONE SNAPSHOT OF WHAT TO CHECK, then every read, then the moves: a read that fails part way has moved nothing
+    const plan = [];
     for (const p of proposals.list()) {
-      const o = open.get(p.id);
-      let changed = false;
-      if (p.decided && p.decided.anchor) changed = (await hashAt(p.decided.anchor.height)) !== p.decided.anchor.hash;
-      else if (!p.decided && o && o.readHash) changed = (await hashAt(o.readTo)) !== o.readHash;
-      else if (!p.decided && p.blockHash) changed = (await hashAt(p.publishedAt)) !== p.blockHash;
-      if (!changed) continue;
+      const st = stateOf(p), o = open.get(p.id);
+      if (st === S.ORPHANED) { if (p.blockHash) plan.push({ p, st, kind: 'back', got: await at(p.publishedAt, p.blockHash) }); continue; }
+      if ((st === S.PASSED || st === S.FAILED) && p.decided.anchor) plan.push({ p, st, kind: 'anchor', got: await at(p.decided.anchor.height, p.decided.anchor.hash) });
+      else if (st === S.COUNTING && o && o.readHash) plan.push({ p, st, kind: 'read', got: await at(o.readTo, o.readHash) });
+      else if (st === S.COUNTING && p.blockHash) plan.push({ p, st, kind: 'published', got: await at(p.publishedAt, p.blockHash) });
+    }
+    // and the publication block of each one whose count moved: is it still on this chain?
+    for (const c of plan) if (c.got === 'other' && c.kind !== 'published' && c.kind !== 'back') c.pub = c.p.blockHash ? await at(c.p.publishedAt, c.p.blockHash) : 'same';
+    let moved = 0;
+    for (const c of plan) {
+      const { p, st } = c;
+      let what = null;
+      if (c.kind === 'back') {
+        if (c.got === 'same' && proposals.restore(p.id, { at: tip })) what = 'its publication block is on this chain again: counted again';
+      } else if (c.got === 'above' && c.kind === 'read') {
+        open.delete(p.id);                                  // this chain is shorter than the count: read again when it is there (memory only)
+      } else if (c.got === 'other') {
+        open.delete(p.id);
+        const published = c.kind === 'published' ? 'other' : c.pub;
+        if (published === 'other') {
+          if (proposals.orphan(p.id, { at: tip })) what = `its publication block left this chain${st === S.COUNTING ? '' : ` (it had ${st} at ${p.decided.decidedAt})`}: orphaned, kept with its bytes`;
+        } else if (st !== S.COUNTING) {
+          if (proposals.undecide(p.id, `the chain under its outcome changed at ${p.decided.anchor.height}`)) what = `the chain under its outcome (${st} at ${p.decided.decidedAt}) changed: counted again`;
+        } else what = 'the chain under its count changed: its votes are read again';
+      }
+      // `above` for an anchor or a publication: no evidence either way - nothing moves until this chain reaches that height again
+      if (!what) continue;
       moved++;
-      open.delete(p.id);
-      const published = !p.blockHash || (await hashAt(p.publishedAt)) === p.blockHash;
-      const what = !published ? 'its publication block left this chain: forgotten until posted again'
-        : p.decided ? `the chain under its outcome (${p.decided.passed ? 'PASSED' : 'FAILED'} at ${p.decided.decidedAt}) changed: counted again`
-          : 'the chain under its count changed: its votes are read again';
-      if (!published) proposals.forget(p.id);
-      else if (p.decided) proposals.undecide(p.id);
       reorgs.push({ id: p.id, at: tip, what }); if (reorgs.length > 16) reorgs.shift();
       log(`[ballot] reorg: proposal ${p.id.slice(0, 16)}: ${what}`);
     }
@@ -118,10 +162,17 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     running = true;
     let read = 0, decided = 0, reorged = 0;
     try {
-      tip = Number(await tipHeight());
-      reorged = await followReorgs();
+      const now = Number(await tipHeight());
+      if (!Number.isInteger(now) || now < 0) return { skipped: 'tip', why: 'this seat\'s chain named no tip', read: 0, decided: 0, reorged: 0 };
+      tip = now;
+      // A CHAIN THAT DID NOT ANSWER IS NO REORG (kanban #1152): the pass stops here - nothing taken back, orphaned or written
+      try { reorged = await followReorgs(); } catch (e) {
+        log(`[ballot] the chain did not answer the reorg check (${e.message}): this pass is skipped, nothing moved`);
+        return { tip, skipped: 'rpc', why: e.message, read: 0, decided: 0, reorged: 0 };
+      }
+      if (reorged) refreshLive();
       for (const p of proposals.list().slice().sort((a, b) => a.votingFrom - b.votingFrom)) {
-        if (p.decided) { open.delete(p.id); continue; }
+        if (stateOf(p) !== S.COUNTING) { open.delete(p.id); continue; }       // decided, or orphaned: not counted
         if (tip < p.votingFrom) continue;                       // review: votes are not counted yet (27A.7.4)
         let o = open.get(p.id);
         if (!o) { o = { readTo: p.votingFrom - 1, readHash: null, census: null, votes: [], result: null, dirty: true }; open.set(p.id, o); }
@@ -151,10 +202,13 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
             census: o.census, votes: o.votes, verify });
           o.dirty = false;
         }
-        // DECIDED ONCE: the whole phase read, and its last block deep enough - but never later than the block before its
-        // activation (a repeal has no cooldown, 27A.7.6): a round created at the activation height must already find the new
-        // config live here, or it would be taken under the old one and refused later, mid-flight
-        const depth = Math.max(1, Math.min(decideDepthFor(p.networkId), p.activationHeight - p.votingUntil + 1));
+        // DECIDED ONCE: the whole phase read, and its last block deep enough - no later than the block before its activation
+        // (a round created at the activation height must already find the new config live here, or it would be taken under
+        // the old one and refused later, mid-flight), and never less than `minDecideDepthFor` deep (kanban #1152: a one- or
+        // two-block reorg moves no outcome; a repeal's cooldown, 27A.7.6, leaves room for exactly that)
+        const depth = Math.max(1, minDecideDepthFor(p.networkId), Math.min(decideDepthFor(p.networkId), p.activationHeight - p.votingUntil + 1));
+        // a count held to the chain names the block it ends on (its anchor); without one nothing is written
+        if (typeof blockHashAt === 'function' && !o.readHash) continue;
         if (o.readTo >= p.votingUntil - 1 && tip >= p.votingUntil - 2 + depth) {
           // ITS ANCHOR: the last voting block's hash - it commits to the publication, the census and every vote below it
           const outcome = { ...tallyJson(o.result), decidedAt: tip, census: o.census.length,
@@ -177,6 +231,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
 
   /** The phase of a kept proposal at the tip (27A.7.4): review, voting, cooldown, activated, failed - or void (27A.7.2). */
   const phaseOf = (p) => {
+    if (stateOf(p) === S.ORPHANED) return 'orphaned';
     if (!p.decided) return tip !== null && tip >= p.votingFrom ? 'voting' : 'review';
     if (!p.decided.passed) return 'failed';
     if (tip === null || tip < p.activationHeight) return 'cooldown';
@@ -210,7 +265,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
      * activate by then is still undecided here (its outcome is not known yet, so neither is the history).
      */
     historyAt(net, height) {
-      const pending = proposals.list().some((p) => p.networkId === net && !p.decided && p.activationHeight <= height);
+      const pending = proposals.list().some((p) => p.networkId === net && stateOf(p) === S.COUNTING && p.activationHeight <= height);
       if (pending) return null;
       return liveConfig({ genesis: genesisFor(net), passed: passedOf(net), height }).history;
     },

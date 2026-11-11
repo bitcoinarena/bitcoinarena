@@ -100,17 +100,34 @@ async fetch(request, env, ctx) {
   // TESTNET NIGHT'S LIVE COUNT (kanban #926 item 7, ruling #1081): how many have joined the rounds open or playing now, from the first seat that answers
   if (url.pathname === '/api/night') return (await nightOn(env)) ? nightCount() : new Response('{"ok":true,"on":false}', { headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' } });
   // A SHORT LINK PER CHANNEL (kanban #943): a profile shows bitcoinarena.io/x, the visit still arrives with its campaign, and the referrer stays
+  // SN.BITCOINARENA.IO (kanban #1458, Daniel 2026-11-11: "If we can't track the referrer refer to sn.bitcoinarena.io so we can track it" - "to the website"): Stacker
+  // News links strip the referrer (rel="noreferrer"), so a post links here and the visit lands on the website with the /sn campaign; a path is kept
+  if (url.hostname === 'sn.bitcoinarena.io' || url.hostname === 'sn.bitcoin-arena.io') {
+    const to = new URL(url.pathname + url.search, 'https://bitcoinarena.io');
+    if (!to.searchParams.has('utm_source')) for (const [k, v] of new URLSearchParams(CHANNEL_LINKS['/sn'])) to.searchParams.set(k, v);
+    return Response.redirect(to.toString(), 302);
+  }
   // TESTNET NIGHT SWITCHED OFF (kanban #926): its page and short link land on the home page
   if ((url.pathname === '/night' || url.pathname === '/night/') && !(await nightOn(env))) return Response.redirect(`${url.origin}/`, 302);
   // /night lands on the Testnet Night page (kanban #926 item 7), the others on the home page; a visit already carrying its campaign is served, not sent round again
   { const path = url.pathname.replace(/\/$/, ''); const utm = CHANNEL_LINKS[path];
     if (utm && !url.searchParams.has('utm_source')) return Response.redirect(`${url.origin}${path === '/night' ? '/night/' : '/'}?${utm}`, 302); }
   // THE PLAYERS' FAUCET AND THE TABLE WANTS (kanban #926): passed on to the faucet service, whose address is a secret of this Worker (FAUCET_ORIGIN), with the caller's address for its limits
-  if (url.pathname === '/api/faucet/player' || url.pathname === '/api/faucet/opponent' || url.pathname === '/api/faucet/feedback' || url.pathname === '/api/faucet/founding' || url.pathname === '/api/faucet/refill') {
+  if (url.pathname === '/api/faucet/player' || url.pathname === '/api/faucet/opponent' || url.pathname === '/api/faucet/feedback' || url.pathname === '/api/faucet/feedback/mine' || url.pathname === '/api/faucet/feedback/screenshot' || url.pathname === '/api/faucet/feedback/rewards' || url.pathname === '/api/faucet/feedback/lnaddress' || url.pathname === '/api/faucet/feedback/node-check' || /^\/api\/faucet\/feedback\/admin\/(list|act|export\.csv|report\/[0-9a-f]{64}|node-check\/[0-9a-f]{64}|screenshot\/[0-9a-f]{64})$/.test(url.pathname) || /^\/api\/faucet\/lnurlw\/[0-9a-f]{64}(\/callback)?$/.test(url.pathname) || url.pathname === '/api/faucet/founding' || url.pathname === '/api/faucet/refill') {
     if (!env.FAUCET_ORIGIN) return new Response('{"ok":false,"why":"the faucet is off"}', { status: 503, headers: { 'content-type': 'application/json' } });
     const headers = new Headers({ 'content-type': 'application/json', 'x-arena-ip': request.headers.get('cf-connecting-ip') || '' });
+    // THE FAUCET BELIEVES THAT ADDRESS ONLY WITH THIS WORKER'S KEY (audit 8, kanban #1434): x-arena-ip was taken from any caller, also straight
+    // over the tunnel, so one machine could pass for many and empty the day's welcome pot
+    if (env.FAUCET_WORKER_KEY) headers.set('x-arena-worker', env.FAUCET_WORKER_KEY);
+    // "MY FEEDBACK" IS ASKED WITH THE PLAYER'S NIP-98 SIGN-IN (kanban #1342): that header, and only on that path
+    if (url.pathname === '/api/faucet/feedback/mine' && request.headers.get('authorization')) headers.set('authorization', request.headers.get('authorization'));
+    // THE REVIEW LIST'S ADMIN CODE (kanban #1342 section 4): that header, only on the admin paths
+    if (url.pathname.startsWith('/api/faucet/feedback/admin/') && request.headers.get('x-arena-admin')) headers.set('x-arena-admin', request.headers.get('x-arena-admin'));
     const origin = request.headers.get('origin'); if (origin) headers.set('origin', origin);
-    return fetch(`${env.FAUCET_ORIGIN}${url.pathname.slice('/api/faucet'.length)}${url.search}`, { method: request.method, headers, body: request.method === 'POST' ? await request.text() : undefined });
+    // A SCREENSHOT IS BYTES (kanban #1342): passed on as they came, with their own type; every other body is text
+    if (url.pathname === '/api/faucet/feedback/screenshot') headers.set('content-type', request.headers.get('content-type') || 'application/octet-stream');
+    return fetch(`${env.FAUCET_ORIGIN}${url.pathname.slice('/api/faucet'.length)}${url.search}`, { method: request.method, headers,
+      body: request.method === 'POST' ? (url.pathname === '/api/faucet/feedback/screenshot' ? await request.arrayBuffer() : await request.text()) : undefined });
   }
   // A PHONE'S BENCHMARK LINES (the page's ?bench=1): logged for wrangler tail, nothing stored, nothing served back
   if (url.pathname === '/__bench' && request.method === 'POST') {
@@ -123,6 +140,17 @@ async fetch(request, env, ctx) {
         { expirationTtl: 30 * 24 * 3600, metadata: { country, ua: (request.headers.get('User-Agent') || '').slice(0, 120) } });
     }
     return new Response('ok', { headers: { 'Access-Control-Allow-Origin': '*' } });
+  }
+  // THE NEW HOMEPAGE BESIDE THE LIVE ONE (kanban #1197): next.bitcoinarena.io serves www/next at its root, kept out of search indexes until Daniel
+  // switches it; every other path (the API, NIP-05 above, the shared scripts, /night/, /security/) answers as on the live host
+  if (url.hostname === 'next.bitcoinarena.io') {
+    if (url.pathname === '/robots.txt') return new Response('User-agent: *\nDisallow: /\n', { headers: { 'Content-Type': 'text/plain' } });
+    if (url.pathname === '/' || url.pathname === '/index.html') {
+      const open = await env.ASSETS.fetch(new Request(new URL('/next/', url), request));
+      const res = new Response(open.body, open);
+      res.headers.set('X-Robots-Tag', 'noindex, nofollow');
+      return res;
+    }
   }
   if (url.pathname === '/robots.txt') return new Response('User-agent: *\nAllow: /\n', { headers: { 'Content-Type': 'text/plain' } });
   // chatgpt.bitcoin-arena.io (2026-10-08 23:17: so ChatGPT can read the page): the same files, kept out of search indexes
@@ -137,6 +165,21 @@ async fetch(request, env, ctx) {
   if (url.pathname === '/__login') return Response.redirect(url.origin + '/', 303);
   if (url.searchParams.has('password')) { url.searchParams.delete('password'); return Response.redirect(url.toString(), 301); }
   if (url.pathname === '/api/chain-nodes') return chainNodes(env, ctx);
+  // THE HOMEPAGE'S VIDEOS IN BYTE RANGES (/media/) (kanban #1197): the asset store answers a Range request with the whole file (200), and Safari on an
+  // iPhone plays an mp4 only from 206 partial answers - so the Worker cuts the asked range itself (the files are a few MB)
+  if (url.pathname.startsWith('/media/') && /\.(mp4|webm)$/.test(url.pathname) && request.method === 'GET') {
+    const whole = await env.ASSETS.fetch(new Request(url.toString(), { method: 'GET' }));
+    if (!whole.ok) return whole;
+    const buf = await whole.arrayBuffer(); const size = buf.byteLength;
+    const headers = new Headers({ 'Content-Type': whole.headers.get('content-type') || 'application/octet-stream', 'Accept-Ranges': 'bytes', 'Cache-Control': 'public, max-age=3600' });
+    const m = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get('range') || '');
+    if (!m) { headers.set('Content-Length', String(size)); return new Response(buf, { status: 200, headers }); }
+    let start = m[1] === '' ? Math.max(0, size - Number(m[2])) : Number(m[1]);
+    let end = m[1] === '' || m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
+    if (!(start <= end) || start >= size) { headers.set('Content-Range', `bytes */${size}`); return new Response(null, { status: 416, headers }); }
+    headers.set('Content-Range', `bytes ${start}-${end}/${size}`); headers.set('Content-Length', String(end - start + 1));
+    return new Response(buf.slice(start, end + 1), { status: 206, headers });
+  }
   const page = await env.ASSETS.fetch(request);
   // TESTNET NIGHT SWITCHED OFF: no page links to it
   if ((page.headers.get('content-type') || '').includes('text/html') && !(await nightOn(env))) return new HTMLRewriter().on('a[href="/night/"]', { element: (e) => e.remove() }).transform(page);

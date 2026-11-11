@@ -38,7 +38,9 @@ test('seven seats certify every batch of locked orders inside the interval: the 
     assert.equal(BATCH_MS, 500n);
     const results = {};
     let n = 0;
-    for (const B of [500, 1000]) {
+    // 1 s FIRST: a batch's number is its time slot, and a seat signs no batch below one it holds (kanban #1150) - at 0.5 s after 1 s
+    // the numbers only rise
+    for (const B of [1000, 500]) {
       for (const d of w.nodes) d.orderBook.intervalMs = B;
       const times = [];
       for (let run = 0; run < RUNS; run++) {
@@ -102,7 +104,7 @@ test('seven seats certify every batch of locked orders inside the interval: the 
       const again = await Promise.all(w.nodes.map((x) => fetch(`http://127.0.0.1:${x.port}/book?round=${toHex(w.rid)}`).then((r) => r.json())));
       for (const b of again) assert.equal(JSON.stringify(b.batches), JSON.stringify(again[0].batches), 'two seats hold the book differently after the replay'); }
     // A CLOSED MARKET ASKS NOBODY (kanban #576): a batch after the close, with nothing pending here, sends no request at all
-    const kc = Math.floor(Number(w.c.entryCloseMs) / 1000) + 5;
+    const kc = Math.floor(Number(w.c.entryCloseMs) / w.nodes[0].orderBook.intervalMs) + 5;
     const lc = w.nodes.find((d) => d.orderBook.leads(w.rid, kc));
     const was = lc.orderBook.fetcher; let asked = 0;
     lc.orderBook.fetcher = async (u, o) => { asked += 1; return was(u, o); };

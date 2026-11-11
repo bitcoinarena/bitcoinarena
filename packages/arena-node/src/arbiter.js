@@ -19,9 +19,12 @@
 //   5. Fewer than k signatures is never posted; k or more is checked by testmempoolaccept and only then broadcast.
 // The nodes' and developers' outputs go to the arbitration escrow too (k-of-m), to be paid on by the same set: the spec
 // names who is paid, not the script (arbitration-tx.js) - and the federation step (pegin) waits for the stake-lock tool.
+import * as nodeFs from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { decodeSpentSet, spentNonceSet, newestSpentSet } from '../../arena-protocol/src/spent-set.js';
+import { splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
 import { slashHolds, slashProofId, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS } from '../../arena-protocol/src/slash.js';
 import { splitSignedResult, decodePlayerResult, resultId } from '../../arena-protocol/src/result.js';
 import { arbitrationSpend, arbitrationSighash, arbitrationWitness, arbitrationTransaction, escrowOutput, escrowSpend } from '../../arena-protocol/src/arbitration-tx.js';
@@ -32,6 +35,7 @@ import { transcriptHash, decodeTranscript } from '../../arena-protocol/src/trans
 import { checkObjectionBundle } from './objection-check.js';
 import { runId } from './verdict.js';
 import { tweakPoint, combine } from './curve.js';
+import { keyedPay, runPayouts } from './keyed-payout.js';
 import { nonceGen, bondSigningContext, bondPartialSign, MusigError } from './musig2.js';
 import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
 
@@ -153,6 +157,13 @@ export async function payOutSlash({ proof, v, set, rpc, keep = () => {}, say = (
   const run = (args, timeoutMs = 120000) => new Promise((done) => execFile(bin, args, { timeout: timeoutMs, maxBuffer: 1 << 24, env: runEnv },
     (err, out) => { const line = String(out || '').split('\n').find((l) => l.startsWith('{')); done(line ? JSON.parse(line) : { error: String((err && err.message) || 'no answer').slice(0, 200) }); }));
   const dir = ['--data-dir', dataDir];
+  if (!v.escrowTxid && v.escrowIntent) {
+    const i = v.escrowIntent;
+    const r = await resumeIntent(rpc, i, { txid: v.posted, vout: i.vout });
+    if (!r.ok) { delete v.escrowIntent; keep(); return { why: `the recorded escrow spend is refused: ${r.why}` }; }
+    Object.assign(v, { escrowTxid: i.txid, pegInAddress: i.pegInAddress, pegInSats: i.pegInSats }); delete v.escrowIntent; keep();
+    say({ proof: proof.slice(0, 16), escrowIntoFederation: i.txid, sats: i.pegInSats, resumed: r.landed ? 'found' : r.inferred ? 'its input is spent' : 'sent again' });
+  }
   if (!v.escrowTxid) {
     // THE ESCROW OUTPUT FROM THE UTXO SET (gettxout: no transaction index needed): path B carries at most four outputs
     const escrow = escrowOutput({ arbitrationKeys: set.keys, k: set.k }, { tweakPoint, combine });
@@ -171,9 +182,12 @@ export async function payOutSlash({ proof, v, set, rpc, keep = () => {}, say = (
     if (!spend.ok) return { why: spend.why };
     const signed = assemble({ slash: spend, signatures: set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, spend.sighash) })), set });
     if (!signed.ok) return { why: signed.why };
+    // RECORDED BEFORE ITS BROADCAST (kanban #1232): a lost answer left the escrow spent and every later pass "no unspent escrow"
+    const txid = await txidOf(rpc, signed.hex);
+    if (txid) { v.escrowIntent = { txid, hex: signed.hex, vout: o.n, pegInAddress: addr.address, pegInSats: String(spend.built.amounts.pegIn) }; keep(); }
     const sent = await post(rpc, signed.hex);
-    if (!sent.ok) return { why: sent.why };
-    Object.assign(v, { escrowTxid: sent.txid, pegInAddress: addr.address, pegInSats: String(spend.built.amounts.pegIn) }); keep();
+    if (!sent.ok) { delete v.escrowIntent; keep(); return { why: sent.why }; }
+    Object.assign(v, { escrowTxid: sent.txid, pegInAddress: addr.address, pegInSats: String(spend.built.amounts.pegIn) }); delete v.escrowIntent; keep();
     say({ proof: proof.slice(0, 16), escrowIntoFederation: sent.txid, sats: String(spend.built.amounts.pegIn) });
   }
   if (!v.claimedMsat) {
@@ -186,8 +200,13 @@ export async function payOutSlash({ proof, v, set, rpc, keep = () => {}, say = (
     const want = v.players.reduce((t, p) => t + BigInt(p.sats) * 1000n, 0n);
     const have = BigInt(v.claimedMsat);
     const payouts = v.players.map((p) => ({ key: toHex(refundKeyOf(fromHex(p.key))), msat: have >= want ? BigInt(p.sats) * 1000n : (BigInt(p.sats) * 1000n * have) / want }));
-    const paid = await run(['--mode', 'pay', ...dir, '--payouts', payouts.map((p) => `${p.key}:${p.msat}`).join(',')], 300000);
-    if (!paid.txid) return { why: `no payout transaction: ${paid.error || JSON.stringify(paid)}` };
+    // THE PAYOUT ONCE (kanban #1174, keyed-payout.js): its record ASKED - key (the proof) and list - written before the tool; after a stop it is read
+    // back under its key (pay-sent), never paid twice; a tool without pay-sent holds it
+    if (!v.pay) v.pay = {};
+    const got = await keyedPay({ rec: v.pay, save: keep, list: payouts, key: `slash-arb:${proof}`,
+      ...runPayouts((args) => run([...args.slice(0, 2), ...dir, ...args.slice(2)], 300000)) });
+    if (!got.ok) return { why: `no payout transaction: ${got.why}`, held: !!got.held };
+    const paid = { txid: got.txid, payouts: got.payouts };
     v.payouts = paid.payouts.map((x) => ({ round: v.round, entry: v.entry, refundPk: x.refund_pk, msat: String(x.amount_msat), txid: paid.txid, outIdx: x.out_idx, contractId: x.contract_id }));
     keep();
     say({ proof: proof.slice(0, 16), paid: v.payouts.length, txid: paid.txid });
@@ -218,9 +237,94 @@ export function assemble({ slash, signatures, set }) {
   return { ok: true, hex: toHex(bytes), signers: byKey.size };
 }
 
+/**
+ * A TRANSACTION THE ARBITER RECORDED BEFORE IT BROADCAST IT, FOUND (kanban #1232): in the mempool or a block (getrawtransaction), or its output
+ * `vout` unspent in either (gettxout) - then it was posted, whatever answer its broadcast got. False when neither knows it.
+ */
+export async function intentLanded(rpc, txid, vout = 1) {
+  try { if (await rpc('getrawtransaction', [txid])) return true; } catch { /* no txindex, or not there */ }
+  try { if (await rpc('gettxout', [txid, vout, true])) return true; } catch { /* not there */ }
+  return false;
+}
+/** WRITTEN WHOLE OR NOT AT ALL (kanban #1232): a temp file, synced, renamed over `path` - a stop mid-write leaves the last good file. */
+export function writeJsonAtomic(path, value, { fs = null } = {}) {
+  const f = fs || nodeFs;
+  const tmp = `${path}.tmp`;
+  f.writeFileSync(tmp, JSON.stringify(value, null, 1));
+  try { const fd = f.openSync(tmp, 'r'); f.fsyncSync(fd); f.closeSync(fd); } catch { /* synced as the file system allows */ }
+  f.renameSync(tmp, path);
+}
+
 /** TESTMEMPOOLACCEPT, THEN BROADCAST - never the other way: `rpc(method, params)` is the arbiter's own bitcoind. */
+/**
+ * THE SPENT SET A LIQUIDATION IS PAID AGAINST, FROM EVERY SEAT (kanban #1236, audit 2 #1204 RES-4): the arbiter took the first copy the
+ * first seat listed, unchecked - a seat holding an older session (or none after a restart, or one serving an old signed copy) let notes
+ * already redeemed in the federation be claimed and paid from the escrow. `listings` are the seats' GET /liquidations rows of one
+ * federation. The record is the one most seats list (a seat can list a wrong one, not outvote the rest); every copy any seat lists is
+ * checked against it (spentSetStands: of that federation, signed by one of its guardians) and the newest session signed wins
+ * (newestSpentSet). Answers { spentNonces, session, signers } or { spentNonces: null, why }.
+ */
+export function spentSetFromSeats(listings, { verify, readRecord = (hex) => splitSignedRecord(fromHex(hex)).record }) {
+  const votes = new Map();
+  for (const l of listings || []) { const r = l && (l.record || l.haltRecord); if (typeof r === 'string' && r) votes.set(r, (votes.get(r) || 0) + 1); }
+  const recHex = [...votes.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map((e) => e[0])[0] || null;
+  if (!recHex) return { spentNonces: null, why: 'no seat lists the federation\'s record: no spent set can be checked' };
+  let record; try { record = readRecord(recHex); } catch (e) { return { spentNonces: null, why: `the record the seats list does not read: ${e.message}` }; }
+  if (!record) return { spentNonces: null, why: 'the record the seats list does not read' };
+  const copies = []; const seen = new Set();
+  for (const l of listings || []) {
+    for (const c of (l && l.spentSet && l.spentSet.copies) || []) {
+      const k = `${c && c.spentSet}:${c && c.signature}`; if (seen.has(k)) continue; seen.add(k);
+      try { copies.push({ ...decodeSpentSet(fromHex(String(c.spentSet))), signature: fromHex(String(c.signature)) }); } catch { /* not a copy */ }
+    }
+  }
+  // THE HALT'S BOUND (kanban #1262): the halt proof's session as most seats list it, + 1
+  const halts = new Map();
+  for (const l of listings || []) { const hs = l && l.haltProof && l.haltProof.session; if (Number.isInteger(hs)) halts.set(hs, (halts.get(hs) || 0) + 1); }
+  const haltSession = [...halts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]).map((e) => e[0])[0];
+  const pick = newestSpentSet(copies, { record, verify, maxSession: Number.isInteger(haltSession) ? haltSession + 1 : null });
+  return pick.copy ? { spentNonces: spentNonceSet(pick.copy), session: pick.session, signers: pick.signers } : { spentNonces: null, why: pick.why };
+}
+
+/**
+ * A RECORDED SPEND RESUMED (kanban #1232): `intent` { txid, hex } was kept before its broadcast, spending `input` { txid, vout }, an
+ * output only this set signs. Found on the chain or in the mempool: posted. Its input spent: posted too (nobody else can spend it).
+ * Its input still unspent: the same bytes are sent again. Refused with the input unspent: { ok: false, drop: true } - built anew.
+ */
+export async function resumeIntent(rpc, intent, input) {
+  if (await intentLanded(rpc, intent.txid, 0)) return { ok: true, landed: true };
+  // AN ERROR IS NOT "SPENT" (audit 5 #1403): a bitcoind still warming up (-28) or a timeout read as a spent input marked a slash posted that never
+  // went out, and its intent was dropped for good - the bond never slashed. Only gettxout's own null (no such unspent output) is spent.
+  let still;
+  try { still = await rpc('gettxout', [input.txid, input.vout, true]); } catch (e) { return { ok: false, why: `the chain could not be read: ${String((e && e.message) || e).slice(0, 120)}` }; }
+  if (!still) return { ok: true, inferred: true };
+  const sent = await post(rpc, intent.hex);
+  return sent.ok ? { ok: true, again: true } : { ok: false, drop: true, why: sent.why };
+}
+
+/**
+ * A KEPT SLASH INTENT, RESUMED (kanban #1357, audit 4 fixesA-3): `intent` { txid, hex, bond: { txid, vout }, slashHeight }. Answers
+ *   { step: 'posted', why }   on the chain or in the mempool, its bond spent (only this set signs it), or its bytes sent again
+ *   { step: 'wait', why }     refused, and younger than `rebuildBlocks` past its slash height: a node that lost it while its peers hold it
+ *   { step: 'rebuild', why }  refused with its bond unspent, `rebuildBlocks` past its slash height: built anew
+ * Never a new build while the first one may still confirm - a later tip gives another locktime and txid, and the escrow of the one that
+ * confirmed was never paid out.
+ */
+export async function resumeSlashIntent(rpc, intent, { rebuildBlocks = 6 } = {}) {
+  const r = await resumeIntent(rpc, intent, intent.bond).catch((e) => ({ ok: false, why: e.message }));
+  if (r.ok) return { step: 'posted', why: r.landed ? 'its recorded slash is on the chain' : r.again ? 'its recorded slash sent again' : 'its bond is spent: the recorded slash' };
+  const tip = await rpc('getblockcount').then(Number).catch(() => null);
+  if (r.drop && tip !== null && tip >= Number(intent.slashHeight) + rebuildBlocks) return { step: 'rebuild', why: r.why };
+  return { step: 'wait', why: r.why || 'no answer' };
+}
+
+/** The display txid of a signed transaction's hex, or null (kanban #1232). */
+export async function txidOf(rpc, hex) { try { return String((await rpc('decoderawtransaction', [hex])).txid); } catch { return null; } }
+
 export async function post(rpc, hex) {
   const [r] = await rpc('testmempoolaccept', [[hex]]);
+  // SENT BEFORE (kanban #1232): the same bytes already in the mempool are this transaction posted, its answer lost
+  if (r && !r.allowed && /txn-already-in-mempool|txn-already-known/.test(String(r['reject-reason'] || ''))) return { ok: true, txid: r.txid, tested: r, again: true };
   if (!r || !r.allowed) return { ok: false, why: `the mempool refuses it: ${r && r['reject-reason']}`, tested: r };
   const txid = await rpc('sendrawtransaction', [hex]);
   return { ok: true, txid, tested: r };
@@ -233,29 +337,47 @@ export async function post(rpc, hex) {
  * coordinator with the bond's node key, its tree's tweak and the 32-byte sighash; each member draws its nonce pair here
  * and keeps its secret nonce, and signs once, only for the message the session was opened with. `allow(session)` is the
  * set's policy - which spends it agrees to (a release with no open proof against the node, a judged slash).
+ *
+ * ONE SESSION, ONE STATE (kanban #1194, the state machine audit of 2026-11-06): MUSIG_SESSION open (nonces drawn) -> signing (taken by one partial ask,
+ * before any signature) -> closed (signed, refused or failed; the session and its secret nonces are dropped). Moved by musigSessionStep only, compare and set.
+ * `allow` is asked at the nonce AND again at the partial, for the very spend the nonce was drawn for: a proof that arrives between the two calls stops the
+ * signature. The secret nonces live in this process alone and are never written: a restart loses every open session, so no nonce can sign twice across one.
  */
+export const MUSIG_SESSION = Object.freeze({ OPEN: 'open', SIGNING: 'signing', CLOSED: 'closed' });
+const MUSIG_MOVES = Object.freeze({ [MUSIG_SESSION.OPEN]: [MUSIG_SESSION.SIGNING, MUSIG_SESSION.CLOSED], [MUSIG_SESSION.SIGNING]: [MUSIG_SESSION.CLOSED], [MUSIG_SESSION.CLOSED]: [] });
+/** The session moved from `from` to `to`: false, nothing changed, unless it is in `from` now and MUSIG_MOVES allows it. */
+export function musigSessionStep(s, from, to) {
+  if (!s || s.state !== from || !MUSIG_MOVES[from].includes(to)) return false;
+  s.state = to;
+  return true;
+}
+
 export function musigParty({ set, allow = () => ({ ok: false, why: 'no spend is agreed to' }) }) {
   const sessions = new Map();
+  const ask = (s) => { try { const may = allow({ nodeKey: s.nodeKey, msg: s.msg, spend: s.spend }); return may && typeof may.ok === 'boolean' ? may : { ok: false, why: 'the policy gave no answer' }; } catch (e) { return { ok: false, why: `the policy could not be read: ${String(e.message || e).slice(0, 160)}` }; } };
+  const close = (sessionId, s) => { musigSessionStep(s, s.state, MUSIG_SESSION.CLOSED); for (const d of s.drawn) d.secnonce = null; sessions.delete(sessionId); };
   return {
     nonce({ sessionId, nodeKey, tweak, msg, spend }) {
       if (sessions.has(sessionId)) return { ok: false, why: 'that session is open already' };
-      const may = allow({ nodeKey, msg, spend });
+      const may = ask({ nodeKey, msg, spend });
       if (!may.ok) return may;
       const bctx = bondSigningContext({ nodeKey, arbitrationKeys: set.keys, tweak });
       const drawn = set.members.map((m) => ({ m, ...nonceGen({ pk: Uint8Array.from([2, ...m.key]), sk: m.secret, msg }) }));
-      sessions.set(sessionId, { bctx, msg, drawn, used: false });
+      sessions.set(sessionId, { state: MUSIG_SESSION.OPEN, nodeKey, spend: spend ?? null, bctx, msg, drawn });
       return { ok: true, outputKey: toHex(bctx.outputKey), pubnonces: drawn.map((d) => ({ member: toHex(d.m.key), pubnonce: toHex(d.pubnonce) })) };
     },
     partial({ sessionId, aggnonce }) {
       const s = sessions.get(sessionId);
       if (!s) return { ok: false, why: 'no such session' };
-      if (s.used) return { ok: false, why: 'that session signed already: a nonce is used once' };
-      s.used = true;
+      if (!musigSessionStep(s, MUSIG_SESSION.OPEN, MUSIG_SESSION.SIGNING)) return { ok: false, why: 'that session signed already: a nonce is used once' };
       try {
+        // THE POLICY AGAIN, NOW (kanban #1194): a proof against the node that arrived after the nonce refuses the signature
+        const may = ask(s);
+        if (!may.ok) return may;
         const psigs = s.drawn.map((d) => ({ member: toHex(d.m.key), psig: toHex(bondPartialSign(s.bctx, {
           who: s.bctx.inner.pks.findIndex((p) => toHex(p) === toHex(d.m.key)), sk: d.m.secret, secnonce: d.secnonce, aggnonce: fromHex(aggnonce), msg: s.msg })) }));
         return { ok: true, psigs };
-      } catch (e) { return { ok: false, why: e instanceof MusigError ? e.message : String(e.message || e) }; } finally { sessions.delete(sessionId); }
+      } catch (e) { return { ok: false, why: e instanceof MusigError ? e.message : String(e.message || e) }; } finally { close(sessionId, s); }
     },
   };
 }

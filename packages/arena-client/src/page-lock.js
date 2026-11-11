@@ -28,7 +28,7 @@ import { refundKeyOf, lockFieldsToJson, lockFieldsFromJson } from '../../arena-p
 import { decodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { lockFromClient } from './lock-result.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
-import { roundLocks, playerFor } from './join.js';
+import { roundLocks, playerFor, sharesNeededFor } from './join.js';
 import { encodeRoundContract, decodeRoundContract, roundId as roundIdOf, custodyFieldsAreValid, entryId } from '../../arena-protocol/src/contracts.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 import { takesDeposits } from '../../arena-protocol/src/known-federations.js';
@@ -304,7 +304,7 @@ export function phraseWalletEntries(storage, seedHex, federationIdHex = null, { 
   const keys = storageKeys(storage);
   // the federation asked about, when named (a wallet with money and no history row is still a wallet), and every one
   // this browser keeps a history for
-  const feds = keys.map((k) => /^arena\.ledger\.([0-9a-f]{64})$/i.exec(k)).filter(Boolean).map((m) => m[1].toLowerCase());
+  const feds = keys.map(ledgerFedOfKey).filter(Boolean);
   if (/^[0-9a-f]{64}$/i.test(String(federationIdHex || ''))) feds.push(String(federationIdHex).toLowerCase());
   let n = 0;
   for (const f of new Set(feds)) {
@@ -327,7 +327,7 @@ export function forgetPhrase(storage, seedHex) {
   const seed = fromHex(String(seedHex).toLowerCase());
   const keys = storageKeys(storage);
   const ids = new Set();
-  for (const f of keys.map((k) => /^arena\.ledger\.([0-9a-f]{64})$/i.exec(k)).filter(Boolean).map((m) => m[1].toLowerCase()))
+  for (const f of keys.map(ledgerFedOfKey).filter(Boolean))
     for (const make of [walletSecretFor, ancestorWalletSecretFor]) {
       try { ids.add(`arena.walletdb.${f.slice(0, 16)}.${toHex(sha256(make(seed, fromHex(f)))).slice(0, 16)}.`); } catch { /* not this kind */ }
     }
@@ -354,7 +354,7 @@ export function tidyStorage(storage, { seeds = [], current = null, federations =
   if (!storage) return { removed: 0, bytes: 0, wallets: 0 };
   const keys = storageKeys(storage);
   const feds = new Set([...federations.map((f) => String(f).toLowerCase()),
-    ...keys.map((k) => /^arena\.ledger\.([0-9a-f]{64})$/i.exec(k)).filter(Boolean).map((m) => m[1].toLowerCase())].filter((f) => /^[0-9a-f]{64}$/.test(f)));
+    ...keys.map(ledgerFedOfKey).filter(Boolean)].filter((f) => /^[0-9a-f]{64}$/.test(f)));
   const phrases = [...new Set([...seeds, ...(current ? [current] : [])].map((h) => String(h).toLowerCase()).filter((h) => /^[0-9a-f]{64}$/.test(h)))];
   const cur = current ? String(current).toLowerCase() : null;
   // every database a kept phrase can open: prefix -> { hex, fed, ancestor }
@@ -374,15 +374,36 @@ export function tidyStorage(storage, { seeds = [], current = null, federations =
   // arena.lock.saved.bd53423e; measured: each round a tab collects opens a lock wallet of its own, arena.lockdb.<round16>.<secret16>.*, 36 entries
   // and ~150 KB, and none was ever removed - a window every 15 min fills a phone's storage within a day): removed once the round's collect is
   // done and an hour old - its money is in the player wallet; a rescan that needs it again joins it anew (its key is the seed's and the round's)
+  // ONE WALLET'S RECORDS, NOT ONE ROUND'S (kanban #1265, audit 4 #1257 CLIENT-1): the lock wallet is the phrase's and the round's (every order of the
+  // phrase shares it), and it went once ANY record of the round was done - another order's e-cash, collected there and not withdrawn, went with it. A
+  // wallet goes only when every collect record that maps to it (its seed and round) is done with the wallet read empty (tabMsat '0'), an hour after it was
+  // kept; a round with a record that maps to no wallet here (no seed: an older page's) keeps every wallet of its round
+  const walletOfRecord = (r) => { try { return `arena.lockdb.${String(r.roundIdHex).toLowerCase().slice(0, 16)}.${toHex(sha256(lockSecretFor(fromHex(String(r.seed)), fromHex(String(r.roundIdHex))))).slice(0, 16)}.`; } catch { return null; } };
+  const recordsOfWallet = new Map(), unmapped = new Set();
+  for (const k of keys) {
+    if (!k.startsWith('arena.collect.')) continue;
+    let r; try { r = JSON.parse(storage.getItem(k)); } catch { continue; }
+    if (!r || !r.roundIdHex) continue;
+    const w = walletOfRecord(r);
+    if (!w) { unmapped.add(String(r.roundIdHex).toLowerCase().slice(0, 16)); continue; }
+    if (!recordsOfWallet.has(w)) recordsOfWallet.set(w, []);
+    recordsOfWallet.get(w).push(r);
+  }
+  const emptyWallet = (prefix, { ageMs = 3600000 } = {}) => {
+    const rs = recordsOfWallet.get(prefix);
+    if (!rs || !rs.length || unmapped.has(prefix.slice('arena.lockdb.'.length, 'arena.lockdb.'.length + 16))) return false;
+    return rs.every((r) => r.done && r.done.tabMsat === '0' && now() - Number(r.savedMs || 0) > ageMs);
+  };
   const doneRounds = new Set();
   for (const k of keys) {
     if (!k.startsWith('arena.collect.')) continue;
-    try { const r = JSON.parse(storage.getItem(k)); if (r && r.done && r.roundIdHex && now() - Number(r.savedMs || 0) > 3600000) doneRounds.add(String(r.roundIdHex).toLowerCase().slice(0, 16)); } catch { /* unreadable: kept */ }
+    // (kanban #1163: only a done that read the round's wallet empty - tabMsat '0'; a done an older page wrote goes only when the browser is full, below)
+    try { const r = JSON.parse(storage.getItem(k)); if (r && r.done && r.done.tabMsat === '0' && r.roundIdHex && now() - Number(r.savedMs || 0) > 3600000) doneRounds.add(String(r.roundIdHex).toLowerCase().slice(0, 16)); } catch { /* unreadable: kept */ }
   }
   const lockGroups = new Map();
   for (const k of keys) {
     const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k);
-    if (m && doneRounds.has(m[2])) { if (!lockGroups.has(m[1])) lockGroups.set(m[1], []); lockGroups.get(m[1]).push(k); }
+    if (m && doneRounds.has(m[2]) && emptyWallet(m[1])) { if (!lockGroups.has(m[1])) lockGroups.set(m[1], []); lockGroups.get(m[1]).push(k); }
   }
   for (const [, ks] of lockGroups) { for (const k of ks) { bytes += (k.length + String(storage.getItem(k) || '').length) * 2; storage.removeItem(k); removed++; } wallets++; }
   for (const [prefix, ks] of groups) {
@@ -413,7 +434,7 @@ export function tidyStorage(storage, { seeds = [], current = null, federations =
         try { const r = JSON.parse(storage.getItem(k)); if (r && r.done && r.roundIdHex) done.add(String(r.roundIdHex).toLowerCase().slice(0, 16)); } catch { /* unreadable: kept */ }
       }
       const byDb = new Map();
-      for (const k of storageKeys(storage)) { const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k); if (m && done.has(m[2])) { if (!byDb.has(m[1])) byDb.set(m[1], []); byDb.get(m[1]).push(k); } }
+      for (const k of storageKeys(storage)) { const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k); if (m && done.has(m[2]) && emptyWallet(m[1], { ageMs: -1 })) { if (!byDb.has(m[1])) byDb.set(m[1], []); byDb.get(m[1]).push(k); } }   // kanban #1265
       for (const [, ks] of byDb) { if (now_ <= pressureChars) break; take(ks); }
     }
     // AND A LOCK WALLET OF A ROUND STILL OPEN, an hour after it was kept and with no client of this page on it: copied to `archive` (the page's IndexedDB) and
@@ -425,7 +446,7 @@ export function tidyStorage(storage, { seeds = [], current = null, federations =
         try { const r = JSON.parse(storage.getItem(k)); if (r && r.roundIdHex && now() - Number(r.savedMs || 0) <= 3600000) recent.add(String(r.roundIdHex).toLowerCase().slice(0, 16)); } catch { /* unreadable: its wallet goes as any other */ }
       }
       const byDb = new Map();
-      for (const k of storageKeys(storage)) { const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k); if (m && !recent.has(m[2]) && !liveLockDbs.has(m[1])) { if (!byDb.has(m[1])) byDb.set(m[1], []); byDb.get(m[1]).push(k); } }
+      for (const k of storageKeys(storage)) { const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k); if (m && !recent.has(m[2]) && !liveLockDbs.has(m[1]) && !(recordsOfWallet.get(m[1]) || []).some((r) => !(r.done && r.done.tabMsat === '0')) && !unmapped.has(m[2])) { if (!byDb.has(m[1])) byDb.set(m[1], []); byDb.get(m[1]).push(k); } }   // kanban #1265: no wallet with a record still open
       for (const [, ks] of byDb) {
         if (now_ <= pressureChars) break;
         archive(ks.map((k) => [k, storage.getItem(k)]));
@@ -438,6 +459,7 @@ export function tidyStorage(storage, { seeds = [], current = null, federations =
       // A DEPOSIT WAITING HOLDS ONLY THE WALLET THAT MADE IT (kanban #803: one unclaimed invoice in a federation held all 22 kept phrases' wallets there, so the
       // storage stayed full and the claim could not be written): that wallet's keys name its operation
       const waitingOps = [];
+      // (kanban #1179: the old list arena.deposit.pending.<fed> and one key per deposit, arena.deposit.pending.<fed>.<operation>, each a list)
       for (const k of storageKeys(storage)) if (k.startsWith(PENDING_PREFIX)) { try { for (const p of JSON.parse(storage.getItem(k))) waitingOps.push(String(p.operation).toLowerCase()); } catch { travelling.add(k.slice(PENDING_PREFIX.length, PENDING_PREFIX.length + 16)); } }
       for (const [prefix] of groups) {
         if (now_ <= pressureChars) break;
@@ -514,6 +536,24 @@ function paysIntoALock(round, invite, LockClient) {
 // the slowest step of a paying join - and the deposit, the lock and the withdraw use that same open client rather than
 // joining again on the same store. A join that failed is not kept.
 const openWallets = new WeakMap();
+// THE OPEN WALLETS OF EACH PHRASE (kanban #1387, audit 2 #1204 CLIENT-15): seed hex (16) -> [{ map, key }] - what forgetPhraseWallets drops
+const phraseWallets = new Map();
+/**
+ * ANOTHER PHRASE'S WALLET CLIENTS LEAVE THE CACHE WITH ITS LOCK (kanban #1387, audit 2 #1204 CLIENT-15): a client this tab opened for a kept phrase it
+ * collected or merged under that phrase's lock stayed cached after the lock went; another tab then used the phrase, and the next collect here got the
+ * old client back - its in-memory store did not see the other tab's notes (the balance read 0, merges refused). The page calls this in the finally
+ * that releases the lock; the next open of that phrase opens it afresh from its store. The client itself is not freed (a call may still hold it).
+ */
+export function forgetPhraseWallets(seedHex) {
+  const k = String(seedHex || '').toLowerCase().slice(0, 16);
+  const list = phraseWallets.get(k) || [];
+  for (const { map, key } of list) map.delete(key);
+  phraseWallets.delete(k);
+  return list.length;
+}
+// THE PAGE'S GATE ON A PHRASE'S WALLETS (kanban #1164): fn(seedHex) -> a promise that resolves once this tab may open that phrase's wallets
+let walletGate = null;
+export function useWalletGate(fn) { walletGate = typeof fn === 'function' ? fn : null; }
 export async function playerWallet({ round, invite, seed, LockClient, storage, onStep = () => {}, openWaitMs = 15000, joinWaitMs = 180000, ancestor = false } = {}) {
   paysIntoALock(round, invite, LockClient);
   return openPlayerWallet({ federationId: round.federationId, invite, seed, LockClient, storage, onStep, openWaitMs, joinWaitMs, ancestor });
@@ -529,6 +569,15 @@ export async function openPlayerWallet({ federationId, invite, seed, LockClient,
   if (!(federationId instanceof Uint8Array) || federationId.length !== 32) throw new Error('a player wallet is opened for a 32-byte federation id');
   if (!invite || typeof invite !== 'string') throw new Error('a player wallet is opened from its federation\'s invite');
   if (!LockClient || typeof LockClient.join !== 'function') throw new Error('a player wallet is opened by the lock client, and none was loaded');
+  // NOT BEFORE THIS TAB HOLDS ITS PHRASE (kanban #1164): while another tab's collect holds the phrase's lock, a wallet of it opened here ran a
+  // second client on the same store - the open waits for the lock (the page's seed keeper, useWalletGate)
+  if (walletGate && seed instanceof Uint8Array) {
+    let waited = false;
+    const said = setTimeout(() => { waited = true; onStep('waiting for another tab of this browser to finish with this phrase'); }, 500);
+    if (said.unref) said.unref();
+    try { await walletGate(toHex(seed)); } finally { clearTimeout(said); }
+    if (waited) onStep('this tab holds its phrase now');
+  }
   const round = { federationId };
   if (!ancestor) rememberInvite(storage, federationId, invite);
   // `ancestor`: the seed's BLWP-era wallet (ancestorWalletSecretFor), opened only to be swept into this one
@@ -577,12 +626,42 @@ export async function openPlayerWallet({ federationId, invite, seed, LockClient,
     new Promise((_, no) => { timer = setTimeout(() => no(new Error(`the federation did not open the player wallet in ${Math.round(joinWaitMs / 1000)} s - press PLAY again`)), joinWaitMs); }),
   ]).finally(() => clearTimeout(timer));
   joining.then((c) => noteClientFederation(c, toHex(round.federationId)), () => {});
+  joining.then((c) => { try { feedTweaks(c); } catch { /* the lock client grinds its own */ } }, () => {});
   if (byStore) {
     const m = open || new Map(); if (!open) byStore.set(storage, m);
     m.set(key, joining);
     joining.catch(() => m.delete(key));
+    if (seed instanceof Uint8Array) { const ph = toHex(seed).slice(0, 16); if (!phraseWallets.has(ph)) phraseWallets.set(ph, []); phraseWallets.get(ph).push({ map: m, key }); }
   }
   return joining;
+}
+
+// TWEAKS GROUND ON EVERY CORE (kanban #1391, Daniel 2026-11-09: "Yes fork it", "Make sure it is everything fast"): a new wallet's first locks waited
+// 18-37 s for change-note tweaks - the lock client grinds them on the page's one wasm thread, about one a second, and a lock takes 7-22. Web Workers
+// grind them here (one SHA-256 block each; 18.6 a second a core measured on the Beelink) and hand them to the lock client (addTweaks), which checks
+// each against the wallet's own filter before it takes it. They stop at `high` ready and start again under `low`; `high` is the queue's whole 256, so the
+// lock client's own grinder - SHA-256 on the page's one thread, 1.84 s a minute profiled on stage UI 604 - waits on a full queue. A client without addTweaks: nothing.
+const TWEAK_WORKER_SRC = "// the worker body (kanban #1391): grinds tweaks that pass SHA-256(tweak || filter)[0..2] == 0, one compression each\nconst K = new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);\nlet F = null, on = false, running = false;\nconst W = new Uint32Array(64), t = new Uint32Array(4);\nconst hex8 = (x) => (x >>> 0).toString(16).padStart(8, '0');\nfunction first(w0, w1, w2, w3) {\n  W[0] = w0; W[1] = w1; W[2] = w2; W[3] = w3;\n  for (let i = 16; i < 64; i++) {\n    const a = W[i - 15], b = W[i - 2];\n    const s0 = ((a >>> 7) | (a << 25)) ^ ((a >>> 18) | (a << 14)) ^ (a >>> 3);\n    const s1 = ((b >>> 17) | (b << 15)) ^ ((b >>> 19) | (b << 13)) ^ (b >>> 10);\n    W[i] = (W[i - 16] + s0 + W[i - 7] + s1) | 0;\n  }\n  let A = 0x6a09e667, B = 0xbb67ae85, C = 0x3c6ef372, D = 0xa54ff53a, E = 0x510e527f, G = 0x9b05688c, H = 0x1f83d9ab, I = 0x5be0cd19;\n  for (let i = 0; i < 64; i++) {\n    const S1 = ((E >>> 6) | (E << 26)) ^ ((E >>> 11) | (E << 21)) ^ ((E >>> 25) | (E << 7));\n    const t1 = (I + S1 + ((E & G) ^ (~E & H)) + K[i] + W[i]) | 0;\n    const S0 = ((A >>> 2) | (A << 30)) ^ ((A >>> 13) | (A << 19)) ^ ((A >>> 22) | (A << 10));\n    const t2 = (S0 + ((A & B) ^ (A & C) ^ (B & C))) | 0;\n    I = H; H = G; G = E; E = (D + t1) | 0; D = C; C = B; B = A; A = (t1 + t2) | 0;\n  }\n  return (A + 0x6a09e667) >>> 0;\n}\nfunction grind(ms) {\n  const found = [];\n  const until = Date.now() + ms;\n  while (Date.now() < until) {\n    crypto.getRandomValues(t);\n    for (let n = 0; n < 65536; n++) {\n      const w3 = (t[3] + n) >>> 0;\n      if ((first(t[0], t[1], t[2], w3) >>> 16) === 0) found.push(hex8(t[0]) + hex8(t[1]) + hex8(t[2]) + hex8(w3));\n    }\n  }\n  return found;\n}\nfunction loop() {\n  if (!on || !F) { running = false; return; }\n  running = true;\n  const found = grind(150);\n  if (found.length) postMessage(found);\n  setTimeout(loop, 0);\n}\nonmessage = (e) => {\n  const d = e.data || {};\n  if (d.filter) { F = d.filter; for (let i = 0; i < 8; i++) W[4 + i] = parseInt(F.slice(8 * i, 8 * i + 8), 16) | 0; W[12] = 0x80000000 | 0; W[13] = 0; W[14] = 0; W[15] = 384; }\n  if ('on' in d) on = !!d.on;\n  if (on && !running) loop();\n};\n";
+const tweakFed = new WeakSet();
+export function feedTweaks(client, { WorkerCtor = globalThis.Worker, workers = null, high = 256, low = 200, everyMs = 500 } = {}) {
+  if (!client || typeof client.tweakFilter !== 'function' || typeof client.addTweaks !== 'function' || typeof client.tweaksReady !== 'function'
+    || typeof WorkerCtor !== 'function' || typeof Blob !== 'function' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function' || tweakFed.has(client)) return null;
+  tweakFed.add(client);
+  let filter; try { filter = String(client.tweakFilter()); } catch { return null; }
+  const n = workers || Math.max(1, Math.min(4, ((globalThis.navigator && navigator.hardwareConcurrency) || 2) - 1));
+  const url = URL.createObjectURL(new Blob([TWEAK_WORKER_SRC], { type: 'text/javascript' }));
+  const pool = []; let on = null, timer = null, taken = 0;
+  const stop = () => { clearInterval(timer); for (const w of pool) { try { w.terminate(); } catch { /* gone */ } } pool.length = 0; try { URL.revokeObjectURL(url); } catch { /* kept */ } };
+  const set = (v) => { if (v === on) return; on = v; for (const w of pool) w.postMessage({ on: v }); };
+  for (let i = 0; i < n; i++) {
+    let w; try { w = new WorkerCtor(url); } catch { break; }
+    w.onmessage = (e) => { try { taken += Number(client.addTweaks((e.data || []).join(''))) || 0; } catch { stop(); } };
+    w.postMessage({ filter }); pool.push(w);
+  }
+  if (!pool.length) { stop(); return null; }
+  const check = () => { let ready; try { ready = Number(client.tweaksReady()); } catch { stop(); return; } if (ready >= high) set(false); else if (ready < low) set(true); };
+  check(); timer = setInterval(check, everyMs);
+  return { workers: pool.length, taken: () => taken, stop };
 }
 
 /**
@@ -937,8 +1016,9 @@ export async function playerWithdrawable({ round, invite, seed, LockClient, stor
  * every tab switch); `claimed` resolves with whichever invoice was paid first, `close()` rejects it. Every invoice made
  * stays payable: one paid after another was claimed is credited to the same wallet.
  */
+// `phrase16`: the depositing phrase's first 16 hex, kept on each pending entry so a scan with another phrase's key never drops it (kanban #1233)
 export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gateways = [], onDeposit = () => {},
-  storage = null, federationId = null, restMsat = null, sizeOf = null, choices = null } = {}) {
+  storage = null, federationId = null, restMsat = null, sizeOf = null, choices = null, phrase16 = null } = {}) {
   // THE LAST WORD ON WHERE NEW MONEY GOES (kanban #807): whichever path asked, no invoice is made for a federation that takes no new deposits
   if (federationId && !takesDeposits(federationId)) throw new Error('this federation takes no new deposits');
   let settle; let fail;
@@ -967,7 +1047,7 @@ export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = nu
       made.push(d);
       // KEPT UNTIL IT ENDS: a reload between the payment and the claim leaves this page, and the next page's wallet
       // (resumeDeposits) waits on the same operation and writes its history row
-      pendingAdd(storage, federationId, { invoice: d.invoice, operation: x.operation, msat: String(amount) });
+      pendingAdd(storage, federationId, { invoice: d.invoice, operation: x.operation, msat: String(amount), ...(phrase16 ? { phrase16: String(phrase16).toLowerCase() } : {}) });
       onDeposit(d);
       return d;
     };
@@ -978,8 +1058,7 @@ export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = nu
       onInvoice: (n) => { byOp.set(n.operation, shown(n)); },
       onEnd: (x, final) => {
         const d = byOp.get(x.operation) || first;
-        if (final === 'Claimed') depositRowOnce(storage, federationId, d);
-        if (final === 'Claimed' || final === 'Expired' || final === 'Failure') pendingDrop(storage, federationId, x.operation);
+        depositEnded(storage, federationId, x.operation, final, d);
         said(d, final); if (final === 'Claimed' && !settled) { settled = true; settle(d); }
       } });
     return first;
@@ -994,23 +1073,67 @@ export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = nu
     watch: (fn) => { watchers.push(fn); },
     close: (why) => fail(new Error(why || 'the deposit was closed: nothing was paid')) };
 }
-// DEPOSITS NOT YET ENDED, per federation (arena.deposit.pending.<fed>): every invoice made, until its receive ends.
+// DEPOSITS NOT YET ENDED (arena.deposit.pending.<fed>.<operation>): every invoice made, until its receive ends.
+// ONE KEY PER DEPOSIT (kanban #1179, the 2026-11-06 state-machine audit): the list was one key per federation, read, changed and written back,
+// and two tabs on two phrases depositing in one federation share the browser's storage: a write of one tab could drop the other's entry,
+// and its deposit was never resumed - nor held its wallet against tidyStorage. Now each deposit is its own key, a one-entry list, written
+// once and removed once, so no tab ever writes another's. The list a page before this kept (arena.deposit.pending.<fed>) is still read,
+// and an entry of it leaves it only when its deposit ends.
+//   pending --(its receive ends: Claimed, the history row written first)--> gone
+//   pending --(Expired | Failure)--> gone
 const PENDING_PREFIX = 'arena.deposit.pending.';
+export const DEPOSIT_STATE = Object.freeze({ PENDING: 'pending', CLAIMED: 'Claimed', EXPIRED: 'Expired', FAILED: 'Failure' });
+const pendingOpKey = (federationId, operation) => `${PENDING_PREFIX}${fedHexOf(federationId)}.${String(operation)}`;
+const readList = (raw) => { const l = raw ? JSON.parse(raw) : []; return Array.isArray(l) ? l : [l]; };
 export function pendingDeposits(storage, federationId) {
-  try { const raw = storage && storage.getItem(PENDING_PREFIX + fedHexOf(federationId)); const l = raw ? JSON.parse(raw) : []; return Array.isArray(l) ? l : []; }
-  catch { return []; }
+  if (!storage || !fedHexOf(federationId)) return [];
+  const base = PENDING_PREFIX + fedHexOf(federationId), byOp = new Map();
+  try { for (const p of readList(storage.getItem(base))) if (p && p.operation) byOp.set(String(p.operation), p); } catch { /* unreadable: the keys below still count */ }
+  for (const k of storageKeys(storage)) {
+    if (!k.startsWith(`${base}.`)) continue;
+    try { for (const p of readList(storage.getItem(k))) if (p && p.operation) byOp.set(String(p.operation), p); } catch { /* that one unreadable */ }
+  }
+  return [...byOp.values()];
 }
-function pendingWrite(storage, federationId, list) {
-  try { if (list.length) storage.setItem(PENDING_PREFIX + fedHexOf(federationId), JSON.stringify(list)); else storage.removeItem(PENDING_PREFIX + fedHexOf(federationId)); }
-  catch { /* a tab that cannot write keeps no note; the money is not touched */ }
-}
+const phraseOfSeed = (seed) => (seed instanceof Uint8Array && seed.length ? toHex(seed).slice(0, 16) : (typeof seed === 'string' && /^[0-9a-f]{16,}$/i.test(seed) ? seed.slice(0, 16).toLowerCase() : null));
 function pendingAdd(storage, federationId, p) {
-  if (!storage || !fedHexOf(federationId)) return;
-  pendingWrite(storage, federationId, [...pendingDeposits(storage, federationId).filter((x) => x.operation !== p.operation), { atMs: Date.now(), ...p }]);
+  if (!storage || !fedHexOf(federationId) || !p || !p.operation) return;
+  // A STORE THAT CANNOT LIST ITS KEYS keeps the one list, as before
+  if (typeof storage.key !== 'function') {
+    try { storage.setItem(PENDING_PREFIX + fedHexOf(federationId), JSON.stringify([...pendingDeposits(storage, federationId).filter((x) => x.operation !== p.operation), { atMs: Date.now(), ...p }])); } catch { /* not kept */ }
+    return;
+  }
+  try { storage.setItem(pendingOpKey(federationId, p.operation), JSON.stringify([{ atMs: Date.now(), ...p }])); }
+  catch { /* a tab that cannot write keeps no note; the money is not touched */ }
 }
 function pendingDrop(storage, federationId, operation) {
   if (!storage || !fedHexOf(federationId)) return;
-  pendingWrite(storage, federationId, pendingDeposits(storage, federationId).filter((x) => x.operation !== operation));
+  try { storage.removeItem(pendingOpKey(federationId, operation)); } catch { /* kept */ }
+  // AN ENTRY OF THE OLD LIST: that list only ever loses the one entry that ended
+  const base = PENDING_PREFIX + fedHexOf(federationId);
+  try {
+    const raw = storage.getItem(base);
+    if (raw === null) return;
+    const left = readList(raw).filter((x) => x && String(x.operation) !== String(operation));
+    if (left.length) storage.setItem(base, JSON.stringify(left)); else storage.removeItem(base);
+  } catch { /* kept as it was */ }
+}
+/**
+ * A DEPOSIT'S RECEIVE ENDED: THE ONE TRANSITION (kanban #1179). Claimed writes its history row before the entry goes, so a page closed between the two
+ * keeps the entry and its next resume finds the row there and writes no second; any final state removes the entry, and anything else leaves it. `d`
+ * { invoice, amountMsat }, or { operation, amountMsat } for a deposit found at the federation without its invoice. Answers whether a new row was written.
+ */
+export function depositEnded(storage, federationId, operation, final, d) {
+  let added = false;
+  if (final === DEPOSIT_STATE.CLAIMED) added = depositRowOnce(storage, federationId, d);
+  if (final === DEPOSIT_STATE.CLAIMED || final === DEPOSIT_STATE.EXPIRED || final === DEPOSIT_STATE.FAILED) pendingDrop(storage, federationId, operation);
+  return added;
+}
+/** THE WELCOME THAT CAME AS E-CASH (kanban #1381): one deposit row per e-cash string, however many pages received it. */
+export function faucetEcashRowOnce(storage, federationId, { ecash, msat }) {
+  if (!storage || !fedHexOf(federationId) || !ecash) return false;
+  const id = `dep-faucet-${toHex(taggedHash('arena/faucet/ecash/v1', new TextEncoder().encode(String(ecash)))).slice(0, 32)}`;
+  return ledgerAppend(storage, federationId, { kind: 'deposit', msat: String(msat), invoiceHash: null, faucet: true }, id);
 }
 /** One history row per paid invoice, however many pages saw it claimed. */
 function depositRowOnce(storage, federationId, d) {
@@ -1018,8 +1141,9 @@ function depositRowOnce(storage, federationId, d) {
   let invoiceHash = null;
   try { invoiceHash = toHex(decodeBolt11(d.invoice).paymentHash); } catch { invoiceHash = null; }
   if (invoiceHash && ledgerRows(storage, federationId).some((r) => r.kind === 'deposit' && r.invoiceHash === invoiceHash)) return false;
-  ledgerAppend(storage, federationId, { kind: 'deposit', msat: String(d.amountMsat), invoiceHash });
-  return true;
+  // ITS ROW'S KEY IS THE INVOICE'S (kanban #1179), or the operation's for a deposit found without its invoice: two tabs that see one claim write one key
+  const id = invoiceHash ? `dep-${invoiceHash}` : d.operation ? `dep-op-${String(d.operation).toLowerCase()}` : null;
+  return ledgerAppend(storage, federationId, { kind: 'deposit', msat: String(d.amountMsat), invoiceHash }, id);
 }
 /**
  * THE DEPOSITS AN EARLIER PAGE LEFT (2026-09-30: a reload of the deposit page lands on the lobby, and a payment
@@ -1029,8 +1153,7 @@ function depositRowOnce(storage, federationId, d) {
 export function resumeDeposits({ client, storage, federationId, onClaimed = () => {}, others = async () => [], onLost = () => {} } = {}) {
   const d0 = (p) => ({ invoice: p.invoice, amountMsat: BigInt(p.msat) });
   const ended = (p, final, from = null) => {
-    if (final === 'Claimed' && depositRowOnce(storage, federationId, d0(p))) onClaimed({ ...d0(p), ...(from ? { from } : {}) });
-    pendingDrop(storage, federationId, p.operation);
+    if (depositEnded(storage, federationId, p.operation, final, d0(p))) onClaimed({ ...d0(p), ...(from ? { from } : {}) });
     return from ? `${final} (in wallet ${from.label})` : final;
   };
   return Promise.all(pendingDeposits(storage, federationId).map((p) => client.awaitReceive(p.operation).then((final) => ended(p, final),
@@ -1042,7 +1165,9 @@ export function resumeDeposits({ client, storage, federationId, onClaimed = () =
       if (/operation not found/i.test(why)) {
         let alts = []; try { alts = (await others()) || []; } catch { alts = []; }
         for (const o of alts) {
-          try { return ended(p, await o.client.awaitReceive(p.operation), o); } catch { /* not that wallet's either */ }
+          // A CLAIM LEFT TO THAT PHRASE'S OWN TAB (kanban #1285): the wallet holds the operation and its claim did not end while its phrase was held here -
+          // not lost; the entry stays
+          try { return ended(p, await o.client.awaitReceive(p.operation), o); } catch (e2) { if (e2 && e2.stillWaiting) return `waiting (in wallet ${o.label}: ${String(e2.message).slice(0, 120)})`; }
         }
       }
       // THE REASON A RESUME COULD NOT BE READ, said (17:4xZ: it printed only "unknown"); the entry stays, so the next page tries again
@@ -1055,36 +1180,48 @@ export function resumeDeposits({ client, storage, federationId, onClaimed = () =
  * federation's incoming contracts are read from the start and each is tried against this wallet's key: only a deposit really paid has one, so what this credits is
  * what arrived, and `lost` - invoices that may never have been paid - is dropped once the whole stream was read. The federation holds a read at the stream's end: `timeoutMs` ends it.
  */
-export async function scanLostDeposits({ client, storage, federationId, lost = [], onClaimed = () => {}, timeoutMs = 15000 } = {}) {
+// `phrase16`: the scanning wallet's phrase; `dropUnnamed`: an entry that names no phrase may go (the browser keeps one phrase only) - kanban #1233
+export async function scanLostDeposits({ client, storage, federationId, lost = [], onClaimed = () => {}, timeoutMs = 15000, phrase16 = null, dropUnnamed = true } = {}) {
   if (typeof client.scanDeposits !== 'function') return { read: false, msat: 0n, found: 0 };
   let next = '0', done = false, msat = 0n, foundN = 0;
   const waits = [];
+  const unresolved = new Set();
   while (!done) {
     let got;
     try { got = JSON.parse(await withinMs(client.scanDeposits(next), timeoutMs, 'the federation held the read')); }
-    catch { if (next === '0') return { read: false, msat: 0n, found: 0 }; break; }
-    next = got.next; done = got.done;
+    catch { break; }
+    next = got.next; done = !!got.done;
     for (const f of got.found) {
       foundN++;
       // BOUNDED, ONE BY ONE (kanban #883, the owner's iPhone: one wait that never ended held the whole scan, so its "done" never came and unpaid invoices stayed in the red line)
-      pendingDrop(storage, federationId, f.operation);
+      // AND ITS ENTRY GOES WHEN ITS RECEIVE ENDS, not before it (kanban #1179): a page closed meanwhile resumes it
       waits.push(withinMs(client.awaitReceive(f.operation), 60000, 'the claim did not end').then((final) => {
-        if (final !== 'Claimed') return;
+        if (!depositEnded(storage, federationId, f.operation, final, { operation: f.operation, amountMsat: BigInt(f.msat) })) return;
         msat += BigInt(f.msat);
-        ledgerAppend(storage, federationId, { kind: 'deposit', msat: String(f.msat), invoiceHash: null });
         onClaimed({ amountMsat: BigInt(f.msat), operation: f.operation });
-      }, () => {}));
+      }, () => { unresolved.add(String(f.operation)); }));
     }
   }
   await Promise.all(waits);
-  for (const p of lost) pendingDrop(storage, federationId, p.operation);
-  return { read: true, msat, found: foundN };
+  // THE INVOICES THAT MAY NEVER HAVE BEEN PAID GO ONLY AFTER A WHOLE READ (kanban #1179): before, a read that failed after its first page still dropped every
+  // one of them, and a paid one past that page was never looked for again. `read` is false then, and the next page reads again
+  if (!done) return { read: false, partial: next !== '0', msat, found: foundN };
+  // ONLY WHAT THIS SCAN COULD HAVE FOUND (kanban #1233, audit 3 #1210 FIXES-4): the stream is read with this wallet's key, so another phrase's paid
+  // deposit is never found here - its entry stays for its own phrase's scan; and an entry whose claim was found but did not end stays too
+  const mine = phrase16 ? String(phrase16).toLowerCase() : null;
+  let kept = 0;
+  for (const p of lost) {
+    const ours = p.phrase16 ? (mine !== null && String(p.phrase16).toLowerCase() === mine) : dropUnnamed;
+    if (!ours || unresolved.has(String(p.operation))) { kept++; continue; }
+    pendingDrop(storage, federationId, p.operation);
+  }
+  return { read: true, msat, found: foundN, kept };
 }
 /** A deposit into the player wallet from Settings: the same tabs, this round's stake, no round to fund. */
 export async function settingsDepositOffer({ round, invite, seed, LockClient, storage, gateways = [], donationMsat = 0n, donationRecipients = null, onDeposit = () => {}, onClaimed = () => {} } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
   const locks = await locksFor(round, client, donationMsat, donationRecipients);
-  const offer = depositOffer({ client, stakeMsat: stakeOf(round), haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit,
+  const offer = depositOffer({ phrase16: phraseOfSeed(typeof seed !== 'undefined' ? seed : null), client, stakeMsat: stakeOf(round), haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit,
     storage, federationId: round.federationId, sizeOf: (n) => roundsDepositMsat(n, locks, LockClient) });
   offer.claimed.then((d) => { depositRow(storage, round, d); onClaimed(d); offer.decided({ funded: true }); }, () => {});
   return offer;
@@ -1101,7 +1238,7 @@ export const walletDepositChoices = () => [...WALLET_DEPOSIT_SATS.map((sat) => (
 export async function walletDepositOffer({ federationId, invite, seed, LockClient, storage, gateways = [], onDeposit = () => {}, onClaimed = () => {} } = {}) {
   if (federationId && !takesDeposits(federationId)) throw new Error('this federation takes no new deposits');   // before a wallet is opened in it (kanban #807)
   const client = await openPlayerWallet({ federationId, invite, seed, LockClient, storage });
-  const offer = depositOffer({ client, stakeMsat: 0n, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit, storage, federationId,
+  const offer = depositOffer({ phrase16: phraseOfSeed(typeof seed !== 'undefined' ? seed : null), client, stakeMsat: 0n, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit, storage, federationId,
     choices: walletDepositChoices() });
   offer.claimed.then((d) => { depositRowOnce(storage, federationId, d); onClaimed(d); offer.decided({ funded: true }); }, () => {});
   offer.client = client;   // the page keeps it with its other wallets: summed, and its pending deposits waited on (2026-10-20)
@@ -1112,11 +1249,14 @@ export async function walletDepositOffer({ federationId, invite, seed, LockClien
  * hash of the seed, so the faucet can pay a welcome once and learns no key. Throws naming why it gave nothing.
  */
 // THE TOP-UP IS 300 (kanban #1088, the owner 2026-11-03: "Get 300 sats, aus dem faucet. Im deposit auch 300. Bis zu 5x faucet am Tag"): the faucet pays it up to 5 times a day per account
-export const FAUCET_GRANTS = Object.freeze({ welcome: { sats: 500, invoiceMsat: 500000n }, topup: { sats: 300, invoiceMsat: 300000n } });
+export const FAUCET_GRANTS = Object.freeze({ welcome: { sats: 3000, invoiceMsat: 3000000n }, topup: { sats: 300, invoiceMsat: 300000n } });
 export const faucetAccountOf = (seed) => toHex(taggedHash('arena/faucet/account/v1', seed instanceof Uint8Array ? seed : fromHex(String(seed))));
-export async function askFaucet({ url, kind, invoice, seed, fetcher = fetch } = {}) {
-  const r = await fetcher(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind, account: faucetAccountOf(seed), invoice }), signal: AbortSignal.timeout(45000) });
+// `ecash` (kanban #1381): the federation id in hex - the welcome comes as ready e-cash of that federation when the faucet holds some ({ ok, sats, ecash });
+// without an invoice and none ready, the answer is `noEcash` and nothing is given (the page then asks again with an invoice)
+export async function askFaucet({ url, kind, invoice, seed, ecash, fetcher = fetch } = {}) {
+  const r = await fetcher(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind, account: faucetAccountOf(seed), invoice, ...(ecash ? { ecash } : {}) }), signal: AbortSignal.timeout(45000) });
   const j = await r.json().catch(() => ({ ok: false, why: `the faucet answered ${r.status}` }));
+  if (!j.ok && j.noEcash) return j;
   if (!j.ok) throw new Error(j.why || 'the faucet gave nothing');
   return j;
 }
@@ -1197,7 +1337,7 @@ export async function earlyDepositOffer({ round, invite, seed, LockClient, stora
   const issuing = await issuingMsat(client);
   if (have + issuing >= stakeOf(round)) return null;
   onStep(`the player wallet holds ${have} msat, less than this round's stake of ${stakeOf(round)} msat: a deposit is asked at once`);
-  return depositOffer({ client, stakeMsat: stakeOf(round), haveMsat: have, needMsat: null, gateways, onDeposit, storage, federationId: round.federationId });
+  return depositOffer({ phrase16: phraseOfSeed(typeof seed !== 'undefined' ? seed : null), client, stakeMsat: stakeOf(round), haveMsat: have, needMsat: null, gateways, onDeposit, storage, federationId: round.federationId });
 }
 
 export async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n, donationRecipients = null, gateways = [],
@@ -1235,7 +1375,7 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
       // while the round's other steps ran - that offer is this one; it is waited for, not made or asked again
       const adopt = !prev && early && !early.adopted && restMsat === null;
       if (adopt) early.adopted = true;
-      const offer = adopt ? early : depositOffer({ client, stakeMsat: stakeOf(round), haveMsat: have, needMsat: n.need, gateways, onDeposit,
+      const offer = adopt ? early : depositOffer({ phrase16: phraseOfSeed(typeof seed !== 'undefined' ? seed : null), client, stakeMsat: stakeOf(round), haveMsat: have, needMsat: n.need, gateways, onDeposit,
         storage, federationId: round.federationId, restMsat, sizeOf: (k) => roundsDepositMsat(k, locks, LockClient) });
       if (adopt) { /* already on the screen */ } else if (prev) prev.decided({ funded: false, rest: offer }); else askDeposit(offer);
       onStep(restMsat === null ? 'waiting for the deposit into the player wallet' : `waiting for the rest of this round's fees: ${restMsat} msat`);
@@ -1348,8 +1488,13 @@ export function donationOutputsFromClient(said, shares) {
  * the top-up is `fundPlayerWallet`, before. Returns the outpoint and the contract (`lockFromClient`), the client that
  * holds it, and the wallet's balance before and after.
  */
-export async function lockStake({ round, roundId, invite, seed, stake, claimKey, playerPubkey, LockClient,
-  storage, donationMsat = 0n, donationRecipients = null, onStep = () => {} } = {}) {
+export async function lockStake(ask = {}) {
+  // `keep`: the page's join (kanban #1162) - the lock is written ahead, kept and stepped as one record (keptLockStake); a caller that keeps its
+  // own (a bot, a tool) leaves it out, and nothing changes for it
+  return ask.keep ? keptLockStake(ask) : lockStakeNow(ask);
+}
+async function lockStakeNow({ round, roundId, invite, seed, stake, claimKey, playerPubkey, LockClient,
+  storage, donationMsat = 0n, donationRecipients = null, onStep = () => {}, onSubmitted = () => {} } = {}) {
   paysIntoALock(round, invite, LockClient);
   if (!stake || namesNothing(stake.stakePoint)) throw new Error('a lock is to the stake\'s point, and this stake names none');
   if (!claimKey || !claimKey.ok || namesNothing(claimKey.claimPk))
@@ -1388,6 +1533,7 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
     const submitted = JSON.parse(await client.lockSubmit(toHex(stake.stakePoint), String(amount), image ? toHex(image) : '',
       String(feeGate.pays ? feeMsat : 0n), toHex(claimKey.claimPk), toHex(refundPk), delta,
       JSON.stringify(donationShares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat), image: toHex(playerPubkey) })))));
+    onSubmitted(submitted);
     // WHERE THE LOCK'S TIME WENT, AS THE LOCK CLIENT MEASURED IT (kanban #623: a browser lock 0.3-2.7 s, a bot's 60-160 ms on the same
     // federation): the block count (kept or read), building the outputs, finalizing and submitting, the mint outputs' wait, the store
     if (submitted.timing) console.log('[arena] TIMED lock inside: ' + JSON.stringify(submitted.timing));
@@ -1502,10 +1648,28 @@ const LEDGER_PREFIX = 'arena.ledger.';
 const LEDGER_READ_PREFIX = 'arena.ledger.read.';
 const fedHexOf = (f) => (f instanceof Uint8Array ? toHex(f) : String(f || '')).toLowerCase();
 export const ledgerKey = (federationId) => `${LEDGER_PREFIX}${fedHexOf(federationId)}`;
-/** This federation's rows, oldest first, as kept. */
+/**
+ * ONE KEY PER ROW (kanban #1179, the 2026-11-06 state-machine audit): the history was one list per federation, read, appended to and written back, and the
+ * tabs of a browser share it: two tabs appending at once kept one row of the two. Now a row is its own key, arena.ledger.<fed>.<id>, a one-row list written
+ * once; a row two tabs may both write (a deposit's, by its invoice) has a key of its own content, so it is one row. The list a page before this kept,
+ * arena.ledger.<fed>, is read first and still written by nobody but an older page.
+ */
+const LEDGER_ROW_RE = /^arena\.ledger\.([0-9a-f]{64})(?:\.([0-9a-z_-]+))?$/i;
+/** The federation (hex) a history key belongs to, the list or one row of it; null for any other key. */
+export const ledgerFedOfKey = (k) => { const m = LEDGER_ROW_RE.exec(String(k || '')); return m ? m[1].toLowerCase() : null; };
+/** This federation's rows, oldest first, as kept: the old list as it was, then each row of its own key by its time. */
 export function ledgerRows(storage, federationId) {
-  try { const raw = storage && storage.getItem(ledgerKey(federationId)); const rows = raw ? JSON.parse(raw) : []; return Array.isArray(rows) ? rows : []; }
-  catch { return []; }
+  if (!storage) return [];
+  const base = ledgerKey(federationId);
+  let rows = [];
+  try { const raw = storage.getItem(base); const l = raw ? JSON.parse(raw) : []; rows = Array.isArray(l) ? l : []; } catch { rows = []; }
+  const own = [];
+  for (const k of storageKeys(storage)) {
+    if (!k.startsWith(`${base}.`) || !LEDGER_ROW_RE.test(k)) continue;
+    try { const l = JSON.parse(storage.getItem(k)); for (const r of Array.isArray(l) ? l : [l]) if (r) own.push({ k, r }); } catch { /* that row unreadable */ }
+  }
+  own.sort((a, b) => (Number(a.r.atMs) || 0) - (Number(b.r.atMs) || 0) || (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
+  return [...rows, ...own.map((x) => x.r)];
 }
 /**
  * WHAT THE WALLET HISTORY DRAWS (2026-10-04 15:45: "One line: Stake round xxx -100 sat. The 100 is the
@@ -1528,13 +1692,26 @@ export function ledgerHistory(rows) {
   }
   return out;
 }
-function ledgerAppend(storage, federationId, row) {
-  if (!storage || !fedHexOf(federationId)) return;
+let ledgerSeq = 0;
+const ledgerRowId = () => {
+  const r = new Uint8Array(6);
+  try { globalThis.crypto.getRandomValues(r); } catch { for (let i = 0; i < r.length; i++) r[i] = Math.floor(Math.random() * 256); }
+  ledgerSeq = (ledgerSeq + 1) % 1296;
+  return `${Date.now().toString(36)}-${ledgerSeq.toString(36).padStart(2, '0')}${toHex(r)}`;
+};
+/** One row, under its own key: `id` names it (a key of the row's content, written once by whoever writes it first), else a fresh one. Answers whether it was written. */
+function ledgerAppend(storage, federationId, row, id = null) {
+  if (!storage || !fedHexOf(federationId)) return false;
+  // A STORE THAT CANNOT LIST ITS KEYS could not read a row of its own key back: the one list, as before
+  if (typeof storage.key !== 'function') {
+    try { const rows = ledgerRows(storage, federationId); rows.push({ atMs: Date.now(), ...row }); storage.setItem(ledgerKey(federationId), JSON.stringify(rows)); return true; } catch { return false; }
+  }
+  const key = `${ledgerKey(federationId)}.${id ? String(id).toLowerCase().replace(/[^0-9a-z_-]/g, '') : ledgerRowId()}`;
   try {
-    const rows = ledgerRows(storage, federationId);
-    rows.push({ atMs: Date.now(), ...row });
-    storage.setItem(ledgerKey(federationId), JSON.stringify(rows));
-  } catch { /* a tab that cannot write keeps no history; the money is not touched */ }
+    if (id && storage.getItem(key) !== null) return false;
+    storage.setItem(key, JSON.stringify([{ atMs: Date.now(), ...row }]));
+    return true;
+  } catch { return false; /* a tab that cannot write keeps no history; the money is not touched */ }
 }
 const storageKeys = (storage) => {
   const out = [];
@@ -1558,30 +1735,151 @@ export function ledgerReadSavedStakes(storage, federationId) {
     const m = /^arena\.lock\.saved\.([0-9a-f]{64})\.([0-9a-f]{16})$/.exec(k);
     if (!m || rows.some((r) => r.kind === 'stake' && r.round === m[1] && r.player === m[2])) continue;
     let j; try { j = JSON.parse(storage.getItem(k)); } catch { continue; }
-    rows.push({ atMs: null, kind: 'stake', round: m[1], player: m[2], entry: j.committedTo || null, msat: String(lockTotalMsat(j)), read: true });
-    added++;
+    // EACH ITS OWN ROW (kanban #1179), keyed by its round and player: two tabs reading at once write one
+    if (ledgerAppend(storage, federationId, { atMs: null, kind: 'stake', round: m[1], player: m[2], entry: j.committedTo || null, msat: String(lockTotalMsat(j)), read: true }, `read-${m[1]}-${m[2]}`)) added++;
   }
-  try { storage.setItem(ledgerKey(federationId), JSON.stringify(rows)); storage.setItem(flag, String(Date.now())); } catch { return 0; }
+  try { storage.setItem(flag, String(Date.now())); } catch { return 0; }
   return added;
 }
 
 const savedLockKey = (roundId, playerPubkey) => `arena.lock.saved.${toHex(roundId)}.${toHex(playerPubkey).slice(0, 16)}`;
+const lockIntentKey = (roundId, playerPubkey) => `arena.lock.intent.${toHex(roundId)}.${toHex(playerPubkey).slice(0, 16)}`;
+
+/**
+ * ONE STAKE LOCK, ONE RECORD, ONE TRANSITION FUNCTION (kanban #1162, the 2026-11-06 state-machine audit). The lock was made first and kept
+ * after, with a raw write: a full browser (QuotaExceededError, #616) or a tab closed between the two left a lock no record names, the join
+ * refused, and the next PLAY locked the same round again; a lock the guardians refused was kept anyway and reused on every reload; and the
+ * entry it was named in lived only in memory, so a reload reused it under a new entry the seats that took the first refuse.
+ *   none --(the intent written, room taken: nothing spent before it)--> intent --(lockSubmit answered)--> submitted
+ *   submitted --(the guardians accept it, or a reload reads it stored: lockStatus)--> accepted --(needed seats took it)--> committed
+ *   submitted --(a reload reads it stored nowhere, `tries` times)--> refused --(a new PLAY)--> intent
+ *   intent --(a lock client that answers only once accepted)--> accepted;  intent --(a new PLAY over one that failed)--> intent
+ * Only an accepted or committed lock is reused; a submitted one is read first (keptLockUse 'check', reconcileKeptLock). The entry a lock is
+ * named in is written before that entry goes out (bindLockEntry), once; committed is final.
+ */
+export const LOCK_RECORD_STATES = Object.freeze({ NONE: 'none', INTENT: 'intent', SUBMITTED: 'submitted', ACCEPTED: 'accepted', REFUSED: 'refused', COMMITTED: 'committed' });
+const LOCK_RECORD_EDGES = Object.freeze({ none: ['intent'], intent: ['intent', 'submitted', 'accepted'], submitted: ['accepted', 'refused', 'committed'],
+  accepted: ['committed'], refused: ['intent'], committed: [] });
+/** THE ONE TRANSITION: a record's state `from` to `to`. Throws for a step a lock does not take. */
+export function lockRecordStep(from, to) {
+  const f = from || 'none';
+  if (!(LOCK_RECORD_EDGES[f] || []).includes(to)) throw new Error(`a stake lock goes ${f} -> ${(LOCK_RECORD_EDGES[f] || []).join(' | ') || 'nothing (final)'}, not -> ${to}`);
+  return to;
+}
+/** A kept record's state. A record kept before #1162 names none: committed when it names its entry, else submitted - read before it is reused. */
+const lockStateOf = (j) => (j && j.state && j.state !== 'none' && LOCK_RECORD_EDGES[j.state] ? j.state : j && j.committedTo ? 'committed' : 'submitted');
+const readJson = (storage, key) => { try { const raw = storage.getItem(key); return raw ? JSON.parse(raw) : null; } catch { return null; } };
+/** WHERE A ROUND'S LOCK STANDS FOR THIS PLAYER: the kept record (its state), else the intent, else none. */
+export function lockRecordOf(storage, { roundId, playerPubkey }) {
+  const saved = storage ? readJson(storage, savedLockKey(roundId, playerPubkey)) : null;
+  if (saved) return { state: lockStateOf(saved), record: saved, key: savedLockKey(roundId, playerPubkey) };
+  const intent = storage ? readJson(storage, lockIntentKey(roundId, playerPubkey)) : null;
+  if (intent) return { state: 'intent', record: intent, key: lockIntentKey(roundId, playerPubkey) };
+  return { state: 'none', record: null, key: null };
+}
+// the state written: compare-and-set on what is kept now, never on what a caller read earlier
+function stepLockRecord(storage, who, to, patch = {}, { expect = null } = {}) {
+  const now = lockRecordOf(storage, who);
+  if (expect && !expect.includes(now.state)) throw new Error(`the stake lock is ${now.state} here, not ${expect.join(' or ')}`);
+  lockRecordStep(now.state, to);
+  const next = { ...(now.record || {}), ...patch, state: to, stateMs: Date.now() };
+  putRoomy(storage, savedLockKey(who.roundId, who.playerPubkey), JSON.stringify(next));
+  return next;
+}
+
+/** An intent younger than this is another tab still asking its lock client; an older one that did not fail is a tab that closed meanwhile. */
+export const LOCK_INTENT_LIVE_MS = 120000;
+// what a kept record needs beyond its intent's stake: outpoints, the contract's fields, the fee lock, a few donation outputs
+const LOCK_RECORD_ROOM = 2400;
+// one tab at a time, never waited for: a lock another tab (or a lock client of this one that never answered) holds refuses this PLAY by name
+const exclusively = (name, fn) => {
+  const locks = typeof navigator !== 'undefined' && navigator ? navigator.locks : null;
+  if (!locks || typeof locks.request !== 'function') return fn();
+  return locks.request(name, { ifAvailable: true }, (held) => (held ? fn()
+    : Promise.reject(new Error('another tab is locking this round\'s stake for this player right now: no second lock is made'))));
+};
+
+/**
+ * THE PAGE'S LOCK, WRITTEN AHEAD (kanban #1162): one navigator lock per round and player around the steps; the intent (the stake, the net
+ * amount, the refund key) written with room taken BEFORE the lock client is asked, so a browser too full to keep it spends nothing; the
+ * submitted transaction's id written into it the moment it is answered; then the record (saveLock) and the acceptance stepped behind. A lock
+ * made that then cannot be kept is still handed back (the entry goes out and names it), said in `kept` - never a refused join.
+ */
+async function keptLockStake(ask) {
+  const { storage, roundId, playerPubkey, stake, federationId = null } = ask;
+  if (!storage || !(roundId instanceof Uint8Array) || !(playerPubkey instanceof Uint8Array)) return lockStakeNow(ask);
+  const who = { roundId, playerPubkey };
+  const tag = `${toHex(roundId)}.${toHex(playerPubkey).slice(0, 16)}`;
+  return exclusively(`arena.lock.${tag}`, async () => {
+    const now = lockRecordOf(storage, who);
+    if (['submitted', 'accepted', 'committed'].includes(now.state))
+      throw new Error(`no second lock is made for this round: this player's stake lock for it is already ${now.state}`);
+    const iKey = lockIntentKey(roundId, playerPubkey);
+    if (now.state === 'intent') {
+      const r = now.record;
+      if (!r.failed && Date.now() - Number(r.atMs || 0) < LOCK_INTENT_LIVE_MS)
+        throw new Error('another tab is locking this round\'s stake for this player right now: no second lock is made');
+      // a tab closed while its lock client was asked: the transaction it names (if any) may hold the stake - kept aside, never written over
+      if (!r.failed) {
+        try { putRoomy(storage, `arena.lock.orphan.${tag}.${Number(r.atMs || 0)}`, JSON.stringify(r)); } catch { /* the next intent is refused for room below */ }
+        console.warn(`[arena] #1162 an earlier stake lock for this round did not finish (${r.txid ? `transaction ${String(r.txid).slice(0, 16)}… submitted` : 'nothing answered'}): kept as arena.lock.orphan.${tag}.*`);
+      }
+    }
+    lockRecordStep(now.state, 'intent');
+    // ROOM FIRST: the intent holds the record's room (`room`, given back when the record takes its place), so the record written after it
+    // fits where it was; refused here, nothing is spent
+    putRoomy(storage, iKey, JSON.stringify({ v: 2, state: 'intent', atMs: Date.now(), preimage: toHex(stake.preimage), body: toHex(stake.body || new Uint8Array(0)),
+      amountMsat: String(lockAmountMsat(ask.round, ask.donationMsat || 0n)), refundPk: toHex(refundKeyOf(playerPubkey)), txid: null, room: '-'.repeat(LOCK_RECORD_ROOM) }));
+    let made;
+    try {
+      made = await lockStakeNow({ ...ask, onSubmitted: (sub) => {
+        // the transaction's id the moment it is answered, before anything else can happen to the tab (written into the intent's own room)
+        try { const r = readJson(storage, iKey) || {}; storage.setItem(iKey, JSON.stringify({ ...r, room: '-'.repeat(LOCK_RECORD_ROOM - 200), txid: String((sub && sub.txid) || ''), operation: String((sub && sub.operation) || '') })); } catch { /* the intent without it */ }
+      } });
+    } catch (e) {
+      // nothing submitted: the intent failed, and the next PLAY writes over it; submitted and then refused by this page: it stays, for the collect
+      const r = readJson(storage, iKey);
+      if (r && !r.txid) { try { storage.setItem(iKey, JSON.stringify({ ...r, failed: String((e && e.message) || e).slice(0, 200) })); } catch { storage.removeItem(iKey); } }
+      throw e;
+    }
+    let kept = true;
+    // the intent gives its room to the record; a record still refused puts the intent (its transaction named) back where it was
+    const intentNow = storage.getItem(iKey);
+    storage.removeItem(iKey);
+    try {
+      saveLock(storage, { ...who, stake, lock: made, federationId, state: made.accepted ? 'submitted' : 'accepted' });
+    } catch (e) {
+      kept = false;
+      try { if (intentNow) storage.setItem(iKey, intentNow); } catch { /* nothing left to write it to */ }
+      console.error(`[arena] #1162 the stake lock is made and could not be kept in this browser (${e && e.message}): the entry still names it; the intent keeps its transaction`);
+    }
+    if (made.accepted && kept) {
+      made.accepted.then(() => { try { stepLockRecord(storage, who, 'accepted', { acceptedMs: Date.now() }, { expect: ['submitted'] }); } catch { /* committed already */ } }, () => {
+        // the lock client's refusal is its word only; the record stays submitted and the next load reads the federation (reconcileKeptLock)
+      });
+    }
+    return Object.assign(made, { kept });
+  });
+}
 
 /**
  * A LOCK THIS TAB MADE, WITH THE STAKE IT LOCKS - kept so a reload before any
  * signer node has committed it uses the same stake and the same lock. The stake's
  * preimage is kept where the player's seed already is (the tab's storage), and
- * its handout as the bytes the signer nodes took.
+ * its handout as the bytes the signer nodes took. `state` (kanban #1162): submitted while the guardians' acceptance is still to come.
  */
-export function saveLock(storage, { roundId, playerPubkey, stake, lock, federationId = null }) {
+export function saveLock(storage, { roundId, playerPubkey, stake, lock, federationId = null, state = 'accepted' }) {
   const lockMsat = BigInt(lock.fields && lock.fields.amountMsat ? lock.fields.amountMsat : 0n)
     + BigInt(lock.feeLock && lock.feeLock.fields && lock.feeLock.fields.amountMsat ? lock.feeLock.fields.amountMsat : 0n);
-  if (federationId) ledgerAppend(storage, federationId, { kind: 'stake', round: toHex(roundId), player: toHex(playerPubkey).slice(0, 16),
-    entry: null, msat: String(lockMsat) });
-  storage.setItem(savedLockKey(roundId, playerPubkey), JSON.stringify({
+  const was = lockRecordOf(storage, { roundId, playerPubkey }).state;
+  // a new lock takes the place of none or of a refused one; a kept lock is never written over by another
+  lockRecordStep(was === 'none' || was === 'refused' ? 'intent' : was, state);
+  // THE RECORD FIRST, WITH ROOM (kanban #1162: a raw write the browser refused lost a lock already made); the history after it
+  putRoomy(storage, savedLockKey(roundId, playerPubkey), JSON.stringify({
+    v: 2, state, stateMs: Date.now(),
     preimage: toHex(stake.preimage), body: toHex(stake.body),
     outpoint: { txid: toHex(lock.outpoint.txid), outIdx: String(lock.outpoint.outIdx) },
-    fields: lockFieldsToJson(lock.fields), committedTo: null,
+    fields: lockFieldsToJson(lock.fields), committedTo: null, entry: null,
     // AND ITS FEE LOCK, when one was minted (Pick b): the same reload keeps it.
     feeLock: lock.feeLock ? { preimage: toHex(lock.feeLock.preimage),
       outpoint: { txid: toHex(lock.feeLock.outpoint.txid), outIdx: String(lock.feeLock.outpoint.outIdx) },
@@ -1589,12 +1887,14 @@ export function saveLock(storage, { roundId, playerPubkey, stake, lock, federati
     // AND ITS DONATION OUTPUTS (2026-10-03): the entry names them, so a reload names the same
     donations: (lock.donations || []).map((d) => ({ txid: toHex(d.txid), outIdx: String(d.outIdx), recipientPk: toHex(d.recipientPk), amountMsat: String(d.amountMsat) })),
   }));
+  if (federationId) ledgerAppend(storage, federationId, { kind: 'stake', round: toHex(roundId), player: toHex(playerPubkey).slice(0, 16),
+    entry: null, msat: String(lockMsat) });
   // THE DONATION IN THE WALLET'S HISTORY, paid with the stake
   const donated = (lock.donations || []).reduce((t, d) => t + BigInt(d.amountMsat), 0n);
   if (federationId && donated > 0n) ledgerAppend(storage, federationId, { kind: 'donation', msat: String(donated), round: toHex(roundId) });
 }
 
-/** The kept lock for this round and player, rebuilt - or null. `committedTo` names the entry a signer node committed it to. */
+/** The kept lock for this round and player, rebuilt - or null. `committedTo` names the entry a signer node committed it to; `state` where it stands. */
 export function savedLock(storage, { roundId, playerPubkey }) {
   let raw = null;
   try { raw = storage && storage.getItem(savedLockKey(roundId, playerPubkey)); } catch { return null; }
@@ -1613,10 +1913,32 @@ export function savedLock(storage, { roundId, playerPubkey }) {
         fields: lockFieldsFromJson(j.feeLock.fields) } : null,
       donations: (j.donations || []).map((d) => ({ txid: fromHex(d.txid), outIdx: BigInt(d.outIdx), recipientPk: fromHex(d.recipientPk), amountMsat: BigInt(d.amountMsat) })) },
     committedTo: j.committedTo || null,
+    state: lockStateOf(j), entry: j.entry || j.committedTo || null,
   };
 }
 
-/** A signer node committed the kept lock to `entryId`: from now on it is that entry's stake, not one to reuse. */
+/**
+ * A KEPT LOCK STILL SUBMITTED, READ WHERE THE GUARDIANS HOLD IT (kanban #1162): stored at its outpoint - accepted, and reused; stored nowhere
+ * in `tries` reads `waitMs` apart - refused, and the next PLAY locks anew (a refused lock holds nothing). A read that fails leaves it submitted
+ * and throws: a lock that may exist is neither reused nor locked over. Answers the kept lock as savedLock rebuilds it.
+ */
+export async function reconcileKeptLock(storage, { roundId, playerPubkey, client, tries = 3, waitMs = 2000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+  const who = { roundId, playerPubkey };
+  const kept = savedLock(storage, who);
+  if (!kept || kept.state !== 'submitted') return kept;
+  const txid = toHex(kept.lock.outpoint.txid), outIdx = Number(kept.lock.outpoint.outIdx);
+  for (let i = 0; i < tries; i++) {
+    if (i) await sleep(waitMs);
+    const st = JSON.parse(await client.lockStatus(txid, outIdx));
+    if (st && st.stored) {
+      stepLockRecord(storage, who, 'accepted', { acceptedMs: Date.now(), readFrom: 'lockStatus' }, { expect: ['submitted'] });
+      return savedLock(storage, who);
+    }
+  }
+  stepLockRecord(storage, who, 'refused', { refusedMs: Date.now(), readFrom: 'lockStatus' }, { expect: ['submitted'] });
+  return savedLock(storage, who);
+}
+
 /**
  * WHAT A TAB DOES WITH THE LOCK IT KEPT FOR THIS ROUND, ON A RELOAD (6d, W4 hole 1). None:
  * a new join. One no signer node committed: the same stake and lock, no second deposit (W1b).
@@ -1625,17 +1947,25 @@ export function savedLock(storage, { roundId, playerPubkey }) {
  * a second deposit for a round the player already stakes. A tab that kept the very entry the lock is committed to
  * plays it again (before the start) or resumes it (until the close); otherwise the join stops, says why, and the
  * payout and stake are still collected from the tab's kept record.
+ * BY ITS STATE (kanban #1162): refused - a new join (it holds nothing); submitted - 'check' (reconcileKeptLock) before anything else; named
+ * in an entry (bindLockEntry) - only that entry, never another.
  */
 export function keptLockUse(kept, { entry = null, beforeStart = false, beforeClose = false } = {}) {
   if (!kept) return { use: 'new' };
+  if (kept.state === 'refused') return { use: 'new', refused: true };
+  if (kept.state === 'submitted') return { use: 'check', kept };
+  let keptId = null;
+  // entryId by its own name: the bundle strips imports, and an "as" alias is undefined there (measured: 0.0.2491 refused)
+  try { keptId = entry ? toHex(entryId(entry)) : null; } catch { keptId = null; }
+  // NAMED IN AN ENTRY, NOT YET COMMITTED (kanban #1162): the seats that took that entry refuse the lock under any other ("one lock is one entry")
+  if (!kept.committedTo && kept.entry && keptId !== String(kept.entry)) return { use: 'staked', kept,
+    why: `this tab's stake in this round is already locked and named in entry ${String(kept.entry).slice(0, 16)}…: no second deposit - `
+      + 'another entry cannot use it, and its stake comes back after the window' };
   if (!kept.committedTo) return { use: 'reuse', kept };
   // UNLESS THE TAB KEPT THAT VERY ENTRY AND THE ROUND HAS NOT STARTED (measured 2026-10-03 13:58:51Z on 0.0.2490: a reload
   // 10 s into a chained join, 84 s before its round's start, refused here - the lock was committed and the kept entry and
   // session key (PAID-NIGHT-2155) were never reached). Before the start there is no run to lose: the same entry is sent
   // again, the seats take it as the one they hold, and the run is played from its start.
-  let keptId = null;
-  // entryId by its own name: the bundle strips imports, and an "as" alias is undefined there (measured: 0.0.2491 refused)
-  try { keptId = entry ? toHex(entryId(entry)) : null; } catch { keptId = null; }
   if (beforeStart && keptId && keptId === String(kept.committedTo)) return { use: 'reuse', kept, resumed: true };
   // AND AFTER THE START, UNTIL THE ROUND CLOSES (2026-10-03: "a reload after the round has started ... That run must
   // not be lost"): the same entry, lock and session key, and the run is RESUMED from what the seats hold of it (the bridge
@@ -1646,11 +1976,51 @@ export function keptLockUse(kept, { entry = null, beforeStart = false, beforeClo
       + 'no second deposit - the run cannot be resumed after a reload, and its payout and stake are collected after the window' };
 }
 
+/**
+ * THE ENTRY A KEPT LOCK IS NAMED IN, WRITTEN BEFORE THAT ENTRY GOES OUT (kanban #1162): once - the same entry again is fine, another one
+ * throws, and the entry is then not sent with it. Nothing kept (a tab that could not keep its lock): nothing to check, false.
+ */
+export function bindLockEntry(storage, { roundId, playerPubkey, entryId: eid }) {
+  const now = lockRecordOf(storage, { roundId, playerPubkey });
+  if (now.state === 'none' || now.state === 'intent') return false;
+  const id = toHex(eid);
+  const named = now.record.entry || now.record.committedTo || null;
+  if (named && named !== id) throw new Error(`this stake lock is named in entry ${named.slice(0, 16)}…, and one lock is one entry: entry ${id.slice(0, 16)}… is not sent with it`);
+  if (now.state === 'refused') throw new Error('this stake lock was refused by the guardians: no entry is sent with it');
+  if (named === id) return true;
+  putRoomy(storage, now.key, JSON.stringify({ ...now.record, entry: id }));
+  return true;
+}
+
+/**
+ * AN ENTRY NO SEAT TOOK DOES NOT HOLD THE LOCK FOR GOOD (kanban #1254, audit 3 FIXES-13): bindLockEntry names the entry before it is posted, and a post that
+ * failed (a seat 503, the round full, offline) left the lock "staked" in an entry no seat holds - a new tab, which has no copy of that entry, could never
+ * use it again. `locks` is findLock's answer for this seed in the round: when every seat asked answered and none names the kept lock under the entry,
+ * the entry is let go of (never one a seat committed to). Answers true when it was.
+ */
+export function releaseUntakenEntry(storage, { roundId, playerPubkey, locks }) {
+  const now = lockRecordOf(storage, { roundId, playerPubkey });
+  if (now.state === 'none' || now.state === 'intent' || now.record.committedTo || !now.record.entry) return false;
+  if (!locks || !(locks.asked > 0) || locks.answered !== locks.asked) return false;
+  const at = now.record.outpoint ? `${String(now.record.outpoint.txid)}:${String(now.record.outpoint.outIdx)}` : null;
+  const named = (locks || []).some((l) => String(l.entryId || '').toLowerCase() === String(now.record.entry).toLowerCase()
+    || (at && l.outpoint && `${toHex(l.outpoint.txid)}:${String(l.outpoint.outIdx)}` === at));
+  if (named) return false;
+  const { entry: _gone, ...rest } = now.record;
+  putRoomy(storage, now.key, JSON.stringify(rest));
+  return true;
+}
+
+/** A signer node committed the kept lock to `entryId`: from now on it is that entry's stake, not one to reuse. Final: never another entry. */
 export function markLockCommitted(storage, { roundId, playerPubkey, entryId }) {
-  const key = savedLockKey(roundId, playerPubkey);
-  const raw = storage.getItem(key);
-  if (!raw) return;
-  storage.setItem(key, JSON.stringify({ ...JSON.parse(raw), committedTo: toHex(entryId) }));
+  const who = { roundId, playerPubkey };
+  const now = lockRecordOf(storage, who);
+  if (now.state === 'none' || now.state === 'intent') return;
+  const id = toHex(entryId);
+  const named = now.state === 'committed' ? now.record.committedTo : now.record.entry;
+  if (named && named !== id) { console.error(`[arena] #1162 the stake lock is ${now.state === 'committed' ? 'committed to' : 'named in'} entry ${String(named).slice(0, 16)}…; a commit to ${id.slice(0, 16)}… is not written`); return; }
+  if (now.state === 'committed') return;
+  try { stepLockRecord(storage, who, 'committed', { committedTo: id, entry: id }); } catch (e) { console.error(`[arena] #1162 ${e.message}`); return; }
   // AND THE STAKE ROW NAMES ITS ENTRY, in whichever federation's history holds it
   const round = toHex(roundId), player = toHex(playerPubkey).slice(0, 16);
   for (const k of storageKeys(storage)) {
@@ -1684,21 +2054,60 @@ export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch }
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/stake-lock?round=${toHex(roundId)}&refund=${refund}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${name} ${r.status}`, got: [] };
       const got = await r.json();
-      return { said: `${name} ${got.length}`, got };
+      return { said: `${name} ${got.length}`, got, node };
     } catch (e) { return { said: `${name} ${String(e && e.message || e).slice(0, 40)}`, got: [] }; }
   }));
   const said = answers.map((a) => a.said);
   for (const { got } of answers) {
     for (const l of got) {
       const [txid, outIdx] = String(l.outpoint).split(':');
-      if (!found.has(l.outpoint))
-        found.set(l.outpoint, { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId });
+      // EVERY SEAT'S VERSION OF AN OUTPOINT, NOT ONLY THE FIRST (kanban #1273, audit 4 #1257 seats-5): one seat listed first answered the real
+      // outpoint with a field changed (or a made-up entry id), and the honest copies were dropped - the stake read "gone" for good, or waited for
+      // its expiry. Each distinct version is kept; the federation's stored contract (heldByGuardians) and the forfeit check pick the real one
+      const key = `${l.outpoint}|${JSON.stringify(l.fields)}|${String(l.entryId || '').toLowerCase()}`;
+      if (!found.has(key))
+        found.set(key, { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId });
     }
   }
   const out = [...found.values()];
   out.asked = asked.length;
   out.answered = said.filter((x) => /\s\d+$/.test(x) && !/\s[45]\d\d$/.test(x)).length;
   out.said = said;
+  // WHICH SEATS ANSWERED (kanban #1355, audit 4 fixesB-6 / CLIENT-5): a "none" counts only the round's own seats' answers
+  out.answeredBy = answers.filter((a) => a.node !== undefined).map((a) => String(a.node).replace(/\/+$/, ''));
+  return out;
+}
+
+// (kanban #1163) the stock lock's read; the 1.9 line has no Arena lock
+const lockStatusOf = (client, fields, txid, outIdx) => client.lockStatus(txid, outIdx);
+// the contract id the guardians hold at a lock's outpoint (a forfeit's message, kanban #1163), or null when no wallet can ask
+async function storedIdAt(client, l) {
+  if (!client || !l || !l.outpoint) return null;
+  try { const st = JSON.parse(await lockStatusOf(client, l.fields, toHex(l.outpoint.txid), Number(l.outpoint.outIdx))); return st && st.stored ? String(st.stored.contract_id || '') : null; } catch { return null; }
+}
+// a stock lock's contract id computed by the lock client's own code (its static outgoingContractId), when the lock client has it
+const contractIdVia = (LockClient) => (LockClient && typeof LockClient.outgoingContractId === 'function'
+  ? (f) => LockClient.outgoingContractId(JSON.stringify(lockFieldsToJson(f))) : null);
+// THE LOCKS THE GUARDIANS HOLD, OF THE ONES THE SEATS NAME (kanban #1238, audit 2 CLIENT-1): findLock is the union of every seat's answer,
+// and one seat's invented lock (its own claim key, a made-up outpoint) was forfeited in place of the real one - the stake read "owed by
+// forfeit" for good and its expiry refund was never asked. A named lock counts only when the federation holds it at its outpoint under the
+// id its fields compute (when the lock client can compute one). Without a wallet nothing can be asked: the list stands as named.
+async function heldByGuardians(client, locks, contractIdOf = null) {
+  if (!client) return [...(locks || [])];
+  const out = [];
+  for (const l of locks || []) {
+    if (!l || !l.outpoint || !l.fields) continue;
+    // a wallet with no read of a lock's status cannot be asked: the lock stands as named, as with no wallet
+    if (typeof (client.lockStatus) !== 'function') { out.push(l); continue; }
+    let st; try { st = JSON.parse(await lockStatusOf(client, l.fields, toHex(l.outpoint.txid), Number(l.outpoint.outIdx))); } catch { continue; }
+    if (!st || !st.stored) continue;
+    if (typeof contractIdOf === 'function') {
+      let c = null; try { c = String(contractIdOf(l.fields) || '').toLowerCase(); } catch { c = null; }
+      const stored = String(st.stored.contract_id || '').toLowerCase();
+      if (/^[0-9a-f]{64}$/.test(c) && /^[0-9a-f]{64}$/.test(stored) && c !== stored) continue;
+    }
+    out.push(l);
+  }
   return out;
 }
 
@@ -1720,8 +2129,13 @@ export async function refundStake({ round, roundId, invite, seed, curve, LockCli
   const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
   onStep('joining the federation');
   const client = await LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+  // ONLY THE VERSIONS THE FEDERATION HOLDS (kanban #1273): findLock keeps every seat's version of an outpoint; a changed one is not refunded
+  // (asked only when two seats named one outpoint differently: one version per outpoint is refunded as before, no status read added)
+  let held = locks;
+  const at = (l) => `${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}`;
+  if (new Set(locks.map(at)).size < locks.length) { try { const h = await heldByGuardians(client, locks, contractIdVia(LockClient)); if (h.length) held = h; } catch { held = locks; } }
   const refunds = [];
-  for (const l of locks) {
+  for (const l of held) {
     onStep('refunding the lock');
     const said = JSON.parse(await client.refund(toHex(l.outpoint.txid), Number(l.outpoint.outIdx),
       JSON.stringify(lockFieldsToJson(l.fields)), toHex(player.secret)));
@@ -1740,15 +2154,18 @@ export async function refundStake({ round, roundId, invite, seed, curve, LockCli
  */
 // `lock`: 'stake', or 'fee' - a market order's fee lock, which the seats return whole for an order the book
 // never filled and claim at resolution for one it did
-export async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch, lock = 'stake' } = {}) {
+// `check` (kanban #1163, forfeitCheck): an answer whose signature does not verify here is no forfeit - the next signer node is asked
+export async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch, lock = 'stake', check = null } = {}) {
   const refused = [];
+  const verified = async (j) => { if (typeof check !== 'function') return true; const v = await check(j); return v !== false; };
   for (const node of [...new Set(nodes || [])]) {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/forfeit?round=${toHex(roundId)}&entry=${entryId}${lock === 'fee' ? '&lock=fee' : ''}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) { refused.push(`${node}: ${r.status} ${(await r.text()).trim()}`); continue; }
       const j = await r.json();
-      if (/^[0-9a-f]{128}$/.test(String(j.signature))) return { ok: true, signature: j.signature, contractId: j.contractId, claimPk: j.claimPk, from: node };
-      refused.push(`${node}: answered no signature`);
+      if (!/^[0-9a-f]{128}$/.test(String(j.signature))) { refused.push(`${node}: answered no signature`); continue; }
+      if (!(await verified(j))) { refused.push(`${node}: its forfeit's signature does not verify`); continue; }
+      return { ok: true, signature: j.signature, contractId: j.contractId, claimPk: j.claimPk, from: node };
     } catch (e) { refused.push(`${node}: ${e.message}`); }
   }
   return { ok: false, why: `no signer node gave a forfeit of this lock: ${refused.join('; ')}`, refused };
@@ -1766,14 +2183,33 @@ export async function redeemStake({ round, roundId, invite, seed, curve, LockCli
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
   const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
   onStep('asking the signer nodes where this seed\'s lock is');
-  const locks = await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher });
-  if (!locks.length) throw new Error('no signer node knows a stake lock that refunds to this seed\'s key in this round');
+  const named = await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher });
+  if (!named.length) throw new Error('no signer node knows a stake lock that refunds to this seed\'s key in this round');
+  // EVERY NAMED LOCK'S FORFEIT FIRST, nothing asked of the lock client when none is given (a loser's page); then only the locks the federation
+  // holds are redeemed, each with its forfeit checked again against the id stored at its outpoint (kanban #1238: one seat's invented lock,
+  // listed first and forfeited by that seat, stood in for the real one and the real one's refused forfeit threw for ever)
+  const asked = [];
+  for (const l of named) {
+    onStep('asking the signer nodes for the forfeit of the lock');
+    asked.push({ lock: l, forfeit: await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher,
+      check: forfeitCheck({ curve, fields: l.fields, contractIdOf: contractIdVia(LockClient) }) }) });
+  }
+  if (!asked.some((a) => a.forfeit.ok)) throw new Error(asked[0].forfeit.why);
+  const secret = lockSecretFor(seed, roundId);
+  const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
+  // THE WALLET THE PAYOUT WAS JUST COLLECTED INTO, when there is one (6d): one client over the tab's store, not a second opened beside it
+  if (!given) onStep('joining the federation');
+  const client = given || await LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+  const cid = contractIdVia(LockClient || (client && client.constructor));
+  const locks = await heldByGuardians(client, named, cid);
+  if (!locks.length) throw new Error('the federation holds none of the locks the signer nodes name for this seed in this round');
   const forfeits = [];
   for (const l of locks) {
-    onStep('asking the signer nodes for the forfeit of the lock');
-    const f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher });
-    if (!f.ok) throw new Error(f.why);
-    forfeits.push({ lock: l, forfeit: f });
+    const a = asked.find((x) => x.lock === l);
+    if (!a.forfeit.ok) throw new Error(a.forfeit.why);
+    const check = forfeitCheck({ curve, fields: l.fields, storedId: await storedIdAt(client, l), contractIdOf: cid });
+    if (check && check(a.forfeit) === false) throw new Error('the forfeit given for this lock does not verify against the contract the federation holds at its outpoint');
+    forfeits.push({ lock: l, forfeit: a.forfeit });
   }
   // AND THE ORDER'S FEE LOCK (measured 2026-10-11 by the bots on the regtest Up/Down market: an order the book
   // never filled came back without its 1 % - 54,450 of 55,000 msat, 55,440 of 56,000 - because only stake locks were ever
@@ -1785,15 +2221,11 @@ export async function redeemStake({ round, roundId, invite, seed, curve, LockCli
   const feeEntry = locks.find((l) => l.entryId) || null;
   if (fee && feeEntry) {
     onStep('asking the signer nodes for the forfeit of the fee lock');
-    const f = await forfeitOf({ roundId, entryId: feeEntry.entryId, nodes, fetcher, lock: 'fee' });
+    const f = await forfeitOf({ roundId, entryId: feeEntry.entryId, nodes, fetcher, lock: 'fee',
+      check: forfeitCheck({ curve, fields: fee.fields, contractIdOf: contractIdVia(LockClient) }) });
     if (f.ok) forfeits.push({ lock: { outpoint: fee.outpoint, fields: fee.fields, entryId: feeEntry.entryId, fee: true }, forfeit: f });
   }
-  const secret = lockSecretFor(seed, roundId);
-  const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
-  // THE WALLET THE PAYOUT WAS JUST COLLECTED INTO, when there is one (6d): one
-  // client over the tab's store, not a second opened beside it.
-  if (!given) onStep('joining the federation');
-  const client = given || await LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+  // (the wallet the payout was just collected into, when there is one (6d): one client over the tab's store, not a second opened beside it)
   const redeems = [];
   for (const { lock: l, forfeit: f } of forfeits) {
     onStep('redeeming the lock');
@@ -1805,13 +2237,17 @@ export async function redeemStake({ round, roundId, invite, seed, curve, LockCli
 }
 
 /**
- * THE ROUND'S SETTLEMENT AS THE SIGNER NODES HOLD IT (GET /lock-settlement, W4): the first
- * signer node whose settlement the guardians ACCEPTED - its txid and what it moved. The
+ * THE ROUND'S SETTLEMENT AS THE SIGNER NODES HOLD IT (GET /lock-settlement, W4): the
+ * settlement the guardians ACCEPTED - its txid and what it moved. The
  * guardians check every payout again when it is spent, so a signer node that lies here
  * points at nothing this key can take.
+ * ONE SEAT'S WORD NEVER FINALISES IT (kanban #1163): `needed` seats must answer the same txid and the same payouts for the answer to say
+ * who is paid (`agreeing`); short of that, an answer that pays `payee` is still handed back (`short`: the federation checks it at the spend),
+ * and one that pays it nothing is no answer - a seat omitting the player made the payout "none" and the round final. When `needed` seats
+ * agree, their settlement is the answer, whatever a lone seat says.
  */
-export async function settlementOf({ roundId, nodes, fetcher = fetch } = {}) {
-  // EVERY SIGNER NODE AT ONCE (kanban #593), the first ACCEPTED in the nodes' order
+export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null } = {}) {
+  // EVERY SIGNER NODE AT ONCE (kanban #593)
   const answers = await Promise.all([...new Set(nodes || [])].map(async (node) => {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
@@ -1821,11 +2257,52 @@ export async function settlementOf({ roundId, nodes, fetcher = fetch } = {}) {
       return { said: `${node}: ${j.state}` };
     } catch (e) { return { said: `${node}: ${e.message}` }; }
   }));
-  const hit = answers.find((a) => a.ok);
-  if (hit) return hit;
-  const said = answers.map((a) => a.said);
-  return { ok: false, why: `no signer node holds an accepted settlement of this round yet (${said.join('; ')})` };
+  const accepted = answers.filter((a) => a.ok);
+  // the same settlement: its txid and its payouts in their order (an output's index is its place in the list)
+  const keyOf = (a) => `${String(a.txid).toLowerCase()}|${JSON.stringify(a.moved.payouts.map((p) => [p.kind || 'qualifier', String(p.pk).toLowerCase(), String(p.msat)]))}`;
+  const groups = new Map();
+  for (const a of accepted) { const k = keyOf(a); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
+  const ranked = [...groups.values()].sort((x, y) => y.length - x.length);
+  const need = Math.max(1, Number(needed) || 1);
+  const pays = (a) => !!payee && a.moved.payouts.some((p) => (p.kind || 'qualifier') === 'qualifier' && String(p.pk).toLowerCase() === String(payee).toLowerCase());
+  const agreed = ranked.find((g) => g.length >= need) || null;
+  // `seats`: the seats that answered this settlement (kanban #1355): the round's own, whose word a stake's "none" may rest on
+  const seatsOf = (g) => g.map((a) => String(a.from).replace(/\/+$/, ''));
+  if (agreed) return { ...agreed[0], agreeing: agreed.length, needed: need, seats: seatsOf(agreed) };
+  const paying = ranked.find((g) => g.some(pays));
+  if (paying) return { ...paying[0], agreeing: paying.length, needed: need, short: true, seats: seatsOf(paying) };
+  const said = answers.filter((a) => !a.ok).map((a) => a.said);
+  if (ranked.length) return { ok: false, agreeing: ranked[0].length, needed: need,
+    why: `only ${ranked[0].length} of the ${need} signer nodes needed agree on this round's settlement yet${said.length ? ` (${said.join('; ')})` : ''}` };
+  return { ok: false, agreeing: 0, needed: need, why: `no signer node holds an accepted settlement of this round yet (${said.join('; ')})` };
 }
+/** HOW MANY SEATS MUST AGREE ON A ROUND'S SETTLEMENT (kanban #1163): its settlement threshold, never more than the seats asked. */
+export const settlementAgreement = (round, nodes = []) => {
+  let t = 1; try { t = sharesNeededFor(round); } catch { t = 1; }
+  return Math.max(1, Math.min(Number(t) || 1, new Set(nodes || []).size || 1));
+};
+
+/**
+ * A FORFEIT IS BELIEVED ONLY WHEN IT VERIFIES HERE (kanban #1163, the 1.9 line: stock locks only: the first 128-hex answer was taken - a fake signature made the stake "owed
+ * by forfeit", the redeem failed, it was tried for ever and the expiry refund was never reached). The message is the lock's contract id: an
+ * Arena lock's computed here from its fields (and refused when the guardians hold another id at its outpoint), a stock lock's the id the
+ * guardians hold there (`storedId`, or `contractIdOf(fields)`); the key the claim key - a stock lock's claim_pk, an Arena lock's BIP-327 KeyAgg
+ * of the named signers' keys (each 02 || x, index order). Answers check(answer) -> true | false, or null when nothing can be checked here
+ * (no curve, no id): then the lock client's own check at the spend is all there is.
+ */
+export function forfeitCheck({ curve, fields, storedId = null, contractIdOf = null } = {}) {
+  if (!curve || typeof curve.verify !== 'function' || !fields) return null;
+  const stored = /^[0-9a-f]{64}$/i.test(String(storedId || '')) ? String(storedId).toLowerCase() : null;
+  return (j) => {
+    let sig; try { sig = fromHex(String(j.signature)); } catch { return false; }
+    if (sig.length !== 64) return false;
+    let id = stored ? fromHex(stored) : null;
+    if (!id && typeof contractIdOf === 'function') { try { const c = String(contractIdOf(fields)); if (/^[0-9a-f]{64}$/i.test(c)) id = fromHex(c); } catch { id = null; } }
+    if (!id || !(fields.claimPk instanceof Uint8Array) || fields.claimPk.length !== 33) return null;
+    return !!curve.verify(sig, id, fields.claimPk.slice(1));
+  };
+}
+const concatBytes = (parts) => { const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let at = 0; for (const p of parts) { out.set(p, at); at += p.length; } return out; };
 
 /**
  * THE WINNER COLLECTS ITS PAYOUT (6d, W4): the pre-expired payout contract the
@@ -1841,15 +2318,15 @@ export async function redeemPayout({ round, roundId, invite, seed, curve, LockCl
   // A PAYOUT THIS TAB ALREADY COLLECTED is answered from the tab's note: after a
   // reload the contract is spent, and asking the federation again could only fail
   // every time the page asks.
-  const noted = `${PAYOUT_NOTE}${toHex(roundId)}${orderTag(order)}`;
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
+  const mine = toHex(refundKeyOf(player.pubkey));
+  const noted = noteKeyOf(PAYOUT_NOTE, roundId, mine, order);
   try {
     const kept = storage && storage.getItem(noted);
     if (kept) return { ...JSON.parse(kept), amountMsat: BigInt(JSON.parse(kept).amountMsat), ok: true, final: true, kept: true };
   } catch { /* an unreadable note is no note */ }
-  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
-  const mine = toHex(refundKeyOf(player.pubkey));
   onStep('asking the signer nodes for the round\'s settlement');
-  const s = await settlementOf({ roundId, nodes, fetcher });
+  const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine });
   if (!s.ok) return { ok: false, final: false, why: s.why };
   const at = s.moved.payouts.findIndex((p) => p.kind === 'qualifier' && String(p.pk).toLowerCase() === mine);
   if (at < 0) return { ok: false, final: true, txid: s.txid, why: 'the round\'s settlement pays this seed\'s key nothing: no payout to collect' };
@@ -1874,6 +2351,11 @@ export async function redeemPayout({ round, roundId, invite, seed, curve, LockCl
   return { ...got, client };
 }
 const PAYOUT_NOTE = 'arena.payout.';
+// A NOTE IS THE PHRASE'S (kanban #1220, audit 3 #1210 PAGE-1): keyed by round and order only, a second phrase of this browser in the same round
+// (two tabs are two players) read the first phrase's note as its own - its payout and stake "collected", its record closed while both stayed
+// in their contracts. Now every note names the phrase's refund key too; a note of the old shape is not read (a phrase that did collect is
+// told so by the federation: already spent, only its key could).
+const noteKeyOf = (prefix, roundId, mineHex, order, extra = '') => `${prefix}${toHex(roundId)}.${String(mineHex).slice(0, 16)}${extra}${orderTag(order)}`;
 
 /**
  * A ROUND THAT TAKES ANY FEDERATION'S SETTLEMENTS (2026.0.3 step 7): one transaction per federation, listed by the
@@ -1915,7 +2397,7 @@ export async function redeemPayoutsAcross({ round, roundId, seed, curve, storage
     const at = f.moved.payouts.findIndex((p) => p.kind === 'qualifier' && String(p.pk).toLowerCase() === mine);
     if (at < 0) continue;
     const fid = String(f.federation).toLowerCase();
-    const noted = `${PAYOUT_NOTE}${toHex(roundId)}.${fid.slice(0, 16)}${orderTag(order)}`;
+    const noted = noteKeyOf(PAYOUT_NOTE, roundId, mine, order, `.${fid.slice(0, 16)}`);
     try { const kept = storage && storage.getItem(noted); if (kept) { const k = JSON.parse(kept); collected.push({ ...k, amountMsat: BigInt(k.amountMsat), kept: true }); continue; } } catch { /* no note */ }
     const p = f.moved.payouts[at];
     const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(p.msat), claimPk: mine, refundPk: mine, expiration: 0 };
@@ -1945,12 +2427,12 @@ export async function redeemSlashPayout({ round, roundId, invite, seed, curve, L
   client: given = null, onStep = () => {}, order = 0, listed: given_list = null } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so it has no slash payout');
   if (!arbiter) return { ok: false, final: false, why: 'no arbitration service named' };
-  const noted = `${SLASH_PAYOUT_NOTE}${toHex(roundId)}${orderTag(order)}`;
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
+  const noted = noteKeyOf(SLASH_PAYOUT_NOTE, roundId, toHex(refundKeyOf(player.pubkey)), order);
   try {
     const kept = storage && storage.getItem(noted);
     if (kept) return { ...JSON.parse(kept), amountMsat: BigInt(JSON.parse(kept).amountMsat), ok: true, final: true, kept: true };
   } catch { /* an unreadable note is no note */ }
-  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
   const mine = toHex(refundKeyOf(player.pubkey));
   onStep('asking the arbitration service for slash payouts');
   let listed = given_list;
@@ -1984,7 +2466,11 @@ export function slashPayoutMine(listed, { round, roundId, seed, curve, order = 0
   return ((listed && listed.payouts) || []).find((p) => p.round === toHex(roundId) && String(p.refundPk).toLowerCase() === mine) || null;
 }
 /** Whether this tab already collected that round's slash payout (its note), so nothing is opened for it again. */
-export const slashPayoutKept = (storage, roundId, order = 0) => { try { return !!(storage && storage.getItem(`${SLASH_PAYOUT_NOTE}${toHex(roundId)}${orderTag(order)}`)); } catch { return false; } };
+// `who` { round, seed, curve }: the phrase whose note it is (kanban #1220); without it no note is this phrase's
+export const slashPayoutKept = (storage, roundId, order = 0, who = null) => { try {
+  if (!who || !who.seed || !who.round) return false;
+  const player = playerFor({ ...who.round, id: roundId }, { seed: who.seed, curve: who.curve, order });
+  return !!(storage && storage.getItem(noteKeyOf(SLASH_PAYOUT_NOTE, roundId, toHex(refundKeyOf(player.pubkey)), order))); } catch { return false; } };
 
 /**
  * A SLASH PAYOUT INTO THE PLAYER WALLET: collected by Refund (redeemSlashPayout) into the wallet every
@@ -2012,7 +2498,7 @@ export async function collectSlashPayout({ round, roundId, invite, seed, curve, 
 export async function returnStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
   client = null, onStep = () => {}, refused = false, forfeited = false, order = 0 } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
-  const noted = `${STAKE_NOTE}${toHex(roundId)}${orderTag(order)}`;
+  const noted = noteKeyOf(STAKE_NOTE, roundId, toHex(refundKeyOf(playerFor({ ...round, id: roundId }, { seed, curve, order }).pubkey)), order);
   try {
     const kept = storage && storage.getItem(noted);
     if (kept) { const k = JSON.parse(kept); return { ...k, amountMsat: BigInt(k.amountMsat), ok: true, final: true, kept: true }; }
@@ -2021,7 +2507,7 @@ export async function returnStake({ round, roundId, invite, seed, curve, LockCli
   // look already found forfeited by the signer nodes (kanban #593, playtest 2026-10-23: round 8464c5fd never settled, its seats
   // had signed the forfeit of the unfilled order's locks, and the collect asked for a settlement first - nothing was redeemed)
   if (!refused && !forfeited) {
-    const s = await settlementOf({ roundId, nodes, fetcher });
+    const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes) });
     if (!s.ok) return { ok: false, final: false, why: s.why };
   }
   let got;
@@ -2032,7 +2518,9 @@ export async function returnStake({ round, roundId, invite, seed, curve, LockCli
     // whose settlement is not ACCEPTED yet, or whose round has an entry still in its window, says so, and is asked again
     const lost = /that run is \S+ with score/.test(e.message)
       && !/not ACCEPTED at this signer node|still inside its window|keeps no record of what its settlement moved/.test(e.message);
-    return { ok: false, final: lost,
+    // NEVER FINAL ON THEIR WORDS (kanban #1163): a stake the round's settlement claimed is read gone in the federation; one it did not claim
+    // comes back by the player's key at its expiry - a record closed here on the seats' error text left it in its lock for good
+    return { ok: false, final: false, lostSaid: lost,
       why: lost ? 'the signer nodes forfeit this seed\'s lock to nobody: the run did not qualify, so its stake went into the round\'s pool' : e.message };
   }
   const rs = got.redeems;
@@ -2088,7 +2576,9 @@ export function saveCollect(storage, { roundIdHex, round, invite, nodes, seed, s
     try {
       if (stakeLock) lock = { outpoint: `${toHex(stakeLock.outpoint.txid)}:${String(stakeLock.outpoint.outIdx)}`, fields: lockFieldsToJson(stakeLock.fields) };
     } catch { lock = null; }
-    storage.setItem(key, JSON.stringify({ roundIdHex, round: toHex(encodeRoundContract(round)), invite, nodes, seed: toHex(seed),
+    // THROUGH putRoomy, AS THE LOCK BESIDE IT (kanban #1251, audit 3 FIXES-14): a raw setItem refused for quota left a saved stake lock with no collect
+    // record - no expiry refund and no forfeit redeem ran on its own; the storage-full handler frees room and the write is tried again
+    putRoomy(storage, key, JSON.stringify({ roundIdHex, round: toHex(encodeRoundContract(round)), invite, nodes, seed: toHex(seed),
       stakeLock: lock, done, savedMs: Date.now(), ...(order ? { order: Number(order) } : {}) }));
     return true;
   } catch { return false; }
@@ -2178,8 +2668,58 @@ export function collectLines(records = [], { failed = new Map(), held = new Set(
   return lines.slice(0, 3);
 }
 
-/** A round whose payout and stake answers are both final: the lines kept, and it is not asked again. */
-export function markCollectDone(storage, roundIdHex, done, seed = null, order = 0) {
+/**
+ * WHERE A ROUND'S COLLECT STANDS AFTER A LOOK AND WHAT ITS COLLECT GOT (kanban #1163: a collect of the payout with the stake still in its lock
+ * marked the record done, it was never looked at again, and an hour later tidyStorage removed the round's wallet). One answer, from every
+ * part's own state: the payout none, gone or collected (or owed and its redeem final); the stake gone, none or collected (or owed and its
+ * redeem or refund final); and this tab's round wallet empty. Anything else is open, and the record is looked at again.
+ */
+export const COLLECT_STATES = Object.freeze({ OPEN: 'open', DONE: 'done' });
+const PAYOUT_TERMINAL = new Set(['none', 'gone', 'collected']);
+const STAKE_TERMINAL = new Set(['gone', 'none', 'collected']);
+export function collectState(look, co = null) {
+  if (!look || !look.payout || !look.stake) return { state: 'open', why: 'not looked at' };
+  const got = (co && co.got) || {};
+  const ok = (x) => !!(x && (x.ok || x.final));
+  const payoutDone = PAYOUT_TERMINAL.has(look.payout.state) || (look.payout.state === 'owed' && ok(got.payout));
+  const stakeDone = STAKE_TERMINAL.has(look.stake.state)
+    || (look.stake.state === 'owed' && (look.stake.how === 'refund' ? ok(got.refund) : ok(got.stake)));
+  const tabEmpty = look.inTabMsat === undefined || (look.inTabMsat !== null && BigInt(look.inTabMsat) === 0n);   // null: not read (kanban #1265)
+  if (payoutDone && stakeDone && tabEmpty) return { state: 'done' };
+  return { state: 'open', why: [!payoutDone && `payout ${look.payout.state}`, !stakeDone && `stake ${look.stake.state}`, !tabEmpty && 'this tab\'s round wallet holds money'].filter(Boolean).join(', ') };
+}
+
+/**
+ * A round whose payout and stake answers are both final: the lines kept, and it is not asked again. `look` (and `co`, what its collect got):
+ * written only when collectState says done (kanban #1163), with the round wallet's balance read 0 (`tabMsat`), which tidyStorage asks for.
+ */
+/**
+ * A DONE WRITTEN BEFORE #1163 IS LOOKED AT ONCE MORE (kanban #1255, audit 3 #1210 FIXES-15): the older page wrote a record done when its collect
+ * redeemed the payout while the stake's forfeit was not signed yet, and the passes skip a done record - that stake stayed in its lock until a
+ * manual Rescan. A done without `tabMsat` (which only a done read by collectState carries) is opened again, once per record (`doneRechecked`):
+ * the next pass looks at it, and markCollectDone writes it done again only when collectState says so. Answers how many were opened.
+ */
+export function reopenUncheckedDone(storage, { now = () => Date.now() } = {}) {
+  let opened = 0;
+  try {
+    const keys = [];
+    for (let i = 0; i < storage.length; i++) { const k = storage.key(i); if (k && k.startsWith(COLLECT_NOTE)) keys.push(k); }
+    for (const k of keys) {
+      try {
+        const r = JSON.parse(storage.getItem(k));
+        if (!r || !r.done || r.doneRechecked) continue;
+        if (typeof r.done === 'object' && r.done.tabMsat !== undefined) continue;
+        storage.setItem(k, JSON.stringify({ ...r, done: null, doneRechecked: now() }));
+        opened++;
+      } catch { /* a record that does not read is left as it is */ }
+    }
+  } catch { /* storage refused */ }
+  return opened;
+}
+
+export function markCollectDone(storage, roundIdHex, done, seed = null, order = 0, { look = null, co = null } = {}) {
+  if (look && collectState(look, co).state !== 'done') return false;
+  if (look && done && typeof done === 'object') done = { ...done, tabMsat: '0' };
   try {
     let key = seed ? collectKey(roundIdHex, seed, order) : null;
     if (!key || !storage.getItem(key)) {
@@ -2208,6 +2748,20 @@ const COLLECT_NOTE = 'arena.collect.';
  * its id and name a federation. Nothing is spent. Returns the rounds worth keeping - the page
  * keeps them and looks at them as its own.
  */
+// A ROUND'S KEY FOR A PHRASE, DERIVED ONCE (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; profiled on live UI 604: 3.1 s of every minute
+// of an RPS page went to the curve here - every scan derived 33 keys for every settled round each signer node listed, the same rounds as the scan before):
+// kept by phrase, round and order; the oldest let go past OWED_KEYS_MAX
+const OWED_KEYS = new Map(), OWED_KEYS_MAX = 200000;
+const owedKeyOf = (seed, id, order, curve) => {
+  const k = toHex(seed) + id + ':' + order;
+  let v = OWED_KEYS.get(k);
+  if (v === undefined) {
+    v = toHex(refundKeyOf(playerFor({ id: fromHex(id) }, { seed, curve, order }).pubkey));
+    if (OWED_KEYS.size >= OWED_KEYS_MAX) OWED_KEYS.delete(OWED_KEYS.keys().next().value);
+    OWED_KEYS.set(k, v);
+  }
+  return v;
+};
 export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [], knownBySeed = null } = {}) {
   // EVERY SAVED PHRASE AT ONCE (2026-10-07): each signer node's /settled is read once and matched against
   // every phrase's keys - 7 asks on 7 signer nodes, not 7 per phrase. One `seed` (with `known`) is the one-phrase scan as before.
@@ -2237,7 +2791,7 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
       if (skips[i].has(id)) continue;
       // EVERY ORDER'S KEY TOO: a tab's orders in a market round are keyed 0, 1, 2 ... - read up to ORDER_SCAN (32: a bot places 12 a window)
       for (let order = 0; order <= ORDER_SCAN; order++) {
-      const mine = toHex(refundKeyOf(playerFor({ id: fromHex(id) }, { seed: list[i], curve, order }).pubkey));
+      const mine = owedKeyOf(list[i], id, order, curve);
       const payout = l.payouts.has(mine); const lock = l.refunds.has(mine);
       if (!payout && !lock) continue;
       if (!contracts.has(id)) {
@@ -2424,7 +2978,7 @@ async function expiredBack(client, locks) {
   return { state: 'owed', how: 'refund', msat: back.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n), locks: back };
 }
 
-async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, client, handoutBody = null }) {
+async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, client, handoutBody = null, curve = null, contractIdOf = null }) {
   const still = [];
   for (const lock of (locks || []).filter((l) => l && l.outpoint)) {
     const st = JSON.parse(await client.lockStatus(toHex(lock.outpoint.txid), Number(lock.outpoint.outIdx)));
@@ -2445,27 +2999,37 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
   const msat = still.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
   const at = (l) => `${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}`;
   const named = await findLock({ roundId, playerPubkey, nodes, fetcher });
-  const found = still.map((l) => named.find((n) => at(n) === at(l))).filter(Boolean);
+  // every version the seats name for each outpoint (kanban #1273): a changed one listed first does not stand in for the real one
+  const versions = still.map((l) => named.filter((n) => at(n) === at(l))).filter((v) => v.length);
+  const found = versions.map((v) => v[0]);
   if (!found.length) return (await expiredBack(client, still)) || { state: 'waiting', how: 'forfeit', refused: true, msat, why: 'handed to the signer nodes, and none names it yet' };
-  for (const l of found) {
-    const f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher });
+  for (const v of versions) {
+    let f = null;
+    for (const l of v) {
+      f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher,
+        check: forfeitCheck({ curve, fields: l.fields, storedId: await storedIdAt(client, l), contractIdOf }) });
+      if (f.ok) break;
+    }
     if (!f.ok) return (await expiredBack(client, still)) || { state: 'waiting', how: 'forfeit', refused: true, msat, why: f.why };
   }
   const owed = found.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
   return { state: 'owed', how: 'forfeit', refused: true, msat: owed };
 }
 
-export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, client = null, storage = null, kept = null, order = 0 } = {}) {
+export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, client = null, storage = null, kept = null, order = 0, LockClient = null } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so nothing in it is owed from a lock');
   const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
   const mine = toHex(refundKeyOf(player.pubkey));
   const rid = toHex(roundId);
   const note = (k) => { try { const v = storage && storage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } };
   // STILL AT ITS OUTPOINT? The federation's read-only answer; without a wallet it is not asked.
-  const held = async (txid, outIdx) => !client || !!JSON.parse(await client.lockStatus(txid, Number(outIdx))).stored;
-  const s = await settlementOf({ roundId, nodes, fetcher });
+  // (an Arena lock is read with its own call: `fields` says which; a payout output is a stock contract)
+  const held = async (txid, outIdx, fields = null) => !client || !!JSON.parse(await lockStatusOf(client, fields, txid, Number(outIdx))).stored;
+  // THE SETTLEMENT THE ROUND'S THRESHOLD OF SEATS AGREES ON (kanban #1163): "none" only on their word, never one seat's
+  const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine });
+  const contractIdOf = contractIdVia(LockClient || (client && client.constructor));
   let payout;
-  const paidNote = note(`${PAYOUT_NOTE}${rid}${orderTag(order)}`);
+  const paidNote = note(noteKeyOf(PAYOUT_NOTE, roundId, mine, order));
   if (paidNote) payout = { state: 'collected', msat: BigInt(paidNote.amountMsat) };
   else if (!s.ok) payout = { state: 'waiting', why: s.why };
   else {
@@ -2476,7 +3040,7 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
   }
   let stake;
   let lockAnswers = null;
-  const backNote = note(`${STAKE_NOTE}${rid}${orderTag(order)}`);
+  const backNote = note(noteKeyOf(STAKE_NOTE, roundId, mine, order));
   if (backNote) stake = { state: 'collected', msat: BigInt(backNote.amountMsat) };
   else {
     // ASKED WITH OR WITHOUT A SETTLEMENT (kanban #593, playtest 2026-10-23: round 8464c5fd never ran - no settlement - and its
@@ -2488,27 +3052,60 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
     // NOBODY ANSWERED IS NOT "NO LOCK" (playtest 2026-10-04: a DELIVERED player's 96 sat stake was never
     // asked back - the page's record of the round ended as if nothing were owed): with no signer node answering where
     // the lock is, the stake is still waiting and the round is looked at again.
-    if (!locks.length && s.ok && locks.asked > 0 && locks.answered === 0)
+    // ONLY THE NAMED LOCKS THE FEDERATION HOLDS (kanban #1238; the seats already answer by this seed's refund key, the guardians check it at the spend)
+    const named = [...locks];
+    const real = await heldByGuardians(client, named, contractIdOf);
+    // none of the named locks is held while this tab's own lock still is: the seats named a lock that is not this stake's
+    const ownHeld = async () => {
+      if (!client) return false;
+      let k = null; try { k = kept || savedLock(storage, { roundId, playerPubkey: player.pubkey }); } catch { k = null; }
+      return !!(k && k.lock) && (await heldByGuardians(client, [k.lock], contractIdOf)).length > 0;
+    };
+    if (!named.length && s.ok && locks.asked > 0 && locks.answered === 0)
       stake = { state: 'waiting', why: `no signer node answered where this seed's lock is (${locks.said.join('; ')})` };
-    else if (locks.length) {
-      let msat = 0n;
-      for (const l of locks) if (await held(toHex(l.outpoint.txid), l.outpoint.outIdx)) msat += BigInt(l.fields.amountMsat);
-      const whole = locks.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
-      if (msat === 0n) stake = { state: 'gone', how: 'forfeit', msat: whole };
+    else if (named.length && (real.length || !(await ownHeld()))) {
+      const whole = [...new Map(named.map((l) => [`${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}`, l])).values()].reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);   // each outpoint once (kanban #1273)
+      if (!real.length) stake = { state: 'gone', how: 'forfeit', msat: whole };
       else {
-        const f = await forfeitOf({ roundId, entryId: locks[0].entryId, nodes, fetcher });
+        // ONE OUTPOINT, ITS AMOUNT ONCE, AND ONE GOOD FORFEIT FROM ANY OF ITS VERSIONS (kanban #1273): findLock keeps every seat's version of an outpoint
+        const byOutpoint = new Map();
+        for (const l of real) { const k = `${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}`; if (!byOutpoint.has(k)) byOutpoint.set(k, []); byOutpoint.get(k).push(l); }
+        const msat = [...byOutpoint.values()].reduce((t, v) => t + BigInt(v[0].fields.amountMsat), 0n);
+        // A FORFEIT FOR EVERY LOCK HELD, never the first one named alone (kanban #1238)
+        let f = { ok: true };
+        for (const v of byOutpoint.values()) {
+          for (const l of v) {
+            f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher,
+              check: forfeitCheck({ curve, fields: l.fields, storedId: await storedIdAt(client, l), contractIdOf }) });
+            if (f.ok) break;
+          }
+          if (!f.ok) break;
+        }
         if (f.ok) stake = { state: 'owed', msat, how: 'forfeit' };
-        // NOBODY WON (2026-10-03): a signer node not yet ACCEPTED, or a round entry still in its window, is waiting
-        else if (/that run is \S+ with score/.test(f.why)
-          && !/not ACCEPTED at this signer node|still inside its window|keeps no record of what its settlement moved/.test(f.why)) stake = { state: 'lost', msat };
-        else stake = (await expiredBack(client, locks)) || { state: 'waiting', msat, why: f.why };
+        // NOBODY WON (2026-10-03) - SAID, NEVER FINAL (kanban #1163: "lost" was decided by a regex over the seats' error text and closed the
+        // record with the stake still in its lock): a stake the settlement claimed reads gone above; one still held comes back at its expiry
+        else {
+          const lostSaid = /that run is \S+ with score/.test(f.why)
+            && !/not ACCEPTED at this signer node|still inside its window|keeps no record of what its settlement moved/.test(f.why);
+          stake = (await expiredBack(client, real)) || { state: 'waiting', msat, why: f.why, ...(lostSaid ? { lostSaid: true } : {}) };
+        }
       }
     } else {
       // NO SIGNER NODE KNOWS THE LOCK (refused at the door) OR NO SETTLEMENT YET: the tab's own record,
       // asked of the federation without spending - owed back by the player's key after expiry.
       const held = kept || savedLock(storage, { roundId, playerPubkey: player.pubkey });
       const ls = held && held.lock ? [held.lock, held.lock.feeLock].filter(Boolean) : [];
-      if (!ls.length) stake = { state: s.ok ? 'none' : 'waiting', why: 'this tab keeps no lock for this round' };
+      // "NONE" IS FINAL ONLY ON ENOUGH SEATS' WORD (kanban #1250, audit 3 FIXES-16): one seat that never sat on the round answering [] while its own
+      // seats timed out closed the record with a winner's stake still in its lock; it is waiting until the round's settlement threshold answered
+      if (!ls.length) {
+        // AND ONLY THE ROUND'S OWN SEATS COUNT (kanban #1355, audit 4 fixesB-6 / CLIENT-5): a seat of the lobby's list that never sat on the round
+        // answers [] at once; only the seats that answered the agreed settlement and also where the lock is make the threshold
+        const own = new Set(s.seats || []);
+        const ownAnswered = (locks.answeredBy || []).filter((n) => own.has(n)).length;
+        const enough = ownAnswered >= settlementAgreement(round, nodes);
+        stake = { state: s.ok && enough ? 'none' : 'waiting', why: enough ? 'this tab keeps no lock for this round'
+          : `this tab keeps no lock for this round, and only ${ownAnswered} of the ${settlementAgreement(round, nodes)} seats of the round's settlement needed answered where its lock is` };
+      }
       else if (!client) stake = { state: 'waiting', why: 'the federation was not asked yet' };
       else {
         // §23.2 REFUSED (2026-10-06 08:57: "A round the seats refuse gets an immediate refund"): a lock
@@ -2518,7 +3115,7 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
         const saved = held.lock.feeLock ? null : savedLock(storage, { roundId, playerPubkey: player.pubkey });
         const feeLock = held.lock.feeLock || (saved && saved.lock && saved.lock.feeLock) || null;
         const handoutBody = (held.stake && held.stake.body) || (saved && saved.stake && saved.stake.body) || null;
-        const back = await refusedReturn({ roundId, playerPubkey: player.pubkey, locks: [held.lock, feeLock], nodes, fetcher, client, handoutBody });
+        const back = await refusedReturn({ roundId, playerPubkey: player.pubkey, locks: [held.lock, feeLock], nodes, fetcher, client, handoutBody, curve, contractIdOf });
         if (back) stake = back;
         else {
           let owed = 0n; let gone = 0; let waiting = null;
@@ -2540,13 +3137,17 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
   const owed = (how) => (stake.state === 'owed' && stake.how === how ? stake.msat : 0n);
   const payoutMsat = payout.state === 'owed' ? payout.msat : 0n;
   // WHAT THIS TAB'S WALLET HOLDS - read, not spent (the stock client throws on an empty one).
-  let inTabMsat = 0n;
-  if (client) { try { inTabMsat = BigInt(await client.withdrawableMsat()); } catch { inTabMsat = 0n; } }
+  // A WALLET NOT READ IS NOT EMPTY (kanban #1265, audit 4 #1257 CLIENT-1 path e): a look with no client, or a client that cannot read its balance (a Rescan's
+  // `{ lockStatus }` wrapper for a round another tab holds), read 0 - and the record was marked done with the wallet's 0, so the tidy removed the wallet that
+  // held the round's collected e-cash. Unread is null now: collectState reads it as not empty
+  let inTabMsat = null;
+  // (the wallet's own "Balance is too low to send any amount after fees" is a read of an empty wallet: 0, as before)
+  if (client && typeof client.withdrawableMsat === 'function') { try { inTabMsat = BigInt(await client.withdrawableMsat()); } catch (e) { inTabMsat = /too low/i.test(String(e && e.message || e)) ? 0n : null; } }
   let tabBalanceMsat = null;
   if (client && typeof client.balanceMsat === 'function') { try { tabBalanceMsat = BigInt(await client.balanceMsat()); } catch { tabBalanceMsat = null; } }
   // FINAL: the federation holds nothing more of this seed's in this round. The tab's own balance is apart.
   const final = ['none', 'gone', 'collected'].includes(payout.state) && ['lost', 'gone', 'none', 'collected'].includes(stake.state);
-  return { payout, stake, payoutMsat, stakeMsat: owed('forfeit'), refundMsat: owed('refund'), stakeLost: stake.state === 'lost',
+  return { payout, stake, payoutMsat, stakeMsat: owed('forfeit'), refundMsat: owed('refund'), stakeLost: stake.state === 'lost' || !!stake.lostSaid,
     owedMsat: payoutMsat + owed('forfeit') + owed('refund'), inTabMsat, tabBalanceMsat, final, settled: s.ok,
     settledWhy: s.ok ? null : s.why, lockAnswers };
 }
@@ -2923,8 +3524,9 @@ export function ledgerFederations(storage) {
     // the gateway funded the incoming contract, but a deposit gets its ledger row only once claimed, and a page reloaded or
     // suspended before the claim opened wallets only where the ledger had rows: the pending deposit was never resumed, claimed or
     // summed). A federation this browser made a deposit invoice in is one it holds a wallet in.
-    const f = k.startsWith(PENDING_PREFIX) ? k.slice(PENDING_PREFIX.length)
-      : k.startsWith(LEDGER_PREFIX) && !k.startsWith(LEDGER_READ_PREFIX) ? k.slice(LEDGER_PREFIX.length) : null;
+    // (kanban #1179: a pending deposit's key and a history row's name the federation before a dot)
+    const f = k.startsWith(PENDING_PREFIX) ? k.slice(PENDING_PREFIX.length).split('.')[0]
+      : k.startsWith(LEDGER_PREFIX) && !k.startsWith(LEDGER_READ_PREFIX) ? ledgerFedOfKey(k) : null;
     if (f && /^[0-9a-f]{64}$/.test(f) && !out.includes(f)) out.push(f);
   }
   return out;

@@ -326,3 +326,132 @@ test('kanban #765: a held first round whose seating is still open is not asked f
   await w.agent.tick();
   assert.equal(w.asked.filter((a) => a.startsWith('GET /seating?')).length, 0, 'no certificate is asked before the seating closes');
 });
+
+// A DEAD NODE IS NEVER IN THE SEATING (kanban #1119, Up/Down round b3f22953 of 2026-11-04 10:30Z, 9 drawn for 7 seats): installer node b36828's quick tunnel
+// was dead - it could send, nobody reached it, and its PRESENT reached every seat. Two cases: the address dead for days (below, `warm`), and the address
+// dead since this window - each seat has failed it once, its PRESENT post, and with all 9 PRESENTs held nothing more was asked before the close (#979 needs two).
+// Nine live nodes here; `dead` (third in score order) reaches everyone, and every request to it gets Cloudflare's 530.
+function deadNet(dead, { warm = false } = {}) {
+  const S0 = START + 600000n;          // room for the earlier round before it
+  const c = { ...contractFor(nodes.slice(0, 7).map((n) => n.pubkey)), startTimeMs: S0 };
+  const bytes = encodeRoundContract(c);
+  const rid = roundIdOf(c);
+  const earlier = { ...c, startTimeMs: S0 - 240000n };
+  const rows = new Map([[toHex(rid), bytes], ...(warm ? [[toHex(roundIdOf(earlier)), encodeRoundContract(earlier)]] : [])]);
+  const drawn = nodes.map((n) => ({ pubkey: n.pubkey, advert: { endpoint: n.endpoint } }));
+  const net = { now: Number((warm ? earlier.startTimeMs : S0) - 180000n), rid, drawn, agents: new Map(), logs: new Map(), dbs: new Map(), lost: new Set() };
+  const fetcherOf = (from) => async (url, init = {}) => {
+    const u = new URL(url);
+    const to = nodes.findIndex((n) => n.endpoint === `${u.protocol}//${u.host}`);
+    const a = net.agents.get(to);
+    // the dead node's own requests go out and come back (b36828's PRESENTs reached every seat); nobody's reach it
+    if (to === dead || (net.cut && net.cut(from, to))) return new Response('', { status: 530 });
+    if (net.lost.has(`${from}>${to}`)) { net.lost.delete(`${from}>${to}`); throw new TypeError('fetch failed'); }   // one request lost on the way
+    if (u.pathname === '/presents') { const r = a.takePresents(new Uint8Array(await new Response(init.body).arrayBuffer())); return new Response(JSON.stringify(r), { status: r.ok ? 201 : 400 }); }
+    if (u.pathname === '/seating-batch') return new Response(JSON.stringify(a.batchOf(u.searchParams.get('rounds').split(','))), { status: 200 });
+    if (u.pathname === '/seating') { const b = new Uint8Array(await new Response(init.body).arrayBuffer()); const d = decodeSeatingCertificate(b); const r = a.keepCert(d.roundId, d.role, b); return new Response(JSON.stringify(r), { status: r.ok ? 201 : 409 }); }
+    return new Response('no', { status: 404 });
+  };
+  for (let i = 0; i < 9; i++) {
+    const n = nodes[i];
+    const db = new DatabaseSync(':memory:');
+    db.exec('CREATE TABLE rounds (round_id BLOB, contract BLOB)');
+    for (const [h, b] of rows) db.prepare('INSERT INTO rounds (round_id, contract) VALUES (?, ?)').run(fromHex(h), b);
+    const round = { db, pubkey: n.pubkey, get: (id) => (rows.has(toHex(id)) ? { contract: rows.get(toHex(id)) } : null) };
+    const logs = []; net.logs.set(i, logs); net.dbs.set(i, db);
+    net.agents.set(i, seatingAgent({ round, roster: { committeeFor: () => ({ ok: true, drawn }) }, sign: signer(n), fetcher: fetcherOf(i), nowMs: () => net.now,
+      verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, log: (l) => logs.push(l) }));
+  }
+  net.tickAll = async () => { for (const a of net.agents.values()) await a.tick(); };
+  // ticks every 2 s from the PRESENT window's opening (seating_close - 60 s) to `untilMs` after the close
+  net.run = async (untilMs) => { while (net.now < Number(S0 - 120000n) + untilMs) { await net.tickAll(); net.now += 2000; } };
+  net.signedOf = (i, role = 'game') => { const s = net.agents.get(i).mySignature(rid, role); return s ? s.seated.map((k) => nodes.findIndex((n) => toHex(n.pubkey) === k)) : null; };
+  net.seatedOf = (i, role) => {
+    const cert = net.agents.get(i).certOf(rid, role);
+    if (!cert) return null;
+    const v = verifySeating(Buffer.from(cert, 'hex'), { roundId: rid, role, drawn: drawn.map((e) => e.pubkey), slots: 7, verify: (s, m, k) => schnorr.verify(s, m, k) });
+    assert.equal(v.ok, true, v.why);
+    return v.seating.seated.map((k) => nodes.findIndex((n) => toHex(n.pubkey) === toHex(k)));
+  };
+  return net;
+}
+
+test('kanban #1119: a drawn node whose address died this window sends its PRESENT but cannot be reached: it is not seated, and the eight others certify the seating with the next reserve in its place', async () => {
+  const dead = 2;
+  const net = deadNet(dead);
+  const live = upTo(9).filter((i) => i !== dead);
+  await net.run(-30000);
+  for (const i of live) assert.equal(net.agents.get(i).presentsOf(net.rid).filter((p) => p.role === 'game').length, 9, `node ${i} holds all 9 PRESENTs, the dead node's too`);
+  // 60 s after the close: entries open at 120 s
+  await net.run(60000);
+  const seven = [0, 1, 3, 4, 5, 6, 7];
+  for (const i of live) assert.deepEqual(net.signedOf(i), i === 8 ? null : seven, `node ${i}'s signature: the dead node out, reserve 7 in`);
+  for (const role of ['game', 'settlement']) for (const i of live) {
+    assert.deepEqual(net.seatedOf(i, role), seven, `${role}: node ${i} holds the certificate of the seating with the reserve`);
+    assert.ok(net.logs.get(i).every((l) => !/two seatings/.test(l)), 'no equivocation seen');
+  }
+  for (const i of live) {
+    const n = net.dbs.get(i).prepare('SELECT COUNT(*) AS n FROM seat_sigs WHERE role = ? AND node = ?').get('game', toHex(nodes[i].pubkey)).n;
+    assert.equal(n, i === 8 ? 0 : 1, `node ${i} signed ${n} game seating(s): one, no re-sign`);
+  }
+});
+
+test('kanban #1119: one lost request to a live node costs it nothing: it keeps its seat', async () => {
+  const net = deadNet(-1);
+  net.lost.add('0>2');                                  // node 0's PRESENT post to node 2 is lost: one failure, not #979's two, and the retry before the close answers
+  await net.run(60000);
+  for (const i of upTo(9)) assert.deepEqual(net.signedOf(i), i > 6 ? null : upTo(7), `node ${i}: the seating of the first 7`);
+  for (const role of ['game', 'settlement']) assert.deepEqual(net.seatedOf(0, role), upTo(7), `${role}: certified with node 2 in it`);
+});
+
+// THE SEATING OF b3f22953 AS IT REALLY STOOD (kanban #1119, read from the live seats' stores 2026-11-04): the dead installer node b36828 ranked among the first
+// seven and every seat left it out (#979, its address failed for days), so six seats signed the seating of the next seven. One seat, 438af56f (`lone`), had also
+// failed twice to reach c6d5d34b (`missed`), whom the others reached: it signed the seating without both, with the ninth drawn node in. Its seating can never
+// stand, but the #738 re-sign took "the seating of the PRESENTs it holds now" - all nine, the dead node in again - which nobody signed, so it never moved; the six
+// waited for it and the window was unplayable.
+test('kanban #1119: a seat that alone failed to reach a seated node re-signs the seating the others signed, the dead node left out, and the certificate forms', async () => {
+  const dead = 2, lone = 3, missed = 5;
+  const net = deadNet(dead, { warm: true });
+  // as on the live seats: every seat has failed the dead node's address for days, and `lone` fails `missed` (two requests, 30 s apart, before the close)
+  net.cut = (from, to) => from === lone && to === missed;
+  await net.run(60000);
+  assert.deepEqual(net.signedOf(0), [0, 1, 3, 4, 5, 6, 7], 'the six: the dead node left out');
+  const seven = [0, 1, 3, 4, 5, 6, 7];
+  for (const role of ['game', 'settlement']) for (const i of upTo(9).filter((k) => k !== dead)) assert.deepEqual(net.seatedOf(i, role), seven, `${role}: node ${i} holds the certificate`);
+  console.log(net.logs.get(lone).filter((l) => /^\[seating\] [0-9a-f]{16} game/.test(l)).join('\n')); console.log(net.logs.get(0).filter((l) => /game/.test(l)).join('\n')); assert.ok(net.logs.get(lone).some((l) => /game: re-signed the seating of 7/.test(l)), 'the lone seat moved, once');
+});
+
+// KANBAN #1271 (audit 4 #1257 outsider-3): takePresent checked a PRESENT's signature before asking whether this seat holds its round or whether its node is
+// drawn, and a batch had no cap: one POST /presents of made-up PRESENTs ran a schnorr verify per 132 bytes on the event loop. Now an unknown round or a
+// node not drawn is refused before the verify, and a batch holds at most MAX_PRESENTS_PER_BATCH.
+test('#1271 PRESENTs of rounds this seat does not hold, or of nodes not drawn, cost no signature check; a batch past the cap is refused', async () => {
+  const { MAX_PRESENTS_PER_BATCH } = await import('../src/seating-agent.js');
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE rounds (round_id BLOB, contract BLOB)');
+  const c = { ...contractFor(nodes.slice(0, 7).map((n) => n.pubkey)), startTimeMs: START };
+  const bytes = encodeRoundContract(c), rid = roundIdOf(c);
+  db.prepare('INSERT INTO rounds (round_id, contract) VALUES (?, ?)').run(rid, bytes);
+  const round = { db, pubkey: nodes[0].pubkey, get: (id) => (toHex(id) === toHex(rid) ? { contract: bytes } : null) };
+  const drawn = nodes.slice(0, 7).map((n) => ({ pubkey: n.pubkey, advert: { endpoint: n.endpoint } }));
+  const roster = { committeeFor: (id) => (toHex(id) === toHex(rid) ? { ok: true, drawn } : { ok: false, why: 'this seat holds no such round' }) };
+  let verifies = 0;
+  const verify = (s, m, k) => { verifies++; try { return schnorr.verify(s, m, k); } catch { return false; } };
+  const agent = seatingAgent({ round, roster, sign: signer(nodes[0]), verify, fetcher: async () => new Response('{}'), nowMs: () => NOW, leftNode: () => false });
+  const junkSig = () => crypto.getRandomValues(new Uint8Array(64));
+  const made = (roundId, pubkey) => signPresent({ roundId, role: 'game', nodePubkey: pubkey }, junkSig);
+  const cat = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let o = 0; for (const x of list) { out.set(x, o); o += x.length; } return out; };
+  const unknown = cat(Array.from({ length: 1000 }, () => made(crypto.getRandomValues(new Uint8Array(32)), nodes[1].pubkey)));
+  const a = agent.takePresents(unknown); const vUnknown = verifies;
+  const notDrawn = cat(Array.from({ length: 100 }, () => made(rid, schnorr.getPublicKey(crypto.getRandomValues(new Uint8Array(32))))));
+  const b = agent.takePresents(notDrawn); const vNotDrawn = verifies - vUnknown;
+  const tooMany = agent.takePresents(cat(Array.from({ length: MAX_PRESENTS_PER_BATCH + 1 }, () => made(rid, nodes[1].pubkey))));
+  const before = verifies;
+  const good = agent.takePresents(signPresent({ roundId: rid, role: 'game', nodePubkey: nodes[2].pubkey }, signer(nodes[2])));
+  const facts = { unknownRounds: { presents: 1000, taken: a.taken, verifies: vUnknown }, notDrawn: { presents: 100, taken: b.taken, verifies: vNotDrawn },
+    overCap: { ok: tooMany.ok, status: tooMany.status }, drawnHeld: { taken: good.taken, verifies: verifies - before } };
+  console.log('  FACTS #1271:', JSON.stringify(facts));
+  assert.equal(vUnknown, 0, 'PRESENTs of rounds this seat does not hold were verified');
+  assert.equal(vNotDrawn, 0, 'PRESENTs of nodes not drawn were verified');
+  assert.deepEqual([tooMany.ok, tooMany.status], [false, 413]);
+  assert.deepEqual([good.taken, verifies - before], [1, 1], 'a drawn node\'s PRESENT for a held round is verified and kept as before');
+});

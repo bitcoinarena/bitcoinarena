@@ -17,6 +17,7 @@ import { buildDefinitionEvent, buildAwardEvent, nostrBadges, isNostrKey, badgesO
   BOARD_RETRY_FOR_MS } from '../src/nostr-badges.js';
 import { startRelay, eventRefusal, RELAY_KINDS } from '../src/nostr-relay.js';
 import { BADGES, PERFECT_RUN_SCORE, WEEK_MS } from '../../arena-protocol/src/badges.js';
+import { contractRound, seatAnswer, drawOf } from './signed-season-fixture.js';
 
 const SECRET = new Uint8Array(32).fill(7);
 const PUB = Buffer.from(schnorr.getPublicKey(SECRET)).toString('hex');
@@ -186,20 +187,28 @@ test('the book: a round counts once ACCEPTED; each award is issued once, across 
 const MON = Date.UTC(2026, 9, 12);
 const DUE = MON + BOARD_GRACE_MS + BOARD_NETWORK_GRACE_MS;
 const S = 100000n;
-const wr = (n, entries) => ({ roundId: n.toString(16).padStart(2, '0').repeat(32), gameId: GAME, startMs: BigInt(MON - WEEK_MS + n * 3600000), entries });
+// SIGNED (kanban #1153): each round with its contract, each seat's answer signed by that seat; a round counts when 5 seats of its draw
+// signed the same account. Every round here draws seats 1-9 - and the three colluders 11-13, the worst case.
+const wr = (n, entries, startMs = MON - WEEK_MS + n * 3600000) => contractRound({ gameId: GAME, startMs, n, entries });
 const en = (player, n, payout, roundKey = keyOf(0x70 + n)) => ({ player, roundKey, name: null, stakeMsat: S, payoutMsat: payout, outcome: 'DELIVERED', score: n });
 const DAVE = keyOf(0x24), ERIN = keyOf(0x25);
 // ALICE, BOB and CAROL's two rounds of the week, which every honest seat holds
 const WEEK = [wr(1, [en(ALICE, 1, 3n * S), en(BOB, 2, 0n), en(CAROL, 3, 0n)]), wr(2, [en(BOB, 4, 2n * S), en(CAROL, 5, 0n)])];
-const seatsOf = (...accounts) => ({ bySeat: new Map(accounts.map((rounds, i) => [`seat-${i}`, rounds])), asked: 13 });
+const DRAWN = drawOf(new Map(), [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13]);
+const verifySig = (s, m, k) => schnorr.verify(s, m, k);
+// seat i + 1 answers the i-th list, or { n, rounds } names the seat
+const seatsOf = (...accounts) => ({ bySeat: new Map(accounts.map((a, i) => { const { n, rounds } = Array.isArray(a) ? { n: i + 1, rounds: a } : a;
+  return [`seat-${n}`, seatAnswer(n, rounds)]; })), asked: 13 });
 const boardBook = (accountsOf, more = {}) => nostrBadges({ db: settlementsDb(), secret: SECRET, on: true, roundOf: () => ({ ok: false }),
-  log: () => {}, apps: () => [{ name: 'nextblock', ids: [GAME] }], accountsOf, ...more });
+  log: () => {}, apps: () => [{ name: 'nextblock', ids: [GAME] }], accountsOf, seatsOf: DRAWN, verify: verifySig, ...more });
 const podium = (book) => [ALICE, BOB, CAROL, DAVE, ERIN].map((p) => book.awardsOf(p).map((a) => [a.scope, a.evidence.rank]));
+
+const FIVE = [WEEK, WEEK, WEEK, WEEK, WEEK];
 
 test('the board badge: the network\'s week, read once BOARD_GRACE_MS + BOARD_NETWORK_GRACE_MS after it closed; off, nothing', async () => {
   let now = MON + 3600000;                       // an hour into the new week: the last week is not read yet
   const asked = [];
-  const accountsOf = async (g, w) => { asked.push([g.name, w.fromMs, w.toMs]); return seatsOf(WEEK, WEEK, WEEK); };
+  const accountsOf = async (g, w) => { asked.push([g.name, w.fromMs, w.toMs]); return seatsOf(...FIVE); };
   const book = boardBook(accountsOf, { now: () => now });
   const off = nostrBadges({ db: settlementsDb(), secret: SECRET, on: false, roundOf: () => { throw new Error('read'); }, now: () => now, log: () => {},
     apps: () => [{ name: 'nextblock', ids: [GAME] }], accountsOf: () => { throw new Error('read'); } });
@@ -215,39 +224,41 @@ test('the board badge: the network\'s week, read once BOARD_GRACE_MS + BOARD_NET
     assert.deepEqual(asked, [['nextblock', MON - WEEK_MS, MON]]);
     assert.equal(t.awarded, 3);
     assert.deepEqual(podium(book), [[['nextblock@2026-10-05', 1]], [['nextblock@2026-10-05', 2]], [['nextblock@2026-10-05', 3]], [], []]);
-    assert.deepEqual(book.awardsOf(ALICE)[0].evidence, { window: { fromMs: MON - WEEK_MS, toMs: MON }, rank: 1, seats: 3, agree: 3 });
+    assert.deepEqual(book.awardsOf(ALICE)[0].evidence, { window: { fromMs: MON - WEEK_MS, toMs: MON }, rank: 1, seats: 5, signed: 2 });
     assert.deepEqual(book.awardsOf(ALICE)[0].event.tags.slice(2, 6), [['window', '2026-10-05T00:00:00.000Z', '2026-10-12T00:00:00.000Z'],
-      ['rank', '1'], ['seats', '3'], ['agree', '3']]);
+      ['rank', '1'], ['seats', '5'], ['signed', '2']]);
     assert.deepEqual(await off.tick(), { awarded: 0, sent: 0 });
     assert.deepEqual(off.awardsOf(ALICE), []);
     off.start();                                 // off: no clock either
   } finally { book.stop(); off.stop(); }
 });
 
-test('the board badge counts a round only when 3 seats hand in the same account of it, round keys included', async () => {
-  // DAVE's huge win only seat 0 holds, and ERIN's only seats 0 and 1: no podium place for either. Seat 3 hands in round 1
-  // with BOB under his own round key - one seat cannot strike BOB's place by naming him a bare key. Round 3, in which ERIN
-  // beats BOB, is held by three seats: it counts. And seat 4 hands in rounds of the week after, asked for days back from its
-  // clock: not this week's.
+test('the board badge counts a round only when 5 seats of its draw signed the same account of it, round keys included (kanban #1153)', async () => {
+  // DAVE's huge win only seat 1 signed, and his second only seats 1-3: three seats are no longer enough. THE SCENARIO: the colluding
+  // seats 11-13, all three of the draw, hand in byte-identical accounts of an invented round in which DAVE wins 900 S - before, that
+  // counted. Seat 6 hands in round 1 with BOB under his own round key - one seat cannot strike BOB's place. Round 5, in which ERIN
+  // beats BOB, five seats signed: it counts. And every seat hands in a round of the week after, asked for days back: not this week's.
   const solo = wr(3, [en(DAVE, 9, 100n * S), en(ALICE, 1, 0n)]);
-  const pair = wr(4, [en(ERIN, 9, 50n * S), en(CAROL, 1, 0n)]);
-  const three = wr(5, [en(ERIN, 6, 4n * S), en(BOB, 1, 0n)]);
+  const three = wr(4, [en(DAVE, 9, 50n * S), en(CAROL, 1, 0n)]);
+  const five = wr(5, [en(ERIN, 6, 4n * S), en(BOB, 1, 0n)]);
+  const fake = wr(7, [en(DAVE, 9, 900n * S), en(ALICE, 1, 0n)]);
   const bare = { ...WEEK[0], entries: WEEK[0].entries.map((e) => (e.player === BOB ? { ...e, roundKey: BOB } : e)) };
-  const later = { ...wr(6, [en(DAVE, 9, 100n * S), en(ERIN, 1, 0n)]), startMs: BigInt(MON + 3600000) };
-  const accounts = seatsOf([...WEEK, solo, pair, three], [...WEEK, pair, three], [three, ...WEEK], [bare, WEEK[1]], [later, later]);
+  const later = wr(6, [en(DAVE, 9, 100n * S), en(ERIN, 1, 0n)], MON + 3600000);
+  const accounts = seatsOf([...WEEK, solo, three, five, later], [...WEEK, three, five, later], [three, ...WEEK, five, later], [...WEEK, five, later],
+    [five, ...WEEK, later], [bare, WEEK[1]], ...[11, 12, 13].map((n) => ({ n, rounds: [...WEEK, fake] })));
   const book = boardBook(async () => accounts, { now: () => DUE });
   const lines = [];
   const loud = boardBook(async () => accounts, { now: () => DUE, log: (l) => lines.push(l) });
   try {
     assert.equal((await book.tick()).awarded, 3);
-    // THE AGREED ROUNDS 1, 2 AND 5, as season() ranks them: ERIN +3S net, ALICE +2S, BOB -1S (-1S, +1S, -1S), CAROL -2S
+    // THE SIGNED ROUNDS 1, 2 AND 5, as season() ranks them: ERIN +3S net, ALICE +2S, BOB -1S (-1S, +1S, -1S), CAROL -2S
     const ranks = podium(book).map((x) => (x.length ? x[0][1] : null));
     assert.deepEqual(ranks, [2, 3, null, null, 1], 'ALICE 2, BOB 3, CAROL 4th (no badge), DAVE none, ERIN 1');
-    assert.equal(ranks[3], null, 'DAVE: a round one seat hands in is no round');
-    assert.equal(ranks[4], 1, 'ERIN: a round three seats agree on counts');
+    assert.equal(ranks[3], null, 'DAVE: neither one seat, nor three, nor three colluders\' identical invented round is a round');
+    assert.equal(ranks[4], 1, 'ERIN: a round five seats of its draw signed counts');
     assert.equal(ranks[1], 3, 'BOB keeps his place over one seat naming him a bare round key');
     await loud.tick();
-    assert.ok(lines.some((l) => /week of 2026-10-05: 3 agreed rounds from 5 seats/.test(l)), lines.join('\n'));
+    assert.ok(lines.some((l) => /week of 2026-10-05: 3 signed rounds from 9 seats/.test(l)), lines.join('\n'));
   } finally { book.stop(); loud.stop(); }
 });
 
@@ -260,8 +271,8 @@ test('the board badge: too few seats answer - no award, asked again every 30 min
   try {
     assert.equal((await book.tick()).awarded, 0);
     assert.equal(calls, 1);
-    assert.match(lines.at(-1), /week of 2026-10-05: not awarded yet, asked again in 30 min - 1 seat answered \(this one included, 13 asked\), and a round counts only when 3 agree/);
-    answering = 2;
+    assert.match(lines.at(-1), /week of 2026-10-05: not awarded yet, asked again in 30 min - 1 seat answered \(this one included, 13 asked\), and a week is read from 5 at least/);
+    answering = 4;
     now += BOARD_RETRY_MS - 1;
     await book.tick();
     assert.equal(calls, 1, 'not before the half hour');
@@ -274,8 +285,8 @@ test('the board badge: too few seats answer - no award, asked again every 30 min
     await failing.tick();
     assert.match(lines.at(-1), /not awarded yet.*the seats could not be asked: no census/);
     failing.stop();
-    // THREE SEATS: awarded, and the week is never asked again
-    answering = 3;
+    // FIVE SEATS: awarded, and the week is never asked again
+    answering = 5;
     now += BOARD_RETRY_MS;
     assert.equal((await book.tick()).awarded, 3);
     assert.equal(calls, 3);
@@ -300,11 +311,11 @@ test('the board badge: too few seats answer - no award, asked again every 30 min
   } finally { book.stop(); }
 });
 
-test('the board badge: two seats handed the same agreed rounds award the same podium, whatever order the seats answered in', async () => {
+test('the board badge: two seats handed the same signed rounds award the same podium, whatever order the seats answered in', async () => {
   const other = new Uint8Array(32).fill(9);
   const shuffled = (rounds) => [...rounds].reverse().map((r) => ({ ...r, entries: [...r.entries].reverse() }));
-  const a = boardBook(async () => seatsOf(WEEK, WEEK, WEEK, [WEEK[1]]), { now: () => DUE });
-  const b = boardBook(async () => ({ bySeat: new Map([['x', shuffled(WEEK)], ['y', [WEEK[1]]], ['z', WEEK], ['w', shuffled(WEEK)]]), asked: 4 }),
+  const a = boardBook(async () => seatsOf(...FIVE, [WEEK[1]]), { now: () => DUE });
+  const b = boardBook(async () => ({ bySeat: new Map([['x', seatAnswer(6, [WEEK[1]])], ...[5, 4, 3, 2, 1].map((n) => [`s${n}`, seatAnswer(n, n % 2 ? shuffled(WEEK) : WEEK)])]), asked: 6 }),
     { now: () => DUE + 3 * 3600000, secret: other });
   try {
     assert.equal((await a.tick()).awarded, 3);
@@ -319,9 +330,9 @@ test('the board badge: a week is fetched once - across ticks and across a restar
   let now = DUE;
   let calls = 0;
   const db = settlementsDb();
-  const accountsOf = async () => { calls++; return seatsOf(WEEK, WEEK, WEEK); };
+  const accountsOf = async () => { calls++; return seatsOf(...FIVE); };
   const make = () => nostrBadges({ db, secret: SECRET, on: true, roundOf: () => ({ ok: false }), log: () => {}, now: () => now,
-    apps: () => [{ name: 'nextblock', ids: [GAME] }, { name: 'rps', ids: [h('b')] }], accountsOf });
+    apps: () => [{ name: 'nextblock', ids: [GAME] }, { name: 'rps', ids: [h('b')] }], accountsOf, seatsOf: DRAWN, verify: verifySig });
   let book = make();
   try {
     // TWO TICKS AT ONCE: the second finds the first still asking, and asks nothing
@@ -340,6 +351,7 @@ test('the board badge: a week is fetched once - across ticks and across a restar
     assert.equal(calls, 4);
   } finally { book.stop(); }
 });
+
 
 // A REAL NODE with badges on: a staked round its settlement holds ACCEPTED, read as the season reads it; the identity its winner's
 // lobby record names gets the first-win badge, served at /badges with its definition; the loser's bare round key gets nothing.
@@ -381,7 +393,7 @@ test('a real node: /badges and /badge-definitions serve the events it signed; /b
       }
       for (let s = 0; s < 2; s++) db.prepare('INSERT INTO final_sigs (round_id, entry_id, run_id, signer_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)').run(rid, eid, run, SEATS[s], new Uint8Array(1), 3);
       round.putStakeLock({ entryId: eid, roundId: rid, outpoint: { txid: b32(0xa0 + i), outIdx: 0 }, fields: { amountMsat: '96000' }, contractId: 'c' });
-      if (identity) round.putLobbyName({ roundId: rid, playerPubkey: key, signature: new Uint8Array(64), atMs: 5,
+      if (identity) round.putLobbyName({ roundId: rid, playerPubkey: key, signature: new Uint8Array(64), identitySig: new Uint8Array(64), atMs: 5,
         record: encodeLobbyName({ roundId: rid, playerPubkey: key, identityPubkey: identity, name: 'alice', atMs: 5 }) });
     });
     const ask = (q) => fetch(`http://127.0.0.1:${d.port}${q}`);

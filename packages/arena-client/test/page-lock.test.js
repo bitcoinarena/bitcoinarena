@@ -508,12 +508,14 @@ test('after the settlement the winner\'s page redeems its own stake by the signe
   assert.equal(again.amountMsat, 980000n);
   assert.equal(asked.length + redeemed.length + joins, 0);
 
-  // A LOSER: every signer node refuses the forfeit as not a qualifier - final, nothing asked of the wallet.
+  // A LOSER: every signer node refuses the forfeit as not a qualifier - nothing asked of the wallet, and NOT FINAL on their words (kanban
+  // #1163): a stake the settlement claimed reads gone in the federation, one it did not comes back by the player's key at its expiry
   const lost = await returnStake({ ...ask, fetcher: signerNodes({ forfeit: 409 }) });
   console.log(`  loser: "${stakeBackLine(lost)}"; joins ${joins}, redeems ${redeemed.length}`);
   assert.equal(lost.ok, false);
-  assert.equal(lost.final, true);
-  assert.match(stakeBackLine(lost), /^No stake back: .*went into the round's pool/);
+  assert.equal(lost.final, false);
+  assert.equal(lost.lostSaid, true);
+  assert.match(stakeBackLine(lost), /^Stake: not back yet - .*went into the round's pool/);
   assert.equal(joins + redeemed.length, 0, 'a loser\'s page asked the lock client');
 
   // A STAKE LOCK ALREADY BACK (another tab took it): refused, and the guardians hold no contract
@@ -582,11 +584,13 @@ test('the page looks at what a seed is owed and spends nothing: a winner\'s payo
   assert.deepEqual(spent, [], 'looking at what is owed spent something');
   assert.match(owedLine(won), /^978000 msat payout and your 980000 msat stake - yours in the round's federation until you withdraw it/);
 
-  const lost = await lookOwed({ ...ask, fetcher: signerNodes({ payout: false, forfeit: 409 }), client: wallet(0), kept });
+  // A LOSER (kanban #1163): said lost, never final while its lock is held - and past the lock's expiry the player's key takes it back
+  const lost = await lookOwed({ ...ask, fetcher: signerNodes({ payout: false, forfeit: 409 }), client: wallet(140), kept });
   assert.equal(lost.owedMsat, 0n);
   assert.equal(lost.stakeLost, true);
-  assert.equal(lost.final, true);
-  assert.match(owedLine(lost), /^No payout · No stake back/);
+  assert.equal(lost.final, false);
+  const lostExpired = await lookOwed({ ...ask, fetcher: signerNodes({ payout: false, forfeit: 409 }), client: wallet(0), kept });
+  assert.equal(lostExpired.refundMsat, 980000n, 'a lost run\'s lock past its expiry was not owed back by the player\'s key');
 
   const early = await lookOwed({ ...ask, fetcher: signerNodes({ payout: false, known: false }), client: wallet(150), kept });
   assert.equal(early.owedMsat, 0n);
@@ -1748,16 +1752,20 @@ test('a withdrawal of a chosen amount pays only an invoice of exactly that amoun
 // THE OBJECTION WINDOW IS EXACTLY 600 000 ms (§13A, WINDOW-10-SPEC, RULED 2026-10-01): "a node refuses to open it,
 // list it or take an entry for it" - and the page, which reads every round through fetchRound (the lobby's rows and a
 // join alike), lists and joins none, whatever a node answers.
-test('WINDOW-10-SPEC: the page lists and joins only a round whose objection window is 600000 ms - 0, 599999 and 600001 refused by name', async () => {
+test('WINDOW-10-SPEC + #1398: the page lists and joins a round whose objection window is 600000 ms or a head-to-head round\'s 60000 (5000 on a regtest) - 0, 599999, 600001, 59999 refused by name (audit 5, #1399)', async () => {
   const { fetchRound } = await import('../src/join.js');
   const answering = (c) => async () => ({ ok: true, status: 200, arrayBuffer: async () => encodeRoundContract(c).buffer.slice(0) });
-  for (const w of [0n, 599999n, 600001n]) {
+  for (const w of [0n, 599999n, 600001n, 59999n]) {
     const c = { ...round, objectionWindowMs: w };
     await assert.rejects(fetchRound(toHex(roundId(c)), ['http://127.0.0.1:9'], { fetcher: answering(c) }),
-      new RegExp(`names an objection window of ${w} ms, not 600000: that contract is invalid and the page does not join it`));
+      new RegExp(`names an objection window of ${w} ms, not one a round may name`));
   }
   const got = await fetchRound(toHex(rid), ['http://127.0.0.1:9'], { fetcher: answering(round) });
   assert.equal(got.contract.objectionWindowMs, 600000n);
+  // a head-to-head round's 60 s: before audit 5 the page refused it, and a day of them would have listed no round
+  const short = { ...round, objectionWindowMs: 60000n };
+  const got60 = await fetchRound(toHex(roundId(short)), ['http://127.0.0.1:9'], { fetcher: answering(short) });
+  assert.equal(got60.contract.objectionWindowMs, 60000n);
 });
 
 // TWO PLAYERS IN ONE BROWSER (ORDER-2116, measured 2026-10-02 05:5xZ): keyed by round alone, the loser's record replaced the

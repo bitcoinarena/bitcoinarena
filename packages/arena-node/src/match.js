@@ -37,9 +37,14 @@ export function matchOf(round, plugins, roundIdBytes, depth = 0) {
   const c = decodeRoundContract(new Uint8Array(row.contract));
   const found = pluginForRound(c, plugins);
   if (!found.ok || !found.headToHead) return null;
-  const entries = round.entriesOf(roundIdBytes);
+  // the round's seated players: in a paying round only the entries backed by a lock (kanban #1437, audit 8 R3)
+  const entries = typeof round.seatedEntriesOf === 'function' ? round.seatedEntriesOf(roundIdBytes, c.stakeMsat) : round.entriesOf(roundIdBytes);
   if (entries.length !== 2) return null;
-  const named = entries.map(({ entryId }) => ({ entryId, id: round.identityOf(entryId), result: agreedResult(round, roundIdBytes, entryId) }));
+  // EACH SIDE'S IDENTITY: its reveal's, else the one its consented name record names (audit 5 #1401) - a loser who left the identity off his reveal, or
+  // forfeited, broke the chain and the next round's score started at 0-0; the consent is fixed at the join, before anything is known
+  const idOf = ({ entryId, entry }) => round.identityOf(entryId)
+    || (typeof round.consentedIdentityOf === 'function' && entry ? ((h) => (h ? { identity: Uint8Array.from(Buffer.from(h, 'hex')) } : null))(round.consentedIdentityOf(roundIdBytes, entry.playerPubkey)) : null);
+  const named = entries.map((e) => ({ entryId: e.entryId, id: idOf(e), result: agreedResult(round, roundIdBytes, e.entryId) }));
   if (named.some((x) => !x.id)) return null;
   if (named.some((x) => !x.result)) return null;                      // not decided yet: counted once it is
   const ids = named.map((x) => toHex(x.id.identity));

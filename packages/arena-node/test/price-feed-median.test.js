@@ -194,8 +194,42 @@ test('RoundResult from medians, end to end: the ends\' readings are kept across 
   const all = await roundVerdict({ roundId: net.rid, nodes: [0, 1, 2, 3, 4, 5, 6].map((i) => `seat${i}`), committee: net.committee, verify, fetcher: asking });
   assert.deepEqual([all.ok, all.front, all.signers, all.needed], [true, 'BEARS', 7, 5], all.why);
   // no seat holds five readings of the open: no result, and no seat makes one up
-  for (const d of dbs) d.exec('DELETE FROM price_ends WHERE k = 0');
+  // (and none signed one before: a seat that signed the round's one result keeps answering it, kanban #1375)
+  for (const d of dbs) { d.exec('DELETE FROM price_ends WHERE k = 0'); d.exec('DELETE FROM price_signed'); }
   for (let i = 0; i < 7; i++) net.restart(i);
   const none = await net.seats[0].result(net.rh);
   assert.equal(none.ok, false); assert.match(none.why, /no opening sample \(k 0\) of the round stands/);
+});
+
+// kanban #1375 (audit 2 #1204 MKT-2): one result per round from a seat - kept once signed, and signed only once the readings are in or a minute passed
+test('#1375 a seat short of two close readings signs one result, and keeps it when the two arrive', async () => {
+  let t; let base;
+  const down = new Set();
+  const dbs = [0, 1, 2, 3, 4, 5, 6].map(() => new DatabaseSync(':memory:'));
+  const net = network({ readings: [0, 1, 2, 3, 4, 5, 6].map((i) => () => base + i * 10), now: () => t, dbs, down });
+  const kClose = closeSampleK(Number(net.contract.blockTicks));
+  for (const [k, p] of [[0, 8297000], [3, 8299000]]) { t = START + (k - 1) * 5000 + 300; base = p; await beatAll(net); }
+  // THE CLOSE: seat 0 does not hear seats 1 and 2 (their posts to it fail)
+  t = START + (kClose - 1) * 5000 + 300; base = 8296000;
+  await beatAll(net, [0, 3, 4, 5, 6]);
+  down.add(0); await beatAll(net, [1, 2]); down.delete(0);
+  // at the end every peer is out of reach: seat 0 holds 5 of the 7 close readings
+  for (const i of [1, 2, 3, 4, 5, 6]) down.add(i);
+  const end = START + Number(msForTicks(BigInt(net.contract.blockTicks)).ms) + 1000;
+  t = end;
+  const first = await net.seats[0].result(net.rh);
+  t = end + 61000;
+  const x = await net.seats[0].result(net.rh);
+  // the two readings within reach again, past the fetch period
+  down.clear(); t = end + 61000 + 31000;
+  const y = await net.seats[0].result(net.rh);
+  console.log(`#1375 first ask: ${first.ok ? 'signed ' + first.closeCents : first.why}; +61 s: close ${x.closeCents} (${x.readings && x.readings.close} readings); peers back: close ${y.closeCents} (${y.readings && y.readings.close})`);
+  assert.equal(first.ok, false, 'signed over a set still filling');
+  assert.equal(x.ok, true, x.why);
+  assert.equal(y.ok, true, y.why);
+  assert.deepEqual([y.openCents, y.closeCents, y.front], [x.openCents, x.closeCents, x.front], 'a second, other result of one round');
+  // and after a restart the kept one is the answer
+  net.restart(0);
+  const z = await net.seats[0].result(net.rh);
+  assert.equal(z.closeCents, x.closeCents);
 });

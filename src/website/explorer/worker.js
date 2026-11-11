@@ -14,7 +14,11 @@
 //   /metrics              that page, its figures built in
 //   GET /api/health       the Network health page's kept copy (kanban #686): every door that page asks, asked every minute (its own cron)
 //   GET /api/played       played rounds per day, week and month, per game, real players apart from the owner and our bots (kanban #1090)
-//   POST /api/mark        entry keys that are the owner's or a bot's, with the admin code (kanban #1090)
+//   GET /api/totals       every round since the first one this explorer holds, per game: rounds, rounds settled, entries (kanban #1197; a count that only grows)
+//   POST /api/mark        entry keys that are the owner's or a bot's, with the admin code (kanban #1090); the owner's address is kept (kanban #1414)
+//   GET  /api/admin-ip    { admin }: whether the caller's address sent the admin code within 48 hours (kanban #1414, #1420)
+//   POST /api/mark-ip     entry keys of a browser on an admin address, marked as the owner's without the code - only entries held here, never
+//                         over another mark, with the address recorded (kanban #1414, #1420)
 import { readHealth, HEALTH_CRON } from './health.js';
 
 const SEATS = [1, 2, 3, 4, 5, 6, 7].map((i) => `https://tn4.bitcoin-arena.io/guardian-${i}`)
@@ -237,8 +241,10 @@ async function metrics(env) {
   const kept = JSON.parse((await stateGet(env, 'metrics')) || 'null');
   const since = Math.floor(Date.now() / DAY_MS) * DAY_MS - (VOLUME_DAYS - 1) * DAY_MS;
   // the stakes of the orders (kanban #683: the gifts and items bought are rows too, not stakes)
-  const r = await env.DB.prepare(`SELECT (stored_ms / ${DAY_MS}) AS d, COUNT(*) AS n, SUM(CAST(json_extract(json, '$.entry.stakeMsat') AS INTEGER)) AS msat
-    FROM txs WHERE stored_ms >= ? AND kind = 'order' GROUP BY d ORDER BY d DESC`).bind(since).all();
+  // THE STAKE IS READ BEFORE THE GROUPING (kanban #1459, the owner 2026-11-11: "metrics is offline" - D1_ERROR: out of memory: SQLITE_NOMEM): grouped
+  // directly, SQLite sorted each order's whole json (14.5 KB on average, 238 MB in all) by its day; now only the day and the stake are sorted
+  const r = await env.DB.prepare(`WITH x AS MATERIALIZED (SELECT stored_ms / ${DAY_MS} AS d, CAST(json_extract(json, '$.entry.stakeMsat') AS INTEGER) AS s
+    FROM txs WHERE stored_ms >= ? AND kind = 'order') SELECT d, COUNT(*) AS n, SUM(s) AS msat FROM x GROUP BY d ORDER BY d DESC`).bind(since).all();
   const volume = (r.results || []).map((x) => ({ day: new Date(Number(x.d) * DAY_MS).toISOString().slice(0, 10), txs: Number(x.n), msat: String(x.msat || 0) }));
   const history = JSON.parse((await stateGet(env, 'reserve-history')) || 'null');
   return { volume, reserve: kept ? kept.reserve : null, referral: kept ? kept.referral : null, readAt: kept ? kept.readAt : null, seats: kept ? kept.seats : null,
@@ -253,18 +259,133 @@ async function metrics(env) {
 const ADMIN_SHA256 = '18fcacfac3164c5a5dc71e71d053c9061fea37403e63056eb9d11e602ab1bc79';
 const PLAYED_FROM_MS = Date.UTC(2026, 10, 1);
 const sha256Hex = async (t) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(t))))].map((b) => b.toString(16).padStart(2, '0')).join('');
+// ADMIN BY ADDRESS (kanban #1414): an address that sent the admin code within ADMIN_IP_DAYS is the admin's - a private window or a fresh browser there
+// is flagged too, and its entries are marked without the code. An IPv6 address counts by its /64 (its first four groups, written out).
+// AN ADDRESS IS THE ADMIN'S FOR 48 HOURS AFTER ITS LAST CODE MARK (audit 6, kanban #1420; was 90 days): a shared address - a carrier's CGNAT, a hotel's
+// Wi-Fi - did not stay flagged for months; the admin's own browser, which marks with the code each minute it plays, keeps it fresh
+const ADMIN_IP_HOURS = 48;
+export function ipKey(ip) {
+  const s = String(ip || '').trim().toLowerCase().replace(/^\[|\]$/g, '').split('%')[0];
+  if (!s) return null;
+  const v4 = /^(?:::ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/.exec(s); if (v4) return v4[1];
+  if (!s.includes(':') || s.split('::').length > 2) return s;
+  const [head, tail = null] = s.split('::'); const a = head ? head.split(':') : [], b = tail ? tail.split(':') : [];
+  const groups = tail === null ? a : [...a, ...Array(Math.max(0, 8 - a.length - b.length)).fill('0'), ...b];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return s;
+  return `${groups.slice(0, 4).map((g) => g.padStart(4, '0')).join(':')}::/64`;
+}
+const callerIp = (request) => ipKey(request.headers.get('cf-connecting-ip'));
+async function adminIp(env, request) {
+  const ip = callerIp(request); if (!ip) return false;
+  const r = await env.DB.prepare('SELECT at_ms FROM admin_ips WHERE ip = ?').bind(ip).first().catch(() => null);
+  return !!(r && Date.now() - Number(r.at_ms) < ADMIN_IP_HOURS * 3600000);
+}
+async function putMarks(env, keys, kind) {
+  const at = Date.now();
+  for (let i = 0; i < keys.length; i += 50)
+    // a mark with the code or a bot's clears an earlier address's by_ip (audit 6 re-check N6, kanban #1426): undoing marks by address never takes it
+    await env.DB.batch(keys.slice(i, i + 50).map((k) => env.DB.prepare('INSERT INTO marked (key, kind, at_ms) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET kind = excluded.kind, at_ms = excluded.at_ms, by_ip = NULL').bind(k, kind, at)));
+}
+const keysOf = (b) => [...new Set((Array.isArray(b && b.keys) ? b.keys : []).map((k) => String(k).toLowerCase()).filter((k) => hex64.test(k)))].slice(0, 500);
+// POST /api/mark-ip { keys }: the entries of a browser on an admin address, marked as the owner's - no code; any other address is refused.
+// ONLY ENTRIES THIS EXPLORER HOLDS, NEVER OVER ANOTHER MARK, AND SAYING WHO (audit 6, kanban #1420): any key was taken and a code or bot mark was
+// overwritten, with no record of the address - now a key must be an entry id in txs, a key already marked keeps its mark, and the row names the
+// address (by_ip) so it can be found and undone. Answers the keys it took: the page counts only those as sent
+// A TEST BROWSER CLOSES BEFORE ITS ENTRY IS HERE (kanban #1466, Daniel 2026-11-11: "Sind die Runden vom 11.11 heute von 22 echten spielern? Prüfe das" - all 22 were
+// playtest scripts on the admin's address: each placed an order and closed its browser within the minute, before the explorer's next read held the entry,
+// so every mark was refused and never asked again - "fix it in code so it won't happen again"): an entry id from an admin address that is not held yet is
+// kept in mark_pending and marked when the entry arrives (applyPendingMarks, each poll), for PENDING_MARK_MS. Still only from an admin address, never over
+// another mark, by_ip kept. A browser under automation (navigator.webdriver) sends kind 'bot'; every other admin browser 'owner'.
+const PENDING_MARK_MS = 2 * DAY_MS;
+const pendingTable = (env) => env.DB.prepare('CREATE TABLE IF NOT EXISTS mark_pending (key TEXT PRIMARY KEY, kind TEXT NOT NULL, at_ms INTEGER NOT NULL, by_ip TEXT)').run();
+export async function applyPendingMarks(env, now = Date.now()) {
+  await pendingTable(env);
+  await env.DB.batch([
+    env.DB.prepare('INSERT INTO marked (key, kind, at_ms, by_ip) SELECT p.key, p.kind, p.at_ms, p.by_ip FROM mark_pending p WHERE p.key IN (SELECT id FROM txs) ON CONFLICT(key) DO NOTHING'),
+    env.DB.prepare('DELETE FROM mark_pending WHERE key IN (SELECT id FROM txs) OR at_ms < ?').bind(now - PENDING_MARK_MS),
+  ]);
+}
+async function markByIp(env, request) {
+  let b; try { b = await request.json(); } catch { return json({ ok: false, why: 'a mark is JSON: { keys }' }, { status: 400 }); }
+  if (!(await adminIp(env, request))) return json({ ok: false, why: 'this address is not the admin\'s' }, { status: 403 });
+  const kind = b && b.kind === 'bot' ? 'bot' : 'owner';
+  const ip = callerIp(request), asked = keysOf(b), at = Date.now(), took = [];
+  for (let i = 0; i < asked.length; i += 50) {
+    const part = asked.slice(i, i + 50);
+    const held = await env.DB.prepare(`SELECT id FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all().then((r) => new Set((r.results || []).map((x) => x.id))).catch(() => new Set());
+    const fresh = part.filter((k) => held.has(k)), later = part.filter((k) => !held.has(k));
+    if (fresh.length) await env.DB.batch(fresh.map((k) => env.DB.prepare('INSERT INTO marked (key, kind, at_ms, by_ip) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO NOTHING').bind(k, kind, at, ip)));
+    if (later.length) { await pendingTable(env); await env.DB.batch(later.map((k) => env.DB.prepare('INSERT INTO mark_pending (key, kind, at_ms, by_ip) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO NOTHING').bind(k, kind, at, ip))); }
+    took.push(...fresh, ...later);   // marked now, or kept until the entry is here: the page need not send them again
+  }
+  return json({ ok: true, marked: took.length, took, kind, by: 'address' });
+}
 async function mark(env, request) {
   let b; try { b = await request.json(); } catch { return json({ ok: false, why: 'a mark is JSON: { keys, kind, code }' }, { status: 400 }); }
   if (!b || typeof b.code !== 'string' || await sha256Hex(b.code.trim()) !== (env.ADMIN_SHA256 || ADMIN_SHA256)) return json({ ok: false, why: 'not the admin code' }, { status: 403 });
   if (!['owner', 'bot'].includes(b.kind)) return json({ ok: false, why: 'kind is owner or bot' }, { status: 400 });
   // entry ids (transaction ids) or player keys, 64 hex each
-  const keys = [...new Set((Array.isArray(b.keys) ? b.keys : []).map((k) => String(k).toLowerCase()).filter((k) => hex64.test(k)))].slice(0, 500);
-  const at = Date.now();
-  for (let i = 0; i < keys.length; i += 50)
-    await env.DB.batch(keys.slice(i, i + 50).map((k) => env.DB.prepare('INSERT INTO marked (key, kind, at_ms) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET kind = excluded.kind, at_ms = excluded.at_ms').bind(k, b.kind, at)));
+  const keys = keysOf(b);
+  await putMarks(env, keys, b.kind);
+  // the owner's address is kept (kanban #1414): a fresh browser there is the admin's too. A bot's runner is not an admin address
+  if (b.kind === 'owner') { const ip = callerIp(request); if (ip) await env.DB.prepare('INSERT INTO admin_ips (ip, at_ms) VALUES (?, ?) ON CONFLICT(ip) DO UPDATE SET at_ms = excluded.at_ms').bind(ip, Date.now()).run().catch(() => null); }
   return json({ ok: true, marked: keys.length, kind: b.kind });
 }
 const weekOf = (ms) => { const d = new Date(Math.floor(ms / DAY_MS) * DAY_MS); const back = (d.getUTCDay() + 6) % 7; return new Date(d.getTime() - back * DAY_MS).toISOString().slice(0, 10); };
+// THE PLAYED ROUNDS, TOLD TO UMAMI (kanban #1110, the owner 2026-11-03: "die events in umami muessen mit unseren gespielten runden im explorer
+// übereinstimmen, admin und bot runden ausgenommen"): the page's own events miss what an ad blocker stops or what is not played on the page, and
+// they came from admin play too. So the explorer sends them itself, from the same rows /api/played counts, with the same rule: an order is
+// real when neither its entry id nor its player key is marked. Each real entry once ('played-entry'), each round with a real entry once
+// ('played-round'), at the time it was played (a round at its first order's time, as /api/played dates it), from 2026-11-01. An order is
+// told only an hour after it was stored, so the bots' marking (every 10 min) and the owner's have come first. UMAMI_SEND=off stops it.
+const UMAMI_SEND_URL = 'https://stats.bitcoinarena.io/api/send', UMAMI_SITE = '024ff09e-c3a6-4dfd-bede-3163eb8be36a', UMAMI_HOST = 'testnet.bitcoinarena.io';
+const UMAMI_DELAY_MS = 3600000, UMAMI_PER_RUN = 25;
+async function sendPlayed(env, now = Date.now(), post = fetch) {
+  if (env.UMAMI_SEND === 'off') return { sent: 0, off: true };
+  const rows = ((await env.DB.prepare(`SELECT t.id, t.round, t.app, t.stored_ms AS ms,
+      (SELECT MIN(o.stored_ms) FROM txs o WHERE o.round = t.round AND COALESCE(o.kind, 'order') = 'order') AS round_ms,
+      EXISTS (SELECT 1 FROM umami_sent u WHERE u.key = 'r:' || t.round) AS round_sent
+    FROM txs t WHERE COALESCE(t.kind, 'order') = 'order' AND t.round IS NOT NULL AND t.stored_ms >= ? AND t.stored_ms < ?
+      AND NOT EXISTS (SELECT 1 FROM marked m WHERE m.key = t.id OR m.key = lower(json_extract(t.json, '$.entry.player')))
+      AND NOT EXISTS (SELECT 1 FROM umami_sent u WHERE u.key = 'e:' || t.id)
+    ORDER BY t.stored_ms LIMIT ?`).bind(PLAYED_FROM_MS, now - UMAMI_DELAY_MS, UMAMI_PER_RUN).all()).results) || [];
+  let sent = 0; const roundsNow = new Set();
+  const tell = async (name, game, ms) => {
+    const r = await post(env.UMAMI_SEND_URL || UMAMI_SEND_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': 'Mozilla/5.0 (compatible; arena-explorer)' },
+      body: JSON.stringify({ type: 'event', payload: { website: env.UMAMI_SITE || UMAMI_SITE, hostname: UMAMI_HOST, url: '/played/' + game, name, data: { game }, timestamp: Math.floor(Number(ms) / 1000) } }) });
+    if (!r.ok) throw new Error(`umami ${r.status}`);
+    sent++;
+  };
+  // EACH ONE CLAIMED BEFORE IT IS SENT (measured 2026-11-03: a run of 60 took longer than the minute, the next run read the same rows and
+  // 11-02 got 15 rounds twice): the row is written first, and a run that finds it written skips it; a send that fails takes it back
+  const claim = async (key) => { const r = (await env.DB.prepare('INSERT INTO umami_sent (key, at_ms) VALUES (?, ?) ON CONFLICT(key) DO NOTHING').bind(key, now).run()) || {};
+    return Number(r.meta ? r.meta.changes : r.changes) > 0; };
+  const unclaim = (key) => env.DB.prepare('DELETE FROM umami_sent WHERE key = ?').bind(key).run();
+  for (const x of rows) {
+    const game = x.app || 'unknown';
+    if (!Number(x.round_sent) && !roundsNow.has(x.round) && await claim('r:' + x.round)) {
+      roundsNow.add(x.round);
+      try { await tell('played-round', game, x.round_ms ?? x.ms); } catch (e) { await unclaim('r:' + x.round); return { sent, why: e.message }; }
+    }
+    if (!(await claim('e:' + x.id))) continue;
+    try { await tell('played-entry', game, x.ms); } catch (e) { await unclaim('e:' + x.id); return { sent, why: e.message }; }
+  }
+  return { sent, rows: rows.length };
+}
+
+/** EVERY ROUND SINCE THE FIRST ONE HELD HERE, PER GAME (kanban #1197, the homepage's numbers): rounds, settled rounds and entries - nothing that shrinks when nobody plays. */
+async function totals(env) {
+  const r = await env.DB.prepare(`SELECT app, COUNT(DISTINCT round) AS rounds, COUNT(DISTINCT CASE WHEN settled = 'ACCEPTED' THEN round END) AS settled, COUNT(*) AS entries,
+    MIN(stored_ms) AS first FROM txs WHERE kind = 'order' AND round IS NOT NULL GROUP BY app`).all();
+  const games = {}; let first = null;
+  for (const x of r.results || []) {
+    games[x.app || 'unknown'] = { rounds: Number(x.rounds), settled: Number(x.settled), entries: Number(x.entries) };
+    if (x.first !== null && (first === null || Number(x.first) < first)) first = Number(x.first);
+  }
+  const all = Object.values(games).reduce((t, g) => ({ rounds: t.rounds + g.rounds, settled: t.settled + g.settled, entries: t.entries + g.entries }), { rounds: 0, settled: 0, entries: 0 });
+  return { since: first === null ? null : new Date(first).toISOString(), readAt: new Date().toISOString(), all, games };
+}
+
 async function played(env) {
   const [rows, marks] = await Promise.all([
     env.DB.prepare(`SELECT id, round, app, stored_ms AS ms, settled, json_extract(json, '$.entry.player') AS p FROM txs WHERE kind = 'order' AND stored_ms >= ? AND round IS NOT NULL`).bind(PLAYED_FROM_MS).all(),
@@ -350,6 +471,7 @@ async function readWindow(env, since, limit, before) {
     if (w) writes.push(w);
   }
   for (let i = 0; i < writes.length; i += 50) await env.DB.batch(writes.slice(i, i + 50));
+  await applyPendingMarks(env).catch((e) => console.log(JSON.stringify({ pendingMarksError: String(e && e.message ? e.message : e) })));
   return { seats: [...answered.values()].filter(Boolean).length, txs: ids.length, written: writes.length, ms: Date.now() - t0 };
 }
 
@@ -381,7 +503,18 @@ function filterSql(q, now = Date.now()) {
   const since = Number(q.get('since'));
   if (Number.isFinite(since) && since > 0) { where.push('stored_ms >= ?'); binds.push(now - since * 1000); }
   const part = String(q.get('q') || '').toLowerCase();
-  if (/^[0-9a-f]{1,64}$/.test(part)) { where.push('(id LIKE ? OR round LIKE ? OR fed_txid LIKE ?)'); binds.push(`%${part}%`, `%${part}%`, `%${part}%`); }
+  // instr, not LIKE: D1 refuses a LIKE pattern over 50 bytes, so a whole 64-hex id ("%" + 64 + "%") answered 500 (kanban #1107, 2026-11-03)
+  if (/^[0-9a-f]{1,64}$/.test(part)) { where.push('(instr(id, ?) > 0 OR instr(round, ?) > 0 OR instr(fed_txid, ?) > 0)'); binds.push(part, part, part); }
+  // OUR BOTS' AND THE OWNER'S TRANSACTIONS LEFT OUT (kanban #1107, the owner 2026-11-03: "bot Transaktionen und admin tx standardmäßig ausblenden, es
+  // gibt ein flag um es einzublenden"): an order whose entry id or player key is marked (POST /api/mark), and every other transaction of a round
+  // whose orders are all marked; ?marked=1 shows them
+  if (q.get('marked') !== '1') {
+    const markedOrder = (t) => `EXISTS (SELECT 1 FROM marked m WHERE m.key = ${t}.id OR m.key = lower(json_extract(${t}.json, '$.entry.player')))`;
+    where.push(`NOT ${markedOrder('txs')}`);
+    where.push(`NOT (txs.round IS NOT NULL AND COALESCE(txs.kind, 'order') != 'order'
+      AND EXISTS (SELECT 1 FROM txs o WHERE o.round = txs.round AND COALESCE(o.kind, 'order') = 'order')
+      AND NOT EXISTS (SELECT 1 FROM txs o WHERE o.round = txs.round AND COALESCE(o.kind, 'order') = 'order' AND NOT ${markedOrder('o')}))`);
+  }
   return { where, binds };
 }
 const ROW_SQL = `SELECT id, round, app, federation, stored_ms, kind, json_extract(json, '$.entry.stakeMsat') AS stake, json_extract(json, '$.amountMsat') AS amount,
@@ -430,10 +563,12 @@ async function inline(env, request, data) {
 // THE OLD DOMAIN (kanban #937): every (sub)domain of it sends to the same place on the new one, path and query kept
 const OLD_DOMAIN = /(^|\.)bitcoin-arena\.io$/;
 const moved = (url) => { if (!OLD_DOMAIN.test(url.hostname)) return null; const to = new URL(url); to.hostname = url.hostname.replace(/bitcoin-arena\.io$/, 'bitcoinarena.io'); return Response.redirect(to.toString(), 308); };
+export { sendPlayed };
 export default {
   // the health copy on its own trigger (kanban #686): its own run, so its fetches do not count against the transactions' read
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(event.cron === HEALTH_CRON ? readHealth(env).catch((e) => console.log(JSON.stringify({ healthError: String(e && e.message ? e.message : e) }))) : poll(env));
+    ctx.waitUntil(event.cron === HEALTH_CRON ? readHealth(env).catch((e) => console.log(JSON.stringify({ healthError: String(e && e.message ? e.message : e) })))
+      : Promise.all([poll(env), sendPlayed(env).then((r) => { if (r.sent || r.why) console.log(JSON.stringify({ umami: r })); }).catch((e) => console.log(JSON.stringify({ umamiError: String(e && e.message ? e.message : e) })))]));
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -442,8 +577,12 @@ export default {
     if (url.pathname === '/api/recent') return json(await recent(env, url.searchParams), { maxAge: 10 });
     if (url.pathname === '/api/metrics') return json(await metrics(env), { maxAge: 30 });
     if (url.pathname === '/api/played') return json(await played(env), { maxAge: 60 });
+    if (url.pathname === '/api/totals') return json(await totals(env), { maxAge: 300 });
     if (url.pathname === '/api/mark' && request.method === 'OPTIONS') return new Response(null, { headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type' } });
     if (url.pathname === '/api/mark' && request.method === 'POST') return mark(env, request);
+    if (url.pathname === '/api/mark-ip' && request.method === 'OPTIONS') return new Response(null, { headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type' } });
+    if (url.pathname === '/api/mark-ip' && request.method === 'POST') return markByIp(env, request);
+    if (url.pathname === '/api/admin-ip') return json({ ok: true, admin: await adminIp(env, request) });
     if (url.pathname === '/api/health') {
       const kept = await env.EXPLORER.get('health');
       return kept ? new Response(kept, { headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=20' } })

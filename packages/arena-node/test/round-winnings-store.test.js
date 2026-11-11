@@ -77,9 +77,11 @@ test('markSend: the state and why of that attempt only; its contract and preimag
     + 'SELECT updated_ms FROM donation_sends WHERE entry_id = ? AND attempt = ?').get(Buffer.from(entry), attempt, Buffer.from(entry), attempt).updated_ms;
   const planned = updated(E1, 1);
   const at = tick(2000);
-  round.markSend({ entryId: E1, attempt: 1, state: 'SENT', why: 'the contract is funded', txid: 'f0'.repeat(32), outIdx: 2 });
+  // ONLY AS send-state.js ALLOWS (kanban #1154): a state no send is in moves nothing
+  assert.equal(round.markSend({ entryId: E1, attempt: 1, state: 'SENT', why: 'no such state' }), false);
+  assert.equal(round.markSend({ entryId: E1, attempt: 1, state: 'SENDING', why: 'the contract is funded', txid: 'f0'.repeat(32), outIdx: 2 }), true);
   const sent = round.sendAttemptsOf(RID).find((a) => hex(a.entryId).startsWith('21') && a.attempt === 1);
-  assert.deepEqual([sent.state, sent.why, sent.txid, sent.outIdx, sent.preimage], ['SENT', 'the contract is funded', 'f0'.repeat(32), 2, null]);
+  assert.deepEqual([sent.state, sent.why, sent.txid, sent.outIdx, sent.preimage], ['SENDING', 'the contract is funded', 'f0'.repeat(32), 2, null]);
   assert.equal(updated(E1, 1), at);
   assert.ok(at > planned);
   const other = round.sendAttemptsOf(RID).find((a) => hex(a.entryId).startsWith('21') && a.attempt === 0);
@@ -89,9 +91,12 @@ test('markSend: the state and why of that attempt only; its contract and preimag
   const paid = round.sendPlansOf(RID).find((p) => hex(p.entryId).startsWith('21'));
   assert.deepEqual([paid.state, paid.why, paid.txid, paid.outIdx, paid.preimage], ['PAID', 'the gateway paid', 'f0'.repeat(32), 2, '99'.repeat(32)],
     'the contract named before is kept; the preimage added');
-  round.markSend({ entryId: D1, attempt: 0, state: 'FAILED', why: 'no route' });
+  // PAID IS FINAL: nothing moves it back
+  assert.equal(round.markSend({ entryId: E1, attempt: 1, state: 'SENDING', why: 'again' }), false);
+  assert.equal(round.sendPlansOf(RID).find((p) => hex(p.entryId).startsWith('21')).state, 'PAID');
+  round.markSend({ entryId: D1, attempt: 0, state: 'HELD', why: 'no route' });
   const d = round.sendPlansOf(RID).find((p) => p.donation);
-  assert.deepEqual([d.state, d.why], ['FAILED', 'no route']);
+  assert.deepEqual([d.state, d.why], ['HELD', 'no route']);
   round.markSend({ entryId: b32(0x77), attempt: 0, state: 'PAID', why: 'nobody' });
   assert.equal(round.sendAttemptsOf(RID).length, 3, 'marking a send that does not exist adds nothing');
 });

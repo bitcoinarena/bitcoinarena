@@ -1,0 +1,80 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// kanban #1374 (audit 2 #1204 FED-C4 / INSTALLER-DOORS-15): an add-bond or roles change asked again while the one sent is unconfirmed answers that one
+// Run with --experimental-test-module-mocks (the bond tool is stubbed: its chain reads are the wallet's).
+import { test, mock } from 'node:test';
+import assert from 'node:assert/strict';
+
+const B1 = { txid: 'a1'.repeat(32), vout: 0, sats: 100000, advert: { roles: ['game'], guardianCapable: false, protocolVersions: [1], operatorId: 'op' } };
+mock.module('../tools/regtest-bond.mjs', { namedExports: { regtest: () => ({ bondsOf: () => [...BONDS], newestUpdateOf: () => null,
+  postBond: () => { throw new Error('BUILD: a second bond would be funded'); }, prepareAdvertUpdate: () => { throw new Error('BUILD: a second update would be funded'); } }) } });
+let BONDS = [B1];
+const { addBondFromWallet, changeRolesFromWallet, SAME_ACTION_MS } = await import('../src/add-bond-wallet.js');
+
+// `mempool`: the transaction ids this node's mempool holds (kanban #1423: an "already" answer needs the kept transaction to be there)
+const world = (mempool = new Set(['b2'.repeat(32), 'b3'.repeat(32), 'u1'.repeat(32)])) => {
+  const calls = [], store = new Map();
+  const cli = (m, ...a) => { calls.push([m, ...a]); if (m === 'getblockcount') return '100'; if (m === 'getmempoolentry' && mempool.has(a[0])) return '{}';
+    // bitcoind's own answer for a transaction it does not hold (kanban #1426 N8: only this reads as "not there")
+    if (m === 'getmempoolentry' || m === 'gettransaction') throw new Error('error code: -5\nerror message:\nNo such mempool or blockchain transaction');
+    throw new Error(`no ${m}`); };
+  const journal = { last: (k) => store.get(k) || null, keep: (k, r) => store.set(k, r) };
+  return { calls, store, cli, journal, sent: () => calls.filter((c) => c[0] === 'sendrawtransaction').map((c) => c[1]) };
+};
+
+test('#1374 the same add again while its bond is unconfirmed: the kept one answered and re-sent, nothing funded', async () => {
+  const w = world();
+  const now = 1_800_000_000_000;
+  // what a first post kept before its lost answer
+  w.journal.keep('add-bond', { key: null, what: '50000', atMs: now - 60_000, hexes: ['f00d', 'b0nd'], bondTxid: 'b2'.repeat(32), bond: { txid: 'b2'.repeat(32) }, plan: { addSats: '50000' } });
+  const r = await addBondFromWallet({ cli: w.cli, network: 'regtest', secret: new Uint8Array(32).fill(1), pubkey: new Uint8Array(32), addSats: '50000', post: true, now, journal: w.journal });
+  assert.equal(r.ok, true, r.why);
+  assert.equal(r.already, true);
+  assert.equal(r.bond.txid, 'b2'.repeat(32));
+  assert.deepEqual(w.sent(), ['f00d', 'b0nd'], 'only the kept bytes broadcast again');
+  // another amount, the same amount after the window, or once the kept bond confirmed: built anew (here the stub refuses to build)
+  for (const [what, at, confirmed] of [['60000', now, false], ['50000', now + SAME_ACTION_MS + 120_000, false], ['50000', now, true]]) {
+    BONDS = confirmed ? [B1, { ...B1, txid: 'b2'.repeat(32) }] : [B1];
+    await assert.rejects(addBondFromWallet({ cli: w.cli, network: 'regtest', secret: new Uint8Array(32).fill(1), pubkey: new Uint8Array(32), addSats: what, post: true, now: at, journal: w.journal }), /BUILD: a second bond/);
+  }
+  BONDS = [B1];
+  // the page's key, when it sends one, decides: the same key answers whatever the amount
+  w.journal.keep('add-bond', { key: 'k1', what: '50000', atMs: now, hexes: ['aa'], bondTxid: 'b3'.repeat(32), bond: { txid: 'b3'.repeat(32) }, plan: {} });
+  const byKey = await addBondFromWallet({ cli: w.cli, network: 'regtest', secret: new Uint8Array(32).fill(1), pubkey: new Uint8Array(32), addSats: '70000', post: true, now: now + 3 * SAME_ACTION_MS, key: 'k1', journal: w.journal });
+  assert.equal(byKey.already, true);
+});
+
+test('#1374 the same roles change again while its update is unconfirmed: answered, not paid twice', async () => {
+  const w = world();
+  const after = { roles: ['game', 'verify'], custody: false };
+  w.journal.keep('roles', { key: null, what: JSON.stringify(after), atMs: 1000, hexes: ['c0', 'de'], txid: 'u1'.repeat(32), plan: { after } });
+  const r = await changeRolesFromWallet({ cli: w.cli, network: 'regtest', secret: new Uint8Array(32).fill(1), pubkey: new Uint8Array(32), roles: ['verify', 'game'], post: true, journal: w.journal, nowMs: 2000 });
+  assert.equal(r.already, true, r.why);
+  assert.equal(r.update.txid, 'u1'.repeat(32));
+  assert.deepEqual(w.sent(), ['c0', 'de']);
+  await assert.rejects(changeRolesFromWallet({ cli: w.cli, network: 'regtest', secret: new Uint8Array(32).fill(1), pubkey: new Uint8Array(32), roles: ['settlement'], post: true, journal: w.journal, nowMs: 2000 }), /BUILD: a second update/);
+});
+
+// KANBAN #1423 (audit 6 for 2026.1.9.27): the journal is kept before the broadcast, so a broadcast that threw left a row for a transaction no node holds,
+// and the same ask answered "already" with nothing sent. Now the kept transaction must be in the mempool (or mined); else the action is built again.
+test('#1423 the same add or roles change again after a broadcast that never went out: built anew, not answered "already"', async () => {
+  const w = world(new Set());                                         // the earlier broadcast threw: the mempool holds nothing
+  const now = 1_800_000_000_000;
+  w.journal.keep('add-bond', { key: null, what: '50000', atMs: now - 60_000, hexes: ['f00d', 'b0nd'], bondTxid: 'b2'.repeat(32), bond: { txid: 'b2'.repeat(32) }, plan: { addSats: '50000' } });
+  const add = await addBondFromWallet({ cli: w.cli, network: 'regtest', secret: new Uint8Array(32).fill(1), pubkey: new Uint8Array(32), addSats: '50000', post: true, now, journal: w.journal }).then((r) => (r.already ? 'answered already' : 'other'), (e) => e.message);
+  const after = { roles: ['game', 'verify'], custody: false };
+  w.journal.keep('roles', { key: null, what: JSON.stringify(after), atMs: 1000, hexes: ['c0', 'de'], txid: 'u1'.repeat(32), plan: { after } });
+  const roles = await changeRolesFromWallet({ cli: w.cli, network: 'regtest', secret: new Uint8Array(32).fill(1), pubkey: new Uint8Array(32), roles: ['verify', 'game'], post: true, journal: w.journal, nowMs: 2000 }).then((r) => (r.already ? 'answered already' : 'other'), (e) => e.message);
+  console.log(`  MEASURED #1423: kept add-bond not in the mempool -> ${add}; kept roles update not in the mempool -> ${roles}`);
+  assert.match(add, /BUILD: a second bond would be funded/);
+  assert.match(roles, /BUILD: a second update would be funded/);
+});
+
+test('#1426 N8 a busy bitcoind is not "the transaction is not there": the kept add answers already, nothing built', async () => {
+  const w = world(new Set());
+  const busy = (m, ...a) => { w.calls.push([m, ...a]); if (m === 'getblockcount') return '100'; if (m === 'getmempoolentry' || m === 'gettransaction') throw new Error('error code: -28\nLoading block index...'); throw new Error(`no ${m}`); };
+  const now = 1_800_000_000_000;
+  w.journal.keep('add-bond', { key: null, what: '50000', atMs: now - 60_000, hexes: ['f00d', 'b0nd'], bondTxid: 'b2'.repeat(32), bond: { txid: 'b2'.repeat(32) }, plan: { addSats: '50000' } });
+  const r = await addBondFromWallet({ cli: busy, network: 'regtest', secret: new Uint8Array(32).fill(1), pubkey: new Uint8Array(32), addSats: '50000', post: true, now, journal: w.journal });
+  assert.equal(r.already, true, 'a busy bitcoind made a second add-bond');
+});

@@ -2,7 +2,7 @@
  "openapi": "3.0.3",
  "info": {
   "title": "Bitcoin Arena node API",
-  "version": "2026-11-03",
+  "version": "2026-11-11",
   "description": "Every request a Bitcoin Arena node (`arena-node`) answers, generated from `packages/arena-node/src/server.js` by `src/website/docs/gen-docs.py`. Concepts and guides: https://docs.bitcoinarena.io/"
  },
  "servers": [
@@ -3435,6 +3435,41 @@
     "x-changes-state": true
    }
   },
+  "/funding-items": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "A proposal's signals and fee approvals",
+    "description": "The signals and fee approvals this seat holds for one funding proposal, as signed, each with when this seat first held it (atMs). A seat pulls them from every network seat it reaches before it decides a fee proposal or a signal, so every seat decides on the same set (kanban #1231, #1279).\n\nAccess: none\n\nReturns: 200 JSON {proposal, items[{kind, hex, atMs}]}; 400\n\nSource: `packages/arena-node/src/server.js` line 10118.",
+    "operationId": "get_funding_items",
+    "parameters": [
+     {
+      "name": "proposal",
+      "in": "query",
+      "required": true,
+      "description": "Proposal id, 64 hex (32 bytes).",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{proposal, items: [{kind: signal|fee-approval, hex: the signed record, atMs}]}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "No proposal id, or not 64 hex.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
   "/game-donation-set": {
    "get": {
     "tags": [
@@ -4372,6 +4407,48 @@
       "description": "Malformed id or request.",
       "content": {
        "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/leaderboard-winners": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Leaderboard payout winners",
+    "description": "A leaderboard payout's winners at this seat: its own frozen read of the season's signed accounts, or the list it planned for, with every signed account it stands on. The coordinator merges the guardians' records into its plan; a co-signer checks a plan's rounds against them (kanban #1153).\n\nAccess: none\n\nReturns: 200 JSON {ok, proposal, state (OPEN|FROZEN|PLANNED), winnersId, winners:[{player, payoutPk, msat, places}], pairs:[[roundId, accountId]], evidence:[{roundId, accountId, contract, round, sigs:[{node, sig}]}]}; 400; 501 on a node that pays no reserves\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_leaderboard_winners",
+    "parameters": [
+     {
+      "name": "proposal",
+      "in": "query",
+      "required": true,
+      "description": "The leaderboard payout id, 64 hex.",
+      "schema": {
+       "type": "string"
+      },
+      "example": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{ok, proposal, state, winnersId, winners, pairs, evidence}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "No proposal id, or not 64 hex.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "501": {
+      "description": "This node pays no reserves.",
+      "content": {
+       "application/json": {}
       }
      }
     }
@@ -8272,7 +8349,7 @@
      "Nodes"
     ],
     "summary": "Ask this seat to sign a price",
-    "description": "Asks this seat to sign a price sample or opening tape it read too.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; signed only if within 0.05 % of this seat's own reading for that moment, a reading no older than 5 s\n\nReturns: 200 JSON {ok, key, signature}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5147.",
+    "description": "Asks this seat to sign a price sample or opening tape it read too.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the moment's leader's signature (leaderSig: seat k mod n, the tape's seat 0); signed only if within 0.05 % of this seat's own reading for that moment, a reading no older than 5 s, one value per moment (kanban #1181)\n\nReturns: 200 JSON {ok, key, signature}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5147.",
     "operationId": "post_price_sign",
     "requestBody": {
      "required": true,
@@ -9739,7 +9816,7 @@
       "name": "scope",
       "in": "query",
       "required": false,
-      "description": "network: ask every seat this node knows for its rounds (GET /season-rounds) and merge them with its own. A round counts only when 3 distinct seats hand in byte-identical accounts of it, so no single seat can forge a row. Omitted: this node's own rounds.",
+      "description": "network: ask every seat this node knows for its rounds (GET /season-rounds) and merge them with its own. A round counts only when 3 distinct seats hand in byte-identical accounts of it, so no single seat can forge a row. Omitted: this node's own rounds. The leaderboard payouts and the weekly badge do not count on agreement: they count signed accounts only (kanban #1153).",
       "schema": {
        "type": "string"
       },
@@ -9780,7 +9857,7 @@
      "Players"
     ],
     "summary": "Leaderboard rounds held by this node",
-    "description": "The rounds this node's own leaderboard is built from: FINAL results and the amounts its ACCEPTED settlements paid. Another node merges them into its network leaderboard. The weekly top-3 badge merges on the round keys too.\n\nAccess: none\n\nReturns: 200 JSON {node, game {ids}, days, fromMs, toMs, roundKeys: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}]}]} - msat and startMs as decimal strings, payoutMsat null while not settled here, roundKey the key the entry joined under (cache 30 s); 400/404\n\nSource: `packages/arena-node/src/server.js` line 4440.",
+    "description": "The rounds this node's own leaderboard is built from: FINAL results and the amounts its ACCEPTED settlements paid. Another node merges them into its network leaderboard. A leaderboard payout and the weekly top-3 badge count a round only when the threshold of the round's own draw (5 of 7) signed the same account of it, its contract checked by id (kanban #1153).\n\nAccess: none\n\nReturns: 200 JSON {node, game {ids}, days, fromMs, toMs, roundKeys: true, signed: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}], contract, sigs:[{node, sig}]}]} - msat and startMs as decimal strings, payoutMsat null while not settled here, roundKey the key the entry joined under, contract the round contract (hex), sigs this seat's BIP-340 signature over the round's account once every entry is settled here (empty before) (cache 30 s); 400/404\n\nSource: `packages/arena-node/src/server.js` line 4440.",
     "operationId": "get_season_rounds",
     "parameters": [
      {
@@ -9806,7 +9883,7 @@
     ],
     "responses": {
      "200": {
-      "description": "{node, game:{ids}, days, fromMs, toMs, roundKeys: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}]}]} (cache 30 s).",
+      "description": "{node, game:{ids}, days, fromMs, toMs, roundKeys: true, signed: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}], contract, sigs:[{node, sig}]}]} (cache 30 s).",
       "content": {
        "application/json": {}
       }
