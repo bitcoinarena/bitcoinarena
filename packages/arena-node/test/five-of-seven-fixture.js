@@ -20,7 +20,7 @@ import { roundEndMs } from '../../arena-protocol/src/first-mark.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { seedWordForEntry } from '../../arena-protocol/src/seed.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
@@ -155,7 +155,7 @@ export async function joinWithTwoFirstMarks(w, custody) {
       ticks: Array.from({ length: tick }, (_, t) => wordsAt(t)), liquidations: [], loads: bedFrom(0) };
     const m = { roundId: w.rid, entryId: eid, tick, stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),
       inputChainHash: batchId(b), previousHash: NO_PREVIOUS, sessionPubkey: entry.sessionPubkey };
-    return [encodeInputBatch(b), sign(m)];
+    return [signedBatchOf(b, (id) => ed25519.sign(id, session)), sign(m)];
   };
   // THE CHAIN PAST THE START LINE (the outage-VOID orders): the first mark at 60,
   // then a mark at PAST chaining to it - a signer node holding that first mark short of
@@ -171,7 +171,7 @@ export async function joinWithTwoFirstMarks(w, custody) {
   const b2 = { roundId: w.rid, entryId: eid, previousHash: batchId(b1), firstTick: 60, ticks: Array.from({ length: PAST - 60 }, (_, t) => wordsAt(60 + t)), liquidations: [] };
   const m2 = { roundId: w.rid, entryId: eid, tick: PAST, stateHash: hashAt(PAST), inputChainHash: batchId(b2), previousHash: checkpointId(m1), sessionPubkey: entry.sessionPubkey };
   return { eid, outpoint, paymentHash: toHex(sha256(preimage)), first: firstAt(60), other: firstAt(30),
-    past: [encodeInputBatch(b2), sign(m2)], late: firstAt(PAST) };
+    past: [signedBatchOf(b2, (id) => ed25519.sign(id, session)), sign(m2)], late: firstAt(PAST) };
 }
 
 /** Signer nodes 4-6 down; the first mark to signer node 0 (forwarded to 1-3); 4-6 back; a different one to signer node 4 (forwarded to 5, 6). */
@@ -236,7 +236,7 @@ export async function playWinner(w, signerNodesUp = null) {
   const signedMark = joinSigned(encodeCheckpoint(mark), ed25519.sign(checkpointId(mark), session));
   const batches = [];
   for (const d of ds) {
-    const took = await say(d.port, encodeInputBatch(input));
+    const took = await say(d.port, signedBatchOf(input, (id) => ed25519.sign(id, session)));
     batches.push(took);
     assert.ok(took === String(WINNER.ticks) || took === '0', `the winner's batch was refused: ${took}`);
     assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES, 'a signer node did not receipt the winner\'s mark');

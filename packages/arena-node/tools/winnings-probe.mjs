@@ -73,7 +73,7 @@ import { lockFromClient } from '../../arena-client/src/lock-result.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { init, step } from '../../nextblock/src/sim.js';
 import { hash as stateHash, O_SCORE, S_STATE } from '../../nextblock/src/state.js';
@@ -253,10 +253,10 @@ async function lockAndPlay(who, { noMarks = false } = {}) {
     said.push(l.status);
     // `noMarks`: seated and staked, and nothing sent - a walk-away (§15 at the door)
     if (noMarks) continue;
-    await say(d.port, encodeInputBatch(input));
+    await say(d.port, signedBatchOf(input, (id) => ed25519.sign(id, session)));
     await say(d.port, signedMark);
   }
-  return { eid, session, outpoint: lk.outpoint, locked: said, late: [encodeInputBatch(input), signedMark] };
+  return { eid, session, outpoint: lk.outpoint, locked: said, late: [signedBatchOf(input, (id) => ed25519.sign(id, session)), signedMark] };
 }
 // REAL PLAYER KEYS, AND RUNS CHOSEN THE WAY THE FIXTURE CHOSE ITS OWN: the seed is the player's key with the world
 // secret, so for each real key the world secret's last byte is stepped until the core itself says the fixture's
