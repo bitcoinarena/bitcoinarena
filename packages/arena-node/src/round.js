@@ -1020,6 +1020,39 @@ export class Round {
       if (why) throw new Error(why);
     }
 
+    // AND ONE EVENT PER TICK, THE SAME IN THE TABLES AS IN THE BYTES (kanban #1568). The tables below keep the FIRST
+    // liquidation, load, sample or tape at a tick (INSERT OR IGNORE); the batch bytes go unchanged into the canonical
+    // transcript, whose flatten() and the core's eventsOf keep the LAST. Two different events at one tick - in one batch
+    // or across two - made every seat replay one run and sign the hash of another, and an objection then held against
+    // every honest seat. A second event at a tick is refused unless it is the very same event (a harmless repeat).
+    if (!seen) {
+      const kinds = [
+        ['liquidation', b.liquidations || [], ([, size]) => String(size),
+          'SELECT size FROM liquidations WHERE round_id = ? AND entry_id = ? AND tick = ?', (r) => String(r.size)],
+        ['load', b.loads || [], ([, fee, btc, room]) => `${fee},${btc},${room === undefined ? null : room}`,
+          'SELECT fee_sats, btc_hund, room FROM loads WHERE round_id = ? AND entry_id = ? AND tick = ?',
+          (r) => `${r.fee_sats},${r.btc_hund},${r.room}`],
+        ['sample', b.samples || [], ([, price]) => String(price),
+          'SELECT price FROM samples WHERE round_id = ? AND entry_id = ? AND tick = ?', (r) => String(r.price)],
+        ['tape', b.tapes || [], ([, ...prices]) => Buffer.from(new Int32Array(prices).buffer).toString('hex'),
+          'SELECT prices FROM tapes WHERE round_id = ? AND entry_id = ? AND tick = ?',
+          (r) => Buffer.from(r.prices).toString('hex')],
+      ];
+      for (const [name, events, keyOf, sql, storedKey] of kinds) {
+        const mine = new Map();
+        const stored = this.db.prepare(sql);
+        for (const ev of events) {
+          const tick = ev[0], key = keyOf(ev);
+          if (mine.has(tick) && mine.get(tick) !== key)
+            throw new Error(`that batch carries two different ${name}s at tick ${tick}: one event per tick`);
+          mine.set(tick, key);
+          const row = stored.get(b.roundId, b.entryId, tick);
+          if (row && storedKey(row) !== key)
+            throw new Error(`a different ${name} is already stored at tick ${tick}: one event per tick`);
+        }
+      }
+    }
+
     // ONE COMMIT FOR THE WHOLE BATCH, not one per row (2026-09-17 19:15, the ghost lag). Every `run` outside a
     // transaction is its own commit, so a batch of six ticks with a sample and a tape cost seven disk syncs on the
     // thread that also pushes other players' trucks: measured live on the Daily, `batch stored` held the loop 24-46 ms
