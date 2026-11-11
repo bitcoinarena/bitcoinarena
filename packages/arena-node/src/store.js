@@ -959,6 +959,15 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, federation_id)
     );
 
+    -- THE FEDERATIONS A ROUND'S SPLIT NAMES, KEPT BEFORE ANYTHING IS SIGNED (kanban #1576): a federation gets its fed_lock_settlements row only at its
+    -- first SUBMITTING, so one whose part failed before that (its port down, fewer than the threshold committed, a share withheld) had no row,
+    -- and the round read settled on the other federations' ACCEPTED rows alone. A round is settled only when every federation named here is ACCEPTED.
+    CREATE TABLE IF NOT EXISTS fed_lock_split (
+      round_id      BLOB NOT NULL,
+      federation_id TEXT NOT NULL,
+      PRIMARY KEY (round_id, federation_id)
+    );
+
     -- WHAT THE SIGNED SETTLEMENT MOVES (W6): its claimed outpoints and how many
     -- payout contracts it makes, kept with its intent - so a signer node restarted inside
     -- it asks the federation without rebuilding the bytes it signed.
