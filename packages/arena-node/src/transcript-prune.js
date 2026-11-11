@@ -46,6 +46,32 @@ export function pruneTranscripts({ db, nowMs = Date.now(), keptUntil = (row) => 
   return { pruned, kept, rows };
 }
 
+// RELAYED TRANSCRIPTS LEAVE WITH THEM (kanban #1532): a transcript this seat keeps as a publication relay (PUT /transcript, the
+// `relayed` table) goes when its round's claim window has ended, as the round's own transcript does. Its round is read from the
+// bytes the door took: a transcript names it (type 0x09, version, round id), a head-to-head reveal record (33 or 65 bytes) names an
+// entry this seat holds. Anything else there (slash proofs) is not touched; a round this seat no longer holds is not guessed at.
+export function pruneRelayed({ db, nowMs = Date.now(), keptUntil = (row) => transcriptKeptUntil(decodeRoundContract(new Uint8Array(row.contract)), row.closed_ms) }) {
+  const rows = db.prepare(`SELECT hash, CASE WHEN LENGTH(bytes) >= 67 AND SUBSTR(bytes, 1, 1) = x'09' THEN SUBSTR(bytes, 4, 32)
+    WHEN LENGTH(bytes) IN (33, 65) THEN (SELECT round_id FROM entries WHERE entry_id = SUBSTR(relayed.bytes, 1, 32)) END AS rid FROM relayed`).all();
+  const roundOf = db.prepare('SELECT contract, closed_ms FROM rounds WHERE round_id = ?');
+  const del = db.prepare('DELETE FROM relayed WHERE hash = ?');
+  const untilOf = new Map(); let deleted = 0;
+  for (const { hash, rid } of rows) {
+    if (!rid) continue;
+    const k = Buffer.from(rid).toString('hex');
+    if (!untilOf.has(k)) {
+      const row = roundOf.get(rid);
+      let until = null;
+      try { until = row ? keptUntil(row) : null; } catch { until = null; }
+      untilOf.set(k, until);
+    }
+    const until = untilOf.get(k);
+    if (until === null || nowMs < until) continue;
+    deleted += Number(del.run(hash).changes);
+  }
+  return { deleted };
+}
+
 // ROUNDS NOBODY USED LEAVE TOO (2026-10-18: "optimise cpu usage and space on nodes ... Make it lean"). Measured on
 // seat 2: 272,857 rounds (233 MB of contracts) of which 316 ever had an entry; their committee and seating records - 1,803,671
 // signer_nodes rows, 820,816 seat_presents, 460,725 seat_sigs, 265,768 round_beacons, 106,637 seat_certs - were never deleted, every
