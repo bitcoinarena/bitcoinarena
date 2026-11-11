@@ -516,7 +516,7 @@
   <p>The node's signed advertisement travels in the witness of the funding transaction, and the bond output commits to its hash. It names the node's roles, its operator, its endpoint and its games. Every node reads the same confirmed bonds from the chain and gets the same <a href="#census">census</a>, and every committee is drawn from that census. No server hands out the list, and your app can derive it too.</p>
   <h4>What a slash looks like</h4>
   <p>A slash spends path B, and the transaction commits to the proof: <code>OP_RETURN = H(fraud_proof) ‖ slash_height ‖ hint</code>. Anyone can fetch that proof later and run it again. A slash whose proof does not check is public evidence against the arbitration set.</p>
-  <p><b>Where the money goes.</b> The rule for the 2.0 release: each player gets their real loss, once, which is what the true result should have paid less what they got. The rest of the bond goes to the protocol reserves. Nothing goes to the nodes, the developers or the slashed node, and nothing is burned. If the money goes to anyone in the round, a cheat can aim for it, so the rest goes where nobody collects by being there. The build running on testnet4 today still has the older split in <a href="#cheat">When a node cheats</a>.</p>
+  <p><b>Where the money goes.</b> The rule for the 2026.2.0 release: each player gets their real loss, once, which is what the true result should have paid less what they got. The rest of the bond goes to the protocol reserves. Nothing goes to the nodes, the developers or the slashed node, and nothing is burned. If the money goes to anyone in the round, a cheat can aim for it, so the rest goes where nobody collects by being there. The build running on testnet4 today still has the older split in <a href="#cheat">When a node cheats</a>.</p>
   <h4>Where it stops</h4>
   <ul>
     <li>Bitcoin cannot replay a game, so a slash needs people to confirm the proof. Under today's bond templates, 5 of the arbitration keys could take any bond, and only public evidence stands against that. A new bond template that removes the standing group is ruled for new bonds and mainnet, and is not built yet.</li>
@@ -696,7 +696,7 @@ node packages/arena-node/tools/devnet.mjs replay</pre>
       <dt>Earns</dt><dd>1 % of each round, shared by the providers: the more coins you hold for new nodes, the bigger your share.</dd></dl>
     </div>
   </div>
-  <p class="ncap">Every role except liquidity needs a <a href="#bond">bond</a>: coins you lock on Bitcoin that make your node count. In version 2.0 a node that signs something false loses its bond (it is <a href="https://bitcoinarena.io/security/">slashed</a>); version 1.9 on testnet does not slash yet.</p>
+  <p class="ncap">Every role except liquidity needs a <a href="#bond">bond</a>: coins you lock on Bitcoin that make your node count. In version 2026.2.0 a node that signs something false loses its bond (it is <a href="https://bitcoinarena.io/security/">slashed</a>); version 1.9 on testnet does not slash yet.</p>
 
   </div></details>
   <details class="sec" open><summary><h2 id="run">Run a node</h2></summary><div class="sec-body">
