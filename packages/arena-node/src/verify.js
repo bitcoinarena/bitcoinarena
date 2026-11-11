@@ -170,6 +170,23 @@ export const NO_RANDOMNESS_SOURCE = () => undefined;
 /** How long a signer node waits on a peer's `/results` before it treats that peer as down for this pass. */
 const PEER_WAIT_MS = 2500;
 
+/**
+ * A PEER'S BODY, READ UP TO A CAP (kanban #1507): a seat that answers 200 and trickles its body, or sends a huge one, is
+ * cut off - by the caller's AbortSignal for time, by `maxBytes` for memory - and treated as down for this pass.
+ */
+async function capped(answer, maxBytes) {
+  const reader = answer.body.getReader();
+  const parts = []; let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > maxBytes) { try { await reader.cancel(); } catch { /* gone already */ } throw new Error(`body over ${maxBytes} bytes`); }
+    parts.push(value);
+  }
+  return Buffer.concat(parts);
+}
+
 export class Verifier {
   constructor(round, {
     randomnessFor = NO_RANDOMNESS_SOURCE, chainFor = null, pool = new ReplayPool(), peers = [],
@@ -313,7 +330,8 @@ export class Verifier {
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
-        const answer = await fetch(`${peer}/receipts?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
+        // BOUNDED IN TIME (kanban #1507): one seat that never ends its body held every close behind it
+        const answer = await fetch(`${peer}/receipts?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
         if (!answer.ok) { report.down.push(`${peer}: answered ${answer.status}`); continue; }
         body = new Uint8Array(await answer.arrayBuffer());
         report.answered++;
@@ -337,7 +355,7 @@ export class Verifier {
     report.refusedMarks = [];
     for (const peer of this.peersOf(roundIdBytes)) {
       try {
-        const r = await fetch(`${peer}/refused-first-mark?entry=${hex(entryIdBytes)}`);
+        const r = await fetch(`${peer}/refused-first-mark?entry=${hex(entryIdBytes)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
         if (r.status !== 200) continue;
         const got = await r.json();
         const c = this.round.onTimeFirstMark(Uint8Array.from(Buffer.from(String(got.mark || ''), 'hex')));
@@ -744,9 +762,14 @@ export class Verifier {
       if (allHeld()) break;
       let body;
       try {
-        const answer = await fetch(`${peer}/reveals?round=${hex(roundIdBytes)}`);
+        // BOUNDED IN TIME AND SIZE (kanban #1507): a seat that answered 200 and trickled its body a byte at a time held
+        // #headToHeadClose forever (undici's body timeout restarts on every chunk), so no head-to-head round was signed and
+        // the peers after it, which may hold the missing reveal, were never asked. Now PEER_WAIT_MS covers the body too,
+        // and the body is read up to about 1 KiB per entry plus 64 KiB of slack (a reveal with its identity is ~350 bytes; the
+        // array is not cut to the entry count, since a peer also sends reveals of entries this seat holds void).
+        const answer = await fetch(`${peer}/reveals?round=${hex(roundIdBytes)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
         if (!answer.ok) continue;
-        body = await answer.json();
+        body = JSON.parse((await capped(answer, 65536 + byId.size * 1024)).toString('utf8'));
       } catch { continue; }
       for (const r of (body && Array.isArray(body.reveals) ? body.reveals : [])) {
         const entry = byId.get(String(r.entry));
