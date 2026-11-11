@@ -37,6 +37,19 @@ const getJson = async (url, ms = 15000) => { const r = await fetch(url, { signal
   watch.addEventListener('click', open);
   close.addEventListener('click', shut);
   bg.addEventListener('click', open);
+  // THE LOOP NEVER STOPS (Daniel 2026-11-06): an iPhone pauses a muted autoplay video on its own (Low Power Mode, the page in the background,
+  // a decoder stall). Whenever the loop is not playing and the visitor did not open the trailer, it is started again: on its own pause or end,
+  // when the page comes back, when the hero is in view again, on a stall, and on the first touch or scroll (a gesture lets iOS play).
+  const keep = () => { if (reduce || full || document.hidden) return; if (bg.ended) bg.currentTime = 0; if (bg.paused) bg.play().catch(() => {}); };
+  for (const e of ['pause', 'ended', 'stalled', 'suspend']) bg.addEventListener(e, () => setTimeout(keep, 300));
+  document.addEventListener('visibilitychange', keep);
+  window.addEventListener('pageshow', keep);
+  for (const e of ['touchstart', 'pointerdown', 'scroll', 'keydown']) window.addEventListener(e, keep, { passive: true });
+  if ('IntersectionObserver' in window) new IntersectionObserver((es) => { if (es.some((x) => x.isIntersecting)) keep(); }).observe(bg);
+  setInterval(keep, 4000);
+  // a decoder that sits still while "playing": nudge it back to the start
+  let lastT = -1, still = 0;
+  setInterval(() => { if (reduce || full || document.hidden || bg.paused) { still = 0; return; } if (bg.currentTime === lastT) { if (++still >= 2) { still = 0; bg.load(); bg.play().catch(() => {}); } } else still = 0; lastT = bg.currentTime; }, 2500);
 })();
 
 // TESTNET NIGHT in the visitor's own time (Wednesday 18 November 2026, 20:00 CET, UTC+1 = 19:00 UTC)
