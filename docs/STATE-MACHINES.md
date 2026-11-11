@@ -26,6 +26,7 @@ release commit and brings this file up to date with it - new machines added, cha
 11. [State the 2026-11-06 fixes introduced or changed](#11-state-the-2026-11-06-fixes-introduced-or-changed)
 12. [The page, its storage and its frames](#12-the-page-its-storage-and-its-frames)
 13. [State the 2026-11-10 audits (5, 6) introduced or changed](#13-state-the-2026-11-10-audits-5-6-introduced-or-changed)
+15. [State audit 2026-11-12](#15-state-audit-2026-11-12)
 
 ## 1. Rounds and settlement
 
@@ -1542,3 +1543,11 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-N1 (add) Guardian handle per slot (node-start.js `startNode`, `guardianControl`, cookie watch, exit watch)
+- Slots `guardian` and `next`, each a handle: none (`running: false`) / running (one fedimintd, or its systemd unit, on `<store>.guardian[-next]`).
+- Every move of a slot's handle - owner start / stop, `retire`, `freshSetup`, the cookie watch's restart, the exit watch's restart, the node's close - runs on that slot's own promise chain (`serial(slot, ...)`), one at a time (kanban #1580).
+- Invariant: one fedimintd per guardian data dir, and it is the one the handle holds. A second Start sent while one is in flight finds the first one's guardian running and spawns nothing; a Stop sent during a Start waits for it and stops what it started, so a Stop that answered ok leaves no guardian running.
+- After `node.close()` (flag `closed`) no door and no watch starts a guardian again; close stops what each slot holds after the moves queued before it.
