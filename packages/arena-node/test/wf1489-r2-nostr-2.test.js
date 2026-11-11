@@ -26,7 +26,8 @@ const open = async (port) => {
 const until = async (f, ms = 10000) => { for (const t = Date.now(); !f() && Date.now() - t < ms;) await new Promise((r) => setTimeout(r, 10)); };
 
 test('#1489-r2-nostr-2 a REQ for an unknown author does not parse the whole store once per filter', async () => {
-  const r = await startRelay({ port: 0 });
+  // one author writes all 1000 events here: the per-author quota (kanban #1513, 500 by default) is raised so the store holds them all
+  const r = await startRelay({ port: 0, limits: { authorEvents: 2000 } });
   const socks = [];
   try {
     const N = 1000;
