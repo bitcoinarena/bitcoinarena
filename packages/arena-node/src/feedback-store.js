@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomBytes } from 'node:crypto';
 import { lnurlFor, urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { eventId, eventRefusal } from './nostr-relay.js';
+import { BIP39_ENGLISH } from '../../arena-client/src/bip39-wordlist.js';
 
 /** The report's kind: ephemeral (20000-29999), so no relay keeps it - it goes to the faucet only. */
 export const FEEDBACK_KIND = 27842;
@@ -49,7 +50,27 @@ export const REPORT_AGE_MOST_S = 24 * 3600;     // a report signed more than a d
 export const AUTH_AGE_MOST_S = 60;
 
 // THE SAME SCRUB AS THE CHAT POST (faucet.js feedbackDecide): an nsec, a 64-hex secret or a seed phrase never stays in a kept report
-const scrubKeys = (t) => String(t).replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]').replace(/\b(?:[a-z]{3,8}\s+){11,23}[a-z]{3,8}\b/g, '[removed]');
+// NO SEED PHRASE IN A REPORT, IN ANY SPELLING (kanban #1472, feedback #005 by Hexbox Tools 2026-11-11: the phrase rule took 12-24 lowercase words split by
+// spaces only - "Abandon, Ability, ..." or "1. abandon 2. ability ..." went through): a run of 12 to 24 BIP39 words in any case, each may carry its number
+// ("1.", "2)", "3:"), split by spaces, new lines, commas, semicolons, slashes or dashes, is removed. Only BIP39 words count, so an ordinary sentence of 12
+// words stays. nsec/ncryptsec keys and 64-hex secrets are removed as before.
+const BIP39_SET = new Set(BIP39_ENGLISH);
+export const scrubKeys = (t) => {
+  let s = String(t).replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]');
+  const tok = /(?:\d{1,2}\s*[.):]\s*)?([a-z]{3,8})/gi;
+  const runs = []; let run = []; let lastEnd = -1;
+  for (const m of s.matchAll(tok)) {
+    const gap = lastEnd < 0 ? '' : s.slice(lastEnd, m.index);
+    const joins = lastEnd >= 0 && /^[\s,;/|-]*$/.test(gap);
+    const word = BIP39_SET.has(m[1].toLowerCase());
+    if (word && (joins || run.length === 0)) run.push([m.index, m.index + m[0].length]);
+    else { if (run.length >= 12) runs.push(run); run = word ? [[m.index, m.index + m[0].length]] : []; }
+    lastEnd = m.index + m[0].length;
+  }
+  if (run.length >= 12) runs.push(run);
+  for (const r of runs.reverse()) s = s.slice(0, r[0][0]) + '[removed]' + s.slice(r[r.length - 1][1]);
+  return s;
+};
 const tag = (e, k) => { const t = e.tags.find((x) => x[0] === k); return t ? String(t[1] ?? '') : ''; };
 const said = (x, re) => (re.test(String(x || '')) ? String(x) : '');
 
