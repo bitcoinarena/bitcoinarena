@@ -102,6 +102,11 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     }
     lives = l; spansAll = s;
   };
+  // A KEPT OUTCOME IS THIS SEAT'S STATE FROM ITS FIRST ANSWER (kanban #1570): after a restart `spans` (the serving rule) and
+  // `live` (GET /config) are read from the PASSED records in the store at once - not only at the end of the first pass that got
+  // through the reorg check, which a bitcoind still loading its block index (-28) holds off for minutes. Until then the seat
+  // served rounds naming the config its own outcome replaced, which every other seat refuses
+  refreshLive();
 
   /**
    * THE REORG CHECK, before anything is counted: per kept proposal one hash - its anchor if decided, its last block read if
@@ -188,6 +193,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       // A CHAIN THAT DID NOT ANSWER IS NO REORG (kanban #1152): the pass stops here - nothing taken back, orphaned or written
       try { reorged = await followReorgs(); } catch (e) {
         log(`[ballot] the chain did not answer the reorg check (${e.message}): this pass is skipped, nothing moved`);
+        refreshLive();                                          // kanban #1570: the tip moved; `live` follows it from the kept outcomes
         return { tip, skipped: 'rpc', why: e.message, read: 0, decided: 0, reorged: 0 };
       }
       if (reorged) refreshLive();
