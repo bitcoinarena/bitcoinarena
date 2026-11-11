@@ -27,7 +27,8 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
  * height)` -> the network's donation set in force at that height (its recipients), or null; `lowestBondMinSatsFor(networkIdHex)` -> BigInt; `verify(sig, msg, pubkey)`; `store`:
  * { read() -> [], write(list) }. `scheduleFor(net)` / `repealScheduleFor(net)`: the network's schedules (regtest's short ones);
  * `historyFor(net, height)` -> the live history at that height ([{ config }], liveConfig's), or null while it cannot be known yet;
- * none given: no proposal is read as a repeal (the first slice's behaviour).
+ * none given: no proposal is read as a repeal (the first slice's behaviour). `censusAt(networkIdHex, height)` -> [{ pubkey }] or
+ * null: the bonds active at that height (the tally's census, ballot-tally.js); given, a proposer outside it is refused (kanban #1489).
  */
 export const PROPOSAL_STATE = Object.freeze({ COUNTING: 'COUNTING', PASSED: 'PASSED', FAILED: 'FAILED', ORPHANED: 'ORPHANED' });
 const S = PROPOSAL_STATE;
@@ -38,7 +39,7 @@ const MOVES = Object.freeze({ [S.COUNTING]: [S.PASSED, S.FAILED, S.ORPHANED], [S
 export const stateOf = (r) => (r && S[r.state] ? r.state : r && r.orphaned ? S.ORPHANED : r && r.decided ? (r.decided.passed ? S.PASSED : S.FAILED) : S.COUNTING);
 
 export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsFor, verify, store, schedule = SCHEDULES.mainnet, scheduleFor = null,
-  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null }) {
+  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, censusAt = null }) {
   const held = new Map((store && store.read ? store.read() || [] : []).map((x) => [x.id, { ...x, state: stateOf(x) }]));
   /** WRITTEN FIRST: the store takes `next` (or throws), and only then this seat's memory. */
   const commit = (next) => {
@@ -106,6 +107,18 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       const stands = proposalStands(p, { publishedAt: dep.publishedAt, depositSats: dep.depositSats, lowestBondMinSats: lowestBondMinSatsFor(net),
         schedule: (scheduleFor && scheduleFor(net)) || schedule, repealSchedule: (repealScheduleFor && repealScheduleFor(net)) || repealSchedule, verify, history });
       if (!stands.ok) return { ok: false, status: 422, why: stands.why };
+      // THE PROPOSER IS A BONDED NODE (27A.7.2 "node pubkey with an active bond", kanban #1489): its key is in the census at the
+      // publication height - the census the tally counts with. A fresh key with a 1-sat deposit took the ballot before; now refused
+      // at the door. A census not readable yet is a 503 (ask again), never a guess.
+      if (typeof censusAt === 'function') {
+        let census = null;
+        try { census = await censusAt(net, dep.publishedAt); } catch { census = null; }
+        if (!Array.isArray(census)) return { ok: false, status: 503, why: `this seat cannot read the census at height ${dep.publishedAt} yet: ask again shortly` };
+        const xOnly = (k) => { const h = typeof k === 'string' ? k.toLowerCase() : k ? toHex(Uint8Array.from(k)) : ''; return h.length === 66 ? h.slice(2) : h; };
+        const me = xOnly(p.proposer);
+        if (!census.some((e) => e && xOnly(e.pubkey) === me))
+          return { ok: false, status: 422, why: `the proposer holds no active bond in the census at height ${dep.publishedAt} (27A.7.2)` };
+      }
       // checked on a proposal that stands on its face and on the chain: refused by its own fault first, then by the deposit (#1489)
       const other = backedBy(depositHex, id);
       if (other) return { ok: false, status: 409, why: `that deposit (deposit_txid) already backs proposal ${other.id}: one deposit pays for one proposal` };
