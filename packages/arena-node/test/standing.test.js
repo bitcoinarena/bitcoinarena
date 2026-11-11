@@ -64,8 +64,13 @@ test('a round settled and accepted, with no FINAL signatures, gives no pending a
     for (const stop = Date.now() + 15000; Date.now() < stop && (!held || held.state !== 'ACCEPTED'); await wait(250)) held = w.a.round.lockSettlement(w.rid);
     assert.equal(held && held.state, 'ACCEPTED', 'signer node a holds no ACCEPTED settlement');
     // NO FINAL SIGNATURE HELD (as on testnet4's older rounds): cleared before every reading - the live seats' watches
-    // would sign it again between readings.
-    const noFinal = () => w.a.round.db.prepare('DELETE FROM final_sigs WHERE round_id = ?').run(w.rid);
+    // would sign it again between readings. And NO FINAL KEPT: since #1173 (ef050552e, "FINAL is kept once reached (entry_finals,
+    // at this seat's own clock), never undone") a seat that once read the entry FINAL answers FINAL from entry_finals whatever
+    // signatures it holds; the rounds this models settled before any FINAL existed, so they have no such row either.
+    const noFinal = () => {
+      w.a.round.db.prepare('DELETE FROM final_sigs WHERE round_id = ?').run(w.rid);
+      w.a.round.db.prepare('DELETE FROM entry_finals WHERE round_id = ?').run(Buffer.from(w.rid));
+    };
     noFinal();
     const accepted = { winner: await standingAt(w.a, won.eid), loser: await standingAt(w.a, lost.eid) };
     w.a.round.db.prepare("UPDATE lock_settlements SET state = 'SUBMITTING' WHERE round_id = ?").run(Buffer.from(w.rid));
