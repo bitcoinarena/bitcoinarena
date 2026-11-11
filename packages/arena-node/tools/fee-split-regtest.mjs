@@ -47,7 +47,7 @@ import { encodeEntryContract, entryId } from '../../arena-protocol/src/contracts
 import { FRONTEND_FEE_VERSION } from '../../arena-protocol/src/constants.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { init, step } from '../../nextblock/src/sim.js';
@@ -174,13 +174,13 @@ async function lockAndPlayReal(w, who, { game = null, target, pick = undefined, 
     for (let t = first; t < who.ticks; t++) game.adapter.step(gs, play.words(t));
     const b2 = { roundId: w.rid, entryId: eid, previousHash: batchId(b1), firstTick: first, ticks: Array.from({ length: who.ticks - first }, (_, t) => play.words(first + t)), liquidations: [], loads: [] };
     const m2 = { roundId: w.rid, entryId: eid, tick: who.ticks, stateHash: hashOf(game.adapter.stateHash(gs)), inputChainHash: batchId(b2), previousHash: checkpointId(m1), sessionPubkey: ed25519.getPublicKey(session) };
-    msgs = [[encodeInputBatch(b1), 'batch'], [sign(m1), 'mark'], [encodeInputBatch(b2), 'batch'], [sign(m2), 'mark']];
+    msgs = [[signedBatchOf(b1, (id) => ed25519.sign(id, session)), 'batch'], [sign(m1), 'mark'], [signedBatchOf(b2, (id) => ed25519.sign(id, session)), 'batch'], [sign(m2), 'mark']];
   } else {
     const st = loaded(init(seedWordForEntry(entry, w.randomness || RANDOMNESS)));
     for (let t = 0; t < who.ticks; t++) step(st, ...play.words(t));
     const input = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0, ticks: Array.from({ length: who.ticks }, (_, t) => play.words(t)), liquidations: [], loads: bedFrom(0) };
     const mark = { roundId: w.rid, entryId: eid, tick: who.ticks, stateHash: hashOf(stateHash(st)), inputChainHash: batchId(input), previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(session) };
-    msgs = [[encodeInputBatch(input), 'batch'], [sign(mark), 'mark']];
+    msgs = [[signedBatchOf(input, (id) => ed25519.sign(id, session)), 'batch'], [sign(mark), 'mark']];
   }
   const answers = [];
   for (const d of w.nodes) {
