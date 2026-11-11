@@ -170,6 +170,13 @@ export const NO_RANDOMNESS_SOURCE = () => undefined;
 /** How long a signer node waits on a peer's `/results` before it treats that peer as down for this pass. */
 const PEER_WAIT_MS = 2500;
 
+/**
+ * A PEER'S /evidence-blocks ANSWER IS BOUNDED (kanban #1561): at most this many listed records are read from one answer, and an
+ * entry's mark keeps at most EVIDENCE_RECORDS_PER_MARK records (one block each) - a committee names far fewer.
+ */
+const EVIDENCE_PULL_MAX = 65536;
+const EVIDENCE_RECORDS_PER_MARK = 64;
+
 export class Verifier {
   constructor(round, {
     randomnessFor = NO_RANDOMNESS_SOURCE, chainFor = null, pool = new ReplayPool(), peers = [],
@@ -969,11 +976,22 @@ export class Verifier {
   async #pullEvidenceBlocks(roundIdBytes, entryId) {
     for (const peer of this.peersOf(roundIdBytes)) {
       try {
-        const r = await fetch(`${peer}/evidence-blocks?entry=${hex(entryId)}`);
+        // ONLY RECORDS OF MARKS THIS SEAT HOLDS, BOUNDED, ON A TIMED ASK (kanban #1561): a peer's list of made-up mark ids wrote a row
+        // each, without limit, on every pull of every entry - and this seat then served them on as its own. A pulled record is
+        // kept only for a mark id this seat already holds a record of for the entry (its checkpoints, offered and void marks,
+        // kept pairs - each noted when stored), at most EVIDENCE_RECORDS_PER_MARK records a mark, from at most EVIDENCE_PULL_MAX
+        // listed records an answer; the ask waits PEER_WAIT_MS like every other peer ask here.
+        const r = await fetch(`${peer}/evidence-blocks?entry=${hex(entryId)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
         if (r.status !== 200) continue;
         const got = await r.json();
-        for (const x of (got && got.marks) || []) {
-          if (!/^[0-9a-f]{64}$/.test(String(x.mark)) || !/^[0-9a-f]{64}$/.test(String(x.block))) continue;
+        const held = new Map();
+        for (const e of this.round.evidenceBlocks(entryId)) { const k = hex(e.markId); held.set(k, (held.get(k) || 0) + 1); }
+        const listed = got && Array.isArray(got.marks) ? got.marks.slice(0, EVIDENCE_PULL_MAX) : [];
+        for (const x of listed) {
+          if (!x || !/^[0-9a-f]{64}$/.test(String(x.mark)) || !/^[0-9a-f]{64}$/.test(String(x.block))) continue;
+          const have = held.get(x.mark);
+          if (have === undefined || have >= EVIDENCE_RECORDS_PER_MARK) continue;
+          held.set(x.mark, have + 1);
           this.round.noteEvidenceBlock(roundIdBytes, entryId, Uint8Array.from(Buffer.from(x.mark, 'hex')), Uint8Array.from(Buffer.from(x.block, 'hex')),
             Number.isSafeInteger(x.seenMs) ? x.seenMs : undefined);
         }
@@ -1079,6 +1097,7 @@ export class Verifier {
     // stored) is not verified again, and the later-parent limb's provenFork is asked once, after the pairs are kept.
     const seen = new Set();
     let laterParent = false;
+    let repulled = false;
     for (const [a, b] of pairs) {
       try {
         const key = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? hex(a) + hex(b) : hex(b) + hex(a);
@@ -1091,6 +1110,9 @@ export class Verifier {
           // AND A FORK AT ANY LATER TICK, kept as a pair (§13B): this node's close and its /equivocation
           // say it from now on, as the seat that held it does
           if (!kept && !this.round.putFirstMarkPair({ a, b })) this.round.putForkPair({ a, b });
+          // A PAIR FIRST HELD HERE NOW (kanban #1561): the peers' records of its marks were passed over above (a pull keeps records
+          // only of marks this seat holds), so they are pulled once more before the pair is placed in the window.
+          if (!kept && window && !repulled) { repulled = true; await this.#pullEvidenceBlocks(roundIdBytes, entryId); }
           // WHAT A PAIR PROVES (RULED 2026-10-05 (b)): two first marks, or two marks at one tick - as ever; two chains
           // from one later parent only when both marks were receipted by a seat (the store's own ruled check, provenFork) -
           // a page stuck on an old head sends refused marks naming that head, and those forfeit nothing
