@@ -66,6 +66,8 @@ const feeLine = (payouts) => {
   return `${n} signer node(s) ${nodes} msat${d ? ` and ${d} donation key(s) ${gifts} msat` : ''}`;
 };
 
+// THE NONCE PAIRS KEPT PER SETTLEMENT (kanban #1489): each /settle-commit hands out a pair of its own; the oldest goes past this many.
+export const PAIRS_KEPT = 64;
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).sort().join('|');
 // `code` (settle-backoff.js REFUSAL, kanban #1186): what a sweep decides by - never the text
 const refuse = (why, status = 409, code = null, more = {}) => ({ ok: false, status, why, ...(code ? { code } : {}), ...more });
@@ -214,7 +216,7 @@ export class LockSettlement {
     this.planCertificates = new Map(); // round id hex [:late entry hex] -> { planId, certificate } the seats signed
     this.planRetries = new Map();    // round id hex -> how often a peer refused the send plan
     this.retryTimers = new Set();
-    this.pairs = new Map();          // round id hex -> { hiding, binding, commitment, list, share }
+    this.pairs = new Map();          // round id hex [:late entry | :fed:federation] -> the pairs handed out for its settlement, each { message, hiding, binding, commitment, list, share } (kanban #1489)
     this.fees = new Map();           // round id hex -> the guardians' fee rule, read once
   }
 
@@ -1197,16 +1199,18 @@ export class LockSettlement {
     if (txid && String(txid).toLowerCase() !== String(m.txid).toLowerCase())
       return refuse(`this signer node rebuilt settlement ${String(m.txid).slice(0, 16)}, not ${String(txid).slice(0, 16)}: it commits to no other bytes`, 409);
     const key = federation ? `${toHex(roundIdBytes)}:fed:${String(federation).toLowerCase()}` : entry ? `${toHex(roundIdBytes)}:${toHex(entry)}` : toHex(roundIdBytes);
-    let pair = this.pairs.get(key);
     // A PAIR THAT SIGNED A LIST IS SPENT, and a new pair signs the next one (kanban #1070; a reserve payout's rule too: "a nonce pair signs one list once"): a list that never
-    // completed - one seat on it gave no share - otherwise left every seat that signed it refusing any other until it restarted. A list from anyone at the door did the same.
-    if (!pair || toHex(pair.message) !== toHex(m.message) || pair.list) {
-      const hiding = nonceGenerate340(this.random(32), m.signerNode.share);
-      const binding = nonceGenerate340(this.random(32), m.signerNode.share);
-      pair = { message: m.message, hiding, binding, list: null, share: null,
-        commitment: { id: m.signerNode.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) } };
-      this.pairs.set(key, pair);
-    }
+    // completed - one seat on it gave no share - otherwise left every seat that signed it refusing any other until it restarted.
+    // EVERY COMMIT ITS OWN PAIR (kanban #1489): an unspent pair was handed to whoever asked next, so anyone at the door - no seat needed - took the pair an asker had
+    // just been given and spent it on a list of that commitment and four invented ones; the asker's list was then refused ("keeps no second pair") at every seat and no
+    // pass reached the threshold. Now no pair is handed out twice: a list from outside spends only the pair its own commit drew. The last PAIRS_KEPT are kept.
+    const held = (this.pairs.get(key) || []).filter((p) => toHex(p.message) === toHex(m.message));
+    const hiding = nonceGenerate340(this.random(32), m.signerNode.share);
+    const binding = nonceGenerate340(this.random(32), m.signerNode.share);
+    const pair = { message: m.message, hiding, binding, list: null, share: null,
+      commitment: { id: m.signerNode.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) } };
+    held.push(pair);
+    this.pairs.set(key, held.slice(-PAIRS_KEPT));
     return { ok: true, commitment: pair.commitment };
   }
 
@@ -1232,11 +1236,13 @@ export class LockSettlement {
   async share(roundIdBytes, commitments, { entry = null, federation = null } = {}) {
     const m = federation ? await this.fedMessage(roundIdBytes, federation) : entry ? await this.lateMessage(roundIdBytes, entry) : await this.message(roundIdBytes);
     if (!m.ok) return m;
-    const pair = this.pairs.get(federation ? `${toHex(roundIdBytes)}:fed:${String(federation).toLowerCase()}` : entry ? `${toHex(roundIdBytes)}:${toHex(entry)}` : toHex(roundIdBytes));
-    if (!pair || toHex(pair.message) !== toHex(m.message)) return refuse('this signer node committed to no settlement of that round');
-    const own = commitments.find((c) => String(c.id) === String(pair.commitment.id));
-    if (!own || toHex(own.hiding) !== toHex(pair.commitment.hiding) || toHex(own.binding) !== toHex(pair.commitment.binding))
-      return refuse('that list does not carry this signer node\'s own commitment');
+    const held = (this.pairs.get(federation ? `${toHex(roundIdBytes)}:fed:${String(federation).toLowerCase()}` : entry ? `${toHex(roundIdBytes)}:${toHex(entry)}` : toHex(roundIdBytes)) || [])
+      .filter((p) => toHex(p.message) === toHex(m.message));
+    if (!held.length) return refuse('this signer node committed to no settlement of that round');
+    // THE PAIR THE LIST NAMES (kanban #1489): the one whose commitment the list carries, of those this seat handed out.
+    const own = commitments.find((c) => String(c.id) === String(held[0].commitment.id));
+    const pair = own && held.find((p) => toHex(own.hiding) === toHex(p.commitment.hiding) && toHex(own.binding) === toHex(p.commitment.binding));
+    if (!pair) return refuse('that list does not carry this signer node\'s own commitment');
     if (commitments.length < m.needed) return refuse(`${commitments.length} commitments, and this round's key signs at ${m.needed}`);
     const key = listKey(commitments);
     if (pair.list && pair.list !== key) return refuse('this signer node signed that settlement over another list, and keeps no second pair');
