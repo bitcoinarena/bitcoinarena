@@ -1542,3 +1542,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-M (change) Stake-share release in a market order book (kanban #1593)
+- `mayRelease` reads the book standing (`bookStanding`) before any other rule of an attested round, a scalar market's too: an order still in an undecided batch is refused, an unfilled order is refused (its lock comes back whole), a filled order is released (`FILLED_ORDER`). The scalar pari-mutuel table decides only a pool. The share door releases exactly the locks the book settlement (`#bookPlan`, `bookSettlement`) claims.
