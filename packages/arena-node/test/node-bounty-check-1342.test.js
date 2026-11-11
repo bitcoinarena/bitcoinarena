@@ -6,20 +6,26 @@ import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { ownerStatementMessage } from '../src/owner.js';
-import { toHex } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { signFinalSig } from '../../arena-protocol/src/final-sig.js';
 
 // the node's identity: it signs its owner statement (kanban #1418)
 const NODE_SECRET = new Uint8Array(32).fill(0x2a), NODE = toHex(schnorr.getPublicKey(NODE_SECRET)), ME = 'bb'.repeat(32), OTHER = 'cc'.repeat(32);
 const said = (owner, atMs) => ({ node: NODE, claimed: true, owner, statement: { atMs, sig: toHex(schnorr.sign(ownerStatementMessage({ node: NODE, owner, atMs }), NODE_SECRET)) } });
 const DAY = 24 * 3600 * 1000, NOW = 20000 * DAY + 5000;
+// KANBAN #1489: a round counts only held by NODE_BOUNTY_AGREE (3) seats with the same committee, and a FINAL only with the node's valid BIP-340
+// signature - each day's round has a 64-hex id, the node signs its FINAL, and two witness seats hold the same rounds
+const rid = (d) => toHex(new Uint8Array(32).fill(0x40 + d));
+const fin = (d) => toHex(signFinalSig({ roundId: fromHex(rid(d)), entryId: new Uint8Array(32).fill(2), runId: new Uint8Array(32).fill(3), signerPubkey: fromHex(NODE), signedAtMs: BigInt(NOW - 1000) }, (digest) => schnorr.sign(digest, NODE_SECRET)));
+const W = ['https://w1.example', 'https://w2.example'];
 // two seats; the node served one round a day on `servedDays` of the last 7, signing each, and claims `owner`
 const fake = ({ servedDays, owner }) => async (url) => {
   if (url.endsWith('/owner')) return url.startsWith('https://node.example') ? said(owner, NOW - 1000) : { node: 'dd'.repeat(32), claimed: true, owner: OTHER };
   const from = Number(new URL(url).searchParams.get('from')), dayAgo = Math.round((Math.floor(NOW / DAY) * DAY - from) / DAY);
-  const held = servedDays.includes(dayAgo) ? [{ roundId: `r${dayAgo}`, committee: [NODE, OTHER], finals: [NODE] }] : [];
+  const held = servedDays.includes(dayAgo) ? [{ roundId: rid(dayAgo), committee: [NODE, OTHER], finals: [fin(dayAgo)] }] : [];
   return { held };
 };
-const seats = ['https://seat1.example', 'https://node.example'];
+const seats = ['https://seat1.example', 'https://node.example', ...W];
 
 test('#1342 the node checklist: one day online in the last 7 passes, whoever owns it (Daniel 2026-11-10); never served or a team node does not', async () => {
   const all = await nodeBountyCheck({ node: NODE, npub: ME, seats, fetchJson: fake({ servedDays: [3], owner: ME }), nowMs: NOW });
@@ -44,15 +50,15 @@ test('#1342 the node checklist: one day online in the last 7 passes, whoever own
 // of someone else's node and passed the checklist (team-host check included). Now only a statement signed by the node key counts.
 test('#1418 a seat naming itself owner of someone else\'s node does not pass: unsigned, forged or stale statements are not the node\'s word', async () => {
   const served = (url) => { const from = Number(new URL(url).searchParams.get('from')), dayAgo = Math.round((Math.floor(NOW / DAY) * DAY - from) / DAY);
-    return { held: dayAgo >= 1 && dayAgo <= 7 ? [{ roundId: `r${dayAgo}`, committee: [NODE], finals: [NODE] }] : [] }; };
+    return { held: dayAgo >= 1 && dayAgo <= 7 ? [{ roundId: rid(dayAgo), committee: [NODE], finals: [fin(dayAgo)] }] : [] }; };
   const evil = (answer) => async (url) => (url.endsWith('/owner') ? (url.startsWith('https://evil.example') ? (await new Promise((r) => setTimeout(r, 30)), answer) : said(ME, NOW - 5000)) : served(url));
-  const seatsE = ['https://node.example', 'https://evil.example'];
+  const seatsE = ['https://node.example', 'https://evil.example', ...W];
   const ATT = 'ee'.repeat(32);
   const forgedSig = toHex(schnorr.sign(ownerStatementMessage({ node: NODE, owner: ATT, atMs: NOW }), new Uint8Array(32).fill(0x33)));
   const cases = {
     unsigned: await nodeBountyCheck({ node: NODE, npub: ATT, seats: seatsE, fetchJson: evil({ node: NODE, claimed: true, owner: ATT }), nowMs: NOW, teamHosts: ['node.example'] }),
     forged: await nodeBountyCheck({ node: NODE, npub: ATT, seats: seatsE, fetchJson: evil({ node: NODE, claimed: true, owner: ATT, statement: { atMs: NOW, sig: forgedSig } }), nowMs: NOW }),
-    staleReal: await nodeBountyCheck({ node: NODE, npub: ATT, seats: ['https://evil.example'], fetchJson: async (u) => (u.endsWith('/owner') ? said(ATT, NOW - 3 * DAY) : served(u)), nowMs: NOW }),
+    staleReal: await nodeBountyCheck({ node: NODE, npub: ATT, seats: ['https://evil.example', ...W], fetchJson: async (u) => (u.endsWith('/owner') ? said(ATT, NOW - 3 * DAY) : served(u)), nowMs: NOW }),
     realOwner: await nodeBountyCheck({ node: NODE, npub: ME, seats: seatsE, fetchJson: evil({ node: NODE, claimed: true, owner: ATT }), nowMs: NOW }),
   };
   const ownerOk = Object.fromEntries(Object.entries(cases).map(([k, r]) => [k, r.owner.ok]));
@@ -65,9 +71,9 @@ test('#1418 a seat naming itself owner of someone else\'s node does not pass: un
 // KANBAN #1426 N7 (audit 6 re-check): a seat relaying a team node's signed word must not make it look outside - any team host that served it counts
 test('#1426 N7 a team node\'s signed statement relayed by an outside seat is still a team node', async () => {
   const served = (url) => { const from = Number(new URL(url).searchParams.get('from')), dayAgo = Math.round((Math.floor(NOW / DAY) * DAY - from) / DAY);
-    return { held: dayAgo >= 1 && dayAgo <= 7 ? [{ roundId: `r${dayAgo}`, committee: [NODE], finals: [NODE] }] : [] }; };
+    return { held: dayAgo >= 1 && dayAgo <= 7 ? [{ roundId: rid(dayAgo), committee: [NODE], finals: [fin(dayAgo)] }] : [] }; };
   const relayNewer = async (url) => (url.endsWith('/owner') ? (url.startsWith('https://relay.example') ? said(ME, NOW - 1000) : said(ME, NOW - 9000)) : served(url));
-  const r = await nodeBountyCheck({ node: NODE, npub: ME, seats: ['https://node.example', 'https://relay.example'], fetchJson: relayNewer, nowMs: NOW, teamHosts: ['node.example'] });
+  const r = await nodeBountyCheck({ node: NODE, npub: ME, seats: ['https://node.example', 'https://relay.example', ...W], fetchJson: relayNewer, nowMs: NOW, teamHosts: ['node.example'] });
   console.log('  MEASURED #1426 N7: team node relayed (newer copy) by an outside seat -> outside check', r.checks.find((c) => c.key === 'outside').ok);
   assert.equal(r.checks.find((c) => c.key === 'outside').ok, false);
 });
@@ -76,13 +82,13 @@ test('#1426 N7 a team node\'s signed statement relayed by an outside seat is sti
 // test read only signed statements. An unsigned answer at a team host now makes it a team node; a node listed nowhere unsigned stays outside
 test('#1428 a team seat answering /owner unsigned is a team node; #1429 the node naming another owner is flagged', async () => {
   const served = (url) => { const from = Number(new URL(url).searchParams.get('from')), dayAgo = Math.round((Math.floor(NOW / DAY) * DAY - from) / DAY);
-    return { held: dayAgo >= 1 && dayAgo <= 3 ? [{ roundId: `r${dayAgo}`, committee: [NODE], finals: [NODE] }] : [] }; };
+    return { held: dayAgo >= 1 && dayAgo <= 3 ? [{ roundId: rid(dayAgo), committee: [NODE], finals: [fin(dayAgo)] }] : [] }; };
   const unsigned = async (url) => (url.endsWith('/owner') ? { node: NODE, claimed: false } : served(url));
-  const atTeam = await nodeBountyCheck({ node: NODE, npub: 'ab'.repeat(32), seats: ['http://127.0.0.1:1'], fetchJson: unsigned, nowMs: NOW, teamHosts: ['127.0.0.1'] });
-  const outside = await nodeBountyCheck({ node: NODE, npub: 'ab'.repeat(32), seats: ['https://seat.example'], fetchJson: unsigned, nowMs: NOW, teamHosts: ['127.0.0.1'] });
+  const atTeam = await nodeBountyCheck({ node: NODE, npub: 'ab'.repeat(32), seats: ['http://127.0.0.1:1', ...W], fetchJson: unsigned, nowMs: NOW, teamHosts: ['127.0.0.1'] });
+  const outside = await nodeBountyCheck({ node: NODE, npub: 'ab'.repeat(32), seats: ['https://seat.example', ...W], fetchJson: unsigned, nowMs: NOW, teamHosts: ['127.0.0.1'] });
   const named = await nodeBountyCheck({ node: NODE, npub: 'ab'.repeat(32), seats, fetchJson: async (u) => (u.endsWith('/owner') ? said(OTHER, NOW - 1000) : served(u)), nowMs: NOW });
   const mine = await nodeBountyCheck({ node: NODE, npub: OTHER, seats, fetchJson: async (u) => (u.endsWith('/owner') ? said(OTHER, NOW - 1000) : served(u)), nowMs: NOW });
-  const none = await nodeBountyCheck({ node: NODE, seats: ['https://seat.example'], fetchJson: unsigned, nowMs: NOW });
+  const none = await nodeBountyCheck({ node: NODE, seats: ['https://seat.example', ...W], fetchJson: unsigned, nowMs: NOW });
   console.log('  MEASURED #1428/#1429:', JSON.stringify({ teamUnsigned: atTeam.passes, outsideUnsigned: outside.passes, otherOwner: named.owner.other, ownOwner: mine.owner.other, noOwner: none.owner.other }));
   assert.equal(atTeam.passes, false); assert.equal(atTeam.checks.find((c) => c.key === 'outside').ok, false);
   assert.equal(outside.passes, true, 'an outside node on an older release (unsigned) still qualifies');
