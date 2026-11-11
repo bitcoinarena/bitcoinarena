@@ -15,6 +15,7 @@
 //   /metrics              that page, its figures built in
 //   GET /api/health       the Network health page's kept copy (kanban #686): every door that page asks, asked every minute (its own cron)
 //   GET /api/played       played rounds per day, week and month, per game, real players apart from the owner and our bots (kanban #1090)
+//   GET /api/totals       every round since the first one this explorer holds, per game: rounds, rounds settled, entries (kanban #1197; a count that only grows)
 //   POST /api/mark        entry keys that are the owner's or a bot's, with the admin code (kanban #1090)
 import { readHealth, HEALTH_CRON } from './health.js';
 
@@ -383,6 +384,19 @@ async function sendPlayed(env, now = Date.now(), post = fetch) {
   return { sent, rows: rows.length };
 }
 
+/** EVERY ROUND SINCE THE FIRST ONE HELD HERE, PER GAME (kanban #1197, the homepage's numbers): rounds, settled rounds and entries - nothing that shrinks when nobody plays. */
+async function totals(env) {
+  const r = await env.DB.prepare(`SELECT app, COUNT(DISTINCT round) AS rounds, COUNT(DISTINCT CASE WHEN settled = 'ACCEPTED' THEN round END) AS settled, COUNT(*) AS entries,
+    MIN(stored_ms) AS first FROM txs WHERE kind = 'order' AND round IS NOT NULL GROUP BY app`).all();
+  const games = {}; let first = null;
+  for (const x of r.results || []) {
+    games[x.app || 'unknown'] = { rounds: Number(x.rounds), settled: Number(x.settled), entries: Number(x.entries) };
+    if (x.first !== null && (first === null || Number(x.first) < first)) first = Number(x.first);
+  }
+  const all = Object.values(games).reduce((t, g) => ({ rounds: t.rounds + g.rounds, settled: t.settled + g.settled, entries: t.entries + g.entries }), { rounds: 0, settled: 0, entries: 0 });
+  return { since: first === null ? null : new Date(first).toISOString(), readAt: new Date().toISOString(), all, games };
+}
+
 async function played(env) {
   const [rows, marks] = await Promise.all([
     env.DB.prepare(`SELECT id, round, app, stored_ms AS ms, settled, json_extract(json, '$.entry.player') AS p FROM txs WHERE kind = 'order' AND stored_ms >= ? AND round IS NOT NULL`).bind(PLAYED_FROM_MS).all(),
@@ -580,6 +594,7 @@ export default {
     if (url.pathname === '/api/recent') return json(await recent(env, url.searchParams), { maxAge: 10 });
     if (url.pathname === '/api/metrics') return json(await metrics(env), { maxAge: 30 });
     if (url.pathname === '/api/played') return json(await played(env), { maxAge: 60 });
+    if (url.pathname === '/api/totals') return json(await totals(env), { maxAge: 300 });
     if (url.pathname === '/api/mark' && request.method === 'OPTIONS') return new Response(null, { headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type' } });
     if (url.pathname === '/api/mark' && request.method === 'POST') return mark(env, request);
     if (url.pathname === '/api/health') {

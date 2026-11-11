@@ -124,6 +124,17 @@ async fetch(request, env, ctx) {
     }
     return new Response('ok', { headers: { 'Access-Control-Allow-Origin': '*' } });
   }
+  // THE NEW HOMEPAGE BESIDE THE LIVE ONE (kanban #1197): next.bitcoinarena.io serves www/next at its root, kept out of search indexes until Daniel
+  // switches it; every other path (the API, NIP-05 above, the shared scripts, /night/, /security/) answers as on the live host
+  if (url.hostname === 'next.bitcoinarena.io') {
+    if (url.pathname === '/robots.txt') return new Response('User-agent: *\nDisallow: /\n', { headers: { 'Content-Type': 'text/plain' } });
+    if (url.pathname === '/' || url.pathname === '/index.html') {
+      const open = await env.ASSETS.fetch(new Request(new URL('/next/', url), request));
+      const res = new Response(open.body, open);
+      res.headers.set('X-Robots-Tag', 'noindex, nofollow');
+      return res;
+    }
+  }
   if (url.pathname === '/robots.txt') return new Response('User-agent: *\nAllow: /\n', { headers: { 'Content-Type': 'text/plain' } });
   // chatgpt.bitcoin-arena.io (2026-10-08 23:17: so ChatGPT can read the page): the same files, kept out of search indexes
   if (url.hostname === 'chatgpt.bitcoin-arena.io' || url.hostname === 'chatgpt.bitcoinarena.io') {
