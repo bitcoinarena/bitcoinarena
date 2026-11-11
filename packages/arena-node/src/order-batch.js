@@ -103,6 +103,8 @@ export const BATCH_MOVES = Object.freeze({
  * not kept. In memory: a restart reads again (safe).
  */
 export const SYNC_STATE = Object.freeze({ UNREAD: 'UNREAD', KEPT: 'KEPT', STALE: 'STALE' });
+/** How many sells of one order a seat keeps waiting for a batch (kanban #1526: unbounded, one order's sells stalled every leader). */
+export const MAX_UNBATCHED_SELLS = 16;
 /** How long a seat waits for one other seat's answer while it leads a batch (proposals, void asks, sets, certificates). */
 export const BATCH_FETCH_MS = 1000;
 class Conflict extends Error {}
@@ -289,7 +291,17 @@ export class OrderBook {
     if (BigInt(this.now()) >= m.contract.entryCloseMs) return refuse(`the market closed at ${new Date(Number(m.contract.entryCloseMs)).toISOString()}: no ${kind} after it`);
     const c = kind === 'cancel' ? this.#cancelStands(roundIdBytes, body) : this.#sellStands(roundIdBytes, body);
     if (!c.ok) return c;
-    if (kind === 'sell') { const b = this.#sellBacked(roundIdBytes, c); if (!b.ok) return b; }
+    if (kind === 'sell') {
+      // A SELL ONLY OF AN ORDER IN THE BOOK HERE, AND A FEW AT A TIME (kanban #1526: a stranger's lockless order - no sat spent - signed
+      // thousands of sells, each nonce a new row, and every leader's lead() went quadratic over them): its locks verified at this seat
+      // (tradable), and no more than MAX_UNBATCHED_SELLS of its sells waiting for a batch here
+      const rid = Buffer.from(roundIdBytes), tradable = this.db.prepare('SELECT 1 FROM market_orders WHERE order_id = ? AND round_id = ?');
+      if (!tradable.get(String(body.entry), rid)) { this.#syncTradable(roundIdBytes); if (!tradable.get(String(body.entry), rid)) return refuse('that order is not tradable at this seat: its locks are not verified here, it holds nothing to sell'); }
+      const held = this.db.prepare('SELECT 1 FROM market_book_events WHERE event_id = ?').get(c.id);
+      const waiting = this.db.prepare("SELECT count(*) AS n FROM market_book_events WHERE round_id = ? AND kind = 'sell' AND entry_id = ? AND batch IS NULL").get(rid, String(body.entry)).n;
+      if (!held && waiting >= MAX_UNBATCHED_SELLS) return refuse(`that order has ${waiting} sells waiting for a batch at this seat: at most ${MAX_UNBATCHED_SELLS}`, 429);
+      const b = this.#sellBacked(roundIdBytes, c); if (!b.ok) return b;   // kanban #1547: and its entry holds an unsold share of that outcome
+    }
     const fresh = this.db.prepare('INSERT OR IGNORE INTO market_book_events (event_id, round_id, kind, entry_id, body, received_ms, batch) VALUES (?, ?, ?, ?, ?, ?, NULL)')
       .run(c.id, Buffer.from(roundIdBytes), kind, String(body.entry), JSON.stringify(body), this.now()).changes === 1;
     return { ok: true, id: c.id, fresh };
@@ -751,10 +763,12 @@ export class OrderBook {
       for (const s of p.sells || []) { const x = this.#sellStands(roundIdBytes, s); if (x.ok && !sells.has(x.id) && !eventBatched(x.id)) sells.set(x.id, s); }
     }
     const record = { k: String(k), orders, cancels: [...cancels.values()], sells: [...sells.values()], leader: toHex(this.round.pubkey) };
-    // a sell beyond what its entry holds unsold is left out (the seats would refuse the whole set over it)
+    // a sell beyond what its entry holds unsold is left out (the seats would refuse the whole set over it) - by its id, once (kanban #1526:
+    // the refused list was searched with a fresh #sellStands per sell, quadratic in the sells)
     // and a cancel whose order neither the book nor this set holds waits for a later batch (kanban #1489: the seats refuse the set over it)
     { const L = this.ledger(roundIdBytes, record); if (L.ok && L.refused.length) {
-      record.sells = record.sells.filter((s) => !L.refused.some((r) => r.id === this.#sellStands(roundIdBytes, s).id));
+      const no = new Set(L.refused.map((r) => r.id));
+      record.sells = [...sells].filter(([id]) => !no.has(id)).map(([, s]) => s);
       record.cancels = record.cancels.filter((c) => !L.refused.some((r) => r.id === c.entry && r.why.startsWith('a cancel')));
     } }
     if (!record.orders.length && !record.cancels.length && !record.sells.length) return { ok: true, empty: true, decided };
