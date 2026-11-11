@@ -4259,6 +4259,8 @@ proof - does not join; it says why, the way a refused entry does.
 
 ## 5A.7 Committee size and thresholds
 
+**RULED 2026-11-11 (kanban #1449): a page reads a table's seating once, not once per round.** A table's rounds are seated by its anchor round, so the page keeps each seat's seating answer per (seat, table, role) and reuses it for the table's later rounds while two things hold: the committee the page builds itself for the new round (§5A.6, from the census and the beacon) is the same seats as the kept answer, and the answer is not older than `seating_keep_ms` (60 s). A built committee that differs, a re-seating announced with `&at=`, or the age passing, asks again. The page warms the seating of the table on screen; another table is read when it is opened. The check stays what it was: every round's committee is still built by the page and compared with a signed seating; only the asking is shared. Before this one idle page sent a seat 616 seating asks in 45 s, 5.5× more than the distinct (seat, table, role) triples. A seat answering a table's seating once with its round range is the 2.0 form of the same rule and needs a release.
+
 **RULED 2026-11-07 (spec review, kanban #1314).** A drawn node that answers PRESENT and then signs no SEATING does not hold the round: a seating that drops a member of S with no signature by `seating_close + Δ` (Δ = 20 s) counts as coming after S for the ordered rule, with the missing signature, attested by the signers' own SEEN record, as the justification, so the honest signers may move to it. A slow honest node loses its seat to a reserve, which the text already accepts.
 
 Mainnet:
