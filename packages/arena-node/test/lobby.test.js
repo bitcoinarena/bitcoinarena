@@ -29,7 +29,7 @@ import { serve } from '../src/server.js';
 import { assumeAssigned } from './assignment.js';
 import { b32, rand, STAKE, contractFor, say } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
-import { encodeInputBatch } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf } from '../../arena-protocol/src/batch.js';
 import { GENESIS } from '../../arena-protocol/src/transcript.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { lobbyListingId } from '../../arena-protocol/src/lobby-listing.js';
@@ -72,9 +72,10 @@ test('the node lists the rounds a player can still join - free or paying, open o
     assert.equal(await say(d.port, `close ${ids.freeClosed}`), 'closed');
 
     // ONE FREE PLAYER, JOINED WITH NO WALLET AND NO LIGHTNING, AND ONE TICK PLAYED.
+    const session = ed25519.utils.randomSecretKey();
     const entry = {
       roundId: roundId(rounds.freeOpen), playerPubkey: schnorr.getPublicKey(rand(32)),
-      sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
+      sessionPubkey: ed25519.getPublicKey(session),
       stakeCommitment: rand(32), stakeMsat: 0n, feeMsat: 0n, donationMsat: 0n,
       joinTick: 0, worldSecret: rand(32), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33),
       feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
@@ -82,8 +83,8 @@ test('the node lists the rounds a player can still join - free or paying, open o
     };
     const joined = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
     assert.equal(joined.status, 201, await joined.text());
-    const played = await say(d.port, encodeInputBatch({ roundId: entry.roundId, entryId: entryId(entry),
-      previousHash: GENESIS, firstTick: 0, ticks: [[0, 0, 0, 0, 0]], liquidations: [] }));
+    const played = await say(d.port, signedBatchOf({ roundId: entry.roundId, entryId: entryId(entry),
+      previousHash: GENESIS, firstTick: 0, ticks: [[0, 0, 0, 0, 0]], liquidations: [] }, (id) => ed25519.sign(id, session)));
 
     const r = await fetch(`${base}/rounds`);
     const body = r.status === 200 ? await r.json() : null;

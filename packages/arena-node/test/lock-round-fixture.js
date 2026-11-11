@@ -23,7 +23,7 @@ import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, GENESIS_HASH, wordsAt, playFor
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { init, step } from '../../nextblock/src/sim.js';
@@ -277,15 +277,15 @@ export async function lockAndPlay(w, who, { session: fixedSession = null, feeLoc
     if (fork) continue;                                   // the fork's run goes out below, seat by seat
     if (gameRun) {
       // a later seat may already hold a batch, forwarded by the first (its answer is then 0 new ticks)
-      for (const [msg, want] of [[encodeInputBatch(gameRun.b1), String(gameRun.first)], [gameRun.m1, SIGNED_RECEIPT_BYTES],
-        [encodeInputBatch(gameRun.b2), String(who.ticks - gameRun.first)], [gameRun.m2, SIGNED_RECEIPT_BYTES]]) {
+      for (const [msg, want] of [[signedBatchOf(gameRun.b1, (id) => ed25519.sign(id, session)), String(gameRun.first)], [gameRun.m1, SIGNED_RECEIPT_BYTES],
+        [signedBatchOf(gameRun.b2, (id) => ed25519.sign(id, session)), String(who.ticks - gameRun.first)], [gameRun.m2, SIGNED_RECEIPT_BYTES]]) {
         const got = await say(d.port, msg);
         if (typeof want === 'number') assert.equal(got.length, want, typeof got === 'string' ? `the mark was refused: ${got}` : undefined);
         else assert.ok(got === want || got === '0', `a batch was answered ${String(got).slice(0, 160)}`);
       }
       continue;
     }
-    assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
+    assert.equal(await say(d.port, signedBatchOf(input, (id) => ed25519.sign(id, session))), String(who.ticks));
     const receipt = await say(d.port, signedMark);
     assert.equal(receipt.length, SIGNED_RECEIPT_BYTES, typeof receipt === 'string' ? `the mark was refused: ${receipt}` : undefined);
   }
@@ -320,9 +320,9 @@ export async function lockAndPlay(w, who, { session: fixedSession = null, feeLoc
     const said = (a) => (a instanceof Uint8Array ? `${a.length} bytes` : String(a).slice(0, 120));
     for (const [i, d] of nodes.entries()) {
       const answers = [];
-      answers.push(said(await say(d.port, encodeInputBatch(b1))));
+      answers.push(said(await say(d.port, signedBatchOf(b1, (id) => ed25519.sign(id, session)))));
       answers.push(said(await say(d.port, sign(m1))));
-      answers.push(said(await say(d.port, encodeInputBatch(b2))));
+      answers.push(said(await say(d.port, signedBatchOf(b2, (id) => ed25519.sign(id, session)))));
       // `fork: 'one-seat'`: both marks to the first seat (the second refused there as an equivocation, and kept), X alone to the rest
       if (stale) {
         answers.push(said(await say(d.port, sign(stale.h))));
@@ -342,7 +342,7 @@ export async function lockAndPlay(w, who, { session: fixedSession = null, feeLoc
     }
   }
   // `late`: the run's batch and first mark, for a test that sends them after the start deadline (§15's same door)
-  const played = { eid, entry, fields, outpoint, feeOutpoint, session, late: [encodeInputBatch(input), signedMark], forked, donated };
+  const played = { eid, entry, fields, outpoint, feeOutpoint, session, late: [signedBatchOf(input, (id) => ed25519.sign(id, session)), signedMark], forked, donated };
   if (address) await nameAddress((w.nodes || [w.a, w.b]).filter((_, i) => !unreached.includes(i)), played, address === true ? ADDRESS : address);
   return played;
 }

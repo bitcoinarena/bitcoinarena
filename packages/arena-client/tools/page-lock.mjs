@@ -35,7 +35,7 @@ import { wordsAt, GENESIS_HASH, secretScalar, say as tell } from '../../arena-no
 import { encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { startDeadlineOf } from '../../arena-protocol/src/first-mark.js';
@@ -328,7 +328,7 @@ async function collectAfterRealJoin({ b, round, label, playerLock }) {
     const fl = fee ? await fetch(`${at}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fee.fields)) }) : null;
     const played = [];
     for (const [b, m] of legs) {
-      const took = await tell(sp, encodeInputBatch(b));
+      const took = await tell(sp, signedBatchOf(b, (id) => ed25519.sign(id, session)));
       const receipt = await tell(sp, joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session)));
       played.push(`batch to ${b.firstTick + b.ticks.length}: ${took === String(b.firstTick + b.ticks.length) ? 'taken' : String(took).slice(0, 120)}, `
         + `mark ${m.tick}: ${receipt.length === SIGNED_RECEIPT_BYTES ? 'receipted' : String(receipt).slice(0, 120)}`);

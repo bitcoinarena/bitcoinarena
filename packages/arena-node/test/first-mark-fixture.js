@@ -22,7 +22,7 @@ import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../.
 import { START_DEADLINE_TICKS } from '../../arena-protocol/src/constants.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { init, step } from '../../nextblock/src/sim.js';
@@ -139,12 +139,12 @@ export async function joinAndBuild(w, { firstAt = 60 } = {}) {
     const m1 = markOf(firstAt, hashAt(firstAt, 0), b1, NO_PREVIOUS);
     const b2 = batchOf(firstAt, END, batchId(b1));
     const m2 = markOf(END, hashAt(END, firstAt), b2, checkpointId(m1));
-    messages = [encodeInputBatch(b1), sign(m1), encodeInputBatch(b2), sign(m2)];
+    messages = [signedBatchOf(b1, (id) => ed25519.sign(id, session)), sign(m1), signedBatchOf(b2, (id) => ed25519.sign(id, session)), sign(m2)];
     firstId = checkpointId(m1);
   } else {
     const b1 = batchOf(0, END, GENESIS_HASH);
     const m1 = markOf(END, hashAt(END, 0), b1, NO_PREVIOUS);
-    messages = [encodeInputBatch(b1), sign(m1)];
+    messages = [signedBatchOf(b1, (id) => ed25519.sign(id, session)), sign(m1)];
     firstId = checkpointId(m1);
   }
   // AND A LATE FIRST MARK FOR THE SAME ENTRY, under the same session key: its
@@ -154,14 +154,14 @@ export async function joinAndBuild(w, { firstAt = 60 } = {}) {
   for (let t = 0; t < END; t++) step(lateSt, ...play.words(t));
   const lb = batchOf(0, END, GENESIS_HASH);
   const lm = markOf(END, Uint8Array.from(stateHash(lateSt).match(/../g).map((x) => parseInt(x, 16))), lb, NO_PREVIOUS);
-  const late = [encodeInputBatch(lb), sign(lm)];
+  const late = [signedBatchOf(lb, (id) => ed25519.sign(id, session)), sign(lm)];
   // AND A SECOND ON-TIME FIRST MARK (tick 30, from nothing): the other half of a
   // player who sent one on-time first mark to one signer node and a different one to another.
   const otherSt = loaded(init(seedWordForEntry(entry, w.randomness || RANDOMNESS)));
   for (let t = 0; t < 30; t++) step(otherSt, ...play.words(t));
   const ob = batchOf(0, 30, GENESIS_HASH);
   const om = markOf(30, Uint8Array.from(stateHash(otherSt).match(/../g).map((x) => parseInt(x, 16))), ob, NO_PREVIOUS);
-  const other = [encodeInputBatch(ob), sign(om)];
+  const other = [signedBatchOf(ob, (id) => ed25519.sign(id, session)), sign(om)];
   // AND THE SAME PLAYER MARKING AGAIN AFTER A LATE FIRST MARK WAS REFUSED (2026-09-21). Measured on the
   // Daily: the first mark went out at 5940 against a window ending at 900, was refused as a late start and
   // never carried, so the client's head stayed ZERO and it marked again every second - 80 times. This is
@@ -171,7 +171,7 @@ export async function joinAndBuild(w, { firstAt = 60 } = {}) {
   for (let t = 0; t < AGAIN_AT; t++) step(againSt, ...play.words(t));
   const gb = batchOf(0, AGAIN_AT, GENESIS_HASH);
   const gm = markOf(AGAIN_AT, Uint8Array.from(stateHash(againSt).match(/../g).map((x) => parseInt(x, 16))), gb, NO_PREVIOUS);
-  const again = [encodeInputBatch(gb), sign(gm)];
+  const again = [signedBatchOf(gb, (id) => ed25519.sign(id, session)), sign(gm)];
   return { entry, eid, outpoint, messages, firstId, late, other, again, againAt: AGAIN_AT };
 }
 

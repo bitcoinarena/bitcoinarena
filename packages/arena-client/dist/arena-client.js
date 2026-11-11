@@ -947,6 +947,14 @@ const TYPE_ABSENCE_ATTESTATION = 0x24;
 const TYPE_DEPARTURE_NOTICE = 0x25;
 /** A leave request signed by a node's emergency key, for a node that is offline (§23A.5a). */
 const TYPE_EMERGENCY_DEPARTURE = 0x35;
+/**
+ * AN INPUT BATCH SIGNED BY ITS ENTRY'S SESSION KEY (kanban #1503, feedback #012): the batch's own bytes, then 64 bytes of
+ * ed25519 over its id under the session key the Entry Contract names. The only form a player's batch is taken in on
+ * /play - an unsigned batch let anybody who knew a public entry id write ticks and loads into that entry. What a seat
+ * stores, hands to another seat and serves in a transcript stays the bare batch (TYPE_INPUT_BATCH): there the signed
+ * mark's input chain hash endorses it.
+ */
+const TYPE_SIGNED_INPUT_BATCH = 0x36;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 const TYPE_SPENT_SET = 0x26;
@@ -3149,6 +3157,57 @@ const MAX_INPUT_BATCH_BYTES =
 const batchTicks = (b) =>
   Array.from({ length: b.ticks.length }, (_, i) => b.firstTick + i);
 
+/**
+ * A BATCH THE PLAYER SIGNED (kanban #1503, feedback #012 by Hexbox Tools). An unsigned batch was taken on /play for any
+ * entry whose id the sender knew - and entry ids are public - so anybody could write ticks and a load into another
+ * player's run: the victim's own next batch no longer followed the chain head, its marks were refused, and the run was
+ * FORFEIT on inputs it never sent.
+ *
+ * The frame is its own type byte, then the batch's bytes unchanged, then 64 bytes: ed25519 under the entry's SESSION
+ * key over the batch's tagged id (batchId) - the key and the message a mark is signed with, under the batch's own tag,
+ * so a mark's signature can never stand as a batch's or the other way round. Beside the batch, not inside it, for the
+ * reason checkpoint.js gives: the batch's id, its chain and every stored transcript stay byte for byte what they were.
+ * The curve is the node's and the client's business; this package only frames.
+ */
+const SIGNED_BATCH_SIGNATURE_BYTES = 64;
+
+/** The largest signed batch a transport can be handed: the type byte, the largest batch, the signature. */
+const MAX_SIGNED_INPUT_BATCH_BYTES = 1 + MAX_INPUT_BATCH_BYTES + SIGNED_BATCH_SIGNATURE_BYTES;
+
+/** The wire frame: the type byte, the encoded batch, the 64 bytes that sign its id. */
+function joinSignedBatch(batchBytes, signature) {
+  if (!signature || signature.length !== SIGNED_BATCH_SIGNATURE_BYTES)
+    throw new Error(`a signature is ${SIGNED_BATCH_SIGNATURE_BYTES} bytes, got ${signature ? signature.length : 0}`);
+  if (!batchBytes || batchBytes[0] !== TYPE_INPUT_BATCH) throw new Error('only an input batch is signed as one');
+  const out = new Uint8Array(1 + batchBytes.length + SIGNED_BATCH_SIGNATURE_BYTES);
+  out[0] = TYPE_SIGNED_INPUT_BATCH;
+  out.set(batchBytes, 1);
+  out.set(signature, 1 + batchBytes.length);
+  return out;
+}
+
+/**
+ * The frame cut apart: `body` the batch's own bytes, `batch` decoded, `id` what the signature must sign, `signature`.
+ * Nothing is verified here - that needs the session key, which lives in the entry the node stores.
+ */
+function splitSignedBatch(bytes) {
+  if (!bytes || bytes[0] !== TYPE_SIGNED_INPUT_BATCH) throw new Error('not a signed input batch');
+  if (bytes.length < 1 + BATCH_HEADER_BYTES + SIGNED_BATCH_SIGNATURE_BYTES) throw new Error('a signed input batch too short to hold a batch and its signature');
+  const body = bytes.subarray(1, bytes.length - SIGNED_BATCH_SIGNATURE_BYTES);
+  const signature = bytes.subarray(bytes.length - SIGNED_BATCH_SIGNATURE_BYTES);
+  const batch = decodeInputBatch(body);
+  return { body, batch, id: batchId(batch), signature };
+}
+
+/** A batch signed by `sign(id)` (sync or async, as markHashed takes it): the frame /play takes. */
+async function signBatch(b, sign) {
+  const bytes = encodeInputBatch(b);
+  return joinSignedBatch(bytes, await sign(batchId(b)));
+}
+
+/** The same with a synchronous `sign(id)` that answers the 64 bytes (a harness's ed25519.sign under the session key). */
+const signedBatchOf = (b, sign) => joinSignedBatch(encodeInputBatch(b), sign(batchId(b)));
+
 // ---- arena-protocol/src/transcript.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -4712,6 +4771,18 @@ async function signEvent({ kind, tags, content, secret, curve, now }) {
  * between - on a fast relay, most of them. The event id is known before it is
  * sent, so the filter can name it.
  */
+/** IS THIS FRAME THE WALLET'S SIGNED ANSWER TO THIS REQUEST (kanban #1471)? `curve.verify(sig, id, pubkey)` is BIP-340 (page-curve.js). */
+function answersThis(frame, { sub, requestId, walletHex, curve }) {
+  const e = frame && frame[2];
+  if (!e || typeof e !== 'object' || frame[1] !== sub) return false;
+  if (e.kind !== NWC_RESPONSE || e.pubkey !== walletHex || typeof e.id !== 'string' || typeof e.sig !== 'string') return false;
+  if (!Array.isArray(e.tags) || !e.tags.some((t) => Array.isArray(t) && t[0] === 'e' && t[1] === requestId)) return false;
+  let id;
+  try { id = toHex(sha256(utf8(JSON.stringify([0, e.pubkey, e.created_at, e.kind, e.tags, e.content])))); } catch { return false; }
+  if (id !== e.id || !curve || typeof curve.verify !== 'function') return false;
+  try { return curve.verify(fromHex(e.sig), fromHex(e.id), fromHex(e.pubkey)) === true; } catch { return false; }
+}
+
 function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
   WebSocketImpl = typeof WebSocket !== 'undefined' ? WebSocket : null } = {}) {
   return new Promise((resolve) => {
@@ -4736,8 +4807,8 @@ function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
     sock.addEventListener('close', () =>
       finish({ ok: false, why: 'that relay closed before the wallet answered' }));
 
+    let event = null, sub = null;   // this request's event and its subscription, read by the answer check below (kanban #1471)
     sock.addEventListener('open', async () => {
-      let event;
       try {
         const content = await nip04Encrypt(JSON.stringify(request), {
           secret: where.secret, theirPubkey: where.walletPubkey, curve, random,
@@ -4750,7 +4821,7 @@ function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
         return finish({ ok: false, why: `this page could not build the request: ${e.message}` });
       }
 
-      const sub = 'blwp-' + event.id.slice(0, 16);
+      sub = 'blwp-' + event.id.slice(0, 16);
       sock.send(JSON.stringify(['REQ', sub, {
         kinds: [NWC_RESPONSE], authors: [toHex(where.walletPubkey)], '#e': [event.id],
       }]));
@@ -4769,6 +4840,11 @@ function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
       if (frame[0] === 'OK' && frame[2] === false)
         return finish({ ok: false, why: `the relay refused the request: ${frame[3] || 'no reason given'}` });
       if (frame[0] !== 'EVENT' || !frame[2]) return;
+      // ONLY THE WALLET'S OWN ANSWER TO THIS REQUEST (kanban #1471, feedback #004 by Hexbox Tools 2026-11-11: any EVENT the relay sent was decrypted and
+      // taken - a relay could replay an earlier genuine answer, say an old pay_invoice success, as the answer to a new payment): the frame is on this
+      // request's subscription, the event is a response (23195) by the wallet's key, its e tag names this request, its id is the hash of its own fields and
+      // its signature is the wallet's. Anything else is not the answer and is passed over, so the real one is still waited for.
+      if (!event || !answersThis(frame, { sub, requestId: event.id, walletHex: toHex(where.walletPubkey), curve })) return;
 
       const opened = await nip04Decrypt(frame[2].content, {
         secret: where.secret, theirPubkey: where.walletPubkey, curve,
@@ -26102,7 +26178,10 @@ class Client {
       tapes,
       ...(attests.length ? { attests } : {}),
     };
-    const bytes = encodeInputBatch(b);
+    // SIGNED BY THE SESSION KEY, as every mark is (kanban #1503, feedback #012): a seat takes no unsigned batch, so
+    // nobody who only knows this entry's public id can write ticks or a load into it. The same signed frame goes to
+    // every peer below.
+    const bytes = await signBatch(b, this.sign);
     const answer = await this.send(bytes);
 
     // The node answers how many ticks were NEW. A refusal is a named string
@@ -26454,7 +26533,8 @@ class Client {
     // was lost, in the node's own order - a peer missing one refuses the rest.
     for (let i = this.published.length; i < t.batches.length; i++) {
       const b = t.batches[i];
-      this.published.push({ bytes: encodeInputBatch(b), through: batchTicks(b).at(-1) + 1 });
+      // signed here as at the first send (kanban #1503): a peer takes a batch only signed by the session key
+      this.published.push({ bytes: await signBatch(b, this.sign), through: batchTicks(b).at(-1) + 1 });
     }
 
     // AND THE COUNT OF WHAT THIS CLIENT HAS ACCEPTED IS RECONCILED WITH IT.

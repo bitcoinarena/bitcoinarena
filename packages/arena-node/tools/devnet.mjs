@@ -620,7 +620,7 @@ async function play() {
   const { worldIsShared } = await import('../../arena-protocol/src/seed.js');
   const { sharedWorldOf } = await import('../../arena-protocol/src/known-game.js');
   const { worldSeedFor } = await import('../../arena-client/src/join.js');
-  const { encodeInputBatch, batchId } = await import('../../arena-protocol/src/batch.js');
+  const { signedBatchOf, batchId } = await import('../../arena-protocol/src/batch.js');
   const { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } = await import('../../arena-protocol/src/checkpoint.js');
   const { SIGNED_RECEIPT_BYTES } = await import('../../arena-protocol/src/receipt.js');
   const { receiptsNeeded } = await import('../../arena-protocol/src/threshold.js');
@@ -701,7 +701,7 @@ async function play() {
   for (let from = 0; from < N;) {
     const to = from === 0 ? FIRST : Math.min(N, from + 600);
     const b = { roundId: fromHex(rid), entryId: fromHex(eid), previousHash, firstTick: from, ticks: drive.tape.slice(from, to), liquidations: [], loads: from === 0 ? loadsAt0 : [] };
-    msgs.push([encodeInputBatch(b), `batch ${from}..${to - 1}`]);
+    msgs.push([signedBatchOf(b, (id) => ed25519.sign(id, session)), `batch ${from}..${to - 1}`]);
     previousHash = batchId(b);
     if (to === FIRST || to === N) {
       const m = { roundId: fromHex(rid), entryId: fromHex(eid), tick: to, stateHash: fromHex(stateAt[to]), inputChainHash: previousHash, previousHash: previousMark, sessionPubkey: entry.sessionPubkey };
