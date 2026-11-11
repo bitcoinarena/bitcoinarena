@@ -257,7 +257,7 @@ export function openFeedbackStore(path = ':memory:') {
     const took = db.prepare("UPDATE rewards SET state = 'paying', invoice = ?, payment_hash = ?, tried_ms = ? WHERE k1 = ? AND state = 'open'").run(String(invoice), d.paymentHash || null, nowMs, w.k1);
     if (took.changes !== 1) return { status: 'ERROR', reason: 'this reward is being paid' };
     let p;
-    try { p = await pay(String(invoice)); } catch (e) { p = { ok: false, why: e.message }; }
+    try { p = await pay(String(invoice), d.amountSats); } catch (e) { p = { ok: false, why: e.message }; }   // the amount bounds the routing fee (kanban #1450)
     if (p && p.ok) { paidNow(w, p.paymentHash || d.paymentHash, nowMs); return { status: 'OK' }; }
     if (p && p.failed) { db.prepare("UPDATE rewards SET state = 'open', why = ? WHERE k1 = ? AND state = 'paying'").run(String(p.why || 'the payment failed'), w.k1); return { status: 'ERROR', reason: 'the payment failed: try again' }; }
     db.prepare("UPDATE rewards SET why = ? WHERE k1 = ?").run(String((p && p.why) || 'the payment\'s outcome is not known yet'), w.k1);

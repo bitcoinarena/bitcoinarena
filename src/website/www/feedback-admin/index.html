@@ -40,7 +40,7 @@
 <body>
 <main>
   <h1>Feedback review</h1>
-  <p class="sub">Player reports, the reward rules and the testnet payouts (kanban #1342). Nothing is paid without an approval here.</p>
+  <p class="sub" data-payouts>Player reports, the reward rules and the payouts. Nothing is paid without an approval here.</p>
 
   <div class="panel" id="login">
     <div class="row"><input id="code" type="password" placeholder="Admin code" autocomplete="off" aria-label="Admin code">
@@ -100,7 +100,9 @@
     s.append(stat('approved this week', `${sats(b.weekApprovedSats)} of ${sats(b.weeklyBudgetSats)}`), stat('approved in all', sats(b.allApprovedSats)), stat('paid', sats(b.paidSats)),
       stat('links not yet claimed', `${b.openRewards.n} · ${sats(b.openRewards.s)}`), stat('new reports', String((b.counts && b.counts.new) || 0)));
     $('weekbar').style.width = `${Math.min(100, (100 * b.weekApprovedSats) / Math.max(1, b.weeklyBudgetSats))}%`;
-    $('weektext').textContent = 'Testnet sats, no value. The weekly budget and the per-player limit are the faucet\'s reward rules.';
+    // REAL SATS ON MAINNET (kanban #1450, Daniel 2026-11-11: bounties are real Lightning payments on mainnet): said by the faucet's payout network
+    $('weektext').textContent = (b.network === 'mainnet' ? 'Mainnet sats: real money, paid over Lightning from the bounty wallet.' : 'Testnet sats, no value.') + ' The weekly budget and the per-player limit are the faucet\'s reward rules.';
+    const sub = document.querySelector('p.sub[data-payouts]'); if (sub) sub.textContent = `Player reports, the reward rules and the ${b.network === 'mainnet' ? 'mainnet Lightning' : 'testnet'} payouts. Nothing is paid without an approval here.`;
   }
   async function load() {
     const q = new URLSearchParams(); for (const [k, id] of [['state', 'f-state'], ['type', 'f-type'], ['source', 'f-source'], ['game', 'f-game'], ['pubkey', 'f-key']]) if ($(id).value.trim()) q.set(k, $(id).value.trim());

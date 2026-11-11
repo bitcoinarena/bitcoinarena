@@ -14,7 +14,7 @@
 //                                   FAUCET_FEEDBACK_DB (the store), FAUCET_FEEDBACK_MINE_URLS (the public URLs a sign-in may name, comma separated)
 //   GET  /lnurlw/<k1>               -> LUD-03 withdrawRequest of an approved report's reward (kanban #1342); /lnurlw/<k1>/callback?k1=&pr= pays it once
 //                                   FAUCET_BOUNTY_PAYER=<lnddir>|<rpc host:port> (the bounty wallet, its own), FAUCET_PUBLIC_BASE (the public /api/faucet URL),
-//                                   FAUCET_BOUNTY_NETWORK (testnet4: phase 1 is testnet only)
+//                                   FAUCET_BOUNTY_NETWORK (mainnet since 2026-11-11, Daniel: "echte lightning payments auf mainnet als bounties"; testnet4 before)
 //   /feedback/admin/list | /report/<id> | /act | /export.csv  (x-arena-admin: the admin code) -> the review list (kanban #1342 section 4)
 //                                   FAUCET_ADMIN_SHA256 (the code's hash, never the code), FAUCET_REWARD_RULES (JSON), FAUCET_FEEDBACK_EXCLUDED (a file of
 //                                   our keys, hex, one per line), FAUCET_SEASON_SEATS / FAUCET_SEASON_GAMES (where "finished a round" is read)
@@ -103,26 +103,33 @@ async function pay(ask) {
 }
 
 const PAYERS = String(env.FAUCET_PAYERS || '').split(',').filter(Boolean).map((p) => { const [dir, rpcserver] = p.split('|'); return { dir, rpcserver }; });
-const lncli = (payer, args, timeoutMs = 20000) => new Promise((res) => execFile(env.FAUCET_LNCLI, [`--lnddir=${payer.dir}`, '--network=testnet4', `--rpcserver=${payer.rpcserver}`, ...args],
+// EACH PAYER ON ITS OWN NETWORK (kanban #1450): the faucet's payers are testnet4; the bounty payer is on FAUCET_BOUNTY_NETWORK, with its own lncli if one is named
+const lncli = (payer, args, timeoutMs = 20000) => new Promise((res) => execFile(payer.lncli || env.FAUCET_LNCLI, [`--lnddir=${payer.dir}`, `--network=${payer.network || 'testnet4'}`, `--rpcserver=${payer.rpcserver}`, ...args],
   { timeout: timeoutMs }, (e, out, err) => res({ ok: !e, timedOut: !!(e && e.killed), out: String(out), err: String(err) })));
 
 // THE BOUNTY WALLET (kanban #1342 section 3): its own payer, never the faucet's; the payout network one setting (testnet4 in phase 1)
-const BOUNTY_PAYER = env.FAUCET_BOUNTY_PAYER ? (([dir, rpcserver]) => ({ dir, rpcserver }))(env.FAUCET_BOUNTY_PAYER.split('|')) : null;
 const BOUNTY_NETWORK = env.FAUCET_BOUNTY_NETWORK || 'testnet4';
+const BOUNTY_PAYER = env.FAUCET_BOUNTY_PAYER ? (([dir, rpcserver]) => ({ dir, rpcserver, network: BOUNTY_NETWORK, lncli: env.FAUCET_BOUNTY_LNCLI || null }))(env.FAUCET_BOUNTY_PAYER.split('|')) : null;
+// A BOUNTY INVOICE OF THE PAYOUT NETWORK (kanban #1450): lnbc on mainnet, lntb on testnet4; another network's invoice is refused before lnd is asked
+export const BOUNTY_INVOICE = { mainnet: /^lnbc[0-9a-z]{20,1500}$/, testnet4: /^lntb[0-9a-z]{20,1500}$/ };
+const bountyInvoiceOk = (invoice) => (BOUNTY_INVOICE[BOUNTY_NETWORK] || BOUNTY_INVOICE.testnet4).test(String(invoice || ''));
+// the routing fee a reward may cost: real sats on mainnet need a route that may cost more than a testnet one (20 sat before); 1 % of the reward, at least 20 sat
+const BOUNTY_FEE_LIMIT_PCT = Number(env.FAUCET_BOUNTY_FEE_LIMIT_PCT || 1);
 // THE BOUNTY IS OFF UNTIL THE OWNER SAYS SO (Daniel 2026-11-07: "ausmachen bis ich es sage und nur auf einer privaten URL aktivieren"): every money path
 // answers only while FAUCET_BOUNTY_ORIGINS names the private page's origin(s), and a report's reward is shown only to a request from one of them
 const BOUNTY_ORIGINS = String(env.FAUCET_BOUNTY_ORIGINS || '').split(',').map((x) => x.trim()).filter(Boolean);
 const bountyOn = () => BOUNTY_ORIGINS.length > 0;
 const PUBLIC_BASE = String(env.FAUCET_PUBLIC_BASE || 'https://bitcoinarena.io/api/faucet').replace(/\/$/, '');
 const bountyDecode = async (invoice) => {
-  if (!/^lntb[0-9a-z]{20,1500}$/.test(invoice)) return { ok: false };
+  if (!bountyInvoiceOk(invoice)) return { ok: false };
   const r = await lncli(BOUNTY_PAYER, ['decodepayreq', invoice]);
   if (!r.ok) return { ok: false };
   const j = JSON.parse(r.out);
   return { ok: true, amountSats: Number(j.num_satoshis), paymentHash: j.payment_hash };
 };
-const bountyPay = async (invoice) => {
-  const r = await lncli(BOUNTY_PAYER, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', invoice], 75000);
+const bountyPay = async (invoice, amountSats = 0) => {
+  const feeLimit = Math.max(20, Math.ceil(Number(amountSats || 0) * BOUNTY_FEE_LIMIT_PCT / 100));
+  const r = await lncli(BOUNTY_PAYER, ['payinvoice', '--force', '--timeout=60s', `--fee_limit=${feeLimit}`, invoice], 75000);
   if (/Payment status: SUCCEEDED/.test(r.out)) { const h = /Payment hash: ([0-9a-f]{64})/.exec(r.out); return { ok: true, paymentHash: h ? h[1] : null }; }
   if (/Payment status: FAILED/.test(r.out) && !r.timedOut) return { ok: false, failed: true, why: (r.out.split('\n').find((l) => /reason/i.test(l)) || 'failed').trim().slice(0, 160) };
   return { ok: false, why: r.timedOut ? 'the payment timed out' : 'in flight' };
@@ -388,7 +395,7 @@ createServer((req, res) => {
       return { ...r, ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), rounds: PLAYED.history ? PLAYED.history(r.pubkey) : null, reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
     if (path === '/feedback/admin/list' && req.method === 'GET') {
       PLAYED.fresh().catch(() => 0).then(() => { const ours = ourKeys();
-        send(200, { ok: true, reports: FEEDBACK.list({ state: q.get('state'), type: q.get('type'), game: q.get('game'), pubkey: q.get('pubkey'), source: q.get('source') }).map((r) => withReward(r, ours)), budget: FEEDBACK.budget({ rules: RULES }),
+        send(200, { ok: true, reports: FEEDBACK.list({ state: q.get('state'), type: q.get('type'), game: q.get('game'), pubkey: q.get('pubkey'), source: q.get('source') }).map((r) => withReward(r, ours)), budget: { ...FEEDBACK.budget({ rules: RULES }), network: BOUNTY_NETWORK },   // the payout network, for the admin's wording (kanban #1450)
           // THE SATS EACH LEVEL PAYS (Daniel 2026-11-10: "Da muss er auch die sats automatisch ausfüllen die wir definiert haben"): the review form fills them in
           levels: [...REWARD_LEVELS.map((l) => ({ level: l.level, sats: l.sats })), { level: 'node', sats: NODE_BOUNTY_BASE_SATS }] }); });
       return undefined;
