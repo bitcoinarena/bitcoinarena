@@ -13145,21 +13145,38 @@ function servedNodesDiffer(claimed, mine) {
 /**
  * ONE SET OF ROUNDS FROM WHAT SEVERAL SEATS HOLD (measured 2026-10-15 17:3xZ: each seat holds only the FINALs of the
  * rounds it sat on - 14 seats gave 7 roots for one window). `held` is a list of seats' answers, each [{ roundId, committee, finals }];
- * a round's FINALs are joined (each signed FINAL once), and a round two seats name with different committees is left out and
- * named in `conflicts` - servedNodes then checks every FINAL itself, so a seat that hands over a forged one adds nothing.
+ * a round's FINALs are joined (each signed FINAL once) and servedNodes then checks every FINAL itself, so a seat that hands over a
+ * forged one adds nothing.
+ *
+ * ONE SEAT'S ANSWER DOES NOT DECIDE WHO IS PAID (kanban #1522, measured: one seat answering an invented round whose "committee" was
+ * 20 keys it made up, each with a FINAL, took 217,380 msat of a 500-sat item; naming a real round with another committee dropped the
+ * round, and the nodes that served it were paid nothing):
+ *   - a committee larger than any round may name is refused: genesis binds 7 slots, and a round names at most its draw, 9
+ *     (contracts.js sittingSeatsFitTheSlots, sortition.js drawnForRole);
+ *   - each seat's answer is read up to SERVED_HELD_MAX rounds;
+ *   - two seats naming one round with different committees no longer drop the round: the committee most seats name stands, and
+ *     between equally many the one held first (the caller's own record first, then the seats in the order it lists them).
  */
+const SERVED_COMMITTEE_MAX = 9;
+const SERVED_HELD_MAX = 20000;
 function mergeServedRounds(held) {
   const hx = (b) => toHex(b);
   const rounds = new Map(), conflicts = new Set();
-  for (const seat of held || []) for (const r of seat || []) {
-    if (!r || !snIs32(r.roundId) || !Array.isArray(r.committee)) continue;
-    const k = hx(r.roundId), committee = r.committee.map(hx).sort().join();
-    if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, committee: r.committee, key: committee, finals: new Map() });
-    const into = rounds.get(k);
-    if (into.key !== committee) { conflicts.add(k); continue; }
-    for (const f of r.finals || []) if (f instanceof Uint8Array) into.finals.set(hx(f), f);
+  for (const seat of held || []) {
+    if (!Array.isArray(seat)) continue;
+    for (const r of seat.slice(0, SERVED_HELD_MAX)) {
+      if (!r || !snIs32(r.roundId) || !Array.isArray(r.committee) || !r.committee.length || r.committee.length > SERVED_COMMITTEE_MAX || !r.committee.every(snIs32)) continue;
+      const k = hx(r.roundId), committee = [...new Set(r.committee.map(hx))].sort().join();
+      if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map() });
+      const into = rounds.get(k);
+      if (!into.copies.has(committee)) into.copies.set(committee, { committee: r.committee, seats: 0 });
+      into.copies.get(committee).seats++;
+      if (into.copies.size > 1) conflicts.add(k);
+      for (const f of r.finals || []) if (f instanceof Uint8Array) into.finals.set(hx(f), f);
+    }
   }
-  return { rounds: [...rounds.entries()].filter(([k]) => !conflicts.has(k)).map(([, r]) => ({ roundId: r.roundId, committee: r.committee, finals: [...r.finals.values()] })),
+  const pick = (copies) => { let best = null; for (const c of copies.values()) if (!best || c.seats > best.seats) best = c; return best.committee; };
+  return { rounds: [...rounds.values()].map((r) => ({ roundId: r.roundId, committee: pick(r.copies), finals: [...r.finals.values()] })),
     conflicts: [...conflicts] };
 }
 
@@ -14359,7 +14376,7 @@ async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
  * nobody replays - which is the fault this function exists to end, arriving by
  * another road. So this is the chain rule again, in the small: every node the
  * URL named is asked, and a disagreement is a refusal by name rather than a
- * majority or a first answer.
+ * first answer - unless more than half of the named nodes agree (kanban #1523).
  *
  * WHAT THIS IS NOT is proof that the hash is the block 5A.5 names. Deriving
  * the height from the chain is letter 32's work and the page does not do it;
@@ -14399,12 +14416,22 @@ async function readRandomness(id, nodes, fetcher) {
   if (!said.length)
     throw new Error('no node named this round\'s randomness: ' + refused.join('; '));
   const first = toHex(said[0].hash);
-  for (const s of said.slice(1)) {
-    if (toHex(s.hash) !== first)
-      throw new Error(`${said[0].node} says this round's randomness is ${first} and `
-        + `${s.node} says ${toHex(s.hash)}: a round whose nodes name two worlds is not one round`);
-  }
-  return { randomness: said[0].hash, height: said[0].height, agreed: said.length, refused };
+  const other = said.find((s) => toHex(s.hash) !== first);
+  if (!other) return { randomness: said[0].hash, height: said[0].height, agreed: said.length, refused };
+  // ONE SEAT OF SEVEN DOES NOT CLOSE EVERY WORLD IT SITS ON (kanban #1523): a disagreement threw at once, so one seat answering 32
+  // other bytes made no player's world seed for any round it was named on - after the stake was locked - while six seats read the
+  // same block hash. A value held by MORE THAN HALF OF THE NODES THE ROUND NAMED (not of those that answered: a seat that stays
+  // silent does not lower the bar) is the round's, and the seats that said otherwise are named as refused; with no such majority
+  // (a 2-of-2's one liar, a split) it is still the refusal by name it was.
+  const count = new Map();
+  for (const s of said) { const h = toHex(s.hash); count.set(h, (count.get(h) || 0) + 1); }
+  const [won, n] = [...count].sort((a, b) => b[1] - a[1])[0];
+  if (2 * n <= nodes.length)
+    throw new Error(`${said[0].node} says this round's randomness is ${first} and `
+      + `${other.node} says ${toHex(other.hash)}: a round whose nodes name two worlds is not one round`);
+  const kept = said.filter((s) => toHex(s.hash) === won);
+  for (const s of said) if (toHex(s.hash) !== won) refused.push(`${s.node}: named randomness ${toHex(s.hash)}, not the ${n} of ${nodes.length} nodes' ${won}`);
+  return { randomness: kept[0].hash, height: kept[0].height, agreed: kept.length, refused };
 }
 
 /**
@@ -24819,42 +24846,10 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
     // A READ THAT NEVER GOT AN ANSWER (kanban #803: "Load failed" on a phone) is a node that did not answer, as one past ANSWER_MS is
     } catch (e) { return { node: base, why: e.message, late: true }; }
   }), nodes.map((node) => String(node).replace(/\/+$/, '')))).filter((a) => a.bytes || !a.late);
-  const missing = answers.filter((a) => !a.bytes);
-  if (missing.length)
-    return { ok: false, why: `not every signer node of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
-  if (!kept && answers.length * 2 < nodes.length)
-    return { ok: false, why: `only ${answers.length} of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
-  const served = toHex(answers[0].bytes);
-  if (answers.some((a) => toHex(a.bytes) !== served)) return { ok: false, why: 'the signer nodes of this round serve different donation sets' };
-  // A SET ITS DEVELOPERS APPROVED (§27A.4.1): the nodes serve, as JSON, the admin key's set it replaces (signed,
-  // checked below as any set), the proposals and approvals since, and the admin key's signature over the approved set (`admin`, kanban
-  // #1337); this page tallies them itself
-  let approval = null;
-  let bytes = answers[0].bytes;
-  if (bytes.length && bytes[0] === 0x7b) {
-    try { approval = JSON.parse(new TextDecoder().decode(bytes)); } catch { approval = null; }
-    if (!approval || approval.approved !== true || typeof approval.root !== 'string' || !Array.isArray(approval.chain))
-      return { ok: false, why: 'the nodes serve a set its developers approved, and not the proof of it' };
-    try { bytes = fromHex(approval.root); } catch { return { ok: false, why: 'the admin key\'s set behind the approved set is not hex' }; }
-  }
-  if (bytes.length <= DONATION_SIGNATURE_BYTES) return { ok: false, why: 'that is no signed donation set' };
-  let set;
-  try { set = { ...decodeDonationSetBody(bytes.slice(0, -DONATION_SIGNATURE_BYTES)), signature: bytes.slice(-DONATION_SIGNATURE_BYTES) }; }
-  catch (e) { return { ok: false, why: `that is no donation set: ${e.message}` }; }
-  if (toHex(set.networkId) !== toHex(round.networkId)) return { ok: false, why: 'that donation set is for another network' };
-  if (!approval) {
-    const named = donationSetMatchesRound(round, set.recipients);
-    if (!named.ok) return { ok: false, why: named.why };
-    // BOTH KEYS ON THE PLAIN PATH TOO (kanban #1447): a set served without approvals stands only if the authority could make it alone
-    const alone = plainDonationSetStands(set, plainPins || undefined);
-    if (!alone.ok) return { ok: false, why: alone.why };
-  }
-  if (!(set.validFrom <= round.censusHeight)) return { ok: false, why: 'that donation set is not in force at the round\'s height' };
-
   // EVERY SIGNER NODE'S ROTATIONS, EACH CHECKED HERE against the network's recovery
   // key: a signer node that hides a rotation cannot hide it from the other signer nodes.
   const offered = new Map();
-  for (const a of answers) for (const r of a.rotations) {
+  for (const a of answers) for (const r of a.rotations || []) {
     try { offered.set(`${r.body}:${r.signature}`, { ...decodeAuthorityRotation(fromHex(String(r.body))), signature: fromHex(String(r.signature)) }); }
     catch { /* not a rotation: nothing to apply */ }
   }
@@ -24864,41 +24859,99 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
     if (await verifyEd25519(rot.signature, authorityRotationId(rot), networkKeys.recovery) === true) signedRotations.add(toHex(rot.signature));
   const inForce = authorityAt({ networkId: round.networkId, authority: networkKeys.authority, recovery: networkKeys.recovery,
     rotations, height: round.censusHeight, verify: (sig) => signedRotations.has(toHex(sig)) });
-  if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
-    return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
-  if (approval) {
-    // the ballots oldest first, each checked against the set it replaces; the set in force at the round's height must be the one it names
-    let ballots;
-    try {
-      ballots = approval.chain.slice().reverse().map((c) => {
-        const pb = fromHex(String(c.proposal));
-        return { proposal: { ...decodeDonationProposal(pb.slice(0, -64)), signature: pb.slice(-64) },
-          approvals: (c.approvals || []).map((h) => { const ab = fromHex(String(h)); return { ...decodeDonationApproval(ab.slice(0, -64)), signature: ab.slice(-64) }; }) };
-      });
-    } catch (e) { return { ok: false, why: `the developers' ballots served do not decode: ${e.message}` }; }
-    const got = await approvedDonationSets({ networkId: round.networkId, known: [set], ballots, verifySecp256k1 });
-    // A CHANGE NEEDS BOTH KEYS (§27A.4.1 RULED 2026-11-07, kanban #1337, 8a94d6cbf: "the authority key alone moves nothing" - and the
-    // recipients alone neither): the approved serial is in force only beside the authority's signature over the same serial and recipients.
-    // The nodes hand it as `admin` (body + signature, like `root`), checked here against the authority in force; without it the approvals
-    // alone make no set in force, and this page used to refuse every approved split for that reason (kanban #1415).
-    const signedSets = [set];
-    if (typeof approval.admin === 'string') {
-      try {
-        const ab = fromHex(approval.admin);
-        if (ab.length > DONATION_SIGNATURE_BYTES) {
-          const admin = { ...decodeDonationSetBody(ab.slice(0, -DONATION_SIGNATURE_BYTES)), signature: ab.slice(-DONATION_SIGNATURE_BYTES) };
-          if (await verifyEd25519(admin.signature, donationSetBodyId(admin), inForce.authority) === true) signedSets.push(admin);
-        }
-      } catch { /* not a signed set: the approvals alone, refused below */ }
+
+  // ONE SEAT CANNOT TAKE THE ROUND'S SET AWAY (kanban #1524): every answering seat had to serve the set byte for byte, so one seat
+  // answering a 4xx or another validly signed set refused every paid join of every round it sat on while six of seven served the
+  // set. The set proves itself (signed by the authority in force, named by round.donationSetId): the answers are grouped by their
+  // bytes, and when the seats disagree a group served by more than half of ALL the round's nodes is taken if it passes every check
+  // below; the seats that said otherwise are reported (`dissent`), not obeyed. With no such group the refusal is said as before.
+  const checkServed = async (served) => {
+    // A SET ITS DEVELOPERS APPROVED (§27A.4.1): the nodes serve, as JSON, the admin key's set it replaces (signed,
+    // checked below as any set), the proposals and approvals since, and the admin key's signature over the approved set (`admin`, kanban
+    // #1337); this page tallies them itself
+    let approval = null;
+    let bytes = served;
+    if (bytes.length && bytes[0] === 0x7b) {
+      try { approval = JSON.parse(new TextDecoder().decode(bytes)); } catch { approval = null; }
+      if (!approval || approval.approved !== true || typeof approval.root !== 'string' || !Array.isArray(approval.chain))
+        return { ok: false, why: 'the nodes serve a set its developers approved, and not the proof of it' };
+      try { bytes = fromHex(approval.root); } catch { return { ok: false, why: 'the admin key\'s set behind the approved set is not hex' }; }
     }
-    const signedSigs = new Set(signedSets.map((x) => toHex(x.signature)));
-    const now = donationSetInForce({ networkId: round.networkId, authority: inForce.authority, recovery: networkKeys.recovery, sets: signedSets, rotations: [],
-      height: round.censusHeight, verify: (sig) => signedSigs.has(toHex(sig)), approved: got.sets });
-    const said = [...got.refused, ...now.refused];
-    if (!now.ok || !now.approvedBy) return { ok: false, why: `the developers' approvals served do not make a set in force at the round's height${said.length ? ': ' + said[0] : ''}` };
-    const named = donationSetMatchesRound(round, now.recipients);
-    if (!named.ok) return { ok: false, why: named.why };
-    set = { networkId: set.networkId, serial: now.serial, validFrom: now.validFrom, recipients: now.recipients, approvedBy: now.approvedBy };
+    if (bytes.length <= DONATION_SIGNATURE_BYTES) return { ok: false, why: 'that is no signed donation set' };
+    let set;
+    try { set = { ...decodeDonationSetBody(bytes.slice(0, -DONATION_SIGNATURE_BYTES)), signature: bytes.slice(-DONATION_SIGNATURE_BYTES) }; }
+    catch (e) { return { ok: false, why: `that is no donation set: ${e.message}` }; }
+    if (toHex(set.networkId) !== toHex(round.networkId)) return { ok: false, why: 'that donation set is for another network' };
+    if (!approval) {
+      const named = donationSetMatchesRound(round, set.recipients);
+      if (!named.ok) return { ok: false, why: named.why };
+      // BOTH KEYS ON THE PLAIN PATH TOO (kanban #1447): a set served without approvals stands only if the authority could make it alone
+      const alone = plainDonationSetStands(set, plainPins || undefined);
+      if (!alone.ok) return { ok: false, why: alone.why };
+    }
+    if (!(set.validFrom <= round.censusHeight)) return { ok: false, why: 'that donation set is not in force at the round\'s height' };
+    if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
+      return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
+    if (approval) {
+      // the ballots oldest first, each checked against the set it replaces; the set in force at the round's height must be the one it names
+      let ballots;
+      try {
+        ballots = approval.chain.slice().reverse().map((c) => {
+          const pb = fromHex(String(c.proposal));
+          return { proposal: { ...decodeDonationProposal(pb.slice(0, -64)), signature: pb.slice(-64) },
+            approvals: (c.approvals || []).map((h) => { const ab = fromHex(String(h)); return { ...decodeDonationApproval(ab.slice(0, -64)), signature: ab.slice(-64) }; }) };
+        });
+      } catch (e) { return { ok: false, why: `the developers' ballots served do not decode: ${e.message}` }; }
+      const got = await approvedDonationSets({ networkId: round.networkId, known: [set], ballots, verifySecp256k1 });
+      // A CHANGE NEEDS BOTH KEYS (§27A.4.1 RULED 2026-11-07, kanban #1337, 8a94d6cbf: "the authority key alone moves nothing" - and the
+      // recipients alone neither): the approved serial is in force only beside the authority's signature over the same serial and recipients.
+      // The nodes hand it as `admin` (body + signature, like `root`), checked here against the authority in force; without it the approvals
+      // alone make no set in force, and this page used to refuse every approved split for that reason (kanban #1415).
+      const signedSets = [set];
+      if (typeof approval.admin === 'string') {
+        try {
+          const ab = fromHex(approval.admin);
+          if (ab.length > DONATION_SIGNATURE_BYTES) {
+            const admin = { ...decodeDonationSetBody(ab.slice(0, -DONATION_SIGNATURE_BYTES)), signature: ab.slice(-DONATION_SIGNATURE_BYTES) };
+            if (await verifyEd25519(admin.signature, donationSetBodyId(admin), inForce.authority) === true) signedSets.push(admin);
+          }
+        } catch { /* not a signed set: the approvals alone, refused below */ }
+      }
+      const signedSigs = new Set(signedSets.map((x) => toHex(x.signature)));
+      const now = donationSetInForce({ networkId: round.networkId, authority: inForce.authority, recovery: networkKeys.recovery, sets: signedSets, rotations: [],
+        height: round.censusHeight, verify: (sig) => signedSigs.has(toHex(sig)), approved: got.sets });
+      const said = [...got.refused, ...now.refused];
+      if (!now.ok || !now.approvedBy) return { ok: false, why: `the developers' approvals served do not make a set in force at the round's height${said.length ? ': ' + said[0] : ''}` };
+      const named = donationSetMatchesRound(round, now.recipients);
+      if (!named.ok) return { ok: false, why: named.why };
+      set = { networkId: set.networkId, serial: now.serial, validFrom: now.validFrom, recipients: now.recipients, approvedBy: now.approvedBy };
+    }
+    return { ok: true, set };
+  };
+  const missing = answers.filter((a) => !a.bytes);
+  const groups = new Map();
+  for (const a of answers) if (a.bytes) { const k = toHex(a.bytes); groups.set(k, [...(groups.get(k) || []), a]); }
+  let chosen = null, set = null, dissent = [];
+  if (!missing.length && groups.size === 1) {
+    if (!kept && answers.length * 2 < nodes.length)
+      return { ok: false, why: `only ${answers.length} of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
+    const got = await checkServed(answers[0].bytes);
+    if (!got.ok) return got;
+    chosen = answers; set = got.set;
+  } else if (!missing.length && !groups.size) {
+    return { ok: false, why: `only 0 of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
+  } else {
+    for (const g of [...groups.values()].sort((x, y) => y.length - x.length)) {
+      if (g.length * 2 <= nodes.length) break;
+      const got = await checkServed(g[0].bytes);
+      if (got.ok) { chosen = g; set = got.set; break; }
+    }
+    if (!chosen) {
+      if (missing.length)
+        return { ok: false, why: `not every signer node of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
+      return { ok: false, why: 'the signer nodes of this round serve different donation sets' };
+    }
+    dissent = answers.filter((a) => !chosen.includes(a)).map((a) => ({ node: a.node, why: a.bytes ? 'serves another donation set' : a.why }));
   }
 
   // AND THE GAME DEV'S SET (§0A.8): every signer node serves the one its round's game's manifest names, and it
@@ -24929,10 +24982,10 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
     if (!gameSet) return { ok: false, why: `no signer node of this round serves its game's donation set: ${tried.join('; ')}` };
     GAME_SETS_FETCHED.set(wantGame, gameSet);
   }
-  if (keepBySet && !kept) DONATION_SETS_FETCHED.set(setKey, answers);
+  if (keepBySet && !kept) DONATION_SETS_FETCHED.set(setKey, chosen);
   // A SET THAT VESTS (§27A.4.1) pays its shares at the round's census height, as the seats split it
-  return { ok: true, set, gameSet, target: { network: vestedShares(set.recipients, round.censusHeight), game: gameSet }, signerNodes: answers.length, rotated: inForce.rotated,
-    why: `${answers.length} signer node(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
+  return { ok: true, set, gameSet, target: { network: vestedShares(set.recipients, round.censusHeight), game: gameSet }, signerNodes: chosen.length, dissent, rotated: inForce.rotated,
+    why: `${chosen.length} signer node(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
 }
 
 // ---- arena-client/src/client.js
@@ -25214,6 +25267,23 @@ const LOCK_ACCEPT_HEAD_MS = 3000;   // the lock client's acceptance first; the s
 const OPENED_ROUNDS = new Map();
 
 /**
+ * IS THIS THE SESSION KEY'S SIGNATURE (kanban #1567): Ed25519 through the platform's own WebCrypto - the browser's, the
+ * one the page's session key signs with, and Node's - so the bundle still carries no curve of its own. A page or a test
+ * may hand its own as `verifySession`. Answers false for anything it cannot check.
+ */
+const SESSION_KEYS = new Map();
+async function verifySessionSignature(signature, message, publicKey) {
+  const subtle = globalThis.crypto && globalThis.crypto.subtle;
+  if (!subtle) return false;
+  try {
+    const hex = toHex(publicKey);
+    let key = SESSION_KEYS.get(hex);
+    if (!key) { key = await subtle.importKey('raw', publicKey, { name: 'Ed25519' }, false, ['verify']); SESSION_KEYS.set(hex, key); }
+    return !!(await subtle.verify({ name: 'Ed25519' }, key, signature, message));
+  } catch { return false; }
+}
+
+/**
  * THE CORE STEPPED THROUGH A TRANSCRIPT, as a seat replays it (arena-node replay.js, core adapter eventsOf): each tick's
  * tape, load, sample and liquidation BEFORE that tick, then its five words. The page's core after a reload is then the
  * state its marks were hashed from, and the run goes on from the tick the node is owed. `core` is the page's sim
@@ -25255,7 +25325,7 @@ class Client {
    * the node's own fixtures talk to a process on localhost that has no bond
    * and never will - and a test that wants the real door calls this one.
    */
-  static async at(discovery, { core, sign, verify, contract, roundIdGiven, stakeLock }) {
+  static async at(discovery, { core, sign, verify, verifySession, contract, roundIdGiven, stakeLock }) {
     if (!contract || !contract.nodes)
       throw new Error('no round contract, so there is no committee to check against');
 
@@ -25324,7 +25394,7 @@ class Client {
     }
 
     const client = new Client({
-      base: seen.endpoint.replace(/^ws/, 'http'), core, sign, verify,
+      base: seen.endpoint.replace(/^ws/, 'http'), core, sign, verify, ...(verifySession ? { verifySession } : {}),
     });
     // THE CHAIN THIS CALL PROVED, carried on the client so the page can open its NEXT round from it rather than
     // proving the same headers again at a boundary where a starved tab misses the ten seconds (2026-09-18).
@@ -25362,10 +25432,19 @@ class Client {
     return this.peers;
   }
 
-  constructor({ base, core, sign, verify }) {
+  constructor({ base, core, sign, verify, verifySession = verifySessionSignature }) {
     this.base = base;
     this.core = core;
     this.sign = sign;
+    // THE SESSION KEY'S CURVE, to tell a batch this client signed from one a seat wrote into its own store (kanban #1567).
+    // `verify` is the seats' curve (receipts, adverts); this one is the session key's.
+    this.verifySession = verifySession;
+    // EVERY FRAME THIS CLIENT SIGNED, by batch id (kanban #1567): the only frames it ever publishes again. A resume used to
+    // sign whatever the home seat served past `published`, so a seat that appended a forged batch to its own store and
+    // refused the next one had the player's own client sign the forgery and feed it to the whole committee.
+    this.signedFrames = new Map();
+    // A SEAT THAT SERVED THIS ENTRY A BATCH THIS CLIENT NEVER SIGNED: { base, firstTick, why }, null while none has
+    this.nodeFault = null;
     // Verifying is injected for the same reason signing is: the curve belongs
     // to whoever runs the client, and this file should not decide it.
     this.verify = verify;
@@ -26301,6 +26380,8 @@ class Client {
     // nobody who only knows this entry's public id can write ticks or a load into it. The same signed frame goes to
     // every peer below.
     const bytes = await signBatch(b, this.sign);
+    // KEPT BEFORE IT GOES OUT (kanban #1567): a batch the node took whose answer was lost is still this client's own
+    this.signedFrames.set(toHex(batchId(b)), bytes);
     const answer = await this.send(bytes);
 
     // The node answers how many ticks were NEW. A refusal is a named string
@@ -26627,6 +26708,12 @@ class Client {
     if (!belongs.ok && t.batches.length)
       throw new Error(`the transcript is not this entry's run: ${belongs.why}`);
 
+    // EVERY SERVED BATCH IS ONE THIS CLIENT SIGNED, or none of it is taken (kanban #1567, feedback #013 by Hexbox Tools).
+    // Measured before: a home seat appended 120 forged ticks to its own store and refused the player's next batch; this
+    // resume signed the forgery and fed it to the honest peer, which stored it as the player's, and the player's real
+    // inputs went on 120 ticks late. Nothing served is signed here - ever.
+    const frames = await this.#ownFrames(t, entry, roundId, entryId);
+
     const before = this.nextTick;
     const last = t.batches[t.batches.length - 1];
     this.batchHead = last ? batchId(last) : GENESIS;
@@ -26650,10 +26737,10 @@ class Client {
     }
     // AND THE PEERS ARE FED WHAT THIS NODE TOOK, including a batch whose answer
     // was lost, in the node's own order - a peer missing one refuses the rest.
+    // THE FRAMES THIS CLIENT SIGNED, as it signed them (kanban #1567) - never a fresh signature over what a seat served.
     for (let i = this.published.length; i < t.batches.length; i++) {
       const b = t.batches[i];
-      // signed here as at the first send (kanban #1503): a peer takes a batch only signed by the session key
-      this.published.push({ bytes: await signBatch(b, this.sign), through: batchTicks(b).at(-1) + 1 });
+      this.published.push({ bytes: frames[i], through: batchTicks(b).at(-1) + 1 });
     }
 
     // AND THE COUNT OF WHAT THIS CLIENT HAS ACCEPTED IS RECONCILED WITH IT.
@@ -26684,6 +26771,49 @@ class Client {
     return { ticks: ok.ticks, batches: t.batches.length, nextTick: this.nextTick,
              batchHead: this.batchHead, head: this.head, receipts,
              live: adopted !== null, witnessed: adopted ? this.witnessed(adopted) : 0, transcript: t };
+  }
+
+  /**
+   * THIS CLIENT'S OWN SIGNED FRAME FOR EVERY BATCH A SEAT SERVED (kanban #1567), in the transcript's order: the frame it
+   * signed and kept, or - after a reload, when it kept nothing - the seat's copy of its signature (GET /batch-signatures),
+   * VERIFIED under this entry's session key. A served batch with neither is not this player's: the seat that served it
+   * wrote it itself. That is a node fault, named on `nodeFault`; the run ends there (VOID, the seat's fault, never the
+   * player's) and nothing of it is signed or handed to a peer.
+   */
+  async #ownFrames(t, entry, roundId, entryId) {
+    const frames = new Array(t.batches.length);
+    const missing = [];
+    t.batches.forEach((b, i) => {
+      const kept = this.signedFrames.get(toHex(batchId(b)));
+      if (kept) frames[i] = kept; else missing.push(i);
+    });
+    if (!missing.length) return frames;
+    let sigs = null;
+    let asked = null;
+    try {
+      const r = await readWithOneRetry(fetch, `${this.base}/batch-signatures?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
+      if (r.ok) sigs = new Uint8Array(await r.arrayBuffer());
+      else asked = `it answered ${r.status} for the batches' signatures`;
+    } catch (e) { asked = `it would not hand over the batches' signatures: ${e.message}`; }
+    const W = SIGNED_BATCH_SIGNATURE_BYTES;
+    for (const i of missing) {
+      const b = t.batches[i];
+      const id = batchId(b);
+      const sig = sigs && sigs.length >= (i + 1) * W ? sigs.slice(i * W, (i + 1) * W) : null;
+      if (sig && sig.some((x) => x !== 0) && await this.verifySession(sig, id, entry.sessionPubkey)) {
+        frames[i] = joinSignedBatch(encodeInputBatch(b), sig);
+        this.signedFrames.set(toHex(id), frames[i]);
+        continue;
+      }
+      const ticks = batchTicks(b);
+      const why = `the node at ${this.base} serves a batch at ticks ${b.firstTick}..${ticks.length ? ticks.at(-1) : b.firstTick} `
+        + `as this entry's that this client never signed (${sig ? 'its signature does not verify under the session key' : (asked || 'no signature beside it')}) `
+        + '- it is not signed or published again, and that node is not trusted with this run';
+      this.nodeFault = { base: this.base, firstTick: b.firstTick, batch: i, why };
+      this.endRun(`node fault: ${why}`);
+      throw Object.assign(new Error(why), { nodeFault: true });
+    }
+    return frames;
   }
 
   /**
@@ -26747,6 +26877,9 @@ class Client {
    * from taste.
    */
   setRound({ roundId, entryId, blockTicks }) {
+    // ANOTHER ENTRY'S RUN STARTS WITH NONE OF THIS ONE'S FRAMES (kanban #1567); the same entry again keeps them
+    if (this.signedEntry !== toHex(entryId)) { this.signedFrames = new Map(); this.signedEntry = toHex(entryId); }
+    this.nodeFault = null;
     this.where = { roundId, entryId };
     // A LATE ENTRY'S FIRST TICK IS ITS JOIN TICK: the round's tick it joined at, so its run ends with the round's.
     // An entry at tick 0 starts where it always did.
@@ -31381,21 +31514,32 @@ async function roundVerdict({ roundId, nodes, committee, verify, threshold = nul
 
 // AS MANY AS SETTLE THE ROUND (2026-10-30: "0 of 2 macht gar keinen sinn"): the two was the two-node test network's; a run fewer than five signer nodes hold cannot settle
 const NODES_HOLDING = SETTLEMENT_THRESHOLD;
+// kanban #1508: EACH NODE GETS A BOUNDED WAIT. One seat that takes GET /transcript and never answers (or dribbles the body) held the
+// whole ask - and with it the page's "keep this tab open" - for ever, while the other seats held the run. A node that has not answered,
+// body read, within this many ms is counted as unanswered and the others decide.
+const NODE_WAIT_MS = 8000;
 
 /**
  * `nodes` the committee's bases; `finalTick` the run's last tick (the client's own count); `mirror` an optional base. Answers
  * { safe, holders: [base], hash, ticks, mirrored, why }.
  */
-async function secureTranscript({ roundId, entryId, nodes, finalTick, mirror = null, fetcher = fetch, need = NODES_HOLDING } = {}) {
+async function secureTranscript({ roundId, entryId, nodes, finalTick, mirror = null, fetcher = fetch, need = NODES_HOLDING, waitMs = NODE_WAIT_MS } = {}) {
   const q = `round=${toHex(roundId)}&entry=${toHex(entryId)}`;
   const said = [];
   const held = await Promise.all([...new Set(nodes || [])].map(async (base) => {
+    // kanban #1508: the fetch and its body read race one timer; the abort also ends a fetcher that honours the signal
+    const ac = new AbortController();
+    let timer;
+    const late = new Promise((_, no) => { timer = setTimeout(() => { ac.abort(); no(new Error(`no answer in ${waitMs} ms`)); }, waitMs); });
     try {
-      const r = await fetcher(`${String(base).replace(/\/+$/, '')}/transcript?${q}`);
-      if (!r.ok) { said.push(`${base}: ${r.status}`); return null; }
-      const ticks = Number(r.headers.get('x-ticks')), hash = String(r.headers.get('x-transcript-hash') || '').toLowerCase();
-      return { base, ticks, hash, bytes: new Uint8Array(await r.arrayBuffer()) };
+      return await Promise.race([late, (async () => {
+        const r = await fetcher(`${String(base).replace(/\/+$/, '')}/transcript?${q}`, { signal: ac.signal });
+        if (!r.ok) { said.push(`${base}: ${r.status}`); return null; }
+        const ticks = Number(r.headers.get('x-ticks')), hash = String(r.headers.get('x-transcript-hash') || '').toLowerCase();
+        return { base, ticks, hash, bytes: new Uint8Array(await r.arrayBuffer()) };
+      })()]);
     } catch (e) { said.push(`${base}: ${e.message}`); return null; }
+    finally { clearTimeout(timer); }
   }));
   const groups = new Map();
   for (const h of held) {
@@ -34213,19 +34357,22 @@ function itemPriceOn(manifest, priceSat, devsPct) {
 /** The served list of the 24 h before `toMs`, from every seat that answers. Answers { ok, served, seats } or { ok: false, why }. */
 async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000 }) {
   const fromMs = BigInt(toMs) - BigInt(SERVED_WINDOW_MS);
+  // kept in the order the seats are listed, not the order they answer (kanban #1522): between two committees named by equally many
+  // seats the one held first stands (mergeServedRounds), and that must not be whichever seat answered fastest
   const held = [];
-  await Promise.all((seats || []).map(async (s) => {
+  await Promise.all((seats || []).map(async (s, i) => {
     try {
       const r = await fetch(`${String(s).replace(/\/$/, '')}/served?to=${toMs}&finals=1`, { signal: AbortSignal.timeout(timeoutMs) });
       if (!r.ok) return;
       const a = await r.json();
-      held.push((a.held || []).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) })));
+      held[i] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
     } catch { /* a seat that does not answer adds nothing */ }
   }));
-  if (!held.length) return { ok: false, why: 'no seat answered who served a round in the last 24 hours' };
-  const served = servedNodes({ rounds: mergeServedRounds(held).rounds, fromMs, toMs: BigInt(toMs), verify });
+  const answered = held.filter(Boolean).length;
+  if (!answered) return { ok: false, why: 'no seat answered who served a round in the last 24 hours' };
+  const served = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean)).rounds, fromMs, toMs: BigInt(toMs), verify });
   if (!served.nodes.length) return { ok: false, why: 'no node served a round in the last 24 hours: the nodes\' half has nobody to go to' };
-  return { ok: true, served, seats: held.length };
+  return { ok: true, served, seats: answered };
 }
 
 /**
