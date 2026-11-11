@@ -15,7 +15,7 @@
 // attestors whose readings agree to the cent sign the same bytes and combine exactly as outcomes do; attestors that saw
 // different cents sign different bodies, and only a threshold over ONE value makes an attestation (two values standing at a
 // seat void the round - attested.js). A value needs no price to beat: only a reading a minute before the window's end.
-import { createPrivateKey, createPublicKey, sign as edSign } from 'node:crypto';
+import { createPrivateKey, createPublicKey, sign as edSign, verify as edVerify } from 'node:crypto';
 import { attestationBodyId, encodeAttestation } from '../../arena-protocol/src/attested.js';
 import { upDownOutcome, upDownPrices, UP_DOWN_OUTCOMES } from '../../arena-protocol/src/up-down.js';
 import { valueAttestationBodyId, encodeValueAttestation } from '../../arena-protocol/src/scalar.js';
@@ -58,20 +58,37 @@ export function attestValue({ samples, roundId, window, attestor }) {
 }
 const isValueWord = (w) => typeof w.body.value === 'bigint';
 
+/** An ed25519 signature over a body id, by a raw 32-byte key (the fixed attestors' scheme): true or false, never a throw. */
+const ED25519_SPKI = Buffer.from('302a300506032b6570032100', 'hex');
+export function verifyEd25519Word(signature, digest, key) {
+  try { return edVerify(null, Buffer.from(digest), createPublicKey({ key: Buffer.concat([ED25519_SPKI, Buffer.from(key)]), format: 'der', type: 'spki' }), Buffer.from(signature)); }
+  catch { return false; }
+}
+
 /**
  * THE SIGNATURES THAT COMBINE: of the words given (this attestor's and the others' - { body, key, signature }), the body the
  * most named attestors signed, and its attestation once it carries `threshold` of them - else null. Only keys the market
  * names count, each once.
+ * ONLY A SIGNATURE THAT VERIFIES COUNTS, AND THE FIRST GOOD ONE OF A KEY STAYS (kanban #1487, feedback #009 by Hexbox Tools 2026-11-11): a peer's word
+ * was taken unchecked and a later word replaced an earlier one of the same key, so one drawn seat answering /attestation-word with the honest body and a
+ * junk signature - or with an honest seat's key on its junk - made every honest seat's combined attestation fail attestationStands (it refuses on the
+ * first bad signature), and the round went VOID with 6 good signatures. `verify(signature, bodyId, key)` is the attestors' scheme: ed25519 by default
+ * (the fixed attestors), BIP-340 for the drawn ones (the seat passes schnorr.verify). Pass the caller's own word first: it is never replaced.
  */
-export function combine(words, { attestors, threshold }) {
+export function combine(words, { attestors, threshold, verify = verifyEd25519Word }) {
   const named = new Set(attestors.map((k) => (typeof k === 'string' ? k : toHex(k))));
   const byBody = new Map();
   for (const w of words) {
     if (!w || !w.body || !named.has(w.key)) continue;
     // an outcome word and a value word never meet in one body: each is identified under its own tag
-    const id = isValueWord(w) ? `v${toHex(valueAttestationBodyId(w.body))}` : toHex(attestationBodyId(w.body));
+    let digest; try { digest = isValueWord(w) ? valueAttestationBodyId(w.body) : attestationBodyId(w.body); } catch { continue; }
+    const id = isValueWord(w) ? `v${toHex(digest)}` : toHex(digest);
+    let good = false;
+    try { good = /^[0-9a-f]{128}$/.test(String(w.signature)) && verify(fromHex(w.signature), digest, fromHex(w.key)) === true; } catch { good = false; }
+    if (!good) continue;
     if (!byBody.has(id)) byBody.set(id, { body: w.body, sigs: new Map() });
-    byBody.get(id).sigs.set(w.key, w.signature);
+    const sigs = byBody.get(id).sigs;
+    if (!sigs.has(w.key)) sigs.set(w.key, w.signature);
   }
   const best = [...byBody.values()].sort((a, b) => b.sigs.size - a.sigs.size)[0];
   if (!best || best.sigs.size < threshold) return null;
