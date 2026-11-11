@@ -1578,3 +1578,6 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 - Before: only memory held the run's start. The store keeps the newest record per federation, and `restore()` keep()s that one, so a restarted seat counted the halt from the newest HALTED record, later than a seat that did not restart.
 - Now: when `keep()` takes a HALTED record and no halt is held, the start is read from the record history (`historyOf`, which reads `store.loadAt` once): from the kept height down, height by height, while the record is HALTED. Any non-HALTED take still clears it.
 - Limit: a seat that first sees the federation by mirror after the run began holds no older records, so it counts from the first record it verified until those records reach its history.
+
+#### SM-22 (add) Feedback reward link: the `address` column (#1575)
+- `address` is written only in the compare-and-set that takes the row open -> paying, together with that payment's invoice: payToAddress passes the report's Lightning address, a claim through the withdraw link (LNURL callback) writes NULL. paying -> open (a sure failure, or `settle` reading failed) clears it. Invariant: a `paid` reward names an address only when the invoice it paid came from that address.
