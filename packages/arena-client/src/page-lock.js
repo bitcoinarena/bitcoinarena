@@ -2053,20 +2053,30 @@ export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch }
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/stake-lock?round=${toHex(roundId)}&refund=${refund}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${name} ${r.status}`, got: [] };
-      const got = await r.json();
+      const raw = await r.json();
+      // ONE SEAT'S MALFORMED ANSWER STAYS ITS OWN (kanban #1489, audit WF1489 CLIENT-1): `{}` or `[null]` from one seat threw for the
+      // whole look, outside this try, and every honest seat's lock was dropped - no payout, stake or refund collected while it answered so.
+      // A seat's answer must be a list; an item that is not a lock (an object, a txid:index outpoint, fields the lock client reads) is skipped
+      if (!Array.isArray(raw)) return { said: `${name} malformed`, got: [] };
+      const got = [];
+      for (const l of raw) {
+        if (!l || typeof l !== 'object' || !/^[0-9a-f]{64}:\d+$/.test(String(l.outpoint))) continue;
+        const [txid, outIdx] = String(l.outpoint).split(':');
+        let lock;
+        try { lock = { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId }; } catch { continue; }
+        got.push({ l, lock });
+      }
       return { said: `${name} ${got.length}`, got, node };
     } catch (e) { return { said: `${name} ${String(e && e.message || e).slice(0, 40)}`, got: [] }; }
   }));
   const said = answers.map((a) => a.said);
   for (const { got } of answers) {
-    for (const l of got) {
-      const [txid, outIdx] = String(l.outpoint).split(':');
+    for (const { l, lock } of got) {
       // EVERY SEAT'S VERSION OF AN OUTPOINT, NOT ONLY THE FIRST (kanban #1273, audit 4 #1257 seats-5): one seat listed first answered the real
       // outpoint with a field changed (or a made-up entry id), and the honest copies were dropped - the stake read "gone" for good, or waited for
       // its expiry. Each distinct version is kept; the federation's stored contract (heldByGuardians) and the forfeit check pick the real one
       const key = `${l.outpoint}|${JSON.stringify(l.fields)}|${String(l.entryId || '').toLowerCase()}`;
-      if (!found.has(key))
-        found.set(key, { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId });
+      if (!found.has(key)) found.set(key, lock);
     }
   }
   const out = [...found.values()];
@@ -2246,6 +2256,9 @@ export async function redeemStake({ round, roundId, invite, seed, curve, LockCli
  * and one that pays it nothing is no answer - a seat omitting the player made the payout "none" and the round final. When `needed` seats
  * agree, their settlement is the answer, whatever a lone seat says.
  */
+// a settlement's payout list as the page reads it (kanban #1489): each an object with a string pk and an integer msat
+const wellFormedPayouts = (payouts) => Array.isArray(payouts) && payouts.every((p) => p && typeof p === 'object'
+  && typeof p.pk === 'string' && /^\d+$/.test(String(p.msat)));
 export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null } = {}) {
   // EVERY SIGNER NODE AT ONCE (kanban #593)
   const answers = await Promise.all([...new Set(nodes || [])].map(async (node) => {
@@ -2253,8 +2266,13 @@ export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${node}: ${r.status}` };
       const j = await r.json();
-      if (j.state === 'ACCEPTED' && j.moved && Array.isArray(j.moved.payouts)) return { ok: true, txid: j.txid, moved: j.moved, from: node };
-      return { said: `${node}: ${j.state}` };
+      if (j && j.state === 'ACCEPTED' && j.moved && Array.isArray(j.moved.payouts)) {
+        // EVERY PAYOUT WELL FORMED, OR THE ANSWER IS NOT COUNTED (kanban #1489, audit WF1489 CLIENT-1): a `null` payout threw in keyOf for
+        // every seat's answer, and the honest seats' agreeing settlement was lost with it
+        if (!wellFormedPayouts(j.moved.payouts)) return { said: `${node}: malformed` };
+        return { ok: true, txid: j.txid, moved: j.moved, from: node };
+      }
+      return { said: `${node}: ${j && j.state}` };
     } catch (e) { return { said: `${node}: ${e.message}` }; }
   }));
   const accepted = answers.filter((a) => a.ok);
@@ -2369,10 +2387,11 @@ export async function federationSettlementsOf({ roundId, nodes, fetcher = fetch 
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) { said.push(`${node}: ${r.status}`); continue; }
       const j = await r.json();
-      if (j.state === 'ACCEPTED' && Array.isArray(j.federations) && j.federations.length
-        && j.federations.every((f) => f.state === 'ACCEPTED' && f.moved && Array.isArray(f.moved.payouts)))
+      // (kanban #1489) a null federation or payout is a malformed answer, not a throw: the next seat is asked
+      if (j && j.state === 'ACCEPTED' && Array.isArray(j.federations) && j.federations.length
+        && j.federations.every((f) => f && f.state === 'ACCEPTED' && f.moved && wellFormedPayouts(f.moved.payouts)))
         return { ok: true, federations: j.federations, from: node };
-      said.push(`${node}: ${j.state}`);
+      said.push(`${node}: ${j && j.state}`);
     } catch (e) { said.push(`${node}: ${e.message}`); }
   }
   return { ok: false, why: `no signer node holds every federation's settlement of this round accepted yet (${said.join('; ')})` };
@@ -2762,6 +2781,14 @@ const owedKeyOf = (seed, id, order, curve) => {
   }
   return v;
 };
+// ONE READ OF THE OWED SCAN, GIVEN UP AFTER SEAT_READ_MS (kanban #1489): null when the seat failed, refused or did not answer in time
+const OWED_LIST_MAX = 500, OWED_NEXT_MS = 2000;
+const owedRead = (read) => {
+  const signal = AbortSignal.timeout(SEAT_READ_MS);
+  let t;
+  const late = new Promise((resolve) => { t = setTimeout(() => resolve(null), SEAT_READ_MS); });
+  return Promise.race([read(signal).catch(() => null), late]).finally(() => clearTimeout(t));
+};
 export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [], knownBySeed = null } = {}) {
   // EVERY SAVED PHRASE AT ONCE (2026-10-07): each signer node's /settled is read once and matched against
   // every phrase's keys - 7 asks on 7 signer nodes, not 7 per phrase. One `seed` (with `known`) is the one-phrase scan as before.
@@ -2771,16 +2798,35 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
   const base = (n) => String(n).replace(/\/+$/, '');
   const skipOf = (s) => new Set(((knownBySeed && knownBySeed.get(toHex(s))) || (list.length === 1 ? known : [])).map((h) => String(h).toLowerCase()));
   const skips = list.map(skipOf);
+  // ONE SEAT'S WORD COSTS THE PAGE NO UNBOUNDED WORK (kanban #1489): every listed id costs ORDER_SCAN + 1 key derivations per kept
+  // phrase on the page's thread - one seat answering /settled with 3000 made-up ids froze the page 16.7 s at every load (99,033
+  // derivations). Now a seat's list is taken newest first up to OWED_SETTLED_MAX ids (a seat answers at most 500, round.js settledSince),
+  // each id once, and OWED_KEYS_PER_ROUND keys of a round: one seat costs the page at most OWED_SETTLED_MAX x (ORDER_SCAN + 1) a phrase.
   const listed = new Map();
-  for (const node of nodes) {
-    let got = null;
-    try { const r = await fetcher(`${base(node)}/settled?since=${Math.max(0, Math.floor(Number(sinceMs) || 0))}`); if (r.ok) got = await r.json(); } catch { got = null; }
-    for (const x of (got && Array.isArray(got.rounds) ? got.rounds : [])) {
+  // EVERY SIGNER NODE AT ONCE, EACH WITHIN SEAT_READ_MS (kanban #1489): read one after another with no timeout, one seat that took
+  // the request and never answered stalled the scan for good - a winner whose tab closed was never shown what the honest seats list.
+  // The deadline holds the answer's body too, and holds even for a fetcher that ignores the signal.
+  const since = Math.max(0, Math.floor(Number(sinceMs) || 0));
+  const lists = await Promise.all(nodes.map((node) => owedRead(async (signal) => {
+    const r = await fetcher(`${base(node)}/settled?since=${since}`, { signal });
+    return r.ok ? r.json() : null;
+  })));
+  for (const got of lists) {
+    // AT MOST OWED_SETTLED_MAX ROUNDS FROM ONE SEAT, NEWEST FIRST, EACH ONCE (kanban #1489)
+    const all = got && Array.isArray(got.rounds) ? got.rounds.filter((x) => x && typeof x === 'object') : null;
+    if (!all) continue;
+    const cap = Math.min(OWED_SETTLED_MAX, OWED_LIST_MAX);
+    const newest = all.length > cap
+      ? all.map((x, i) => ({ x, i, ms: Number(x.madeMs) || 0 })).sort((a, b) => (b.ms - a.ms) || (b.i - a.i)).slice(0, cap).map((y) => y.x)
+      : all;
+    const seen = new Set();
+    for (const x of newest) {
       const id = String(x.id || '').toLowerCase();
-      if (!/^[0-9a-f]{64}$/.test(id)) continue;
+      if (!/^[0-9a-f]{64}$/.test(id) || seen.has(id)) continue;
+      seen.add(id);
       const l = listed.get(id) || { payouts: new Set(), refunds: new Set() };
-      for (const k of x.payouts || []) l.payouts.add(String(k).toLowerCase());
-      for (const k of x.refunds || []) l.refunds.add(String(k).toLowerCase());
+      for (const k of (Array.isArray(x.payouts) ? x.payouts : []).slice(0, OWED_KEYS_PER_ROUND)) l.payouts.add(String(k).toLowerCase());
+      for (const k of (Array.isArray(x.refunds) ? x.refunds : []).slice(0, OWED_KEYS_PER_ROUND)) l.refunds.add(String(k).toLowerCase());
       listed.set(id, l);
     }
   }
@@ -2797,14 +2843,30 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
       if (!contracts.has(id)) {
         // A CONTRACT READ ONCE IS KEPT: the id is its hash, so it is the round for good - not read again at every scan
         let round = OWED_ROUNDS.get(id) || null;
-        for (const node of round ? [] : nodes) {
-          try {
-            const r = await fetcher(`${base(node)}/round?id=${id}`);
-            if (!r.ok) continue;
-            const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
-            if (toHex(roundIdOf(c)) === id && roundLocks(c)) { round = c; break; }
-          } catch { /* this signer node did not answer, or not with the round */ }
-        }
+        // ONE SIGNER NODE AT A TIME, BUT NONE HOLDS THE SCAN (kanban #1489): each read gives up after SEAT_READ_MS, and a seat
+        // silent for OWED_NEXT_MS has the next one asked beside it - the first answer that is the round wins (its id is the
+        // contract's hash, so any seat's is as good); seats that answer at once are still asked one read per round
+        if (!round) round = await new Promise((resolve) => {
+          let open = 0, next = 0, done = false, t = null;
+          const ask = () => {
+            clearTimeout(t);
+            if (done) return;
+            if (next >= nodes.length) { if (!open) { done = true; resolve(null); } return; }
+            const node = nodes[next++]; open += 1;
+            t = setTimeout(ask, OWED_NEXT_MS);
+            owedRead(async (signal) => {
+              const r = await fetcher(`${base(node)}/round?id=${id}`, { signal });
+              if (!r.ok) return null;
+              const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
+              return toHex(roundIdOf(c)) === id && roundLocks(c) ? c : null;
+            }).then((c) => {
+              open -= 1;
+              if (done) return;
+              if (c) { done = true; clearTimeout(t); resolve(c); } else ask();
+            });
+          };
+          ask();
+        });
         if (round && !OWED_ROUNDS.has(id)) { OWED_ROUNDS.set(id, round); if (OWED_ROUNDS.size > 2000) OWED_ROUNDS.delete(OWED_ROUNDS.keys().next().value); }
         contracts.set(id, round);
       }
@@ -2819,6 +2881,8 @@ const OWED_ROUNDS = new Map();   // round id -> its contract, read and checked o
 export const forgetOwedRounds = () => OWED_ROUNDS.clear();
 // how many orders of one market round the seed scan reads keys for (orders 0 ... ORDER_SCAN)
 export const ORDER_SCAN = 32;
+// how many rounds of one seat's /settled one owed scan derives keys for (newest first), and keys of one round it takes from one seat (kanban #1489)
+export const OWED_SETTLED_MAX = 500, OWED_KEYS_PER_ROUND = 4096;
 
 /**
  * THE ROUND'S FEDERATION WALLET IN THIS TAB - the one the payout and the stake were

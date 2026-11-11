@@ -63,12 +63,16 @@ export function priceAttestationStands({ id, sigs, committee, threshold, verify 
   const members = new Set((committee || []).map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))));
   const signed = new Set();
   for (const s of sigs || []) {
-    const key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key);
+    // kanban #1489: a signature that is not 64 bytes (as 128 hex or bytes) counts nothing - it never throws. `"".match(/../g)`
+    // is null, and one seat answering GET /round-result with signature "" threw here, so no market on its game ever resolved.
+    let key, sig;
+    try { key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key); } catch { continue; }
     if (!members.has(key) || signed.has(key)) continue;
-    const sig = typeof s.signature === 'string' ? Uint8Array.from(s.signature.match(/../g).map((x) => parseInt(x, 16))) : s.signature;
-    const pk = Uint8Array.from(key.match(/../g).map((x) => parseInt(x, 16)));
+    if (typeof s.signature === 'string') { if (!/^[0-9a-f]{128}$/i.test(s.signature)) continue; sig = fromHex(s.signature.toLowerCase()); }
+    else if (s.signature instanceof Uint8Array && s.signature.length === 64) sig = s.signature;
+    else continue;
     let good = false;
-    try { good = !!verify(sig, id, pk); } catch { good = false; }
+    try { good = !!verify(sig, id, fromHex(key)); } catch { good = false; }
     if (good) signed.add(key);
   }
   return signed.size >= threshold ? { ok: true, signed: [...signed] }

@@ -135,12 +135,25 @@ export function decodeVote(payload) {
  * `votes`: the vote outputs found on chain - [{ payload, height, txid }]. A vote counts for every bond whose key its signature
  * verifies under, only inside the voting phase; per bond outpoint the last by height wins (ties inside a block: lower txid).
  * ABSTAIN counts for turnout, not approval. Weight is the bond amount. Answers the weights, the percentages and `passed`.
+ *
+ * A REPLAYED VOTE COUNTS ONCE, AT ITS FIRST OCCURRENCE (kanban #1489): the signature covers H(proposal_id || choice) only, not
+ * the transaction or the height, so anyone could copy a bond's old 77 bytes into a later transaction of his own and make them
+ * that bond's "last vote" - undoing its change of mind for a tx fee. Byte-identical payloads are one vote: only the copy that
+ * ranks lowest under the rule above (lowest height; inside one block the higher txid) is kept, whatever order `votes` comes
+ * in, so a copy can never move a vote later. The vote bytes and their signature are unchanged; a bond that changes its mind
+ * signs anew (BIP-340 with fresh aux randomness gives new bytes).
  */
 export function tally({ proposal, standing, census, votes, verify }) {
   const id = standing.id;
   const prefix = toHex(id.subarray(0, 8));
-  const latest = new Map();                          // outpoint -> { choice, height, txid, weight }
+  const first = new Map();                           // payload hex -> the occurrence of those bytes that ranks lowest
   for (const v of votes || []) {
+    if (!(v?.payload instanceof Uint8Array)) continue;
+    const k = toHex(v.payload), had = first.get(k);
+    if (!had || v.height < had.height || (v.height === had.height && String(v.txid) > String(had.txid))) first.set(k, v);
+  }
+  const latest = new Map();                          // outpoint -> { choice, height, txid, weight }
+  for (const v of first.values()) {
     const d = decodeVote(v.payload);
     if (!d || toHex(d.idPrefix) !== prefix) continue;
     if (v.height < standing.votingFrom || v.height >= standing.votingUntil) continue;

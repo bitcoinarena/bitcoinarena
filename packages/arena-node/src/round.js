@@ -2298,9 +2298,11 @@ export class Round {
       .map((r) => ({ id: new Uint8Array(r.handout_id), bytes: new Uint8Array(r.bytes) }));
   }
 
-  /** §23.2 REFUSED: a lock for a round this signer node refuses, never entered, kept under its handout's id. */
+  /** §23.2 REFUSED: a lock for a round this signer node refuses, never entered, kept under its handout's id.
+   *  THE FIRST KEPT LOCK STANDS (kanban #1489): the handout's A0, the player's refund key and the round's claim key are public,
+   *  so anyone can lock 1 sat with them; INSERT OR REPLACE let that lock take the player's row, and the forfeit returned it. */
   putRefusedLock({ handoutId, roundId, outpoint, fields, contractId }) {
-    this.db.prepare('INSERT OR REPLACE INTO refused_locks (handout_id, round_id, outpoint, fields, contract_id, kept_ms) VALUES (?, ?, ?, ?, ?, ?)')
+    this.db.prepare('INSERT OR IGNORE INTO refused_locks (handout_id, round_id, outpoint, fields, contract_id, kept_ms) VALUES (?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(handoutId), Buffer.from(roundId), `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`,
         JSON.stringify(fields), contractId, this.now());
   }
@@ -3507,6 +3509,22 @@ export class Round {
     const r = this.db.prepare('SELECT entry_id FROM fee_locks WHERE outpoint = ?')
       .get(`${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`);
     return r ? { entryId: new Uint8Array(r.entry_id) } : null;
+  }
+
+  /**
+   * THE ENTRY THAT FIRST NAMED THIS LOCK OUTPOINT HERE (kanban #1489): the id of the earliest entry of the round (by the time this seat took it)
+   * whose `kind` ('stake' | 'fee') lock outpoint is `outpoint`, or null. A lock is handed only for the entry that named it first.
+   */
+  firstEntryNamingLock(roundIdBytes, kind, outpoint) {
+    const field = kind === 'fee' ? 'feeLockOutpoint' : 'stakeLockOutpoint';
+    const rows = this.db.prepare(
+      'SELECT entry_id, contract FROM entries WHERE round_id = ? AND entry_id NOT IN (SELECT entry_id FROM market_cancels) ORDER BY joined_ms, rowid')
+      .all(roundIdBytes);
+    for (const r of rows) {
+      const o = decodeEntryContract(new Uint8Array(r.contract))[field];
+      if (o && same(o.txid, outpoint.txid) && o.outIdx === outpoint.outIdx) return new Uint8Array(r.entry_id);
+    }
+    return null;
   }
 
   /** The entry a verified lock at this outpoint already stakes, or null: one lock is one entry. */
