@@ -2155,7 +2155,13 @@ stage       RESULT      an entry of the round went VOID by no quorum (§13C),
                         below it no seat signs such a note, no seat takes one,
                         and no check counts one (#1069)
 silent[]    RESULT      the round's seats that gave this seat no signed result for
-                        that entry
+                        that entry by the time the note is written, after the
+                        round's re-run windows (round_end + 1865 s), not by the
+                        quorum deadline (RULED 2026-11-11, kanban #1339): a
+                        result that came after end + 600 s is late, and late is
+                        signed bytes that show the seat worked; the entry still
+                        voids for no quorum in time, the money rule is untouched,
+                        but a loaded seat is not silent for being slow
             FINAL       the round's seats that did not sign FINAL for that run
             SETTLEMENT  the round's seats silent at the step where this seat's
                         last settlement pass stopped: no signed word there, or a
