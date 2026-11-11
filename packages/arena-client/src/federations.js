@@ -76,9 +76,10 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
       for (const f of j.federations || []) {
         const fid = String(f.federation).toLowerCase();
         if (only && fid !== only) continue;
-        noteRecordInvite(f.record);   // its guardians, for a join one guardian cannot serve (guardian-invites.js) - verified or not
         const v = verifyFederationRecord(hexToBytes(f.record), { census, verify, inviteFederationId });
-        if (v.ok) add(verified, fid, { ...v, from: u }); else add(refused, fid, `${u}: ${v.why}`);
+        // ITS GUARDIANS, for a join one guardian cannot serve (guardian-invites.js) - ONLY ONCE THE RECORD VERIFIES (kanban #1556: one seat
+        // answering first with an unsigned record naming the player's federation took every peer slot, so the join fallback named only its hosts)
+        if (v.ok) { noteRecordInvite(f.record); add(verified, fid, { ...v, from: u }); } else add(refused, fid, `${u}: ${v.why}`);
       }
     } catch (e) { if (!closed) failed.push(`${u}: ${e.message}`); }
   }), COMPARE_GRACE_MS);
