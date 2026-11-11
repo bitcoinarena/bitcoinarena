@@ -1581,3 +1581,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-22 (add) Feedback reward link: the `address` column (#1575)
 - `address` is written only in the compare-and-set that takes the row open -> paying, together with that payment's invoice: payToAddress passes the report's Lightning address, a claim through the withdraw link (LNURL callback) writes NULL. paying -> open (a sure failure, or `settle` reading failed) clears it. Invariant: a `paid` reward names an address only when the invoice it paid came from that address.
+
+#### SM-E (change) Refused-lock return of a lock /lock refused (server.js POST /refused-lock, kanban #1582)
+- "The player entered the round here" now means an entry of that player whose stake this seat saw or whose stake lock it holds (round.js `seatedEntriesOf`'s rule), not any entry it holds: the /entry door takes an entry before any lock (#1437), and a lock /lock refused for it (head-to-head full, another entry of the key staked, a lock after close) is never counted or settled by the round.
+- Invariant: a stake lock every seat refused at /lock for an entry they hold is kept at /refused-lock once the entries closed and `unenteredGraceMs` passed, and its forfeit by handout id returns it before its expiry. A lock a seat verified (`stakeLockAt`) is still never kept as refused there, so the seats that settle it and the seats that return it stay disjoint.
+- Not covered: a fee lock verified before its stake lock was refused stays a verified fee lock (`feeLockAt`) and only expires.
