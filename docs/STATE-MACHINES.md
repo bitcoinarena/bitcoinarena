@@ -1559,3 +1559,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 #### Seat e-cash exchange x liquidation halt (ecash-exchange.js `step`, server.js `halted`, liquidations.js) - kanban #1577
 - Invariant: a federation this seat holds HALTED (a signed HALTED record or the seats' halt proof, `liquidations.haltOf`) takes no new exchange, out of it or into it (409), before anything is written or any note is taken.
 - `createLiquidations` exports `haltOf` and `haltedFederations`; server.js passes `halted` without a catch. A halt check that throws refuses the exchange (503, nothing taken): "cannot tell" is never read as "not halted". Before the fix `haltOf` was missing, the call threw, the catch answered null, and a halted federation's notes were exchanged here and claimed at the liquidation too (paid twice).
+
+#### SM-19 (change) Faucet book: the installer's POST /faucet (kanban #1572)
+- `pay()` books the address before `sendtoaddress`: a row `{ address, ip, sats, atMs, txid: null, pending: true }` is saved first; a send that answers sets its txid, drops `pending`, and appends the txid to `FAUCET_PENDING`.
+- On a failed send the row is removed only when bitcoind answered with an error (it refused the send) or the wallet's `listtransactions` holds no send to that address; a send found there is booked with its txid; anything else (a timeout, no answer, a crash) keeps the row `pending`.
+- Invariant: no coins go to an address without a row naming it in the book, so an address is paid at most once whatever the RPC or the process does between the send and the book.
