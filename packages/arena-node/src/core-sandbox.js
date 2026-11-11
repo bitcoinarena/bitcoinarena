@@ -232,7 +232,12 @@ export function sandboxFor(core, options) {
   if (!s) {
     // A REFUSED CORE STAYS REFUSED in this thread: it is not read, started and waited for again on every ask
     try { s = loadCore(coreFiles(core), { name: core.name || String(core.hash).slice(0, 16), ...options }); }
-    catch (e) { s = { refused: e.message }; }
+    catch (e) {
+      // ...BUT A LOAD THAT ONLY RAN OUT OF TIME is not cached (kanban #1586): a busy node can miss LOAD_MS once, and a refusal kept
+      // for the thread's life left every later close of that game - a head-to-head decide's retry too - failing until a restart
+      if (/did not stop within \d+ ms \(loading\)/.test(e.message)) throw e;
+      s = { refused: e.message };
+    }
     cache.set(key, s);
   }
   if (s.refused) throw new Error(s.refused);

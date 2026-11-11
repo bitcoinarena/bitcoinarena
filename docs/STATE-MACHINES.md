@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-R (change) Head-to-head close retry (verify.js `#retryClose`, `retry`, `#kept`; kanban #1586)
+- A head-to-head entry is signed only from the round's reveals (WIN / DRAW / LOSS, FORFEIT only for no reveal), by `#headToHeadClose`. A close whose decide failed (a sandbox call past ASK_MS, a load past LOAD_MS, a thrown error) leaves each entry HOLDING; the finality watch's `retryClose` (and `retry`) runs `#headToHeadClose` again for that one entry - reveals carried, decide asked, `#sign` - or answers `{ stored: false, why }`. It never reaches the replay pool, `#neverStarted` or `stoppedOutcome`, and `#kept` refuses a head-to-head entry outright, so no seat signs a revealed move as a run that never started.
+- `sandboxFor` caches a core's load refusal for the thread's life, except a load that only ran out of LOAD_MS: that one is tried again on the next ask.
