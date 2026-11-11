@@ -29,7 +29,7 @@ function seatsWith({ keep = 200 } = {}) {
   const fetch = async (url, o = {}) => {
     if (url.includes('/served?')) return { ok: true, json: async () => ({ held: [{ roundId: toHex(ROUND), committee: NODE_KEYS.map(toHex), finals: finals.map(toHex) }] }) };
     if (url.endsWith('/item-purchase')) { posted.push(JSON.parse(o.body)); return { ok: keep === 200, status: keep, text: async () => 'not now' }; }
-    if (url.includes('/items?')) return { ok: true, json: async () => ({ items: [{ itemId: 'large-truck', gameName: 'nextblock' }] }) };
+    if (url.includes('/items?')) return { ok: true, json: async () => ({ items: [{ id: 'ab'.repeat(32), itemId: 'large-truck', gameName: 'nextblock' }] }) };
     throw new Error(`no such door ${url}`);
   };
   return { fetch, posted };
