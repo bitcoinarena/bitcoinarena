@@ -237,6 +237,19 @@
   .split { border: 1px solid var(--line); border-radius: 4px; background: rgba(0,0,0,.22); border-collapse: separate; border-spacing: 0; }
   .split th, .split td { padding-left: 18px; }
   .split tr:last-child td { border-bottom: 0; }
+
+  .cta .stack { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; }
+  .cta .ver { font: 12px/1 var(--mono); color: var(--dim); }
+  .cta .ver:empty { display: none; }
+  .cta { align-items: flex-start; }
+  @media (max-width: 860px) {
+    header.intro .bg { height: 170px; }
+    header.intro::after { background: linear-gradient(180deg, rgba(15,10,16,0) 0, rgba(15,10,16,0) 100px, var(--bg) 170px); }
+    h1.big { font-size: 38px; margin-bottom: 12px; }
+    header.intro .facts { font-size: 17px; margin-bottom: 0; }
+    .cta { margin-top: 18px; }
+  }
+  @media (max-width: 480px) { .cta { gap: 10px 8px; } .cta .btn { padding: 10px 13px; font-size: 15px; } }
 </style>
 <script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="4f00ff2b-032e-4683-890c-63458e0b178e" data-domains="bitcoinarena.io,www.bitcoinarena.io"></script>
 </head>
@@ -253,18 +266,18 @@
   <div class="wrap"><div class="copy">
     <h1 class="big">Play for sats.<br><span class="accent">Settle on Bitcoin.</span></h1>
     <p class="facts">Games and markets on a federated network: many independent nodes, no single owner.</p>
-    <div class="actions">
+    <div class="actions cta">
       <a class="btn primary" href="https://testnet.bitcoinarena.io/" data-umami-event="site-play">Play on Testnet</a>
-      <a class="btn" href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-umami-event="site-run-node">Run a node <span class="v" data-arena-release-version></span></a>
-      <a href="https://docs.bitcoinarena.io/" data-umami-event="site-docs">Docs</a>
+      <span class="stack"><a class="btn" href="https://github.com/bitcoinarena/bitcoinarena/releases/latest" data-umami-event="site-run-node">Run a node</a><small class="ver" data-arena-release-version></small></span>
+      <a class="btn" href="https://docs.bitcoinarena.io/" data-umami-event="site-docs">Docs</a>
     </div>
-    <p class="where">Bitcoin testnet4, free test sats. New here? <a href="/start/" data-umami-event="site-start">Start here</a>.</p>
+    <p class="where">Free test sats, no sign-up.</p>
   </div></div>
 </header>
 
 <section id="games"><div class="wrap">
   <h2>Three games, live on testnet4</h2>
-  <p class="lead">Free test sats, no sign-up. Same nodes, federations and Lightning as a paid game.</p>
+  <p class="lead">Same nodes, federations and Lightning as a paid game.</p>
   <div class="games">
     <article class="game">
       <img src="/next/media/nextblock-v2.jpg" alt="Tick Tock, Next Block in play: a truck on the road to the miners, tanks and the price war ahead" width="960" height="540">
@@ -293,7 +306,17 @@
   </div>
 </div></section>
 
-<section id="how"><div class="wrap media">
+<section id="build"><div class="wrap">
+  <h2>Anyone can publish a game, open a market or run a node</h2>
+  <figure class="pic wide"><img src="/next/media/nextblock-art-1200.jpg" alt="Tick Tock, Next Block: trucks, tanks and the mempool, the first game on the engine" width="1200" height="675"></figure>
+  <div class="three">
+    <div><h3>Make a game</h3><p>Sign it, and any node can host it.</p><a href="https://docs.bitcoinarena.io/#game">Build a game →</a></div>
+    <div><h3>Make a market</h3><p>A question, its outcomes, who signs the result.</p><a href="https://docs.bitcoinarena.io/#market">Build a market →</a></div>
+    <div><h3>Run a node</h3><p>Post a bond, sign results, earn fees.</p><a href="https://docs.bitcoinarena.io/#run">Run a node →</a></div>
+  </div>
+</div></section>
+
+<section id="how"><div class="wrap">
   <div>
   <h2>A round has four steps, from deposit to payout</h2>
   <table class="rows">
@@ -305,7 +328,6 @@
     </tbody>
   </table>
   </div>
-  <figure class="pic"><img src="/next/media/lobby-apps.jpg" alt="The Arena right after a new wallet: 500 test sats on their way, the apps to choose from" width="1280" height="620" ><figcaption>A new wallet: 500 test sats, then pick an app.</figcaption></figure>
 </div></section>
 
 <section id="trust"><div class="wrap">
@@ -356,8 +378,6 @@
       <tr><th scope="row">Your wallet follows you</th><td>The seed is kept on Nostr, encrypted to your key.</td></tr>
       <tr><th scope="row">Nostr Wallet Connect</th><td>Pay and withdraw with your own Lightning wallet (NIP-47).</td></tr>
       <tr><th scope="row">Run a node with your key</th><td>Every owner action is a signed Nostr event.</td></tr>
-      <tr><th scope="row">The Arena relay</th><td><span class="mono">relay.bitcoin-arena.io</span>: profiles, encrypted seeds, signer requests.</td></tr>
-      <tr><th scope="row">Community</th><td>On Armada, a Nostr chat app. Same key.</td></tr>
     </tbody>
   </table>
   <a class="more" href="https://docs.bitcoinarena.io/#nostr">Nostr in the docs →</a>
@@ -407,15 +427,6 @@
   </div>
 </div></section>
 
-<section id="build"><div class="wrap">
-  <h2>Anyone can publish a game, open a market or run a node</h2>
-  <figure class="pic wide"><img src="/next/media/nextblock-art-1200.jpg" alt="Tick Tock, Next Block: trucks, tanks and the mempool, the first game on the engine" width="1200" height="675"></figure>
-  <div class="three">
-    <div><h3>Make a game</h3><p>Sign it, and any node can host it.</p><a href="https://docs.bitcoinarena.io/#game">Build a game →</a></div>
-    <div><h3>Make a market</h3><p>A question, its outcomes, who signs the result.</p><a href="https://docs.bitcoinarena.io/#market">Build a market →</a></div>
-    <div><h3>Run a node</h3><p>Post a bond, sign results, earn fees.</p><a href="https://docs.bitcoinarena.io/#run">Run a node →</a></div>
-  </div>
-</div></section>
 
 <section id="download"><div class="wrap">
   <h2>Download the Bitcoin Arena node</h2>
@@ -442,19 +453,6 @@
   <p class="dl-foot">Signed <code>SHA256SUMS</code> with the <a href="https://testnet.bitcoinarena.io/release-key.txt">release key</a> · <a href="https://docs.bitcoinarena.io/#run">Setup guide</a> · <a href="https://github.com/bitcoinarena">Source</a></p>
 </div></section>
 
-<section id="arch"><div class="wrap">
-  <h2>Bonds, committees and payouts all rest on Bitcoin</h2>
-  <table class="rows">
-    <tbody>
-      <tr><th scope="row">Bonds</th><td>No bond, no seat.</td></tr>
-      <tr><th scope="row">Committees</th><td>Drawn by a Bitcoin block hash.</td></tr>
-      <tr><th scope="row">Replay</th><td>Every input re-run, every result signed.</td></tr>
-      <tr><th scope="row">Custody</th><td>A Fedimint federation of the nodes.</td></tr>
-      <tr><th scope="row">Settlement</th><td>Sats over Lightning.</td></tr>
-    </tbody>
-  </table>
-  <a class="more" href="https://docs.bitcoinarena.io/#how">How it works →</a>
-</div></section>
 
 <section id="start"><div class="wrap tn">
   <div>
