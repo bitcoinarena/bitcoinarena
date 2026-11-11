@@ -66,6 +66,9 @@ export function openFeedbackStore(path = ':memory:') {
   // COLUMNS ADDED AFTER THE FIRST FILE (kanban #1342 follow-up): a file from before gains them, null for its old rows
   for (const [col, ddl] of [['source', 'TEXT'], ['node', 'TEXT'], ['screenshot', 'TEXT'], ['number', 'INTEGER']])
     if (!db.prepare('PRAGMA table_info(reports)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE reports ADD COLUMN ${col} ${ddl}`);
+  // THE ADMIN'S WORDS WITH A REWARD AND WHERE IT WENT (kanban #1474): the comment sent with the payment, the Lightning address it was paid to
+  for (const col of ['comment', 'address'])
+    if (!db.prepare('PRAGMA table_info(rewards)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE rewards ADD COLUMN ${col} TEXT`);
   // EVERY REPORT ITS NUMBER (kanban #1413, Daniel 2026-11-10: "Gib jedem feedback eine unique number also Feedback #001 etc wie eine Ticket Number die überall
   // angezeigt wird"): 1, 2, 3 ... in the order the reports came, never reused; the reports of a file from before are numbered once, oldest first
   { const unnumbered = db.prepare('SELECT id FROM reports WHERE number IS NULL ORDER BY received_ms, id').all();
@@ -207,18 +210,20 @@ export function openFeedbackStore(path = ':memory:') {
 
   // ---- THE REWARD (kanban #1342 section 3): one LNURL-withdraw per approved report, for exactly its amount, single use, never expiring ----
   const rewardRow = (w) => (w ? { k1: w.k1, report: w.report, pubkey: w.pubkey, amountSats: w.amount_sats, network: w.network, createdMs: w.created_ms, state: w.state,
-    paymentHash: w.payment_hash || null, paidMs: w.paid_ms ?? null, why: w.why || null } : null);
+    paymentHash: w.payment_hash || null, paidMs: w.paid_ms ?? null, why: w.why || null, comment: w.comment || null, address: w.address || null } : null);
   const rewardOf = db.prepare('SELECT * FROM rewards WHERE k1 = ?');
 
   /** THE LINK FOR AN ACCEPTED REPORT: made once (asked again, the same k1). `network` the payout network ('testnet4' in phase 1). */
-  function createReward(id, { network = 'testnet4', nowMs = Date.now(), by = null } = {}) {
+  function createReward(id, { network = 'testnet4', comment = null, nowMs = Date.now(), by = null } = {}) {
     const r = get.get(String(id));
     if (!r) return { ok: false, why: 'no such report' };
+    const said = comment === null || comment === undefined ? null : String(comment).replace(/\s+/g, ' ').trim().slice(0, COMMENT_MOST) || null;
     const had = db.prepare('SELECT * FROM rewards WHERE report = ?').get(r.id);
-    if (had) return { ok: true, reward: rewardRow(had), made: false };
+    if (had) { if (said !== null && had.state === 'open') db.prepare("UPDATE rewards SET comment = ? WHERE k1 = ? AND state = 'open'").run(said, had.k1);
+      return { ok: true, reward: rewardRow(rewardOf.get(had.k1)), made: false }; }
     if (r.state !== STATES.ACCEPTED || !(r.amount_sats > 0)) return { ok: false, why: 'only an approved report with its amount gets a reward link' };
     const k1 = randomBytes(32).toString('hex');
-    db.prepare('INSERT INTO rewards (k1, report, pubkey, amount_sats, network, created_ms) VALUES (?, ?, ?, ?, ?, ?)').run(k1, r.id, r.pubkey, r.amount_sats, String(network), nowMs);
+    db.prepare('INSERT INTO rewards (k1, report, pubkey, amount_sats, network, created_ms, comment) VALUES (?, ?, ?, ?, ?, ?, ?)').run(k1, r.id, r.pubkey, r.amount_sats, String(network), nowMs, said);
     db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by, `reward link made, ${r.amount_sats} sat on ${network}`);
     return { ok: true, reward: rewardRow(rewardOf.get(k1)), made: true };
   }
@@ -232,7 +237,7 @@ export function openFeedbackStore(path = ':memory:') {
     if (w.state === 'void' || !reportPays(w)) return { status: 'ERROR', reason: 'this reward was withdrawn: its report is not approved' };
     const msat = w.amount_sats * 1000;
     return { tag: 'withdrawRequest', callback: `${base}/lnurlw/${w.k1}/callback`, k1: w.k1, minWithdrawable: msat, maxWithdrawable: msat,
-      defaultDescription: `Bitcoin Arena feedback reward, ${w.amount_sats} sat${w.network === 'mainnet' ? '' : ' (testnet sats, no value)'}` };
+      defaultDescription: `Bitcoin Arena feedback reward, ${w.amount_sats} sat${w.network === 'mainnet' ? '' : ' (testnet sats, no value)'}${w.comment ? `: ${w.comment}` : ''}`.slice(0, 300) };
   }
   /** A reward pays only while its report is approved (audit 5 #1402). */
   const reportPays = (w) => { const r = get.get(w.report); return !!r && (r.state === STATES.ACCEPTED || r.state === STATES.PAID); };
@@ -288,6 +293,33 @@ export function openFeedbackStore(path = ':memory:') {
       out.push({ k1: w.k1, status: st });
     }
     return out;
+  }
+  /** THE ADDRESS A REPORT ASKED TO BE PAID AT (its signed lud16 tag, else its content's lnAddress): null when it named none. */
+  function addressOf(id) {
+    const r = get.get(String(id)); if (!r) return null;
+    let e = null; try { e = JSON.parse(r.event); } catch { e = null; }
+    const tag = e && Array.isArray(e.tags) ? (e.tags.find((t) => Array.isArray(t) && t[0] === 'lud16') || [])[1] : null;
+    let c = null; try { c = JSON.parse(e && e.content); } catch { c = null; }
+    const a = String(tag || (c && c.lnAddress) || '').trim();
+    return /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(a) || /^lnurl1[02-9ac-hj-np-z]+$/i.test(a) ? a : null;
+  }
+  /**
+   * PAID STRAIGHT TO THE REPORT'S LIGHTNING ADDRESS (kanban #1474, Daniel 2026-11-11: "Do we have a function to give a comment when we pay?" - "1, ja. Und zeig es
+   * auch in my feedback"): the address is asked for an invoice of exactly the reward (LUD-16/06), with the reward's comment (LUD-12, cut to what the wallet
+   * takes), and that invoice goes through claim() - the same compare-and-set, the same payer, the same "an unknown outcome stays paying". `invoiceFor(address,
+   * sats, comment)` -> { ok, invoice } | { ok: false, why }. Answers { ok, status } or { ok: false, why }.
+   */
+  async function payToAddress(k1, { invoiceFor, decode, pay, nowMs = Date.now() } = {}) {
+    const w = rewardOf.get(String(k1));
+    if (!w) return { ok: false, why: 'no such reward' };
+    if (w.state !== 'open') return { ok: false, why: w.state === 'paid' ? 'this reward is paid' : w.state === 'void' ? 'this reward was withdrawn' : 'this reward is being paid' };
+    const address = addressOf(w.report);
+    if (!address) return { ok: false, why: 'the report names no Lightning address: send its withdraw link instead' };
+    let inv; try { inv = await invoiceFor(address, w.amount_sats, w.comment || ''); } catch (e) { inv = { ok: false, why: e.message }; }
+    if (!inv || !inv.ok) return { ok: false, why: `the address gave no invoice: ${(inv && inv.why) || 'no answer'}` };
+    db.prepare("UPDATE rewards SET address = ? WHERE k1 = ? AND state = 'open'").run(address, w.k1);
+    const r = await claim(w.k1, inv.invoice, { decode, pay, nowMs });
+    return r.status === 'OK' ? { ok: true, status: 'paid', address, reward: rewardRow(rewardOf.get(w.k1)) } : { ok: false, why: r.reason, address, reward: rewardRow(rewardOf.get(w.k1)) };
   }
   const rewards = ({ pubkey = null } = {}) => (pubkey ? db.prepare('SELECT * FROM rewards WHERE pubkey = ? ORDER BY created_ms DESC').all(String(pubkey))
     : db.prepare('SELECT * FROM rewards ORDER BY created_ms DESC').all()).map(rewardRow);
@@ -353,7 +385,7 @@ export function openFeedbackStore(path = ':memory:') {
       takenBy: taken ? { id: taken.id, label: feedbackLabel(taken.number), sameNode: !!(taken.node && String(taken.node) === String(report.node)) } : null,
       full: !mine && !taken && held.length >= NODE_BOUNTY_MOST };
   }
-  return { take, mine, move, approve, list, shotsInUse, note, moves, budget, csv, nodeBountyFor, createReward, withdrawRequest, lnurlOf, claim, settle, rewards, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
+  return { take, mine, move, approve, list, shotsInUse, note, moves, budget, csv, nodeBountyFor, createReward, withdrawRequest, lnurlOf, claim, settle, rewards, payToAddress, addressOf, reward: (k1) => rewardRow(rewardOf.get(String(k1))), report: (id) => row(get.get(String(id))), close: () => db.close(), eventId };
 }
 
 /**
@@ -411,6 +443,9 @@ export function imageKind(bytes) {
  * (name@domain, LUD-16) is asked at https://domain/.well-known/lnurlp/name, an LNURL (LUD-01) at the URL it encodes; it works when that answers a
  * pay request (LUD-06: tag payRequest, a callback) within `timeoutMs`. `fetchFn` is the caller's fetch. Answers { ok } or { ok: false, why }.
  */
+// a reward's comment: at most this many characters (LUD-12 wallets take 100-255; the address's own commentAllowed cuts it further)
+export const COMMENT_MOST = 200;
+
 export async function lnAddressWorks(address, { fetchFn = fetch, timeoutMs = 8000 } = {}) {
   const a = String(address || '').trim();
   let url = null;
@@ -427,4 +462,28 @@ export async function lnAddressWorks(address, { fetchFn = fetch, timeoutMs = 800
   if (!j || j.status === 'ERROR') return { ok: false, why: `its wallet said: ${String((j && j.reason) || 'error').slice(0, 120)}` };
   if (j.tag !== 'payRequest' || typeof j.callback !== 'string' || !/^https:\/\//.test(j.callback)) return { ok: false, why: 'its wallet does not take payments at that address' };
   return { ok: true, minSats: Math.ceil(Number(j.minSendable || 0) / 1000), maxSats: Math.floor(Number(j.maxSendable || 0) / 1000) };
+}
+
+/**
+ * AN INVOICE FROM A LIGHTNING ADDRESS (kanban #1474): LUD-16 name@domain (or an LNURL, LUD-01) -> its pay request (LUD-06) -> its callback with
+ * amount (msat) and the comment (LUD-12, only when the wallet takes one, cut to its commentAllowed). Answers { ok, invoice, commentSent } or { ok: false, why }.
+ * The caller's decode() then checks the invoice is for exactly the amount (claim()).
+ */
+export async function lnAddressInvoice(address, sats, comment = '', { fetchFn = fetch, timeoutMs = 10000 } = {}) {
+  const a = String(address || '').trim();
+  const m = /^([a-z0-9._+-]+)@([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/i.exec(a);
+  let url = m ? `https://${m[2].toLowerCase()}/.well-known/lnurlp/${encodeURIComponent(m[1].toLowerCase())}` : null;
+  if (!url && /^lnurl1[02-9ac-hj-np-z]+$/i.test(a)) { try { url = urlOfLnurl(a.toLowerCase()); } catch { url = null; } }
+  if (!url || !/^https:\/\//.test(url)) return { ok: false, why: 'not a Lightning address or an LNURL' };
+  const get = async (u) => { const r = await fetchFn(u, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } }); if (!r.ok) throw new Error(`answered ${r.status}`); return r.json(); };
+  let p; try { p = await get(url); } catch (e) { return { ok: false, why: `its wallet: ${e.message}` }; }
+  if (!p || p.status === 'ERROR' || p.tag !== 'payRequest' || !/^https:\/\//.test(String(p.callback || ''))) return { ok: false, why: `its wallet takes no payment there${p && p.reason ? `: ${String(p.reason).slice(0, 120)}` : ''}` };
+  const msat = Number(sats) * 1000;
+  if (msat < Number(p.minSendable || 0) || msat > Number(p.maxSendable || Infinity)) return { ok: false, why: `its wallet takes ${Math.ceil(Number(p.minSendable || 0) / 1000)} to ${Math.floor(Number(p.maxSendable || 0) / 1000)} sat` };
+  const room = Math.max(0, Math.floor(Number(p.commentAllowed || 0)));
+  const said = room ? String(comment || '').slice(0, room) : '';
+  const cb = new URL(p.callback); cb.searchParams.set('amount', String(msat)); if (said) cb.searchParams.set('comment', said);
+  let i; try { i = await get(cb.toString()); } catch (e) { return { ok: false, why: `its wallet: ${e.message}` }; }
+  if (!i || i.status === 'ERROR' || typeof i.pr !== 'string' || !/^ln(bc|tb|bcrt)/i.test(i.pr)) return { ok: false, why: `its wallet gave no invoice${i && i.reason ? `: ${String(i.reason).slice(0, 120)}` : ''}` };
+  return { ok: true, invoice: i.pr, commentSent: said };
 }

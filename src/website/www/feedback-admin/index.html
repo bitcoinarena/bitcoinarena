@@ -176,7 +176,9 @@
       }, (e) => box.replaceChildren(el('h2', { text: 'Node bounty checklist' }), el('div', { cls: 'bad', text: e.message }))); }
     if (r.reason) d.append(el('div', { cls: 'bad', text: `Rejected: ${r.reason}` }));
     if (r.duplicateOf) d.append(el('div', { cls: 'dim', text: `Duplicate of ${r.duplicateOf.slice(0, 16)}…` }));
-    if (r.reward) d.append(el('div', {}, el('b', { text: `Reward ${sats(r.reward.amountSats)} (${r.reward.network}) · ${r.reward.state}` }), r.reward.lnurl ? el('div', {}, el('code', { text: r.reward.lnurl })) : null));
+    if (r.reward) d.append(el('div', {}, el('b', { text: `Reward ${sats(r.reward.amountSats)} (${r.reward.network}) · ${r.reward.state}${r.reward.address ? ` · to ${r.reward.address}` : ''}` }),
+      r.reward.comment ? el('div', { cls: 'dim', text: `Comment: ${r.reward.comment}` }) : null, r.reward.why && r.reward.state !== 'paid' ? el('div', { cls: 'warn', text: r.reward.why }) : null,
+      r.reward.lnurl ? el('div', {}, el('code', { text: r.reward.lnurl })) : null));
     const act = async (body, ok) => { let a; try { a = await call('act', { id: r.id, ...body }); } catch (e) { return say(e.message, true); } if (!a.ok) return say(a.why, true); say(ok); await load(); await open(r.id); };
     const amount = el('input', { type: 'number', min: '100', step: '100', placeholder: 'sat', size: '8' });
     // "node" first and pre-filled only when this report gets the one-time bounty (kanban #1453); a node report without one starts at a normal level
@@ -195,7 +197,21 @@
         el('div', { cls: 'row' }, reason, btn('Reject', () => act({ action: 'reject', reason: reason.value }, 'Rejected'))),
         el('div', { cls: 'row' }, dupOf, btn('Duplicate of', () => act({ action: 'duplicate', of: dupOf.value.trim() }, 'Marked duplicate'))));
     }
-    if (r.state === 'accepted' && !r.reward) d.append(el('div', { cls: 'row' }, btn('Make the reward link', () => act({ action: 'reward' }, 'Reward link made'), true)));
+    // PAY TO THE REPORT'S LIGHTNING ADDRESS, WITH A COMMENT (kanban #1474, Daniel 2026-11-11: "Do we have a function to give a comment when we pay?" - "1, ja. Und zeig
+    // es auch in my feedback"): the comment goes with the payment (LUD-12) and shows in the player's My Feedback; without an address, or by choice, the withdraw link
+    if (r.state === 'accepted' && (!r.reward || r.reward.state === 'open')) {
+      const num = r.number ? `Feedback #${String(r.number).padStart(3, '0')}` : 'your report';
+      const comment = el('input', { size: '48', maxlength: '200', value: (r.reward && r.reward.comment) || `Bitcoin Arena bounty for ${num} - thank you!` });
+      const payAct = async (payTo) => { let a; try { a = await call('act', { id: r.id, action: 'reward', comment: comment.value, payTo }); } catch (e) { return say(e.message, true); }
+        if (!a.ok) return say(a.why, true);
+        if (a.paid) say(a.paid.ok ? `Paid ${sats(a.reward.amountSats)} to ${a.paid.address}` : `Not paid to the address: ${a.paid.why}. The withdraw link is ready instead.`, !a.paid.ok);
+        else say('Reward link made'); await load(); await open(r.id); };
+      d.append(el('h2', { text: 'Reward' }),
+        el('div', { cls: 'dim', text: r.lnAddress ? `Lightning address of the report: ${r.lnAddress}` : 'The report names no Lightning address: the player claims a withdraw link in My Feedback.' }),
+        el('div', { cls: 'row' }, el('span', { text: 'Comment ' }), comment),
+        el('div', { cls: 'row' }, ...(r.lnAddress ? [btn(`Pay ${sats(r.amountSats)} to ${r.lnAddress}`, () => payAct('address'), true), btn('Link only', () => payAct('link'))]
+          : [btn(r.reward ? 'Save the comment' : 'Make the reward link', () => payAct('link'), true)])));
+    }
     if (r.state === 'accepted') d.append(el('div', { cls: 'row' }, el('input', { placeholder: 'reason the player reads', size: '30', id: 'rej2' }), btn('Reject', () => act({ action: 'reject', reason: document.getElementById('rej2').value }, 'Rejected'))));
     d.append(el('div', { cls: 'row' }, ticket, btn('Link ticket', () => act({ action: 'note', ticket: ticket.value.trim() }, 'Ticket linked'))));
     d.append(el('h2', { text: 'History' }), ...j.moves.map((m) => el('div', { cls: 'dim', text: `${when(m.atMs)} · ${m.from} → ${m.to}${m.by ? ` · ${m.by}` : ''}${m.note ? ` · ${m.note}` : ''}` })));

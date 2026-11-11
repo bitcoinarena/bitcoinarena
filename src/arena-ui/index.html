@@ -2075,7 +2075,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             const copy = el('button', { type: 'button', text: 'Copy' }); copy.onclick = () => { navigator.clipboard.writeText(rp.reward.lnurl).then(() => { copy.textContent = 'Copied'; }, () => {}); };
             row.append(el('div', { cls: 'fb-reward' }, el('span', { text: 'Reward ' + Number(rp.reward.sats).toLocaleString('en-US') + ' sat' + (rp.reward.network === 'mainnet' ? '' : ' (testnet sats, no value)') + ': ' }),
               el('a', { href: 'lightning:' + rp.reward.lnurl, text: 'claim with your Lightning wallet' }), el('span', { text: ' ' }), copy));
-          } else if (window.ARENA_BOUNTY_ON && rp.reward && rp.reward.state === 'paid') row.append(el('div', { cls: 'fb-reward', text: 'Reward ' + Number(rp.reward.sats).toLocaleString('en-US') + ' sat: claimed' }));
+          } else if (window.ARENA_BOUNTY_ON && rp.reward && rp.reward.state === 'paid') row.append(el('div', { cls: 'fb-reward', text: 'Reward ' + Number(rp.reward.sats).toLocaleString('en-US') + ' sat: '
+            + (rp.reward.address ? 'paid to ' + rp.reward.address : 'claimed') + (rp.reward.paidMs ? ' on ' + new Date(rp.reward.paidMs).toISOString().slice(0, 10) : '') }));
+          // THE TEAM'S WORDS WITH THE REWARD (kanban #1474, Daniel 2026-11-11: "Und zeig es auch in my feedback"): the comment sent with the payment
+          if (window.ARENA_BOUNTY_ON && rp.reward && rp.reward.comment) row.append(el('div', { cls: 'fb-reward', text: '\u201C' + rp.reward.comment + '\u201D' }));
           list.append(row);
         }
       } catch (e) { list.textContent = (e && e.message) || 'not read'; }
