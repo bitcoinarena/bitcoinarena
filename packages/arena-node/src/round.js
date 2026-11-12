@@ -2171,10 +2171,9 @@ export class Round {
    * THE SAME SEATS AT EVERY SEAT (kanban #1588, state audit 2026-11-12 sm1-h2h-1): the seats were the first LOCKS to reach this seat, and locks
    * reach the seats in network order - seat 0 seated {A, B}, seat 1 {A, C}, each refused the other's lock as full, and at the close each waited
    * for a lock its own door refused: no seat signed anything, the winner A included. Now /lock keeps every valid lock (no "full" refusal; the
-   * close fetches what is missing, server.js takeEntryParts), and a paying head-to-head round seats the game's `players` lock-backed entries in
-   * the order their ENTRIES were first taken here (rowid): a client posts its entry to every seat before it hands any lock, so the seats hold the
-   * entries in one order while their locks still cross - and a player who entered first is never unseated by a later entry's lock. A locked
-   * entry outside the seats is played against nobody and signed VOID: its lock is never claimed and expires back to its player.
+   * close fetches what is missing, server.js takeEntryParts), and a paying head-to-head round seats the game's `players` lock-backed entries
+   * with the lowest entry ids (kanban #2538: not the order the entries were taken here - entries posted at the same moment reach the seats in
+   * network order). A locked entry outside the seats is played against nobody and signed VOID: its lock is never claimed and comes back.
    */
   seatedEntriesOf(roundIdBytes, stakeMsat, { played = false } = {}) {
     const all = this.entriesOf(roundIdBytes);
@@ -2202,10 +2201,15 @@ export class Round {
     const playedOnly = (list) => played ? list.filter(({ entryId }) => !!this.stakeSeen(entryId)) : list;
     const players = this.#headToHeadPlayers(roundIdBytes);
     if (!players) return playedOnly(locked);
-    const order = new Map(this.db.prepare('SELECT entry_id FROM entries WHERE round_id = ? ORDER BY rowid').all(roundIdBytes)
-      .map((r, i) => [Buffer.from(r.entry_id).toString('hex'), i]));
-    const at = ({ entryId }) => order.get(Buffer.from(entryId).toString('hex'));
-    const seated = new Set([...locked].sort((x, y) => at(x) - at(y)).slice(0, players).map(({ entryId }) => Buffer.from(entryId).toString('hex')));
+    // SEATED BY ENTRY ID, NOT BY THE ORDER THIS SEAT TOOK THE ENTRIES (kanban #2538, state audit 2026-11-12 sm2-h2h-3): #1588 seated the first
+    // `players` lock-backed entries in this seat's insertion order (rowid), on the assumption that every seat took the entries in one order. Two
+    // players tapping the same table at the same moment (or the RPS bot entering beside a player) post to all seats in parallel and the entry
+    // relay hands each entry on 0.7-1.2 s later: seat 0 held [A, B, C], seat 1 [A, C, B], seat 0 seated {A, B} and seat 1 {A, C}, and no entry got
+    // a threshold result - the round was never decided. No order a seat sees locally is the same at every seat; the entry id is. So the seats are
+    // the `players` lowest entry ids among the lock-backed entries (`locked` is in entry id order, entriesOf): the same set at every seat that
+    // holds the same entries and locks. An entry left outside is VOID and its lock comes back at settlement (#1582). The /entry door still refuses
+    // a new entry once the round seats its players (#1437), so only entries that raced in before the seats filled compete for them.
+    const seated = new Set(locked.slice(0, players).map(({ entryId }) => Buffer.from(entryId).toString('hex')));
     return playedOnly(locked.filter(({ entryId }) => seated.has(Buffer.from(entryId).toString('hex'))));   // answered in entry id order, as before
   }
 
