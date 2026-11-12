@@ -210,6 +210,7 @@ export class PriceFeed {
     this.mine = new Map();       // `${round}:${k}` / `${round}:tape` -> the reading this seat signed (one each)
     this.built = new Map();      // `${round}:${k}` -> the sample made of the readings held (dropped when one more comes)
     this.endsAsked = new Map();  // round hex -> when this seat last asked the committee for the ends' readings
+    this.endsInFlight = new Map(); // round hex -> the pre-protocol-5 ask of the ends now running (kanban #2395): callers share it
     // every map above but `readings` is let go of a round once it is finished (tidy, kanban #742)
     this.evicted = 0;            // rounds let go of since the last held line
     this.heldLoggedAt = null;
@@ -463,7 +464,19 @@ export class PriceFeed {
     if (this.now() < endMs) return refuse(`the round runs until ${new Date(endMs).toISOString()}: its result is made at its end`);
     const kClose = closeSampleK(endTick);
     if (c.median) return this.#result5(rid, roundHex, c, endTick, kClose);
-    if (!this.#held(roundHex, 0) || !this.#held(roundHex, kClose)) await this.#fetchEnds(rid, [0, kClose]);
+    // THE ENDS ARE ASKED FOR AT MOST ONCE PER ASK_ENDS_EVERY_MS, AND ONE ASK IS SHARED (kanban #2395, #1489 a44 refute 57, #2170 /
+    // #1730 variant): GET /round-result is public, and a stranger reloading it (one after another or 40 at once) made the seat ask the
+    // committee again on every call - and redo a lying peer's junk verifies each time. As #result5 does, the ask is marked before the
+    // await, and calls that arrive while it runs await the same ask instead of starting their own.
+    if (!this.#held(roundHex, 0) || !this.#held(roundHex, kClose)) {
+      let asking = this.endsInFlight.get(roundHex);
+      if (!asking && !(this.now() - (this.endsAsked.get(roundHex) ?? -Infinity) < ASK_ENDS_EVERY_MS)) {
+        this.endsAsked.set(roundHex, this.now());
+        asking = this.#fetchEnds(rid, [0, kClose]).finally(() => this.endsInFlight.delete(roundHex));
+        this.endsInFlight.set(roundHex, asking);
+      }
+      if (asking) await asking;
+    }
     const open = this.#held(roundHex, 0), close = this.#held(roundHex, kClose);
     if (!open || !close) return refuse(`no attested ${!open ? 'opening sample (k 0)' : `closing sample (k ${kClose})`} of the round is held here or by its committee`);
     const got = roundResultFrom({ roundId: rid, samples: [open, close], endTick });
