@@ -59,7 +59,7 @@ async function addressCheckFor(ip, address) {
   // naming a bounty address was refused "try again in a minute", for as long as they liked. Now the report is kept with its address unchecked -
   // nothing is fetched for it here, and the address is asked again at payout (lnAddressInvoice), so a reward is still never paid to one that fails.
   if (!addressCheckSlot()) return { ok: true, unchecked: true };
-  c.n += 1; c.busy = true;
+  c.n += 1; c.busy = true; dayLimitNote({ k: 'addr', ip: k });   // kanban #2284
   try { return await lnAddressWorks(address); } finally { c.busy = false; }
 }
 import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync, statfsSync, utimesSync } from 'node:fs';
@@ -91,7 +91,13 @@ const rpc = async (method, params = []) => {
   if (j.error) throw Object.assign(new Error(j.error.message), { rpcRefused: true });   // bitcoind answered and refused (kanban #1572)
   return j.result;
 };
-const REPORTS = [];   // this day's reports: their count and address, in memory
+const REPORTS = [];   // this day's reports: their count and address, in memory - and in the day-limits file below (kanban #2284)
+// THE DAY'S LIMITS OUTLIVE A RESTART (state audit 2026-11-12, kanban #2284): the reports per address, the address checks (#1511) and the screenshot
+// count and bytes (#1405) were kept only in memory, so every restart of the faucet handed each address a fresh day. Each counted event is appended
+// to one small file beside the book (FAUCET_DAY_LIMITS, default <book>.day-limits.jsonl), and at start today's lines are read back into the same
+// counters (and the file is written again with only today's lines). LN_ASKS (10 min) and NODE_CHECK_ASKS (an hour) stay in memory.
+const DAY_LIMITS_FILE = env.FAUCET_DAY_LIMITS || (env.FAUCET_BOOK ? `${env.FAUCET_BOOK}.day-limits.jsonl` : null);
+function dayLimitNote(x) { if (!DAY_LIMITS_FILE) return; try { appendFileSync(DAY_LIMITS_FILE, `${JSON.stringify({ ...x, atMs: x.atMs ?? Date.now() })}\n`); } catch (e) { console.error(`${new Date().toISOString()} day limits not written: ${e.message}`); } }
 // A SIGNED REPORT SENT AGAIN IS NOT A NEW ONE (kanban #2456, #2498): the ids of kept reports whose chat post failed - only those are posted again
 // when the same event comes back; any other resend of a kept event answers the first result, with no new slot and no chat post
 const UNPOSTED = new Set();
@@ -103,6 +109,19 @@ if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 const shotFile = (h) => { if (!SHOTS || !/^[0-9a-f]{64}$/.test(h)) return null; for (const ext of ['png', 'jpg', 'webp']) { const f = pathJoin(SHOTS, `${h}.${ext}`); if (existsSync(f)) return f; } return null; };
 const SHOT_UPLOADS = [];   // { ip, atMs } of today
 const SHOTS_PER_IP_PER_DAY = 10;
+if (DAY_LIMITS_FILE) {
+  const day = Math.floor(Date.now() / DAY_MS), keep = [];
+  let lines = []; try { lines = readFileSync(DAY_LIMITS_FILE, 'utf8').split('\n'); } catch { lines = []; }
+  for (const l of lines) {
+    let x; try { x = JSON.parse(l); } catch { continue; }
+    if (!x || !Number.isFinite(x.atMs) || Math.floor(x.atMs / DAY_MS) !== day) continue;
+    keep.push(l);
+    if (x.k === 'report') REPORTS.push({ ip: x.ip ?? null, atMs: x.atMs, signed: !!x.signed });
+    else if (x.k === 'shot') SHOT_UPLOADS.push({ ip: x.ip ?? null, atMs: x.atMs, bytes: Number(x.bytes) || 0 });
+    else if (x.k === 'addr') { const c = ADDR_CHECKS.get(x.ip) || { day, n: 0, busy: false }; c.n += 1; ADDR_CHECKS.set(x.ip, c); }
+  }
+  try { writeFileSync(`${DAY_LIMITS_FILE}.new`, keep.length ? `${keep.join('\n')}\n` : ''); renameSync(`${DAY_LIMITS_FILE}.new`, DAY_LIMITS_FILE); } catch (e) { console.error(`${new Date().toISOString()} day limits not rewritten: ${e.message}`); }
+}
 // THE DISK IS NOT THE UPLOADER'S (audit 5, kanban #1405): an address counts by ipKey (an IPv6 /64 is one), all uploads of a day together write at
 // most SHOT_DAY_BYTES, and none is written while the disk holds less than SHOT_FREE_FLOOR_BYTES free
 const SHOT_DAY_BYTES = Number(env.FAUCET_SHOT_DAY_BYTES || 300e6);
@@ -628,8 +647,14 @@ function grantEcash(ask) {
 
 const WANTS = new Map();
 const ORIGIN_OK = /^https:\/\/([a-z0-9-]+\.)?(testnet(-stage)?\.bitcoin-?arena\.io|bitcoin-arena-site\.pages\.dev)$/;   // testnet-stage: the bounty's stage (kanban #1342)
+// NO REQUEST ENDS THE FAUCET (state audit 2026-11-12, kanban #2284): one raw target new URL() refuses ("//[") threw in this listener before any
+// try and the process exited, cutting every grant and claim in flight between its payment and its record. The target is parsed once in a try
+// (400 when it does not parse), and a last guard below logs anything else that escapes instead of ending the process.
+process.on('uncaughtException', (e) => { console.error(`${new Date().toISOString()} uncaught, kept running: ${(e && e.stack) || e}`); });
+process.on('unhandledRejection', (e) => { console.error(`${new Date().toISOString()} unhandled rejection, kept running: ${(e && e.stack) || e}`); });
 createServer((req, res) => {
   const origin = String(req.headers.origin || '');
+  try { new URL(req.url, 'http://x'); } catch { res.writeHead(400, { 'content-type': 'application/json', 'cache-control': 'no-store' }); return res.end(JSON.stringify({ ok: false, why: 'not a request target' })); }
   // THE TWO DOORS A NODE'S OWN OWNER PAGE WRITES TO (kanban #1342 node feedback): signed, rate-limited reports and their screenshots, from any origin;
   // every other door only from the Arena's own hosts
   const writePath = new URL(req.url, 'http://x').pathname.replace(/\/+$/, '');
@@ -830,6 +855,7 @@ createServer((req, res) => {
         else { try { const now = new Date(); utimesSync(had, now, now); } catch { /* the sweep's next hour */ } }
       } catch { release(); return send(507, { ok: false, why: 'the faucet has no room for screenshots just now: send the report without one' }); }
       settled = true; slot.bytes = fresh ? bytes.length : 0;
+      dayLimitNote({ k: 'shot', ip, bytes: slot.bytes });   // kanban #2284: the day's screenshot count outlives a restart
       return send(200, { ok: true, sha256: h });
     });
     return undefined;
@@ -978,6 +1004,7 @@ createServer((req, res) => {
           counted = true;
           slot = null;
           UNPOSTED.add(kept.id);   // until the chat post below comes back (kanban #2456)
+          dayLimitNote({ k: 'report', ip, signed: true });   // kanban #2284: kept for good, so on the day's file
         }
         // DECIDED AND COUNTED AT ONCE (kanban #2158, #2226): the report was put into REPORTS only after the address check and the chat post came back,
         // so a burst of requests sent together all decided against the same count - one /64 got 1522 reports (and chat posts) past its 50, and the
@@ -999,6 +1026,7 @@ createServer((req, res) => {
         const r = await fetch(`${env.FAUCET_CHAT_URL}/api/channels/${env.FAUCET_CHAT_CHANNEL}/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` }, body: JSON.stringify({ text: (kept && kept.label ? `${kept.label} · ` : '') + d.text }), signal: AbortSignal.timeout(10000) });
         if (!r.ok) { giveBack(); return send(502, { ok: false, why: 'the report could not be kept just now' }); }
         if (kept) UNPOSTED.delete(kept.id);
+        if (slot) dayLimitNote({ k: 'report', ip, signed: !!slot.signed });   // kanban #2284: posted, its slot stays counted - on the day's file (a kept signed one was noted when kept)
         if (d.player) appendFileSync(FOUNDING_FILE, `${JSON.stringify({ player: d.player, atMs: Date.now() })}\n`);
         send(200, { ok: true, ...(kept ? { id: kept.id, kept: kept.kept, number: kept.number ?? null, label: kept.label || null } : {}) });   // its number (kanban #1413)
       } catch (e) {
