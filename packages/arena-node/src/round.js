@@ -883,7 +883,9 @@ export class Round {
     let ok = false;
     try { ok = ed25519.verify(signature, id, sessionPubkey); } catch { ok = false; }
     if (!ok) throw new Error('the batch\'s signature does not verify under the entry\'s session key');
-    return this.batch(body);
+    // AND THE SIGNATURE IS KEPT BESIDE THE BATCH (kanban #1567): a reloaded page re-publishes a batch only on its own
+    // signature, verified under its own session key, and never signs one it did not record (GET /batch-signatures)
+    return this.batch(body, new Uint8Array(signature));
   }
 
   /**
@@ -893,7 +895,7 @@ export class Round {
    * to the mark's inputChainHash: then the player signed them, through the mark. Anything else stores nothing.
    * Answers { ok, why } and stores the batches through `batch` when ok.
    */
-  batchesEndorsedBy(markBytes, batchBytes) {
+  batchesEndorsedBy(markBytes, batchBytes, signatures = []) {
     let c; let signature;
     try { const s = splitSigned(markBytes); signature = s.signature; c = decodeCheckpoint(s.body); }
     catch (e) { return { ok: false, why: `that is not a signed mark: ${e.message}` }; }
@@ -916,8 +918,16 @@ export class Round {
       bodies.push(raw);
     }
     if (!same(prev, c.inputChainHash)) return { ok: false, why: 'the batches handed on with the mark do not end at its input chain hash' };
+    // EACH BATCH'S OWN SIGNATURE, WHEN THE HANDING SEAT HELD ONE (kanban #1567): kept only when it verifies under the same
+    // session key over that batch's id - a wrong or missing one is dropped, never a reason to refuse the endorsed chain
+    const sigOf = (i) => {
+      let sig = null;
+      try { sig = signatures && signatures[i] ? new Uint8Array(signatures[i]) : null; } catch { sig = null; }
+      if (!sig || sig.length !== 64) return null;
+      try { return ed25519.verify(sig, batchId(decodeInputBatch(bodies[i])), e.sessionPubkey) ? sig : null; } catch { return null; }
+    };
     let taken = 0;
-    for (const raw of bodies) { try { this.batch(raw); taken++; } catch { /* held already, or refused: the mark says which */ } }
+    for (let i = 0; i < bodies.length; i++) { try { this.batch(bodies[i], sigOf(i)); taken++; } catch { /* held already, or refused: the mark says which */ } }
     return { ok: true, taken };
   }
 
@@ -928,8 +938,12 @@ export class Round {
    * his message arrived, so re-sending is the correct thing for him to do and
    * the wrong thing for the node to punish. `INSERT OR IGNORE` against the
    * primary key is the whole mechanism.
+   *
+   * `signature`: the player's session-key signature over the batch's id, ALREADY VERIFIED by the caller (signedBatch,
+   * batchesEndorsedBy) - kept beside the row for GET /batch-signatures (kanban #1567), and added to a row taken bare
+   * before. The stored bytes, id and chain are the same either way.
    */
-  batch(bytes) {
+  batch(bytes, signature = null) {
     // NO BATCH A TRANSCRIPT CANNOT FRAME (measured live 2026-10-11 on round 6843f9fb: a 97,309-byte batch
     // was taken by all seven seats and every close then failed "u16 out of range" - the run could never be replayed)
     if (bytes.length > TRANSCRIPT_BATCH_MAX_BYTES)
@@ -1103,8 +1117,11 @@ export class Round {
           'SELECT MAX(seq) m FROM batches WHERE round_id = ? AND entry_id = ?').get(b.roundId, b.entryId).m;
         const n = last === null ? 0 : last + 1;
         this.db.prepare(
-          'INSERT INTO batches (round_id, entry_id, seq, batch_id, bytes) VALUES (?, ?, ?, ?, ?)')
-          .run(b.roundId, b.entryId, n, id, bytes);
+          'INSERT INTO batches (round_id, entry_id, seq, batch_id, bytes, signature) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(b.roundId, b.entryId, n, id, bytes, signature);
+      } else if (signature) {
+        this.db.prepare('UPDATE batches SET signature = ? WHERE round_id = ? AND entry_id = ? AND batch_id = ? AND signature IS NULL')
+          .run(signature, b.roundId, b.entryId, id);
       }
       this.db.exec('COMMIT');
     } catch (e) {
@@ -2736,6 +2753,25 @@ export class Round {
       try { signers.add(toHex(decodeCheckpointReceipt(splitSignedReceipt(bytes).body).nodePubkey)); } catch { /* verified above */ }
     }
     return signers.size;
+  }
+
+  /**
+   * EACH BATCH'S SIGNATURE, in chain order (kanban #1567): 64 bytes per batch `handOver` serves, the player's session-key
+   * signature over that batch's id, or 64 zero bytes where this seat took the batch bare. GET /batch-signatures.
+   */
+  batchSignatures(roundIdBytes, entryIdBytes) {
+    const rows = this.db.prepare('SELECT signature FROM batches WHERE round_id = ? AND entry_id = ? ORDER BY seq')
+      .all(roundIdBytes, entryIdBytes);
+    const out = new Uint8Array(64 * rows.length);
+    rows.forEach((r, i) => { if (r.signature && r.signature.length === 64) out.set(new Uint8Array(r.signature), 64 * i); });
+    return out;
+  }
+
+  /** The signature kept beside one batch (kanban #1567), or null. */
+  batchSignature(roundIdBytes, entryIdBytes, batchIdBytes) {
+    const r = this.db.prepare('SELECT signature FROM batches WHERE round_id = ? AND entry_id = ? AND batch_id = ?')
+      .get(roundIdBytes, entryIdBytes, batchIdBytes);
+    return r && r.signature && r.signature.length === 64 ? new Uint8Array(r.signature) : null;
   }
 
   /** An entry's batches in chain order, through the one a mark names. */

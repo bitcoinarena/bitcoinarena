@@ -23,7 +23,7 @@ import { standUpRound } from '../../arena-node/tools/round-2of2.mjs';
 import { Client } from '../src/client.js';
 import { joinFromQuery, tabSeed, playerFor, entryFor } from '../src/join.js';
 import { feldmanGroup } from '../../arena-node/src/curve.js';
-import { decodeInputBatch } from '../../arena-protocol/src/batch.js';
+import { splitSignedBatch } from '../../arena-protocol/src/batch.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { init as coreInit, step as coreStep } from '../../nextblock/src/sim.js';
 
@@ -102,7 +102,7 @@ test('the final mark goes to the node holding its inputs; a signer node that was
     for (let i = 0; i < 60 && client.finalCatchUp !== 'receipted'; i++) await wait(250);
     const kinds = toB.map((b) => (toHex(b) === finalBytes ? 'mark' : 'batch'));
     const firstMark = kinds.indexOf('mark');
-    const batches = toB.filter((b, i) => kinds[i] === 'batch').map((b) => decodeInputBatch(b));
+    const batches = toB.filter((b, i) => kinds[i] === 'batch').map((b) => splitSignedBatch(b).batch);   // the signed frame /play takes since #1503
     const lastTick = Math.max(...batches.map((b) => b.firstTick + b.ticks.length - 1));
     const [ta, tb] = [await transcript(A, rid, eid), await transcript(B, rid, eid)];
     console.log(`  after B back: catch-up ${client.finalCatchUp} after ${client.finalRelinks} re-offer(s); to B: ${batches.length} batch(es) `
