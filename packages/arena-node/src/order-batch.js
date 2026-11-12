@@ -142,6 +142,12 @@ const SELL_CHECKED_MAX = 65536;
 const REPLAY_ROUNDS_MAX = 64;
 // at most this many pending items of one seat's proposal are read by a leader (kanban #1934, #1971, #2004)
 const PENDING_PER_PROPOSAL = 64;
+// A SIGNATURE LIST IS BOUNDED WHERE IT IS COUNTED (kanban #2175, #2253; audit a44 refute of #1686): #counted tries at most
+// SIG_TRIES_PER_SEAT signatures per seat and at most that many times the round's seats in one call, whatever list it is handed - a round
+// seat's padded void-ask certificate or padded proposal `pending` list held the leader's event loop 15.6 s and 29.2 s.
+export const SIG_TRIES_PER_SEAT = 2;
+// the pending batches one proposal is read for: one item per k, at most this many k (an honest seat holds one or two pending)
+export const PROPOSAL_PENDING_MAX = 16;
 
 export class OrderBook {
   constructor(round, { plugins, peersFor = () => [], fetcher = (u, o) => fetch(u, o), now = () => Date.now(), intervalMs = Number(BATCH_MS), feesFor = null,
@@ -725,12 +731,18 @@ export class OrderBook {
   #counted(m, id, sigs) {
     // A SIGNATURE IS TRIED ONCE (kanban #1686): a failed (seat, signature) pair is never verified again in the same list, so repeats of
     // one junk signature cost nothing; the doors bound the list itself to the round's seats (certify, applyVoid).
-    const ok = new Map(), tried = new Set();
+    // AND THE LIST IS BOUNDED HERE (kanban #2175, #2253): at most SIG_TRIES_PER_SEAT tries per seat and SIG_TRIES_PER_SEAT x seats
+    // verifies per call - lead() and #decide hand this lists built from the peers' answers, which no door bounds.
+    const ok = new Map(), tried = new Set(), tries = new Map();
+    const budget = SIG_TRIES_PER_SEAT * m.seats.length;
+    if (!Array.isArray(sigs)) return [];
     for (const s of sigs) {
+      if (tried.size >= budget) break;
       if (!s || !isHex(s.seat, 32) || !isHex(s.signature, 64) || !m.seats.includes(s.seat) || ok.has(s.seat)) continue;
       const pair = `${s.seat}:${s.signature}`;
-      if (tried.has(pair)) continue;
+      if (tried.has(pair) || (tries.get(s.seat) || 0) >= SIG_TRIES_PER_SEAT) continue;
       tried.add(pair);
+      tries.set(s.seat, (tries.get(s.seat) || 0) + 1);
       if (verifySchnorr(fromHex(s.signature), fromHex(id), fromHex(s.seat))) ok.set(s.seat, s.signature);
     }
     return [...ok].map(([seat, signature]) => ({ seat, signature }));
@@ -953,7 +965,8 @@ export class OrderBook {
       if (!ask) return { state: 'PENDING', why: `the set of batch ${k} does not read: no void ask for it` };
       const answers = await Promise.all(peers.map((b) => this.#post(b, `/batch-void-ask?round=${rid}&k=${k}`, ask)));
       const own = this.voidAsk(roundIdBytes, k, ask);
-      const all = [own, ...answers.filter((a) => a.ok)];
+      // AN ANSWER'S CERTIFICATE NO LONGER THAN THE ROUND'S SEATS (kanban #2175): a longer one is ignored, never verified
+      const all = [own, ...answers.filter((a) => a.ok && (a.certificate == null || (Array.isArray(a.certificate) && a.certificate.length <= m.seats.length)))];
       // a seat that holds the batch certified without having signed it answers the certificate (kanban #1150: it used to decline it)
       counted = this.#counted(m, id, [...counted, ...all.filter((a) => a.signed && a.batchId === id).map((a) => ({ seat: a.seat, signature: a.signed })),
         ...all.filter((a) => Array.isArray(a.certificate) && a.batchId === id).flatMap((a) => a.certificate)]);
