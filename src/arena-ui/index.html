@@ -5760,8 +5760,17 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             if (!hex) throw new Error('phrase ' + h16.slice(0, 8) + ' is not kept in this browser: its exchange is left for its own tab');
             return ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fid), invite: inviteOf(fid), seed: ARENACLIENT.fromHex(hex), LockClient, storage: vault() });
           },
-          // its wallet clients leave this tab's cache before the lock goes (kanban #1387, CLIENT-15, as mergeOne's hold)
-          leavePhrase: (h16) => { if (ARENACLIENT.forgetPhraseWallets) ARENACLIENT.forgetPhraseWallets(h16); } });
+          // WHILE IT HOLDS THAT PHRASE'S LOCK, THIS TAB HOLDS IT (kanban #2401, #2470): the merge and the deposit resume skip it, as for a collect;
+          // resumeEcashExchanges writes the collecting mark itself, so a tab opened on that phrase meanwhile waits instead of minting
+          onHold: (h16) => { if (window.ARENA_PHRASES_HELD_HERE) window.ARENA_PHRASES_HELD_HERE.add(h16); },
+          // its wallet clients leave this tab's cache before the lock goes (kanban #1387, CLIENT-15, as mergeOne's hold); an open that ended
+          // after its limit (`late`, the lock may be gone) is dropped only while this tab does not hold that phrase again
+          leavePhrase: (h16, o) => {
+            const here = window.ARENA_PHRASES_HELD_HERE || new Set();
+            if (o && o.late) { if (!here.has(h16) && ARENACLIENT.forgetPhraseWallets) ARENACLIENT.forgetPhraseWallets(h16); return; }
+            here.delete(h16);
+            if (ARENACLIENT.forgetPhraseWallets) ARENACLIENT.forgetPhraseWallets(h16);
+          } });
         for (const r of said) console.log(`[arena] exchange kept since ${r.key.slice(21)}: ${r.ok ? `${r.msat} msat received` : r.why}`);
       }
       const spendable = (p) => BigInt(Math.max(0, Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0))) * 1000n;

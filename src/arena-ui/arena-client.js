@@ -33266,9 +33266,16 @@ async function exchangeEcashInto({ storage, from, to, needMsat, seats, walletFro
  * finished with that phrase's own wallets (`walletForPhrase(fromKey, federationHex)`; the caller's `walletFor` when none is given), which
  * `leavePhrase(fromKey)` closes while the lock is still held. A
  * phrase a live tab holds is still left alone (the #1641 case), and so is every other phrase when no lock list exists (`locks` null).
+ * WHILE IT HOLDS ANOTHER PHRASE'S LOCK, THE RESUME SAYS SO (kanban #2401, #2470, #1489 a44 refute 27 s2): as the collect (withRecordPhrase)
+ * and the deposit resume do, it writes arena.seed.collecting.<16> = { at } into `storage`, kept fresh every 10 s, and removes it before the
+ * lock goes (`onHold(h16)` / `leavePhrase(h16)` tell the page, which counts the phrase as held here): a tab opened or reloaded on that phrase
+ * meanwhile waits for the lock ((b), 2026-10-07: "the seed keeper must not mint") instead of dropping the phrase and minting a new one.
+ * AND IT NEVER WAITS LONG ON THAT PHRASE'S WALLETS (kanban #2401, #2470): the caller (the stake lock of a join) awaits this, and another
+ * phrase's wallets open cold. Each open is raced against `openMs` (10 s, the merge's MERGE_OPEN_MS), and its from-wallet is opened only when
+ * the record needs it (an intent read from its log, or notes taken back) - a record waiting on its seat opens nothing of that phrase.
  */
 async function resumeEcashExchanges({ storage, keys, walletFor, fetcher = fetch, seats = [], nowMs = Date.now(), put = putRoomy, timeoutMs = 30000,
-  phrase16 = null, takeUnnamed = false, walletForPhrase = null, leavePhrase = () => {},
+  phrase16 = null, takeUnnamed = false, walletForPhrase = null, leavePhrase = () => {}, onHold = () => {}, openMs = 10000,
   locks = (typeof navigator !== 'undefined' && navigator && navigator.locks && typeof navigator.locks.request === 'function') ? navigator.locks : null }) {
   const mine = phrase16 ? String(phrase16).slice(0, 16) : null;
   const out = [];
@@ -33287,13 +33294,36 @@ async function resumeEcashExchanges({ storage, keys, walletFor, fetcher = fetch,
     // ANOTHER PHRASE'S (kanban #1641, #2148): only while no live tab holds it, under its lock, into its own wallets
     if (!locks || !/^[0-9a-f]{16}$/i.test(rec.fromKey)) continue;
     const other = String(rec.fromKey).toLowerCase();
-    const open = walletForPhrase ? (fid) => walletForPhrase(other, fid) : walletFor;
+    const opener = walletForPhrase ? (fid) => walletForPhrase(other, fid) : walletFor;
+    // EACH OPEN BOUNDED (kanban #2401): an open that ends after its limit (the lock may be gone by then) is handed to leavePhrase(h16, { late: true }):
+    // the page drops its clients from the cache unless this tab holds that phrase again
+    const open = (fid) => new Promise((ok, no) => {
+      let late = false;
+      const timer = setTimeout(() => { late = true; no(new Error(`the wallet of phrase ${other.slice(0, 8)} did not open in ${openMs / 1000} s: its exchange is moved on later`)); }, openMs);
+      Promise.resolve().then(() => opener(fid)).then((w) => { clearTimeout(timer); if (!late) ok(w); else { try { leavePhrase(other, { late: true }); } catch { /* the next open reads the store */ } } },
+        (e) => { clearTimeout(timer); no(e); });
+    });
+    // ITS FROM-WALLET ONLY WHEN THE RECORD NEEDS IT (kanban #2401): an intent is read from its log at once; notes are taken back through it
+    const openLazily = (r) => {
+      if (r.state === 'intent') return open;
+      let w = null;
+      return (fid) => (fid === r.from ? Promise.resolve({ receiveEcash: async (e) => (await (w || (w = open(fid)))).receiveEcash(e) }) : open(fid));
+    };
     try {
       await locks.request('arena.phrase.' + other, { ifAvailable: true }, async (lock) => {
         if (!lock) return;   // a live tab plays that phrase: its own tab moves it on
         const again = readEcashTransfer(storage, key);   // read again under the lock: its tab may have finished it in between
         if (!again || ['short', 'refused', 'unreadable'].includes(again.state) || again.fromKey !== rec.fromKey) return;
-        try { await advance(key, again, open); } finally { try { await leavePhrase(other); } catch { /* the next open reads the store */ } }   // its wallets closed before the lock goes
+        // THE COLLECTING MARK (kanban #2401, #2470): a tab picking this phrase now waits for the lock rather than minting
+        const mark = 'arena.seed.collecting.' + other;
+        const say = () => { try { storage.setItem(mark, JSON.stringify({ at: Date.now() })); } catch { /* the lock is held all the same */ } };
+        say(); const beat = setInterval(say, 10000);
+        try { onHold(other); } catch { /* the lock is held all the same */ }
+        try { await advance(key, again, openLazily(again)); } finally {
+          clearInterval(beat);
+          try { storage.removeItem(mark); } catch { /* stale in 30 s */ }
+          try { await leavePhrase(other); } catch { /* the next open reads the store */ }   // its wallets closed before the lock goes
+        }
       });
     } catch (e) { out.push({ key, ok: false, why: e && e.message ? e.message : String(e) }); }
   }
