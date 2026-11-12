@@ -378,7 +378,7 @@ const CORS = {
   'access-control-expose-headers':
     'x-state, x-ticks, x-transcript-hash, x-checkpoints, x-receipts, '
     + 'x-marks, x-dropped, x-through-tick, x-equivocations, x-ticks-at, x-no-quorum, '
-    + 'x-foreign-receipts, x-nostr-published, x-question, x-outcomes, x-resolve-at-ms',
+    + 'x-foreign-receipts, x-nostr-published, x-question, x-outcomes, x-resolve-at-ms, x-entry-close-in-ms',
 };
 
 const bytes = (res, code, body) => {
@@ -3721,7 +3721,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   let headToHeadReadyGo = () => {};
   const headToHeadReadyAt = new Promise((go) => { headToHeadReadyGo = go; });
   const closingNow = new Map();
-  const H2H_HANDOUT_LEAD_MS = h2hHandoutLeadMs;   // kanban #1485: a head-to-head handout this close to the entry close is refused (takeHandout); a lock alone takes 2.2-2.7 s
+  // kanban #1485: a head-to-head handout this close to the entry close is refused (takeHandout). `h2hHandoutLeadMs` is the slowest lock the seats measured
+  // (2.7 s, tx_steps of round 77bd9609); kanban #1742 (#1489 refute of #1485): a lead of only that lets a handout through that the order cannot land behind - a
+  // lock as slow as the fix's own measurement, then the entry post, reaches the seats after the close, the lock is made (developers' and reserves' parts
+  // spent) and every seat refuses the entry, the outcome of feedback #010. The door now keeps half the lock again for the entry post and a lock slower than
+  // any measured (the measured spread: 2.7 s against a 2 s lead, 1.35x): a handout is taken only with more than H2H_HANDOUT_LEAD_MS left. This is the guard
+  // that stands for a player whose clock runs slow - every page guard reads the player's own Date.now(), this one the seat's clock.
+  const H2H_HANDOUT_LEAD_MS = Math.ceil(Number(h2hHandoutLeadMs) * 3 / 2);
   function afterClose(roundIdBytes) {
     const key = toHex(roundIdBytes);
     const running = closingNow.get(key);
@@ -5048,7 +5054,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!accepted && !round.handout(id) && round.handoutCount(handout.roundId) - round.entriesOf(handout.roundId).length >= HANDOUTS_UNENTERED_MAX)
       return { ok: false, status: 429, why: `handout refused: this round already holds ${HANDOUTS_UNENTERED_MAX} handouts that no entry names - nothing is locked, try the next round` };
     round.rememberHandout({ id, roundId: handout.roundId, bytes: encodeHandout(handout) });
-    return { ok: true, id, signerNode: mine.signerNode };
+    // THE TIME LEFT TO THE CLOSE ON THIS SEAT'S CLOCK (kanban #1892, #1489 refute 2 of #1485/#1742, feedback #010): the page runs this handout beside the
+    // funding (wallet, exchange, a deposit invoice) and locks only after both, so the time between this answer and the lock is the funding's, which no
+    // lead here can bound. The page's own guard before the lock read the player's Date.now() - wrong for exactly the slow clock this door stands for.
+    // The 201 now says how many ms this seat had left at its answer (x-entry-close-in-ms); the page (arena-client seatCloseLeftMs) reads the close on the
+    // seats' clock from it and makes no lock with less than the lead left, however long the funding took after the handout
+    return { ok: true, id, signerNode: mine.signerNode, closeInMs: Number(roundContract.entryCloseMs) - Number(round.now()) };
   };
   // A LOCK THAT ENTERED NOTHING, ITS ROUND'S ENTRIES CLOSED (kanban #593, playtest 2026-10-23: a page's 100 sat stake for
   // round 9412cdf9, locked while the seats restarted, entered at no seat - back only at its expiry, 1834 blocks on): returned as
@@ -8994,7 +9005,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         steps.at(got.ok ? 'share opened' : 'refused');
         if (!got.ok) return text(res, got.status || 409, got.why);
         steps.named(toHex(got.id));
-        res.writeHead(201, { 'content-type': 'application/octet-stream', 'x-signer-node': String(got.signerNode), ...CORS });
+        res.writeHead(201, { 'content-type': 'application/octet-stream', 'x-signer-node': String(got.signerNode), 'x-entry-close-in-ms': String(got.closeInMs), ...CORS });   // kanban #1892
         return res.end(Buffer.from(got.id));
       }
 

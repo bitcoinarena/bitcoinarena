@@ -223,6 +223,7 @@ out += '         settlementBy: settlementBy,\n';
 // sealed to a game-verify signer node are a stake nobody can open at payout.
 out += '         stakeFor: stakeFor, fetchSettlementSignerNodes: fetchSettlementSignerNodes,\n';
 out += '         roundPays: roundPays, postHandout: postHandout, attestedClaimKey: attestedClaimKey, roundLocks: roundLocks,\n';
+out += '         seatClockAheadMs: seatClockAheadMs, h2hLockRefusal: h2hLockRefusal,\n';   // kanban #1892: the head-to-head lock check on the seats' clock
 out += '         awaitAttestedClaimKey: awaitAttestedClaimKey,\n';
 // THE THRESHOLD THE STAKE IS DEALT AT - the round's (2 of 2, 5 of 7), the
 // same rule the node's door and settle read, never the slot count (M3.3-26).
