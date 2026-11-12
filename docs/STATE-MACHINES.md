@@ -1550,3 +1550,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 #### SM-O1 (add) Owner binding across a crash (main.js `ownerFiles`, owner.js `createOwner`, durable-json.js; kanban #1630)
 - `<db>.owner.json` (and `<db>.operator-tokens.json`, `<db>.retire.json`) is written atomically: `<file>.bak` first, then the file, each a temp file + fsync + rename. A reader sees the value before or after a write, never a torn one.
 - An absent file (ENOENT) is "no owner" as before. A file that exists but does not parse is read from `<file>.bak`; with no good `.bak` the node refuses to start (`DurableJsonUnreadable`). A claimed node never comes back unclaimed, never writes a new claim code over an owner, and keeps its owner's `leaving` and `settings` across any crash.
+
+#### SM-N1 (add) The key move steps the old key out (identity-switch.js `switchToSeedKey`, onchain-action EFFECTS `key-switch`; kanban #1776)
+- Once the node stops signing with a key, that key is not serving in the census. The `key-switch <old>` on-chain action carries, after the new bond's funding and bond, one advertisement update per old bond output, signed by the old key, with `serving = false` (§5A.3), funded from the new bond's change and chained. All of them are written into the action's BUILT bytes before anything is sent, so a crash re-sends them with the bond and never leaves the old key drawn and silent.
+- Not enough coins for the step-outs refuses the move as a whole. Nothing is sent and the key stays as it was.
+- Not covered yet: committee seats the seat holds as the old key at the moment of the move. The move does not wait for them.

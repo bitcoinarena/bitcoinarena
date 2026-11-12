@@ -11,12 +11,17 @@
 // THE MOVE IS AN ON-CHAIN ACTION (kanban #1165, onchain-action.js), once per key moved from: the new bond's bytes written before they are
 // sent; then the key swap - identity_old and identity in ONE SQLite transaction, only from the key it was built from - then the state.
 // A crash anywhere is finished at the next ask (the owner page asks on every load), never a second new bond.
+// AND THE OLD KEY STEPS OUT (kanban #1776, state audit 2026-11-12): after the swap nothing signs as the old key, but its bond stays
+// unspent and locked to its maturity with an advertisement that says serving = true, so every census until then drew a node that never
+// answered. The same action now carries, after the new bond, one advertisement update per old bond output, signed by the old key, with
+// serving = false (§5A.3, what tools/testnet4-step-out.mjs did by hand), paid from the new bond's change: built and written with the
+// bond's bytes, so a crash re-sends them and the move is never half a step-out. Too few coins for them refuses the move as a whole.
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { walletOf, payoutKeyOf, coinsOf, broadcast, txSeen } from './wallet.js';
-import { buildBond, lockOf, EMERGENCY_IN_ADVERT } from './bond.js';
+import { buildBond, buildAdvertUpdate, advertFor, lockOf, EMERGENCY_IN_ADVERT } from './bond.js';
 import { emergencyOf, nodeKeyOf } from './seed.js';
 import { nodeState, bondsOf } from './state.js';
 import { fromHex, toHex, sha256 } from '../../arena-protocol/src/hash.js';
@@ -57,10 +62,26 @@ export async function switchToSeedKey({ home, release, post = false, chainKit = 
         roles: s.roles, endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, nowMs,
         emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
     } catch (e) { return { ok: false, why: `${e.message} - the new bond needs ${bondSats} sat plus fees in the node's wallet (${w.address})` }; }
+    // kanban #1776: each old bond output stepped out (serving = false) under the old key, chained on the new bond's change
+    const stepOuts = [];
+    let coin = built.changeSats > 0n ? { txid: built.bond.txid, vout: 3, sats: built.changeSats } : null;
+    for (const b of outputs) {
+      const advert = { ...advertFor({ hostedGames: s.hostedGames, nodeKey: schnorr.getPublicKey(now), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
+        endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), maturity: b.maturity, softwareHash, nowMs,
+        emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null }), serving: false };
+      let u;
+      try {
+        if (!coin) throw new Error('the new bond leaves no change');
+        u = buildAdvertUpdate({ wallet: w, nodeSecret: now, coins: [coin], bond: { txid: b.txid, vout: b.vout || 0 }, advert });
+      } catch (e) { return { ok: false, why: `${e.message} - stepping the old key out of the census (one advertisement update per old bond) needs a few thousand sat more in the node's wallet (${w.address})` }; }
+      stepOuts.push(u);
+      coin = u.changeSats > 0n ? { txid: u.update.txid, vout: 2, sats: u.changeSats } : null;
+    }
     const plan = { keyNow: nowPub, keyNext: nextPub, bondSats: String(bondSats), maturity: built.maturity, lock: lockOf(tip, { maturity: built.maturity }),
-      fees: String(built.fees.funding + built.fees.bond), oldBonds: outputs.map((b) => ({ txid: b.txid, vout: b.vout || 0, sats: String(b.sats), maturity: b.maturity })),
+      fees: String(stepOuts.reduce((a, u) => a + u.fees.funding + u.fees.update, built.fees.funding + built.fees.bond)),
+      stepOuts: stepOuts.map((u) => u.update.txid), oldBonds: outputs.map((b) => ({ txid: b.txid, vout: b.vout || 0, sats: String(b.sats), maturity: b.maturity })),
       wallet: w.address, tip, countsAfter: 6 };
-    return { ok: true, plan, built, tip, outputs };
+    return { ok: true, plan, built, stepOuts, tip, outputs };
   };
   if (!post) { const p = await planOf(s); return p.ok ? { ok: true, plan: p.plan } : p; }
   const kind = `key-switch ${nowPub}`;
@@ -68,11 +89,12 @@ export async function switchToSeedKey({ home, release, post = false, chainKit = 
     build: async (s2) => {
       const p = await planOf(s2);
       if (!p.ok) return p;
-      const { built, tip, plan, outputs } = p;
+      const { built, stepOuts, tip, plan, outputs } = p;
       const bond = { txid: built.bond.txid, vout: 0, fundingTxid: built.funding.txid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
         lock: plan.lock, atMs: nowMs };
       // the old key kept beside the store, so its bond can be taken back at its maturity (the effect); then the node signs with the new one
-      return { ok: true, tip, txs: [{ name: 'funding', hex: built.funding.hex }, { name: 'bond', hex: built.bond.hex }],
+      return { ok: true, tip, txs: [{ name: 'funding', hex: built.funding.hex }, { name: 'bond', hex: built.bond.hex },
+        ...stepOuts.flatMap((u) => [{ name: 'step-out funding', hex: u.funding.hex }, { name: 'step-out', hex: u.update.hex }])],
         effect: 'key-switch', meta: { from: nowPub, to: nextPub },
         ops: [{ op: 'set', key: 'bond', value: bond }, { op: 'set', key: 'bonds', value: [bond] }, { op: 'push', key: 'oldBonds', values: outputs.map((b) => ({ ...b, key: nowPub })) },
           { op: 'set', key: 'identityFromSeed', value: true }, { op: 'set', key: 'keySwitch', value: { from: nowPub, to: nextPub, bond: bond.txid, atMs: nowMs } }],
