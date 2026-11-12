@@ -4431,8 +4431,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const held = () => (kind === 'fee' ? (round.feeLock ? round.feeLock(eid) : null) : round.stakeLock(eid));
     const what = kind === 'fee' ? 'fee' : 'stake';
     const ac = attestedRoundOf(e.roundId);
-    if (ac && round.outcomeAttestations && round.outcomeAttestations(e.roundId).length && !held())
-      return `that market's outcome is attested here: a ${what} lock new to this seat is not taken (kanban #1554)`;
+    // any outcome this seat holds of it: an attestation, or a game market's held game outcome (heldOutcomes, kanban #1793 - the same hole as #1554)
+    if (ac && !held()) { let known = []; try { known = heldOutcomes(round, e.roundId); } catch { known = round.outcomeAttestations ? round.outcomeAttestations(e.roundId) : []; }
+      if (known.length) return `that market's outcome is attested here: a ${what} lock new to this seat is not taken (kanban #1554, #1793)`; }
     if (grace === null || grace === undefined) return null;
     const c = relayedRound(e.roundId) || ac;
     if (!c || typeof c.entryCloseMs !== 'bigint') return null;
