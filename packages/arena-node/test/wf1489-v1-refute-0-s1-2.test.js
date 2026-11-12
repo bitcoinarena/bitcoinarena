@@ -30,7 +30,8 @@ const failed = (r) => r.checks.filter((c) => !c.ok).map((c) => c.key);
 
 test('#1682 the honest path: three census nodes of the committee at their own endpoints pass', async () => {
   const S = ['https://n.example', 'https://a.example', 'https://b.example'];
-  const roles = [entry(NODE, S[0]), entry(A, S[1]), entry(B, S[2])];
+  // the adverts as live seats advertise them, wss:// (kanban #1866, #1888: an https:// fixture hid that wss:// adverts had no witness address)
+  const roles = [entry(NODE, S[0].replace(/^https:/, 'wss:')), entry(A, S[1].replace(/^https:/, 'wss:')), entry(B, S[2].replace(/^https:/, 'wss:'))];
   const r = await run(world({ holders: S, committee: [NODE, A, B], roles, nodeOf: { [S[0]]: NODE, [S[1]]: A, [S[2]]: B } }), []);
   console.log('  MEASURED #1682 honest:', JSON.stringify(r.checks.map((c) => [c.key, c.ok, c.says])));
   assert.equal(r.passes, true, 'census endpoints are asked even when no seat is listed');
