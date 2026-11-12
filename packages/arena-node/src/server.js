@@ -6748,10 +6748,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         entry = decodeEntryContract(await peerBody(r, BODY_MOST));
       } catch { continue; }
       if (toHex(idOfEntry(entry)) !== entryHex || toHex(entry.roundId) !== toHex(rid)) continue;   // the bytes hash to the id, of this round
+      // THE THRESHOLD OF SEATS HOLDING IT IS ENOUGH (kanban #2096): waiting only for signed results naming it was a wait-for cycle. A seat short of one entry
+      // and a seat short of another each waited for the other's signature, so 7 - 3 = 4 of 5 seats signed and a round both players entered went no-quorum.
+      // `from` is the peers whose own views (GET /api/round-result) hold this entry: when `needed` of them hold it, it is a member, as a quorum of results
+      // would say, and this seat's own signature no longer waits on its peers'. Everything about the entry is checked below as before.
       // kanban #2063: only results about THIS entry (its reveal record, verify.js) - a VOID still counts here: taking the entry gives it no seat,
       // and a late lock it lacks comes only through takeEntryParts below, which counts seated results alone
-      const signers = await verifier.signersNaming(rid, eid, entry.playerPubkey, { entry });
-      if (signers.size < needed) return { ok: false, why: `${signers.size} of ${needed} seats signed a result naming it` };
+      const held = from.length >= needed;
+      const signers = held ? null : await verifier.signersNaming(rid, eid, entry.playerPubkey, { entry });
+      if (!held && signers.size < needed) return { ok: false, why: `${signers.size} of ${needed} seats signed a result naming it, ${from.length} hold it` };
       const ref = entry.vssSharesRef;
       if (ref && !ref.every((b) => b === 0) && !round.handout(ref)) {
         // kanban #1755: ONE PEER'S HANDOUT ANSWER IS ONE PEER'S - a non-OK status, junk bytes, a handout of another stake or one takeHandout refuses
@@ -6767,7 +6772,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         } catch (e) { why = `${base}'s handout: ${e.message}`; continue; }
       }
       try { round.enter(entry, { accepted: true }); } catch (e) { return { ok: false, why: e.message }; }
-      console.log(`[entry] ${entryHex.slice(0, 16)} taken from ${base} past the door: ${signers.size} seats signed results naming it (§17)`);
+      console.log(`[entry] ${entryHex.slice(0, 16)} taken from ${base} past the door: ${held ? `${from.length} seats hold it` : `${signers.size} seats signed results naming it`} (§17)`);
       return { ok: true };
     }
     return { ok: false, why };
