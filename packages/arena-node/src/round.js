@@ -2777,6 +2777,16 @@ export class Round {
         JSON.stringify(fields), contractId, at, Buffer.from(entryId), at);
   }
 
+  /**
+   * THE ROUND A LOCK OR AN ENTRY BELONGS TO (feedback #018, kanban #2511): the round id its stake lock, its fee lock and its entry were written
+   * under, as 64 hex each (null where this node holds none). The forfeit door returns a lock only through that round.
+   */
+  roundsOfEntry(entryIdBytes) {
+    const e = Buffer.from(entryIdBytes);
+    const one = (sql) => { const r = this.db.prepare(sql).get(e); return r && r.round_id ? Buffer.from(r.round_id).toString('hex') : null; };
+    return { stake: one('SELECT round_id FROM stake_locks WHERE entry_id = ?'), fee: one('SELECT round_id FROM fee_locks WHERE entry_id = ?'),
+      entry: one('SELECT round_id FROM entries WHERE entry_id = ?') };
+  }
   stakeLock(entryIdBytes) {
     const r = this.db.prepare('SELECT outpoint, fields, contract_id, verified_ms FROM stake_locks WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
     return r ? { outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, verifiedMs: Number(r.verified_ms) } : null;
