@@ -5068,7 +5068,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const first = seriesRound(t, 0);
       let view = null; try { view = chainFor({ contract: first, roundIdBytes: roundIdOf(first) }); } catch { view = null; }
       gridAsked.set(k, { at: now, pending: !view || !!view.pending });
-      const pub = view && !view.pending ? findSeriesPublication(view, seriesId(t)) : null;
+      // THE BLOCK FROM ITS KEPT COMMITMENTS, THEN ONLY THAT BLOCK'S TRANSACTIONS READ (kanban #1968, a fresh testnet4 seat's 15 s CPU profile:
+      // this pass's findSeriesPublication, every transaction of a ~4,700-block view parsed and hashed again for each undecided series every
+      // 2 s, ~22 % of the main thread while its chain views were still being read): roster.js finds the same lowest block, each block's
+      // commitments read once and kept beside it, as isBackupRound does - the same publication, the first in that block
+      const sidBytes = seriesId(t);
+      const at = view && !view.pending ? findSeriesPublicationIndexed(view, sidBytes) : null;
+      const pub = at ? findSeriesPublication({ firstHeight: at.height, blocks: [view.blocks[at.height - view.firstHeight]] }, sidBytes) : null;
       if (pub) {
         const marks = dayMarkersOf(pub.tx);
         const role = marks.some((m) => m.kind === 'B') ? 'backup' : marks.some((m) => EMERGENCY_TAGS.has(m.tag)) ? 'emergency' : 'primary';
