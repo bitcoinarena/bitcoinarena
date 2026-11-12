@@ -27,7 +27,7 @@
 // guessing which - so the answer is that there is no answer yet, by name. A
 // SHORTER chain is not a disagreement: it is omission, it is the case this
 // design expects, and the longer one simply carries it.
-import { chainWork, blockHashOf } from '../../arena-protocol/src/chain.js';
+import { chainWork, blockHashOf, targetOf } from '../../arena-protocol/src/chain.js';
 import { HEADER_BYTES } from '../../arena-protocol/src/chain.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { readWithOneRetry } from './reread.js';
@@ -112,6 +112,12 @@ export function httpProvider(where, { tag, ...rest } = {}) {
 const tips = (headers) => headers.map((h) => toHex(blockHashOf(h)));
 /** How deep a split at the tip may run and still be a split, not a fork: twice the six blocks a beacon is taken under. */
 export const TIP_SPLIT_BLOCKS = 12;
+/**
+ * How far the chain answered may run past the blocks `need` sources hold (kanban #1908, refute of #1529/#1713): one block, for a
+ * source that is simply one block behind - fewer than the six a census or beacon is taken under, so no block a client decides on
+ * rests on one source alone - and only at a difficulty no easier than the easiest the sources agree on, so it cannot be free.
+ */
+export const TIP_LAG_BLOCKS = 1;
 
 /**
  * Ask several providers and answer only if they can be weighed against each
@@ -232,6 +238,7 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask
   // among them) still agree on it; with fewer the fork is refused as before: two sources that fork are two of whom one is lying.
   const forked = [];
   const splits = [];
+  const lags = [];
   let firstFork = null;
   for (const a of good) {
     // ANSWERS ABOUT DIFFERENT PARTS OF THE CHAIN used to be told apart from a
@@ -241,7 +248,16 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask
     // provider whose range does not reach the anchor is refused earlier, by
     // name, which is the same fact said in the right place.
     const i = a.hashes.findIndex((h) => !inBest.has(h));
-    if (i < 0) continue;
+    // A SHORTER ANSWER IS AGREEMENT ONLY AS FAR AS IT GOES (kanban #1908, refute of #1529/#1713): headers claim their own target,
+    // so one seat could answer the honest chain plus any number of free headers on top of the honest tip, outweigh it, and have
+    // the three honest answers counted as omission - the agreed chain was then 76 headers of which 36 only that seat held, the
+    // round's beacon and any bond depth its to choose. A source holding a part of the most-work chain counts as holding it up to
+    // its own last block, like a tip split there, so the cut below stops where `need` sources still hold every block.
+    if (i < 0) {
+      const last = bestAt.get(a.hashes[a.hashes.length - 1]) + 1;
+      if (last < best.hashes.length) lags.push(last);
+      continue;
+    }
     const stray = a.hashes[i];
     const shared = i > 0 ? bestAt.get(a.hashes[i - 1]) : undefined;
     // A TIP SPLIT SITS AT THE TIP OF BOTH CHAINS (kanban #1713, #1777, refute of #1529): it was taken from the forking source's
@@ -266,9 +282,19 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask
   // it. Two sources split at the tip still stop at the last block both hold; one splitting source among three that agree on
   // the whole chain cuts nothing.
   // (a split source holds the most-work chain's first `s` blocks; at a length L it disagrees when s < L)
-  for (const at of [best.hashes.length, ...splits.sort((x, y) => y - x)]) {
+  const held = [...splits, ...lags];
+  for (const at of [best.hashes.length, ...held.sort((x, y) => y - x)]) {
     cut = at;
-    if (agree - splits.filter((s) => s < at).length >= need) break;
+    if (agree - held.filter((s) => s < at).length >= need) break;
+  }
+  // ONE BLOCK OF LAG STILL PASSES (kanban #1908): a source one block behind is every day, and with two sources the chain would
+  // otherwise always stop a block short. Only past blocks no agreeing source contradicts (no tip split at or below the cut), at
+  // most TIP_LAG_BLOCKS, and each no easier to mine than the easiest block the sources agree on - free headers do not pass.
+  if (cut > 0 && cut < best.hashes.length && !splits.some((s) => s <= cut)) {
+    let easiest = 0n;
+    for (const h of best.headers.slice(0, cut)) { const t = targetOf(h); if (t > easiest) easiest = t; }
+    const stop = Math.min(best.hashes.length, cut + TIP_LAG_BLOCKS);
+    while (cut < stop && targetOf(best.headers[cut]) <= easiest) cut++;
   }
 
   return {
