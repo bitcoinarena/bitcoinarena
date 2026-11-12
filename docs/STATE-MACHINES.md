@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-22 (change) Reward link: a link pays on its own network only (kanban #1784)
+- Invariant: a reward is paid at most once, and only on the network it was made for (`rewards.network`). With the faucet's payout network (`FAUCET_BOUNTY_NETWORK`) passed in, `withdrawRequest`, `claim` and `payToAddress` refuse a link of another network; a testnet4 link made before the switch to mainnet is never paid in mainnet sats.
+- Invariant: `settle()` asks only the payer of the current network, and only about `paying` rows of that network; a `paying` row of another network stays `paying` (its payer is not here to ask). A payment hash the payer's `listpayments` does not list is asked by itself (`trackpayment`, as the grant sweep, #1426): only "not initiated" reads as failed (paying -> open); no answer is unknown (stays paying).
