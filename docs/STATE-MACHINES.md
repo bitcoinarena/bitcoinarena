@@ -1542,3 +1542,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-19 (change) Faucet book: an unsure welcome blocks another (kanban #1834)
+- Invariant: an account is paid one welcome, counting the rows in `unsure` - payments no payer has called FAILED or NONE yet, which may still arrive. `grant` and `grantEcash` decide over book.players plus book.unsure (toward the welcome, the top-ups and the day, hour and address caps); a welcome asked while one of the account's welcomes is unsure is answered "your welcome is still on its way" and nothing is paid. The sweep's rebook of a late SUCCEEDED can therefore never book a second welcome row next to one paid meanwhile.
