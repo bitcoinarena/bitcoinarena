@@ -45,6 +45,20 @@ export function scanSource(text) {
 export const MAX_PACKAGE_ANCESTORS = 64;
 
 /**
+ * THE PART OF A PACKAGE'S EARLIER VERSIONS A NODE READS, KEEPS AND SERVES (kanban #1854, #2332, #2346): `window` is the newest
+ * MAX_PACKAGE_ANCESTORS (oldest first) - the ones checkPackage decodes and checks; `cut` is the one entry right below them when
+ * the package carried more, kept only as the marker that the chain goes on below (never decoded, never sorted, never trusted).
+ * Everything below the cut is dropped: a node never keeps, decodes or re-serves an earlier version it did not check.
+ */
+export function packageWindow(ancestors) {
+  const all = Array.isArray(ancestors) ? ancestors : [];
+  if (all.length <= MAX_PACKAGE_ANCESTORS) return { cut: null, window: all, carried: all.length };
+  return { cut: all[all.length - MAX_PACKAGE_ANCESTORS - 1], window: all.slice(all.length - MAX_PACKAGE_ANCESTORS), carried: all.length };
+}
+/** The earlier versions as kept on disk and served: the cut marker (when there is one) and the checked window, oldest first. */
+export const boundedAncestors = (ancestors) => { const w = packageWindow(ancestors); return w.cut === null ? [...w.window] : [w.cut, ...w.window]; };
+
+/**
  * THE REPORT ON A PACKAGE: `verify(sig, msg, key)` is Ed25519. Answers { ok, gameId, name, version, devKey, parent, checks:
  * [{ check, ok, detail }], findings, why }. Every check is listed, passed or not, so the page shows the whole report.
  */
@@ -80,10 +94,9 @@ export function checkPackage(pkg, { verify, want = null, parentOf = () => null }
   // not hold the one before, that one is the CUT: the oldest checked version stands on a version of the same developer one
   // lower, as its chain says - nothing below the cut is decoded. Every version this node already holds is taken as held,
   // not verified again.
-  const all = Array.isArray(pkg.ancestors) ? pkg.ancestors : [];
-  const ancestors = all.length > MAX_PACKAGE_ANCESTORS ? all.slice(all.length - MAX_PACKAGE_ANCESTORS) : all;
-  const cutBelow = all.length > ancestors.length;
-  add('its earlier versions are read up to a bound', true, cutBelow ? `the newest ${ancestors.length} of ${all.length}` : `${all.length}`);
+  const { window: ancestors, cut: cutEntry, carried } = packageWindow(pkg.ancestors);
+  const cutBelow = cutEntry !== null;
+  add('its earlier versions are read up to a bound', true, cutBelow ? `the newest ${ancestors.length} of ${carried}` : `${carried}`);
   let cut = null;
   const parentFrom = (id) => known.get(toHex(id)) || parentOf(id) || (cut && toHex(id) === cut.id ? cut.stub : null);
   for (const [i, h] of ancestors.entries()) {
@@ -118,11 +131,11 @@ export function checkPackage(pkg, { verify, want = null, parentOf = () => null }
   // EACH NAMED CORE ONCE (kanban #2240, refute of #1814): the count alone let a relaying seat list one signed core twice and
   // drop another - the package then passed and was hosted without that core (every round on it refused, kept on disk that
   // way). The package's cores must be exactly the manifest's set: no core twice, none missing.
-  const carried = new Set();
+  const coresSeen = new Set();
   for (const c of pkg.cores || []) {
-    if (!add(`core ${String(c && c.hash).slice(0, 12)}… is carried once`, !carried.has(String(c && c.hash))))
+    if (!add(`core ${String(c && c.hash).slice(0, 12)}… is carried once`, !coresSeen.has(String(c && c.hash))))
       return out(`core ${String(c && c.hash).slice(0, 16)} is in the package twice, so a core its manifest names is missing`, who);
-    carried.add(String(c && c.hash));
+    coresSeen.add(String(c && c.hash));
   }
   for (const c of pkg.cores || []) {
     const src = fromBase64(c.source);
