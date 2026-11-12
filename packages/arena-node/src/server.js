@@ -25,7 +25,7 @@ import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT }
 import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid, findSeriesPublication, seriesPublicationOutput } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js';
 import { blockRandom, blockRandomReady } from '../../arena-protocol/src/block-random.js';
-import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS, SERVED_HELD_MAX } from '../../arena-protocol/src/served-nodes.js';
+import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS, SERVED_HELD_MAX, SERVED_ANSWER_BYTES_MAX } from '../../arena-protocol/src/served-nodes.js';
 import { decodePurchase } from '../../arena-protocol/src/purchase.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
 import { textUpTo, jsonUpTo, listedGames, PEER_LISTING_BYTES, PEER_PACKAGE_BYTES } from './peer-read.js';   // kanban #1540, #1723
@@ -246,7 +246,7 @@ import { SIGNED_RESULT_BYTES, resultId, decodePlayerResult, splitSignedResult } 
 export const MAX_FRAME_BYTES = Math.max(
   MAX_SIGNED_INPUT_BATCH_BYTES, SIGNED_CHECKPOINT_BYTES, SIGNED_RECEIPT_BYTES);
 import { CLOSED, relayRowCost } from './store.js';
-import { Round } from './round.js';
+import { Round, lockClaimHolds, refusedLockOwnId } from './round.js';
 import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { gameLive } from './game-live.js';
@@ -455,7 +455,7 @@ const CORS = {
   'access-control-expose-headers':
     'x-state, x-ticks, x-transcript-hash, x-checkpoints, x-receipts, '
     + 'x-marks, x-dropped, x-through-tick, x-equivocations, x-ticks-at, x-no-quorum, '
-    + 'x-foreign-receipts, x-nostr-published, x-question, x-outcomes, x-resolve-at-ms',
+    + 'x-foreign-receipts, x-nostr-published, x-question, x-outcomes, x-resolve-at-ms, x-entry-close-in-ms',
 };
 
 const bytes = (res, code, body) => {
@@ -2320,7 +2320,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try {
         const r = await seasonFetch(`${s}/served?to=${to}&from=${from}&finals=1`, { signal: AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS) });
         if (!r.ok) return;
-        const a = await r.json();
+        const a = await readJsonCapped(r, SERVED_ANSWER_BYTES_MAX);   // kanban #2239: one seat's answer is read up to a bound
         held[i + 1] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
       } catch { /* a seat that does not answer adds nothing */ }
     }));
@@ -6156,7 +6156,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const o = e[field];
         if (!o || toHex(o.txid) !== toHex(outpoint.txid) || o.outIdx !== outpoint.outIdx) return null;
         if (toHex(e.playerPubkey) !== toHex(entry.playerPubkey)) return null;
-        return { entryId: new Uint8Array(id), joinedMs: Number(body.joinedMs) };
+        // THE PLAYER'S CLAIMS THAT SEAT HOLDS (kanban #1897, #1938): each checked here - its bytes an entry of that id naming this outpoint under
+        // this player key, its signature the entry's stake point's - and kept, so a claim reaches a seat the page did not. A peer can show a claim,
+        // never forge one; its time (joinedMs) only ever refuses (stake-lock-signer-node.js namedFirstByAnother), it never picks the winner.
+        const claimed = [];
+        for (const c of Array.isArray(body.claimed) ? body.claimed.slice(0, 8) : []) {
+          try {
+            if (!c || typeof c.entry !== 'string' || typeof c.bytes !== 'string' || typeof c.sig !== 'string') continue;
+            const cb = fromHex(c.bytes), ce = decodeEntryContract(cb), cid = idOfEntry(ce);
+            if (toHex(cid) !== c.entry.toLowerCase()) continue;
+            const co = ce[field];
+            if (!co || toHex(co.txid) !== toHex(outpoint.txid) || co.outIdx !== outpoint.outIdx) continue;
+            if (toHex(ce.playerPubkey) !== toHex(entry.playerPubkey)) continue;
+            const sig = fromHex(c.sig);
+            if (!lockClaimHolds(cb, new Uint8Array(cid), sig).ok) continue;
+            if (round.entry(cid)) round.putLockClaim(new Uint8Array(cid), sig);
+            claimed.push({ entryId: new Uint8Array(cid), entry: ce }); // its bytes decoded: the signer checks its stake point (kanban #2069)
+          } catch { /* one bad claim adds nothing */ }
+        }
+        return { entryId: new Uint8Array(id), joinedMs: Number(body.joinedMs), entry: e, claimed };
       } catch { return null; }
     }));
     return said.filter(Boolean);
@@ -6677,7 +6695,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!accepted && !round.handout(id) && round.handoutCount(handout.roundId) - round.entriesOf(handout.roundId).length >= HANDOUTS_UNENTERED_MAX)
       return { ok: false, status: 429, why: `handout refused: this round already holds ${HANDOUTS_UNENTERED_MAX} handouts that no entry names - nothing is locked, try the next round` };
     round.rememberHandout({ id, roundId: handout.roundId, bytes: encodeHandout(handout) });
-    return { ok: true, id, signerNode: mine.signerNode };
+    // THE TIME LEFT TO THE CLOSE ON THIS SEAT'S CLOCK (kanban #1892, #1489 refute 2 of #1485/#1742, feedback #010): the page runs this handout beside the
+    // funding (wallet, exchange, a deposit invoice) and locks only after both, so the time between this answer and the lock is the funding's, which no
+    // lead here can bound. The page's own guard before the lock read the player's Date.now() - wrong for exactly the slow clock this door stands for.
+    // The 201 now says how many ms this seat had left at its answer (x-entry-close-in-ms); the page (arena-client seatCloseLeftMs) reads the close on the
+    // seats' clock from it and makes no lock with less than the lead left, however long the funding took after the handout
+    return { ok: true, id, signerNode: mine.signerNode, closeInMs: Number(roundContract.entryCloseMs) - Number(round.now()) };
   };
   // A LOCK THAT ENTERED NOTHING, ITS ROUND'S ENTRIES CLOSED (kanban #593, playtest 2026-10-23: a page's 100 sat stake for
   // round 9412cdf9, locked while the seats restarted, entered at no seat - back only at its expiry, 1834 blocks on): returned as
@@ -10905,7 +10928,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try {
             const r = await seasonFetch(`${s}/served?to=${to}&from=${from}&finals=1`, { signal: AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS) });
             if (!r.ok) return;
-            const a = await r.json();
+            const a = await readJsonCapped(r, SERVED_ANSWER_BYTES_MAX);   // kanban #2239: one seat's answer is read up to a bound
             held[i + 1] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
           } catch { /* a seat that does not answer adds nothing */ }
         }));
@@ -11089,7 +11112,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         steps.at(got.ok ? 'share opened' : 'refused');
         if (!got.ok) return text(res, got.status || 409, got.why);
         steps.named(toHex(got.id));
-        res.writeHead(201, { 'content-type': 'application/octet-stream', 'x-signer-node': String(got.signerNode), ...CORS });
+        res.writeHead(201, { 'content-type': 'application/octet-stream', 'x-signer-node': String(got.signerNode), 'x-entry-close-in-ms': String(got.closeInMs), ...CORS });   // kanban #1892
         return res.end(Buffer.from(got.id));
       }
 
@@ -11527,8 +11550,29 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if ((kind !== 'stake' && kind !== 'fee') || !m || player.length !== 32) return text(res, 400, 'GET /lock-namer?kind=stake|fee&outpoint=<txid>:<index>&player=<player key>');
         const first = round.firstNamingOfLock(null, kind, { txid: fromHex(m[1].toLowerCase()), outIdx: BigInt(m[2]) }, new Uint8Array(player));
         if (!first) return text(res, 404, 'this seat holds no entry naming that lock');
+        // and the player's claims this seat holds for that lock (kanban #1897, #1938): the asker checks each signature itself
+        const claimed = round.claimedNamingsOfLock(kind, { txid: fromHex(m[1].toLowerCase()), outIdx: BigInt(m[2]) }, new Uint8Array(player)).slice(0, 8)
+          .map((c) => ({ entry: toHex(c.entryId), bytes: toHex(c.bytes), sig: toHex(c.sig) }));
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ entry: toHex(first.entryId), joinedMs: first.joinedMs, bytes: toHex(first.bytes) }));
+        return res.end(JSON.stringify({ entry: toHex(first.entryId), joinedMs: first.joinedMs, bytes: toHex(first.bytes), claimed }));
+      }
+      // THE PLAYER'S CLAIM ON AN ENTRY'S LOCKS (kanban #1897, #1938; protocol lock-claim.js): POST /lock-claim?entry=<id> with the 64-byte BIP-340
+      // signature by the entry's stake point over lockClaimDigest(id), which the page sends with its entry. Checked before it is kept; once kept,
+      // a lock outpoint this entry names goes only to a claimed entry - a copy of the entry under another session key can never make one.
+      // GET /lock-claim?entry=<id> answers the kept signature. Entries and claims are public.
+      if (url.pathname === '/lock-claim' && (req.method === 'POST' || req.method === 'GET')) {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, `${req.method} /lock-claim?entry=<entry id>`);
+        if (req.method === 'GET') {
+          const sig = round.lockClaim(new Uint8Array(eid));
+          if (!sig) return text(res, 404, 'this seat holds no claim for that entry');
+          res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+          return res.end(Buffer.from(sig));
+        }
+        const sig = new Uint8Array(await read(req));
+        const kept = round.putLockClaim(new Uint8Array(eid), sig);
+        if (!kept.ok) return text(res, /no such entry/.test(kept.why) ? 404 : 400, kept.why);
+        return text(res, 201, 'lock claim kept: the locks this entry names go to a claimed entry only');
       }
       if (req.method === 'GET' && url.pathname === '/order-locks') {
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
@@ -12458,13 +12502,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const opHex = `${toHex(outpoint.txid)}:${outpoint.outIdx}`;
         const keptLocks = round.refusedLocksOfHandout(held.id);
         const again = keptLocks.find((l) => l.outpoint === opHex);
-        if (again) return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(again.lockId)}`);
+        // the lock's own id, also for a row kept before #1881 under the bare handout id (kanban #2029: round.js finds it by that id too)
+        if (again) return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(refusedLockOwnId(held.id, opHex))}`);
         const amountOf = (l) => { try { return BigInt(l.fields.amountMsat); } catch { return 0n; } };
         const amount = BigInt(fields.amountMsat);
         const asLarge = keptLocks.filter((l) => amountOf(l) >= amount).length;
         if (asLarge >= REFUSED_LOCKS_PER_HANDOUT)
           return text(res, 409, `this signer node already keeps ${asLarge} locks for that handout at least as large (${amount} msat), all refunding to the same player: no more are kept`);
-        const lockId = sha256(new Uint8Array([...held.id, ...new TextEncoder().encode(`lock:${opHex}`)]));
+        const lockId = refusedLockOwnId(held.id, opHex);
         round.putRefusedLock({ lockId, handoutId: held.id, roundId: rid, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
         console.log(`[refused-lock] ${toHex(rid).slice(0, 16)}: ${String(fields.amountMsat)} msat kept for its return (${String(refusedWhy).slice(0, 80)})`);
         return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(lockId)}`);

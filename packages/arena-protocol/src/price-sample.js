@@ -70,18 +70,20 @@ export function priceAttestationStands({ id, sigs, committee, threshold, verify 
   // the real one must still count - at most n entries come from n seats, so the budget never drops it.
   const tried = new Map();
   for (const s of sigs || []) {
-    // kanban #1489 / #1530: a signature that is not 64 bytes (as 128 hex or bytes), an odd-length or 1-char hex, counts nothing -
-    // `"".match(/../g)` was null and threw, so one bad seat hid the result the others signed. Both checks below hold that.
-    // kanban #1566: a malformed entry (a key or signature that is not hex of its size, a non-string, a missing field) counts
-    // nothing, as a signature that does not verify - it never throws out of here and so never refuses the others' signatures.
-    let key, sig, pk;
-    try {
-      key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key);
-      if (!/^[0-9a-f]{64}$/.test(key) || !members.has(key) || signed.has(key) || (tried.get(key) || 0) >= members.size) continue;
-      sig = typeof s.signature === 'string' ? s.signature.toLowerCase() : toHex(s.signature);
-      if (!/^[0-9a-f]{128}$/.test(sig)) continue;
-      sig = fromHex(sig); pk = fromHex(key);
-    } catch { continue; }
+    // kanban #1489 / #1530 / #1566: a signature that is not 64 bytes (as 128 hex or bytes), an odd-length or 1-char hex, a malformed
+    // entry - counts nothing and never throws out of here, so one bad seat never hides the result the others signed.
+    // kanban #1958 / #1997: a key is a 64-hex string or a Uint8Array of 32 bytes, nothing else - decoded only then. toHex on any
+    // other value loops to its .length (a JSON key { "length": 4294967295 } held the seat's one thread), and a JSON array of the
+    // 32 bytes counted here while price-feed dropped it, so a seat kept a sample that stood with no signature at all.
+    if (!s || typeof s !== 'object') continue;
+    let key, sig;
+    if (typeof s.key === 'string') { if (!/^[0-9a-f]{64}$/i.test(s.key)) continue; key = s.key.toLowerCase(); }
+    else if (isBytes32(s.key)) key = toHex(s.key);
+    else continue;
+    if (!members.has(key) || signed.has(key) || (tried.get(key) || 0) >= members.size) continue;
+    if (typeof s.signature === 'string') { if (!/^[0-9a-f]{128}$/i.test(s.signature)) continue; sig = fromHex(s.signature.toLowerCase()); }
+    else if (s.signature instanceof Uint8Array && s.signature.length === 64) sig = s.signature;
+    else continue;
     tried.set(key, (tried.get(key) || 0) + 1);
     let good = false;
     try { good = !!verify(sig, id, fromHex(key)); } catch { good = false; }

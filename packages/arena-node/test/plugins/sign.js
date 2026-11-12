@@ -13,6 +13,7 @@ import { attestationBodyId } from '../../../arena-protocol/src/attested.js';
 import { valueAttestationBodyId } from '../../../arena-protocol/src/scalar.js';
 import { fromHex } from '../../../arena-protocol/src/hash.js';
 import { donationSetId } from '../../../arena-protocol/src/donation.js';
+import { onCurveX } from '../../../arena-protocol/src/point.js';
 
 /**
  * A TEST GAME'S DONATION SET (kanban #205): one 33-byte key derived from the developer's word, all 10000 bps - a set of its
@@ -20,6 +21,9 @@ import { donationSetId } from '../../../arena-protocol/src/donation.js';
  */
 export function testDonationSet(word) {
   const x = createHash('sha256').update(`test game donation key: ${word}`).digest();
+  // a curve point (kanban #1489, #1675: a recipient key that is no point does not stand): the last byte stepped until x is on the
+  // curve - a word whose hash already is one keeps its key, and its set its id
+  while (!onCurveX(x)) x[31] = (x[31] + 1) & 0xff;
   return [{ recipientPk: Uint8Array.from([0x02, ...x]), label: `${word} dev`, shareBps: 10000 }];
 }
 

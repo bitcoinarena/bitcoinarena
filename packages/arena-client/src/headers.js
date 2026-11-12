@@ -27,7 +27,7 @@
 // guessing which - so the answer is that there is no answer yet, by name. A
 // SHORTER chain is not a disagreement: it is omission, it is the case this
 // design expects, and the longer one simply carries it.
-import { chainWork, blockHashOf } from '../../arena-protocol/src/chain.js';
+import { chainWork, blockHashOf, targetOf } from '../../arena-protocol/src/chain.js';
 import { HEADER_BYTES } from '../../arena-protocol/src/chain.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { readWithOneRetry } from './reread.js';
@@ -112,6 +112,12 @@ export function httpProvider(where, { tag, ...rest } = {}) {
 const tips = (headers) => headers.map((h) => toHex(blockHashOf(h)));
 /** How deep a split at the tip may run and still be a split, not a fork: twice the six blocks a beacon is taken under. */
 export const TIP_SPLIT_BLOCKS = 12;
+/**
+ * How far the chain answered may run past the blocks `need` sources hold (kanban #1908, refute of #1529/#1713): one block, for a
+ * source that is simply one block behind - fewer than the six a census or beacon is taken under, so no block a client decides on
+ * rests on one source alone - and only at a difficulty no easier than the easiest the sources agree on, so it cannot be free.
+ */
+export const TIP_LAG_BLOCKS = 1;
 
 /**
  * Ask several providers and answer only if they can be weighed against each
@@ -213,56 +219,114 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask
   // chain has merely left some out, which is the case this design expects; a
   // source holding a block the best chain does not have is a fork, and there
   // is no honest way to choose between them here.
-  let best = good[0];
-  for (const a of good) if (a.work > best.work) best = a;
-  const inBest = new Set(best.hashes);
-
-  // A SPLIT AT THE TIP IS NOT A FORK TO REFUSE (the owner's testnet4, measured 2026-10-14 ~10:00Z: the test host's bitcoind and the
-  // the test host's stood at one height and one chainwork on two branches six blocks long - testnet4's minimum-difficulty blocks tie
-  // often - and every committee this client built from all 14 seats' headers was refused, "providers 0 and 1 do not agree").
-  // A provider whose chain leaves the most-work one only in its last TIP_SPLIT_BLOCKS blocks still agrees on everything below,
-  // and the chain answered stops at the last block every provider shares: a round's census and beacon are taken at least six
-  // blocks deep, so nothing a client decides sits in the split. A provider that leaves it deeper is a fork, refused as before.
-  const bestAt = new Map(best.hashes.map((h, i) => [h, i]));
-  let cut = best.hashes.length;
-  // ONE FORKING SOURCE IS DROPPED, NOT OBEYED (kanban #1529): a seat answering the real chain cut 13 blocks below the tip plus
-  // headers of its own - mined at the easiest target it claims, so free - refused every join that picked it, although the other
-  // three sources agreed on the chain with the most work. A source that forks off the most-work chain deeper than a tip split is
-  // now set aside by name, and the chain stands only while at least `least` sources (and never fewer than two, the most-work one
-  // among them) still agree on it; with fewer the fork is refused as before: two sources that fork are two of whom one is lying.
-  const forked = [];
-  let firstFork = null;
-  for (const a of good) {
-    // ANSWERS ABOUT DIFFERENT PARTS OF THE CHAIN used to be told apart from a
-    // fork here, and that branch is gone rather than left unreachable: every
-    // chain that gets this far contains the anchor, so any two of them share
-    // at least that block, and no test or mutant could ever reach it again. A
-    // provider whose range does not reach the anchor is refused earlier, by
-    // name, which is the same fact said in the right place.
-    const i = a.hashes.findIndex((h) => !inBest.has(h));
-    if (i < 0) continue;
-    const stray = a.hashes[i];
-    const shared = i > 0 ? bestAt.get(a.hashes[i - 1]) : undefined;
-    if (a.hashes.length - i > TIP_SPLIT_BLOCKS || shared === undefined) {
-      const why = `providers ${best.at} and ${a.at} do not agree on the chain: `
-        + `${stray} is not in the one with the most work`;
-      if (!firstFork) firstFork = why;
-      forked.push({ at: a.at, why });
-      continue;
-    }
-    cut = Math.min(cut, shared + 1);
+  // THE MOST-WORK SOURCE ALONE DOES NOT DECIDE WHO FORKS (kanban #2042, refute of #1529/#1713/#1908): one seat forking one
+  // block below the honest tip with 13+ headers of its own (on testnet4 that needs only one minimum-difficulty block's work, on
+  // regtest nothing) outweighed the honest chain, and #1713's depth rule then set all three honest answers aside as forks of
+  // it: agreed 1 < 2, "no chain" for every join that picked that seat - #1529's effect from the other side. The chain is now the
+  // heaviest one that `need` sources agree on: the answers are tried as the most-work chain in order of work, and one that too
+  // few others agree with is set aside by name. With no answer that enough sources agree on, the read is refused with the
+  // heaviest one's reason, as before - two sources that fork are still two of whom one is lying.
+  const order = good.map((a, k) => [a, k]).sort((x, y) => (y[0].work > x[0].work ? 1 : y[0].work < x[0].work ? -1 : x[1] - y[1]))
+    .map(([a]) => a);
+  let firstWhy = null;
+  const outweighed = [];
+  for (const best of order) {
+    if (outweighed.some((o) => o.hashes.length === best.hashes.length && o.hashes.every((h, k) => h === best.hashes[k]))) continue;
+    const seen = weigh(best);
+    // a heavier answer that forks off this chain is already in `refused` by name, with the block it does not share
+    if (seen.ok) return seen.result;
+    if (!firstWhy) firstWhy = seen.why;
+    outweighed.push(best);
   }
-  if (forked.length && good.length - forked.length < Math.max(least, 2)) return { ok: false, why: firstFork };
+  return { ok: false, why: firstWhy };
 
-  return {
-    ok: true,
-    ...(cut < best.hashes.length ? { split: best.hashes.length - cut } : {}),
-    headers: best.headers.slice(0, cut),
-    work: best.work,
-    from: best.at,
-    agreed: good.length - forked.length,
-    refused: [...bad, ...forked].map((b) => `provider ${b.at}: ${b.why}`),
-  };
+  function weigh(best) {
+    const inBest = new Set(best.hashes);
+
+    // A SPLIT AT THE TIP IS NOT A FORK TO REFUSE (the owner's testnet4, measured 2026-10-14 ~10:00Z: the test host's bitcoind and the
+    // the test host's stood at one height and one chainwork on two branches six blocks long - testnet4's minimum-difficulty blocks tie
+    // often - and every committee this client built from all 14 seats' headers was refused, "providers 0 and 1 do not agree").
+    // A provider whose chain leaves the most-work one only in its last TIP_SPLIT_BLOCKS blocks still agrees on everything below,
+    // and the chain answered stops at the last block every provider shares: a round's census and beacon are taken at least six
+    // blocks deep, so nothing a client decides sits in the split. A provider that leaves it deeper is a fork, refused as before.
+    const bestAt = new Map(best.hashes.map((h, i) => [h, i]));
+    let cut = best.hashes.length;
+    // ONE FORKING SOURCE IS DROPPED, NOT OBEYED (kanban #1529): a seat answering the real chain cut 13 blocks below the tip plus
+    // headers of its own - mined at the easiest target it claims, so free - refused every join that picked it, although the other
+    // three sources agreed on the chain with the most work. A source that forks off the most-work chain deeper than a tip split is
+    // now set aside by name, and the chain stands only while at least `least` sources (and never fewer than two, the most-work one
+    // among them) still agree on it; with fewer the fork is refused as before: two sources that fork are two of whom one is lying.
+    const forked = [];
+    const splits = [];
+    const lags = [];
+    let firstFork = null;
+    for (const a of good) {
+      // ANSWERS ABOUT DIFFERENT PARTS OF THE CHAIN used to be told apart from a
+      // fork here, and that branch is gone rather than left unreachable: every
+      // chain that gets this far contains the anchor, so any two of them share
+      // at least that block, and no test or mutant could ever reach it again. A
+      // provider whose range does not reach the anchor is refused earlier, by
+      // name, which is the same fact said in the right place.
+      const i = a.hashes.findIndex((h) => !inBest.has(h));
+      // A SHORTER ANSWER IS AGREEMENT ONLY AS FAR AS IT GOES (kanban #1908, refute of #1529/#1713): headers claim their own target,
+      // so one seat could answer the honest chain plus any number of free headers on top of the honest tip, outweigh it, and have
+      // the three honest answers counted as omission - the agreed chain was then 76 headers of which 36 only that seat held, the
+      // round's beacon and any bond depth its to choose. A source holding a part of the most-work chain counts as holding it up to
+      // its own last block, like a tip split there, so the cut below stops where `need` sources still hold every block.
+      if (i < 0) {
+        const last = bestAt.get(a.hashes[a.hashes.length - 1]) + 1;
+        if (last < best.hashes.length) lags.push(last);
+        continue;
+      }
+      const stray = a.hashes[i];
+      const shared = i > 0 ? bestAt.get(a.hashes[i - 1]) : undefined;
+      // A TIP SPLIT SITS AT THE TIP OF BOTH CHAINS (kanban #1713, #1777, refute of #1529): it was taken from the forking source's
+      // side alone, so one seat answering the honest chain up to block 10 plus 12 headers of its own was a "tip split" wherever it
+      // sat, and cut the chain three honest seats agree on to 11 headers - below the census and the bonds. The split must also leave
+      // at most TIP_SPLIT_BLOCKS blocks of the most-work chain out; deeper, the source is set aside as a fork.
+      if (a.hashes.length - i > TIP_SPLIT_BLOCKS || shared === undefined
+        || best.hashes.length - (shared + 1) > TIP_SPLIT_BLOCKS) {
+        const why = `providers ${best.at} and ${a.at} do not agree on the chain: `
+          + `${stray} is not in the one with the most work`;
+        if (!firstFork) firstFork = why;
+        forked.push({ at: a.at, why });
+        continue;
+      }
+      splits.push(shared + 1);
+    }
+    const need = Math.max(least, 2);
+    const agree = good.length - forked.length;
+    if (forked.length && agree < need) return { ok: false, why: firstFork };
+    // ONE SOURCE NEVER SHORTENS THE CHAIN THE OTHERS SHARE (kanban #1713, #1777): the chain is cut only as far as it takes for
+    // `need` sources to agree on every block it holds - the longest length at which at most agree - need of the tip splits leave
+    // it. Two sources split at the tip still stop at the last block both hold; one splitting source among three that agree on
+    // the whole chain cuts nothing.
+    // (a split source holds the most-work chain's first `s` blocks; at a length L it disagrees when s < L)
+    const held = [...splits, ...lags];
+    for (const at of [best.hashes.length, ...held.sort((x, y) => y - x)]) {
+      cut = at;
+      if (agree - held.filter((s) => s < at).length >= need) break;
+    }
+    // ONE BLOCK OF LAG STILL PASSES (kanban #1908): a source one block behind is every day, and with two sources the chain would
+    // otherwise always stop a block short. Only past blocks no agreeing source contradicts (no tip split at or below the cut), at
+    // most TIP_LAG_BLOCKS, and each no easier to mine than the easiest block the sources agree on - free headers do not pass.
+    if (cut > 0 && cut < best.hashes.length && !splits.some((s) => s <= cut)) {
+      let easiest = 0n;
+      for (const h of best.headers.slice(0, cut)) { const t = targetOf(h); if (t > easiest) easiest = t; }
+      const stop = Math.min(best.hashes.length, cut + TIP_LAG_BLOCKS);
+      while (cut < stop && targetOf(best.headers[cut]) <= easiest) cut++;
+    }
+
+    return { ok: true, result: {
+      ok: true,
+      ...(cut < best.hashes.length ? { split: best.hashes.length - cut } : {}),
+      headers: best.headers.slice(0, cut),
+      work: best.work,
+      from: best.at,
+      agreed: good.length - forked.length,
+      refused: [...bad, ...forked].map((b) => `provider ${b.at}: ${b.why}`),
+    } };
+  }
 }
 
 /**

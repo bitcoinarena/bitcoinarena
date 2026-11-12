@@ -314,6 +314,13 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (kind, outpoint, entry_id)
     );
 
+    -- THE PLAYER'S CLAIM ON AN ENTRY'S LOCKS (kanban #1897, #1938; protocol lock-claim.js): a BIP-340 signature by the entry's stake point over
+    -- its id, checked before it is kept. A lock outpoint that a claimed entry names goes only to a claimed entry (stake-lock-signer-node.js).
+    CREATE TABLE IF NOT EXISTS lock_claims (
+      entry_id   BLOB PRIMARY KEY,
+      sig        BLOB NOT NULL
+    );
+
     -- THIS NODE'S OWN KEY. One row, and the CHECK is what makes it one: a
     -- daemon with two identities would sign some receipts with each and a
     -- client checking them against the committee would be right to refuse

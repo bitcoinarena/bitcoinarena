@@ -223,6 +223,7 @@ out += '         settlementBy: settlementBy,\n';
 // sealed to a game-verify signer node are a stake nobody can open at payout.
 out += '         stakeFor: stakeFor, fetchSettlementSignerNodes: fetchSettlementSignerNodes,\n';
 out += '         roundPays: roundPays, postHandout: postHandout, attestedClaimKey: attestedClaimKey, roundLocks: roundLocks, namedClaims: namedClaims,\n';
+out += '         seatClockAheadMs: seatClockAheadMs, h2hLockRefusal: h2hLockRefusal,\n';   // kanban #1892: the head-to-head lock check on the seats' clock
 out += '         awaitAttestedClaimKey: awaitAttestedClaimKey,\n';
 // THE THRESHOLD THE STAKE IS DEALT AT - the round's (2 of 2, 5 of 7), the
 // same rule the node's door and settle read, never the slot count (M3.3-26).
@@ -230,6 +231,8 @@ out += '         sharesNeededFor: sharesNeededFor,\n';
 // THE PLAYER'S STAKE LOCK (W1b): what the injected lock client is asked, and the
 // hand-over of the lock it made to every signer node.
 out += '         lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,\n';
+out += '         lockClaimer: lockClaimer, postLockClaim: postLockClaim,\n';   // the player's claim on its entry's locks (kanban #1897, #1938)
+
 out += '         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, referralOf: referralOf, referralNameFor: referralNameFor, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves, roundGiftsInFee: roundGiftsInFee,\n';
 // AND THE PLAYER WALLET (§24A.1, RULED 2026-09-25): one per seed and federation; the top-up is its own act, before the
 // stake, and the stake is spent from it.
@@ -287,6 +290,8 @@ out += '         tabIdentity: tabIdentity, setPlayerName: setPlayerName, generat
 // the round's records fetched and checked before a name is drawn.
 out += '         nameRecordFor: nameRecordFor, postName: postName, namesOf: namesOf, checkedNames: checkedNames, shownNameOf: shownNameOf,\n';
 out += '         boardNames: boardNames,\n';
+// THE LOBBY'S NAME BOUNDS (kanban #2367): the page's Players chip applies the same caps as one lobby read.
+out += '         NAMES_PER_SEAT: NAMES_PER_SEAT, LOBBY_NAME_CHECKS_PER_READ: LOBBY_NAME_CHECKS_PER_READ,\n';
 // THE WALLET THE PAGE RENDERS. `tabWallet` holds the connection per tab,
 // `spendLog` is what §24A.1 requires a client to show, and `spentLine` turns it
 // into one sentence - so the page renders a total it did not add up.

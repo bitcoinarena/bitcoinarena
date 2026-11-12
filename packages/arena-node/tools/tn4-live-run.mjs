@@ -40,6 +40,7 @@ import { lockFromClient } from '../../arena-client/src/lock-result.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
+import { markBot, entryKeys } from './mark-bot.mjs';   // kanban #2035: every live entry marked bot in the explorer
 import { seatingCloseMs } from '../../arena-protocol/src/seating.js';
 import { clientSettlementSignerNodes } from '../../arena-client/src/committee.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
@@ -355,6 +356,8 @@ try {
   // LOSE=1 (regtest, kanban #1044 B1 phase 4, offence (b)): a run that sends every mark and never moves the truck - a non-qualifying result the seats sign
   if (env.LOSE) drive = { tape: Array.from({ length: N }, () => [0, 0, 0, 0, 0]) };
   const eid = entryId(entry);
+  // MARKED BOT IN THE EXPLORER AS IT GOES OUT (kanban #2035): by the admin code, so the real-player count stays true
+  const marking = markBot(entryKeys(eid, entry));
   if (env.KEYS_FILE) appendFileSync(env.KEYS_FILE, `${JSON.stringify({ at: new Date().toISOString(), round: toHex(rid), entry: toHex(eid),
     secret: toHex(me.secret), stake: `${toHex(locks.stake.outpoint.txid)}:${locks.stake.outpoint.outIdx}`,
     fee: locks.fee ? `${toHex(locks.fee.outpoint.txid)}:${locks.fee.outpoint.outIdx}` : null })}\n`);
@@ -432,6 +435,7 @@ try {
   // IDENTITY_SECRET_FILE=<64 hex> (kanban #1346): the round is booked to that identity, with its own consent (#1278, RULED #1276) - a name
   // record signed by the round key, and the identity key over (round, round key), posted to every seat once they hold the entry (a seat answers 409 for a round key it holds no entry of), within the join's grace (#1267)
   if (naming) log({ step: 'identity named', identity: toHex(naming.identityKey).slice(0, 16), said: naming.said });
+  log({ step: 'marked bot', entry: toHex(eid).slice(0, 16), ...await marking });
   if (signerNodes.filter((x) => x.lock >= 200 && x.lock < 300).length < needed) throw new Error('fewer seats than needed took the lock');
   // NO_MARKS=1: IN THE ROUND AND NEVER PLAYED: not one mark is sent (tools/no-quorum-devnet.mjs)
   if (env.NO_MARKS && !env.REFUND_AT_EXPIRY) { log({ step: 'no marks sent' }); process.exit(0); }
