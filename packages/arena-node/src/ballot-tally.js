@@ -182,6 +182,9 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         if (c.got === 'same' && proposals.restore(p.id, { at: tip })) { heldOutcome.delete(p.id); what = 'its publication block is on this chain again: counted again'; }
       } else if (c.got === 'above' && c.kind === 'read') {
         open.delete(p.id);                                  // this chain is shorter than the count: read again when it is there (memory only)
+        // AND THE CACHE ABOVE THE TIP GOES WITH IT (kanban #2019): a chain seen shorter may be a reorg seen part way - the
+        // heights above it are read again from the chain that grows there, never from the branch it may have left
+        for (const h of [...votesByHeight.keys()]) if (h > tip) { votesByHeight.delete(h); hashByHeight.delete(h); }
       } else if (c.got === 'other') {
         open.delete(p.id);
         const published = c.kind === 'published' ? 'other' : c.pub;
@@ -316,6 +319,14 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         const fromTo = o.readTo, fromHash = o.readHash;
         while (o.readTo < last && read < maxBlocksPerPass) {
           const h = o.readTo + 1;
+          // A CACHED HEIGHT IS USED ONLY WHILE ITS BLOCK IS STILL THIS SEAT'S (kanban #2019): its hash is asked again, and a
+          // block that changed is read afresh - so a count's votes always come from the chain its anchor (the last block read)
+          // is on, whatever the reorg checks saw before
+          if (votesByHeight.has(h) && typeof blockHashAt === 'function') {
+            const now = await blockHashAt(h);
+            if (!now) break;                                                 // above this seat's tip after all: the next pass
+            if (String(now).toLowerCase() !== hashByHeight.get(h)) { votesByHeight.delete(h); hashByHeight.delete(h); }
+          }
           if (!votesByHeight.has(h)) {
             // the block's hash first, and its votes from THAT block: the hash the count is later held to is the block it read
             const hash = typeof blockHashAt === 'function' ? await blockHashAt(h) : null;
