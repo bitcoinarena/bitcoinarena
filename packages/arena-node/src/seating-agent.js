@@ -544,15 +544,18 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (nowMs() - reseatsCheckedMs < RESEAT_CHECK_MS) return;
     reseatsCheckedMs = nowMs();
     let draws = RESEAT_DRAWS;
+    const pass = { tables: 0, drawn: 0, noDraw: 0, checked: 0, stale: 0 };
     for (const [key, list] of reseats) {
+      pass.tables++;
       if (!list.length) continue;
       const role = key.slice(key.lastIndexOf(':') + 1);
       let drawn = tableDraws.get(key);
       if (!drawn) {
         if (draws-- <= 0) continue;
         let c = null; try { c = roster.committeeFor(list[list.length - 1].rid, role); } catch { c = null; }
-        if (!c || !c.ok || !Array.isArray(c.drawn)) continue;
+        if (!c || !c.ok || !Array.isArray(c.drawn)) { pass.noDraw++; if (pass.noDraw === 1) pass.why = c ? c.why : 'no answer'; continue; }
         drawn = c.drawn.map((e) => toHex(e.pubkey));
+        pass.drawn++;
         tableDraws.set(key, drawn);
         if (tableDraws.size > 2000) tableDraws.delete(tableDraws.keys().next().value);
       }
@@ -563,10 +566,12 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         const stands = seatedInDrawOrder(x.seated, drawn);
         reseatVerdicts.set(k, stands);
         if (reseatVerdicts.size > 200000) reseatVerdicts.delete(reseatVerdicts.keys().next().value);
-        if (stands) staleReseats.delete(k); else { staleReseats.add(k); named++; }
+        pass.checked++;
+        if (stands) staleReseats.delete(k); else { staleReseats.add(k); named++; pass.stale++; }
       }
       if (named) log(`[seating] table ${key.slice(0, 16)} ${role}: ${named} check-in seating(s) held are not this seat's draw in score order - not used (kanban #2564)`);
     }
+    if (pass.drawn || pass.noDraw || pass.checked) log(`[seating] check-in pass (kanban #2564): ${pass.tables} table role(s), ${pass.drawn} drawn, ${pass.noDraw} not drawable${pass.why ? ` (${pass.why})` : ''}, ${pass.checked} seating(s) checked, ${pass.stale} stale, ${staleReseats.size} stale held`);
   };
   async function tick() {
     if (busy) return;
