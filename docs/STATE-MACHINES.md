@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-4 (change) Market outcome: one attestation, every seat on the same side of the deadline (kanban #1787)
+- Invariant: a seat that takes a standing, timely attestation FRESH at POST /outcome hands the same bytes to the round's other settlement seats (`winningsPeers`: the settlement committee, or the DKG peers before a census is read) before it answers, each post bounded at 3 s. The other seats' `receivedMs` then differs from the first by the hand-on's milliseconds, not by an attestor daemon's per-seat timeouts, so one market round no longer ends FINAL at one seat and VOID by deadline at another (neither the settlement nor the return door could reach its threshold; every lock waited for its expiry).
+- A handed-on post carries `handed=1` and is not handed on again; a post that was already held (200), or held as evidence only (the round already FINAL or VOID), is not handed on. Each receiver still checks it in full (`holdOutcome`: stands, timely, window end) - the deadline rule of #1151 is unchanged, so an attestation withheld until after the deadline is refused everywhere.
