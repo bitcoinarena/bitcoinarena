@@ -3850,6 +3850,11 @@ export class Round {
       },
       putWinnings() { /* the first round's row stands; the late payment is its late_winnings_sends row */ },
       lockSettlement(roundIdBytes) { return base.lateLockSettlement(roundIdBytes, late); },
+      // THE LATE ROW ONLY (kanban #2178): a late settlement is its one late_lock_settlements row. Without these two, a round that takes
+      // any federation fell through to the round's own federation rows (all ACCEPTED before any late settlement exists), so a late plan
+      // nothing had signed read ACCEPTED: never replaced by a lower plan, never dropped when stale, and contractFate's GONE check read them too.
+      settlementState(roundIdBytes) { const s = base.lateLockSettlement(roundIdBytes, late); return s ? s.state : null; },
+      fedLockSettlementsOf() { return []; },
     });
   }
 
