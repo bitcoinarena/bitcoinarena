@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-E1 (change) Refused lock vs stake lock of an entry (kanban #1639)
+- One outpoint is never both a lock this seat returns (kept in `refused_locks`, or fated RETURNING in `lock_fates`) and a verified stake or fee lock of an entry. `verifyStakeLock` and `verifyFeeLock` refuse such an outpoint before the federation is asked and again right before the write (`returnedHere`, `refusedLockAt`); this covers `takeEntryParts`/`membersKnown`, which call `takeStakeLock` directly. The reverse already held: POST /refused-lock and a refused lock's forfeit refuse an outpoint that stakes an entry.
+- A round that flips back from refused to offered does not take the lock the player handed back: the page locks anew; the kept lock comes back by its forfeit while the round is refused, or at its expiry.
