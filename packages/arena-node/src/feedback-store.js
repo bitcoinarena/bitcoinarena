@@ -55,29 +55,72 @@ export const AUTH_AGE_MOST_S = 60;
 // spaces only - "Abandon, Ability, ..." or "1. abandon 2. ability ..." went through): a run of 12 to 24 BIP39 words in any case, each may carry its number
 // ("1.", "2)", "3:"), split by spaces, new lines, commas, semicolons, slashes or dashes, is removed. Only BIP39 words count, so an ordinary sentence of 12
 // words stays. nsec/ncryptsec keys and 64-hex secrets are removed as before.
+// NO SEED IN ANY COPY FORMAT EITHER (kanban #1591, a bypass of #1472): the run above took only [\s,;/|-] between words and a number only before
+// ". ) :", so a seed copied as a JSON array ["abandon","ability",...], from a wallet's numbered grid ("1\nabandon\n2\nability"), as "1 abandon 2 ability"
+// or as "abandon. ability. ..." was kept, shown to the admin and posted to #feedback. Now the text is cut into runs of letters only; two BIP39 words are
+// joined by any short gap holding no letter (spaces, quotes, brackets, periods, digits, #, parentheses ...; a colon only right after a number, so
+// "my seed: abandon ..." keeps "seed"), and invisible format characters (zero-width spaces, soft hyphens) are dropped first so they split nothing. A
+// 4-letter BIP39 prefix ("aban abil able abou", the form many wallets accept) counts as a word. Still 12 such words in a row, so a sentence stays.
 const BIP39_SET = new Set(BIP39_ENGLISH);
+const BIP39_PREFIX4 = new Set(BIP39_ENGLISH.map((w) => w.slice(0, 4)));
+const SEED_RUN_LEAST = 12;
+const SEED_GAP_MOST = 12;
+const SEED_GAP = /^(?:[^\p{L}\d:]|\d+\s*:?)*$/u;
+const seedWord = (w) => BIP39_SET.has(w) || (w.length === 4 && BIP39_PREFIX4.has(w));
 export const scrubKeys = (t) => {
-  let s = String(t).replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]');
-  const tok = /(?:\d{1,2}\s*[.):]\s*)?([a-z]{3,8})/gi;
+  let s = String(t).replace(/\p{Cf}/gu, '');
+  s = s.replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]');
   const runs = []; let run = []; let lastEnd = -1;
-  for (const m of s.matchAll(tok)) {
-    const gap = lastEnd < 0 ? '' : s.slice(lastEnd, m.index);
-    const joins = lastEnd >= 0 && /^[\s,;/|-]*$/.test(gap);
-    const word = BIP39_SET.has(m[1].toLowerCase());
-    if (word && (joins || run.length === 0)) run.push([m.index, m.index + m[0].length]);
-    else { if (run.length >= 12) runs.push(run); run = word ? [[m.index, m.index + m[0].length]] : []; }
+  const close = () => { if (run.length >= SEED_RUN_LEAST) runs.push([run[0], run[run.length - 1]]); run = []; };
+  for (const m of s.matchAll(/\p{L}+/gu)) {
+    const gap = lastEnd < 0 ? null : s.slice(lastEnd, m.index);
+    const word = seedWord(m[0].toLowerCase());
+    if (!word) close();
+    else {
+      if (run.length && !(gap.length <= SEED_GAP_MOST && SEED_GAP.test(gap))) close();
+      run.push([m.index, m.index + m[0].length]);
+    }
     lastEnd = m.index + m[0].length;
   }
-  if (run.length >= 12) runs.push(run);
-  for (const r of runs.reverse()) s = s.slice(0, r[0][0]) + '[removed]' + s.slice(r[r.length - 1][1]);
+  close();
+  // the first word's own number ("1. ", "#1 (") goes with the run, as #1472 did
+  for (const [first, last] of runs.reverse()) {
+    const lead = /(?<!\d)#?\d{1,2}\s*[.):]?\s*["'(\[]?$/.exec(s.slice(0, first[0]));
+    s = s.slice(0, lead ? lead.index : first[0]) + '[removed]' + s.slice(last[1]);
+  }
   return s;
 };
 const tag = (e, k) => { const t = e.tags.find((x) => x[0] === k); return t ? String(t[1] ?? '') : ''; };
 const said = (x, re) => (re.test(String(x || '')) ? String(x) : '');
+// THE REPORT AS KEPT, NEVER AS RECEIVED (kanban #1590, a bypass of #1472): take() scrubbed 'happened' and 'expected' but wrote the whole signed event into
+// reports.event, so the seed phrase or nsec it removed from the words stayed in the SQLite file (its backups, its exports). The one place a report's event is
+// written now keeps only this: id, pubkey, kind, created_at and sig as received (the signature was checked when it came in; the kept copy is not re-verified),
+// the tags this store reads with their checked values (any other tag scrubbed), and a content rebuilt from the parsed body with every string scrubbed - the
+// debug, the lnAddress and any field nobody reads included. Files written before are rewritten once when opened (keptRewrite below).
+const KEPT_TAG = Object.freeze({ t: /^[a-z]{1,24}$/, source: /^[a-z]{1,24}$/, node: /^[0-9a-f]{64}$/, screenshot: /^[0-9a-f]{64}$/, round: /^[0-9a-f]{8,64}$/,
+  game: /^[a-z0-9-]{1,48}$/, build: /^[0-9a-zA-Z. -]{1,24}$/, lud16: /^(?:[a-z0-9._+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+|lnurl1[02-9ac-hj-np-z]+)$/i });
+const scrubDeep = (v, depth = 0) => (typeof v === 'string' ? scrubKeys(v)
+  : Array.isArray(v) ? (depth > 8 ? [] : v.map((x) => scrubDeep(x, depth + 1)))
+  : v && typeof v === 'object' ? (depth > 8 ? {} : Object.fromEntries(Object.entries(v).map(([k, x]) => [scrubKeys(k), scrubDeep(x, depth + 1)])))
+  : v);
+export function keptEvent(e) {
+  let body; try { body = JSON.parse(e && e.content); } catch { body = null; }
+  const tags = (Array.isArray(e && e.tags) ? e.tags : []).filter(Array.isArray).map((t) => {
+    const name = String(t[0] ?? '');
+    const re = Object.prototype.hasOwnProperty.call(KEPT_TAG, name) ? KEPT_TAG[name] : null;
+    // a known tag keeps its value only when it is of its shape and nothing in it is scrubbed (the hex ones are keys and hashes by shape: never scrubbed)
+    const v = String(t[1] ?? '');
+    if (re) return re.test(v) && (/^[0-9a-f]+$/.test(v) || scrubKeys(v) === v) ? [name, v] : null;
+    return t.map((x) => scrubKeys(String(x ?? '')));
+  }).filter(Boolean);
+  return { id: e && e.id, pubkey: e && e.pubkey, created_at: e && e.created_at, kind: e && e.kind, tags,
+    content: body && typeof body === 'object' ? JSON.stringify(scrubDeep(body)) : scrubKeys(String((e && e.content) ?? '')), sig: e && e.sig };
+}
 
 export function openFeedbackStore(path = ':memory:') {
   const db = new DatabaseSync(path);
-  db.exec(`PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;
+  // secure_delete (kanban #1590): the bytes of a rewritten event are zeroed, not left in a free page of the file
+  db.exec(`PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA secure_delete = ON;
     CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY, pubkey TEXT NOT NULL, type TEXT NOT NULL, signed_at INTEGER NOT NULL, received_ms INTEGER NOT NULL,
       happened TEXT NOT NULL, expected TEXT NOT NULL, game TEXT, round TEXT, build TEXT, event TEXT NOT NULL,
       state TEXT NOT NULL DEFAULT 'new', reason TEXT, duplicate_of TEXT, severity TEXT, amount_sats INTEGER, ticket TEXT, changed_ms INTEGER);
@@ -97,6 +140,12 @@ export function openFeedbackStore(path = ':memory:') {
     if (unnumbered.length) { let n = Number(db.prepare('SELECT COALESCE(MAX(number), 0) AS n FROM reports').get().n);
       const set = db.prepare('UPDATE reports SET number = ? WHERE id = ?'); for (const r of unnumbered) set.run(++n, r.id); } }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS reports_by_number ON reports (number)');
+  // A FILE FROM BEFORE #1590 (keptRewrite): every report's event rewritten to its kept form once; then the WAL is folded in and the file vacuumed, so the raw
+  // copies are gone from the file, not only from the rows
+  { const all = db.prepare('SELECT id, event FROM reports').all(); const set = db.prepare('UPDATE reports SET event = ? WHERE id = ?'); let changed = 0;
+    for (const r of all) { let e = null; try { e = JSON.parse(r.event); } catch { e = null; }
+      const kept = JSON.stringify(e ? keptEvent(e) : { content: '' }); if (kept !== r.event) { set.run(kept, r.id); changed++; } }
+    if (changed && path !== ':memory:') { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); db.exec('VACUUM'); db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } }
   const get = db.prepare('SELECT * FROM reports WHERE id = ?');
   const row = (r) => (r ? { id: r.id, pubkey: r.pubkey, type: r.type, signedAt: r.signed_at, receivedMs: r.received_ms, happened: r.happened, expected: r.expected,
     game: r.game || null, round: r.round || null, build: r.build || null, state: r.state, reason: r.reason || null, duplicateOf: r.duplicate_of || null,
@@ -130,7 +179,7 @@ export function openFeedbackStore(path = ':memory:') {
     { const had = get.get(e.id); if (had) return { ok: true, id: e.id, kept: false, number: had.number, label: feedbackLabel(had.number) }; }
     db.prepare(`INSERT INTO reports (id, pubkey, type, signed_at, received_ms, happened, expected, game, round, build, event, source, node, screenshot, number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(number), 0) + 1 FROM reports))`)
       .run(e.id, e.pubkey, type, e.created_at, nowMs, happened, expected, said(tag(e, 'game'), /^[a-z0-9-]{1,48}$/) || null,
-        said(tag(e, 'round'), /^[0-9a-f]{8,64}$/) || null, said(tag(e, 'build'), /^[0-9a-zA-Z. -]{1,24}$/) || null, JSON.stringify(e), source, node || null, shot || null);
+        said(tag(e, 'round'), /^[0-9a-f]{8,64}$/) || null, said(tag(e, 'build'), /^[0-9a-zA-Z. -]{1,24}$/) || null, JSON.stringify(keptEvent(e)), source, node || null, shot || null);
     const n = get.get(e.id).number;
     return { ok: true, id: e.id, kept: true, number: n, label: feedbackLabel(n) };
   }
@@ -272,7 +321,12 @@ export function openFeedbackStore(path = ':memory:') {
    * failed: true } (a payment that surely did not go) | { ok: false } (not known): only a sure failure opens the link again; an unknown stays
    * paying, for settle() to read. Answers LUD-03's { status: 'OK' } or { status: 'ERROR', reason }.
    */
-  async function claim(k1, invoice, { decode, pay, nowMs = Date.now() } = {}) {
+  // THE ADDRESS IS WRITTEN WITH THE PAYMENT IT NAMES (kanban #1575, state audit 2026-11-12, SM-22): `address` was set by payToAddress before claim()'s
+  // compare-and-set and stayed when that payment surely failed and the link opened again; the player's own wallet then claimed the link and the paid row
+  // named an address that got nothing. Now the address goes into the same UPDATE that takes the row to paying, for that invoice only: a claim through the
+  // withdraw link (the LNURL callback) writes NULL, and a payment that surely failed clears it as it opens the link again.
+  const claim = (k1, invoice, opts = {}) => claimFor(k1, invoice, opts, null);
+  async function claimFor(k1, invoice, { decode, pay, nowMs = Date.now() } = {}, address = null) {
     const w = rewardOf.get(String(k1));
     if (!w) return { status: 'ERROR', reason: 'no such reward' };
     if (w.state !== 'open') return { status: 'ERROR', reason: w.state === 'paid' ? 'this reward was claimed' : w.state === 'void' ? 'this reward was withdrawn: its report is not approved' : 'this reward is being paid' };
@@ -281,22 +335,26 @@ export function openFeedbackStore(path = ':memory:') {
     try { d = await decode(String(invoice || '')); } catch { d = { ok: false }; }
     if (!d || !d.ok) return { status: 'ERROR', reason: 'that invoice could not be read' };
     if (Number(d.amountSats) !== w.amount_sats) return { status: 'ERROR', reason: `the invoice must be for exactly ${w.amount_sats} sat` };
-    const took = db.prepare("UPDATE rewards SET state = 'paying', invoice = ?, payment_hash = ?, tried_ms = ? WHERE k1 = ? AND state = 'open'").run(String(invoice), d.paymentHash || null, nowMs, w.k1);
+    const took = db.prepare("UPDATE rewards SET state = 'paying', invoice = ?, payment_hash = ?, tried_ms = ?, address = ? WHERE k1 = ? AND state = 'open'").run(String(invoice), d.paymentHash || null, nowMs, address, w.k1);
     if (took.changes !== 1) return { status: 'ERROR', reason: 'this reward is being paid' };
     let p;
     try { p = await pay(String(invoice), d.amountSats); } catch (e) { p = { ok: false, why: e.message }; }   // the amount bounds the routing fee (kanban #1450)
     if (p && p.ok) { paidNow(w, p.paymentHash || d.paymentHash, nowMs); return { status: 'OK' }; }
-    if (p && p.failed) { db.prepare("UPDATE rewards SET state = 'open', why = ? WHERE k1 = ? AND state = 'paying'").run(String(p.why || 'the payment failed'), w.k1); return { status: 'ERROR', reason: 'the payment failed: try again' }; }
+    if (p && p.failed) { db.prepare("UPDATE rewards SET state = 'open', address = NULL, why = ? WHERE k1 = ? AND state = 'paying' AND payment_hash IS ?").run(String(p.why || 'the payment failed'), w.k1, d.paymentHash || null); return { status: 'ERROR', reason: 'the payment failed: try again' }; }   // only its own payment (kanban #1571); the address goes with it (kanban #1575)
     db.prepare("UPDATE rewards SET why = ? WHERE k1 = ?").run(String((p && p.why) || 'the payment\'s outcome is not known yet'), w.k1);
     return { status: 'ERROR', reason: 'the payment is not settled yet: it is checked again, do not claim twice' };
   }
-  function paidNow(w, paymentHash, nowMs) {
-    db.prepare("UPDATE rewards SET state = 'paid', payment_hash = COALESCE(?, payment_hash), paid_ms = ?, why = NULL WHERE k1 = ?").run(paymentHash || null, nowMs, w.k1);
+  // `onHash` (kanban #1571): settle() marks paid only the payment it asked about - the row must still be paying under that hash
+  function paidNow(w, paymentHash, nowMs, { onHash = undefined } = {}) {
+    if (onHash !== undefined) {
+      if (db.prepare("UPDATE rewards SET state = 'paid', paid_ms = ?, why = NULL WHERE k1 = ? AND state = 'paying' AND payment_hash = ?").run(nowMs, w.k1, onHash).changes !== 1) return false;
+    } else db.prepare("UPDATE rewards SET state = 'paid', payment_hash = COALESCE(?, payment_hash), paid_ms = ?, why = NULL WHERE k1 = ?").run(paymentHash || null, nowMs, w.k1);
     const r = get.get(w.report);
     if (r && r.state === STATES.ACCEPTED) {
       db.prepare('UPDATE reports SET state = ?, changed_ms = ? WHERE id = ?').run(STATES.PAID, nowMs, r.id);
       db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, STATES.PAID, nowMs, 'lnurlw', paymentHash || null);
     }
+    return true;
   }
   /**
    * A PAYMENT WHOSE OUTCOME WAS NOT KNOWN (a restart mid-pay, a timeout): `status(paymentHash)` -> 'paid' | 'failed' | 'unknown', the payer's own
@@ -306,13 +364,19 @@ export function openFeedbackStore(path = ':memory:') {
   // claim()'s payinvoice still ran (75 s) - with a hold invoice the holder claimed again and was paid twice. Read only after `freshMs`.
   async function settle({ status, nowMs = Date.now(), freshMs = 180000 } = {}) {
     const out = [];
-    for (const w of db.prepare("SELECT * FROM rewards WHERE state = 'paying'").all()) {
+    // A DECISION HOLDS ONLY FOR THE PAYMENT IT READ (kanban #1571): status() may wait 20 s a row and two passes may overlap, so a row read at the
+    // start of a pass can be opened, claimed again and paying under a NEW hash by the time it is decided. Each row is read again before its
+    // decision, and the move is a compare-and-set on the hash that was asked about - an answer about an old payment never touches a new one.
+    for (const { k1 } of db.prepare("SELECT k1 FROM rewards WHERE state = 'paying'").all()) {
+      const w = rewardOf.get(k1);
+      if (!w || w.state !== 'paying') continue;
       if (Number(w.tried_ms || 0) > nowMs - freshMs) { out.push({ k1: w.k1, status: 'unknown', fresh: true }); continue; }
       let st = 'unknown';
       try { st = w.payment_hash ? await status(w.payment_hash) : 'unknown'; } catch { st = 'unknown'; }
-      if (st === 'paid') paidNow(w, w.payment_hash, nowMs);
-      else if (st === 'failed') db.prepare("UPDATE rewards SET state = 'open', why = 'the payment failed' WHERE k1 = ? AND state = 'paying'").run(w.k1);
-      out.push({ k1: w.k1, status: st });
+      let moved = false;
+      if (st === 'paid') moved = paidNow(w, w.payment_hash, nowMs, { onHash: w.payment_hash });
+      else if (st === 'failed') moved = db.prepare("UPDATE rewards SET state = 'open', address = NULL, why = 'the payment failed' WHERE k1 = ? AND state = 'paying' AND payment_hash = ?").run(w.k1, w.payment_hash).changes === 1;   // #1571 own hash, #1575 address cleared
+      out.push(st === 'unknown' || moved ? { k1: w.k1, status: st } : { k1: w.k1, status: 'unknown', stale: true });
     }
     return out;
   }
@@ -339,8 +403,7 @@ export function openFeedbackStore(path = ':memory:') {
     if (!address) return { ok: false, why: 'the report names no Lightning address: send its withdraw link instead' };
     let inv; try { inv = await invoiceFor(address, w.amount_sats, w.comment || ''); } catch (e) { inv = { ok: false, why: e.message }; }
     if (!inv || !inv.ok) return { ok: false, why: `the address gave no invoice: ${(inv && inv.why) || 'no answer'}` };
-    db.prepare("UPDATE rewards SET address = ? WHERE k1 = ? AND state = 'open'").run(address, w.k1);
-    const r = await claim(w.k1, inv.invoice, { decode, pay, nowMs });
+    const r = await claimFor(w.k1, inv.invoice, { decode, pay, nowMs }, address);   // the address is written with its invoice's paying CAS (kanban #1575)
     return r.status === 'OK' ? { ok: true, status: 'paid', address, reward: rewardRow(rewardOf.get(w.k1)) } : { ok: false, why: r.reason, address, reward: rewardRow(rewardOf.get(w.k1)) };
   }
   const rewards = ({ pubkey = null } = {}) => (pubkey ? db.prepare('SELECT * FROM rewards WHERE pubkey = ? ORDER BY created_ms DESC').all(String(pubkey))

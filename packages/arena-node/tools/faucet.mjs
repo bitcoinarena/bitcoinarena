@@ -61,7 +61,7 @@ const rpc = async (method, params = []) => {
   const r = await fetch(env.FAUCET_RPC_URL, { method: 'POST', headers: { authorization: `Basic ${auth}`, 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '1.0', id: 'faucet', method, params }), signal: AbortSignal.timeout(30000) });
   const j = await r.json();
-  if (j.error) throw new Error(j.error.message);
+  if (j.error) throw Object.assign(new Error(j.error.message), { rpcRefused: true });   // bitcoind answered and refused (kanban #1572)
   return j.result;
 };
 const REPORTS = [];   // this day's reports: their count and address, in memory
@@ -105,14 +105,46 @@ const oneAdmin = (fn) => { const run = adminQueue.then(fn, fn); adminQueue = run
 // a welcome answered again to the same caller (its address, an IPv6 /64) within this long: its first answer may never have reached the page
 const WELCOME_REISSUE_MS = 15 * 60 * 1000;
 
+// THE ADDRESS IS BOOKED BEFORE THE SEND (state audit 2026-11-12, kanban #1572): pay() sent first and booked after, so a sendtoaddress that bitcoind
+// committed but answered after the 30 s RPC timeout (a big wallet, a busy node) - or a crash between the send and saveBook - left coins sent to an
+// address with no row, and the installer's retry of the same address was paid again. The row is now written first (`pending`, no txid), as the
+// players' grant does. It is taken out again only when bitcoind refused the send, or the wallet shows no send to that address; any other failure
+// keeps it (the address is never paid twice; a row without its txid is the worst case).
+async function walletSentTo(address) {
+  // the wallet's own record: a txid when it sent to the address, 'none' when it holds no such send, null when it cannot say
+  try {
+    const txs = await rpc('listtransactions', ['*', 1000, 0, true]);
+    if (!Array.isArray(txs)) return null;
+    const t = txs.find((x) => x && x.category === 'send' && x.address === address);
+    return t ? String(t.txid) : 'none';
+  } catch { return null; }
+}
 async function pay(ask) {
   const book = readBook();
   const d = faucetDecide(ask, book, { balanceSats: await balanceSats() });
   if (!d.ok) return d;
-  const txid = await rpc('sendtoaddress', { address: ask.address, amount: (d.sats / 1e8).toFixed(8), replaceable: true, fee_rate: feeRate });
-  book.paid.push({ address: ask.address, ip: ask.ip, sats: d.sats, atMs: Date.now(), txid });
-  saveBook(book);
-  appendFileSync(env.FAUCET_PENDING, `${txid}\n`);
+  // THE BOOK AS IT IS NOW (kanban #1573): the copy read before the awaits was saved whole, and a refill booked by POST /refill (outside the queue),
+  // the payment sweep's decisions and the refill timer's removals made meanwhile were undone - a paid refill no longer counted toward its day cap.
+  // Every write goes onto a freshly read book in one synchronous step (read, change, save), as the sweep and the grant's later writes do.
+  // THE ROW BEFORE THE SEND (kanban #1572): booked `pending` first, its txid set once the send answers
+  const row = { address: ask.address, ip: ask.ip, sats: d.sats, atMs: Date.now(), txid: null, pending: true };
+  { const now = readBook(); now.paid = now.paid || []; now.paid.push(row); saveBook(now); }
+  const settle = (txid) => {   // only this row changes, in a book read again
+    const b = readBook(); const r = (b.paid || []).find((p) => p.address === ask.address && p.pending);
+    if (r) { r.txid = txid; delete r.pending; saveBook(b); }
+    appendFileSync(env.FAUCET_PENDING, `${txid}\n`);
+  };
+  let txid;
+  try {
+    txid = await rpc('sendtoaddress', { address: ask.address, amount: (d.sats / 1e8).toFixed(8), replaceable: true, fee_rate: feeRate });
+  } catch (e) {
+    const sent = e && e.rpcRefused ? 'none' : await walletSentTo(ask.address);
+    if (sent === 'none') { const b = readBook(); b.paid = (b.paid || []).filter((p) => !(p.address === ask.address && p.pending)); saveBook(b); throw e; }
+    if (sent) { settle(sent); console.log(`${new Date().toISOString()} paid ${d.sats} sat to ${ask.address} (${ask.ip || 'no ip'}), found after "${e.message}": ${sent}`); return { ok: true, txid: sent, sats: d.sats }; }
+    console.log(`${new Date().toISOString()} send of ${d.sats} sat to ${ask.address} unsure ("${e && e.message}"): the address stays booked`);
+    throw e;
+  }
+  settle(txid);
   console.log(`${new Date().toISOString()} paid ${d.sats} sat to ${ask.address} (${ask.ip || 'no ip'}): ${txid}`);
   return { ok: true, txid, sats: d.sats };
 }
@@ -182,7 +214,9 @@ async function nodeCheckNow(node, npub) {
 }
 const PLAYED = networkPlayers({ seats: String(env.FAUCET_SEASON_SEATS || '').split(',').filter(Boolean), games: String(env.FAUCET_SEASON_GAMES || 'rock-paper-scissors,nextblock,btc-updown').split(',').filter(Boolean) });
 PLAYED.fresh().catch(() => 0);   // kanban #1484: the list is read at start, so the admin page never waits for it
-if (FEEDBACK && BOUNTY_PAYER) setInterval(() => FEEDBACK.settle({ status: bountyStatus }).catch(() => {}), 60000).unref();
+// ONE SETTLE PASS AT A TIME (kanban #1571): a pass waits up to 20 s a paying row on lncli, so passes overlapped and decided on stale rows
+let settling = false;
+if (FEEDBACK && BOUNTY_PAYER) setInterval(() => { if (settling) return; settling = true; FEEDBACK.settle({ status: bountyStatus }).catch(() => {}).finally(() => { settling = false; }); }, 60000).unref();
 
 /** A player's grant: read the invoice, decide, keep it in the book BEFORE paying (a crash pays nobody twice), and take it out again if no payer could pay. */
 /** Each payer's own node key, read once (lncli getinfo); a payer whose node is the invoice's destination goes last. */

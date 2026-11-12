@@ -36,7 +36,8 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION, ITEMS_VERSION, objectionWindowFits } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
-import { entryFeeBpsForRound, entryPaysReserves, roundSplit, RESERVES_NODE_FEE_BPS } from '../../arena-protocol/src/reserves.js';
+import { entryFeeBpsForRound, entryPaysReserves, roundSplit, RESERVES_NODE_FEE_BPS, entryGiftsInFee, giftsEntryExpected, giftsFeeBps, ROUND_SPLIT_BPS } from '../../arena-protocol/src/reserves.js';
+import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
 import { itemPurchaseKept } from './item-purchase-seat.js';
 import { readTranscript } from './transcript-read.js';
@@ -702,8 +703,18 @@ export class Round {
       // id - passes, as a resend after a reload does; another entry of the same session key in this round is refused. A client makes a new session key for every
       // entry (measured on seat 1: 7,326 entries of all games, no session key twice in a round), so only a forged second entry meets this. Entries a round
       // accepted and relayed are not touched.
+      // BUT A SESSION KEY IS PUBLIC, AND AN ENTRY CARRIES NO SIGNATURE OF IT (kanban #1597, a bypass of #1479): GET /entry hands any entry's key to anyone,
+      // so a copier who saw an honest entry at one seat posted an entry of his own naming the same key to a seat the honest one had not reached yet, and that
+      // seat then refused the honest entry and every resend for good - fewer than the threshold of seats held it, and it was no member (§17). An earlier entry
+      // of the key now holds it here only when it is more than the key's bare name: in a paying round only one backed by a lock at this seat (its stake seen
+      // or its stake lock verified - what seats it, seatedEntriesOf), and in a free round only one that names the same player key - the same player entering
+      // again, which is what #1479 saw. A lockless entry of another player that names the key shuts no one out; it can never play (every batch, mark,
+      // reveal and address must be signed by the session key).
       if (!accepted) { const mine = entryId(contract);
-        if (this.entriesOf(contract.roundId).some((x) => same(x.entry.sessionPubkey, contract.sessionPubkey) && !same(x.entryId, mine)))
+        const holders = asks.stakeMsat === 0n
+          ? this.entriesOf(contract.roundId).filter((x) => same(x.entry.playerPubkey, contract.playerPubkey))
+          : this.seatedEntriesOf(contract.roundId, asks.stakeMsat);
+        if (holders.some((x) => same(x.entry.sessionPubkey, contract.sessionPubkey) && !same(x.entryId, mine)))
           throw new Error('that session key already has an entry in this round: one entry per session key'); }
       // THE HIDDEN MOVE: an entry into a head-to-head round names its commitment, before entry close, and the
       // round seats no more than its game's players; an entry into any other round names none
@@ -713,7 +724,7 @@ export class Round {
         if (!hidden) throw new Error(`an entry into a round of head-to-head game "${m.gameName}" hides its move: it carries no commitment`);
         if (!accepted && typeof asks.entryCloseMs === 'bigint' && BigInt(this.now()) >= asks.entryCloseMs)
           throw new Error(`that round's entries closed at ${new Date(Number(asks.entryCloseMs)).toISOString()}: a head-to-head round takes no entry after it - the moves are being revealed`);
-        // ONLY ENTRIES BACKED BY A LOCK TAKE A SEAT OF A PAYING ROUND (kanban #1437, audit 8 R3); a third lock is refused at /lock (stake-lock-signer-node.js)
+        // ONLY ENTRIES BACKED BY A LOCK TAKE A SEAT OF A PAYING ROUND (kanban #1437, audit 8 R3); which ones, the same at every seat: seatedEntriesOf (kanban #1588)
         const me = entryId(contract);   // seats counted by entry id (kanban #1479)
         const seated = this.seatedEntriesOf(contract.roundId, asks.stakeMsat).filter((x) => !same(x.entryId, me)).length;
         if (seated >= m.players && !accepted) throw new Error(`that round already seats game "${m.gameName}"'s ${m.players} players`);
@@ -766,7 +777,17 @@ export class Round {
     // ON PROTOCOL 11 A GAME'S ENTRY PAYS THE RESERVES (§27A.9): the nodes' fee is the mandatory 4 %, and its donation
     // field carries the developers' 4 % and the reserves' 2 % exactly, with its reserve lock named
     const reserves = entryPaysReserves(asks, feeGame.ok ? feeGame.plugin.manifest : null);
-    const feeBps = reserves ? RESERVES_NODE_FEE_BPS : feeGame.ok ? entryFeeBpsOf(feeGame.plugin.manifest) : NODE_FEE_BPS;
+    // FROM PROTOCOL 27 (kanban #1486) the developers' 4 % and the reserves' 2 % ride in the fee lock beside the nodes' 4 %: the fee is the
+    // whole 10 %, the donation 0, and no donation or reserve output is named - a refused entry gets them back with its stake
+    // AT THE SPLIT IN FORCE AT THE ROUND'S CENSUS HEIGHT (`this.feesFor`, server.js: the fee set GET /fees?height= serves and the page reads) -
+    // the one the seats' settlement splits it by (settlement.js giftsFor); today's split where no fee book is read
+    const gifts = entryGiftsInFee(asks, feeGame.ok ? feeGame.plugin.manifest : null);
+    const giftSplit = gifts ? (() => { const set = typeof this.feesFor === 'function' ? this.feesFor(asks) : null; return set ? roundSplitBps(set) : ROUND_SPLIT_BPS; })() : null;
+    if (gifts) {
+      const g = giftsEntryExpected({ entry: { ...contract, stakeMsat: ownAmount ? contract.stakeMsat : asks.stakeMsat }, split: giftSplit });
+      if (!g.ok) throw new Error(g.why);
+    }
+    const feeBps = gifts ? giftsFeeBps(giftSplit) : reserves ? RESERVES_NODE_FEE_BPS : feeGame.ok ? entryFeeBpsOf(feeGame.plugin.manifest) : NODE_FEE_BPS;
     if (reserves) {
       const split = roundSplit(ownAmount ? contract.stakeMsat : asks.stakeMsat);
       const owed = split.protocolDevsMsat + split.gameDevsMsat + split.reservesMsat;
@@ -776,7 +797,7 @@ export class Round {
     }
     const fee = feeMatchesEntry({
       stakeMsat: ownAmount ? contract.stakeMsat : asks.stakeMsat, feeMsat: contract.feeMsat, donationMsat: contract.donationMsat,
-    }, { feeBps, donationInFee: feeGame.ok && donationInFee(feeGame.plugin.manifest) });
+    }, { feeBps, donationInFee: gifts || (feeGame.ok && donationInFee(feeGame.plugin.manifest)) });
     if (!fee.ok) throw new Error(fee.why);
     const donationCap = feeGame.ok ? donationBpsOf(feeGame.plugin.manifest) : null;
     if (donationCap !== null && contract.donationMsat > (asks.stakeMsat * BigInt(donationCap)) / 10000n)
@@ -873,7 +894,9 @@ export class Round {
     let ok = false;
     try { ok = ed25519.verify(signature, id, sessionPubkey); } catch { ok = false; }
     if (!ok) throw new Error('the batch\'s signature does not verify under the entry\'s session key');
-    return this.batch(body);
+    // AND THE SIGNATURE IS KEPT BESIDE THE BATCH (kanban #1567): a reloaded page re-publishes a batch only on its own
+    // signature, verified under its own session key, and never signs one it did not record (GET /batch-signatures)
+    return this.batch(body, new Uint8Array(signature));
   }
 
   /**
@@ -883,7 +906,7 @@ export class Round {
    * to the mark's inputChainHash: then the player signed them, through the mark. Anything else stores nothing.
    * Answers { ok, why } and stores the batches through `batch` when ok.
    */
-  batchesEndorsedBy(markBytes, batchBytes) {
+  batchesEndorsedBy(markBytes, batchBytes, signatures = []) {
     let c; let signature;
     try { const s = splitSigned(markBytes); signature = s.signature; c = decodeCheckpoint(s.body); }
     catch (e) { return { ok: false, why: `that is not a signed mark: ${e.message}` }; }
@@ -906,8 +929,16 @@ export class Round {
       bodies.push(raw);
     }
     if (!same(prev, c.inputChainHash)) return { ok: false, why: 'the batches handed on with the mark do not end at its input chain hash' };
+    // EACH BATCH'S OWN SIGNATURE, WHEN THE HANDING SEAT HELD ONE (kanban #1567): kept only when it verifies under the same
+    // session key over that batch's id - a wrong or missing one is dropped, never a reason to refuse the endorsed chain
+    const sigOf = (i) => {
+      let sig = null;
+      try { sig = signatures && signatures[i] ? new Uint8Array(signatures[i]) : null; } catch { sig = null; }
+      if (!sig || sig.length !== 64) return null;
+      try { return ed25519.verify(sig, batchId(decodeInputBatch(bodies[i])), e.sessionPubkey) ? sig : null; } catch { return null; }
+    };
     let taken = 0;
-    for (const raw of bodies) { try { this.batch(raw); taken++; } catch { /* held already, or refused: the mark says which */ } }
+    for (let i = 0; i < bodies.length; i++) { try { this.batch(bodies[i], sigOf(i)); taken++; } catch { /* held already, or refused: the mark says which */ } }
     return { ok: true, taken };
   }
 
@@ -918,8 +949,12 @@ export class Round {
    * his message arrived, so re-sending is the correct thing for him to do and
    * the wrong thing for the node to punish. `INSERT OR IGNORE` against the
    * primary key is the whole mechanism.
+   *
+   * `signature`: the player's session-key signature over the batch's id, ALREADY VERIFIED by the caller (signedBatch,
+   * batchesEndorsedBy) - kept beside the row for GET /batch-signatures (kanban #1567), and added to a row taken bare
+   * before. The stored bytes, id and chain are the same either way.
    */
-  batch(bytes) {
+  batch(bytes, signature = null) {
     // NO BATCH A TRANSCRIPT CANNOT FRAME (measured live 2026-10-11 on round 6843f9fb: a 97,309-byte batch
     // was taken by all seven seats and every close then failed "u16 out of range" - the run could never be replayed)
     if (bytes.length > TRANSCRIPT_BATCH_MAX_BYTES)
@@ -1093,8 +1128,11 @@ export class Round {
           'SELECT MAX(seq) m FROM batches WHERE round_id = ? AND entry_id = ?').get(b.roundId, b.entryId).m;
         const n = last === null ? 0 : last + 1;
         this.db.prepare(
-          'INSERT INTO batches (round_id, entry_id, seq, batch_id, bytes) VALUES (?, ?, ?, ?, ?)')
-          .run(b.roundId, b.entryId, n, id, bytes);
+          'INSERT INTO batches (round_id, entry_id, seq, batch_id, bytes, signature) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(b.roundId, b.entryId, n, id, bytes, signature);
+      } else if (signature) {
+        this.db.prepare('UPDATE batches SET signature = ? WHERE round_id = ? AND entry_id = ? AND batch_id = ? AND signature IS NULL')
+          .run(signature, b.roundId, b.entryId, id);
       }
       this.db.exec('COMMIT');
     } catch (e) {
@@ -1985,11 +2023,36 @@ export class Round {
    * `played` (kanban #1544): the entries the close plays and decides - its stake SEEN only, the set the settlement counts (settlement.js
    * entriesOnRecord). A stake lock still waiting for its fee lock holds its seat at the door but is played against nobody and signed VOID:
    * played, it lost into no settlement - its stake came back by refund and the honest winner was paid nothing (a free option).
+   * THE SAME SEATS AT EVERY SEAT (kanban #1588, state audit 2026-11-12 sm1-h2h-1): the seats were the first LOCKS to reach this seat, and locks
+   * reach the seats in network order - seat 0 seated {A, B}, seat 1 {A, C}, each refused the other's lock as full, and at the close each waited
+   * for a lock its own door refused: no seat signed anything, the winner A included. Now /lock keeps every valid lock (no "full" refusal; the
+   * close fetches what is missing, server.js takeEntryParts), and a paying head-to-head round seats the game's `players` lock-backed entries in
+   * the order their ENTRIES were first taken here (rowid): a client posts its entry to every seat before it hands any lock, so the seats hold the
+   * entries in one order while their locks still cross - and a player who entered first is never unseated by a later entry's lock. A locked
+   * entry outside the seats is played against nobody and signed VOID: its lock is never claimed and expires back to its player.
    */
   seatedEntriesOf(roundIdBytes, stakeMsat, { played = false } = {}) {
     const all = this.entriesOf(roundIdBytes);
     if (stakeMsat === 0n) return all;
-    return all.filter(({ entryId }) => !!this.stakeSeen(entryId) || (!played && !!this.stakeLock(entryId)));
+    const locked = all.filter(({ entryId }) => !!this.stakeSeen(entryId) || !!this.stakeLock(entryId));
+    // `played` (kanban #1544) keeps of the seats only the entries whose stake is SEEN - the seats themselves are the same as the door's (#1588)
+    const playedOnly = (list) => played ? list.filter(({ entryId }) => !!this.stakeSeen(entryId)) : list;
+    const players = this.#headToHeadPlayers(roundIdBytes);
+    if (!players) return playedOnly(locked);
+    const order = new Map(this.db.prepare('SELECT entry_id FROM entries WHERE round_id = ? ORDER BY rowid').all(roundIdBytes)
+      .map((r, i) => [Buffer.from(r.entry_id).toString('hex'), i]));
+    const at = ({ entryId }) => order.get(Buffer.from(entryId).toString('hex'));
+    const seated = new Set([...locked].sort((x, y) => at(x) - at(y)).slice(0, players).map(({ entryId }) => Buffer.from(entryId).toString('hex')));
+    return playedOnly(locked.filter(({ entryId }) => seated.has(Buffer.from(entryId).toString('hex'))));   // answered in entry id order, as before
+  }
+
+  /** The game's players when the round is a hosted head-to-head game's, else null (kanban #1588). */
+  #headToHeadPlayers(roundIdBytes) {
+    const row = this.get(roundIdBytes);
+    if (!row) return null;
+    let g;
+    try { g = pluginForRound(decodeRoundContract(new Uint8Array(row.contract)), this.plugins); } catch { return null; }
+    return g.ok && g.headToHead ? g.plugin.manifest.players : null;
   }
 
   /**
@@ -2703,6 +2766,25 @@ export class Round {
     return signers.size;
   }
 
+  /**
+   * EACH BATCH'S SIGNATURE, in chain order (kanban #1567): 64 bytes per batch `handOver` serves, the player's session-key
+   * signature over that batch's id, or 64 zero bytes where this seat took the batch bare. GET /batch-signatures.
+   */
+  batchSignatures(roundIdBytes, entryIdBytes) {
+    const rows = this.db.prepare('SELECT signature FROM batches WHERE round_id = ? AND entry_id = ? ORDER BY seq')
+      .all(roundIdBytes, entryIdBytes);
+    const out = new Uint8Array(64 * rows.length);
+    rows.forEach((r, i) => { if (r.signature && r.signature.length === 64) out.set(new Uint8Array(r.signature), 64 * i); });
+    return out;
+  }
+
+  /** The signature kept beside one batch (kanban #1567), or null. */
+  batchSignature(roundIdBytes, entryIdBytes, batchIdBytes) {
+    const r = this.db.prepare('SELECT signature FROM batches WHERE round_id = ? AND entry_id = ? AND batch_id = ?')
+      .get(roundIdBytes, entryIdBytes, batchIdBytes);
+    return r && r.signature && r.signature.length === 64 ? new Uint8Array(r.signature) : null;
+  }
+
   /** An entry's batches in chain order, through the one a mark names. */
   batchesThrough(roundIdBytes, entryIdBytes, inputChainHash) {
     const out = [];
@@ -3139,7 +3221,25 @@ export class Round {
     if (one) return one.state;
     const feds = this.fedLockSettlementsOf(roundIdBytes);
     if (!feds.length) return null;
-    return feds.every((r) => r.state === 'ACCEPTED') ? 'ACCEPTED' : 'SUBMITTING';
+    // EVERY FEDERATION OF THE SPLIT, NOT ONLY THE ROWS THERE ARE (kanban #1576): a federation the split names with no row yet (its part never built) keeps it SUBMITTING
+    const accepted = new Set(feds.filter((r) => r.state === 'ACCEPTED').map((r) => r.federation));
+    return feds.every((r) => r.state === 'ACCEPTED') && this.fedLockSplitOf(roundIdBytes).every((f) => accepted.has(f)) ? 'ACCEPTED' : 'SUBMITTING';
+  }
+
+  /**
+   * THE FEDERATIONS A ROUND'S SPLIT NAMES (kanban #1576), kept before anything is signed: the round is settled only once each holds an ACCEPTED row.
+   * Never removed; a federation already kept is kept once.
+   */
+  putFedLockSplit(roundIdBytes, federations) {
+    const have = new Set(this.fedLockSplitOf(roundIdBytes));
+    const fresh = [...new Set(federations.map((f) => String(f).toLowerCase()))].filter((f) => !have.has(f));
+    if (!fresh.length) return;
+    const put = this.db.prepare('INSERT OR IGNORE INTO fed_lock_split (round_id, federation_id) VALUES (?, ?)');
+    durably(this.db, () => { for (const f of fresh) put.run(Buffer.from(roundIdBytes), f); });
+  }
+
+  fedLockSplitOf(roundIdBytes) {
+    return this.db.prepare('SELECT federation_id FROM fed_lock_split WHERE round_id = ? ORDER BY federation_id').all(Buffer.from(roundIdBytes)).map((r) => r.federation_id);
   }
 
   /** A series' proven publication fee (§5A.5): kept once; { txid, feeSats } or null. */
@@ -3176,7 +3276,8 @@ export class Round {
 
   /**
    * THE CLOSED ROUNDS WITH A STAKE LOCK AND NO ACCEPTED SETTLEMENT HERE, closed between two times (kanban #803): what a settlement's
-   * retry reads. A round that takes any federation counts until every row it holds is ACCEPTED.
+   * retry reads. A round that takes any federation counts until every row it holds is ACCEPTED, and every federation its split names
+   * holds one (kanban #1576: a federation whose part was never built has no row and kept the round off this list).
    */
   closedLockRoundsUnsettled(fromMs, toMs) {
     // FROM THE LOCKS, NEVER FROM THE ROUNDS (kanban #927, measured 2026-11-01): left to choose, SQLite walked all 122,591 rounds with their contracts and held a seat's loop for 398 s, every minute. There are 4,736 locks
@@ -3185,7 +3286,9 @@ export class Round {
         AND NOT EXISTS (SELECT 1 FROM lock_settlements l WHERE l.round_id = r.round_id AND l.state = 'ACCEPTED')
         AND NOT EXISTS (SELECT 1 FROM settle_retries t WHERE t.round_id = r.round_id AND t.scope = '' AND t.state IN ('SETTLED', 'EXPIRED'))
         AND NOT (EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id)
-          AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id AND f.state <> 'ACCEPTED'))`)
+          AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id AND f.state <> 'ACCEPTED')
+          AND NOT EXISTS (SELECT 1 FROM fed_lock_split p WHERE p.round_id = r.round_id AND NOT EXISTS
+            (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = p.round_id AND f.federation_id = p.federation_id AND f.state = 'ACCEPTED')))`)
       .all(CLOSED, fromMs, toMs).map((r) => new Uint8Array(r.round_id));
   }
 
@@ -3377,7 +3480,9 @@ export class Round {
         AND (EXISTS (SELECT 1 FROM lock_settlements s WHERE s.round_id = o.round_id AND s.state = 'ACCEPTED')
           OR (NOT EXISTS (SELECT 1 FROM lock_settlements s WHERE s.round_id = o.round_id)
             AND EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id)
-            AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id AND f.state <> 'ACCEPTED')))`).all()
+            AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id AND f.state <> 'ACCEPTED')
+            AND NOT EXISTS (SELECT 1 FROM fed_lock_split p WHERE p.round_id = o.round_id AND NOT EXISTS
+              (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = p.round_id AND f.federation_id = p.federation_id AND f.state = 'ACCEPTED'))))`).all()
       .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id) }));
   }
 

@@ -26,6 +26,7 @@ release commit and brings this file up to date with it - new machines added, cha
 11. [State the 2026-11-06 fixes introduced or changed](#11-state-the-2026-11-06-fixes-introduced-or-changed)
 12. [The page, its storage and its frames](#12-the-page-its-storage-and-its-frames)
 13. [State the 2026-11-10 audits (5, 6) introduced or changed](#13-state-the-2026-11-10-audits-5-6-introduced-or-changed)
+15. [State audit 2026-11-12](#15-state-audit-2026-11-12)
 
 ## 1. Rounds and settlement
 
@@ -930,7 +931,7 @@ Line numbers: 2.0 (worktree-health-199 6e84fed99), packages/arena-node/src/serve
 | POST /item-purchase | 9166 | buyer's page, then every seat that kept it | buyer sig, manifest/donation set/served list (`purchaseStands`), federation output by output with the item-bound image | DB item_purchases PENDING->KEPT in IMMEDIATE txns (item-purchase-seat.js 82-118), donation_outputs + reserve row (INSERT OR REPLACE), fan-out POST to all seats when kept 'new' | yes - #1180 fix holds (claim before the await, CAS to KEPT) |
 | POST /donation-gift | 9220 | donor's page, then every seat that kept it | donor sig + set shares (`giftStands`), federation outputs with image = donor key | DB donation_gifts (INSERT OR IGNORE, donation-gift-seat.js 42), donation_outputs INSERT OR REPLACE (round.js 3369), fan-out POST to all seats | partly - the #1180 race is still open on this path (doorsB-3) |
 | POST /reach-check | 9285 | a seat checking a new node's reachability (installer) | none; rate limit 6/min per asker IP, 60/min total (reach-check.js 53-80) | memory `asks` map (pruned at 10 000), one outgoing HTTP GET ip:port/reach-nonce | partly - asker IP taken from x-forwarded-for when the socket is localhost (doorsB-7) |
-| POST /handout | 9370 | the player's page, one sealed share per signer node | round's threshold, own share on the published polynomial (`takeHandout`) | DB handouts (sealed bytes only), tx_steps (named only on success) | yes - per the door's checks; a node dealt nothing keeps nothing |
+| POST /handout | 9370 | the player's page, one sealed share per signer node | round's threshold, own share on the published polynomial (`takeHandout`); a head-to-head round inside its handout lead (2 s live, #1485) takes it only with a stake lock the federation holds for its A0 (`x-arena-stake-lock`, #1596) - a client gets its handout taken before it locks | DB handouts (sealed bytes only), tx_steps (named only on success) | yes - per the door's checks; a node dealt nothing keeps nothing |
 | POST /census-objection | 9393 | a client that found the census block disagreeing with an explorer | none on the asker; the seat asks the explorer URL THE CLIENT NAMES (9396-9403) | memory `censusObjections` (512, 9406-9407): the round then refuses every new entry (9422-9423) and lists `census_objected` | no - the "independent" explorer is the attacker's own URL (doorsB-1) |
 | POST /entry | 9412 | player's page; seats relaying a client's copy (`x-arena-relayed`) | entry contract decode, round held, censusObjection, seating, funded(), stake ceiling, federation port/gateways/fee rule/bonded, donation/reserve outputs | DB entries (`round.enter`), tx_steps; outgoing relay to the seats the client missed (entry-relay.js, skipped when the header is set) | yes - the relay header only suppresses the relay of the caller's own entry |
 | GET /federation-invoice | 9617 | player's page before entry (old invoice-first path) | none | federation.receive (an LNv2 invoice at the federation) | yes in practice - main.js passes no `federation`, so it answers 409 (dormant) |
@@ -1542,3 +1543,95 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### Ballot tally memory (ballot-tally.js `lives` / `spansAll`) vs the kept outcome (kanban #1570)
+- Invariant: the serving rule (`spans`, configServesRound) and GET /config (`live`) always answer from every PASSED record in `ballot_proposals`, from the tally's construction on. `refreshLive()` runs when the tally is made (a restart reads the kept outcomes at once) and on every pass that read a tip, including one skipped because the chain did not answer the reorg check (#1152). A restarted seat never serves a round naming the config its own kept outcome replaced.
+
+#### SM-22 (change) Feedback reward link: a decision moves only the payment it read (kanban #1571)
+- Invariant: a reward is never `open` while a payment of it may still be in flight. `settle` reads each `paying` row again just before it decides it, and moves it (paying -> paid, paying -> open) by compare-and-set on the `payment_hash` it asked `status()` about (`WHERE k1 = ? AND state = 'paying' AND payment_hash = ?`); a row that was opened and claimed again under a new hash meanwhile is left `paying` for a later pass. claim()'s own sure failure reopens only under its own hash.
+- One settle pass at a time: the faucet's 60 s interval skips a tick while the previous pass is still running (`settling`, as `sweeping` does for the sweep).
+
+#### SM-19 (change) Faucet book: one JSON file, several writers (kanban #1573)
+
+- Every writer of the book that awaits anything (bitcoind, lncli) applies only its own change to a book read after its last await, in one synchronous step (readBook -> change -> saveBook). `pay()` (POST /faucet) reads the book for its decision, but pushes its `paid` row onto a freshly read copy after `sendtoaddress`; a refill row booked by POST /refill meanwhile, the sweep's keep/drop/rebook/forget decisions and the refill timer's removals stay in the book. Invariant: a paid refill always has its row in `book.refills` (its day cap counts it).
+
+#### Seat e-cash exchange x liquidation halt (ecash-exchange.js `step`, server.js `halted`, liquidations.js) - kanban #1577
+- Invariant: a federation this seat holds HALTED (a signed HALTED record or the seats' halt proof, `liquidations.haltOf`) takes no new exchange, out of it or into it (409), before anything is written or any note is taken.
+- `createLiquidations` exports `haltOf` and `haltedFederations`; server.js passes `halted` without a catch. A halt check that throws refuses the exchange (503, nothing taken): "cannot tell" is never read as "not halted". Before the fix `haltOf` was missing, the call threw, the catch answered null, and a halted federation's notes were exchanged here and claimed at the liquidation too (paid twice).
+
+#### SM-19 (change) Faucet book: the installer's POST /faucet (kanban #1572)
+- `pay()` books the address before `sendtoaddress`: a row `{ address, ip, sats, atMs, txid: null, pending: true }` is saved first; a send that answers sets its txid, drops `pending`, and appends the txid to `FAUCET_PENDING`.
+- On a failed send the row is removed only when bitcoind answered with an error (it refused the send) or the wallet's `listtransactions` holds no send to that address; a send found there is booked with its txid; anything else (a timeout, no answer, a crash) keeps the row `pending`.
+- Invariant: no coins go to an address without a row naming it in the book, so an address is paid at most once whatever the RPC or the process does between the send and the book.
+
+#### Seat e-cash exchange x liquidation halt: an asked reissue (ecash-exchange.js `step`) - kanban #1579
+- Invariant: a RECEIVING row that asked its reissue (`receive_asked` 1, or NULL from before #1204) is never stuck by a halt of `from` or `to`. The halt refusal (409, nothing written) holds for a new exchange and for a RECEIVING row that has not asked yet (`receive_asked` 0). An asked row asks the receive again: AlreadyReceived (its own reissue from before the halt) -> TAKEN -> SENDING -> PAID, the player paid in `to`; a fresh Success after the halt (the earlier ask never reached the federation) -> REFUSED, nothing paid, the notes held for the operator. TAKEN and SENDING rows are paid out after a halt as before (#1272).
+
+#### Per-federation settlement rows (kanban #1576)
+- Before a round that takes any federation signs anything in any federation, `#settleFederations` keeps the split's federations in `fed_lock_split` (one row per federation, never removed). A federation gets its `fed_lock_settlements` row only at its first SUBMITTING, so a part that fails before that (its port not reachable this pass, fewer than the threshold committed, a share withheld) used to leave no row.
+- Invariant: the round is ACCEPTED (`settlementState`), off the retry list (`closedLockRoundsUnsettled`) and open to late settlements (`lateSettlementCandidates`) only when every row is ACCEPTED **and** every federation in `fed_lock_split` holds an ACCEPTED row. A named federation with no row keeps the round SUBMITTING, so `retryUnsettled` asks it again.
+- A round with no `fed_lock_split` rows (settled before this change, or a seat that only took handed signatures) reads its rows as before.
+
+#### Federation record kept per federation: the halt start (federation-records.js `halted`, kanban #1578)
+- Invariant: `halted[fid].height` is the lowest height of the current run of HALTED records, the same at every seat that holds the run's records, before and after a restart (§23A.5). The liquidation clocks (`liquidatesAt`, claim window, late-claim tail, remainder split) count from it.
+- Before: only memory held the run's start. The store keeps the newest record per federation, and `restore()` keep()s that one, so a restarted seat counted the halt from the newest HALTED record, later than a seat that did not restart.
+- Now: when `keep()` takes a HALTED record and no halt is held, the start is read from the record history (`historyOf`, which reads `store.loadAt` once): from the kept height down, height by height, while the record is HALTED. Any non-HALTED take still clears it.
+- Limit: a seat that first sees the federation by mirror after the run began holds no older records, so it counts from the first record it verified until those records reach its history.
+
+#### SM-22 (add) Feedback reward link: the `address` column (#1575)
+- `address` is written only in the compare-and-set that takes the row open -> paying, together with that payment's invoice: payToAddress passes the report's Lightning address, a claim through the withdraw link (LNURL callback) writes NULL. paying -> open (a sure failure, or `settle` reading failed) clears it. Invariant: a `paid` reward names an address only when the invoice it paid came from that address.
+
+#### SM-E (change) Refused-lock return of a lock /lock refused (server.js POST /refused-lock, kanban #1582)
+- "The player entered the round here" now means an entry of that player whose stake this seat saw or whose stake lock it holds (round.js `seatedEntriesOf`'s rule), not any entry it holds: the /entry door takes an entry before any lock (#1437), and a lock /lock refused for it (head-to-head full, another entry of the key staked, a lock after close) is never counted or settled by the round.
+- Invariant: a stake lock every seat refused at /lock for an entry they hold is kept at /refused-lock once the entries closed and `unenteredGraceMs` passed, and its forfeit by handout id returns it before its expiry. A lock a seat verified (`stakeLockAt`) is still never kept as refused there, so the seats that settle it and the seats that return it stay disjoint.
+- Not covered: a fee lock verified before its stake lock was refused stays a verified fee lock (`feeLockAt`) and only expires.
+- With #1588 (merged in #1489): /lock no longer refuses a head-to-head lock as "full", so the lock of a player left outside the seats (seats = the game's players by entry order) is HELD and verified, never refused. Its return is GET /forfeit (forfeit.js `#outsideTheSeats`): a held stake lock of a paying head-to-head entry not in `seatedEntriesOf` comes back once this seat's settlement is ACCEPTED and did not claim it.
+
+#### SM-N1 (add) Guardian handle per slot (node-start.js `startNode`, `guardianControl`, cookie watch, exit watch)
+- Slots `guardian` and `next`, each a handle: none (`running: false`) / running (one fedimintd, or its systemd unit, on `<store>.guardian[-next]`).
+- Every move of a slot's handle - owner start / stop, `retire`, `freshSetup`, the cookie watch's restart, the exit watch's restart, the node's close - runs on that slot's own promise chain (`serial(slot, ...)`), one at a time (kanban #1580).
+- Invariant: one fedimintd per guardian data dir, and it is the one the handle holds. A second Start sent while one is in flight finds the first one's guardian running and spawns nothing; a Stop sent during a Start waits for it and stops what it started, so a Stop that answered ok leaves no guardian running.
+- After `node.close()` (flag `closed`) no door and no watch starts a guardian again; close stops what each slot holds after the moves queued before it.
+
+#### SM-C1 x SM-C2 (change) E-cash exchange: a seat's 4xx after it took the notes (kanban #1583)
+- Invariant: a page exchange record is `refused` (terminal, never asked again) only for notes that were never handed to a seat. While the seat's row is TAKEN or SENDING (or RECEIVING with `receive_asked`), the page record is `handed`, `reclaiming` or `answered`, never `refused`.
+- Seat (`ecash-exchange.js`): a row whose notes it took or may have taken (TAKEN, SENDING, RECEIVING asked before) is never answered 4xx for a passing condition: no client of a federation yet (a restart, guardians not answering at boot) or a halted federation answers 503 "ask again". The per-exchange cap is checked only for a new row. A new row, or a RECEIVING one never asked, may still be refused with 409.
+- Page (`ecash-transfer.js`): a Rejected take-back after a seat's refusal moves the record back to `handed` with `seatTook` (asked again, same seat, same notes), as after a silence. A record with `seatTook` that meets another refusal is asked again, never taken back from twice. Only `kept -> reclaiming` (`neverHanded`) goes to `refused` on Rejected.
+
+#### SM-R (change) Head-to-head close retry (verify.js `#retryClose`, `retry`, `#kept`; kanban #1586)
+- A head-to-head entry is signed only from the round's reveals (WIN / DRAW / LOSS, FORFEIT only for no reveal), by `#headToHeadClose`. A close whose decide failed (a sandbox call past ASK_MS, a load past LOAD_MS, a thrown error) leaves each entry HOLDING; the finality watch's `retryClose` (and `retry`) runs `#headToHeadClose` again for that one entry - reveals carried, decide asked, `#sign` - or answers `{ stored: false, why }`. It never reaches the replay pool, `#neverStarted` or `stoppedOutcome`, and `#kept` refuses a head-to-head entry outright, so no seat signs a revealed move as a run that never started.
+- `sandboxFor` caches a core's load refusal for the thread's life, except a load that only ran out of LOAD_MS: that one is tried again on the next ask.
+
+#### SM-T2 x SM-L2 (change) Kept round wallets and the collect record (kanban #1585)
+- A tab's round wallets (`roundWallets`) and the empty note (`arena.tabempty.<key>`) are keyed by round and phrase (`walletKey`: `<round id>.<seed hex 16>`), as the round's lock database is (`arena.lockdb.<round16>.<sha(lockSecretFor(seed, round))16>`). A record is looked at, and marked done with its `tabMsat`, only through its own phrase's round wallet: a second phrase's record in the same round never reads the first phrase's wallet or empty note, so its own wallet is never tidied away unread. The browser lock (`arena.round.<round id>`) stays per round. An empty note under the old round-only key is no longer read; that round's wallet is joined and read once more.
+
+#### SM-L1 (change) Stake lock record: a refused record is kept aside (kanban #1584)
+- `refused` is decided from three "not stored" reads 2 s apart on a reload (reconcileKeptLock), not from the guardians' word: their consensus can still accept that transaction afterwards.
+- refused -> intent (a new PLAY, keptLockStake) now first copies the refused record to `arena.lock.orphan.<tag>.<refusedMs>` (putRoomy); with no room for the copy the PLAY is refused before anything is spent.
+- Invariant: no lock record this browser wrote with an outpoint is overwritten without a copy - every transaction the page submitted stays named (outpoint, fields, stake) in `arena.lock.saved`, `arena.lock.intent` or `arena.lock.orphan`.
+
+#### Round close at start: no close before the seat can learn who is in a round (server.js `afterClose`, kanban #1587)
+- Invariant: no close logic (entry-void at the close, settleRound, the stakes, the finality watch) runs before serve() has set `headToHeadReady`; a close asked for earlier - the start's synchronous close sweep, a round overdue while the seat was down - waits for it, so a head-to-head round always goes through membersKnown (#1071) first. A seat restarted past a round's end signs what the threshold signs, never VOID over the entries it alone holds.
+- One round's close logic runs once at a time (`closingNow`): the start's sweep and resumingCloses no longer close one round twice in parallel; a second ask while one runs gets the running one's promise.
+
+#### H2H (change) Head-to-head reveal per seat and the verdict signed over it (kanban #1589)
+- A seat signs no head-to-head verdict while the round's reveal set is open: a seated entry has no reveal held here and a peer of the round did not answer this seat's `/reveals` pull (`carryReveals` names it in `down`; a 404 - the peer holds no such round - counts as an answer). Its close returns each entry `waiting`, the finality watch closes the round again (`retryClose`, which re-runs `#headToHeadClose` for a head-to-head round) until every peer answered or the result window has passed; only then are all entries decided and signed together.
+- Invariant: an entry's result at every seat is decided from every reveal that stood in the window at any seat of the round that answered before the result window closed; two seats never sign opposite verdicts because one peer missed one seat's single pull.
+
+#### SM-M (change) Stake-share release in a market order book (kanban #1593)
+- `mayRelease` reads the book standing (`bookStanding`) before any other rule of an attested round, a scalar market's too: an order still in an undecided batch is refused, an unfilled order is refused (its lock comes back whole), a filled order is released (`FILLED_ORDER`). The scalar pari-mutuel table decides only a pool. The share door releases exactly the locks the book settlement (`#bookPlan`, `bookSettlement`) claims.
+
+#### SM-H2H (change) Head-to-head seating per seat (round.js `seatedEntriesOf`, kanban #1588)
+- Invariant: every seat of one paying head-to-head round seats the same players once it holds the same locks and took the entries in the same order (a client posts its entry to every seat before it hands a lock). The seated set is the game's `players` lock-backed entries (stake seen or stake lock held) in the order their entries were first taken at this seat (rowid) - not the order their locks arrived. A player who entered first is never unseated by a later entry's lock.
+- /lock no longer refuses a valid stake lock because the round already seats its players ("this lock seats no one" is gone): a seat that saw B's lock first and one that saw C's first both keep both, and the close (`membersKnown` -> `takeEntryParts`) fetches any lock still missing, so no seat waits for a lock its own door refuses.
+- A locked entry outside the seats is played against nobody and signed VOID; its stake and fee locks are never claimed and expire back to the player (EXPIRE).
+- The /entry door still refuses a new entry once `players` lock-backed entries stand (#1437); an entry relayed as accepted is taken as before.
+
+#### SM-I4 (change) Auto-update record vs the update journal's resume (kanban #1581, audit #1489 sm1-node-2)
+- Invariant: every rollback of a release on this node is in auto-update.json (`rolledBack: true`, `to` = its VERSION, `commit` = its COMMIT) before the next check reads it - the updater's own (updateOnce), one that threw (#1440), and one the journal's resume made after its updater died (`resumeUpdate`, `resumed: true`; at the service's start through `resumeUnderLock`, or inside `updateNode`). So the #1369 day's wait applies to all of them.
+- `updateNode` with `retryRolledBack: false` (the auto updater, unless `bitcoinarena update` forces it) does not move to the release its own resume rolled back in the same call; it answers rolled back.
+
+#### SM-M (change) Stake-share release in a scalar pool (kanban #1594)
+- Invariant: the share door counts exactly the entries the settlement counts. In a scalar market round that ended a pool (no certified batch holds an order, §0A.7b), `mayRelease` tables only the plain picks whose stake this seat saw - the set `#attestedPlan` and forfeit `#marketRefund` table (#1436) - so a lock is released exactly when the settlement claims it. An order in a pool is no entry of the round: its share stays sealed and its lock comes back whole. A scalar round that is a book goes to the book's rule (filled orders released, `FILLED_ORDER`). Book or pool is read from `isBook` (order-batch.js), wired in server.js as for the forfeit door.

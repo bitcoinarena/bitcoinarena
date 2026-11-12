@@ -108,7 +108,6 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
     if (typeof ecash !== 'string' || ecash.length < 20 || ecash.length > 200_000) return refuse(400, 'ecash is the e-cash string of federation `from`');
     let want; try { want = BigInt(amountMsat); } catch { want = -1n; }
     if (want <= 0n) return refuse(400, 'amountMsat is the amount the e-cash carries');
-    if (want > maxMsat) return refuse(409, `this seat exchanges at most ${maxMsat / 1000n} sat at a time`);
     // a row from before kanban #1204 is keyed by the string as it came: its retries find it there
     const legacy = createHash('sha256').update(ecash.trim()).digest('hex');
     const id = get.get(legacy) ? legacy : noteKey(ecash);
@@ -122,21 +121,38 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
   async function step({ id, from, to, ecash, want }) {
     let r = get.get(id);
     if (r && r.state === EXCHANGE.PAID) return paidAnswer(r, true);
+    // A TAKEN ROW IS NEVER ANSWERED 4xx (kanban #1583, audit #1489 sm1-page-2): the page reads 400/404/409/429 as "this seat took nothing",
+    // takes its notes back (Rejected - the seat holds them) and gives the exchange up as refused for good. A row whose notes this seat took or
+    // may have taken (TAKEN, SENDING, RECEIVING asked before) meets a passing condition here - its client of a federation not up yet after a
+    // restart, the cap lowered - with 503 "ask again"; only a new row, or a RECEIVING one never asked, may still be refused
+    const holdsNotes = !!r && (r.state === EXCHANGE.TAKEN || r.state === EXCHANGE.SENDING
+      || (r.state === EXCHANGE.RECEIVING && (r.receive_asked === null || r.receive_asked === undefined || Number(r.receive_asked) === 1)));
+    if (!r && want > maxMsat) return refuse(409, `this seat exchanges at most ${maxMsat / 1000n} sat at a time`);
     if (r && r.state === EXCHANGE.REFUSED) return refuse(409, `federation ${r.from_fed.slice(0, 8)} did not reissue that e-cash: ${r.why || 'refused'}`);
     if (r && (r.from_fed !== from || r.to_fed !== to)) return refuse(409, 'that e-cash is in an exchange between two other federations here');
     // NO NEW EXCHANGE OUT OF OR INTO A FEDERATION BEING LIQUIDATED (kanban #1244, audit 3 MONEY-3): its notes are claimed at the arbitration set,
     // and notes claimed there and exchanged here too would be paid twice. Asked before anything is written - and only for an exchange whose notes
     // this seat has not taken yet (kanban #1272, audit 4 #1257 fixesB-1): one taken before the halt (TAKEN, SENDING) is paid out, a PAID one is
     // answered again (above); refused, they stayed with the seat for good and the player was never paid
+    // AN ASKED REISSUE IS FINISHED AFTER A HALT (kanban #1579, state audit 2026-11-12): a RECEIVING row that asked already (receive_asked
+    // = 1, or NULL from before #1204) may hold the player's notes in the seat's client - spent at the federation, so the arbitration set
+    // refuses his claim too. Refused here it stayed RECEIVING for good and nothing was paid. Such a row asks again below and takes only
+    // AlreadyReceived (its own earlier reissue, from before the halt); a fresh Success after the halt is refused like a new exchange.
+    let haltedWhy = null;
     if (!r || r.state === EXCHANGE.RECEIVING) {
       for (const fid of [from, to]) {
-        let h = null; try { h = halted(String(fid || '').toLowerCase()); } catch { h = null; }
-        if (h) return refuse(409, `federation ${String(fid).slice(0, 16)} is being liquidated${Number.isInteger(h.height) ? ` (halted at ${h.height})` : ''}: its notes are claimed at the arbitration set, not exchanged here`);
+        // a halt check that cannot answer refuses (kanban #1577): read as "not halted", a liquidated federation's notes were paid twice
+        let h = null; try { h = halted(String(fid || '').toLowerCase()); } catch (e) { return refuse(503, `cannot tell whether federation ${String(fid).slice(0, 16)} is being liquidated: ${e && e.message ? e.message : e}`); }
+        if (h) { haltedWhy = `federation ${String(fid).slice(0, 16)} is being liquidated${Number.isInteger(h.height) ? ` (halted at ${h.height})` : ''}: its notes are claimed at the arbitration set, not exchanged here`; break; }
+        // an asked RECEIVING row (holdsNotes, kanban #1583) is never refused 4xx here: it goes on to finish its reissue (#1579); a new or unasked row gets 409 below
       }
+      const askedEarlier = r && (r.receive_asked === null || r.receive_asked === undefined || Number(r.receive_asked) === 1);
+      if (haltedWhy && !askedEarlier) return refuse(409, haltedWhy);
     }
     const [pin, pout] = await Promise.all([portOf(from), portOf(to)]);
     if (!pin || !pout || typeof pin.ecashReceive !== 'function' || typeof pout.ecashSend !== 'function')
-      return refuse(409, 'this seat holds no client of one of the two federations, or its tool cannot move e-cash');
+      return holdsNotes ? refuse(503, 'this seat\'s client of one of the two federations is not up yet and it holds your exchange: ask again with the same e-cash')
+        : refuse(409, 'this seat holds no client of one of the two federations, or its tool cannot move e-cash');
     if (!r) {
       const paidHour = lastHour.all(now() - 3_600_000).reduce((t, x) => t + BigInt(x.out_msat || x.pay_msat || 0), 0n);
       if (paidHour + want > perHourMsat) return refuse(429, `this seat's exchanges for this hour are spent (${perHourMsat / 1000n} sat an hour)`);
@@ -157,6 +173,12 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
       try { got = await pin.ecashReceive(ecash); }
       catch (e) { note(id, EXCHANGE.RECEIVING, `the receive did not answer: ${e.message}`); return refuse(503, `federation ${from.slice(0, 8)} did not answer the reissue (${String(e.message).slice(0, 120)}); ask again with the same e-cash`); }
       let carried = null;
+      if (got.state === 'Success' && haltedWhy) {
+        // kanban #1579: the earlier ask never reached the federation - this reissue is new, after the halt: not exchanged
+        transition(id, EXCHANGE.RECEIVING, EXCHANGE.REFUSED, { why: `reissued after the halt, held for the operator: ${haltedWhy}`.slice(0, 300) });
+        log(`[exchange] ${id.slice(0, 12)}: a fresh reissue after the halt - refused, held for the operator, nothing paid`);
+        return refuse(409, haltedWhy);
+      }
       if (got.state === 'Success') carried = BigInt(got.msat || 0);
       else if (got.state === 'AlreadyReceived' && !askedBefore) {
         // RECEIVED BEFORE, BUT NOT BY THIS EXCHANGE (kanban #1204 RES-3): another spelling of the same notes, or notes this seat took elsewhere

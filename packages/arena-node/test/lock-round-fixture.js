@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { openStore } from '../src/store.js';
-import { serve } from '../src/server.js';
+import { serve, STAKE_LOCK_HEADER } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeAssigned } from './assignment.js';
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
@@ -171,7 +171,7 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
 // until it resolves), a game's the network's - as the page pays it
 const gameFeeBps = (w) => { const f = pluginForRound(w.c, (w.a || w.nodes[0]).round.plugins); return f.ok ? entryFeeBpsOf(f.plugin.manifest) : undefined; };
 // `order`: { price (PRICE_SCALE units), expiryMs } - a market order: the entry buys `pick` at that limit
-export async function lockAndPlay(w, who, { session: fixedSession = null, feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, unreached = [], expirySpan = null, frontendPk = null, lockHeaders = null } = {}) {
+export async function lockAndPlay(w, who, { session: fixedSession = null, feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, unreached = [], expirySpan = null, frontendPk = null, lockHeaders = null, lockFirst = true } = {}) {
   const session = fixedSession || ed25519.utils.randomSecretKey();   // `session`: a fixed session key, for a test that enters twice with one (kanban #1479)
   const preimage = secretScalar();
   const e = rand(32);
@@ -255,7 +255,13 @@ export async function lockAndPlay(w, who, { session: fixedSession = null, feeLoc
     // `unreached`: the seats (by index) this client's posts never reach
     if (unreached.includes((w.nodes || [w.a, w.b]).indexOf(d))) continue;
     const base = `http://127.0.0.1:${d.port}`;
-    assert.equal((await fetch(`${base}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) })).status, 201);
+    // THIS CLIENT LOCKS FIRST (the stake lock is in the federation above, as the RPS bot's was): it shows that lock with its handout, which a
+    // head-to-head seat needs inside its handout lead (kanban #1596). `lockFirst: false` plays the page, which posts the handout before any lock;
+    // 'unheld' shows a lock at an outpoint the federation does not hold
+    const shownAt = lockFirst === 'unheld' ? `${toHex(rand(32))}:0` : `${toHex(outpoint.txid)}:${outpoint.outIdx}`;
+    const shown = lockFirst ? { headers: { [STAKE_LOCK_HEADER]: JSON.stringify({ outpoint: shownAt, fields: lockFieldsToJson(fields) }) } } : {};
+    const handed = await fetch(`${base}/handout`, { method: 'POST', body: encodeHandout(dealt.handout), ...shown });
+    assert.equal(handed.status, 201, handed.status === 201 ? undefined : await handed.text());
     const joined = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
     assert.equal(joined.status, 201, await joined.text());
     // PICK (a): THE STAKE COUNTS WHICHEVER LOCK COMES LAST - the fee lock may be handed first.
@@ -264,8 +270,10 @@ export async function lockAndPlay(w, who, { session: fixedSession = null, feeLoc
       assert.equal(fee.status, 201, await fee.text());
     };
     if (feeLock && feeFirst) {
+      // a seat the entry relay already handed the stake lock (kanban #1598: an entry's locks go with it) counts the stake on the fee lock, rightly
+      const relayed = !!d.round.stakeLock(eid);
       await handFee();
-      assert.equal(d.round.stakeSeen(eid), null, 'a stake counted on its fee lock alone, before its stake lock');
+      if (!relayed) assert.equal(d.round.stakeSeen(eid), null, 'a stake counted on its fee lock alone, before its stake lock');
     }
     // `only`: the seats (by index) handed the locks - the others hold the entry and never verify a lock of it
     if (only && !only.includes((w.nodes || [w.a, w.b]).indexOf(d))) continue;
@@ -285,7 +293,12 @@ export async function lockAndPlay(w, who, { session: fixedSession = null, feeLoc
       }
       continue;
     }
-    assert.equal(await say(d.port, signedBatchOf(input, (id) => ed25519.sign(id, session))), String(who.ticks));
+    // A LATER SEAT MAY ALREADY HOLD THE BATCH (its answer is then 0 new ticks), as in a game's run above: since kanban #1598 the entry relay hands
+    // an entry's locks together with the entry, so the seat a relay reached holds the stake lock at once and holds the run before
+    // this client's own post (measured: next tick 1320 at seat 1 before its post). The first seat always answers the batch's ticks.
+    { const got = await say(d.port, signedBatchOf(input, (id) => ed25519.sign(id, session)));
+      const at = (w.nodes || [w.a, w.b]).indexOf(d);
+      if (at === 0 || got !== '0' || (d.round.nextTick && d.round.nextTick(w.rid, eid) !== who.ticks)) assert.equal(got, String(who.ticks)); }
     const receipt = await say(d.port, signedMark);
     assert.equal(receipt.length, SIGNED_RECEIPT_BYTES, typeof receipt === 'string' ? `the mark was refused: ${receipt}` : undefined);
   }
