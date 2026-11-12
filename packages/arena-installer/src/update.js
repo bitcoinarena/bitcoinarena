@@ -14,7 +14,7 @@
 //      the old release started, and the update said refused, with why.
 // A data migration is the seat's own: openStore migrates its database on start (store.js), and the backup is what a failed one
 // is rolled back from.
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, renameSync, rmSync, statSync, statfsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, renameSync, rmSync, statSync, statfsSync, linkSync } from 'node:fs';
 import { join } from 'node:path';
 import { readDurableJson, writeDurableJson } from '../../arena-node/src/durable-json.js';
 import { homedir, uptime } from 'node:os';
@@ -616,6 +616,19 @@ export async function seatLogTail({ home, platform = process.platform, sh = run,
 // THE MACHINE'S START, IN MINUTES (kanban #1166): a lock taken before the machine last started is no lock - its pid may be any process now
 // (a reboot reused it, and the lock blocked updates for up to 45 min). Read from the uptime, the same on every system; a minute either way
 export const bootMinute = (now = Date.now(), up = uptime()) => Math.round((now - up * 1000) / 60000);
+// A STALE LOCK IS TAKEN OVER BY RENAME, NOT BY REMOVE (kanban #1975): read -> judged stale -> remove let two updaters that found the same
+// dead holder both hold the lock - the one that judged second removed the lock the first had just made for itself. Now the lock is moved
+// aside to a name of this process's own (a rename is atomic: of two, one moves it, the other finds none and reads again), and only when the
+// moved file is the very lock that was judged stale is it kept aside (as update.lock.stale, the last one taken over). A lock another updater
+// made in between is put back where it was, by a link, which never lands over a newer lock (the aside name is left; nothing reads it); then
+// this one reads again and waits for it.
+function takeOverStaleLock(file, heldText, pid) {
+  const aside = `${file}.taking-${pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  try { renameSync(file, aside); } catch { return; /* gone: another updater took it over - read again */ }
+  let moved = null; try { moved = readFileSync(aside, 'utf8'); } catch { /* the same */ }
+  if (moved !== heldText) { try { linkSync(aside, file); } catch { /* a newer lock is there already: it holds */ } return; }
+  try { renameSync(aside, `${file}.stale`); } catch { /* left aside: it names no holder */ }
+}
 export async function takeUpdateLock(home, { pid = process.pid, now = Date.now, alive = (p) => { try { process.kill(p, 0); return true; } catch (e) { return e.code === 'EPERM'; } },
   waitLockMs = 20 * 60000, staleMs = 45 * 60000, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), onWait = () => {}, boot = bootMinute() } = {}) {
   // no node home, nothing to hold: the update says itself why it cannot move it
@@ -626,10 +639,10 @@ export async function takeUpdateLock(home, { pid = process.pid, now = Date.now, 
   for (;;) {
     try { writeFileSync(file, JSON.stringify({ pid, atMs: now(), boot }), { flag: 'wx' }); return { file, waited, release: () => { try { const h = JSON.parse(readFileSync(file, 'utf8')); if (h.pid === pid) rmSync(file, { force: true }); } catch { /* gone */ } } }; }
     catch (e) { if (e.code !== 'EEXIST') throw e; }
-    let held = null; try { held = JSON.parse(readFileSync(file, 'utf8')); } catch { /* half written or gone: read again */ }
+    let held = null, heldText = null; try { heldText = readFileSync(file, 'utf8'); held = JSON.parse(heldText); } catch { /* half written or gone: read again */ }
     // left over: from before the machine started (a lock an older updater wrote names no boot: its pid and age decide, as before), its process gone, or too old
     const beforeBoot = held && Number.isFinite(held.boot) && Math.abs(held.boot - boot) > 2;
-    if (held && (beforeBoot || !alive(held.pid) || now() - held.atMs > staleMs)) { rmSync(file, { force: true }); continue; }
+    if (held && (beforeBoot || !alive(held.pid) || now() - held.atMs > staleMs)) { takeOverStaleLock(file, heldText, pid); continue; }
     if (now() - t0 > waitLockMs) throw new Error(`another update of this node is still running (pid ${held ? held.pid : '?'}); try again when it has ended`);
     if (!waited) onWait(held); waited = true;
     await sleep(2000);
