@@ -6450,6 +6450,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   round.db.exec('CREATE TABLE IF NOT EXISTS federation_record_history (federation TEXT NOT NULL, height INTEGER NOT NULL, record TEXT NOT NULL, PRIMARY KEY (federation, height))');
   const recordStore = {
     load: async () => round.db.prepare('SELECT federation, record FROM federation_records').all(),
+    // the same rows synchronously, for the restore before the doors open (kanban #1765)
+    loadNow: () => round.db.prepare('SELECT federation, record FROM federation_records').all(),
     save: (fid, hex) => { round.db.prepare('INSERT INTO federation_records (federation, record) VALUES (?, ?) ON CONFLICT(federation) DO UPDATE SET record = excluded.record').run(String(fid), hex); },
     // and every one by its height (the record in force at a round's census height, §23A.3a)
     saveAt: (fid, height, hex) => { round.db.prepare('INSERT OR IGNORE INTO federation_record_history (federation, height, record) VALUES (?, ?, ?)').run(String(fid), Number(height), hex); },
@@ -7287,6 +7289,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // 10 min - the timer's first run - so its gateway probes read no seated guardian and every health page said "0 of 2")
   // the founding waits for this (fedRecordsSettled, above): restored, failed, or at the latest 2 min after start
   const settle = () => { if (!fedRecordsSettled) { fedRecordsSettled = true; if (foundingSeat) setTimeout(() => foundingPassNow(), 0); } };
+  // THE SAVED RECORDS BEFORE THE FIRST ANSWER (kanban #1765, state audit 2026-11-12): for the 20 s before restoreSoon a restarted seat held
+  // no record of a federation it held HALTED, CRITICAL or DRAINING - drainingRefusal, the #1244 exchange guard (liquidations.haltOf) and
+  // GET /federations + /liquidations all read "no record" as OPEN. Each saved record is read back now against its own guardian list
+  // (signatures and threshold, the fallback restore uses too); restoreSoon checks it against the census again
+  try { const r = fedRecords.restoreNow(inviteFedId); if (r.restored) console.log(`[federations] ${r.restored} of ${r.of} records read back before the first answer`); }
+  catch (e) { console.log(`[federations] early restore: ${e.message}`); }
   const restoreSoon = setTimeout(() => { fedRecords.restore(inviteFedId).then((r) => { if (r.restored) console.log(`[federations] ${r.restored} of ${r.of} records restored`); settle(); }, settle); }, 20000);
   const settleAtLatest = setTimeout(settle, 120000);
   if (settleAtLatest.unref) settleAtLatest.unref();
