@@ -831,11 +831,19 @@ async function leavePanel() {
 // THE PLUGIN STORE, LIKE AN APP STORE (2026-10-10: in the browser, no restart, updates as a setting, malicious-code checks): the apps on
 // this node, and the network's apps or one node's looked at by its address - checked in this browser with the page's own package checks
 // (C.checkPackage, C.checkUpdate), then installed or updated; the seat checks again and runs a trial in a sandbox first
+// A CHECK THAT THROWS IS A REFUSAL (kanban #2359, refute of #1814/#2307): a relayed package the page's copy of plugin-check.js cannot read
+// (an older bundle threw on clients: [null]) left the card at "checking in this browser..." with its button disabled - now it is refused, named
+function shortCheck(pkg, opts) {
+  try { return C.checkPackage(pkg, opts); } catch (e) { return { ok: false, checks: [{ check: 'the package can be read', ok: false, detail: e.message }], why: `This package cannot be read: ${e.message}` }; }
+}
+function shortUpdateCheck(...args) {
+  try { return C.checkUpdate(...args); } catch (e) { return { ok: false, checks: [{ check: 'the update can be read', ok: false, detail: e.message }], why: `This update cannot be read: ${e.message}` }; }
+}
 function storePanel() {
   const apps = () => mount('installed', 'mountApps', { api: { get: getJson, post, signed } });
   apps();
   mount('netfound', 'mountNetworkApps', { api: { get: getJson, post, signed, fetchJson },
-    client: { checkPackage: C.checkPackage, checkUpdate: C.checkUpdate, verifyEd25519: C.verifyEd25519, toHex: C.toHex, fromHex: C.fromHex }, onChanged: apps });
+    client: { checkPackage: shortCheck, checkUpdate: shortUpdateCheck, verifyEd25519: C.verifyEd25519, toHex: C.toHex, fromHex: C.fromHex }, onChanged: apps });
 }
 // THE NETWORK STORE (letter 2026-10-10): this node's network - chain, donation sets, series, federation - and another node's network
 // package, checked in this browser (C.checkNetworkPackage, C.checkNetworkUpdate), then installed or updated; Remove

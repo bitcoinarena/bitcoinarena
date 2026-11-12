@@ -110,7 +110,7 @@ export function createEntryRelay({ peersOf, entryOf, handoutOf, locksOf, fetcher
       const again = await Promise.all(left.map(async (base) => {
         try {
           const r = await ask(`${base}/order-locks?entry=${entryHex}`);
-          const has = r.status === 200 ? await peerJsonUpTo(r, LOCKS_MAX_BYTES) : r.status === 404 ? {} : null;   // capped (#1870, #1901)
+          const has = r.status === 200 ? await peerJsonUpTo(r, LOCKS_MAX_BYTES).catch(() => null) : r.status === 404 ? {} : null;   // capped (#1870, #1901; a refused read is no answer, #2327, #2343)
           if (!has) return null;
           let short = false;
           for (const [door, have, fields] of [['lock', has.stake, held.stake], ['fee-lock', has.fee, held.fee]]) {

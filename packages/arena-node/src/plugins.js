@@ -82,6 +82,8 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519, log 
       clientUrls: Array.isArray(p.clientUrls) ? [...p.clientUrls] : [],
       // its earlier versions' signed manifests (an installed update's chain), oldest first
       ancestors: Array.isArray(p.ancestors) ? [...p.ancestors] : [],
+      // the opaque marker below them when its chain went on further (plugin-check.js packageWindow, kanban #2332): served, never read
+      ancestorCut: typeof p.ancestorCut === 'string' ? p.ancestorCut : null,
       // its description and website, signed by its developer beside the manifest: kept only when they stand
       info: (() => { if (!p.info) return null; const i = gameInfoStands(p.info, { gameId: stands.gameId, manifest: p.manifest, verify });
         return i.ok ? Object.freeze({ ...gameInfoJson(p.info) }) : null; })() }));

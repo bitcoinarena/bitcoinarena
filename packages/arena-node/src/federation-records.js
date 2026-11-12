@@ -63,9 +63,31 @@ export const CHAIN_BASIS_STEP = 6;
 /** How many census seats one mirror pass asks for a record none of its guardians' nodes holds. */
 export const MIRROR_PEERS = 8;
 
-/** A mirror pass reads the chain's census (censusAt) at most this many heights per peer answer, and this many in all (kanban #1818). */
+/** A mirror pass reads the chain's census (censusAt) at most this many heights per peer answer, and this many in all (kanban #1818).
+ * "In all" is the whole gather pass, every federation of it (kanban #2339): one bonded seat listing K made-up federation ids in its
+ * advert's guardianOf made each of the K mirrors read MIRROR_CENSUS_PER_ANSWER heights - 2K a pass. And one guardian's node causes at
+ * most MIRROR_CENSUS_PER_ANSWER new heights in the whole pass, across every federation it is asked for, so it cannot spend the pass's. */
 export const MIRROR_CENSUS_PER_ANSWER = 2;
 export const MIRROR_CENSUS_PER_PASS = 8;
+/** A PASS IS NOT FREE TO START (kanban #2370, #2373, a45 refute 8 s3 of #1818/#2270/#2339): the census budget above is a pass's, and
+ * GET /federations?fresh=1 started a pass for any caller - 51 asks from a stranger were 102 chain census derivations at 102 heights. A
+ * pass asked for while one runs joins it (one budget for both), and an ask with minAgeMs (the public door) is answered by the last
+ * pass while that one finished less than minAgeMs ago. */
+export const GATHER_FRESH_MS = 30000;
+
+/** GET /federation-record's named height (kanban #2270, the #1818 cost through the other door): a chain census read for a height a
+ * gatherer names happens only for a federation this seat names an invite for, at a height no further below the tip than this, and at
+ * most NAMED_CENSUS_BURST reads at once, refilled at NAMED_CENSUS_PER_MIN a minute. */
+export const NAMED_CENSUS_BELOW_TIP = 288;
+export const NAMED_CENSUS_BURST = 8;
+export const NAMED_CENSUS_PER_MIN = 4;
+/** THE SHARED CHAIN BASIS HEIGHTS NEED NO TOKEN (kanban #2348): a multiple of CHAIN_BASIS_STEP not above the tip and above
+ * tip - CHAIN_BASIS_LAG - 2 * CHAIN_BASIS_STEP - the height a seat with no round names (chainAhead), its own or a gatherer's a block or a
+ * step apart - is read once without the bucket, so a stranger who empties the bucket does not make the guardian refuse its gatherer
+ * (the kanban #549 case). There are at most this many such heights at a tip; the bucket holds NAMED_CENSUS_BURST less these, so a burst
+ * is still at most NAMED_CENSUS_BURST reads. */
+export const NAMED_CENSUS_FREE_HEIGHTS = Math.ceil((CHAIN_BASIS_LAG + 2 * CHAIN_BASIS_STEP) / CHAIN_BASIS_STEP);
+const NAMED_CENSUS_BUCKET = Math.max(1, NAMED_CENSUS_BURST - NAMED_CENSUS_FREE_HEIGHTS);
 
 export function federationsOf(census) {
   const ids = new Map();
@@ -272,16 +294,27 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     return { entries, spends };
   };
   let chainHeight = null;
+  let lastTip = null;                        // the tip last read (kanban #2348: which heights are the shared basis heights)
+  const freeHeight = (h, t = lastTip) => Number.isFinite(t) && h % CHAIN_BASIS_STEP === 0 && h <= t
+    && h > t - CHAIN_BASIS_LAG - 2 * CHAIN_BASIS_STEP;
+  // at most 8 heights kept; a shared basis height is evicted last, so named odd heights do not push it out (kanban #2348)
+  const trimChainCensus = () => {
+    while (chainCensus.size > 8) {
+      let k = null; for (const x of chainCensus.keys()) if (!freeHeight(x)) { k = x; break; }
+      chainCensus.delete(k === null ? chainCensus.keys().next().value : k);
+    }
+  };
   const readChainCensus = (h) => {
     if (typeof censusAt !== 'function' || !Number.isInteger(h) || h < 0 || chainCensus.has(h)) return;
     chainCensus.set(h, null);
     chainCensusAt(h).then((c) => { if (c) chainCensus.set(h, c); else chainCensus.delete(h); }, () => chainCensus.delete(h));
-    while (chainCensus.size > 8) chainCensus.delete(chainCensus.keys().next().value);
+    trimChainCensus();
   };
   async function chainAhead() {
     if (typeof chainTip !== 'function' || typeof censusAt !== 'function') return;
     let t = null; try { t = Number(await chainTip()); } catch { t = null; }
     if (!Number.isFinite(t)) return;
+    lastTip = t;
     const h = Math.floor((t - CHAIN_BASIS_LAG) / CHAIN_BASIS_STEP) * CHAIN_BASIS_STEP;
     if (!chainCensus.get(h)) { try { const c = await chainCensusAt(h); if (c) chainCensus.set(h, c); } catch { /* the next pass */ } }
     if (chainCensus.get(h)) chainHeight = h;
@@ -289,17 +322,48 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // A NAMED HEIGHT NOT READ YET IS READ BEFORE THE ANSWER (kanban #549, measured 2026-10-20 07:37Z: right after a restart every guardian
   // seat of 4dc88be7 answered its gatherer "this seat holds no round with census height 157086" - the read had only been started - so
   // the record waited for the next pass); a held round's census still comes first, and a height already read is not read again
-  async function chainReady(atHeight) {
+  // A STRANGER'S NAMED HEIGHT IS NO CHAIN READ (kanban #2270, a45 refute of #1818): GET /federation-record takes any 64-hex id and any
+  // height from anyone, and each censusAt is a walk over ~2,017 blocks plus a census_kept row. So the chain is read for a named height
+  // only for a federation this seat names an invite for, at a height not above the tip and at most NAMED_CENSUS_BELOW_TIP below it, and
+  // within a token bucket shared by the door (NAMED_CENSUS_BURST, NAMED_CENSUS_PER_MIN). Otherwise the answer is the one before: the
+  // basis without that census ("this seat holds no round with census height n").
+  // THE GATHERER'S HEIGHT IS NOT IN THE STRANGER'S BUCKET (kanban #2348, a45 refute 8 s2): the bucket was one for the whole door, so a
+  // stranger's 8 asks near the tip emptied it and the guardian refused its own gatherer's named height again. A shared chain basis height
+  // (freeHeight: what a seat with no round names) is read once a tip without a token; only the other heights spend the bucket, which
+  // holds NAMED_CENSUS_BURST less those, so a burst is still at most NAMED_CENSUS_BURST reads.
+  let namedTokens = NAMED_CENSUS_BUCKET, namedAt = nowMs();
+  const freeTried = new Set();               // shared basis heights read without a token (each once; a failed one then takes a token)
+  const namedToken = () => {
+    const now = nowMs();
+    namedTokens = Math.min(NAMED_CENSUS_BUCKET, namedTokens + Math.max(0, now - namedAt) * NAMED_CENSUS_PER_MIN / 60000); namedAt = now;
+    if (namedTokens < 1) return false;
+    namedTokens -= 1; return true;
+  };
+  async function chainReady(atHeight, fidHex = null) {
     if (atHeight === null || typeof censusAt !== 'function' || !Number.isInteger(atHeight) || atHeight < 0 || chainCensus.get(atHeight)) return;
     if (roundBasis(atHeight).ok) return;
+    let invite = null; try { invite = fidHex === null ? null : inviteFor(String(fidHex).toLowerCase()); } catch { invite = null; }
+    if (!invite) return;
+    let free = false;
+    if (typeof chainTip === 'function') {
+      let t = null; try { t = Number(await chainTip()); } catch { t = null; }
+      if (!Number.isFinite(t) || atHeight > t || atHeight < t - NAMED_CENSUS_BELOW_TIP) return;
+      lastTip = t;
+      if (freeHeight(atHeight, t) && !freeTried.has(atHeight)) {
+        free = true; freeTried.add(atHeight);
+        for (const x of freeTried) if (!freeHeight(x, t)) freeTried.delete(x);
+      }
+    }
+    if (!free && !namedToken()) return;
     try { const c = await chainCensusAt(atHeight); if (c) chainCensus.set(atHeight, c); } catch { /* answered below as before */ }
-    while (chainCensus.size > 8) chainCensus.delete(chainCensus.keys().next().value);
+    trimChainCensus();
   }
   function chainBasis(atHeight) {
     const h = atHeight !== null ? atHeight : chainHeight;
     if (h === null) return null;
     const c = chainCensus.get(h);
-    if (!c) { readChainCensus(h); return null; }
+    // a named height is read only by chainReady, under its gates (kanban #2270); the read ahead here is for this seat's own height
+    if (!c) { if (atHeight === null) readChainCensus(h); return null; }
     return { ok: true, census: { ok: true, entries: c.entries, spends: c.spends }, height: h, networkId, fromChain: true };
   }
   function basis(atHeight = null) {
@@ -723,7 +787,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     return { ok: true, player };
   }
   async function mySignature(federationIdHex, atHeight = null, reserveNamed = null, { previous = null, inviteFederationId = null, player: playerNamed = null } = {}) {
-    await chainReady(atHeight);
+    await chainReady(atHeight, federationIdHex);
     const b = basisFor(federationIdHex, atHeight);
     if (!b.ok) return b;
     const prior = await wasFor(federationIdHex, b, previous, inviteFederationId);
@@ -889,9 +953,11 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     return { restored, of: rows.length };
   }
   const peerTurns = new Map();               // federation id hex -> passes asked: where its next pass starts in peerSeats()
-  async function mirror(federationId, b, inviteFederationId) {
+  // pass: one per gather pass (gatherAll), shared by every federation mirrored in it (kanban #2339) - kept: record height -> its census
+  // (one read per height in a pass); byBase: guardian node -> new heights its answers made this pass read
+  async function mirror(federationId, b, inviteFederationId, pass = { kept: new Map(), byBase: new Map() }) {
     const fid = toHex(federationId);
-    const censusKept = new Map();          // record height -> its census (one read per height in a pass)
+    const censusKept = pass.kept;
     const guardians = guardiansOf(b.census, federationId);
     if (!guardians.length) return { ok: false, why: 'no census node guards that federation' };
     const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
@@ -902,11 +968,11 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         const r = await fetcher(`${base}/federations`, { signal: AbortSignal.timeout(8000) });
         if (!r.ok) return;
         const j = await r.json();
-        // ONE PEER'S ANSWER IS NOT A LIST OF CHAIN READS (kanban #1818): a record's height is its own, unsigned word, and censusAt derives
+        // ONE PEER'S ANSWER IS NOT A LIST OF CHAIN READS (kanban #1818, #2339): a record's height is its own, unsigned word, and censusAt derives
         // a whole census from bitcoind (kept 3 days) - one guardian listing the federation at 2,000 made-up heights cost 2,000 derivations
         // a pass. A record that does not stand against this seat's census goes to the chain only if it first stands against its own
         // guardian list (every signature and the threshold, bonds not: cheap, and junk with no signatures stops here), newest first, at
-        // most MIRROR_CENSUS_PER_ANSWER heights from one answer and MIRROR_CENSUS_PER_PASS in the pass
+        // most MIRROR_CENSUS_PER_ANSWER heights from one guardian node in the whole gather pass and MIRROR_CENSUS_PER_PASS in the pass
         const mine = (Array.isArray(j.federations) ? j.federations : []).filter((x) => x && String(x.federation).toLowerCase() === fid);
         const later = [];
         for (const x of mine) {
@@ -915,18 +981,18 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
             let rec = null; try { rec = decodeFederationRecord(splitSignedRecord(fromHex(String(x.record))).body); } catch { rec = null; }
             if (rec && Number.isInteger(rec.height) && Array.isArray(rec.guardians)) {
               const own = rec.guardians.map((g) => ({ pubkey: g.nodePubkey, advert: { guardianOf: [{ federationId: rec.federationId, guardianKey: g.peerKey }] } }));
-              let self = { ok: false }; try { self = verifyFederationRecord(fromHex(String(x.record)), { census: own, verify, inviteFederationId }); } catch { self = { ok: false }; }
+              let self = { ok: false }; try { self = verifyFederationRecord(fromHex(String(x.record)), { census: own, verify, inviteFederationId, bandPoint: bandFrom }); } catch { self = { ok: false }; }
               if (self.ok) { later.push({ x, h: rec.height }); continue; }
             }
           }
           take(x, v);
         }
         later.sort((p, q) => q.h - p.h);
-        let reads = 0;
         for (const { x, h } of later) {
           let v = { ok: false, why: 'its census was not read: too many record heights in one answer' };
+          const reads = pass.byBase.get(base) || 0;   // this node's new heights in the whole pass, every federation (kanban #2339)
           if (censusKept.has(h) || (reads < MIRROR_CENSUS_PER_ANSWER && censusKept.size < MIRROR_CENSUS_PER_PASS)) {
-            if (!censusKept.has(h)) { censusKept.set(h, Promise.resolve(censusAt(h)).catch(() => null)); reads++; }
+            if (!censusKept.has(h)) { censusKept.set(h, Promise.resolve(censusAt(h)).catch(() => null)); pass.byBase.set(base, reads + 1); }
             const entries = await censusKept.get(h);
             try { v = entries ? verifyFederationRecord(fromHex(String(x.record)), { census: entries, verify, inviteFederationId, bandPoint: bandFrom }) : { ok: false, why: 'no census at that record height' }; } catch (e) { v = { ok: false, why: e.message }; }
           }
@@ -992,7 +1058,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // the gatherer's word alone. And THIS SEAT'S OWN GUARDIAN by a leave statement only while this node is leaving: never by one it does not
   // stand behind now. Its owner's notice or emergency request, and 2f + 1 attestations (a threshold of observers), stand for it as for any
   async function mySignatureWithGone(federationIdHex, goneHex, atHeight = null, reserveNamed = null, absentHex = [], departedHex = [], emergencyHexes = [], { previous = null, inviteFederationId = null, left = [], player: playerNamed = null } = {}) {
-    await chainReady(atHeight);
+    await chainReady(atHeight, federationIdHex);
     const b = basisFor(federationIdHex, atHeight);
     if (!b.ok) return b;
     const prior = await wasFor(federationIdHex, b, previous, inviteFederationId);
@@ -1059,33 +1125,44 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     return signBody(bodyFor(b, fromHex(federationIdHex), gone, res.reserveSats, eps, was, pl.player).record);
   }
 
+  // one gather pass (gatherAll starts it): kanban #2370 - never two at once, and the public door's no more often than GATHER_FRESH_MS
+  const passes = { running: null, last: null, doneAt: 0 };
+  async function gatherPass(inviteFederationId) {
+    await chainAhead();
+    const b = basis();
+    // every federation the basis names AND every one only the chain's census names (kanban #549: a successor named after the
+    // rounds' census was frozen), each read from the basis that names it
+    const cb = chainBasis(null);
+    const feds = new Map();
+    for (const x of [b, cb]) if (x && x.ok) for (const f of federationsOf(x.census)) if (!feds.has(toHex(f))) feds.set(toHex(f), f);
+    if (!feds.size) return [b.ok ? { ok: false, why: 'no census this seat reads names a federation' } : b];
+    const out = [];
+    const pass = { kept: new Map(), byBase: new Map() };   // the chain census reads of this whole pass (kanban #2339)
+    // A FEDERATION THIS SEAT HAS NO INVITE FOR IS MIRRORED, NOT SKIPPED (2026-10-12: "Make it happen
+    // automatically so we don't have to update nodes, it needs to find federations"): its guardians' own nodes - their bond
+    // adverts' endpoints in this census - are asked for its signed record, which stands only against this seat's census
+    // AND A GATHER THAT FAILS IS MIRRORED TOO (measured live 2026-10-15): a seat that holds a federation's invite but
+    // whose own basis is another census height than its guardians' (node 15: newest readable round at 156388, B's guardians sign
+    // at 156538) gathered "0 of its bonded guardians signed it" every pass and never held B's record; the record its guardians keep
+    // stands against this seat's census all the same
+    for (const fid of feds.values()) {
+      try {
+        let got = inviteFor(toHex(fid)) ? await gather(fid, inviteFederationId) : null;
+        if (!got || got.ok === false) { const m = await mirror(fid, basisFor(toHex(fid)), inviteFederationId, pass); got = m.ok || !got ? { ...m, ...(got ? { gathered: got.why } : {}) } : got; }
+        out.push({ federation: toHex(fid), ...got });
+      } catch (e) { out.push({ federation: toHex(fid), ok: false, why: e.message }); }
+    }
+    return out;
+  }
+
   return {
     mySignature, mySignatureWithGone, gather, restore, restoreNow,
-    async gatherAll(inviteFederationId) {
-      await chainAhead();
-      const b = basis();
-      // every federation the basis names AND every one only the chain's census names (kanban #549: a successor named after the
-      // rounds' census was frozen), each read from the basis that names it
-      const cb = chainBasis(null);
-      const feds = new Map();
-      for (const x of [b, cb]) if (x && x.ok) for (const f of federationsOf(x.census)) if (!feds.has(toHex(f))) feds.set(toHex(f), f);
-      if (!feds.size) return [b.ok ? { ok: false, why: 'no census this seat reads names a federation' } : b];
-      const out = [];
-      // A FEDERATION THIS SEAT HAS NO INVITE FOR IS MIRRORED, NOT SKIPPED (2026-10-12: "Make it happen
-      // automatically so we don't have to update nodes, it needs to find federations"): its guardians' own nodes - their bond
-      // adverts' endpoints in this census - are asked for its signed record, which stands only against this seat's census
-      // AND A GATHER THAT FAILS IS MIRRORED TOO (measured live 2026-10-15): a seat that holds a federation's invite but
-      // whose own basis is another census height than its guardians' (node 15: newest readable round at 156388, B's guardians sign
-      // at 156538) gathered "0 of its bonded guardians signed it" every pass and never held B's record; the record its guardians keep
-      // stands against this seat's census all the same
-      for (const fid of feds.values()) {
-        try {
-          let got = inviteFor(toHex(fid)) ? await gather(fid, inviteFederationId) : null;
-          if (!got || got.ok === false) { const m = await mirror(fid, basisFor(toHex(fid)), inviteFederationId); got = m.ok || !got ? { ...m, ...(got ? { gathered: got.why } : {}) } : got; }
-          out.push({ federation: toHex(fid), ...got });
-        } catch (e) { out.push({ federation: toHex(fid), ok: false, why: e.message }); }
-      }
-      return out;
+    gatherAll(inviteFederationId, { minAgeMs = 0 } = {}) {
+      if (passes.running) return passes.running;
+      if (minAgeMs > 0 && passes.doneAt && nowMs() - passes.doneAt < minAgeMs) return Promise.resolve(passes.last || []);
+      passes.running = gatherPass(inviteFederationId).then((out) => { passes.last = out; return out; })
+        .finally(() => { passes.doneAt = nowMs(); passes.running = null; });
+      return passes.running;
     },
     list: () => [...kept.entries()].map(([federation, k]) => ({ federation, status: k.status, height: k.height, signers: k.signers, record: toHex(k.bytes),
       // ITS FIRST HEIGHT HERE (§23A.2 RULED 2026-11-07, kanban #1297/#1323): the oldest record this seat holds of it - a client sends no first deposit
