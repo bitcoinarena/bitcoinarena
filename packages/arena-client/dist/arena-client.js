@@ -3885,10 +3885,14 @@ function priceAttestationStands({ id, sigs, committee, threshold, verify }) {
   for (const s of sigs || []) {
     const key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key);
     if (!members.has(key) || signed.has(key)) continue;
-    const sig = typeof s.signature === 'string' ? Uint8Array.from(s.signature.match(/../g).map((x) => parseInt(x, 16))) : s.signature;
-    const pk = Uint8Array.from(key.match(/../g).map((x) => parseInt(x, 16)));
+    // kanban #1530: the signature and key are decoded inside the try - a peer's odd-length or 1-char hex ('a') made
+    // match() return null and threw out of the whole check, so one bad seat hid the result the others signed.
     let good = false;
-    try { good = !!verify(sig, id, pk); } catch { good = false; }
+    try {
+      const sig = typeof s.signature === 'string' ? Uint8Array.from(s.signature.match(/../g).map((x) => parseInt(x, 16))) : s.signature;
+      const pk = Uint8Array.from(key.match(/../g).map((x) => parseInt(x, 16)));
+      good = !!verify(sig, id, pk);
+    } catch { good = false; }
     if (good) signed.add(key);
   }
   return signed.size >= threshold ? { ok: true, signed: [...signed] }
@@ -14127,6 +14131,13 @@ async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask, ancho
   // blocks deep, so nothing a client decides sits in the split. A provider that leaves it deeper is a fork, refused as before.
   const bestAt = new Map(best.hashes.map((h, i) => [h, i]));
   let cut = best.hashes.length;
+  // ONE FORKING SOURCE IS DROPPED, NOT OBEYED (kanban #1529): a seat answering the real chain cut 13 blocks below the tip plus
+  // headers of its own - mined at the easiest target it claims, so free - refused every join that picked it, although the other
+  // three sources agreed on the chain with the most work. A source that forks off the most-work chain deeper than a tip split is
+  // now set aside by name, and the chain stands only while at least `least` sources (and never fewer than two, the most-work one
+  // among them) still agree on it; with fewer the fork is refused as before: two sources that fork are two of whom one is lying.
+  const forked = [];
+  let firstFork = null;
   for (const a of good) {
     // ANSWERS ABOUT DIFFERENT PARTS OF THE CHAIN used to be told apart from a
     // fork here, and that branch is gone rather than left unreachable: every
@@ -14139,14 +14150,15 @@ async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask, ancho
     const stray = a.hashes[i];
     const shared = i > 0 ? bestAt.get(a.hashes[i - 1]) : undefined;
     if (a.hashes.length - i > TIP_SPLIT_BLOCKS || shared === undefined) {
-      return {
-        ok: false,
-        why: `providers ${best.at} and ${a.at} do not agree on the chain: `
-          + `${stray} is not in the one with the most work`,
-      };
+      const why = `providers ${best.at} and ${a.at} do not agree on the chain: `
+        + `${stray} is not in the one with the most work`;
+      if (!firstFork) firstFork = why;
+      forked.push({ at: a.at, why });
+      continue;
     }
     cut = Math.min(cut, shared + 1);
   }
+  if (forked.length && good.length - forked.length < Math.max(least, 2)) return { ok: false, why: firstFork };
 
   return {
     ok: true,
@@ -14154,8 +14166,8 @@ async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask, ancho
     headers: best.headers.slice(0, cut),
     work: best.work,
     from: best.at,
-    agreed: good.length,
-    refused: bad.map((b) => `provider ${b.at}: ${b.why}`),
+    agreed: good.length - forked.length,
+    refused: [...bad, ...forked].map((b) => `provider ${b.at}: ${b.why}`),
   };
 }
 
@@ -20063,8 +20075,8 @@ const newestRecord = (verified) => verified.filter((v) => v && v.ok).sort((a, b)
 // EVERY GUARDIAN A FEDERATION'S INVITES NAME, ONE INVITE FOR A JOIN THAT COULD NOT READ THE CONFIG (2026-10-20 18:0xZ: "Fix the issue that it
 // connects to a wallet/guardian that is offline" - federation 4dc88be7's invite named only fed2-8, whose guardian had stopped at 07:56Z, so
 // every new wallet there failed with "Failed to download client config" while 6 of its 7 guardians ran). Every invite this client sees -
-// a round's, a remembered one, each seat's federation record (read here even before the record can be verified: only the config is
-// fetched with it, and the wallet checks that config against the federation id, its hash) - adds its guardians; a join that cannot read
+// a round's, a remembered one, each seat's federation record once it verifies (kanban #1556: an unverified record's hosts took every
+// peer slot and the browser joined through them) - adds its guardians; a join that cannot read
 // the config is tried once more with an invite naming all of them, so one guardian down no longer keeps a player out.
 
 
@@ -20079,7 +20091,7 @@ function noteInvite(invite) {
   return true;
 }
 
-/** A seat's signed federation record (hex), verified or not: its invite's guardians are noted. */
+/** A seat's signed federation record (hex), verified by the caller (kanban #1556): its invite's guardians are noted. */
 // A RECORD NOTED ONCE (kanban #1391, Daniel 2026-11-09 "Make sure it is everything fast"; profiled on stage UI 603: 1.75 s of every minute of an RPS page
 // decoded the same signed records again - each seat's, each federation's, on every read): a record already noted is not decoded again
 const NOTED_RECORDS = new Set();
@@ -20101,7 +20113,9 @@ function wholeInvite(invite) {
   noteInvite(invite);
   const m = seen.get(r.federationId);
   if (!m || m.size <= new Set(r.guardians.map((g) => g.peer)).size) return null;
-  const guardians = [...m].map(([peer, url]) => ({ peer, url })).sort((a, b) => a.peer - b.peer);
+  // THE INVITE'S OWN URLS WIN (kanban #1556): a peer the join's own invite names is joined at that url, whatever was noted for it before
+  const own = new Map(r.guardians.map((g) => [g.peer, g.url]));
+  const guardians = [...m].map(([peer, url]) => ({ peer, url: own.get(peer) ?? url })).sort((a, b) => a.peer - b.peer);
   const id = Uint8Array.from(r.federationId.match(/../g).map((x) => parseInt(x, 16)));
   try { return inviteForGuardians(id, guardians); } catch { return null; }
 }
@@ -23893,6 +23907,9 @@ function markLockCommitted(storage, { roundId, playerPubkey, entryId }) {
  * verified; the lock client then refuses one the guardians do not hold as
  * rebuilt, so a lying signer node can point at nothing this key can spend.
  */
+// (kanban #1531) a player has one stake lock in a round, a few versions of it at most (kanban #1273): what one seat's answer and all of them may name
+const LOCKS_PER_SEAT = 8;
+const LOCKS_FOUND_MAX = 64;
 async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) {
   const refund = toHex(refundKeyOf(playerPubkey));
   const found = new Map();
@@ -23923,14 +23940,20 @@ async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) 
     } catch (e) { return { said: `${name} ${String(e && e.message || e).slice(0, 40)}`, got: [] }; }
   }));
   const said = answers.map((a) => a.said);
-  for (const { got } of answers) {
-    for (const { l, lock } of got) {
-      // EVERY SEAT'S VERSION OF AN OUTPOINT, NOT ONLY THE FIRST (kanban #1273, audit 4 #1257 seats-5): one seat listed first answered the real
-      // outpoint with a field changed (or a made-up entry id), and the honest copies were dropped - the stake read "gone" for good, or waited for
-      // its expiry. Each distinct version is kept; the federation's stored contract (heldByGuardians) and the forfeit check pick the real one
-      const key = `${l.outpoint}|${JSON.stringify(l.fields)}|${String(l.entryId || '').toLowerCase()}`;
-      if (!found.has(key)) found.set(key, lock);
-    }
+  // WHAT ONE SEAT CAN ADD IS BOUNDED (kanban #1531, audit #1489 r2 client-3): one seat answered thousands of made-up locks under the
+  // player's refund key, every one was kept, and the collect asked each a forfeit of every seat in turn (redeemStake) or a lockStatus of
+  // the federation (heldByGuardians) - hours of requests. A seat's first LOCKS_PER_SEAT entries count, taken round-robin over the seats
+  // (each seat's first lock before any seat's second), and the whole list stops at LOCKS_FOUND_MAX
+  const lists = answers.map(({ got }) => (Array.isArray(got) ? got.slice(0, LOCKS_PER_SEAT) : []));
+  const picked = [];
+  for (let i = 0; i < LOCKS_PER_SEAT; i++) for (const got of lists) if (i < got.length) picked.push(got[i]);
+  for (const { l, lock } of picked) {
+    if (found.size >= LOCKS_FOUND_MAX) break;
+    // EVERY SEAT'S VERSION OF AN OUTPOINT, NOT ONLY THE FIRST (kanban #1273, audit 4 #1257 seats-5): one seat listed first answered the real
+    // outpoint with a field changed (or a made-up entry id), and the honest copies were dropped - the stake read "gone" for good, or waited for
+    // its expiry. Each distinct version is kept; the federation's stored contract (heldByGuardians) and the forfeit check pick the real one
+    const key = `${l.outpoint}|${JSON.stringify(l.fields)}|${String(l.entryId || '').toLowerCase()}`;
+    if (!found.has(key)) found.set(key, lock);
   }
   const out = [...found.values()];
   out.asked = asked.length;
@@ -35827,9 +35850,10 @@ async function federationStatuses({ nodes, census, verify, fetcher = fetch, only
         // enough to stop deposits - stopping is the safe side, and the mark carries its own proof for anyone who acts on it
         if (f.alarm && typeof f.alarm === 'object' && !alarms.has(fid)) alarms.set(fid, { ...f.alarm, from: u });
         if (Number.isInteger(f.firstHeight)) add(firsts, fid, f.firstHeight);
-        noteRecordInvite(f.record);   // its guardians, for a join one guardian cannot serve (guardian-invites.js) - verified or not
         const v = verifyFederationRecord(hexToBytes(f.record), { census, verify, inviteFederationId });
-        if (v.ok) add(verified, fid, { ...v, from: u }); else add(refused, fid, `${u}: ${v.why}`);
+        // ITS GUARDIANS, for a join one guardian cannot serve (guardian-invites.js) - ONLY ONCE THE RECORD VERIFIES (kanban #1556: one seat
+        // answering first with an unsigned record naming the player's federation took every peer slot, so the join fallback named only its hosts)
+        if (v.ok) { noteRecordInvite(f.record); add(verified, fid, { ...v, from: u }); } else add(refused, fid, `${u}: ${v.why}`);
       }
     } catch (e) { if (!closed) failed.push(`${u}: ${e.message}`); }
   }), COMPARE_GRACE_MS);
@@ -36964,6 +36988,8 @@ async function roundVerdict({ roundId, nodes, committee, verify, threshold = nul
       if (!r.ok) { said.push(`${base}: ${(await r.text()).slice(0, 120)}`); return; }
       const j = await r.json();
       if (!Number.isInteger(j.openCents) || !Number.isInteger(j.closeCents) || !j.key || !j.signature) return;
+      // kanban #1530: a key that is not 64 hex or a signature that is not 128 hex is refused at the door, before grouping.
+      if (typeof j.key !== 'string' || !/^[0-9a-fA-F]{64}$/.test(j.key) || typeof j.signature !== 'string' || !/^[0-9a-fA-F]{128}$/.test(j.signature)) return;
       const k = `${j.openCents}:${j.closeCents}`;
       if (!byResult.has(k)) byResult.set(k, { openCents: j.openCents, closeCents: j.closeCents, sigs: [] });
       byResult.get(k).sigs.push({ key: j.key, signature: j.signature });
@@ -37439,32 +37465,67 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
   let done = [];
   try { done = JSON.parse((keep && keep.getItem(ZAPS_COLLECTED_KEY)) || '[]'); } catch { done = []; }
   const seen = new Set(Array.isArray(done) ? done : []);
+  // kanban #1557: a /donations row is not signed, so one seat answering first with the real outpoint and a changed amountMsat /
+  // playerKey / senderOnContract must not stand for that outpoint. Every distinct version is kept (outpoint -> version -> the seats
+  // that said it; one version per seat and outpoint, so a seat cannot flood an outpoint), and each is tried - most seats first - until
+  // one is collected or reads as spent, as lookOwed keeps every version since #1273.
   const found = new Map();
-  await Promise.all((seats || []).map(async (s) => {
+  const versionOf = (d) => JSON.stringify([String(d.federationId).toLowerCase(), String(d.amountMsat), !!d.senderOnContract, String(d.playerKey || ''), String(d.item || '')]);
+  await Promise.all((seats || []).map(async (s, si) => {
     try {
       const r = await fetcher(`${String(s).replace(/\/$/, '')}/donations?key=${pk}&since=0`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
       if (!r.ok) return;
-      for (const d of ((await r.json()).donations || [])) if (d && d.outpoint && !found.has(d.outpoint)) found.set(d.outpoint, d);
+      for (const d of ((await r.json()).donations || [])) {
+        if (!d || !d.outpoint) continue;
+        let byVersion = found.get(d.outpoint);
+        if (!byVersion) found.set(d.outpoint, byVersion = new Map());
+        if ([...byVersion.values()].some((v) => v.seats.has(si))) continue;
+        const k = versionOf(d);
+        if (!byVersion.has(k)) byVersion.set(k, { d, seats: new Set() });
+        byVersion.get(k).seats.add(si);
+      }
     } catch { /* another seat answers for it */ }
   }));
   const collected = [], spent = [], failed = [], waiting = [];
-  for (const d of found.values()) {
-    if (seen.has(d.outpoint)) continue;
+  const accepted = new Map(); // outpoint -> the version a refund accepted
+  for (const [outpoint, byVersion] of found) {
+    if (seen.has(outpoint)) continue;
+    const versions = [...byVersion.values()].sort((a, b) => b.seats.size - a.seats.size).map((v) => v.d);
+    const tried = [], waits = [];
+    let settled = false;
+    for (const d of versions) {
+      const r = await collectOne(d);
+      if (r === 'waiting') { waits.push(d); continue; }
+      if (r === 'skip') continue;
+      if (r && r.why !== undefined) { tried.push(r); continue; }
+      if (r === 'collected') accepted.set(outpoint, d);
+      seen.add(outpoint);
+      settled = true;
+      break;
+    }
+    if (!settled) { failed.push(...tried); if (waits.length) waiting.push(waits[0]); }
+  }
+  async function collectOne(d) {
     const client = clients && clients.get ? clients.get(String(d.federationId).toLowerCase()) : null;
-    if (!client || typeof client.refund !== 'function') { waiting.push(d); continue; }
+    if (!client || typeof client.refund !== 'function') return 'waiting';
     const m = /^([0-9a-f]{64}):(\d+)$/.exec(String(d.outpoint));
-    if (!m) continue;
+    if (!m || !/^\d+$/.test(String(d.amountMsat))) return 'skip';
     const image = d.senderOnContract && /^[0-9a-f]{64}$/.test(String(d.playerKey || '')) ? d.playerKey : '00'.repeat(32);
     const fields = JSON.stringify({ paymentImage: { kind: 'hash', bytes: image }, amountMsat: String(d.amountMsat), claimPk: pk, refundPk: pk, expiration: 0 });
     let said;
-    try { said = JSON.parse(await client.refund(m[1], Number(m[2]), fields, toHex(secret))); } catch (e) { failed.push({ ...d, why: String(e && e.message || e) }); continue; }
-    if (said.accepted === true) collected.push({ outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat), item: d.item || null, roundId: d.roundId || null });
-    else if (said.stored_before === null || said.stored_before === undefined) spent.push(d);
-    else { failed.push({ ...d, why: said.error || 'the federation did not accept the collect' }); continue; }
-    seen.add(d.outpoint);
+    try { said = JSON.parse(await client.refund(m[1], Number(m[2]), fields, toHex(secret))); } catch (e) { return { ...d, why: String(e && e.message || e) }; }
+    if (said.accepted === true) { collected.push({ outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat), item: d.item || null, roundId: d.roundId || null }); return 'collected'; }
+    if (said.stored_before === null || said.stored_before === undefined) { spent.push(d); return 'spent'; }
+    return { ...d, why: said.error || 'the federation did not accept the collect' };
   }
   try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-500))); } catch { /* not kept: asked again, then found spent */ }
-  const web = [...found.values()].filter((d) => d.item === 'website');
+  // kanban #1557: the referral total counts an outpoint's row only when a refund accepted that version or every seat that listed the
+  // outpoint gave the same one - a seat's changed amount neither inflates nor hides it.
+  const web = [];
+  for (const [outpoint, byVersion] of found) {
+    const d = accepted.get(outpoint) || (byVersion.size === 1 ? [...byVersion.values()][0].d : null);
+    if (d && d.item === 'website' && /^\d+$/.test(String(d.amountMsat))) web.push(d);
+  }
   return { key: pk, collected, spent, failed, waiting, totalMsat: String(collected.reduce((t, c) => t + BigInt(c.amountMsat), 0n)),
     referral: { msat: String(web.reduce((t, d) => t + BigInt(d.amountMsat || 0), 0n)), payouts: web.length } };
 }
@@ -40066,15 +40127,34 @@ async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federati
     devsPct: Number(devsPct), outputs: outs.length, keptBy, ...(terms.reserves ? { reserveKey: toHex(reserveKey), reserveMsat: built.reserve.msat } : {}) };
 }
 
-/** THE ITEMS A PLAYER OWNS, from the first seat that answers (GET /items): [{ id, gameName, itemId, ... }]. */
+/**
+ * THE ITEMS A PLAYER OWNS (GET /items): [{ id, gameName, itemId, ... }]. Kanban #1558: every seat is asked (15 s each) and the answers
+ * are merged by purchase id - no longer the first seat's answer as it is, where one seat answering [] hid a purchase every other seat
+ * keeps, or named a made-up one. A purchase is kept when two seats name it (one, when only one seat answered); the record kept is the
+ * first seat's in list order.
+ */
 async function ownedItems({ seats, player, gameName = null, fetch }) {
-  for (const s of seats || []) {
+  const answers = await Promise.all((seats || []).map(async (s) => {
     try {
       const r = await fetch(`${String(s).replace(/\/$/, '')}/items?player=${toHex(player)}${gameName ? `&game=${encodeURIComponent(gameName)}` : ''}`, { signal: AbortSignal.timeout(15000) });
-      if (r.ok) return (await r.json()).items || [];
-    } catch { /* the next seat */ }
+      if (!r.ok) return null;
+      const items = (await r.json()).items;
+      return Array.isArray(items) ? items.slice(0, 1000) : [];
+    } catch { return null; }
+  }));
+  const answered = answers.filter((a) => a);
+  const need = answered.length >= 2 ? 2 : 1;
+  const byId = new Map();
+  for (const items of answered) {
+    const seen = new Set();
+    for (const it of items) {
+      if (!it || typeof it.id !== 'string' || seen.has(it.id)) continue;
+      seen.add(it.id);
+      const e = byId.get(it.id);
+      if (e) e.n++; else byId.set(it.id, { it, n: 1 });
+    }
   }
-  return [];
+  return [...byId.values()].filter((e) => e.n >= need).map((e) => e.it);
 }
 
 /**
