@@ -1697,3 +1697,7 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 #### SM-C3 (change) Liquidation claim: one record per federation and payout key (kanban #1771)
 - A notes record (`arena-liquidation-ecash-<fid>`) and a pending-outputs record (`arena-liquidation-pending-<fid>`) name the payout key they were written for (`payoutPk`). A phrase uses the plain key only when it is free or names its own key (a record from an older page that names no key is read as this phrase's); otherwise its record is `<key>.<16 hex of its payout key>` (`claimSlot`).
 - Invariant: every phrase's notes in a liquidated federation are handed over inside the claim window, whatever another phrase's tab of the same browser did. A record is posted, and dropped as taken, only with the payout key it names; another phrase's record is never re-posted under this phrase's key.
+#### SM-L1 (change) Node process and its guardians: one guardian action at a time (kanban #1779)
+- Invariant: one fedimintd per data dir, and every fedimintd the node started is one it can stop.
+- The same hole as #1580 (SM-N1 above), found again: merged in #1489 onto #1580's node-start.js (`serial`, `closed`); #1779's own chain (`inTurn`) was not taken, its test wf1489-sm2-node-2 holds #1580's code to the invariant.
+- A kept guardian's `halt` (pidfile kept, guardian.js) also ends its RAM follow loop, so a restart from the owner page does not leave a second snapshot loop behind.
