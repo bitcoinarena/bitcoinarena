@@ -23,12 +23,12 @@ const enter = async (w, who) => {
   catch (e) { return String(e.message).split('\n').join(' ').slice(0, 300); }
 };
 
-test('#1485 a head-to-head handout inside the lead before the close is refused (nothing to lock); before the lead it is taken (lead 1 s here, the fixture window is 1.5 s; 2 s live)', async () => {
-  const w = await lockRound({ stakeMsat: 0n, serveOpts: { plugins: [NEXTBLOCK, RPS], h2hHandoutLeadMs: 1000 }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 25000 });
+test('#1485 a head-to-head handout inside the lead before the close is refused (nothing to lock); before the lead it is taken (lead 0.9 s here, kept 1.35 s, the fixture window is 1.5 s; 2.7 s live, kept 4.05 s)', async () => {
+  const w = await lockRound({ stakeMsat: 0n, serveOpts: { plugins: [NEXTBLOCK, RPS], h2hHandoutLeadMs: 900 }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 25000 });
   try {
     const close = Number(w.c.entryCloseMs);
     skipTo(Number(w.c.committeeTimeMs) + 20);
-    assert.ok(close - testNow() > 1000, `the window leaves ${close - testNow()} ms`);
+    assert.ok(close - testNow() > 1350, `the window leaves ${close - testNow()} ms`);
     const early = await enter(w, mk(1));
     skipTo(close - 500);
     const late = await enter(w, mk(2));
