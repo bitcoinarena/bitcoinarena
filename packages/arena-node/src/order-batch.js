@@ -62,8 +62,9 @@ export function marketRates(manifest, fees = null) {
 
 /** How long an order whose replay was refused waits before it is asked again, of any peer (kanban #1087). */
 export const REPLAY_RETRY_MS = 10 * 60 * 1000;
-/** A refusal no later block can lift: the stake lock is already older than the freshness window at the height it is verified at. */
-const REPLAY_NEVER = /blocks below the height \d+ it is verified at/;
+/** A refusal no later block can lift: the lock has expired at the federation. Not the freshness rule any more (kanban #1992): a replay of a
+ * certified batch's order is not refused for the blocks since its lock was verified, so that text no longer marks an order for good. */
+const REPLAY_NEVER = /that lock has expired at the federation/;
 /** Which orders may be asked again (kanban #1087): `allow(o)` false while a refusal holds, `refused(o, why)` answers whether it is for good. */
 export class ReplayGate {
   constructor({ now = () => Date.now(), retryMs = REPLAY_RETRY_MS, max = 4096 } = {}) { this.now = now; this.retryMs = retryMs; this.max = max; this.held = new Map(); }
@@ -657,6 +658,17 @@ export class OrderBook {
     const putEvent = this.db.prepare('INSERT INTO market_book_events (event_id, round_id, kind, entry_id, body, received_ms, batch) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (event_id) DO UPDATE SET batch = excluded.batch');
     for (const c of record.cancels || []) { const e = this.#cancelStands(roundIdBytes, c).id; claim('cancel', eventAt.get(e), e); putEvent.run(e, rid, 'cancel', c.entry, JSON.stringify(c), at, k); }
     for (const s of record.sells || []) { const e = this.#sellStands(roundIdBytes, s).id; claim('sell', eventAt.get(e), e); putEvent.run(e, rid, 'sell', s.entry, JSON.stringify(s), at, k); }
+  }
+
+  /** Whether a certificate's set carries the threshold of the round's seats' signatures, read without the orders' entries (kanban #1992). */
+  #signedByThreshold(roundIdBytes, cert) {
+    const m = this.market(roundIdBytes);
+    if (!m.ok || !cert || !cert.record) return false;
+    const ids = this.#idsOf(roundIdBytes, cert.record);
+    if (!ids) return false;
+    let id;
+    try { id = toHex(bookBatchId({ roundId: roundIdBytes, k: BigInt(cert.record.k), orderIds: ids })); } catch { return false; }
+    return this.#counted(m, id, Array.isArray(cert.sigs) ? cert.sigs : []).length >= m.needed;
   }
 
   /** Signatures over a batch id that count: distinct seats of the round, each verifying. */
