@@ -1996,3 +1996,7 @@ Files: `owner-leave.js` leaveStatus.
   callback (`claim`) and the admin's pay-to-address (`payToAddress`). Invariant: no payinvoice on the bounty payer runs in the players' queue, so a
   welcome asked while a reward payment hangs (75 s lncli, 20 s more for a pay-to-address) is answered within the page's 45 s. Two claims of one link
   stay apart through claim()'s `open -> paying` compare-and-set, not through a queue. Test: test/wf1489-sm6-faucet-3.test.js.
+#### SM-P3 (change) Head-to-head move: kept before the entry goes out (kanban #2025)
+- Invariant: no entry is at a seat with its commitment unless the tab's sessionStorage (`HIDDEN_KEY`) holds its move and salt. The join writes the record (round, entry id made locally with `entryId(entry)`, move, salt, nodes, entry close, end) before `submitPick` sends anything, and writes it again with the seats' entry id once they answered; a reload anywhere in the wait on the seats can still reveal.
+- An entry no seat took (no 201) has its record taken out again (`forgetHidden`), so the round is not counted as the tab's.
+- Not covered: a reload after the stake lock is made but before the move is drawn; no entry exists then, so no reveal is owed.
