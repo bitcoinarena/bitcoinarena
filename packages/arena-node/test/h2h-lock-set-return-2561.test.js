@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { lockRound, lockAndPlay } from './lock-round-fixture.js';
+import { lockRound, openLockRound, lockAndPlay } from './lock-round-fixture.js';
 import { b32, wait } from './window-fixture.js';
 import { skipTo, testNow } from './test-clock.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
@@ -115,4 +115,32 @@ test('2-of-2: no certificate by close + the window (VOID) - every lock is forfei
     assert.equal(fee.status, 200, `a VOID round's fee lock did not come back at once: ${fee.why}`);
     assert.ok(fee.verifies, 'the fee lock\'s forfeit does not verify');
   } finally { up(w.nodes[1]); await w.close(); }
+});
+
+// FEEDBACK #018 / kanban #2511 (Hexbox, critical): the forfeit door read the lock by its entry alone and asked lockSetOut about the round the ASKER
+// named - a certified loser of R1 named another protocol-28 round R2 of the same seats (VOID: every lock out) and had R1's stake and fee lock
+// signed back after seeing the reveals. A lock goes back only through the round it stakes.
+test('feedback #018: a certified entry of one round is not forfeited back by naming another protocol-28 round of the same seats (stake and fee lock)', { timeout: 180000 }, async () => {
+  const w = await lockRound({ serveOpts: { plugins: [NEXTBLOCK, RPS], closeAtEnd: { everyMs: 250 } }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 25000 });
+  try {
+    const w2 = await openLockRound(w, { round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 30000 });
+    skipTo(Number(w.c.committeeTimeMs) + 20);
+    const sa = salt(), sb = salt();
+    const a = await lockAndPlay(w, player(), { hidden: { move: ROCK, salt: sa }, noMarks: true });
+    const b = await lockAndPlay(w, player(), { hidden: { move: SCISSORS, salt: sb }, noMarks: true });
+    skipTo(Number(w.c.entryCloseMs) + 50);
+    let sets = [];
+    for (let i = 0; i < 80 && !(sets.length && sets.every((s) => s.certificate)); i++) { await wait(50); sets = await Promise.all(w.nodes.map((d) => lockSetAt(d, w))); }
+    for (const s of sets) assert.deepEqual([...(s.entries || [])].sort(), [toHex(a.eid), toHex(b.eid)].sort(), 'R1 is not certified with the pair');
+    // R2: no entry, past its close + the window - VOID, every lock of it out
+    skipTo(Math.max(Number(w2.c.entryCloseMs), Number(w.c.entryCloseMs)) + LOCK_SET_WINDOW_MS + 2500);
+    await wait(600);
+    const viaR2 = await Promise.all(w.nodes.map((d) => forfeitAt(d, w2, b.eid)));
+    const feeViaR2 = await Promise.all(w.nodes.map((d) => forfeitAt(d, w2, b.eid, 'fee')));
+    console.log('  FACTS (#018 cross-round forfeit):', JSON.stringify({ viaR2, feeViaR2 }));
+    for (const x of [...viaR2, ...feeViaR2]) {
+      assert.notEqual(x.status, 200, `R1's lock was signed back through R2: ${JSON.stringify(x)}`);
+      assert.ok(!x.verifies, 'a signature over R1\'s lock came back through R2');
+    }
+  } finally { await w.close(); }
 });
