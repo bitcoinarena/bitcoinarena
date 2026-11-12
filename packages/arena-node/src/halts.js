@@ -128,6 +128,13 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
     let o; try { o = decodeWithSig(said || {}); } catch (e) { return { ok: false, status: 400, why: `not a halt observation: ${e.message}` }; }
     const seats = new Set((censusSeats() || []).map(toHex));
     if (!seats.has(toHex(o.observer))) return { ok: false, status: 409, why: 'that observer is not an active seat of this seat\'s census' };
+    // ONLY OF A FEDERATION THIS SEAT HOLDS A RECORD OF, ITS ANSWERING LIST NO LONGER THAN THE RECORD'S GUARDIANS (kanban #1819, audit #1489 r6
+    // gossip): keep() opened an entry for any federation id and each fresh one rewrote the whole halts file, so one census seat signing
+    // observations of 600 made-up federations was held 600 times and 2,438 MB went to disk. proofOf answers only for a held record, so such an
+    // observation never counted; one that arrives before its record is refused and taken from the observer's next pass (it posts every pass).
+    const held = records.recordOf(toHex(o.federationId));
+    if (!held) return { ok: false, status: 409, why: 'this seat holds no record of that federation' };
+    if ((o.answering || []).length > (held.record.guardians || []).length) return { ok: false, status: 409, why: 'that observation names more answering guardians than the record lists' };
     if (!verify(o.signature, haltObservationId(o), o.observer)) return { ok: false, status: 409, why: 'that observation is not signed by its seat' };
     const fresh = keep(o);
     if (fresh) persist();
