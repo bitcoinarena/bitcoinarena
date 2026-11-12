@@ -31,6 +31,12 @@ const toHexB = (b) => Buffer.from(b).toString('hex');
 export const ZAP_PENDING_MAX = 1000;
 export const ZAP_PENDING_PER_PAYER = 10;
 export const ZAP_REFUSED_KEPT = 200;
+// RECEIPTS DO NOT WAIT ON ANOTHER ZAP'S RELAYS (kanban #1828): the relays are the payer's own choice, and watch() used to await each
+// publish before it looked at the next zap - one 1-sat zap naming 8 silent relays held every later receipt (and the expiry sweep)
+// for 8 x 10 s. A paid zap's receipt is signed and kept at once; its publish runs beside the watcher, a few at a time, from a
+// bounded queue (the oldest waiting one is dropped when it is full; the receipt itself stays in `receipts`).
+export const ZAP_PUBLISH_PARALLEL = 4;
+export const ZAP_PUBLISH_QUEUED = 1000;
 
 /** What a plain (not zap) tip's invoice is hashed over (LUD-06: raw JSON, text/plain first, the address as text/identifier). */
 export const addressMetadata = (name, host) => JSON.stringify([['text/plain', `Zap ${name}@${host}`], ['text/identifier', `${name}@${host}`]]);
@@ -64,6 +70,24 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
     renameSync(`${statePath}.tmp`, statePath);
   };
 
+  const publishQueue = [];
+  let publishing = 0;
+  const pump = () => {
+    while (publishing < ZAP_PUBLISH_PARALLEL && publishQueue.length) {
+      const [receipt, relays] = publishQueue.shift();
+      publishing++;
+      Promise.resolve().then(() => publish(receipt, relays))
+        .catch((e) => log(`publish ${receipt.id.slice(0, 16)} failed: ${e.message}`))
+        .finally(() => { publishing--; pump(); });
+    }
+  };
+  const enqueuePublish = (receipt, relays) => {
+    if (typeof publish !== 'function') return;
+    publishQueue.push([receipt, relays]);
+    if (publishQueue.length > ZAP_PUBLISH_QUEUED) { const [old] = publishQueue.shift(); log(`publish ${old.id.slice(0, 16)} dropped: the queue is full`); }
+    pump();
+  };
+
   async function watch() {
     const nowS = Math.floor(Date.now() / 1000);
     for (const [hash, p] of pending) {
@@ -75,7 +99,7 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
         pending.delete(hash); save();
         receipts.push(receipt);
         log(`zap paid ${p.name} ${hash.slice(0, 16)} -> receipt ${receipt.id.slice(0, 16)}`);
-        try { await publish(receipt, p.relays); } catch (e) { log(`publish ${receipt.id.slice(0, 16)} failed: ${e.message}`); }
+        enqueuePublish(receipt, p.relays);   // not awaited (kanban #1828)
       } else if (p.until < nowS) { pending.delete(hash); save(); log(`zap ${hash.slice(0, 16)} expired unpaid`); }
     }
   }
