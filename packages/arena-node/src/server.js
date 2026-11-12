@@ -11273,6 +11273,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!st || !st.stored) return text(res, 409, 'the federation holds no lock at that outpoint: spent, or never made');
         if (String(id) !== String(st.stored.contractId)) return text(res, 409, 'the lock at that outpoint is not the contract handed over: its id is another');
         if (fields.expiration !== st.blockCount + st.stored.blocksLeft) return text(res, 409, 'that contract\'s expiration is not the one the federation holds');
+        // ONE LOCK PER HANDOUT, THE FIRST KEPT (kanban #1489): a second, other lock with the same public image, refund key and
+        // claim key - anyone's, 1 sat - is refused here and never replaces the kept one; the same lock handed again is kept as it was.
+        const opHex = `${toHex(outpoint.txid)}:${outpoint.outIdx}`;
+        const before = round.refusedLock(held.id);
+        if (before && before.outpoint !== opHex)
+          return text(res, 409, `this signer node already keeps another lock for that handout (${before.outpoint}): the first kept lock stands`);
         round.putRefusedLock({ handoutId: held.id, roundId: rid, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
         console.log(`[refused-lock] ${toHex(rid).slice(0, 16)}: ${String(fields.amountMsat)} msat kept for its return (${String(refusedWhy).slice(0, 80)})`);
         return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(held.id)}`);
