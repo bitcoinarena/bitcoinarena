@@ -199,7 +199,7 @@ async function updateOnce({ home, latest, fetcher = fetch, platform = process.pl
   let r;
   // AN UPDATE THAT THREW IS RECORDED AS ROLLED BACK TOO (kanban #1440, audit 8 O8-1): without the record the #1369 day's wait never applied, and
   // every 30 min check stopped the node again
-  try { r = await apply({ home, newRelease, port: node.port, node: join(newRelease, 'runtime', platform === 'win32' ? 'node.exe' : 'node'), installUpdaterFn, trace: given, progress: moved }); }
+  try { r = await apply({ home, newRelease, port: node.port, node: join(newRelease, 'runtime', platform === 'win32' ? 'node.exe' : 'node'), installUpdaterFn, trace: given, progress: moved, retryRolledBack: force }); }
   catch (e) { record(home, { ok: false, from: node.version, to: v, why: e.message, rolledBack: true, threw: true, ...(l.latest.commit ? { commit: l.latest.commit } : {}) }); throw e; }
   trace.verbose(`the node moved: ${r.ok ? 'ok' : r.rolledBack ? 'rolled back' : 'not updated'} (${trace.since(t0)})`);
   const out = r.ok ? { ok: true, from: node.version, to: v, backup: r.backup } : { ok: false, from: node.version, to: v, why: r.why, rolledBack: !!r.rolledBack, ...(l.latest.commit ? { commit: l.latest.commit } : {}) };
