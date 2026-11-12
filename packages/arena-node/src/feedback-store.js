@@ -9,7 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomBytes } from 'node:crypto';
 import { lnurlFor, urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { eventId, eventRefusal } from './nostr-relay.js';
-import { BIP39_ENGLISH } from '../../arena-client/src/bip39-wordlist.js';
+import { seedRunSpans } from './seed-phrase.js';
 
 /** The report's kind: ephemeral (20000-29999), so no relay keeps it - it goes to the faucet only. */
 export const FEEDBACK_KIND = 27842;
@@ -54,23 +54,31 @@ export const AUTH_AGE_MOST_S = 60;
 // spaces only - "Abandon, Ability, ..." or "1. abandon 2. ability ..." went through): a run of 12 to 24 BIP39 words in any case, each may carry its number
 // ("1.", "2)", "3:"), split by spaces, new lines, commas, semicolons, slashes or dashes, is removed. Only BIP39 words count, so an ordinary sentence of 12
 // words stays. nsec/ncryptsec keys and 64-hex secrets are removed as before.
-const BIP39_SET = new Set(BIP39_ENGLISH);
+// ONE SEED RULE FOR THE STORE, THE FAUCET AND THE LOGS (kanban #1737, #1799, #1843, #1858, refute of #1472): the run is found by seed-phrase.js
+// seedRunSpans, the same function log-level.js redact masks with - any non-letter between the words (list numbers in any layout, a tab table, a JSON
+// array, quotes, dots, underscores, "+", zero-width spaces), 4-letter BIP39 prefixes counted as their words. A list number just before the first word
+// ("1.", "(1)", "#1", "1-") goes with the run.
 export const scrubKeys = (t) => {
   let s = String(t).replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]');
-  const tok = /(?:\d{1,2}\s*[.):]\s*)?([a-z]{3,8})/gi;
-  const runs = []; let run = []; let lastEnd = -1;
-  for (const m of s.matchAll(tok)) {
-    const gap = lastEnd < 0 ? '' : s.slice(lastEnd, m.index);
-    const joins = lastEnd >= 0 && /^[\s,;/|-]*$/.test(gap);
-    const word = BIP39_SET.has(m[1].toLowerCase());
-    if (word && (joins || run.length === 0)) run.push([m.index, m.index + m[0].length]);
-    else { if (run.length >= 12) runs.push(run); run = word ? [[m.index, m.index + m[0].length]] : []; }
-    lastEnd = m.index + m[0].length;
+  for (const [a, b] of seedRunSpans(s).reverse()) {
+    const lead = /[#(]?\d{1,2}[ \t]*[.):-]?[ \t]*$/.exec(s.slice(0, a));
+    s = s.slice(0, lead ? lead.index : a) + '[removed]' + s.slice(b);
   }
-  if (run.length >= 12) runs.push(run);
-  for (const r of runs.reverse()) s = s.slice(0, r[0][0]) + '[removed]' + s.slice(r[r.length - 1][1]);
   return s;
 };
+// WHAT IS KEPT OF THE SIGNED EVENT (kanban #1737, #1799, #1843, #1858): the event as kept had its raw content - the seed the columns had lost stayed on
+// disk in `event`, and `debug` was scrubbed only when read. The kept copy now holds every string of the content scrubbed (happened, expected, debug,
+// anything else) and every tag value scrubbed but the hex ones the store reads (node, screenshot, round, p, e). Its id and sig stay for reference: the
+// signature was checked when the report came in, and the kept copy is not checked again.
+const HEX_TAGS = new Set(['node', 'screenshot', 'round', 'p', 'e']);
+const scrubDeep = (v, depth = 0) => (typeof v === 'string' ? scrubKeys(v) : depth > 8 || v === null || typeof v !== 'object' ? v
+  : Array.isArray(v) ? v.map((x) => scrubDeep(x, depth + 1)) : Object.fromEntries(Object.entries(v).map(([k, x]) => [k, scrubDeep(x, depth + 1)])));
+export function keptEvent(e) {
+  let content;
+  try { content = JSON.stringify(scrubDeep(JSON.parse(e.content))); } catch { content = scrubKeys(String(e.content ?? '')); }
+  const tags = Array.isArray(e.tags) ? e.tags.map((t) => (Array.isArray(t) ? t.map((x, i) => (i === 0 || typeof x !== 'string' || (i === 1 && HEX_TAGS.has(t[0]) && /^[0-9a-f]{8,64}$/.test(x)) ? x : scrubKeys(x))) : t)) : e.tags;
+  return { ...e, tags, content };
+}
 const tag = (e, k) => { const t = e.tags.find((x) => x[0] === k); return t ? String(t[1] ?? '') : ''; };
 const said = (x, re) => (re.test(String(x || '')) ? String(x) : '');
 
@@ -96,6 +104,12 @@ export function openFeedbackStore(path = ':memory:') {
     if (unnumbered.length) { let n = Number(db.prepare('SELECT COALESCE(MAX(number), 0) AS n FROM reports').get().n);
       const set = db.prepare('UPDATE reports SET number = ? WHERE id = ?'); for (const r of unnumbered) set.run(++n, r.id); } }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS reports_by_number ON reports (number)');
+  // A FILE FROM BEFORE (kanban #1737, #1799, #1843, #1858): its kept events held the raw content - each is scrubbed in place once, as take() keeps one now
+  { const fix = db.prepare('UPDATE reports SET event = ? WHERE id = ?');
+    for (const r of db.prepare('SELECT id, event FROM reports').all()) {
+      let kept; try { kept = JSON.stringify(keptEvent(JSON.parse(r.event))); } catch { continue; }
+      if (kept !== r.event) fix.run(kept, r.id);
+    } }
   const get = db.prepare('SELECT * FROM reports WHERE id = ?');
   const row = (r) => (r ? { id: r.id, pubkey: r.pubkey, type: r.type, signedAt: r.signed_at, receivedMs: r.received_ms, happened: r.happened, expected: r.expected,
     game: r.game || null, round: r.round || null, build: r.build || null, state: r.state, reason: r.reason || null, duplicateOf: r.duplicate_of || null,
@@ -129,7 +143,7 @@ export function openFeedbackStore(path = ':memory:') {
     { const had = get.get(e.id); if (had) return { ok: true, id: e.id, kept: false, number: had.number, label: feedbackLabel(had.number) }; }
     db.prepare(`INSERT INTO reports (id, pubkey, type, signed_at, received_ms, happened, expected, game, round, build, event, source, node, screenshot, number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(number), 0) + 1 FROM reports))`)
       .run(e.id, e.pubkey, type, e.created_at, nowMs, happened, expected, said(tag(e, 'game'), /^[a-z0-9-]{1,48}$/) || null,
-        said(tag(e, 'round'), /^[0-9a-f]{8,64}$/) || null, said(tag(e, 'build'), /^[0-9a-zA-Z. -]{1,24}$/) || null, JSON.stringify(e), source, node || null, shot || null);
+        said(tag(e, 'round'), /^[0-9a-f]{8,64}$/) || null, said(tag(e, 'build'), /^[0-9a-zA-Z. -]{1,24}$/) || null, JSON.stringify(keptEvent(e)), source, node || null, shot || null);
     const n = get.get(e.id).number;
     return { ok: true, id: e.id, kept: true, number: n, label: feedbackLabel(n) };
   }
