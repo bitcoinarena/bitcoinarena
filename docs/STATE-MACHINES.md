@@ -1502,3 +1502,10 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 - Reserve payout: rows whose round this seat cannot read are `unknown` - taken as a co-signer, never picked as coordinator, never a SHORT while they could cover it (#1409).
 - Donation sets: a network's first set is its founding serial; a set's parent is the last set in force below it (#1407).
 
+## 15. State audit 2026-11-12
+
+#### SM-H2H (change) Head-to-head seating per seat (round.js `seatedEntriesOf`, kanban #1588)
+- Invariant: every seat of one paying head-to-head round seats the same players once it holds the same locks and took the entries in the same order (a client posts its entry to every seat before it hands a lock). The seated set is the game's `players` lock-backed entries (stake seen or stake lock held) in the order their entries were first taken at this seat (rowid) - not the order their locks arrived. A player who entered first is never unseated by a later entry's lock.
+- /lock no longer refuses a valid stake lock because the round already seats its players ("this lock seats no one" is gone): a seat that saw B's lock first and one that saw C's first both keep both, and the close (`membersKnown` -> `takeEntryParts`) fetches any lock still missing, so no seat waits for a lock its own door refuses.
+- A locked entry outside the seats is played against nobody and signed VOID; its stake and fee locks are never claimed and expire back to the player (EXPIRE).
+- The /entry door still refuses a new entry once `players` lock-backed entries stand (#1437); an entry relayed as accepted is taken as before.
