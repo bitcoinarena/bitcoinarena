@@ -984,7 +984,11 @@ const serviceRun = async (b) => {
       const s = state.read();
       if (!(s.done || {}).service) return { ok: false, why: 'install the node first' };
       if (!(s.done || {}).promise) return { ok: false, why: 'read the bond\'s rules first and type I UNDERSTAND' };
-      if (!just && s.bond && s.bond.txid && !(laterCustody(s) && !s.bond.custodyAdvert)) return { ok: false, why: `this node's bond is posted already (${s.bond.txid})` };
+      if (!just && s.bond && s.bond.txid && !(laterCustody(s) && !s.bond.custodyAdvert)) {
+        // the agent of a bond posted before a crash (between the bond's DONE and installAgent) or a failed install: installed now (kanban #2464)
+        if (((s.roles || []).includes('custody') || (s.roles || []).includes('liquidity')) && !((s.custodyAgent || {}).installedMs)) await installAgent();
+        return { ok: false, why: `this node's bond is posted already (${s.bond.txid})` };
+      }
       const seed = fromHex(state.readSecret('seed.hex'));
       const w = walletOf(seed);
       const nodeSecretNow = () => {
