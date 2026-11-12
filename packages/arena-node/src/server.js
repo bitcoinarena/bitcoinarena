@@ -1188,9 +1188,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const u = checkUpdate(installedInfo(replaces), v);
       if (!u.ok) { console.log(`[plugins] refused update ${game.slice(0, 16)} of ${replaces.slice(0, 16)}: ${u.why}`); return { ...v, ok: false, status: 422, why: u.why }; }
     }
+    // NAMED BY ITS SIGNED MANIFEST, TITLED AS THE VERSION IT REPLACES (kanban #1541): never by what the serving seat wrote
+    const named = decodeManifest(fromHex(String(pkg.manifest))).gameName;
+    pkg = { ...pkg, name: named, title: replaces !== null ? (hosted.get(replaces).title || named) : named };
     const at = installPackage(pluginsDir, pkg, game);
     let reg;
-    try { reg = await registrationFromPackage(at, pkg); } catch (e) { return { ok: false, status: 500, why: `kept, but it does not load: ${e.message}` }; }
+    try { reg = await registrationFromPackage(at, pkg, { title: pkg.title }); } catch (e) { return { ok: false, status: 500, why: `kept, but it does not load: ${e.message}` }; }
     const entry = hostedPlugins([reg]).get(game);
     hosted.set(game, entry);
     if (replaces !== null) superseded.set(replaces, game);
