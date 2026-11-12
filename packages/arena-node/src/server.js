@@ -1393,25 +1393,51 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // this thread. Each page is read like every other peer listing (#1540): past PEER_LISTING_BYTES the seat counts as not
           // answered. IN PAGES (kanban #2273): an honest busy seat's window is more than one bound, so its pages are followed
           // up to SEASON_PEER_ROUNDS_MAX rounds / SEASON_PEER_ANSWER_BYTES; a seat on an older build answers whole, without `next`.
-          const list = []; let after = '', bytes = 0, node = null, first = true;
+          // THE HONEST SHAPE ONLY (kanban #2355, #1489 a45-refute-22-s2, refute of #1856 after #2273): one seat cut #1856's padded answer
+          // into rising pages just under the bound and was read whole again - 20,241 rounds of one seat, each carrying a signature
+          // "of" every seat of its draw, each schnorr-verified in this thread on the badge / payout path (~250 s a collect). The work
+          // is bounded, not only the bytes: an honest seat's GET /season-rounds (season-read.js signedSeasonRoundsJson) hands on each
+          // round once, in round-id order after the cursor, with no signature or its OWN one (the node its answer names). A page with
+          // a round twice, a round at or before the cursor, a second signature or one of another node is not a seat's own account:
+          // the seat counts as not answered, before anything is verified - so one seat costs at most one verify per round it was
+          // drawn for (a draw is the contract's, and only a real round's draw names it). The totals are checked before a page is
+          // taken. A seat whose later page does not come in time (its own timeout, or the whole-seat limit) keeps what it read.
+          const list = []; const seen = new Set(); let after = '', bytes = 0, node = null, first = true;
           const whole = AbortSignal.timeout(SEASON_PEER_READ_MS);   // every page of one seat within this, each within its own timeout
           for (;;) {
-            const r = await seasonFetch(`${seats[i]}/season-rounds?game=${ids.join(',')}&days=${days}&page=1&after=${after}`, { signal: AbortSignal.any([whole, AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS)]) });
-            if (!r.ok) throw new Error(`${r.status}`);
-            const t = await textUpTo(r, PEER_LISTING_BYTES);
-            bytes += t.length;
+            let t;
+            try {
+              const r = await seasonFetch(`${seats[i]}/season-rounds?game=${ids.join(',')}&days=${days}&page=1&after=${after}`, { signal: AbortSignal.any([whole, AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS)]) });
+              if (!r.ok) throw new Error(`${r.status}`);
+              t = await textUpTo(r, PEER_LISTING_BYTES);
+            } catch (e) {
+              // a later page that does not come in (time, network, a refusal): the pages read stand; the first one is the answer
+              if (!first && !/passed|more than/.test(String(e && e.message))) break;
+              throw e;
+            }
             const j = JSON.parse(t);
             if (!j || !Array.isArray(j.rounds) || (keyed && j.roundKeys !== true)) throw new Error('not a season\'s rounds');
             const n = typeof j.node === 'string' && /^[0-9a-f]{64}$/i.test(j.node) ? j.node.toLowerCase() : null;
             if (first) node = n; else if (n !== node) throw new Error('its pages name two nodes');
             first = false;
-            list.push(...j.rounds);
+            for (const x of j.rounds) {
+              const rid = x && typeof x === 'object' ? String(x.roundId || '').toLowerCase() : '';
+              if (!/^[0-9a-f]{64}$/.test(rid)) continue;                   // left for the merge to refuse by name, never verified
+              if (seen.has(rid) || (after && rid <= after)) throw new Error('a round handed on twice');
+              seen.add(rid);
+              const sigs = x.sigs;
+              if (sigs !== undefined && (!Array.isArray(sigs) || sigs.length > 1
+                || (sigs.length === 1 && (!node || !sigs[0] || String(sigs[0].node || '').toLowerCase() !== node)))) throw new Error('a signature that is not the seat\'s own');
+            }
+            if (bytes + t.length > SEASON_PEER_ANSWER_BYTES) break;
+            bytes += t.length;
+            list.push(...j.rounds.slice(0, SEASON_PEER_ROUNDS_MAX - list.length));
             const nx = typeof j.next === 'string' ? j.next.toLowerCase() : null;
             // a page that is the last, or a cursor that does not rise (a loop), or the totals reached: what was read is the answer
             if (!nx || !/^[0-9a-f]{64}$/.test(nx) || nx <= after || list.length >= SEASON_PEER_ROUNDS_MAX || bytes >= SEASON_PEER_ANSWER_BYTES) break;
             after = nx;
           }
-          answers[i] = { seat: seats[i], node, rounds: seasonRoundsFromJson(list.slice(0, SEASON_PEER_ROUNDS_MAX)) };
+          answers[i] = { seat: seats[i], node, rounds: seasonRoundsFromJson(list) };
         } catch { /* missing: no answer in time, or none that reads */ }
       }
     };
