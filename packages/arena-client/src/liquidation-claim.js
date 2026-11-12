@@ -244,13 +244,31 @@ export function liquidationKeyFor(seed, federationHex, curve) {
 // A door's list is that door's word (kanban #1853): the claim key is derived once per distinct federation the list names, and
 // for at most MAX_LIQUIDATION_FEDERATIONS of them - an honest list names the few liquidated federations, many payouts each; a
 // padded one naming thousands of federations no longer costs the tab one EC multiply per row.
+//
+// Kanban #2252 / #2264 (audit45 refute of #1853): (1) the cap counted every federation the list named, other players' too, and
+// an honest set's list holds every liquidation it ever paid, oldest first - after 32 of them the newest one's payout was never
+// collected. The rows are now read newest first, and `federations` (the federations this page holds, then those the signed
+// liquidation events name) puts those rows first and leaves every other federation underived; the cap bounds only what is left.
+// (2) every row naming this seed's payout key cost a wallet open and a refund round trip, and the door learns that key from the
+// player's own POST: matching rows are deduplicated by txid:outIdx and at most MAX_LIQUIDATION_PAYOUTS_PER_FEDERATION are
+// claimed per federation (an honest list holds a player's few: notes, pending, remainder).
 export const MAX_LIQUIDATION_FEDERATIONS = 32;
-export async function collectLiquidationPayouts({ listed, seed, curve, clientFor, storage }) {
+export const MAX_LIQUIDATION_PAYOUTS_PER_FEDERATION = 16;
+export async function collectLiquidationPayouts({ listed, seed, curve, clientFor, storage, federations }) {
   const out = [];
   const keys = new Map();
-  const rows = Array.isArray(listed && listed.payouts) ? listed.payouts : [];
+  const claimed = new Map();
+  const seen = new Set();
+  const all = Array.isArray(listed && listed.payouts) ? listed.payouts : [];
+  const fidOf = (p) => String((p && p.federation) || '').toLowerCase();
+  let rows = all.slice().reverse();
+  if (Array.isArray(federations)) {
+    const rank = new Map();
+    for (const f of federations) { const k = String(f || '').toLowerCase(); if (/^[0-9a-f]{64}$/.test(k) && !rank.has(k)) rank.set(k, rank.size); }
+    rows = rows.filter((p) => rank.has(fidOf(p))).sort((a, b) => rank.get(fidOf(a)) - rank.get(fidOf(b)));   // stable: newest first within one
+  }
   for (const p of rows) {
-    const fid = String((p && p.federation) || '').toLowerCase();
+    const fid = fidOf(p);
     if (!/^[0-9a-f]{64}$/.test(fid)) continue;
     let key = keys.get(fid);
     if (!key) {
@@ -259,6 +277,12 @@ export async function collectLiquidationPayouts({ listed, seed, curve, clientFor
       keys.set(fid, key);
     }
     if (String(p.payoutPk).toLowerCase() !== key.payoutPk) continue;
+    const at = `${String(p.txid).toLowerCase()}:${Number(p.outIdx)}`;
+    if (seen.has(at)) continue;
+    seen.add(at);
+    const n = claimed.get(fid) || 0;
+    if (n >= MAX_LIQUIDATION_PAYOUTS_PER_FEDERATION) continue;
+    claimed.set(fid, n + 1);
     const note = movedKey(storage, `arena-liquidation-paid-${p.txid}:${p.outIdx}`);
     if (storage.getItem(note)) { out.push({ ...p, ok: true, kept: true }); continue; }
     const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(p.msat), claimPk: key.payoutPk, refundPk: key.payoutPk, expiration: 0 };
