@@ -19954,6 +19954,25 @@ const owedRead = (read) => {
   const late = new Promise((resolve) => { t = setTimeout(() => resolve(null), SEAT_READ_MS); });
   return Promise.race([read(signal).catch(() => null), late]).finally(() => clearTimeout(t));
 };
+// THE SITE A NODE URL IS COUNTED BY IN THE OWED SCAN (kanban #1966): one machine or one domain is one site, however it is spelled
+const owedSiteOf = (n) => {
+  let h;
+  try { h = new URL(String(n)).hostname.toLowerCase(); } catch { return String(n).toLowerCase(); }
+  h = h.replace(/\.+$/, '');
+  if (h.startsWith('[') && h.endsWith(']')) {
+    const v6 = h.slice(1, -1);
+    const [head, tail = null] = v6.split('::');
+    const left = head ? head.split(':') : [], right = tail ? tail.split(':') : [];
+    const groups = tail === null ? left : [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right];
+    const g = groups.map((x) => parseInt(x || '0', 16) || 0);
+    // ::ffff:a.b.c.d (URL writes it ::ffff:hhhh:hhhh) is the IPv4 a.b.c.d
+    if (g.length === 8 && g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff)
+      h = [g[6] >> 8, g[6] & 255, g[7] >> 8].join('.');
+    else return 'v6:' + g.slice(0, 3).map((x) => x.toString(16)).join(':');
+  } else if (/^\d+\.\d+\.\d+\.\d+$/.test(h)) h = h.split('.').slice(0, 3).join('.');
+  else return h.split('.').slice(-2).join('.');
+  return 'v4:' + h;
+};
 async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [], knownBySeed = null } = {}) {
   // EVERY SAVED PHRASE AT ONCE (2026-10-07): each signer node's /settled is read once and matched against
   // every phrase's keys - 7 asks on 7 signer nodes, not 7 per phrase. One `seed` (with `known`) is the one-phrase scan as before.
@@ -19972,26 +19991,28 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
   // the request and never answered stalled the scan for good - a winner whose tab closed was never shown what the honest seats list.
   // The deadline holds the answer's body too, and holds even for a fetcher that ignores the signal.
   const since = Math.max(0, Math.floor(Number(sinceMs) || 0));
-  // ONE HOST IS ONE SEAT'S ALLOWANCE, HOWEVER MANY node= ENTRIES NAME IT (kanban #1832, #1489 v1-refute-10): a lobby link's node=
-  // list has no cap and no dedup (lobby.js lobbyQuery, join.js joinQuery), and the scan runs as soon as the link opens - eight path
-  // spellings of one liar host were eight seats with 500 made-up ids each, 132,000 derivations and 26.7 s for one phrase. Now each
-  // node string is read once, at most OWED_NODES_MAX of them; every node on one host shares one OWED_SETTLED_MAX allowance; and
-  // the whole scan derives keys for at most OWED_SCAN_IDS_MAX ids, taken host by host in turn, so the entry count cannot scale it.
+  // ONE SITE IS ONE SEAT'S ALLOWANCE, HOWEVER MANY node= ENTRIES OR HOSTNAMES NAME IT (kanban #1832, #1966, #2002, #1489
+  // v1-refute-10): a lobby link's node= list has no cap and no dedup (lobby.js lobbyQuery, join.js joinQuery), and the scan runs as
+  // soon as the link opens. Eight path spellings of one liar host were eight seats with 500 made-up ids each (132,000 derivations);
+  // then one machine named as liar.example, liar.example., its IPv4 literal and its ::ffff: IPv4-mapped literal was still four
+  // "hosts" (66,000), and wildcard subdomains as many as the scan-wide budget held (#1966). Each node string is read once, at most
+  // OWED_NODES_MAX of them, and every node is counted by its SITE (owedSiteOf): the hostname without trailing dots, an IPv4-mapped
+  // IPv6 literal as its IPv4, an IPv4 by its /24, another IPv6 by its /48, a name by its last two labels - every subdomain of one
+  // domain is one site. A site gives at most OWED_SETTLED_MAX ids, newest first.
   const scanNodes = [...new Set(nodes.map(base))].slice(0, OWED_NODES_MAX);
   nodes = scanNodes;
-  const hostOf = (n) => { try { return new URL(n).hostname.toLowerCase(); } catch { return n.toLowerCase(); } };
   const lists = await Promise.all(nodes.map((node) => owedRead(async (signal) => {
     const r = await fetcher(`${base(node)}/settled?since=${since}`, { signal });
     return r.ok ? r.json() : null;
   })));
-  // AT MOST OWED_SETTLED_MAX ROUNDS FROM ONE HOST, NEWEST FIRST, EACH ID ONCE PER SEAT (kanban #1489, #1832)
-  const byHost = new Map();
+  // AT MOST OWED_SETTLED_MAX ROUNDS FROM ONE SITE, NEWEST FIRST, EACH ID ONCE PER SEAT (kanban #1489, #1832, #1966)
+  const bySite = new Map();
   lists.forEach((got, n) => {
     const all = got && Array.isArray(got.rounds) ? got.rounds.filter((x) => x && typeof x === 'object') : null;
     if (!all) return;
-    const h = hostOf(nodes[n]);
-    if (!byHost.has(h)) byHost.set(h, []);
-    const seen = new Set(), rows = byHost.get(h);
+    const h = owedSiteOf(nodes[n]);
+    if (!bySite.has(h)) bySite.set(h, []);
+    const seen = new Set(), rows = bySite.get(h);
     all.forEach((x, i) => {
       const id = String(x.id || '').toLowerCase();
       if (!/^[0-9a-f]{64}$/.test(id) || seen.has(id)) return;
@@ -20000,17 +20021,28 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
     });
   });
   const cap = Math.min(OWED_SETTLED_MAX, OWED_LIST_MAX);
-  const queues = [...byHost.values()].map((rows) => {
+  const queues = [...bySite.values()].map((rows) => {
     rows.sort((a, b) => (b.ms - a.ms) || (a.n - b.n) || (b.i - a.i));
     const ids = [], keep = new Set();
     for (const r of rows) { if (keep.size >= cap) break; if (!keep.has(r.id)) { keep.add(r.id); ids.push(r.id); } }
     return { ids, rows: rows.filter((r) => keep.has(r.id)) };
   });
-  // the scan's whole budget, host by host in turn (newest first within each): a host listing many cannot crowd the others out
+  // THE SCAN'S WHOLE BUDGET GOES FIRST TO THE ROUNDS MOST SITES AGREE ON (kanban #2002): one budget of OWED_SCAN_IDS_MAX ids shared
+  // "site by site in turn" let four liar spellings cut an honest seat's 500 to 400 and hide the player's oldest round. Now an id
+  // is ranked by how many distinct sites list it: every round the seats of a federation all list (7-14 sites) is taken before any
+  // round fewer sites list, and a round only one site lists comes last - a liar's made-up ids are derived only with what is left.
+  // Among ids that equally many sites list, the sites take turns, newest first within each.
+  const agree = new Map();
+  for (const q of queues) for (const id of q.ids) agree.set(id, (agree.get(id) || 0) + 1);
   const taken = new Set();
-  for (let k = 0; taken.size < OWED_SCAN_IDS_MAX && queues.some((q) => k < q.ids.length); k++)
-    for (const q of queues) { if (k < q.ids.length && taken.size < OWED_SCAN_IDS_MAX) taken.add(q.ids[k]); }
-  // in the order the seats listed them (seat by seat, as before): only which ids are kept is chosen newest first
+  const tiers = [...new Set(agree.values())].sort((a, b) => b - a);
+  for (const c of tiers) {
+    if (taken.size >= OWED_SCAN_IDS_MAX) break;
+    const tier = queues.map((q) => q.ids.filter((id) => agree.get(id) === c && !taken.has(id)));
+    for (let k = 0; taken.size < OWED_SCAN_IDS_MAX && tier.some((t) => k < t.length); k++)
+      for (const t of tier) { if (k < t.length && taken.size < OWED_SCAN_IDS_MAX) taken.add(t[k]); }
+  }
+  // in the order the seats listed them (seat by seat, as before): only which ids are kept is chosen by agreement and age
   for (const { x, id } of queues.flatMap((q) => q.rows).filter((r) => taken.has(r.id)).sort((a, b) => (a.n - b.n) || (a.i - b.i))) {
     const l = listed.get(id) || { payouts: new Set(), refunds: new Set() };
     for (const k of (Array.isArray(x.payouts) ? x.payouts : []).slice(0, OWED_KEYS_PER_ROUND)) l.payouts.add(String(k).toLowerCase());
@@ -20071,7 +20103,8 @@ const ORDER_SCAN = 32;
 // how many rounds of one seat's /settled one owed scan derives keys for (newest first), and keys of one round it takes from one seat (kanban #1489)
 const OWED_SETTLED_MAX = 500, OWED_KEYS_PER_ROUND = 4096;
 // how many node= entries one owed scan reads (each distinct node string once), and how many ids the whole scan derives keys for,
-// over every host (kanban #1832): a federation lobby names 7-14 seats, and they list the same settled rounds
+// over every site, the ids most sites list first (kanban #1832, #2002): a federation lobby names 7-14 seats, and they list the same
+// settled rounds
 const OWED_NODES_MAX = 32, OWED_SCAN_IDS_MAX = 2000;
 
 /**
