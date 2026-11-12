@@ -55,7 +55,8 @@ function seven({ misbehave = () => undefined, seed = 0x74, boundMs = BOUND_MS, w
   for (let k = 0; k < 7; k++) {
     let drawn = 0;
     // A FIXED STREAM PER SEAT: the same nonces whichever order the peers are asked in, so the bytes on the wire can be compared
-    const random = (n) => sha256(Uint8Array.from([seed, k, drawn++, n]));
+    // NO WRAP AT 256 DRAWS (kanban #1699): the first 256 draws hash the bytes they always did
+    const random = (n) => { const d = drawn++; return sha256(Uint8Array.from(d < 256 ? [seed, k, d, n] : [seed, k, d & 255, n, (d >> 8) & 255, (d >> 16) & 255, (d >> 24) & 255])); };
     const peers = [0, 1, 2, 3, 4, 5, 6].filter((j) => j !== k).map(base);
     const f = new Forfeit(stubRound(), { curve, random, peersFor: () => peers, peerAskMs: boundMs, peerGraceMs: GRACE_MS,
       dkg: { publicSharesFor: () => ({ ok: true, shares: PUBLIC_SHARES }) },
