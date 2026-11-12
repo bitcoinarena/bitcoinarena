@@ -137,8 +137,9 @@ function deathOf(sup, id) {
  * array budget or grows this process past the backstop is ended - the node waits for its thread to be gone - and refused
  * from then on.
  */
-export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry,
-  arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP } = {}) {
+export function loadCore({ files, entry }, options = {}) {
+  const { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry,
+    arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, oneReplay = false } = options;
   const sup = supervisorOf();
   const id = sup.next++;
   const ctrl = new Int32Array(new SharedArrayBuffer(8 * 4));
@@ -200,7 +201,7 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
   if (!loaded.ok) { end(loaded.why); throw new Error(loaded.why); }
 
   // `within`: a shorter deadline for this one call (kanban #1538: the plugin trial run gives all its calls one deadline in total)
-  const call = (op, input = {}, within = null) => {
+  const callHere = (op, input = {}, within = null) => {
     if (ended) throw new Error(ended);
     port1.postMessage({ op: String(op), json: plain(input) });
     const ms = Number.isFinite(within) ? Math.max(1, Math.min(within, { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'])) : { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'];
@@ -211,8 +212,30 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
     if (!a.ok) throw new Error(a.why);
     return revive(a.json);
   };
-  const meta = call('meta');
-  return Object.freeze({ call, meta, end: () => end('ended by the node'), lastEnd: () => lastEnd, highWaterMb: () => Atomics.load(ctrl, C.HIGH_MB) });
+  // A REPLAY RUNS ON A FRESH CORE THREAD OF ITS OWN (kanban #1624): a core that recursed until V8's "Maximum call stack size
+  // exceeded", caught the RangeError and counted its frames read its thread's JIT history - a frame's size depends on the tier
+  // its function runs in, and the tiers on a thread depend on what it ran before (measured: 400 replays of one input on one
+  // thread answered depths 41205, 41206 and 41209; 60 replays each on a fresh thread answered 41205 every time). The stack
+  // overflow cannot be made sticky like the array budget: V8 builds and throws it without running any code a sandbox could
+  // hook (not even the debugger hears it). So the replay - the call whose answer a seat signs - starts from the same history
+  // every time: a thread loaded for it alone (~45 ms), ended after it. A thread that ends that way (a deadline, the array
+  // budget, its heap, the backstop) ends this core too, as before. What this does not close: two machines (another CPU,
+  // another node build) still count a different depth - that is a core's own nondeterminism, as with any engine limit.
+  let lastOne = null;
+  const replayFresh = (input, within) => {
+    if (ended) throw new Error(ended);
+    const one = loadCore({ files, entry }, { ...options, oneReplay: true });
+    lastOne = one;
+    try { return one.call('replay', input, within); } catch (e) {
+      const why = one.endedWhy();
+      if (why) { end(why); lastEnd = one.lastEnd(); }
+      throw e;
+    } finally { if (!one.endedWhy()) one.end(); }
+  };
+  const call = (op, input = {}, within = null) => (String(op) === 'replay' && !oneReplay ? replayFresh(input, within) : callHere(op, input, within));
+  const meta = callHere('meta');
+  return Object.freeze({ call, meta, end: () => end('ended by the node'), lastEnd: () => lastEnd, endedWhy: () => ended,
+    highWaterMb: () => (lastOne ? lastOne.highWaterMb() : Atomics.load(ctrl, C.HIGH_MB)) });
 }
 
 /** Does this core draw a picture (a ghost)? false only when its sandbox says it does not; null when it does not load. */
