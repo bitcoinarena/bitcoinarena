@@ -38,6 +38,12 @@ export function servedNodes({ rounds, fromMs, toMs, verify }) {
   // spent that, the FINAL is not checked. An honest answer holds FINALs that verify and is never cut, however many rounds it holds
   // and whoever else answers; padding with junk signatures costs the reader at most SERVED_FAILED_MAX checks per answer.
   const failed = new Map(), spent = new Set();               // answer index -> FINALs of it that did not verify
+  // kanban #2361/#2365 (#1489 a45 refute 9 skeptic 3 of #2312): a FINAL that VERIFIES costs the same check, and one seat can sign
+  // valid FINALs on made-up rounds under keys it made up (18,000 checks for 2,000 such rounds). So every check of a round the reader's
+  // own record does not hold is charged to an answer holding the FINAL - the one with the most budget left - and an answer is checked
+  // for at most SERVED_CHECKS_MAX of them, valid or not. A round the reader's own record holds (`own`, mergeServedRounds) is real: it
+  // costs at most 18 checks per answer and is never cut. A FINAL named by no answer (the caller's own rounds) is not charged.
+  const checked = new Map(), exhausted = new Set();          // answer index -> checks charged to it
   let counted = 0;
   for (const round of rounds || []) {
     if (!round || !snIs32(round.roundId) || !Array.isArray(round.committee)) { refused.push({ round: null, why: 'a round is named by its id and committee' }); continue; }
@@ -57,6 +63,13 @@ export function servedNodes({ rounds, fromMs, toMs, verify }) {
       if (served.get(key)?.has(rid)) continue;                 // a round counts once per node: no second check for it
       const src = sources && Array.isArray(sources[j]) && sources[j].length ? sources[j] : null;
       if (src && src.every((s) => (failed.get(s) || 0) >= SERVED_FAILED_MAX)) continue;   // its answers spent their bad-signature budget
+      if (src && !round.own) {                                 // kanban #2361: a check of a round the reader did not sit on costs an answer
+        let payer = null;
+        for (const s of src) if ((checked.get(s) || 0) < SERVED_CHECKS_MAX && (payer === null || (checked.get(s) || 0) < (checked.get(payer) || 0))) payer = s;
+        if (payer === null) continue;
+        const n = (checked.get(payer) || 0) + 1; checked.set(payer, n);
+        if (n >= SERVED_CHECKS_MAX && !exhausted.has(payer)) { exhausted.add(payer); refused.push({ round: null, why: `answer ${payer} made this reader check ${n} FINALs of rounds it did not sit on: no more of its FINALs are checked` }); }
+      }
       let good = false;
       try { good = !!verify(signature, finalSigId(x), x.signerPubkey); } catch { good = false; }
       if (!good) {
@@ -129,8 +142,16 @@ export const SERVED_HELD_MAX = 20000;
 // of them did not verify. FINALs that verify are never cut; how many answers name a round no longer matters.
 export const SERVED_LONE_FINALS_MAX = 360;   // kept exported for older imports; no longer read (kanban #2312)
 export const SERVED_FAILED_MAX = 64;
+// kanban #2361/#2365 (#1489 a45 refute 9 skeptic 3 of #2312): and at most SERVED_CHECKS_MAX checks in all - valid signatures or not -
+// per answer for rounds the reader's own record does not hold. #2312 bounded only FINALs that fail; one seat signing valid FINALs
+// under keys it made up on 2,000 made-up rounds cost 18,000 checks (300 rounds, real signatures: 3.4 s on the M1 Max). A round the
+// reader sat on is not charged; a FINAL several answers hold is charged to the one with the most budget left, so honest rounds held
+// by their committee's seats spread over them.
+export const SERVED_CHECKS_MAX = 1024;
 export const SERVED_ANSWER_BYTES_MAX = 32 * 1024 * 1024;
-export function mergeServedRounds(held) {
+// `own` (default true): held[0] is the reader's own record (server.js), and the rounds it names are marked `own` - servedNodes does
+// not charge their checks to the answers (kanban #2361). A reader with no record of its own (the page, item-buy.js) passes false.
+export function mergeServedRounds(held, { own = true } = {}) {
   const hx = (b) => toHex(b);
   const rounds = new Map(), conflicts = new Set();
   (held || []).forEach((seat, at) => {
@@ -142,8 +163,9 @@ export function mergeServedRounds(held) {
       if (seen.has(k)) continue;                              // kanban #2239: one answer names a round once
       seen.add(k);
       const committee = [...new Set(r.committee.map(hx))].sort().join();
-      if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map(), sources: new Map() });
+      if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map(), sources: new Map(), own: false });
       const into = rounds.get(k);
+      if (own && at === 0) into.own = true;
       if (!into.copies.has(committee)) into.copies.set(committee, { committee: r.committee, seats: 0 });
       into.copies.get(committee).seats++;
       if (into.copies.size > 1) conflicts.add(k);
@@ -171,6 +193,6 @@ export function mergeServedRounds(held) {
     }
   });
   const pick = (copies) => { let best = null; for (const c of copies.values()) if (!best || c.seats > best.seats) best = c; return best.committee; };
-  return { rounds: [...rounds.values()].map((r) => ({ roundId: r.roundId, committee: pick(r.copies), finals: [...r.finals.values()], sources: [...r.sources.values()] })),
+  return { rounds: [...rounds.values()].map((r) => ({ roundId: r.roundId, committee: pick(r.copies), finals: [...r.finals.values()], sources: [...r.sources.values()], own: r.own })),
     conflicts: [...conflicts] };
 }
