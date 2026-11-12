@@ -672,6 +672,12 @@ export class OrderBook {
       // a seat that holds the batch certified without having signed it answers the certificate (kanban #1150: it used to decline it)
       counted = this.#counted(m, id, [...counted, ...all.filter((a) => a.signed && a.batchId === id).map((a) => ({ seat: a.seat, signature: a.signed })),
         ...all.filter((a) => Array.isArray(a.certificate) && a.batchId === id).flatMap((a) => a.certificate)]);
+      // A CERTIFICATE FOR ANOTHER SET DECIDES k (kanban #1697, #1762): k's leader signed two sets and the threshold signed the other one -
+      // this set can never be certified (an honest seat signs one set per batch) and k is not pending: the book moves on
+      if (counted.length < m.needed) {
+        const other = all.find((a) => Array.isArray(a.certificate) && isHex(String(a.batchId), 32) && a.batchId !== id && this.#counted(m, a.batchId, a.certificate).length >= m.needed);
+        if (other) return { state: 'DECIDED', batchId: other.batchId, why: `batch ${k} is certified under ${String(other.batchId).slice(0, 16)}` };
+      }
       if (counted.length < m.needed) {
         const declines = all.filter((a) => a.declined).map((a) => ({ seat: a.seat, signature: a.declined }));
         const voided = this.applyVoid(roundIdBytes, { k: String(k), declines });
@@ -726,8 +732,18 @@ export class OrderBook {
     // record at all - made every leader's lead() refuse "still undecided" or throw, for every batch after: no seat signs it and none can
     // decline it, #askStands refusing an unsigned set). Checked as #askStands checks a void ask: k inside the round's book, the record
     // reads, its id is the batchId named, and k's leader signed that id; anything else is skipped, never thrown on.
+    // ONLY A BATCH THAT CAN BE DECIDED NOW HOLDS THE BOOK (kanban #1697, #1762: a seat leads every n-th batch, so it signed a record for a
+    // later batch k' it leads and listed it pending - no seat can decline k' before cutoff(k') + interval, and every leader before k'
+    // refused "still undecided"; a past leader signed a second set for its own batch already certified - every seat answers the
+    // certificate under the other id, nobody declines, and the book froze for good). A pending k' above the batch led here is skipped:
+    // its own leader decides it in its turn (it is k there). A k this seat holds CERTIFIED under another id is decided: skipped too.
+    const ridBuf = Buffer.from(roundIdBytes);
+    const certifiedHere = (kn) => { const r = this.db.prepare('SELECT batch_id, certificate FROM market_batches WHERE round_id = ? AND k = ?').get(ridBuf, kn); return r && r.certificate ? String(r.batch_id) : null; };
     for (const p of proposals) for (const x of Array.isArray(p.pending) ? p.pending : []) {
       if (!this.#pendingStands(roundIdBytes, m, x)) continue;
+      if (Number(x.k) > Number(k)) continue;
+      const held = certifiedHere(Number(x.k));
+      if (held !== null && held !== String(x.batchId)) continue;
       if (!pending.has(String(x.k))) pending.set(String(x.k), { ids: new Map(), sigs: [] });
       const q = pending.get(String(x.k));
       if (x.ownSig) q.sigs.push({ seat: p.seat, signature: x.ownSig, batchId: x.batchId });
