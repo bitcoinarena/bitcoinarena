@@ -3068,7 +3068,20 @@ export class Round {
     if (one) return one.state;
     const feds = this.fedLockSettlementsOf(roundIdBytes);
     if (!feds.length) return null;
+    // EVERY FEDERATION OF THE SPLIT, NOT EVERY ROW HELD (kanban #1838): a federation the pass never reached has no row, and is not settled
+    const accepted = new Set(feds.filter((r) => r.state === 'ACCEPTED').map((r) => r.federation));
+    if (this.fedSettlementPlanOf(roundIdBytes).some((f) => !accepted.has(f))) return 'SUBMITTING';
     return feds.every((r) => r.state === 'ACCEPTED') ? 'ACCEPTED' : 'SUBMITTING';
+  }
+
+  /** The federations of a round's split (kanban #1838): kept once each, from the plan, before anything is submitted. */
+  putFedSettlementPlan(roundIdBytes, federations) {
+    const ins = this.db.prepare('INSERT OR IGNORE INTO fed_lock_settlement_plans (round_id, federation_id) VALUES (?, ?)');
+    for (const f of federations) ins.run(Buffer.from(roundIdBytes), String(f).toLowerCase());
+  }
+
+  fedSettlementPlanOf(roundIdBytes) {
+    return this.db.prepare('SELECT federation_id FROM fed_lock_settlement_plans WHERE round_id = ? ORDER BY federation_id').all(Buffer.from(roundIdBytes)).map((r) => r.federation_id);
   }
 
   /** A series' proven publication fee (§5A.5): kept once; { txid, feeSats } or null. */
@@ -3105,7 +3118,8 @@ export class Round {
 
   /**
    * THE CLOSED ROUNDS WITH A STAKE LOCK AND NO ACCEPTED SETTLEMENT HERE, closed between two times (kanban #803): what a settlement's
-   * retry reads. A round that takes any federation counts until every row it holds is ACCEPTED.
+   * retry reads. A round that takes any federation counts until every row it holds is ACCEPTED and every federation of its split
+   * holds one (kanban #1838: a federation never reached has no row).
    */
   closedLockRoundsUnsettled(fromMs, toMs) {
     // FROM THE LOCKS, NEVER FROM THE ROUNDS (kanban #927, measured 2026-11-01): left to choose, SQLite walked all 122,591 rounds with their contracts and held a seat's loop for 398 s, every minute. There are 4,736 locks
@@ -3114,7 +3128,9 @@ export class Round {
         AND NOT EXISTS (SELECT 1 FROM lock_settlements l WHERE l.round_id = r.round_id AND l.state = 'ACCEPTED')
         AND NOT EXISTS (SELECT 1 FROM settle_retries t WHERE t.round_id = r.round_id AND t.scope = '' AND t.state IN ('SETTLED', 'EXPIRED'))
         AND NOT (EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id)
-          AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id AND f.state <> 'ACCEPTED'))`)
+          AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id AND f.state <> 'ACCEPTED')
+          AND NOT EXISTS (SELECT 1 FROM fed_lock_settlement_plans p WHERE p.round_id = r.round_id AND NOT EXISTS
+            (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = p.round_id AND f.federation_id = p.federation_id AND f.state = 'ACCEPTED')))`)
       .all(CLOSED, fromMs, toMs).map((r) => new Uint8Array(r.round_id));
   }
 
@@ -3306,7 +3322,10 @@ export class Round {
         AND (EXISTS (SELECT 1 FROM lock_settlements s WHERE s.round_id = o.round_id AND s.state = 'ACCEPTED')
           OR (NOT EXISTS (SELECT 1 FROM lock_settlements s WHERE s.round_id = o.round_id)
             AND EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id)
-            AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id AND f.state <> 'ACCEPTED')))`).all()
+            AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id AND f.state <> 'ACCEPTED')
+            -- and every federation of its split holds an ACCEPTED row (kanban #1838)
+            AND NOT EXISTS (SELECT 1 FROM fed_lock_settlement_plans p WHERE p.round_id = o.round_id AND NOT EXISTS
+              (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = p.round_id AND f.federation_id = p.federation_id AND f.state = 'ACCEPTED'))))`).all()
       .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id) }));
   }
 
