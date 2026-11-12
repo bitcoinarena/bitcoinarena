@@ -18,7 +18,6 @@ import { noQuorumGoesToRerun } from '../../arena-protocol/src/constants.js';
 import { dissentsOn, dissentsFirstOn, dissentsFailOn, postsLateOn, LATE_POSTING_AFTER_MS } from './test-dissent.js';
 import { ReplayPool } from './pool.js';
 import { checkObjectionBundle } from './objection-check.js';
-import { decodeObjectionBundle } from '../../arena-protocol/src/objection.js';
 import { sha256 } from '../../arena-protocol/src/hash.js';
 import { stateOf } from './settlement-state.js';
 import { verifyKept } from './verify-kept.js';
@@ -1503,8 +1502,8 @@ export class Verifier {
     // full replay, ~1.4 s measured live, first in the pool - a flood of copies would have starved the closes):
     //   - ONE CHECK IN FLIGHT PER ENTRY: the next bundle for that entry waits its turn (its arrival is already stamped at
     //     the door, so waiting never makes an objection late);
-    //   - THE SAME RUN IS REPLAYED ONCE: a replay is keyed by the bytes it replays (transcript and inputs) and the length
-    //     replayed, kept in flight and after, so copies of one bundle share one answer;
+    //   - THE SAME RUN IS REPLAYED ONCE: a replay is keyed by the input it replays (the parsed form and marks, kanban
+    //     #1517), kept in flight and after, so copies of one bundle share one answer;
     //   - AND IN THE ORDINARY CLASS: a check is not yet an objection, so it does not go ahead of a close. The re-run a held
     //     objection starts is still first (rerun, objected: true).
     // A CHECK QUEUED OR RUNNING HERE HOLDS ITS ENTRY (kanban #1225, audit 2 #1204 SETTLEMENT-3): a pending objection held the entry SUSPENDED
@@ -1521,15 +1520,24 @@ export class Verifier {
     this.objectionTurns.set(hex(entryIdBytes), mine);
     await tail;
     try {
-      let content = '';
-      try { const p = decodeObjectionBundle(bundle); content = hex(sha256(new Uint8Array([...p.transcript, ...(p.inputs || [])]))); } catch { content = ''; }
       return await checkObjectionBundle({
         bundle, roundId: roundIdBytes, entryId: entryIdBytes, entry: found.entry, contract,
         committee: given.committee || this.round.signerNodes(roundIdBytes), signedResultId, core, roundRandomness: beacon.hash,
         verify: (sig, msg, key) => verifyKept(sig, msg, key), hashTicks: given.hashTicks || [],
         replayRun: (form, entry, options) => {
+          // KEYED BY WHAT IS REPLAYED, NOT BY THE BYTES POSTED (kanban #1517): the raw transcript + inputs bytes let a
+          // stranger make every copy of one run a fresh key (whitespace or an unknown key in a live run's inputs, or an
+          // inputs part beside a batch transcript, never read) - each a full replay, the entry held SUSPENDED behind
+          // them. The parsed replay form (replayFormOf / inputsFormOf: fixed fields, integers only) and the marks it
+          // must reproduce are the replay's whole input for this entry, so any bytes giving the same input share one job.
+          let content = '';
+          try {
+            content = hex(sha256(new TextEncoder().encode(JSON.stringify([
+              [form.ticks.map((x) => [x.tick, x.words]), form.liquidations, form.loads, form.samples, form.tapes],
+              (options.marks || []).map((m) => [m.tick, hex(m.stateHash)])]))));
+          } catch { content = ''; }
           const ticksAsked = (options.hashTicks || []).join('.');
-          const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${content}:${form.ticks.length}${ticksAsked ? `:h${ticksAsked}` : ''}`;
+          const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${content}${ticksAsked ? `:h${ticksAsked}` : ''}`;
           const had = content && this.objectionReplays.get(key);
           if (had) return had;
           this.objectionReplayCount++;
