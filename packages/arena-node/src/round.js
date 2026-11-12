@@ -3715,6 +3715,17 @@ export class Round {
     return n;
   }
 
+  /** Where each payout output of a settlement txid sends (kanban #1988): [{ kind, paymentHash, donationId }] in output order, kept once per txid. */
+  putSettlementPayoutKeys({ roundId, txid, payouts }) {
+    this.db.prepare('INSERT OR IGNORE INTO lock_settlement_payout_keys (round_id, txid, payouts) VALUES (?, ?, ?)')
+      .run(Buffer.from(roundId), String(txid), JSON.stringify(payouts));
+  }
+
+  settlementPayoutKeys(roundIdBytes, txid) {
+    const r = this.db.prepare('SELECT payouts FROM lock_settlement_payout_keys WHERE round_id = ? AND txid = ?').get(Buffer.from(roundIdBytes), String(txid));
+    return r ? JSON.parse(r.payouts) : null;
+  }
+
   settlementTxidsOf(roundIdBytes) {
     return this.db.prepare('SELECT txid, message, signature, claims, payouts FROM lock_settlement_txids WHERE round_id = ? ORDER BY made_ms').all(Buffer.from(roundIdBytes))
       .map((r) => ({ txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claims: JSON.parse(r.claims), payouts: Number(r.payouts) }));
