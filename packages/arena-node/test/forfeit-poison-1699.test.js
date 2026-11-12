@@ -139,7 +139,9 @@ for (const BAD of [1, 6]) {
   });
 }
 
-test('an honest pair stays while its pool is full of young pairs: the next commit is refused, never the honest list', async () => {
+// kanban #2011: a full pool no longer refuses the next commit (a stranger who kept it full stopped every forfeit with 503s, wf1489-v1-refute-27-s3-1).
+// The honest pair, the oldest of its pool, stays however many commits follow it; every later commit is taken, and the pool never grows past its cap.
+test('an honest pair stays while its pool is full of young pairs: the next commit is taken, the honest list still signs', async () => {
   const w = seven();
   for (const f of w.seats) f.random = (n) => crypto.getRandomValues(new Uint8Array(n));
   const seat = w.seats[3];
@@ -150,10 +152,10 @@ test('an honest pair stays while its pool is full of young pairs: the next commi
     const c = await seat.commit(RID, ENTRY);
     if (!c.ok) { refusedAt = { i, status: c.status }; break; }
   }
-  console.log(`  FACTS: the flood was refused at commit ${refusedAt && refusedAt.i} with ${refusedAt && refusedAt.status}`);
-  assert.deepEqual(refusedAt, { i: PAIRS_PER_FORFEIT - 1, status: 503 });
+  console.log(`  FACTS: the flood was refused at commit ${refusedAt && refusedAt.i}; ${seat.pairs.count} pair(s) kept`);
+  assert.equal(refusedAt, null, 'a full pool refused a commit');
+  assert.equal(seat.pairs.count, PAIRS_PER_FORFEIT, 'the pool grew past its cap');
   const list = [honest, ...[0, 1, 2, 4].map((k) => ({ id: DEAL.shares[k].id, hiding: curve.pointFromScalar(BigInt(7 + k)), binding: curve.pointFromScalar(BigInt(70 + k)) }))].sort((a, b) => a.id - b.id);
   assert.equal((await seat.share(RID, ENTRY, list)).ok, true, 'the honest pair was pushed out');
-  // a spent pair makes room again
   assert.equal((await seat.commit(RID, ENTRY)).ok, true);
 });
