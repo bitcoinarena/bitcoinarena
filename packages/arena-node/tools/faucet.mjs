@@ -221,6 +221,12 @@ const PAYERS = String(env.FAUCET_PAYERS || '').split(',').filter(Boolean).map((p
 const lncli = (payer, args, timeoutMs = 20000) => new Promise((res) => execFile(payer.lncli || env.FAUCET_LNCLI, [`--lnddir=${payer.dir}`, `--network=${payer.network || 'testnet4'}`, `--rpcserver=${payer.rpcserver}`, ...args],
   // NO 1 MB CAP ON WHAT LNCLI PRINTS (kanban #1785, state audit 2026-11-12, SM-22): node's default maxBuffer failed a listpayments of a few hundred payments
   { timeout: timeoutMs, maxBuffer: 256 * 1024 * 1024 }, (e, out, err) => res({ ok: !e, timedOut: !!(e && e.killed), out: String(out), err: String(err) })));
+// LNCLI'S STATUS LINE, NEVER THE PAYEE'S WORDS (kanban #2416, #2482, #1489 a44-refute-84 s2): without --json lncli 0.21 prints the payment as a table
+// whose ROUTE column holds the hops' node ALIASES - chosen by the payee. An alias "not found" or "Unknown Payment" made trackpayment read as NONE
+// while lnd said IN_FLIGHT, the sweep dropped the welcome, and the account was paid a second one. A status is read only from a line that BEGINS with
+// "Payment status:" (a table cell never does; the last such line is the payment's), and "never initiated" only from lnd's rpc error on stderr
+const lnStatus = (out) => { const said = [...String(out || '').matchAll(/^Payment status:[ \t]*([A-Z_]+)/gm)].map((m) => m[1]); return said[said.length - 1] || null; };
+const lnNotInitiated = (err) => /^\[lncli\] rpc error:.*(isn't initiated|not initiated|payment not found|unknown payment)/im.test(String(err || ''));
 
 // THE BOUNTY WALLET (kanban #1342 section 3): its own payer, never the faucet's; the payout network one setting (testnet4 in phase 1)
 const BOUNTY_NETWORK = env.FAUCET_BOUNTY_NETWORK || 'testnet4';
@@ -256,8 +262,8 @@ const bountyDecode = async (invoice) => {
 const bountyPay = async (invoice, amountSats = 0) => {
   const feeLimit = Math.max(20, Math.ceil(Number(amountSats || 0) * BOUNTY_FEE_LIMIT_PCT / 100));
   const r = await lncli(BOUNTY_PAYER, ['payinvoice', '--force', '--timeout=60s', `--fee_limit=${feeLimit}`, invoice], 75000);
-  if (/Payment status: SUCCEEDED/.test(r.out)) { const h = /Payment hash: ([0-9a-f]{64})/.exec(r.out); return { ok: true, paymentHash: h ? h[1] : null }; }
-  if (/Payment status: FAILED/.test(r.out) && !r.timedOut) return { ok: false, failed: true, why: (r.out.split('\n').find((l) => /reason/i.test(l)) || 'failed').trim().slice(0, 160) };
+  if (lnStatus(r.out) === 'SUCCEEDED') { const h = /^Payment hash:\s*([0-9a-f]{64})/m.exec(r.out); return { ok: true, paymentHash: h ? h[1] : null }; }
+  if (lnStatus(r.out) === 'FAILED' && !r.timedOut) return { ok: false, failed: true, why: (r.out.split('\n').find((l) => /reason/i.test(l)) || 'failed').trim().slice(0, 160) };
   return { ok: false, why: r.timedOut ? 'the payment timed out' : 'in flight' };
 };
 // A PAYING REWARD READ BY ITS HASH (kanban #1785, state audit 2026-11-12, SM-22): settle read the whole listpayments (500 payments, ~3 KB each) through
@@ -383,19 +389,14 @@ async function paymentSent(payer, hash) {
 async function paymentFinal(payer, hash) {
   if (!payer) return null;
   const r = await lncli(payer, ['trackpayment', hash], 10000);
-  // A NODE'S ALIAS IS NOT LND'S ANSWER (kanban #2589, the same hole as #2288 below): lncli prints each HTLC's route as the hops' aliases
+  // the payment's own status line decides whenever lncli printed one; NONE only from lnd's rpc error, never from stdout (kanban #2416, #2482;
+  // the same alias hole as #2288 and #2589: lncli prints each HTLC's route as the hops' aliases, which their owners choose)
   // LNCLI'S OWN WORDS (audit 7, kanban #1430): without --json lncli 0.21 prints a table and "Payment status: SUCCEEDED, preimage: ..." (the refill timer
   // reads the same line) - the JSON match found nothing live, so a settled welcome read as no answer; the payment's line, the last one printed, decides
-  // THE STATUS LINE FIRST, NEVER A NODE'S ALIAS (kanban #2288, #1489 a44-refute-73, after #1785): the table's ROUTE column prints each hop's node alias,
-  // which its operator chooses - a receiving or routing node aliased "not found" made a SUCCEEDED or held payment read NONE, settle reopened the link and
-  // the reward was paid twice. A printed "Payment status:" line decides; NONE is read only when none was printed and lncli failed with lnd's own
-  // "payment isn't initiated" error on stderr (stdout, where the aliases are, is never searched for it)
-  const said = [...String(r.out || '').matchAll(/^Payment status:[ \t]*([A-Z_]+)/gm)].map((m) => m[1]);
-  const last = said[said.length - 1] || null;
+  const last = lnStatus(r.out);
   if (last === 'SUCCEEDED' || last === 'FAILED') return last;
-  if (last) return 'IN_FLIGHT';
-  if (!r.ok && !r.timedOut && /rpc error:.*payment (?:isn't|is not|not) initiated/i.test(String(r.err || ''))) return 'NONE';
-  return r.timedOut ? 'IN_FLIGHT' : null;
+  if (last || r.timedOut) return 'IN_FLIGHT';
+  return lnNotInitiated(r.err) ? 'NONE' : null;
 }
 const UNSURE_KEEP_MS = 24 * 3600 * 1000;
 const UNSURE_CAP = 500;   // kanban #2132: grant() refuses while `unsure` holds this many; grantPay never cuts the list
@@ -498,12 +499,13 @@ async function grantPay(ask, inv, d, book, row) {
     // after): the payment's own state is read - an HTLC on its way (the federation's incoming contract holds it until the client claims) or SUCCEEDED
     // is paid; FAILED, or no part sent within PAY_SETTLE_MS, is not, and the next payer is asked
     const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', ask.invoice], PAY_WAIT_MS);
-    const state = /Payment status: (SUCCEEDED|IN_FLIGHT)/.test(paid.out) ? 'sent' : paid.timedOut ? await paymentSent(payer, inv.payment_hash) : 'no';
+    const paidSays = lnStatus(paid.out);
+    const state = paidSays === 'SUCCEEDED' || paidSays === 'IN_FLIGHT' ? 'sent' : paid.timedOut ? await paymentSent(payer, inv.payment_hash) : 'no';
     askedPayers.push(PAYERS.indexOf(payer));
     // NOT FINAL YET (kanban #1421): booked as pending with the payers asked; the sweep reads their final word
     if (state === 'sent') {
       const b2 = readBook(); const mine = (b2.players || []).find((x) => ownRow(x, row));
-      if (mine && /Payment status: SUCCEEDED/.test(paid.out)) { delete mine.pending; delete mine.payers; saveBook(b2); }
+      if (mine && paidSays === 'SUCCEEDED') { delete mine.pending; delete mine.payers; saveBook(b2); }
       else if (mine) { mine.pending = true; mine.payers = [...askedPayers]; saveBook(b2); }
     }
     if (state === 'sent') {
@@ -511,7 +513,7 @@ async function grantPay(ask, inv, d, book, row) {
       return { ok: true, sats: d.grant.sats };
     }
     // FAILED, AND SAID SO IN TIME (kanban #2187): lnd's FAILED is the payment's last state - this payer will never pay it
-    failedFor.push(!paid.timedOut && /Payment status: FAILED/.test(paid.out));
+    failedFor.push(!paid.timedOut && paidSays === 'FAILED');
     tried.push((paid.err || paid.out).trim().slice(-160));
   }
   const after = readBook();
@@ -645,9 +647,10 @@ createServer((req, res) => {
           for (const payer of PAYERS) {
             const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', b.invoice], 15000);
             askedPayers.push(PAYERS.indexOf(payer));
-            if (paid.timedOut || /Payment status: (SUCCEEDED|IN_FLIGHT)/.test(paid.out)) {
+            const paidSays = lnStatus(paid.out);   // kanban #2416: the status line, never a node's alias
+            if (paid.timedOut || paidSays === 'SUCCEEDED' || paidSays === 'IN_FLIGHT') {
               const b2 = readBook(), mine = mineOf(b2);
-              if (mine && /Payment status: SUCCEEDED/.test(paid.out)) { delete mine.pending; delete mine.payers; saveBook(b2); }
+              if (mine && paidSays === 'SUCCEEDED') { delete mine.pending; delete mine.payers; saveBook(b2); }
               else if (mine) { mine.payers = [...askedPayers]; saveBook(b2); }
               console.log(`${new Date().toISOString()} refill ${d.sats} sat: ${hash.slice(0, 16)}`); return send(200, { ok: true, sats: d.sats });
             }
