@@ -107,8 +107,13 @@ test('a new account (fresh): its seed is made without asking the relays for one,
   const url = `ws://127.0.0.1:${r.port}`;
   const pool = new SimplePool();
   const asked = [];
-  const querySync = pool.querySync.bind(pool);
-  pool.querySync = (...a) => { asked.push(a[1]); return querySync(...a); };
+  // the seed is asked of each relay on its own (kanban #1574): count the seed REQs the pool's relays send
+  const ensureRelay = pool.ensureRelay.bind(pool);
+  pool.ensureRelay = async (...a) => {
+    const relay = await ensureRelay(...a);
+    if (!relay.spied) { relay.spied = true; const sub = relay.subscribe.bind(relay); relay.subscribe = (f, p) => { if (f.some((x) => (x.kinds || []).includes(SEED_KIND))) asked.push(f); return sub(f, p); }; }
+    return relay;
+  };
   try {
     const acct = newAccount();
     const made = await seedFor(acct.signer, { pool, relays: [url], fresh: true });
