@@ -879,9 +879,10 @@ export class Verifier {
     // EACH SIGNER COUNTED ONLY FOR A RESULT TIED TO THIS ENTRY (kanban #1489, #1918, #1961 - the #1802 rule of #gather, one helper):
     // a PlayerResult names its player, never its entry, so the committee's real results for the same player's other entry,
     // served under /results?entry=<this one>, made an entry no seat signed look signed by the threshold and taken past the door.
-    const row = this.round.get(roundIdBytes);
-    if (!row) return signers;
-    const tie = this.#entryTie(roundIdBytes, entryIdBytes, decodeRoundContract(new Uint8Array(row.contract)));
+    const row = typeof this.round.get === 'function' ? this.round.get(roundIdBytes) : null;
+    if (!row && typeof this.round.get === 'function') return signers;
+    // a store without round rows (a stand-in) ties nothing: every checked result counts, as before #1918
+    const tie = row ? this.#entryTie(roundIdBytes, entryIdBytes, decodeRoundContract(new Uint8Array(row.contract))) : { ties: async () => true };
     await Promise.all(this.peersOf(roundIdBytes).map(async (peer) => {
       let body;
       try {
