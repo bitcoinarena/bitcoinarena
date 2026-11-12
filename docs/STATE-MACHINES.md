@@ -2023,3 +2023,8 @@ Files: `owner-leave.js` leaveStatus.
 #### SM7-NODE-2 (#2098) Bond lifecycle on an installed node (state.json bond / bonds vs the chain)
 - Invariant: the bond outputs state.json names (`bond`, `bonds`) are outputs the chain still holds unspent. A withdrawal on the owner page (POST /owner/bond-withdraw, ARENA_HOME set) takes the spent outpoints out of `bonds` / `bond` (the first left or null) and keeps them in `withdrawn` with the spending txid (state.js withoutSpentBonds).
 - A record that missed it (a crash after the send, an older seat) is caught where it matters: firstBond and addBond ask each recorded output of the chain (chainKit.txOut, gettxout with the mempool); a definite "spent" is not counted, an all-spent record is no bond (first-bond posts a new one, add-bond refuses), and the action that posts drops the spent outputs from the record (`drop-bonds` op). An unknown answer (Electrum, an error) keeps the output.
+- **Owner binding against the installer's owner step (kanban #2099).** node.db.owner.json is the seat's owner record (owner.js: pubkey,
+  claimedAtMs, leaving, settings). The wizard (POST /api/owner, and POST /api/start for a Nostr node) leaves it unchanged when it already
+  names the same owner key: the owner's signed Leave and store settings change only through /owner/leave, /owner/stay and /owner/settings,
+  so a rerun (#734) never makes a node that left take new rounds after its next restart. Only a new owner key writes a new file, and then
+  atomically (temp file + rename).
