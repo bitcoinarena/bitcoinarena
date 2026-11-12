@@ -4288,9 +4288,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const c = relayedRound(e.roundId);
     if (!c || typeof c.entryCloseMs !== 'bigint') return null;
     const now = BigInt(Math.floor(Number(round.now())));
-    if (now <= c.entryCloseMs + BigInt(grace)) return null;
+    // A HEAD-TO-HEAD ROUND HAS NO GRACE FOR A LOCK (kanban #1850, state audit 2026-11-12 sm3-h2h-2): its moves are revealed from the entry close on
+    // (the page at close + 120 ms) and GET /reveals serves them to anyone, so a player who entered and committed but held his stake lock back read
+    // the opponent's move, handed the lock within the 15 s grace only when his own move won (seated, then signed the winner) and handed nothing when
+    // it lost (no member, the opponent VOID): a free option on every honest opponent's stake. A lock new to this seat is taken only before the close;
+    // the pull of a peer's lock (takeEntryParts) can only carry one a seat verified before its close, since every seat's door refuses it after.
+    let h2h = false; try { const g = pluginForRound(c, hosted); h2h = !!(g.ok && g.headToHead); } catch { h2h = false; }
+    if (h2h ? now < c.entryCloseMs : now <= c.entryCloseMs + BigInt(grace)) return null;
     const held = kind === 'fee' ? (round.feeLock ? round.feeLock(eid) : null) : round.stakeLock(eid);
     if (held) return null;
+    if (h2h) return `that head-to-head round's entry closed at ${c.entryCloseMs} and it is ${now}: its moves are revealed from the close on, so a ${kind === 'fee' ? 'fee' : 'stake'} lock new to this seat seats no one (kanban #1850)`;
     return `that round's entry closed at ${c.entryCloseMs} (and ${grace} ms for a join on its way) and it is ${now}: a ${kind === 'fee' ? 'fee' : 'stake'} lock new to this seat is not taken (kanban #1260)`;
   };
   relayedRound = (rid) => {
