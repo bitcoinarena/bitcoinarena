@@ -325,8 +325,9 @@ test('#1342 a node report: the review list reads its checklist from the seats; "
       FAUCET_FEEDBACK_DB: join(dir, 'feedback.db'), FAUCET_FEEDBACK_MINE_URLS: MINE, FAUCET_FOUNDING_FILE: join(dir, 'founding.jsonl'), FAUCET_BOOK: join(dir, 'book.json'),
       FAUCET_ADMIN_SHA256: createHash('sha256').update(CODE).digest('hex'), FAUCET_FEEDBACK_EXCLUDED: join(dir, 'ours.txt'), FAUCET_SEASON_SEATS: seatBase,
       FAUCET_SEASON_GAMES: 'rock-paper-scissors', FAUCET_BOUNTY_PAYER: `${dir}|127.0.0.1:1`, FAUCET_PUBLIC_BASE: 'https://testnet.example/api/faucet',
-      // the listed seats stand for public ones on 127.0.0.1: since kanban #1884 an announced seat on an internal host is asked only when the operator trusts it
-      FAUCET_BOUNTY_ORIGINS: 'https://private.example', FAUCET_TEAM_HOSTS: 'team.example', FAUCET_SEAT_TRUSTED_HOSTS: '127.0.0.1' } });
+      // the listed seats stand for public ones on 127.0.0.1: since kanban #1884 an announced seat on an internal host is asked only when the operator
+      // trusts it, and since kanban #2074 by its exact origin
+      FAUCET_BOUNTY_ORIGINS: 'https://private.example', FAUCET_TEAM_HOSTS: 'team.example', FAUCET_SEAT_TRUSTED_ORIGINS: seatBases.join(',') } });
   const base = `http://127.0.0.1:${port}`;
   try {
     for (let i = 0; i < 50; i++) { try { await fetch(`${base}/feedback/mine`); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
