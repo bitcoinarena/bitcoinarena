@@ -4280,18 +4280,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // came at any time, so a player held his locks back from three seats, played, and posted them there only once the run had won (FINAL, paid) - a
   // losing run was VOID there (the stake back). A replayed or head-to-head round (the relayed ones) takes a lock new to this seat only until the entry
   // close plus the grace a join on its way has (ENTRY_CLOSE_GRACE_MS); one already held is answered as before. An order keeps its own rule (orderLockAfterClose).
+  // AND A POOL PICK'S (kanban #1793, #1489 state audit sm2-entry-5): a plain pick of an attested round (a market's, no limit price) was neither relayed
+  // nor an order, so its locks were taken at any time - a player entered his pick before the close, held the locks back and handed them only once
+  // the outcome was attested (FINAL) in his favour: paid as a winner out of the losers' stakes, a losing pick's lock simply expired back to him. Its
+  // round now takes a lock new to this seat by the same rule, and none at all once this seat holds any outcome of it (the grace is no window to
+  // lock against a known outcome); one already held is answered as before, so a resend still works.
   const lockAfterCloseRefusal = (storedEntry, eid, kind) => {
     const grace = round.entryCloseGraceMs;
-    if (grace === null || grace === undefined) return null;
     let e; try { e = decodeEntryContract(new Uint8Array(storedEntry)); } catch { return null; }
     if (e.limitPrice !== undefined) return null;
-    const c = relayedRound(e.roundId);
+    let c = relayedRound(e.roundId), attested = false;
+    if (!c) {
+      const row = round.get(e.roundId);
+      try { const rc = row ? decodeRoundContract(new Uint8Array(row.contract)) : null; if (rc && attestedOf(rc)) { c = rc; attested = true; } } catch { c = null; }
+    }
     if (!c || typeof c.entryCloseMs !== 'bigint') return null;
-    const now = BigInt(Math.floor(Number(round.now())));
-    if (now <= c.entryCloseMs + BigInt(grace)) return null;
     const held = kind === 'fee' ? (round.feeLock ? round.feeLock(eid) : null) : round.stakeLock(eid);
     if (held) return null;
-    return `that round's entry closed at ${c.entryCloseMs} (and ${grace} ms for a join on its way) and it is ${now}: a ${kind === 'fee' ? 'fee' : 'stake'} lock new to this seat is not taken (kanban #1260)`;
+    const what = `a ${kind === 'fee' ? 'fee' : 'stake'} lock new to this seat is not taken`;
+    if (attested) { let known = []; try { known = heldOutcomes(round, e.roundId); } catch { known = []; }
+      if (known.length) return `this seat already holds an outcome of that round: ${what} (kanban #1793)`; }
+    if (grace === null || grace === undefined) return null;
+    const now = BigInt(Math.floor(Number(round.now())));
+    if (now <= c.entryCloseMs + BigInt(grace)) return null;
+    return `that round's entry closed at ${c.entryCloseMs} (and ${grace} ms for a join on its way) and it is ${now}: ${what} (kanban ${attested ? '#1793' : '#1260'})`;
   };
   relayedRound = (rid) => {
     const row = round.get(rid);
