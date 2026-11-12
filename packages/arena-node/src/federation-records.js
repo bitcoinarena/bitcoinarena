@@ -1043,7 +1043,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // the record in force at `height`: the newest this seat verified at or below it (null when it holds none)
     recordAt(fid, height) {
       const f = String(fid).toLowerCase(); let m = history.get(f);
-      if (!m || !m.size) m = historyOf(f);
+      m = historyOf(f);   // kanban #2315: the store's history read once per federation, whatever memory holds (restore() put the newest in)
       if (!m) return null;
       let best = null; for (const [h, rec] of m) if (h <= Number(height) && (!best || h > best.height)) best = rec;
       return best;
