@@ -5666,10 +5666,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // with its locks made but handed nowhere took them at any time - handed over only once the outcome was attested and the pick had won (a losing
   // pick's locks just expired back): a free option on every pool market, paid by the honest pickers. An attested round's plain pick now keeps the
   // same rule, and once this seat holds an outcome attestation of the round a lock new to it is refused whatever the clock says.
+  // A HEAD-TO-HEAD ROUND TAKES NO NEW LOCK ONCE ITS REVEALS CAN STAND (kanban #1598, bypass of #1479 "one entry per session key"): a session key
+  // is free, so one player entered rock, paper and scissors under three fresh keys with no stake lock - the door counts only lock-backed entries
+  // (#1437), so all three were taken - read the honest player's reveal on GET /reveals at the close, and locked only the entry that beat it
+  // inside the 15 s grace; the other two came out VOID and he won every paying RPS round. In a head-to-head round a move is public from the
+  // entry close on (revealStands), so there is no grace there: a stake or fee lock new to this seat is refused from the entry close on, and
+  // from the moment this seat holds any reveal of the round (whatever its clock says), whether or not the seat runs with a grace. Every lock
+  // door (POST /lock, POST /fee-lock) passes here; a lock a peer took before the close is still pulled by takeEntryParts.
+  const h2hLockRefusal = (e, eid, kind) => {
+    const c = headToHeadReady ? headToHeadRound(e.roundId) : null;
+    if (!c || typeof c.entryCloseMs !== 'bigint') return null;
+    const now = BigInt(Math.floor(Number(round.now())));
+    const revealed = now >= c.entryCloseMs || round.revealsOf(e.roundId).length > 0;
+    if (!revealed) return null;
+    const held = kind === 'fee' ? (round.feeLock ? round.feeLock(eid) : null) : round.stakeLock(eid);
+    if (held) return null;
+    return `that head-to-head round's entry closed at ${c.entryCloseMs} and it is ${now}: its moves can be revealed now, so a ${kind === 'fee' ? 'fee' : 'stake'} lock new to this seat is not taken (kanban #1598, #1479)`;
+  };
   const lockAfterCloseRefusal = (storedEntry, eid, kind) => {
     const grace = round.entryCloseGraceMs;
     let e; try { e = decodeEntryContract(new Uint8Array(storedEntry)); } catch { return null; }
     if (e.limitPrice !== undefined && e.limitPrice !== null) return null;
+    { let h = null; try { h = h2hLockRefusal(e, eid, kind); } catch { h = null; } if (h) return h; }   // before any grace rule (kanban #1598)
     const held = () => (kind === 'fee' ? (round.feeLock ? round.feeLock(eid) : null) : round.stakeLock(eid));
     const what = kind === 'fee' ? 'fee' : 'stake';
     const ac = attestedRoundOf(e.roundId);
@@ -5748,6 +5766,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (!ref || ref.every((b) => b === 0)) return null; const h = round.handout(ref); return h ? h.bytes : null; },
     locksOf: (hex) => { const fieldsOf = (row) => (row ? (typeof row.fields === 'string' ? JSON.parse(row.fields) : row.fields) : null), eid = fromHex(hex);
       return { stake: fieldsOf(round.stakeLock(eid)), fee: fieldsOf(round.feeLock ? round.feeLock(eid) : null) }; },
+    nowMs: () => Number(round.now()),   // the round's clock, the one the doors judge the entry close by (kanban #1598)
   });
   // AN ENTRY THE ROUND ACCEPTED, FROM A PEER AND PAST THIS SEAT'S DOOR (kanban #1071, entry-relay.js, §17): the threshold's signed results named it, so none of the door's
   // refusals apply. Everything about the entry itself is still checked. Answers { ok } or { ok: false, why }: not yet.
@@ -11399,7 +11418,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = await takeStakeLock(eid, fields, timing);
         lockTimed(got.ok ? 'verified' : got.why.slice(0, 60));
         if (!got.ok) return text(res, 409, got.why);
-        if (relayedRound(decodeEntryContract(stored).roundId)) entryRelay.lockTaken(decodeEntryContract(stored).roundId, toHex(eid));   // every round's (kanban #1216)
+        { const rid = decodeEntryContract(stored).roundId, rc = relayedRound(rid);   // every round's (kanban #1216)
+          if (rc) entryRelay.lockTaken(rid, toHex(eid), headToHeadRound(rid) ? rc.entryCloseMs : null); }   // a head-to-head lock before its close (kanban #1598)
         // AN ORDER (comment 1127): tradable here once both its locks are verified - and only before its market's entry close
         const lateOrder = orderLockAfterClose(stored);
         if (decodeEntryContract(stored).limitPrice !== undefined && !lateOrder) orderBook.noteTradable(decodeEntryContract(stored).roundId);
