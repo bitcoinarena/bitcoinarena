@@ -3020,6 +3020,8 @@ const owedKeyOf = (seed, id, order, curve) => {
 // ONE READ OF THE OWED SCAN, GIVEN UP AFTER SEAT_READ_MS (kanban #1489): null when the seat failed, refused or did not answer in time
 // (1.9's OWED_LIST_MAX cap is 2.0's OWED_SETTLED_MAX, newest first)
 const OWED_NEXT_MS = 2000, OWED_ROUND_READS = 4;
+// a valid /round?id= answer within OWED_FAST_MS puts its seat first in the owed scan's order; a slower one sends it back (kanban #2041, #2061)
+const OWED_FAST_MS = 250;
 // ONE SEAT'S LIST, NEWEST cap ENTRIES IN ONE PASS (kanban #1772, #1489 refute 14): the cap was taken after the whole list was
 // copied, mapped and sorted - a seat listing a million entries cost the page an O(n log n) sort at every load. Now one pass keeps
 // the newest `cap` (a min-heap on madeMs, then position), and only those are sorted. Same entries, same order as before.
@@ -3174,6 +3176,13 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
   // a refusal, a wrong or unlockable contract - sends the seat to the back of this scan's order, a seat that returned a valid
   // contract moves to the front, and each read picks its next seat from the scan's order as it stands then (not a copy taken at
   // its start), so reads already under way profit at once. A useless seat costs a scan its delay for the first reads only.
+  // ONLY A FAST WINNER GOES FIRST (kanban #2041, #2061, #1489 refute 14 skeptic 4): any valid contract moved its seat to the front,
+  // whatever its latency and even after the read was over. The contract is public bytes (its id is its hash), so one seat that
+  // copied it and answered every /round?id= at 1.9 s stayed first and cost every owed round 1.9 s again (48 rounds: 23.3 s), and
+  // one that answered at 2.1 s was demoted by the OWED_NEXT_MS timer and then promoted back by its late answer (48 rounds: 25.9 s).
+  // Now a seat goes to the front only when its valid answer came within OWED_FAST_MS, before this read's OWED_NEXT_MS timer moved
+  // on, and won the read; a valid answer slower than OWED_FAST_MS sends the seat to the back like a useless one. Honest seats that
+  // all answer slowly only take turns at the front; each read still asks one seat while it answers within OWED_NEXT_MS.
   const order = nodes.slice();
   const slow = (node) => { const k = order.indexOf(node); if (k >= 0 && k < order.length - 1) { order.splice(k, 1); order.push(node); } };
   const good = (node) => { const k = order.indexOf(node); if (k > 0) { order.splice(k, 1); order.unshift(node); } };
@@ -3186,8 +3195,9 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
       const node = order.find((n) => !asked.has(n));
       if (node === undefined) { if (!open) { done = true; resolve(null); } return; }
       asked.add(node); open += 1;
-      let answered = false;
-      t = setTimeout(() => { if (!answered) slow(node); ask(); }, OWED_NEXT_MS);
+      let answered = false, timedOut = false;
+      const askedAt = Date.now();
+      t = setTimeout(() => { if (!answered) { timedOut = true; slow(node); } ask(); }, OWED_NEXT_MS);
       owedRead(async (signal) => {
         const r = await fetcher(`${base(node)}/round?id=${id}`, { signal });
         if (!r.ok) return null;
@@ -3195,7 +3205,8 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
         return toHex(roundIdOf(c)) === id && roundLocks(c) ? c : null;
       }).then((c) => {
         answered = true; open -= 1;
-        if (c) good(node); else slow(node);
+        const fast = !timedOut && Date.now() - askedAt <= OWED_FAST_MS;
+        if (c && fast && !done) good(node); else if (!c || !fast) slow(node);
         if (done) return;
         if (c) { done = true; clearTimeout(t); resolve(c); } else ask();
       });
