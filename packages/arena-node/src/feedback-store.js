@@ -7,7 +7,7 @@
 // list is never read by its pubkey alone.
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes } from 'node:crypto';
-import { walletUrlRefusal, publicFetch, checkedFetch, internalAddress } from './public-fetch.js';
+import { walletUrlRefusal, publicFetch, checkedFetch, internalAddress, guardedLookup } from './public-fetch.js';
 import { lnurlFor, urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { eventId, eventRefusal } from './nostr-relay.js';
 import { BIP39_ENGLISH } from '../../arena-client/src/bip39-wordlist.js';
@@ -567,7 +567,17 @@ export { internalAddress, walletUrlRefusal, guardedLookup, publicFetch } from '.
 export const publicHttpsUrl = (u) => !walletUrlRefusal(u);
 export const addressIsGlobal = (address) => !internalAddress(address);
 export const walletFetch = (url, { signal, headers } = {}) => publicFetch(url, { signal, headers });
-const walletGet = (fetchFn, u, timeoutMs) => checkedFetch(u, { fetchFn, signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } });
+// BY WHERE THE NAME LEADS FOR ANY FETCHER (kanban #1809): publicFetch checks the resolved address at its connect, but an injected fetcher
+// connects as it likes - so before one is asked, the name is resolved here and a name leading to an internal address is refused (EINTERNALHOST).
+// A name that does not resolve now is left to the fetch, which fails on its own.
+const leadsInternal = (u) => new Promise((resolve) => {
+  let host; try { host = new URL(String(u)).hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, ''); } catch { resolve(true); return; }
+  guardedLookup(host, {}, (err) => resolve(!!err && err.code === 'EINTERNALHOST'));
+});
+const walletGet = async (fetchFn, u, timeoutMs) => {
+  if (fetchFn !== publicFetch && await leadsInternal(u)) throw Object.assign(new Error('its wallet must be on a public name'), { code: 'EINTERNALHOST' });
+  return checkedFetch(u, { fetchFn, signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } });
+};
 
 export async function lnAddressWorks(address, { fetchFn = publicFetch, timeoutMs = 8000 } = {}) {
   const a = String(address || '').trim();
