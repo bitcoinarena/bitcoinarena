@@ -46,14 +46,14 @@ test('#1489 bypass #1479: three fresh session keys stand rock, paper and scissor
       catch (e) { moves[move] = { refused: String(e.message).split('\n')[0].slice(0, 200) }; }
     }
     const taken = Object.fromEntries(Object.entries(moves).map(([m, v]) => [m, v.refused || 'taken']));
-    // entry close: the honest page reveals; GET /reveals is public
-    skipTo(Number(w.c.entryCloseMs) + 500);
+    // entry close: the honest page reveals; GET /reveals is public from the close + H2H_REVEAL_HOLD_MS (1750 ms, kanban #1822)
+    skipTo(Number(w.c.entryCloseMs) + 1800);
     await reveal(w, honest, ROCK, hs);
     const pub = await (await fetch(`http://127.0.0.1:${w.nodes[0].port}/reveals?round=${toHex(w.rid)}`)).json();
     const seen = pub.reveals.find((r) => r.entry === toHex(honest.eid)).move;
     const win = BEATS[seen];
-    // 1 s after the close (inside the 15 s grace): the stake lock of the winning entry only
-    skipTo(Number(w.c.entryCloseMs) + 1500);
+    // 2.5 s after the close (inside the 15 s grace): the stake lock of the winning entry only
+    skipTo(Number(w.c.entryCloseMs) + 2500);
     const lockAnswers = [];
     if (moves[win].played) {
       for (const d of w.nodes) {
