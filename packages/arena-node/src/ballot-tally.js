@@ -165,6 +165,11 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       const now = Number(await tipHeight());
       if (!Number.isInteger(now) || now < 0) return { skipped: 'tip', why: 'this seat\'s chain named no tip', read: 0, decided: 0, reorged: 0 };
       tip = now;
+      // THE PROPOSER CHECK OF RECORDS KEPT BEFORE THIS START (kanban #1670, proposals.js recheck): one not checked yet reads as
+      // ORPHANED and is not counted; one whose census was not readable at the start is asked again here, before anything is counted
+      if (typeof proposals.recheck === 'function' && typeof proposals.unchecked === 'function' && proposals.unchecked()) {
+        try { await proposals.recheck(); } catch (e) { log(`[ballot] the proposer check did not run: ${e.message}`); }
+      }
       // A CHAIN THAT DID NOT ANSWER IS NO REORG (kanban #1152): the pass stops here - nothing taken back, orphaned or written
       try { reorged = await followReorgs(); } catch (e) {
         log(`[ballot] the chain did not answer the reorg check (${e.message}): this pass is skipped, nothing moved`);
@@ -265,7 +270,9 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
      * activate by then is still undecided here (its outcome is not known yet, so neither is the history).
      */
     historyAt(net, height) {
-      const pending = proposals.list().some((p) => p.networkId === net && stateOf(p) === S.COUNTING && p.activationHeight <= height);
+      // a record whose proposer is not checked yet (kanban #1670) may be a PASSED one: its outcome is not known here yet either
+      const pending = (typeof proposals.unchecked === 'function' && proposals.unchecked(net) > 0)
+        || proposals.list().some((p) => p.networkId === net && stateOf(p) === S.COUNTING && p.activationHeight <= height);
       if (pending) return null;
       return liveConfig({ genesis: genesisFor(net), passed: passedOf(net), height }).history;
     },
