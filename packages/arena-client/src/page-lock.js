@@ -2809,6 +2809,9 @@ export function collectState(look, co = null) {
   const payoutDone = PAYOUT_TERMINAL.has(look.payout.state) || (look.payout.state === 'owed' && ok(got.payout));
   const stakeDone = STAKE_TERMINAL.has(look.stake.state)
     || (look.stake.state === 'owed' && (look.stake.how === 'refund' ? ok(got.refund) : ok(got.stake)));
+  // A KEPT FEE LOCK STILL STORED AFTER THE COLLECT (kanban #2149, #2215): the look before the collect said the stake alone was owed, and the
+  // collect brought it back while the order's fee lock stayed in the federation - never done on that look; the next look owes the fee
+  if (got.feeHeld) return { state: 'open', why: 'this tab\'s fee lock is still in the federation' };
   const tabEmpty = look.inTabMsat === undefined || (look.inTabMsat !== null && BigInt(look.inTabMsat) === 0n);   // null: not read (kanban #1265)
   if (payoutDone && stakeDone && tabEmpty) return { state: 'done' };
   return { state: 'open', why: [!payoutDone && `payout ${look.payout.state}`, !stakeDone && `stake ${look.stake.state}`, !tabEmpty && 'this tab\'s round wallet holds money'].filter(Boolean).join(', ') };
@@ -3308,6 +3311,14 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
   return { state: 'owed', how: 'forfeit', refused: true, msat: owed };
 }
 
+// THE ORDER'S FEE LOCK AS THIS TAB KEPT IT (kanban #2149): the given record's, else this seed's saved lock's; null when none
+async function keptFeeLock({ kept, storage, roundId, player }) {
+  let k = null;
+  try { k = kept && kept.lock && kept.lock.feeLock ? kept : (storage ? savedLock(storage, { roundId, playerPubkey: player.pubkey }) : null); } catch { k = null; }
+  const fee = k && k.lock && k.lock.feeLock;
+  return fee && fee.outpoint && fee.fields ? fee : null;
+}
+
 // THE TAB'S KEPT FEE LOCK, WHILE THE FEDERATION STILL HOLDS IT (kanban #1642): null when there is none or it is spent; else the fee's own
 // state, read the way the stake's is - { state: 'owed', how: 'refund', locks } past its expiry, { state: 'owed', how: 'forfeit', entryId } when
 // the seats give its forfeit, { state: 'waiting' } otherwise. `fee: true` marks it: collectOwed redeems it alone (redeemFee), never the stake again.
@@ -3433,6 +3444,17 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
           const lostSaid = /that run is \S+ with score/.test(f.why)
             && !/not ACCEPTED at this signer node|still inside its window|keeps no record of what its settlement moved/.test(f.why);
           stake = (await expiredBack(client, real)) || { state: 'waiting', msat, why: f.why, ...(lostSaid ? { lostSaid: true } : {}) };
+          // AND THE TAB'S OWN FEE LOCK, PAST ITS EXPIRY TOO (kanban #2149, #2215): the seats name the stake lock only, so the refund took the
+          // stake and left the order's expired fee lock in the federation - it is refunded in the same pass, beside the stake
+          if (stake.state === 'owed' && stake.how === 'refund') {
+            const fl = await keptFeeLock({ kept, storage, roundId, player });
+            const at = (l) => `${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}`;
+            if (fl && !stake.locks.some((l) => at(l) === at(fl))) {
+              let st = null; try { st = JSON.parse(await lockStatusOf(client, fl.fields, toHex(fl.outpoint.txid), Number(fl.outpoint.outIdx))); } catch { st = null; }
+              if (st && st.stored && !(Number(st.stored.blocks_left) > 0))
+                stake = { ...stake, msat: stake.msat + BigInt(fl.fields.amountMsat), locks: [...stake.locks, { outpoint: fl.outpoint, fields: fl.fields }] };
+            }
+          }
         }
       }
     } else {
@@ -3545,6 +3567,21 @@ export async function collectOwed({ look, client, ...ask } = {}) {
   else if (look.stakeMsat > 0n) got.stake = await returnStake({ ...ask, client, refused: !!(look.stake && look.stake.refused),
     forfeited: !!(look.stake && look.stake.state === 'owed' && look.stake.how === 'forfeit') });
   if (look.refundMsat > 0n) got.refund = await refundKept({ ...ask, client, locks: (look.stake && look.stake.locks) || null });
+  // THE FEE LOCK READ AGAIN AFTER THE COLLECT (kanban #2149, #2215): the page marks the record done from the look taken BEFORE this collect,
+  // and a fee forfeit missed on its one ask beside the stake's (or a fee lock the stake's refund did not take) stayed in the federation while
+  // that look read the stake alone - the record was closed and the fee never asked again. A kept fee lock still stored (or not read) keeps it open.
+  if (got.payout || got.stake || got.refund) {
+    try {
+      if (ask.round && roundLocks(ask.round) && client && typeof client.lockStatus === 'function') {
+        const player = playerFor({ ...ask.round, id: ask.roundId }, { seed: ask.seed, curve: ask.curve, order: ask.order || 0 });
+        const fl = await keptFeeLock({ kept: ask.kept || null, storage: ask.storage || null, roundId: ask.roundId, player });
+        if (fl) {
+          let st = null; try { st = JSON.parse(await lockStatusOf(client, fl.fields, toHex(fl.outpoint.txid), Number(fl.outpoint.outIdx))); } catch { st = null; }
+          if (!st || st.stored) got.feeHeld = true;
+        }
+      }
+    } catch { /* no player key here: nothing is read, nothing changed */ }
+  }
   return got;
 }
 
