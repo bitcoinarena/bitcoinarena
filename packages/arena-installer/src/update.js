@@ -18,7 +18,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readd
 import { join } from 'node:path';
 import { readDurableJson, writeDurableJson } from '../../arena-node/src/durable-json.js';
 import { homedir, uptime } from 'node:os';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { checkAsset } from './release-verify.js';
 import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL, interactivePlist, windowsLauncher, withWindowsRestart, removeProgram, unitName, waitPortLine } from './service.js';
 import { adhocSign } from './tor.js';
@@ -650,23 +650,44 @@ function takeOverStaleLock(file, heldText, pid) {
   if (moved !== heldText) { try { linkSync(aside, file); } catch { /* a newer lock is there already: it holds */ } return; }
   try { renameSync(aside, `${file}.stale`); } catch { /* left aside: it names no holder */ }
 }
+
+// THE MACHINE'S START, BY A NAME THE CLOCK DOES NOT MOVE (kanban #2334): bootMinute is wall clock minus uptime, so an NTP step of more than
+// 2 minutes after the lock was written (a machine without a real-time clock that boots behind, then syncs) gave every later reader another
+// minute - a live, seconds-old lock read as "from before the machine started" and a second updater moved the node beside the first (#809).
+// The kernel's own id of this boot: Linux /proc/sys/kernel/random/boot_id, macOS kern.bootsessionuuid; read once. Where there is none
+// (Windows), or the lock was written by an older updater without one, the boot minute decides as before.
+let bootIdCache;
+export function bootId() {
+  if (bootIdCache !== undefined) return bootIdCache;
+  bootIdCache = null;
+  try {
+    if (process.platform === 'linux') bootIdCache = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() || null;
+    else if (process.platform === 'darwin') bootIdCache = execFileSync('/usr/sbin/sysctl', ['-n', 'kern.bootsessionuuid'], { encoding: 'utf8', timeout: 5000 }).trim() || null;
+  } catch { bootIdCache = null; }
+  return bootIdCache;
+}
 export async function takeUpdateLock(home, { pid = process.pid, now = Date.now, alive = (p) => { try { process.kill(p, 0); return true; } catch (e) { return e.code === 'EPERM'; } },
-  waitLockMs = 20 * 60000, staleMs = 45 * 60000, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), onWait = () => {}, boot = bootMinute() } = {}) {
+  waitLockMs = 20 * 60000, staleMs = 45 * 60000, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), onWait = () => {}, boot = bootMinute(),
+  bootKey = bootId(), up = uptime } = {}) {
   // no node home, nothing to hold: the update says itself why it cannot move it
   if (!home || !existsSync(home)) return { file: null, waited: false, release: () => {} };
   const file = join(home, 'update.lock');
   const t0 = now();
-  let waited = false;
+  let waited = false, slept = 0;
   for (;;) {
-    try { writeFileSync(file, JSON.stringify({ pid, atMs: now(), boot }), { flag: 'wx' }); return { file, waited, release: () => { try { const h = JSON.parse(readFileSync(file, 'utf8')); if (h.pid === pid) rmSync(file, { force: true }); } catch { /* gone */ } } }; }
+    try { writeFileSync(file, JSON.stringify({ pid, atMs: now(), boot, ...(bootKey ? { bootId: bootKey, up: up() } : {}) }), { flag: 'wx' }); return { file, waited, release: () => { try { const h = JSON.parse(readFileSync(file, 'utf8')); if (h.pid === pid) rmSync(file, { force: true }); } catch { /* gone */ } } }; }
     catch (e) { if (e.code !== 'EEXIST') throw e; }
     let held = null, heldText = null; try { heldText = readFileSync(file, 'utf8'); held = JSON.parse(heldText); } catch { /* half written or gone: read again */ }
     // left over: from before the machine started (a lock an older updater wrote names no boot: its pid and age decide, as before), its process gone, or too old
-    const beforeBoot = held && Number.isFinite(held.boot) && Math.abs(held.boot - boot) > 2;
-    if (held && (beforeBoot || !alive(held.pid) || now() - held.atMs > staleMs)) { takeOverStaleLock(file, heldText, pid); continue; }
-    if (now() - t0 > waitLockMs) throw new Error(`another update of this node is still running (pid ${held ? held.pid : '?'}); try again when it has ended`);
+    // kanban #2334: when both name the kernel's boot id, it alone says "another boot", and the age is read from the uptime, which no clock step moves
+    const sameKey = held && typeof held.bootId === 'string' && bootKey;
+    const beforeBoot = held && (sameKey ? held.bootId !== bootKey : Number.isFinite(held.boot) && Math.abs(held.boot - boot) > 2);
+    const age = held && (sameKey && Number.isFinite(held.up) ? (up() - held.up) * 1000 : now() - held.atMs);
+    if (held && (beforeBoot || !alive(held.pid) || age > staleMs)) { takeOverStaleLock(file, heldText, pid); continue; }   // by rename (#1975)
+    // kanban #2334: the wait counts its own sleeps too - a clock stepped back never makes it wait for ever
+    if (Math.max(now() - t0, slept) > waitLockMs) throw new Error(`another update of this node is still running (pid ${held ? held.pid : '?'}); try again when it has ended`);
     if (!waited) onWait(held); waited = true;
-    await sleep(2000);
+    await sleep(2000); slept += 2000;
   }
 }
 
