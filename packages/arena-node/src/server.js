@@ -1190,14 +1190,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // replaces stays hosted for the rounds it already holds, and new rounds use the new one.
   const superseded = new Map();     // old game id -> the id that replaced it
   // A GAME'S EARLIER VERSIONS, oldest first: from its own chain (an installed update's) and from the versions hosted here
+  // THE CHECKED WINDOW IS KEPT AS IT WAS CHECKED (kanban #2366, #1854, #2332): checkPackage accepts a window that repeats a
+  // version, and deduplicating it here shrank a full window of 64 to fewer, so chainHex dropped the cut marker and served a
+  // chain whose oldest entry stands on nothing a peer holds - every honest peer refused the game from this seat (422), and
+  // its own hostSplit and update chain were cut the same way. g.ancestors is served entry for entry, in its checked order;
+  // only versions hosted here that it does not carry are merged in (by version, as before).
   const chainOf = (g) => {
-    const byId = new Map((g.ancestors || []).map((m) => [toHex(gameIdOf(m)), m]));
+    const own = [...(g.ancestors || [])];
+    const ids = new Set(own.map((m) => toHex(gameIdOf(m))));
+    const more = [];
     for (let parent = toHex(g.manifest.parentManifestId); !/^0+$/.test(parent) && hosted.has(parent);) {
       const m = hosted.get(parent).manifest;
-      if (!byId.has(parent)) byId.set(parent, m);
+      if (!ids.has(parent)) { ids.add(parent); more.push(m); }
       parent = toHex(m.parentManifestId);
     }
-    return [...byId.values()].sort((x, y) => x.version - y.version);
+    return more.length ? [...own, ...more].sort((x, y) => x.version - y.version) : own;
   };
   // THE CHAIN THIS SEAT HANDS ON, as hex, held to the bound it checks (kanban #2332, #2346): every manifest in g.ancestors was
   // checked when the game was taken (registrationFromPackage keeps only the checked window), so the sort above sees no forged
