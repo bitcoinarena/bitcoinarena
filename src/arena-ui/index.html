@@ -8991,7 +8991,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               const said = await ARENACLIENT.receiveKeptEcash({ storage: L, key: k, rec, federation: fedHex, settle,
                 receive: (ecash) => Promise.race([main.receiveEcash(ecash), new Promise((_, no) => setTimeout(() => no(new Error('the federation did not answer the receive in ' + MERGE_RECEIVE_MS / 1000 + ' s')), MERGE_RECEIVE_MS))]) });
               step('<- merge receive ' + Math.round(Number(rec.msat) / 1000) + ' sat (' + (said.state || said.why) + ', ' + Math.round(performance.now() - recvAt) + ' ms)');
-              if (!said.ok && !said.refused) mergeSaid(fedHex, 'stuck', 'receiving ' + rec.msat + ' msat from wallet ' + rec.from + ': ' + (said.why || 'the federation said ' + said.state));
+              // another tab is receiving this record (kanban #2212: its receive holds the claim) - not stuck, that tab finishes it
+              if (!said.ok && !said.refused && !said.busy) mergeSaid(fedHex, 'stuck', 'receiving ' + rec.msat + ' msat from wallet ' + rec.from + ': ' + (said.why || 'the federation said ' + said.state));
               console.log('[arena] combined ' + rec.msat + ' msat from wallet ' + rec.from + ' in federation ' + fedHex.slice(0, 8) + ': ' + (said.state || said.why) + (said.short ? ' (short: ' + said.why + ')' : ''));
             }
           };

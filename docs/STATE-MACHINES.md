@@ -1923,3 +1923,7 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 #### SM-T4 (change) Play socket: one attempt at a time (kanban #2213)
 - Each `connect()` is the current attempt (`connectingSock`); only that socket may become `this.sock` on 'open'. A socket that opens after a newer attempt started, or after connectFirst gave up on it, is closed at once and never takes the client's place.
 - connectFirst's timeout closes the pending attempt itself (not only `this.sock`), so after connectFirst answers the client's socket is the one it answered with: one socket feeds `said`, and every reply goes to its own send.
+#### SM-C1 (change) E-cash in flight: one receive of a record at a time (kanban #2212)
+- receiveKeptEcash first claims the record: a self-step (kept -> kept, reclaiming -> reclaiming, answered -> answered) stamping `receivingAtMs`, a compare-and-set like every move. A tab whose claim finds the record moved, or claimed by another receive less than `ECASH_RECEIVE_CLAIM_MS` (5 min) ago, receives nothing, writes nothing and answers `busy` (the page's merge does not call it stuck).
+- Every move out of the receive (none, short, refused, handed) drops the claim; a receive that throws or ends without a final answer gives it back; a claim of a closed tab is taken over once it is 5 min old. A memory-only record is received unclaimed.
+- Invariant: a record ends 'refused' only when its notes went to nobody of this browser; one received in full by any tab is removed.
