@@ -220,10 +220,8 @@ export class Forfeit {
     const row = this.round.get(roundIdBytes);
     if (!row) return refuse('this node holds no such round', 404);
     const contract = decodeRoundContract(new Uint8Array(row.contract));
-    // AN ORDER OF AN ORDER BOOK: its own rules (comment 1127)
-    { const book = this.bookStanding ? this.bookStanding(roundIdBytes, entryIdBytes) : null;
-      if (book && book.book) return this.#bookReturn(roundIdBytes, entryIdBytes, contract, kind, book); }
-    // A LOCK GOES BACK ONLY THROUGH THE ROUND IT STAKES (feedback #018, kanban #2511, critical): every rule below reads the lock by its entry and the
+    // A LOCK GOES BACK ONLY THROUGH THE ROUND IT STAKES (feedback #018, kanban #2511, critical; before the order book's rules too - feedback #023, Hexbox:
+    // naming a VOID market round signed another round's filled order stake and fee lock back through #bookReturn): every rule below reads the lock by its entry and the
     // round from the asker - a certified loser of one protocol-28 round named another round of the same seats (VOID, or one it is not in) and had
     // its stake and fee lock signed back after seeing the reveals. The entry, its stake lock and its fee lock must all name the asked round.
     if (this.round.roundsOfEntry) {
@@ -231,6 +229,9 @@ export class Forfeit {
       const other = [of.entry, of.stake, of.fee].find((r) => r && r !== asked);
       if (other) return refuse(`that entry and its locks belong to round ${other.slice(0, 16)}, not to the round asked: a lock goes back only through its own round`, 409);
     }
+    // AN ORDER OF AN ORDER BOOK: its own rules (comment 1127)
+    { const book = this.bookStanding ? this.bookStanding(roundIdBytes, entryIdBytes) : null;
+      if (book && book.book) return this.#bookReturn(roundIdBytes, entryIdBytes, contract, kind, book); }
     // A CANCELLED MARKET ORDER: signed by its player before entry close, out of the round's table at this seat
     const cancelled = !!(this.round.cancelled && this.round.cancelled(entryIdBytes));
     if (kind === 'fee') {
