@@ -1589,3 +1589,8 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 #### SM-I4 (change) Auto-update record vs the update journal's resume (kanban #1581, audit #1489 sm1-node-2)
 - Invariant: every rollback of a release on this node is in auto-update.json (`rolledBack: true`, `to` = its VERSION, `commit` = its COMMIT) before the next check reads it - the updater's own (updateOnce), one that threw (#1440), and one the journal's resume made after its updater died (`resumeUpdate`, `resumed: true`; at the service's start through `resumeUnderLock`, or inside `updateNode`). So the #1369 day's wait applies to all of them.
 - `updateNode` with `retryRolledBack: false` (the auto updater, unless `bitcoinarena update` forces it) does not move to the release its own resume rolled back in the same call; it answers rolled back.
+
+#### SM-N1 (add) The key move steps the old key out (identity-switch.js `switchToSeedKey`, onchain-action EFFECTS `key-switch`; kanban #1776)
+- Once the node stops signing with a key, that key is not serving in the census. The `key-switch <old>` on-chain action carries, after the new bond's funding and bond, one advertisement update per old bond output, signed by the old key, with `serving = false` (§5A.3), funded from the new bond's change and chained. All of them are written into the action's BUILT bytes before anything is sent, so a crash re-sends them with the bond and never leaves the old key drawn and silent.
+- Not enough coins for the step-outs refuses the move as a whole. Nothing is sent and the key stays as it was.
+- Not covered yet: committee seats the seat holds as the old key at the moment of the move. The move does not wait for them.
