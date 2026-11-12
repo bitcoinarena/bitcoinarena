@@ -270,8 +270,10 @@ export async function lockAndPlay(w, who, { session: fixedSession = null, feeLoc
       assert.equal(fee.status, 201, await fee.text());
     };
     if (feeLock && feeFirst) {
+      // a seat the entry relay already handed the stake lock (kanban #1598: an entry's locks go with it) counts the stake on the fee lock, rightly
+      const relayed = !!d.round.stakeLock(eid);
       await handFee();
-      assert.equal(d.round.stakeSeen(eid), null, 'a stake counted on its fee lock alone, before its stake lock');
+      if (!relayed) assert.equal(d.round.stakeSeen(eid), null, 'a stake counted on its fee lock alone, before its stake lock');
     }
     // `only`: the seats (by index) handed the locks - the others hold the entry and never verify a lock of it
     if (only && !only.includes((w.nodes || [w.a, w.b]).indexOf(d))) continue;
@@ -291,7 +293,12 @@ export async function lockAndPlay(w, who, { session: fixedSession = null, feeLoc
       }
       continue;
     }
-    assert.equal(await say(d.port, signedBatchOf(input, (id) => ed25519.sign(id, session))), String(who.ticks));
+    // A LATER SEAT MAY ALREADY HOLD THE BATCH (its answer is then 0 new ticks), as in a game's run above: since kanban #1598 the entry relay hands
+    // an entry's locks together with the entry, so the seat a relay reached holds the stake lock at once and holds the run before
+    // this client's own post (measured: next tick 1320 at seat 1 before its post). The first seat always answers the batch's ticks.
+    { const got = await say(d.port, signedBatchOf(input, (id) => ed25519.sign(id, session)));
+      const at = (w.nodes || [w.a, w.b]).indexOf(d);
+      if (at === 0 || got !== '0' || (d.round.nextTick && d.round.nextTick(w.rid, eid) !== who.ticks)) assert.equal(got, String(who.ticks)); }
     const receipt = await say(d.port, signedMark);
     assert.equal(receipt.length, SIGNED_RECEIPT_BYTES, typeof receipt === 'string' ? `the mark was refused: ${receipt}` : undefined);
   }
