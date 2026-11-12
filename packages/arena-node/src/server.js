@@ -600,6 +600,15 @@ export function objectionIntake(round, rid, eid, blockHash = null, bundle = null
     // kept as evidence (late) and suspends nothing - this seat may have signed FINAL, released P or acked on it already
     const kept = typeof round.entryFinal === 'function' ? round.entryFinal(rid, eid) : null;
     if (kept && BigInt(arrivedMs ?? round.now()) < BigInt(kept.finalAfterMs)) arrivedMs = kept.finalAfterMs;
+    // SO DOES A §13C OUTCOME DECIDED HERE (kanban #2272, state audit 2026-11-12): a no-quorum VOID/FORFEIT this seat already wrote is read first by the
+    // settlement, the finality watch and the restart; an objection taken over it as in time would turn the entry SUSPENDED beside it - two records
+    // that disagree. It is kept as evidence (dated at final_after, late) and the decision stands
+    const decided = !kept && typeof round.noQuorum === 'function' ? round.noQuorum(eid) : null;
+    if (decided) {
+      let finalAfter = null;
+      try { finalAfter = windowsOf(decodeRoundContract(new Uint8Array(round.get(rid).contract))).finalAfterMs; } catch { finalAfter = null; }
+      if (finalAfter !== null && BigInt(arrivedMs ?? round.now()) < BigInt(finalAfter)) arrivedMs = Number(finalAfter);
+    }
     // AN OBJECTION COUNTS BY WHEN IT REACHED THIS SEAT, ON ITS OWN CLOCK (§13A, WINDOW-10-SPEC, RULED 2026-10-01):
     // before this seat's window close + 5 s it suspends the run here; after, it suspends nothing and is kept as evidence.
     // A block it names is kept and decides nothing.
