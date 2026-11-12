@@ -14,11 +14,12 @@
 //   any time                              a second valid certificate for one round and role is equivocation: both are
 //                                         kept as the proof (GET /seating-equivocation), and the round takes no entries - except a
 //                                         seating less a withholding member, reserves in, and the one it replaced: the replacement
-//                                         stands (kanban #1681, #1741)
+//                                         stands (kanban #1681, #1741) while no round the held one seats took entries, and is refused
+//                                         after (#2083); a seating that seats a withholder this node left is refused (#2083)
 //
 // The roster asks `seatedFor` and seats the certificate's nodes; before one stands, the draw's first slots (Roster).
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
+import { decodeRoundContract, seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
 import { slotsForRole } from '../../arena-protocol/src/sortition.js';
 import { signPresent, verifyPresent, decodePresent, seatedFrom, signSeating, seatingId, encodeSeatingCertificate, verifySeating,
   seatingEquivocation, seatingCloseMs, decodeSeatingCertificate, SEATING_ROLES } from '../../arena-protocol/src/seating.js';
@@ -44,6 +45,8 @@ export const UNANSWERED_TRIES = 2;
 /** How long a seated member may hold back its seating signature (kanban #1509): one that signed no seating at all this long after this node signed its own is
  * left out like a silent node (#979), and the next present reserve takes its place. Well inside the 120 s from seating_close to the start. */
 export const WITHHELD_SIG_MS = Number(process.env.ARENA_WITHHELD_SIG_MS || 30000);
+/** The most rounds of a table one replacement is checked for entries (kanban #2083): a table of 15 s rounds plays 5,760 a day. */
+const TABLE_ENTRY_SCAN = 20000;
 /** How long after its start a table's first round without a certificate is still read, and joined late (kanban #803): its table plays all day. */
 export const TABLE_LATE_MS = BigInt(process.env.ARENA_TABLE_LATE_MS || 24 * 3600000);
 /** A table's check-in (kanban #1020): the first round of the table in each of these periods of UTC time exchanges PRESENTs. */
@@ -86,6 +89,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   for (const r of db.prepare('SELECT round_id, role FROM seat_equivocations').all()) certs.set(`${toHex(new Uint8Array(r.round_id))}:${r.role}`, null);
   // a kept certificate was checked before it was kept (keepCert): read back, it names its seated
   function decodeSeated(cert) { return decodeSeatingCertificate(cert).seated.map(toHex); }
+  function seatingIdOfCert(cert) { try { const d = decodeSeatingCertificate(cert); return seatingId({ roundId: d.roundId, role: d.role, seated: d.seated }); } catch { return new Uint8Array(0); } }
 
   // A TABLE'S LATER SEATINGS (kanban #1020, the owner 2026-11-02: "Die tote node muss doch 120s vor Runden Beginn einchecken, das kann sie doch nicht"; measured 10:45Z: a node
   // gone since 04:00Z sat in two RPS tables, because a table was seated once, by its first round). `${anchor hex}:${role}` -> [{ index, rid, seated }], lowest index first: a
@@ -159,6 +163,31 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const last = Math.max(...b.map((k) => rank.get(k)));
     return a.filter((k) => !inB.has(k)).every((k) => rank.get(k) > last);
   };
+  /**
+   * DID ANY ROUND THE CERTIFICATE HELD ON `rid` SEATS TAKE ENTRIES (kanban #2083, wf1489 v1 refute-17-s3-2 of #1509)? The round itself, and on a table every
+   * round from it up to the table's next seating held (a table is seated by its first round and its check-ins, #1020): those rounds took their entries under
+   * the held seating, and a replacement must not move the money already on the table to another committee. Rows are walked by their series ids, past the
+   * leading ones a prune took, until the table's rows end.
+   */
+  const seatsEntries = (rid, role, contract) => {
+    const has = (r) => { try { return !!(round.entriesOf && round.entriesOf(r).length); } catch { return false; } };
+    if (has(rid)) return true;
+    let a = null; try { a = tableAnchorOf(contract); } catch { a = null; }
+    if (!a) return false;
+    const from = contract.roundIndex;
+    const next = (reseats.get(`${toHex(a.anchorId)}:${role}`) || []).find((x) => x.index > from);
+    const upto = Math.min(next ? next.index : Infinity, from + TABLE_ENTRY_SCAN);
+    let seen = false, misses = 0;
+    for (let j = from + 1; j < upto; j++) {
+      const r = seriesRoundIdOf(contract.seriesId, j);
+      if (!round.get(r)) { if (seen && ++misses >= 64) return false; continue; }
+      seen = true; misses = 0;
+      if (has(r)) return true;
+    }
+    return false;
+  };
+  // REPLACEMENTS REFUSED FOR GOOD (kanban #2083): entries never leave a round, so a replacement refused for them is refused again without its signatures checked
+  const refusedLate = new Set();
   const keepCert = (rid, role, bytes, { index = null } = {}) => {
     // ONE HELD ALREADY, byte for byte, is not checked again (2026-10-12 "figure out why CPU usage so high and
     // optimise it": every batch answer repeats a round's certificate, and each was verified - all its signatures - before the
@@ -169,10 +198,17 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       if (index !== null) { const posted = contractOf(rid, index); if (posted) noteReseat(rid, role, decodeSeated(bytes), posted); }
       return { ok: true, kept: false };
     }
+    const lateKey = `${toHex(rid)}:${role}:${toHex(seatingIdOfCert(bytes))}`;
+    if (refusedLate.has(lateKey)) return { ok: false, superseded: true, why: 'the seating held seats rounds that took entries: a replacement does not move them' };
     const check = checkFor(rid, role, index);
     if (!check || check.refused) return { ok: false, why: `this node cannot draw that round yet${check ? `: ${check.refused}` : ''}` };
     const v = verifySeating(bytes, check);
     if (!v.ok) return v;
+    // A SEATING THAT SEATS A WITHHOLDER THIS NODE LEFT (kanban #2083, wf1489 v1 refute-17-s3-1 of #1509) is refused here: this node signed a seating without it
+    // (resign, seat_withheld) because it never signed, so a certificate that seats it is built from this node's older signature over a seating it gave up. The
+    // withholder handed out such a certificate of S after the honest seats moved to S', and every seat took it.
+    const withheld = new Set(db.prepare('SELECT node FROM seat_withheld WHERE round_id = ? AND role = ?').all(rid, role).map((r) => r.node));
+    if (withheld.size && v.seating.seated.some((k) => withheld.has(toHex(k)))) return { ok: false, superseded: true, why: 'that seating seats a member this node left because it withheld its signature' };
     // on a table only the first round and its check-ins hold a seating (kanban #1020)
     try { const a = tableAnchorOf(check.contract);
       if (a && !a.first && !checkInOf(check.contract, a)) return { ok: false, why: 'that round of its table is no check-in' }; } catch { /* the draw above read it */ }
@@ -191,8 +227,17 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       if (certs.get(key) !== null) {
         const heldSeated = decodeSeated(old), newSeated = v.seating.seated.map(toHex), drawnHex = check.drawn.map(toHex);
         if (replaces(heldSeated, newSeated, drawnHex)) return { ok: false, superseded: true, why: 'a certificate that replaced this seating (a member of it withheld its signature) seats that round here' };
-        const entries = (() => { try { return round.entriesOf ? round.entriesOf(rid).length : 0; } catch { return 0; } })();
-        if (replaces(newSeated, heldSeated, drawnHex) && !entries) {
+        if (replaces(newSeated, heldSeated, drawnHex)) {
+          // A REPLACEMENT AFTER ENTRIES CAME (kanban #2083, wf1489 v1 refute-17-s3): the held seating stands, the newcomer is refused as superseded - and no
+          // equivocation is kept. The pair is replace-shaped because the honest members signed both (the #1509 move): no proof of anything against them, and
+          // a withholder plus a reserve that hid its signature over S' (handing out S first, S' after the entries) voided every round they were drawn into.
+          // Entries on any round the held seating seats count, a later round of its table too (#1020: the money on the table keeps its committee).
+          if (seatsEntries(rid, role, check.contract)) {
+            refusedLate.add(lateKey);
+            if (refusedLate.size > 20000) refusedLate.delete(refusedLate.values().next().value);
+            log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: a certificate that would replace the one held came after entries - the one held stands`);
+            return { ok: false, superseded: true, why: 'the seating held seats rounds that took entries: a replacement does not move them' };
+          }
           db.prepare('UPDATE seat_certs SET cert = ? WHERE round_id = ? AND role = ?').run(bytes, rid, role);
           certs.set(key, newSeated);
           for (const list of reseats.values()) for (const x of list) if (toHex(x.rid) === toHex(rid)) x.seated = newSeated;
