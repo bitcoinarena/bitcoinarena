@@ -18411,10 +18411,12 @@ function depositRowOnce(storage, federationId, d) {
   if (!storage || !fedHexOf(federationId)) return false;
   let invoiceHash = null;
   try { invoiceHash = toHex(decodeBolt11(d.invoice).paymentHash); } catch { invoiceHash = null; }
-  if (invoiceHash && ledgerRows(storage, federationId).some((r) => r.kind === 'deposit' && r.invoiceHash === invoiceHash)) return false;
+  // A MOVE'S RECEIVE LEG (kanban #1774) writes its own row (moved-in / swapped-in, `d.row`), once per invoice as a deposit's
+  const row = d.row && typeof d.row.kind === 'string' ? d.row : { kind: 'deposit' };
+  if (invoiceHash && ledgerRows(storage, federationId).some((r) => r.kind === row.kind && r.invoiceHash === invoiceHash)) return false;
   // ITS ROW'S KEY IS THE INVOICE'S (kanban #1179), or the operation's for a deposit found without its invoice: two tabs that see one claim write one key
   const id = invoiceHash ? `dep-${invoiceHash}` : d.operation ? `dep-op-${String(d.operation).toLowerCase()}` : null;
-  return ledgerAppend(storage, federationId, { kind: 'deposit', msat: String(d.amountMsat), invoiceHash }, id);
+  return ledgerAppend(storage, federationId, { ...row, msat: String(d.amountMsat), invoiceHash }, id);
 }
 /**
  * THE DEPOSITS AN EARLIER PAGE LEFT (2026-09-30: a reload of the deposit page lands on the lobby, and a payment
@@ -18422,7 +18424,7 @@ function depositRowOnce(storage, federationId, d) {
  * gets its row, and every ended one leaves the list. `onClaimed(d)` for each new row. Spends nothing.
  */
 function resumeDeposits({ client, storage, federationId, onClaimed = () => {}, others = async () => [], onLost = () => {} } = {}) {
-  const d0 = (p) => ({ invoice: p.invoice, amountMsat: BigInt(p.msat) });
+  const d0 = (p) => ({ invoice: p.invoice, amountMsat: BigInt(p.msat), ...(p.row ? { row: p.row } : {}) });
   const ended = (p, final, from = null) => {
     if (depositEnded(storage, federationId, p.operation, final, d0(p))) onClaimed({ ...d0(p), ...(from ? { from } : {}) });
     return from ? `${final} (in wallet ${from.label})` : final;
@@ -20683,8 +20685,9 @@ async function handLock({ entryId, fields, nodes, needed, fetcher = fetch, door 
  */
 const MIGRATE_DUST_MSAT = 10000n;
 async function migrateFromDraining({ from, to, record, toFederationId, chunkMsat = null, retries = 3, maxChunks = 64,
-  gateways = [], onState = () => {}, storage = null, fromFederationId = null } = {}) {
+  gateways = [], onState = () => {}, storage = null, fromFederationId = null, phrase16 = null } = {}) {
   const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
+  const inRow = { kind: 'moved-in', from: hex(fromFederationId) };
   // DRAINING, or CRITICAL with the safe federation the page chose as `successorId` (evacuatePlayerWallet, 2026-10-13)
   if (!record || !['DRAINING', 'CRITICAL'].includes(record.status)) return { moved: 0n, chunks: 0, state: 'not draining' };
   if (!record.successorId || /^0+$/.test(hex(record.successorId))) return { moved: 0n, chunks: 0, state: 'no successor named' };
@@ -20700,14 +20703,18 @@ async function migrateFromDraining({ from, to, record, toFederationId, chunkMsat
     onState({ state: 'moving', leftMsat: can, chunkMsat: amount, movedMsat: moved });
     let made = null;
     const out = await withdrawCollected({ client: from, amountMsat: amount, gateways,
-      invoiceFor: async (msat) => { made = JSON.parse(await to.receive(String(msat), '')); return { ok: true, invoice: made.invoice }; } });
+      invoiceFor: async (msat) => { made = JSON.parse(await to.receive(String(msat), '')); moveLegAhead(storage, toFederationId, made, msat, inRow, phrase16); return { ok: true, invoice: made.invoice }; } });
+    // NOTHING PAID (no payment made, or Refunded - the money back in the old wallet): the leg written ahead goes
+    if (made && !out.ok && (!out.state || out.state === 'Refunded')) pendingDrop(storage, toFederationId, made.operation);
     const final = out.ok && made ? await to.awaitReceive(made.operation) : null;
     if (out.ok && final === 'Claimed') {
       moved += amount; chunks++; failed = 0;
       if (storage && fromFederationId) ledgerAppend(storage, fromFederationId, { kind: 'moved-out', msat: String(amount), to: hex(toFederationId) });
-      if (storage) ledgerAppend(storage, toFederationId, { kind: 'moved-in', msat: String(amount), from: hex(fromFederationId) });
+      if (storage) depositEnded(storage, toFederationId, made.operation, final, { invoice: made.invoice, operation: made.operation, amountMsat: amount, row: inRow });
       continue;
     }
+    // THE RECEIVE ENDED Expired / Failure: its entry goes; any other answer keeps it for the next page's resume
+    if (made && final) depositEnded(storage, toFederationId, made.operation, final, null);
     if (++failed > retries) {
       const why = out.ok ? `the successor's receive ended ${final}` : out.why;
       onState({ state: 'stopped', movedMsat: moved, why });
@@ -20730,7 +20737,7 @@ async function migratePlayerWallet({ round, invite, seed, LockClient, storage, s
   const from = await playerWallet({ round, invite, seed, LockClient, storage });
   const to = await playerWallet({ round: { ...round, federationId: fromHex(status.successorId) }, invite: successor.invite, seed, LockClient, storage });
   return migrateFromDraining({ from, to, record: { status: 'DRAINING', successorId: status.successorId }, toFederationId: fromHex(status.successorId),
-    fromFederationId: round.federationId, storage, onState, chunkMsat });
+    fromFederationId: round.federationId, storage, onState, chunkMsat, phrase16: phraseOfSeed(seed) });
 }
 
 /**
@@ -20747,7 +20754,7 @@ async function evacuatePlayerWallet({ from, target, seed, LockClient, storage, o
   const a = await openPlayerWallet({ federationId: fromId, invite: from.invite, seed, LockClient, storage });
   const b = await openPlayerWallet({ federationId: toId, invite: target.invite, seed, LockClient, storage });
   return migrateFromDraining({ from: a, to: b, record: { status: from.status, successorId: toId }, toFederationId: toId, fromFederationId: fromId,
-    storage, onState, chunkMsat, gateways });
+    storage, onState, chunkMsat, gateways, phrase16: phraseOfSeed(seed) });
 }
 
 /**
@@ -20787,11 +20794,19 @@ function swapGatewayPairs(named = [], listedTo = [], listedFrom = [], max = SWAP
   for (const r of recv) for (const p of pay) if (gwKey(r) !== gwKey(p) && out.length < max) out.push([r, p]);
   return out.length ? out : [[recv[0], '']];
 }
+// A MOVE'S RECEIVE LEG, WRITTEN BEFORE ITS PAYMENT (kanban #1774): the invoice and operation of the receiving wallet as a pending entry of its
+// federation, with the history row its claim writes (`row`); `phrase16` the moving phrase's, so another phrase's scan never drops it (kanban #1233)
+function moveLegAhead(storage, federationId, made, msat, row, phrase16 = null) {
+  if (!made || !made.operation) return;
+  pendingAdd(storage, federationId, { invoice: made.invoice, operation: made.operation, msat: String(msat), kind: 'move', row,
+    ...(phrase16 ? { phrase16: String(phrase16).toLowerCase() } : {}) });
+}
 // `rows`: the history's two kinds - a join's swap, or the player's own Move (movePlayerWallet)
 async function swapForRound({ from, to, amountMsat, gateways = [], storage = null, fromFederationId = null, toFederationId = null, onState = () => {},
-  rows = ['swapped-out', 'swapped-in'] }) {
+  rows = ['swapped-out', 'swapped-in'], phrase16 = null }) {
   const amount = BigInt(amountMsat);
   const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
+  const inRow = { kind: rows[1], from: hex(fromFederationId) };
   onState({ state: 'swapping', amountMsat: amount });
   const before = BigInt(await from.balanceMsat());
   // THE INVOICE IS THE RECEIVING WALLET'S OWN, made for exactly the amount, and paid as a withdraw pays; the lock client never
@@ -20806,11 +20821,18 @@ async function swapForRound({ from, to, amountMsat, gateways = [], storage = nul
   let made = null, said = null;
   for (const [recv, pay] of pairs) {
     made = JSON.parse(await to.receive(String(amount), recv));
+    // THE RECEIVE LEG IS WRITTEN AHEAD OF THE PAYMENT (kanban #1774, state audit 2026-11-12, SM-C5): a tab closed after the payment left `from`
+    // and before the claim in `to` kept nothing naming `to` - the next page never opened its wallet and the paid invoice was never claimed.
+    // Now the receive is a pending entry of `to` (arena.deposit.pending, as a deposit's): ledgerFederations names it, resumeDeposits claims it
+    moveLegAhead(storage, toFederationId, made, amount, inRow, phrase16);
     said = JSON.parse(await from.withdraw(made.invoice, pay || undefined));
     if (said.state !== 'Refunded') break;
+    pendingDrop(storage, toFederationId, made.operation);   // Refunded: nothing paid into that invoice
     tried.push({ receive: recv, pay, state: said.state });
   }
   const final = said.state === 'Success' ? await to.awaitReceive(made.operation) : null;
+  // THE RECEIVE ENDED Expired / Failure: its entry goes; Claimed ends below, with its row; anything else keeps it for the next page's resume
+  if (final && final !== 'Claimed') depositEnded(storage, toFederationId, made.operation, final, null);
   if (!(said.state === 'Success' && final === 'Claimed')) {
     const why = said.state === 'Success' ? `the receive in the round's federation ended ${final}` : `the payment from the other federation ended ${said.state}${said.state === 'Refunded' ? ` - the money is back there (${tried.length} gateway pair${tried.length === 1 ? '' : 's'} tried)` : ''}`;
     onState({ state: 'stopped', why, tried });
@@ -20818,7 +20840,8 @@ async function swapForRound({ from, to, amountMsat, gateways = [], storage = nul
   }
   const feeMsat = before - BigInt(await from.balanceMsat()) - amount;
   if (storage && fromFederationId) ledgerAppend(storage, fromFederationId, { kind: rows[0], msat: String(amount), feeMsat: String(feeMsat), to: hex(toFederationId) });
-  if (storage && toFederationId) ledgerAppend(storage, toFederationId, { kind: rows[1], msat: String(amount), from: hex(fromFederationId) });
+  // the row and the end of the entry written ahead: one transition (depositEnded), the row once per invoice
+  if (storage && toFederationId) depositEnded(storage, toFederationId, made.operation, final, { invoice: made.invoice, operation: made.operation, amountMsat: amount, row: inRow });
   onState({ state: 'swapped', amountMsat: amount, feeMsat });
   return { ok: true, state: 'swapped', movedMsat: amount, feeMsat };
 }
@@ -20848,7 +20871,7 @@ async function movePlayerWallet({ from, to, seed, LockClient, storage, amountMsa
   const amount = amountMsat === null ? can : BigInt(amountMsat);
   if (amount <= 0n) return { ok: false, state: 'refused', canMsat: can, why: can <= 0n ? 'nothing to send from that federation after the fees' : 'a move is more than 0 sat' };
   if (amount > can) return { ok: false, state: 'refused', canMsat: can, why: `that federation can send ${can / 1000n} sat after the fees, less than the ${amount / 1000n} sat asked` };
-  const done = await swapForRound({ from: a, to: b, amountMsat: amount, gateways, storage, fromFederationId: fromId, toFederationId: toId, onState, rows: ['moved-out', 'moved-in'] });
+  const done = await swapForRound({ from: a, to: b, amountMsat: amount, gateways, storage, fromFederationId: fromId, toFederationId: toId, onState, rows: ['moved-out', 'moved-in'], phrase16: phraseOfSeed(seed) });
   return { ...done, canMsat: can };
 }
 
@@ -20866,7 +20889,7 @@ async function swapPlayerWalletForRound({ round, toInvite, fromInvite, fromFeder
   const quote = await swapQuote({ from, to, amountMsat: BigInt(needMsat) - have });
   if (!quote.enough) return { ok: false, state: 'short', quote, why: `the wallet in federation ${String(fromFederationId).slice(0, 8)} can send ${quote.withdrawableMsat} msat, less than ${quote.amountMsat}` };
   if (!(await confirm(quote))) return { ok: false, state: 'declined', quote };
-  const done = await swapForRound({ from, to, amountMsat: quote.amountMsat, gateways, storage, fromFederationId, toFederationId: round.federationId, onState });
+  const done = await swapForRound({ from, to, amountMsat: quote.amountMsat, gateways, storage, fromFederationId, toFederationId: round.federationId, onState, phrase16: phraseOfSeed(seed) });
   return { ...done, quote };
 }
 
