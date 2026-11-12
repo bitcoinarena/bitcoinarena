@@ -391,11 +391,15 @@ export function inviteNamesFederation(invite, federationIdHex) {
 
 /**
  * THE FEDERATION A WITHDRAW READS (with every deposit going to the lowest load): the one of `parts` - the summed
- * balance's split, [{ federation, sats }] - holding the most, among those whose invite a verified status names; else the lobby's.
+ * balance's split, [{ federation, sats }] - holding the most, among those whose invite a verified status names and whose status
+ * allows a withdraw (kanban #2434); else the lobby's.
  * One federation per withdraw; a withdraw over several federations at once is a later step.
  */
 export function withdrawFederation({ lobbyInvite, parts = [], statuses = [] }) {
-  const inviteOf = (fid) => { const st = (statuses || []).find((f) => f && f.invite && String(f.federation).toLowerCase() === String(fid).toLowerCase()); return st ? st.invite : null; };
+  // ONLY A FEDERATION WHOSE STATUS ALLOWS A WITHDRAW (kanban #2434): a HALTED one (FEDERATION_ALLOWS.HALTED.withdraw false) holding
+  // the larger part pinned every Withdraw on its frozen notes, and the money in an OPEN federation could not leave through Withdraw
+  const canWithdraw = (f) => ((f.allows || FEDERATION_ALLOWS[f.status] || {}).withdraw) !== false;
+  const inviteOf = (fid) => { const st = (statuses || []).find((f) => f && f.invite && canWithdraw(f) && String(f.federation).toLowerCase() === String(fid).toLowerCase()); return st ? st.invite : null; };
   const best = [...(parts || [])].filter((p) => p && p.sats > 0 && inviteOf(p.federation)).sort((a, b) => b.sats - a.sats)[0];
   return best ? { invite: inviteOf(best.federation), federation: best.federation, sats: best.sats, why: `withdraw from federation ${String(best.federation).slice(0, 16)}, which holds the most (${best.sats} sat)` }
     : { invite: lobbyInvite, federation: null, sats: null, why: 'the lobby\'s federation' };

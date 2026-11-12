@@ -5890,7 +5890,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       if (!ctx.ok && !noRound) { say(ctx.why); return Promise.resolve({ ok: false, why: ctx.why }); }
       // WHAT THE FEDERATION'S OWN SIGNED RECORD ALLOWS (§23A.4): DRAINING and CRITICAL take no deposit, HALTED
       // nothing at all - said by name, from the record this page checked (ARENACLIENT.federationStatus)
-      const fed = window.ARENA_FED_STATUS;
+      // A WITHDRAW ASKS THE FEDERATION IT READS (kanban #2434): the withdraw-from federation's own status, not the lobby's - a HALTED
+      // lobby federation refused the whole Withdraw while the money sat in an OPEN one
+      const fromHex = which === 'withdraw' && ctx.withdrawFrom && ctx.withdrawFrom.federation ? String(ctx.withdrawFrom.federation).toLowerCase() : '';
+      const fed = (fromHex && window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.get && window.ARENA_FED_LOADS.get(fromHex)) || window.ARENA_FED_STATUS;
       if (fed && fed.allows && !fed.allows[which === 'withdraw' ? 'withdraw' : which === 'move' ? 'move' : 'deposit']) {
         // the status says why, or - an OPEN federation over its cover on mainnet (§23A.3, ruled A) - its load does
         const why = ARENACLIENT.federationSays(fed.status) || (ARENACLIENT.loadSays ? ARENACLIENT.loadSays(fed) : ''); say(why); return Promise.resolve({ ok: false, why });
