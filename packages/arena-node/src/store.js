@@ -1223,8 +1223,8 @@ export function openStore(path = ':memory:') {
       seen_ms  INTEGER NOT NULL
     );
 
-    -- ONE RELAYED SLASH PROOF PER ACCUSED SIGNED RESULT (kanban #2248, a45 refute of #1816): the key is
-    -- round id || accused node || player || signed result id (128 bytes), the proof is the one PUT /slash kept for it.
+    -- ONE RELAYED SLASH PROOF PER SLOT (kanban #2248, a45 refute of #1816; #2344): the key is round id || accused node || player || door
+    -- (1 result, 2 re-run; 97 bytes - a 128-byte key from #2248 is never read again), the proof is the one PUT /slash keeps for it.
     -- A proof's other fields (its bond outpoint, its transcript hash) are free to whoever re-wraps a public signed
     -- result, so without this one signed result minted 2^32+ distinct proofs into the relay store.
     CREATE TABLE IF NOT EXISTS relayed_slash (
