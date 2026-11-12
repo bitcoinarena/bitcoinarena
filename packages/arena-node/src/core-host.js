@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { posix } from 'node:path';
 import { workerData } from 'node:worker_threads';
 
-const { files: fileList, entry, name, port, ctrl: ctrlBuffer, arrayBudget, liveCap } = workerData;
+const { files: fileList, entry, name, port, ctrl: ctrlBuffer, arrayBudget, liveCap, answerMax } = workerData;
 const files = new Map(fileList);
 const ctrl = new Int32Array(ctrlBuffer);
 const DRIVER = readFileSync(new URL('./core-driver.js', import.meta.url), 'utf8');
@@ -34,6 +34,12 @@ const BUDGET = Number.isInteger(arrayBudget) && arrayBudget > 0 ? arrayBudget : 
 // (kanban #1489 merge of #1538 + #1539) a caller may set a tighter cap: the plugin trial uses the budget itself, so a decide
 // adapter that keeps its arrays across calls is refused at the array budget, as #1538 promises; 0 or absent keeps 4x the budget
 const LIVE_CAP = Number.isInteger(liveCap) && liveCap > 0 ? liveCap : 4 * BUDGET;
+// THE ANSWER'S SIZE (kanban #1691): the node copies each answer into its own thread and parses it there, outside every limit
+// this thread has - the driver calls JSON.stringify as the core left it, so a core could answer a 32 MB '[0,0,...]' for one
+// String.prototype.repeat (measured: the node's thread held 7.3 s, its heap +800 MB). An answer longer than ANSWER_MAX is
+// never posted: the core is ended, as at LIVE_CAP. `out` is a primitive string checked in this thread's realm, its length no
+// property the core can change.
+const ANSWER_MAX = Number.isInteger(answerMax) && answerMax > 0 ? answerMax : 4 * 1024 * 1024;
 const LOCKDOWN = `'use strict';
 (() => {
   const budget = ${BUDGET};
@@ -151,5 +157,9 @@ port.on('message', ({ op, json }) => {
     return answer({ ok: false, why: `the core failed in ${op}: it kept more than ${Math.round(LIVE_CAP / 1048576)} MB of arrays alive` });
   }
   if (typeof out !== 'string') return answer({ ok: false, why: `the core answered ${op} with something other than JSON` });
+  if (out.length > ANSWER_MAX) {
+    call = null; liveOf = () => 0;
+    return answer({ ok: false, why: `the core failed in ${op}: its answer was longer than ${Math.round(ANSWER_MAX / 1048576)} MB` });
+  }
   answer({ ok: true, json: out });
 });
