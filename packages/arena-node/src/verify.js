@@ -446,6 +446,10 @@ export class Verifier {
   }
 
   async #kept({ roundIdBytes, entryId, entry, contract, answer, options }) {
+    // A HEAD-TO-HEAD ENTRY IS NEVER KEPT AS A RUN (kanban #1586): it has no marks, so every rule below - above all #neverStarted's
+    // FORFEIT over the empty transcript - would sign a player who revealed in time as one who never played. Only
+    // #headToHeadClose signs it.
+    if (this.#headToHead(contract)) return { entryId, stored: false, why: 'a head-to-head entry is signed from the round\'s reveals, not kept as a run' };
     let canonical = null;
     let noCanonical = null;
     try { canonical = this.round.canonicalTranscript(roundIdBytes, entryId); }
@@ -732,7 +736,7 @@ export class Verifier {
    * FORFEIT for no reveal), then one signed result per entry through #sign - its transcript hash the digest of the entry's
    * reveal (32 zero bytes for none), its core the round's decide adapter. One promise per entry, as a replayed close.
    */
-  #headToHeadClose(roundIdBytes, contract, found) {
+  #headToHeadClose(roundIdBytes, contract, found, only = null) {
     // AN ENTRY BELOW THE ROUND'S THRESHOLD IS NO MEMBER (§17, kanban #1071): it is not decided, played against or signed for
     const entries = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.entryVoid(entryId));
     // AND IN A PAYING ROUND ONLY THE ENTRIES BACKED BY A LOCK ARE PLAYED (kanban #1437, audit 8 R3): one with no lock took no seat, is played against
@@ -750,7 +754,8 @@ export class Verifier {
       if (!box || !box.meta.decide) throw new Error(`game "${found.plugin.manifest.gameName}"'s decide adapter is not installed on this node`);
       return { held, results: headToHeadResults(list, (moves, config) => box.call('decide', { moves, config }), found.config, { players: found.plugin.manifest.players }) };
     })();
-    return entries.map(({ entryId, entry }) => decided.then(({ held, results }) => {
+    // A RETRY SIGNS ONLY THE ENTRY IT WAS ASKED FOR (kanban #1586), decided over all of the round's reveals as the close is
+    return entries.filter(({ entryId }) => !only || hex(entryId) === hex(only)).map(({ entryId, entry }) => decided.then(({ held, results }) => {
       const r = results[hex(entryId)] || { outcome: VOID, score: 0 };
       const rv = held.get(hex(entryId));
       this.queued.push({ entryId, objected: false });
@@ -1348,6 +1353,15 @@ export class Verifier {
     const row = this.round.get(roundIdBytes);
     if (!row) return { entryId: entryIdBytes, stored: false, why: 'no such round' };
     const contract = decodeRoundContract(new Uint8Array(row.contract));
+    // A HEAD-TO-HEAD ROUND'S ENTRY IS RETRIED AS ITS CLOSE IS, NEVER AS A RUN (kanban #1586): the reveals carried, the decide
+    // asked again, the entry signed from the reveals (WIN / DRAW / LOSS, FORFEIT only for no reveal) - or nothing, and the watch
+    // asks again. Before, a close whose decide failed once (a sandbox call past ASK_MS, a load past LOAD_MS) came here, found no
+    // first mark and every peer up, and #kept signed every revealed entry - the winner too - FORFEIT 0 as a run that never started.
+    { const h2h = this.#headToHead(contract);
+      if (h2h) {
+        const [work] = this.#headToHeadClose(roundIdBytes, contract, h2h, entryIdBytes);
+        return work ? await work : { entryId: entryIdBytes, stored: false, why: 'no such member entry in that head-to-head round' };
+      } }
     const found = this.round.entriesOf(roundIdBytes).find((e) => hex(e.entryId) === hex(entryIdBytes));
     if (!found) return { entryId: entryIdBytes, stored: false, why: 'no such entry in that round' };
     const beacon = beaconFor(this.randomnessFor, contract, roundIdBytes, found.entry, entryIdBytes, this.chainFor);
@@ -2225,6 +2239,14 @@ export class Verifier {
     const row = this.round.get(roundIdBytes);
     if (!row) return null;
     const contract = decodeRoundContract(new Uint8Array(row.contract));
+    // A HEAD-TO-HEAD ENTRY IS RETRIED AS ITS CLOSE, never replayed as a run (kanban #1586; as #retryClose)
+    { const h2h = this.#headToHead(contract);
+      if (h2h) {
+        const [work] = this.#headToHeadClose(roundIdBytes, contract, h2h, entryIdBytes);
+        if (!work) return null;
+        this.done = [...this.done, work];
+        return work;
+      } }
     const found = this.round.entriesOf(roundIdBytes)
       .find((e) => hex(e.entryId) === hex(entryIdBytes));
     if (!found) return null;
