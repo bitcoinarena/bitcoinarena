@@ -29,7 +29,7 @@ import { serve } from '../src/server.js';
 import { init, step } from '../../nextblock/src/sim.js';
 import { hash } from '../../nextblock/src/state.js';
 import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../../arena-protocol/src/contracts.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { encodeCheckpointReceipt, receiptId, joinSignedReceipt, SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import {
@@ -171,7 +171,7 @@ async function roundThrough(node, {
     for (let t = from; t < from + BATCH_TICKS && t < TICKS; t++) rows.push(wordsAt(t));
     const b = { roundId: rid, entryId: eid, firstTick: from, ticks: rows, liquidations: [],
       previousHash: batches.length ? batchId(batches[batches.length - 1]) : GENESIS };
-    assert.equal(await s.say(encodeInputBatch(b)), String(rows.length));
+    assert.equal(await s.say(signedBatchOf(b, (id) => ed25519.sign(id, session))), String(rows.length));
     batches.push(b);
   }
   const batch = batches[batches.length - 1];

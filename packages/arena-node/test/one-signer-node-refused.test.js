@@ -37,7 +37,7 @@ import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt,
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { init, step } from '../../nextblock/src/sim.js';
@@ -153,7 +153,7 @@ async function joinAndBuild(w, { lockAt = ['a', 'b'] } = {}) {
       for (let t = from; t < to; t++) step(st, ...play.words(t));
       const b = batchOf(from, to, prevBatch);
       const m = markOf(to, Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))), b, prevMark);
-      out.push(encodeInputBatch(b), sign(m));
+      out.push(signedBatchOf(b, (id) => ed25519.sign(id, session)), sign(m));
       if (!first) first = checkpointId(m);
       from = to; prevBatch = batchId(b); prevMark = checkpointId(m);
     }
