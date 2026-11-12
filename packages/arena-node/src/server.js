@@ -3245,6 +3245,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // 4 h after opening dropped every round of a market on a period of 4 h or more before it was ever due - none signed, all VOID)
   const drawnContracts = new Map();
   let drawnAfterRowid = 0;             // the rounds row read last (kanban #791)
+  const drawnDelivered = new Map();   // round hex -> the seats' base URLs that took its combined attestation (200/201, kanban #1989)
   const drawnAttestor = drawnHosted ? new DrawnAttestor({
     readPrice: () => prices.readPrice(), selfKey: toHex(round.pubkey), sign: (d) => schnorr.sign(d, round.identity.secret),
     verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } },   // kanban #1487: every peer's word checked before it counts
@@ -3274,13 +3275,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       return out;
     },
+    // HANDED UNTIL TAKEN (kanban #1989): the push was made once and every answer dropped, so a settlement seat restarting or slow in
+    // those ~20 s never held the attestation, stayed OPEN and turned VOID at the deadline while the others were FINAL. Now the seats that
+    // answered 200/201 are kept per round, and the rest are asked again on every pass while the round is due ({ delivered: false })
     hold: async (bytes, rid) => {
-      const got = holdOutcome(rid, bytes, decodeAttestation(bytes), false);
-      if (!got.held) { console.log(`[attest] ${toHex(rid).slice(0, 16)}: the combined attestation was not held here: ${got.why}`); return false; }
+      const hex = toHex(rid);
+      let took = drawnDelivered.get(hex);
+      if (!took) {
+        const got = holdOutcome(rid, bytes, decodeAttestation(bytes), false);
+        if (!got.held) { console.log(`[attest] ${hex.slice(0, 16)}: the combined attestation was not held here: ${got.why}`); return false; }
+        drawnDelivered.set(hex, took = new Set());
+        for (const k of [...drawnDelivered.keys()].slice(0, Math.max(0, drawnDelivered.size - 512))) drawnDelivered.delete(k);
+      }
       const picked = roster.committeeFor(rid, 'settlement');
-      const to = new Set([...(picked.ok ? peerEndpointsOf(picked.committee, round.pubkey) : []), ...drawnAttestor.peersFor(rid)]);
-      await Promise.all([...to].map((base) => fetch(`${base}/outcome?round=${toHex(rid)}`, { method: 'POST', body: bytes, signal: AbortSignal.timeout(8000) }).catch(() => null)));
-      return true;
+      const to = new Set([...(picked.ok ? peerEndpointsOf(picked.committee, round.pubkey) : []), ...drawnAttestor.peersFor(rid)].filter((b) => !took.has(b)));
+      await Promise.all([...to].map(async (base) => {
+        try { const res = await fetch(`${base}/outcome?round=${hex}`, { method: 'POST', body: bytes, signal: AbortSignal.timeout(8000) }); if (res.status === 200 || res.status === 201) took.add(base); } catch { /* asked again next pass */ }
+      }));
+      return { held: true, delivered: [...to].every((b) => took.has(b)) };
     },
   }) : null;
   if (drawnAttestor) {
