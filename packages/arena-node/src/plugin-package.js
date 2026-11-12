@@ -20,6 +20,10 @@ import { decodeManifest, encodeManifest, gameIdOf } from '../../arena-protocol/s
 import { gameInfoJson } from '../../arena-protocol/src/game-info.js';
 import { checkPackage } from './plugin-check.js';
 import { trialRun, TRIAL_MS } from './plugin-trial.js';
+/** THE FIRST LOAD OF EACH OF AN ADOPTED PACKAGE'S CORES (kanban #2058, #2078): no longer than the trial that passed it. */
+export const REGISTER_MS = TRIAL_MS;
+/** The file an installed core is kept in - and the name its module has in the trial too (kanban #2058, #2078). */
+const coreFileOf = (hash) => `core-${hash}.mjs`;
 
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 const b64 = (b) => Buffer.from(b).toString('base64');
@@ -69,7 +73,7 @@ export function seatTitleAt(at) {
 export function installPackage(dir, pkg, gameId, { title = null } = {}) {
   const at = join(dir, gameId);
   mkdirSync(at, { recursive: true });
-  for (const c of pkg.cores) writeFileSync(join(at, `core-${c.hash}.mjs`), Buffer.from(c.source, 'base64'));
+  for (const c of pkg.cores) writeFileSync(join(at, coreFileOf(c.hash)), Buffer.from(c.source, 'base64'));
   for (const k of pkg.clients || []) writeFileSync(join(at, `client-${k.hash}.html`), Buffer.from(k.body, 'base64'));
   writeFileSync(join(at, 'package.json'), JSON.stringify(pkg));
   if (typeof title === 'string' && title) writeFileSync(join(at, SEAT_TITLE_FILE), JSON.stringify({ title: title.slice(0, 80) }));
@@ -80,11 +84,16 @@ export function installPackage(dir, pkg, gameId, { title = null } = {}) {
 // THE NAME AND TITLE ARE NOT THE SERVING SEAT'S (kanban #1541): a package's `name` and `title` are signed by nobody, so a seat
 // relaying a genuine signed version could rename the game it hands over. The hosted name is the manifest's signed gameName; the
 // title is the one this seat keeps (`title`: its installed version's, or the one it wrote to disk), else that gameName.
-export async function registrationFromPackage(at, pkg, { title = null } = {}) {
+// ITS FIRST LOAD IS BOUNDED LIKE THE TRIAL (kanban #2058, #2078): adoptPackage (an owner's install, autoUpdate unattended) and
+// loadInstalled (every start) load the same untrusted bytes a second time, and that load ran with an installed core's limits -
+// LOAD_MS 10 s, then the ask, then EXIT_WAIT - on the seat's thread: a core that passed the trial held it 10 s here. Each core's
+// first load (its meta ask and, refused, its thread's end included) now has the trial's deadline, REGISTER_MS (`within`); one
+// not loaded by then is refused. The trial now shows the core the same module name, so a core honest in the trial loads the same way here.
+export async function registrationFromPackage(at, pkg, { title = null, within = REGISTER_MS } = {}) {
   const manifest = decodeManifest(fromHex(pkg.manifest));
   const cores = new Map();
   for (const c of pkg.cores) {
-    const file = join(at, `core-${c.hash}.mjs`);
+    const file = join(at, coreFileOf(c.hash));
     if (sha(readFileSync(file)) !== c.hash) throw new Error(`core ${c.hash.slice(0, 16)} changed on disk`);
     // NEVER IMPORTED INTO THIS THREAD (§0A.6): loaded into its sandbox from the bytes just checked
     // THE CONFIGS ARE THE SIGNED MANIFEST'S (kanban #1814): a package's cores[].configs are signed by nobody, so a relaying seat
