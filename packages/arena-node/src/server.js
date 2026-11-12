@@ -1109,11 +1109,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     // NAMED BY ITS SIGNED MANIFEST, TITLED AS THE VERSION IT REPLACES (kanban #1541): never by what the serving seat wrote
     const named = decodeManifest(fromHex(String(pkg.manifest))).gameName;
-    pkg = { ...pkg, name: named, title: replaces !== null ? (hosted.get(replaces).title || named) : named };
+    // and each core's configs the manifest's (kanban #1814), so the package.json kept on disk loads the same at the next start
+    const signedCores = decodeManifest(fromHex(String(pkg.manifest))).cores;
+    pkg = { ...pkg, name: named, title: replaces !== null ? (hosted.get(replaces).title || named) : named,
+      cores: pkg.cores.map((c) => { const m = signedCores.find((s) => toHex(s.hash) === c.hash); return { ...c, configs: m ? m.configs.map(toHex) : [] }; }) };
     const at = installPackage(pluginsDir, pkg, game);
     let reg;
     try { reg = await registrationFromPackage(at, pkg, { title: pkg.title }); } catch (e) { return { ok: false, status: 500, why: `kept, but it does not load: ${e.message}` }; }
-    const entry = hostedPlugins([reg]).get(game);
+    // a package this seat cannot host is refused, never thrown out of an autoUpdate sweep (kanban #1814)
+    let entry;
+    try { entry = hostedPlugins([reg]).get(game); } catch (e) { return { ok: false, status: 422, why: `kept, but it cannot be hosted: ${e.message}` }; }
     hosted.set(game, entry);
     if (replaces !== null) superseded.set(replaces, game);
     console.log(`[plugins] ${replaces ? `updated ${replaces.slice(0, 16)} to` : 'installed'} ${v.name} v${v.version} (${game.slice(0, 16)}) from ${from}: running now`);
