@@ -408,6 +408,10 @@ async function paymentFinal(payer, hash) {
   if (last || r.timedOut) return 'IN_FLIGHT';
   return lnNotInitiated(r.err) ? 'NONE' : null;
 }
+// THE LAST WORD OF A PAYINVOICE (kanban #2206): with table output lncli prints every update of the payment (lnd PrintLivePayment "Always print in-flight
+// updates"; with stdout not a terminal the clear-line codes erase nothing), so a payment that FAILED within the wait printed IN_FLIGHT first - any
+// IN_FLIGHT line read as sent, the welcome was answered paid and the next payer never asked. The last "Payment status:" line printed decides
+const lastPayStatus = (out) => { const said = [...String(out || '').matchAll(/Payment status:\s*([A-Z_]+)/g)].map((m) => m[1]); return said[said.length - 1] || null; };
 const UNSURE_KEEP_MS = 24 * 3600 * 1000;
 const UNSURE_CAP = 500;   // kanban #2132: grant() refuses while `unsure` holds this many; grantPay never cuts the list
 // OUT OF THE PLAYERS' QUEUE, AND ONLY ITS OWN CHANGES (audit 6 re-check N3/N4, kanban #1426): in the queue its lncli reads held welcomes past the page's
@@ -517,7 +521,9 @@ async function grantPay(ask, inv, d, book, row) {
     // is paid; FAILED, or no part sent within PAY_SETTLE_MS, is not, and the next payer is asked
     const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', ask.invoice], PAY_WAIT_MS);
     const paidSays = lnStatus(paid.out);
-    const said = paidSays === 'SUCCEEDED' || paidSays === 'IN_FLIGHT' ? 'sent' : paid.timedOut ? await paymentSent(payer, inv.payment_hash) : 'no';
+    // a last FAILED line, or an exit (not a timeout) without SUCCEEDED, is 'no' and the next payer is asked; only a timed-out lncli whose last line
+    // was IN_FLIGHT counts as sent (kanban #2206)
+    const said = paidSays === 'SUCCEEDED' ? 'sent' : paidSays === 'FAILED' || !paid.timedOut ? 'no' : paidSays === 'IN_FLIGHT' ? 'sent' : await paymentSent(payer, inv.payment_hash);
     const state = said === 'paid' ? 'sent' : said, final = said === 'paid' || paidSays === 'SUCCEEDED';   // kanban #2100: a final SUCCEEDED is not pending
     askedPayers.push(PAYERS.indexOf(payer)); askedIds.push(payerId(payer));   // kanban #1926: by its own entry too
     // NOT FINAL YET (kanban #1421): booked as pending with the payers asked; the sweep reads their final word
@@ -669,7 +675,7 @@ createServer((req, res) => {
             const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', b.invoice], 15000);
             askedPayers.push(PAYERS.indexOf(payer));
             const paidSays = lnStatus(paid.out);   // kanban #2416: the status line, never a node's alias
-            if (paid.timedOut || paidSays === 'SUCCEEDED' || paidSays === 'IN_FLIGHT') {
+            if (paidSays === 'SUCCEEDED' || (paid.timedOut && paidSays !== 'FAILED')) {   // kanban #2206: an IN_FLIGHT update before FAILED, or an exit without SUCCEEDED, is no top-up
               const b2 = readBook(), mine = mineOf(b2);
               if (mine && paidSays === 'SUCCEEDED') { delete mine.pending; delete mine.payers; saveBook(b2); }
               else if (mine) { mine.payers = [...askedPayers]; saveBook(b2); }
