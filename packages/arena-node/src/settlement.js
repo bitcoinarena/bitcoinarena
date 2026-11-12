@@ -2588,6 +2588,9 @@ export class LockSettlement {
     // #1249's rewrite had run and was undone, and the claims, payouts and shares read were those of a transaction that never landed
     // AND WITH ITS WINNERS' SHARES (kanban #2277): a row made ACCEPTED on this txid later puts them back next to its moves
     if (typeof this.round.putSettlementTxid === 'function') this.round.putSettlementTxid({ roundId: roundIdBytes, txid: m.txid, message: m.message, claims, payouts: m.plan.payouts.length, shares: m.plan.stakeShares || [] });
+    // AND WHERE EACH SEND'S FIRST CONTRACT SITS IN IT (kanban #1988): the sends of a round ACCEPTED on this txid are driven from these, never from a rebuild
+    if (typeof this.round.putSettlementPayoutKeys === 'function') this.round.putSettlementPayoutKeys({ roundId: roundIdBytes, txid: m.txid,
+      payouts: m.plan.payouts.map((p) => ({ kind: p.kind, paymentHash: p.sent ? String(p.sent.paymentHash) : null, donationId: p.donation ? toHex(p.donation.id) : null })) });
     const row = typeof this.round.lockSettlement === 'function' ? this.round.lockSettlement(roundIdBytes) : null;
     if (row && row.state === ACCEPTED && row.txid !== m.txid) return;
     this.round.putLockSettlementMoves({ roundId: roundIdBytes, txid: m.txid, claims, payouts: m.plan.payouts.length });
@@ -3728,7 +3731,7 @@ export class LockSettlement {
       const got = await this.settle(roundIdBytes).catch((e) => ({ ok: false, why: e.message }));
       return [{ ok: !!got.ok, settle: got.state || null, why: got.why }];
     }
-    const m = this.sendBuilt(roundIdBytes, await this.message(roundIdBytes));
+    const m = this.sendBuilt(roundIdBytes, await this.sendsBuilt(roundIdBytes));
     if (!m.ok) return [{ ok: false, why: m.why }];
     return this.winnings.sendAll(roundIdBytes, m);
   }
@@ -3744,6 +3747,33 @@ export class LockSettlement {
     if (!batch || batch.bodyId !== m.bodyId) return refuse('this signer node keeps no signed batch of that settlement, so it sends nothing');
     const { seatKeys, threshold } = batchKeys(m);
     return { ...m, txid: batch.txid, claimPk: signerSetKey(seatKeys, threshold, batch.signers), signers: batch.signers, batch };
+  }
+
+  /**
+   * WHAT AN ACCEPTED ROUND'S SENDS ARE DRIVEN FROM: THE TRANSACTION THAT LANDED (kanban #1988, state audit 2026-11-12 SM-3/SM-7). The sends
+   * took `message()` - a fresh rebuild - and asked the gateway for attempt 0's contract at its txid; a restart that rebuilt other bytes (the
+   * guardians' fee rule read again, or the row ACCEPTED on another asker's txid) refused to build or named a transaction that never existed,
+   * and the landed contracts expired to the committee key with every send row SENDING for good. Once the row is ACCEPTED, the txid is the
+   * row's and each payout output's send is the one kept with that txid (keepMoves); only a round with no such record still takes the rebuild.
+   */
+  async sendsBuilt(roundIdBytes) {
+    const row = this.round.lockSettlement(roundIdBytes);
+    const keys = row && row.state === ACCEPTED && typeof this.round.settlementPayoutKeys === 'function'
+      ? this.round.settlementPayoutKeys(roundIdBytes, row.txid) : null;
+    if (!keys) return this.message(roundIdBytes);
+    // 2.0: a protocol-27 settlement's sends read the batch of the txid its row stands on (sendBuilt, kanban #1170) - that is the build
+    { const r = this.round.get(roundIdBytes); if (r && namedClaims(decodeRoundContract(new Uint8Array(r.contract)))) return this.message(roundIdBytes); }
+    const kept = this.built.get(toHex(roundIdBytes));
+    if (kept && kept.ok && kept.txid === row.txid) return kept;
+    const r = this.round.get(roundIdBytes);
+    if (!r) return refuse('this node holds no such round', 404);
+    const contract = decodeRoundContract(new Uint8Array(r.contract));
+    const held = this.dkg.signerNodeFor(contract.nodes);
+    if (!held.ok) return refuse(`this signer node holds no share of the round's claim key: ${held.why}`);
+    const payouts = keys.map((k) => ({ kind: k.kind, ...(k.paymentHash ? { sent: { paymentHash: k.paymentHash } } : {}),
+      ...(k.donationId ? { donation: { id: fromHex(k.donationId) } } : {}) }));
+    return { ok: true, landed: true, txid: row.txid, plan: { payouts }, claimPk: held.pool.groupPublicKey, signerNode: held.signerNode,
+      needed: receiptsNeeded(contract.settlementSlots), contract };
   }
 }
 
