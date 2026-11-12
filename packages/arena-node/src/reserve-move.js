@@ -13,8 +13,15 @@
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 const utf8 = (s) => new TextEncoder().encode(s);
-/** A move's id: one per (drained federation, destination) - X drains once. */
-export const moveIdOf = (from, to) => toHex(taggedHash('ARENA/v1/ReserveMove', Uint8Array.from([...fromHex(from), ...fromHex(to)])));
+/** A move's id: one per (drained federation, destination, sequence). Sequence 0 is the first move (its id as before); sequence n the move
+ *  after n finished ones (kanban #2435, state audit 2026-11-12: one id per pair let X drain once - a REFUNDED move, or a reserve output
+ *  reaching X after its move was CLAIMED, stayed in X for good while moveTargets kept listing it). reserve-payout.js moves under the
+ *  lowest sequence whose record is not finished (REFUNDED, SHORT, CLAIMED); each input is still spent once, by the spent set. */
+export const moveIdOf = (from, to, seq = 0) => {
+  const n = Number(seq) || 0;
+  const tail = n > 0 ? [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255] : [];
+  return toHex(taggedHash('ARENA/v1/ReserveMove', Uint8Array.from([...fromHex(from), ...fromHex(to), ...tail])));
+};
 /** The encryption seed of the destination's incoming contract: the move's own, so every seat rebuilds the same contract. */
 export const moveSeedOf = (moveIdHex) => taggedHash('ARENA/v1/ReserveMoveSeed', utf8(String(moveIdHex)));
 /** The seed of a plan's own invoice: each attempt draws a `seedTag` the plan names, so a second attempt asks for another payment hash
