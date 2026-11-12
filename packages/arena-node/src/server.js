@@ -2151,6 +2151,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return mergeServedRounds(held.filter(Boolean)).rounds;
   };
   const fundingBook = round.db ? createFundingBook({ db: round.db, schedule: fundingSchedule, log: (l) => console.log(l),
+    // the ballot binding's gate for funding votes too (kanban #2576): seq votes from the network's BALLOT_BIND_HEIGHT
+    bindHeightFor: (net) => { const k = donationKeysForNetworkId(fromHex(net)); return ballotBindHeight(k ? k.network : 'mainnet'); },
     endTimeAt: typeof blockHeaderTimeAt === 'function' ? blockHeaderTimeAt : null,
     // BEFORE A FEE DECISION, EVERY SEAT'S APPROVALS AND SIGNALS (ruled on #1245, kanban #1231): GET /funding-items of each network seat this seat reaches
     pull: async (pid) => {
