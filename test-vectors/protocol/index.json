@@ -12,6 +12,7 @@
   "contracts",
   "checkpoint",
   "receipt",
-  "advert"
+  "advert",
+  "lock-set"
  ]
 }

@@ -34,6 +34,7 @@ import { hash as stateHash } from '../../nextblock/src/state.js';
 import { seedWordForEntry } from '../../arena-protocol/src/seed.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { entryFeeMsat, entryFeeBpsOf } from '../../arena-protocol/src/fee.js';
+import { entryGiftsInFee, entryFeeBpsForRound } from '../../arena-protocol/src/reserves.js';
 import { pluginForRound } from '../src/plugins.js';
 import { refundKeyOf, lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
 import { toHex, sha256 } from '../../arena-protocol/src/hash.js';
@@ -171,7 +172,9 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
 // an entry plays no run either (noMarks), and reveals after entry close (POST /reveal).
 // THE ROUND'S GAME'S ENTRY FEE: a market's node fee and donation together (1 % by default, both in the fee lock
 // until it resolves), a game's the network's - as the page pays it
-const gameFeeBps = (w) => { const f = pluginForRound(w.c, (w.a || w.nodes[0]).round.plugins); return f.ok ? entryFeeBpsOf(f.plugin.manifest) : undefined; };
+// FROM PROTOCOL 27 a game round's fee lock carries the developers' and the reserves' parts too (kanban #1486): such a round's rate (kanban #2561 rounds are 28)
+const gameFeeBps = (w) => { const f = pluginForRound(w.c, (w.a || w.nodes[0]).round.plugins); if (!f.ok) return undefined;
+  return entryGiftsInFee(w.c, f.plugin.manifest) ? entryFeeBpsForRound(w.c, f.plugin.manifest) : entryFeeBpsOf(f.plugin.manifest); };
 // `order`: { price (PRICE_SCALE units), expiryMs } - a market order: the entry buys `pick` at that limit
 export async function lockAndPlay(w, who, { session: fixedSession = null, feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, unreached = [], expirySpan = null, frontendPk = null, lockHeaders = null, lockFirst = true, lockClaim = true } = {}) {
   const session = fixedSession || ed25519.utils.randomSecretKey();   // `session`: a fixed session key, for a test that enters twice with one (kanban #1479)
