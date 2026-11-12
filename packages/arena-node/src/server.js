@@ -327,26 +327,18 @@ import { decodeCommitments, encodeCommitments, encodeShare } from './pool-wire.j
 import { setTagNetwork } from '../../arena-protocol/src/tag-switch.js';
 import { keptRead } from './kept-read.js';
 import { guardianAnswers } from './guardian-probe.js';
+import { readBody as readRequestBody, BODY_MOST } from './body-read.js';   // named apart: stake-lock-port.js's readBody is another thing
 
 // who sits at each head-to-head round's table, per seat (POST /here): round hex -> identity key hex -> last said (ms)
 const presenceByRound = new WeakMap();
 const presenceTables = (round) => { let t = presenceByRound.get(round); if (!t) { t = new Map(); presenceByRound.set(round, t); } return t; };
 
-// EVERY BODY HAS A LIMIT (kanban #1469, feedback #001 by Hexbox Tools 2026-11-11: read() kept a body of any size, and ~57 doors anyone may call buffered
-// it whole before any check - one large POST filled a seat's memory): BODY_MOST by default (8 MiB, ARENA_BODY_MOST), far above the few kilobytes a door's
-// message takes; a door that needs less passes its own `max`. Past it the body is dropped, the request ended, and the door answers 413.
-const BODY_MOST = Number(process.env.ARENA_BODY_MOST) > 0 ? Number(process.env.ARENA_BODY_MOST) : 8 * 1024 * 1024;
+// EVERY BODY HAS A LIMIT (kanban #1469; one reader for every server since kanban #1592): see body-read.js
 // WHAT A SEAT KEEPS AS A RELAY IS BOUNDED (kanban #1532, audit #1489 gossip: PUT /transcript and PUT /slash kept any bytes from anyone,
 // for ever - a stranger filled the disk with random blobs under their own hash). At most RELAY_MOST bytes in `relayed` over both doors
 // (256 MiB, ARENA_RELAY_MOST); past it a door answers 507 and keeps nothing.
 const RELAY_MOST = Number(process.env.ARENA_RELAY_MOST) > 0 ? Number(process.env.ARENA_RELAY_MOST) : 256 * 1024 * 1024;
-const read = (req, max = BODY_MOST) => new Promise((resolve, reject) => {
-  const parts = []; let size = 0;
-  // A DOOR'S OWN LIMIT (kanban #1271): past `max` bytes the body is not kept, the request ends, and the door answers 413
-  req.on('data', (c) => { size += c.length; if (size > max) { parts.length = 0; const e = new Error(`a body of more than ${max} bytes`); e.tooLarge = true; reject(e); try { req.destroy(); } catch { /* gone */ } return; } parts.push(c); });
-  req.on('end', () => resolve(new Uint8Array(Buffer.concat(parts))));
-  req.on('error', reject);
-});
+const read = readRequestBody;
 
 // A BROWSER IS THE CLIENT, and a browser will never be on this origin.
 //
@@ -359,7 +351,7 @@ const read = (req, max = BODY_MOST) => new Promise((resolve, reject) => {
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
-  'access-control-allow-headers': 'content-type, authorization',
+  'access-control-allow-headers': 'content-type, authorization, x-arena-stake-lock',   // the last: STAKE_LOCK_HEADER (kanban #1596)
   // The headers a client actually reads answers out of. Without this a page
   // sees the body and none of the counts.
   'access-control-expose-headers':
@@ -432,6 +424,9 @@ export async function readTextCapped(r, maxBytes) {
   return Buffer.concat(parts, total).toString('utf8');
 }
 export const readJsonCapped = async (r, maxBytes) => JSON.parse(await readTextCapped(r, maxBytes));
+// THE STAKE LOCK A LOCK-FIRST CLIENT SHOWS WITH ITS HANDOUT (kanban #1596, after #1485): JSON { outpoint: "txid:index", fields, federation? }.
+// Inside a head-to-head round's handout lead a handout is taken only with one the federation holds (takeHandout, stakeLockMadeFor)
+export const STAKE_LOCK_HEADER = 'x-arena-stake-lock';
 
 export const NOTHING_IS_FUNDED = () => false;
 
@@ -1778,7 +1773,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // The peers are the same list the verifier gathers results from, because a
   // signer node that answers about a run is a signer node that can be asked about its share.
   const stakeSecrets = new StakeSecrets(round, {
-    bookStanding: (rid, eid) => orderBook.standing(rid, eid),
+    bookStanding: (rid, eid) => orderBook.standing(rid, eid), isBook: (rid) => orderBook.isBook(rid),
     curve: feldmanGroup, peers, fetcher: (u, o) => fetch(u, o), random: (n) => new Uint8Array(randomBytes(n)),
     // AND WHEN THE OPERATOR SAID NOTHING, the round's SETTLEMENT signer nodes off the
     // census - they hold the shares. Read when a stake is opened, long after
@@ -2246,6 +2241,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE FEES IN FORCE: at a round's census height - what its entries pay and its settlement splits - or at a height
   const feesAtHeight = (h) => (fundingBook && Number.isInteger(h) ? fundingBook.feesAt(h) : FEES_TODAY);
   const feesFor = (contract) => feesAtHeight(Number(contract && contract.censusHeight));
+  // THE DOOR AND THE /stake-lock GATE READ A PROTOCOL-27 ROUND'S SPLIT HERE (kanban #1486): the same fee set the settlement splits it by
+  round.feesFor = feesFor;
   if (fundingBook) { const t = setInterval(() => { fundingBook.decide().then(() => fundingBook.voteRound()).then(() => fundingBook.decideFees())
     .then(async () => { if (reservePayouts && typeof chainTip === 'function') { fundingTipSeen = Number(await chainTip()); const got = await reservePayouts.round({ height: fundingTipSeen });
       // WHAT A PAYOUT OR MOVE STOPPED ON, said once per reason (kanban #326: the round's answers were dropped, so a move that never
@@ -5680,10 +5677,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // with its locks made but handed nowhere took them at any time - handed over only once the outcome was attested and the pick had won (a losing
   // pick's locks just expired back): a free option on every pool market, paid by the honest pickers. An attested round's plain pick now keeps the
   // same rule, and once this seat holds an outcome attestation of the round a lock new to it is refused whatever the clock says.
+  // A HEAD-TO-HEAD ROUND TAKES NO NEW LOCK ONCE ITS REVEALS CAN STAND (kanban #1598, bypass of #1479 "one entry per session key"): a session key
+  // is free, so one player entered rock, paper and scissors under three fresh keys with no stake lock - the door counts only lock-backed entries
+  // (#1437), so all three were taken - read the honest player's reveal on GET /reveals at the close, and locked only the entry that beat it
+  // inside the 15 s grace; the other two came out VOID and he won every paying RPS round. In a head-to-head round a move is public from the
+  // entry close on (revealStands), so there is no grace there: a stake or fee lock new to this seat is refused from the entry close on, and
+  // from the moment this seat holds any reveal of the round (whatever its clock says), whether or not the seat runs with a grace. Every lock
+  // door (POST /lock, POST /fee-lock) passes here; a lock a peer took before the close is still pulled by takeEntryParts.
+  const h2hLockRefusal = (e, eid, kind) => {
+    const c = headToHeadReady ? headToHeadRound(e.roundId) : null;
+    if (!c || typeof c.entryCloseMs !== 'bigint') return null;
+    const now = BigInt(Math.floor(Number(round.now())));
+    const revealed = now >= c.entryCloseMs || round.revealsOf(e.roundId).length > 0;
+    if (!revealed) return null;
+    const held = kind === 'fee' ? (round.feeLock ? round.feeLock(eid) : null) : round.stakeLock(eid);
+    if (held) return null;
+    return `that head-to-head round's entry closed at ${c.entryCloseMs} and it is ${now}: its moves can be revealed now, so a ${kind === 'fee' ? 'fee' : 'stake'} lock new to this seat is not taken (kanban #1598, #1479)`;
+  };
   const lockAfterCloseRefusal = (storedEntry, eid, kind) => {
     const grace = round.entryCloseGraceMs;
     let e; try { e = decodeEntryContract(new Uint8Array(storedEntry)); } catch { return null; }
     if (e.limitPrice !== undefined && e.limitPrice !== null) return null;
+    { let h = null; try { h = h2hLockRefusal(e, eid, kind); } catch { h = null; } if (h) return h; }   // before any grace rule (kanban #1598)
     const held = () => (kind === 'fee' ? (round.feeLock ? round.feeLock(eid) : null) : round.stakeLock(eid));
     const what = kind === 'fee' ? 'fee' : 'stake';
     const ac = attestedRoundOf(e.roundId);
@@ -5762,6 +5777,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (!ref || ref.every((b) => b === 0)) return null; const h = round.handout(ref); return h ? h.bytes : null; },
     locksOf: (hex) => { const fieldsOf = (row) => (row ? (typeof row.fields === 'string' ? JSON.parse(row.fields) : row.fields) : null), eid = fromHex(hex);
       return { stake: fieldsOf(round.stakeLock(eid)), fee: fieldsOf(round.feeLock ? round.feeLock(eid) : null) }; },
+    nowMs: () => Number(round.now()),   // the round's clock, the one the doors judge the entry close by (kanban #1598)
   });
   // AN ENTRY THE ROUND ACCEPTED, FROM A PEER AND PAST THIS SEAT'S DOOR (kanban #1071, entry-relay.js, §17): the threshold's signed results named it, so none of the door's
   // refusals apply. Everything about the entry itself is still checked. Answers { ok } or { ok: false, why }: not yet.
@@ -5877,7 +5893,40 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }));
     return said.some(Boolean);
   };
-  const takeHandout = async (bytes, { accepted = false } = {}) => {
+  // A STAKE LOCK ALREADY MADE FOR THIS HANDOUT (kanban #1596, after #1485): what a lock-first client (tools/rps-opponent.mjs before #1596, the
+  // lock-round fixture) shows with its handout, as STAKE_LOCK_HEADER = JSON { outpoint: "txid:index", fields, federation? }. Checked as POST
+  // /refused-lock checks a lock: its image is this handout's A0, its refund key the handout player's, its claim key the round's, and the
+  // federation holds that very contract at that outpoint. Answers null when the lock is made, else why not.
+  const stakeLockMadeFor = async (handout, said) => {
+    if (!stakeLocks) return 'this seat reaches no federation, so it cannot read the lock';
+    let fields, outpoint, fed = null;
+    try {
+      const body = JSON.parse(String(said));
+      fields = lockFieldsFromJson(body.fields);
+      const [txid, outIdx] = String(body.outpoint || '').split(':');
+      if (!/^[0-9a-f]{64}$/.test(txid || '') || !/^\d+$/.test(outIdx || '')) throw new Error('an outpoint is txid:index');
+      outpoint = { txid: new Uint8Array(Buffer.from(txid, 'hex')), outIdx: BigInt(outIdx) };
+      if (body.federation !== undefined) {
+        if (!/^[0-9a-f]{64}$/.test(String(body.federation))) throw new Error('a federation is 64 hex');
+        fed = new Uint8Array(Buffer.from(body.federation, 'hex'));
+      }
+    } catch (e) { return `that is not a lock: ${e.message}`; }
+    const image = fields.paymentImage || {};
+    if (image.kind !== 'point' || !(image.bytes instanceof Uint8Array) || !handout.commitments[0] || toHex(image.bytes) !== toHex(handout.commitments[0]))
+      return 'that lock\'s image is not this handout\'s A0';
+    if (toHex(refundKeyOf(handout.playerPubkey)) !== toHex(fields.refundPk)) return 'that lock\'s refund key is not the handout player\'s';
+    const claimPk = claimKeyOf(handout.roundId);
+    if (!(claimPk instanceof Uint8Array) || toHex(claimPk) !== toHex(fields.claimPk)) return 'that lock names another claim key than this round\'s';
+    try {
+      const port = (fed ? await portOfFederation(fed) : await portOfRid(handout.roundId)) || stakeLocks;
+      const [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
+      if (!st || !st.stored) return 'the federation holds no lock at that outpoint (not accepted yet, spent, or never made)';
+      if (String(id) !== String(st.stored.contractId)) return 'the lock at that outpoint is not the contract shown';
+    } catch (e) { return `the federation could not be asked: ${e.message}`; }
+    return null;
+  };
+  // `lockMade`: the STAKE_LOCK_HEADER a client sent with the handout, or null.
+  const takeHandout = async (bytes, { accepted = false, lockMade = null } = {}) => {
     let handout;
     try { handout = decodeHandout(bytes); } catch (e) { return { ok: false, status: 400, why: 'that is not a handout: ' + e.message }; }
     const forRound = round.get(handout.roundId);
@@ -5895,10 +5944,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // stops. A handout one of the round's own seats already holds was dealt before that seat's lead - the page's lock is made or on its way - so it is
     // taken here until the close itself. The proof is the peer's copy, read here (GET /handout, as replayOrder reads it), byte for byte this one;
     // never a header a client could send. A handout no peer holds is a client's first one and still refused inside the lead.
+    // AND THE LEAD SPARES ONLY A CLIENT THAT HAS LOCKED NOTHING (kanban #1596, the #1489 audit of #1485): a client that locks first and posts the handout
+    // after (the RPS opponent bot, the lock-round fixture) met this refusal after its money - the stake and fee lock made, every seat refusing the
+    // handout and so the entry, its fee parts spent: the #1485 loss itself. A handout that comes with its stake lock, the federation holding it
+    // (stakeLockMadeFor), is taken inside the lead until the close itself, where /entry takes it too: refusing it saves nothing. Without one it is
+    // refused as before, so a client that posts the handout first (the page, the bot since #1596) locks nothing
+    // both spare a handout inside the lead (#1595 a peer's copy, #1596 a lock the federation holds); neither one past the close itself
     const nowMs = BigInt(round.now());
-    if (!accepted && headToHeadReady && headToHeadRound(handout.roundId) && nowMs > roundContract.entryCloseMs - BigInt(H2H_HANDOUT_LEAD_MS)
-      && (nowMs >= roundContract.entryCloseMs || !(await aPeerHoldsHandout(handout.roundId, handout))))
-      return { ok: false, status: 409, why: `handout refused: that round's entries close at ${new Date(Number(roundContract.entryCloseMs)).toISOString()}, and a head-to-head order needs ${H2H_HANDOUT_LEAD_MS / 1000} s before it to lock and enter - nothing is locked, tap the next round` };
+    if (!accepted && headToHeadReady && headToHeadRound(handout.roundId) && nowMs > roundContract.entryCloseMs - BigInt(H2H_HANDOUT_LEAD_MS)) {
+      const lockWhy = nowMs >= roundContract.entryCloseMs ? 'closed'
+        : (await aPeerHoldsHandout(handout.roundId, handout)) ? null
+        : lockMade ? await stakeLockMadeFor(handout, lockMade) : 'none shown';
+      if (lockWhy !== null)
+        return { ok: false, status: 409, why: `handout refused: that round's entries close at ${new Date(Number(roundContract.entryCloseMs)).toISOString()}, and a head-to-head order needs ${H2H_HANDOUT_LEAD_MS / 1000} s before it to lock and enter - nothing is locked, tap the next round${lockMade && lockWhy !== 'closed' ? ` (the stake lock shown: ${lockWhy})` : ''}` };
+    }
     let threshold;
     try { threshold = roundThreshold(roundContract.settlementSlots); } catch (e) { return { ok: false, status: 409, why: e.message }; }
     if (handout.needed !== threshold)
@@ -10262,7 +10321,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE ROUND'S THRESHOLD, NOT THE PLAYER'S (M3.3-26). `acceptHandout` checks a handout only against itself, and measured: a crafted
         // 1-of-2 and a 7-of-7 on seven signer nodes were both taken 201. A stake is dealt at the round's number or not at all - the same
         // number the settle opens at and the page deals (takeHandout).
-        const got = await takeHandout(await read(req));
+        const got = await takeHandout(await read(req), { lockMade: req.headers[STAKE_LOCK_HEADER] || null });   // kanban #1596: a lock-first client shows its lock
         steps.at(got.ok ? 'share opened' : 'refused');
         if (!got.ok) return text(res, got.status || 409, got.why);
         steps.named(toHex(got.id));
@@ -10367,7 +10426,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
                 if (!bonded.ok) return text(res, 409, bonded.why);
               }
             }
-            try { const g = pluginForRound(rc, hosted); gate = await roundMintsFees({ contract: rc, port: fport, feeBps: g.ok ? entryFeeBpsForRound(rc, g.plugin.manifest) : undefined }); }
+            try { const g = pluginForRound(rc, hosted); const sp = roundSplitBps(feesFor(rc)); gate = await roundMintsFees({ contract: rc, port: fport, feeBps: g.ok ? entryFeeBpsForRound(rc, g.plugin.manifest, sp) : undefined, split: sp }); }
             catch (e) { return text(res, 503, `this node could not read the federation's fee rule, so it takes no entry in a round that may mint fee locks: ${e.message}`); }
             // AND THE FEDERATION MUST CHARGE NO BASE FEE (FEDERATION.md item 4; §22A: "Fedimint's own base
             // fees are 0: the federation runs with disable_base_fees"). A base fee comes out of every input
@@ -11393,7 +11452,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = await takeStakeLock(eid, fields, timing);
         lockTimed(got.ok ? 'verified' : got.why.slice(0, 60));
         if (!got.ok) return text(res, 409, got.why);
-        if (relayedRound(decodeEntryContract(stored).roundId)) entryRelay.lockTaken(decodeEntryContract(stored).roundId, toHex(eid));   // every round's (kanban #1216)
+        { const rid = decodeEntryContract(stored).roundId, rc = relayedRound(rid);   // every round's (kanban #1216)
+          if (rc) entryRelay.lockTaken(rid, toHex(eid), headToHeadRound(rid) ? rc.entryCloseMs : null); }   // a head-to-head lock before its close (kanban #1598)
         // AN ORDER (comment 1127): tradable here once both its locks are verified - and only before its market's entry close
         const lateOrder = orderLockAfterClose(stored);
         if (decodeEntryContract(stored).limitPrice !== undefined && !lateOrder) orderBook.noteTradable(decodeEntryContract(stored).roundId);

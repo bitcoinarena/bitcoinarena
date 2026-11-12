@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { openStore } from '../src/store.js';
-import { serve } from '../src/server.js';
+import { serve, STAKE_LOCK_HEADER } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeAssigned } from './assignment.js';
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
@@ -194,7 +194,7 @@ const reservesOf = (w) => { const f = pluginForRound(w.c, (w.a || w.nodes[0]).ro
 // outputs are split over when the test names no `donation.target`
 const donationTargetOf = (w) => { const d = (w.a || w.nodes[0]); const t = d.settlements && d.settlements.donationTargetFor ? d.settlements.donationTargetFor(w.c) : null; return t && t.ok ? t.target : null; };
 // `order`: { price (PRICE_SCALE units), expiryMs } - a market order: the entry buys `pick` at that limit
-export async function lockAndPlay(w, who, { session: fixedSession = null, feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, unreached = [], expirySpan = null, frontendPk = null, lockHeaders = null } = {}) {
+export async function lockAndPlay(w, who, { session: fixedSession = null, feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, unreached = [], expirySpan = null, frontendPk = null, lockHeaders = null, lockFirst = true } = {}) {
   const session = fixedSession || ed25519.utils.randomSecretKey();   // `session`: a fixed session key, for a test that enters twice with one (kanban #1479)
   const preimage = secretScalar();
   const e = rand(32);
@@ -296,7 +296,13 @@ export async function lockAndPlay(w, who, { session: fixedSession = null, feeLoc
     // `unreached`: the seats (by index) this client's posts never reach
     if (unreached.includes((w.nodes || [w.a, w.b]).indexOf(d))) continue;
     const base = `http://127.0.0.1:${d.port}`;
-    assert.equal((await fetch(`${base}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) })).status, 201);
+    // THIS CLIENT LOCKS FIRST (the stake lock is in the federation above, as the RPS bot's was): it shows that lock with its handout, which a
+    // head-to-head seat needs inside its handout lead (kanban #1596). `lockFirst: false` plays the page, which posts the handout before any lock;
+    // 'unheld' shows a lock at an outpoint the federation does not hold
+    const shownAt = lockFirst === 'unheld' ? `${toHex(rand(32))}:0` : `${toHex(outpoint.txid)}:${outpoint.outIdx}`;
+    const shown = lockFirst ? { headers: { [STAKE_LOCK_HEADER]: JSON.stringify({ outpoint: shownAt, fields: lockFieldsToJson(fields) }) } } : {};
+    const handed = await fetch(`${base}/handout`, { method: 'POST', body: encodeHandout(dealt.handout), ...shown });
+    assert.equal(handed.status, 201, handed.status === 201 ? undefined : await handed.text());
     const joined = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
     assert.equal(joined.status, 201, await joined.text());
     // PICK (a): THE STAKE COUNTS WHICHEVER LOCK COMES LAST - the fee lock may be handed first.
@@ -305,8 +311,10 @@ export async function lockAndPlay(w, who, { session: fixedSession = null, feeLoc
       assert.equal(fee.status, 201, await fee.text());
     };
     if (feeLock && feeFirst) {
+      // a seat the entry relay already handed the stake lock (kanban #1598: an entry's locks go with it) counts the stake on the fee lock, rightly
+      const relayed = !!d.round.stakeLock(eid);
       await handFee();
-      assert.equal(d.round.stakeSeen(eid), null, 'a stake counted on its fee lock alone, before its stake lock');
+      if (!relayed) assert.equal(d.round.stakeSeen(eid), null, 'a stake counted on its fee lock alone, before its stake lock');
     }
     // `only`: the seats (by index) handed the locks - the others hold the entry and never verify a lock of it
     if (only && !only.includes((w.nodes || [w.a, w.b]).indexOf(d))) continue;

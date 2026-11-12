@@ -37,7 +37,8 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION, ITEMS_VERSION, objectionWindowFits } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
-import { entryFeeBpsForRound, entryPaysReserves, roundSplit, RESERVES_NODE_FEE_BPS } from '../../arena-protocol/src/reserves.js';
+import { entryFeeBpsForRound, entryPaysReserves, roundSplit, RESERVES_NODE_FEE_BPS, entryGiftsInFee, giftsEntryExpected, giftsFeeBps, ROUND_SPLIT_BPS } from '../../arena-protocol/src/reserves.js';
+import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
 import { itemPurchaseKept } from './item-purchase-seat.js';
 import { readTranscript } from './transcript-read.js';
@@ -707,8 +708,18 @@ export class Round {
       // id - passes, as a resend after a reload does; another entry of the same session key in this round is refused. A client makes a new session key for every
       // entry (measured on seat 1: 7,326 entries of all games, no session key twice in a round), so only a forged second entry meets this. Entries a round
       // accepted and relayed are not touched.
+      // BUT A SESSION KEY IS PUBLIC, AND AN ENTRY CARRIES NO SIGNATURE OF IT (kanban #1597, a bypass of #1479): GET /entry hands any entry's key to anyone,
+      // so a copier who saw an honest entry at one seat posted an entry of his own naming the same key to a seat the honest one had not reached yet, and that
+      // seat then refused the honest entry and every resend for good - fewer than the threshold of seats held it, and it was no member (§17). An earlier entry
+      // of the key now holds it here only when it is more than the key's bare name: in a paying round only one backed by a lock at this seat (its stake seen
+      // or its stake lock verified - what seats it, seatedEntriesOf), and in a free round only one that names the same player key - the same player entering
+      // again, which is what #1479 saw. A lockless entry of another player that names the key shuts no one out; it can never play (every batch, mark,
+      // reveal and address must be signed by the session key).
       if (!accepted) { const mine = entryId(contract);
-        if (this.entriesOf(contract.roundId).some((x) => same(x.entry.sessionPubkey, contract.sessionPubkey) && !same(x.entryId, mine)))
+        const holders = asks.stakeMsat === 0n
+          ? this.entriesOf(contract.roundId).filter((x) => same(x.entry.playerPubkey, contract.playerPubkey))
+          : this.seatedEntriesOf(contract.roundId, asks.stakeMsat);
+        if (holders.some((x) => same(x.entry.sessionPubkey, contract.sessionPubkey) && !same(x.entryId, mine)))
           throw new Error('that session key already has an entry in this round: one entry per session key'); }
       // THE HIDDEN MOVE: an entry into a head-to-head round names its commitment, before entry close, and the
       // round seats no more than its game's players; an entry into any other round names none
@@ -718,7 +729,7 @@ export class Round {
         if (!hidden) throw new Error(`an entry into a round of head-to-head game "${m.gameName}" hides its move: it carries no commitment`);
         if (!accepted && typeof asks.entryCloseMs === 'bigint' && BigInt(this.now()) >= asks.entryCloseMs)
           throw new Error(`that round's entries closed at ${new Date(Number(asks.entryCloseMs)).toISOString()}: a head-to-head round takes no entry after it - the moves are being revealed`);
-        // ONLY ENTRIES BACKED BY A LOCK TAKE A SEAT OF A PAYING ROUND (kanban #1437, audit 8 R3); a third lock is refused at /lock (stake-lock-signer-node.js)
+        // ONLY ENTRIES BACKED BY A LOCK TAKE A SEAT OF A PAYING ROUND (kanban #1437, audit 8 R3); which ones, the same at every seat: seatedEntriesOf (kanban #1588)
         const me = entryId(contract);   // seats counted by entry id (kanban #1479)
         const seated = this.seatedEntriesOf(contract.roundId, asks.stakeMsat).filter((x) => !same(x.entryId, me)).length;
         if (seated >= m.players && !accepted) throw new Error(`that round already seats game "${m.gameName}"'s ${m.players} players`);
@@ -771,7 +782,17 @@ export class Round {
     // ON PROTOCOL 11 A GAME'S ENTRY PAYS THE RESERVES (§27A.9): the nodes' fee is the mandatory 4 %, and its donation
     // field carries the developers' 4 % and the reserves' 2 % exactly, with its reserve lock named
     const reserves = entryPaysReserves(asks, feeGame.ok ? feeGame.plugin.manifest : null);
-    const feeBps = reserves ? RESERVES_NODE_FEE_BPS : feeGame.ok ? entryFeeBpsOf(feeGame.plugin.manifest) : NODE_FEE_BPS;
+    // FROM PROTOCOL 27 (kanban #1486) the developers' 4 % and the reserves' 2 % ride in the fee lock beside the nodes' 4 %: the fee is the
+    // whole 10 %, the donation 0, and no donation or reserve output is named - a refused entry gets them back with its stake
+    // AT THE SPLIT IN FORCE AT THE ROUND'S CENSUS HEIGHT (`this.feesFor`, server.js: the fee set GET /fees?height= serves and the page reads) -
+    // the one the seats' settlement splits it by (settlement.js giftsFor); today's split where no fee book is read
+    const gifts = entryGiftsInFee(asks, feeGame.ok ? feeGame.plugin.manifest : null);
+    const giftSplit = gifts ? (() => { const set = typeof this.feesFor === 'function' ? this.feesFor(asks) : null; return set ? roundSplitBps(set) : ROUND_SPLIT_BPS; })() : null;
+    if (gifts) {
+      const g = giftsEntryExpected({ entry: { ...contract, stakeMsat: ownAmount ? contract.stakeMsat : asks.stakeMsat }, split: giftSplit });
+      if (!g.ok) throw new Error(g.why);
+    }
+    const feeBps = gifts ? giftsFeeBps(giftSplit) : reserves ? RESERVES_NODE_FEE_BPS : feeGame.ok ? entryFeeBpsOf(feeGame.plugin.manifest) : NODE_FEE_BPS;
     if (reserves) {
       const split = roundSplit(ownAmount ? contract.stakeMsat : asks.stakeMsat);
       const owed = split.protocolDevsMsat + split.gameDevsMsat + split.reservesMsat;
@@ -781,7 +802,7 @@ export class Round {
     }
     const fee = feeMatchesEntry({
       stakeMsat: ownAmount ? contract.stakeMsat : asks.stakeMsat, feeMsat: contract.feeMsat, donationMsat: contract.donationMsat,
-    }, { feeBps, donationInFee: feeGame.ok && donationInFee(feeGame.plugin.manifest) });
+    }, { feeBps, donationInFee: gifts || (feeGame.ok && donationInFee(feeGame.plugin.manifest)) });
     if (!fee.ok) throw new Error(fee.why);
     const donationCap = feeGame.ok ? donationBpsOf(feeGame.plugin.manifest) : null;
     if (donationCap !== null && contract.donationMsat > (asks.stakeMsat * BigInt(donationCap)) / 10000n)
@@ -1990,11 +2011,37 @@ export class Round {
    * `played` (kanban #1544): the entries the close plays and decides - its stake SEEN only, the set the settlement counts (settlement.js
    * entriesOnRecord). A stake lock still waiting for its fee lock holds its seat at the door but is played against nobody and signed VOID:
    * played, it lost into no settlement - its stake came back by refund and the honest winner was paid nothing (a free option).
+   *
+   * THE SAME SEATS AT EVERY SEAT (kanban #1588, state audit 2026-11-12 sm1-h2h-1): the seats were the first LOCKS to reach this seat, and locks
+   * reach the seats in network order - seat 0 seated {A, B}, seat 1 {A, C}, each refused the other's lock as full, and at the close each waited
+   * for a lock its own door refused: no seat signed anything, the winner A included. Now /lock keeps every valid lock (no "full" refusal; the
+   * close fetches what is missing, server.js takeEntryParts), and a paying head-to-head round seats the game's `players` lock-backed entries in
+   * the order their ENTRIES were first taken here (rowid): a client posts its entry to every seat before it hands any lock, so the seats hold the
+   * entries in one order while their locks still cross - and a player who entered first is never unseated by a later entry's lock. A locked
+   * entry outside the seats is played against nobody and signed VOID: its lock is never claimed and expires back to its player.
    */
   seatedEntriesOf(roundIdBytes, stakeMsat, { played = false } = {}) {
     const all = this.entriesOf(roundIdBytes);
     if (stakeMsat === 0n) return all;
-    return all.filter(({ entryId }) => !!this.stakeSeen(entryId) || (!played && !!this.stakeLock(entryId)));
+    const locked = all.filter(({ entryId }) => !!this.stakeSeen(entryId) || !!this.stakeLock(entryId));
+    // `played` (kanban #1544) keeps of the seats only the entries whose stake is SEEN - the seats themselves are the same as the door's (#1588)
+    const playedOnly = (list) => played ? list.filter(({ entryId }) => !!this.stakeSeen(entryId)) : list;
+    const players = this.#headToHeadPlayers(roundIdBytes);
+    if (!players) return playedOnly(locked);
+    const order = new Map(this.db.prepare('SELECT entry_id FROM entries WHERE round_id = ? ORDER BY rowid').all(roundIdBytes)
+      .map((r, i) => [Buffer.from(r.entry_id).toString('hex'), i]));
+    const at = ({ entryId }) => order.get(Buffer.from(entryId).toString('hex'));
+    const seated = new Set([...locked].sort((x, y) => at(x) - at(y)).slice(0, players).map(({ entryId }) => Buffer.from(entryId).toString('hex')));
+    return playedOnly(locked.filter(({ entryId }) => seated.has(Buffer.from(entryId).toString('hex'))));   // answered in entry id order, as before
+  }
+
+  /** The game's players when the round is a hosted head-to-head game's, else null (kanban #1588). */
+  #headToHeadPlayers(roundIdBytes) {
+    const row = this.get(roundIdBytes);
+    if (!row) return null;
+    let g;
+    try { g = pluginForRound(decodeRoundContract(new Uint8Array(row.contract)), this.plugins); } catch { return null; }
+    return g.ok && g.headToHead ? g.plugin.manifest.players : null;
   }
 
   /**
