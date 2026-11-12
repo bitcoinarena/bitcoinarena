@@ -28,6 +28,8 @@ export async function roundVerdict({ roundId, nodes, committee, verify, threshol
       if (!r.ok) { said.push(`${base}: ${(await r.text()).slice(0, 120)}`); return; }
       const j = await r.json();
       if (!Number.isInteger(j.openCents) || !Number.isInteger(j.closeCents) || !j.key || !j.signature) return;
+      // kanban #1530: a key that is not 64 hex or a signature that is not 128 hex is refused at the door, before grouping.
+      if (typeof j.key !== 'string' || !/^[0-9a-fA-F]{64}$/.test(j.key) || typeof j.signature !== 'string' || !/^[0-9a-fA-F]{128}$/.test(j.signature)) return;
       const k = `${j.openCents}:${j.closeCents}`;
       if (!byResult.has(k)) byResult.set(k, { openCents: j.openCents, closeCents: j.closeCents, sigs: [] });
       byResult.get(k).sigs.push({ key: j.key, signature: j.signature });
