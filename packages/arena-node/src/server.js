@@ -1175,8 +1175,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   // AUTOMATIC UPDATES (the owner's setting): every 10 minutes the source seats are asked for a newer version of each game
   // hosted here - same developer, the hosted one as its parent, a higher version - and it is taken as an update would be
+  // A VERSION THE TRIAL REFUSED IS NOT TRIED AGAIN (kanban #1880, #1913): a peer seat listed one refused, developer-signed version
+  // up to PEER_LISTING_GAMES times and every line was fetched and trialed again - N x TRIAL_MS of this seat's thread per sweep,
+  // every sweep. Its game id is the hash of its manifest, which names its cores' hashes, and the trial runs only bytes checked
+  // against them - so the trial's verdict is the verdict on that id, kept here (per process, for TRIAL_REFUSED_MS; bounded). A
+  // refusal before the trial (a seat handing other bytes) or a `retry` (no verdict yet) is not kept: no seat can make this one
+  // refuse another seat's genuine copy.
+  const TRIAL_REFUSED_MS = 24 * 3600000, TRIAL_REFUSED_MAX = 4096;
+  const trialRefused = new Map();
+  const refusedByTrial = (id) => { const at = trialRefused.get(id); if (at === undefined) return false; if (Date.now() - at < TRIAL_REFUSED_MS) return true; trialRefused.delete(id); return false; };
   const autoUpdate = async () => {
     if (!owner || !pluginsDir) return;
+    // EACH VERSION ONCE PER SWEEP, AND ONE TRIAL PER HOSTED GAME PER SWEEP (kanban #1880, #1913): every source and every line
+    const seen = new Set(), trialedParent = new Set();
     // ALWAYS ON (2026-10-26, the owner on the Apps section's switch "Update apps automatically": "Should always be enabled")
     const set = owner.storeSettings();
     // NAMED SOURCES, ELSE THE NETWORK'S OWN SEATS (found by this seat, not typed in)
@@ -1184,13 +1195,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     for (const from of sources) {
       let got; try { got = await jsonUpTo(await fetch(`${from}/games`, { signal: AbortSignal.timeout(10000) }), PEER_LISTING_BYTES); } catch { got = { games: [] }; }
       for (const g of listedGames(got)) {
-        if (hosted.has(g.id)) continue;
+        const gid = String((g && g.id) || '').toLowerCase();
+        if (hosted.has(gid) || seen.has(gid) || refusedByTrial(gid)) continue;
         let m; try { m = decodeManifest(fromHex(g.manifest)); } catch { continue; }
         const parent = toHex(m.parentManifestId);
-        if (!hosted.has(parent) || superseded.has(parent)) continue;
+        if (!hosted.has(parent) || superseded.has(parent) || trialedParent.has(parent)) continue;
         const u = checkUpdate(installedInfo(parent), { devKey: toHex(m.gameDevPubkey), parent, version: m.version });
         if (!u.ok) continue;
-        const r = await takeGame({ game: g.id, from, replaces: parent });
+        const r = await takeGame({ game: gid, from, replaces: parent });
+        // a version that reached the trial (taken or refused by it) is done for this sweep, and so is its parent's one trial;
+        // one a seat did not hand over, or handed other bytes for, may still come whole from the next source
+        if (r.ok || r.trial || r.retry) { seen.add(gid); trialedParent.add(parent); }
+        if (r.trial) { if (trialRefused.size >= TRIAL_REFUSED_MAX) trialRefused.delete(trialRefused.keys().next().value); trialRefused.set(gid, Date.now()); }
         console.log(`[plugins] automatic update of ${parent.slice(0, 16)} from ${from}: ${r.ok ? 'taken' : r.why}`);
       }
       // AND EACH INSTALLED NETWORK: a newer package of it at a source seat - another package id, the same
