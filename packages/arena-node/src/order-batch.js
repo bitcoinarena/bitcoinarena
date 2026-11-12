@@ -124,6 +124,10 @@ export function sourcePoolLeft({ poolSats, sourceStakesSats = 0n, othersFilledSa
 }
 class Conflict extends Error {}
 
+// kanban #1547: the sells one entry keeps waiting for a batch at a seat, and the verified sells a seat remembers
+export const SELL_PENDING_MAX = 16;
+const SELL_CHECKED_MAX = 65536;
+
 export class OrderBook {
   constructor(round, { plugins, peersFor = () => [], fetcher = (u, o) => fetch(u, o), now = () => Date.now(), intervalMs = Number(BATCH_MS), feesFor = null,
     syncTimeoutMs = 4000, fetchTimeoutMs = BATCH_FETCH_MS, maxLagMs = null, poolCapFor = null } = {}) {
@@ -292,10 +296,22 @@ export class OrderBook {
     return { ok: true, id: toHex(id) };
   }
 
+  // A SELL IS VERIFIED ONCE (kanban #1547): the leader checked every pending sell's Ed25519 signature again for each seat's proposal and
+  // again in the ledger - 3000 sells of one entry on seven seats made lead() take 39 s and its own batch past the 2 s signing limit.
+  // A sell that stood is kept here by its whole body (round, fields and signature), at most SELL_CHECKED_MAX of them, oldest out first.
+  #sellChecked = new Map();
   /** A sell, checked: a whole cent, signed by its entry's session key over sellId (what it holds is the ledger's question). */
   #sellStands(roundIdBytes, s) {
     if (!s || !isHex(s.signature, 64) || !/^[0-9]{1,20}$/.test(String(s.price)) || !/^[0-9]{1,20}$/.test(String(s.sharesMsat)) || !/^[0-9]{1,20}$/.test(String(s.nonce)))
       return refuse('a sell is { entry, outcome, price, sharesMsat, nonce, signature }', 400);
+    const key = [toHex(roundIdBytes), s.entry, s.outcome, s.price, s.sharesMsat, s.nonce, s.signature].map(String).join('|');
+    const kept = this.#sellChecked.get(key);
+    if (kept) return { ok: true, id: kept.id, sell: { ...kept.sell } };
+    const x = this.#sellVerify(roundIdBytes, s);
+    if (x.ok) { this.#sellChecked.set(key, x); if (this.#sellChecked.size > SELL_CHECKED_MAX) this.#sellChecked.delete(this.#sellChecked.keys().next().value); }
+    return x.ok ? { ok: true, id: x.id, sell: { ...x.sell } } : x;
+  }
+  #sellVerify(roundIdBytes, s) {
     const o = this.#orderEntry(roundIdBytes, s.entry);
     if (!o.ok) return o;
     const price = BigInt(s.price);
@@ -314,9 +330,31 @@ export class OrderBook {
     if (BigInt(this.now()) >= m.contract.entryCloseMs) return refuse(`the market closed at ${new Date(Number(m.contract.entryCloseMs)).toISOString()}: no ${kind} after it`);
     const c = kind === 'cancel' ? this.#cancelStands(roundIdBytes, body) : this.#sellStands(roundIdBytes, body);
     if (!c.ok) return c;
+    if (kind === 'sell') { const b = this.#sellBacked(roundIdBytes, c); if (!b.ok) return b; }
     const fresh = this.db.prepare('INSERT OR IGNORE INTO market_book_events (event_id, round_id, kind, entry_id, body, received_ms, batch) VALUES (?, ?, ?, ?, ?, ?, NULL)')
       .run(c.id, Buffer.from(roundIdBytes), kind, String(body.entry), JSON.stringify(body), this.now()).changes === 1;
     return { ok: true, id: c.id, fresh };
+  }
+
+  /**
+   * A SELL AT THE DOOR (kanban #1547): ask() kept any signed sell - a fresh nonce a fresh sell, no bound per entry - and a sell its
+   * entry could not back was left out of every batch by the leader's ledger but stayed unbatched at every seat until the close, handed
+   * to the leader again in every proposal (3000 of one entry stalled every later batch of the market). Now a sell is refused here when
+   * the certified ledger shows its entry holds no unsold share of that outcome, and one entry keeps at most SELL_PENDING_MAX sells
+   * unbatched at this seat. A sell larger than what is unsold is still the leader's question (the ledger leaves it out), as before.
+   */
+  #sellBacked(roundIdBytes, c) {
+    const rid = Buffer.from(roundIdBytes);
+    if (this.db.prepare('SELECT 1 FROM market_book_events WHERE event_id = ?').get(c.id)) return { ok: true };
+    const pending = this.db.prepare("SELECT COUNT(*) AS n FROM market_book_events WHERE round_id = ? AND kind = 'sell' AND entry_id = ? AND batch IS NULL").get(rid, c.sell.entry).n;
+    if (pending >= SELL_PENDING_MAX) return refuse(`entry ${c.sell.entry.slice(0, 16)} has ${pending} sells waiting for a batch at this seat: at most ${SELL_PENDING_MAX}`, 429);
+    const L = this.ledger(roundIdBytes);
+    if (!L.ok) return { ok: true };
+    const p = L.positions.get(c.sell.entry);
+    const o = Number(c.sell.outcome);
+    const unsold = p && (o === 0 || o === 1) ? p.shares[o] - p.shares[1 - o] : 0n;
+    if (unsold <= 0n) return refuse(`entry ${c.sell.entry.slice(0, 16)} holds no unsold share of outcome ${c.sell.outcome} in the certified book: nothing to sell`);
+    return { ok: true };
   }
 
   /** GET /batch-proposal: this seat's unbatched orders, cancels and sells before batch k's cutoff, and its pending batches. */
