@@ -1734,8 +1734,6 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
 
-## 15. State audit 2026-11-12
-
 #### SM-19 (change) Faucet book: players + unsure (kanban #1628)
 - Invariant: an account holds at most one welcome, whatever the order of payer answers. A grant parked in `unsure` (its payer timed out, lnd may still pay it) counts as taken until the sweep rebooks it (any payer SUCCEEDED) or forgets it (all FAILED/NONE, or no IN_FLIGHT after 24 h): `playerGrantDecide` refuses a welcome while the same account has an unsure welcome ("your welcome is still being checked"), and counts the account's unsure top-ups of the day toward `PLAYER_TOPUPS_PER_DAY`.
 #### SM-19 (change) Faucet book: a grant row before its payment (#1627)
@@ -1746,3 +1744,8 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 #### SM-19 (add) E-cash welcome: pool shelf -> taken/ -> book row (kanban #1835)
 - A note leaves the shelf only for a welcome the book holds. `grantEcash` renames the note into `taken/` and then writes the book; when the book write fails (a full disk), the note is renamed back to the shelf before the 500, so a retry takes the same note, not the next one.
 - At start the faucet puts back every note in `taken/` that no book row names as its `noteFile` (a faucet killed between the take and the book write). It does so only when the book file is there and reads: a lost or broken book puts nothing back, so a note already handed out is never offered twice.
+
+#### SM-N1 (add) The key move steps the old key out (identity-switch.js `switchToSeedKey`, onchain-action EFFECTS `key-switch`; kanban #1776)
+- Once the node stops signing with a key, that key is not serving in the census. The `key-switch <old>` on-chain action carries, after the new bond's funding and bond, one advertisement update per old bond output, signed by the old key, with `serving = false` (§5A.3), funded from the new bond's change and chained. All of them are written into the action's BUILT bytes before anything is sent, so a crash re-sends them with the bond and never leaves the old key drawn and silent.
+- Not enough coins for the step-outs refuses the move as a whole. Nothing is sent and the key stays as it was.
+- Not covered yet: committee seats the seat holds as the old key at the moment of the move. The move does not wait for them.
