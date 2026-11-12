@@ -131,20 +131,20 @@ export function decodeVote(payload) {
 }
 
 /**
- * THE TALLY (§27A.7.3-4). `census`: the bonds active at the proposal's publication - [{ pubkey, outpoint, bondSats }];
- * `votes`: the vote outputs found on chain - [{ payload, height, txid }]. A vote counts for every bond whose key its signature
- * verifies under, only inside the voting phase; per bond outpoint the last by height wins (ties inside a block: lower txid).
- * ABSTAIN counts for turnout, not approval. Weight is the bond amount. Answers the weights, the percentages and `passed`.
+ * EACH BOND'S LAST VOTE (§27A.7.3), the one rule both bond-weighted counts read: the ballot's tally() and the funding vote's
+ * fundingTally() (funding.js, §27A.9.3 stage 2). `votes` [{ payload, height, txid }] as found on chain; a vote counts only inside
+ * [from, until) and for every census bond whose key its signature verifies under H(proposal_id || choice); per bond outpoint the
+ * last by height wins, a tie inside one block going to the lower txid. Answers Map outpoint -> { choice, height, txid, weight },
+ * weight = weightOf(bond).
  *
- * A REPLAYED VOTE COUNTS ONCE, AT ITS FIRST OCCURRENCE (kanban #1489): the signature covers H(proposal_id || choice) only, not
- * the transaction or the height, so anyone could copy a bond's old 77 bytes into a later transaction of his own and make them
- * that bond's "last vote" - undoing its change of mind for a tx fee. Byte-identical payloads are one vote: only the copy that
- * ranks lowest under the rule above (lowest height; inside one block the higher txid) is kept, whatever order `votes` comes
- * in, so a copy can never move a vote later. The vote bytes and their signature are unchanged; a bond that changes its mind
- * signs anew (BIP-340 with fresh aux randomness gives new bytes).
+ * A REPLAYED VOTE COUNTS ONCE, AT ITS FIRST OCCURRENCE (kanban #1489, #1668, #1734): the signature covers H(proposal_id || choice)
+ * only, not the transaction or the height, so anyone could copy a bond's old 77 bytes into a later transaction of his own and make
+ * them that bond's "last vote" - undoing its change of mind for a tx fee. Byte-identical payloads are one vote: only the copy that
+ * ranks lowest under the rule above (lowest height; inside one block the higher txid) is kept, whatever order `votes` comes in, so
+ * a copy can never move a vote later. One helper so the two counts cannot drift apart again (#1734: the funding vote had kept the
+ * replay hole after the ballot's fix).
  */
-export function tally({ proposal, standing, census, votes, verify }) {
-  const id = standing.id;
+export function lastVotes({ proposalId: id, census, votes, from, until, verify, weightOf }) {
   const prefix = toHex(id.subarray(0, 8));
   const first = new Map();                           // payload hex -> the occurrence of those bytes that ranks lowest
   for (const v of votes || []) {
@@ -156,16 +156,31 @@ export function tally({ proposal, standing, census, votes, verify }) {
   for (const v of first.values()) {
     const d = decodeVote(v.payload);
     if (!d || toHex(d.idPrefix) !== prefix) continue;
-    if (v.height < standing.votingFrom || v.height >= standing.votingUntil) continue;
+    if (!(v.height >= from && v.height < until)) continue;
     const msg = voteMessage(id, d.choice);
     for (const b of census || []) {
-      let good = false; try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; }
+      let good = false; try { good = verify(d.signature, msg, b.pubkey) === true; } catch { good = false; }
       if (!good) continue;
       const had = latest.get(b.outpoint);
       const later = !had || v.height > had.height || (v.height === had.height && String(v.txid) < String(had.txid));
-      if (later) latest.set(b.outpoint, { choice: d.choice, height: v.height, txid: v.txid, weight: BigInt(b.bondSats) });
+      if (later) latest.set(b.outpoint, { choice: d.choice, height: v.height, txid: v.txid, weight: weightOf(b) });
     }
   }
+  return latest;
+}
+
+/**
+ * THE TALLY (§27A.7.3-4). `census`: the bonds active at the proposal's publication - [{ pubkey, outpoint, bondSats }];
+ * `votes`: the vote outputs found on chain - [{ payload, height, txid }]. A vote counts for every bond whose key its signature
+ * verifies under, only inside the voting phase; per bond outpoint the last by height wins (ties inside a block: lower txid).
+ * ABSTAIN counts for turnout, not approval. Weight is the bond amount. Answers the weights, the percentages and `passed`.
+ *
+ * A replayed vote counts once, at its first occurrence (kanban #1489): see lastVotes. The vote bytes and their signature are
+ * unchanged; a bond that changes its mind signs anew (BIP-340 with fresh aux randomness gives new bytes).
+ */
+export function tally({ proposal, standing, census, votes, verify }) {
+  const latest = lastVotes({ proposalId: standing.id, census, votes, from: standing.votingFrom, until: standing.votingUntil, verify,
+    weightOf: (b) => BigInt(b.bondSats) });
   const total = (census || []).reduce((a, b) => a + BigInt(b.bondSats), 0n);
   let yes = 0n, no = 0n, abstain = 0n;
   for (const x of latest.values()) { if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }

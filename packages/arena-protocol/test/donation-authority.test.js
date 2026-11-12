@@ -19,6 +19,7 @@ import {
 import { donationKeysFor } from '../src/genesis.js';
 import { networkAnchor } from '../src/constants.js';
 import { toHex } from '../src/hash.js';
+import { pointKey } from './point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
 const b32 = (v) => new Uint8Array(32).fill(v);
 
@@ -321,7 +322,7 @@ test('no money moves here: nothing in the donation code pays anybody', async () 
 // KANBAN #1337 (§27A.4.1 RULED 2026-11-07): "A change of the set needs the authority key and approvals by more than half of the recipients'
 // share_bps, so the authority key alone moves nothing". Measured: the authority key's higher serial alone, the recipients' approval alone, and both.
 test('#1337 the authority key alone cannot change the set; the recipients alone cannot either; both together do', () => {
-  const key = (v) => { const k = new Uint8Array(33).fill(v); k[0] = 2; return k; };
+  const key = (v) => pointKey(2, v);
   const first = setOf({ serial: 3n, validFrom: 10, recipients: [{ recipientPk: key(0x11), shareBps: 6000, label: 'a' }, { recipientPk: key(0x22), shareBps: 4000, label: 'b' }] });
   const next = setOf({ serial: 9n, validFrom: 20, recipients: [{ recipientPk: key(0x33), shareBps: 10000, label: 'c' }] });
   const authorityAlone = inForce({ sets: [first, next], height: 1000 });
@@ -345,7 +346,7 @@ test('#1337 the authority key alone cannot change the set; the recipients alone 
 // one (it became the network's "first") or an LNURL set that was itself refused (it was taken as the next set's LNURL parent)
 test('#1407 the authority key alone cannot move the set by a lower serial (testnet4: first is serial 1) or through a refused LNURL "parent"', async () => {
   const { NETWORK_ID_TESTNET4 } = await import('../src/genesis-ids.js');
-  const keyOf = (v) => { const k = new Uint8Array(33).fill(v); k[0] = 0x02; return k; };
+  const keyOf = (v) => pointKey(2, v);
   const KEYS = [{ recipientPk: keyOf(0x11), shareBps: 6000, label: 'a' }, { recipientPk: keyOf(0x22), shareBps: 4000, label: 'b' }];
   const THIEF_KEYS = [{ recipientPk: keyOf(0x66), shareBps: 10000, label: 'thief' }];
   // A - testnet4's chain is 1 (LNURL) -> 2 (LNURL) -> 3 (keys); a serial 0 signed by the authority alone is below the first set and refused

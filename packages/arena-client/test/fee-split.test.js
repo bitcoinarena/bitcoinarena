@@ -12,9 +12,10 @@ import { netStakeMsat, DELIVERED } from '../../arena-protocol/src/payout.js';
 import { DONATION_DEFAULT_BPS, DONATION_CHOICES_BPS, DONATION_CONFIRM_BPS, donationChoice } from '../src/donation-choice.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { pointKey } from '../../arena-protocol/test/point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const key = (n) => Uint8Array.from([0x02, ...b32(n)]);
+const key = (n) => pointKey(0x02, n);
 // the network's protocol-dev set and a game's own set
 const NETWORK = [{ recipientPk: key(0xa1), label: 'dev a', shareBps: 5000 }, { recipientPk: key(0xa2), label: 'dev b', shareBps: 5000 }];
 const OTHER_GAME = [{ recipientPk: key(0xc1), label: 'game dev', shareBps: 10000 }];
