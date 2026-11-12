@@ -21,7 +21,7 @@ import { taggedHash, toHex } from './hash.js';
 import { NETWORK_ID_TESTNET4 } from './genesis-ids.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_FUNDING_PROPOSAL, TYPE_FUNDING_COMMENT, TYPE_FUNDING_SIGNAL, TAG } from './constants.js';
 import { servedNodes } from './served-nodes.js';
-import { decodeVote, voteMessage, CHOICE } from './ballot.js';
+import { decodeVote, voteMessage, CHOICE, boundVotes } from './ballot.js';
 import { decodePlayerName, playerNameId } from './player-name.js';
 import { decodeFeeProposal, feeProposalId, decodeFeeApproval, feeApprovalId } from './fee-proposal.js';
 import { decodeLeaderboardPayout, leaderboardPayoutId } from './leaderboard-payout.js';
@@ -206,12 +206,19 @@ export function votePeriodOf({ proposal, signal, schedule = FUNDING_SCHEDULES.sp
  * block going to the lower txid. ABSTAIN counts for turnout only. Passed: turnout >= 30 % of the bonded capital and YES >= 60 % of
  * YES + NO. Answers the weights in sat, the percentages, the bonds voted and `passed`.
  */
-export function fundingTally({ proposalId, census = [], votes = [], from, until, verify }) {
+export function fundingTally({ proposalId, census = [], votes = [], from, until, verify, bound = false }) {
+  // `bound` (kanban #2125/#2562): the 80-byte seq votes, highest seq wins (ballot.js boundVotes); the funding book does not pass it yet
+  if (bound) {
+    const latest = boundVotes({ proposalId, census, votes, from, until, verify, weightOf: (b) => BigInt(b.weight ?? b.bondSats) });
+    const voidedOf = new Map(census.map((b) => [b.outpoint, !!b.voided]));
+    for (const [k, x] of latest) x.voided = voidedOf.get(k) || false;
+    return countFunding(census, latest);
+  }
   const prefix = toHex(proposalId.subarray(0, 8));
   const latest = new Map();
   for (const v of votes) {
     const d = decodeVote(v.payload instanceof Uint8Array ? v.payload : null);
-    if (!d || toHex(d.idPrefix) !== prefix) continue;
+    if (!d || d.bound || toHex(d.idPrefix) !== prefix) continue;     // the old reading: 77-byte votes only, as before
     if (!(v.height >= from && v.height < until)) continue;
     const msg = voteMessage(proposalId, d.choice);
     for (const b of census) {
@@ -222,6 +229,9 @@ export function fundingTally({ proposalId, census = [], votes = [], from, until,
       if (later) latest.set(b.outpoint, { choice: d.choice, height: v.height, txid: v.txid, weight: BigInt(b.weight ?? b.bondSats), voided: !!b.voided });
     }
   }
+  return countFunding(census, latest);
+}
+function countFunding(census, latest) {
   const total = census.reduce((a, b) => a + BigInt(b.weight ?? b.bondSats), 0n);
   let yes = 0n, no = 0n, abstain = 0n;
   // A VOIDED VOTE (kanban #1334, rule 1 RULED 2026-11-07): its bond was spent before last + lockAfterVote - it stays in everyone who could vote

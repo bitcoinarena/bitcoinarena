@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { createBallotTally } from '../src/ballot-tally.js';
 import { encodeConfigProposalBody, proposalBodyId, proposalId, encodeVote, voteMessage, CLASS, CHOICE, configHashOf } from '../../arena-protocol/src/ballot.js';
-import { depositOutputsExpected, BALLOT_GENESIS, SOURCES_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
+import { depositOutputsExpected, depositCommitmentScript, BALLOT_GENESIS, SOURCES_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
 import { MARKET_HOSTS, encodeSourceList } from '../../arena-protocol/src/market-check.js';
 import { SOURCE_ENTRIES } from '../../arena-protocol/src/market-sources.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -204,15 +204,19 @@ test('on a seat: a proposal passes and activates, rounds are served under the co
   const deposits = new Map();                                                    // txid (display) -> { raw, height }
   /** A proposal with its deposit confirmed at `at`, posted to the seat. */
   const propose = async (base, { parent, configHash, config, at, activationHeight, salt }) => {
-    const raw = tx(depositOutputsExpected(1000, KEYS.recipients).outputs.map((o) => ({ sats: o.sats, script: o.script })), salt);
-    const p = { networkId: NETWORK_ID_REGTEST, parent, configHash, config, class: CLASS.DESIGN, activationHeight, proposer: A.pubkey, depositTxid: Uint8Array.from(parseTransaction(raw).txid) };
+    // regtest is bound from 0 (kanban #2562): the deposit commits to its proposer and the proposal's bytes
+    const body = { networkId: NETWORK_ID_REGTEST, parent, configHash, config, class: CLASS.DESIGN, activationHeight, proposer: A.pubkey };
+    const raw = tx([...depositOutputsExpected(1000, KEYS.recipients).outputs.map((o) => ({ sats: o.sats, script: o.script })), { sats: 0, script: depositCommitmentScript(body) }], salt);
+    const p = { ...body, depositTxid: Uint8Array.from(parseTransaction(raw).txid) };
     deposits.set(toHex(Uint8Array.from(p.depositTxid).reverse()), { raw, height: at });
     const hex = toHex(Uint8Array.from([...encodeConfigProposalBody(p), ...schnorr.sign(proposalBodyId(p), A.secret)]));
     const r = await fetch(`${base}/proposal`, { method: 'POST', body: JSON.stringify({ proposal: hex, blockHash: 'ab'.repeat(32) }) });
     return { status: r.status, body: await r.json() };
   };
   const votes = new Map();
-  const cast = (who, idHex, choice, height) => { const id = Uint8Array.from(Buffer.from(idHex, 'hex')); votes.set(height, [...(votes.get(height) || []), vote(who, id, choice, height, `${height}${who === A ? 'a' : 'b'}`)]); };
+  // the bound vote (kanban #2562): seq 1, each bond votes once per proposal here
+  const boundVote = (who, idBytes, choice, height, txid) => ({ payload: encodeVote({ proposalId: idBytes, choice, seq: 1, signature: schnorr.sign(voteMessage(idBytes, choice, 1), who.secret) }), height, txid });
+  const cast = (who, idHex, choice, height) => { const id = Uint8Array.from(Buffer.from(idHex, 'hex')); votes.set(height, [...(votes.get(height) || []), boundVote(who, id, choice, height, `${height}${who === A ? 'a' : 'b'}`)]); };
   let tip = 300;
   const d = await serve(openStore(':memory:'), { port: 0, donationSets: [KEYS],
     ballot: { confirmedTx: async (txid) => deposits.get(txid) || null, lowestBondMinSats: 100000n, tipHeight: async () => tip,
