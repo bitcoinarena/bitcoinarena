@@ -119,6 +119,8 @@ async function keep(env, tx, had) {
 // the explorer"): each a row of its own kind beside the orders - what it paid for, from whom, its federation transaction and its outputs,
 // and which seats keep it. A seat keeps every one of its network (each is handed on to all), and a kept one never changes.
 const PAYMENT_KINDS = ['item', 'donation', 'zap'];
+// a seat's list row is read only when it is a plain object (kanban #1600: one seat's null element stopped the read of all fourteen)
+const isRow = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
 function paymentTx(id, answers) {
   const held = answers.filter((a) => a.row);
   const r = held[0].row;
@@ -141,9 +143,12 @@ async function readPayments(env, since, limit) {
   for (const g of got) {
     if (!g.body || !Array.isArray(g.body.gifts) || !Array.isArray(g.body.items)) continue;
     for (const list of [g.body.gifts, g.body.items]) {
-      if (list.length >= limit) { const last = Number(list[list.length - 1].keptMs); if (Number.isFinite(last) && (next === null || last < next)) next = last; }
+      // ONE SEAT'S JUNK ROW DROPS ONLY THAT ROW (kanban #1600): a null (or any non-object) row threw at r.id / .keptMs, and the minute's
+      // read of every seat's gifts, zaps and items stopped
+      const lastRow = list[list.length - 1];
+      if (list.length >= limit && isRow(lastRow)) { const last = Number(lastRow.keptMs); if (Number.isFinite(last) && (next === null || last < next)) next = last; }
       for (const r of list) {
-        if (!hex64.test(String(r.id)) || !hex64.test(String(r.txid))) continue;
+        if (!isRow(r) || !hex64.test(String(r.id)) || !hex64.test(String(r.txid))) continue;
         if (!byId.has(r.id)) byId.set(r.id, new Map());
         byId.get(r.id).set(g.seat, { row: r, key: g.body.seat || null });
       }
@@ -540,7 +545,8 @@ async function played(env) {
 }
 
 async function poll(env) {
-  const n = await readWindow(env, Date.now() - READ_BACK_MS, 500, null);
+  // a failed read of the orders no longer stops the rest of the minute (kanban #1600)
+  const n = await readWindow(env, Date.now() - READ_BACK_MS, 500, null).catch((e) => ({ error: String(e && e.message ? e.message : e) }));
   const pay = await readPayments(env, Date.now() - READ_BACK_MS, 500).catch((e) => ({ error: String(e && e.message ? e.message : e) }));
   const events = await readEvents(env).catch((e) => ({ error: String(e && e.message ? e.message : e) }));
   console.log(JSON.stringify({ poll: n, payments: pay, events }));
@@ -565,7 +571,8 @@ async function readWindow(env, since, limit, before) {
   for (const g of got) {
     if (!g.body || !Array.isArray(g.body.txs)) continue;
     for (const t of g.body.txs) {
-      if (!hex64.test(String(t.id)) || !t.detail || (before && Number(t.storedMs) >= before)) continue;
+      // ONE SEAT'S JUNK ELEMENT DROPS ONLY THAT ELEMENT (kanban #1600): a null one threw at t.id and no seat's orders were stored that minute
+      if (!isRow(t) || !hex64.test(String(t.id)) || !t.detail || (before && Number(t.storedMs) >= before)) continue;
       if (!byId.has(t.id)) byId.set(t.id, new Map());
       byId.get(t.id).set(g.seat, { status: 200, body: t.detail });
     }
