@@ -9520,7 +9520,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               gateways: window.ARENA_LEDGER_GATEWAYS || [],
               onState: (m) => console.log(`[arena] moving out of federation ${fid.slice(0, 8)} (${st.status}) into ${String(target.federation).slice(0, 8)}: ${m.state}`
                 + (m.leftMsat !== undefined ? `, ${Math.floor(Number(m.leftMsat) / 1000)} sat to go` : '') + (m.why ? ` (${m.why})` : '')) });
-            if (String(r.moved) === '0' && Number(r.chunks) === 0) evacuatedEmpty.add(fid);
+            // ONLY A FEDERATION FOUND EMPTY (kanban #2289): a stopped move (the gateway refunded, the notes all still there) also answers 0 msat in
+            // 0 chunks - migrateFromDraining says `empty` when it found nothing above dust
+            if (r.state === 'moved' && r.empty === true) evacuatedEmpty.add(fid);
             window.ARENA_EVACUATED = { from: fid, to: String(target.federation), state: r.state, moved: String(r.moved), chunks: r.chunks };
             console.log(`[arena] out of federation ${fid.slice(0, 16)}: ${r.state}, ${r.moved} msat in ${r.chunks} chunk(s) to ${String(target.federation).slice(0, 16)}`);
             if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
