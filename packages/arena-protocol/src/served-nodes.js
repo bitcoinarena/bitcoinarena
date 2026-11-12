@@ -99,23 +99,62 @@ export function servedNodesDiffer(claimed, mine) {
  */
 export const SERVED_COMMITTEE_MAX = 9;
 export const SERVED_HELD_MAX = 20000;
+// kanban #2239 (#1489 a45 refute 9 of #1815): what one seat's answer makes the reader verify is bounded IN ALL, not per round entry.
+//   - a round is read once per answer: the first entry naming it stands, a repeat adds no FINAL and no vote for its committee
+//     (measured before: the same real round listed 2,000 times in one answer cost 12,003 BIP-340 checks, 7.6 s on the M1 Max);
+//   - a round that only one answer names (no other seat, and not the reader's own record, holds it) is read from that answer up to
+//     SERVED_LONE_FINALS_MAX new FINALs in all; past that its FINALs are not kept (measured before: 1,200 made-up rounds with a
+//     made-up committee each cost 21,603 checks). A real round is held by every seat of its committee, so it is named by more than one;
+//   - a reader reads one seat's answer up to SERVED_ANSWER_BYTES_MAX bytes (server.js, item-buy.js).
+export const SERVED_LONE_FINALS_MAX = 360;
+export const SERVED_ANSWER_BYTES_MAX = 32 * 1024 * 1024;
 export function mergeServedRounds(held) {
   const hx = (b) => toHex(b);
   const rounds = new Map(), conflicts = new Set();
+  // each answer's rounds, each round once (the first entry naming it), and how many answers name each round
+  const answers = [], namedBy = new Map();
   for (const seat of held || []) {
     if (!Array.isArray(seat)) continue;
-    const seen = new Set();                                  // kanban #1698 #1766: this seat's rounds, each counted once
+    const seen = new Set(), list = [];
     for (const r of seat.slice(0, SERVED_HELD_MAX)) {
       if (!r || !snIs32(r.roundId) || !Array.isArray(r.committee) || !r.committee.length || r.committee.length > SERVED_COMMITTEE_MAX || !r.committee.every(snIs32)) continue;
-      const k = hx(r.roundId), committee = [...new Set(r.committee.map(hx))].sort().join();
+      const k = hx(r.roundId);
       if (seen.has(k)) continue;
-      seen.add(k);
+      seen.add(k); list.push([k, r]);
+      namedBy.set(k, (namedBy.get(k) || 0) + 1);
+    }
+    answers.push(list);
+  }
+  for (const list of answers) {
+    let lone = 0;
+    for (const [k, r] of list) {
+      const committee = [...new Set(r.committee.map(hx))].sort().join();
       if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map() });
       const into = rounds.get(k);
       if (!into.copies.has(committee)) into.copies.set(committee, { committee: r.committee, seats: 0 });
       into.copies.get(committee).seats++;
       if (into.copies.size > 1) conflicts.add(k);
-      for (const f of r.finals || []) if (f instanceof Uint8Array) into.finals.set(hx(f), f);
+      // kanban #1815: what one seat's answer makes the reader verify is bounded. A round counts once per node, so from each seat's
+      // answer at most two FINALs per signer are kept - its earliest and its latest (a node's FINALs on one round fall inside minutes,
+      // so when any of them lies in a window, one of these two does) - and at most SERVED_COMMITTEE_MAX signers, the first listed (a
+      // seat keeps FINALs only from the round's committee). What is no FINAL at all is not kept; servedNodes still checks the rest.
+      // Measured before: one padded answer of 20,000 made-up FINALs under a real committee's keys, junk signatures, cost 20,003
+      // BIP-340 checks (28 s on a seat's main thread) on every item purchase and funding decision.
+      if (namedBy.get(k) < 2 && lone >= SERVED_LONE_FINALS_MAX) continue;   // kanban #2239: the budget is spent, nothing more is read
+      const bySigner = new Map();
+      for (const f of Array.isArray(r.finals) ? r.finals : []) {
+        if (!(f instanceof Uint8Array)) continue;
+        let x; try { const { signature } = splitSignedFinalSig(f); x = decodeFinalSig(f.subarray(0, f.length - signature.length)); } catch { continue; }
+        const key = hx(x.signerPubkey), b = bySigner.get(key);
+        if (!b) { if (bySigner.size < SERVED_COMMITTEE_MAX) bySigner.set(key, { first: [x.signedAtMs, f], last: [x.signedAtMs, f] }); continue; }
+        if (x.signedAtMs < b.first[0]) b.first = [x.signedAtMs, f];
+        if (x.signedAtMs > b.last[0]) b.last = [x.signedAtMs, f];
+      }
+      const add = new Map();
+      for (const b of bySigner.values()) for (const [, f] of [b.first, b.last]) { const h = hx(f); if (!into.finals.has(h)) add.set(h, f); }
+      // kanban #2239: a round no other answer names spends this answer's budget of new FINALs; past it they are not kept
+      if (namedBy.get(k) < 2) { if (lone + add.size > SERVED_LONE_FINALS_MAX) continue; lone += add.size; }
+      for (const [h, f] of add) into.finals.set(h, f);
     }
   }
   const pick = (copies) => { let best = null; for (const c of copies.values()) if (!best || c.seats > best.seats) best = c; return best.committee; };
