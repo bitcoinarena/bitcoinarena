@@ -1542,3 +1542,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12 (kanban #1489, base f64efd1bb)
+
+#### SM-E (change) Stake lock / fee lock per entry (one player key, one entry: kanban #1215, #1640)
+- A player key's stake lock and fee lock stand on ONE entry of the round at a seat. A lock of either kind is refused while another entry of the same player key holds a verified lock of either kind there (`otherStakedUnderKey`, stake-lock-signer-node.js), at the door and again at the write. The entry whose lock stood first owns the key; a reload's second entry under the same key (join.js playerFor) gets no lock, so an entry waiting for its fee lock (`waitsForFeeLock`) is never left beside another entry holding the key's fee lock, where neither could ever be seen.
