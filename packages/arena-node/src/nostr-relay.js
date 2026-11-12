@@ -182,6 +182,10 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     let budget = 60, refill = setInterval(() => { budget = Math.min(60, budget + 20); }, 10000);
     const send = (m) => { if (ws.readyState === 1) ws.send(JSON.stringify(m)); };
     ws.on('close', () => { clients.delete(c); clearInterval(refill); });
+    // kanban #1470, #1726, #1796, #1833: a frame ws itself refuses (over maxPayload, a text frame that is not UTF-8, a reserved bit set, a bad
+    // opcode) never reaches 'message' - ws emits 'error' on this socket and closes it. Without a listener the EventEmitter throws and the relay
+    // process ends for every player; with one, only this socket goes.
+    ws.on('error', () => { clients.delete(c); clearInterval(refill); try { ws.terminate(); } catch { /* already gone */ } });
     ws.on('message', (raw) => { try { onMessage(raw); } catch (err) { try { send(['NOTICE', 'error: that message could not be handled']); } catch { /* the socket is gone */ } } });   // kanban #1470: no message takes the relay down
     const onMessage = (raw) => {
       if (raw.length > MAX_EVENT_BYTES * 2) return send(['NOTICE', 'message too large']);
