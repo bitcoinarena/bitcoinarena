@@ -32,12 +32,30 @@ export const FUNDING_SQL = `CREATE TABLE IF NOT EXISTS funding_items (id TEXT PR
 /**
  * A PEER'S "I HELD IT AT ..." IS A CLAIM, NOT A FACT (kanban #1607, audit #1489 r4 census-2): with the end block's time as the cutoff (#1410, every live
  * seat), a pulled signal took the earliest atMs ONE peer stated, and an UPDATE moved a held one earlier on that word - so one seat answering `atMs: 0` for
- * a signal signed after the end, to chosen seats only, flipped the outcome there: two outcomes for one period, two fee sets in force. Now this seat keeps
- * its own receipt time, keeps each peer's claim apart (by the seat it pulled it from), and counts a signal held before the cutoff here, or claimed held
- * before it by at least PEER_CLAIM_SEATS distinct named seats. GET /funding-items answers this seat's own receipt time only, so a claim is never relayed
- * as a fact. Without `endTimeAt` (the cutoff is this seat's own first sight, the #1279 interim, no live seat) the claims count as before.
+ * a signal signed after the end, to chosen seats only, flipped the outcome there: two outcomes for one period, two fee sets in force. This seat keeps
+ * its own receipt time and keeps each peer's claim apart (by the seat it pulled it from). GET /funding-items answers this seat's own receipt time only, so
+ * a claim is never relayed as a fact. Without `endTimeAt` (the cutoff is this seat's own first sight, the #1279 interim, no live seat) the claims count
+ * as before.
+ *
+ * WHEN A SIGNAL COUNTS (kanban #2131, #2193, a44 refute of #1607): #1607 counted a signal held here before the cutoff, or claimed held before it by
+ * PEER_CLAIM_SEATS (2) named seats. Both halves split one period: (1) two colluding seats (two bonds, one operator) answering atMs 0 to chosen seats still
+ * backdated a late signal there; (2) a signal one honest seat X held just before the cutoff, handed on to Y and Z just after it, counted at X (its own
+ * time) and nowhere else (one claim) - a split a lone signer makes with no seat at all. Now every seat judges from the same evidence, its own receipt
+ * being one more seat's word: B = the named seats (this one included) that held it by the cutoff, L = those that first held it after. It counts
+ *   - when this seat held it by the cutoff AND more holders held it before than after (B > L): what X does now sees Y's and Z's late receipts as Y and
+ *     Z do, so X lands where they land; a lone seat that holds it (no peer reports it, #1426) still counts it;
+ *   - or when more than a third of the active census (the nodes the signal is counted over) claim it held by the cutoff (3 B > census): a seat that was
+ *     down catches up on the network's word, and no handful of bonds can buy that word - two seats of a census of 100 never backdate anything.
+ * The peers' word alone never makes a late arrival count unless a third of the census says so; a seat's own early arrival counts unless the holders
+ * it hears from say the signal mostly reached the network late. Shared protocol rules unchanged.
  */
-export const PEER_CLAIM_SEATS = 2;
+export const CLAIM_QUORUM_DEN = 3;
+/** `own` this seat held it by the cutoff; `before` / `after` distinct named peer seats that claim they held it by / after the cutoff; `census` the active nodes. */
+export function heldBeforeCounts({ own, before, after, census }) {
+  const B = before + (own ? 1 : 0), L = after + (own ? 0 : 1);
+  if (own && B > L) return true;
+  return B > 0 && B * CLAIM_QUORUM_DEN > Math.max(0, Number(census) || 0);
+}
 
 /** A payment's id: the proposal's own for a single payment (rule 5), else one per tranche. */
 export const trancheIdOf = (pid, k, of) => (of === 1 ? pid : createHash('sha256').update(`ARENA/v1/FundingTranche:${pid}:${k}`).digest('hex'));
@@ -121,11 +139,14 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   const read = (kind, hex) => readSignedFunding(kind, fromHex(hex), verify);
   const outcomeOf = (pid) => { const r = db.prepare('SELECT outcome FROM funding_outcomes WHERE proposal = ?').get(pid); return r ? JSON.parse(r.outcome) : null; };
   // `beforeMs` (kanban #1279, RULED #1277 A): only the signals some seat held before the signal period ended (at_ms is the earliest time a seat held it)
-  // kanban #1607: with the end block's time as the cutoff, a peer's earlier time counts only when PEER_CLAIM_SEATS distinct named seats claim it
+  // kanban #1607, #2131, #2193: with the end block's time as the cutoff, a signal counts by heldBeforeCounts over the named seats' claims and this seat's own time
   const claimsOnly = typeof endTimeAt === 'function';
-  const claimedBefore = (id, beforeMs) => db.prepare("SELECT COUNT(DISTINCT seat) AS n FROM funding_held_claims WHERE id = ? AND seat != '' AND at_ms <= ?").get(id, Number(beforeMs)).n >= PEER_CLAIM_SEATS;
-  const signalsOf = (pid, beforeMs = null) => db.prepare("SELECT id, hex, at_ms FROM funding_items WHERE kind = 'signal' AND proposal = ?").all(pid)
-    .filter((r) => beforeMs === null || Number(r.at_ms) <= Number(beforeMs) || (claimsOnly && claimedBefore(r.id, beforeMs)))
+  const claimsOf = (id, beforeMs) => db.prepare("SELECT COALESCE(SUM(CASE WHEN at_ms <= ? THEN 1 ELSE 0 END), 0) AS b, COALESCE(SUM(CASE WHEN at_ms > ? THEN 1 ELSE 0 END), 0) AS l FROM funding_held_claims WHERE id = ? AND seat != ''")
+    .get(Number(beforeMs), Number(beforeMs), id);
+  const counts = (r, beforeMs, census) => { const own = Number(r.at_ms) <= Number(beforeMs); if (!claimsOnly) return own;
+    const c = claimsOf(r.id, beforeMs); return heldBeforeCounts({ own, before: Number(c.b), after: Number(c.l), census }); };
+  const signalsOf = (pid, beforeMs = null, census = 0) => db.prepare("SELECT id, hex, at_ms FROM funding_items WHERE kind = 'signal' AND proposal = ?").all(pid)
+    .filter((r) => beforeMs === null || counts(r, beforeMs, census))
     .map((r) => read('signal', r.hex)).filter((x) => x.ok).map((x) => ({ node: toHex(x.obj.node), atHeight: x.obj.atHeight }));
   // THE VOTE (§27A.9.3 stage 2): opened only by a signal this seat decided passed; the census taken ONCE at the
   // vote's start (signalEnd); each voting block read once for this proposal's votes, held to by its hash; the outcome written once
@@ -569,6 +590,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         }
         const a = await activeAt(end).catch((e) => ({ ok: false, why: e.message }));
         if (!a || !a.ok) { log(`[funding] ${row.id.slice(0, 16)}: the signal ended at ${end}, its active nodes not read yet: ${a ? a.why : '?'}`); continue; }
+        const census = Array.isArray(a.nodes) ? a.nodes.length : 0;   // kanban #2131: the claim quorum is a third of the active nodes, before the seasoned filter
         // THE SIGNAL RULE: only nodes with a bond 3 months old count, among the active and among the signals
         if (typeof seasonedNodes === 'function') {
           const seasoned = await Promise.resolve(seasonedNodes(toHex(p.obj.networkId), p.obj.publishedHeight, end)).catch(() => null);
@@ -576,7 +598,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
           const s = new Set(seasoned.map((k) => String(k).toLowerCase()));
           a.nodes = a.nodes.filter((k) => s.has(String(k).toLowerCase()));
         }
-        const out = { ...signalOutcome({ proposal: p.obj, signals: signalsOf(row.id, endSeen), active: a.nodes, tip: height, schedule }), activeFrom: a.fromHeight ?? null, activeTo: end };
+        const out = { ...signalOutcome({ proposal: p.obj, signals: signalsOf(row.id, endSeen, census), active: a.nodes, tip: height, schedule }), activeFrom: a.fromHeight ?? null, activeTo: end };
         db.prepare('INSERT OR IGNORE INTO funding_outcomes (proposal, outcome, decided_ms) VALUES (?, ?, ?)').run(row.id, JSON.stringify(out), now());
         log(`[funding] ${row.id.slice(0, 16)}: signal ${out.state} - ${out.supporters} of ${out.active} active nodes (${out.pct} %, ${out.needed} needed)`);
         done.push({ id: row.id, ...out });
