@@ -3709,10 +3709,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const r = await fetch(`${String(peer).replace(/\/+$/, '')}/lock-settlement?round=${toHex(rid)}`, { signal: AbortSignal.timeout(3000) });
         const j = await r.json();
         if ((j.state === 'SUBMITTING' || j.state === 'ACCEPTED') && j.signature && j.message
-          && schnorr.verify(fromHex(j.signature), fromHex(j.message), claimPk.subarray(1))) return true;
+          && schnorr.verify(fromHex(j.signature), fromHex(j.message), claimPk.subarray(1))
+          && await thisRoundsMessage(rid, fromHex(j.message))) return true;
       } catch { /* the next peer */ }
     }
     return false;
+  };
+  // AND THE MESSAGE MUST BE THIS ROUND'S SETTLEMENT (kanban #1757): the claim key is the committee's DKG key, the same for every round
+  // that committee sits, so a peer that answered with an earlier round's ACCEPTED row (public at GET /lock-settlement) made a round
+  // never settled read "combined" - the held final mark dropped and the stopped transcript signed. A verifying signature counts only
+  // over a message this seat ties to THIS round: one it handed a nonce or a share for, one kept in its txid history for the round, or
+  // the one it rebuilds from its own store. Anything else is another round's, or nothing this seat can check: not combined.
+  const thisRoundsMessage = async (rid, msg) => {
+    const hx = toHex(msg);
+    // 2.0: a protocol-27 seat's entry is one { named, message, nonces } object, a FROST round's a list of handed pairs
+    const held = settlements && settlements.pairs ? settlements.pairs.get(toHex(rid)) : null;
+    if ((Array.isArray(held) ? held : held ? [held] : []).some((p) => p && p.message && toHex(p.message) === hx)) return true;
+    if (typeof round.settlementTxidsOf === 'function' && round.settlementTxidsOf(rid).some((h) => toHex(h.message) === hx)) return true;
+    if (!settlements || typeof settlements.message !== 'function') return false;
+    const m = await settlements.message(rid).catch(() => null);
+    return !!(m && m.ok && m.message && toHex(m.message) === hx);
   };
 
 
