@@ -1336,6 +1336,8 @@ export class Verifier {
     // AND EACH SIGNER NODE'S OWN WORD THAT IT DECIDED THE ENTRY BY §13C (x-no-quorum): not taken as the entry's
     // outcome here - it only says that signer node will sign nothing, which `shortPastWindow` counts.
     const noQuorumPeers = [];
+    // THE ROUND'S COMMITTEE, read once: a peer result counts only under one of its keys (kanban #1489).
+    const committee = this.round.signerNodes(roundIdBytes);
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
@@ -1358,7 +1360,7 @@ export class Verifier {
         // record by record, each its type's size
         for (const record of cutSignedResults(body)) {
           fetched++;
-          if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey)) kept++;
+          if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey, committee)) kept++;
         }
       }, { over: 20 });
     }
@@ -2005,7 +2007,7 @@ export class Verifier {
   }
 
   /** One record from a peer, believed only as far as it can be checked. */
-  #keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey) {
+  #keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey, signerNodes) {
     let result, signature;
     try {
       const split = splitSignedResult(record);
@@ -2025,6 +2027,12 @@ export class Verifier {
     if (hex(result.roundId) !== hex(roundIdBytes)) return false;
     if (!(playerPubkey instanceof Uint8Array)
       || hex(result.playerPubkey) !== hex(playerPubkey)) return false;
+
+    // AND IT MUST BE SIGNED BY ONE OF THE ROUND'S SIGNER NODES, as #keepPeerPosting asks (kanban #1489). A signature
+    // that verifies under a key the record itself names proves nothing: one peer could mint throwaway keys, have every
+    // forged result stored (one row per key) and outvote the committee in every plurality read off the store -
+    // /api/round-result, the Nostr result, the head-to-head score.
+    if (!Array.isArray(signerNodes) || !signerNodes.some((s) => hex(s) === hex(result.nodePubkey))) return false;
 
     const id = resultId(result);
     let ok = false;
