@@ -6187,7 +6187,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         entry = decodeEntryContract(await peerBody(r, BODY_MOST));
       } catch { continue; }
       if (toHex(idOfEntry(entry)) !== entryHex || toHex(entry.roundId) !== toHex(rid)) continue;   // the bytes hash to the id, of this round
-      const signers = await verifier.signersNaming(rid, eid, entry.playerPubkey);
+      // kanban #2063: only results about THIS entry (its reveal record, verify.js) - a VOID still counts here: taking the entry gives it no seat,
+      // and a late lock it lacks comes only through takeEntryParts below, which counts seated results alone
+      const signers = await verifier.signersNaming(rid, eid, entry.playerPubkey, { entry });
       if (signers.size < needed) return { ok: false, why: `${signers.size} of ${needed} seats signed a result naming it` };
       const ref = entry.vssSharesRef;
       if (ref && !ref.every((b) => b === 0) && !round.handout(ref)) {
