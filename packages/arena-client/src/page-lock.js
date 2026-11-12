@@ -2885,7 +2885,36 @@ const owedKeyOf = (seed, id, order, curve) => {
   return v;
 };
 // ONE READ OF THE OWED SCAN, GIVEN UP AFTER SEAT_READ_MS (kanban #1489): null when the seat failed, refused or did not answer in time
-const OWED_LIST_MAX = 500, OWED_NEXT_MS = 2000;
+const OWED_LIST_MAX = 500, OWED_NEXT_MS = 2000, OWED_ROUND_READS = 4;
+// a valid /round?id= answer within OWED_FAST_MS puts its seat first in the owed scan's order; a slower one sends it back (kanban #2041, #2061)
+const OWED_FAST_MS = 250;
+// ONE SEAT'S LIST, NEWEST cap ENTRIES IN ONE PASS (kanban #1772, #1489 refute 14): the cap was taken after the whole list was
+// copied, mapped and sorted - a seat listing a million entries cost the page an O(n log n) sort at every load. Now one pass keeps
+// the newest `cap` (a min-heap on madeMs, then position), and only those are sorted. Same entries, same order as before.
+const owedNewest = (rounds, cap) => {
+  const heap = [];   // min-heap of { x, i, ms }: heap[0] is the oldest kept
+  const older = (a, b) => (a.ms - b.ms) || (a.i - b.i);
+  const up = (k) => { while (k > 0) { const p = (k - 1) >> 1; if (older(heap[k], heap[p]) >= 0) break; [heap[k], heap[p]] = [heap[p], heap[k]]; k = p; } };
+  const down = (k) => {
+    for (;;) {
+      const l = 2 * k + 1, r = l + 1; let m = k;
+      if (l < heap.length && older(heap[l], heap[m]) < 0) m = l;
+      if (r < heap.length && older(heap[r], heap[m]) < 0) m = r;
+      if (m === k) return;
+      [heap[k], heap[m]] = [heap[m], heap[k]]; k = m;
+    }
+  };
+  let n = 0;
+  for (let i = 0; i < rounds.length; i++) {
+    const x = rounds[i];
+    if (!x || typeof x !== 'object') continue;
+    const e = { x, i: n++, ms: Number(x.madeMs) || 0 };
+    if (heap.length < cap) { heap.push(e); up(heap.length - 1); } else if (cap > 0 && older(heap[0], e) < 0) { heap[0] = e; down(0); }
+  }
+  // fewer than cap objects: the list as sent (as before); else newest first
+  if (n <= cap) return heap.sort((a, b) => a.i - b.i).map((y) => y.x);
+  return heap.sort((a, b) => -older(a, b)).map((y) => y.x);
+};
 const owedRead = (read) => {
   const signal = AbortSignal.timeout(SEAT_READ_MS);
   let t;
@@ -2946,7 +2975,8 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
   // AT MOST OWED_SETTLED_MAX ROUNDS FROM ONE SITE, NEWEST FIRST, EACH ID ONCE PER SEAT (kanban #1489, #1832, #1966)
   const bySite = new Map();
   lists.forEach((got, n) => {
-    const all = got && Array.isArray(got.rounds) ? got.rounds.filter((x) => x && typeof x === 'object') : null;
+    // the seat's newest entries in one pass, objects only (owedNewest, kanban #1772): no sort of a seat's whole list
+    const all = got && Array.isArray(got.rounds) ? owedNewest(got.rounds, Math.min(OWED_SETTLED_MAX, OWED_LIST_MAX)) : null;
     if (!all) return;
     const h = owedSiteOf(nodes[n]);
     if (!bySite.has(h)) bySite.set(h, []);
@@ -2987,50 +3017,84 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
     for (const k of (Array.isArray(x.refunds) ? x.refunds : []).slice(0, OWED_KEYS_PER_ROUND)) l.refunds.add(String(k).toLowerCase());
     listed.set(id, l);
   }
-  const found = [];
-  const contracts = new Map();
+  // WHICH ROUNDS ARE THIS PAGE'S, FROM THE KEYS ALONE - no seat is asked anything yet
+  const matches = [];
   for (const [id, l] of listed) {
     for (let i = 0; i < list.length; i++) {
       if (skips[i].has(id)) continue;
       // EVERY ORDER'S KEY TOO: a tab's orders in a market round are keyed 0, 1, 2 ... - read up to ORDER_SCAN (32: a bot places 12 a window)
       for (let order = 0; order <= ORDER_SCAN; order++) {
-      const mine = owedKeyOf(list[i], id, order, curve);
-      const payout = l.payouts.has(mine); const lock = l.refunds.has(mine);
-      if (!payout && !lock) continue;
-      if (!contracts.has(id)) {
-        // A CONTRACT READ ONCE IS KEPT: the id is its hash, so it is the round for good - not read again at every scan
-        let round = OWED_ROUNDS.get(id) || null;
-        // ONE SIGNER NODE AT A TIME, BUT NONE HOLDS THE SCAN (kanban #1489): each read gives up after SEAT_READ_MS, and a seat
-        // silent for OWED_NEXT_MS has the next one asked beside it - the first answer that is the round wins (its id is the
-        // contract's hash, so any seat's is as good); seats that answer at once are still asked one read per round
-        if (!round) round = await new Promise((resolve) => {
-          let open = 0, next = 0, done = false, t = null;
-          const ask = () => {
-            clearTimeout(t);
-            if (done) return;
-            if (next >= nodes.length) { if (!open) { done = true; resolve(null); } return; }
-            const node = nodes[next++]; open += 1;
-            t = setTimeout(ask, OWED_NEXT_MS);
-            owedRead(async (signal) => {
-              const r = await fetcher(`${base(node)}/round?id=${id}`, { signal });
-              if (!r.ok) return null;
-              const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
-              return toHex(roundIdOf(c)) === id && roundLocks(c) ? c : null;
-            }).then((c) => {
-              open -= 1;
-              if (done) return;
-              if (c) { done = true; clearTimeout(t); resolve(c); } else ask();
-            });
-          };
-          ask();
-        });
-        if (round && !OWED_ROUNDS.has(id)) { OWED_ROUNDS.set(id, round); if (OWED_ROUNDS.size > 2000) OWED_ROUNDS.delete(OWED_ROUNDS.keys().next().value); }
-        contracts.set(id, round);
-      }
-      const round = contracts.get(id);
-      if (round) found.push({ roundIdHex: id, round, payout, lock, seed: list[i], order });
+        const mine = owedKeyOf(list[i], id, order, curve);
+        const payout = l.payouts.has(mine); const lock = l.refunds.has(mine);
+        if (payout || lock) matches.push({ id, payout, lock, seed: list[i], order });
       }
     }
+  }
+  // A SILENT SEAT COSTS ONE SCAN OWED_NEXT_MS ONCE, NOT ONCE PER ROUND (kanban #1772, #1489 refute 14): the contracts were read one
+  // round after another, each asking the signer nodes in list order - one seat first in the list that took /round?id= and never
+  // answered cost OWED_NEXT_MS for every owed round (12 rounds: 24.3 s before anything was kept; a reload paid it all again).
+  // Now a seat that has not answered a read within OWED_NEXT_MS goes to the back of this scan's order for every later read, and the
+  // rounds' contracts are read OWED_ROUND_READS at a time. Still one read per round from seats that answer at once.
+  // A SEAT THAT ANSWERS USELESSLY IS DEMOTED TOO, AND THE SEAT THAT SERVED GOES FIRST (kanban #1907, #1489 refute 14 skeptic 3): only
+  // silence sent a seat back, so one that answered every /round?id= with a 404 - or with a contract that is not the round - at
+  // 1.9 s, just inside OWED_NEXT_MS, kept its front place and cost every owed round again (3 such seats of 7: 12 rounds 17.3 s;
+  // one seat: 48 rounds 23.2 s, all before the page saved anything). Now any read that did not yield the round - silence, an error,
+  // a refusal, a wrong or unlockable contract - sends the seat to the back of this scan's order, a seat that returned a valid
+  // contract moves to the front, and each read picks its next seat from the scan's order as it stands then (not a copy taken at
+  // its start), so reads already under way profit at once. A useless seat costs a scan its delay for the first reads only.
+  // ONLY A FAST WINNER GOES FIRST (kanban #2041, #2061, #1489 refute 14 skeptic 4): any valid contract moved its seat to the front,
+  // whatever its latency and even after the read was over. The contract is public bytes (its id is its hash), so one seat that
+  // copied it and answered every /round?id= at 1.9 s stayed first and cost every owed round 1.9 s again (48 rounds: 23.3 s), and
+  // one that answered at 2.1 s was demoted by the OWED_NEXT_MS timer and then promoted back by its late answer (48 rounds: 25.9 s).
+  // Now a seat goes to the front only when its valid answer came within OWED_FAST_MS, before this read's OWED_NEXT_MS timer moved
+  // on, and won the read; a valid answer slower than OWED_FAST_MS sends the seat to the back like a useless one. Honest seats that
+  // all answer slowly only take turns at the front; each read still asks one seat while it answers within OWED_NEXT_MS.
+  const order = nodes.slice();
+  const slow = (node) => { const k = order.indexOf(node); if (k >= 0 && k < order.length - 1) { order.splice(k, 1); order.push(node); } };
+  const good = (node) => { const k = order.indexOf(node); if (k > 0) { order.splice(k, 1); order.unshift(node); } };
+  const readContract = (id) => new Promise((resolve) => {
+    const asked = new Set();
+    let open = 0, done = false, t = null;
+    const ask = () => {
+      clearTimeout(t);
+      if (done) return;
+      const node = order.find((n) => !asked.has(n));
+      if (node === undefined) { if (!open) { done = true; resolve(null); } return; }
+      asked.add(node); open += 1;
+      let answered = false, timedOut = false;
+      const askedAt = Date.now();
+      t = setTimeout(() => { if (!answered) { timedOut = true; slow(node); } ask(); }, OWED_NEXT_MS);
+      owedRead(async (signal) => {
+        const r = await fetcher(`${base(node)}/round?id=${id}`, { signal });
+        if (!r.ok) return null;
+        const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
+        return toHex(roundIdOf(c)) === id && roundLocks(c) ? c : null;
+      }).then((c) => {
+        answered = true; open -= 1;
+        const fast = !timedOut && Date.now() - askedAt <= OWED_FAST_MS;
+        if (c && fast && !done) good(node); else if (!c || !fast) slow(node);
+        if (done) return;
+        if (c) { done = true; clearTimeout(t); resolve(c); } else ask();
+      });
+    };
+    ask();
+  });
+  const contracts = new Map();
+  // A CONTRACT READ ONCE IS KEPT: the id is its hash, so it is the round for good - not read again at every scan
+  const wanted = [...new Set(matches.map((m) => m.id))].filter((id) => { const c = OWED_ROUNDS.get(id); if (c) contracts.set(id, c); return !c; });
+  let at = 0;
+  await Promise.all(Array.from({ length: Math.min(OWED_ROUND_READS, wanted.length) }, async () => {
+    while (at < wanted.length) {
+      const id = wanted[at++];
+      const round = await readContract(id);
+      if (round && !OWED_ROUNDS.has(id)) { OWED_ROUNDS.set(id, round); if (OWED_ROUNDS.size > 2000) OWED_ROUNDS.delete(OWED_ROUNDS.keys().next().value); }
+      contracts.set(id, round);
+    }
+  }));
+  const found = [];
+  for (const m of matches) {
+    const round = contracts.get(m.id);
+    if (round) found.push({ roundIdHex: m.id, round, payout: m.payout, lock: m.lock, seed: m.seed, order: m.order });
   }
   return found;
 }
