@@ -17,7 +17,7 @@ import { windowsOf } from '../../arena-protocol/src/window.js';
 import { noQuorumGoesToRerun } from '../../arena-protocol/src/constants.js';
 import { dissentsOn, dissentsFirstOn, dissentsFailOn, postsLateOn, LATE_POSTING_AFTER_MS } from './test-dissent.js';
 import { ReplayPool } from './pool.js';
-import { checkObjectionBundle } from './objection-check.js';
+import { checkObjectionBundle, replayKeyOf } from './objection-check.js';
 import { sha256 } from '../../arena-protocol/src/hash.js';
 import { stateOf } from './settlement-state.js';
 import { verifyKept } from './verify-kept.js';
@@ -39,7 +39,7 @@ import { holdsRun } from './finality.js';
 
 let retryJobs = 0;                     // each re-tried close is its own pool job
 let objectionJobs = 0;                 // each objection's replay is its own pool job (§13A)
-import { encodeTranscript, transcriptHash as hashOfTranscript } from '../../arena-protocol/src/transcript.js';
+import { encodeTranscript, decodeTranscript, transcriptHash as hashOfTranscript } from '../../arena-protocol/src/transcript.js';
 import { TRANSCRIPT_BATCH_MAX_BYTES } from './round.js';
 import {
   encodeTranscriptPosting, transcriptPostingId, joinSignedPosting, splitSignedPosting, decodeTranscriptPosting,
@@ -209,6 +209,10 @@ async function capped(answer, maxBytes) {
 const PEER_BODY_MAX_BYTES = 16 * 1024 * 1024;
 /** Marks a peer may hold past this seat's own chain in one /checkpoints answer (#1550's cap). */
 const PEER_MARKS_AHEAD = 1024;
+/** The transcript hash (hex) a signed result names, or null for a record that does not decode (kanban #1802). */
+function namedTranscript(record) {
+  try { return hex(decodePlayerResult(splitSignedResult(record).body).transcriptHash); } catch { return null; }
+}
 async function peerFetch(url, waitMs = PEER_WAIT_MS) {
   return fetch(url, { signal: AbortSignal.timeout(waitMs) });
 }
@@ -259,7 +263,9 @@ const ENTRY_VOID_MAX_BYTES = 4096;
  */
 const RESULT_RECORD_MAX_BYTES = RESULT_FRONT_BYTES + RESULT_SIGNATURE_BYTES;
 const peerResultsCap = (committeeSize) => 2 * Math.max(1, committeeSize) * RESULT_RECORD_MAX_BYTES;
-async function peerJson(answer) { return JSON.parse(Buffer.from(await peerBody(answer)).toString('utf8')); }
+async function peerJson(answer, cap = PEER_BODY_MAX_BYTES) { return JSON.parse(Buffer.from(await peerBody(answer, cap)).toString('utf8')); }
+/** An answer this seat does not read (not 200): its body dropped unread, so a peer cannot make it pile up (kanban #1744). */
+async function dropBody(answer) { try { await answer.body?.cancel(); } catch { /* gone */ } }
 /** GET /checkpoints of every peer AT ONCE (#1550: in parallel, not one after another), each its bytes or null when down. */
 async function peersCheckpoints(peers, roundIdBytes, entryId, cap, waitMs = PEER_WAIT_MS) {
   return Promise.all(peers.map(async (peer) => {
@@ -1187,8 +1193,8 @@ export class Verifier {
     for (const peer of this.peersOf(roundIdBytes)) {
       try {
         const r = await peerFetch(`${peer}/entry-void?entry=${hex(entryId)}`);
-        if (r.status !== 200) continue;
-        const got = await peerJson(r);
+        if (r.status !== 200) { await dropBody(r); continue; }
+        const got = await peerJson(r, ENTRY_VOID_MAX_BYTES);   // kanban #1744
         const mark = Uint8Array.from(Buffer.from(String(got.firstMark || ''), 'hex'));
         const c = this.round.onTimeFirstMark(mark);
         if (!c || hex(c.entryId) !== hex(entryId)) continue;
@@ -1261,6 +1267,7 @@ export class Verifier {
         try {
           const r = await peerFetch(`${peer}/late-first-mark?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`);
           if (r.status === 200) { const theirs = await peerBody(r, SIGNED_MARK_BYTES); for (const m of mine) got.pairs.push([m, theirs]); }
+          else { try { await r.body?.cancel(); } catch { /* gone */ } }   // kanban #1685: a refused body is not left open
         } catch { /* a signer node that cannot answer proves nothing */ }
         try {
           const r = await peerFetch(`${peer}/entry-void?entry=${hex(entryId)}`);
@@ -1277,7 +1284,7 @@ export class Verifier {
           const body = await peerHead(r, EQUIVOCATION_PAIRS_PER_PEER * 2 * SIGNED_MARK_BYTES);
           for (let at = 0; at + 2 * SIGNED_MARK_BYTES <= body.length; at += 2 * SIGNED_MARK_BYTES)
             got.pairs.push([body.slice(at, at + SIGNED_MARK_BYTES), body.slice(at + SIGNED_MARK_BYTES, at + 2 * SIGNED_MARK_BYTES)]);
-        }
+        } else { try { await r.body?.cancel(); } catch { /* gone */ } }   // kanban #1685
       } catch { /* a signer node that cannot answer proves nothing */ }
       return got;
     }));
@@ -1549,6 +1556,17 @@ export class Verifier {
     // contract's nodes where this node holds no signer list
     const signers = this.round.signerNodes(roundIdBytes);
     const committee = signers.length ? signers : contract.nodes || [];
+    // A PLAYER WITH MORE THAN ONE ENTRY IN THE ROUND (kanban #1489, #1802; a reload's second entry, #1479): a PlayerResult
+    // names its round and its player, never its entry, so a committee member's real signed result for the player's
+    // other entry passes every check above. A peer filing it under this entry would have it stored here, outvote this
+    // node's own result in every plurality read of the store (the Nostr result signed and published once, /results,
+    // a slash proof against the honest signers) and push the committee's true rows out as duplicates. For such a
+    // player a peer result is kept only when the transcript it names is this entry's: one this node holds or builds for
+    // it, or bytes a peer serves that hash to that name and name this entry inside them (#transcriptTiedTo).
+    const ambiguous = this.round.entriesOf(roundIdBytes)
+      .some((e) => hex(e.entryId) !== hex(entryIdBytes) && hex(e.entry.playerPubkey) === hex(playerPubkey));
+    const tied = ambiguous ? this.#transcriptsOfEntry(roundIdBytes, entryIdBytes, contract) : null;
+    const pending = new Map();      // transcript hash (hex) -> the records naming it, until it is tied to this entry or not
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
@@ -1557,8 +1575,9 @@ export class Verifier {
         // gather waits on it before it may move to the next entry - measured on the Daily, gathers running 2946 to
         // 6140 ms each while a page's own calls were aborting at 8 s. "A peer that is down is not a fault" was
         // already this function's rule; without a deadline it was a rule it could not keep.
-        const answer = await fetch(url, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
-        if (!answer.ok) { refused++; continue; }
+        // kanban #1685: and a size cap (#1550) - the gather buffered a peer's whole /results, however large.
+        const answer = await peerFetch(url);
+        if (!answer.ok) { try { await answer.body?.cancel(); } catch { /* gone */ } refused++; continue; }
         const said = answer.headers.get('x-no-quorum');
         if (said) noQuorumPeers.push({ peer, outcome: said });
         body = await peerBody(answer, peerResultsCap(committee.length));   // kanban #1634: bounded, as #1550's pulls
@@ -1581,9 +1600,25 @@ export class Verifier {
           if (tried.has(key)) continue;
           tried.add(key);
           if (this.round.hasResult(roundIdBytes, entryIdBytes, r.nodePubkey)) continue;
+          if (tied) {
+            const named = namedTranscript(record);
+            if (!named) { refused++; continue; }
+            if (!tied.has(named)) {
+              if (!pending.has(named)) pending.set(named, []);
+              pending.get(named).push(record);
+              continue;
+            }
+          }
           if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey, committee)) kept++;
         }
       }, { over: 20 });
+    }
+    // THE TRANSCRIPTS NOT TIED HERE YET, each asked of the peers once (#1802): a dissent about this entry still counts
+    // (and can be slashed) when its transcript is this entry's; one about the player's other entry is refused.
+    for (const [named, records] of pending) {
+      if (await this.#transcriptTiedTo(roundIdBytes, entryIdBytes, named, contract)) {
+        for (const record of records) if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey, committee)) kept++;
+      } else refused += records.length;
     }
 
     const { held, seen } = timed(`close gather counted ${hex(entryIdBytes).slice(0, 8)}`, () => {
@@ -1748,17 +1783,19 @@ export class Verifier {
         bundle, roundId: roundIdBytes, entryId: entryIdBytes, entry: found.entry, contract,
         committee: given.committee || this.round.signerNodes(roundIdBytes), signedResultId, core, roundRandomness: beacon.hash,
         verify: (sig, msg, key) => verifyKept(sig, msg, key), hashTicks: given.hashTicks || [],
+        // THIS SEAT'S OWN RUN OF THE ENTRY (kanban #1706): a live run's inputs that differ from it are checked against its
+        // replay, one key per entry, instead of each costing a replay of its own (objection-check.js 7a)
+        ownInputs: () => this.round.transcript(roundIdBytes, entryIdBytes),
         replayRun: (form, entry, options) => {
           // KEYED BY WHAT IS REPLAYED, NOT BY THE BYTES POSTED (kanban #1517): the raw transcript + inputs bytes let a
           // stranger make every copy of one run a fresh key (whitespace or an unknown key in a live run's inputs, or an
           // inputs part beside a batch transcript, never read) - each a full replay, the entry held SUSPENDED behind
           // them. The parsed replay form (replayFormOf / inputsFormOf: fixed fields, integers only) and the marks it
           // must reproduce are the replay's whole input for this entry, so any bytes giving the same input share one job.
+          // And rows no replay applies are dropped before the key (inputsFormOf, kanban #1706), so they make no new key.
           let content = '';
           try {
-            content = hex(sha256(new TextEncoder().encode(JSON.stringify([
-              [form.ticks.map((x) => [x.tick, x.words]), form.liquidations, form.loads, form.samples, form.tapes],
-              (options.marks || []).map((m) => [m.tick, hex(m.stateHash)])]))));
+            content = hex(sha256(new TextEncoder().encode(replayKeyOf(form, options.marks))));
           } catch { content = ''; }
           const ticksAsked = (options.hashTicks || []).join('.');
           const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${content}${ticksAsked ? `:h${ticksAsked}` : ''}`;
@@ -2218,6 +2255,44 @@ export class Verifier {
     }
     report.refused.push('no signer node served the transcript the agreed result names');
     return null;
+  }
+
+  /**
+   * THE TRANSCRIPT HASHES THIS NODE ITSELF TIES TO AN ENTRY (kanban #1802): its own result's, its canonical transcript's,
+   * the empty transcript of an entry that never started, and a head-to-head entry's reveal record - each names the
+   * entry inside its bytes, so none of them is another entry's.
+   */
+  #transcriptsOfEntry(roundIdBytes, entryIdBytes, contract) {
+    const out = new Set();
+    for (const r of this.round.results(roundIdBytes, entryIdBytes)) {
+      if (hex(r.nodePubkey) !== hex(this.round.pubkey)) continue;
+      const named = namedTranscript(r.bytes);
+      if (named) out.add(named);
+    }
+    try { out.add(hex(this.round.canonicalTranscript(roundIdBytes, entryIdBytes).hash)); } catch { /* none held */ }
+    out.add(hex(hashOfTranscript(this.#unstarted(roundIdBytes, entryIdBytes))));
+    if (this.#headToHead(contract)) {
+      const rv = this.round.revealsOf(roundIdBytes).find((r) => hex(r.entryId) === hex(entryIdBytes));
+      out.add(hex(transcriptBytesHash(this.#revealRecord(entryIdBytes, rv))));
+    }
+    return out;
+  }
+
+  /** Does a peer serve, for this entry, bytes that hash to `named` AND name this entry inside them (kanban #1802)? */
+  async #transcriptTiedTo(roundIdBytes, entryIdBytes, named, contract) {
+    const h2h = !!this.#headToHead(contract);
+    for (const peer of this.peersOf(roundIdBytes)) {
+      try {
+        const answer = await peerFetch(`${peer}/canonical?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
+        if (!answer.ok) continue;
+        const bytes = await peerBody(answer);
+        if (hex(transcriptBytesHash(bytes)) !== named) continue;
+        if (h2h) { if (bytes.length >= 33 && hex(bytes.slice(0, 32)) === hex(entryIdBytes)) return true; continue; }
+        const t = decodeTranscript(bytes);
+        if (hex(t.roundId) === hex(roundIdBytes) && hex(t.entryId) === hex(entryIdBytes)) return true;
+      } catch { /* the next peer may have it */ }
+    }
+    return false;
   }
 
   /** One posting from a peer: about this round and player, from a joined signer node, and signed by it. */

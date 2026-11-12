@@ -66,7 +66,7 @@ import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } 
 import { askPeers, PEER_ASK_MS, PEER_READ_MS, PEER_GRACE_MS } from './peer-ask.js';
 import { namedClaims, namedClaimKeys, namedSignerSet, zKey } from '../../arena-protocol/src/arena-lock.js';
 import { offTableOn, offTablePayouts, swapRefundOn, swappedRefundPayouts, settleHoldOn } from './test-named-offence.js';
-import { lostForfeitAllowed, LOCK_FATE, lockFateStep, lockFateOf, markLockFate } from './forfeit.js';
+import { lostForfeitAllowed, LOCK_FATE, lockFateStep, lockFateOf, markLockFate, misnamedSigners } from './forfeit.js';
 import { namedSlots, NamedNonces, aggregateBatch, signerSetKey, encodeNamedCommitment, decodeNamedCommitment, encodeNamedList, decodeNamedList,
   encodeNamedPartials, decodeNamedPartials, encodeNamedBatch, decodeNamedBatch } from './named-settlement.js';
 // the payouts of an accepted settlement kept as rows (GET /donations, GET /reserves): a walk-away's donation keys and a market's reserve
@@ -1436,6 +1436,14 @@ export class LockSettlement {
    * (dkg.publicSharesFor) each whose share does not stand (#leaveOut, kanban #1070). `scope` null notes no pass: a late settlement's has no stall note.
    */
   async #gatherShares(roundIdBytes, m, q, signers, scope, refusedBy, own) {
+    // EACH PEER UNDER ITS OWN ID (kanban #1807, forfeit.js misnamedSigners), checked before any share is asked; a list that still throws is a refusal, never an abort
+    const misnamed = misnamedSigners(signers, m.contract && m.contract.nodes);
+    if (misnamed.length) return { ...refuse(`${misnamed[0]} committed under an id that is not its own on this list`), withheld: misnamed };
+    try { return await this.#gatherChecked(roundIdBytes, m, q, signers, scope, refusedBy, own); }
+    catch (e) { return { ...refuse(`the settlement list could not be signed: ${e.message}`, 500), withheld: [] }; }
+  }
+
+  async #gatherChecked(roundIdBytes, m, q, signers, scope, refusedBy, own) {
     const commitments = signers.map((s) => s.commitment).sort((a, b) => a.id - b.id);
     const named = stallsOut(m.contract);
     const shares = [], gave = [], failed = [], withheld = [], refusers = [...refusedBy];

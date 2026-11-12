@@ -94,8 +94,10 @@ test('Hexbox 1: a full bed with no fee and no BTC is refused, and nothing of the
   assert.throws(() => send(10, () => HELD, [[0, 0, 0]]), /carries no room/, 'no room scores 0.7 of a bed: refused too');
   assert.throws(() => send(10, () => HELD, [[0, 0, 0, 275250]]), /which no bed of parcels fills/, 'the old fixture bed');
   assert.deepEqual(stored(), []);
+  // 1 sat a parcel is not a mempool's price either (kanban #1740, #1800): the bed's parcels pay 245 sats at 0.1 sat/vB
+  assert.throws(() => send(10, () => HELD, [[0, 7, 0, 393214]]), /pays 7 sats: parcels that fill it pay at least 245 sats/);
   // and the run goes on with an honest batch at the same tick
-  assert.equal(send(10, () => HELD, [[0, 9, 0, 393214]]), 10);
+  assert.equal(send(10, () => HELD, [[0, 245, 0, 393214]]), 10);
 });
 
 test('Hexbox 2: drive empty, then declare a bed before the gate - refused', () => {
@@ -124,9 +126,11 @@ test('the rest of the shape: negative, absurd and misplaced loads (two at one ti
     [[[0, 0, 3, 0]], /an empty bed carrying 0 sats and 3/],
     [[[0, 1, 0, 2 * 36044]], /2 parcels at the fewest - and pays 1 sats/],
     [[[10, 9, 0, 36044]], /not at a tick this batch carries \(0 \.\. 9\)/],
+    [[[0, 11, 0, 2 * 36044]], /pays 11 sats: parcels that fill it pay at least 12 sats/],
+    [[[0, 149, 0, 88474]], /pays 149 sats: parcels that fill it pay at least 150 sats/],
   ];
   for (const [loads, why] of refused) assert.throws(() => send(10, () => HELD, loads), why, JSON.stringify(loads));
-  assert.equal(send(10, () => HELD, [[9, 2, BTC_MOST_HUND, 2 * 36044]]), 10, 'the edges themselves are taken');
+  assert.equal(send(10, () => HELD, [[9, 12, BTC_MOST_HUND, 2 * 36044]]), 10, 'the edges themselves are taken');
 });
 
 test('loads real pages declared on a testnet4 seat (node-1.db, 2026-10-06 .. 11-11) all pass the value rules', () => {

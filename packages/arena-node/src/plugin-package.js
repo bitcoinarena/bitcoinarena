@@ -54,13 +54,24 @@ export function verifyPackage(pkg, { verify, want = null, parentOf } = {}) {
   return r;
 }
 
-/** Kept on disk, one directory per game id: the package as fetched and its files. */
-export function installPackage(dir, pkg, gameId) {
+// THE TITLE THIS SEAT GAVE A GAME IS KEPT APART FROM THE PACKAGE (kanban #1716, #1780, after #1541): package.json is the package
+// as a serving seat handed it, and a build before #1541 kept it as fetched - so its `title` (and any mark inside it) may be a
+// relaying seat's. Only SEAT_TITLE_FILE, which only this seat writes (adoptPackage through installPackage's `title`), names
+// the title; a game kept without one is shown under its manifest's signed gameName.
+export const SEAT_TITLE_FILE = 'seat-title.json';
+/** The title this seat wrote for the game kept at `at`, or null (none written, or unreadable). */
+export function seatTitleAt(at) {
+  try { const j = JSON.parse(readFileSync(join(at, SEAT_TITLE_FILE), 'utf8')); return typeof j.title === 'string' && j.title ? j.title.slice(0, 80) : null; } catch { return null; }
+}
+
+/** Kept on disk, one directory per game id: the package as fetched and its files; `title`, when given, as this seat's title. */
+export function installPackage(dir, pkg, gameId, { title = null } = {}) {
   const at = join(dir, gameId);
   mkdirSync(at, { recursive: true });
   for (const c of pkg.cores) writeFileSync(join(at, `core-${c.hash}.mjs`), Buffer.from(c.source, 'base64'));
   for (const k of pkg.clients || []) writeFileSync(join(at, `client-${k.hash}.html`), Buffer.from(k.body, 'base64'));
   writeFileSync(join(at, 'package.json'), JSON.stringify(pkg));
+  if (typeof title === 'string' && title) writeFileSync(join(at, SEAT_TITLE_FILE), JSON.stringify({ title: title.slice(0, 80) }));
   return at;
 }
 
@@ -75,7 +86,10 @@ export async function registrationFromPackage(at, pkg, { title = null } = {}) {
     const file = join(at, `core-${c.hash}.mjs`);
     if (sha(readFileSync(file)) !== c.hash) throw new Error(`core ${c.hash.slice(0, 16)} changed on disk`);
     // NEVER IMPORTED INTO THIS THREAD (§0A.6): loaded into its sandbox from the bytes just checked
-    const core = { name: c.name, hash: c.hash, url: pathToFileURL(file).href, configs: new Map((c.configs || []).map((h) => [h, {}])) };
+    // THE CONFIGS ARE THE SIGNED MANIFEST'S (kanban #1814): a package's cores[].configs are signed by nobody, so a relaying seat
+    // could empty them (every round of the version refused) or add one the manifest does not list (hostedPlugins throws)
+    const signed = manifest.cores.find((m) => toHex(m.hash) === c.hash);
+    const core = { name: c.name, hash: c.hash, url: pathToFileURL(file).href, configs: new Map((signed ? signed.configs : []).map((h) => [toHex(h), {}])) };
     // THE INSTALL LOAD IS HELD TO THE TRIAL'S BOUND (kanban #1694): a core that passed the trial loaded within TRIAL_MS, so the
     // seat waits no longer for it here (was LOAD_MS, 10 s of the node's thread per version, on install and every restart)
     if (!sandboxFor(core, { loadMs: TRIAL_MS }).meta.decide) throw new Error(`core ${c.hash.slice(0, 16)} exports no DECIDE`);
@@ -101,8 +115,8 @@ export async function loadInstalled(dir, { verify }) {
     try { pkg = JSON.parse(readFileSync(join(at, 'package.json'), 'utf8')); } catch (e) { refused.push({ dir: at, why: e.message }); continue; }
     const v = verifyPackage(pkg, { verify, want: id });
     if (!v.ok) { refused.push({ dir: at, why: v.why }); continue; }
-    // the package.json this seat wrote itself (adoptPackage keeps the name and title it trusts, kanban #1541)
-    try { registrations.push(await registrationFromPackage(at, pkg, { title: pkg.title })); } catch (e) { refused.push({ dir: at, why: e.message }); }
+    // the title this seat wrote itself (kanban #1541, #1716, #1780): never package.json's, which an older build kept as a seat relayed it
+    try { registrations.push(await registrationFromPackage(at, pkg, { title: seatTitleAt(at) })); } catch (e) { refused.push({ dir: at, why: e.message }); }
   }
   return { registrations, refused };
 }
