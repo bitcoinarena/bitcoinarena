@@ -49,14 +49,26 @@ export function pruneTranscripts({ db, nowMs = Date.now(), keptUntil = (row) => 
 // RELAYED TRANSCRIPTS LEAVE WITH THEM (kanban #1532): a transcript this seat keeps as a publication relay (PUT /transcript, the
 // `relayed` table) goes when its round's claim window has ended, as the round's own transcript does. Its round is read from the
 // bytes the door took: a transcript names it (type 0x09, version, round id), a head-to-head reveal record (33 or 65 bytes) names an
-// entry this seat holds. Anything else there (slash proofs) is not touched; a round this seat no longer holds is not guessed at.
-export function pruneRelayed({ db, nowMs = Date.now(), keptUntil = (row) => transcriptKeptUntil(decodeRoundContract(new Uint8Array(row.contract)), row.closed_ms) }) {
-  const rows = db.prepare(`SELECT hash, CASE WHEN LENGTH(bytes) >= 67 AND SUBSTR(bytes, 1, 1) = x'09' THEN SUBSTR(bytes, 4, 32)
+// entry this seat holds. Anything else there (slash proofs) is not touched.
+//
+// A RELAYED COPY IS NEVER KEPT FOR EVER (kanban #1725, #1795, refute of #1532): a round whose contract names no claim window (no rules
+// block - the duty poster's DUTY_TEMPLATE) keeps its own transcript, but the copies the relay door took for it go RELAY_NO_WINDOW_DAYS
+// after max(entry close, close here) + W; a copy whose round this seat no longer holds, or whose contract it cannot read, goes
+// RELAY_NO_WINDOW_DAYS after the door took it (seen_ms). Otherwise one entry's junk in such a round kept the relay pool full for good.
+export const RELAY_NO_WINDOW_DAYS = 7;
+export function relayedKeptUntil(contract, closedMs = 0) {
+  const until = transcriptKeptUntil(contract, closedMs);
+  if (until !== null) return until;
+  return Math.max(Number(contract.entryCloseMs), Number(closedMs || 0)) + Number(contract.objectionWindowMs) + RELAY_NO_WINDOW_DAYS * DAY_MS;
+}
+export function pruneRelayed({ db, nowMs = Date.now(), keptUntil = (row) => relayedKeptUntil(decodeRoundContract(new Uint8Array(row.contract)), row.closed_ms) }) {
+  const rows = db.prepare(`SELECT hash, seen_ms, CASE WHEN LENGTH(bytes) >= 67 AND SUBSTR(bytes, 1, 1) = x'09' THEN SUBSTR(bytes, 4, 32)
     WHEN LENGTH(bytes) IN (33, 65) THEN (SELECT round_id FROM entries WHERE entry_id = SUBSTR(relayed.bytes, 1, 32)) END AS rid FROM relayed`).all();
   const roundOf = db.prepare('SELECT contract, closed_ms FROM rounds WHERE round_id = ?');
   const del = db.prepare('DELETE FROM relayed WHERE hash = ?');
   const untilOf = new Map(); let deleted = 0;
-  for (const { hash, rid } of rows) {
+  const lastly = (seenMs) => Number(seenMs || 0) + RELAY_NO_WINDOW_DAYS * DAY_MS;
+  for (const { hash, rid, seen_ms: seenMs } of rows) {
     if (!rid) continue;
     const k = Buffer.from(rid).toString('hex');
     if (!untilOf.has(k)) {
@@ -65,8 +77,8 @@ export function pruneRelayed({ db, nowMs = Date.now(), keptUntil = (row) => tran
       try { until = row ? keptUntil(row) : null; } catch { until = null; }
       untilOf.set(k, until);
     }
-    const until = untilOf.get(k);
-    if (until === null || nowMs < until) continue;
+    const u = untilOf.get(k), until = Number.isFinite(u) ? u : lastly(seenMs);
+    if (nowMs < until) continue;
     deleted += Number(del.run(hash).changes);
   }
   return { deleted };
