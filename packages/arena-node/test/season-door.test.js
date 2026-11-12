@@ -214,6 +214,8 @@ test('GET /season?scope=network: the other seats\' rounds merged, a round counte
     seed(d.round, now);
     const game = toHex(NEXTBLOCK_GAME_ID);
     const mine = await (await fetch(`http://127.0.0.1:${d.port}/season-rounds?game=nextblock`)).json();
+    // kanban #2355: another seat hands on its copies with its own signature or none, never this seat's (a seat that does is not read)
+    mine.rounds = mine.rounds.map((r) => ({ ...r, sigs: [] }));
     const local = await (await fetch(`http://127.0.0.1:${d.port}/season?game=nextblock`)).json();
     const extra = { roundId: 'ee'.repeat(32), gameId: game, startMs: String(now - HOUR), void: false,
       entries: [{ player: X, name: 'bob', stakeMsat: '0', payoutMsat: '0', outcome: 'DELIVERED', score: 42 }] };
