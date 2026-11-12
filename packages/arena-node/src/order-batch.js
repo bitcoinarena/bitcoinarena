@@ -418,6 +418,10 @@ export class OrderBook {
       if (!L.ok) return L;
       const bad = L.refused.filter((r) => rec.sells.some((s) => s.id === r.id));
       if (bad.length) return refuse(`a sell of that batch does not stand: ${bad[0].why}`);
+      // A CANCEL ONLY OF AN ORDER THE BOOK HOLDS (kanban #1489): a leader carrying a cancel before its order got the batch signed - the
+      // ledger skipped the cancel, the cancel was marked batched for good (one id per entry), and the order filled in the next batch
+      const lost = L.refused.find((r) => r.why.startsWith('a cancel') && (record.cancels || []).some((c) => c.entry === r.id));
+      if (lost) return refuse(`a cancel of that batch does not stand: ${lost.why}`);
     }
     return { ok: true, id: rec.id, k, events: rec.events };
   }
@@ -768,7 +772,11 @@ export class OrderBook {
     }
     const record = { k: String(k), orders, cancels: [...cancels.values()], sells: [...sells.values()], leader: toHex(this.round.pubkey) };
     // a sell beyond what its entry holds unsold is left out (the seats would refuse the whole set over it)
-    { const L = this.ledger(roundIdBytes, record); if (L.ok && L.refused.length) record.sells = record.sells.filter((s) => !L.refused.some((r) => r.id === this.#sellStands(roundIdBytes, s).id)); }
+    // and a cancel whose order neither the book nor this set holds waits for a later batch (kanban #1489: the seats refuse the set over it)
+    { const L = this.ledger(roundIdBytes, record); if (L.ok && L.refused.length) {
+      record.sells = record.sells.filter((s) => !L.refused.some((r) => r.id === this.#sellStands(roundIdBytes, s).id));
+      record.cancels = record.cancels.filter((c) => !L.refused.some((r) => r.id === c.entry && r.why.startsWith('a cancel')));
+    } }
     if (!record.orders.length && !record.cancels.length && !record.sells.length) return { ok: true, empty: true, decided };
     const idc = this.#recordId(roundIdBytes, record);
     if (!idc.ok) return idc;
