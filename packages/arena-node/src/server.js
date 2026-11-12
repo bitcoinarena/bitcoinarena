@@ -196,7 +196,7 @@ import { SIGNED_RESULT_BYTES, resultId, decodePlayerResult, splitSignedResult } 
 export const MAX_FRAME_BYTES = Math.max(
   MAX_SIGNED_INPUT_BATCH_BYTES, SIGNED_CHECKPOINT_BYTES, SIGNED_RECEIPT_BYTES);
 import { CLOSED } from './store.js';
-import { Round, refusedLockOwnId } from './round.js';
+import { Round, refusedLockOwnId, lockClaimHolds } from './round.js';
 import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { gameLive } from './game-live.js';
@@ -4496,6 +4496,48 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // AN ENTRY'S STAKE LOCK AND FEE LOCK, CHECKED WITH THE FEDERATION AND KEPT: what POST /lock and POST /fee-lock do, and what a seat does
   // for an order a certified batch names that never reached it (replayOrder below). Answers verifyStakeLock's / verifyFeeLock's answer.
+  // WHICH ENTRY THE ROUND'S OTHER SEATS TOOK FIRST NAMING A LOCK OUTPOINT (kanban #1692, #1758): a copy of a player's entry posted to the seats
+  // the page had not reached yet was the first there and kept the player's lock. Each seat of the round is asked (GET /lock-namer), beside
+  // the federation; an answer counts only when its bytes are an entry of that id naming that outpoint under the same player key. A seat that
+  // does not answer in time adds nothing. stake-lock-signer-node.js namedFirstByAnother then hands the lock to the entry taken earliest.
+  const namersAtPeers = async ({ kind, outpoint, entry }) => {
+    const field = kind === 'fee' ? 'feeLockOutpoint' : 'stakeLockOutpoint';
+    const op = `${toHex(outpoint.txid)}:${outpoint.outIdx}`;
+    const peers = [...new Set((verifier.peersOf(entry.roundId) || []).map((x) => String(x).replace(/\/+$/, '')))];
+    const said = await Promise.all(peers.map(async (base) => {
+      try {
+        const r = await fetch(`${base}/lock-namer?kind=${kind}&outpoint=${op}&player=${toHex(entry.playerPubkey)}`, { signal: AbortSignal.timeout(1500) });
+        if (!r.ok) return null;
+        const body = await r.json();
+        if (!body || typeof body.entry !== 'string' || typeof body.bytes !== 'string' || !Number.isFinite(body.joinedMs)) return null;
+        const bytes = fromHex(body.bytes), e = decodeEntryContract(bytes), id = idOfEntry(e);
+        if (toHex(id) !== body.entry.toLowerCase()) return null;
+        const o = e[field];
+        if (!o || toHex(o.txid) !== toHex(outpoint.txid) || o.outIdx !== outpoint.outIdx) return null;
+        if (toHex(e.playerPubkey) !== toHex(entry.playerPubkey)) return null;
+        // THE PLAYER'S CLAIMS THAT SEAT HOLDS (kanban #1897, #1938): each checked here - its bytes an entry of that id naming this outpoint under
+        // this player key, its signature the entry's stake point's - and kept, so a claim reaches a seat the page did not. A peer can show a claim,
+        // never forge one; its time (joinedMs) only ever refuses (stake-lock-signer-node.js namedFirstByAnother), it never picks the winner.
+        const claimed = [];
+        for (const c of Array.isArray(body.claimed) ? body.claimed.slice(0, 8) : []) {
+          try {
+            if (!c || typeof c.entry !== 'string' || typeof c.bytes !== 'string' || typeof c.sig !== 'string') continue;
+            const cb = fromHex(c.bytes), ce = decodeEntryContract(cb), cid = idOfEntry(ce);
+            if (toHex(cid) !== c.entry.toLowerCase()) continue;
+            const co = ce[field];
+            if (!co || toHex(co.txid) !== toHex(outpoint.txid) || co.outIdx !== outpoint.outIdx) continue;
+            if (toHex(ce.playerPubkey) !== toHex(entry.playerPubkey)) continue;
+            const sig = fromHex(c.sig);
+            if (!lockClaimHolds(cb, new Uint8Array(cid), sig).ok) continue;
+            if (round.entry(cid)) round.putLockClaim(new Uint8Array(cid), sig);
+            claimed.push({ entryId: new Uint8Array(cid), entry: ce }); // its bytes decoded: the signer checks its stake point (kanban #2069)
+          } catch { /* one bad claim adds nothing */ }
+        }
+        return { entryId: new Uint8Array(id), joinedMs: Number(body.joinedMs), entry: e, claimed };
+      } catch { return null; }
+    }));
+    return said.filter(Boolean);
+  };
   const takeStakeLock = async (eid, fields, timing = {}) => {
     const stored = round.entry(eid);
     if (!stored) return { ok: false, status: 404, why: 'this node holds no such entry' };
@@ -4510,14 +4552,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (ef.ok) { const t = Date.now(); reserveKey = await reserveKeyFor(toHex(ef.federationId)); timing.reserveKeyMs = Date.now() - t; } split = roundSplitBps(feesFor(rcx)); }
     try {
       const t = Date.now(); const port = (await portOfEntryBytes(stored)) || stakeLocks; timing.portMs = Date.now() - t;
-      return await verifyStakeLock({ round, port, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split, timing });
+      return await verifyStakeLock({ round, port, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split, timing, namersAtPeers });
     } catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
   };
   const takeFeeLock = async (eid, fields) => {
     const stored = round.entry(eid);
     if (!stored) return { ok: false, status: 404, why: 'this node holds no such entry' };
     const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
-    try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
+    try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, namersAtPeers }); }
     catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
   };
   // A ROUND WHOSE ENTRIES AND LOCKS A SEAT HANDS ON (kanban #1216): every round it holds that is a game's - head-to-head (kanban #1068) or replayed;
@@ -9285,6 +9327,38 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       // AN ORDER'S LOCKS AS THIS SEAT VERIFIED THEM (kanban #620): the stake lock's and the fee lock's fields - what the federation holds at
       // the outpoints the entry names - for a seat that holds the order's certified batch but never received its locks (replayOrder)
+      // THE ENTRY THIS SEAT TOOK FIRST NAMING A LOCK OUTPOINT (kanban #1692, #1758): what a seat of the round asks before it verifies a lock
+      // (namersAtPeers) - in any round this seat holds, of that player key; its bytes, so the asker checks what it is told. Entries are public.
+      if (req.method === 'GET' && url.pathname === '/lock-namer') {
+        const kind = url.searchParams.get('kind'), m = /^([0-9a-f]{64}):([0-9]{1,10})$/i.exec(url.searchParams.get('outpoint') || '');
+        const player = Buffer.from(url.searchParams.get('player') || '', 'hex');
+        if ((kind !== 'stake' && kind !== 'fee') || !m || player.length !== 32) return text(res, 400, 'GET /lock-namer?kind=stake|fee&outpoint=<txid>:<index>&player=<player key>');
+        const first = round.firstNamingOfLock(null, kind, { txid: fromHex(m[1].toLowerCase()), outIdx: BigInt(m[2]) }, new Uint8Array(player));
+        if (!first) return text(res, 404, 'this seat holds no entry naming that lock');
+        // and the player's claims this seat holds for that lock (kanban #1897, #1938): the asker checks each signature itself
+        const claimed = round.claimedNamingsOfLock(kind, { txid: fromHex(m[1].toLowerCase()), outIdx: BigInt(m[2]) }, new Uint8Array(player)).slice(0, 8)
+          .map((c) => ({ entry: toHex(c.entryId), bytes: toHex(c.bytes), sig: toHex(c.sig) }));
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ entry: toHex(first.entryId), joinedMs: first.joinedMs, bytes: toHex(first.bytes), claimed }));
+      }
+      // THE PLAYER'S CLAIM ON AN ENTRY'S LOCKS (kanban #1897, #1938; protocol lock-claim.js): POST /lock-claim?entry=<id> with the 64-byte BIP-340
+      // signature by the entry's stake point over lockClaimDigest(id), which the page sends with its entry. Checked before it is kept; once kept,
+      // a lock outpoint this entry names goes only to a claimed entry - a copy of the entry under another session key can never make one.
+      // GET /lock-claim?entry=<id> answers the kept signature. Entries and claims are public.
+      if (url.pathname === '/lock-claim' && (req.method === 'POST' || req.method === 'GET')) {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, `${req.method} /lock-claim?entry=<entry id>`);
+        if (req.method === 'GET') {
+          const sig = round.lockClaim(new Uint8Array(eid));
+          if (!sig) return text(res, 404, 'this seat holds no claim for that entry');
+          res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+          return res.end(Buffer.from(sig));
+        }
+        const sig = new Uint8Array(await read(req));
+        const kept = round.putLockClaim(new Uint8Array(eid), sig);
+        if (!kept.ok) return text(res, /no such entry/.test(kept.why) ? 404 : 400, kept.why);
+        return text(res, 201, 'lock claim kept: the locks this entry names go to a claimed entry only');
+      }
       if (req.method === 'GET' && url.pathname === '/order-locks') {
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'GET /order-locks?entry=<entry id>');
