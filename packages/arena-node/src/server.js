@@ -4603,18 +4603,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const takeEntryParts = async (rid, entryHex, from) => {
     const eid = fromHex(entryHex), entry = decodeEntryContract(round.entry(eid));
     if (entry.stakeMsat === 0n) return null;
-    const ofPeers = async (path, read) => (await Promise.all(from.map(async (base) => {
+    const ofPeers = async (path, read) => (await Promise.all([...new Set(from)].map(async (base) => {   // each peer once (kanban #1823: its answers are counted)
       try { const r = await peerGet(`${base}${path}`); return r.ok ? await read(r) : null; } catch { return null; }
     }))).filter(Boolean);
     let why = null;
     if (!round.stakeLock(eid) || (round.feeLock && !round.feeLock(eid))) {
-      for (const locks of await ofPeers(`/order-locks?entry=${entryHex}`, (r) => r.json())) {
+      const answers = await ofPeers(`/order-locks?entry=${entryHex}`, (r) => r.json());
+      for (const locks of answers) {
         why = null;
         try {
           if (locks.stake && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, lockFieldsFromJson(locks.stake)); if (!g.ok) why = `its stake lock: ${g.why}`; }
           if (locks.fee && round.feeLock && !round.feeLock(eid)) { const g = await takeFeeLock(eid, lockFieldsFromJson(locks.fee)); if (!g.ok) why = `its fee lock: ${g.why}`; }
         } catch (e) { why = e.message; }
         if (!why) break;
+      }
+      // A LOCK NO THRESHOLD OF SEATS CLAIMS IS NO REASON TO WAIT (kanban #1823, audit #1489 r6-h2h-3): the last failing answer was the wait, so for an entry
+      // nobody locked (an abandoned join, a stranger's lockless entry) ONE peer answering 200 with junk lock fields kept this seat waiting on every pass until
+      // the result window ran out, and it signed nothing for the round's real players. A lock that fails here is the answering peer's fault; this seat waits
+      // for one only while at least the round's threshold of peers say they verified a lock of it - only then can the entry be seated without this seat.
+      if (why) {
+        let needed = Infinity;
+        try { needed = roundThreshold(decodeRoundContract(new Uint8Array(round.get(rid).contract)).settlementSlots); } catch { /* no threshold read: no wait */ }
+        if (answers.length < needed) why = null;
       }
     }
     if (!round.payoutAddress(eid)) {
