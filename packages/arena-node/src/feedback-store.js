@@ -298,7 +298,21 @@ export function openFeedbackStore(path = ':memory:') {
     const r = get.get(String(id));
     if (!r) return { ok: false, why: 'no such report' };
     const said = comment === null || comment === undefined ? null : String(comment).replace(/\s+/g, ' ').trim().slice(0, COMMENT_MOST) || null;
-    const had = db.prepare('SELECT * FROM rewards WHERE report = ?').get(r.id);
+    let had = db.prepare('SELECT * FROM rewards WHERE report = ?').get(r.id);
+    // AN OPEN LINK OF ANOTHER NETWORK IS MADE AGAIN ON THIS ONE (kanban #2452, state audit 2026-11-12 SM-21 x SM-22, after #1784): a testnet4 link left
+    // open by the payout switch (2026-11-11) was refused by every payer and answered again here, so its approved report stayed accepted for good - and a
+    // node bounty held the node's one bounty and a NODE_BOUNTY_MOST place. While the row is open and its report approved, the admin's reward action
+    // moves it to `network` under a new k1 (one compare-and-set from open: the old link is dead, never paid on either network); failed tries are
+    // cleared. A paying or paid row stays as it is: settle() asks only the payer of its own network (#1784, #2177).
+    if (had && had.state === 'open' && String(had.network) !== String(network) && r.state === STATES.ACCEPTED) {
+      const k1 = randomBytes(32).toString('hex');
+      if (db.prepare("UPDATE rewards SET k1 = ?, network = ?, created_ms = ?, invoice = NULL, payment_hash = NULL, tried_ms = NULL, address = NULL, why = NULL WHERE k1 = ? AND state = 'open' AND network = ?")
+        .run(k1, String(network), nowMs, had.k1, had.network).changes !== 1) return { ok: false, why: 'its reward is being paid: try again in a minute' };
+      db.prepare('INSERT INTO report_moves (id, from_state, to_state, at_ms, by, note) VALUES (?, ?, ?, ?, ?, ?)').run(r.id, r.state, r.state, nowMs, by,
+        `reward link made again, ${had.amount_sats} sat on ${network} (the ${had.network} link is withdrawn)`);
+      if (said !== null) db.prepare("UPDATE rewards SET comment = ? WHERE k1 = ? AND state = 'open'").run(said, k1);
+      return { ok: true, reward: rewardRow(rewardOf.get(k1)), made: true };
+    }
     if (had) { if (said !== null && had.state === 'open') db.prepare("UPDATE rewards SET comment = ? WHERE k1 = ? AND state = 'open'").run(said, had.k1);
       return { ok: true, reward: rewardRow(rewardOf.get(had.k1)), made: false }; }
     if (r.state !== STATES.ACCEPTED || !(r.amount_sats > 0)) return { ok: false, why: 'only an approved report with its amount gets a reward link' };
