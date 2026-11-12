@@ -198,8 +198,30 @@ function returnedHere(round, outpoint) {
   return null;
 }
 
+// THE DOOR'S TIME, KEPT ONLY IF THE FEDERATION ANSWERED IN TIME (kanban #1822, #1551 refute 0 s3, #1489): read right after the federation's answer
+// that found the lock. Past `untilMs` the lock may have been put on the federation only after a move was public: undefined, so the row takes now.
+// AND ONLY WHILE THIS SEAT HOLDS NO OTHER ENTRY'S MOVE (kanban #1846, #1847, #1551 refute 0 s4): the honest page posts its reveal to EVERY committee
+// seat at the close (arena-client head-to-head.js revealMove), so one colluding seat had the move at close + 0 whatever GET /reveals held back,
+// and a lock submitted then still came back by the time bound. The reveal reaches the honest seats at the same moment, so a seat that already holds
+// another entry's reveal of the round when the answer comes back cannot tell that lock from one put on the federation after the move was known:
+// the door time is dropped. A slow federation read is no longer what drops it (an honest lock answered 1.3 s after the close, before any move
+// arrived, keeps it); `untilMs` is now the close + H2H_REVEAL_HOLD_MS, the moment an honest seat serves the moves itself.
+// Returns { atMs, dropped }: `dropped` when a door time was given and is not kept (the door then says the lock seats no one).
+function doorTimeKept(round, atMs, untilMs, entry, entryIdBytes) {
+  if (atMs === undefined || atMs === null || untilMs === undefined || untilMs === null) return { atMs, dropped: false };
+  const late = Math.floor(Number(round.now())) > Number(untilMs);
+  const me = Buffer.from(entryIdBytes);
+  const moveHeld = typeof round.revealsOf === 'function' && round.revealsOf(entry.roundId).some((r) => !Buffer.from(r.entryId).equals(me));
+  return late || moveHeld ? { atMs: undefined, dropped: true } : { atMs, dropped: false };
+}
+
 // `timing` (kanban #605): an object the caller reads afterwards - ms spent asking the federation, checking gifts and reading the fee gate
-export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined, timing = {} }) {
+// `atMs` (kanban #1805): the time the seat's door took this lock and checked its round's lock close, before any await - kept as the lock's verified_ms
+// (round.putStakeLock), so a head-to-head lock handed before the close seats its entry however long the federation takes. Omitted (a repair, a replay): now.
+// `atUntilMs` (kanban #1822, #1551 refute 0 s3): the last moment the federation's answer may come back and `atMs` still count (server.js
+// H2H_DOOR_TIME_KEPT_MS, a head-to-head round's) - an answer after it is after a move may be public, and the lock keeps the answer time; so does
+// an answer that comes back once this seat holds another entry's reveal of the round (kanban #1846). `doorTimeDropped` in the answer then.
+export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined, timing = {}, atMs = undefined, atUntilMs = undefined }) {
   const stored = round.entry(entryIdBytes);
   if (!stored) return { ok: false, why: 'this node holds no such entry' };
   const entry = decodeEntryContract(stored);
@@ -233,6 +255,8 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   const [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
   timing.statusMs = Date.now() - t;
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s stake_lock_outpoint' };
+  let doorTimeDropped;   // read when the answer that found the lock came back (kanban #1822, #1846)
+  ({ atMs, dropped: doorTimeDropped } = doorTimeKept(round, atMs, atUntilMs, entry, entryIdBytes));
   if (String(id) !== String(st.stored.contractId))
     return { ok: false, why: 'the lock at that outpoint is not the contract handed over: its id is another' };
   if (fields.expiration !== st.blockCount + st.stored.blocksLeft)
@@ -260,7 +284,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
       return { ok: false, why: 'another entry of that player key is already staked in this round: one player key stakes one entry' };
     const back = returnedHere(round, outpoint);
     if (back) return { ok: false, why: back }; }
-  round.putStakeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
+  round.putStakeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id), atMs });
   // IN A ROUND WHOSE GATE MINTS, THE STAKE COUNTS ONLY WITH ITS FEE LOCK (pick a): kept,
   // verified, and not seen - no play, no place in the settlement - until the fee lock is.
   t = Date.now();
@@ -271,9 +295,9 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   const gate = await roundMintsFees({ contract, port, ...(gifted ? { feeBps: giftsFeeBps(giftSplit), split: giftSplit } : {}) });
   timing.gateMs = Date.now() - t;
   if (gate.mints && !(round.feeLock && round.feeLock(entryIdBytes)))
-    return { ok: true, contractId: String(id), paidMsat: fields.amountMsat, height: st.blockCount, waitsForFeeLock: true };
-  round.putStakeSeen({ entryId: entryIdBytes, paidMsat: fields.amountMsat });
-  return { ok: true, contractId: String(id), paidMsat: fields.amountMsat, height: st.blockCount };
+    return { ok: true, contractId: String(id), paidMsat: fields.amountMsat, height: st.blockCount, waitsForFeeLock: true, doorTimeDropped };
+  round.putStakeSeen({ entryId: entryIdBytes, paidMsat: fields.amountMsat, atMs });
+  return { ok: true, contractId: String(id), paidMsat: fields.amountMsat, height: st.blockCount, doorTimeDropped };
 }
 
 /**
@@ -283,7 +307,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
  * by field against the entry as the stake lock is. It is claimed for the round's
  * sitting signer nodes in the one settlement, whatever the result.
  */
-export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk }) {
+export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk, atMs = undefined, atUntilMs = undefined }) {   // `atMs`, `atUntilMs`: as verifyStakeLock's (kanban #1805, #1822)
   const stored = round.entry(entryIdBytes);
   if (!stored) return { ok: false, why: 'this node holds no such entry' };
   const entry = decodeEntryContract(stored);
@@ -308,6 +332,8 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   { const back = returnedHere(round, outpoint); if (back) return { ok: false, why: back }; }
   const [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s fee_lock_outpoint' };
+  let doorTimeDropped;   // (kanban #1822, #1846)
+  ({ atMs, dropped: doorTimeDropped } = doorTimeKept(round, atMs, atUntilMs, entry, entryIdBytes));
 
   if (String(id) !== String(st.stored.contractId))
     return { ok: false, why: 'the lock at that outpoint is not the fee contract handed over: its id is another' };
@@ -320,9 +346,11 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   if (otherStakedUnderKey(round, entry, entryIdBytes, 'fee'))
     return { ok: false, why: 'another entry of that player key already has a fee lock in this round: one player key, one fee lock (kanban #1215)' };
   { const back = returnedHere(round, outpoint); if (back) return { ok: false, why: back }; }
-  round.putFeeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
+  round.putFeeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id), atMs });
   // AND A STAKE LOCK ALREADY VERIFIED AND WAITING FOR THIS ONE IS COUNTED NOW (pick a).
   const staked = round.stakeLock ? round.stakeLock(entryIdBytes) : null;
-  if (staked && !round.stakeSeen(entryIdBytes)) round.putStakeSeen({ entryId: entryIdBytes, paidMsat: lockFieldsFromJson(staked.fields).amountMsat });
-  return { ok: true, contractId: String(id), feeMsat: fields.amountMsat, height: st.blockCount };
+  // seen when both locks are held: the later of the two door times (kanban #1805)
+  if (staked && !round.stakeSeen(entryIdBytes)) round.putStakeSeen({ entryId: entryIdBytes, paidMsat: lockFieldsFromJson(staked.fields).amountMsat,
+    atMs: atMs === undefined || atMs === null ? undefined : Math.max(Number(atMs), Number(staked.verifiedMs) || 0) });
+  return { ok: true, contractId: String(id), feeMsat: fields.amountMsat, height: st.blockCount, doorTimeDropped };
 }
