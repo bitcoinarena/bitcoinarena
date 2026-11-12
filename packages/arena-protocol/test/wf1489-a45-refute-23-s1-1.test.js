@@ -7,9 +7,11 @@
 // the set: every paid entry's donation is refused network-wide on those days.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { vestedShares, splitDonation, splitTwoSets, donationSetStands, VESTING_DAY_BLOCKS } from '../src/donation.js';
 
-const key = (n) => Uint8Array.from([0x02, ...new Uint8Array(32).fill(n)]);
+// a real compressed point per n (the 1.9.17 merge: a recipient key must be a secp256k1 point, kanban #1489 v1-refute-3)
+const key = (n) => secp256k1.getPublicKey(Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? (n + 1) & 0xff : i === 30 ? ((n + 1) >> 8) & 0xff : 0)), true);
 const MIXED = [
   { recipientPk: key(1), shareBps: 3333, label: 'a', vesting: { targetBps: 0, startHeight: 0, days: 7 } },
   { recipientPk: key(2), shareBps: 3333, label: 'b', vesting: { targetBps: 0, startHeight: 0, days: 7 } },
