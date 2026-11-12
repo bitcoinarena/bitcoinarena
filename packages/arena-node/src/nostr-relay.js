@@ -240,8 +240,16 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     const tE = timeOn('e.created_at'), tC = timeOn('created_at');
     const and = (ws) => (ws.length ? ` AND ${ws.join(' AND ')}` : '');
     const qs = (l) => l.map(() => '?').join(',');
-    // a stream: (id, created_at, rowid) rows of one index, newest first, the time window applied inside the index, read in keyset pages
-    const stream = (from, eq, args) => ({ sql: `SELECT id, created_at AS t, rowid AS rid FROM ${from} WHERE ${eq}${and(tC.sql)} AND created_at <= ? AND (created_at < ? OR rowid < ?) ORDER BY created_at DESC, rowid DESC LIMIT ?`, args: [...args, ...tC.args] });
+    // a stream: (id, created_at, rowid) rows of one index, newest first, the time window applied inside the index, read in keyset pages.
+    // kanban #2418, #2419 (#1489 a45-refute-11-s3 on #1826): the keyset was 'created_at <= t AND (created_at < t OR rowid < rid)', which is
+    // no index range - each page re-read, and threw away, every row of created_at t it had already returned, so 20,000 events of ONE
+    // created_at walked in pages of 10 were ~20 million index rows (the budget counted 20,000) and one REQ held the event loop ~1.1 s.
+    // Now a page is two index ranges, each read row returned: the rest of the current second (created_at = t AND rowid < rid - rowid is
+    // the trailing key column of every index walked here) and then the older seconds (created_at < t). Same order, same rows.
+    const stream = (from, eq, args) => {
+      const head = `SELECT id, created_at AS t, rowid AS rid FROM ${from} WHERE ${eq}${and(tC.sql)} AND created_at`;
+      return { grp: `${head} = ? AND rowid < ? ORDER BY rowid DESC LIMIT ?`, older: `${head} < ? ORDER BY created_at DESC, rowid DESC LIMIT ?`, args: [...args, ...tC.args] };
+    };
     const onEvents = (c, timed) => ({ ...c, drive: `SELECT e.id AS id FROM events e WHERE ${c.where}${timed ? and(tE.sql) : ''}`, driveArgs: [...c.args, ...(timed ? tE.args : [])] });
     if (f.ids) conds.push({ ...onEvents(hexIn('e.id', f.ids), false), streams: null, seeks: f.ids.length });
     if (f.authors) conds.push({ ...onEvents(hexIn('e.pubkey', f.authors), true), seeks: f.authors.length,
@@ -320,10 +328,11 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     const check = db.prepare(`SELECT e.json AS json FROM (SELECT value AS id FROM json_each(?)) d CROSS JOIN events e ON e.id = d.id WHERE 1${where} ORDER BY e.created_at DESC`);
     const checkBatch = (ids) => { for (const r of check.all(JSON.stringify(ids), ...q.check.args)) if (out.length < q.limit) out.push(r.json); };
     const page = Math.max(8, Math.min(512, Math.floor(Math.max(budget.left, 32) / 4 / q.streams.length)));
-    const fill = (s) => {
-      let st = stmts.get(s.sql);
-      if (!st) stmts.set(s.sql, (st = db.prepare(s.sql)));
-      s.buf = st.all(...s.args, s.t, s.t, s.rid, page); s.pos = 0; s.end = s.buf.length < page;
+    const prep = (sql) => { let st = stmts.get(sql); if (!st) stmts.set(sql, (st = db.prepare(sql))); return st; };
+    const fill = (s) => {   // kanban #2418: the rest of second s.t below s.rid, then older seconds - both index ranges
+      s.buf = prep(s.grp).all(...s.args, s.t, s.rid, page);
+      if (s.buf.length < page) s.buf.push(...prep(s.older).all(...s.args, s.t, page - s.buf.length));
+      s.pos = 0; s.end = s.buf.length < page;
       if (s.buf.length) { const l = s.buf[s.buf.length - 1]; s.t = l.t; s.rid = l.rid; }
       return s.buf.length > 0;
     };
