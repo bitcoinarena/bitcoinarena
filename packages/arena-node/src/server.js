@@ -339,6 +339,10 @@ const presenceTables = (round) => { let t = presenceByRound.get(round); if (!t) 
 // (256 MiB, ARENA_RELAY_MOST); past it a door answers 507 and keeps nothing.
 const RELAY_MOST = Number(process.env.ARENA_RELAY_MOST) > 0 ? Number(process.env.ARENA_RELAY_MOST) : 256 * 1024 * 1024;
 const read = readRequestBody;
+// the largest seating certificate POST /seating takes (kanban #1711). In 1.9 a certificate is its body and signatures (9 seated: 1,192 bytes);
+// in 2.0 it also carries the SEEN groups (present and left-out lists), the justifications of second signatures and the bonds' presigs, so the
+// bound is 1 MiB - far above any committee's, and an eighth of the 8 MiB body a padded certificate came in under
+const SEATING_CERT_MOST = 1024 * 1024;
 
 // A BROWSER IS THE CLIENT, and a browser will never be on this origin.
 //
@@ -12727,7 +12731,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // stands against this node's draw; one that differs from the one held is the proof of equivocation
       if (seating && req.method === 'POST' && url.pathname === '/seating') {
         let rid, role, k;
-        try { const c = decodeSeatingCertificate(await read(req)); rid = c.roundId; role = c.role; k = seating.keepCert(rid, role, encodeSeatingCertificate(c)); }
+        // AT MOST A SEATING'S SIZE (kanban #1711): a certificate is a few hundred bytes per seated node (9 seated: 1,192 bytes);
+        // a padded one of megabytes is refused at the door, before it is decoded
+        let body; try { body = await read(req, SEATING_CERT_MOST); } catch (e) { return text(res, e && e.tooLarge ? 413 : 400, e && e.message || 'no body'); }
+        try { const c = decodeSeatingCertificate(body); rid = c.roundId; role = c.role; k = seating.keepCert(rid, role, encodeSeatingCertificate(c)); }
         catch (e) { return text(res, 400, `not a seating certificate: ${e.message}`); }
         if (!k.ok) return text(res, 409, k.why);
         return json(res, k.equivocation ? 200 : 201, k);
