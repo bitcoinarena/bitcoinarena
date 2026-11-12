@@ -2797,8 +2797,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     verify: verifySchnorrKept,   // kept per (sig, msg, key): a PRESENT refused once is not checked again (kanban #587)
     log: (m) => console.log(m), windowOf: marketWindowFor,
     // A V2 ROUND'S SEATS (2026.0.2): the settlement seating's certified seated set is the round's 7 signer nodes
-    onSeated: (rid, role, seated, contract = null) => {
+    onSeated: (rid, role, seated, contract = null, { replaced = false } = {}) => {
+      // A SEATING THAT REPLACED THE ONE HELD (kanban #2245) DROPS EVERY KEPT COPY OF THE OLD ONE, for both roles (kanban #2363, wf1489 a45 refute 5 s3):
+      // committeeOf keeps a round's seated committees once both roles are seated, and the GET /rounds listings are kept too - a seat that served one
+      // of them while it held M's superseded S went on naming S to clients for the round's life. Cleared whole, as reseatTable does: a table's rounds
+      // are all seated by this seating, and a replacement is rare.
+      if (replaced) {
+        try { committeeDrawn.clear(); } catch { /* a certificate before the listing was set up: nothing kept yet */ }
+        try { listingKept.clear(); } catch { /* as above */ }
+      }
       if (role !== 'settlement') return;
+      // a seating that replaced the one held (kanban #2245) seats the table's rounds again
+      if (replaced) tablesSeated.delete(toHex(rid));
       // A TABLE'S LATER SEATING (kanban #1020): it seats that check-in and the rounds after it
       let later = null; try { const t = tableAnchorOf(contract || decodeRoundContract(new Uint8Array(round.get(rid).contract))); later = t && !t.first ? t : null; } catch { later = null; }
       if (later) { reseatTable(later.anchorId, contract ? contract.roundIndex : decodeRoundContract(new Uint8Array(round.get(rid).contract)).roundIndex); return; }
