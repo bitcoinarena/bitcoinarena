@@ -235,6 +235,13 @@ async function peersCheckpoints(peers, roundIdBytes, entryId, cap, waitMs = PEER
   }));
 }
 
+/**
+ * A PEER'S /evidence-blocks ANSWER IS BOUNDED (kanban #1561): at most this many listed records are read from one answer, and an
+ * entry's mark keeps at most EVIDENCE_RECORDS_PER_MARK records (one block each) - a committee names far fewer.
+ */
+const EVIDENCE_PULL_MAX = 65536;
+const EVIDENCE_RECORDS_PER_MARK = 64;
+
 export class Verifier {
   constructor(round, {
     randomnessFor = NO_RANDOMNESS_SOURCE, chainFor = null, pool = new ReplayPool(), peers = [],
@@ -286,6 +293,8 @@ export class Verifier {
     this.objectionReplays = new Map();
     this.objectionReplayCount = 0;
     this.latePostingSaid = new Set();
+    // ONE RETRY IN FLIGHT PER RUN (kanban #1569): a retry asked for while one for the same run is replaying gets that one.
+    this.retrying = new Map();
     /** The last close's whole sequence: replays, then the asking. */
     this.settling = Promise.resolve([]);
   }
@@ -1045,11 +1054,22 @@ export class Verifier {
   async #pullEvidenceBlocks(roundIdBytes, entryId) {
     for (const peer of this.peersOf(roundIdBytes)) {
       try {
-        const r = await peerFetch(`${peer}/evidence-blocks?entry=${hex(entryId)}`);
+        // ONLY RECORDS OF MARKS THIS SEAT HOLDS, BOUNDED, ON A TIMED ASK (kanban #1561): a peer's list of made-up mark ids wrote a row
+        // each, without limit, on every pull of every entry - and this seat then served them on as its own. A pulled record is
+        // kept only for a mark id this seat already holds a record of for the entry (its checkpoints, offered and void marks,
+        // kept pairs - each noted when stored), at most EVIDENCE_RECORDS_PER_MARK records a mark, from at most EVIDENCE_PULL_MAX
+        // listed records an answer; the ask waits PEER_WAIT_MS like every other peer ask here, its body capped (peerJson).
+        const r = await peerFetch(`${peer}/evidence-blocks?entry=${hex(entryId)}`);   // timed and size-capped (kanban #1550)
         if (r.status !== 200) continue;
         const got = await peerJson(r);
-        for (const x of (got && got.marks) || []) {
-          if (!/^[0-9a-f]{64}$/.test(String(x.mark)) || !/^[0-9a-f]{64}$/.test(String(x.block))) continue;
+        const held = new Map();
+        for (const e of this.round.evidenceBlocks(entryId)) { const k = hex(e.markId); held.set(k, (held.get(k) || 0) + 1); }
+        const listed = got && Array.isArray(got.marks) ? got.marks.slice(0, EVIDENCE_PULL_MAX) : [];
+        for (const x of listed) {
+          if (!x || !/^[0-9a-f]{64}$/.test(String(x.mark)) || !/^[0-9a-f]{64}$/.test(String(x.block))) continue;
+          const have = held.get(x.mark);
+          if (have === undefined || have >= EVIDENCE_RECORDS_PER_MARK) continue;
+          held.set(x.mark, have + 1);
           this.round.noteEvidenceBlock(roundIdBytes, entryId, Uint8Array.from(Buffer.from(x.mark, 'hex')), Uint8Array.from(Buffer.from(x.block, 'hex')),
             Number.isSafeInteger(x.seenMs) ? x.seenMs : undefined);
         }
@@ -1155,6 +1175,7 @@ export class Verifier {
     // stored) is not verified again, and the later-parent limb's provenFork is asked once, after the pairs are kept.
     const seen = new Set();
     let laterParent = false;
+    let repulled = false;
     for (const [a, b] of pairs) {
       try {
         const key = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? hex(a) + hex(b) : hex(b) + hex(a);
@@ -1167,6 +1188,9 @@ export class Verifier {
           // AND A FORK AT ANY LATER TICK, kept as a pair (§13B): this node's close and its /equivocation
           // say it from now on, as the seat that held it does
           if (!kept && !this.round.putFirstMarkPair({ a, b })) this.round.putForkPair({ a, b });
+          // A PAIR FIRST HELD HERE NOW (kanban #1561): the peers' records of its marks were passed over above (a pull keeps records
+          // only of marks this seat holds), so they are pulled once more before the pair is placed in the window.
+          if (!kept && window && !repulled) { repulled = true; await this.#pullEvidenceBlocks(roundIdBytes, entryId); }
           // WHAT A PAIR PROVES (RULED 2026-10-05 (b)): two first marks, or two marks at one tick - as ever; two chains
           // from one later parent only when both marks were receipted by a seat (the store's own ruled check, provenFork) -
           // a page stuck on an old head sends refused marks naming that head, and those forfeit nothing
@@ -2189,6 +2213,15 @@ export class Verifier {
    */
   retry(roundIdBytes, entryIdBytes) {
     if (this.round.hasResult(roundIdBytes, entryIdBytes, this.round.pubkey)) return null;
+    // NOT A SECOND REPLAY OF THE SAME RUN WHILE ONE IS QUEUED OR RUNNING (kanban #1569): each /play receipt used to queue
+    // its own whole-run replay, unbounded. Asked again while one is in flight, ONE more follows it (a receipt that came
+    // during the replay may be what completes the run) and every further ask shares that one - at most two per run.
+    const runKey = `${hex(roundIdBytes)}:${hex(entryIdBytes)}`;
+    const flying = this.retrying.get(runKey);
+    if (flying) {
+      if (!flying.next) flying.next = flying.work.catch(() => null).then(() => this.retry(roundIdBytes, entryIdBytes));
+      return flying.next;
+    }
     const row = this.round.get(roundIdBytes);
     if (!row) return null;
     const contract = decodeRoundContract(new Uint8Array(row.contract));
@@ -2209,7 +2242,8 @@ export class Verifier {
       options: { roundRandomness: beacon.hash },
     }).then((answer) => this.#keep({
       roundIdBytes, entryId: entryIdBytes, entry: found.entry, contract, answer,
-    }));
+    })).finally(() => { this.retrying.delete(runKey); });
+    this.retrying.set(runKey, { work, next: null });
     this.done = [...this.done, work];
     return work;
   }

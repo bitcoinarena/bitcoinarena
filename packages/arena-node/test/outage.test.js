@@ -21,6 +21,7 @@
 // result, forfeit 409, a silent refund at expiry; (b') DELIVERED at both.
 import { closeRound as closeRoundLive } from './lock-round-fixture.js';
 import { testNow } from './test-clock.js';
+import { roundEndMs } from '../../arena-protocol/src/first-mark.js';
 import { test } from 'node:test';
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import assert from 'node:assert/strict';
@@ -293,6 +294,10 @@ test('(e) a player who sends the first mark to one signer node while the other i
 // the lock only at expiry.
 const closeAt = (d, w) => say(d.port, `close ${toHex(w.rid)}`);
 const firstOnly = (run) => run.messages.slice(0, 2);
+// kanban #1549: an open signer node takes a peer's "closed" Void only once the round's end has passed on its OWN clock
+// (A's close here is forced early by the operator command; an honest close comes at the end). Before it, one seat's
+// own receipt and its word "closed" voided an on-time first mark at an open seat (wf1489-r2-play-2).
+const pastEnd = (d, w) => until(() => d.round.now() >= Number(roundEndMs(w.c)), 15000);
 
 test('(i) the chain stops at 60 and A closes while B is down: ENTRY_VOID (closed) at both signer nodes, the lock back at once', async () => {
   const w = await signerNodes({ endIn: 9000 });
@@ -327,6 +332,7 @@ test('(ii) the forfeit asked while the down signer node is back and still open: 
     await closeAt(w.a, w);
     await until(() => w.a.round.entryVoid(run.eid));
     await w.upB();
+    await pastEnd(w.b, w);
     const bOpen = w.b.round.get(w.rid).state === 0;
     const forfeit = await forfeitAt(w.a, w, run);
     const facts = { bOpen, a: recordAt(w.a, w, run), b: recordAt(w.b, w, run), forfeit, bKeepsIt: !!w.b.round.forfeit(run.eid) };
@@ -347,6 +353,7 @@ test('(iii) the player sends the first mark to the down signer node once it is b
     await closeAt(w.a, w);
     await until(() => w.a.round.entryVoid(run.eid));
     await w.upB();
+    await pastEnd(w.b, w);
     const saidB = [];
     for (const m of firstOnly(run)) saidB.push(answer(await say(w.b.port, m)));
     const forfeit = await forfeitAt(w.a, w, run);
