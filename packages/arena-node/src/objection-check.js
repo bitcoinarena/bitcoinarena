@@ -289,16 +289,20 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
       } catch { return null; }
     };
     const tried = new Set();
+    let vouched = false;
     // 'refuse', 'carried' (replay the inputs carried), or null (try the next run)
     const tryRun = async (mine) => {
       if (!mine) return null;
       const key = replayKeyOf(mine, marks);
-      if (key === formKey) return 'carried';
+      // the carried inputs ARE a run this seat holds or a committee seat handed out (kanban #2017, #2051): replayed as
+      // they are, never capped - a fetched reference that is the true run must not be refused as one variant too many
+      if (key === formKey) { vouched = true; return 'carried'; }
       if (tried.has(key)) return null;
       tried.add(key);
       let own;
       try { own = await replayRun(mine, entry, { core, roundRandomness, marks }); } catch (e) { own = { ok: false, why: e.message }; }
       if (!reproduces(own)) return null;
+      vouched = true;
       if (typeof keepRun === 'function') { try { keepRun(mine, key); } catch { /* remembering is a saving, never a verdict */ } }
       const ownBuilt = resultFrom({ answer: own, contract, entry, transcript: { ...t, hash: th }, entryId, nodePubkey: NOBODY, stopped: true });
       return ownBuilt.ok && hex(runId(ownBuilt.result)) === hex(signedResultId) ? 'refuse' : 'carried';
@@ -316,7 +320,9 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
         + 'checkpoint and gives the signed result - inputs that reach the same checkpoints give it too (kanban #1706, #1878)');
     // A BOUNDED NUMBER OF OTHER INPUTS PER ENTRY (kanban #1878): with no run here to check them against, each distinct
     // set of inputs is a full replay; past the seat's cap a further one is refused by name, unreplayed.
-    if (typeof admitReplay === 'function' && !admitReplay(formKey))
+    // Only where NO run reproduced the marks (kanban #2017, #2051): when one did and it does not give the signed result
+    // (the committee signed wrong), the carried inputs are what a genuine objection is checked by - never capped.
+    if (!vouched && typeof admitReplay === 'function' && !admitReplay(formKey))
       return no('replay', 'this seat has already replayed as many different inputs for that entry\'s live run as it replays for one entry, '
         + 'and holds no run of it that reproduces the receipted checkpoints to check these against - refused without a replay (kanban #1878)');
   }

@@ -1798,7 +1798,12 @@ export class Verifier {
     };
     {
       const k = liveRunKeyOf(bundle);
-      if (k !== null && !dissentsOn(entryIdBytes) && mem.variants.size >= OBJECTION_VARIANTS_PER_ENTRY && mem.reference.size === 0) {
+      // ...BUT NEVER WHILE A REFERENCE FETCH IS DUE (kanban #2017, #2051): a cap filled while the committee seats were down
+      // for a moment must not close the door for the entry for good. Once the retry time has passed, the bundle goes in, so
+      // referenceRuns asks the seats again - fetch first, the cap after, and only if no run reproduces the marks.
+      const lastAsk = mem.askedMs.get('at');
+      const fetchDue = lastAsk === undefined || Date.now() - lastAsk >= OBJECTION_REFERENCE_RETRY_MS;
+      if (k !== null && !dissentsOn(entryIdBytes) && mem.variants.size >= OBJECTION_VARIANTS_PER_ENTRY && mem.reference.size === 0 && !fetchDue) {
         const h = keyHash(k);
         if (!mem.good.has(h) && !mem.variants.has(h))
           return { holds: false, step: 'replay', why: `this seat has already replayed ${OBJECTION_VARIANTS_PER_ENTRY} different inputs for that entry's live run, `
