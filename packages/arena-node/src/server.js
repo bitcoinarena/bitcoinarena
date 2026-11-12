@@ -6553,10 +6553,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // NO GRACE ON A HEAD-TO-HEAD ROUND (kanban #1551, #1489 r3 h2h-1): its moves are revealed from the entry close on (GET /reveals), so a lock new to
     // this seat inside the grace was handed with the opponent's move known - a player locked only when its committed move won, and when it lost
     // handed nothing and the round, one seated player short, went VOID. The entry relay carries an honest join's locks before the close.
-    const h2h = headToHeadRound(e.roundId) !== null;
-    const allowed = h2h ? 0 : grace;
+    // NOR ON A MARKET'S PLAIN PICK (kanban #2223, #2300, #1489 a44-refute-83-1, refute of #1793): a price market's outcome is public at the entry
+    // close (the feed), long before an attestation lands here, so a lock new to this seat inside the grace was handed with the outcome known - only the
+    // winning pick of a player's picks was locked. The pick door allows an attested round no grace; the lock door now matches it. An honest pick's
+    // locks reach every seat before the close through the client's own posts and the entry relay's hand-on (#1790, CLOSE_MARGIN_MS).
+    const h2h = headToHeadRound(e.roundId) !== null, noGrace = h2h || !!ac;
+    const allowed = noGrace ? 0 : grace;
     const now = BigInt(Math.floor(Number(doorMs)));
-    if (h2h ? now < c.entryCloseMs : now <= c.entryCloseMs + BigInt(grace)) return null;
+    if (noGrace ? now < c.entryCloseMs : now <= c.entryCloseMs + BigInt(grace)) return null;
     if (held()) return null;
     return `that round's entry closed at ${c.entryCloseMs} (and ${allowed} ms for a join on its way) and it is ${now}: a ${what} lock new to this seat is not taken (kanban #1260, #1554)`;
   };
@@ -6734,7 +6738,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     && typeof f.amountMsat === 'bigint' && f.amountMsat >= 0n && f.amountMsat < (1n << 64n)
     && !!f.paymentImage && (f.paymentImage.kind === 'point' ? isPoint(f.paymentImage.bytes)
       : f.paymentImage.kind === 'hash' && f.paymentImage.bytes instanceof Uint8Array && f.paymentImage.bytes.length === 32);
-  const takeEntryParts = async (rid, entryHex, from) => {
+  // `pick` (a market's plain pick, pullPickLocks - kanban #2223, #2300, #1489 a44-refute-83-2, refute of #1793): this path is a lock door too. A pulled
+  // lock is taken only if the peer says it verified it before the entry close (GET /order-locks stakeVerifiedMs / feeVerifiedMs, its own clock's
+  // verified_ms) - the door rule every seat keeps since #2223. A lax peer that took late locks says so and is passed over; a peer that says nothing of
+  // the time (an older build) is passed over too. No held-outcome rule here: an honest close pull (#1790) often runs after the attestation landed,
+  // and a lock verified before the entry close was handed before any outcome could be known.
+  const takeEntryParts = async (rid, entryHex, from, { pick = null } = {}) => {
     const eid = fromHex(entryHex), entry = decodeEntryContract(round.entry(eid));
     if (entry.stakeMsat === 0n) return null;
     const ofPeers = async (path, read) => (await Promise.all([...new Set(from)].map(async (base) => {   // each seat once: a count is read off these (kanban #1783)
@@ -6799,6 +6808,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       let mine = null;
       for (const locks of answers) {
         why = null;
+        if (pick) {
+          const before = (ms) => ms !== undefined && ms !== null && Number.isFinite(Number(ms)) && BigInt(Math.floor(Number(ms))) < pick.closeMs;
+          if ((locks.stake && !round.stakeLock(eid) && !before(locks.stakeVerifiedMs)) || (locks.fee && round.feeLock && !round.feeLock(eid) && !before(locks.feeVerifiedMs))) {
+            why = `that peer verified the lock at or after the entry close ${pick.closeMs} (or says not when): not taken (kanban #2300, #1793)`; continue;
+          }
+        }
         let stakeF = null, feeF = null;
         try { if (locks.stake) stakeF = lockFieldsFromJson(locks.stake); if (locks.fee) feeF = lockFieldsFromJson(locks.fee); }
         catch (e) { why = `its lock fields: ${e.message}`; continue; }   // junk fields: that peer's fault
@@ -6858,7 +6873,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const stored = round.entry(e);
         if (!stored || round.entryVoid(e) || round.stakeSeen(e)) continue;
         if (!plainPickRound(stored)) continue;   // an order (the book replays it) or a free entry: not this pull's, and no reason to stop it
-        const why = await takeEntryParts(rid, toHex(e), peers);
+        const ac = attestedRoundOf(rid);
+        if (!ac || typeof ac.entryCloseMs !== 'bigint') continue;
+        const why = await takeEntryParts(rid, toHex(e), peers, { pick: { closeMs: ac.entryCloseMs } });   // kanban #2300
         if (round.stakeSeen(e)) taken = true;
         if (why || !round.stakeSeen(e)) short++;
       }
