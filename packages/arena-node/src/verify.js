@@ -1261,6 +1261,7 @@ export class Verifier {
         try {
           const r = await peerFetch(`${peer}/late-first-mark?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`);
           if (r.status === 200) { const theirs = await peerBody(r, SIGNED_MARK_BYTES); for (const m of mine) got.pairs.push([m, theirs]); }
+          else { try { await r.body?.cancel(); } catch { /* gone */ } }   // kanban #1685: a refused body is not left open
         } catch { /* a signer node that cannot answer proves nothing */ }
         try {
           const r = await peerFetch(`${peer}/entry-void?entry=${hex(entryId)}`);
@@ -1277,7 +1278,7 @@ export class Verifier {
           const body = await peerHead(r, EQUIVOCATION_PAIRS_PER_PEER * 2 * SIGNED_MARK_BYTES);
           for (let at = 0; at + 2 * SIGNED_MARK_BYTES <= body.length; at += 2 * SIGNED_MARK_BYTES)
             got.pairs.push([body.slice(at, at + SIGNED_MARK_BYTES), body.slice(at + SIGNED_MARK_BYTES, at + 2 * SIGNED_MARK_BYTES)]);
-        }
+        } else { try { await r.body?.cancel(); } catch { /* gone */ } }   // kanban #1685
       } catch { /* a signer node that cannot answer proves nothing */ }
       return got;
     }));
@@ -1557,8 +1558,9 @@ export class Verifier {
         // gather waits on it before it may move to the next entry - measured on the Daily, gathers running 2946 to
         // 6140 ms each while a page's own calls were aborting at 8 s. "A peer that is down is not a fault" was
         // already this function's rule; without a deadline it was a rule it could not keep.
-        const answer = await fetch(url, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
-        if (!answer.ok) { refused++; continue; }
+        // kanban #1685: and a size cap (#1550) - the gather buffered a peer's whole /results, however large.
+        const answer = await peerFetch(url);
+        if (!answer.ok) { try { await answer.body?.cancel(); } catch { /* gone */ } refused++; continue; }
         const said = answer.headers.get('x-no-quorum');
         if (said) noQuorumPeers.push({ peer, outcome: said });
         body = await peerBody(answer, peerResultsCap(committee.length));   // kanban #1634: bounded, as #1550's pulls
