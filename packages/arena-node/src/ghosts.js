@@ -28,6 +28,7 @@ import { batchId, batchTicks } from '../../arena-protocol/src/batch.js';
 import { GENESIS, decodeTranscript } from '../../arena-protocol/src/transcript.js';
 import { replay, RunInProgress } from './replay.js';
 import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
+import { OPEN } from './store.js';
 
 const same = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
   && a.length === b.length && a.every((v, i) => v === b[i]);
@@ -150,6 +151,13 @@ export function ghostForChecked(options) {
  */
 /** The most ticks one picture replays in one call (see `latest`). */
 export const STEP_BUDGET = 150;
+/**
+ * THE MOST WARM RUNS KEPT AT ONCE (kanban #1820). Each one holds about 70 KB of the truck's arrays in the node thread's core
+ * sandbox - the one round.open's runLengthFits asks too - and core-host.js ends a core that keeps more than LIVE_CAP (256 MB)
+ * alive: 3,608 runs never let go ended it, and the seat then opened no Tick Tock round and pictured no truck until a restart.
+ * Runs of a round that closed are let go at once; past this many the least recently used run goes (~72 MB at most).
+ */
+export const GHOST_RUNS_KEEP = 1024;
 
 export class Ghosts {
   constructor(round, { randomnessFor = () => undefined, limit = GHOST_SUBSCRIPTIONS, plugins = [] } = {}) {
@@ -171,6 +179,39 @@ export class Ghosts {
     // HOW FAR EACH RUN'S INPUT CHAIN HAS BEEN CHECKED, so the check is done
     // once per batch instead of once per batch per frame.
     this.chains = new Map();
+    // THE ROUNDS CLOSED SINCE THE LAST SWEEP (kanban #1820): the store's close count as last read
+    this.closeSeq = round?.closeSeq ?? 0;
+  }
+
+  /** Lets one warm run go (kanban #1820): its state in the core's sandbox, its checked chain and its kept frames. */
+  #letGo(key) {
+    const run = this.runs.get(key);
+    const had = this.runs.delete(key);
+    this.chains.delete(key);
+    const prefix = `${key}:`;
+    for (const k of this.frames.keys()) if (k.startsWith(prefix)) this.frames.delete(k);
+    if (run && typeof run.release === 'function') run.release();
+    return had;
+  }
+
+  /** LETS THE RUNS OF EVERY ROUND CLOSED SINCE THE LAST SWEEP GO (kanban #1820): a closed round is driven no further. */
+  #sweepClosed() {
+    const seq = this.round?.closeSeq;
+    if (!Number.isInteger(seq) || seq === this.closeSeq) return;
+    const gone = typeof this.round.closedSince === 'function' ? this.round.closedSince(this.closeSeq) : null;
+    this.closeSeq = seq;
+    const state = new Map();
+    for (const key of [...this.runs.keys()]) {
+      const rh = key.slice(0, key.indexOf(':'));
+      let closed;
+      if (gone) closed = gone.has(rh);
+      else {
+        // MORE CLOSED THAN THE STORE'S LOG REMEMBERS: each held round is asked once
+        if (!state.has(rh)) { const row = this.round.get(Buffer.from(rh, 'hex')); state.set(rh, !row || row.state !== OPEN); }
+        closed = state.get(rh);
+      }
+      if (closed) this.#letGo(key);
+    }
   }
 
   /**
@@ -214,7 +255,9 @@ export class Ghosts {
   #runFor(roundIdBytes, entryIdBytes, entry) {
     const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}`;
     const had = this.runs.get(key);
-    if (had) return had;
+    // LEAST RECENTLY USED LAST TO GO (kanban #1820): a run asked again moves to the end of the Map's order
+    if (had) { this.runs.delete(key); this.runs.set(key, had); return had; }
+    this.#sweepClosed();
     // THE LIVE PATH REFUSES AS THE SLOW ONE DOES: a game that draws no picture keeps no run warm for one
     const core = this.#coreOf(roundIdBytes);
     if (core && drawsPicture(core) === false)
@@ -224,12 +267,13 @@ export class Ghosts {
       roundRandomness: this.#randomnessOf(roundIdBytes, entry, entryIdBytes),
     });
     this.runs.set(key, made);
+    while (this.runs.size > GHOST_RUNS_KEEP) this.#letGo(this.runs.keys().next().value);
     return made;
   }
 
   /** A run this node will not picture again - a round that closed, say. */
   forget(roundIdBytes, entryIdBytes) {
-    return this.runs.delete(`${hex(roundIdBytes)}:${hex(entryIdBytes)}`);
+    return this.#letGo(`${hex(roundIdBytes)}:${hex(entryIdBytes)}`);
   }
 
   /** The core the round names, as this node's plugins.js resolves it (M3 R1) - or none: nothing is pictured. */
