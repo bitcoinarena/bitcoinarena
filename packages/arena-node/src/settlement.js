@@ -56,7 +56,7 @@ import { scalarFrom32, FIELD } from '../../arena-protocol/src/shares.js';
 import { FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../arena-protocol/src/objection.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { resultFinality, settledResult } from './finality.js';
-import { encodeCommitments, decodeCommitments, decodePeerCommitment, encodeShare, decodeShare, commitmentListRefusal } from './pool-wire.js';
+import { encodeCommitments, decodeCommitments, decodePeerCommitment, encodeShare, decodeShare, commitmentListRefusal, peerCommitmentRefusal, leftOffLast } from './pool-wire.js';
 import { sendPlanToJson, planKey } from './winnings-send.js';
 import { askerOrder, eligibleAsker } from './payout.js';
 import { REFUSAL } from './settle-backoff.js';
@@ -1444,9 +1444,12 @@ export class LockSettlement {
     }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: m.needed - 1, counts: (x) => !!x.commitment && !x.leftOut });
     const signers = [{ base: null, commitment: own.commitment }];
     const refused = [], committed = [], refusedBy = [];
-    for (const { peer: base, value, error } of asked) {
-      if (value && value.commitment) { signers.push({ base, commitment: value.commitment, who: value.who }); if (value.who) committed.push(value.who); continue; }
-      refused.push(`${base}: ${value ? value.why : error.message}`);
+    // A COMMITMENT UNDER ANOTHER SIGNER'S ID IS A REFUSAL (kanban #2402, #2471): listed, it made this seat's own share() refuse the list
+    // with nobody left off, every pass. A seat left off this settlement before is read last, so its forged id never pushes out an honest one.
+    for (const { peer: base, value, error } of leftOffLast(asked, this.#lists.withheld.get(query))) {
+      const bad = value && value.commitment ? peerCommitmentRefusal(value.commitment, signers) : null;
+      if (value && value.commitment && !bad) { signers.push({ base, commitment: value.commitment, who: value.who }); if (value.who) committed.push(value.who); continue; }
+      refused.push(`${base}: ${bad || (value ? value.why : error.message)}`);
       if (value && value.byName) refusedBy.push(base);
     }
     return { signers, refused, committed, refusedBy };

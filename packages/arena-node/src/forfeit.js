@@ -41,7 +41,7 @@ import { resultFinality, settledResult, agreedRerunOf } from './finality.js';
 import { stateOf } from './settlement-state.js';
 import { pluginForRound } from './plugins.js';
 import { giftsInFeeLock } from '../../arena-protocol/src/reserves.js';
-import { encodeCommitments, decodeCommitments, decodePeerCommitment, encodeShare, decodeShare, commitmentListRefusal } from './pool-wire.js';
+import { encodeCommitments, decodeCommitments, encodeShare, decodeShare, commitmentListRefusal, decodePeerCommitment, peerCommitmentRefusal, leftOffLast } from './pool-wire.js';
 import { askPeers, PEER_ASK_MS, PEER_GRACE_MS } from './peer-ask.js';
 import { NoncePool, SignerLists, sharesRefused, BOUND_ELSEWHERE, PAIRS_PER_KEY, PAIRS_ALL as POOL_ALL, LIST_TRIALS } from './nonce-pool.js';
 import { namedClaims, namedClaimKeys, arenaLockContractId } from '../../arena-protocol/src/arena-lock.js';
@@ -707,9 +707,11 @@ export class Forfeit {
       }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: m.needed - 1, counts: (x) => !!x.commitment });
       const signers = [{ base: null, commitment: own.commitment }];
       const refused = [];
-      for (const { peer: base, value, error } of asked) {
-        if (value && value.commitment) signers.push({ base, commitment: value.commitment });
-        else refused.push(`${base}: ${value ? value.why : error.message}`);
+      // A COMMITMENT UNDER ANOTHER SIGNER'S ID IS A REFUSAL (kanban #2402, #2471, as settlement.js #peerCommitments)
+      for (const { peer: base, value, error } of leftOffLast(asked, this.lists.withheld.get(q))) {
+        const bad = value && value.commitment ? peerCommitmentRefusal(value.commitment, signers) : null;
+        if (value && value.commitment && !bad) signers.push({ base, commitment: value.commitment });
+        else refused.push(`${base}: ${bad || (value ? value.why : error.message)}`);
       }
       if (signers.length < m.needed)
         return refuse(`${signers.length} of the ${m.needed} signer nodes the forfeit needs committed to it: ${refused.join('; ')}`);

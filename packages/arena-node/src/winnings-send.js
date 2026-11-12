@@ -29,7 +29,7 @@ import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpirat
 import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
-import { encodeCommitments, decodeCommitments, decodePeerCommitment, decodeShare, commitmentListRefusal } from './pool-wire.js';
+import { encodeCommitments, decodeCommitments, decodeShare, commitmentListRefusal, decodePeerCommitment, peerCommitmentRefusal, leftOffLast } from './pool-wire.js';
 import { largestPayoutMsat, lnv2FeeMsat } from '../../arena-protocol/src/lock-settlement.js';
 import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { stateOf } from './settlement-state.js';
@@ -731,7 +731,9 @@ export class WinningsSend {
         return r.ok ? { commitment: decodePeerCommitment(new Uint8Array(await r.arrayBuffer())) } : null;   // its nonces are points, or it is refused (kanban #2331, #2345)
       }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: built.needed - 1, counts: (x) => !!(x && x.commitment) });
       const signers = [{ base: null, commitment: own.commitment }];
-      for (const { peer: base, value } of asked) if (value && value.commitment) signers.push({ base, commitment: value.commitment });
+      // A COMMITMENT UNDER ANOTHER SIGNER'S ID IS NOT LISTED (kanban #2402, #2471, as settlement.js #peerCommitments)
+      for (const { peer: base, value } of leftOffLast(asked, this.lists.withheld.get(q)))
+        if (value && value.commitment && !peerCommitmentRefusal(value.commitment, signers)) signers.push({ base, commitment: value.commitment });
       if (signers.length < built.needed) return refuse(`${signers.length} of ${built.needed} signer nodes committed to the ${kind}`);
       const listed = this.lists.listed(q, signers, built.needed);
       const combined = await this.#gatherShares(roundIdBytes, entryHex, built, kind, row.attempt, q, message, listed);
