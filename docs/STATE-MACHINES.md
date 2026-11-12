@@ -1904,3 +1904,7 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 - Invariant: every vote a count holds was read from a block that is this seat's block at that height when the count reads it; a decided outcome's votes come from the chain its anchor commits to.
 - A cached height (`votesByHeight` / `hashByHeight`) is used only after `blockHashAt(h)` still names the hash it was read from; a changed block is read afresh, a height above the tip ends the pass's reading.
 - The reorg check's `above` for an open count (the tip seen below its last read block) drops the count and every cached height above the tip.
+- SM-P3 page hidden move (index.html HIDDEN_KEY, kanban #2024): a move the seats took is readable by the page that hid it until
+  its reveal, whether or not sessionStorage accepted the write. rememberHidden keeps it in the page's memory (hiddenInPage, at most
+  50) as well as in sessionStorage, and readHidden returns the stored list plus every in-page move it lacks; a refused write is
+  logged ("kept for this page only: do not reload before its reveal") instead of being swallowed.

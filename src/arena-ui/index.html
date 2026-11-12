@@ -3706,10 +3706,20 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // THE TAB'S HIDDEN MOVES, kept with the tab's seed (sessionStorage): the move and its salt until they are revealed - a
     // reload between entry and reveal must not lose the salt, or the move could never be shown and the entry forfeits
     const HIDDEN_KEY = 'arena.h2h.moves';
-    function readHidden() { try { return JSON.parse(window.sessionStorage.getItem(HIDDEN_KEY) || '[]'); } catch { return []; } }
+    // AND IN THE PAGE'S MEMORY TOO (kanban #2024): a write sessionStorage refuses (a full origin quota, a storage the browser
+    // refuses) used to keep the move nowhere - the reveal answered "this tab hid no move" and the entry, its stake locked, was
+    // forfeit in the same tab. The page's own copy is read with the stored list, so a failed write still reveals in this page.
+    const hiddenInPage = new Map();
+    function readStoredHidden() { try { const v = JSON.parse(window.sessionStorage.getItem(HIDDEN_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } }
+    function readHidden() {
+      const stored = readStoredHidden(), have = new Set(stored.map((x) => x && x.roundIdHex));
+      return stored.concat([...hiddenInPage.values()].filter((x) => !have.has(x.roundIdHex)));
+    }
     function rememberHidden(h) {
-      try { const all = readHidden().filter((x) => x.roundIdHex !== h.roundIdHex); all.push(h); window.sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(all.slice(-50))); }
-      catch { /* kept for this page only */ }
+      hiddenInPage.delete(h.roundIdHex); hiddenInPage.set(h.roundIdHex, h);
+      while (hiddenInPage.size > 50) hiddenInPage.delete(hiddenInPage.keys().next().value);
+      try { const all = readStoredHidden().filter((x) => x.roundIdHex !== h.roundIdHex); all.push(h); window.sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(all.slice(-50))); }
+      catch (e) { console.warn('[arena] the hidden move of round ' + String(h.roundIdHex).slice(0, 16) + ' is kept for this page only (' + ((e && e.name) || e) + '): do not reload before its reveal'); }
     }
     window.ARENA_HIDDEN_MOVES = readHidden;
     // ---------------------------------------------------------------- markets (§0A.7a): Up/Down's page part, packages/btc-updown/page/market-page.js (kanban #521)
