@@ -631,9 +631,9 @@ async function nodeFeedbackPanel() {
     const unit = j.network === 'mainnet' ? 'sats' : 'testnet sats';
     levels.append(el('div', { cls: 'sub', text: 'Rewards in ' + unit + ':' }), el('div', { cls: 'fbn-chips' }, ...j.levels.map((l) => { const c = el('span', { cls: 'fbn-chip' }, el('b', { text: Number(l.sats).toLocaleString('en-US') }), el('span', { text: ' ' + String(l.label).replace(/^Bug, /, '') })); if (l.example) c.title = l.example; return c; })));
     if (j.budget && Number(j.budget.weeklyBudgetSats) > 0) {
-      const used = Number(j.budget.weekApprovedSats) || 0, all = Number(j.budget.weeklyBudgetSats);
+      const used = Number(j.budget.weekPaidSats ?? j.budget.weekApprovedSats) || 0, all = Number(j.budget.weeklyBudgetSats);   // paid this week (Daniel 2026-11-12)
       const bar = el('div', { cls: 'fbn-bar' }, el('div', { cls: 'fbn-fill' })); bar.firstChild.style.width = Math.min(100, Math.round((used / all) * 100)) + '%';
-      levels.append(el('div', { cls: 'sub', text: 'This week: ' + used.toLocaleString('en-US') + ' / ' + all.toLocaleString('en-US') + ' sats' }), bar);
+      levels.append(el('div', { cls: 'sub', text: 'Paid this week: ' + used.toLocaleString('en-US') + ' / ' + all.toLocaleString('en-US') + ' sats' }), bar);
     }
   }).catch(() => {});
   if (!document.getElementById('fbn-css')) { const st = document.createElement('style'); st.id = 'fbn-css';
