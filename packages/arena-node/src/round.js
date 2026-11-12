@@ -3874,6 +3874,45 @@ export class Round {
     return Number(this.db.prepare('SELECT COALESCE(SUM(LENGTH(bytes)), 0) AS n FROM relayed WHERE capped = 1').get().n);
   }
 
+  /**
+   * A SLASH PROOF KEPT AS A RELAY, AT MOST ONE PER SLOT (kanban #2248, a45 refute of #1816; #2344). `accused` is
+   * round id || accused node || entry id || door (3 result, 4 re-run), or || player || door (1, 2) for a proof about no held entry (#2381). Returns 'kept', 'same' (this proof is already the one kept)
+   * or 'other' (another proof about the same signed result is kept; nothing stored).
+   */
+  relaySlashPut(accused, proofId, bytes) {
+    const was = this.relaySlashOf(accused);
+    if (was) return Buffer.from(was).equals(Buffer.from(proofId)) ? 'same' : 'other';
+    const own = !this.db.isTransaction;
+    if (own) this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('INSERT INTO relayed_slash (accused, proof_id) VALUES (?, ?)').run(accused, proofId);
+      this.relayPut(proofId, bytes);
+      if (own) this.db.exec('COMMIT');
+    } catch (e) { if (own) this.db.exec('ROLLBACK'); throw e; }
+    return 'kept';
+  }
+
+  /**
+   * A BETTER-HOLDING PROOF TAKES THE SLOT (kanban #2344): the slot named `accused` points at `proofId` instead of `wasId`, and its bytes are
+   * kept beside the old ones (nothing is removed). Returns 'kept', or 'other' when the slot no longer names `wasId` (a racing PUT took it).
+   */
+  relaySlashReplace(accused, wasId, proofId, bytes) {
+    const own = !this.db.isTransaction;
+    if (own) this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const n = this.db.prepare('UPDATE relayed_slash SET proof_id = ? WHERE accused = ? AND proof_id = ?').run(proofId, accused, wasId).changes;
+      if (n) this.relayPut(proofId, bytes);
+      if (own) this.db.exec('COMMIT');
+      return n ? 'kept' : 'other';
+    } catch (e) { if (own) this.db.exec('ROLLBACK'); throw e; }
+  }
+
+  /** The id of the slash proof kept as a relay in this slot (relaySlashPut's key: round || accused node || player || door), or null. */
+  relaySlashOf(accused) {
+    const r = this.db.prepare('SELECT proof_id FROM relayed_slash WHERE accused = ?').get(accused);
+    return r ? new Uint8Array(r.proof_id) : null;
+  }
+
   /** The bytes this node keeps as a relay, all doors together (kanban #1532: the doors refuse past a cap). */
   relayedBytes() {
     return Number(this.db.prepare('SELECT COALESCE(SUM(LENGTH(bytes)), 0) AS n FROM relayed').get().n);
