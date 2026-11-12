@@ -122,6 +122,12 @@ export const TRANSCRIPT_BATCH_MAX_BYTES = 65535;
 export const FOREIGN_RECEIPTS_KEPT = 4096;
 export const FOREIGN_RECEIPTS_MAX_AGE_MS = 24 * 3600000;
 
+// THE DOOR'S TIME OF A LOCK (kanban #1805, #1551 refute 0 s2, #1489): a finite time no later than now, else now - never a time after this seat's clock
+const lockDoorMs = (atMs, now) => {
+  const n = Math.floor(Number(now)), a = Math.floor(Number(atMs));
+  return atMs === null || atMs === undefined || !Number.isFinite(a) || a > n ? n : a;
+};
+
 export class Round {
   /** How long openHeld trusts its last count of the open rows when this store wrote none (kanban #786). */
   static OPEN_HELD_MS = 250;
@@ -2049,9 +2055,27 @@ export class Round {
   seatedEntriesOf(roundIdBytes, stakeMsat, { played = false } = {}) {
     const all = this.entriesOf(roundIdBytes);
     if (stakeMsat === 0n) return all;
-    const locked = all.filter(({ entryId }) => !!this.stakeSeen(entryId) || !!this.stakeLock(entryId));
+    // BACKED BEFORE THE ENTRY CLOSE (kanban #1783, #1551 refute 0, #1489): from the close a head-to-head round's moves are public (GET /reveals), and
+    // no door takes a lock new to it from then on (#1551). A lock or a seen stake this seat wrote only after the close - however it got here: a
+    // patched door, an operator's hand, a lock pulled from one peer - backs no seat, or a player locked only once the revealed move let him win.
+    // A lock repaired from peers keeps the time the round's threshold of seats took it (keepLockTimes). Only on a seat that keeps the lock close
+    // (entryCloseGraceMs set, as every live seat's is).
+    let close = null;
+    if (this.entryCloseGraceMs !== null && this.entryCloseGraceMs !== undefined) {
+      try { const row = this.get(roundIdBytes); close = row ? BigInt(decodeRoundContract(new Uint8Array(row.contract)).entryCloseMs) : null; } catch { close = null; }
+    }
+    const inTime = (ms) => close === null || (ms !== null && ms !== undefined && BigInt(Math.floor(Number(ms))) < close);
+    // A STAKE LOCK STILL WAITING FOR ITS FEE LOCK SEATS NO ONE ONCE THE FEE DOOR IS SHUT (kanban #1861, #1551 refute c1551b-0, #1489): from the
+    // close no fee lock new to a head-to-head seat is taken (#1551), and a stake counts only with its fee lock (pick a), so such an entry can never
+    // be counted - it has no place in the settlement. Seated, it was played at no risk: when it lost, the honest winner was signed DELIVERED but no
+    // loser's lock was claimed and nothing was paid (its stake came back by refund); when it won, it took the score. Now only a counted stake (seen
+    // before the close) seats it, and the entry is VOID as a lockless one (#1437). A fee lock whose door time stands before the close but whose
+    // federation answer comes back after it writes the stake seen at that door time (#1805, #1822), which seats the entry again.
+    const feeDoorShut = close !== null && BigInt(Math.floor(Number(this.now()))) >= close;
+    const locked = all.filter(({ entryId }) => { const seen = this.stakeSeen(entryId), lock = this.stakeLock(entryId);
+      return (!!seen && inTime(seen.seenMs)) || (!feeDoorShut && !!lock && inTime(lock.verifiedMs)); });
     // `played` (kanban #1544) keeps of the seats only the entries whose stake is SEEN - the seats themselves are the same as the door's (#1588)
-    const playedOnly = (list) => played ? list.filter(({ entryId }) => !!this.stakeSeen(entryId)) : list;
+    const playedOnly = (list) => played ? list.filter(({ entryId }) => { const seen = this.stakeSeen(entryId); return !!seen && inTime(seen.seenMs); }) : list;
     const players = this.#headToHeadPlayers(roundIdBytes);
     if (!players) return playedOnly(locked);
     const order = new Map(this.db.prepare('SELECT entry_id FROM entries WHERE round_id = ? ORDER BY rowid').all(roundIdBytes)
@@ -2068,6 +2092,17 @@ export class Round {
     let g;
     try { g = pluginForRound(decodeRoundContract(new Uint8Array(row.contract)), this.plugins); } catch { return null; }
     return g.ok && g.headToHead ? g.plugin.manifest.players : null;
+  }
+
+  /**
+   * A LOCK TAKEN FROM PEERS PAST ITS ROUND'S LOCK CLOSE KEEPS THE TIME THE ROUND'S SEATS TOOK IT (kanban #1783): `ms` is the time at least the
+   * round's threshold of its other seats said they verified it (GET /order-locks), which is before that close; the rows only ever move earlier.
+   */
+  keepLockTimes(entryIdBytes, ms) {
+    const id = Buffer.from(entryIdBytes), at = Math.floor(Number(ms));
+    this.db.prepare('UPDATE stake_locks SET verified_ms = ? WHERE entry_id = ? AND verified_ms > ?').run(at, id, at);
+    this.db.prepare('UPDATE fee_locks SET verified_ms = ? WHERE entry_id = ? AND verified_ms > ?').run(at, id, at);
+    this.db.prepare('UPDATE stake_seen SET seen_ms = ? WHERE entry_id = ? AND seen_ms > ?').run(at, id, at);
   }
 
   /**
@@ -2128,9 +2163,10 @@ export class Round {
   }
 
 
-  putStakeSeen({ entryId, paidMsat }) {
+  // `atMs` (kanban #1805): the time the seat's door took the lock that counts the stake, when a door did (stake-lock-signer-node.js); else now
+  putStakeSeen({ entryId, paidMsat, atMs }) {
     this.db.prepare('INSERT OR IGNORE INTO stake_seen (entry_id, paid_msat, seen_ms) VALUES (?, ?, ?)')
-      .run(Buffer.from(entryId), String(paidMsat), this.now());
+      .run(Buffer.from(entryId), String(paidMsat), lockDoorMs(atMs, this.now()));
     // AND THE TICK THE PLAYER HAD REACHED BY THEN, which is where §15's start window opens. Written in the
     // same breath and once, because it is a fact about this instant: any later reading would be a different
     // tick. The highest tick already RECEIVED - not one the client asserts - so it is pinned by the same
@@ -2551,11 +2587,18 @@ export class Round {
       .filter((l) => String(l.fields.refundPk).toLowerCase() === String(refundHex).toLowerCase());
   }
 
-  /** A stake lock this signer node verified: the handed contract (JSON), its id, its outpoint. */
-  putStakeLock({ entryId, roundId, outpoint, fields, contractId }) {
-    this.db.prepare('INSERT OR REPLACE INTO stake_locks (entry_id, round_id, outpoint, fields, contract_id, verified_ms) VALUES (?, ?, ?, ?, ?, ?)')
+  /**
+   * A stake lock this signer node verified: the handed contract (JSON), its id, its outpoint. `atMs` (kanban #1805): the time this seat's door
+   * (POST /lock) took the request and checked the round's lock close, before the federation was asked; verified_ms keeps it, so a lock handed
+   * in time is in time however long the federation took to answer. A lock that came another way (a repair from peers, a replayed order) has none: now.
+   */
+  putStakeLock({ entryId, roundId, outpoint, fields, contractId, atMs }) {
+    // a lock handed again keeps its first time (kanban #1805): a page re-handing a held lock after the close does not move it past the close
+    const at = lockDoorMs(atMs, this.now());
+    this.db.prepare('INSERT OR REPLACE INTO stake_locks (entry_id, round_id, outpoint, fields, contract_id, verified_ms) VALUES (?, ?, ?, ?, ?, '
+      + 'MIN(?, COALESCE((SELECT verified_ms FROM stake_locks WHERE entry_id = ?), ?)))')
       .run(Buffer.from(entryId), Buffer.from(roundId), `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`,
-        JSON.stringify(fields), contractId, this.now());
+        JSON.stringify(fields), contractId, at, Buffer.from(entryId), at);
   }
 
   stakeLock(entryIdBytes) {
@@ -3193,11 +3236,14 @@ export class Round {
     return r ? { message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claimPk: new Uint8Array(r.claim_pk), madeMs: Number(r.made_ms) } : null;
   }
 
-  /** A fee lock this signer node verified (Pick A): the handed contract (JSON), its id, its outpoint. */
-  putFeeLock({ entryId, roundId, outpoint, fields, contractId }) {
-    this.db.prepare('INSERT OR REPLACE INTO fee_locks (entry_id, round_id, outpoint, fields, contract_id, verified_ms) VALUES (?, ?, ?, ?, ?, ?)')
+  /** A fee lock this signer node verified (Pick A): the handed contract (JSON), its id, its outpoint. `atMs`: its door's time, as putStakeLock's (kanban #1805). */
+  putFeeLock({ entryId, roundId, outpoint, fields, contractId, atMs }) {
+    // a lock handed again keeps its first time (kanban #1805): a page re-handing a held lock after the close does not move it past the close
+    const at = lockDoorMs(atMs, this.now());
+    this.db.prepare('INSERT OR REPLACE INTO fee_locks (entry_id, round_id, outpoint, fields, contract_id, verified_ms) VALUES (?, ?, ?, ?, ?, '
+      + 'MIN(?, COALESCE((SELECT verified_ms FROM fee_locks WHERE entry_id = ?), ?)))')
       .run(Buffer.from(entryId), Buffer.from(roundId), `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`,
-        JSON.stringify(fields), contractId, this.now());
+        JSON.stringify(fields), contractId, at, Buffer.from(entryId), at);
   }
 
   feeLock(entryIdBytes) {
