@@ -615,12 +615,21 @@ async function runner() {
     // THE KEEPER: a free and a paid round always open for entries in the lobby
     // (DEVNET_KEEPER=0: none, for a tool that mines to exact heights and opens what it needs at the control door)
     const kinds = [['free', { stakeMsat: 0n, entryAfterStartMs: FREE_WINDOW_MS }], ...(state.paidRound ? [['paid', { stakeMsat: stake, entryAfterStartMs: PAID_WINDOW_MS }]] : [])];
+    // A FAILED OPENING WAITS BEFORE THE NEXT (kanban #784, measured 2026-11-10 on the census run: after one node stopped, every opening failed
+    // after its beacon loop had mined its 8 x 6 blocks, and the keeper tried again 15 s later - ~80 blocks a minute for 68 min, 5,400 blocks
+    // past the census, so every census window moved on). Each failure doubles the wait, 1 min up to 30; an opening that works resets it.
+    const backoff = new Map();
     if (env.DEVNET_KEEPER !== '0') setInterval(() => {
       for (const [kind, fields] of kinds) {
         if (state.rounds.some((r) => r.kind === kind && r.entryCloseMs > Date.now() + KEEP_LEAD_MS) || state.opening === kind) continue;
+        const b = backoff.get(kind);
+        if (b && Date.now() < b.next) continue;
         state.opening = kind;
-        open(kind, fields).then((id) => console.log(`[keeper] ${kind} ${id}`), (e) => console.error(`[keeper] ${kind} not opened: ${e.message}`))
-          .finally(() => { state.opening = null; });
+        open(kind, fields).then((id) => { backoff.delete(kind); console.log(`[keeper] ${kind} ${id}`); }, (e) => {
+          const waitMs = Math.min(b ? b.waitMs * 2 : 60000, 1800000);
+          backoff.set(kind, { waitMs, next: Date.now() + waitMs });
+          console.error(`[keeper] ${kind} not opened: ${e.message} - next try in ${waitMs / 1000} s`);
+        }).finally(() => { state.opening = null; });
       }
     }, 15000);
     // THE BLOCK CLOCK: the chain moves on its own once the rounds are up
