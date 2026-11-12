@@ -185,7 +185,8 @@ export function openFeedbackStore(path = ':memory:') {
   try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS rewards_by_payment ON rewards (payment_hash) WHERE payment_hash IS NOT NULL AND state IN ('paying', 'paid')"); } catch { /* an older file with a shared hash */ }
   // COUPLED WRITES IN ONE TRANSACTION (kanban #1984, state audit 2026-11-12): a reward paid and its report paid, a link voided and its report rejected,
   // commit together or not at all - a faucet killed between two autocommit statements left the sats paid and the report accepted for good
-  const inTx = (fn) => { db.exec('BEGIN IMMEDIATE'); try { const v = fn(); db.exec('COMMIT'); return v; } catch (err) { try { db.exec('ROLLBACK'); } catch {} throw err; } };
+  // inside a caller's transaction it is part of that one (kanban #2020's immediately(), below, is the same rule)
+  const inTx = (fn) => { const own = !db.isTransaction; if (own) db.exec('BEGIN IMMEDIATE'); try { const v = fn(); if (own) db.exec('COMMIT'); return v; } catch (err) { if (own) { try { db.exec('ROLLBACK'); } catch { /* none open */ } } throw err; } };
   // AND THE REPAIR (kanban #1984): a file written before this fix may hold an accepted report whose reward is paid; it is paid, as paidNow would have
   // left it (its approval time kept, #1786; logged by 'repair'). Run at open and before each settle pass.
   const repairPaid = () => inTx(() => {
@@ -197,6 +198,14 @@ export function openFeedbackStore(path = ':memory:') {
   });
   repairPaid();
   const get = db.prepare('SELECT * FROM reports WHERE id = ?');
+  // A PAIR OF ROWS IS NEVER WRITTEN HALF (kanban #2020, state audit 2026-11-12: a kill between a rejection's link void and its report's update left an
+  // ACCEPTED report with a VOID link - approved, in the week's budget, never payable): every move that writes a report and its reward link, or a row and
+  // its move log, runs in one BEGIN IMMEDIATE ... COMMIT; inside a caller's transaction it is part of that one
+  const immediately = (fn) => {
+    const own = !db.isTransaction;
+    if (own) db.exec('BEGIN IMMEDIATE');
+    try { const r = fn(); if (own) db.exec('COMMIT'); return r; } catch (e) { if (own) { try { db.exec('ROLLBACK'); } catch { /* none open */ } } throw e; }
+  };
   const row = (r) => (r ? { id: r.id, pubkey: r.pubkey, type: r.type, signedAt: r.signed_at, receivedMs: r.received_ms, happened: r.happened, expected: r.expected,
     game: r.game || null, round: r.round || null, build: r.build || null, state: r.state, reason: r.reason || null, duplicateOf: r.duplicate_of || null,
     severity: r.severity || null, amountSats: r.amount_sats ?? null, ticket: r.ticket || null, changedMs: r.changed_ms ?? null,
@@ -257,7 +266,8 @@ export function openFeedbackStore(path = ':memory:') {
    * A STATE MOVE, BY A HUMAN (the admin, slice 4): only the moves the table allows; a rejection needs its reason, a duplicate the report it repeats
    * (an earlier one, not itself, not one that is a duplicate in turn). Every move is logged with who made it.
    */
-  function move(id, to, { reason = null, duplicateOf = null, by = null, nowMs = Date.now() } = {}) {
+  function move(...a) { return immediately(() => moveNow(...a)); }   // one transaction (kanban #2020)
+  function moveNow(id, to, { reason = null, duplicateOf = null, by = null, nowMs = Date.now() } = {}) {
     const r = get.get(String(id));
     if (!r) return { ok: false, why: 'no such report' };
     if (!(NEXT[r.state] || []).includes(to)) return { ok: false, why: `a ${r.state} report does not become ${to}` };
@@ -301,7 +311,8 @@ export function openFeedbackStore(path = ':memory:') {
    *   an amount       between `leastSats` and `mostSats` (a critical bug above that is the owner's own call: a higher `mostSats` for that one approval)
    * Answers { ok, report } or { ok: false, why } naming the rule.
    */
-  function approve(id, amountSats, { played, excluded = new Set(), rules = REWARD_DEFAULTS, severity = null, by = null, nowMs = Date.now() } = {}) {
+  function approve(...a) { return immediately(() => approveNow(...a)); }   // one transaction (kanban #2020)
+  function approveNow(id, amountSats, { played, excluded = new Set(), rules = REWARD_DEFAULTS, severity = null, by = null, nowMs = Date.now() } = {}) {
     const r = get.get(String(id));
     if (!r) return { ok: false, why: 'no such report' };
     if (r.state !== STATES.NEW) return { ok: false, why: `${/^[aeiou]/.test(r.state) ? 'an' : 'a'} ${r.state} report is not approved for money${r.state === STATES.DUPLICATE ? ': the first report of it is' : ''}` };
@@ -341,7 +352,8 @@ export function openFeedbackStore(path = ':memory:') {
   const rewardOf = db.prepare('SELECT * FROM rewards WHERE k1 = ?');
 
   /** THE LINK FOR AN ACCEPTED REPORT: made once (asked again, the same k1). `network` the payout network ('testnet4' in phase 1). */
-  function createReward(id, { network = 'testnet4', comment = null, nowMs = Date.now(), by = null } = {}) {
+  function createReward(...a) { return immediately(() => createRewardNow(...a)); }   // one transaction (kanban #2020)
+  function createRewardNow(id, { network = 'testnet4', comment = null, nowMs = Date.now(), by = null } = {}) {
     const r = get.get(String(id));
     if (!r) return { ok: false, why: 'no such report' };
     const said = comment === null || comment === undefined ? null : String(comment).replace(/\s+/g, ' ').trim().slice(0, COMMENT_MOST) || null;
