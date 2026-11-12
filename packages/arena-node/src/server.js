@@ -281,6 +281,9 @@ const BODY_MOST = Number(process.env.ARENA_BODY_MOST) > 0 ? Number(process.env.A
 // for ever - a stranger filled the disk with random blobs under their own hash). At most RELAY_MOST bytes in `relayed` over both doors
 // (256 MiB, ARENA_RELAY_MOST); past it a door answers 507 and keeps nothing.
 const RELAY_MOST = Number(process.env.ARENA_RELAY_MOST) > 0 ? Number(process.env.ARENA_RELAY_MOST) : 256 * 1024 * 1024;
+// the largest seating certificate POST /seating takes (kanban #1711): 36 bytes of head + 2 + 32 per seated + 2 + 96 per signature,
+// for up to 128 seated - far above any committee (9)
+const SEATING_CERT_MOST = 36 + 2 + 128 * 32 + 2 + 128 * 96;
 const read = (req, max = BODY_MOST) => new Promise((resolve, reject) => {
   const parts = []; let size = 0;
   // A DOOR'S OWN LIMIT (kanban #1271): past `max` bytes the body is not kept, the request ends, and the door answers 413
@@ -10606,7 +10609,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // stands against this node's draw; one that differs from the one held is the proof of equivocation
       if (seating && req.method === 'POST' && url.pathname === '/seating') {
         let rid, role, k;
-        try { const c = decodeSeatingCertificate(await read(req)); rid = c.roundId; role = c.role; k = seating.keepCert(rid, role, encodeSeatingCertificate(c)); }
+        // AT MOST A SEATING'S SIZE (kanban #1711): a certificate is a few hundred bytes per seated node (9 seated: 1,192 bytes);
+        // a padded one of megabytes is refused at the door, before it is decoded
+        let body; try { body = await read(req, SEATING_CERT_MOST); } catch (e) { return text(res, e && e.tooLarge ? 413 : 400, e && e.message || 'no body'); }
+        try { const c = decodeSeatingCertificate(body); rid = c.roundId; role = c.role; k = seating.keepCert(rid, role, encodeSeatingCertificate(c)); }
         catch (e) { return text(res, 400, `not a seating certificate: ${e.message}`); }
         if (!k.ok) return text(res, 409, k.why);
         return json(res, k.equivocation ? 200 : 201, k);
