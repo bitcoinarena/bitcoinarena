@@ -3505,8 +3505,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
     })().catch((e) => console.error(`[entry-void] ${e.message}`));
     // A HEAD-TO-HEAD SEAT FIRST LEARNS WHO IS IN THE ROUND (kanban #1071), and with a wait that ran out it signs nothing
+    // - and with a throw too (kanban #1755): members not known is never 'known', so this seat never decides the round alone
     const h2h = headToHeadReady ? headToHeadRound(roundIdBytes) : null;
-    stakes = (h2h ? membersKnown(roundIdBytes, h2h).catch((e) => { console.error(`[entry] ${e.message}`); return true; }) : Promise.resolve(true))
+    stakes = (h2h ? membersKnown(roundIdBytes, h2h).catch((e) => { console.error(`[entry] ${e.message}`); return false; }) : Promise.resolve(true))
       .then((known) => (known ? timed(`close ${toHex(roundIdBytes).slice(0, 8)} settleRound`, () => verifier.settleRound(roundIdBytes)) : null))
       .then(async (closed) => {
         if (!closed) return { ok: false, why: 'this seat could not learn who is in the round: it signs nothing for it' };
@@ -4411,6 +4412,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const peerGet = (url) => fetch(url, { signal: AbortSignal.timeout(4000) });
   const takeAcceptedEntry = async (rid, entryHex, from) => {
     const eid = fromHex(entryHex), needed = roundThreshold(decodeRoundContract(new Uint8Array(round.get(rid).contract)).settlementSlots);
+    let why = 'no peer that holds it handed the entry over';
     for (const base of from) {
       let entry;
       try {
@@ -4423,19 +4425,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (signers.size < needed) return { ok: false, why: `${signers.size} of ${needed} seats signed a result naming it` };
       const ref = entry.vssSharesRef;
       if (ref && !ref.every((b) => b === 0) && !round.handout(ref)) {
-        const h = await peerGet(`${base}/handout?id=${toHex(ref)}`);
-        if (!h.ok) return { ok: false, why: `${base} answered ${h.status} for its handout` };
-        const bytes = new Uint8Array(await h.arrayBuffer());
-        const same = stakePointIsTheHandouts(entry, decodeHandout(bytes));
-        if (!same.ok) return { ok: false, why: `its handout: ${same.why}` };
-        const took = await takeHandout(bytes, { accepted: true });
-        if (!took.ok) return { ok: false, why: `its handout: ${took.why}` };
+        // kanban #1755: ONE PEER'S HANDOUT ANSWER IS ONE PEER'S - a non-OK status, junk bytes, a handout of another stake or one takeHandout refuses
+        // passes that peer over like a missing entry, and the next holder is asked. It never throws out of here (membersKnown would reject).
+        try {
+          const h = await peerGet(`${base}/handout?id=${toHex(ref)}`);
+          if (!h.ok) { why = `${base} answered ${h.status} for its handout`; continue; }
+          const bytes = new Uint8Array(await h.arrayBuffer());
+          const same = stakePointIsTheHandouts(entry, decodeHandout(bytes));
+          if (!same.ok) { why = `${base}'s handout: ${same.why}`; continue; }
+          const took = await takeHandout(bytes, { accepted: true });
+          if (!took.ok) { why = `${base}'s handout: ${took.why}`; continue; }
+        } catch (e) { why = `${base}'s handout: ${e.message}`; continue; }
       }
       try { round.enter(entry, { accepted: true }); } catch (e) { return { ok: false, why: e.message }; }
       console.log(`[entry] ${entryHex.slice(0, 16)} taken from ${base} past the door: ${signers.size} seats signed results naming it (§17)`);
       return { ok: true };
     }
-    return { ok: false, why: 'no peer that holds it handed the entry over' };
+    return { ok: false, why };
   };
   // AND WHAT GOES WITH AN ENTRY OF A PAYING ROUND: its locks, checked with the federation, and the winner's address under the entry's own session key. Every seat's plan
   // reads its own rows, so a seat without them would rebuild another plan and refuse the one the others sign. Answers why it must wait, or null.
