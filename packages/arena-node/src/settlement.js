@@ -898,6 +898,10 @@ export class LockSettlement {
       if (!synced.ok) return refuse(`not yet: reading the other seats' batches - ${synced.why}`, 409);
     }
     if (this.orderBook && this.orderBook.isBook(roundIdBytes)) return this.#bookPlan(roundIdBytes, a, claimPk, held);
+    // NOT A POOL WHILE A BATCH HOLDING ORDERS IS UNDECIDED HERE (kanban #1666, audit #1489): it can still be certified, and then the round is a
+    // book whose plain picks come back - a pool settled now would claim and pay them by the other rule. The combiner asks again.
+    { const undecided = this.orderBook && this.orderBook.kindPending ? this.orderBook.kindPending(roundIdBytes) : [];
+      if (undecided.length) return refuse(`not yet: batch ${undecided[0]} of the book is not decided at this seat, so neither is the round's kind`, 409); }
     if (this.round.cancelsOf) await this.#carryCancels(roundIdBytes, contract);
     const entries = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.stakeSeen || !!this.round.stakeSeen(entryId))
       .filter(({ entry }) => entry.limitPrice === undefined || entry.limitPrice === null)
@@ -948,7 +952,7 @@ export class LockSettlement {
     const plan = attested(fees);
     if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
     if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`, 409, plan.noFill ? REFUSAL.NOTHING_CLAIMED : null);
-    return { ok: true, plan, base: { plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry, table };
+    return { ok: true, pool: true, plan, base: { plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry, table };
   }
 
   /**
@@ -1170,7 +1174,9 @@ export class LockSettlement {
     { const held = this.#attestedHold(roundIdBytes); if (held) return held; }
     const key = toHex(roundIdBytes);
     const kept = this.built.get(key);
-    if (kept) return kept;
+    // A POOL BUILT BEFORE A CERTIFICATE MADE THE ROUND A BOOK (kanban #1666) is dropped, never signed: the book's plan is built instead
+    if (kept && kept.pool && this.orderBook && this.orderBook.isBook(roundIdBytes)) { this.built.delete(key); this.byPlan.delete(key); }
+    else if (kept) return kept;
     const got = await this.planOf(roundIdBytes, { withSends: true });
     if (!got.ok) return got;
     if (got.anyFed) return refuse('that round takes any federation: it is signed one federation at a time (name the federation)');
@@ -1206,7 +1212,7 @@ export class LockSettlement {
     }
     const built = { ok: true, ...tx, plan, claims, claimPk,
       signerNode: held.signerNode, needed: receiptsNeeded(contract.settlementSlots), contract,
-      ackTable: ackTableOf({ roundId: roundIdBytes }, plan, claimPk, ackRows || planTableRows(plan), byLockKey(lockEntry)) };
+      ackTable: ackTableOf({ roundId: roundIdBytes }, plan, claimPk, ackRows || planTableRows(plan), byLockKey(lockEntry)), ...(got.pool ? { pool: true } : {}) };   // a pool built here (kanban #1666)
     this.built.set(key, built);
     this.byPlan.set(key, { fp, built });
     if (this.byPlan.size > 4096) this.byPlan.delete(this.byPlan.keys().next().value);
