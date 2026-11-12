@@ -27,9 +27,18 @@ import { timingSafeEqual, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
-import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressInvoice } from '../src/feedback-store.js';
+import { seatPublicFetch } from '../src/public-fetch.js';
+import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressUrl, lnAddressInvoice } from '../src/feedback-store.js';
 const LN_ASKS = new Map();   // ip /64 -> times it asked GET /feedback/lnaddress (kanban #1342, #1537)
 const LN_ASKS_ALL = [], LN_ASKS_MINUTE = 120;   // every check of the last minute, all callers (kanban #1537)
+// ONE GLOBAL WINDOW FOR EVERY DOOR THAT FETCHES A CALLER'S ADDRESS (kanban #1714, refute of #1537): the cap held only GET /feedback/lnaddress, and
+// POST /feedback (addressCheckFor, a report's bounty address) fetched caller-named hosts with no bound across callers - a /48 is 65,536 /64s of 50
+// checks a day each. Both doors now take a slot here first: true = the check may run (and is counted), false = the minute is full, nothing fetched.
+function addressCheckSlot(now = Date.now()) {
+  while (LN_ASKS_ALL.length && now - LN_ASKS_ALL[0] >= 60000) LN_ASKS_ALL.shift();
+  if (LN_ASKS_ALL.length >= LN_ASKS_MINUTE) return false;
+  LN_ASKS_ALL.push(now); return true;
+}
 // A REPORT'S BOUNTY ADDRESS IS CHECKED ON A BUDGET (kanban #1511): POST /feedback fetched the address's URL before the report was counted, and a report
 // whose address failed was never counted - so one caller made the faucet fetch any HTTPS URL it named (an LNURL can name an internal host), without
 // limit. Each check is now counted against the caller's ipKey (an IPv6 /64 as one) before it is made, whether the address works or not, at most
@@ -39,8 +48,15 @@ async function addressCheckFor(ip, address) {
   const k = ipKey(ip) || String(ip || ''), day = Math.floor(Date.now() / DAY_MS);
   let c = ADDR_CHECKS.get(k);
   if (!c || c.day !== day) { c = { day, n: 0, busy: false }; ADDR_CHECKS.set(k, c); if (ADDR_CHECKS.size > 5000) for (const [x, v] of ADDR_CHECKS) { if (ADDR_CHECKS.size <= 5000) break; if (!v.busy && x !== k) ADDR_CHECKS.delete(x); } }
+  // text that is no address, or names no public host, fetches nothing: answered here, no budget and no slot used (kanban #1873, #1905)
+  const u = lnAddressUrl(address); if (!u.ok) return u;
   if (c.busy) return { ok: false, why: 'another address from you is still being checked' };
   if (c.n >= FEEDBACK_PER_IP_PER_DAY) return { ok: false, why: 'this address checked all it can today' };
+  // the global minute (kanban #1714) still bounds every fetch of a caller's address, both doors together. A FULL MINUTE NEVER REFUSES A REPORT
+  // (kanban #1873, #1905): other callers' checks (GET /feedback/lnaddress takes slots from any Origin) kept the minute full and every honest report
+  // naming a bounty address was refused "try again in a minute", for as long as they liked. Now the report is kept with its address unchecked -
+  // nothing is fetched for it here, and the address is asked again at payout (lnAddressInvoice), so a reward is still never paid to one that fails.
+  if (!addressCheckSlot()) return { ok: true, unchecked: true };
   c.n += 1; c.busy = true;
   try { return await lnAddressWorks(address); } finally { c.busy = false; }
 }
@@ -168,10 +184,18 @@ const BOUNTY_FEE_LIMIT_PCT = Number(env.FAUCET_BOUNTY_FEE_LIMIT_PCT || 1);
 const BOUNTY_ORIGINS = String(env.FAUCET_BOUNTY_ORIGINS || '').split(',').map((x) => x.trim()).filter(Boolean);
 const bountyOn = () => BOUNTY_ORIGINS.length > 0;
 const PUBLIC_BASE = String(env.FAUCET_PUBLIC_BASE || 'https://bitcoinarena.io/api/faucet').replace(/\/$/, '');
+// THE PAYOUT WALLET IS READY (kanban #2412, feedback #016 by Hexbox Tools): lnd answers `state` with SERVER_ACTIVE. Measured 2026-11-12: the mainnet
+// bounty lnd was LOCKED, every `decodepayreq` failed, and every valid lnbc invoice was answered "that invoice could not be read" - the wallet's fault
+// blamed on the invoice. A decode that fails while the wallet is not ready is `paused`: the reward stays open and the claimer is told to come back.
+const bountyReady = async () => {
+  const r = await lncli(BOUNTY_PAYER, ['state'], 10000);
+  if (!r.ok) return false;
+  try { return JSON.parse(r.out).state === 'SERVER_ACTIVE'; } catch { return false; }
+};
 const bountyDecode = async (invoice) => {
   if (!bountyInvoiceOk(invoice)) return { ok: false };
   const r = await lncli(BOUNTY_PAYER, ['decodepayreq', invoice]);
-  if (!r.ok) return { ok: false };
+  if (!r.ok) return (await bountyReady()) ? { ok: false } : { ok: false, paused: true };
   const j = JSON.parse(r.out);
   return { ok: true, amountSats: Number(j.num_satoshis), paymentHash: j.payment_hash };
 };
@@ -209,21 +233,41 @@ const ourKeys = () => { try { return new Set(readFileSync(env.FAUCET_FEEDBACK_EX
 // THE SEATS A NODE CHECK ASKS (kanban #1342): every seat the season seats list (GET /network-games - a seat does not list itself, so they are merged, and each is one too)
 const NODE_CHECKS = new Map();
 const NODE_CHECK_ASKS = new Map(); const NODE_CHECKS_PER_HOUR = 10; let NODE_CHECK_BUSY = false;   // audit 5 #1402
-const fetchJson1342 = async (u) => { const r = await fetch(u, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(`${r.status}`); return r.json(); };
+// AN ANNOUNCED SEAT ENDPOINT IS ASKED ON THE PUBLIC INTERNET ONLY (kanban #1884, re-check of #1511): GET /network-games lists the census nodes'
+// endpoints, which any bonded node sets by a free signed address announcement - http://127.0.0.1:8080, 169.254.169.254, a LAN host - and a stranger's
+// node check made this faucet GET /owner, /roles and /served there. Only the operator's own are taken as given: the FAUCET_SEASON_SEATS bases, and a
+// listed seat at the exact origin of one of them or of FAUCET_SEAT_TRUSTED_ORIGINS (kanban #2074, below). Every other listed seat goes through seatPublicFetch: a public name or a
+// public IP literal, a public resolved address, no redirect. A trusted one is never redirected either.
+const SEASON_BASES = String(env.FAUCET_SEASON_SEATS || '').split(',').map((u) => u.trim().replace(/\/+$/, '')).filter(Boolean);
+const TEAM_HOSTS = String(env.FAUCET_TEAM_HOSTS || 'beelink.tail1723e2.ts.net,127.0.0.1,localhost,192.168.1.18,100.85.86.106,100.99.158.103,192.168.1.68,tn4.bitcoin-arena.io').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+// TRUSTED BY EXACT ORIGIN, NEVER BY HOSTNAME (kanban #2074, re-check of #1511 / #1884): a trust list of host names let any bonded node announce
+// http://<trusted host>:<any port>/ - the Beelink's Tailscale name reaches signal-cli 8080, OpenClaw 18789 and the Chrome debug ports 9351/9352 there,
+// a loopback/LAN seat host every port on it - and a stranger's node check made this faucet GET /roles, /owner and /served at that port with plain
+// fetch. A listed seat is taken as given only when its origin (scheme + host + port) is the origin of a FAUCET_SEASON_SEATS base or one of
+// FAUCET_SEAT_TRUSTED_ORIGINS (full origins, comma separated; an entry that is no http(s) origin is ignored). No default list: a tail-net name is
+// trusted only by its exact seat origin, named by the operator. FAUCET_SEAT_TRUSTED_HOSTS (bare host names) is no longer read.
+const originOf = (u) => { try { const x = new URL(String(u).trim()); return (x.protocol === 'https:' || x.protocol === 'http:') && !x.username && !x.password ? x.origin : ''; } catch { return ''; } };
+const SEAT_TRUSTED_ORIGINS = new Set([...SEASON_BASES, ...String(env.FAUCET_SEAT_TRUSTED_ORIGINS || '').split(',')].map(originOf).filter(Boolean));
+if (env.FAUCET_SEAT_TRUSTED_HOSTS !== undefined) console.log('faucet: FAUCET_SEAT_TRUSTED_HOSTS is ignored (kanban #2074) - name full seat origins in FAUCET_SEAT_TRUSTED_ORIGINS');
+const seatTrusted = (u) => { const o = originOf(u); return !!o && SEAT_TRUSTED_ORIGINS.has(o); };
+const fetchJson1342 = async (u) => { const signal = AbortSignal.timeout(15000);
+  const r = seatTrusted(u) ? await fetch(u, { signal, redirect: 'error' }) : await seatPublicFetch(u, { signal });
+  if (!r.ok) throw new Error(`${r.status}`); return r.json(); };
 async function nodeCheckNow(node, npub) {
-  const bases = String(env.FAUCET_SEASON_SEATS || '').split(',').filter(Boolean).map((u) => u.replace(/\/+$/, ''));
+  const bases = SEASON_BASES;
   const lists = await Promise.all(bases.map((b) => fetchJson1342(`${b}/network-games`).then((j) => (j.seats || []).map((x) => x.seat), () => [])));
   const seats = [...new Set([...bases, ...lists.flat()])];
   let excluded = new Set(); try { excluded = ourKeys(); } catch { excluded = new Set(); }
   // the hosts the team's own nodes answer at (kanban #1342: team nodes are never paid)
   // THE TEAM'S OWN SEATS BY THEIR NODE KEYS (audit 7, kanban #1428: our-keys.txt held none of them, and the Mac seats' addresses were no team host):
   // every seat this faucet is configured with, and every listed seat at a team host, is the team's - its /roles node key is excluded
-  const teamHosts = String(env.FAUCET_TEAM_HOSTS || 'beelink.tail1723e2.ts.net,127.0.0.1,localhost,192.168.1.18,100.85.86.106,100.99.158.103,192.168.1.68,tn4.bitcoin-arena.io').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const teamHosts = TEAM_HOSTS;
   const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch { return ''; } };
   const ours = [...new Set([...bases, ...seats.filter((u) => teamHosts.includes(hostOf(u)))])];
   const keys = await Promise.all(ours.map((u) => fetchJson1342(`${u}/roles`).then((j) => String((j && j.node) || '').toLowerCase(), () => '')));
   for (const k of keys) if (/^[0-9a-f]{64}$/.test(k)) excluded.add(k);
-  return nodeBountyCheck({ node, npub, seats, fetchJson: fetchJson1342, excluded, teamHosts });
+  // the census is read from the faucet's own configured seats only (kanban #1682): a listed seat an outsider adds could name any fresh key
+  return nodeBountyCheck({ node, npub, seats, fetchJson: fetchJson1342, excluded, teamHosts, censusSeats: bases });
 }
 const PLAYED = networkPlayers({ seats: String(env.FAUCET_SEASON_SEATS || '').split(',').filter(Boolean), games: String(env.FAUCET_SEASON_GAMES || 'rock-paper-scissors,nextblock,btc-updown').split(',').filter(Boolean) });
 PLAYED.fresh().catch(() => 0);   // kanban #1484: the list is read at start, so the admin page never waits for it
@@ -638,11 +682,16 @@ createServer((req, res) => {
     // each check fetches a URL the caller names; and at most LN_ASKS_MINUTE checks a minute from everyone together, so the faucet is never an
     // unlimited fetcher
     const ip = String(ipKey(ipOf(req)) || ipOf(req) || ''), now = Date.now();   // an IPv6 caller by its /64 (kanban #1511, #1537)
-    while (LN_ASKS_ALL.length && now - LN_ASKS_ALL[0] >= 60000) LN_ASKS_ALL.shift();
-    if (LN_ASKS_ALL.length >= LN_ASKS_MINUTE) return send(200, { ok: false, why: 'too many checks - it is checked again at Send' });
     const seen = (LN_ASKS.get(ip) || []).filter((t) => now - t < 600000); if (seen.length >= 30) return send(200, { ok: false, why: 'too many checks - it is checked again at Send' });
-    seen.push(now); LN_ASKS.delete(ip); LN_ASKS.set(ip, seen); LN_ASKS_ALL.push(now); if (LN_ASKS.size > 5000) LN_ASKS.delete(LN_ASKS.keys().next().value);
-    lnAddressWorks(String(new URL(req.url, 'http://x').searchParams.get('a') || '').slice(0, 200)).then((w) => send(200, { ok: !!w.ok, why: w.ok ? null : w.why }), (e) => send(200, { ok: false, why: String((e && e.message) || e).slice(0, 120) }));
+    // NO GLOBAL SLOT FOR WHAT FETCHES NOTHING (kanban #1873, #1905): text that is no address (or names no public host) counts toward the caller's own
+    // 30 but is answered before the shared minute - a stranger's 'nothing' took a slot and, from a few dozen addresses, kept the minute full
+    const asked = String(new URL(req.url, 'http://x').searchParams.get('a') || '').slice(0, 200), u = lnAddressUrl(asked);
+    const counted = () => { seen.push(now); LN_ASKS.delete(ip); LN_ASKS.set(ip, seen); if (LN_ASKS.size > 5000) LN_ASKS.delete(LN_ASKS.keys().next().value); };
+    if (!u.ok) { counted(); return send(200, { ok: false, why: u.why }); }
+    // the global minute shared with POST /feedback's address checks (kanban #1714)
+    if (!addressCheckSlot(now)) return send(200, { ok: false, why: 'too many checks - it is checked again at Send' });
+    counted();
+    lnAddressWorks(asked).then((w) => send(200, { ok: !!w.ok, why: w.ok ? null : w.why }), (e) => send(200, { ok: false, why: String((e && e.message) || e).slice(0, 120) }));
     return;
   }
   if (path === '/feedback/rewards' && req.method === 'GET') {

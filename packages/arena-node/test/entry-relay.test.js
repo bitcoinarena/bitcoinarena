@@ -11,7 +11,9 @@ const stub = (doors) => {
     const u = new URL(url), key = `${init.method || 'GET'} ${u.origin}${u.pathname}`;
     asked.push({ key, relayed: init.headers && init.headers[RELAY_HEADER] });
     const a = doors(key);
-    return new Response(a.body === undefined ? null : JSON.stringify(a.body), { status: a.status ?? a });   // a real body: handLocks reads it capped (kanban #2327)
+    // a real Response: every peer answer is read through peer-body.js under a cap (kanban #1870, #1901)
+    const status = a.status ?? a;
+    return new Response([101, 204, 205, 304].includes(status) ? null : JSON.stringify(a.body ?? null), { status });
   };
   return { asked, fetcher };
 };

@@ -75,7 +75,10 @@ export async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 
   // kept in the order the seats are listed, not the order they answer (kanban #1522): between two committees named by equally many
   // seats the one held first stands (mergeServedRounds), and that must not be whichever seat answered fastest
   const held = [];
-  await Promise.all((seats || []).map(async (s, i) => {
+  // kanban #1698 #1766: one seat is one answer - a seat listed twice (or with a trailing slash) is asked once, as the merge counts
+  // seats, not entries
+  const once = [...new Set((seats || []).map((s) => String(s).replace(/\/$/, '')))];
+  await Promise.all(once.map(async (s, i) => {
     try {
       const r = await fetch(`${String(s).replace(/\/$/, '')}/served?to=${toMs}&finals=1`, { signal: AbortSignal.timeout(timeoutMs) });
       if (!r.ok) return;

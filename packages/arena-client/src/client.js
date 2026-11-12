@@ -41,7 +41,7 @@ import {
 import {
   GENESIS, decodeTranscript, checkTranscript, transcriptBelongsToEntry, flatten,
 } from '../../arena-protocol/src/transcript.js';
-import { batchId, batchTicks, signBatch, encodeInputBatch, joinSignedBatch, SIGNED_BATCH_SIGNATURE_BYTES } from '../../arena-protocol/src/batch.js';
+import { batchId, batchTicks, signBatch, encodeInputBatch, joinSignedBatch, splitSignedBatch, SIGNED_BATCH_SIGNATURE_BYTES } from '../../arena-protocol/src/batch.js';
 import { centsToTapeUnits } from '../../arena-protocol/src/price-sample.js';
 import { fromHex, toHex, sha256 } from '../../arena-protocol/src/hash.js';
 import {
@@ -56,7 +56,7 @@ import {
 import { parseConnection, payInvoice } from './nwc.js';
 import { STAKE_NOT_SEEN } from '../../arena-protocol/src/constants.js';
 import { stakeSeenBy, settlementBy, settlementDecided, feeBpsForRound } from './join.js';
-import { handLock } from './page-lock.js';
+import { handLock, postLockClaim } from './page-lock.js';
 import { invoiceQrSvg } from './qr.js';
 import { decodeGhost } from '../../arena-protocol/src/ghost.js';
 import { TYPE_GHOST } from '../../arena-protocol/src/constants.js';
@@ -652,6 +652,10 @@ export class Client {
     this.playerPubkey = entry.playerPubkey;
 
     const joined = agrees(mine, new Uint8Array(await r.arrayBuffer()), 'entry');
+    // THE PLAYER'S CLAIM ON THE ENTRY'S LOCKS beside it (kanban #1897, #1938): what binds the stake and fee lock to this entry and no copy
+    // (not waited on: it never throws, and the join's time is the player's - `lockClaimed` holds each seat's answer to come)
+    this.lockClaimed = [];
+    if (this.stakeLock && typeof this.stakeLock.claimFor === 'function') this.lockClaimed.push(postLockClaim({ node: this.base, entryId: mine, claimFor: this.stakeLock.claimFor }));
 
     // AND ON EVERY OTHER COMMITTEE NODE, or it refuses this entry's checkpoints
     // as "no such entry" - measured: daemon B answered 404 for every Daily signer node.
@@ -752,6 +756,9 @@ export class Client {
   async joinOn(base) {
     try {
       const p = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(this.joinedEntry) });
+      // and the player's claim on its locks (kanban #1897, #1938)
+      if (p.status === 201 && this.stakeLock && typeof this.stakeLock.claimFor === 'function')
+        (this.lockClaimed = this.lockClaimed || []).push(postLockClaim({ node: base, entryId: entryId(this.joinedEntry), claimFor: this.stakeLock.claimFor }));
       return { base, ok: p.status === 201, why: p.status === 201 ? null : (await p.text()).trim() };
     } catch (e) { return { base, ok: false, why: e.message }; }
   }
@@ -1732,6 +1739,16 @@ export class Client {
     // resume signed the forgery and fed it to the honest peer, which stored it as the player's, and the player's real
     // inputs went on 120 ticks late. Nothing served is signed here - ever.
     const frames = await this.#ownFrames(t, entry, roundId, entryId);
+    // AND IT IS NOT SHORTER THAN WHAT THIS PLAYER ALREADY PUBLISHED (kanban #2410, feedback #014 by Hexbox Tools). Every
+    // served batch being the player's is not enough: a home seat that cut its store back to a prefix of the player's own
+    // batches served a chain that verifies, the resume rewound nextTick/batchHead to it and the client signed a second
+    // batch on a previousHash it had already built on - an equivocation the honest peers, holding the longer chain,
+    // refuse forever. Measured before: after 60 ticks the seat cut to 30, the client re-signed ticks 30..59 on the old
+    // head with the inputs recorded for 60..89. So the served chain must carry every batch this client published, in
+    // order (`published`, this tab), and no committee peer may hold a longer chain the player signed (after a reload,
+    // when `published` is empty). Either way it is that seat's fault, and nothing is signed again on an old head.
+    this.#notBehindPublished(t);
+    await this.#notBehindPeers(t, entry, roundId, entryId);
 
     const before = this.nextTick;
     const last = t.batches[t.batches.length - 1];
@@ -1835,6 +1852,59 @@ export class Client {
       throw Object.assign(new Error(why), { nodeFault: true });
     }
     return frames;
+  }
+
+  /** A seat whose served chain is behind the player's own (kanban #2410): named on `nodeFault`, the run ends, thrown. */
+  #servedBehind(t, why) {
+    this.nodeFault = { base: this.base, firstTick: null, batch: t.batches.length, why };
+    this.endRun(`node fault: ${why}`);
+    throw Object.assign(new Error(why), { nodeFault: true });
+  }
+
+  /** The served chain carries every batch this client published, in order (kanban #2410); a shorter or forked one is the seat's fault. */
+  #notBehindPublished(t) {
+    for (let i = 0; i < this.published.length; i++) {
+      const mine = splitSignedBatch(this.published[i].bytes).id;
+      const served = t.batches[i];
+      if (served && toHex(batchId(served)) === toHex(mine)) continue;
+      this.#servedBehind(t, `the node at ${this.base} serves ${t.batches.length} batches for this entry, `
+        + (served ? `and its batch ${i} is not the one this client published there` : `shorter than the ${this.published.length} this client already published`)
+        + ' - this client does not rewind and sign again on an older head, and that node is not trusted with this run');
+    }
+  }
+
+  /**
+   * NO COMMITTEE PEER HOLDS A LONGER CHAIN THE PLAYER SIGNED (kanban #2410): the reload's check, when this tab published
+   * nothing yet. A peer is fed a batch only after the home seat took it, so a peer whose chain is longer than the home
+   * seat's, ending in a batch whose signature verifies under this entry's session key, shows the home seat dropped
+   * batches the player published. A peer that is down, behind, or serves something that does not verify shows nothing.
+   */
+  async #notBehindPeers(t, entry, roundId, entryId) {
+    const n = t.batches.length;
+    const shown = await Promise.all((this.peers || []).map(async (base) => {
+      try {
+        const q = `round=${toHex(roundId)}&entry=${toHex(entryId)}`;
+        const r = await readWithOneRetry(fetch, `${base}/transcript?${q}`);
+        if (!r.ok) return null;
+        const pt = decodeTranscript(new Uint8Array(await r.arrayBuffer()));
+        if (pt.batches.length <= n || toHex(pt.roundId) !== toHex(roundId) || toHex(pt.entryId) !== toHex(entryId)) return null;
+        if (!checkTranscript(pt).ok) return null;
+        const s = await readWithOneRetry(fetch, `${base}/batch-signatures?${q}`);
+        if (!s.ok) return null;
+        const sigs = new Uint8Array(await s.arrayBuffer());
+        const W = SIGNED_BATCH_SIGNATURE_BYTES;
+        const k = pt.batches.length - 1;
+        if (sigs.length < (k + 1) * W) return null;
+        const sig = sigs.slice(k * W, (k + 1) * W);
+        if (!sig.some((x) => x !== 0) || !(await this.verifySession(sig, batchId(pt.batches[k]), entry.sessionPubkey))) return null;
+        return { base, batches: pt.batches.length };
+      } catch { return null; }
+    }));
+    const longer = shown.find(Boolean);
+    if (!longer) return;
+    this.#servedBehind(t, `the node at ${this.base} serves ${n} batches for this entry, shorter than the ${longer.batches} `
+      + `this player signed that the committee node at ${longer.base} holds - this client does not rewind and sign again `
+      + 'on an older head, and that node is not trusted with this run');
   }
 
   /**
