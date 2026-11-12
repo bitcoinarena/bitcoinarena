@@ -23,7 +23,7 @@
 // Each payment's txid is appended to FAUCET_PENDING, which the the test host's miner-C feeder (ops/pending-to-minerc.sh) lists for mining.
 //   FAUCET_PORT  FAUCET_RPC_URL (with /wallet/<name>)  FAUCET_COOKIE  FAUCET_BOOK  FAUCET_PENDING  [FAUCET_FEE_RATE sat/vB, 2]
 import { createServer } from 'node:http';
-import { timingSafeEqual, createHash } from 'node:crypto';
+import { timingSafeEqual, createHash, randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
@@ -535,11 +535,20 @@ createServer((req, res) => {
         // sat counted toward REFILL_DAY_CAP_SATS all day (#1391). The row is now pending with every payer that may be asked, as a player's grant
         // (#1627): SUCCEEDED clears it, IN_FLIGHT or a timeout narrows it to the payers asked, and the payment sweep removes it once every one of them
         // answers NONE/FAILED (after a restart too). refillDecide still counts pending rows, so the cap never pays one twice
-        const hash = inv.payment_hash, mineOf = (bk) => (bk.refills || []).find((r) => r.hash === hash && r.pending);
-        book.refills = book.refills || []; book.refills.push({ sats: d.sats, atMs: Date.now(), hash, pending: true, payers: PAYERS.map((_, i) => i) }); saveBook(book);
+        const hash = inv.payment_hash;
+        // THE SAME INVOICE AGAIN (kanban #2375, a44 refute 6 s2 of #2130): a refill whose invoice was already asked - paid, pending or still paying
+        // here - is refused before any row or payinvoice. A retry of a paid invoice failed at every payer and the failure path removed EVERY row with
+        // that hash, the SUCCEEDED one too, so "refill, re-post the invoice" drained past REFILL_DAY_CAP_SATS; a concurrent retry also took the first
+        // request's pending row and cleared its GRANTING mark. The check and the push below run in one synchronous step after the last await
+        book.refills = book.refills || [];
+        if (GRANTING.has(hash) || book.refills.some((r) => r.hash === hash)) return send(200, { ok: false, why: 'that invoice was already asked' });
+        // ONLY ITS OWN ROW (kanban #2375): each row carries its own id; every later change finds the row by that id, never by the hash alone
+        const id = randomBytes(8).toString('hex'), mineOf = (bk) => (bk.refills || []).find((r) => r.id === id && r.pending);
+        book.refills.push({ id, sats: d.sats, atMs: Date.now(), hash, pending: true, payers: PAYERS.map((_, i) => i) }); saveBook(book);
         GRANTING.add(hash);
         try {
           const askedPayers = [];
+          let unclear = false;
           for (const payer of PAYERS) {
             const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', b.invoice], 15000);
             askedPayers.push(PAYERS.indexOf(payer));
@@ -549,8 +558,12 @@ createServer((req, res) => {
               else if (mine) { mine.payers = [...askedPayers]; saveBook(b2); }
               console.log(`${new Date().toISOString()} refill ${d.sats} sat: ${hash.slice(0, 16)}`); return send(200, { ok: true, sats: d.sats });
             }
+            // "already paid" / "in transition" is no proof that nothing moved (kanban #2375): the row stays for the sweep to decide
+            if (/already paid|in transition|already exists/i.test(`${paid.err} ${paid.out}`)) unclear = true;
           }
-          const after = readBook(); after.refills = (after.refills || []).filter((r) => r.hash !== hash); saveBook(after);
+          const after = readBook();
+          if (unclear) { const mine = mineOf(after); if (mine) { mine.payers = [...askedPayers]; saveBook(after); } }
+          else { after.refills = (after.refills || []).filter((r) => !(r.id === id && r.pending)); saveBook(after); }
         } finally { GRANTING.delete(hash); }
         send(200, { ok: false, why: 'could not pay just now' });
       } catch { send(400, { ok: false, why: 'not JSON' }); }
