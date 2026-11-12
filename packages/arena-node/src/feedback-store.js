@@ -7,14 +7,18 @@
 // list is never read by its pubkey alone.
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes } from 'node:crypto';
+import { walletUrlRefusal, publicFetch, checkedFetch, internalAddress, guardedLookup } from './public-fetch.js';
 import { lnurlFor, urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { eventId, eventRefusal } from './nostr-relay.js';
 import { BIP39_ENGLISH } from '../../arena-client/src/bip39-wordlist.js';
 import { readJsonBounded } from './lnurl-read.js';
-import { hostReach, walletFetch } from './public-fetch.js';
+import { seedRunSpans } from './seed-phrase.js';
 
 /** The report's kind: ephemeral (20000-29999), so no relay keeps it - it goes to the faucet only. */
 export const FEEDBACK_KIND = 27842;
+// THE PAYOUT WALLET IS NOT READY (kanban #2412, feedback #016): what a claim or an address payout answers while the bounty lnd is locked or down - the
+// reward is not touched (it stays open) and the invoice is not blamed
+export const PAYOUTS_PAUSED = 'payouts are paused (the payout wallet is not ready): your reward stays open - try again later';
 /** NIP-98 HTTP auth. */
 export const HTTP_AUTH_KIND = 27235;
 // THE CATEGORIES (Daniel 2026-11-07: "eine Kategorie bug / improvement"), and where a report came from: the game page or a node's owner page
@@ -56,72 +60,54 @@ export const AUTH_AGE_MOST_S = 60;
 // spaces only - "Abandon, Ability, ..." or "1. abandon 2. ability ..." went through): a run of 12 to 24 BIP39 words in any case, each may carry its number
 // ("1.", "2)", "3:"), split by spaces, new lines, commas, semicolons, slashes or dashes, is removed. Only BIP39 words count, so an ordinary sentence of 12
 // words stays. nsec/ncryptsec keys and 64-hex secrets are removed as before.
-// NO SEED IN ANY COPY FORMAT EITHER (kanban #1591, a bypass of #1472): the run above took only [\s,;/|-] between words and a number only before
-// ". ) :", so a seed copied as a JSON array ["abandon","ability",...], from a wallet's numbered grid ("1\nabandon\n2\nability"), as "1 abandon 2 ability"
-// or as "abandon. ability. ..." was kept, shown to the admin and posted to #feedback. Now the text is cut into runs of letters only; two BIP39 words are
-// joined by any short gap holding no letter (spaces, quotes, brackets, periods, digits, #, parentheses ...; a colon only right after a number, so
-// "my seed: abandon ..." keeps "seed"), and invisible format characters (zero-width spaces, soft hyphens) are dropped first so they split nothing. A
-// 4-letter BIP39 prefix ("aban abil able abou", the form many wallets accept) counts as a word. Still 12 such words in a row, so a sentence stays.
-const BIP39_SET = new Set(BIP39_ENGLISH);
-const BIP39_PREFIX4 = new Set(BIP39_ENGLISH.map((w) => w.slice(0, 4)));
-const SEED_RUN_LEAST = 12;
-const SEED_GAP_MOST = 12;
-const SEED_GAP = /^(?:[^\p{L}\d:]|\d+\s*:?)*$/u;
-const seedWord = (w) => BIP39_SET.has(w) || (w.length === 4 && BIP39_PREFIX4.has(w));
+// ONE SEED RULE FOR THE STORE, THE FAUCET AND THE LOGS (kanban #1737, #1799, #1843, #1858, refute of #1472): the run is found by seed-phrase.js
+// seedRunSpans, the same function log-level.js redact masks with - any non-letter between the words (list numbers in any layout, a tab table, a JSON
+// array, quotes, dots, underscores, "+", zero-width spaces), 4-letter BIP39 prefixes counted as their words. A list number just before the first word
+// ("1.", "(1)", "#1", "1-") goes with the run.
 export const scrubKeys = (t) => {
-  let s = String(t).replace(/\p{Cf}/gu, '');
-  s = s.replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]');
-  const runs = []; let run = []; let lastEnd = -1;
-  const close = () => { if (run.length >= SEED_RUN_LEAST) runs.push([run[0], run[run.length - 1]]); run = []; };
-  for (const m of s.matchAll(/\p{L}+/gu)) {
-    const gap = lastEnd < 0 ? null : s.slice(lastEnd, m.index);
-    const word = seedWord(m[0].toLowerCase());
-    if (!word) close();
-    else {
-      if (run.length && !(gap.length <= SEED_GAP_MOST && SEED_GAP.test(gap))) close();
-      run.push([m.index, m.index + m[0].length]);
-    }
-    lastEnd = m.index + m[0].length;
-  }
-  close();
-  // the first word's own number ("1. ", "#1 (") goes with the run, as #1472 did
-  for (const [first, last] of runs.reverse()) {
-    const lead = /(?<!\d)#?\d{1,2}\s*[.):]?\s*["'(\[]?$/.exec(s.slice(0, first[0]));
-    s = s.slice(0, lead ? lead.index : first[0]) + '[removed]' + s.slice(last[1]);
+  let s = String(t).replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]');
+  for (const [a, b] of seedRunSpans(s).reverse()) {
+    const lead = /[#(]?\d{1,2}[ \t]*[.):-]?[ \t]*$/.exec(s.slice(0, a));
+    s = s.slice(0, lead ? lead.index : a) + '[removed]' + s.slice(b);
   }
   return s;
 };
+// WHAT IS KEPT OF THE SIGNED EVENT (kanban #1737, #1799, #1843, #1858): the event as kept had its raw content - the seed the columns had lost stayed on
+// disk in `event`, and `debug` was scrubbed only when read. The kept copy now holds every string of the content scrubbed (happened, expected, debug,
+// anything else) and every tag value scrubbed but the hex ones the store reads (node, screenshot, round, p, e). Its id and sig stay for reference: the
+// signature was checked when the report came in, and the kept copy is not checked again.
+const HEX_TAGS = new Set(['node', 'screenshot', 'round', 'p', 'e']);
+// ONLY THE SIGNED FIELDS, ONLY THE KNOWN TAGS (kanban #2003, #2016, #2050; refute of #1472): a field beside the NIP-01 ones ({ ...e } kept it, the id
+// covers none of it) and a tag of another name (its name was kept raw) are dropped; every object key is scrubbed as its value is, and a value nested
+// deeper than the walk goes is kept as its scrubbed JSON text, never raw. Last, the kept bytes are searched once more as a whole (a seed spread over
+// several strings or tags): one still found there keeps the event without its content and with only the tag values the store reads.
+// and lud16, the address a report may ask to be paid at (paidAddress reads it; kanban #1590 kept it, checked by its shape below)
+const KEPT_TAGS = new Set(['t', 'game', 'round', 'build', 'source', 'node', 'screenshot', 'p', 'e', 'lud16']);
+const DEEP_MOST = 32;
+const scrubDeep = (v, depth = 0) => (typeof v === 'string' ? scrubKeys(v) : v === null || typeof v !== 'object' ? v
+  : depth > DEEP_MOST ? scrubKeys(JSON.stringify(v))
+  : Array.isArray(v) ? v.map((x) => scrubDeep(x, depth + 1)) : Object.fromEntries(Object.entries(v).map(([k, x]) => [scrubKeys(k), scrubDeep(x, depth + 1)])));
+const hexTagValue = (t, x, i) => i === 1 && HEX_TAGS.has(t[0]) && typeof x === 'string' && /^[0-9a-f]{8,64}$/.test(x);
+const STRICT_TAG = { t: /^(bug|improvement)$/, source: /^(frontend|node)$/, game: /^[a-z0-9-]{1,48}$/, build: /^[0-9a-zA-Z. -]{1,24}$/,
+  lud16: /^(?:[a-z0-9._+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+|lnurl1[02-9ac-hj-np-z]+)$/i };
+export function keptEvent(e) {
+  let content;
+  try { content = JSON.stringify(scrubDeep(JSON.parse(e.content))); } catch { content = scrubKeys(String(e.content ?? '')); }
+  const tags = (Array.isArray(e.tags) ? e.tags : []).filter((t) => Array.isArray(t) && KEPT_TAGS.has(t[0]))
+    .map((t) => t.map((x, i) => (i === 0 || typeof x !== 'string' || hexTagValue(t, x, i) ? x : scrubKeys(x))));
+  const kept = { id: e.id, pubkey: e.pubkey, created_at: e.created_at, kind: e.kind, tags, content, sig: e.sig };
+  if (!seedRunSpans(JSON.stringify([kept.tags, kept.content])).length) return kept;
+  const plain = tags.filter((t) => hexTagValue(t, t[1], 1) || (STRICT_TAG[t[0]] && typeof t[1] === 'string' && STRICT_TAG[t[0]].test(t[1]))).map((t) => [t[0], t[1]]);
+  return { ...kept, tags: plain, content: JSON.stringify({ removed: 'a seed phrase was found in this report: its content is not kept' }) };
+}
 const tag = (e, k) => { const t = e.tags.find((x) => x[0] === k); return t ? String(t[1] ?? '') : ''; };
 const said = (x, re) => (re.test(String(x || '')) ? String(x) : '');
-// THE REPORT AS KEPT, NEVER AS RECEIVED (kanban #1590, a bypass of #1472): take() scrubbed 'happened' and 'expected' but wrote the whole signed event into
-// reports.event, so the seed phrase or nsec it removed from the words stayed in the SQLite file (its backups, its exports). The one place a report's event is
-// written now keeps only this: id, pubkey, kind, created_at and sig as received (the signature was checked when it came in; the kept copy is not re-verified),
-// the tags this store reads with their checked values (any other tag scrubbed), and a content rebuilt from the parsed body with every string scrubbed - the
-// debug, the lnAddress and any field nobody reads included. Files written before are rewritten once when opened (keptRewrite below).
-const KEPT_TAG = Object.freeze({ t: /^[a-z]{1,24}$/, source: /^[a-z]{1,24}$/, node: /^[0-9a-f]{64}$/, screenshot: /^[0-9a-f]{64}$/, round: /^[0-9a-f]{8,64}$/,
-  game: /^[a-z0-9-]{1,48}$/, build: /^[0-9a-zA-Z. -]{1,24}$/, lud16: /^(?:[a-z0-9._+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+|lnurl1[02-9ac-hj-np-z]+)$/i });
-const scrubDeep = (v, depth = 0) => (typeof v === 'string' ? scrubKeys(v)
-  : Array.isArray(v) ? (depth > 8 ? [] : v.map((x) => scrubDeep(x, depth + 1)))
-  : v && typeof v === 'object' ? (depth > 8 ? {} : Object.fromEntries(Object.entries(v).map(([k, x]) => [scrubKeys(k), scrubDeep(x, depth + 1)])))
-  : v);
-export function keptEvent(e) {
-  let body; try { body = JSON.parse(e && e.content); } catch { body = null; }
-  const tags = (Array.isArray(e && e.tags) ? e.tags : []).filter(Array.isArray).map((t) => {
-    const name = String(t[0] ?? '');
-    const re = Object.prototype.hasOwnProperty.call(KEPT_TAG, name) ? KEPT_TAG[name] : null;
-    // a known tag keeps its value only when it is of its shape and nothing in it is scrubbed (the hex ones are keys and hashes by shape: never scrubbed)
-    const v = String(t[1] ?? '');
-    if (re) return re.test(v) && (/^[0-9a-f]+$/.test(v) || scrubKeys(v) === v) ? [name, v] : null;
-    return t.map((x) => scrubKeys(String(x ?? '')));
-  }).filter(Boolean);
-  return { id: e && e.id, pubkey: e && e.pubkey, created_at: e && e.created_at, kind: e && e.kind, tags,
-    content: body && typeof body === 'object' ? JSON.stringify(scrubDeep(body)) : scrubKeys(String((e && e.content) ?? '')), sig: e && e.sig };
-}
+// (kanban #1590, a bypass of #1472: the report as kept, never as received - keptEvent above, since #2003 / #2016 / #2050 the one rule)
 
 export function openFeedbackStore(path = ':memory:') {
   const db = new DatabaseSync(path);
-  // secure_delete (kanban #1590): the bytes of a rewritten event are zeroed, not left in a free page of the file
-  db.exec(`PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA secure_delete = ON;
+  // FREED BYTES ARE ZEROED (kanban #2003, #2016, #2050): a row rewritten without a seed must not leave the seed in the file's free space
+  db.exec(`PRAGMA secure_delete = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;
     CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY, pubkey TEXT NOT NULL, type TEXT NOT NULL, signed_at INTEGER NOT NULL, received_ms INTEGER NOT NULL,
       happened TEXT NOT NULL, expected TEXT NOT NULL, game TEXT, round TEXT, build TEXT, event TEXT NOT NULL,
       state TEXT NOT NULL DEFAULT 'new', reason TEXT, duplicate_of TEXT, severity TEXT, amount_sats INTEGER, ticket TEXT, changed_ms INTEGER);
@@ -141,12 +127,21 @@ export function openFeedbackStore(path = ':memory:') {
     if (unnumbered.length) { let n = Number(db.prepare('SELECT COALESCE(MAX(number), 0) AS n FROM reports').get().n);
       const set = db.prepare('UPDATE reports SET number = ? WHERE id = ?'); for (const r of unnumbered) set.run(++n, r.id); } }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS reports_by_number ON reports (number)');
-  // A FILE FROM BEFORE #1590 (keptRewrite): every report's event rewritten to its kept form once; then the WAL is folded in and the file vacuumed, so the raw
-  // copies are gone from the file, not only from the rows
-  { const all = db.prepare('SELECT id, event FROM reports').all(); const set = db.prepare('UPDATE reports SET event = ? WHERE id = ?'); let changed = 0;
-    for (const r of all) { let e = null; try { e = JSON.parse(r.event); } catch { e = null; }
-      const kept = JSON.stringify(e ? keptEvent(e) : { content: '' }); if (kept !== r.event) { set.run(kept, r.id); changed++; } }
-    if (changed && path !== ':memory:') { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); db.exec('VACUUM'); db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } }
+  // A FILE FROM BEFORE (kanban #1737, #1799, #1843, #1858): its kept events held the raw content - each is scrubbed in place once, as take() keeps one now
+  // (kanban #2003, #2016, #2050) and so are its words: happened, expected and a rejection's reason under the rule of today, not the one they were
+  // kept under. A pass that changed a row then checkpoints the WAL away and VACUUMs, so no old page or frame keeps the raw text on disk.
+  { let changed = 0;
+    const fix = db.prepare('UPDATE reports SET event = ?, happened = ?, expected = ?, reason = ? WHERE id = ?');
+    for (const r of db.prepare('SELECT id, event, happened, expected, reason FROM reports').all()) {
+      let kept = r.event; try { kept = JSON.stringify(keptEvent(JSON.parse(r.event))); } catch { kept = JSON.stringify(keptEvent({ content: scrubKeys(String(r.event)) })); }
+      const happened = scrubKeys(r.happened); const expected = scrubKeys(r.expected); const reason = r.reason === null ? null : scrubKeys(r.reason);
+      if (kept !== r.event || happened !== r.happened || expected !== r.expected || reason !== r.reason) { fix.run(kept, happened, expected, reason, r.id); changed++; }
+    }
+    const fixMove = db.prepare('UPDATE report_moves SET note = ? WHERE rowid = ?');
+    for (const m of db.prepare('SELECT rowid AS k, note FROM report_moves WHERE note IS NOT NULL').all()) {
+      const note = scrubKeys(m.note); if (note !== m.note) { fixMove.run(note, m.k); changed++; }
+    }
+    if (changed && path !== ':memory:') db.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);'); }
   // A PAID REPORT FROM BEFORE GETS ITS APPROVAL TIME BACK (kanban #1786): paidNow used to move changed_ms to the payment time; the approval's move
   // (report_moves, to 'accepted') still holds when it was approved
   db.exec(`UPDATE reports SET changed_ms = (SELECT MAX(m.at_ms) FROM report_moves m WHERE m.id = reports.id AND m.to_state = 'accepted')
@@ -346,6 +341,7 @@ export function openFeedbackStore(path = ':memory:') {
     if (!reportPays(w)) return { status: 'ERROR', reason: 'this reward was withdrawn: its report is not approved' };   // audit 5 #1402
     let d;
     try { d = await decode(String(invoice || '')); } catch { d = { ok: false }; }
+    if (d && d.paused) return { status: 'ERROR', reason: PAYOUTS_PAUSED };   // kanban #2412: the wallet's state, not the invoice's
     if (!d || !d.ok) return { status: 'ERROR', reason: 'that invoice could not be read' };
     if (Number(d.amountSats) !== w.amount_sats) return { status: 'ERROR', reason: `the invoice must be for exactly ${w.amount_sats} sat` };
     const took = db.prepare("UPDATE rewards SET state = 'paying', invoice = ?, payment_hash = ?, tried_ms = ?, address = ? WHERE k1 = ? AND state = 'open'").run(String(invoice), d.paymentHash || null, nowMs, address, w.k1);
@@ -510,7 +506,7 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
     await Promise.all(games.map(async (g) => {
       for (const seat of seats) {
         try {
-          const r = await fetcher(`${String(seat).replace(/\/$/, '')}/season?scope=network&game=${encodeURIComponent(g)}&days=${days}`, { signal: AbortSignal.timeout(20000) });
+          const r = await fetcher(`${String(seat).replace(/\/$/, '')}/season?scope=network&game=${encodeURIComponent(g)}&days=${days}`, { signal: AbortSignal.timeout(20000), redirect: 'error' });   // kanban #1884: a configured seat is asked as given, never redirected
           if (!r.ok) continue;
           const b = await r.json();
           for (const row of b.rows || []) if (Number(row.rounds) > 0 && /^[0-9a-f]{64}$/i.test(String(row.player || ''))) {
@@ -556,37 +552,69 @@ export function imageKind(bytes) {
 // a reward's comment: at most this many characters (LUD-12 wallets take 100-255; the address's own commentAllowed cuts it further)
 export const COMMENT_MOST = 200;
 
-// NEVER AN INTERNAL HOST (kanban #1511, #1677): an LNURL, a Lightning address's domain and a wallet's callback can name any URL, so an IP literal,
-// localhost or a local-only name is refused before any fetch - one test for the address and the callback, at send (lnAddressWorks) and at payout
-// (lnAddressInvoice), so the faucet's process never asks a host the reporter picked inside our network.
-export function publicHttpsUrl(u) {
-  if (!/^https:\/\//.test(String(u || ''))) return false;
-  let host = ''; try { host = new URL(String(u)).hostname.toLowerCase().replace(/\.$/, ''); } catch { host = ''; }
-  return !(!host || /^\[|^\d+(\.\d+){3}$|^\d+$|^0x/i.test(host) || !host.includes('.') || /(^|\.)(localhost|local|internal|lan|home|arpa|localdomain|intranet)$/.test(host));
-}
-
-// THE GUARD ITSELF (kanban #1809) lives in public-fetch.js since #2236, shared with the winnings send; re-exported for the faucet's importers.
-export { addressIsGlobal, hostReach, walletFetch } from './public-fetch.js';
-
-export async function lnAddressWorks(address, { fetchFn = walletFetch, timeoutMs = 8000 } = {}) {
+// ---- A WALLET IS ASKED ON THE PUBLIC INTERNET ONLY (kanban #1511, #1677, #1689, #1746, #1809, #1962) ----
+// The guard lives in public-fetch.js (kanban #1919: every seat's payout asks use it too) and is re-exported here: a public name
+// (walletUrlRefusal - no IP literal, no local-only or tailnet name, the default HTTPS port only), a public resolved address (guardedLookup in
+// publicFetch: DNS rebinding between the check and the connect cannot swap it), and a redirect followed by hand only - at most REDIRECTS_MOST
+// hops, each Location checked exactly as the first URL (#1962: name@own-domain answering 301 to its wallet provider works; #1746: a 302 to an
+// internal URL is never fetched). An injected fetchFn is asked with redirect: 'manual' and its hops are checked the same way.
+export { internalAddress, walletUrlRefusal, guardedLookup, publicFetch } from './public-fetch.js';
+// and the a45 #2236 name for the faucet's and the winnings send's one guard by where a name leads (kanban #1809, #2236)
+export { hostReach } from './public-fetch.js';
+// the names #1511 / #1809 gave these checks, kept for their callers: a URL on a public name, an address that is global, one pinned GET
+export const publicHttpsUrl = (u) => !walletUrlRefusal(u);
+export const addressIsGlobal = (address) => !internalAddress(address);
+export const walletFetch = (url, { signal, headers } = {}) => publicFetch(url, { signal, headers });
+// BY WHERE THE NAME LEADS FOR ANY FETCHER (kanban #1809): publicFetch checks the resolved address at its connect, but an injected fetcher
+// connects as it likes - so before one is asked, the name is resolved here and a name leading to an internal address is refused (EINTERNALHOST).
+// A name that does not resolve now is left to the fetch, which fails on its own.
+const leadsInternal = (u) => new Promise((resolve) => {
+  let host; try { host = new URL(String(u)).hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, ''); } catch { resolve(true); return; }
+  guardedLookup(host, {}, (err) => resolve(!!err && err.code === 'EINTERNALHOST'));
+});
+// NEVER INSIDE THE FAUCET'S OWN NETWORK (kanban #2045, #2064, refute 3 of #1537): the faucet's own team hosts (FAUCET_TEAM_HOSTS) are refused by
+// name too - the first URL and every redirect hop
+function teamHosts() { return String(process.env.FAUCET_TEAM_HOSTS || 'tn4.bitcoin-arena.io').split(',').map((x) => x.trim().toLowerCase().replace(/\.$/, '')).filter(Boolean); }
+const onTeamHost = (url) => { let h = ''; try { h = new URL(String(url)).hostname.toLowerCase().replace(/\.$/, ''); } catch { return true; } return teamHosts().some((t) => h === t || h.endsWith(`.${t}`)); };
+const walletRefusal = (url) => walletUrlRefusal(url) || (onTeamHost(url) ? 'its wallet must be on a public name' : null);
+const walletGet = async (fetchFn, u, timeoutMs) => {
+  if (fetchFn !== publicFetch && await leadsInternal(u)) throw Object.assign(new Error('its wallet must be on a public name'), { code: 'EINTERNALHOST' });
+  return checkedFetch(u, { fetchFn, signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' }, refusal: walletRefusal });
+};
+/**
+ * WHERE AN ADDRESS IS ASKED, BEFORE ANYTHING IS FETCHED (kanban #1873, #1905): { ok, url } for a Lightning address or an LNURL on a public HTTPS
+ * name, else { ok: false, why }. The faucet takes a slot of its address-check minute only for an address that passes this, so text that is no
+ * address costs nothing and can never fill the minute.
+ */
+export function lnAddressUrl(address) {
   const a = String(address || '').trim();
   let url = null;
   const m = /^([a-z0-9._+-]+)@([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/i.exec(a);
   if (m) url = `https://${m[2].toLowerCase()}/.well-known/lnurlp/${encodeURIComponent(m[1].toLowerCase())}`;
   else if (/^lnurl1[02-9ac-hj-np-z]+$/i.test(a)) { try { url = urlOfLnurl(a.toLowerCase()); } catch { url = null; } }
   if (!url || !/^https:\/\//.test(url)) return { ok: false, why: 'that is not a Lightning address (name@wallet.com) or an LNURL' };
-  // NEVER AN INTERNAL HOST (kanban #1511, the test shared with the payout since #1677)
-  if (!publicHttpsUrl(url)) return { ok: false, why: 'its wallet must be on a public name' };
-  // and by where the name leads (kanban #1809)
-  if (await hostReach(url) === 'internal') return { ok: false, why: 'its wallet must be on a public name' };
+  const refused = walletRefusal(url); if (refused) return { ok: false, why: refused };
+  return { ok: true, url };
+}
+
+export async function lnAddressWorks(address, { fetchFn = publicFetch, timeoutMs = 8000 } = {}) {
+  const a = String(address || '').trim();
+  let url = null;
+  const m = /^([a-z0-9._+-]+)@([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/i.exec(a);
+  if (m) url = `https://${m[2].toLowerCase()}/.well-known/lnurlp/${encodeURIComponent(m[1].toLowerCase())}`;
+  else if (/^lnurl1[02-9ac-hj-np-z]+$/i.test(a)) { try { url = urlOfLnurl(a.toLowerCase()); } catch { url = null; } }
+  if (!url || !/^https:\/\//.test(url)) return { ok: false, why: 'that is not a Lightning address (name@wallet.com) or an LNURL' };
+  // NEVER AN INTERNAL HOST (kanban #1511, #1689, #1746, #1962, #2064): by name here, by resolved address in publicFetch's lookup, each redirect hop the same
+  const refused = walletRefusal(url); if (refused) return { ok: false, why: refused };
   let j;
   try {
-    const r = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } });
+    const r = await walletGet(fetchFn, url, timeoutMs);
     if (!r.ok) return { ok: false, why: `its wallet answered ${r.status}` };
     // read to at most LNURL_MAX_BYTES (kanban #1563): the address is named by anyone who posts a report, and r.json() took a stranger's
     // whole answer - hundreds of MB ran the faucet (welcomes, node faucet, the mainnet bounty payer) out of memory
     j = await readJsonBounded(r);
   } catch (e) { if (/LNURL answer may be/.test(String(e && e.message))) return { ok: false, why: 'its wallet answered too much' };
+    if (e && e.code === 'EINTERNALHOST') return { ok: false, why: 'its wallet must be on a public name' };
     return { ok: false, why: /abort|timeout/i.test(String(e && e.name) + String(e && e.message)) ? 'its wallet did not answer in time' : 'its wallet could not be reached' }; }
   if (!j || j.status === 'ERROR') return { ok: false, why: `its wallet said: ${String((j && j.reason) || 'error').slice(0, 120)}` };
   if (j.tag !== 'payRequest' || typeof j.callback !== 'string' || !/^https:\/\//.test(j.callback)) return { ok: false, why: 'its wallet does not take payments at that address' };
@@ -599,16 +627,17 @@ export async function lnAddressWorks(address, { fetchFn = walletFetch, timeoutMs
  * amount (msat) and the comment (LUD-12, only when the wallet takes one, cut to its commentAllowed). Answers { ok, invoice, commentSent } or { ok: false, why }.
  * The caller's decode() then checks the invoice is for exactly the amount (claim()).
  */
-export async function lnAddressInvoice(address, sats, comment = '', { fetchFn = walletFetch, timeoutMs = 10000 } = {}) {
+export async function lnAddressInvoice(address, sats, comment = '', { fetchFn = publicFetch, timeoutMs = 10000 } = {}) {
   const a = String(address || '').trim();
   const m = /^([a-z0-9._+-]+)@([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/i.exec(a);
   let url = m ? `https://${m[2].toLowerCase()}/.well-known/lnurlp/${encodeURIComponent(m[1].toLowerCase())}` : null;
   if (!url && /^lnurl1[02-9ac-hj-np-z]+$/i.test(a)) { try { url = urlOfLnurl(a.toLowerCase()); } catch { url = null; } }
   if (!url || !/^https:\/\//.test(url)) return { ok: false, why: 'not a Lightning address or an LNURL' };
-  // NEVER AN INTERNAL HOST AT PAYOUT EITHER (kanban #1677): the #1511 test, before the address's fetch and before its callback's
-  if (!publicHttpsUrl(url)) return { ok: false, why: 'its wallet must be on a public name' };
-  // and by where the name leads, for the address and for the callback it names (kanban #1809); every answer read bounded (kanban #1563)
-  const get = async (u) => { if (await hostReach(u) === 'internal') throw new Error('must be on a public name'); const r = await fetchFn(u, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } }); if (!r.ok) throw new Error(`answered ${r.status}`); return readJsonBounded(r).catch((e) => { throw /LNURL answer may be/.test(e.message) ? new Error('answered too much') : e; }); };
+  // the same guard as lnAddressWorks on BOTH GETs, the callback's included (kanban #1677, #1689, #1746, #1809, #1962): a public name, a public
+  // address, each redirect hop checked; every answer read bounded (kanban #1563)
+  const get = async (u) => { const refused = walletRefusal(u); if (refused) throw new Error(refused);
+    let r; try { r = await walletGet(fetchFn, u, timeoutMs); } catch (e) { throw new Error(e && e.code === 'EINTERNALHOST' ? 'its wallet must be on a public name' : 'could not be reached'); }
+    if (!r.ok) throw new Error(`answered ${r.status}`); return readJsonBounded(r).catch((e) => { throw /LNURL answer may be/.test(e.message) ? new Error('answered too much') : e; }); };
   let p; try { p = await get(url); } catch (e) { return { ok: false, why: `its wallet: ${e.message}` }; }
   if (!p || p.status === 'ERROR' || p.tag !== 'payRequest' || !/^https:\/\//.test(String(p.callback || ''))) return { ok: false, why: `its wallet takes no payment there${p && p.reason ? `: ${String(p.reason).slice(0, 120)}` : ''}` };
   if (!publicHttpsUrl(p.callback)) return { ok: false, why: 'its wallet must be on a public name' };

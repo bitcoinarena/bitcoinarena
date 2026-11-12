@@ -262,7 +262,9 @@ test('a cancel before entry close is free: out of the table at every seat, its s
     for (const stop = Date.now() + 8000; Date.now() < stop && !handed; await wait(100)) handed = w.b.round.cancelled(played[2].eid);
     console.log('  CANCEL:', JSON.stringify({ forged, both, free, kept, one, handed }));
     assert.match(forged, /^403 that cancel is not signed by the entry's session key/);
-    assert.deepEqual(both.map((x) => x.slice(0, 3)), ['201', '201', '200']);
+    // (seat A hands its take on at once before it answers, kanban #1950: seat B already holds it when the player's own post reaches it)
+    assert.deepEqual(both.map((x) => x.slice(0, 3)), ['201', '200', '200']);
+    assert.equal(w.b.round.cancelled(played[3].eid), true);
     assert.deepEqual(free, { stake: '200', fee: '200' });
     assert.match(kept, /^409 a fee lock comes back at once only for a cancelled order or a refunded market/);
     assert.equal(one.slice(0, 3), '201');

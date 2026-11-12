@@ -6,8 +6,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { vestedShares, VESTING_DAY_BLOCKS, encodeDonationSet, decodeDonationSet, donationSetId, donationSetStands } from '../src/donation.js';
+import { pointKey } from './point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
-const key = (n) => Uint8Array.from([0x02, ...new Uint8Array(32).fill(n)]);
+const key = (n) => pointKey(0x02, n);
 const START = 160000;
 const NEWCOMER = [{ recipientPk: key(1), shareBps: 6000, label: 'dev a' }, { recipientPk: key(2), shareBps: 4000, label: 'dev b' },
   { recipientPk: key(3), shareBps: 0, label: 'dev c', vesting: { targetBps: 1000, startHeight: START, days: 365 } }];

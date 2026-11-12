@@ -144,6 +144,11 @@ test('a peer cannot talk a seat into an entry: a result with a bad signature or 
     seat.verifier.peers = [`http://127.0.0.1:${stub.address().port}`];
     const count = () => seat.verifier.signersNaming(w.rid, b.eid, entry.playerPubkey).then((s) => s.size);
     assert.equal(await count(), records.length, 'the true records count');
+    // kanban #2063: about this entry (its reveal record) and seated (not VOID) - both entries were played, so every true record still counts;
+    // read against the other entry's contract (another reveal record) none does
+    const entryA = (await import('../../arena-protocol/src/contracts.js')).decodeEntryContract(seat.round.entry(a.eid));
+    assert.equal(await seat.verifier.signersNaming(w.rid, b.eid, entry.playerPubkey, { seated: true, entry }).then((s) => s.size), records.length, 'a seated record about this entry did not count');
+    assert.equal(await seat.verifier.signersNaming(w.rid, a.eid, entry.playerPubkey, { entry: entryA }).then((s) => s.size), 0, 'a record about another entry counted');
     serve = Buffer.concat(records.map((r) => { const x = Buffer.from(r); x[x.length - 1] ^= 1; return x; }));
     assert.equal(await count(), 0, 'a broken signature counted');
     const other = (await import('../../arena-protocol/src/contracts.js')).decodeEntryContract(seat.round.entry(a.eid)).playerPubkey;

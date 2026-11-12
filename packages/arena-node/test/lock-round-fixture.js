@@ -7,6 +7,8 @@ import { headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
 import { CLOCK } from './block-clock.js';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { lockClaimDigest } from '../../arena-protocol/src/lock-claim.js';
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { openStore } from '../src/store.js';
 import { serve, STAKE_LOCK_HEADER } from '../src/server.js';
@@ -171,7 +173,7 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
 // until it resolves), a game's the network's - as the page pays it
 const gameFeeBps = (w) => { const f = pluginForRound(w.c, (w.a || w.nodes[0]).round.plugins); return f.ok ? entryFeeBpsOf(f.plugin.manifest) : undefined; };
 // `order`: { price (PRICE_SCALE units), expiryMs } - a market order: the entry buys `pick` at that limit
-export async function lockAndPlay(w, who, { session: fixedSession = null, feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, unreached = [], expirySpan = null, frontendPk = null, lockHeaders = null, lockFirst = true } = {}) {
+export async function lockAndPlay(w, who, { session: fixedSession = null, feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, unreached = [], expirySpan = null, frontendPk = null, lockHeaders = null, lockFirst = true, lockClaim = true } = {}) {
   const session = fixedSession || ed25519.utils.randomSecretKey();   // `session`: a fixed session key, for a test that enters twice with one (kanban #1479)
   const preimage = secretScalar();
   const e = rand(32);
@@ -264,6 +266,11 @@ export async function lockAndPlay(w, who, { session: fixedSession = null, feeLoc
     assert.equal(handed.status, 201, handed.status === 201 ? undefined : await handed.text());
     const joined = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
     assert.equal(joined.status, 201, await joined.text());
+    // THE PLAYER'S CLAIM ON THE ENTRY'S LOCKS, as the page sends it with its entry (kanban #1897, #1938): signed by the stake point
+    if (lockClaim) {
+      const claimed = await fetch(`${base}/lock-claim?entry=${toHex(eid)}`, { method: 'POST', body: schnorr.sign(lockClaimDigest(eid), preimage) });
+      assert.equal(claimed.status, 201, await claimed.text());
+    }
     // PICK (a): THE STAKE COUNTS WHICHEVER LOCK COMES LAST - the fee lock may be handed first.
     const handFee = async () => {
       const fee = await fetch(`${base}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFields)), ...(lockHeaders ? { headers: lockHeaders } : {}) });

@@ -18,6 +18,11 @@ import { DatabaseSync } from 'node:sqlite';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 export const OPEN = 0, CLOSED = 1;
+// WHAT ONE ROW OF `relayed` COSTS BEYOND ITS BYTES (kanban #2055, #2073, refute 3 of #1532): its hash, entry_id, round_id, seen_ms,
+// named/accused and its index entries - measured about 265 bytes for a 65-byte reveal record, so 320 bounds it with room. Every
+// relay cap counts relayRowCost(bytes) per row, so RELAY_MOST bounds what the table takes on disk, not only its payload.
+export const RELAY_ROW_COST = 320;
+export const relayRowCost = (length) => Number(length) + RELAY_ROW_COST;
 
 /**
  * A STORE MADE WHILE A SIGNING MACHINE WAS CALLED A SEAT keeps its rows under the new names
@@ -292,6 +297,25 @@ export function openStore(path = ':memory:') {
     -- proposal read entries by round at every batch of every open market round, and without this each read scanned every entry
     -- the seat holds, contract blobs and all - SQLite's own time was the largest left in the seat.
     CREATE INDEX IF NOT EXISTS entries_by_round ON entries (round_id);
+
+    -- WHICH ENTRIES NAME A LOCK OUTPOINT, IN EVERY ROUND (kanban #1692, #1758): a lock goes to the first entry naming it in ANY round this seat
+    -- holds - every round on the same seats has the same claim key, so a copy into another round passed lockMatchesEntry. Written when an
+    -- entry is first kept; entries kept before this table are still read by their own round (Round.firstNamingOfLock).
+    CREATE TABLE IF NOT EXISTS entry_lock_names (
+      kind       TEXT NOT NULL,
+      outpoint   TEXT NOT NULL,
+      entry_id   BLOB NOT NULL,
+      player_pk  BLOB NOT NULL,
+      joined_ms  INTEGER NOT NULL,
+      PRIMARY KEY (kind, outpoint, entry_id)
+    );
+
+    -- THE PLAYER'S CLAIM ON AN ENTRY'S LOCKS (kanban #1897, #1938; protocol lock-claim.js): a BIP-340 signature by the entry's stake point over
+    -- its id, checked before it is kept. A lock outpoint that a claimed entry names goes only to a claimed entry (stake-lock-signer-node.js).
+    CREATE TABLE IF NOT EXISTS lock_claims (
+      entry_id   BLOB PRIMARY KEY,
+      sig        BLOB NOT NULL
+    );
 
     -- THIS NODE'S OWN KEY. One row, and the CHECK is what makes it one: a
     -- daemon with two identities would sign some receipts with each and a
@@ -855,6 +879,15 @@ export function openStore(path = ':memory:') {
       received_ms INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS market_cancels_round ON market_cancels (round_id);
+    -- A CANCEL THIS SEAT'S PLAYER DOOR TOOK, STILL TO BE HANDED ON (kanban #1875, #1909, #1950): retried until every other seat of the round
+    -- holds it or the round's entry close (close_ms) shuts their doors, across a restart; done = 1 once that is so. Never removed.
+    CREATE TABLE IF NOT EXISTS market_cancel_handons (
+      entry_id    BLOB PRIMARY KEY,
+      round_id    BLOB NOT NULL,
+      close_ms    INTEGER NOT NULL,
+      done        INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS market_cancel_handons_open ON market_cancel_handons (done);
 
     -- A HEAD-TO-HEAD ENTRY'S IDENTITY: the player's identity key, signed by it over (round, entry, key) -
     -- what a score across rounds links its rounds by. Kept once per entry. And each round's match record as this seat
@@ -1292,8 +1325,65 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, signer_pubkey, bytes)
     );
   `);
+  // A RELAYED COPY NAMES ITS ROUND AND ENTRY (kanban #1725, #1795, refute of #1532): the relay door bounds what one entry and one round
+  // may park there, and keeps a reserve for transcripts a held result names and for slash proofs, so it needs them without reading
+  // every blob. `named` is 1 when a held result or posting of that entry names the transcript's hash. A row from before gets them
+  // read from its bytes once, here (a transcript: type 0x09, version, round id, entry id; a reveal record: entry id first).
+  if (!db.prepare('PRAGMA table_info(relayed)').all().some((c) => c.name === 'entry_id')) {
+    db.exec('ALTER TABLE relayed ADD COLUMN entry_id BLOB');
+    db.exec('ALTER TABLE relayed ADD COLUMN round_id BLOB');
+    db.exec('ALTER TABLE relayed ADD COLUMN named INTEGER NOT NULL DEFAULT 0');
+    db.exec(`UPDATE relayed SET round_id = SUBSTR(bytes, 4, 32), entry_id = SUBSTR(bytes, 36, 32)
+      WHERE LENGTH(bytes) >= 67 AND SUBSTR(bytes, 1, 1) = x'09'`);
+    db.exec(`UPDATE relayed SET entry_id = SUBSTR(bytes, 1, 32), round_id = (SELECT round_id FROM entries WHERE entry_id = SUBSTR(relayed.bytes, 1, 32))
+      WHERE entry_id IS NULL AND LENGTH(bytes) IN (33, 65) AND EXISTS (SELECT 1 FROM entries WHERE entry_id = SUBSTR(relayed.bytes, 1, 32))`);
+  }
+  // A RELAYED SLASH PROOF NAMES ITS ROUND AND ITS ACCUSED (kanban #1917, refute 2 of #1532): the slash door keeps proofs in their own
+  // share of the pool (RELAY_SLASH_RESERVE), per accused node per round, and the prune lets them go with their round's claim window;
+  // `accused` is set on slash rows only. A row from before gets both read from its bytes once, here (a slash proof: type 0x0c,
+  // version, round id at 3, player key at 35, accused node key at 67).
+  if (!db.prepare('PRAGMA table_info(relayed)').all().some((c) => c.name === 'accused')) {
+    db.exec('ALTER TABLE relayed ADD COLUMN accused BLOB');
+    db.exec(`UPDATE relayed SET round_id = SUBSTR(bytes, 4, 32), accused = SUBSTR(bytes, 68, 32)
+      WHERE entry_id IS NULL AND LENGTH(bytes) > 199 AND SUBSTR(bytes, 1, 1) = x'0c'`);
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS relayed_entry ON relayed (entry_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS relayed_round ON relayed (round_id)');
+  // WHAT A RELAYED ROW COSTS, AND THE POOL'S TOTALS KEPT AS IT GOES (kanban #2055, #2073, refute 3 of #1532). The relay caps counted
+  // LENGTH(bytes) only, but a row also stores its 32-byte hash, entry_id, round_id, seen_ms and the index entries (primary key,
+  // relayed_entry, relayed_round): a 65-byte reveal record took about 330 bytes on disk, so RELAY_MOST counted was about 5x that on
+  // disk. Every cap now counts LENGTH(bytes) + RELAY_ROW_COST per row (relayRowCost). And the whole-pool sums the doors asked on every
+  // PUT were SUM scans over every row on the seat's one thread: they are kept in relayed_tally by triggers on `relayed` (every writer,
+  // the prune's deletes included) and recounted once here at open. Per entry, round and accused node the sums stay queries over an
+  // index, each bounded by its own cap; relayed_accused (slash rows only) serves the per-accused-node cap over all rounds.
+  db.exec('CREATE INDEX IF NOT EXISTS relayed_accused ON relayed (accused) WHERE accused IS NOT NULL');
+  db.exec('CREATE TABLE IF NOT EXISTS relayed_tally (k TEXT PRIMARY KEY, n INTEGER NOT NULL)');
+  const rowCost = (t) => `(LENGTH(${t}.bytes) + ${RELAY_ROW_COST})`;
+  const tallyOf = (t) => ({
+    all: rowCost(t),
+    transcript: `CASE WHEN ${t}.accused IS NULL THEN ${rowCost(t)} ELSE 0 END`,
+    unnamed: `CASE WHEN ${t}.entry_id IS NOT NULL AND ${t}.named = 0 THEN ${rowCost(t)} ELSE 0 END`,
+    slash: `CASE WHEN ${t}.accused IS NOT NULL THEN ${rowCost(t)} ELSE 0 END`,
+  });
+  const tallyKeys = Object.keys(tallyOf('x'));
+  for (const k of tallyKeys) db.exec(`INSERT OR REPLACE INTO relayed_tally (k, n) SELECT '${k}', COALESCE(SUM(${tallyOf('relayed')[k]}), 0) FROM relayed`);
+  const tallyBy = (sign, t) => tallyKeys.map((k) => `UPDATE relayed_tally SET n = n ${sign} (${tallyOf(t)[k]}) WHERE k = '${k}';`).join('\n      ');
+  db.exec(`CREATE TRIGGER IF NOT EXISTS relayed_tally_in AFTER INSERT ON relayed BEGIN
+      ${tallyBy('+', 'NEW')}
+    END;
+    CREATE TRIGGER IF NOT EXISTS relayed_tally_out AFTER DELETE ON relayed BEGIN
+      ${tallyBy('-', 'OLD')}
+    END;
+    CREATE TRIGGER IF NOT EXISTS relayed_tally_change AFTER UPDATE ON relayed BEGIN
+      ${tallyBy('-', 'OLD')}
+      ${tallyBy('+', 'NEW')}
+    END;`);
   // A STORE MADE BEFORE A NONCE ROW CARRIED ITS SIGNING ATTEMPT gets the column:
   // every row it already holds was attempt 0.
+  // EVERY LOCK FOR ONE HANDOUT, EACH UNDER ITS OWN ID (kanban #1669, #1735): a refused round's lock row names the handout it
+  // belongs to; a row from before names none, and belongs to the handout whose id it is kept under
+  if (!db.prepare('PRAGMA table_info(refused_locks)').all().some((c) => c.name === 'of_handout'))
+    db.exec('ALTER TABLE refused_locks ADD COLUMN of_handout BLOB');
   if (!db.prepare('PRAGMA table_info(pool_nonces)').all().some((c) => c.name === 'attempt'))
     db.exec('ALTER TABLE pool_nonces ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0');
   // AN OBJECTION NAMES ITS BLOCK (§13A, RULED 2026-09-24): the window places it by that block, not by when it came.
@@ -1350,6 +1440,17 @@ export function openStore(path = ':memory:') {
   // from before the column counts as held from the start.
   if (!db.prepare('PRAGMA table_info(evidence_blocks)').all().some((c) => c.name === 'seen_ms'))
     db.exec('ALTER TABLE evidence_blocks ADD COLUMN seen_ms INTEGER');
+  // AND WHICH PEER A PULLED RECORD CAME FROM (kanban #1883, #1914, #1489): NULL for this seat's own record (every row from
+  // before the column is one), the peer's address for a record #pullEvidenceBlocks kept - so what one peer can add is
+  // bounded per peer, and this seat serves on only the records of marks it holds itself.
+  if (!db.prepare('PRAGMA table_info(evidence_blocks)').all().some((c) => c.name === 'pulled_from'))
+    db.exec('ALTER TABLE evidence_blocks ADD COLUMN pulled_from TEXT');
+  // AND WHICH PEER A PULLED PAIR CAME FROM (kanban #2060, #1548, #1738, #1883, #1914, #1489): NULL for a pair this seat
+  // kept on its own record (every row from before the column), the peer's address for one #equivocationProven pulled from
+  // a peer's /equivocation, /late-first-mark or /entry-void answer - so what one peer can add is bounded per peer.
+  for (const t of ['fork_pairs', 'first_mark_pairs'])
+    if (!db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'pulled_from'))
+      db.exec(`ALTER TABLE ${t} ADD COLUMN pulled_from TEXT`);
   // AND BEFORE AN ENTRY_VOID SAID HOW THIS SIGNER NODE LEARNED IT (M3.3-34): every row
   // it already holds was decided on its own record.
   if (!db.prepare('PRAGMA table_info(entry_voids)').all().some((c) => c.name === 'learned'))

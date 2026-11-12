@@ -20,6 +20,10 @@ import { decodeManifest, encodeManifest, gameIdOf } from '../../arena-protocol/s
 import { gameInfoJson } from '../../arena-protocol/src/game-info.js';
 import { checkPackage, packageWindow } from './plugin-check.js';
 import { trialRun, TRIAL_MS } from './plugin-trial.js';
+/** THE FIRST LOAD OF EACH OF AN ADOPTED PACKAGE'S CORES (kanban #2058, #2078): no longer than the trial that passed it. */
+export const REGISTER_MS = TRIAL_MS;
+/** The file an installed core is kept in - and the name its module has in the trial too (kanban #2058, #2078). */
+const coreFileOf = (hash) => `core-${hash}.mjs`;
 
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 const b64 = (b) => Buffer.from(b).toString('base64');
@@ -50,18 +54,30 @@ export function verifyPackage(pkg, { verify, want = null, parentOf } = {}) {
   for (const c of pkg.cores) {
     const t = trialRun(Buffer.from(c.source, 'base64').toString('utf8'), manifest, { name: c.name || String(c.hash).slice(0, 16) });
     r.checks.push({ check: `core ${c.hash.slice(0, 12)}… runs in the sandbox`, ok: t.ok, detail: t.ok ? `${t.cases} move combinations, each answered the same twice` : t.why });
-    if (!t.ok) return { ...r, ok: false, why: `the trial run refuses it: ${t.why}` };
+    // `trial` (kanban #1880, #1913): the verdict on these signed bytes, which a seat may remember; `retry`: none yet (try again)
+    if (!t.ok) return { ...r, ok: false, trial: !t.retry, retry: !!t.retry, why: `the trial run refuses it: ${t.why}` };
   }
   return r;
 }
 
-/** Kept on disk, one directory per game id: the package as fetched and its files. */
-export function installPackage(dir, pkg, gameId) {
+// THE TITLE THIS SEAT GAVE A GAME IS KEPT APART FROM THE PACKAGE (kanban #1716, #1780, after #1541): package.json is the package
+// as a serving seat handed it, and a build before #1541 kept it as fetched - so its `title` (and any mark inside it) may be a
+// relaying seat's. Only SEAT_TITLE_FILE, which only this seat writes (adoptPackage through installPackage's `title`), names
+// the title; a game kept without one is shown under its manifest's signed gameName.
+export const SEAT_TITLE_FILE = 'seat-title.json';
+/** The title this seat wrote for the game kept at `at`, or null (none written, or unreadable). */
+export function seatTitleAt(at) {
+  try { const j = JSON.parse(readFileSync(join(at, SEAT_TITLE_FILE), 'utf8')); return typeof j.title === 'string' && j.title ? j.title.slice(0, 80) : null; } catch { return null; }
+}
+
+/** Kept on disk, one directory per game id: the package as fetched and its files; `title`, when given, as this seat's title. */
+export function installPackage(dir, pkg, gameId, { title = null } = {}) {
   const at = join(dir, gameId);
   mkdirSync(at, { recursive: true });
-  for (const c of pkg.cores) writeFileSync(join(at, `core-${c.hash}.mjs`), Buffer.from(c.source, 'base64'));
+  for (const c of pkg.cores) writeFileSync(join(at, coreFileOf(c.hash)), Buffer.from(c.source, 'base64'));
   for (const k of pkg.clients || []) writeFileSync(join(at, `client-${k.hash}.html`), Buffer.from(k.body, 'base64'));
   writeFileSync(join(at, 'package.json'), JSON.stringify(pkg));
+  if (typeof title === 'string' && title) writeFileSync(join(at, SEAT_TITLE_FILE), JSON.stringify({ title: title.slice(0, 80) }));
   return at;
 }
 
@@ -69,11 +85,16 @@ export function installPackage(dir, pkg, gameId) {
 // THE NAME AND TITLE ARE NOT THE SERVING SEAT'S (kanban #1541): a package's `name` and `title` are signed by nobody, so a seat
 // relaying a genuine signed version could rename the game it hands over. The hosted name is the manifest's signed gameName; the
 // title is the one this seat keeps (`title`: its installed version's, or the one it wrote to disk), else that gameName.
-export async function registrationFromPackage(at, pkg, { title = null } = {}) {
+// ITS FIRST LOAD IS BOUNDED LIKE THE TRIAL (kanban #2058, #2078): adoptPackage (an owner's install, autoUpdate unattended) and
+// loadInstalled (every start) load the same untrusted bytes a second time, and that load ran with an installed core's limits -
+// LOAD_MS 10 s, then the ask, then EXIT_WAIT - on the seat's thread: a core that passed the trial held it 10 s here. Each core's
+// first load (its meta ask and, refused, its thread's end included) now has the trial's deadline, REGISTER_MS (`within`); one
+// not loaded by then is refused. The trial now shows the core the same module name, so a core honest in the trial loads the same way here.
+export async function registrationFromPackage(at, pkg, { title = null, within = REGISTER_MS } = {}) {
   const manifest = decodeManifest(fromHex(pkg.manifest));
   const cores = new Map();
   for (const c of pkg.cores) {
-    const file = join(at, `core-${c.hash}.mjs`);
+    const file = join(at, coreFileOf(c.hash));
     if (sha(readFileSync(file)) !== c.hash) throw new Error(`core ${c.hash.slice(0, 16)} changed on disk`);
     // NEVER IMPORTED INTO THIS THREAD (§0A.6): loaded into its sandbox from the bytes just checked
     // THE CONFIGS ARE THE SIGNED MANIFEST'S (kanban #1814): a package's cores[].configs are signed by nobody, so a relaying seat
@@ -110,8 +131,8 @@ export async function loadInstalled(dir, { verify }) {
     try { pkg = JSON.parse(readFileSync(join(at, 'package.json'), 'utf8')); } catch (e) { refused.push({ dir: at, why: e.message }); continue; }
     const v = verifyPackage(pkg, { verify, want: id });
     if (!v.ok) { refused.push({ dir: at, why: v.why }); continue; }
-    // the package.json this seat wrote itself (adoptPackage keeps the name and title it trusts, kanban #1541)
-    try { registrations.push(await registrationFromPackage(at, pkg, { title: pkg.title })); } catch (e) { refused.push({ dir: at, why: e.message }); }
+    // the title this seat wrote itself (kanban #1541, #1716, #1780): never package.json's, which an older build kept as a seat relayed it
+    try { registrations.push(await registrationFromPackage(at, pkg, { title: seatTitleAt(at) })); } catch (e) { refused.push({ dir: at, why: e.message }); }
   }
   return { registrations, refused };
 }

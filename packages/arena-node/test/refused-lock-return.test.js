@@ -84,7 +84,9 @@ test('a lock for a round the seats refuse, never entered, is kept by each seat o
     for (const [s, why] of kept) assert.equal(s, 201, why);
     assert.deepEqual(listed.find((l) => l.entryId === hid) && listed.find((l) => l.entryId === hid).outpoint, `${toHex(outpoint.txid)}:0`);
     for (const [st, why] of feeKept) assert.equal(st, 201, why);
-    assert.equal(listed.length, 2, 'the stake and its fee lock are not both listed');
+    // kanban #2029, #2056: a handout's lone lock is listed under its alias AND its own id - two locks, each listed twice
+    assert.equal(new Set(listed.map((l) => l.outpoint)).size, 2, 'the stake and its fee lock are not both listed');
+    assert.equal(listed.length, 4, 'each lone lock is not listed under both its alias and its own id');
     assert.ok(feeRow && feeRow.entryId !== hid, 'the fee lock is not kept under an id of its own');
     assert.equal(ff && ff.status, 200, ffj.why); assert.equal(feeVerifies, true, 'the fee lock\'s forfeit does not verify');
     assert.equal(f.status, 200, fj.why); assert.equal(verifies, true, 'the forfeit does not verify under the round\'s claim key');

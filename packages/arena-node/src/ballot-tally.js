@@ -217,6 +217,14 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       const now = Number(await tipHeight());
       if (!Number.isInteger(now) || now < 0) return { skipped: 'tip', why: 'this seat\'s chain named no tip', read: 0, decided: 0, reorged: 0 };
       tip = now;
+      // THE PROPOSER CHECK OF RECORDS KEPT BEFORE THIS START (kanban #1670, proposals.js recheck): one not checked yet reads as
+      // ORPHANED and is not counted; one whose census was not readable at the start is asked again here, before anything is counted
+      // - on the branch of each one's own publication block (kanban #2032): this tally's block reader goes with it, and an
+      // `unbonded` record not yet confirmed on its own block is read again too
+      if (typeof proposals.recheck === 'function' && typeof proposals.unchecked === 'function'
+        && (proposals.unchecked() || (typeof proposals.toReview === 'function' && typeof blockHashAt === 'function' && proposals.toReview()))) {
+        try { await proposals.recheck(typeof blockHashAt === 'function' ? { blockHashAt } : {}); } catch (e) { log(`[ballot] the proposer check did not run: ${e.message}`); }
+      }
       // A CHAIN THAT DID NOT ANSWER IS NO REORG (kanban #1152): the pass stops here - nothing taken back, orphaned or written
       try { reorged = await followReorgs(); } catch (e) {
         log(`[ballot] the chain did not answer the reorg check (${e.message}): this pass is skipped, nothing moved`);
@@ -362,7 +370,12 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
      * activate by then is still undecided here (its outcome is not known yet, so neither is the history).
      */
     historyAt(net, height) {
-      const pending = proposals.list().some((p) => p.networkId === net && stateOf(p) === S.COUNTING && counted(p) && p.activationHeight <= height);
+      // a record whose proposer is not checked yet (kanban #1670) may be a PASSED one: its outcome is not known here yet either
+      // (kanban #1865: only one stored OPEN and activating by `height` - a decided one is held with its outcome, see proposals.js);
+      // a COUNTING one counts only when its deposit backs it alone (kanban #1840)
+      const pending = (typeof proposals.openUnchecked === 'function' ? proposals.openUnchecked(net, height) > 0
+        : typeof proposals.unchecked === 'function' && proposals.unchecked(net) > 0)
+        || proposals.list().some((p) => p.networkId === net && stateOf(p) === S.COUNTING && counted(p) && p.activationHeight <= height);
       if (pending) return null;
       return liveConfig({ genesis: genesisFor(net), passed: passedOf(net), height }).history;
     },

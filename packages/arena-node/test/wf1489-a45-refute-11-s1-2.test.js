@@ -21,7 +21,9 @@ const store = async (fill) => {
   const r0 = await startRelay({ port: 0, dbPath: path }); await r0.close();
   const db = new DatabaseSync(path); db.exec('BEGIN');
   const put = db.prepare('INSERT INTO events (id, pubkey, kind, created_at, d, json) VALUES (?, ?, ?, ?, ?, ?)');
-  const tag = db.prepare('INSERT INTO tags (id, name, value) VALUES (?, ?, ?)');
+  // since the 1.9.17 merge the store keeps one row per (event, name, value) under a UNIQUE index (kanban #1915, tag_key): a duplicate row is
+  // refused by the store itself, so the fixture writes what it can - the event's json still carries the 1000 duplicate tags
+  const tag = db.prepare('INSERT OR IGNORE INTO tags (id, name, value) VALUES (?, ?, ?)');
   let n = 0;
   fill((kind, created_at, who, tags) => {
     const id = H(`ev${n++}`), pubkey = H(who);
