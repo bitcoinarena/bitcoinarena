@@ -14,7 +14,7 @@
 // ECASH_DIR the wallet's directory (seed.hex, wallet.json); INVITE_FILE the federation's invite; WASM_PKG the lock client build
 // (blwp_lock_client.js + _bg.wasm); GATEWAY a gateway URL the federation lists; FAUCET_LNCLI and PAYER (<lnddir>|<rpc>) the payer;
 // POOL the pool directory (default ECASH_DIR/pool); the faucet reads it as FAUCET_ECASH_POOL.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, copyFileSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, copyFileSync, readdirSync, openSync, writeSync, closeSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -27,7 +27,40 @@ mkdirSync(DIR, { recursive: true });
 const POOL = env.POOL || join(DIR, 'pool');
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
 
-export async function openWallet() {
+// ONE WRITER PER WALLET (kanban #2337, state audit 2026-11-12): the wallet is read whole before the join (seconds live) and written whole at the
+// end, so a second run that read it before another run's mint wrote its old copy over the minted state - the notes already in the pool were
+// unspent again and the next mint handed them out a second time. Every run that may spend or receive (mint, fund, keep) holds the wallet's lock
+// from before the read to its exit; a second one waits while a live pid holds it. `balance` takes no lock and never writes the wallet back.
+// The lock is a chain of files wallet.lock.<n> made with O_EXCL (nothing is ever removed): the newest one is held while it names a live pid
+// (an empty one for 5 s, while its maker writes it); 'free', or a dead pid, lets the next run make <n+1>.
+const live = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+async function lockWallet() {
+  let told = false;
+  for (;;) {
+    const gens = readdirSync(DIR).map((f) => /^wallet\.lock\.(\d+)$/.exec(f)).filter(Boolean).map((x) => Number(x[1]));
+    const g = gens.length ? Math.max(...gens) : 0;
+    if (g > 0) {
+      const f = join(DIR, `wallet.lock.${g}`);
+      let held = '', age = 0;
+      try { held = readFileSync(f, 'utf8').trim(); age = Date.now() - statSync(f).mtimeMs; } catch {}
+      const busy = held === '' ? age < 5000 : (held !== 'free' && /^\d+$/.test(held) && Number(held) !== process.pid && live(Number(held)));
+      if (busy) {
+        if (!told) { told = true; say({ step: 'waiting for the wallet', heldBy: held || 'starting' }); }
+        await new Promise((ok) => setTimeout(ok, 200));
+        continue;
+      }
+    }
+    const mine = join(DIR, `wallet.lock.${g + 1}`);
+    let fd;
+    try { fd = openSync(mine, 'wx', 0o600); } catch (e) { if (e.code === 'EEXIST') continue; throw e; }
+    writeSync(fd, String(process.pid)); closeSync(fd);
+    process.on('exit', () => { try { writeFileSync(mine, 'free'); } catch {} });
+    return;
+  }
+}
+
+export async function openWallet({ readOnly = false } = {}) {
+  if (!readOnly) await lockWallet();
   if (typeof globalThis.window === 'undefined') globalThis.window = globalThis;
   const esm = join(tmpdir(), `arena-lock-client-ecash-${process.pid}.mjs`);
   copyFileSync(`${env.WASM_PKG}/blwp_lock_client.js`, esm);
@@ -36,7 +69,7 @@ export async function openWallet() {
   const file = join(DIR, 'wallet.json');
   const held = new Map(existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : []);
   let due = false;
-  const write = () => { due = false; const t = `${file}.tmp`; writeFileSync(t, JSON.stringify([...held]), { mode: 0o600 }); renameSync(t, file); };
+  const write = () => { due = false; if (readOnly) return; const t = `${file}.tmp`; writeFileSync(t, JSON.stringify([...held]), { mode: 0o600 }); renameSync(t, file); };
   const later = () => { if (!due) { due = true; setImmediate(write); } };
   const store = { entries: () => JSON.stringify([...held]), put: (k, v) => { held.set(k, v); later(); }, remove: (k) => { held.delete(k); later(); } };
   const seedFile = join(DIR, 'seed.hex');
@@ -54,7 +87,7 @@ const lncli = (args) => new Promise((ok) => {
 });
 
 const [cmd, a1, a2, a3] = process.argv.slice(2);
-const { lc, fed, openMs, flush } = await openWallet();
+const { lc, fed, openMs, flush } = await openWallet({ readOnly: cmd === 'balance' });
 say({ step: 'wallet open', federation: fed.slice(0, 16), ms: openMs, balanceMsat: String(await lc.balanceMsat()) });
 const shelf = join(POOL, fed);
 mkdirSync(shelf, { recursive: true, mode: 0o700 });
