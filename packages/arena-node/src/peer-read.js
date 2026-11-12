@@ -4,7 +4,8 @@
 // r.arrayBuffer() buffered - and parsed - all of it on every honest seat that asked. The body is read chunk by chunk and refused, the stream
 // cancelled, once it passes the cap; a Content-Length over it is refused unread. Shared by every door that reads a small peer answer:
 // game-market.js (GET /round, GET /round-result, #1829), entry-relay.js seatView (GET /api/round-result, #2244) and server.js
-// learnRoundApps (GET /round, #2244; GET /entry, #2327 #2343), entry-relay.js handLocks (GET /order-locks, #2327 #2343).
+// learnRoundApps (GET /round, #2244; GET /entry, #2327 #2343), entry-relay.js handLocks (GET /order-locks, #2327 #2343), server.js
+// takeEntryParts, takeAcceptedEntry and replayOrder (GET /order-locks, /payout-address, /entry, /handout, #2368).
 
 /** A peer's body as bytes, at most `maxBytes` of them; throws past the cap. */
 export async function bytesUpTo(r, maxBytes) {
