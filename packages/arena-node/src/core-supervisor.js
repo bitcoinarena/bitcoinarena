@@ -29,7 +29,7 @@ if (parentPort && workerData && workerData.arenaCoreSupervisor) {
       const ctrl = new Int32Array(m.ctrl);
       const worker = new Worker(new URL('./core-host.js', import.meta.url), {
         execArgv: ['--experimental-vm-modules', '--disable-warning=ExperimentalWarning'], env: {}, resourceLimits: m.heap,
-        workerData: { files: m.files, entry: m.entry, name: m.name, port: m.port, ctrl: m.ctrl, arrayBudget: m.arrayBudget },
+        workerData: { files: m.files, entry: m.entry, name: m.name, port: m.port, ctrl: m.ctrl, arrayBudget: m.arrayBudget, liveCap: m.liveCap },
         transferList: [m.port],
       });
       const c = { worker, ctrl, triggerMb: m.triggerMb, error: null };

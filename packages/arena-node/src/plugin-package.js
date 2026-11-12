@@ -65,7 +65,10 @@ export function installPackage(dir, pkg, gameId) {
 }
 
 /** ONE INSTALLED PACKAGE AS A REGISTRATION (activated at once,: no restart): its cores imported from disk. */
-export async function registrationFromPackage(at, pkg) {
+// THE NAME AND TITLE ARE NOT THE SERVING SEAT'S (kanban #1541): a package's `name` and `title` are signed by nobody, so a seat
+// relaying a genuine signed version could rename the game it hands over. The hosted name is the manifest's signed gameName; the
+// title is the one this seat keeps (`title`: its installed version's, or the one it wrote to disk), else that gameName.
+export async function registrationFromPackage(at, pkg, { title = null } = {}) {
   const manifest = decodeManifest(fromHex(pkg.manifest));
   const cores = new Map();
   for (const c of pkg.cores) {
@@ -76,7 +79,7 @@ export async function registrationFromPackage(at, pkg) {
     if (!sandboxFor(core).meta.decide) throw new Error(`core ${c.hash.slice(0, 16)} exports no DECIDE`);
     cores.set(c.hash, core);
   }
-  return { name: pkg.name, title: pkg.title, manifest, gameId: gameIdOf(manifest), cores, info: pkg.info || null,
+  return { name: manifest.gameName, title: typeof title === 'string' && title ? title.slice(0, 80) : manifest.gameName, manifest, gameId: gameIdOf(manifest), cores, info: pkg.info || null,
     ancestors: (pkg.ancestors || []).map((h) => decodeManifest(fromHex(h))),
     donationSet: pkg.donationSet.map((r) => ({ recipientPk: fromHex(r.recipientPk), shareBps: r.shareBps, label: r.label })),
     clientUrls: (pkg.clients || []).map((k) => pathToFileURL(join(at, `client-${k.hash}.html`)).href) };
@@ -96,7 +99,8 @@ export async function loadInstalled(dir, { verify }) {
     try { pkg = JSON.parse(readFileSync(join(at, 'package.json'), 'utf8')); } catch (e) { refused.push({ dir: at, why: e.message }); continue; }
     const v = verifyPackage(pkg, { verify, want: id });
     if (!v.ok) { refused.push({ dir: at, why: v.why }); continue; }
-    try { registrations.push(await registrationFromPackage(at, pkg)); } catch (e) { refused.push({ dir: at, why: e.message }); }
+    // the package.json this seat wrote itself (adoptPackage keeps the name and title it trusts, kanban #1541)
+    try { registrations.push(await registrationFromPackage(at, pkg, { title: pkg.title })); } catch (e) { refused.push({ dir: at, why: e.message }); }
   }
   return { registrations, refused };
 }
