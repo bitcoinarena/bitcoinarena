@@ -4165,9 +4165,28 @@ export class Round {
   }
 
   /** A transcript kept as a relay, under the hash its bytes have (checked by the door). */
-  relayPut(hashBytes, bytes) {
-    return this.db.prepare('INSERT OR IGNORE INTO relayed (hash, bytes, seen_ms) VALUES (?, ?, ?)')
-      .run(hashBytes, bytes, this.now()).changes;
+  // `of`: { entryId, roundId, named } of a transcript (kanban #1725, #1795): the door's caps per entry and per round count by them;
+  // a copy taken again once a held result names it is marked named (it no longer counts against the unnamed caps)
+  relayPut(hashBytes, bytes, of = {}) {
+    const ch = this.db.prepare('INSERT OR IGNORE INTO relayed (hash, bytes, seen_ms, entry_id, round_id, named) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(hashBytes, bytes, this.now(), of.entryId || null, of.roundId || null, of.named ? 1 : 0).changes;
+    if (!ch && of.named) this.db.prepare('UPDATE relayed SET named = 1 WHERE hash = ?').run(hashBytes);
+    return ch;
+  }
+
+  /** Whether a copy is kept under that hash already (the door takes it again without counting it twice). */
+  relayHas(hashBytes) {
+    return !!this.db.prepare('SELECT 1 FROM relayed WHERE hash = ?').get(hashBytes);
+  }
+
+  /**
+   * The relayed bytes no held result names (kanban #1725, #1795): of one entry, of one round, or all of them (`{}`). Slash proofs
+   * (no entry) are not among them.
+   */
+  relayedUnnamedBytes({ entryId = null, roundId = null } = {}) {
+    if (entryId) return Number(this.db.prepare('SELECT COALESCE(SUM(LENGTH(bytes)), 0) AS n FROM relayed WHERE entry_id = ? AND named = 0').get(entryId).n);
+    if (roundId) return Number(this.db.prepare('SELECT COALESCE(SUM(LENGTH(bytes)), 0) AS n FROM relayed WHERE round_id = ? AND named = 0').get(roundId).n);
+    return Number(this.db.prepare('SELECT COALESCE(SUM(LENGTH(bytes)), 0) AS n FROM relayed WHERE entry_id IS NOT NULL AND named = 0').get().n);
   }
 
   /** The bytes this node keeps as a relay, all doors together (kanban #1532: the doors refuse past a cap). */

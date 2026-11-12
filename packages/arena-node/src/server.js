@@ -274,7 +274,7 @@ import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
 import { outageOutcome } from '../../arena-protocol/src/entry-void.js';
 import { ENTRY_VOID, netStakeMsat, withGoneStakes } from '../../arena-protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/objection.js';
-import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
+import { transcriptBytesHash, SIGNED_POSTING_BYTES, decodeTranscriptPosting, splitSignedPosting } from '../../arena-protocol/src/posting.js';
 import { decodeTranscript } from '../../arena-protocol/src/transcript.js';   // the relay door's check (kanban #1532)
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedAppsCheck, payoutRuleOfRound } from './plugins.js';
@@ -346,6 +346,17 @@ const read = readRequestBody;
 // in 2.0 it also carries the SEEN groups (present and left-out lists), the justifications of second signatures and the bonds' presigs, so the
 // bound is 1 MiB - far above any committee's, and an eighth of the 8 MiB body a padded certificate came in under
 const SEATING_CERT_MOST = 1024 * 1024;
+// AND NO ONE PARTY FILLS IT FOR THE OTHERS (kanban #1725, #1795, refute of #1532: the cap was one pool, and one held entry filled it with
+// many different decodable transcripts - random marks the door does not check - so every honest transcript and slash proof got 507).
+// A transcript no held result or posting of its entry names (UNNAMED) may take at most RELAY_ENTRY_MOST bytes per entry (RELAY_MOST/32:
+// 8 MiB live, one body), RELAY_ROUND_MOST per round (RELAY_MOST/8) and RELAY_UNNAMED_MOST over all (RELAY_MOST/2). Transcripts together
+// stop RELAY_SLASH_RESERVE (RELAY_MOST/8) short of the pool: that part is left for slash proofs. A transcript a held result names is
+// the one the run is settled on: it passes the unnamed caps (there are at most a committee's worth of such hashes per entry).
+const relayPart = (env, div) => (Number(process.env[env]) > 0 ? Number(process.env[env]) : Math.floor(RELAY_MOST / div));
+const RELAY_ENTRY_MOST = relayPart('ARENA_RELAY_ENTRY_MOST', 32);
+const RELAY_ROUND_MOST = relayPart('ARENA_RELAY_ROUND_MOST', 8);
+const RELAY_UNNAMED_MOST = relayPart('ARENA_RELAY_UNNAMED_MOST', 2);
+const RELAY_SLASH_RESERVE = relayPart('ARENA_RELAY_SLASH_RESERVE', 8);
 
 // A BROWSER IS THE CLIENT, and a browser will never be on this origin.
 //
@@ -13548,8 +13559,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { const t = decodeTranscript(u8); ours = roundOfEntry(t.entryId) === toHex(t.roundId); }
         catch { ours = (u8.length === 65 || (u8.length === 33 && u8[32] === 0xff)) && roundOfEntry(u8.subarray(0, 32)) !== null && revealRecordOpens(u8); }
         if (!ours) return text(res, 422, 'this relay keeps only the transcript of an entry it holds');
-        if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');
-        round.relayPut(Buffer.from(relayed[1], 'hex'), bytes);
+        // WHOSE BYTES THESE ARE, AND WHETHER A HELD RESULT NAMES THEM (kanban #1725, #1795): the caps above count per entry and round
+        const hashBytes = Buffer.from(relayed[1], 'hex');
+        let eid, rid;
+        try { const t = decodeTranscript(u8); eid = t.entryId; rid = t.roundId; }
+        catch { eid = u8.slice(0, 32); rid = new Uint8Array(round.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(eid).round_id); }
+        let named = false;
+        for (const x of round.results(rid, eid)) {
+          try { if (toHex(decodePlayerResult(splitSignedResult(x.bytes).body).transcriptHash) === relayed[1]) { named = true; break; } } catch { /* not readable: names nothing */ }
+        }
+        if (!named) for (const x of round.postings(rid, eid)) {
+          try { if (toHex(decodeTranscriptPosting(splitSignedPosting(x.bytes).body).transcriptHash) === relayed[1]) { named = true; break; } } catch { /* names nothing */ }
+        }
+        // the same bytes again are kept already (and become named once a held result names them): nothing more is counted
+        if (round.relayHas(hashBytes)) { round.relayPut(hashBytes, bytes, { entryId: eid, roundId: rid, named }); return text(res, 201, 'kept'); }
+        if (!named) {
+          if (round.relayedUnnamedBytes({ entryId: eid }) + bytes.length > RELAY_ENTRY_MOST) return text(res, 507, 'this relay keeps no more for that entry: no held result names this transcript, and its share for the entry is full');
+          if (round.relayedUnnamedBytes({ roundId: rid }) + bytes.length > RELAY_ROUND_MOST) return text(res, 507, 'this relay keeps no more for that round: no held result names this transcript, and its share for the round is full');
+          if (round.relayedUnnamedBytes() + bytes.length > RELAY_UNNAMED_MOST) return text(res, 507, 'this relay keeps no more transcripts no held result names: that share is full');
+        }
+        if (round.relayedBytes() + bytes.length > RELAY_MOST - RELAY_SLASH_RESERVE) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');
+        round.relayPut(hashBytes, bytes, { entryId: eid, roundId: rid, named });
         return text(res, 201, 'kept');
       }
       if (relayed && req.method === 'GET') {
