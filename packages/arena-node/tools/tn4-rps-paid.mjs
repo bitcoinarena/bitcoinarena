@@ -38,6 +38,7 @@ import { attestedClaimKey } from '../../arena-client/src/join.js';
 import { lockFromClient } from '../../arena-client/src/lock-result.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
 import { decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
+import { markBot, entryKeys } from './mark-bot.mjs';   // kanban #2035: every live entry marked bot in the explorer
 import { seatingCloseMs } from '../../arena-protocol/src/seating.js';
 import { clientSettlementSignerNodes } from '../../arena-client/src/committee.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
@@ -169,6 +170,8 @@ async function paidEntry(c, rid, roundHex, move, who) {
     const hidden = hiddenMove(move, rand);
     entry.commit = moveCommitment({ roundId: rid, sessionPubkey: entry.sessionPubkey, move: hidden.move, salt: hidden.salt });
     const eid = entryId(entry);
+    // MARKED BOT IN THE EXPLORER AS IT GOES OUT (kanban #2035): by the admin code, so the real-player count stays true
+    const marking = markBot(entryKeys(eid, entry));
     // EVERY SEAT AT ONCE (2026.1.9.12 release check, 2026-10-29: locked at 11:29:32Z, handed to the 14 seats one after another until
     // 11:32:43Z - 35 s past the entry close; every signer node said "the round is closed")
     const signerNodes = await Promise.all(nodes.map(async (n) => {
@@ -193,6 +196,7 @@ async function paidEntry(c, rid, roundHex, move, who) {
         lock: l.status, lockSaid: (await l.text()).trim().slice(0, 160) };
     }));
     log({ step: 'handed over', entry: toHex(eid).slice(0, 16), signerNodes });
+    log({ step: 'marked bot', entry: toHex(eid).slice(0, 16), ...await marking });
     // KEYS_FILE: the player's key and locks, one line each, so a collect that failed can be done again by hand (testnet only). Kept BEFORE
     // the seats' count is judged (kanban #803: a run stopped by that throw left a 94,000 msat lock whose key was gone with the process).
     if (env.KEYS_FILE) appendFileSync(env.KEYS_FILE, `${JSON.stringify({ at: new Date().toISOString(), round: toHex(rid), entry: toHex(eid), player: who,
