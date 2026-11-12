@@ -31,6 +31,7 @@ import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
 import { clientSettlementSignerNodes } from '../../arena-client/src/committee.js';
 import { decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
+import { markBot, entryKeys } from './mark-bot.mjs';   // kanban #2035: every live entry marked bot in the explorer
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
@@ -383,6 +384,8 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
     stakePoint: dealt.handout.commitments[0], ...locks.entryFields, claimKeyAttestationRef: att.ref,
     pick: Number(rung.outcome), limitPrice: Number(rung.price), orderExpiryMs: 0n, bot: true };
   const eid = entryId(entry);
+  // MARKED BOT IN THE EXPLORER AS IT GOES OUT (kanban #2035): by the admin code, so the real-player count stays true
+  markBot(entryKeys(eid, entry)).then((m) => { if (!m.ok) say({ step: 'not marked bot', entry: toHex(eid).slice(0, 16), why: m.why }); });
   // EVERY SEAT AT ONCE (2026-10-23 ~19:45Z: "Wie lange dauert nun eine btc up down Order über die api?"): the seats were handed the
   // order one after another - handout, entry, fee lock, lock, each lock checked by that seat with the federation - so an order waited for
   // seven seats in a row. Each seat's four posts stay in order; the seats run side by side. `ms`: the whole order, the locks at the
