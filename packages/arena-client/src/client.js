@@ -41,7 +41,7 @@ import {
 import {
   GENESIS, decodeTranscript, checkTranscript, transcriptBelongsToEntry, flatten,
 } from '../../arena-protocol/src/transcript.js';
-import { encodeInputBatch, batchId, batchTicks } from '../../arena-protocol/src/batch.js';
+import { batchId, batchTicks, signBatch } from '../../arena-protocol/src/batch.js';
 import { centsToTapeUnits } from '../../arena-protocol/src/price-sample.js';
 import { fromHex, toHex, sha256 } from '../../arena-protocol/src/hash.js';
 import {
@@ -1367,7 +1367,10 @@ export class Client {
       tapes,
       ...(attests.length ? { attests } : {}),
     };
-    const bytes = encodeInputBatch(b);
+    // SIGNED BY THE SESSION KEY, as every mark is (kanban #1503, feedback #012): a seat takes no unsigned batch, so
+    // nobody who only knows this entry's public id can write ticks or a load into it. The same signed frame goes to
+    // every peer below.
+    const bytes = await signBatch(b, this.sign);
     const answer = await this.send(bytes);
 
     // The node answers how many ticks were NEW. A refusal is a named string
@@ -1719,7 +1722,8 @@ export class Client {
     // was lost, in the node's own order - a peer missing one refuses the rest.
     for (let i = this.published.length; i < t.batches.length; i++) {
       const b = t.batches[i];
-      this.published.push({ bytes: encodeInputBatch(b), through: batchTicks(b).at(-1) + 1 });
+      // signed here as at the first send (kanban #1503): a peer takes a batch only signed by the session key
+      this.published.push({ bytes: await signBatch(b, this.sign), through: batchTicks(b).at(-1) + 1 });
     }
 
     // AND THE COUNT OF WHAT THIS CLIENT HAS ACCEPTED IS RECONCILED WITH IT.

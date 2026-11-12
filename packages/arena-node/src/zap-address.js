@@ -25,6 +25,12 @@ const OPEN = { 'access-control-allow-origin': '*' };
 const sha256hex = (s) => createHash('sha256').update(s).digest('hex');
 const hex = (h) => Uint8Array.from(Buffer.from(h, 'hex'));
 const toHexB = (b) => Buffer.from(b).toString('hex');
+// BOUNDS (kanban #1514): one signed zap request could be replayed at the callback without end, each call a new LND invoice, a new
+// pending entry (one lookup every watchMs for an hour) and a whole rewrite of the state file. Open zaps are capped in total and per
+// payer key, and the refusal log is a ring.
+export const ZAP_PENDING_MAX = 1000;
+export const ZAP_PENDING_PER_PAYER = 10;
+export const ZAP_REFUSED_KEPT = 200;
 
 /** What a plain (not zap) tip's invoice is hashed over (LUD-06: raw JSON, text/plain first, the address as text/identifier). */
 export const addressMetadata = (name, host) => JSON.stringify([['text/plain', `Zap ${name}@${host}`], ['text/identifier', `${name}@${host}`]]);
@@ -47,6 +53,8 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   const pending = new Map();          // paymentHash -> { name, request, description, invoice, until }
   const receipts = [];
   const refused = [];
+  const minting = new Set();          // zap request ids whose invoice is being made right now (kanban #1514)
+  const requestOf = (p) => { try { return JSON.parse(p.description); } catch { return {}; } };
   if (statePath && existsSync(statePath)) {
     try { for (const p of JSON.parse(readFileSync(statePath, 'utf8')).pending || []) pending.set(p.paymentHash, p); } catch { /* a bad file starts empty */ }
   }
@@ -78,7 +86,7 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   return new Promise((resolve, reject) => {
     const server = createServer(async (req, res) => {
       const json = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', ...OPEN }); res.end(JSON.stringify(body)); };
-      const refuse = (reason) => { refused.push(reason); return json(200, { status: 'ERROR', reason }); };
+      const refuse = (reason) => { refused.push(reason); if (refused.length > ZAP_REFUSED_KEPT) refused.splice(0, refused.length - ZAP_REFUSED_KEPT); return json(200, { status: 'ERROR', reason }); };
       if (req.method === 'OPTIONS') { res.writeHead(204, { ...OPEN, 'access-control-allow-methods': 'GET' }); return res.end(); }
       const u = new URL(req.url, 'http://local');
       const m = u.pathname.match(/^(?:\/\.well-known)?\/lnurlp\/([a-z0-9._-]+)(\/cb)?$/);
@@ -107,16 +115,29 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
           .map((x) => lnurlFor(x).toLowerCase());
         if (lnurl && !ours.includes(lnurl.toLowerCase())) return refuse('that lnurl is not this address');
         zap = { request, relays: stands.relays };
+        // ONE SIGNED ZAP REQUEST, ONE OPEN INVOICE (kanban #1514): a request already invoiced and still open gets that invoice again
+        // (the same name and amount) and is refused otherwise; a new one waits for room under the caps.
+        const open = [...pending.values()].map((p) => [p, requestOf(p)]);
+        const same = open.find(([, r]) => r.id === request.id);
+        if (same) {
+          if (same[0].name === name && same[0].amountMsat === String(amountMsat) && same[0].until >= Math.floor(Date.now() / 1000)) return json(200, { pr: same[0].invoice, routes: [] });
+          return refuse('that zap request is already invoiced');
+        }
+        if (minting.has(request.id)) return refuse('that zap request is being invoiced; ask again');
+        if (pending.size + minting.size >= ZAP_PENDING_MAX) return refuse('too many zaps are open here; try again later');
+        if (open.filter(([, r]) => r.pubkey === request.pubkey).length >= ZAP_PENDING_PER_PAYER) return refuse('too many open zaps from that key');
       } else {
         const comment = u.searchParams.get('comment');
         if (comment && comment.length > ZAP_COMMENT_MAX) return refuse(`a comment is at most ${ZAP_COMMENT_MAX} characters`);
       }
       let made;
+      if (zap) minting.add(zap.request.id);
       try { made = await invoice({ name, amountMsat, descriptionHash: hex(sha256hex(zap ? description : metadata)), expiryS }); }
       catch (e) { return refuse(`no invoice was made: ${String(e.message).slice(0, 160)}`); }
+      finally { if (zap) minting.delete(zap.request.id); }
       if (zap) {
         pending.set(made.paymentHash, { paymentHash: made.paymentHash, name, description, relays: zap.relays, invoice: made.request,
-          until: Math.floor(Date.now() / 1000) + expiryS });
+          amountMsat: String(amountMsat), until: Math.floor(Date.now() / 1000) + expiryS });
         save();
         log(`zap invoice ${name} ${amountMsat} msat ${made.paymentHash.slice(0, 16)} from ${zap.request.pubkey.slice(0, 16)}`);
       } else log(`tip invoice ${name} ${amountMsat} msat ${made.paymentHash.slice(0, 16)}`);

@@ -27,7 +27,7 @@ import { awaitAttestedClaimKey, stakeFor, postHandout, entryFor, playerFor, fetc
 import { lockStake, fundPlayerWallet, handLock, redeemStake, forfeitOf, refundStake } from '../../arena-client/src/page-lock.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
 import { encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { GENESIS } from '../../arena-protocol/src/transcript.js';
 import { seedWordForEntry } from '../../arena-protocol/src/seed.js';
@@ -116,7 +116,7 @@ try {
   const signedM1 = joinSigned(encodeCheckpoint(m1), ed25519.sign(checkpointId(m1), session));
   const A = round.nodes[0];
   const Bnode = round.nodes[1];
-  const saidA = [shortAnswer(await ws(A, encodeInputBatch(b1))), shortAnswer(await ws(A, signedM1))];
+  const saidA = [shortAnswer(await ws(A, signedBatchOf(b1, (id) => ed25519.sign(id, session)))), shortAnswer(await ws(A, signedM1))];
   await wait(1000);
   const closedA = await ws(A, `close ${round.id}`);
   let atA = { status: 404 };
@@ -126,7 +126,7 @@ try {
 
   // B BACK, ITS ROUND OPEN; THE PLAYER SENDS B THE FIRST MARK.
   await round.restartB();
-  const saidB = [shortAnswer(await ws(Bnode, encodeInputBatch(b1))), shortAnswer(await ws(Bnode, signedM1))];
+  const saidB = [shortAnswer(await ws(Bnode, signedBatchOf(b1, (id) => ed25519.sign(id, session)))), shortAnswer(await ws(Bnode, signedM1))];
   await wait(1000);
   const atB = await entryVoidAt(Bnode, eid);
   say({ step: 'B back and open; the player sends B the first mark', saidB, atB: { outcome: atB.outcome || atB.status, evidenceKind: atB.evidenceKind },

@@ -569,6 +569,15 @@ export const TYPE_HEARTBEAT_HEARD = 0x3a;
 // MAKING THE CENSUS KEY (5A.3B, census-dkg.js): never read as the claim key's messages, or the other way round.
 export const TYPE_CENSUS_DEAL = 0x3b;
 export const TYPE_CENSUS_COMPLAINT = 0x3d;
+/**
+ * AN INPUT BATCH SIGNED BY ITS ENTRY'S SESSION KEY (kanban #1503, feedback #012): the batch's own bytes, then 64 bytes of
+ * ed25519 over its id under the session key the Entry Contract names. The only form a player's batch is taken in on
+ * /play - an unsigned batch let anybody who knew a public entry id write ticks and loads into that entry. What a seat
+ * stores, hands to another seat and serves in a transcript stays the bare batch (TYPE_INPUT_BATCH): there the signed
+ * mark's input chain hash endorses it. 0x4e on 2.0, the first free byte past 0x4d (1.9 put it at 0x36, which is 2.0's
+ * TYPE_AUDIT).
+ */
+export const TYPE_SIGNED_INPUT_BATCH = 0x4e;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 export const TYPE_SPENT_SET = 0x26;

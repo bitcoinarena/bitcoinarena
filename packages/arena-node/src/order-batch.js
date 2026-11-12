@@ -418,6 +418,10 @@ export class OrderBook {
       if (!L.ok) return L;
       const bad = L.refused.filter((r) => rec.sells.some((s) => s.id === r.id));
       if (bad.length) return refuse(`a sell of that batch does not stand: ${bad[0].why}`);
+      // A CANCEL ONLY OF AN ORDER THE BOOK HOLDS (kanban #1489): a leader carrying a cancel before its order got the batch signed - the
+      // ledger skipped the cancel, the cancel was marked batched for good (one id per entry), and the order filled in the next batch
+      const lost = L.refused.find((r) => r.why.startsWith('a cancel') && (record.cancels || []).some((c) => c.entry === r.id));
+      if (lost) return refuse(`a cancel of that batch does not stand: ${lost.why}`);
     }
     return { ok: true, id: rec.id, k, events: rec.events };
   }
@@ -711,6 +715,21 @@ export class OrderBook {
     return { state: 'CERTIFIED', sigs: counted.length };
   }
 
+  /** A proposal's pending item a leader may decide (kanban #1519): k in the round's book, the record reads to batchId, k's leader signed it. */
+  #pendingStands(roundIdBytes, m, x) {
+    try {
+      if (!x || typeof x !== 'object' || !x.record || typeof x.record !== 'object' || !Array.isArray(x.record.orders)) return false;
+      if (!/^[0-9]{1,15}$/.test(String(x.k)) || String(x.record.k) !== String(x.k) || !isHex(String(x.batchId), 32) || !isHex(String(x.record.leaderSig), 64)) return false;
+      const k = BigInt(x.k), cutoff = BigInt(this.cutoffOf(k));
+      if (cutoff < m.contract.committeeTimeMs || cutoff > m.contract.entryCloseMs + BigInt(this.intervalMs)) return false;
+      const leader = toHex(this.leaderOf(m.contract, k));
+      if (String(x.record.leader) !== leader) return false;
+      const rec = this.#recordId(roundIdBytes, x.record);
+      if (!rec.ok || rec.id !== String(x.batchId)) return false;
+      return verifySchnorr(fromHex(String(x.record.leaderSig)), fromHex(rec.id), fromHex(leader));
+    } catch { return false; }
+  }
+
   /**
    * LEAD BATCH k (the round's seat k mod n, at its cutoff). `dropCertificate` (a test of a leader that stops after collecting
    * the signatures): the certificate is not handed out. Answers { ok, batchId, orderIds, heldBy, certified, decided, timings }.
@@ -731,9 +750,14 @@ export class OrderBook {
     const tProposals = this.now();
     // 1. EVERY PENDING BATCH FIRST: certified, void, or the book waits
     const pending = new Map();
-    for (const p of proposals) for (const x of p.pending || []) {
-      if (!pending.has(x.k)) pending.set(x.k, { ids: new Map(), sigs: [] });
-      const q = pending.get(x.k);
+    // A PENDING ITEM COUNTS ONLY IF ITS LEADER SIGNED IT (kanban #1519: one seat listing an invented batch - junk leaderSig, or no
+    // record at all - made every leader's lead() refuse "still undecided" or throw, for every batch after: no seat signs it and none can
+    // decline it, #askStands refusing an unsigned set). Checked as #askStands checks a void ask: k inside the round's book, the record
+    // reads, its id is the batchId named, and k's leader signed that id; anything else is skipped, never thrown on.
+    for (const p of proposals) for (const x of Array.isArray(p.pending) ? p.pending : []) {
+      if (!this.#pendingStands(roundIdBytes, m, x)) continue;
+      if (!pending.has(String(x.k))) pending.set(String(x.k), { ids: new Map(), sigs: [] });
+      const q = pending.get(String(x.k));
       if (x.ownSig) q.sigs.push({ seat: p.seat, signature: x.ownSig, batchId: x.batchId });
       q.sigs.push({ seat: x.record.leader, signature: x.record.leaderSig, batchId: x.batchId });
       q.ids.set(x.batchId, x.record);
@@ -768,7 +792,11 @@ export class OrderBook {
     }
     const record = { k: String(k), orders, cancels: [...cancels.values()], sells: [...sells.values()], leader: toHex(this.round.pubkey) };
     // a sell beyond what its entry holds unsold is left out (the seats would refuse the whole set over it)
-    { const L = this.ledger(roundIdBytes, record); if (L.ok && L.refused.length) record.sells = record.sells.filter((s) => !L.refused.some((r) => r.id === this.#sellStands(roundIdBytes, s).id)); }
+    // and a cancel whose order neither the book nor this set holds waits for a later batch (kanban #1489: the seats refuse the set over it)
+    { const L = this.ledger(roundIdBytes, record); if (L.ok && L.refused.length) {
+      record.sells = record.sells.filter((s) => !L.refused.some((r) => r.id === this.#sellStands(roundIdBytes, s).id));
+      record.cancels = record.cancels.filter((c) => !L.refused.some((r) => r.id === c.entry && r.why.startsWith('a cancel')));
+    } }
     if (!record.orders.length && !record.cancels.length && !record.sells.length) return { ok: true, empty: true, decided };
     const idc = this.#recordId(roundIdBytes, record);
     if (!idc.ok) return idc;
