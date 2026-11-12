@@ -28,7 +28,7 @@ import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { seatPublicFetch } from '../src/public-fetch.js';
-import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressUrl, lnAddressInvoice } from '../src/feedback-store.js';
+import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressUrl, lnAddressInvoice, reportAddress } from '../src/feedback-store.js';
 const LN_ASKS = new Map();   // ip /64 -> times it asked GET /feedback/lnaddress (kanban #1342, #1537)
 const LN_ASKS_ALL = [], LN_ASKS_MINUTE = 120;   // every check of the last minute, all callers (kanban #1537)
 // ONE GLOBAL WINDOW FOR EVERY DOOR THAT FETCHES A CALLER'S ADDRESS (kanban #1714, refute of #1537): the cap held only GET /feedback/lnaddress, and
@@ -882,7 +882,12 @@ createServer((req, res) => {
           const pre = feedbackDecide({ ...b, ip }, REPORTS);
           if (!pre.ok) return send(200, pre);
           // THE BOUNTY ADDRESS MUST WORK (Daniel 2026-11-10, #1342): asked before the report is kept, so a reward is never made for an address nothing pays to
+          // THE ADDRESS PAID IS THE ADDRESS CHECKED (kanban #2468, #1489 audit44 refute of #1677): an lnAddress that is not a string is refused (it was
+          // checked as String() of it while the payout took the unchecked lud16 tag), and the address a reward would go to (reportAddress, what
+          // FEEDBACK.addressOf answers) is checked too when it is not the one just checked - a lud16 tag alone, with no content address, included
+          if (words && typeof words === 'object' && words.lnAddress !== undefined && words.lnAddress !== null && words.lnAddress !== '' && typeof words.lnAddress !== 'string') return send(200, { ok: false, why: 'That Lightning address is not text. Check it, or leave it empty.' });
           if (words.lnAddress) { const w = await lnAddressWorks(words.lnAddress); if (!w.ok) return send(200, { ok: false, why: `That Lightning address does not work: ${w.why}. Check it, or leave it empty.` }); }
+          { const pays = reportAddress(e); if (pays && pays !== String(words.lnAddress || '')) { const w = await lnAddressWorks(pays); if (!w.ok) return send(200, { ok: false, why: `That Lightning address does not work: ${w.why}. Check it, or leave it empty.` }); } }
           kept = FEEDBACK.take(e, { hasShot: (h) => !!shotFile(h) });
           if (!kept.ok) return send(200, kept);
           // COUNTED WHEN KEPT (audit 6, kanban #1424): it was counted only after the chat post went out - with the chat down every signed report was
