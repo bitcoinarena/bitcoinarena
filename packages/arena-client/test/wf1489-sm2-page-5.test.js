@@ -20,11 +20,13 @@ const A = 'aa'.repeat(32), B = 'bb'.repeat(32);
 const ledger = () => { const m = new Map(); return { m, getItem: (k) => m.get(k) ?? null, setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), key: (i) => [...m.keys()][i] ?? null, get length() { return m.size; } }; };
 
 test('wf1489-sm2-page-5: a Move whose tab closes after X paid and before Y claimed leaves Y named in this browser', async () => {
-  const x = { balance: 500000n, feeRule: async () => JSON.stringify({ fee_base_msat: 1000, fee_ppm: 0 }),
+  // 2.0 (kanban #1324): each leg goes only through a gateway at or under its federation's fee cap - both wallets list one with its fees
+  const gw = { gateways: async () => JSON.stringify(['https://gw.test']), gatewayFees: async () => JSON.stringify({ send: { ppm: 100, baseMsat: 0 }, receive: { ppm: 100, baseMsat: 0 } }) };
+  const x = { ...gw, balance: 500000n, feeRule: async () => JSON.stringify({ fee_base_msat: 1000, fee_ppm: 0 }),
     balanceMsat: async () => String(x.balance), withdrawableMsat: async () => String(x.balance - 5000n),
     withdraw: async (invoice) => { const msat = BigInt(invoice.split('-').pop()); x.balance -= msat + 1000n; return JSON.stringify({ state: 'Success', invoice_msat: String(msat) }); } };
   let claimWait = null;
-  const y = { balance: 0n, feeRule: async () => JSON.stringify({ fee_base_msat: 0, fee_ppm: 0 }), balanceMsat: async () => String(y.balance),
+  const y = { ...gw, balance: 0n, feeRule: async () => JSON.stringify({ fee_base_msat: 0, fee_ppm: 0 }), balanceMsat: async () => String(y.balance),
     receive: async (msat) => JSON.stringify({ invoice: `lnbcrt-move-${msat}`, operation: 'op-move-1' }),
     // the gateway funded the incoming contract; the claim is still running when the tab goes
     awaitReceive: () => new Promise((ok) => { claimWait = ok; }) };
