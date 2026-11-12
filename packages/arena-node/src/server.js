@@ -1146,7 +1146,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A PACKAGE TAKEN IN: checked (plugin-check.js and the trial run), an update checked against the version it replaces, kept on disk and
   // running at once - one fetched from another seat, or a version its developer signed in the owner page (an app's new split, app-version.js)
   async function adoptPackage(pkg, { game, from, replaces = null }) {
-    const v = verifyPackage(pkg, { verify: verifyEd25519, want: game, parentOf: hostedParent });
+    // a package the checks cannot even read is refused, never thrown out of an autoUpdate sweep (kanban #2307, refute of #1814)
+    let v;
+    try { v = verifyPackage(pkg, { verify: verifyEd25519, want: game, parentOf: hostedParent }); } catch (e) { v = { ok: false, why: `that package does not read: ${e.message}` }; }
     if (!v.ok) { console.log(`[plugins] refused ${game.slice(0, 16)} from ${from}: ${v.why}`); return { ...v, status: 422 }; }
     // the package kept with its whole chain, so it stands at the next start even once its old version is removed
     if (replaces !== null) { const chain = [...chainOf(hosted.get(replaces)), hosted.get(replaces).manifest]; pkg = { ...pkg, ancestors: chain.map((m) => toHex(encodeManifest(m))) }; }
@@ -1259,7 +1261,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const u = checkUpdate(installedInfo(parent), { devKey: toHex(m.gameDevPubkey), parent, version: m.version });
         if (!u.ok) continue;
         tried.add(parent);
-        const r = await takeGame({ game: id, from, replaces: parent });
+        // one source's package never ends the sweep for the sources after it (kanban #2307)
+        let r; try { r = await takeGame({ game: id, from, replaces: parent }); } catch (e) { r = { ok: false, status: 422, why: e.message }; }
         console.log(`[plugins] automatic update of ${parent.slice(0, 16)} from ${from}: ${r.ok ? 'taken' : r.why}`);
         if (!r.ok && r.status === 502) break;
       }
