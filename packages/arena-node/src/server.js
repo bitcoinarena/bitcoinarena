@@ -11111,26 +11111,77 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // transcript its evidence was signed about, a player of the round, and the bond the accused node advertised.
         if (toHex(proof.transcriptHash) !== toHex(body.transcriptHash)) return 'the proof names a transcript its evidence was not signed about';
         if (!round.entriesOf(proof.roundId).some((e) => toHex(e.entry.playerPubkey) === toHex(proof.playerPubkey))) return 'the player is not an entry of that round';
+        // AND THE BOND IS CHECKED, ALWAYS (kanban #2351, a45 refute s2 of #2248): it was checked only when advertsFor answered a Map, so
+        // right after a restart (census view not read yet) a stranger's proof naming a made-up bond about a published committee result
+        // was kept 201, took the one slot, and the honest proof with the advertised bond was refused 409 for good. While the census is not
+        // read the door answers 503 and keeps nothing; the honest filer's retry is taken once it is.
         let adverts = null;
         try { adverts = verifier.advertsFor ? verifier.advertsFor(proof.roundId) : null; } catch { adverts = null; }
-        if (adverts instanceof Map) {
-          const advert = adverts.get(toHex(proof.nodePubkey));
-          if (!advert) return 'the accused node advertised no bond for that round';
-          if (toHex(advert.bondTxid) !== toHex(proof.bondTxid) || advert.bondVout !== proof.bondVout) return 'the proof names a bond the accused node did not advertise';
-        }
+        if (!(adverts instanceof Map)) return { code: 503, why: 'this relay has not read the census of that round yet, so it cannot check the bond: try again' };
+        const advert = adverts.get(toHex(proof.nodePubkey));
+        if (!advert) return 'the accused node advertised no bond for that round';
+        if (toHex(advert.bondTxid) !== toHex(proof.bondTxid) || advert.bondVout !== proof.bondVout) return 'the proof names a bond the accused node did not advertise';
+        // AND THE TRANSCRIPT IS THE CANONICAL ONE WHEN THIS SEAT HOLDS IT (kanban #2344, a45 refute s2 of #2248): a proof about any other
+        // transcript cannot hold (slashHolds 'not the canonical one'). Refused only when every entry of that player has a canonical transcript here.
+        const canon = slashCanonOf(proof);
+        if (canon.known && !canon.match) return 'the proof names a transcript that is not the canonical one of that player\'s entry';
         return null;
       };
-      // AT MOST ONE RELAYED PROOF PER ACCUSED SIGNED RESULT (kanban #2248): the same proof again is 200, another proof about the same
-      // signed result 409 and not kept - whatever its bond fields say, it cannot make room-filling copies of one signed result.
-      const slashKeep = (proof, bytes) => {
-        const accused = Buffer.concat([proof.roundId, proof.nodePubkey, proof.playerPubkey, proof.signedResultId].map((b) => Buffer.from(b)));
+      // The canonical transcript hashes this seat holds for the proof's player: { known: every entry of the player has one, match: the proof names one }.
+      const slashCanonOf = (proof) => {
+        let known = true, match = false;
+        for (const e of round.entriesOf(proof.roundId)) {
+          if (toHex(e.entry.playerPubkey) !== toHex(proof.playerPubkey)) continue;
+          let h = null;
+          try { h = round.canonicalTranscript(proof.roundId, e.entryId).hash; } catch { h = null; }
+          if (!(h instanceof Uint8Array)) { known = false; continue; }
+          if (toHex(h) === toHex(proof.transcriptHash)) match = true;
+        }
+        return { known, match };
+      };
+      // HOW WELL A RELAYED PROOF CAN HOLD, AS FAR AS A RELAY CAN TELL WITHOUT A REPLAY (kanban #2344): 2 for naming the canonical transcript
+      // this seat holds, 1 for carrying a signed result (or re-run) this seat holds in its store - the one the accused node published.
+      const slashRankOf = (door, proof) => {
+        let rank = slashCanonOf(proof).match ? 2 : 0;
+        try {
+          for (const e of round.entriesOf(proof.roundId)) {
+            if (toHex(e.entry.playerPubkey) !== toHex(proof.playerPubkey)) continue;
+            const held = door === 'rerun'
+              ? round.reruns(proof.roundId, e.entryId).some((r) => toHex(rerunResultId(decodeRerunResult(splitSignedRerun(r.bytes).body))) === toHex(proof.signedResultId))
+              : round.results(proof.roundId, e.entryId).some((r) => toHex(r.resultId) === toHex(proof.signedResultId));
+            if (held) { rank += 1; break; }
+          }
+        } catch { /* rank as is */ }
+        return rank;
+      };
+      const slashRankOfBytes = (bytes) => {
+        try {
+          const b = new Uint8Array(bytes);
+          if (b.length > SLASH_PROOF_BYTES && b[SLASH_PROOF_BYTES] === TYPE_RERUN_RESULT) return slashRankOf('rerun', splitRerunSlashEvidence(b).proof);
+          return slashRankOf('result', splitSlashEvidence(b).proof);
+        } catch { return -1; }
+      };
+      // AT MOST ONE RELAYED PROOF PER (ROUND, ACCUSED NODE, PLAYER, DOOR) (kanban #2344, a45 refute s2 of #2248): the slot was keyed on the
+      // signed result id too, and the accused node makes as many signed results as it likes (a re-run re-signed with a fresh signedAtMs, a
+      // result about a made-up transcript), so one committee seat filled RELAY_MOST with proofs against itself and every honest transcript
+      // was refused 507. Now the same proof again is 200, another proof 409 and not kept - unless it holds better than the kept one by what a
+      // relay can check (slashRankOf: the canonical transcript, the published evidence), so a squatter's junk proof cannot lock out the
+      // honest one. The rank only rises (0..3), so a slot takes at most four proofs' bytes.
+      const slashKeep = (door, proof, bytes) => {
+        const accused = Buffer.concat([proof.roundId, proof.nodePubkey, proof.playerPubkey, Buffer.from(door === 'rerun' ? [2] : [1])].map((b) => Buffer.from(b)));
         const id = Buffer.from(slashed[1], 'hex');
-        if (!round.relaySlashOf(accused) && round.relayedBytes() + bytes.length > RELAY_MOST)
+        const was = round.relaySlashOf(accused);
+        if (was && Buffer.from(was).equals(id)) return [200, 'already kept'];
+        if (was) {
+          const kept = round.relayGet(was);
+          if (!kept || slashRankOf(door, proof) <= slashRankOfBytes(kept)) return [409, 'this relay already keeps a slash proof about that node and player'];
+        }
+        if (round.relayedBytes() + bytes.length > RELAY_MOST)
           return [507, 'this relay keeps no more: its store for relayed bytes is full'];   // kanban #1532
-        const got = round.relaySlashPut(accused, id, bytes);
+        const got = was ? round.relaySlashReplace(accused, was, id, bytes) : round.relaySlashPut(accused, id, bytes);
         if (got === 'kept') return [201, 'kept'];
         if (got === 'same') return [200, 'already kept'];
-        return [409, 'this relay already keeps a slash proof about that signed result'];
+        return [409, 'this relay already keeps a slash proof about that node and player'];
       };
       if (slashed && req.method === 'PUT') {
         const bytes = await read(req);
@@ -11146,8 +11197,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           let rx, rsig;
           try { const sp = splitSignedRerun(rr.signedRerun); rsig = sp.signature; rx = decodeRerunResult(sp.body); } catch { rx = null; }
           const rwhy = rx ? slashOursWhy(rr.proof, rx.result, () => schnorr.verify(rsig, rerunResultId(rx), rx.result.nodePubkey)) : 'the evidence is not a signed re-run result';
-          if (rwhy) return text(res, 422, rwhy);   // kanban #1816
-          const [code, said] = slashKeep(rr.proof, bytes);   // kanban #2248, #1532
+          if (rwhy) return typeof rwhy === 'string' ? text(res, 422, rwhy) : text(res, rwhy.code, rwhy.why);   // kanban #1816, #2351
+          const [code, said] = slashKeep('rerun', rr.proof, bytes);   // kanban #2248, #1532
           return text(res, code, said);
         }
         let got;
@@ -11160,9 +11211,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         {
           const sp = splitSignedResult(got.signedResult), body = decodePlayerResult(sp.body);
           const why = slashOursWhy(got.proof, body, () => schnorr.verify(sp.signature, resultId(body), body.nodePubkey));
-          if (why) return text(res, 422, why);   // kanban #1816
+          if (why) return typeof why === 'string' ? text(res, 422, why) : text(res, why.code, why.why);   // kanban #1816, #2351
         }
-        const [code, said] = slashKeep(got.proof, bytes);   // kanban #2248, #1532
+        const [code, said] = slashKeep('result', got.proof, bytes);   // kanban #2248, #1532
         return text(res, code, said);
       }
       if (slashed && req.method === 'GET') {
