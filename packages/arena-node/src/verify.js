@@ -12,6 +12,7 @@
 // stops when the queue empties. Nothing here polls, nothing ticks, and nothing
 // here reaches the core: `replay.js` remains the only file in this daemon that
 // does, and this file only decides which runs are handed to it.
+import { peerBody as sharedPeerBody } from './peer-body.js';
 import { sandboxFor } from './core-sandbox.js';
 import { windowsOf } from '../../arena-protocol/src/window.js';
 import { dissentsOn, dissentsFirstOn, postsLateOn, LATE_POSTING_AFTER_MS } from './test-dissent.js';
