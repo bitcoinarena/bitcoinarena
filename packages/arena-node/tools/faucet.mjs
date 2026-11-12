@@ -119,7 +119,8 @@ async function pay(ask) {
 const PAYERS = String(env.FAUCET_PAYERS || '').split(',').filter(Boolean).map((p) => { const [dir, rpcserver] = p.split('|'); return { dir, rpcserver }; });
 // EACH PAYER ON ITS OWN NETWORK (kanban #1450): the faucet's payers are testnet4; the bounty payer is on FAUCET_BOUNTY_NETWORK, with its own lncli if one is named
 const lncli = (payer, args, timeoutMs = 20000) => new Promise((res) => execFile(payer.lncli || env.FAUCET_LNCLI, [`--lnddir=${payer.dir}`, `--network=${payer.network || 'testnet4'}`, `--rpcserver=${payer.rpcserver}`, ...args],
-  { timeout: timeoutMs }, (e, out, err) => res({ ok: !e, timedOut: !!(e && e.killed), out: String(out), err: String(err) })));
+  // NO 1 MB CAP ON WHAT LNCLI PRINTS (kanban #1785, state audit 2026-11-12, SM-22): node's default maxBuffer failed a listpayments of a few hundred payments
+  { timeout: timeoutMs, maxBuffer: 256 * 1024 * 1024 }, (e, out, err) => res({ ok: !e, timedOut: !!(e && e.killed), out: String(out), err: String(err) })));
 
 // THE BOUNTY WALLET (kanban #1342 section 3): its own payer, never the faucet's; the payout network one setting (testnet4 in phase 1)
 const BOUNTY_NETWORK = env.FAUCET_BOUNTY_NETWORK || 'testnet4';
@@ -148,11 +149,21 @@ const bountyPay = async (invoice, amountSats = 0) => {
   if (/Payment status: FAILED/.test(r.out) && !r.timedOut) return { ok: false, failed: true, why: (r.out.split('\n').find((l) => /reason/i.test(l)) || 'failed').trim().slice(0, 160) };
   return { ok: false, why: r.timedOut ? 'the payment timed out' : 'in flight' };
 };
+// A PAYING REWARD READ BY ITS HASH (kanban #1785, state audit 2026-11-12, SM-22): settle read the whole listpayments (500 payments, ~3 KB each) through
+// execFile's 1 MB buffer - past a few hundred payments every read failed, 'unknown' for good, and a paid reward stayed `paying` forever. trackpayment
+// answers the one hash (as paymentFinal does since #1426), so the read no longer grows with the wallet; only when it gives no answer at all is the list
+// read, without the buffer cap, and a hash missing from a full list (it may have fallen out of the newest 500) is 'unknown', never 'failed'
+const BOUNTY_LIST_MAX = 500;
 const bountyStatus = async (hash) => {
-  const r = await lncli(BOUNTY_PAYER, ['listpayments', '--include_incomplete', '--max_payments=500', '--paginate_forwards=false'], 20000);
+  const t = await paymentFinal(BOUNTY_PAYER, hash);
+  if (t === 'SUCCEEDED') return 'paid';
+  if (t === 'FAILED' || t === 'NONE') return 'failed';
+  if (t === 'IN_FLIGHT') return 'unknown';
+  const r = await lncli(BOUNTY_PAYER, ['listpayments', '--include_incomplete', `--max_payments=${BOUNTY_LIST_MAX}`, '--paginate_forwards=false'], 20000);
   if (!r.ok) return 'unknown';
-  const p = (JSON.parse(r.out).payments || []).find((x) => x.payment_hash === hash);
-  return !p ? 'failed' : p.status === 'SUCCEEDED' ? 'paid' : p.status === 'FAILED' ? 'failed' : 'unknown';
+  let list = null; try { list = JSON.parse(r.out).payments || []; } catch { return 'unknown'; }
+  const p = list.find((x) => x.payment_hash === hash);
+  return !p ? (list.length < BOUNTY_LIST_MAX ? 'failed' : 'unknown') : p.status === 'SUCCEEDED' ? 'paid' : p.status === 'FAILED' ? 'failed' : 'unknown';
 };
 // THE ADMIN (kanban #1342 section 4): the owner's code, held to its hash as the explorer holds it (#1092); the rules, our keys, who played
 const ADMIN_SHA = String(env.FAUCET_ADMIN_SHA256 || '').trim().toLowerCase();
