@@ -173,10 +173,19 @@ function otherStakedUnderKey(round, entry, entryIdBytes, kind) {
   return round.entriesOf(entry.roundId).some((x) => !Buffer.from(x.entryId).equals(me) && Buffer.from(x.entry.playerPubkey).equals(key) && !!lockOf.call(round, x.entryId));
 }
 
+// THE DOOR'S TIME, KEPT ONLY IF THE FEDERATION ANSWERED IN TIME (kanban #1822, #1551 refute 0 s3, #1489): read right after the federation's answer
+// that found the lock. Past `untilMs` the lock may have been put on the federation only after a move was public: undefined, so the row takes now.
+function doorTimeKept(round, atMs, untilMs) {
+  if (atMs === undefined || atMs === null || untilMs === undefined || untilMs === null) return atMs;
+  return Math.floor(Number(round.now())) <= Number(untilMs) ? atMs : undefined;
+}
+
 // `timing` (kanban #605): an object the caller reads afterwards - ms spent asking the federation, checking gifts and reading the fee gate
 // `atMs` (kanban #1805): the time the seat's door took this lock and checked its round's lock close, before any await - kept as the lock's verified_ms
 // (round.putStakeLock), so a head-to-head lock handed before the close seats its entry however long the federation takes. Omitted (a repair, a replay): now.
-export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined, timing = {}, atMs = undefined }) {
+// `atUntilMs` (kanban #1822, #1551 refute 0 s3): the last moment the federation's answer may come back and `atMs` still count (server.js
+// H2H_DOOR_TIME_KEPT_MS, a head-to-head round's) - an answer after it is after a move may be public, and the lock keeps the answer time.
+export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined, timing = {}, atMs = undefined, atUntilMs = undefined }) {
   const stored = round.entry(entryIdBytes);
   if (!stored) return { ok: false, why: 'this node holds no such entry' };
   const entry = decodeEntryContract(stored);
@@ -207,6 +216,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   const [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
   timing.statusMs = Date.now() - t;
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s stake_lock_outpoint' };
+  atMs = doorTimeKept(round, atMs, atUntilMs);   // read when the answer that found the lock came back (kanban #1822)
   if (String(id) !== String(st.stored.contractId))
     return { ok: false, why: 'the lock at that outpoint is not the contract handed over: its id is another' };
   if (fields.expiration !== st.blockCount + st.stored.blocksLeft)
@@ -253,7 +263,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
  * by field against the entry as the stake lock is. It is claimed for the round's
  * sitting signer nodes in the one settlement, whatever the result.
  */
-export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk, atMs = undefined }) {   // `atMs`: as verifyStakeLock's (kanban #1805)
+export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk, atMs = undefined, atUntilMs = undefined }) {   // `atMs`, `atUntilMs`: as verifyStakeLock's (kanban #1805, #1822)
   const stored = round.entry(entryIdBytes);
   if (!stored) return { ok: false, why: 'this node holds no such entry' };
   const entry = decodeEntryContract(stored);
@@ -275,6 +285,7 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
     return { ok: false, why: 'another entry of that player key already has a fee lock in this round: one player key, one fee lock (kanban #1215)' };
   const [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s fee_lock_outpoint' };
+  atMs = doorTimeKept(round, atMs, atUntilMs);   // (kanban #1822)
 
   if (String(id) !== String(st.stored.contractId))
     return { ok: false, why: 'the lock at that outpoint is not the fee contract handed over: its id is another' };

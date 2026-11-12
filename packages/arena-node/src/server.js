@@ -344,6 +344,22 @@ const hexOf = (b) => Buffer.from(b).toString('hex');
  */
 export const GHOST_BACKLOG_BYTES = 262144;
 
+/**
+ * A HEAD-TO-HEAD DOOR TIME COUNTS ONLY FOR A LOCK THE FEDERATION HELD BEFORE ANY MOVE WAS PUBLIC (kanban #1822, #1551 refute 0 s3, #1805, #1489).
+ * #1805 keeps the time POST /lock / POST /fee-lock checked the close as the lock's verified_ms, so an honest lock handed just before the close
+ * seats its entry although the federation answers 2.2-2.7 s later. But an entry only names its lock's outpoint: the player could hand the locks
+ * before the close with the transaction built and held back, read the opponent's move once revealed, and submit it only when his move won -
+ * the late federation read then found it and the door time seated him. Now:
+ *  - no seat serves a paying head-to-head round's reveals (GET /reveals) before its entry close + H2H_REVEAL_HOLD_MS, so no move is public
+ *    from an honest seat before then;
+ *  - a door time is kept only when the federation answer that found the lock came back by the entry close + H2H_DOOR_TIME_KEPT_MS, i.e. the
+ *    lock was on the federation before any reveal was served (the 500 ms between the two: seats' clocks that disagree a little). A lock
+ *    found later keeps the answer time, as before #1805 (df616e824), and seats nobody.
+ * Live an honest lock handed at the handout lead (2 s before the close) is answered 0.2-0.7 s after it.
+ */
+export const H2H_REVEAL_HOLD_MS = 1750;
+export const H2H_DOOR_TIME_KEPT_MS = 1250;
+
 export const NOTHING_IS_FUNDED = () => false;
 
 /**
@@ -4234,6 +4250,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const takeStakeLock = async (eid, fields, timing = {}, atMs = undefined) => {
     const stored = round.entry(eid);
     if (!stored) return { ok: false, status: 404, why: 'this node holds no such entry' };
+    const atUntilMs = atMs === undefined ? undefined : doorTimeUntilOf(stored);   // kanban #1822
     const se = decodeEntryContract(stored);
     const claimPk = claimKeyOf(se.roundId);
     // THE ROUND'S DONATION SET, so the donation outputs in the same transaction are checked with the stake (2026-10-03)
@@ -4245,14 +4262,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (ef.ok) { const t = Date.now(); reserveKey = await reserveKeyFor(toHex(ef.federationId)); timing.reserveKeyMs = Date.now() - t; } split = roundSplitBps(feesFor(rcx)); }
     try {
       const t = Date.now(); const port = (await portOfEntryBytes(stored)) || stakeLocks; timing.portMs = Date.now() - t;
-      return await verifyStakeLock({ round, port, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split, timing, atMs });
+      return await verifyStakeLock({ round, port, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split, timing, atMs, atUntilMs });
     } catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
   };
   const takeFeeLock = async (eid, fields, atMs = undefined) => {
     const stored = round.entry(eid);
     if (!stored) return { ok: false, status: 404, why: 'this node holds no such entry' };
     const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
-    try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, atMs }); }
+    const atUntilMs = atMs === undefined ? undefined : doorTimeUntilOf(stored);   // kanban #1822
+    try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, atMs, atUntilMs }); }
     catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
   };
   // A ROUND WHOSE ENTRIES AND LOCKS A SEAT HANDS ON (kanban #1216): every round it holds that is a game's - head-to-head (kanban #1068) or replayed;
@@ -4269,6 +4287,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const c = relayedRound(e.roundId);
     if (!c || typeof c.entryCloseMs !== 'bigint') return null;
     return headToHeadRound(e.roundId) !== null ? c.entryCloseMs - 1n : c.entryCloseMs + BigInt(grace);
+  };
+  // THE LAST MOMENT A FEDERATION ANSWER MAY COME BACK AND THE LOCK STILL KEEP ITS DOOR TIME (kanban #1822, #1551 refute 0 s3): a head-to-head
+  // round's entry close + H2H_DOOR_TIME_KEPT_MS - before any honest seat serves its reveals (H2H_REVEAL_HOLD_MS). undefined: no such bound (a
+  // round that is not head-to-head keeps its door time as #1805 made it).
+  const doorTimeUntilOf = (storedEntry) => {
+    let e; try { e = decodeEntryContract(new Uint8Array(storedEntry)); } catch { return undefined; }
+    if (e.limitPrice !== undefined || headToHeadRound(e.roundId) === null) return undefined;
+    const row = round.get(e.roundId);
+    let c; try { c = row ? decodeRoundContract(new Uint8Array(row.contract)) : null; } catch { c = null; }
+    // a head-to-head round this seat cannot read the close of: no door time at all (the answer time, as before #1805)
+    if (!c || typeof c.entryCloseMs !== 'bigint') return -Infinity;
+    return Number(c.entryCloseMs) + H2H_DOOR_TIME_KEPT_MS;
   };
   // `doorMs` (kanban #1805): the door's own time, taken once - the same time the lock row then keeps (takeStakeLock / takeFeeLock atMs)
   const lockAfterCloseRefusal = (storedEntry, eid, kind, doorMs = round.now()) => {
@@ -9428,6 +9458,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (id.length !== 32) return text(res, 400, 'that is not a round id');
         if (!round.get(id)) return text(res, 404, 'this node holds no such round');
+        // NO MOVE PUBLIC BEFORE THE CLOSE + H2H_REVEAL_HOLD_MS IN A PAYING ROUND (kanban #1822, #1551 refute 0 s3): until then a lock handed at the
+        // door before the close may still be answered by the federation and keep its door time; a move read here first let a player submit his
+        // held-back lock only when his own move won. The reveals are kept, and served from then on; `heldUntilMs` says when.
+        { let c = null; try { c = decodeRoundContract(new Uint8Array(round.get(id).contract)); } catch { c = null; }
+          if (c && c.stakeMsat > 0n && typeof c.entryCloseMs === 'bigint' && headToHeadRound(new Uint8Array(id)) !== null) {
+            const until = Number(c.entryCloseMs) + H2H_REVEAL_HOLD_MS;
+            if (Math.floor(Number(round.now())) < until) {
+              res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+              return res.end(JSON.stringify({ round: toHex(id), reveals: [], heldUntilMs: until }));
+            }
+          } }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ round: toHex(id), reveals: round.revealsOf(new Uint8Array(id))
           .map((r) => { const who = round.identityOf(r.entryId); return { entry: toHex(r.entryId), move: r.move, salt: toHex(r.salt),
