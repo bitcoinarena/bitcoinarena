@@ -444,6 +444,7 @@ export class LockSettlement {
     const got = await this.planOf(roundIdBytes);
     if (!got.ok) return got;
     if (!got.anyFed) return refuse('that round settles in its one federation: it has no per-federation settlement');
+    this.keepFederationSet(roundIdBytes, got);
     const s = got.split.settlements.find((x) => x.federation === String(fid).toLowerCase());
     if (!s) return refuse(`that round's settlement moves nothing in federation ${String(fid).slice(0, 16)}`, 404);
     const claims = [];
@@ -2384,6 +2385,18 @@ export class LockSettlement {
     if (this.round.putLockSettlementShares) this.round.putLockSettlementShares(roundIdBytes, got.plan.stakeShares || []);
   }
 
+  /**
+   * EVERY FEDERATION OF THE SPLIT, KEPT BEFORE ANYTHING IS SUBMITTED (kanban #1838, state audit 2026-11-12): settled in federation A while
+   * B was never reached (no port, too few commitments, its shares failed), the round held only A's ACCEPTED row - settlementState said
+   * ACCEPTED, the retry and attested sweeps dropped it, and B's locks were never claimed nor its winners paid. Kept here, by the combiner
+   * (#settleFederations) and by every peer that builds a federation's bytes (fedMessage), the round is ACCEPTED only with every one.
+   */
+  keepFederationSet(roundIdBytes, got) {
+    // 2.0: kept in fed_lock_split (round.putFedLockSplit, kanban #1576), which settlementState and the sweeps already read
+    if (!got || !got.split || !Array.isArray(got.split.settlements) || typeof this.round.putFedLockSplit !== 'function') return;
+    this.round.putFedLockSplit(roundIdBytes, got.split.settlements.map((s) => s.federation));
+  }
+
   /** What the signed settlement moves, kept with its intent (W6). */
   keepMoves(roundIdBytes, m) {
     const claims = m.claims.map((c) => `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`);
@@ -2997,6 +3010,9 @@ export class LockSettlement {
     }
     const got = await this.planOf(roundIdBytes);
     if (!got.ok) return got;
+    // THE SPLIT'S FEDERATIONS ON DISK BEFORE ANY IS SIGNED (kanban #1576, #1838): one whose part fails before its SUBMITTING row keeps the round
+    // unsettled and retried - kept here before the turn check, so a seat whose turn it is not keeps them too
+    this.keepFederationSet(roundIdBytes, got);
     if (this.winnings) {
       const t = await this.turn(roundIdBytes);
       if (!t.mine) return refuse(`not this signer node's turn to combine: ${t.why}`, 409, t.code || REFUSAL.NOT_MY_TURN, Number.isInteger(t.takeoverAt) ? { takeoverAt: t.takeoverAt } : {});
@@ -3005,7 +3021,6 @@ export class LockSettlement {
     // with its txid (keepScopedMoves) at its first SUBMITTING
     if (!(this.round.fedLockSettlementsOf ? this.round.fedLockSettlementsOf(roundIdBytes) : []).some((r) => r.state === ACCEPTED)) this.keepFederationMoves(roundIdBytes, got);
     // THE SPLIT'S FEDERATIONS ON DISK BEFORE ANY IS SIGNED (kanban #1576): one whose part fails before its SUBMITTING row keeps the round unsettled and retried
-    if (this.round.putFedLockSplit) this.round.putFedLockSplit(roundIdBytes, got.split.settlements.map((s) => s.federation));
     const results = [];
     for (let i = 0; i < got.split.settlements.length; i++) {
       const s = got.split.settlements[i];
