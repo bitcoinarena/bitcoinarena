@@ -58,6 +58,11 @@ export const MIRROR_PEERS = 8;
  * most MIRROR_CENSUS_PER_ANSWER new heights in the whole pass, across every federation it is asked for, so it cannot spend the pass's. */
 export const MIRROR_CENSUS_PER_ANSWER = 2;
 export const MIRROR_CENSUS_PER_PASS = 8;
+/** A PASS IS NOT FREE TO START (kanban #2370, #2373, a45 refute 8 s3 of #1818/#2270/#2339): the census budget above is a pass's, and
+ * GET /federations?fresh=1 started a pass for any caller - 51 asks from a stranger were 102 chain census derivations at 102 heights. A
+ * pass asked for while one runs joins it (one budget for both), and an ask with minAgeMs (the public door) is answered by the last
+ * pass while that one finished less than minAgeMs ago. */
+export const GATHER_FRESH_MS = 30000;
 
 /** GET /federation-record's named height (kanban #2270, the #1818 cost through the other door): a chain census read for a height a
  * gatherer names happens only for a federation this seat names an invite for, at a height no further below the tip than this, and at
@@ -700,34 +705,44 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     return signBody(bodyFor(b, fromHex(federationIdHex), gone, res.reserveSats, eps).record);
   }
 
+  // one gather pass (gatherAll starts it): kanban #2370 - never two at once, and the public door's no more often than GATHER_FRESH_MS
+  const passes = { running: null, last: null, doneAt: 0 };
+  async function gatherPass(inviteFederationId) {
+    await chainAhead();
+    const b = basis();
+    // every federation the basis names AND every one only the chain's census names (kanban #549: a successor named after the
+    // rounds' census was frozen), each read from the basis that names it
+    const cb = chainBasis(null);
+    const feds = new Map();
+    for (const x of [b, cb]) if (x && x.ok) for (const f of federationsOf(x.census)) if (!feds.has(toHex(f))) feds.set(toHex(f), f);
+    if (!feds.size) return [b.ok ? { ok: false, why: 'no census this seat reads names a federation' } : b];
+    const out = [];
+    const pass = { kept: new Map(), byBase: new Map() };   // the chain census reads of this whole pass (kanban #2339)
+    // A FEDERATION THIS SEAT HAS NO INVITE FOR IS MIRRORED, NOT SKIPPED (2026-10-12: "Make it happen
+    // automatically so we don't have to update nodes, it needs to find federations"): its guardians' own nodes - their bond
+    // adverts' endpoints in this census - are asked for its signed record, which stands only against this seat's census
+    // AND A GATHER THAT FAILS IS MIRRORED TOO (measured live 2026-10-15): a seat that holds a federation's invite but
+    // whose own basis is another census height than its guardians' (node 15: newest readable round at 156388, B's guardians sign
+    // at 156538) gathered "0 of its bonded guardians signed it" every pass and never held B's record; the record its guardians keep
+    // stands against this seat's census all the same
+    for (const fid of feds.values()) {
+      try {
+        let got = inviteFor(toHex(fid)) ? await gather(fid, inviteFederationId) : null;
+        if (!got || got.ok === false) { const m = await mirror(fid, basisFor(toHex(fid)), inviteFederationId, pass); got = m.ok || !got ? { ...m, ...(got ? { gathered: got.why } : {}) } : got; }
+        out.push({ federation: toHex(fid), ...got });
+      } catch (e) { out.push({ federation: toHex(fid), ok: false, why: e.message }); }
+    }
+    return out;
+  }
+
   return {
     mySignature, mySignatureWithGone, gather, restore, restoreNow,
-    async gatherAll(inviteFederationId) {
-      await chainAhead();
-      const b = basis();
-      // every federation the basis names AND every one only the chain's census names (kanban #549: a successor named after the
-      // rounds' census was frozen), each read from the basis that names it
-      const cb = chainBasis(null);
-      const feds = new Map();
-      for (const x of [b, cb]) if (x && x.ok) for (const f of federationsOf(x.census)) if (!feds.has(toHex(f))) feds.set(toHex(f), f);
-      if (!feds.size) return [b.ok ? { ok: false, why: 'no census this seat reads names a federation' } : b];
-      const out = [];
-      const pass = { kept: new Map(), byBase: new Map() };   // the chain census reads of this whole pass (kanban #2339)
-      // A FEDERATION THIS SEAT HAS NO INVITE FOR IS MIRRORED, NOT SKIPPED (2026-10-12: "Make it happen
-      // automatically so we don't have to update nodes, it needs to find federations"): its guardians' own nodes - their bond
-      // adverts' endpoints in this census - are asked for its signed record, which stands only against this seat's census
-      // AND A GATHER THAT FAILS IS MIRRORED TOO (measured live 2026-10-15): a seat that holds a federation's invite but
-      // whose own basis is another census height than its guardians' (node 15: newest readable round at 156388, B's guardians sign
-      // at 156538) gathered "0 of its bonded guardians signed it" every pass and never held B's record; the record its guardians keep
-      // stands against this seat's census all the same
-      for (const fid of feds.values()) {
-        try {
-          let got = inviteFor(toHex(fid)) ? await gather(fid, inviteFederationId) : null;
-          if (!got || got.ok === false) { const m = await mirror(fid, basisFor(toHex(fid)), inviteFederationId, pass); got = m.ok || !got ? { ...m, ...(got ? { gathered: got.why } : {}) } : got; }
-          out.push({ federation: toHex(fid), ...got });
-        } catch (e) { out.push({ federation: toHex(fid), ok: false, why: e.message }); }
-      }
-      return out;
+    gatherAll(inviteFederationId, { minAgeMs = 0 } = {}) {
+      if (passes.running) return passes.running;
+      if (minAgeMs > 0 && passes.doneAt && nowMs() - passes.doneAt < minAgeMs) return Promise.resolve(passes.last || []);
+      passes.running = gatherPass(inviteFederationId).then((out) => { passes.last = out; return out; })
+        .finally(() => { passes.doneAt = nowMs(); passes.running = null; });
+      return passes.running;
     },
     list: () => [...kept.entries()].map(([federation, k]) => ({ federation, status: k.status, height: k.height, signers: k.signers, record: toHex(k.bytes),
       // THE LOAD (§23A.3): the signed record's reserve over its signed exposure cap
