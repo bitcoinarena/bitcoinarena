@@ -2053,3 +2053,8 @@ Files: `owner-leave.js` leaveStatus.
 #### SM-G2 (change) Gateway watch per guardian: one federation's state at a time (kanban #2290)
 - The watch's epochs, volumes, contract-stream cursor, seatedBy and `loaded` flag belong to the federation `federationId()` answered last. When it answers another id (the guardian dir retired and refounded in the same process), all of them start empty and that federation's own kept rows and state are loaded; a probe or load whose federation changed while it ran writes nothing.
 - A row is ranked (and loaded back) only when its claim's `federationId` is the federation being ranked. Invariant: a federation's gateway seats are gateways that claim THAT federation and answered routing_info for it; another federation's contract stream index is never used against its stream.
+State machine audit round 9 (#1489, base f64efd1bb). Each machine as it stands after its fix; the ticket that fixed it in brackets.
+
+#### SM-2 (change) Order / book event placement + book ledger: a cancel is final for its entry
+- cancelId is one id per entry, so an entry's cancel is one event and one batch carries it. From the moment a seat holds an entry's cancel (waiting or batched), POST /sell of that entry is refused (409), and a cancel already in a batch is answered 409 "already carried by batch k", never 200 inNextBatch (#2283).
+- A leader leaves out of its set every sell of an entry cancelled in the certified book or in the set itself, and a seat refuses a batch that carries one: no sell of a cancelled entry ever rests, so nothing rests that no door could take out (#2283).
