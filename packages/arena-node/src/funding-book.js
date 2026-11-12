@@ -227,11 +227,26 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     } catch (e) { if (own) db.exec('ROLLBACK'); throw e; }
     return Boolean(outcomeToo);
   }
+  // ONLY THE NEWEST VOTE PASS WRITES (kanban #2405, #2474, #1489 refute of #2139 - audit44 item 14, skeptic 2): two passes could
+  // run at once (server.js ticks every 120 s; a getblock or cs_main held through a reorg outlives that), and the #2139 check after
+  // the read loop held only one pass's rows against its own `decided`. A slow pass wrote an abandoned branch's row (INSERT OR
+  // REPLACE) after the other pass checked its rows, or dropped every row (an RPC error in its re-check) while the other counted -
+  // the outcome was written FAILED on a row set that was not the chain's, anchored to a block that never moves. Now every pass
+  // takes a number; after EVERY await (each chain read) a pass that is no longer the newest stops there and writes nothing more.
+  // A pass writes only between awaits, so no other pass's write can land between its last check and its writes: the rows it
+  // checks are the rows it counts. The outcome is also written only when the store still holds the row set the pass checked.
+  let votePassSeq = 0;
+  const SUPERSEDED = Symbol('superseded vote pass');
   async function voteRound() {
+    const gen = ++votePassSeq;
+    try { return await votePass(gen); } catch (e) { if (e === SUPERSEDED) return []; throw e; }
+  }
+  async function votePass(gen) {
     if (!voteChain) return [];
-    const height = await Promise.resolve(voteChain.tipHeight()).catch(() => null);
+    const newest = (x) => { if (gen !== votePassSeq) throw SUPERSEDED; return x; };
+    const height = newest(await Promise.resolve(voteChain.tipHeight()).catch(() => null));
     if (!Number.isInteger(height)) return [];
-    const hashAt = async (h) => { try { const x = await voteChain.blockHashAt(h); return x ? String(x).toLowerCase() : null; } catch { return null; } };
+    const hashAt = async (h) => { let x = null; try { x = await voteChain.blockHashAt(h); } catch { x = null; } newest(); return x ? String(x).toLowerCase() : null; };
     const done = [];
     for (const row of votedRows()) {
       const signal = outcomeOf(row.id);
@@ -285,6 +300,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         // kanban #1749: the hash read before and after the census - a reorg in between leaves it for the next pass
         const before = await hashAt(period.from);
         let c = null; try { c = await voteChain.censusAt(toHex(p.obj.networkId), period.from); } catch { c = null; }
+        newest();
         if (!c) continue;
         const after = await hashAt(period.from);
         if (before !== after) continue;
@@ -332,7 +348,11 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         // NO BLOCK IS HELD WITHOUT ITS HASH (kanban #1750): a hash that did not answer (above the tip, or an RPC error - main.js
         // blockHashAt reads both as null) is read on the next pass, never stored as a row no reorg check can test
         if (!hash) break;
-        let votes; try { votes = await voteChain.votesAt(next, hash || undefined); } catch { break; }
+        let votes; try { votes = await voteChain.votesAt(next, hash || undefined); } catch { newest(); break; }
+        newest();
+        // kanban #2474: rows written and not yet checked after the loop - a pass stopped before its check (a newer pass took over)
+        // leaves them to the next pass's full walk-back, never to its newest-row check alone
+        walkedAll.delete(row.id);
         // the 77-byte vote names 8 bytes of the id; the bound seq vote (kanban #2562 / #2576, 80 bytes) names 7 - both are kept, the tally decides
         const mine = (votes || []).filter((v) => { const h = toHex(v.payload); return h.slice(8, 24) === prefix || (v.payload.length === VOTE_BOUND_BYTES && h.slice(8, 22) === prefix.slice(0, 14)); })
           .map((v) => ({ payload: toHex(v.payload), txid: String(v.txid) }));
@@ -367,6 +387,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
           log(`[funding] ${row.id.slice(0, 16)}: the chain changed while the vote was read (block ${r.height}) - its blocks are read again from there`);
           broken = true; break;
         }
+        walkedAll.add(row.id);   // kanban #2474: this pass's rows are checked (or dropped from the first that moved)
         if (broken) continue;
       }
       const readTo = held.length ? held[held.length - 1].height : null;
@@ -376,6 +397,10 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       const lastHash = await hashAt(period.last);
       const lastRow = held.find((r) => r.height === period.last);
       if (!lastHash || !lastRow || lastRow.hash !== lastHash || held.some((r) => !r.hash)) continue;
+      // kanban #2405, #2474: counted only from the row set checked above - the store read again after the last await must hold
+      // exactly those rows (heights, hashes, votes); anything else waits for the next pass
+      const now0 = voteBlocks(row.id);
+      if (now0.length !== held.length || now0.some((r, i) => r.height !== held[i].height || r.hash !== held[i].hash || r.votes !== held[i].votes)) continue;
       const out = ruleOf(row.kind, countOf(row.id, period, p.obj, period.until, row.kind));
       db.prepare('INSERT OR IGNORE INTO funding_vote_outcomes (proposal, outcome, last_hash, decided_ms) VALUES (?, ?, ?, ?)').run(row.id, JSON.stringify(out), lastHash, now());
       log(`[funding] ${row.id.slice(0, 16)}: vote ${out.passed ? 'passed' : 'failed'} - turnout ${out.turnoutPct} %, YES ${out.approvalPct} % of YES + NO, YES ${out.yesOfAllPct} % of everyone who could vote, ${out.bondsVoted} bond(s)`);

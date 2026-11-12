@@ -2408,14 +2408,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const feesFor = (contract) => feesAtHeight(Number(contract && contract.censusHeight));
   // THE DOOR AND THE /stake-lock GATE READ A PROTOCOL-27 ROUND'S SPLIT HERE (kanban #1486): the same fee set the settlement splits it by
   round.feesFor = feesFor;
-  if (fundingBook) { const t = setInterval(() => { fundingBook.decide().then(() => fundingBook.voteRound()).then(() => fundingBook.decideFees())
+  // ONE FUNDING TICK AT A TIME (kanban #2405, #2474, audit44 item 14 refute s2): a tick that outlived 120 s (a slow getblock, cs_main
+  // held through a reorg) overlapped the next, and two vote passes wrote and dropped one proposal's rows under each other's count.
+  // A tick still running when the next fires is skipped; funding-book voteRound also lets only its newest pass write.
+  let fundingTickRunning = false;
+  if (fundingBook) { const t = setInterval(() => { if (fundingTickRunning) return; fundingTickRunning = true; fundingBook.decide().then(() => fundingBook.voteRound()).then(() => fundingBook.decideFees())
     .then(async () => { if (reservePayouts && typeof chainTip === 'function') { fundingTipSeen = Number(await chainTip()); const got = await reservePayouts.round({ height: fundingTipSeen });
       // WHAT A PAYOUT OR MOVE STOPPED ON, said once per reason (kanban #326: the round's answers were dropped, so a move that never
       // started said nothing)
       for (const x of got || []) if (x && x.ok === false && x.why && !payoutWhySaid.has(`${x.id}:${x.why}`)) { payoutWhySaid.add(`${x.id}:${x.why}`); console.log(`[payout] ${String(x.id).slice(0, 16)}: ${x.why}`); } } })
     // A STOPPED ROUND IS SAID, once per reason (kanban #326, 2026-10-22: a paid move went unclaimed on A's seats with nothing in their
     // logs - a throw anywhere in the chain skipped every payout, move and claim without a word)
-    .catch((e) => { const w = `[funding] the round stopped: ${e && e.message ? e.message : e}`; if (!payoutWhySaid.has(w)) { payoutWhySaid.add(w); console.log(w); } }); }, 120000); if (t.unref) t.unref(); }
+    .catch((e) => { const w = `[funding] the round stopped: ${e && e.message ? e.message : e}`; if (!payoutWhySaid.has(w)) { payoutWhySaid.add(w); console.log(w); } }).finally(() => { fundingTickRunning = false; }); }, 120000); if (t.unref) t.unref(); }
 
   // THE PLAYER'S FIRST MARK, FORWARDED TO THE ROUND'S OTHER SIGNER NODES.
   //
