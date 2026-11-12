@@ -3022,6 +3022,17 @@ export class Round {
     return !!this.db.prepare('SELECT 1 k FROM checkpoints WHERE checkpoint_id = ?').get(checkpointIdBytes);
   }
 
+  /**
+   * WHOSE MARK IS IT (kanban #2151, #1489 audit44 refute of #1636): 'entry' when this node holds the mark under that round and
+   * entry, 'other' when it holds it under another, null when it does not hold it at all - one indexed read, no curve work, so
+   * carryReceipts can tell a peer's record that is about this entry from one that is not before it verifies anything.
+   */
+  markOfEntry(roundIdBytes, entryIdBytes, checkpointIdBytes) {
+    const rows = this.db.prepare('SELECT round_id, entry_id FROM checkpoints WHERE checkpoint_id = ?').all(checkpointIdBytes);
+    if (!rows.length) return null;
+    return rows.some((r) => same(new Uint8Array(r.round_id), roundIdBytes) && same(new Uint8Array(r.entry_id), entryIdBytes)) ? 'entry' : 'other';
+  }
+
   /** This signer node's own receipt of a mark it holds, or null - never a new one. */
   ownReceipt(checkpointIdBytes) {
     const r = this.db.prepare('SELECT bytes FROM receipts WHERE checkpoint_id = ? AND node_pubkey = ?')
