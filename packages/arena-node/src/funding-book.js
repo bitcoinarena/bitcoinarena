@@ -188,6 +188,23 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   // the stored form of a census (kanban #1749); one function, so a legacy row is compared byte for byte with a fresh read (#2400)
   const censusText = (c) => JSON.stringify(c.map((b) => ({ pubkey: toHex(b.pubkey), outpoint: b.outpoint, bondSats: String(b.bondSats),
     height: Number.isInteger(b.height) ? b.height : null, maturity: Number.isInteger(b.maturity) ? b.maturity : null })));
+  // kanban #2139: the proposals whose every held vote block this process has asked once (the full walk-back), and one step that
+  // drops a proposal's vote blocks from a height up - with its outcome (and a fee proposal's) when `outcomeToo`, and its census too
+  const walkedAll = new Set();
+  function dropVoteFrom(pid, fromHeight, outcomeToo, censusToo = false) {
+    const own = !db.isTransaction;
+    if (own) db.exec('BEGIN IMMEDIATE');
+    try {
+      if (censusToo) db.prepare('DELETE FROM funding_vote_census WHERE proposal = ?').run(pid);
+      db.prepare('DELETE FROM funding_vote_blocks WHERE proposal = ? AND height >= ?').run(pid, fromHeight);
+      if (outcomeToo) {
+        db.prepare('DELETE FROM funding_vote_outcomes WHERE proposal = ?').run(pid);
+        db.prepare('DELETE FROM fee_outcomes WHERE proposal = ?').run(pid);
+      }
+      if (own) db.exec('COMMIT');
+    } catch (e) { if (own) db.exec('ROLLBACK'); throw e; }
+    return Boolean(outcomeToo);
+  }
   async function voteRound() {
     const gen = ++votePassSeq;
     try { return await votePass(gen); } catch (e) { if (e === SUPERSEDED) return []; throw e; }
@@ -283,11 +300,29 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         const had = lateCensus.get(row.id);
         if (!had || (had.height !== at && (at - had.height >= 144 || at === period.last + schedule.lockAfterVote))) {
           let lc = null; try { lc = await voteChain.lateCensusAt(toHex(p.obj.networkId), at); } catch { lc = null; }
+          newest();   // kanban #2405: a pass no longer the newest writes nothing more
           if (lc) lateCensus.set(row.id, { height: at, outpoints: new Set(lc.map((b) => b.outpoint)) });
         }
       }
-      // blocks a reorg replaced are read again: walk back from the newest held block while its hash moved
+      // blocks a reorg replaced are read again. THE WALK-BACK READS EVERY HELD ROW (kanban #2139, refute of #1633 audit44 item 14):
+      // it stopped at the newest row whose hash still matched, so rows of an abandoned branch BELOW it (a reorg that landed between
+      // two block reads of one pass, written by a build before the check after the read loop) stood for good. The first time this
+      // process sees a proposal every held row is asked; after that a row set is only ever written as one chain (the check after
+      // the read loop), so the newest row standing means every row under it stands (a block moved means every block above moved).
       let held = voteBlocks(row.id);
+      if (!walkedAll.has(row.id)) {
+        let bad = -1, moved = false;
+        for (let i = 0; i < held.length; i++) {
+          const h = await hashAt(held[i].height);
+          if (!h || !held[i].hash || h !== held[i].hash) { bad = i; moved = Boolean(h && held[i].hash); break; }
+        }
+        if (bad >= 0) {
+          if (dropVoteFrom(row.id, held[bad].height, moved && decided && held[bad].height <= period.last)) decided = null;
+          log(`[funding] ${row.id.slice(0, 16)}: held vote block ${held[bad].height} is not this chain's - read again from it`);
+          held = held.slice(0, bad);
+        }
+        walkedAll.add(row.id);
+      }
       while (held.length) {
         const top = held[held.length - 1];
         const h = await hashAt(top.height);
@@ -301,6 +336,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       // read on, a pass at a time, this proposal's votes only
       const prefix = row.id.slice(0, 16);
       let next = held.length ? held[held.length - 1].height + 1 : period.from;
+      const anchorAt = held.length ? held[held.length - 1].height : null;   // the held block this pass reads on from
       // a passed vote is read on through its payments' due heights: a NO in the delay cancels (rule 5)
       const upTo = Math.min(height, decided ? readEndOf(period) : period.last);
       for (let n = 0; next <= upTo && n < maxBlocksPerPass; next++, n++) {
@@ -310,12 +346,46 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         if (!hash) break;
         let votes; try { votes = await voteChain.votesAt(next, hash || undefined); } catch { newest(); break; }
         newest();
+        // kanban #2474: rows written and not yet checked after the loop - a pass stopped before its check (a newer pass took over)
+        // leaves them to the next pass's full walk-back, never to its newest-row check alone
+        walkedAll.delete(row.id);
         // the 77-byte vote names 8 bytes of the id; the bound seq vote (kanban #2562 / #2576, 80 bytes) names 7 - both are kept, the tally decides
         const mine = (votes || []).filter((v) => { const h = toHex(v.payload); return h.slice(8, 24) === prefix || (v.payload.length === VOTE_BOUND_BYTES && h.slice(8, 22) === prefix.slice(0, 14)); })
           .map((v) => ({ payload: toHex(v.payload), txid: String(v.txid) }));
         db.prepare('INSERT OR REPLACE INTO funding_vote_blocks (proposal, height, hash, votes) VALUES (?, ?, ?, ?)').run(row.id, next, hash, JSON.stringify(mine));
       }
       held = voteBlocks(row.id);
+      // THE BLOCKS OF ONE PASS ARE ONE CHAIN (kanban #2139, the second copy of the #1633 hole - ballot-tally.js had it closed):
+      // each block's hash was asked on its own, a few RPC awaits apart, so a reorg landing between two reads kept the abandoned
+      // branch's votes in funding_vote_blocks while the anchor below (the new branch's last voting block) said nothing moved -
+      // the vote was written PASSED (or FAILED) on votes not on this chain, and this seat paid tranches every other seat refuses.
+      // After the read loop the census block and every row from the block this pass went on from up to the newest are asked
+      // again (rows below the anchor were asked at the walk-back: one of them moved means the anchor moved). A moved or missing
+      // hash drops the rows from the first such height up (and the outcome, with a fee proposal's, when a moved one is a counted
+      // block), and nothing is decided this pass.
+      const added = held.filter((r) => anchorAt === null || r.height >= anchorAt);
+      if (anchorAt === null ? added.length : added.length > 1) {
+        let broken = false;
+        const c = voteCensus(row.id);
+        const censusNow = await hashAt(period.from);
+        // no answer (an RPC error): the rows this pass wrote are not held unchecked - they are read again next pass
+        if (!censusNow) { dropVoteFrom(row.id, anchorAt === null ? -1 : anchorAt + 1, false); broken = true; }
+        else if (c && c.hash && censusNow !== c.hash) {
+          // the census block itself moved: everything goes, as the check at the top of the pass does it
+          dropVoteFrom(row.id, -1, true, true); lateCensus.delete(row.id); decided = null; broken = true;   // 2.0: the late census too (#1334)
+          log(`[funding] ${row.id.slice(0, 16)}: the census block ${period.from} moved while the vote was read - census and vote are read again`);
+        }
+        for (const r of broken ? [] : added) {
+          const h = await hashAt(r.height);
+          if (h && r.hash && h === r.hash) continue;
+          const moved = Boolean(h && r.hash);
+          if (dropVoteFrom(row.id, r.height, moved && decided && r.height <= period.last)) decided = null;
+          log(`[funding] ${row.id.slice(0, 16)}: the chain changed while the vote was read (block ${r.height}) - its blocks are read again from there`);
+          broken = true; break;
+        }
+        walkedAll.add(row.id);   // kanban #2474: this pass's rows are checked (or dropped from the first that moved)
+        if (broken) continue;
+      }
       const readTo = held.length ? held[held.length - 1].height : null;
       if (decided || readTo === null || readTo < period.last || held.length !== readTo - period.from + 1 || height < period.decidableAt) continue;
       // NEVER DECIDED WITHOUT ITS ANCHOR (kanban #1750): the outcome is held to the hash of its last voting block as held, and that
