@@ -22,12 +22,31 @@ export const PULL_EVERY_MS = 120000;
 export const PULL_PEERS = 4;
 export const PULL_PER_PASS = 40;
 export const RETRY_MS = 300000;
+// ONE PEER CANNOT SPEND THE PASS (kanban #2424): a /series answer is read up to PULL_LISTING_BYTES, a whole pass ends by PULL_PASS_MS,
+// and a peer whose lines fail PULL_PEER_STRIKES times in a pass is not asked for the ids only it lists
+export const PULL_LISTING_BYTES = 1 << 20;
+export const PULL_PASS_MS = 90000;
+export const PULL_PEER_STRIKES = 3;
 
 export function createSeriesPull({ peers, held, take, parse, idOf, fetchFn = fetch, say = () => {}, now = Date.now,
-  perPass = PULL_PER_PASS, askPeers = PULL_PEERS, retryMs = RETRY_MS, timeoutMs = 15000 }) {
+  perPass = PULL_PER_PASS, askPeers = PULL_PEERS, retryMs = RETRY_MS, timeoutMs = 15000,
+  passMs = PULL_PASS_MS, listingBytes = PULL_LISTING_BYTES, peerStrikes = PULL_PEER_STRIKES }) {
   const refusedAt = new Map();         // series id hex -> { atMs, why }
   let busy = false, start = 0, last = null;
-  const json = async (u) => { const r = await fetchFn(u, { signal: AbortSignal.timeout(timeoutMs) }); return r.ok ? r.json() : null; };
+  // the listing read up to listingBytes (kanban #2424): a body without a stream reader (a test double) is read as it is
+  const capped = async (r) => {
+    if (!r.body || typeof r.body.getReader !== 'function') return r.json();
+    const reader = r.body.getReader(); const chunks = []; let n = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      n += value.length;
+      if (n > listingBytes) { reader.cancel().catch(() => {}); throw new Error(`its answer passed ${listingBytes} bytes`); }
+      chunks.push(value);
+    }
+    return JSON.parse(Buffer.concat(chunks.map((x) => Buffer.from(x.buffer, x.byteOffset, x.byteLength))).toString('utf8'));
+  };
+  const json = async (u) => { const r = await fetchFn(u, { signal: AbortSignal.timeout(timeoutMs) }); return r.ok ? capped(r) : null; };
 
   /** One pass: the series the asked peers hold that this node does not, fetched, checked and taken. Never throws. */
   const pass = async () => {
@@ -60,20 +79,35 @@ export function createSeriesPull({ peers, held, take, parse, idOf, fetchFn = fet
         }
       }));
       out.missing = from.size;
+      // ONE PEER'S MADE-UP IDS DO NOT TAKE THE PASS (kanban #2424): ids more asked peers list go first, an id only one peer lists
+      // spends that peer's share of the pass (perPass / peers asked), a peer whose lines fail peerStrikes times is not asked again
+      // this pass for the ids only it lists, and the whole pass ends by passMs - not 15 s for each of 40 reads
+      const order = [...from].map(([id, roots], i) => ({ id, roots, i })).sort((a, b) => (b.roots.length - a.roots.length) || (a.i - b.i));
+      const share = Math.max(1, Math.ceil(perPass / Math.max(1, ask.length)));
+      const solo = new Map(), strikes = new Map();
+      const strike = (u) => strikes.set(u, (strikes.get(u) || 0) + 1);
+      const endAt = Date.now() + passMs;
       let done = 0;
-      for (const [id, roots] of from) {
-        if (done >= perPass) break;
+      for (const { id, roots } of order) {
+        if (done >= perPass || Date.now() >= endAt) break;
         const r = refusedAt.get(id);
         if (r && now() - r.atMs < retryMs) continue;
+        if (roots.length === 1) {
+          const u = roots[0];
+          if ((solo.get(u) || 0) >= share || (strikes.get(u) || 0) >= peerStrikes) continue;
+          solo.set(u, (solo.get(u) || 0) + 1);
+        }
         done++;
         let why = 'no peer answered its line';
         for (const u of roots) {
+          const left = endAt - Date.now();
+          if (left <= 0) break;
           let line = null;
-          try { const res = await fetchFn(`${u}/series-template?id=${id}`, { signal: AbortSignal.timeout(timeoutMs) }); line = res.ok ? await res.text() : null; } catch { line = null; }
-          if (!line) continue;
-          let t; try { t = parse(line.trim()); } catch (e) { why = `its line did not read: ${e.message}`; continue; }
+          try { const res = await fetchFn(`${u}/series-template?id=${id}`, { signal: AbortSignal.timeout(Math.min(timeoutMs, left)) }); line = res.ok ? await res.text() : null; } catch { line = null; }
+          if (!line) { strike(u); continue; }
+          let t; try { t = parse(line.trim()); } catch (e) { strike(u); why = `its line did not read: ${e.message}`; continue; }
           // A LINE IS BELIEVED ONLY AS ITS OWN ID: whatever a peer sends, it must hash to the id asked for
-          if (idOf(t) !== id) { why = `${u} answered a line of another series`; continue; }
+          if (idOf(t) !== id) { strike(u); why = `${u} answered a line of another series`; continue; }
           let got; try { got = await take(t); } catch (e) { got = { ok: false, why: e.message }; }
           if (got && got.ok) { why = null; break; }
           why = (got && got.why) || 'refused';
