@@ -16,7 +16,7 @@ import { sandboxFor } from './core-sandbox.js';
 import { windowsOf } from '../../arena-protocol/src/window.js';
 import { dissentsOn, dissentsFirstOn, postsLateOn, LATE_POSTING_AFTER_MS } from './test-dissent.js';
 import { ReplayPool } from './pool.js';
-import { checkObjectionBundle } from './objection-check.js';
+import { checkObjectionBundle, replayKeyOf, liveRunKeyOf } from './objection-check.js';
 import { sha256 } from '../../arena-protocol/src/hash.js';
 import { stateOf } from './settlement-state.js';
 import { verifyKept } from './verify-kept.js';
@@ -204,6 +204,16 @@ const PEER_MARKS_AHEAD = 1024;
 function namedTranscript(record) {
   try { return hex(decodePlayerResult(splitSignedResult(record).body).transcriptHash); } catch { return null; }
 }
+/**
+ * THE OBJECTION DOOR'S BOUND ON ONE ENTRY'S LIVE-RUN VARIANTS (kanban #1878): distinct inputs carried for one entry's
+ * live run that this seat replays when it holds no run reproducing the receipted marks to check them against. Past
+ * this many, a further variant is refused by name, unreplayed and without holding the entry SUSPENDED.
+ */
+export const OBJECTION_VARIANTS_PER_ENTRY = 3;
+/** How often one entry's reference run is asked of the committee seats while none is held (kanban #1878). */
+const OBJECTION_REFERENCE_RETRY_MS = 30000;
+/** Entries whose objection-door memory (reference run, variants replayed) is kept at once; the oldest goes first. */
+const OBJECTION_MEMORY_ENTRIES = 512;
 async function peerFetch(url) {
   return fetch(url, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
 }
@@ -331,6 +341,9 @@ export class Verifier {
     this.objectionTurns = new Map();
     this.objectionReplays = new Map();
     this.objectionReplayCount = 0;
+    // PER ENTRY (kanban #1878): the run remembered as reproducing its receipted marks, the keys known to reproduce them,
+    // the carried variants replayed, and when the committee seats were last asked for a reference
+    this.objectionMemory = new Map();
     this.latePostingSaid = new Set();
     // ONE RETRY IN FLIGHT PER RUN (kanban #1569): a retry asked for while one for the same run is replaying gets that one.
     this.retrying = new Map();
@@ -1767,6 +1780,38 @@ export class Verifier {
     // for 120 s only, but checks of one entry run one at a time - a valid objection behind enough junk bundles (or on a loaded seat) waited past
     // that, the seat signed FINAL, released P and acked, and the objection was re-dated late. finality.js reads this count: while it is above 0
     // the pending row holds whatever its age (a restart clears both).
+    // PER ENTRY'S MEMORY AT THE DOOR (kanban #1878), and A VARIANT PAST THE CAP refused here, before the hold below: it
+    // is never replayed, so it neither waits its turn nor keeps the entry SUSPENDED
+    const memKey = `${hex(roundIdBytes)}:${hex(entryIdBytes)}`;
+    let mem = this.objectionMemory.get(memKey);
+    if (!mem) {
+      mem = { reference: new Map(), good: new Set(), variants: new Set(), askedMs: new Map() };
+      this.objectionMemory.set(memKey, mem);
+      if (this.objectionMemory.size > OBJECTION_MEMORY_ENTRIES) this.objectionMemory.delete(this.objectionMemory.keys().next().value);
+    }
+    const keyHash = (k) => hex(sha256(new TextEncoder().encode(k)));
+    const marksKeyOf = (marks) => JSON.stringify((marks || []).map((m) => [m.tick, hex(m.stateHash)]));
+    const admitReplay = (k) => {
+      const h = keyHash(k);
+      if (mem.good.has(h) || mem.variants.has(h)) return true;
+      if (mem.variants.size >= OBJECTION_VARIANTS_PER_ENTRY) return false;
+      mem.variants.add(h);
+      return true;
+    };
+    {
+      const k = liveRunKeyOf(bundle);
+      // ...BUT NEVER WHILE A REFERENCE FETCH IS DUE (kanban #2017, #2051): a cap filled while the committee seats were down
+      // for a moment must not close the door for the entry for good. Once the retry time has passed, the bundle goes in, so
+      // referenceRuns asks the seats again - fetch first, the cap after, and only if no run reproduces the marks.
+      const lastAsk = mem.askedMs.get('at');
+      const fetchDue = lastAsk === undefined || Date.now() - lastAsk >= OBJECTION_REFERENCE_RETRY_MS;
+      if (k !== null && !dissentsOn(entryIdBytes) && mem.variants.size >= OBJECTION_VARIANTS_PER_ENTRY && mem.reference.size === 0 && !fetchDue) {
+        const h = keyHash(k);
+        if (!mem.good.has(h) && !mem.variants.has(h))
+          return { holds: false, step: 'replay', why: `this seat has already replayed ${OBJECTION_VARIANTS_PER_ENTRY} different inputs for that entry's live run, `
+            + 'and holds no run of it that reproduces the receipted checkpoints to check these against - refused without a replay (kanban #1878)' };
+      }
+    }
     const live = this.round.objectionChecks || (this.round.objectionChecks = new Map());
     const liveKey = hex(entryIdBytes);
     live.set(liveKey, (live.get(liveKey) || 0) + 1);
@@ -1783,17 +1828,44 @@ export class Verifier {
         verify: (sig, msg, key) => verifyKept(sig, msg, key),
         // A LIVE RUN'S INPUTS ARE BOUND TO THE ONES THIS SEAT STORED, which the session key signed (kanban #1952, #1990)
         storedInputs: (() => { try { return this.round.transcript(roundIdBytes, entryIdBytes); } catch { return null; } })(),
+        // THIS SEAT'S OWN RUN OF THE ENTRY (kanban #1706): a live run's inputs that differ from it are checked against its
+        // replay, one key per entry, instead of each costing a replay of its own (objection-check.js 7a)
+        ownInputs: () => this.round.transcript(roundIdBytes, entryIdBytes),
+        // A REFERENCE RUN WHERE THIS SEAT'S OWN DOES NOT REPRODUCE THE MARKS (kanban #1878): the first run that did, carried or
+        // fetched, remembered per entry and marks; else the run the committee seats hand out (GET /replay/transcript), asked
+        // at most once per OBJECTION_REFERENCE_RETRY_MS while none is held. Each is checked by its replay against the marks.
+        knownRun: (marks) => mem.reference.get(marksKeyOf(marks)) || null,
+        keepRun: (form, k) => {
+          mem.good.add(keyHash(k));
+          const mk = JSON.parse(k)[1];
+          const at = JSON.stringify(mk);
+          if (!mem.reference.has(at) && mem.reference.size < 4) mem.reference.set(at, form);
+        },
+        referenceRuns: async () => {
+          const now = Date.now();
+          const last = mem.askedMs.get('at');
+          if (last !== undefined && now - last < OBJECTION_REFERENCE_RETRY_MS) return [];
+          mem.askedMs.set('at', now);
+          const got = await Promise.all(this.peersOf(roundIdBytes).slice(0, 9).map(async (peer) => {
+            try {
+              const r = await peerFetch(`${peer}/replay/transcript?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
+              if (r.status !== 200) { try { await r.body?.cancel(); } catch { /* gone */ } return null; }
+              return await peerJson(r);
+            } catch { return null; }
+          }));
+          return got.filter(Boolean);
+        },
+        admitReplay,
         replayRun: (form, entry, options) => {
           // KEYED BY WHAT IS REPLAYED, NOT BY THE BYTES POSTED (kanban #1517): the raw transcript + inputs bytes let a
           // stranger make every copy of one run a fresh key (whitespace or an unknown key in a live run's inputs, or an
           // inputs part beside a batch transcript, never read) - each a full replay, the entry held SUSPENDED behind
           // them. The parsed replay form (replayFormOf / inputsFormOf: fixed fields, integers only) and the marks it
           // must reproduce are the replay's whole input for this entry, so any bytes giving the same input share one job.
+          // And rows no replay applies are dropped before the key (inputsFormOf, kanban #1706), so they make no new key.
           let content = '';
           try {
-            content = hex(sha256(new TextEncoder().encode(JSON.stringify([
-              [form.ticks.map((x) => [x.tick, x.words]), form.liquidations, form.loads, form.samples, form.tapes],
-              (options.marks || []).map((m) => [m.tick, hex(m.stateHash)])]))));
+            content = hex(sha256(new TextEncoder().encode(replayKeyOf(form, options.marks))));
           } catch { content = ''; }
           const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${content}`;
           const had = content && this.objectionReplays.get(key);
