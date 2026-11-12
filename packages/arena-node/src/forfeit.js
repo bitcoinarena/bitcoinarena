@@ -137,54 +137,9 @@ const PAIRS_PER_FORFEIT = 256;
 // HOW LONG A PAIR HANDED OUT IS KEPT AT LEAST (kanban #1611): the asker's two rounds, and never less than this - a seat busy with a flood answers late
 const PAIR_HOLD_MIN_MS = 60000;
 
-/**
- * A COMMITMENT UNDER ANOTHER SEAT'S ID (kanban #1807): a peer's answer at the commit door names its own FROST id, and nothing else checked it. One seat
- * that answered under another's id (or this seat's) put two commitments for one participant on the list, signShare340 threw at the asker, the throw left
- * the forfeit (or settlement) before any seat was left out, and every ask failed the same way until the lock's expiry.
- * Answers { out, aside }: `out` the doors to leave out - those that name this seat's id or an id outside the committee (1..its size, `nodes` the
- * contract's committee; with none known the range is not checked here, and an id with no public share is caught as a share that does not stand).
- * `aside` (kanban #2247, #2260): of two or more doors naming one id only the first stays on this list and the others are set aside for this pass, not
- * left out - dropping them all let one forger under an honest seat's id, with one seat down, take the threshold's last honest seat off every list.
- * The one kept signs; if it is the forger its share does not stand under that id's public share, it is left out, and the honest seat is alone on the
- * next list.
- */
-export function misnamedSigners(signers, nodes) {
-  const own = signers.find((s) => s.base === null);
-  const ownId = own ? String(own.commitment.id) : null;
-  const size = Array.isArray(nodes) ? nodes.length : 0;
-  const byId = new Map();
-  for (const s of signers) {
-    if (s.base === null) continue;
-    const id = String(s.commitment.id);
-    if (!byId.has(id)) byId.set(id, []);
-    byId.get(id).push(s.base);
-  }
-  const out = [];
-  const aside = [];
-  const kept = [];
-  for (const [id, bases] of byId) {
-    const n = Number(id);
-    if (id === ownId || (size > 0 && !(Number.isInteger(n) && n >= 1 && n <= size))) out.push(...bases);
-    else if (bases.length > 1) { kept.push(bases[0]); aside.push(...bases.slice(1)); }
-  }
-  return { out, aside, kept };
-}
-
-/**
- * THE PEERS WHOSE SHARE DOES NOT STAND (kanban #1070, #2247, #2260): each peer's share checked under the public share of the id it committed under. An id
- * with no public share (outside the committee) does not stand; a check that throws does not stand. `shares[i]` belongs to `signers[i]`.
- */
-export function spoiltShares({ signers, shares, held, m, commitments, curve }) {
-  if (!held || !held.ok || !held.shares) return [];
-  return signers.filter((s, i) => {
-    if (s.base === null) return false;
-    const publicShare = held.shares.get(String(s.commitment.id));
-    if (!publicShare) return true;
-    try {
-      return !verifyShare340({ id: s.commitment.id, share: shares[i], publicShare, groupPublicKey: m.claimPk, message: m.message, commitments, curve });
-    } catch { return true; }
-  });
-}
+// misnamedSigners and spoiltShares live in signer-guard.js (kanban #2369, #2372): the winnings send and the reserve payout run them too
+export { misnamedSigners, spoiltShares } from './signer-guard.js';
+import { misnamedSigners, spoiltShares } from './signer-guard.js';
 
 /**
  * WHAT THIS SEAT COMMITTED A LOCK TO, ONE ENUM AND ONE TRANSITION FUNCTION (kanban #1184, the 2026-11-06 state-machine audit). A lock has two ways
