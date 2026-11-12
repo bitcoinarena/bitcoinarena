@@ -62,7 +62,7 @@ async function addressCheckFor(ip, address) {
   c.n += 1; c.busy = true;
   try { return await lnAddressWorks(address); } finally { c.busy = false; }
 }
-import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync, statfsSync } from 'node:fs';
+import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync, statfsSync, utimesSync } from 'node:fs';
 import { PLAYER_GRANTS } from '../src/faucet.js';
 const PLAYER_WELCOME_SATS = PLAYER_GRANTS.welcome.invoiceSats;
 import { join as pathJoin, dirname, basename } from 'node:path';
@@ -801,8 +801,18 @@ createServer((req, res) => {
       const bytes = Buffer.concat(parts), kind = imageKind(bytes);
       if (!kind) { release(); return send(415, { ok: false, why: 'a screenshot is a PNG, JPEG or WebP image' }); }
       const h = createHash('sha256').update(bytes).digest('hex');
-      const fresh = !shotFile(h);
-      try { if (fresh) writeFileSync(pathJoin(SHOTS, `${h}.${kind}`), bytes); } catch { release(); return send(507, { ok: false, why: 'the faucet has no room for screenshots just now: send the report without one' }); }
+      // A FILE UNDER A HASH IS THAT HASH'S IMAGE (kanban #2101): the file was written in place, and an upload whose hash had a file wrote nothing - a
+      // faucet killed mid-write left a cut file under the image's name, and every later upload of it was answered kept while the cut bytes stayed for
+      // good. Each image is now written to a temp name and renamed to <h>.<kind> (as saveBook does), and a file already there whose bytes do not hash
+      // to h is written again; one that does has its mtime refreshed, so the hourly sweep does not take an image that was just uploaded again.
+      const had = shotFile(h);
+      let intact = false;
+      if (had) { try { intact = createHash('sha256').update(readFileSync(had)).digest('hex') === h; } catch { intact = false; } }
+      const fresh = !intact;
+      try {
+        if (fresh) { const to = pathJoin(SHOTS, `${h}.${kind}`), tmp = `${to}.${process.pid}.new`; writeFileSync(tmp, bytes); renameSync(tmp, had && had !== to ? had : to); }
+        else { try { const now = new Date(); utimesSync(had, now, now); } catch { /* the sweep's next hour */ } }
+      } catch { release(); return send(507, { ok: false, why: 'the faucet has no room for screenshots just now: send the report without one' }); }
       settled = true; slot.bytes = fresh ? bytes.length : 0;
       return send(200, { ok: true, sha256: h });
     });
