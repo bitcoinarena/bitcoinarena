@@ -53,17 +53,24 @@ test('#1681: the old seating held first - the replacement takes its place, and t
   assert.equal(agent.keepCert(rid, 'settlement', S).superseded, true);
 });
 
-test('#1681: once the round has entries the held certificate is not replaced - two seatings are equivocation, as before', () => {
+// kanban #2083 (wf1489 v1 refute-17-s3): the pair was equivocation here before, which let a withholder and a colluding reserve void a round with entries
+test('#1681, #2083: once the round has entries the held certificate is not replaced - the replacement is refused as superseded, no equivocation', () => {
   const { agent } = agentOf({ entries: 1 });
   agent.keepCert(rid, 'settlement', S);
-  assert.equal(agent.keepCert(rid, 'settlement', S2).equivocation, true);
-  assert.equal(agent.equivocationOf(rid).length, 1);
+  const r = agent.keepCert(rid, 'settlement', S2);
+  assert.equal(r.ok, false);
+  assert.equal(r.superseded, true);
+  assert.equal(agent.equivocationOf(rid).length, 0);
+  assert.equal(agent.certOf(rid, 'settlement'), toHex(S));
+  assert.equal(agent.keepCert(rid, 'settlement', S2).superseded, true);   // asked again: the same answer
 });
 
 test('#1681: two seatings of any other shape are still equivocation', () => {
   const { agent } = agentOf();
-  agent.keepCert(rid, 'settlement', certOf([0, 1, 2, 3, 4, 5, 7]));
-  const r = agent.keepCert(rid, 'settlement', certOf([0, 2, 3, 4, 5, 6, 7]));   // leaves out 1 but takes in 6, which ranks before 7
+  // a pair #738's order ranks (one seating before the other) is refused as superseded since kanban #1812 - no equivocation; this pair it does not
+  // order: 2 and 7 out, 1 (ranking before 2) and 8 in
+  agent.keepCert(rid, 'settlement', certOf([0, 2, 3, 4, 5, 6, 7]));
+  const r = agent.keepCert(rid, 'settlement', certOf([0, 1, 3, 4, 5, 6, 8]));
   assert.equal(r.equivocation, true);
   assert.equal(agent.stateOf(rid).settlement.equivocated, true);
 });

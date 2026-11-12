@@ -40,7 +40,7 @@ test('#1489 refute #1485: a head-to-head handout the seat takes leaves room for 
       return r;
     };
     let got;
-    try { await lockAndPlay(w, mk(1), { session: mk(1).session, hidden: { move: 0, salt: new Uint8Array(randomBytes(32)) }, noMarks: true, only: [], feeLock: false }); got = 'taken'; }
+    try { await lockAndPlay(w, mk(1), { session: mk(1).session, hidden: { move: 0, salt: new Uint8Array(randomBytes(32)) }, noMarks: true, only: [], feeLock: false, lockFirst: false }); got = 'taken'; }   // 2.0: the page's order, handout before any lock (#1596's lock-first client is spared)
     catch (e) { got = String(e.message).split('\n').join(' ').slice(0, 300); }
     console.log('  FACTS (#1489 refute #1485):', JSON.stringify({ seen, got }));
     const handoutTaken = seen.some((s) => /^\/handout 201/.test(s));
