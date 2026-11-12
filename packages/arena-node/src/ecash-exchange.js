@@ -14,7 +14,8 @@
 // THE STATES (kanban #1160), one enum and one transition function, each step compare-and-set, each written BEFORE the side effect it names:
 //   none -> receiving   the row exists before the player's notes are reissued: a stop in the middle leaves "receiving", and the retry's
 //                       AlreadyReceived is this exchange's own receive (its amount the string's, as the tool reads it back)
-//   receiving -> taken  the notes are in, with what they carried | -> refused: the federation would not reissue them
+//   receiving -> taken  the notes are in, with what THEY carried (kanban #1936: the notes' own amount, never the client's balance change)
+//                       | -> refused: the federation would not reissue them
 //   taken -> sending    the payout is named (its key: the exchange id) before the seat's notes leave
 //   sending -> paid     the notes out, kept. A retry in "sending" never spends blind: it reads the keyed send back from the tool's
 //                       operation log (stake-lock ecash-sent); found, it is the answer; not found, the send is made then; a tool that
@@ -221,7 +222,17 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
         log(`[exchange] ${id.slice(0, 12)}: a fresh reissue after the halt - refused, held for the operator, nothing paid`);
         return refuse(409, haltedWhy);
       }
-      if (got.state === 'Success') carried = BigInt(got.msat || 0);
+      if (got.state === 'Success') {
+        // BOOKED BY THE NOTES, NEVER BY THE BALANCE (kanban #1936, state audit 2026-11-12): the tool's "msat" is the client's balance after
+        // its run less before - a reissue left by an earlier, killed run finishes in this run and counts in (paid twice: here and at that
+        // exchange's retry), and a balance that has not risen yet counts 0 (TAKEN with nothing, refused for good). What the notes carried is
+        // `carriedMsat` (the tool's e.amount()); a tool that does not say it holds the row in RECEIVING - asked again, its AlreadyReceived says it
+        if (got.carriedMsat === undefined || got.carriedMsat === null) {
+          note(id, EXCHANGE.RECEIVING, 'reissued; this seat\'s tool does not say what the notes carried: ask again');
+          return refuse(503, 'that e-cash is taken here and its amount is read back on the next ask: ask again with the same e-cash');
+        }
+        carried = BigInt(got.carriedMsat);
+      }
       else if (got.state === 'AlreadyReceived' && !askedBefore) {
         // RECEIVED BEFORE, BUT NOT BY THIS EXCHANGE (kanban #1204 RES-3): another spelling of the same notes, or notes this seat took elsewhere
         transition(id, EXCHANGE.RECEIVING, EXCHANGE.REFUSED, { why: 'those notes were received here before, not by this exchange' });
@@ -252,8 +263,19 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
     }
     // THE SEAT'S NOTES OUT: what was taken, never more than was asked - named before they leave
     if (r.state === EXCHANGE.TAKEN) {
-      const taken = BigInt(r.in_msat || 0);
-      if (taken <= 0n) return refuse(409, 'that e-cash carried nothing');
+      let taken = BigInt(r.in_msat || 0);
+      if (taken <= 0n) {
+        // A ROW TAKEN WITH 0 (kanban #1936): booked by a balance that had not risen yet (before the fix above). Not refused for good: the
+        // tool is asked again, and its AlreadyReceived of this row's own earlier Success says what the notes carried; booked once, guarded
+        let got = null;
+        try { got = await pin.ecashReceive(ecash); } catch (e) { return refuse(503, `federation ${from.slice(0, 8)} did not answer (${String(e.message).slice(0, 120)}); ask again with the same e-cash`); }
+        if (!got || got.state !== 'AlreadyReceived' || got.earlier !== 'Success' || got.carriedMsat === undefined || got.carriedMsat === null || BigInt(got.carriedMsat) <= 0n)
+          return refuse(503, 'that e-cash is taken here and what it carried cannot be read back yet: held, ask again');
+        taken = BigInt(got.carriedMsat);
+        durably(db, () => db.prepare("UPDATE ecash_exchanges SET in_msat = ? WHERE id = ? AND state = 'taken' AND (in_msat IS NULL OR in_msat = '0')").run(String(taken), id));
+        r = get.get(id);
+        if (r.state !== EXCHANGE.TAKEN || BigInt(r.in_msat || 0) !== taken) return refuse(409, 'that exchange moved on here while it was read back: ask again');
+      }
       const asked = BigInt(r.want_msat || want);
       const pay = taken < asked ? taken : asked;
       const t = transition(id, EXCHANGE.TAKEN, EXCHANGE.SENDING, { pay_msat: String(pay), pay_ms: now() });   // kanban #1637: the hour it counts in

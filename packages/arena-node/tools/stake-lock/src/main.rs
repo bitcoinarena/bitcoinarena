@@ -1138,7 +1138,10 @@ async fn ecash_receive(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         after = client.get_balance_for_btc().await?.msats;
     }
-    println!("{}", serde_json::json!({ "mode": "ecash-receive", "state": format!("{state:?}"), "msat": after.saturating_sub(before) }));
+    // kanban #1936: "msat" is the balance change - other reissues finishing in this run count in, a late balance counts 0; the exchange
+    // books "carried_msat", what these notes themselves carry (as AlreadyReceived says it)
+    let e: fedimint_mintv2_client::ECash = fedimint_core::base32::decode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, need(a, "ecash")?.trim())?;
+    println!("{}", serde_json::json!({ "mode": "ecash-receive", "state": format!("{state:?}"), "msat": after.saturating_sub(before), "carried_msat": e.amount().msats }));
     Ok(())
 }
 
