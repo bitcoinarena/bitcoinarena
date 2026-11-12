@@ -150,7 +150,9 @@ async function lockAndPlay(w, who) {
     assert.equal(locked.status, 201, await locked.text());
     const fee = await fetch(`${base}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFields)) });
     assert.equal(fee.status, 201, await fee.text());
-    assert.equal(await say(d.port, signedBatchOf(input, (id) => ed25519.sign(id, session))), String(who.ticks));
+    // the second seat may hold the run already (0 new ticks): the entry relay hands an entry's locks with it since kanban #1598 (lock-round-fixture.js)
+    { const got = await say(d.port, signedBatchOf(input, (id) => ed25519.sign(id, session)));
+      if (d === w.a || got !== '0' || d.round.nextTick(w.rid, eid) !== who.ticks) assert.equal(got, String(who.ticks)); }
     assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
   }
   return { eid, entry, fields, outpoint, feeOutpoint, session };
