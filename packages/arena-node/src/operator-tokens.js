@@ -35,12 +35,16 @@ export function createOperatorTokens({ store, nowMs = () => Date.now(), random =
   // revoked them all", so once a token was minted the file is { tokens, paired: true } and first() mints nothing after a
   // revoke-all - a new token is the owner's signed mint. An older file (a bare list) is read as before; a list with a token in
   // it was paired.
+  // kanban #2487 (#1489 a44 refute of #1630, SM-O1): a tokens file that exists but does not parse, with no good .bak, is NOT read as
+  // "no tokens" - that dropped every paired operator UI, minted a new pairing and wrote it over the torn evidence. The store's
+  // DurableJsonUnreadable is thrown on, so the node refuses to start as it does for owner.json; only a store that cannot be read
+  // at all for another reason (or holds a non-list) starts empty, as before.
   let kept = []; let paired = false;
   try {
     const l = store.read();
     if (Array.isArray(l)) { kept = l; paired = l.length > 0; }
     else if (l && Array.isArray(l.tokens)) { kept = l.tokens; paired = l.paired === true || l.tokens.length > 0; }
-  } catch { /* unreadable: as no file */ }
+  } catch (e) { if (e && e.code === 'DURABLE_JSON_UNREADABLE') throw e; /* unreadable otherwise: as no file */ }
   const save = () => store.write({ tokens: kept, paired: (paired = paired || kept.length > 0) });
   const scopesOf = (scopes) => {
     const s = [...new Set((Array.isArray(scopes) ? scopes : []).map(String))];
