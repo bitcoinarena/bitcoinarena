@@ -1585,3 +1585,7 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 - `pay()` books the address before `sendtoaddress`: a row `{ address, ip, sats, atMs, txid: null, pending: true }` is saved first; a send that answers sets its txid, drops `pending`, and appends the txid to `FAUCET_PENDING`.
 - On a failed send the row is removed only when bitcoind answered with an error (it refused the send) or the wallet's `listtransactions` holds no send to that address; a send found there is booked with its txid; anything else (a timeout, no answer, a crash) keeps the row `pending`.
 - Invariant: no coins go to an address without a row naming it in the book, so an address is paid at most once whatever the RPC or the process does between the send and the book.
+
+#### SM-I4 (change) Auto-update record vs the update journal's resume (kanban #1581, audit #1489 sm1-node-2)
+- Invariant: every rollback of a release on this node is in auto-update.json (`rolledBack: true`, `to` = its VERSION, `commit` = its COMMIT) before the next check reads it - the updater's own (updateOnce), one that threw (#1440), and one the journal's resume made after its updater died (`resumeUpdate`, `resumed: true`; at the service's start through `resumeUnderLock`, or inside `updateNode`). So the #1369 day's wait applies to all of them.
+- `updateNode` with `retryRolledBack: false` (the auto updater, unless `bitcoinarena update` forces it) does not move to the release its own resume rolled back in the same call; it answers rolled back.
