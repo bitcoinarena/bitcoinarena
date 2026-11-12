@@ -114,9 +114,13 @@ const LOCKDOWN = `'use strict';
   const tracked = new M();
   let used = 0, over = null, since = 0, base = 0, nextId = 0, count = 0;
   const take = (n) => { if (over !== null || !(n >= 0) || used + n > budget) { over = said; throw new RangeErr(said); } };
+  // (kanban #2145, #2211) every object the count has taken, so a copy counted by a wrapped constructor is never counted twice
+  const counted = new WeakSet(), wsAdd = WeakSet.prototype.add, wsHas = WeakSet.prototype.has;
+  const isCounted = (o) => R.apply(wsHas, counted, [o]);
   const keep = (o, n) => {
     used += n; since += n;
     if (n > 0) { R.apply(mSet, tracked, [nextId++, { r: new WR(o), n }]); count++; }
+    R.apply(wsAdd, counted, [o]);
     return o;
   };
   /** The bytes of the arrays still reachable - read by this thread right after a GC, never by the core. */
@@ -170,6 +174,24 @@ const LOCKDOWN = `'use strict';
   // constructor, so they are counted - but a factory such as Uint8Array.fromHex / fromBase64 (V8 13.x+, not in node 24.22) allocates on the original,
   // outside the budget and the live cap. Removed wherever the runtime has them, so a newer node cannot open the hole.
   for (const k of KINDS) for (const m of ['fromHex', 'fromBase64']) { try { delete globalThis[k][m]; } catch { /* none */ } try { delete Object.getPrototypeOf(globalThis[k])[m]; } catch { /* none */ } }
+  // THE SPECIES FALLBACK (kanban #2145, #2211, a44 refute of #1622): slice, map and filter of a typed array and slice of an
+  // ArrayBuffer make their copy through the species path, and that path falls back to the realm's RAW intrinsic when the
+  // exemplar's own \`constructor\` is undefined or has no @@species (ECMA-262 TypedArraySpeciesCreate, SpeciesConstructor) -
+  // a core that ran Object.defineProperty(a, 'constructor', { value: undefined }) copied outside the budget and the live
+  // cap. So the count no longer depends on the species lookup: each method is wrapped, and a copy the wrapped constructors
+  // did not already count (or a view on a buffer they counted) is counted here by its real byte length.
+  const copied = (o, bytesOf) => {
+    if (o === null || typeof o !== 'object' || isCounted(o)) return o;
+    if (bytesOf === taBytes) { let b = null; try { b = taBuffer(o); } catch { return o; } if (isCounted(b)) return o; }
+    else if (!isBuffer(o)) return o;
+    const n = bytesOf(o);
+    take(n);
+    return keep(o, n);
+  };
+  for (const [O, m, bytesOf] of [[TAP, 'slice', taBytes], [TAP, 'map', taBytes], [TAP, 'filter', taBytes], [ArrayBuffer.prototype, 'slice', abBytes]]) {
+    const f = O[m];
+    Object.defineProperty(O, m, { value: { [m](...a) { return copied(apply(f, this, a), bytesOf); } }[m], writable: false, configurable: false });
+  }
   for (const m of ['toReversed', 'toSorted', 'with']) {
     const f = TAP[m];
     Object.defineProperty(TAP, m, { value: function (...a) { take(taBytes(this)); const o = apply(f, this, a); return keep(o, taBytes(o)); }, writable: false, configurable: false });
