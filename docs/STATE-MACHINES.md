@@ -1542,3 +1542,10 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### Funding/fee/leaderboard vote (funding-book.js voteRound): the anchor of a decided vote (kanban #1750)
+- A vote is never decided without its anchor: the outcome is written only when `blockHashAt(period.last)` answers a hash equal to the hash of the held `funding_vote_blocks` row for `period.last`, and every held row of the period has a hash. A hash read that answers null (above the tip, or an RPC error read as null by main.js `blockHashAt`) decides nothing that pass.
+- No `funding_vote_blocks` row is stored without its hash: a block whose hash does not answer is read on the next pass.
+- Recovery of older stores: a decided outcome with `last_hash` NULL is counted again once the chain answers the last voting block's hash (outcome and fee outcome dropped, blocks from the lowest hashless row, at most from `period.last`, read again); a held row with no hash is read again with every row after it. So `funding_vote_outcomes.last_hash` is never NULL for long, and a reorg of the counted block always reopens the vote.
