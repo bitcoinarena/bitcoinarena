@@ -82,6 +82,9 @@ export function createEntryRelay({ peersOf, entryOf, handoutOf, locksOf, fetcher
       } catch (e) { return e.message; }
     }));
     const handed = said.filter((x) => x !== null);
+    // AND ITS LOCKS WITH IT (kanban #1598): a head-to-head seat takes no lock new to it from the entry close on, so a lock waiting for its own
+    // pass could come too late at a seat that only now took the entry; handLocks posts only what a seat lacks
+    if (said.includes('took')) await handLocks(roundId, entryHex).catch((e) => log(`[relay] ${e.message}`));
     if (handed.length) log(`[relay] entry ${entryHex.slice(0, 16)}: ${handed.filter((x) => x === 'took').length} of ${handed.length} seats short of it took it`
       + `${handed.some((x) => x !== 'took') ? ` (${[...new Set(handed.filter((x) => x !== 'took'))].join(', ').slice(0, 80)})` : ''}`);
   };
@@ -119,10 +122,13 @@ export function createEntryRelay({ peersOf, entryOf, handoutOf, locksOf, fetcher
       const left = Number(closeMs) - nowMs() - CLOSE_MARGIN_MS;
       later(Math.max(0, Math.min(afterMs + Math.random() * spreadMs, Number.isFinite(left) ? left : Infinity)), () => handEntry(roundId, entryHex));
     },
-    /** A client's copy of a lock was verified here. Both of an entry's locks go in one pass. */
-    lockTaken(roundId, entryHex) {
+    /** A client's copy of a lock was verified here. Both of an entry's locks go in one pass. `closeMs` (optional): the round's entry close -
+     *  a head-to-head seat takes no lock new to it from the close on (kanban #1598), so a lock taken just before it goes at once, as an entry does. */
+    lockTaken(roundId, entryHex, closeMs = null) {
       if (!once(lockPasses, entryHex)) return;
-      later(lockAfterMs + Math.random() * spreadMs, async () => { lockPasses.delete(entryHex); await handLocks(roundId, entryHex); });
+      const left = closeMs === null || closeMs === undefined ? Infinity : Number(closeMs) - nowMs() - CLOSE_MARGIN_MS;
+      later(Math.max(0, Math.min(lockAfterMs + Math.random() * spreadMs, Number.isFinite(left) ? left : Infinity)),
+        async () => { lockPasses.delete(entryHex); await handLocks(roundId, entryHex); });
     },
   };
 }
