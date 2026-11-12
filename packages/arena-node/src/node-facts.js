@@ -20,6 +20,11 @@ export const PROBE_BYTES = 1000000;
 export const FACTS_MOST_BYTES = 1024;
 /** A record dated further ahead than this is refused: a node cannot keep its record newest by dating it in the future. */
 export const FACTS_AHEAD_MS = 300000;
+/**
+ * The least time between two kept records of one node (kanban #2425): a seat hands every kept record on to every seat it knows, so a node that dated its records 1 ms apart
+ * had each one verified, written and fanned out S x S times across the network. A record dated less than this after the held one is not kept, so not passed on.
+ */
+export const FACTS_KEEP_GAP_MS = FACTS_EVERY_MS / 4;
 
 const te = new TextEncoder();
 /** The bytes signed: a tag, then the record's fields in one order. */
@@ -86,7 +91,7 @@ export function createNodeFactsBook({ db, verify, isBonded = () => null, nowMs =
     if (v !== null && v !== undefined) db.prepare('INSERT OR REPLACE INTO node_facts_once (key, value) VALUES (?, ?)').run(key, JSON.stringify(v));
     return v ?? null;
   }
-  /** Keeps a record that stands and is newer than the one held. { ok, kept } or { ok: false, why }. */
+  /** Keeps a record that stands and is at least FACTS_KEEP_GAP_MS newer than the one held. { ok, kept } or { ok: false, why }. */
   function offer(said) {
     const r = said && said.record;
     if (!r || !/^[0-9a-f]{64}$/.test(String(r.node)) || !Number.isSafeInteger(r.atMs) || !r.facts || typeof r.facts !== 'object') return { ok: false, why: 'a record is { record: { node, atMs, facts }, signature }' };
@@ -96,6 +101,7 @@ export function createNodeFactsBook({ db, verify, isBonded = () => null, nowMs =
     if (isBonded(r.node) === false) return { ok: false, why: 'that node holds no bond' };
     const had = db.prepare('SELECT at_ms FROM node_facts WHERE node = ?').get(r.node);
     if (had && had.at_ms >= r.atMs) return { ok: true, kept: false };
+    if (had && r.atMs - had.at_ms < FACTS_KEEP_GAP_MS) return { ok: true, kept: false }; // kanban #2425: at most one kept (and passed on) per FACTS_KEEP_GAP_MS
     let good = false;
     try { good = !!verify(fromHex(String(said.signature)), factsDigest(r), fromHex(r.node)); } catch { good = false; }
     if (!good) return { ok: false, why: 'that record is not signed by the node it names' };
