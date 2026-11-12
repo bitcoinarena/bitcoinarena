@@ -268,7 +268,8 @@ import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
 import { decodeCommitments, encodeCommitments, encodeShare, COMMITMENT_BYTES, MOST_COMMITMENTS } from './pool-wire.js';
 import { setTagNetwork } from '../../arena-protocol/src/tag-switch.js';
 import { keptRead } from './kept-read.js';
-import { readBody } from './body-read.js';
+import { readBody, BODY_MOST } from './body-read.js';
+import { bodyBudget, messageBudget } from './body-budget.js';
 
 // ANOTHER SEAT'S ANSWER TO A SEAT-TO-SEAT GET, READ UP TO A CAP (kanban #1900, #1942, bypass of #1550 / #1744): verify.js
 // capped every peer pull before a signature, but server.js still read a peer's /entry-void (lateByPeers, run for any first
@@ -305,8 +306,8 @@ async function dropSeatBody(answer) { try { await answer.body?.cancel(); } catch
 const presenceByRound = new WeakMap();
 const presenceTables = (round) => { let t = presenceByRound.get(round); if (!t) { t = new Map(); presenceByRound.set(round, t); } return t; };
 
-// EVERY BODY HAS A LIMIT (kanban #1469; one reader for every server since kanban #1592): see body-read.js
-const read = readBody;
+// EVERY BODY HAS A LIMIT (kanban #1469; one reader for every server since kanban #1592): see body-read.js - and in this server all bodies in
+// flight share one budget besides (kanban #1724, #1794, #1911, #1953: `read` below, body-budget.js)
 // WHAT A SEAT KEEPS AS A RELAY IS BOUNDED (kanban #1532, audit #1489 gossip: PUT /transcript and PUT /slash kept any bytes from anyone,
 // for ever - a stranger filled the disk with random blobs under their own hash). At most RELAY_MOST bytes in `relayed` over both doors
 // (256 MiB, ARENA_RELAY_MOST); past it a door answers 507 and keeps nothing.
@@ -336,6 +337,28 @@ const RELAY_SLASH_RESERVE = relayPart('ARENA_RELAY_SLASH_RESERVE', 8);
 // signed result (or re-run) beside it carries the accused's own signature - so only a committee member's own signatures can fill
 // it, and one accused node in one round takes at most RELAY_SLASH_ACCUSED_MOST (RELAY_SLASH_RESERVE/16: 2 MiB live, ~4,800 proofs).
 const RELAY_SLASH_ACCUSED_MOST = Number(process.env.ARENA_RELAY_SLASH_ACCUSED_MOST) > 0 ? Number(process.env.ARENA_RELAY_SLASH_ACCUSED_MOST) : Math.floor(RELAY_SLASH_RESERVE / 16);
+// ALL BODIES IN FLIGHT SHARE ONE BUDGET (kanban #1724, #1794, refute of #1469): the limit above is per request, so a stranger who
+// opened many connections and sent just under it on each, never ending the body, kept every partial body (measured: 48 bodies
+// of ~3.9 MiB pinned +190 MiB). BODY_BUDGET (four bodies at the limit, 32 MiB by default; ARENA_BODY_BUDGET, never below BODY_MOST) is
+// what all unfinished bodies of this process may hold together.
+// COUNTED ON BYTES RECEIVED, NEVER ON A DECLARED LENGTH (kanban #1911, #1953): taking the share from Content-Length let four idle
+// connections declaring 8 MiB each hold the whole budget for free and cut every honest POST off. Now an idle socket holds nothing,
+// one address takes at most half the budget, a small body always finds room in a reserve, a body silent for 10 s is dropped, and a
+// refused body is answered (413 / 503) before its socket ends - see body-budget.js.
+const BODY_BUDGET = Math.max(BODY_MOST, Number(process.env.ARENA_BODY_BUDGET) > 0 ? Number(process.env.ARENA_BODY_BUDGET) : 4 * BODY_MOST);
+const BODY_IDLE_MS = Number(process.env.ARENA_BODY_IDLE_MS) > 0 ? Number(process.env.ARENA_BODY_IDLE_MS) : 10000;
+const bodies = bodyBudget({ total: BODY_BUDGET, perAddress: Math.max(BODY_MOST, Math.floor(BODY_BUDGET / 2)), idleMs: BODY_IDLE_MS, defaultMax: BODY_MOST });
+const read = async (req, max = BODY_MOST) => new Uint8Array(await bodies.read(req, max));
+// AND THE UNFINISHED WEBSOCKET MESSAGES (kanban #2075, refute of #1469 / #1724 / #1794 / #1911 / #1953): /guardian-p2p took one message of up to
+// 64 MiB per connection outside the body budget and with no time limit - six connections that never sent a message's last fragment pinned
+// 383 MiB (measured 2026-11-12). Every accepted websocket (/play, /guardian-p2p, /guardian-next-p2p, /guardian-api/...) now counts the bytes it
+// received since its last whole message against WS_BUDGET (8 MiB, ARENA_WS_BUDGET; one address at most half, a small unfinished message
+// from a reserve, a message unfinished for WS_MESSAGE_MS = 15 s not waited for) - see body-budget.js messageBudget. A guardian's P2P carries
+// TCP reads of at most 64 KiB per message and its API requests are small, so P2P_MESSAGE_MOST (4 MiB, ARENA_P2P_MESSAGE_MOST) is plenty.
+const WS_BUDGET = Number(process.env.ARENA_WS_BUDGET) > 0 ? Number(process.env.ARENA_WS_BUDGET) : 8 * 1024 * 1024;
+const WS_MESSAGE_MS = Number(process.env.ARENA_WS_MESSAGE_MS) > 0 ? Number(process.env.ARENA_WS_MESSAGE_MS) : 15000;
+const P2P_MESSAGE_MOST = Number(process.env.ARENA_P2P_MESSAGE_MOST) > 0 ? Number(process.env.ARENA_P2P_MESSAGE_MOST) : 4 * 1024 * 1024;
+const wsMessages = messageBudget({ total: WS_BUDGET, perAddress: Math.floor(WS_BUDGET / 2), reserve: Math.max(1024 * 1024, Math.floor(WS_BUDGET / 4)), messageMs: WS_MESSAGE_MS });
 
 // A BROWSER IS THE CLIENT, and a browser will never be on this origin.
 //
@@ -6712,6 +6735,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   const http = (tls ? (h) => createHttpsServer({ cert: tls.cert, key: tls.key }, h) : createServer)(async (req, res) => {
     try {
+      bodies.attach(req, res);   // a refused body's socket ends after its answer (kanban #1911, #1953)
       const url = new URL(req.url, 'http://node');
       // THE NODE'S GATEWAY AT ITS PUBLIC ADDRESS (spec §23A.9): /gateway/... carried byte for byte to the gateway on
       // this machine (ARENA_GATEWAY_PORT, written by the installer), as /guardian is to the guardian - clients of its federation reach the
@@ -6734,6 +6758,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // The message is the reason - "the round is closed", "no such entry" -
       // because a node that answers "400" to everything makes a client guess.
       if (e && e.tooLarge) { try { return text(res, 413, e.message); } catch { return undefined; } }   // kanban #1469
+      if (e && e.busy) { try { return text(res, 503, e.message); } catch { return undefined; } }   // kanban #1724, #1794
       return text(res, 400, e.message);
     }
   });
@@ -11665,7 +11690,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const guardianPipes = new Set();
   // THE GUARDIANS' P2P THROUGH THE NODES (p2p-tunnel.js, kanban #562): /guardian-p2p ends here as a websocket and goes on to
   // this node's guardian's own P2P port; every node carries the other guardians' P2P ports to their seats the same way
-  const p2pWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024 });
+  const p2pWss = new WebSocketServer({ noServer: true, maxPayload: P2P_MESSAGE_MOST });   // kanban #2075: was 64 MiB, see WS_BUDGET
   // THIS NODE'S OWN ADDRESS, ANNOUNCED (kanban #562, 2026-10-21 "1 default, 2 for updates so no needed updates"): signed for the
   // address it names itself and pushed to every census node's seat every ARENA_ADDRESS_ANNOUNCE_MS (10 min) - no advertisement update
   const censusForAddresses = async () => {
@@ -11752,9 +11777,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // the seat ended. Such a request is closed, nothing else
     let at;
     try { at = new URL(req.url, 'http://node').pathname; } catch { try { socket.destroy(); } catch { /* gone */ } return; }
-    if (at === '/play') { wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req)); return; }
+    if (at === '/play') { wss.handleUpgrade(req, socket, head, (ws) => { wsMessages.watch(ws, socket); wss.emit('connection', ws, req); }); return; }
     const p2pOf = at === P2P_TUNNEL_PATHS.guardian ? guardian : at === P2P_TUNNEL_PATHS.next ? guardianNext : null;
-    if (p2pOf && p2pOf.p2pPort) { p2pWss.handleUpgrade(req, socket, head, (ws) => { carryP2p(ws, p2pOf.p2pPort); }); return; }
+    if (p2pOf && p2pOf.p2pPort) { p2pWss.handleUpgrade(req, socket, head, (ws) => { wsMessages.watch(ws, socket); carryP2p(ws, p2pOf.p2pPort); }); return; }
     // A PEER GUARDIAN'S API, carried to its node's current endpoint (kanban #577, p2p-tunnel.js GUARDIAN_API_RELAY_PATH): only for a
     // census node the tunnel follows, so the seat carries nothing but guardians' own public API
     if (at.startsWith(GUARDIAN_API_RELAY_PATH)) {
@@ -11762,7 +11787,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const relayNext = relayed.endsWith(GUARDIAN_NEXT_PATH);       // the node's second federation (kanban #1032)
       const root = p2pTunnels ? p2pTunnels.rootOf(relayNext ? relayed.slice(0, -GUARDIAN_NEXT_PATH.length) : relayed) : null;
       if (!root) { socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'); return; }
-      p2pWss.handleUpgrade(req, socket, head, (ws) => { carryApi(ws, root, relayNext ? { path: GUARDIAN_NEXT_PATH } : {}); });
+      p2pWss.handleUpgrade(req, socket, head, (ws) => { wsMessages.watch(ws, socket); carryApi(ws, root, relayNext ? { path: GUARDIAN_NEXT_PATH } : {}); });
       return;
     }
     // /guardian-next is the guardian-next's, carried the same way to its own API port
@@ -12182,6 +12207,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // and the whole announced grid: its game and first close, so a marker counts only for its own app's day (kanban #1204 FED-C1)
       announcedOf: (idHex) => announced.get(String(idHex)) || null });
   };
+  // A SLOW BODY IS DROPPED (kanban #1724, #1794): a request not received whole within REQUEST_MS (120 s, ARENA_REQUEST_TIMEOUT_MS;
+  // Node's default is 300 s) ends, and the budget share its body held is freed
+  const REQUEST_MS = Number(process.env.ARENA_REQUEST_TIMEOUT_MS) > 0 ? Number(process.env.ARENA_REQUEST_TIMEOUT_MS) : 120000;
+  http.requestTimeout = REQUEST_MS; http.headersTimeout = Math.min(http.headersTimeout || 60000, REQUEST_MS);
   return new Promise((resolve) => {
     http.listen(port, host, () => { dutyAttach(); resolve({
       http, wss, round, host, verifier, ghosts, roster, stakeSecrets,
