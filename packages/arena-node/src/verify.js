@@ -1822,6 +1822,8 @@ export class Verifier {
         // THIS SEAT'S OWN RUN OF THE ENTRY (kanban #1706): a live run's inputs that differ from it are checked against its
         // replay, one key per entry, instead of each costing a replay of its own (objection-check.js 7a)
         ownInputs: () => this.round.transcript(roundIdBytes, entryIdBytes),
+        // A LIVE RUN'S INPUTS ARE BOUND TO THE ONES THIS SEAT STORED, which the session key signed (kanban #1952, #1990)
+        storedInputs: (() => { try { return this.round.transcript(roundIdBytes, entryIdBytes); } catch { return null; } })(),
         // A REFERENCE RUN WHERE THIS SEAT'S OWN DOES NOT REPRODUCE THE MARKS (kanban #1878): the first run that did, carried or
         // fetched, remembered per entry and marks; else the run the committee seats hand out (GET /replay/transcript), asked
         // at most once per OBJECTION_REFERENCE_RETRY_MS while none is held. Each is checked by its replay against the marks.
