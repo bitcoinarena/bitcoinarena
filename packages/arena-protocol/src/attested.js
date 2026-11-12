@@ -115,6 +115,11 @@ export function attestationStands(a, { manifest: game, roundIdBytes, verify, rou
   const keysOf = draws ? drawn.map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))) : (backup ? manifest.backupAttestors.attestors : manifest.attestors).map(toHex);
   const need = draws ? manifest.attestDraw.threshold : backup ? manifest.backupAttestors.threshold : manifest.attestThreshold;
   const named = new Set(keysOf);
+  // A LIST LONGER THAN THE ATTESTOR SET (kanban #1546) holds a key twice - each key must be one the set names. Refused before any
+  // signature is checked: the wire's u16 vec carries up to 65,535, and one public attestation padded with a repeat of a good
+  // signature made POST /outcome run every check on the seat's one thread (65,002 Ed25519: 2.5 s; BIP-340 in JS: ~40 s).
+  if ((a.signatures || []).length > named.size)
+    return { ok: false, why: `that attestation carries ${(a.signatures || []).length} signatures, more than the ${named.size} attestors ${draws ? 'this round drew' : `game "${manifest.gameName}" names`}` };
   const signed = new Set();
   for (const s of a.signatures || []) {
     const k = toHex(s.key);

@@ -278,7 +278,7 @@ import { hostedPlugins, pluginForRound, advertisedAppsCheck, payoutRuleOfRound }
 import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, marketFinalityOf, marketStateOf, VALUE_HELD_OUTCOME } from './game-market.js';
 import { isHeadToHead, marketOfRound, isGameMarket, isScalar, isDrawnAttest, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
 import { decodeValueAttestation, valueAttestationStands, valueAttestationBodyId, isValueAttestationBytes } from '../../arena-protocol/src/scalar.js';
-import { encodeManifest, decodeManifest, gameIdOf, MARKET_SOURCE_KIND, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
+import { encodeManifest, decodeManifest, gameIdOf, manifestStands, MARKET_SOURCE_KIND, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { gameTypeOf, gameInfoStands } from '../../arena-protocol/src/game-info.js';
 import { genesisFor, committeesStand } from '../../arena-protocol/src/genesis.js';
 import { nonceGen as musigNonceGen, bondSigningContext as musigBondContext, bondPartialSign as musigBondPartial } from './musig2.js';
@@ -410,6 +410,28 @@ export const GHOST_BACKLOG_BYTES = 262144;
 // HOW LONG AFTER THE ENTRY CLOSE A SEAT STILL TAKES A CANCEL ANOTHER SEAT TOOK IN TIME AND HANDED ON (kanban #1520): the hand-on's own
 // bound (4 s, handCancelOn) plus a margin - far shorter than any market's outcome, so no cancel is signed knowing it (kanban #1435)
 export const CANCEL_HANDON_GRACE_MS = 5000;
+// ANOTHER SEAT'S ANSWER IS READ ONLY UP TO A BOUND (kanban #1553): a game package (GET /plugin) is its manifest, chain, cores and
+// clients - a few hundred kB to a few MB for the real apps - and a GET /games listing far less. r.json() took any length: a seat
+// streaming hundreds of MB inside the timeout was buffered and parsed whole on this seat's main thread, on every automatic-update
+// sweep. Past the bound the stream is cancelled and the answer refused.
+export const PACKAGE_ANSWER_MAX_BYTES = 16 * 1024 * 1024;
+export const LISTING_ANSWER_MAX_BYTES = 4 * 1024 * 1024;
+export async function readTextCapped(r, maxBytes) {
+  const len = Number(r.headers.get('content-length'));
+  if (Number.isFinite(len) && len > maxBytes) { try { await r.body?.cancel(); } catch {} throw new Error(`its answer of ${len} bytes is over ${maxBytes}`); }
+  if (!r.body) return '';
+  const reader = r.body.getReader(), parts = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) { try { await reader.cancel(); } catch {} throw new Error(`its answer is over ${maxBytes} bytes`); }
+    parts.push(value);
+  }
+  return Buffer.concat(parts, total).toString('utf8');
+}
+export const readJsonCapped = async (r, maxBytes) => JSON.parse(await readTextCapped(r, maxBytes));
 
 export const NOTHING_IS_FUNDED = () => false;
 
@@ -1174,7 +1196,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // /plugin or /network with hundreds of MB, and `await r.json()` held all of it and its parsed objects at once (measured: one
   // 120 MB /games listing grew the reading seat's heap 218 MB and held its event loop 3.6 s). The body is read chunk by chunk
   // and refused, the connection dropped, as soon as it passes `maxBytes`.
-  const PEER_LISTING_BYTES = 4 * 1048576, PEER_LISTING_GAMES = 64, PEER_PACKAGE_BYTES = 32 * 1048576;
+  const PEER_LISTING_BYTES = LISTING_ANSWER_MAX_BYTES, PEER_LISTING_GAMES = 64, PEER_PACKAGE_BYTES = PACKAGE_ANSWER_MAX_BYTES;
   const textUpTo = async (r, maxBytes) => {
     const said = Number(r.headers.get('content-length'));
     if (said > maxBytes) { try { await r.body?.cancel(); } catch { /* dropped */ } throw new Error(`its answer is ${said} bytes, more than ${maxBytes}`); }
@@ -1286,23 +1308,41 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   // AUTOMATIC UPDATES (the owner's setting): every 10 minutes the source seats are asked for a newer version of each game
   // hosted here - same developer, the hosted one as its parent, a higher version - and it is taken as an update would be
+  // ONE SWEEP AT A TIME (kanban #1552): a sweep still waiting on a slow seat is not joined by the next one, so stalled sweeps and
+  // their open fetches never pile up
+  let autoUpdating = false;
   const autoUpdate = async () => {
+    if (autoUpdating) return;
+    autoUpdating = true;
+    try { await autoUpdateSweep(); } finally { autoUpdating = false; }
+  };
+  const autoUpdateSweep = async () => {
     if (!owner || !pluginsDir) return;
     // ALWAYS ON (2026-10-26, the owner on the Apps section's switch "Update apps automatically": "Should always be enabled")
     const set = owner.storeSettings();
     // NAMED SOURCES, ELSE THE NETWORK'S OWN SEATS (found by this seat, not typed in)
     const sources = set.sources.length ? set.sources : networkSeats();
     for (const from of sources) {
-      let got; try { got = await jsonUpTo(await fetch(`${from}/games`, { signal: AbortSignal.timeout(10000) }), PEER_LISTING_BYTES); } catch { got = { games: [] }; }
+      let got; try { got = await jsonUpTo(await fetch(`${from}/games`, { signal: AbortSignal.timeout(10000) }), PEER_LISTING_BYTES); } catch { got = { games: [] }; }   // bounded (kanban #1540, #1553)
+      // A LISTING IS A SEAT'S CLAIM, CHECKED HERE BEFORE ANY /plugin IS ASKED (kanban #1552, #1553): the listed manifest must stand
+      // (its developer signed it, its parent the hosted one), the game asked for is the manifest's own id - never the id the listing
+      // names beside it - each parent is tried once per source per sweep, and a source whose /plugin fails once is not asked again this sweep
+      const tried = new Set();
       for (const g of listedGames(got)) {
-        if (hosted.has(g.id)) continue;
-        let m; try { m = decodeManifest(fromHex(g.manifest)); } catch { continue; }
+        if (typeof g?.id !== 'string' || hosted.has(g.id)) continue;
+        let m; try { m = decodeManifest(fromHex(String(g?.manifest || ''))); } catch { continue; }
         const parent = toHex(m.parentManifestId);
-        if (!hosted.has(parent) || superseded.has(parent)) continue;
+        if (!hosted.has(parent) || superseded.has(parent) || tried.has(parent)) continue;
+        let id; try { id = toHex(gameIdOf(m)); } catch { continue; }
+        // the game asked for is the manifest's own id (kanban #1553) - a listing naming another id beside it is not asked at all (#1552)
+        if (id !== g.id || hosted.has(id)) continue;
+        if (!manifestStands(m, { verify: verifyEd25519, parentOf: hostedParent }).ok) continue;
         const u = checkUpdate(installedInfo(parent), { devKey: toHex(m.gameDevPubkey), parent, version: m.version });
         if (!u.ok) continue;
-        const r = await takeGame({ game: g.id, from, replaces: parent });
+        tried.add(parent);
+        const r = await takeGame({ game: id, from, replaces: parent });
         console.log(`[plugins] automatic update of ${parent.slice(0, 16)} from ${from}: ${r.ok ? 'taken' : r.why}`);
+        if (!r.ok && r.status === 502) break;
       }
       // AND EACH INSTALLED NETWORK: a newer package of it at a source seat - another package id, the same
       // federation - is taken as an update would be (checked, tried, never a lower donation serial). A package naming ANOTHER
@@ -2418,6 +2458,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // HAS THE START DEADLINE PASSED, as far as THIS signer node can check, for a first
   // mark it has never held? Its own record, its own round closed, or the
   // player's own signed mark past the line - never a peer's word alone.
+  /** kanban #1549: has the round's end (protocol roundEndMs, else entry close) passed on THIS seat's clock? */
+  function roundOverHere(rid) {
+    const row = round.get(rid);
+    if (!row) return false;
+    try {
+      const rc = decodeRoundContract(new Uint8Array(row.contract));
+      let end; try { end = Number(roundEndMs(rc)); } catch { end = Number(rc.entryCloseMs); }
+      return Number.isFinite(end) && round.now() >= end;
+    } catch { return false; }
+  }
   function lateEvidenceHere(c, claim, claimReceipt = null) {
     const line = round.startLine(c.roundId, c.entryId);
     if (!line || c.tick > line.lastTick) return null;             // a late START is FORFEIT's
@@ -2429,7 +2479,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // the threshold. This signer node records only what it knows: it never took the
     // first mark. A signer node that holds it never gets here, so a run that started
     // cannot be voided this way; the lock goes back to the player, never to anyone else.
-    if (claim && claim.kind === 'closed' && claimReceipt && round.receiptVerifies(claimReceipt, checkpointId(c), c.roundId))
+    // ONLY ONCE THE ROUND IS OVER ON THIS SEAT'S OWN CLOCK (kanban #1549): the claimer's receipt shows only that it saw
+    // the mark, never that the round closed. Measured before: one seat posted /first-mark with its own receipt and
+    // "closed" 60 s before the end, and the open seat recorded ENTRY_VOID and refused the player's on-time first mark.
+    if (claim && claim.kind === 'closed' && claimReceipt && roundOverHere(c.roundId)
+      && round.receiptVerifies(claimReceipt, checkpointId(c), c.roundId))
       return { kind: 'closed', evidence: null };
     if (claim && claim.kind === 'mark' && claim.evidence) {
       try {
@@ -5605,18 +5659,39 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // came at any time, so a player held his locks back from three seats, played, and posted them there only once the run had won (FINAL, paid) - a
   // losing run was VOID there (the stake back). A replayed or head-to-head round (the relayed ones) takes a lock new to this seat only until the entry
   // close plus the grace a join on its way has (ENTRY_CLOSE_GRACE_MS); one already held is answered as before. An order keeps its own rule (orderLockAfterClose).
+  // AND A MARKET'S PLAIN PICK (kanban #1554, wf1489 R3 entry 1): relayedRound answers null for an attested round, so a pick entered before the close
+  // with its locks made but handed nowhere took them at any time - handed over only once the outcome was attested and the pick had won (a losing
+  // pick's locks just expired back): a free option on every pool market, paid by the honest pickers. An attested round's plain pick now keeps the
+  // same rule, and once this seat holds an outcome attestation of the round a lock new to it is refused whatever the clock says.
   const lockAfterCloseRefusal = (storedEntry, eid, kind) => {
     const grace = round.entryCloseGraceMs;
-    if (grace === null || grace === undefined) return null;
     let e; try { e = decodeEntryContract(new Uint8Array(storedEntry)); } catch { return null; }
-    if (e.limitPrice !== undefined) return null;
-    const c = relayedRound(e.roundId);
+    if (e.limitPrice !== undefined && e.limitPrice !== null) return null;
+    const held = () => (kind === 'fee' ? (round.feeLock ? round.feeLock(eid) : null) : round.stakeLock(eid));
+    const what = kind === 'fee' ? 'fee' : 'stake';
+    const ac = attestedRoundOf(e.roundId);
+    if (ac && round.outcomeAttestations && round.outcomeAttestations(e.roundId).length && !held())
+      return `that market's outcome is attested here: a ${what} lock new to this seat is not taken (kanban #1554)`;
+    if (grace === null || grace === undefined) return null;
+    const c = relayedRound(e.roundId) || ac;
     if (!c || typeof c.entryCloseMs !== 'bigint') return null;
+    // NO GRACE ON A HEAD-TO-HEAD ROUND (kanban #1551, #1489 r3 h2h-1): its moves are revealed from the entry close on (GET /reveals), so a lock new to
+    // this seat inside the grace was handed with the opponent's move known - a player locked only when its committed move won, and when it lost
+    // handed nothing and the round, one seated player short, went VOID. The entry relay carries an honest join's locks before the close.
+    const h2h = headToHeadRound(e.roundId) !== null;
+    const allowed = h2h ? 0 : grace;
     const now = BigInt(Math.floor(Number(round.now())));
-    if (now <= c.entryCloseMs + BigInt(grace)) return null;
-    const held = kind === 'fee' ? (round.feeLock ? round.feeLock(eid) : null) : round.stakeLock(eid);
-    if (held) return null;
-    return `that round's entry closed at ${c.entryCloseMs} (and ${grace} ms for a join on its way) and it is ${now}: a ${kind === 'fee' ? 'fee' : 'stake'} lock new to this seat is not taken (kanban #1260)`;
+    if (h2h ? now < c.entryCloseMs : now <= c.entryCloseMs + BigInt(grace)) return null;
+    if (held()) return null;
+    return `that round's entry closed at ${c.entryCloseMs} (and ${allowed} ms for a join on its way) and it is ${now}: a ${what} lock new to this seat is not taken (kanban #1260, #1554)`;
+  };
+  // A ROUND THAT IS AN ATTESTED ONE (a market's), its contract, or null (kanban #1554)
+  const attestedRoundOf = (rid) => {
+    const row = round.get(rid);
+    if (!row) return null;
+    let c; try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
+    const g = pluginForRound(c, hosted);
+    return g.ok && g.attested && !g.headToHead ? c : null;
   };
   relayedRound = (rid) => {
     const row = round.get(rid);
@@ -13655,6 +13730,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // gossip. The first byte says so, the same way it says a mark is a
         // mark, so gossip needs no second port and no envelope.
         if (bytes[0] === TYPE_CHECKPOINT_RECEIPT) {
+          // A REPEAT ADDS NOTHING, SO IT REPLAYS NOTHING (kanban #1569): a byte-identical receipt is answered 'held' without a
+          // check (#1204's fast path), and every copy used to queue a whole-run replay - one public receipt from GET /receipts,
+          // sent N times, kept the replay pool busy for hours. Only a receipt this seat did not hold before can complete a run.
+          const repeat = round.holdsReceipt(bytes);
           const answer = round.takeReceipt(bytes);
           // A RECEIPT CAN COMPLETE WHAT A REPLAY COULD NOT SIGN. 13C's
           // canonical prefix grows as receipts arrive, so a run replayed
@@ -13664,7 +13743,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try {
             const run = round.runOf(decodeCheckpointReceipt(splitSignedReceipt(bytes).body).checkpointId);
             const held = run && round.get(run.roundId);
-            if (run && held && held.state === CLOSED) {
+            if (!repeat && run && held && held.state === CLOSED) {
               const again = verifier.retry(run.roundId, run.entryId);
               if (again) again.then((d) => (d && d.stored
                 ? verifier.gather(run.roundId, run.entryId) : null))
