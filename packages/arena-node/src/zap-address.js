@@ -43,7 +43,7 @@ export const ZAP_TIPS_MINTING_MAX = 16;
 // ONE LANE PER RELAY HOST, AND NO RECEIPT DROPPED UNSENT (kanban #2249, #2261, #1489 a45-refute-17): that queue was one FIFO with 4
 // shared slots, each held as long as the payer's relays took, so 4 one-sat zaps naming a silent relay held every later receipt for
 // 10 s (K zaps: ceil(K/4) x 10 s), and 1000 more pushed a waiting honest receipt out of the queue, never to be sent. Now each
-// (receipt, relay) is its own send, queued in the lane of the relay's host (URL host, port included): at most
+// (receipt, relay) is its own send, queued in the lane of the relay's host (hostname and effective port, #2398): at most
 // ZAP_PUBLISH_PER_HOST sends to one host at once, ZAP_PUBLISH_PARALLEL in all, lanes taken in turn. A host whose last send took
 // ZAP_PUBLISH_SLOW_MS or more (or failed) is not proven, and hosts not proven share all but ZAP_PUBLISH_RESERVED of the slots, so a
 // payer's silent hosts cannot hold the sends to relays that answer. Receipts still owed a send are kept in the state file
@@ -114,6 +114,13 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   // - over ZAP_PUBLISH_QUEUED waiting sends nothing is settled unsent: the send of the payer key with the most waiting sends (the
   //   newest on a tie) is PARKED - still owed, still in the state file - and queued again when there is room. Only past
   //   ZAP_PUBLISH_PARKED parked sends is one given up (logged), again the most numerous payer's newest.
+  // A LANE IS ONE SOCKET, AND ITS HEAD DOES NOT HOLD A PROVEN SEND (kanban #2398, #2399, #1489 a45-refute-17-s3):
+  // - the lane key is hostname + effective port (80 for ws:/http:, 443 for wss:/https: when the URL leaves it out): URL.host drops a
+  //   default port, so ws://relay.x/ and wss://relay.x/ (two sockets) shared one lane and its per-host cap, and a stranger's silent
+  //   port-80 URLs held the honest wss:// relay.
+  // - pump() no longer judges a lane by its head: it takes the lane's first send that may start now, so a proven URL's send starts
+  //   from the reserve whatever unproven sends stand before it in the queue. A lane caps proven and unproven sends apart (each
+  //   ZAP_PUBLISH_PER_HOST at once), so unproven sends to a host never take the slots of a proven URL on that host.
   const lanes = new Map();
   const proven = new Map();           // relay URL -> true when its last send answered within ZAP_PUBLISH_SLOW_MS (a bounded ring)
   const retries = new Set();
@@ -121,12 +128,19 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   const parked = [];                  // sends owed but waiting outside the lanes (kanban #2362)
   let flying = 0, flyingUnproven = 0, queued = 0, seq = 0, closed = false;
   const UNPROVEN_SLOTS = ZAP_PUBLISH_PARALLEL - ZAP_PUBLISH_RESERVED;
-  const hostOf = (relay) => { try { return new URL(relay).host.toLowerCase() || String(relay); } catch { return String(relay); } };
+  const DEFAULT_PORT = { 'ws:': '80', 'http:': '80', 'wss:': '443', 'https:': '443' };
+  const hostOf = (relay) => {
+    try {
+      const u = new URL(relay);
+      if (!u.hostname) return String(relay);
+      return `${u.hostname.toLowerCase()}:${u.port || DEFAULT_PORT[u.protocol] || ''}`;
+    } catch { return String(relay); }
+  };
   const urlOf = (relay) => { try { return new URL(relay).href; } catch { return String(relay); } };
   const payerOf = (receipt) => {
     try { const d = receipt.tags.find((t) => t[0] === 'description'); return String(JSON.parse(d[1]).pubkey || ''); } catch { return ''; }
   };
-  const lane = (host) => { let l = lanes.get(host); if (!l) { l = { queue: [], flying: 0 }; lanes.set(host, l); } return l; };
+  const lane = (host) => { let l = lanes.get(host); if (!l) { l = { queue: [], flying: 0, flyingGood: 0, flyingBad: 0 }; lanes.set(host, l); } return l; };
   const settle = (job) => {           // this relay is no longer owed a send for this receipt
     const o = owed.get(job.receipt.id);
     if (!o) return;
@@ -140,17 +154,23 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
     : flying < ZAP_PUBLISH_PARALLEL && flyingUnproven < UNPROVEN_SLOTS);
   const pump = () => {
     if (closed) return;
-    while (parked.length && queued < ZAP_PUBLISH_QUEUED) { const job = parked.shift(); lane(hostOf(job.relay)).queue.push(job); queued++; }
+    while (parked.length && queued < ZAP_PUBLISH_QUEUED) { const job = parked.shift(); lane(job.host).queue.push(job); queued++; }
     let moved = true;
     while (moved && queued) {
       moved = false;
       for (const [host, l] of [...lanes]) {          // each lane in turn, one send each pass
         if (!roomFor(true)) break;
         if (!l.queue.length) { if (!l.flying) lanes.delete(host); continue; }
-        if (l.flying >= ZAP_PUBLISH_PER_HOST) continue;
-        const good = proven.get(urlOf(l.queue[0].relay)) === true;
-        if (!roomFor(good)) continue;
-        const job = l.queue.shift(); queued--;
+        const roomGood = l.flyingGood < ZAP_PUBLISH_PER_HOST;
+        const roomBad = l.flyingBad < ZAP_PUBLISH_PER_HOST && roomFor(false);
+        if (!roomGood && !roomBad) continue;
+        let i = -1, good = false;           // the lane's first send that may start now (kanban #2398)
+        for (let k = 0; k < l.queue.length; k++) {
+          const g = proven.get(l.queue[k].url) === true;
+          if (g ? roomGood : roomBad) { i = k; good = g; break; }
+        }
+        if (i < 0) continue;
+        const job = l.queue.splice(i, 1)[0]; queued--;
         lanes.delete(host); lanes.set(host, l);   // to the back of the turn
         start(l, job, good);
         moved = true;
@@ -158,16 +178,16 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
     }
   };
   const start = (l, job, good) => {
-    const url = urlOf(job.relay);
+    const url = job.url;
     const run = { good };
-    flying++; l.flying++; if (good) { /* counted as proven */ } else flyingUnproven++;
+    flying++; l.flying++; if (good) l.flyingGood++; else { flyingUnproven++; l.flyingBad++; }
     const t0 = Date.now();
     let slow = null;
     if (good) {                       // still in flight after SLOW_MS: no longer proven, out of the reserve (kanban #2371)
       slow = setTimeout(() => {
         slowTimers.delete(slow); slow = null;
         if (!run.good) return;
-        run.good = false; flyingUnproven++; markUrl(url, false);
+        run.good = false; flyingUnproven++; l.flyingGood--; l.flyingBad++; markUrl(url, false);
         log(`publish ${job.receipt.id.slice(0, 16)} -> ${job.relay} slow; that relay is not proven`);
         pump();
       }, ZAP_PUBLISH_SLOW_MS);
@@ -185,7 +205,7 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
         })
       .finally(() => {
         if (slow) { clearTimeout(slow); slowTimers.delete(slow); }
-        flying--; l.flying--; if (!run.good) flyingUnproven--;
+        flying--; l.flying--; if (run.good) l.flyingGood--; else { flyingUnproven--; l.flyingBad--; }
         pump();
       });
   };
@@ -203,11 +223,12 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   };
   const push = (job) => {
     if (job.seq === undefined) { job.seq = ++seq; job.payer = payerOf(job.receipt); }
-    lane(hostOf(job.relay)).queue.push(job); queued++;
+    if (job.host === undefined) { job.host = hostOf(job.relay); job.url = urlOf(job.relay); }
+    lane(job.host).queue.push(job); queued++;
     while (queued > ZAP_PUBLISH_QUEUED) {     // park (not shed) the most numerous payer's newest send (kanban #2362)
       const all = []; for (const l of lanes.values()) for (const j of l.queue) all.push(j);
       const out = pick(all);
-      const l = lanes.get(hostOf(out.relay));
+      const l = lanes.get(out.host);
       l.queue.splice(l.queue.indexOf(out), 1); queued--;
       parked.push(out);
     }
