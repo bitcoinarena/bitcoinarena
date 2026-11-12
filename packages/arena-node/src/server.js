@@ -3434,7 +3434,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHICH ROUND IS HEAD-TO-HEAD (kanban #1068, #1071): declared here, filled in below. A close sweep can fire while the server is still being set up
   // (measured 2026-11-03 on a restarted seat: "Cannot access 'headToHeadRound' before initialization" from afterClose, and the seat exited); until then a round is
   // closed as before #1071, without first learning who is in it.
-  let headToHeadRound = () => null, headToHeadReady = false, relayedRound = () => null;
+  let headToHeadRound = () => null, headToHeadReady = false, relayedRound = () => null, pullPickLocks = async () => {};
   const H2H_HANDOUT_LEAD_MS = h2hHandoutLeadMs;   // kanban #1485: a head-to-head handout this close to the entry close is refused (takeHandout); a lock alone takes 2.2-2.7 s
   function afterClose(roundIdBytes) {
     // §16 AT THE CLOSE: an entry whose on-time first mark is still short of the
@@ -3447,6 +3447,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (decideOutage(roundIdBytes, entryId, { evidenceKind: 'closed' })) await forwardFirstMark(f);
       }
     })().catch((e) => console.error(`[entry-void] ${e.message}`));
+    // A POOL'S PLAIN PICKS WHOSE LOCKS NEVER REACHED THIS SEAT ARE FETCHED FROM ITS PEERS (kanban #1790): the hand-on at the lock door lives in
+    // memory, so a seat that restarted before it ran never handed them; this runs at every close, a resumed one too
+    pullPickLocks(roundIdBytes).catch((e) => console.error(`[entry] ${e.message}`));
     // A HEAD-TO-HEAD SEAT FIRST LEARNS WHO IS IN THE ROUND (kanban #1071), and with a wait that ran out it signs nothing
     const h2h = headToHeadReady ? headToHeadRound(roundIdBytes) : null;
     stakes = (h2h ? membersKnown(roundIdBytes, h2h).catch((e) => { console.error(`[entry] ${e.message}`); return true; }) : Promise.resolve(true))
@@ -4300,6 +4303,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const g = pluginForRound(c, hosted);
     return g.ok && (g.headToHead || !g.attested) ? c : null;   // an attested round's (a market's) orders are replayed by the order book
   };
+  // A POOL'S PLAIN PICK HANDS ITS LOCKS ON TOO (kanban #1790, state audit 2026-11-12, #1489 sm2-entry-4): the order book replays orders only, and
+  // relayedRound leaves every attested round out, so a pick whose locks reached one seat (the page says "placed" after one, a tab closed seconds later)
+  // stayed stake-unseen at the others for good - each seat rebuilt another pari-mutuel table and no threshold signed one. A plain pick (no limit
+  // price) of a round this seat hosts as attested goes through the entry relay's lock pass as a relayed round's does; each seat checks the lock
+  // with the federation at its own door. Answers the round id to hand on for, or null.
+  const plainPickRound = (storedEntry) => {
+    let e; try { e = decodeEntryContract(new Uint8Array(storedEntry)); } catch { return null; }
+    if (relayedRound(e.roundId)) return e.roundId;
+    if (e.limitPrice !== undefined || e.stakeMsat === 0n) return null;
+    const row = round.get(e.roundId);
+    if (!row) return null;
+    let c; try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
+    const g = pluginForRound(c, hosted);
+    return g.ok && g.attested && !g.headToHead ? e.roundId : null;
+  };
   // WHAT A SEAT HANDS ON OF A HEAD-TO-HEAD ENTRY (kanban #1068, entry-relay.js)
   headToHeadRound = (rid) => {
     const row = round.get(rid);
@@ -4409,6 +4427,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
     }
     return why;
+  };
+  // A POOL'S PLAIN PICK HELD HERE WITHOUT ITS STAKE SEEN (kanban #1790): its locks and address asked of the round's peers, as a head-to-head
+  // member's parts are (takeEntryParts: each lock checked with the federation here). A few passes, while the outcome is not yet final.
+  pullPickLocks = async (rid) => {
+    const peers = verifier.peersOf(rid).map((p) => String(p).replace(/\/+$/, ''));
+    if (!peers.length) return;
+    for (let pass = 0; pass < 4 && !shuttingDown; pass++) {
+      if (pass) await new Promise((go) => { const t = setTimeout(go, 2000 * pass); if (t.unref) t.unref(); });
+      let short = 0;
+      for (const { entryId: e } of round.entriesOf(rid)) {
+        const stored = round.entry(e);
+        if (!stored || round.entryVoid(e) || round.stakeSeen(e)) continue;
+        if (!plainPickRound(stored) || relayedRound(rid)) return;   // a relayed round's members have their own way (membersKnown)
+        const why = await takeEntryParts(rid, toHex(e), peers);
+        if (why || !round.stakeSeen(e)) short++;
+      }
+      if (!short) return;
+    }
   };
   // A SEAT SIGNS FOR A HEAD-TO-HEAD ROUND ONLY ONCE IT KNOWS WHO IS IN IT (kanban #1071): false when the wait ran out at the result window, and this seat stays silent
   const asksPeers = seatView((...a) => globalThis.fetch(...a));
@@ -9513,7 +9549,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = await takeStakeLock(eid, fields, timing);
         lockTimed(got.ok ? 'verified' : got.why.slice(0, 60));
         if (!got.ok) return text(res, 409, got.why);
-        if (relayedRound(decodeEntryContract(stored).roundId)) entryRelay.lockTaken(decodeEntryContract(stored).roundId, toHex(eid));   // every round's (kanban #1216)
+        { const rid = plainPickRound(stored); if (rid) entryRelay.lockTaken(rid, toHex(eid)); }   // every round's (kanban #1216), a pool's plain pick's too (kanban #1790)
         // AN ORDER (comment 1127): tradable here once both its locks are verified - and only before its market's entry close
         const lateOrder = orderLockAfterClose(stored);
         if (decodeEntryContract(stored).limitPrice !== undefined && !lateOrder) orderBook.noteTradable(decodeEntryContract(stored).roundId);
@@ -9538,6 +9574,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = await takeFeeLock(eid, fields);
         steps.at(got.ok ? 'verified' : 'refused');
         if (!got.ok) return text(res, 409, got.why);
+        { const rid = plainPickRound(stored); if (rid) entryRelay.lockTaken(rid, toHex(eid)); }   // a fee lock that came after its stake lock's pass (kanban #1790)
         const lateOrder = orderLockAfterClose(stored);
         if (decodeEntryContract(stored).limitPrice !== undefined && !lateOrder) orderBook.noteTradable(decodeEntryContract(stored).roundId);
         return text(res, 201, `fee lock verified: contract ${got.contractId} holds ${got.feeMsat} msat` + (lateOrder ? ` - ${lateOrder}` : ''));
