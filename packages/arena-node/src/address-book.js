@@ -14,18 +14,41 @@ import { checkAddressAnnouncement, newerAnnouncement, signAddressAnnouncement, e
 export const ADDRESS_ENDPOINT_MAX = 256;
 export const ADDRESS_BOOK_MAX = 4096;
 
-export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCensusNode = () => null }) {
+export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCensusNode = () => null, ownKey = null }) {
   db.exec('CREATE TABLE IF NOT EXISTS address_announcements (node TEXT PRIMARY KEY, body TEXT NOT NULL)');
-  const map = new Map();
+  // THE BOUNDS HOLD FOR WHAT IS HELD, NOT ONLY AT THE DOOR (kanban #1712, #1778, wf1489 refute of #1533): an announcement taken while
+  // no census was read yet (isCensusNode -> null, the first minute after a start) stayed in the book and was served, counted and used
+  // as a seat URL for good once the census named other keys; and rows stored before #1533 (4 KB endpoints, any key, more than
+  // ADDRESS_BOOK_MAX) were read back at a start with the signature check only. Now: a held node the census does not name is dropped
+  // from the book (never served at GET /address-announcements, never an endpoint, not counted) as soon as the census is read; this
+  // node's own is kept. The load applies take()'s bounds. Stored rows are left as they are (skipped, never deleted) - an honest
+  // node's newer announcement overwrites its row.
+  let me = ownKey ? String(ownKey).toLowerCase() : null;
+  const kept = (a) => a.node === me || isCensusNode(a.node) !== false;
+  let map = new Map();
   for (const r of db.prepare('SELECT body FROM address_announcements').all()) {
-    try { const a = JSON.parse(r.body); if (checkAddressAnnouncement(a, { verify, nowMs: nowMs() }).ok) map.set(a.node, a); } catch { /* a row that does not read */ }
+    if (map.size >= ADDRESS_BOOK_MAX) break;
+    try {
+      const a = JSON.parse(r.body);
+      if (!checkAddressAnnouncement(a, { verify, nowMs: nowMs() }).ok) continue;
+      if (String(a.endpoint).length > ADDRESS_ENDPOINT_MAX || !kept(a)) continue;
+      map.set(a.node, { node: a.node, endpoint: a.endpoint, atMs: a.atMs, sig: a.sig });
+    } catch { /* a row that does not read */ }
+  }
+  /** Drops every held node the census (now read) does not name, this node's own apart. Answers how many went. */
+  function prune() {
+    let gone = 0;
+    for (const a of map.values()) if (!kept(a)) gone++;
+    if (gone) map = new Map([...map].filter(([, a]) => kept(a)));
+    return gone;
   }
   /** Take one in: checked, kept when it is the node's newest. Answers { ok, kept, why }. */
   function take(a, { self = false } = {}) {
     const c = checkAddressAnnouncement(a, { verify, nowMs: nowMs() });
     if (!c.ok) return { ok: false, why: c.why };
     if (String(a.endpoint).length > ADDRESS_ENDPOINT_MAX) return { ok: false, status: 400, why: `an endpoint of at most ${ADDRESS_ENDPOINT_MAX} characters` };
-    if (!self && isCensusNode(a.node) === false) return { ok: false, status: 409, why: 'not a node of this seat\'s census' };
+    if (!self && a.node !== me && isCensusNode(a.node) === false) return { ok: false, status: 409, why: 'not a node of this seat\'s census' };
+    prune();   // junk held from before the census was read does not take a place (kanban #1712)
     if (!map.has(a.node) && map.size >= ADDRESS_BOOK_MAX) return { ok: false, status: 409, why: 'the address book is full' };
     const clean = { node: a.node, endpoint: a.endpoint, atMs: a.atMs, sig: a.sig };
     const have = map.get(clean.node);
@@ -36,13 +59,15 @@ export function createAddressBook({ db, verify, nowMs = () => Date.now(), isCens
   }
   /** This node's own, for the address it names itself: the one kept when it names it, else a new one, signed now. */
   function own({ node, endpoint, sign }) {
-    const have = map.get(String(node).toLowerCase());
+    me = String(node).toLowerCase();
+    const have = map.get(me);
     if (have && have.endpoint === endpoint) return have;
     const a = signAddressAnnouncement({ node, endpoint, atMs: nowMs() }, sign);
     take(a, { self: true });   // this node's own, kept before its bond is in the census (kanban #1533)
     return a;
   }
-  return { take, own, map: () => map, list: () => [...map.values()], endpointOf: (entry) => endpointOf(entry, map) };
+  const held = { get: (k) => { const a = map.get(k); return a && kept(a) ? a : undefined; } };
+  return { take, own, prune, map: () => { prune(); return map; }, list: () => { prune(); return [...map.values()]; }, endpointOf: (entry) => endpointOf(entry, held) };
 }
 
 /** Push this node's announcement to every census node's seat at the address it is found at; answers how many took it. */
