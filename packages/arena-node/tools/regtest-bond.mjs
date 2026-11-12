@@ -240,7 +240,8 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
       const newer = newestUpdateOf({ txid: fromHex(u.txid).reverse(), vout: u.vout, height: u.height, nodePubkey: nodeKey });
       out.push({ txid: u.txid, vout: u.vout, height: u.height, sats: Math.round(u.amount * 1e8), maturity: maturity.maturity,
         advert: newer ? newer.advert : advert, bondAdvert: advert, bondSignature: advertSignature, ...(ancestor ? { ancestor: true } : {}),
-        ...(newer ? { updatedBy: { txid: newer.txidHex, height: newer.height } } : {}) });
+        // its POSITION in its block too (kanban #2190): two updates of the node in one block are ordered by it, as the census orders them
+        ...(newer ? { updatedBy: { txid: newer.txidHex, height: newer.height, ...(Number.isInteger(newer.position) ? { position: newer.position } : {}) } } : {}) });
     }
     return out;
   }
@@ -287,7 +288,17 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
    * kept only if it names this bond, carries its node key, is signed by it and sits at or above the bond.
    */
   let markers = null;
+  /** A transaction's index in the block at `height` (getblock verbosity 1 lists the txids in block order), or null when it cannot be read. */
+  const blockTxids = new Map();
+  function positionIn(height, txidHex) {
+    try {
+      if (!blockTxids.has(height)) blockTxids.set(height, JSON.parse(cli('getblock', cli('getblockhash', String(height)), '1')).tx || []);
+      const i = blockTxids.get(height).indexOf(String(txidHex).toLowerCase());
+      return i >= 0 ? i : null;
+    } catch { return null; }
+  }
   function newestUpdateOf(bond) {
+    blockTxids.clear();
     if (!markers) {
       const scan = scanUtxos([`raw(5120${toHex(bondMarker(network))})`]);
       markers = (scan.unspents || []).filter((m) => m.height > 0);
@@ -303,8 +314,16 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
       let signed = false;
       try { signed = schnorr.verify(read.signature, read.advertId, read.nodePubkey); } catch { signed = false; }
       if (!signed) continue;
+      // TWO UPDATES OF THIS BOND IN ONE BLOCK (kanban #2190): the later position in the block wins, as advert-update.js newestUpdates
+      // decides it for the census - not whichever marker the UTXO scan listed first
       if (!best || m.height > best.height) best = { advert: read.advert, height: m.height, txidHex: m.txid };
+      else if (m.height === best.height) {
+        const pm = positionIn(m.height, m.txid), pb = best.position !== undefined ? best.position : positionIn(best.height, best.txidHex);
+        best.position = pb;
+        if (Number.isInteger(pm) && Number.isInteger(pb) && pm > pb) best = { advert: read.advert, height: m.height, txidHex: m.txid, position: pm };
+      }
     }
+    if (best && best.position === undefined) best.position = positionIn(best.height, best.txidHex);
     return best;
   }
 

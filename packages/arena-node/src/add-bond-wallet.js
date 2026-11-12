@@ -63,11 +63,30 @@ const sameAction = (was, { key, what, nowMs }) => !!was && (key ? was.key === ke
  * every census, never asked. Answers the record, or null for none.
  */
 export function inForceOf(bonds) {
+  // THE CENSUS'S OWN TIE RULE (kanban #2190, audit44 refute of #1836): two updates of the node in ONE block are ordered by their POSITION in
+  // the block (census.js newestPerNode, advert-update.js newestUpdates: the later one wins) - regtest-bond newestUpdateOf carries it as
+  // updatedBy.position. Before, every update was position 0 and the larger txid decided: the operator's step-out mined after the seat's own
+  // check in one block was read as "not in force", and the seat's next post put the node back in every census. The txid tie compares the
+  // INTERNAL byte order (what parseTransaction computes and the census compares), not bitcoind's display hex.
+  // AN UPDATE WHOSE POSITION IS NOT KNOWN (a record from an older reader): the order in its block cannot be read here, so of two such
+  // updates at one height the one that steps the node out wins - an unknown order never puts a stepped-out node back in unasked.
+  const internalHex = (h) => (/^[0-9a-f]{64}$/i.test(String(h || '')) ? String(h).toLowerCase().match(/../g).reverse().join('') : String(h || '').toLowerCase());
+  const later = (c, best) => {
+    if (c.height !== best.height) return c.height > best.height;
+    if (c.pos !== null && best.pos !== null && c.pos !== best.pos) return c.pos > best.pos;
+    if (c.pos === null || best.pos === null) {
+      if (c.own !== best.own) return !c.own;   // an update beats an output's own body in one block (the census's -1)
+      const co = c.b.advert && c.b.advert.serving === false, bo = best.b.advert && best.b.advert.serving === false;
+      if (co !== bo) return co;
+    }
+    return c.tie > best.tie;
+  };
   let best = null;
   for (const b of bonds || []) {
-    const c = b.updatedBy ? { b, height: b.updatedBy.height, pos: 0, tie: String(b.updatedBy.txid || '').toLowerCase() }
-      : { b, height: b.height, pos: -1, tie: String(b.txid || '').toLowerCase() };
-    if (!best || c.height > best.height || (c.height === best.height && (c.pos > best.pos || (c.pos === best.pos && c.tie > best.tie)))) best = c;
+    const c = b.updatedBy
+      ? { b, own: false, height: b.updatedBy.height, pos: Number.isInteger(b.updatedBy.position) ? b.updatedBy.position : null, tie: internalHex(b.updatedBy.txid) }
+      : { b, own: true, height: b.height, pos: -1, tie: internalHex(b.txid) };
+    if (!best || later(c, best)) best = c;
   }
   return best ? best.b : null;
 }
