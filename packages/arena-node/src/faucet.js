@@ -148,19 +148,50 @@ export function feedbackDecide({ text, ip = null, build = '', game = '', round =
 // WHO SITS ALONE AT A TABLE (kanban #926): the page says which head-to-head round it is looking at; the test opponent reads this. In memory, a few seconds' worth, one row per round.
 // ONE CALLER, AT MOST TWO TABLES (kanban #1535): the door is unsigned, and the test opponent reads only the newest few rows, so one address
 // re-posting made-up rounds every second pushed every real player's table out of its reading. Each row now names the callers (ipKey) that said
-// it; a caller's newest OPPONENT_WANTS_PER_CALLER rows stay theirs, a new one drops them from their oldest (a row nobody else said goes).
+// it; the list ranks them per network (below), and since #1912 a caller's extra rows are ranked behind, never deleted.
 export const OPPONENT_WANT_MS = 12000, OPPONENT_WANTS_MOST = 64, OPPONENT_WANTS_PER_CALLER = 2;
 export function opponentWant(wants, round, nowMs = Date.now(), tapped = false, who = null) {
   if (!/^[0-9a-f]{64}$/.test(String(round || ''))) return { ok: false, why: 'a round is 32 bytes of hex' };
   for (const [k, x] of wants) if (nowMs - x.at > OPPONENT_WANT_MS) wants.delete(k);
-  if (who) {
-    const mine = [...wants].filter(([k, x]) => k !== round && x.by && x.by.has(who)).sort((a, b) => b[1].at - a[1].at);
-    for (const [k, x] of mine.slice(OPPONENT_WANTS_PER_CALLER - 1)) { x.by.delete(who); if (!x.by.size) wants.delete(k); }
-  }
-  if (!wants.has(round) && wants.size >= OPPONENT_WANTS_MOST) return { ok: false, why: 'too many tables just now' };
+  // A CALLER OVER ITS SHARE IS RANKED, NOT DELETED (kanban #1489, #1912 + #1954 + #1991): every device behind one IPv4 (CGNAT, a cafe) is one
+  // caller, so dropping a caller's oldest rows let a neighbour's two posts delete the real player's table on every re-post. Its rows now stay;
+  // opponentWants gives each network's newest row before any network's second, so a caller's extra rows already sit behind every other's.
+  if (!wants.has(round) && wants.size >= OPPONENT_WANTS_MOST && !opponentEvict(wants, who ? opponentNet(who) : `round:${round}`)) return { ok: false, why: 'too many tables just now' };
   const by = wants.get(round)?.by || new Set();
   if (who) by.add(who);
   wants.set(round, { at: nowMs, tapped: tapped === true || wants.get(round)?.tapped === true, by });
   return { ok: true };
 }
-export const opponentWants = (wants, nowMs = Date.now()) => [...wants].filter(([, x]) => nowMs - x.at <= OPPONENT_WANT_MS).sort((a, b) => b[1].at - a[1].at).map(([round, x]) => ({ round, agoMs: nowMs - x.at, tapped: x.tapped }));
+// ONE NETWORK, NOT ONE ADDRESS (kanban #1718, #1781): an IPv6 caller is keyed by its /64, and any home line holds a /56 (256 /64s), so the cap of 2
+// rows per caller alone let two /64s of one attacker fill the 4 rows the test opponent reads, and 32 of them (one /59) fill all 64 rows so a real
+// page was refused. Rows are now also counted per network (an IPv6 /48, an IPv4 address as it stands): the list gives every network's newest row
+// before any network's second (newest first within a rank), and a full list makes room by dropping the oldest row of the network holding the most
+// rows - only one holding more than one caller's share - instead of refusing the newcomer.
+// AN IPv4 /24, NOT ONE ADDRESS (kanban #1912, #1954, #1991): one IPv4 address was its own network, so 4 addresses (Tor exits, VPS) held the 4
+// rank-0 rows ahead of the real page and 32 of them filled the list; an IPv4 caller now counts in its /24, as an IPv6 one in its /48.
+export const opponentNet = (who) => {
+  const s = String(who);
+  if (/^[0-9a-f]{4}(?::[0-9a-f]{4}){3}::\/64$/.test(s)) return `${s.split(':').slice(0, 3).join(':')}::/48`;
+  const v4 = /^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/.exec(s);
+  return v4 ? `${v4[1]}.0/24` : s;
+};
+const netsOf = (round, x) => (x.by && x.by.size ? [...new Set([...x.by].map(opponentNet))] : [`round:${round}`]);
+function opponentEvict(wants, newNet) {
+  const rows = new Map();
+  for (const [k, x] of wants) for (const n of netsOf(k, x)) { if (!rows.has(n)) rows.set(n, []); rows.get(n).push([k, x]); }
+  let top = null;
+  for (const [n, list] of rows) if (!top || list.length > top[1].length) top = [n, list];
+  // ANY NETWORK HOLDING MORE THAN ONE ROW, AND MORE THAN THE NEWCOMER'S (kanban #1912, #1954, #1991): 32 networks at 2 rows each filled the list
+  // and no one was over a caller's share, so a real page was refused; a full list of single rows still refuses
+  if (!top || top[1].length < 2 || (rows.get(newNet) || []).length >= top[1].length) return false;
+  for (const [k, x] of top[1].sort((a, b) => a[1].at - b[1].at)) {
+    if (x.by && x.by.size) for (const c of [...x.by]) if (opponentNet(c) === top[0]) x.by.delete(c);
+    if (!x.by || !x.by.size) { wants.delete(k); return true; }
+  }
+  return false;
+}
+export const opponentWants = (wants, nowMs = Date.now()) => {
+  const live = [...wants].filter(([, x]) => nowMs - x.at <= OPPONENT_WANT_MS).sort((a, b) => b[1].at - a[1].at), seen = new Map();
+  const ranked = live.map(([round, x]) => { const nets = netsOf(round, x); const rank = Math.min(...nets.map((n) => seen.get(n) || 0)); for (const n of nets) seen.set(n, (seen.get(n) || 0) + 1); return { round, x, rank }; });
+  return ranked.sort((a, b) => a.rank - b.rank || b.x.at - a.x.at).map(({ round, x }) => ({ round, agoMs: nowMs - x.at, tapped: x.tapped }));
+};
