@@ -1401,6 +1401,10 @@ export function openStore(path = ':memory:') {
     db.exec('ALTER TABLE batches ADD COLUMN signature BLOB');
   if (!db.prepare('PRAGMA table_info(loads)').all().some((c) => c.name === 'room'))
     db.exec('ALTER TABLE loads ADD COLUMN room INTEGER');
+  // A DRAWN BED'S PARCELS (kanban #2574): [[slot, txid hex], ...] as JSON, kept so the run's inputs (GET /replay/transcript) carry them
+  // to an objection, which holds the load to the round's snapshot again; a declared load keeps none
+  if (!db.prepare('PRAGMA table_info(loads)').all().some((c) => c.name === 'parcels'))
+    db.exec('ALTER TABLE loads ADD COLUMN parcels TEXT');
   // THE IDENTITY'S CONSENT BESIDE A NAME RECORD (kanban #1278, RULED #1276): the identity key over (round id, round key), checked at the door; a row from
   // before carries none, and books its round to nobody
   // THE RELAY'S CAPPED POOL (kanban #2388): a store from before gets the column; what it already keeps counts as uncapped.
