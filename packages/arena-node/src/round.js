@@ -2694,25 +2694,43 @@ export class Round {
   }
 
   /**
-   * THE HANDOUTS OF ONE ROUND THAT NO ENTRY NAMES (kanban #2136, the #1489 a44 refute of #1605): `loose` counts them, `oldest` is the
-   * id of the oldest one that may make room for a new one - never one a kept refused-round lock stands on (its player's return reads it),
-   * nor one any entry here names (cancelled ones too: their settlement may still read it). null when none may go.
+   * THE HANDOUTS OF ONE ROUND THAT NO ENTRY NAMES (kanban #2136, the #1489 a44 refute of #1605): `loose` counts the ones that may make room
+   * for a new one, `oldest` is the oldest of those past `graceMs`, `oldestYoung` the oldest of all of them (null when none). Never loose, never
+   * pushed out: one any entry here names (cancelled ones too: their settlement may still read it), one a kept refused-round lock stands on (its
+   * player's return reads it), and one whose stake lock the federation was shown holding (kanban #2415, #2481: pinHandout - a real lock,
+   * at the handout's A0 under the round's claim key, so a stranger's free junk can never be one).
+   * A LOOSE HANDOUT YOUNGER THAN `graceMs` IS THE PLAYER'S OWN, ON ITS WAY TO ITS ENTRY (kanban #2415, #2481: the page posts the handout,
+   * locks its stake - 2-20 s, measured - and only then posts the entry; #2136's oldest-first had a stranger's 256 junk posts in that gap push
+   * it out, and the entry was refused with the stake already locked): `oldest` skips it.
    */
-  looseHandouts(roundIdBytes) {
+  looseHandouts(roundIdBytes, { graceMs = 0 } = {}) {
     const rid = Buffer.from(roundIdBytes);
     const named = new Set();
     for (const r of this.db.prepare('SELECT contract FROM entries WHERE round_id = ?').all(rid)) {
       try { const ref = decodeEntryContract(new Uint8Array(r.contract)).vssSharesRef; if (ref) named.add(Buffer.from(ref).toString('hex')); } catch { /* not ours to judge here */ }
     }
-    const locked = new Set(this.db.prepare('SELECT handout_id FROM refused_locks WHERE round_id = ?').all(rid).map((r) => Buffer.from(r.handout_id).toString('hex')));
-    let loose = 0, oldest = null;
-    for (const r of this.db.prepare('SELECT handout_id FROM handouts WHERE round_id = ? ORDER BY accepted_ms, rowid').all(rid)) {
+    const pinned = new Set([...this.db.prepare('SELECT handout_id FROM refused_locks WHERE round_id = ?').all(rid),
+      ...this.db.prepare('SELECT handout_id FROM handout_locks WHERE round_id = ?').all(rid)].map((r) => Buffer.from(r.handout_id).toString('hex')));
+    const before = this.now() - Number(graceMs);
+    let loose = 0, oldest = null, oldestYoung = null;
+    for (const r of this.db.prepare('SELECT handout_id, accepted_ms FROM handouts WHERE round_id = ? ORDER BY accepted_ms, rowid').all(rid)) {
       const hex = Buffer.from(r.handout_id).toString('hex');
-      if (named.has(hex)) continue;
+      if (named.has(hex) || pinned.has(hex)) continue;
       loose++;
-      if (oldest === null && !locked.has(hex)) oldest = new Uint8Array(r.handout_id);
+      if (oldestYoung === null) oldestYoung = new Uint8Array(r.handout_id);
+      if (oldest === null && Number(r.accepted_ms) <= before) oldest = new Uint8Array(r.handout_id);
     }
-    return { loose, oldest };
+    return { loose, oldest, oldestYoung };
+  }
+
+  /**
+   * A HANDOUT WHOSE STAKE LOCK THE FEDERATION WAS SHOWN HOLDING (kanban #2415, #2481): the door checked the lock a client showed with it
+   * (server.js stakeLockMadeFor - image A0, the player's refund key, the round's claim key, the contract at that outpoint). Such a handout
+   * is never pushed out by another: its player's entry, or its refused-round return, reads it.
+   */
+  pinHandout(handoutIdBytes, roundIdBytes) {
+    this.db.prepare('INSERT OR IGNORE INTO handout_locks (handout_id, round_id, pinned_ms) VALUES (?, ?, ?)')
+      .run(Buffer.from(handoutIdBytes), Buffer.from(roundIdBytes), this.now());
   }
 
   /**
