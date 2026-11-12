@@ -29,6 +29,7 @@ import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { seatPublicFetch } from '../src/public-fetch.js';
 import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressUrl, lnAddressInvoice, reportAddress } from '../src/feedback-store.js';
+import { eventId } from '../src/nostr-relay.js';   // a resent report is matched by its id's hash (kanban #2456, #2498)
 const LN_ASKS = new Map();   // ip /64 -> times it asked GET /feedback/lnaddress (kanban #1342, #1537)
 const LN_ASKS_ALL = [], LN_ASKS_MINUTE = 120;   // every check of the last minute, all callers (kanban #1537)
 // ONE GLOBAL WINDOW FOR EVERY DOOR THAT FETCHES A CALLER'S ADDRESS (kanban #1714, refute of #1537): the cap held only GET /feedback/lnaddress, and
@@ -90,6 +91,9 @@ const rpc = async (method, params = []) => {
   return j.result;
 };
 const REPORTS = [];   // this day's reports: their count and address, in memory
+// A SIGNED REPORT SENT AGAIN IS NOT A NEW ONE (kanban #2456, #2498): the ids of kept reports whose chat post failed - only those are posted again
+// when the same event comes back; any other resend of a kept event answers the first result, with no new slot and no chat post
+const UNPOSTED = new Set();
 // THE REPORTS KEPT FOR REVIEW (kanban #1342): one SQLite file beside the book; none when FAUCET_FEEDBACK_DB is not set
 const FEEDBACK = env.FAUCET_FEEDBACK_DB ? openFeedbackStore(env.FAUCET_FEEDBACK_DB) : null;
 // THE SCREENSHOTS (Daniel 2026-11-07): a folder beside the store, one file per image under its SHA-256
@@ -879,6 +883,25 @@ createServer((req, res) => {
           try { words = JSON.parse(e.content); } catch { words = {}; }
           // and where a bounty for it is paid, if the reporter named it (kanban #1363): the signed content's lnAddress
           b = { ...b0, text: `${String(words.happened || '')}${words.expected ? `\nExpected: ${String(words.expected)}` : ''}${words.lnAddress ? `\nBounty address: ${String(words.lnAddress).slice(0, 200)}` : ''}`, build: tagOf('build'), game: tagOf('game'), round: tagOf('round') };
+          // A RESEND OF A KEPT EVENT (kanban #2456, #2498): a page sending its report again after a lost answer or a reload, or anyone holding the event,
+          // booked a new slot and posted the words to the chat on every post - 50 chat posts of one report, and the reporter's next report refused.
+          // A kept event answers its first result here, before any slot; its chat post is tried again only when the first one failed (UNPOSTED)
+          // (only the same bytes: the id is the hash of the event, so a post naming a kept id is that event or answers nothing here)
+          let had = null;
+          try { if (/^[0-9a-f]{64}$/.test(String(e.id)) && eventId(e) === e.id) had = FEEDBACK.report(e.id); } catch { had = null; }
+          const firstAnswer = (x) => ({ ok: true, id: x.id, kept: false, number: x.number ?? null, label: x.label || null });
+          if (had && !UNPOSTED.has(had.id)) return send(200, firstAnswer(had));
+          if (had) {
+            UNPOSTED.delete(had.id);   // one try at a time; put back if it fails again
+            const d1 = feedbackDecide({ ...b, ip, signed: true }, []);
+            if (!d1.ok) { UNPOSTED.add(had.id); return send(200, d1); }
+            try {
+              const token = readFileSync(env.FAUCET_CHAT_TOKEN_FILE, 'utf8').trim();
+              const r = await fetch(`${env.FAUCET_CHAT_URL}/api/channels/${env.FAUCET_CHAT_CHANNEL}/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ text: (had.label ? `${had.label} · ` : '') + d1.text }), signal: AbortSignal.timeout(10000) });
+              if (!r.ok) throw new Error('chat');
+            } catch { UNPOSTED.add(had.id); return send(502, { ok: false, why: 'the report could not be kept just now' }); }
+            return send(200, firstAnswer(had));
+          }
           const pre = feedbackDecide({ ...b, ip, signed: true }, REPORTS);
           if (!pre.ok) return send(200, pre);
           // DECIDED AND COUNTED AT ONCE (kanban #2158, #2226): a signed report's slot is taken here, before its first await (the address checks),
@@ -893,11 +916,13 @@ createServer((req, res) => {
           { const pays = reportAddress(e); if (pays && pays !== String(words.lnAddress || '')) { const w = await lnAddressWorks(pays); if (!w.ok) { giveBack(); return send(200, { ok: false, why: `That Lightning address does not work: ${w.why}. Check it, or leave it empty.` }); } } }
           kept = FEEDBACK.take(e, { hasShot: (h) => !!shotFile(h) });
           if (!kept.ok) { giveBack(); return send(200, kept); }
+          // the same event kept meanwhile by a post running beside this one (kanban #2456, #2498): its first result, no slot, no chat post
+          if (!kept.kept) { giveBack(); return send(200, { ok: true, id: kept.id, kept: false, number: kept.number ?? null, label: kept.label || null }); }
           // COUNTED WHEN KEPT (audit 6, kanban #1424): it was counted only after the chat post went out - with the chat down every signed report was
-          // kept and none counted, so the limits never tripped. A kept one stays counted whatever comes after (its slot is no longer given back);
-          // a replayed one (kept: false) holds its slot as #1808 says, given back if it is not posted
+          // kept and none counted, so the limits never tripped. A kept one stays counted whatever comes after (its slot is no longer given back)
           counted = true;
-          if (kept.kept) slot = null;
+          slot = null;
+          UNPOSTED.add(kept.id);   // until the chat post below comes back (kanban #2456)
         }
         // DECIDED AND COUNTED AT ONCE (kanban #2158, #2226): the report was put into REPORTS only after the address check and the chat post came back,
         // so a burst of requests sent together all decided against the same count - one /64 got 1522 reports (and chat posts) past its 50, and the
@@ -918,6 +943,7 @@ createServer((req, res) => {
         posted = true;
         const r = await fetch(`${env.FAUCET_CHAT_URL}/api/channels/${env.FAUCET_CHAT_CHANNEL}/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` }, body: JSON.stringify({ text: (kept && kept.label ? `${kept.label} · ` : '') + d.text }), signal: AbortSignal.timeout(10000) });
         if (!r.ok) { giveBack(); return send(502, { ok: false, why: 'the report could not be kept just now' }); }
+        if (kept) UNPOSTED.delete(kept.id);
         if (d.player) appendFileSync(FOUNDING_FILE, `${JSON.stringify({ player: d.player, atMs: Date.now() })}\n`);
         send(200, { ok: true, ...(kept ? { id: kept.id, kept: kept.kept, number: kept.number ?? null, label: kept.label || null } : {}) });   // its number (kanban #1413)
       } catch (e) {
