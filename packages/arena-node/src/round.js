@@ -4089,9 +4089,14 @@ export class Round {
   }
 
   /** A transcript kept as a relay, under the hash its bytes have (checked by the door). */
-  relayPut(hashBytes, bytes) {
-    return this.db.prepare('INSERT OR IGNORE INTO relayed (hash, bytes, seen_ms) VALUES (?, ?, ?)')
-      .run(hashBytes, bytes, this.now()).changes;
+  relayPut(hashBytes, bytes, capped = false) {
+    return this.db.prepare('INSERT OR IGNORE INTO relayed (hash, bytes, seen_ms, capped) VALUES (?, ?, ?, ?)')
+      .run(hashBytes, bytes, this.now(), capped ? 1 : 0).changes;
+  }
+
+  /** The bytes kept in the capped pool: transcripts the committee does not agree on (kanban #2388). */
+  relayedCappedBytes() {
+    return Number(this.db.prepare('SELECT COALESCE(SUM(LENGTH(bytes)), 0) AS n FROM relayed WHERE capped = 1').get().n);
   }
 
   /**
