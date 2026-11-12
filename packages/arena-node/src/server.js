@@ -356,9 +356,19 @@ export const GHOST_BACKLOG_BYTES = 262144;
  *    lock was on the federation before any reveal was served (the 500 ms between the two: seats' clocks that disagree a little). A lock
  *    found later keeps the answer time, as before #1805 (df616e824), and seats nobody.
  * Live an honest lock handed at the handout lead (2 s before the close) is answered 0.2-0.7 s after it.
+ * NOT WHEN THE SEAT ANSWERED, BUT WHAT IT HELD THEN (kanban #1846, #1847, #1551 refute 0 s4): the hold is only an honest seat's, and the honest page
+ * posts its reveal to every committee seat at the close, so one colluding seat had the move at close + 0 and a lock submitted then came back well
+ * within 1250 ms; and an honest lock answered 1.3 s after the close (a busy read lane, #605) seated nobody. Now a door time is dropped when the
+ * federation's answer comes back once the seat holds another entry's reveal of the round - the honest reveal reaches the honest seats when it
+ * reaches the colluding one - or after the close + H2H_REVEAL_HOLD_MS, when the seat would serve the moves itself; a slow answer before any move
+ * arrived keeps it. A door that drops it answers 409 (the lock is held, but seats no one), so the page knows.
  */
 export const H2H_REVEAL_HOLD_MS = 1750;
-export const H2H_DOOR_TIME_KEPT_MS = 1250;
+export const H2H_DOOR_TIME_KEPT_MS = H2H_REVEAL_HOLD_MS;   // kanban #1846: was 1250, which unseated honest slow reads (#1847)
+
+// THE DOOR'S ANSWER WHEN A HEAD-TO-HEAD LOCK'S DOOR TIME IS DROPPED (kanban #1847): held, written with the answer time, after the close - it seats no one
+const DOOR_TIME_DROPPED = (kind) => `${kind} lock held, but it seats no one: the federation answered only after the round's entry close, once a move `
+  + `of the round had reached this seat (or past the close + ${H2H_REVEAL_HOLD_MS} ms), so it cannot count as on the federation before the move was known (kanban #1846)`;
 
 export const NOTHING_IS_FUNDED = () => false;
 
@@ -9552,6 +9562,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = await takeStakeLock(eid, fields, timing, doorMs);
         lockTimed(got.ok ? 'verified' : got.why.slice(0, 60));
         if (!got.ok) return text(res, 409, got.why);
+        if (got.doorTimeDropped) return text(res, 409, DOOR_TIME_DROPPED('stake'));   // kanban #1847
         if (relayedRound(decodeEntryContract(stored).roundId)) entryRelay.lockTaken(decodeEntryContract(stored).roundId, toHex(eid));   // every round's (kanban #1216)
         // AN ORDER (comment 1127): tradable here once both its locks are verified - and only before its market's entry close
         const lateOrder = orderLockAfterClose(stored);
@@ -9578,6 +9589,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = await takeFeeLock(eid, fields, doorMs);
         steps.at(got.ok ? 'verified' : 'refused');
         if (!got.ok) return text(res, 409, got.why);
+        if (got.doorTimeDropped) return text(res, 409, DOOR_TIME_DROPPED('fee'));   // kanban #1847
         const lateOrder = orderLockAfterClose(stored);
         if (decodeEntryContract(stored).limitPrice !== undefined && !lateOrder) orderBook.noteTradable(decodeEntryContract(stored).roundId);
         return text(res, 201, `fee lock verified: contract ${got.contractId} holds ${got.feeMsat} msat` + (lateOrder ? ` - ${lateOrder}` : ''));
