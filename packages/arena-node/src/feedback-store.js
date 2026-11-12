@@ -71,20 +71,34 @@ export const scrubKeys = (t) => {
 // anything else) and every tag value scrubbed but the hex ones the store reads (node, screenshot, round, p, e). Its id and sig stay for reference: the
 // signature was checked when the report came in, and the kept copy is not checked again.
 const HEX_TAGS = new Set(['node', 'screenshot', 'round', 'p', 'e']);
-const scrubDeep = (v, depth = 0) => (typeof v === 'string' ? scrubKeys(v) : depth > 8 || v === null || typeof v !== 'object' ? v
-  : Array.isArray(v) ? v.map((x) => scrubDeep(x, depth + 1)) : Object.fromEntries(Object.entries(v).map(([k, x]) => [k, scrubDeep(x, depth + 1)])));
+// ONLY THE SIGNED FIELDS, ONLY THE KNOWN TAGS (kanban #2003, #2016, #2050; refute of #1472): a field beside the NIP-01 ones ({ ...e } kept it, the id
+// covers none of it) and a tag of another name (its name was kept raw) are dropped; every object key is scrubbed as its value is, and a value nested
+// deeper than the walk goes is kept as its scrubbed JSON text, never raw. Last, the kept bytes are searched once more as a whole (a seed spread over
+// several strings or tags): one still found there keeps the event without its content and with only the tag values the store reads.
+const KEPT_TAGS = new Set(['t', 'game', 'round', 'build', 'source', 'node', 'screenshot', 'p', 'e']);
+const DEEP_MOST = 32;
+const scrubDeep = (v, depth = 0) => (typeof v === 'string' ? scrubKeys(v) : v === null || typeof v !== 'object' ? v
+  : depth > DEEP_MOST ? scrubKeys(JSON.stringify(v))
+  : Array.isArray(v) ? v.map((x) => scrubDeep(x, depth + 1)) : Object.fromEntries(Object.entries(v).map(([k, x]) => [scrubKeys(k), scrubDeep(x, depth + 1)])));
+const hexTagValue = (t, x, i) => i === 1 && HEX_TAGS.has(t[0]) && typeof x === 'string' && /^[0-9a-f]{8,64}$/.test(x);
+const STRICT_TAG = { t: /^(bug|improvement)$/, source: /^(frontend|node)$/, game: /^[a-z0-9-]{1,48}$/, build: /^[0-9a-zA-Z. -]{1,24}$/ };
 export function keptEvent(e) {
   let content;
   try { content = JSON.stringify(scrubDeep(JSON.parse(e.content))); } catch { content = scrubKeys(String(e.content ?? '')); }
-  const tags = Array.isArray(e.tags) ? e.tags.map((t) => (Array.isArray(t) ? t.map((x, i) => (i === 0 || typeof x !== 'string' || (i === 1 && HEX_TAGS.has(t[0]) && /^[0-9a-f]{8,64}$/.test(x)) ? x : scrubKeys(x))) : t)) : e.tags;
-  return { ...e, tags, content };
+  const tags = (Array.isArray(e.tags) ? e.tags : []).filter((t) => Array.isArray(t) && KEPT_TAGS.has(t[0]))
+    .map((t) => t.map((x, i) => (i === 0 || typeof x !== 'string' || hexTagValue(t, x, i) ? x : scrubKeys(x))));
+  const kept = { id: e.id, pubkey: e.pubkey, created_at: e.created_at, kind: e.kind, tags, content, sig: e.sig };
+  if (!seedRunSpans(JSON.stringify([kept.tags, kept.content])).length) return kept;
+  const plain = tags.filter((t) => hexTagValue(t, t[1], 1) || (STRICT_TAG[t[0]] && typeof t[1] === 'string' && STRICT_TAG[t[0]].test(t[1]))).map((t) => [t[0], t[1]]);
+  return { ...kept, tags: plain, content: JSON.stringify({ removed: 'a seed phrase was found in this report: its content is not kept' }) };
 }
 const tag = (e, k) => { const t = e.tags.find((x) => x[0] === k); return t ? String(t[1] ?? '') : ''; };
 const said = (x, re) => (re.test(String(x || '')) ? String(x) : '');
 
 export function openFeedbackStore(path = ':memory:') {
   const db = new DatabaseSync(path);
-  db.exec(`PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;
+  // FREED BYTES ARE ZEROED (kanban #2003, #2016, #2050): a row rewritten without a seed must not leave the seed in the file's free space
+  db.exec(`PRAGMA secure_delete = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;
     CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY, pubkey TEXT NOT NULL, type TEXT NOT NULL, signed_at INTEGER NOT NULL, received_ms INTEGER NOT NULL,
       happened TEXT NOT NULL, expected TEXT NOT NULL, game TEXT, round TEXT, build TEXT, event TEXT NOT NULL,
       state TEXT NOT NULL DEFAULT 'new', reason TEXT, duplicate_of TEXT, severity TEXT, amount_sats INTEGER, ticket TEXT, changed_ms INTEGER);
@@ -105,11 +119,20 @@ export function openFeedbackStore(path = ':memory:') {
       const set = db.prepare('UPDATE reports SET number = ? WHERE id = ?'); for (const r of unnumbered) set.run(++n, r.id); } }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS reports_by_number ON reports (number)');
   // A FILE FROM BEFORE (kanban #1737, #1799, #1843, #1858): its kept events held the raw content - each is scrubbed in place once, as take() keeps one now
-  { const fix = db.prepare('UPDATE reports SET event = ? WHERE id = ?');
-    for (const r of db.prepare('SELECT id, event FROM reports').all()) {
-      let kept; try { kept = JSON.stringify(keptEvent(JSON.parse(r.event))); } catch { continue; }
-      if (kept !== r.event) fix.run(kept, r.id);
-    } }
+  // (kanban #2003, #2016, #2050) and so are its words: happened, expected and a rejection's reason under the rule of today, not the one they were
+  // kept under. A pass that changed a row then checkpoints the WAL away and VACUUMs, so no old page or frame keeps the raw text on disk.
+  { let changed = 0;
+    const fix = db.prepare('UPDATE reports SET event = ?, happened = ?, expected = ?, reason = ? WHERE id = ?');
+    for (const r of db.prepare('SELECT id, event, happened, expected, reason FROM reports').all()) {
+      let kept = r.event; try { kept = JSON.stringify(keptEvent(JSON.parse(r.event))); } catch { kept = JSON.stringify(keptEvent({ content: scrubKeys(String(r.event)) })); }
+      const happened = scrubKeys(r.happened); const expected = scrubKeys(r.expected); const reason = r.reason === null ? null : scrubKeys(r.reason);
+      if (kept !== r.event || happened !== r.happened || expected !== r.expected || reason !== r.reason) { fix.run(kept, happened, expected, reason, r.id); changed++; }
+    }
+    const fixMove = db.prepare('UPDATE report_moves SET note = ? WHERE rowid = ?');
+    for (const m of db.prepare('SELECT rowid AS k, note FROM report_moves WHERE note IS NOT NULL').all()) {
+      const note = scrubKeys(m.note); if (note !== m.note) { fixMove.run(note, m.k); changed++; }
+    }
+    if (changed) db.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);'); }
   const get = db.prepare('SELECT * FROM reports WHERE id = ?');
   const row = (r) => (r ? { id: r.id, pubkey: r.pubkey, type: r.type, signedAt: r.signed_at, receivedMs: r.received_ms, happened: r.happened, expected: r.expected,
     game: r.game || null, round: r.round || null, build: r.build || null, state: r.state, reason: r.reason || null, duplicateOf: r.duplicate_of || null,
