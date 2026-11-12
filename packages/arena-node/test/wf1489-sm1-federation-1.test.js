@@ -11,7 +11,7 @@ import { DatabaseSync } from 'node:sqlite';
 import * as ex from '../src/ecash-exchange.js';
 
 const A = 'aa'.repeat(32), B = 'bb'.repeat(32);
-const NOTES = 'fedimintA'.padEnd(40, 'x');
+const NOTES = 'fedimintA'.padEnd(40, 'a')  // kanban #2384, #2436: notes that decode;
 
 test('wf1489-sm1-federation-1: a reissue asked before the halt is finished after it, never kept unpaid', async () => {
   const db = new DatabaseSync(':memory:');
@@ -59,6 +59,6 @@ test('wf1489-sm1-federation-1 (kanban #1579): an asked reissue that never reache
   const after = db.prepare('SELECT state FROM ecash_exchanges').get();
   assert.deepEqual([again.ok, again.status, after.state, String(500_000n - holdsB)], [false, 409, 'refused', '0']);
   // a new exchange out of the halted federation is still refused before anything is asked
-  const fresh = await x.exchange({ from: A, to: B, ecash: 'fedimintC'.padEnd(40, 'y'), amountMsat: '100000' });
+  const fresh = await x.exchange({ from: A, to: B, ecash: 'fedimintC'.padEnd(40, 'b'), amountMsat: '100000' });
   assert.deepEqual([fresh.status, receives], [409, 1]);
 });
