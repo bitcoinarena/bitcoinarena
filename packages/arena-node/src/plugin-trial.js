@@ -22,7 +22,7 @@ export function trialRun(source, manifest, { ms = TRIAL_MS } = {}) {
   const until = Date.now() + ms;
   const left = () => until - Date.now();
   let box;
-  try { box = loadCore({ files: new Map([['core.mjs', String(source)]]), entry: 'core.mjs' }, { name: 'plugin trial', loadMs: ms, askMs: ms, liveCap: ARRAY_BUDGET }); }   // kanban #1538: kept arrays refused at the budget
+  try { box = loadCore({ files: new Map([['core.mjs', String(source)]]), entry: 'core.mjs' }, { name: 'plugin trial', loadMs: ms, askMs: ms, liveCap: ARRAY_BUDGET, oneThread: true }); }   // kanban #1538: kept arrays refused at the budget; #1792: every call on ONE thread, so what the adapter keeps across calls is seen (counted exactly, after a GC)
   catch (e) { return { ok: false, cases: 0, why: `it does not load in the sandbox: ${e.message}` }; }
   try { return trialCases(box, manifest, left); } finally { box.end(); }
 }

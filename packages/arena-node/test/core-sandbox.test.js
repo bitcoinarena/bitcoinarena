@@ -18,11 +18,11 @@ import { replay } from '../src/replay.js';
 const DIR = mkdtempSync(join(tmpdir(), 'hostile-core-'));
 let n = 0;
 /** A one-file core: `top` at its top level, `step` inside its step (st, w in scope), `head` its imports. */
-function core({ head = '', top = '', step = '', start = '' }) {
+function core({ head = '', top = '', step = '', start = '', extra = '' }) {
   const src = `${head}
 ${top}
 export const CORE = Object.freeze({
-  name: 'hostile', RUN_TICKS: 10, INPUT_WORDS: 5,
+  name: 'hostile', RUN_TICKS: 10, INPUT_WORDS: 5, ${extra}
   start: (seed) => { const st = { seed, t: 0, note: '' }; ${start}; return st; },
   eventsOf: () => ({ count: { liquidations: 0, loads: 0, samples: 0, tapes: 0 }, before() {} }),
   step(st, w) { ${step}; st.t++; },
@@ -117,13 +117,17 @@ test('every run-time attack throws inside the sandbox: the replay is not ok, wit
 });
 
 test('a dynamic import() gets no module: the core cannot even learn one exists', async () => {
-  const c = core({ step: "import('node:net').then(() => { globalThis.got = 'net'; }, (e) => { globalThis.got = 'refused: ' + e.code; })", start: "st.note = String(globalThis.got)" });
+  const c = core({ step: "import('node:net').then(() => { globalThis.got = 'net'; }, (e) => { globalThis.got = 'refused: ' + e.code; })", start: "st.note = String(globalThis.got)",
+    extra: 'picture: (st) => ({ note: st.note }),' });
   assert.equal(run(c).ok, true);
-  // the second run reads what the first one's import() came to
+  // the warm ghost's thread keeps its core between calls (a replay runs on a thread of its own, kanban #1831): a second run
+  // opened there reads what the first one's import() came to
   const s = sandboxFor(c);
-  const out = s.call('replay', { seedWord: 1, config: {}, runTicks: 10, start: 0, words: [[0, 0, 0, 0, 0]], events: {}, marks: [], pictures: [] });
-  assert.match(out.stateHash, /refused: ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING/);
-  rows.push(['network', 'a dynamic import()', 'rejected in the sandbox', out.stateHash.replace(/^h:\d+:\d+:/, '')]);
+  const first = s.call('open', { seedWord: 1, config: {}, runTicks: 10 });
+  s.call('stepTo', { id: first, events: {}, from: 0, words: [[0, 0, 0, 0, 0]] });
+  const out = s.call('pose', { id: s.call('open', { seedWord: 1, config: {}, runTicks: 10 }) });
+  assert.match(out.note, /refused: ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING/);
+  rows.push(['network', 'a dynamic import()', 'rejected in the sandbox', out.note]);
   await stillAnswering();
 });
 
