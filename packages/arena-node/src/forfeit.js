@@ -134,6 +134,8 @@ const refuse = (why, status = 409) => ({ ok: false, status, why });
 // A PAIR PER ASK (kanban #1521): a commitment names the pair it was drawn with; at most this many are kept per forfeit
 const commitmentKey = (c) => `${toHex(c.hiding)}:${toHex(c.binding)}`;
 const PAIRS_PER_FORFEIT = 256;
+// HOW LONG A PAIR HANDED OUT IS KEPT AT LEAST (kanban #1611): the asker's two rounds, and never less than this - a seat busy with a flood answers late
+const PAIR_HOLD_MIN_MS = 60000;
 
 /**
  * WHAT THIS SEAT COMMITTED A LOCK TO, ONE ENUM AND ONE TRANSITION FUNCTION (kanban #1184, the 2026-11-06 state-machine audit). A lock has two ways
@@ -492,29 +494,42 @@ export class Forfeit {
    * anyone, and one pair handed to every asker let a stranger ask for it and at once spend it on a list of made-up commitments, so the honest
    * asker's list was refused ("keeps no second pair") at every seat he reached first and the forfeit never formed. Now each ask draws its own pair,
    * kept by its commitment, and a share request spends only the pair its own list carries: a stranger spends the pair he was given and no other.
-   * At most PAIRS_PER_FORFEIT are kept per forfeit, the oldest dropped first (a dropped pair signs nothing; its asker asks again).
+   * At most PAIRS_PER_FORFEIT are kept per forfeit.
+   * A PAIR HANDED OUT RECENTLY IS NEVER DROPPED FOR A NEWER ONE (kanban #1611): the oldest went first past the cap, so a stranger at the open door who
+   * sent 256 commits between an asker's commit and its share request dropped the asker's pair - its share and every peer's was refused ("that list does
+   * not carry this signer node's own commitment") and the forfeit (a qualifier's stake, an ENTRY_VOID refund, a cancelled order's locks) never formed
+   * while he went on. Now only a pair older than the asker's two rounds (commit and share, each within its bound; at least PAIR_HOLD_MIN_MS) is dropped; with the cap full of
+   * younger ones a door commit is refused, and the pairs already handed out still sign. This seat's own pass (`own`, never from the door) is not refused.
    */
-  async commit(roundIdBytes, entryIdBytes, kind = 'stake') {
+  async commit(roundIdBytes, entryIdBytes, kind = 'stake', { own = false } = {}) {
     const m = await this.message(roundIdBytes, entryIdBytes, kind);
     if (!m.ok) return m;
     const key = toHex(m.message);
     // A FRESH PAIR FOR EVERY ASK (kanban #1521), a FROST pair or (protocol 27) a MuSig2 one alike, kept by its commitment
     let held = this.pairs.get(key);
     if (!(held instanceof Map)) { held = new Map(); this.pairs.set(key, held); }
+    const now = this.round.now ? this.round.now() : Date.now();
+    const holdMs = Math.max(2 * (this.peerAskMs + this.peerGraceMs), PAIR_HOLD_MIN_MS);
+    while (held.size >= PAIRS_PER_FORFEIT) {
+      const [oldest, p] = held.entries().next().value;
+      if (now - Number(p.at ?? 0) <= holdMs) break;
+      held.delete(oldest);
+    }
+    if (held.size >= PAIRS_PER_FORFEIT && !own)
+      return refuse(`this signer node holds ${held.size} commitments to that forfeit handed out in the last ${Math.round(holdMs / 1000)} s: ask again later`, 503);
     let pair;
     if (m.named) {
       const sk = signingSecret(this.round.identity.secret);
       const n = nonceGen({ sk, pk: evenYKey(m.claimKeys[m.me]), rand: this.random(32) });
-      pair = { named: true, secnonce: n.secnonce, list: null, share: null,
+      pair = { named: true, secnonce: n.secnonce, list: null, share: null, at: now,
         commitment: { id: m.me + 1, hiding: n.pubnonce.slice(0, 33), binding: n.pubnonce.slice(33) } };
     } else {
       const hiding = nonceGenerate340(this.random(32), m.signerNode.share);
       const binding = nonceGenerate340(this.random(32), m.signerNode.share);
-      pair = { hiding, binding, list: null, share: null,
+      pair = { hiding, binding, list: null, share: null, at: now,
         commitment: { id: m.signerNode.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) } };
     }
     held.set(commitmentKey(pair.commitment), pair);
-    while (held.size > PAIRS_PER_FORFEIT) held.delete(held.keys().next().value);
     return { ok: true, commitment: pair.commitment };
   }
 
@@ -608,7 +623,7 @@ export class Forfeit {
     const q = `round=${toHex(roundIdBytes)}&entry=${toHex(entryIdBytes)}${kind === 'fee' ? '&lock=fee' : ''}`;
     let signature, named = null;
     for (;;) {
-      const own = await this.commit(roundIdBytes, entryIdBytes, kind);
+      const own = await this.commit(roundIdBytes, entryIdBytes, kind, { own: true });   // this seat's own pass is never refused at the cap (kanban #1611)
       if (!own.ok) return own;
       // EVERY PEER AT ONCE, WITHIN A BOUND (kanban #1074 as #1061): the list needs the threshold, so a hung seat costs the grace, not the forfeit
       const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
