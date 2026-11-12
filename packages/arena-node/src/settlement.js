@@ -247,11 +247,17 @@ export class LockSettlement {
       if (this.round.stakeSeen && !this.round.stakeSeen(entryId)) continue;
       const base = { entryId, pubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat,
         feePreimage: entry.feePreimage, ...(entry.frontendPk ? { frontendPk: entry.frontendPk } : {}) };   // the website that brought it (item 7)
-      if (this.round.entryVoid && this.round.entryVoid(entryId)) { entries.push({ ...base, outcome: ENTRY_VOID, score: 0 }); continue; }
       const nq = this.round.noQuorum ? this.round.noQuorum(entryId) : null;
       // §13C's FORFEIT is proven equivocation (§13B): claimed like a walk-away's when nobody qualifies ((b))
       const proven = () => typeof this.round.provenEquivocation === 'function' && this.round.provenEquivocation(roundIdBytes, entryId);
-      if (nq && nq.outcome === FORFEIT) { entries.push({ ...base, outcome: FORFEIT, score: 0, ...(proven() ? { atTheDoor: true } : {}) }); continue; }
+      // AN OUTAGE VOID LATER DECIDED FORFEIT ON TWO FIRST MARKS (kanban #2318, ruled 2026-09-12): the Void stays as
+      // history and the entry is FORFEIT - read in the forfeit door's order (forfeit.js: two first marks or the stored
+      // no-quorum FORFEIT before the Void), so this seat lists it as a seat without the Void does, and its lock is
+      // claimed like a walk-away's (ruling 2026-10-04 (b)), never left to return to the equivocator at expiry.
+      const voided = !!(this.round.entryVoid && this.round.entryVoid(entryId));
+      const twoFirst = voided && typeof this.round.twoFirstMarks === 'function' && !!this.round.twoFirstMarks(roundIdBytes, entryId);
+      if ((nq && nq.outcome === FORFEIT) || twoFirst) { entries.push({ ...base, outcome: FORFEIT, score: 0, ...(proven() ? { atTheDoor: true } : {}) }); continue; }
+      if (voided) { entries.push({ ...base, outcome: ENTRY_VOID, score: 0 }); continue; }
       if (nq && nq.outcome === VOID) { entries.push({ ...base, outcome: VOID, score: 0 }); continue; }
       const standing = this.finalityOf(this.round, roundIdBytes, entryId);
       if (standing.state === VOID) { entries.push({ ...base, outcome: VOID, score: 0 }); continue; }

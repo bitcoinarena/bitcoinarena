@@ -1942,3 +1942,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 #### Entry finality x objection intake: no §13C outcome while an in-time objection is checked (kanban #2272)
 - While an objection that reached this seat before final_after is still being checked (a `pending_objections` row with `arrived_ms < final_after`, younger than `PENDING_OBJECTION_MS` or with a check still queued or running in `objectionChecks`), `computeFinality` writes no no-quorum record in its no-objection branch (the late transcript posting's VOID, the not-FINAL-by-the-re-run-window VOID/FORFEIT): the entry reads SUSPENDED with `pendingObjection` until the check answered. Taken, the re-run decides it; refused, the branch decides as before.
 - An objection's intake never takes an objection as in time over a no-quorum record this seat already holds for the entry: like one over a kept FINAL, it is stored dated at final_after (late, evidence) and the §13C outcome stands. So `noQuorum(entry)` and a SUSPENDED entry from an in-time objection never stand side by side.
+- **Entry: outage Void, then two first marks (kanban #2318).** An entry this seat holds ENTRY_VOID (§16) and later decided
+  FORFEIT on two first marks (no_quorum FORFEIT, or the pair held) is FORFEIT everywhere it is read: the forfeit door
+  (forfeit.js), the settlement's `entriesOnRecord` (settlement.js, `atTheDoor` when the equivocation is proven) and the
+  standing (standing.js). The Void stays as history; ENTRY_VOID is read only when no such record or pair is held. So a seat
+  with the Void and a seat without it list the same entry the same way, and the equivocator's lock is claimed like a
+  walk-away's (ruling 2026-10-04 (b)), never left to return to him at expiry.
