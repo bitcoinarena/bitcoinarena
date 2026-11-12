@@ -36,6 +36,8 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
  * `minDecideDepthFor(net)` -> the depth its seats decide at (none given: the schedule's, ballot.js minDecideDepthOf).
  * `censusAt(networkIdHex, height)` -> [{ pubkey }] or
  * null: the bonds active at that height (the tally's census, ballot-tally.js); given, a proposer outside it is refused (kanban #1489).
+ * `tipHeight()` -> this seat's tip (or set later by the tally, `useTip`); given, a proposal first posted once its voting has begun is
+ * refused (kanban #1608).
  */
 export const PROPOSAL_STATE = Object.freeze({ COUNTING: 'COUNTING', PASSED: 'PASSED', FAILED: 'FAILED', ORPHANED: 'ORPHANED' });
 const S = PROPOSAL_STATE;
@@ -46,7 +48,8 @@ const MOVES = Object.freeze({ [S.COUNTING]: [S.PASSED, S.FAILED, S.ORPHANED], [S
 export const stateOf = (r) => (r && S[r.state] ? r.state : r && r.orphaned ? S.ORPHANED : r && r.decided ? (r.decided.passed ? S.PASSED : S.FAILED) : S.COUNTING);
 
 export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsFor, verify, store, schedule = SCHEDULES.mainnet, scheduleFor = null,
-  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, exampleCheck = null, depthHeightFor = null, minDecideDepthFor = null, censusAt = null }) {
+  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, exampleCheck = null, depthHeightFor = null, minDecideDepthFor = null, censusAt = null, tipHeight = null }) {
+  let tipOf = typeof tipHeight === 'function' ? tipHeight : null;
   const held = new Map((store && store.read ? store.read() || [] : []).map((x) => [x.id, { ...x, state: stateOf(x) }]));
   /** WRITTEN FIRST: the store takes `next` (or throws), and only then this seat's memory. */
   const commit = (next) => {
@@ -66,14 +69,17 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       if (!outcome || outcome.passed !== (to === S.PASSED)) return false;
       next = { ...had, state: to, decided: outcome };
     } else if (to === S.ORPHANED) {
-      const { decided, ...rest } = had;
-      next = { ...rest, state: S.ORPHANED, orphaned: { at, why, was: from, ...(decided ? { outcome: decided } : {}) } };
+      // kanban #1635: an outcome a recount held in force (undecided.outcome) is not carried on - an orphan is counted for nothing
+      const { decided, undecided, ...rest } = had;
+      const u = undecided ? (({ outcome: _o, ...x }) => x)(undecided) : null;
+      next = { ...rest, ...(u ? { undecided: u } : {}), state: S.ORPHANED, orphaned: { at, why, was: from, ...(decided ? { outcome: decided } : {}) } };
     } else if (from === S.ORPHANED) {
       const { orphaned, ...rest } = record ? { ...record, orphaned: had.orphaned } : had;
       next = { ...rest, state: S.COUNTING, restored: { at, why, was: orphaned ? orphaned.was : null } };
     } else {
       const { decided, ...rest } = had;
-      next = { ...rest, state: S.COUNTING, undecided: { at: decided ? decided.decidedAt : null, was: from, why } };
+      // kanban #1635: the replaced outcome is kept with the record, so ballot-tally.js holds it in force through a restart mid-recount
+      next = { ...rest, state: S.COUNTING, undecided: { at: decided ? decided.decidedAt : null, was: from, why, ...(decided ? { outcome: decided } : {}) } };
     }
     try { commit(next); } catch { return false; }
     return true;
@@ -117,6 +123,18 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         // activation fewer than the network's decide depth after the last voting block refused here, so it is never counted
         ...(depthHeightFor ? { depthHeight: depthHeightFor(net) } : {}), ...(minDecideDepthFor ? { minDecideDepth: minDecideDepthFor(net) } : {}) });
       if (!stands.ok) return { ok: false, status: 422, why: stands.why };
+      // SEEN BEFORE ITS VOTING (kanban #1608): the deposit commits to nothing of the proposal and a vote names only
+      // proposal_id[0:8], so a proposer could confirm a deposit, vote YES alone, and post the proposal only after its voting phase
+      // and activation - counted on his own vote, and live retroactively under rounds this seat served. Taken only while this
+      // seat's tip is below its first voting block (a review-0 repeal, whose voting starts at its own block: at that block).
+      // Mainnet's review is 1008 blocks, time enough for every seat to hear of it (POST or the peer pull). A tip not read is a 503.
+      if (tipOf) {
+        let tip = NaN;
+        try { tip = Number(await tipOf()); } catch { tip = NaN; }
+        if (!Number.isFinite(tip)) return { ok: false, status: 503, why: 'this seat could not read its tip: ask again shortly' };
+        if (tip >= Math.max(stands.votingFrom, dep.publishedAt + 1))
+          return { ok: false, status: 422, why: `its voting began at ${stands.votingFrom} and this seat's tip is ${tip}: a proposal must be posted before its voting phase` };
+      }
       // THE PROPOSER IS A BONDED NODE (27A.7.2 "node pubkey with an active bond", kanban #1489): its key is in the census at the
       // publication height - the census the tally counts with. A fresh key with a 1-sat deposit took the ballot before; now refused
       // at the door. A census not readable yet is a 503 (ask again), never a guess.
@@ -157,7 +175,53 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       return { ok: true, status: 201, ...kept };
     },
     list: () => [...held.values()].sort((a, b) => b.publishedAt - a.publishedAt),
+    /** THE TIP add() reads (kanban #1608), handed by the tally when none was given here. */
+    useTip(fn) { if (!tipOf && typeof fn === 'function') tipOf = fn; },
     transition,
+    /**
+     * ITS SCHEDULE READ AGAIN (kanban #1631): whether a proposal is a repeal, and so its voting window (27A.7.6), is a function of
+     * the history live at its publication height - not of what this seat had decided when the proposal reached it. A seat that
+     * took a repeal before it heard of the proposal it repeals (posted to one seat, pulled 10 min later) read it against the
+     * genesis alone and kept the ordinary schedule for good, so two seats counted different blocks and went live on different
+     * configs. The tally (ballot-tally.js) asks this for every kept proposal on every pass, before it counts: 'pending' while
+     * that history is not known here (a proposal activating by then is undecided: nothing of this one is counted or moved),
+     * 'same', or 'moved' - the record's repeal / votingFrom / votingUntil rewritten from the history now (written FIRST, a
+     * failed write moves nothing), a decided one back to COUNTING to be counted on its window, and one that no longer stands
+     * on its face under that schedule (activation before the end of its cooldown) FAILED as void, held to its publication block.
+     */
+    reschedule(id, { at = null } = {}) {
+      const had = held.get(id);
+      const st = stateOf(had);
+      if (!had || st === S.ORPHANED || !historyFor) return 'same';
+      let p; try { const b = fromHex(String(had.proposal)); p = { ...decodeConfigProposalBody(b.subarray(0, b.length - 64)), signature: b.slice(b.length - 64) }; } catch { return 'same'; }
+      const net = had.networkId;
+      const history = historyFor(net, had.publishedAt, p.class);
+      if (!history) return 'pending';
+      // 2.0 (kanban #1489 port of #1631): the schedule is read by proposalStands itself, as add() reads it - host removals, the #1196
+      // depth rule and its repeal cooldown included. Signature and deposit were checked at intake and do not move with the history:
+      // `probe` (activation at the top, so it stands) gives the window, `face` whether its own activation still stands on it.
+      const opts = { publishedAt: had.publishedAt, depositSats: 0, lowestBondMinSats: 10n ** 30n, verify: () => true, history,
+        schedule: (scheduleFor && scheduleFor(net)) || schedule, repealSchedule: (repealScheduleFor && repealScheduleFor(net)) || repealSchedule,
+        ...(depthHeightFor ? { depthHeight: depthHeightFor(net) } : {}), ...(minDecideDepthFor ? { minDecideDepth: minDecideDepthFor(net) } : {}) };
+      const probe = proposalStands({ ...p, activationHeight: 0xffffffff }, opts);
+      if (!probe.ok) return 'same';
+      const face = proposalStands(p, opts);
+      const repeal = !!probe.repeal, votingFrom = probe.votingFrom, votingUntil = probe.votingUntil, stands = face.ok;
+      const isVoid = !!(had.decided && had.decided.void);
+      if (repeal === !!had.repeal && votingFrom === had.votingFrom && votingUntil === had.votingUntil && stands === !isVoid) return 'same';
+      // a record whose window did not move and that intake took is never voided here for another reason (only the schedule is re-read)
+      if (!stands && !isVoid && repeal === !!had.repeal && votingFrom === had.votingFrom && votingUntil === had.votingUntil) return 'same';
+      const { decided, undecided, ...rest } = had;
+      const rescheduled = { at, was: { state: st, repeal: !!had.repeal, votingFrom: had.votingFrom, votingUntil: had.votingUntil } };
+      const next = stands
+        ? { ...rest, repeal, votingFrom, votingUntil, state: S.COUNTING, rescheduled }
+        : { ...rest, repeal, votingFrom, votingUntil, state: S.FAILED, rescheduled, decided: { passed: false, decidedAt: at,
+          void: `${face.why} under the history live at ${had.publishedAt}`,
+          anchor: had.blockHash ? { height: had.publishedAt, hash: had.blockHash } : null } };
+      if (held.get(id) !== had) return 'same';                          // compare-and-set: moved meanwhile, asked again next pass
+      try { commit(next); } catch { return 'same'; }
+      return 'moved';
+    },
     /** THE OUTCOME, WRITTEN ONCE (ballot-tally.js): COUNTING -> PASSED | FAILED - not tallied again, across restarts too. */
     decide: (id, outcome) => transition(id, S.COUNTING, outcome && outcome.passed ? S.PASSED : S.FAILED, { outcome }),
     /** A REORG BELOW ITS DECISION - a hash that differs (ballot-tally.js): PASSED | FAILED -> COUNTING, counted again on the chain now. */

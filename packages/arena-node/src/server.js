@@ -2057,10 +2057,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // BEFORE A FEE DECISION, EVERY SEAT'S APPROVALS AND SIGNALS (ruled on #1245, kanban #1231): GET /funding-items of each network seat this seat reaches
     pull: async (pid) => {
       let seats = []; try { seats = networkSeats(); } catch { seats = []; }
-      const got = await Promise.all(seats.map(async (base) => { try { const r = await fetch(`${base}/funding-items?proposal=${pid}`, { signal: AbortSignal.timeout(8000) }); return r.ok ? ((await r.json()).items || []) : []; } catch { return []; } }));
-      // with when each seat first held it (kanban #1279): the earliest of the answers is the time an item counts from
+      const got = await Promise.all(seats.map(async (base) => { try { const r = await fetch(`${base}/funding-items?proposal=${pid}`, { signal: AbortSignal.timeout(8000) }); return r.ok ? ((await r.json()).items || []).map((x) => (x && typeof x === 'object' ? { ...x, seat: String(base) } : x)) : []; } catch { return []; } }));
+      // with when each seat first held it (kanban #1279) and WHICH seat says so (kanban #1607): one seat's claim alone never backdates a signal
       return got.flat().filter((x) => x && (x.kind === 'signal' || x.kind === 'fee-approval') && /^[0-9a-f]+$/i.test(String(x.hex || '')))
-        .map((x) => ({ kind: x.kind, hex: x.hex, ...(/^[0-9]{1,16}$/.test(String(x.atMs || '')) ? { atMs: Number(x.atMs) } : {}) })).slice(0, 4096);
+        .map((x) => ({ kind: x.kind, hex: x.hex, seat: x.seat, ...(/^[0-9]{1,16}$/.test(String(x.atMs || '')) ? { atMs: Number(x.atMs) } : {}) })).slice(0, 4096);
     },
     // THE PROTOCOL DEVELOPERS OF A NETWORK: the keys of the network's donation set in force at this seat's tip - their
     // majority answers a fee proposal that changes a donation; a set of LNURLs names no key, and none can approve
@@ -5928,6 +5928,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     } catch (e) { return `the federation could not be asked: ${e.message}`; }
     return null;
   };
+  const HANDOUTS_UNENTERED_MAX = Number(process.env.ARENA_HANDOUTS_UNENTERED_MAX || 256);   // kanban #1605
   // `lockMade`: the STAKE_LOCK_HEADER a client sent with the handout, or null.
   const takeHandout = async (bytes, { accepted = false, lockMade = null } = {}) => {
     let handout;
@@ -5970,6 +5971,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const mine = await openMyShare(handout, { pubkey: round.pubkey, secret: round.identity.secret, curve: feldmanGroup });
     if (!mine.ok) return { ok: false, status: 409, why: mine.why };
     const id = handoutId(handout);
+    // A ROUND KEEPS A BOUNDED NUMBER OF HANDOUTS NO ENTRY NAMES (kanban #1605): a handout needs no entry, no lock and no known key, so a
+    // stranger dealing fresh player keys stored 320 of 320 for one round (the disk, and every POST /refused-lock decodes them all). Past
+    // HANDOUTS_UNENTERED_MAX handouts beyond the round's entries a new one is refused; one already kept, and a certified batch's
+    // order (accepted), still go through
+    if (!accepted && !round.handout(id) && round.handoutCount(handout.roundId) - round.entriesOf(handout.roundId).length >= HANDOUTS_UNENTERED_MAX)
+      return { ok: false, status: 429, why: `handout refused: this round already holds ${HANDOUTS_UNENTERED_MAX} handouts that no entry names - nothing is locked, try the next round` };
     round.rememberHandout({ id, roundId: handout.roundId, bytes: encodeHandout(handout) });
     return { ok: true, id, signerNode: mine.signerNode };
   };
@@ -11165,9 +11172,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           let good = false;
           try { good = !!(key && sig) && schnorr.verify(sig, presenceId({ roundId: new Uint8Array(id), identityKey: key }), key); } catch { good = false; }
           if (!good) return text(res, 403, 'that presence is not signed by its key over this round');
-          if (!tables.has(ridHex) && tables.size >= 256) return text(res, 503, 'this node keeps no more tables just now');
+          // A FULL TABLE MAKES ROOM, IT DOES NOT REFUSE (kanban #1645, audit WF1489 R4 H2H-2): keys cost nothing, so a stranger who knew the
+          // public round id said 32 throwaway presences every 2 s and the round's real players were refused 503 "that table is full" at every
+          // seat - each tab read "You are alone in this round" again; one presence on 256 old rounds refused every new table the same way.
+          // Now a full table drops the presence said longest ago, never one whose identity a name record of the round names while an
+          // unnamed one is there (a named identity is refused only when all 32 are named), and a full map drops the table said to longest ago.
+          if (!tables.has(ridHex) && tables.size >= 256) {
+            let old = null, oldAt = Infinity;
+            for (const [rid, tt] of tables) { const last = Math.max(...tt.values()); if (last < oldAt) { oldAt = last; old = rid; } }
+            tables.delete(old);
+          }
           const t = tables.get(ridHex) || new Map();
-          if (!t.has(body.key) && t.size >= 32) return text(res, 503, 'that table is full');
+          if (!t.has(body.key) && t.size >= 32) {
+            const named = typeof round.namedIdentitiesOfRound === 'function' ? round.namedIdentitiesOfRound(new Uint8Array(id)) : new Set();
+            let drop = null, dropAt = Infinity;
+            for (const [k, at] of t) if (!named.has(k) && at < dropAt) { dropAt = at; drop = k; }
+            if (drop === null && !named.has(body.key)) return text(res, 503, 'that table is full');
+            if (drop === null) for (const [k, at] of t) if (at < dropAt) { dropAt = at; drop = k; }
+            t.delete(drop);
+          }
           t.set(body.key, now);
           tables.set(ridHex, t);
         }
@@ -11567,15 +11590,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!st || !st.stored) return text(res, 409, 'the federation holds no lock at that outpoint: spent, or never made');
         if (String(id) !== String(st.stored.contractId)) return text(res, 409, 'the lock at that outpoint is not the contract handed over: its id is another');
         if (fields.expiration !== st.blockCount + st.stored.blocksLeft) return text(res, 409, 'that contract\'s expiration is not the one the federation holds');
-        // ONE LOCK PER HANDOUT, THE FIRST KEPT (kanban #1489): a second, other lock with the same public image, refund key and
-        // claim key - anyone's, 1 sat - is refused here and never replaces the kept one; the same lock handed again is kept as it was.
+        // EVERY VERIFIED LOCK OF THE HANDOUT IS KEPT, EACH UNDER ITS OWN ID (kanban #1489, #1604): the handout's A0, the player's refund
+        // key and the round's claim key are public, so anyone can lock 1 sat with them. Replacing the kept lock (#1498) let the last one
+        // hand over win; keeping only the first let an attacker who hands its 1 sat lock first shut the player's real stake out of its
+        // return (#1604). Every such lock refunds to the handout player's key, so returning each is safe: each is kept under
+        // H(handout id || outpoint) - the same id at every seat, whatever order the locks came in - and the first one also under the
+        // handout's own id, as before, which never changes once kept. The same lock handed again is kept as it was.
         const opHex = `${toHex(outpoint.txid)}:${outpoint.outIdx}`;
-        const before = round.refusedLock(held.id);
-        if (before && before.outpoint !== opHex)
-          return text(res, 409, `this signer node already keeps another lock for that handout (${before.outpoint}): the first kept lock stands`);
-        round.putRefusedLock({ handoutId: held.id, roundId: rid, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
+        const keepId = sha256(new Uint8Array([...held.id, ...new TextEncoder().encode(`lock ${opHex}`)]));
+        const keptLock = { roundId: rid, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) };
+        round.putRefusedLock({ ...keptLock, handoutId: held.id });
+        round.putRefusedLock({ ...keptLock, handoutId: keepId });
         console.log(`[refused-lock] ${toHex(rid).slice(0, 16)}: ${String(fields.amountMsat)} msat kept for its return (${String(refusedWhy).slice(0, 80)})`);
-        return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(held.id)}`);
+        const first = round.refusedLock(held.id);
+        const named = first && first.outpoint === opHex ? held.id : keepId;
+        return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(named)}`);
       }
 
       if (req.method === 'GET' && url.pathname === '/stake-lock') {

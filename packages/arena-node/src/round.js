@@ -2607,6 +2607,11 @@ export class Round {
     return this.db.prepare('SELECT round_id FROM settlement_suspects WHERE seen_ms >= ?').all(sinceMs).map((r) => new Uint8Array(r.round_id));
   }
 
+  /** How many handouts this signer node keeps for one round (kanban #1605: the door bounds the ones no entry names). */
+  handoutCount(roundIdBytes) {
+    return this.db.prepare('SELECT COUNT(*) AS n FROM handouts WHERE round_id = ?').get(Buffer.from(roundIdBytes)).n;
+  }
+
   /** Every handout this signer node accepted for one round: its id and bytes. */
   handoutsOf(roundIdBytes) {
     return this.db.prepare('SELECT handout_id, bytes FROM handouts WHERE round_id = ?').all(Buffer.from(roundIdBytes))
@@ -2627,10 +2632,21 @@ export class Round {
     return r ? { roundId: new Uint8Array(r.round_id), outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, keptMs: Number(r.kept_ms) } : null;
   }
 
+  /** The refused-round lock kept at an outpoint ("txid:idx"), any round (kanban #1639): such a lock stakes no entry. */
+  refusedLockAt(outpointStr) {
+    const r = this.db.prepare('SELECT handout_id, round_id FROM refused_locks WHERE outpoint = ?').get(String(outpointStr));
+    return r ? { handoutId: new Uint8Array(r.handout_id), roundId: new Uint8Array(r.round_id) } : null;
+  }
+
   /** The refused-round locks of one round that refund to `refundHex`, shaped as stakeLocksFor's (entryId = the handout id). */
+  // ONE ROW PER LOCK (kanban #1604): a lock is kept under H(handout id || outpoint), and the first one of a handout also under the
+  // handout's id; listed once, under its first row - the handout's id for the first lock (as before), H(handout id || outpoint)
+  // for every later one.
   refusedLocksFor(roundIdBytes, refundHex) {
-    return this.db.prepare('SELECT handout_id, outpoint, fields, contract_id FROM refused_locks WHERE round_id = ?')
-      .all(Buffer.from(roundIdBytes))
+    const byOutpoint = new Map();
+    for (const r of this.db.prepare('SELECT handout_id, outpoint, fields, contract_id FROM refused_locks WHERE round_id = ? ORDER BY rowid')
+      .all(Buffer.from(roundIdBytes))) if (!byOutpoint.has(r.outpoint)) byOutpoint.set(r.outpoint, r);
+    return [...byOutpoint.values()]
       .map((r) => ({ entryId: Buffer.from(r.handout_id).toString('hex'), outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, refused: true }))
       .filter((l) => String(l.fields.refundPk).toLowerCase() === String(refundHex).toLowerCase());
   }
@@ -3861,6 +3877,16 @@ export class Round {
       if (Buffer.from(e.playerPubkey).toString('hex') === want && (at === null || Number(r.joined_ms) < at)) at = Number(r.joined_ms);
     }
     return at;
+  }
+
+  /** Every identity a name record of that round names (hex), for who sits at its table first (kanban #1645). */
+  namedIdentitiesOfRound(roundIdBytes) {
+    const out = new Set();
+    for (const r of this.db.prepare('SELECT record FROM lobby_names WHERE round_id = ?').iterate(Buffer.from(roundIdBytes))) {
+      const b = new Uint8Array(r.record);
+      if (b.length >= 96) out.add(Buffer.from(b.subarray(64, 96)).toString('hex'));
+    }
+    return out;
   }
 
   namedIdentityOf(roundIdBytes, playerPubkeyBytes) {

@@ -43,10 +43,21 @@ const LOCKDOWN = `'use strict';
   const back = new FR((n) => { live -= n; });
   const take = (n) => { if (over !== null || !(n >= 0) || used + n > budget) { over = said; throw new RangeErr(said); } };
   const keep = (o) => { const n = o.byteLength; used += n; live += n; back.register(o, n); return o; };
-  const KINDS = ['ArrayBuffer', 'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array',
-    'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array'];
-  const sizeOf = { ArrayBuffer: 1, Int8Array: 1, Uint8Array: 1, Uint8ClampedArray: 1, Int16Array: 2, Uint16Array: 2, Int32Array: 4, Uint32Array: 4,
-    Float32Array: 4, Float64Array: 8, BigInt64Array: 8, BigUint64Array: 8 };
+  // (kanban #1622) the kinds are read from the realm itself, never from a list: every own global whose prototype chain
+  // reaches %TypedArray% (Float16Array on node 24 was missing from the old list and allocated outside the budget and the
+  // live cap), plus ArrayBuffer - so a typed-array kind a later V8 adds is wrapped too. Its size is its BYTES_PER_ELEMENT.
+  const TA0 = Object.getPrototypeOf(Int8Array);
+  const KINDS = ['ArrayBuffer'], sizeOf = { ArrayBuffer: 1 };
+  for (const k of Object.getOwnPropertyNames(globalThis)) {
+    const d = Object.getOwnPropertyDescriptor(globalThis, k), K = d && d.value;
+    if (typeof K !== 'function' || K === TA0) continue;
+    let p = Object.getPrototypeOf(K);
+    while (p !== null && p !== TA0) p = Object.getPrototypeOf(p);
+    if (p !== TA0) continue;
+    const b = K.BYTES_PER_ELEMENT;
+    if (!Number.isInteger(b) || b < 1) throw new RangeErr('the typed array kind ' + k + ' has no element size');
+    KINDS.push(k); sizeOf[k] = b;
+  }
   for (const k of KINDS) {
     const K = globalThis[k];
     const W = new P(K, { construct(t, a, nt) {
@@ -70,6 +81,23 @@ const LOCKDOWN = `'use strict';
   }
   for (const k of ${JSON.stringify(REMOVED)}) delete globalThis[k];
   delete Math.random;
+  // THE SEAT'S LOCALE (kanban #1623): Intl is gone, but the locale-aware methods of the language still answer by the
+  // thread's ICU default locale - the seat's LANG/LC_ALL (measured: '1,234.5|äz' under en_US, '1 234,5|zä' under sv_SE),
+  // so one run hashed differently on seats with different locales. Each is replaced by its locale-free twin: toLocaleString
+  // is toString (Array, TypedArray and Object's call the elements' own, so they follow), the case methods are the
+  // locale-free ones, localeCompare compares code units. The same answer on every seat, whatever its locale.
+  const lockLocale = (o, m, f) => Object.defineProperty(o, m, { value: f, writable: false, configurable: false, enumerable: false });
+  const nToS = Number.prototype.toString, bToS = BigInt.prototype.toString;
+  const up = String.prototype.toUpperCase, low = String.prototype.toLowerCase;
+  lockLocale(Number.prototype, 'toLocaleString', { toLocaleString() { return R.apply(nToS, this, []); } }.toLocaleString);
+  lockLocale(BigInt.prototype, 'toLocaleString', { toLocaleString() { return R.apply(bToS, this, []); } }.toLocaleString);
+  const strOf = (s) => { if (s === null || s === undefined) throw new TypeError('String.prototype method called on null or undefined'); return String(s); };
+  lockLocale(String.prototype, 'toLocaleUpperCase', { toLocaleUpperCase() { return R.apply(up, strOf(this), []); } }.toLocaleUpperCase);
+  lockLocale(String.prototype, 'toLocaleLowerCase', { toLocaleLowerCase() { return R.apply(low, strOf(this), []); } }.toLocaleLowerCase);
+  lockLocale(String.prototype, 'localeCompare', { localeCompare(that) {
+    const a = strOf(this), b = String(that);
+    return a < b ? -1 : a > b ? 1 : 0;
+  } }.localeCompare);
   Object.defineProperty(Error, 'prepareStackTrace', { value: undefined, writable: false, configurable: false });
   // the script's value, handed only to this thread and kept on no global: the core never reaches it
   return Object.freeze({ begin() { used = 0; }, over: () => over, live: () => live });
