@@ -174,6 +174,9 @@ export function openFeedbackStore(path = ':memory:') {
   db.exec(`UPDATE reports SET changed_ms = (SELECT MAX(m.at_ms) FROM report_moves m WHERE m.id = reports.id AND m.from_state = 'new' AND m.to_state = 'accepted')
     WHERE state = 'paid' AND EXISTS (SELECT 1 FROM report_moves m WHERE m.id = reports.id AND m.from_state = 'new' AND m.to_state = 'accepted')
       AND changed_ms IS NOT (SELECT MAX(m.at_ms) FROM report_moves m WHERE m.id = reports.id AND m.from_state = 'new' AND m.to_state = 'accepted')`);
+  // ONE PAYMENT, ONE REWARD (kanban #1925, state audit 2026-11-12): a payment hash is held by at most one paying or paid reward. A file that already holds
+  // two keeps opening (the index is then not made); claim() and settle() hold the rule by themselves.
+  try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS rewards_by_payment ON rewards (payment_hash) WHERE payment_hash IS NOT NULL AND state IN ('paying', 'paid')"); } catch { /* an older file with a shared hash */ }
   const get = db.prepare('SELECT * FROM reports WHERE id = ?');
   const row = (r) => (r ? { id: r.id, pubkey: r.pubkey, type: r.type, signedAt: r.signed_at, receivedMs: r.received_ms, happened: r.happened, expected: r.expected,
     game: r.game || null, round: r.round || null, build: r.build || null, state: r.state, reason: r.reason || null, duplicateOf: r.duplicate_of || null,
@@ -388,7 +391,15 @@ export function openFeedbackStore(path = ':memory:') {
     if (d && d.paused) return { status: 'ERROR', reason: PAYOUTS_PAUSED };   // kanban #2412: the wallet's state, not the invoice's
     if (!d || !d.ok) return { status: 'ERROR', reason: 'that invoice could not be read' };
     if (Number(d.amountSats) !== w.amount_sats) return { status: 'ERROR', reason: `the invoice must be for exactly ${w.amount_sats} sat` };
-    const took = db.prepare("UPDATE rewards SET state = 'paying', invoice = ?, payment_hash = ?, tried_ms = ?, address = ?, payer = ? WHERE k1 = ? AND state = 'open'").run(String(invoice), d.paymentHash || null, nowMs, address, payer == null ? null : String(payer), w.k1);
+    // AN INVOICE ANOTHER REWARD HOLDS IS REFUSED (kanban #1925): reward Y claimed with the invoice X was already paid with got "invoice is already paid" from
+    // lnd, stayed paying, and settle() read X's SUCCEEDED for that hash as Y's payment - Y and its report booked paid, no sat sent. The check is in the
+    // compare-and-set itself, and the partial unique index refuses a second holder too.
+    const hash = d.paymentHash ? String(d.paymentHash) : null;
+    const held = "SELECT 1 FROM rewards WHERE payment_hash = ? AND k1 <> ? AND state IN ('paying', 'paid')";
+    if (hash && db.prepare(held).get(hash, w.k1)) return { status: 'ERROR', reason: 'that invoice was used for another reward: make a new invoice' };
+    let took;
+    try { took = db.prepare(`UPDATE rewards SET state = 'paying', invoice = ?, payment_hash = ?, tried_ms = ?, address = ?, payer = ? WHERE k1 = ? AND state = 'open' AND NOT EXISTS (${held})`).run(String(invoice), hash, nowMs, address, payer == null ? null : String(payer), w.k1, hash, w.k1); }
+    catch { return { status: 'ERROR', reason: 'that invoice was used for another reward: make a new invoice' }; }
     if (took.changes !== 1) return { status: 'ERROR', reason: 'this reward is being paid' };
     let p;
     try { p = await pay(String(invoice), d.amountSats); } catch (e) { p = { ok: false, why: e.message }; }   // the amount bounds the routing fee (kanban #1450)
@@ -444,6 +455,13 @@ export function openFeedbackStore(path = ':memory:') {
         confirmOnly = true;
       }
       if (Number(w.tried_ms || 0) > nowMs - freshMs) { out.push({ k1: w.k1, status: 'unknown', fresh: true }); continue; }
+      // A HASH IS CREDITED ONLY TO THE REWARD THAT FIRST TOOK IT (kanban #1925): a paying reward whose hash another reward holds paid, or took earlier, was
+      // not paid by that payment - its link opens again (a file from before the claim() check may hold such a pair)
+      const first = db.prepare("SELECT k1 FROM rewards WHERE payment_hash = ? AND state IN ('paying', 'paid') ORDER BY state = 'paid' DESC, tried_ms, rowid LIMIT 1").get(w.payment_hash);
+      if (w.payment_hash && first && first.k1 !== w.k1) {
+        db.prepare("UPDATE rewards SET state = 'open', why = 'that invoice was another reward''s payment: make a new invoice' WHERE k1 = ? AND state = 'paying'").run(w.k1);
+        out.push({ k1: w.k1, status: 'failed', shared: true }); continue;
+      }
       let st = 'unknown';
       try { st = w.payment_hash ? await status(w.payment_hash) : 'unknown'; } catch { st = 'unknown'; }
       if (confirmOnly && st !== 'paid') { out.push({ k1: w.k1, status: 'unknown', confirmOnly: true, asked: st }); continue; }   // kanban #2403, #2469
