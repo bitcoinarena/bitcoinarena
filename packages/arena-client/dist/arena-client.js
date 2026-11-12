@@ -16951,8 +16951,10 @@ function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, feeBps =
 }
 
 // the gate's stand-in donation target and reserve key: it asks only whether the nodes' part pays, never where the gifts go
-const GATE_GIFT_KEY = Uint8Array.from([0x02, ...new Uint8Array(32).fill(0x47)]);
-const GATE_GIFT_TARGET = [{ recipientPk: Uint8Array.from([0x02, ...new Uint8Array(32).fill(0x46)]), shareBps: 10000, label: 'gate' }];
+// real curve points (kanban #1675: a donation recipient key must be one - the 0x02 || 0x46.. stand-in no longer stood, and every gate
+// of a gifts-in-fee-lock round said its donation set does not stand): 2G as the reserve key, G as the one recipient
+const GATE_GIFT_KEY = fromHex('02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5');
+const GATE_GIFT_TARGET = [{ recipientPk: fromHex('0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798'), shareBps: 10000, label: 'gate' }];
 // the fee part's lines that are no signer node's: a donation key's and the reserves'
 const GIFT_KINDS = new Set(['donation key', 'reserve']);
 
