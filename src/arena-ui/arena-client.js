@@ -19198,18 +19198,32 @@ function markLockCommitted(storage, { roundId, playerPubkey, entryId }) {
 // (kanban #1531) a player has one stake lock in a round, a few versions of it at most (kanban #1273): what one seat's answer and all of them may name
 const LOCKS_PER_SEAT = 8;
 const LOCKS_FOUND_MAX = 64;
+// ONE SEAT, ONE ENTRY (kanban #1876, #1531 skeptic 2, #1489): the node list's spellings of one seat ("http://evil", "http://evil/",
+// "http://EVIL//") were asked and counted as that many seats. The fetch base: the origin (URL lower-cases the host, drops a default
+// port) and the path with repeated and trailing slashes folded; the origin is what the per-host budget counts
+const seatBaseOf = (node) => {
+  const s = String(node);
+  try {
+    const u = new URL(s);
+    if (/^https?:$/.test(u.protocol) && !u.search && !u.hash && !u.username && !u.password)
+      return { base: (u.origin + u.pathname.replace(/\/{2,}/g, '/')).replace(/\/+$/, ''), origin: u.origin };
+  } catch { /* not a URL: its own spelling */ }
+  const base = s.replace(/\/+$/, '');
+  return { base, origin: base };
+};
 async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) {
   const refund = toHex(refundKeyOf(playerPubkey));
-  const found = new Map();
   // WHO ANSWERED: the list carries how many signer nodes were asked, answered and named a lock, and each
   // one's reply in short - an empty list nobody answered is not "no lock".
-  const asked = [...new Set(nodes || [])];
+  const asked = [];
+  { const seen = new Set();
+    for (const node of nodes || []) { const at = seatBaseOf(node); if (!seen.has(at.base)) { seen.add(at.base); asked.push({ node, ...at }); } } }
   // EVERY SIGNER NODE AT ONCE (kanban #593: one after another, 35 nodes and dead ones among them, a look took minutes and the
   // collect never reached the round owed): the answers in the nodes' order
-  const answers = await Promise.all(asked.map(async (node) => {
+  const answers = await Promise.all(asked.map(async ({ node, base, origin }) => {
     const name = String(node).replace(/^https?:\/\//, '').slice(0, 40);
     try {
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/stake-lock?round=${toHex(roundId)}&refund=${refund}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
+      const r = await fetcher(`${base}/stake-lock?round=${toHex(roundId)}&refund=${refund}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${name} ${r.status}`, got: [] };
       const raw = await r.json();
       // ONE SEAT'S MALFORMED ANSWER STAYS ITS OWN (kanban #1489, audit WF1489 CLIENT-1): `{}` or `[null]` from one seat threw for the
@@ -19225,7 +19239,7 @@ async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) 
         got.push({ l, lock });
         if (got.length >= LOCKS_PER_SEAT) break;   // kanban #1531: no more of one seat's answer counts
       }
-      return { said: `${name} ${got.length}`, got, node };
+      return { said: `${name} ${got.length}`, got, node, base, origin };
     } catch (e) { return { said: `${name} ${String(e && e.message || e).slice(0, 40)}`, got: [] }; }
   }));
   const said = answers.map((a) => a.said);
@@ -19233,18 +19247,40 @@ async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) 
   // player's refund key, every one was kept, and the collect asked each a forfeit of every seat in turn (redeemStake) or a lockStatus of
   // the federation (heldByGuardians) - hours of requests. A seat's first LOCKS_PER_SEAT entries count, taken round-robin over the seats
   // (each seat's first lock before any seat's second), and the whole list stops at LOCKS_FOUND_MAX
-  const lists = answers.map(({ got }) => (Array.isArray(got) ? got.slice(0, LOCKS_PER_SEAT) : []));
-  const picked = [];
-  for (let i = 0; i < LOCKS_PER_SEAT; i++) for (const got of lists) if (i < got.length) picked.push(got[i]);
-  for (const { l, lock } of picked) {
-    if (found.size >= LOCKS_FOUND_MAX) break;
-    // EVERY SEAT'S VERSION OF AN OUTPOINT, NOT ONLY THE FIRST (kanban #1273, audit 4 #1257 seats-5): one seat listed first answered the real
-    // outpoint with a field changed (or a made-up entry id), and the honest copies were dropped - the stake read "gone" for good, or waited for
-    // its expiry. Each distinct version is kept; the federation's stored contract (heldByGuardians) and the forfeit check pick the real one
-    const key = `${l.outpoint}|${JSON.stringify(l.fields)}|${String(l.entryId || '').toLowerCase()}`;
-    if (!found.has(key)) found.set(key, lock);
+  // EVERY SEAT'S VERSION OF AN OUTPOINT, NOT ONLY THE FIRST (kanban #1273, audit 4 #1257 seats-5): one seat listed first answered the real
+  // outpoint with a field changed (or a made-up entry id), and the honest copies were dropped - the stake read "gone" for good, or waited for
+  // its expiry. Each distinct version is kept; the federation's stored contract (heldByGuardians) and the forfeit check pick the real one
+  const keyOf = (l) => `${l.outpoint}|${JSON.stringify(l.fields)}|${String(l.entryId || '').toLowerCase()}`;
+  // THE BUDGET IS THE HOST'S, NOT THE LIST ENTRY'S (kanban #1876, #1531 skeptic 2): one operator behind one host named 64 path-prefixed
+  // "seats" (or one seat under 64 spellings) ahead of the honest seats, each took a round-robin slot, and LOCKS_FOUND_MAX cut the player's
+  // real lock off the list - redeemStake and refundStake then worked only on made-up locks. All the seats of one origin now share one
+  // LOCKS_PER_SEAT budget of distinct locks (taken round-robin over that origin's seats)
+  const byOrigin = new Map();
+  for (const a of answers) if (Array.isArray(a.got) && a.got.length && a.origin !== undefined) {
+    if (!byOrigin.has(a.origin)) byOrigin.set(a.origin, []);
+    byOrigin.get(a.origin).push(a);
   }
-  const out = [...found.values()];
+  const named = new Map();   // key -> { lock, origins, seats, rank }
+  const perOrigin = [];
+  for (const [origin, seats] of byOrigin) {
+    const keys = [];
+    for (let i = 0; i < LOCKS_PER_SEAT; i++) for (const a of seats) {
+      if (i >= a.got.length) continue;
+      const { l, lock } = a.got[i], key = keyOf(l);
+      if (!keys.includes(key)) { if (keys.length >= LOCKS_PER_SEAT) continue; keys.push(key); }
+      if (!named.has(key)) named.set(key, { lock, origins: new Set(), seats: new Set(), rank: Infinity });
+      named.get(key).origins.add(origin); named.get(key).seats.add(a.base);
+    }
+    perOrigin.push(keys);
+  }
+  // each origin's first lock before any origin's second (kanban #1531)
+  let rank = 0;
+  for (let i = 0; i < LOCKS_PER_SEAT; i++) for (const keys of perOrigin) if (i < keys.length && named.get(keys[i]).rank === Infinity) named.get(keys[i]).rank = rank++;
+  // A LOCK SEVERAL HOSTS AGREE ON IS NOT CUT FOR ONE HOST'S INVENTIONS (kanban #1876): the locks most distinct origins name come first
+  // (then most distinct seats, then the round-robin order), and only then does the list stop at LOCKS_FOUND_MAX. To push out a lock k
+  // origins name, made-up locks would need more than k origins each on all 64 slots - more than 8k hosts of the round's own node list
+  const ranked = [...named.values()].sort((x, y) => (y.origins.size - x.origins.size) || (y.seats.size - x.seats.size) || (x.rank - y.rank));
+  const out = ranked.slice(0, LOCKS_FOUND_MAX).map((x) => x.lock);
   out.asked = asked.length;
   out.answered = said.filter((x) => /\s\d+$/.test(x) && !/\s[45]\d\d$/.test(x)).length;
   out.said = said;
