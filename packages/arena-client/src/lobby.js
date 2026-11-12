@@ -29,7 +29,7 @@
 // (identity.js `checkedNames`) - never a key in place of a name.
 import { protocolVersionName } from '../../arena-protocol/src/protocol-version.js';
 import { joinQuery, fetchRound, roundPays } from './join.js';
-import { checkedNames } from './identity.js';
+import { checkedNames, NAMES_PER_SEAT } from './identity.js';
 import { lobbyListingId } from '../../arena-protocol/src/lobby-listing.js';
 import { entryOpenUntilMs } from './late-join.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
@@ -268,7 +268,8 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
           get signed() { return signedNow(); }, fresh: Number.isFinite(at) && Math.abs(at - nowMs) <= skewMs,
           // for verifyMany (below): what it is checked with, and its answer kept
           checkArgs: () => (parses ? lobbySignedArgs({ id, nodeKey, nowMs: at, x }) : null), setChecked: (ok) => { checked = !!ok; },
-          names: Array.isArray(x.names) ? x.names : [],
+          // ONE SEAT'S NAMES FOR ONE ROUND, BOUNDED before the costly signature check (kanban #1864, identity.js NAMES_PER_SEAT)
+          names: Array.isArray(x.names) ? x.names.slice(0, NAMES_PER_SEAT) : [],
           // THE GAME'S WARNINGS BEFORE ENTRY (§18A.7): the seat's word, only known codes kept (entry-warnings.js)
           warnings: Array.isArray(x.warnings) ? x.warnings.filter((k) => typeof k === 'string') : [],
           // RESERVE SEATS (§5A.7): the seat's word on who is seated - the join checks the certificate itself
