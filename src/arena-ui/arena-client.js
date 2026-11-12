@@ -19450,6 +19450,14 @@ const wellFormedPayouts = (payouts) => Array.isArray(payouts) && payouts.every((
   && (typeof p.msat === 'string' || typeof p.msat === 'number') && /^\d+$/.test(String(p.msat)));
 // a settlement's txid as the page reads it (kanban #1671): 64 hex characters, or the answer is not counted
 const wellFormedTxid = (txid) => typeof txid === 'string' && /^[0-9a-f]{64}$/i.test(txid);
+// A SEAT'S PAYOUTS AS THE PAGE READS THEM (kanban #2014, refute #3 of #1489 CLIENT-1): the same values the settlement's group key is
+// built from - an absent kind is 'qualifier', the pk lower case, the msat text. A group answers with its first member's copy; a seat
+// listed first that left the kinds out joined the honest group under the same key and its copy made the winner's payout "none" (final).
+// Every consumer reads this normalised copy, so whichever member stands for the group reads the same.
+const payoutKind = (p) => p.kind || 'qualifier';
+const normalPayouts = (payouts) => payouts.map((p) => ({ ...p, kind: payoutKind(p), pk: p.pk.toLowerCase(), msat: String(p.msat) }));
+// the player's payout in a settlement (kanban #2014): its kind read as the group key reads it
+const isQualifierTo = (p, pk) => payoutKind(p) === 'qualifier' && String(p.pk).toLowerCase() === String(pk).toLowerCase();
 async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null } = {}) {
   // EVERY SIGNER NODE AT ONCE (kanban #593)
   const answers = await Promise.all([...new Set(nodes || [])].map(async (node) => {
@@ -19464,8 +19472,10 @@ async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee
         // A TXID THAT IS NOT TEXT IS THIS SEAT'S OWN MALFORMED ANSWER (kanban #1671, refute of #1489 CLIENT-1): `{"toString":0}` threw in
         // keyOf below, outside this try, for every seat's answer. The settlement's key is built here, inside this seat's try
         if (!wellFormedTxid(j.txid)) return { said: `${node}: malformed` };
-        const key = `${j.txid.toLowerCase()}|${JSON.stringify(j.moved.payouts.map((p) => [p.kind || 'qualifier', p.pk.toLowerCase(), String(p.msat)]))}`;
-        return { ok: true, txid: j.txid, moved: j.moved, from: node, key };
+        // (kanban #2014) normalised here, in this seat's try: the answer kept is the key's own values
+        const payouts = normalPayouts(j.moved.payouts), txid = j.txid.toLowerCase();
+        const key = `${txid}|${JSON.stringify(payouts.map((p) => [p.kind, p.pk, p.msat]))}`;
+        return { ok: true, txid, moved: { ...j.moved, payouts }, from: node, key };
       }
       return { said: `${node}: ${j && typeof j.state === 'string' ? j.state : 'malformed'}` };
     } catch (e) { return { said: `${node}: ${e.message}` }; }
@@ -19477,7 +19487,7 @@ async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee
   for (const a of accepted) { const k = a.key; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
   const ranked = [...groups.values()].sort((x, y) => y.length - x.length);
   const need = Math.max(1, Number(needed) || 1);
-  const pays = (a) => !!payee && a.moved.payouts.some((p) => (p.kind || 'qualifier') === 'qualifier' && String(p.pk).toLowerCase() === String(payee).toLowerCase());
+  const pays = (a) => !!payee && a.moved.payouts.some((p) => isQualifierTo(p, payee));
   const agreed = ranked.find((g) => g.length >= need) || null;
   // `seats`: the seats that answered this settlement (kanban #1355): the round's own, whose word a stake's "none" may rest on
   const seatsOf = (g) => g.map((a) => String(a.from).replace(/\/+$/, ''));
@@ -19541,7 +19551,7 @@ async function redeemPayout({ round, roundId, invite, seed, curve, LockClient, s
   onStep('asking the signer nodes for the round\'s settlement');
   const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine });
   if (!s.ok) return { ok: false, final: false, why: s.why };
-  const at = s.moved.payouts.findIndex((p) => p.kind === 'qualifier' && String(p.pk).toLowerCase() === mine);
+  const at = s.moved.payouts.findIndex((p) => isQualifierTo(p, mine));
   if (at < 0) return { ok: false, final: true, txid: s.txid, why: 'the round\'s settlement pays this seed\'s key nothing: no payout to collect' };
   const p = s.moved.payouts[at];
   const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(p.msat), claimPk: mine, refundPk: mine, expiration: 0 };
@@ -19587,7 +19597,8 @@ async function federationSettlementsOf({ roundId, nodes, fetcher = fetch } = {})
         && j.federations.every((f) => f && f.state === 'ACCEPTED' && f.moved && wellFormedPayouts(f.moved.payouts)
           // (kanban #1671) the federation and txid are read with String() by the collect, outside any try: text only
           && typeof f.federation === 'string' && wellFormedTxid(f.txid)))
-        return { ok: true, federations: j.federations, from: node };
+        // (kanban #2014) each federation's payouts and txid normalised as settlementOf's are
+        return { ok: true, federations: j.federations.map((f) => ({ ...f, txid: f.txid.toLowerCase(), moved: { ...f.moved, payouts: normalPayouts(f.moved.payouts) } })), from: node };
       said.push(`${node}: ${j && typeof j.state === 'string' ? j.state : 'malformed'}`);
     } catch (e) { said.push(`${node}: ${e.message}`); }
   }
@@ -19610,7 +19621,7 @@ async function redeemPayoutsAcross({ round, roundId, seed, curve, storage, nodes
   if (!s.ok) return { ok: false, final: false, collected: [], waiting: [], why: s.why };
   const collected = [], waiting = [];
   for (const f of s.federations) {
-    const at = f.moved.payouts.findIndex((p) => p.kind === 'qualifier' && String(p.pk).toLowerCase() === mine);
+    const at = f.moved.payouts.findIndex((p) => isQualifierTo(p, mine));
     if (at < 0) continue;
     const fid = String(f.federation).toLowerCase();
     const noted = noteKeyOf(PAYOUT_NOTE, roundId, mine, order, `.${fid.slice(0, 16)}`);
@@ -20294,7 +20305,7 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
   if (paidNote) payout = { state: 'collected', msat: BigInt(paidNote.amountMsat) };
   else if (!s.ok) payout = { state: 'waiting', why: s.why };
   else {
-    const at = s.moved.payouts.findIndex((x) => x.kind === 'qualifier' && String(x.pk).toLowerCase() === mine);
+    const at = s.moved.payouts.findIndex((x) => isQualifierTo(x, mine));
     if (at < 0) payout = { state: 'none' };
     // ALREADY SPENT - only this key can: collected before (another tab, an earlier build's timer).
     else payout = { state: await held(s.txid, at) ? 'owed' : 'gone', msat: BigInt(s.moved.payouts[at].msat) };
