@@ -152,7 +152,11 @@ const bountyStatus = async (hash) => {
   const r = await lncli(BOUNTY_PAYER, ['listpayments', '--include_incomplete', '--max_payments=500', '--paginate_forwards=false'], 20000);
   if (!r.ok) return 'unknown';
   const p = (JSON.parse(r.out).payments || []).find((x) => x.payment_hash === hash);
-  return !p ? 'failed' : p.status === 'SUCCEEDED' ? 'paid' : p.status === 'FAILED' ? 'failed' : 'unknown';
+  if (p) return p.status === 'SUCCEEDED' ? 'paid' : p.status === 'FAILED' ? 'failed' : 'unknown';
+  // NOT LISTED IS NOT FAILED (kanban #1784): the list holds the newest 500 only, and a payment another wallet made is in none of this one's lists - the
+  // hash is asked by itself (trackpayment, as the grant sweep does, #1426): only "not initiated" (this payer never paid it) reads as failed
+  const f = await paymentFinal(BOUNTY_PAYER, hash);
+  return f === 'SUCCEEDED' ? 'paid' : f === 'FAILED' || f === 'NONE' ? 'failed' : 'unknown';
 };
 // THE ADMIN (kanban #1342 section 4): the owner's code, held to its hash as the explorer holds it (#1092); the rules, our keys, who played
 const ADMIN_SHA = String(env.FAUCET_ADMIN_SHA256 || '').trim().toLowerCase();
@@ -181,7 +185,7 @@ async function nodeCheckNow(node, npub) {
 }
 const PLAYED = networkPlayers({ seats: String(env.FAUCET_SEASON_SEATS || '').split(',').filter(Boolean), games: String(env.FAUCET_SEASON_GAMES || 'rock-paper-scissors,nextblock,btc-updown').split(',').filter(Boolean) });
 PLAYED.fresh().catch(() => 0);   // kanban #1484: the list is read at start, so the admin page never waits for it
-if (FEEDBACK && BOUNTY_PAYER) setInterval(() => FEEDBACK.settle({ status: bountyStatus }).catch(() => {}), 60000).unref();
+if (FEEDBACK && BOUNTY_PAYER) setInterval(() => FEEDBACK.settle({ status: bountyStatus, network: BOUNTY_NETWORK }).catch(() => {}), 60000).unref();
 
 /** A player's grant: read the invoice, decide, keep it in the book BEFORE paying (a crash pays nobody twice), and take it out again if no payer could pay. */
 /** Each payer's own node key, read once (lncli getinfo); a payer whose node is the invoice's destination goes last. */
@@ -471,7 +475,7 @@ createServer((req, res) => {
           // withdraw link stays the fallback (a wallet that gives no invoice, a failed route) and is answered too
           if (b.payTo === 'link' || !FEEDBACK.addressOf(b.id) || w.reward.state !== 'open') return send(200, { ...w, lnurl, address: FEEDBACK.addressOf(b.id) });
           if (!BOUNTY_PAYER || !bountyOn()) return send(200, { ...w, lnurl, paid: { ok: false, why: 'rewards are off' } });
-          return one(() => FEEDBACK.payToAddress(w.reward.k1, { invoiceFor: (a, sats, c) => lnAddressInvoice(a, sats, c), decode: bountyDecode, pay: bountyPay }))
+          return one(() => FEEDBACK.payToAddress(w.reward.k1, { invoiceFor: (a, sats, c) => lnAddressInvoice(a, sats, c), decode: bountyDecode, pay: bountyPay, network: BOUNTY_NETWORK }))
             .then((paid) => send(200, { ...w, reward: paid.reward || w.reward, lnurl: paid.ok ? null : lnurl, paid }), (e) => send(200, { ...w, lnurl, paid: { ok: false, why: e.message } })); }
         if (b.action === 'note') return send(200, FEEDBACK.note(b.id, { ticket: b.ticket, severity: b.severity, by }));
         return send(400, { ok: false, why: 'an action is approve, reject, duplicate, reward or note' });
@@ -484,10 +488,10 @@ createServer((req, res) => {
   { const m = /^\/lnurlw\/([0-9a-f]{64})(\/callback)?$/.exec(path);
     if (m) {
       if (!FEEDBACK || !BOUNTY_PAYER || !bountyOn()) return send(503, { status: 'ERROR', reason: 'rewards are off' });
-      if (!m[2]) return send(200, FEEDBACK.withdrawRequest(m[1], { base: PUBLIC_BASE }));
+      if (!m[2]) return send(200, FEEDBACK.withdrawRequest(m[1], { base: PUBLIC_BASE, network: BOUNTY_NETWORK }));
       const q = new URL(req.url, 'http://x').searchParams;
       if (q.get('k1') !== m[1]) return send(200, { status: 'ERROR', reason: 'k1 does not match the link' });
-      return one(() => FEEDBACK.claim(m[1], q.get('pr') || '', { decode: bountyDecode, pay: bountyPay })).then((r) => send(200, r), () => send(200, { status: 'ERROR', reason: 'try again in a minute' }));
+      return one(() => FEEDBACK.claim(m[1], q.get('pr') || '', { decode: bountyDecode, pay: bountyPay, network: BOUNTY_NETWORK })).then((r) => send(200, r), () => send(200, { status: 'ERROR', reason: 'try again in a minute' }));
     } }
   // A SCREENSHOT FOR A REPORT (Daniel 2026-11-07): the raw image, before the report is signed; answers its SHA-256, which the report then names
   if (path === '/feedback/screenshot') {
