@@ -26,6 +26,8 @@ import WebSocket from 'ws';
 import { standUpRound } from '../../arena-node/tools/round-2of2.mjs';
 import { stakeLockPort } from '../../arena-node/src/stake-lock-port.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { lockClaimDigest } from '../../arena-protocol/src/lock-claim.js';
 // THE collect LABEL (6d leftover 2): a winner played from Node beside the real tab.
 import { createRequire } from 'node:module';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -324,6 +326,9 @@ async function collectAfterRealJoin({ b, round, label, playerLock }) {
     const at = `http://127.0.0.1:${sp}`;
     const h = await fetch(`${at}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
     const en = await fetch(`${at}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+    // THE PLAYER'S LOCK CLAIM (kanban #2069, #2088): a signature by the stake point over the entry id, as the page sends it - a seat then hands
+    // these locks only to a claimed entry, never to a copy under another stake point. Never fatal.
+    if (en.ok) { try { await fetch(`${at}/lock-claim?entry=${toHex(eid)}`, { method: 'POST', body: schnorr.sign(lockClaimDigest(eid), preimage) }).then((r) => r.text()); } catch { /* the seats show it to each other */ } }
     const lk = await fetch(`${at}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(stake.fields)) });
     const fl = fee ? await fetch(`${at}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fee.fields)) }) : null;
     const played = [];

@@ -9,12 +9,19 @@
 // it there as it checks a client's copy, entry close included, so this adds no trust in the seat that hands it. Only a copy from a client is
 // handed on (RELAY_HEADER marks a seat's), and only to a seat that does not hold it. A market has its own way (order-batch.js replayOrder), and a
 // replayed game's client sends its entry again with its batches.
+import { peerJsonUpTo } from './peer-body.js';
+
 export const RELAY_HEADER = 'x-arena-relayed';
 const AFTER_MS = 700, SPREAD_MS = 500;      // after the client's own posts have had their time, and not all seats at the same moment
 const LOCK_AFTER_MS = 1500;                 // and a lock after the entry it needs
 const CLOSE_MARGIN_MS = 300;                // an entry taken just before entry close goes at once: the seats' doors shut there
 const WAIT_MS = 4000, TRIES = 3, AGAIN_MS = 2000, KEPT = 2048;
 const VIEW_WAIT_MS = 3000;                  // a dead peer may not hold a seat's close for longer than this
+// AND NO PEER'S ANSWER IS READ PAST A CAP (kanban #1870, #1901; #1550/#1685's rule for every peer pull): membersKnown asks every peer's GET /api/round-result on
+// every finality pass, and a bare r.json() let one seat stream 96 MiB in 420 ms into each seat that asked, pass after pass. A round's result lists each
+// entry in a few hundred bytes: 1 MiB is far past any round and far short of a flood. A lock answer is a few hundred bytes.
+export const VIEW_MAX_BYTES = 1024 * 1024;
+export const LOCKS_MAX_BYTES = 64 * 1024;
 
 // AND THE DOOR DECIDES NOTHING ABOUT WHO IS IN THE ROUND (kanban #1071, §17). A seat's door is its own: the backup rule, and every other refusal, says whether this
 // seat takes a new entry now. Handing an entry on cannot help a door that refused it, so before a head-to-head seat signs anything it looks at the entries its peers
@@ -54,8 +61,8 @@ export async function lookAtMembers({ roundId, roundHex, peers, slots, needed, p
 export const seatView = (fetcher) => async (base, roundHex) => {
   const r = await fetcher(`${base}/api/round-result?round=${roundHex}`, { signal: AbortSignal.timeout(VIEW_WAIT_MS) });
   if (r.status === 404) return new Set();                  // it holds no such round, so it holds no entry of it
-  if (!r.ok) throw new Error(`${r.status}`);
-  const j = await r.json();
+  if (!r.ok) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`${r.status}`); }
+  const j = await peerJsonUpTo(r, VIEW_MAX_BYTES);       // kanban #1870, #1901: capped, not a bare r.json()
   return new Set((j.players || []).map((p) => String(p.entry)));
 };
 
@@ -89,17 +96,21 @@ export function createEntryRelay({ peersOf, entryOf, handoutOf, locksOf, fetcher
       + `${handed.some((x) => x !== 'took') ? ` (${[...new Set(handed.filter((x) => x !== 'took'))].join(', ').slice(0, 80)})` : ''}`);
   };
 
-  const handLocks = async (roundId, entryHex) => {
+  const handLocks = async (roundId, entryHex, closeMs = null) => {
     const held = locksOf(entryHex);
     if (!held.stake && !held.fee) return;
     let left = bases(roundId), took = 0;
-    for (let i = 0; i < TRIES && left.length; i++) {
-      if (i) await new Promise((r) => setTimeout(r, againMs));
+    const tries = closeMs === null || closeMs === undefined ? TRIES : TRIES + 5;
+    for (let i = 0; i < tries && left.length; i++) {
+      // BEFORE A HEAD-TO-HEAD CLOSE THE NEXT TRY COMES SOONER (kanban #1760): the entry handed on in the same moment may not have landed yet, and the
+      // seats' lock doors shut at the close
+      const close = closeMs === null || closeMs === undefined ? NaN : Number(closeMs) - nowMs();
+      if (i) await new Promise((r) => setTimeout(r, Number.isFinite(close) && close > 0 ? Math.max(50, Math.min(againMs, close / 3)) : againMs));
       // A SEAT STILL WITHOUT THE ENTRY answers 404 to a lock: asked again, the entry may be on its way
       const again = await Promise.all(left.map(async (base) => {
         try {
           const r = await ask(`${base}/order-locks?entry=${entryHex}`);
-          const has = r.status === 200 ? await r.json() : r.status === 404 ? {} : null;
+          const has = r.status === 200 ? await peerJsonUpTo(r, LOCKS_MAX_BYTES) : r.status === 404 ? {} : null;   // capped (#1870, #1901)
           if (!has) return null;
           let short = false;
           for (const [door, have, fields] of [['lock', has.stake, held.stake], ['fee-lock', has.fee, held.fee]]) {
@@ -123,12 +134,13 @@ export function createEntryRelay({ peersOf, entryOf, handoutOf, locksOf, fetcher
       later(Math.max(0, Math.min(afterMs + Math.random() * spreadMs, Number.isFinite(left) ? left : Infinity)), () => handEntry(roundId, entryHex));
     },
     /** A client's copy of a lock was verified here. Both of an entry's locks go in one pass. `closeMs` (optional): the round's entry close -
-     *  a head-to-head seat takes no lock new to it from the close on (kanban #1598), so a lock taken just before it goes at once, as an entry does. */
+     *  a head-to-head seat takes no lock new to it from the close on (kanban #1598, #1760), so a lock taken just before it goes at once, as an entry
+     *  does, and its later tries come sooner before the close. */
     lockTaken(roundId, entryHex, closeMs = null) {
       if (!once(lockPasses, entryHex)) return;
       const left = closeMs === null || closeMs === undefined ? Infinity : Number(closeMs) - nowMs() - CLOSE_MARGIN_MS;
       later(Math.max(0, Math.min(lockAfterMs + Math.random() * spreadMs, Number.isFinite(left) ? left : Infinity)),
-        async () => { lockPasses.delete(entryHex); await handLocks(roundId, entryHex); });
+        async () => { lockPasses.delete(entryHex); await handLocks(roundId, entryHex, closeMs); });
     },
   };
 }

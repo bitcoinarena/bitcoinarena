@@ -9,9 +9,10 @@ import { giftDonation, giftAmountOf, giftRecipientsLine } from '../src/donation-
 import { ledgerRows, ledgerHistory } from '../src/page-lock.js';
 import { decodeDonationGift, donationGiftId, giftStands, GIFT_TO_GAME, GIFT_TO_NETWORK } from '../../arena-protocol/src/donation-gift.js';
 import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
+import { pointKey } from '../../arena-protocol/test/point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const pk33 = (n) => Uint8Array.from([0x02, ...b32(n)]);
+const pk33 = (n) => pointKey(0x02, n);
 const SET = [{ recipientPk: pk33(0x11), label: 'dev a', shareBps: 6667 }, { recipientPk: pk33(0x12), label: 'dev b', shareBps: 3333 }];
 const SECRET = b32(0x77), donor = { pubkey: schnorr.getPublicKey(SECRET), sign: (m) => schnorr.sign(m, SECRET) };
 const verify = (s, m, k) => schnorr.verify(s, m, k);

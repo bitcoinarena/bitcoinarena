@@ -35,6 +35,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { marketExpiryBlocks } from '../../arena-protocol/src/lock-expiry.js';
 import { beaconBlockIn } from './publication-wait.js';
 import * as guard from './duty-guard.js';
+import { jsonUpTo, binaryUpTo, listedGames, PEER_LISTING_BYTES, PEER_ROUNDS_BYTES, PEER_ROUNDS_ROWS, PEER_HEADERS_SLACK, PEER_HEADERS_BYTES } from './peer-read.js';   // kanban #1723, #2018, #2052
 
 export const DUTY_APPS = Object.freeze(['updown', 'rps', 'nextblock']);
 /** How many seats must have answered their rounds before an emergency grid is posted on what they say (fewer known: all of them). */
@@ -124,14 +125,35 @@ export function bumpStep(k, to, { atMs = Date.now(), ...fields } = {}) {
 export function createGridBase({ chainCall, prepare = null, censusEntriesAt, contractAt, catalogSeats, chainSeats, localCount = 0, devOf = {},
   protocolFor = () => undefined, pinnedFor = () => null, builtinFor = () => ({ gameId: null, fields: {} }), cores = {}, rpsBase = {},
   donationSetAt, censusDepth = 6, checkSeats = 16, decode, idOf, blockHashOf, fetchFn = fetch, say = () => {}, now = Date.now }) {
-  const seatJson = async (url, ms = 20000) => { const r = await fetchFn(url, { signal: AbortSignal.timeout(ms) }); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.json(); };
-  // THE APPS THE SEATS HOLD (GET /games, every manifest checked against its id), read again every 5 min
-  const seatCatalog = keptFor(5 * 60000, async () => guard.catalogOf((await Promise.all((await catalogSeats()).map((u) => seatJson(`${u}/games`).catch(() => null)))).filter(Boolean),
+  // a census seat's answer, read up to a bound (kanban #1723, the poster's copy of #1540): any bonded seat could answer GET /games
+  // with 120 MB, and r.json() held all of it in the poster - the seat's own process - on every pass
+  const seatJson = async (url, ms = 20000, maxBytes = PEER_LISTING_BYTES) => { const r = await fetchFn(url, { signal: AbortSignal.timeout(ms) });
+    if (!r.ok) { r.body?.cancel().catch(() => {}); throw new Error(`${url}: ${r.status}`); } return jsonUpTo(r, maxBytes); };
+  // THE APPS THE SEATS HOLD (GET /games, every manifest checked against its id), read again every 5 min; at most
+  // PEER_LISTING_GAMES entries of each seat's listing are walked (kanban #1723)
+  const seatCatalog = keptFor(5 * 60000, async () => guard.catalogOf((await Promise.all((await catalogSeats()).map((u) => seatJson(`${u}/games`)
+    .then((got) => ({ games: listedGames(got) })).catch(() => null)))).filter(Boolean),
     { decode, idOf }), now, (c) => !c || !c.size);
-  // THE SEATS' CHAINS (GET /headers), read again every 15 min
-  const seatChains = keptFor(15 * 60000, async () => ({ local: localCount, sets: await Promise.all((await chainSeats()).slice(0, checkSeats).map(async (u) => {
-    try { const r = await fetchFn(`${u}/headers`, { signal: AbortSignal.timeout(30000) }); return r.ok ? guard.headerHashes(new Uint8Array(await r.arrayBuffer()), blockHashOf) : null; } catch { return null; }
-  })) }), now, (c) => !c.sets.some(Boolean));
+  // THE SEATS' CHAINS (GET /headers), read again every 15 min. BOUNDED (kanban #2018, #2052): each answer is read up to the reader's own
+  // chain plus PEER_HEADERS_SLACK blocks of 80 bytes - r.arrayBuffer() held whatever a census seat sent (256 MB measured, 3,355,443
+  // headers hashed) - and the seats are read HEADER_READS at a time, not all checkSeats at once
+  const HEADER_READS = 4;
+  const seatChains = keptFor(15 * 60000, async () => {
+    let maxBytes = PEER_HEADERS_BYTES;
+    try { const tip = Number(await chainCall('getblockcount', [])); if (Number.isSafeInteger(tip) && tip >= 0) maxBytes = Math.min(PEER_HEADERS_BYTES, (tip + 1 + PEER_HEADERS_SLACK) * 80); } catch { /* tip not known: the fixed bound */ }
+    const urls = (await chainSeats()).slice(0, checkSeats);
+    const sets = new Array(urls.length).fill(null);
+    for (let i = 0; i < urls.length; i += HEADER_READS) {
+      await Promise.all(urls.slice(i, i + HEADER_READS).map(async (u, j) => {
+        try {
+          const r = await fetchFn(`${u}/headers`, { signal: AbortSignal.timeout(30000) });
+          if (!r.ok) { r.body?.cancel().catch(() => {}); return; }
+          sets[i + j] = guard.headerHashes(new Uint8Array(await binaryUpTo(r, maxBytes)), blockHashOf);
+        } catch { /* no answer, or past its bound: says nothing */ }
+      }));
+    }
+    return { local: localCount, sets };
+  }, now, (c) => !c.sets.some(Boolean));
   // A MAJORITY OF ALL THE SEATS ASKED - and of the OTHER machines' seats when three or more of them answer: seats that read the same
   // bitcoind agree with it on a branch of its own whatever the rest of the network follows (10-26, 157625)
   const agreementOf = (hash, c) => {
@@ -402,7 +424,17 @@ export function createDayDuty(o) {
   };
   // THE SEATS' ROUNDS (GET /rounds?next=1&ahead=50h), read again every 10 min
   const seatRounds = keptFor(10 * 60000, async () => Promise.all((await chain.seatUrls()).slice(0, drawSeats)
-    .map(async (u) => { try { const r = await fetchFn(`${u}/rounds?next=1&ahead=50h`, { signal: AbortSignal.timeout(60000) }); return r.ok ? await r.json() : null; } catch { return null; } })), now,
+    .map(async (u) => {
+      // BOUNDED (kanban #2018, #2052, the #1540/#1723 read of /games left open here): r.json() held a census seat's whole answer - 110 MB
+      // measured, 3,000,001 rounds parsed, the poster's heap +228 MB on every look() - so it is read up to PEER_ROUNDS_BYTES and at most
+      // PEER_ROUNDS_ROWS of its rows are walked
+      try {
+        const r = await fetchFn(`${u}/rounds?next=1&ahead=50h`, { signal: AbortSignal.timeout(60000) });
+        if (!r.ok) { r.body?.cancel().catch(() => {}); return null; }
+        const got = await jsonUpTo(r, PEER_ROUNDS_BYTES);
+        return got && Array.isArray(got.rounds) && got.rounds.length > PEER_ROUNDS_ROWS ? { ...got, rounds: got.rounds.slice(0, PEER_ROUNDS_ROWS) } : got;
+      } catch { return null; }
+    })), now,
     (l) => !l.some(Boolean));
   // HOW MANY SEATS ANSWERED THEIR ROUNDS: an emergency grid is posted only on the word of DUTY_MIN_SEATS of them (#702, seat 4's first pass)
   const seatsAnswered = async () => { const l = await seatRounds(); return { answered: l.filter(Boolean).length, asked: l.length }; };

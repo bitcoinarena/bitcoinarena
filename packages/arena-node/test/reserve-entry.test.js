@@ -11,8 +11,9 @@ import { reservesEntryExpected, roundSplit } from '../../arena-protocol/src/rese
 import { RESERVES_VERSION } from '../../arena-protocol/src/constants.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { b32 } from './window-fixture.js';
+import { pointKey } from '../../arena-protocol/test/point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
-const key = (prefix, fill) => Uint8Array.of(prefix, ...new Uint8Array(32).fill(fill));
+const key = (prefix, fill) => pointKey(prefix, fill);
 const DEVS = [{ recipientPk: key(0x02, 0xa1), shareBps: 6667, label: 'dev a' }, { recipientPk: key(0x03, 0xb2), shareBps: 3333, label: 'dev b' }];
 const TARGET = { network: DEVS, game: DEVS };
 const RESERVE_KEY = key(0x02, 0xc3);

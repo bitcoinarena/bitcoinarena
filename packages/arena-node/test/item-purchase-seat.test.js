@@ -11,9 +11,10 @@ import { purchaseOutputs, purchaseId } from '../../arena-protocol/src/purchase.j
 import { ITEMS_VERSION } from '../../arena-protocol/src/constants.js';
 import { SERVED_WINDOW_MS } from '../../arena-protocol/src/served-nodes.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { pointKey } from '../../arena-protocol/test/point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const pk33 = (n) => Uint8Array.from([0x02, ...b32(n)]);
+const pk33 = (n) => pointKey(0x02, n);
 const SECRET = b32(0x77), BUYER = schnorr.getPublicKey(SECRET);
 const verify = (s, m, k) => schnorr.verify(s, m, k);
 const MANIFEST = { gameDevPubkey: b32(0xde), gameName: 'nextblock', items: [{ id: 'large-truck', name: 'Larger truck', priceSat: 500n, unlock: b32(0xa1) }], requiredProtocolVersion: ITEMS_VERSION };

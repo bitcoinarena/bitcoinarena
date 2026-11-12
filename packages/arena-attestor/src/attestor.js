@@ -20,7 +20,10 @@ import { attestationBodyId, encodeAttestation } from '../../arena-protocol/src/a
 import { upDownOutcome, upDownPrices, UP_DOWN_OUTCOMES } from '../../arena-protocol/src/up-down.js';
 import { valueAttestationBodyId, encodeValueAttestation } from '../../arena-protocol/src/scalar.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { decodeManifest, gameIdOf, isScalar, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
+import { decodeManifest, gameIdOf, isScalar, manifestBodyId, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
+import { decodeRoundContract, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
+import { seriesId as seriesIdOf, seriesRoundCheck } from '../../arena-protocol/src/series.js';
+import { parseSeriesLine } from '../../arena-protocol/src/series-line.js';
 
 const PKCS8_ED25519 = Buffer.from('302e020100300506032b657004220420', 'hex');
 
@@ -122,9 +125,9 @@ export function wordFromJson(j) {
  * names this attestor's key - an attested outcome market for --mode outcome, a scalar one for --mode value - so a new version of
  * the market is attested from the first listing that carries it. A row whose id is not its manifest's is not taken.
  */
-export function marketsToAttest({ games = [], name, key, mode = 'outcome', ids = [] }) {
+export function marketsToAttest({ games = [], name, key, mode = 'outcome', ids = [], verify = verifyEd25519Word }) {
   const out = new Set(ids.map((x) => String(x).toLowerCase()));
-  for (const v of marketVersions({ games, name, key, mode })) out.add(v.id);
+  for (const v of marketVersions({ games, name, key, mode, ids, verify })) out.add(v.id);
   return out;
 }
 
@@ -133,20 +136,78 @@ export function marketsToAttest({ games = [], name, key, mode = 'outcome', ids =
  * including the latest version"): of the seats' /games rows, each version once - { id, version } - oldest first, so the last is
  * the latest; the list an attestor shows on /status and logs whenever it changes.
  */
-export function marketVersions({ games = [], name, key, mode = 'outcome' }) {
-  const keyHex = String(key).toLowerCase();
-  const byId = new Map();
+// ONLY A MANIFEST ITS DEVELOPER SIGNED, AND OF THE NAMED MARKET'S DEVELOPER (kanban #2080, #1489, refute 4 of fix:attest:3): a seat's
+// /games rows are unsigned - one seat listed a manifest of this game's name naming this attestor's key with a garbage signature and a
+// day-long round_period, and its id joined the markets and their grids; that seat then labelled the REAL round with it, its close was
+// off the forged day grid, and the round was never worked (VOID, a refund the seat chose after watching the price). A version is now
+// believed only when its developer key signed its body (manifest.js manifestStands' first rule; its parent is checked when a seat lists
+// it - a parent no longer hosted is not listed, so its absence is no refusal), and, when the operator named markets (--game-id, `ids`)
+// and a seat lists one of them, only of THAT developer key: anyone can sign a manifest of their own key under this game's name.
+// An id the operator named is always kept, as before (its manifest is bound to it by its hash).
+const manifestsOf = (games) => {
+  const out = new Map();                 // id hex -> manifest, each row whose id is its manifest's
   for (const g of games) {
-    let m;
-    try { m = decodeManifest(fromHex(String(g.manifest))); } catch { continue; }
+    let m; try { m = decodeManifest(fromHex(String(g && g.manifest))); } catch { continue; }
+    let id; try { id = toHex(gameIdOf(m)); } catch { continue; }
+    if (String(g.id).toLowerCase() === id) out.set(id, m);
+  }
+  return out;
+};
+export function marketVersions({ games = [], name, key, mode = 'outcome', ids = [], verify = verifyEd25519Word }) {
+  const keyHex = String(key).toLowerCase();
+  const all = manifestsOf(games);
+  const named = new Set(ids.map((x) => String(x).toLowerCase()));
+  const devKeys = new Set([...named].filter((id) => all.has(id)).map((id) => toHex(all.get(id).gameDevPubkey)));
+  const byId = new Map();
+  for (const [id, m] of all) {
     if (m.resultType !== RESULT_TYPE.ATTESTED || m.gameName !== name) continue;
     if (isScalar(m) !== (mode === 'value')) continue;
     if (!m.attestors.some((a) => toHex(a) === keyHex)) continue;
-    const id = toHex(gameIdOf(m));
-    if (String(g.id).toLowerCase() !== id) continue;
+    if (!named.has(id)) {
+      let signed = false;
+      try { signed = verify(m.signature, manifestBodyId(m), m.gameDevPubkey) === true; } catch { signed = false; }
+      if (!signed) continue;
+      if (devKeys.size && !devKeys.has(toHex(m.gameDevPubkey))) continue;
+      const parent = m.version > 1 ? all.get(toHex(m.parentManifestId)) : null;
+      if (parent && (toHex(parent.gameDevPubkey) !== toHex(m.gameDevPubkey) || parent.version + 1 !== m.version)) continue;
+    }
     byId.set(id, { id, version: m.version });
   }
   return [...byId.values()].sort((a, b) => a.version - b.version || (a.id < b.id ? -1 : 1));
 }
 
 export { UP_DOWN_OUTCOMES };
+
+/**
+ * THE ROUND'S CLOSE FROM ITS OWN CONTRACT, NOT FROM A SEAT'S WORD (kanban #1489 / #1705, refute of fix:attest:3): a seat's GET
+ * /rounds row is unsigned, so the seat listed first could name a shifted close, have this attestor sign another window, and -
+ * every seat refusing that word (attested.js attestationTimely: observed_at must be the window's end) - turn the round VOID after
+ * watching the price. The close is believed only from contract bytes that ARE the round: a round of no series is the hash of its
+ * contract (contracts.js roundId); a series round is H(series_id || i), so its contract must also be the one the series' template
+ * derives (series.js seriesRoundCheck), the template believed only as the series id it hashes to. `contract` is the bytes of GET
+ * /round?id=, `seriesLine` the text of GET /series-template?id= (asked for only when the contract names a series). `marketIds`
+ * (a Set of hex ids, may be empty) - the contract must play one of them; `periodMs` - the market's own grid (its manifest's
+ * roundPeriodMs; 0 = none): a close off it is no round of the market (attested.js marketWindowOf).
+ *   -> { ok: true, closeMs, gameId } | { ok: false, why, seriesId? } (seriesId: the template to fetch, when it was not given)
+ */
+export function roundCloseOf({ id, contract, seriesLine = null, marketIds = null, periodMs = 0n }) {
+  let c;
+  try { c = decodeRoundContract(contract instanceof Uint8Array ? contract : new Uint8Array(contract)); } catch (e) { return { ok: false, why: `that contract does not read: ${e.message}` }; }
+  const want = String(id).toLowerCase();
+  if (c.seriesId !== undefined && c.seriesId !== null) {
+    const sid = toHex(c.seriesId);
+    if (seriesLine === null || seriesLine === undefined) return { ok: false, why: `round of series ${sid.slice(0, 16)}: its template is needed`, seriesId: sid };
+    let t; try { t = parseSeriesLine(String(seriesLine).trim()); } catch (e) { return { ok: false, why: `that series line does not read: ${e.message}` }; }
+    let tid; try { tid = toHex(seriesIdOf(t)); } catch (e) { return { ok: false, why: `that series template has no id: ${e.message}` }; }
+    if (tid !== sid) return { ok: false, why: `that series line is series ${tid.slice(0, 16)}, not the ${sid.slice(0, 16)} the contract names` };
+    const k = seriesRoundCheck(c, [t]);
+    if (!k.ok) return { ok: false, why: k.why };
+  }
+  let rid; try { rid = toHex(roundIdOf(c)); } catch (e) { return { ok: false, why: `that contract has no round id: ${e.message}` }; }
+  if (rid !== want) return { ok: false, why: `that contract is round ${rid.slice(0, 16)}, not ${want.slice(0, 16)}` };
+  const gameId = toHex(c.gameId);
+  if (marketIds && marketIds.size && !marketIds.has(gameId)) return { ok: false, why: `that round plays game ${gameId.slice(0, 16)}, not this market` };
+  const p = BigInt(periodMs || 0n);
+  if (p > 0n && c.entryCloseMs % p !== 0n) return { ok: false, why: `that round closes at ${c.entryCloseMs}, off the market's ${p} ms grid` };
+  return { ok: true, closeMs: c.entryCloseMs, gameId };
+}

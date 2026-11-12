@@ -13,11 +13,12 @@ import { SERVED_WINDOW_MS } from '../src/served-nodes.js';
 import { toHex } from '../src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const pk33 = (n) => Uint8Array.from([0x02, ...new Uint8Array(32).fill(n)]);
+const pk33 = (n) => pointKey(0x02, n);
 const BUYER = b32(0x77);
 const BUYER_PUB = schnorr.getPublicKey(BUYER);
 const verify = (sig, msg, key) => schnorr.verify(sig, msg, key);
 import { MANIFEST_V3 } from '../../nextblock/plugin/nextblock-v3.js';
+import { pointKey } from './point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 // Tick Tock's version 3 as signed, and a version 4 that requires protocol 11 (signature zeroed: gameIdOf hashes, it does not verify)
 const DEV = MANIFEST_V3.gameDevPubkey;
 const V3 = MANIFEST_V3;

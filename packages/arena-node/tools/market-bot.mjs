@@ -37,6 +37,8 @@ import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { lockClaimDigest } from '../../arena-protocol/src/lock-claim.js';
 import { TICK, sellId } from '../../arena-protocol/src/order-book.js';
 import { lockEntry } from './entry-locks.mjs';
 import { saveLock, lookOwed, collectOwed } from '../../arena-client/src/page-lock.js';
@@ -412,6 +414,9 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
       // A SEAT THAT REFUSED THE ENTRY GETS NO LOCKS (2026-10-24, the explorer: "Some show 404"): a node not seated for the round
       // holds no entry, so its lock doors could only answer 404
       if (en.status < 200 || en.status >= 300) { said.push({ seat: n.replace(/^https?:\/\//, ''), entry: en.status, why: enWhy }); return; }
+      // THE PLAYER'S LOCK CLAIM (kanban #2069, #2088): a signature by the stake point over the entry id, as the page sends it - a seat then hands
+      // these locks only to a claimed entry, never to a copy under another stake point. Never fatal.
+      try { await fetch(`${n}/lock-claim?entry=${toHex(eid)}`, { method: 'POST', body: schnorr.sign(lockClaimDigest(eid), p), signal: limit() }).then((r) => r.text()); } catch { /* the seats show it to each other */ }
       await accepted;
       if (locks.fee) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(locks.fee.fields)), signal: limit() });
       const l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(locks.stake.fields)), signal: limit() });

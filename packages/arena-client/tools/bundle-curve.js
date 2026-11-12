@@ -29,6 +29,10 @@ const r = spawnSync(bin, [
   '--preserve-symlinks',
   `--outfile=${out}`,
 ], { stdio: 'inherit', cwd: resolve(here, '..') });
+// AN ESBUILD THAT DID NOT START IS NAMED (kanban #1713, #1777): spawnSync sets `error`, not `status`, when the binary is missing
+// (the MacBook's shared test deps have no esbuild), and the tool went on to stat a file it never wrote - bundle-fresh then read
+// as a missing arena-curve.js in a temp directory rather than as the missing build tool.
+if (r.error) { console.error(`bundle-curve: ${bin} did not run: ${r.error.message}`); process.exit(1); }
 if (r.status) process.exit(r.status || 1);
 
 const kb = (statSync(out).size / 1024).toFixed(1);

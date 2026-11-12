@@ -1,0 +1,107 @@
+kanban #2027 (#1508, #1868, #1489): every per-seat ask of the replay walks is bounded (answer 8 s, body stall 8 s, body total 64 s).
+For bitcoinarena/arena-app-next-block (apps.lock.json pin b9c9aa35; written against the copy in packages/nextblock). Apply in the app repo: git apply <this file>
+
+--- a/page/unity-page.js
++++ b/page/unity-page.js
+@@ -201,14 +201,50 @@
+     // when the run ends, so the click itself only builds the link and writes it: the clipboard wants the click's
+     // activation, and a fetch between the two could outlive it.
+     const replayNodes = new Map();
++    // kanban #2027 (#1508, #1868, #1489): EACH SEAT GETS A BOUNDED WAIT, as secureTranscript's NODE_WAIT_MS. One committee seat that
++    // takes the request and never answers held this walk for ever (a bare fetch, no timer) while the next seat held the run. The timer
++    // covers the time to the answer (status and headers); the body is then bounded by a stall (no byte for NODE_WAIT_MS) and a total
++    // of 8 x NODE_WAIT_MS, never by one timer over the whole transfer, so an honest seat still sending on a slow link is not cut off.
++    // A seat over either bound is skipped and the next one is asked. Kept inside this block: the #2027 test runs exactly this text.
++    const NODE_WAIT_MS = 8000;
++    const askBounded = async (url, init = {}) => {
++      const ac = new AbortController();
++      let timer, r;
++      const late = new Promise((_, no) => { timer = setTimeout(() => { ac.abort(); no(new Error(`${url}: no answer in ${NODE_WAIT_MS} ms`)); }, NODE_WAIT_MS); });
++      try { r = await Promise.race([late, fetch(url, { ...init, signal: ac.signal })]); }
++      catch (e) { ac.abort(); throw e; }
++      finally { clearTimeout(timer); }
++      const bytes = async () => {
++        let stall, total, cut;
++        const stop = new Promise((_, no) => { cut = (why) => { ac.abort(); no(new Error(`${url}: ${why}`)); }; });
++        const poke = () => { clearTimeout(stall); stall = setTimeout(() => cut(`body stalled for ${NODE_WAIT_MS} ms`), NODE_WAIT_MS); };
++        poke();
++        total = setTimeout(() => cut(`body not read in ${8 * NODE_WAIT_MS} ms`), 8 * NODE_WAIT_MS);
++        const read = (async () => {
++          const reader = r.body && typeof r.body.getReader === 'function' ? r.body.getReader() : null;
++          if (!reader) return new Uint8Array(await r.arrayBuffer());
++          const parts = []; let n = 0;
++          for (;;) { const { done, value } = await reader.read(); if (done) break; poke(); parts.push(value); n += value.length; }
++          const out = new Uint8Array(n); let at = 0;
++          for (const p of parts) { out.set(p, at); at += p.length; }
++          return out;
++        })();
++        try { return await Promise.race([stop, read]); }
++        finally { clearTimeout(stall); clearTimeout(total); }
++      };
++      const text = async () => new TextDecoder().decode(await bytes());
++      // a body nobody reads is cancelled, so a refused answer frees its connection at once
++      const drop = () => { try { const c = r.body && typeof r.body.cancel === 'function' ? r.body.cancel() : null; if (c && c.catch) c.catch(() => {}); } catch (e) { /* nothing to drop */ } };
++      return { ok: r.ok, status: r.status, bytes, text, json: async () => JSON.parse(await text()), drop };
++    };
+     const prefetchReplayNodes = (roundHex, nodes) => {
+       if (!roundHex || replayNodes.has(roundHex)) return replayNodes.get(roundHex);
+       const asked = (async () => {
+         for (const n of nodes || []) {
+           // THE STABLE NAMES FIRST (2026-09-26 13:28): a quick tunnel's name dies on its next start, so the copied link
+           // names the nodes' stable https bases when they answer any, and the round's advertised endpoints only when not
+-          try { const r = await fetch(`${String(n).replace(/\/+$/, '')}/replay/nodes?round=${roundHex}`); if (r.ok) { const j = await r.json(); return (j.stable && j.stable.length ? j.stable : j.endpoints) || []; } }
+-          catch (e) { /* the next node */ }
++          try { const r = await askBounded(`${String(n).replace(/\/+$/, '')}/replay/nodes?round=${roundHex}`); if (r.ok) { const j = await r.json(); return (j.stable && j.stable.length ? j.stable : j.endpoints) || []; } r.drop(); }
++          catch (e) { /* the next node (kanban #2027: a silent one too) */ }
+         }
+         return [];
+       })();
+--- a/plugin/nextblock-replay.html
++++ b/plugin/nextblock-replay.html
+@@ -79,8 +79,44 @@
+   // THIS NODE is the origin AND the path it is published under: an advertised endpoint may carry one
+   // (wss://host/node-a), and location.origin alone would ask the host's root, which is not this node.
+   const here = location.origin + location.pathname.replace(/\/replay\/?$/, '');
+-  const tryJson = async (url) => { try { const r = await fetch(url); return r.ok ? await r.json() : null; } catch (e) { return null; } };
+-  const bytesOf = async (url) => { const r = await fetch(url); if (!r.ok) throw new Error(`${url}: ${r.status} ${await r.text()}`); return new Uint8Array(await r.arrayBuffer()); };
++  // kanban #2027 (#1508, #1868, #1489): EACH SEAT GETS A BOUNDED WAIT, as secureTranscript's NODE_WAIT_MS. One committee seat that
++  // takes the request and never answers held this walk for ever (a bare fetch, no timer) while the next seat held the run. The timer
++  // covers the time to the answer (status and headers); the body is then bounded by a stall (no byte for NODE_WAIT_MS) and a total
++  // of 8 x NODE_WAIT_MS, never by one timer over the whole transfer, so an honest seat still sending on a slow link is not cut off.
++  // A seat over either bound is skipped and the next one is asked. Kept inside this block: the #2027 test runs exactly this text.
++  const NODE_WAIT_MS = 8000;
++  const askBounded = async (url, init = {}) => {
++    const ac = new AbortController();
++    let timer, r;
++    const late = new Promise((_, no) => { timer = setTimeout(() => { ac.abort(); no(new Error(`${url}: no answer in ${NODE_WAIT_MS} ms`)); }, NODE_WAIT_MS); });
++    try { r = await Promise.race([late, fetch(url, { ...init, signal: ac.signal })]); }
++    catch (e) { ac.abort(); throw e; }
++    finally { clearTimeout(timer); }
++    const bytes = async () => {
++      let stall, total, cut;
++      const stop = new Promise((_, no) => { cut = (why) => { ac.abort(); no(new Error(`${url}: ${why}`)); }; });
++      const poke = () => { clearTimeout(stall); stall = setTimeout(() => cut(`body stalled for ${NODE_WAIT_MS} ms`), NODE_WAIT_MS); };
++      poke();
++      total = setTimeout(() => cut(`body not read in ${8 * NODE_WAIT_MS} ms`), 8 * NODE_WAIT_MS);
++      const read = (async () => {
++        const reader = r.body && typeof r.body.getReader === 'function' ? r.body.getReader() : null;
++        if (!reader) return new Uint8Array(await r.arrayBuffer());
++        const parts = []; let n = 0;
++        for (;;) { const { done, value } = await reader.read(); if (done) break; poke(); parts.push(value); n += value.length; }
++        const out = new Uint8Array(n); let at = 0;
++        for (const p of parts) { out.set(p, at); at += p.length; }
++        return out;
++      })();
++      try { return await Promise.race([stop, read]); }
++      finally { clearTimeout(stall); clearTimeout(total); }
++    };
++    const text = async () => new TextDecoder().decode(await bytes());
++    // a body nobody reads is cancelled, so a refused answer frees its connection at once
++    const drop = () => { try { const c = r.body && typeof r.body.cancel === 'function' ? r.body.cancel() : null; if (c && c.catch) c.catch(() => {}); } catch (e) { /* nothing to drop */ } };
++    return { ok: r.ok, status: r.status, bytes, text, json: async () => JSON.parse(await text()), drop };
++  };
++  const tryJson = async (url) => { try { const r = await askBounded(url); if (!r.ok) { r.drop(); return null; } return await r.json(); } catch (e) { return null; } };
++  const bytesOf = async (url) => { const r = await askBounded(url); if (!r.ok) throw new Error(`${url}: ${r.status} ${await r.text()}`); return await r.bytes(); };
+ 
+   // THE NODE THAT HOLDS THE RUN: this one first, then the round's committee endpoints.
+   const others = ((await tryJson(`${here}/replay/nodes?round=${round}`)) || { endpoints: [] }).endpoints.filter((u) => u !== here);

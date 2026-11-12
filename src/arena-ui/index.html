@@ -2813,7 +2813,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     (function () {
       var P = window.ARENA_PRICES = { round: null, nodes: [], samples: new Map(), tape: null, tapeDone: false, active: false, applied: [], timer: null,
         heard: true, feed: false, held: {}, misses: 0 };
-      function hex2u8(h) { return Uint8Array.from(String(h).match(/../g).map(function (x) { return parseInt(x, 16); })); }
+      function hex2u8(h) { return Uint8Array.from((String(h).match(/../g) || []).map(function (x) { return parseInt(x, 16); })); }
       function sigsOf(list) { return (list || []).map(function (s) { return [hex2u8(s.key), hex2u8(s.signature)]; }); }
       // PROTOCOL 5: a sample is the median of the seats' own signed readings - each [key, its cents (or its 64
       // prices), signature] goes into the transcript beside the median, and every seat recomputes it
@@ -4387,7 +4387,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // happen again"; feedback #010: the handout reached the seats 1.8 s after the close, the lock was made, the seats refused the entry and 6 sat of developers'
         // and reserves' parts stayed spent): the handout, the lock and the entry need ARENA_H2H_LEAD_MS() before the close; with less, nothing is sent or locked
         if (!reuse && window.ARENA_HIDDEN_CHOSEN && window.ARENA_HIDDEN_CHOSEN.round === named.roundIdHex && thisJoin && !thisJoin.free
-          && Number(named.round.entryCloseMs) - Date.now() < window.ARENA_H2H_LEAD_MS() + 1500) {
+          && Number(named.round.entryCloseMs) - (Date.now() + (window.ARENA_SEAT_AHEAD_MS || 0)) < window.ARENA_H2H_LEAD_MS() + 1500) {   // kanban #1892: the seats' clock as the last handout read it
           // NOT `missed` (measured 2026-11-11 on the MacBook, round 9f51edf1 -> 41432520): a missed join is retried in the next round, and that retry
           // locked the stake and made no entry - the hidden move is the old round's. A late tap is refused; the player taps the next round
           window.ARENA_JOIN_REFUSED = 'the entry closed before it went in - nothing was locked';
@@ -4466,6 +4466,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             if (thisJoin) thisJoin.locking = true;
             stakeLock = { outpoint: reuse.lock.outpoint, fields: reuse.lock.fields, feeLock: reuse.lock.feeLock || null, donations: reuse.lock.donations || [],
               needed: ARENACLIENT.sharesNeededFor(named.round), onCommitted: committedTo, onNamed: namedIn,
+              // THE PLAYER'S CLAIM ON THE ENTRY'S LOCKS (kanban #1897, #1938): signed by the stake point, so no copy of the entry can take them
+              claimFor: ARENACLIENT.lockClaimer ? ARENACLIENT.lockClaimer(window.ARENA_CURVE, stake) : null,
               handUntilMs: ARENACLIENT.marketForRound && ARENACLIENT.marketForRound(named.round) ? Number(named.round.entryCloseMs) : 0 };
             window.ARENA_STAKE_LOCK = stakeLock;
             if (stageEl) window.ArenaText.say(stageEl, ARENACLIENT.lockLine(stakeLock));
@@ -4490,9 +4492,16 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             // the close, its lock was made anyway - close + 10 s above is the other games' grace - and refunded 94 of 100 sat, 6 sat in federation fees): a
             // hidden move's round is locked only while the lock and the entry can still land before the close (H2H_LOCK_LEAD_MS); later, nothing is locked
             const h2hHere = !!(window.ARENA_HIDDEN_CHOSEN && window.ARENA_HIDDEN_CHOSEN.round === named.roundIdHex);
-            if (thisJoin && !thisJoin.free && h2hHere && Date.now() > Number(named.round.entryCloseMs) - window.ARENA_H2H_LEAD_MS()) {
-              console.log('[arena] #1485 no lock: head-to-head round ' + named.roundIdHex.slice(0, 8) + ' closes in ' + ((Number(named.round.entryCloseMs) - Date.now()) / 1000).toFixed(1) + ' s');
-              throw new Error('the entry closed before it went in - nothing was locked');
+            // ON THE SEATS' CLOCK (kanban #1892, #1489 refute 2 of #1742): the handout ran beside the funding, which nothing bounds, and a player whose clock
+            // runs slow passed the old Date.now() check - the lock was made and every seat refused the entry after the close. The seats said in the handout's
+            // 201 how long they still had (put.seatCloseAtMs); the smaller of theirs and this clock's must leave the lead, or nothing is locked
+            if (thisJoin && !thisJoin.free && h2hHere) {
+              window.ARENA_SEAT_AHEAD_MS = ARENACLIENT.seatClockAheadMs(put, named.round.entryCloseMs);
+              const h2hLate = ARENACLIENT.h2hLockRefusal({ put, entryCloseMs: named.round.entryCloseMs, leadMs: window.ARENA_H2H_LEAD_MS() });
+              if (h2hLate) {
+                console.log('[arena] #1485 #1892 no lock: head-to-head round ' + named.roundIdHex.slice(0, 8) + ': ' + h2hLate);
+                throw new Error('the entry closed before it went in - nothing was locked');
+              }
             }
             if (thisJoin && !thisJoin.free && Number.isFinite(lastEntryMs) && Date.now() > lastEntryMs) {
               thisJoin.missed = !h2hHere;   // kanban #1485: a head-to-head order is never retried in another round - its hidden move is this round's
@@ -4519,6 +4528,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             // a 100 sat round makes none, so the player is charged no lock that expires unused.
             stakeLock = { outpoint: made.outpoint, fields: made.fields, feeLock: made.feeLock || null, donations: made.donations || [], accepted: made.accepted || null,
               needed: ARENACLIENT.sharesNeededFor(named.round), onCommitted: committedTo, onNamed: namedIn,
+              // THE PLAYER'S CLAIM ON THE ENTRY'S LOCKS (kanban #1897, #1938): signed by the stake point, so no copy of the entry can take them
+              claimFor: ARENACLIENT.lockClaimer ? ARENACLIENT.lockClaimer(window.ARENA_CURVE, stake) : null,
               handUntilMs: ARENACLIENT.marketForRound && ARENACLIENT.marketForRound(named.round) ? Number(named.round.entryCloseMs) : 0 };
             console.log('[arena] fee lock: ' + (made.feeLock ? 'minted, ' + String(made.feeLock.fields.amountMsat) + ' msat' : 'none - ' + made.feeGate.why));
             // KEPT BEFORE ANYTHING ELSE CAN HAPPEN TO THE TAB (lockStake, `keep`): a reload from here on uses this lock, not a second deposit
@@ -7881,7 +7892,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // NOTHING FOR A TAP THAT CANNOT GO IN (audit 5, kanban #1406): a tap in the round's last 3 s (the client offers its row down to 1.5 s) set the hidden
           // move, told the bot "tapped" and set a reveal for a join the page then refused; and a tap on another round while a paid join was locking left
           // that join's hidden move replaced - a stake locked with no hidden entry. Both are refused here first, with nothing changed
-          { const row = (window.ARENA_LOBBY_ROWS || []).find((r) => r && r.id === id), left = row ? Number(row.entryCloseMs) - Date.now() : null, j = window.ARENA_JOIN;
+          { const row = (window.ARENA_LOBBY_ROWS || []).find((r) => r && r.id === id), left = row ? Number(row.entryCloseMs) - (Date.now() + (window.ARENA_SEAT_AHEAD_MS || 0)) : null, j = window.ARENA_JOIN;   // kanban #1892: on the seats' clock
             // A PAID HEAD-TO-HEAD TAP NEEDS THE ORDER'S WHOLE LEAD (kanban #1485): refused here, before the opponent is told and before anything is dealt or locked
             const need = row && !row.free && window.ARENA_H2H_LEAD_MS ? window.ARENA_H2H_LEAD_MS() + 1500 : Number(window.ARENA_ORDER_CUTOFF_MS || 3000);
             if (left !== null && left < need) {
@@ -7954,39 +7965,81 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           { const kept = resultsSeen.get(id), moves = revealsSeen.get(id); if (kept && moves && Object.keys(moves).length >= 2 && h && Date.now() < Number(h.entryCloseMs) + 6000) return saidProvisionally(id, provisional(kept, moves)); }
           let none = null, best = null;
           const needs = (game.manifest && game.manifest.resultType === 3) ? 2 : 1;
-          // A HEAD-TO-HEAD VERDICT IS WHAT THE SEATS AGREE ON, NOT THE FIRST SEAT'S WORD (kanban #1825, audit #1489 r6-h2h): the first seat listing both entries
-          // was taken whole - its outcome, score and its own `signedBy` count - so one committee seat listed first told every winner of its rounds "You lose" and
-          // raised the "Correction" alert against what the other seats signed. Every seat is asked at once; the two entries' outcome and score most seats name
-          // stand, and only when at least two seats (one, for a round of one seat) name them alike - otherwise no seat's answer counts as signed
-          const asked = needs === 2 ? await Promise.all((h ? h.nodes : []).map(async (n) => {
-            try { const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(5000) }); return r.ok ? await r.json() : null; } catch { return null; }
-          })) : null;
-          const verdictOf = (j) => JSON.stringify((j.players || []).map((p) => [String(p.entry), String(p.outcome), Number(p.score)]).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
-          const agreed = new Map();   // verdict -> how many seats name it
-          if (asked) for (const j of asked) if (j && (j.players || []).length === 2) agreed.set(verdictOf(j), (agreed.get(verdictOf(j)) || 0) + 1);
-          const counts = [...agreed.values()].sort((a, b) => b - a), top = [...agreed.entries()].find(([, c]) => c === counts[0]);
-          const quorum = Math.min(2, h ? h.nodes.length : 2), standing = top && top[1] >= quorum && !(counts.length > 1 && counts[1] === counts[0]) ? top[0] : null;
-          for (const [i, n] of (h ? h.nodes : []).entries()) {
-            try {
-              let j;
-              if (asked) { j = asked[i]; if (!j) continue; if ((j.players || []).length === 2 && standing !== null && verdictOf(j) !== standing) continue; }
-              else {
-                const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(best ? 2000 : 5000) });
-                if (!r.ok) continue;
-                j = await r.json();
-              }
+          // NO SEAT ALONE SAYS THE SIGNED RESULT (kanban #1673, #1489 v1-refute-4, the bypass of the client-4 fix aaf288ee): the first seat that answered with
+          // both entries was the round, its outcome, score and signedBy taken as it wrote them - one seat at the head of the list could make an honest win read
+          // "a loss" (and fire the #1406 Correction against a right provisional verdict). Every listed seat is asked at once; an entry is in the round when at
+          // least 2 seats name it (every seat of a one-seat list), and its outcome and score count as signed only when that many seats give the same pair with
+          // signedBy > 0 and more seats give it than any other pair. An entry without that agreement is unsigned here: no outcome yet, and a head-to-head round
+          // keeps its provisional verdict from the agreed open moves (revealsOfRound, the same rule)
+          const listed = h ? h.nodes : [], agree = Math.min(2, listed.length);
+          // THE MATCH RECORD AND signedBy BY THE SAME RULE, AND NO WAIT ON A SILENT SEAT (kanban #1867, #1890, #1928, #1489 v1-refute-4-s2, the bypass of
+          // c36c05f30): the score across rounds and whose identity is whose came from the first seat that had a match record - one seat at the head of the
+          // list, even one whose players the vote outvoted, set it; signedBy was the largest any agreeing seat claimed, so one seat said how many signed; and
+          // every call waited for every seat (a dead tunnel in the list: 5 s on each poll). Now each seat has one vote per entry and one for the match record
+          // (identities, score, played, previousRound and which entry is which, as one key); a value counts when at least `agree` seats give it and more than
+          // give any other. signedBy is the agree-th largest among the seats that give the counted pair: a number that many seats reach. The answers are
+          // counted as they come, and the call settles once the seats still out could not change any of it; the rest are aborted.
+          // NO LONE MATCH RECORD (kanban #2057, #1489 v1-refute-4-s3, the bypass of 8620bc1ce): a record only one seat gave was kept when that seat's signed
+          // pairs matched the counted ones - the pairs are public at every seat's /api/round-result, and a seat with no signed pair passed vacuously, so one
+          // seat could copy them and set the score across rounds and whose identity is whose while the honest seats had none (matchOf null). A match record
+          // is now shown only by the vote above (at least `agree` seats, more than any other; every seat of a one-seat list), and otherwise none.
+          const winner = (counts, out) => {   // { v: the counted value or null, fixed: the seats still out cannot change that }
+            const r = [...counts.values()].sort((x, y) => y.seats - x.seats), a = r[0] ? r[0].seats : 0, b = r[1] ? r[1].seats : 0;
+            const top = a >= agree && a > b ? r[0] : null;
+            return { v: top, fixed: out === 0 || (top ? a > b + out : a + out < agree) };
+          };
+          const tally = (answers, out) => {
+            const named = new Map(), matches = new Map(); let empty = false, settled = out < agree;   // an entry no seat named yet cannot get in
+            for (const j of answers) {
+              if (!j) continue;
               // A SEAT THAT WAS NOT DRAWN ANSWERS 200 WITH NO PLAYERS (2026-10-30: "beide orders werden abgesendet aber es gibt kein Ergebnis": round
-              // 1b995103 settled, 5 signed, and seven seats ahead of the signers in the list said nothing): the next seat is asked
-              if (!(j.players || []).length) { none = none || { entries: [], match: null }; continue; }
-              // AND THE SCORE ACROSS ROUNDS: the seat's signed match record, with whose identity is whose
-              const got = { entries: (j.players || []).map((p) => ({ entry: p.entry, outcome: p.outcome, score: p.score, signedBy: (asked && (j.players || []).length === 2 && standing === null) ? 0 : p.signedBy })),
-                match: j.match ? { identities: j.match.identities, names: j.match.names || [], score: j.match.score, played: j.match.played,
-                  continued: !!j.match.previousRound, byEntry: j.match.players || {}, seat: j.match.seat, signature: j.match.signature } : null };
-              // A SEAT THAT HOLDS ONLY ONE OF TWO IS NOT THE ROUND (kanban #947, 2026-11-01: "das Ergebnis nicht konsistent"): an entry reaches the seats one by one, so the fullest answer counts
-              if (!best || got.entries.length > best.entries.length) best = got;
-              if (best.entries.length >= needs) break;
-            } catch { /* the next seat */ }
-          }
+              // 1b995103 settled, 5 signed, and seven seats ahead of the signers in the list said nothing): the other seats count
+              if (!Array.isArray(j.players) || !j.players.length) { empty = true; continue; }
+              const seen = new Set();   // one vote per seat and entry: the first it lists
+              for (const p of j.players) {
+                if (!p || typeof p.entry !== 'string' || seen.has(p.entry)) continue; seen.add(p.entry);
+                if (!named.has(p.entry)) named.set(p.entry, { seats: 0, said: new Map() });
+                const e = named.get(p.entry); e.seats += 1;
+                if (p.outcome && Number(p.signedBy) > 0) { const k = String(p.outcome) + '|' + String(p.score); const v = e.said.get(k) || { outcome: p.outcome, score: p.score, seats: 0, signs: [] };
+                  v.seats += 1; v.signs.push(Number(p.signedBy)); e.said.set(k, v); }
+              }
+              // AND THE SCORE ACROSS ROUNDS: a seat's signed match record, with whose identity is whose - one vote per seat, its own fields (seat, signature) not in the key
+              const m = j.match;
+              if (m && typeof m === 'object') {
+                const by = m.players && typeof m.players === 'object' ? m.players : {};
+                const k = JSON.stringify([m.identities, m.score, m.played, m.previousRound || null, Object.keys(by).sort().map((x) => [x, by[x]])]);
+                const v = matches.get(k) || { m, seats: 0 }; v.seats += 1; matches.set(k, v);
+              }
+            }
+            // A SEAT THAT HOLDS ONLY ONE OF TWO IS NOT THE ROUND (kanban #947, 2026-11-01: "das Ergebnis nicht konsistent"): an entry reaches the seats one by one;
+            // it is in the round once enough seats hold it
+            const entries = [];
+            for (const [entry, e] of named) {
+              if (e.seats + out < agree) continue;
+              if (e.seats < agree) { settled = false; continue; }
+              const w = winner(e.said, out); if (!w.fixed) settled = false;
+              entries.push(w.v ? { entry, outcome: w.v.outcome, score: w.v.score, signedBy: [...w.v.signs].sort((x, y) => y - x)[agree - 1] } : { entry, outcome: null, score: null, signedBy: 0 });
+            }
+            const mw = winner(matches, out); if (!mw.fixed) settled = false;
+            const m = mw.v && mw.v.m;   // the vote's record or none (kanban #2057: no lone-record exception)
+            return { entries, empty, settled, match: m ? { identities: m.identities, names: m.names || [], score: m.score, played: m.played,
+              continued: !!m.previousRound, byEntry: m.players || {}, seat: m.seat, signature: m.signature } : null };
+          };
+          const stop = new AbortController(), answers = listed.map(() => null);
+          let out = listed.length;
+          const got = await new Promise((done) => {
+            if (!out) { done(tally(answers, 0)); return; }
+            listed.forEach((n, i) => (async () => {
+              try {
+                const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.any([stop.signal, AbortSignal.timeout(5000)]) });
+                answers[i] = r.ok ? await r.json() : null;
+              } catch { answers[i] = null; }
+              out -= 1; const t = tally(answers, out); if (t.settled) done(t);
+            })());
+          });
+          stop.abort();
+          if (got.empty) none = { entries: [], match: null };
+          if (got.entries.length) best = { entries: got.entries, match: got.match };
           if (best && needs === 2 && best.entries.length === 2) { resultsSeen.set(id, best); if (resultsSeen.size > 32) resultsSeen.delete(resultsSeen.keys().next().value); }
           if (best && needs === 2 && best.entries.length === 2 && !best.entries.some((e) => e.outcome && e.signedBy > 0)) return saidProvisionally(id, provisional(best, revealsSeen.get(id) || {}));
           checkSigned(id, best);

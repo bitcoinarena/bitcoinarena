@@ -51,6 +51,7 @@ import { ArenaText, ArenaBits } from './arena-text.js';   // the page's React li
 import { TRUCK_68E2_HASH } from '../../nextblock/plugin/truck-cores.js';   // the truck versions 1-4 name (kanban #523: the tree now builds a5c5766a)
 
 const b32 = (n) => new Uint8Array(32).fill(n);
+import { pointKey } from '../../arena-protocol/test/point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 const rand = (n) => new Uint8Array(randomBytes(n));
 const sha256 = (s) => new Uint8Array(createHash('sha256').update(s).digest());
 const SET = TEST_DONATION_SET_REGTEST;
@@ -535,15 +536,23 @@ test('a signer node missing, a signer node serving another set, a forged set, or
   assert.equal((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: honest }) })).ok, true);
   // a game set its manifest does not name is no game set: the game dev's half is never routed to it
   (await import('../src/donation-pay.js')).forgetGameSets();
-  const strayGame = [{ recipientPk: Uint8Array.from([0x02, ...b32(0x5e)]), label: 'not the game dev', shareBps: 10000 }];
+  const strayGame = [{ recipientPk: pointKey(0x02, 0x5e), label: 'not the game dev', shareBps: 10000 }];
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: honest }, [], strayGame) })).why,
     /not the set the game's manifest names/);
-  assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest }) })).why, /not every signer node/);
+  // ONE SEAT'S 404 COUNTS AS NO MORE THAN ITS SILENCE (kanban #1701, #1767): half of the nodes serving the checked set is enough on both
+  // paths - the dropped read below already let it through, so the seat's own 404 does too, reported as dissent; with no seat serving it, refused
+  const one404 = await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest }) });
+  assert.equal(one404.ok, true, one404.why);
+  assert.deepEqual(one404.dissent.map((d) => d.node), ['http://127.0.0.1:2']);
+  assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({}) })).why, /not every signer node/);
   // A READ THE CONNECTION DROPPED (kanban #803, "Load failed" on a phone) is a node that did not answer, not a refusal - and half must still serve
   const dropping = (ports, f) => async (url) => { if (ports.includes(new URL(url).port)) throw new TypeError('Load failed'); return f(url); };
   assert.equal((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: dropping(['2'], serving({ 1: honest })) })).ok, true);
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: dropping(['1', '2'], serving({})) })).why, /only 0 of 2 nodes served/);
-  assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: forged }) })).why, /serve different donation sets/);
+  // a forged set beside the honest one is that seat's dissent, as its 404 would be (kanban #1701, #1767); two sets neither of which checks are refused
+  assert.equal((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: forged }) })).ok, true);
+  const forged2 = signedBytes({ ...SET, signature: ed25519.sign(donationSetBodyId(SET), ed25519.utils.randomSecretKey()) });
+  assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: forged2, 2: forged }) })).why, /serve different donation sets/);
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: forged, 2: forged }) })).why, /not signed by the network's donation authority/);
 
   // A ROTATION, served by one signer node only: the old authority's set is no set once it is in force.
@@ -629,7 +638,7 @@ test('a node that does not answer holds no join, and a set fetched and checked i
   assert.match(lone.why, /only 0 of 1 nodes served/);
 });
 
-test('a majority that serves the same set is not held for the slowest node (kanban #625); a refusal in before it waits for all', async () => {
+test('a majority that serves the same set is not held for the slowest node (kanban #625), nor by a refusal or other bytes beside it (kanban #1903)', async () => {
   const { firstMajority } = await import('../src/donation-pay.js');
   const b = new Uint8Array([1, 2, 3]);
   const at = (ms, v) => new Promise((r) => setTimeout(() => r(v), ms));
@@ -641,9 +650,19 @@ test('a majority that serves the same set is not held for the slowest node (kanb
   assert.equal(got[3].late, true);
   t = Date.now();
   const refused = await firstMajority([at(2, { node: 'a', why: '404 no such round' }), at(5, { node: 'b', bytes: b }), at(5, { node: 'c', bytes: b }), at(80, { node: 'd', bytes: b })], names, { graceMs: 10 });
-  assert.ok(Date.now() - t >= 70, 'with a refusal in, every answer is waited for');
+  // only half of the nodes served the same bytes: no majority yet, so every answer is waited for (as for a late node in its place)
+  assert.ok(Date.now() - t >= 70, 'half the nodes is no majority: every answer is waited for');
   assert.equal(refused[0].why, '404 no such round');
   assert.ok(refused[3].bytes);
   const split = await firstMajority([at(5, { node: 'a', bytes: b }), at(5, { node: 'b', bytes: new Uint8Array([9]) }), at(5, { node: 'c', bytes: b }), at(60, { node: 'd', bytes: b })], names, { graceMs: 10 });
-  assert.ok(split.every((x) => x.bytes), 'answers that differ wait for all');
+  assert.ok(split.every((x) => x.bytes), 'without a majority of the same bytes, answers that differ wait for all');
+  // A REFUSAL IS NO LONGER OBEYED (kanban #1524), SO IT HOLDS NOTHING (kanban #1903): more than half served the same bytes, one refused
+  // and one served other bytes at once, one hangs - the grace runs, the hung node is late, and the caller's quorum and checks decide
+  t = Date.now();
+  const hung = await firstMajority([at(1, { node: 'a', why: '404 no such round' }), at(1, { node: 'b', bytes: new Uint8Array([9]) }), at(5, { node: 'c', bytes: b }),
+    at(5, { node: 'd', bytes: b }), at(5, { node: 'e', bytes: b }), at(5, { node: 'f', bytes: b }), new Promise(() => {})], ['a', 'b', 'c', 'd', 'e', 'f', 'g'], { graceMs: 10 });
+  assert.ok(Date.now() - t < 500, 'a refusal and other bytes do not hold the read for the hung node');
+  assert.equal(hung[6].late, true, 'the hung node is left out as late, a refusal beside it or not');
+  assert.equal(hung[0].why, '404 no such round');
+  assert.deepEqual(Array.from(hung[1].bytes), [9]);
 });

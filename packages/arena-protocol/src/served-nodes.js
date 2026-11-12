@@ -92,7 +92,10 @@ export function servedNodesDiffer(claimed, mine) {
  *     (contracts.js sittingSeatsFitTheSlots, sortition.js drawnForRole);
  *   - each seat's answer is read up to SERVED_HELD_MAX rounds;
  *   - two seats naming one round with different committees no longer drop the round: the committee most seats name stands, and
- *     between equally many the one held first (the caller's own record first, then the seats in the order it lists them).
+ *     between equally many the one held first (the caller's own record first, then the seats in the order it lists them);
+ *   - a seat's answer names each round once (kanban #1698, #1766, measured: one seat listing a real round three times, each with a
+ *     committee of one made-up key, outvoted two honest seats and that key took 250,000 msat of a 500-sat item): the first entry
+ *     of a round in one seat's answer is that seat's, and its later repeats are skipped - so "most seats" counts seats, not entries.
  */
 export const SERVED_COMMITTEE_MAX = 9;
 export const SERVED_HELD_MAX = 20000;
@@ -101,9 +104,12 @@ export function mergeServedRounds(held) {
   const rounds = new Map(), conflicts = new Set();
   for (const seat of held || []) {
     if (!Array.isArray(seat)) continue;
+    const seen = new Set();                                  // kanban #1698 #1766: this seat's rounds, each counted once
     for (const r of seat.slice(0, SERVED_HELD_MAX)) {
       if (!r || !snIs32(r.roundId) || !Array.isArray(r.committee) || !r.committee.length || r.committee.length > SERVED_COMMITTEE_MAX || !r.committee.every(snIs32)) continue;
       const k = hx(r.roundId), committee = [...new Set(r.committee.map(hx))].sort().join();
+      if (seen.has(k)) continue;
+      seen.add(k);
       if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, copies: new Map(), finals: new Map() });
       const into = rounds.get(k);
       if (!into.copies.has(committee)) into.copies.set(committee, { committee: r.committee, seats: 0 });
