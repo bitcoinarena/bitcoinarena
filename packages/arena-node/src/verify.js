@@ -361,6 +361,12 @@ export class Verifier {
     this.latePostingSaid = new Set();
     // ONE RETRY IN FLIGHT PER RUN (kanban #1569): a retry asked for while one for the same run is replaying gets that one.
     this.retrying = new Map();
+    // WHO IS IN A HEAD-TO-HEAD ROUND, KNOWN BEFORE ANY RETRY SIGNS IT (kanban #2295, #1755, #1071): the server sets this to a
+    // predicate (roundIdBytes) -> true once its close has learned the round's members (membersKnown). A head-to-head round is
+    // signed by retry / retryClose only after that: a player's own checkpoint receipt over /play reached retry's #headToHeadClose
+    // with no members check, and a seat short of the second entry signed VOID 0 for a two-player round alone. Unset (a verifier
+    // made without a server), nothing is gated.
+    this.membersSettled = null;
     /** The last close's whole sequence: replays, then the asking. */
     this.settling = Promise.resolve([]);
   }
@@ -1550,6 +1556,10 @@ export class Verifier {
     return String(h.stateHash);
   }
 
+  #membersSettled(roundIdBytes) {
+    if (typeof this.membersSettled !== 'function') return true;
+    try { return this.membersSettled(roundIdBytes) === true; } catch { return false; }
+  }
   retryClose(roundIdBytes, entryIdBytes) {
     return timed(`close retry ${hex(entryIdBytes).slice(0, 8)}`, () => this.#retryClose(roundIdBytes, entryIdBytes), { over: 50 });
   }
@@ -1569,6 +1579,8 @@ export class Verifier {
     // first mark and every peer up, and #kept signed every revealed entry - the winner too - FORFEIT 0 as a run that never started.
     { const h2h = this.#headToHead(contract);
       if (h2h) {
+        // kanban #2295: not before this seat knows who is in the round (as retry)
+        if (!this.#membersSettled(roundIdBytes)) return { entryId: entryIdBytes, stored: false, why: 'this seat does not yet know who is in that head-to-head round: it signs nothing for it' };
         const [work] = this.#headToHeadClose(roundIdBytes, contract, h2h, entryIdBytes);
         return work ? await work : { entryId: entryIdBytes, stored: false, why: 'no such member entry in that head-to-head round' };
       } }
@@ -2645,6 +2657,8 @@ export class Verifier {
     // A HEAD-TO-HEAD ENTRY IS RETRIED AS ITS CLOSE, never replayed as a run (kanban #1586; as #retryClose)
     { const h2h = this.#headToHead(contract);
       if (h2h) {
+        // kanban #2295: not before this seat knows who is in the round - its close decides it then
+        if (!this.#membersSettled(roundIdBytes)) return null;
         const [work] = this.#headToHeadClose(roundIdBytes, contract, h2h, entryIdBytes);
         if (!work) return null;
         this.done = [...this.done, work];
