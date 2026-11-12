@@ -22,7 +22,7 @@ import { leaderboardVotePeriod, leaderboardPasses } from '../../arena-protocol/s
 export const FUNDING_SQL = `CREATE TABLE IF NOT EXISTS funding_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL, proposal TEXT NOT NULL, hex TEXT NOT NULL, at_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_signal_ends (proposal TEXT PRIMARY KEY, seen_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_outcomes (proposal TEXT PRIMARY KEY, outcome TEXT NOT NULL, decided_ms INTEGER NOT NULL);
-  CREATE TABLE IF NOT EXISTS funding_vote_census (proposal TEXT PRIMARY KEY, height INTEGER NOT NULL, census TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS funding_vote_census (proposal TEXT PRIMARY KEY, height INTEGER NOT NULL, census TEXT NOT NULL, hash TEXT);
   CREATE TABLE IF NOT EXISTS funding_vote_blocks (proposal TEXT NOT NULL, height INTEGER NOT NULL, hash TEXT, votes TEXT NOT NULL, PRIMARY KEY (proposal, height));
   CREATE TABLE IF NOT EXISTS funding_vote_outcomes (proposal TEXT PRIMARY KEY, outcome TEXT NOT NULL, last_hash TEXT, decided_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_payments (proposal TEXT PRIMARY KEY, tranches INTEGER NOT NULL, cancelled TEXT, cancelled_k INTEGER);
@@ -87,6 +87,8 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   db.exec(FUNDING_SQL);
   // A FEE PROPOSAL'S SIGNAL READ FROM THE CHAIN (kanban #1283, RULED #1277 B): the signal period's blocks, held by hash, a reorg of one re-decides
   db.exec('CREATE TABLE IF NOT EXISTS fee_chain_blocks (proposal TEXT NOT NULL, height INTEGER NOT NULL, hash TEXT, items TEXT NOT NULL, PRIMARY KEY (proposal, height))');
+  // kanban #1749: the census is held to the hash of the block it was read at (a store from before has no column: added, rows without one)
+  if (!db.prepare('PRAGMA table_info(funding_vote_census)').all().some((c) => c.name === 'hash')) db.exec('ALTER TABLE funding_vote_census ADD COLUMN hash TEXT');
   const rows = (kind) => db.prepare('SELECT id, proposal, hex, kind FROM funding_items WHERE kind = ? ORDER BY at_ms, id').all(kind);
   // the proposals the signal and the vote run over: funding proposals and fee proposals
   // ... and leaderboard payout requests: voted on as they are, but with no signal - their vote starts at publication
@@ -103,8 +105,8 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   // THE VOTE (§27A.9.3 stage 2): opened only by a signal this seat decided passed; the census taken ONCE at the
   // vote's start (signalEnd); each voting block read once for this proposal's votes, held to by its hash; the outcome written once
   // when the last voting block is `decideDepth` deep, and reopened only when that counted block is reorged away
-  const voteCensus = (pid) => { const r = db.prepare('SELECT height, census FROM funding_vote_census WHERE proposal = ?').get(pid);
-    return r ? { height: r.height, census: JSON.parse(r.census).map((b) => ({ pubkey: fromHex(b.pubkey), outpoint: b.outpoint, bondSats: BigInt(b.bondSats),
+  const voteCensus = (pid) => { const r = db.prepare('SELECT height, census, hash FROM funding_vote_census WHERE proposal = ?').get(pid);
+    return r ? { height: r.height, hash: r.hash || null, census: JSON.parse(r.census).map((b) => ({ pubkey: fromHex(b.pubkey), outpoint: b.outpoint, bondSats: BigInt(b.bondSats),
       height: Number.isInteger(b.height) ? b.height : null, maturity: Number.isInteger(b.maturity) ? b.maturity : null })) } : null; };
   const voteBlocks = (pid) => db.prepare('SELECT height, hash, votes FROM funding_vote_blocks WHERE proposal = ? ORDER BY height').all(pid);
   const voteOutcome = (pid) => { const r = db.prepare('SELECT outcome, last_hash FROM funding_vote_outcomes WHERE proposal = ?').get(pid); return r ? { ...JSON.parse(r.outcome), lastHash: r.last_hash } : null; };
@@ -141,6 +143,30 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       const p = read(row.kind, row.hex); if (!p.ok) continue;
       const period = periodOf(row.kind, p.obj, signal);
       if (!period || height < period.from) continue;
+      // THE CENSUS IS HELD TO ITS BLOCK (kanban #1749, state audit 2026-11-12): read once at period.from, it stood for good, so a reorg
+      // over the vote's start (a bond withdrawn in the replacing block) left this seat counting with a branch the chain left while a seat
+      // that read it later counted with the chain's - one vote, two outcomes, never healed. Now its block hash is stored with it and
+      // checked every pass, decided or not: a different hash at period.from (never a missing one - an RPC error or a tip below it) drops
+      // the census, the vote blocks and the outcome (a fee proposal's with it), and all are read again on this chain. A census stored
+      // without a hash (before this column, or while the hash could not be read) takes the hash it finds first.
+      const held0 = voteCensus(row.id);
+      if (held0) {
+        const fromHash = await hashAt(period.from);
+        if (fromHash && !held0.hash) db.prepare('UPDATE funding_vote_census SET hash = ? WHERE proposal = ? AND hash IS NULL').run(fromHash, row.id);
+        else if (fromHash && fromHash !== held0.hash) {
+          const own = !db.isTransaction;   // one step: the census never goes without its blocks and outcome
+          if (own) db.exec('BEGIN IMMEDIATE');
+          try {
+            db.prepare('DELETE FROM funding_vote_census WHERE proposal = ?').run(row.id);
+            db.prepare('DELETE FROM funding_vote_blocks WHERE proposal = ?').run(row.id);
+            db.prepare('DELETE FROM funding_vote_outcomes WHERE proposal = ?').run(row.id);
+            db.prepare('DELETE FROM fee_outcomes WHERE proposal = ?').run(row.id);
+            if (own) db.exec('COMMIT');
+          } catch (e) { if (own) db.exec('ROLLBACK'); throw e; }
+          lateCensus.delete(row.id);   // 2.0 (kanban #1334): the late census was read on the branch left, too
+          log(`[funding] ${row.id.slice(0, 16)}: the census block ${period.from} was reorged away - census and vote are read again`);
+        }
+      }
       // A DECIDED VOTE STANDS while its counted last block is still on this chain; a reorg that replaced it reopens the count
       let decided = voteOutcome(row.id);
       if (decided) {
@@ -157,11 +183,15 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       }
       // the census at the vote's start, once
       if (!voteCensus(row.id)) {
+        // kanban #1749: the hash read before and after the census - a reorg in between leaves it for the next pass
+        const before = await hashAt(period.from);
         let c = null; try { c = await voteChain.censusAt(toHex(p.obj.networkId), period.from); } catch { c = null; }
         if (!c) continue;
-        db.prepare('INSERT OR IGNORE INTO funding_vote_census (proposal, height, census) VALUES (?, ?, ?)').run(row.id, period.from,
+        const after = await hashAt(period.from);
+        if (before !== after) continue;
+        db.prepare('INSERT OR IGNORE INTO funding_vote_census (proposal, height, census, hash) VALUES (?, ?, ?, ?)').run(row.id, period.from,
           JSON.stringify(c.map((b) => ({ pubkey: toHex(b.pubkey), outpoint: b.outpoint, bondSats: String(b.bondSats),
-            height: Number.isInteger(b.height) ? b.height : null, maturity: Number.isInteger(b.maturity) ? b.maturity : null }))));
+            height: Number.isInteger(b.height) ? b.height : null, maturity: Number.isInteger(b.maturity) ? b.maturity : null }))), after);
       }
       // the bonds still held at min(tip, last + lockAfterVote): one spent before is no longer in the census there (kanban #1334)
       // (its own door, `lateCensusAt`, read at most once every 144 blocks: the vote's census itself is read once, at the vote's start)

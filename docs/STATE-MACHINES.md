@@ -1598,3 +1598,8 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 #### SM-H2H-MATCH (change) Match record waits for the round before (kanban #1748)
 - match.js `matchOf` keeps a round's match record (INSERT OR IGNORE, never revisited) only once the round before it in the match (the last earlier round of this game either identity played, within MATCH_CONTINUE_MS) is decided here or is not a match. While that round is held with its two entries named and a result still missing, and it is open or closed less than an hour ago (`UNDECIDED_GRACE_MS`: its close waiting on its members, a slow peer's /reveals, a restart resuming closes), nothing is kept and the round answers no match yet; the same holds down the chain.
 - Invariant: a round's kept match record does not depend on the order in which this seat decided its rounds - every seat keeps and signs the same score.
+
+#### SM-FV1 (change) Funding / fee / leaderboard vote census is held to its block (kanban #1749)
+- `funding_vote_census` stores the hash of block `period.from` it was read at (`hash`; read before and after `censusAt`, a census whose hash moved in between is not stored).
+- Every `voteRound` pass, decided or not, compares it with `blockHashAt(period.from)`: a different hash drops the census, every vote block, the vote outcome and a fee proposal's `fee_outcomes` in one transaction, and all are read again on the current chain. A missing hash (RPC error, tip below) changes nothing; a census without a hash (older store) takes the first hash it finds.
+- Invariant: two seats on one chain count a vote with the census of the same block `period.from`; no seat keeps a census of a block the chain left.
