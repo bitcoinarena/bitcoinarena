@@ -185,7 +185,7 @@ import { stageDecision, signReleaseAnswer, createStageBook } from './update-stag
 import { createSettleBackoff, refusedForGood, REFUSAL } from './settle-backoff.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
-import { DrawnAttestor, drawnStoreOf } from './drawn-attestor.js';
+import { DrawnAttestor, drawnStoreOf, DUE_AFTER_END_MS } from './drawn-attestor.js';
 import { relaySweep, createAuditDesk, agreedRunsOf, forwardDigest } from './audit-seat.js';
 import { createH2hAuditDesk, h2hAgreedResultsOf, h2hForwardDigest } from './h2h-audit-desk.js';
 import { H2hAuditor, h2hAuditorNet } from './h2h-auditor.js';
@@ -3935,7 +3935,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       for (const [k, d] of drawnContracts) {
         if (d.openedMs <= now - 4 * 3600000 && !(d.source && Number(d.window.endMs) > now - 1800000)) { drawnContracts.delete(k); continue; }
-        if (Number(d.window.endMs) <= now && Number(d.window.endMs) > now - 1800000) out.push({ roundId: fromHex(k), window: d.window, ...(d.source ? { source: d.source, outcomes: d.outcomes, listed: sourcesOfRound(d.c) } : {}) });
+        if (Number(d.window.endMs) <= now && Number(d.window.endMs) > now - DUE_AFTER_END_MS) out.push({ roundId: fromHex(k), window: d.window, ...(d.source ? { source: d.source, outcomes: d.outcomes, listed: sourcesOfRound(d.c) } : {}) });
       }
       return out;
     },
