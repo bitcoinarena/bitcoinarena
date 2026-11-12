@@ -110,11 +110,11 @@ const LOCKDOWN = `'use strict';
   const lockLocale = (o, m, f) => Object.defineProperty(o, m, { value: f, writable: false, configurable: false, enumerable: false });
   const nToS = Number.prototype.toString, bToS = BigInt.prototype.toString;
   const up = String.prototype.toUpperCase, low = String.prototype.toLowerCase;
-  lockLocale(Number.prototype, 'toLocaleString', { toLocaleString() { return R.apply(nToS, this, []); } }.toLocaleString);
-  lockLocale(BigInt.prototype, 'toLocaleString', { toLocaleString() { return R.apply(bToS, this, []); } }.toLocaleString);
+  lockLocale(Number.prototype, 'toLocaleString', { toLocaleString() { return apply(nToS, this, []); } }.toLocaleString);
+  lockLocale(BigInt.prototype, 'toLocaleString', { toLocaleString() { return apply(bToS, this, []); } }.toLocaleString);
   const strOf = (s) => { if (s === null || s === undefined) throw new TypeError('String.prototype method called on null or undefined'); return String(s); };
-  lockLocale(String.prototype, 'toLocaleUpperCase', { toLocaleUpperCase() { return R.apply(up, strOf(this), []); } }.toLocaleUpperCase);
-  lockLocale(String.prototype, 'toLocaleLowerCase', { toLocaleLowerCase() { return R.apply(low, strOf(this), []); } }.toLocaleLowerCase);
+  lockLocale(String.prototype, 'toLocaleUpperCase', { toLocaleUpperCase() { return apply(up, strOf(this), []); } }.toLocaleUpperCase);
+  lockLocale(String.prototype, 'toLocaleLowerCase', { toLocaleLowerCase() { return apply(low, strOf(this), []); } }.toLocaleLowerCase);
   lockLocale(String.prototype, 'localeCompare', { localeCompare(that) {
     const a = strOf(this), b = String(that);
     return a < b ? -1 : a > b ? 1 : 0;
