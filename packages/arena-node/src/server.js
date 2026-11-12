@@ -155,7 +155,7 @@ import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
 import { DrawnAttestor } from './drawn-attestor.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
-import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
+import { walletFetch, hostOf, payoutAddressRefusal } from './public-fetch.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
 import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } from './send-plan-ask.js';
 import { objectionWindowAllowed } from '../../arena-protocol/src/constants.js';   // kanban #1398
@@ -586,8 +586,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // HOW LONG AFTER A ROUND'S ENTRY CLOSE A PLAYER'S NAME RECORD IS STILL TAKEN (kanban #1213): after it, the identity a round is booked to is fixed
   lobbyNameGraceMs = 60000,
   censusExplorers = String(process.env.ARENA_CENSUS_EXPLORERS || '').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean),
-  // HOW A WINNER'S LIGHTNING ADDRESS IS FETCHED (winnings-send.js), and the round network its invoices are for.
-  lnurlFetch = (u, o) => fetch(u, o),
+  // THE OPERATOR'S OWN LNURL SERVERS INSIDE ITS NETWORK (kanban #2236): "host[:port]" a regtest harness serves a payee on (ARENA_LNURL_LOCAL_HOSTS).
+  // Every other Lightning address is on a public HTTPS name: refused at POST /payout-address, and never fetched otherwise.
+  lnurlLocalHosts = String(process.env.ARENA_LNURL_LOCAL_HOSTS || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
+  // HOW A WINNER'S LIGHTNING ADDRESS IS FETCHED (winnings-send.js), and the round network its invoices are for. https: walletFetch (kanban #2236) - it
+  // connects only to an address its lookup checked global (no DNS rebinding past the check), follows no redirect and reads at most 64 KB; plain
+  // fetch only for an operator's own local server (lnurlLocalHosts, the test donation set's http recipients - winnings-send.js lets no other through).
+  lnurlFetch = (u, o) => (String(u).startsWith('https:') && !lnurlLocalHosts.includes(hostOf(u)) ? walletFetch(u, o) : fetch(u, o)),
   // HOW A NETWORK SEASON ASKS THE OTHER SEATS FOR THEIR ROUNDS (GET /season?scope=network): the process's fetch -
   // routed and capped per seat by fetch-routes.js - unless a test hands in its own seats.
   seasonFetch = (u, o) => fetch(u, o),
@@ -1970,7 +1975,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE PAYOUT OF A PASSED PROPOSAL (§27A.9.3reserve-payout.js): the 5-of-7 of the federation that holds the
   // reserves - its guardian seats, by the reserve key's DKG shares - pay the proposal's LNURL once; every seat records it
   const payoutNet = String(chain || '').replace(/^bitcoin-/, '') || 'testnet4';
-  const lnurlAsk = lnurlClient({ network: payoutNet });
+  const lnurlAsk = lnurlClient({ network: payoutNet, localHosts: lnurlLocalHosts });   // the #1809 guard, operator's local hosts kept (kanban #2323, #2340)
   const payoutPeer = (base) => ({
     // kanban #1159: every ask carries the asking guardian seat's node key and its signature
     commit: async (b) => { const r = await fetch(`${base}/reserve-payout/commit`, { method: 'POST', headers: { 'content-type': 'application/json' },
@@ -2442,7 +2447,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const winnings = stakeLocks ? new WinningsSend({ round, port: stakeLocks, curve: poolCurve,
     random: (n) => new Uint8Array(randomBytes(n)), peersFor: winningsPeers, fetcher: (u, o) => fetch(u, o),
-    lnurlFetch, network: winningsNetwork, dkg }) : null;
+    lnurlFetch, network: winningsNetwork, dkg, localHosts: lnurlLocalHosts }) : null;
   // EVERY ORDER'S TRANSACTION, KEPT HERE (kanban #624, tx-record.js): each door's steps per transaction id, and the page's signed timing
   const txRecord = createTxRecord({ db: round.db });
   // THE MARKET ORDER BOOK: orders taken here, each batch's set agreed with the round's other seats
@@ -4760,7 +4765,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const signed = new TextEncoder().encode(String(named.signed)), sig = fromHex(String(named.signature));
           if (!ed25519.verify(sig, signed, entry.sessionPubkey)) continue;
           const address = Buffer.from(signed).toString('utf8').trim();
-          if (!lightningAddressEndpoint(address).ok) continue;
+          if (payoutAddressRefusal(address, { localHosts: lnurlLocalHosts })) continue; // a peer's copy is held to the same door (kanban #2236)
           round.putPayoutAddress({ entryId: eid, roundId: entry.roundId, address, signature: Buffer.concat([Buffer.from(signed), Buffer.from(sig)]) });
           break;
         } catch { /* the next peer's copy may stand */ }
@@ -10273,8 +10278,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!ed25519.verify(all.subarray(all.length - 64), signed, entry.sessionPubkey))
           return text(res, 403, 'that address is not signed by the session key this entry was played with');
         const address = Buffer.from(signed).toString('utf8').trim();
-        const where = lightningAddressEndpoint(address);
-        if (!where.ok) return text(res, 400, where.why);
+        // ON A PUBLIC HTTPS NAME ONLY (kanban #2236): every signer node fetches this address at settlement, so no port, IP literal, local
+        // suffix or tailnet name is kept (the operator's own lnurlLocalHosts excepted); where the name resolves is checked again at each fetch
+        const refused = payoutAddressRefusal(address, { localHosts: lnurlLocalHosts });
+        if (refused) return text(res, 400, refused);
         // THE FIRST ADDRESS STANDS (ruled 2026-09-23): the same address again is taken and changes nothing - the page
         // posts it again to a node that did not answer - and another one for this entry is refused, so no second
         // address can make the signer nodes hold different ones.

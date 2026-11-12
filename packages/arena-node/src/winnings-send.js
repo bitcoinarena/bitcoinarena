@@ -38,6 +38,8 @@ import { invoicePayee } from '../../arena-protocol/src/bolt11.js';
 import { SEND } from './send-state.js';
 import { PLAN_ASK, sendPlanAskHeaders, checkSendPlanAsk, sendCommitAskBody } from './send-plan-ask.js';
 import { readJsonBounded } from './lnurl-read.js';
+import { hostReach, hostOf } from './public-fetch.js';
+import { TEST_DONATION_ENDPOINTS } from '../../arena-protocol/src/test-donation-sets.js';
 
 /** WHO AN INVOICE PAYS (kanban #1154): the node key its BOLT11 signature recovers to, hex; throws if none. */
 export const payeeOf = (invoice) => invoicePayee(invoice, (sig64, bit, digest) =>
@@ -73,11 +75,13 @@ export class WinningsSend {
    * @param peersFor   (roundIdBytes) => [base URL] - the round's other settlement signer nodes
    */
   constructor({ round, port, curve, random, peersFor, fetcher, lnurlFetch = fetch, network = 'regtest', scopeParam = '', dkg = null,
-    peerAskMs = PEER_ASK_MS, peerGraceMs = PEER_GRACE_MS, lnurlMs = LNURL_ASK_MS }) {
+    peerAskMs = PEER_ASK_MS, peerGraceMs = PEER_GRACE_MS, lnurlMs = LNURL_ASK_MS, localHosts = [] }) {
     // `scopeParam`: A LATE SETTLEMENT'S SENDS (slice C3b-2a) - `&late=<entry>` on every signing and paid call to a peer,
     // so the peer answers from that late settlement's rows; empty for the round's own sends.
     // `dkg`: the public shares that name a seat whose share does not stand (kanban #1074); the bounds: how long a seat, and an LNURL endpoint, is waited for
     Object.assign(this, { round, port, curve, random, peersFor, fetcher, lnurlFetch, network, scopeParam, dkg, peerAskMs, peerGraceMs, lnurlMs });
+    // `localHosts`: the operator's own "host[:port]" LNURL servers inside its network (a regtest harness's, ARENA_LNURL_LOCAL_HOSTS) - kanban #2236
+    this.localHosts = (localHosts || []).map((h) => String(h).toLowerCase());
     this.pairs = new Map();      // `${kind}:${round}:${entry}:${attempt}` -> { message, held: Map(commitment key -> nonce pair) }, a pair per ask (kanban #1806)
     this.withheld = new Map();   // a signing's query -> the peers that gave this asker no share for it (kanban #1074)
     this.rebuilt = new Map();    // an unsigned re-send transaction, by everything it is built from
@@ -101,16 +105,38 @@ export class WinningsSend {
   async payRequest(address, amountMsat) {
     const ep = payRequestUrl(address);
     if (!ep.ok) return refuse(ep.why);
+    // NEVER A HOST INSIDE THE SEAT'S NETWORK (kanban #2236, the #1809 guard of the faucet): the address is the player's pick, and every signer node
+    // of the committee fetches it - so a host that is not on the public internet, by its name or by where it resolves, is never asked
+    const local = this.lnurlLocal(ep.url);
+    if (!local) { const why = await this.publicRefusal(ep.url); if (why) return refuse(why); }
     let said;
     try { said = await askWithin(async (signal) => readJsonBounded(await this.lnurlFetch(ep.url, { signal })), this.lnurlMs); } catch (e) { return refuse(`${ep.url} did not answer: ${e.message}`); }
     const pr = payRequestStands(said, amountMsat);
-    return pr.ok ? { ok: true, ...pr } : refuse(pr.why);
+    return pr.ok ? { ok: true, ...pr, local: local ? hostOf(ep.url) : null } : refuse(pr.why);
+  }
+
+  /** An LNURL the operator itself runs inside its network (kanban #2236): the test donation set's two recipients off mainnet, or a host the operator listed. */
+  lnurlLocal(url) {
+    if (!/^(bitcoin|mainnet)$/.test(String(this.network)) && TEST_DONATION_ENDPOINTS.includes(String(url))) return true;
+    return this.localHosts.includes(hostOf(url));
+  }
+
+  /** Why this URL is not fetched for a stranger (kanban #2236), or null: https on port 443 only, no internal name, every address it resolves to global. */
+  async publicRefusal(url) {
+    let reach;
+    try { reach = await askWithin(() => hostReach(url), this.lnurlMs); } catch { reach = 'unresolved'; }
+    return reach === 'internal' ? `${hostOf(url) || 'that URL'} is not a public HTTPS host, and a seat asks no host inside its own network for an address` : null;
   }
 
   /** The invoice for exactly `amountMsat`, checked by amount and LUD-06 description hash. */
   async invoiceFor(address, amountMsat) {
     const pr = await this.payRequest(address, amountMsat);
     if (!pr.ok) return pr;
+    // ITS CALLBACK TOO (kanban #2236): an operator's own local recipient may call back on its own host; any other callback is https on a public host
+    if (!(pr.local && (hostOf(pr.callback) === pr.local || this.localHosts.includes(hostOf(pr.callback))))) {
+      const why = await this.publicRefusal(pr.callback);
+      if (why) return refuse(`the address's callback: ${why}`);
+    }
     let said;
     try { said = await askWithin(async (signal) => readJsonBounded(await this.lnurlFetch(callbackFor({ callback: pr.callback, amountMsat }), { signal })), this.lnurlMs); }
     catch (e) { return refuse(`the address's callback did not answer: ${e.message}`); }
