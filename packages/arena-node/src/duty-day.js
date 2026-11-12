@@ -35,6 +35,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { marketExpiryBlocks } from '../../arena-protocol/src/lock-expiry.js';
 import { beaconBlockIn } from './publication-wait.js';
 import * as guard from './duty-guard.js';
+import { jsonUpTo, listedGames, PEER_LISTING_BYTES } from './peer-read.js';   // kanban #1723
 
 export const DUTY_APPS = Object.freeze(['updown', 'rps', 'nextblock']);
 /** How many seats must have answered their rounds before an emergency grid is posted on what they say (fewer known: all of them). */
@@ -124,9 +125,14 @@ export function bumpStep(k, to, { atMs = Date.now(), ...fields } = {}) {
 export function createGridBase({ chainCall, prepare = null, censusEntriesAt, contractAt, catalogSeats, chainSeats, localCount = 0, devOf = {},
   protocolFor = () => undefined, pinnedFor = () => null, builtinFor = () => ({ gameId: null, fields: {} }), cores = {}, rpsBase = {},
   donationSetAt, censusDepth = 6, checkSeats = 16, decode, idOf, blockHashOf, fetchFn = fetch, say = () => {}, now = Date.now }) {
-  const seatJson = async (url, ms = 20000) => { const r = await fetchFn(url, { signal: AbortSignal.timeout(ms) }); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.json(); };
-  // THE APPS THE SEATS HOLD (GET /games, every manifest checked against its id), read again every 5 min
-  const seatCatalog = keptFor(5 * 60000, async () => guard.catalogOf((await Promise.all((await catalogSeats()).map((u) => seatJson(`${u}/games`).catch(() => null)))).filter(Boolean),
+  // a census seat's answer, read up to a bound (kanban #1723, the poster's copy of #1540): any bonded seat could answer GET /games
+  // with 120 MB, and r.json() held all of it in the poster - the seat's own process - on every pass
+  const seatJson = async (url, ms = 20000, maxBytes = PEER_LISTING_BYTES) => { const r = await fetchFn(url, { signal: AbortSignal.timeout(ms) });
+    if (!r.ok) { r.body?.cancel().catch(() => {}); throw new Error(`${url}: ${r.status}`); } return jsonUpTo(r, maxBytes); };
+  // THE APPS THE SEATS HOLD (GET /games, every manifest checked against its id), read again every 5 min; at most
+  // PEER_LISTING_GAMES entries of each seat's listing are walked (kanban #1723)
+  const seatCatalog = keptFor(5 * 60000, async () => guard.catalogOf((await Promise.all((await catalogSeats()).map((u) => seatJson(`${u}/games`)
+    .then((got) => ({ games: listedGames(got) })).catch(() => null)))).filter(Boolean),
     { decode, idOf }), now, (c) => !c || !c.size);
   // THE SEATS' CHAINS (GET /headers), read again every 15 min
   const seatChains = keptFor(15 * 60000, async () => ({ local: localCount, sets: await Promise.all((await chainSeats()).slice(0, checkSeats).map(async (u) => {
