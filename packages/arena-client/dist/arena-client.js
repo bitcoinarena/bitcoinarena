@@ -14402,7 +14402,14 @@ async function fetchRandomness(id, nodes, { fetcher = fetch } = {}) {
   const key = id + '|' + nodes.join(',');
   if (fetcher === fetch && RANDOMNESS.has(key)) return RANDOMNESS.get(key);
   const asked = readRandomness(id, nodes, fetcher);
-  if (fetcher === fetch) { RANDOMNESS.set(key, asked); asked.catch(() => RANDOMNESS.delete(key)); }
+  // ONLY A WHOLE ANSWER IS KEPT (kanban #1869, #1898): the warm read at the Join click is the one worldSeedFor is answered from
+  // after the stake is locked, so a read some seats refused (a seat that had not read the beacon block yet) is not kept either -
+  // the next read asks every node again. A refusal is dropped as before.
+  if (fetcher === fetch) {
+    RANDOMNESS.set(key, asked);
+    asked.then((got) => { if (got.refused.length && RANDOMNESS.get(key) === asked) RANDOMNESS.delete(key); },
+      () => { if (RANDOMNESS.get(key) === asked) RANDOMNESS.delete(key); });
+  }
   return asked;
 }
 
@@ -14427,20 +14434,29 @@ async function readRandomness(id, nodes, fetcher) {
     throw new Error('no node named this round\'s randomness: ' + refused.join('; '));
   const first = toHex(said[0].hash);
   const other = said.find((s) => toHex(s.hash) !== first);
-  if (!other) return { randomness: said[0].hash, height: said[0].height, agreed: said.length, refused };
   // ONE SEAT OF SEVEN DOES NOT CLOSE EVERY WORLD IT SITS ON (kanban #1523): a disagreement threw at once, so one seat answering 32
   // other bytes made no player's world seed for any round it was named on - after the stake was locked - while six seats read the
   // same block hash. A value held by MORE THAN HALF OF THE NODES THE ROUND NAMED (not of those that answered: a seat that stays
   // silent does not lower the bar) is the round's, and the seats that said otherwise are named as refused; with no such majority
   // (a 2-of-2's one liar, a split) it is still the refusal by name it was.
+  // THE SAME BAR WHEN EVERY ANSWER AGREES (kanban #1869, #1898): the majority was asked only on a disagreement, so with six honest
+  // seats answering 409 (no beacon read yet) and one seat answering its own 32 bytes, that one seat's bytes were the round's -
+  // 1 of 7. Every outcome now needs more than half of the named nodes, each source counted once (sourceKey: the seats behind one
+  // host differ by path; one URL named twice is one node), or it is a refusal by name and the caller asks again later.
+  const src = (node) => sourceKey(node) || node.replace(/\/+$/, '');
+  const named = new Set(nodes.map(src)).size;
   const count = new Map();
-  for (const s of said) { const h = toHex(s.hash); count.set(h, (count.get(h) || 0) + 1); }
-  const [won, n] = [...count].sort((a, b) => b[1] - a[1])[0];
-  if (2 * n <= nodes.length)
-    throw new Error(`${said[0].node} says this round's randomness is ${first} and `
-      + `${other.node} says ${toHex(other.hash)}: a round whose nodes name two worlds is not one round`);
+  for (const s of said) { const h = toHex(s.hash); if (!count.has(h)) count.set(h, new Set()); count.get(h).add(src(s.node)); }
+  const [won, by] = [...count].sort((a, b) => b[1].size - a[1].size)[0];
+  const n = by.size;
+  if (2 * n <= named) {
+    if (other)
+      throw new Error(`${said[0].node} says this round's randomness is ${first} and `
+        + `${other.node} says ${toHex(other.hash)}: a round whose nodes name two worlds is not one round`);
+    throw new Error(`only ${n} of ${named} named nodes name this round's randomness (more than half must): ` + refused.join('; '));
+  }
   const kept = said.filter((s) => toHex(s.hash) === won);
-  for (const s of said) if (toHex(s.hash) !== won) refused.push(`${s.node}: named randomness ${toHex(s.hash)}, not the ${n} of ${nodes.length} nodes' ${won}`);
+  for (const s of said) if (toHex(s.hash) !== won) refused.push(`${s.node}: named randomness ${toHex(s.hash)}, not the ${n} of ${named} nodes' ${won}`);
   return { randomness: kept[0].hash, height: kept[0].height, agreed: kept.length, refused };
 }
 
