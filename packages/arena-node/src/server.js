@@ -3112,7 +3112,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // the one it rebuilds from its own store. Anything else is another round's, or nothing this seat can check: not combined.
   const thisRoundsMessage = async (rid, msg) => {
     const hx = toHex(msg);
-    if (settlements && settlements.pairs && (settlements.pairs.get(toHex(rid)) || []).some((p) => toHex(p.message) === hx)) return true;
+    // the pairs this seat handed for the round are one AskerPairs per settlement message since #2386 (settlement.js #commit; before, a list of
+    // pairs each naming its message) - read both shapes (kanban #1489 merge: the list read threw on the new shape and no peer's answer counted)
+    const handed = settlements && settlements.pairs ? settlements.pairs.get(toHex(rid)) : null;
+    if (handed && (Array.isArray(handed) ? handed.some((p) => p && p.message && toHex(p.message) === hx) : (handed.message && toHex(handed.message) === hx))) return true;
     if (typeof round.settlementTxidsOf === 'function' && round.settlementTxidsOf(rid).some((h) => toHex(h.message) === hx)) return true;
     if (!settlements || typeof settlements.message !== 'function') return false;
     const m = await settlements.message(rid).catch(() => null);
