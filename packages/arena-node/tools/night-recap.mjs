@@ -45,6 +45,49 @@ export function recapText(r, { link = 'https://bitcoinarena.io/night' } = {}) {
   return lines.join('\n');
 }
 
+// A SEAT'S SEASON, READ UP TO A BOUND (kanban #2383, #1489 a45-refute-22-s3: #1856's other copy): a bare `r.json()` held a seat's whole
+// answer. As server.js seasonAccounts reads it: in pages (?page=1&after=, kanban #2273), each page up to PAGE_BYTES (the peer listing
+// bound, 4 MB), all of a seat's pages up to ANSWER_BYTES and ROUNDS_MAX rounds, the cursor strictly rising. A page past the bound,
+// or a first page that does not read, and the seat has not answered; a later one, and what was read is its answer.
+export const PAGE_BYTES = 4 * 1024 * 1024, ANSWER_BYTES = 48 * 1024 * 1024, ROUNDS_MAX = 25000;
+async function textUpTo(r, maxBytes) {
+  const said = Number(r.headers.get('content-length'));
+  if (said > maxBytes) { try { await r.body?.cancel(); } catch { /* dropped */ } throw new Error(`its answer is ${said} bytes, more than ${maxBytes}`); }
+  if (!r.body) return '';
+  const reader = r.body.getReader(); const chunks = []; let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.length;
+    if (n > maxBytes) { reader.cancel().catch(() => {}); throw new Error(`its answer passed ${maxBytes} bytes`); }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks.map((x) => Buffer.from(x.buffer, x.byteOffset, x.byteLength))).toString('utf8');
+}
+export async function readSeasonRounds(seat, game, days, { timeoutMs = 60000 } = {}) {
+  const whole = AbortSignal.timeout(timeoutMs);
+  const rounds = [], ids = new Set(); let after = '', bytes = 0, first = true;
+  for (;;) {
+    let j;
+    try {
+      const r = await fetch(`${seat}/season-rounds?game=${encodeURIComponent(game)}&days=${days}&page=1&after=${after}`, { signal: whole });
+      if (!r.ok) throw new Error(`${r.status}`);
+      const t = await textUpTo(r, PAGE_BYTES);
+      if (bytes + t.length > ANSWER_BYTES) break;
+      bytes += t.length;
+      j = JSON.parse(t);
+      if (!j || !Array.isArray(j.rounds)) throw new Error('not a season\'s rounds');
+    } catch (e) { if (first) throw e; break; }
+    first = false;
+    for (const x of (j.game && j.game.ids) || []) ids.add(String(x).toLowerCase());
+    rounds.push(...j.rounds.slice(0, ROUNDS_MAX - rounds.length));
+    const nx = typeof j.next === 'string' ? j.next.toLowerCase() : null;
+    if (!nx || !/^[0-9a-f]{64}$/.test(nx) || nx <= after || rounds.length >= ROUNDS_MAX) break;
+    after = nx;
+  }
+  return { ids: [...ids], rounds };
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const env = process.env;
   const fromMs = Date.parse(env.FROM), toMs = Date.parse(env.TO);
@@ -58,10 +101,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const bySeat = new Map(); const ids = new Set();
     await Promise.all(seats.map(async (seat) => {
       try {
-        const r = await fetch(`${seat}/season-rounds?game=${encodeURIComponent(game)}&days=${days}`, { signal: AbortSignal.timeout(60000) });
-        if (!r.ok) return;
-        const j = await r.json();
-        for (const x of (j.game && j.game.ids) || []) ids.add(String(x).toLowerCase());
+        const j = await readSeasonRounds(seat, game, days);
+        for (const x of j.ids) ids.add(x);
         bySeat.set(seat, seasonRoundsFromJson(j.rounds));
       } catch { /* a seat that does not answer adds nothing */ }
     }));
