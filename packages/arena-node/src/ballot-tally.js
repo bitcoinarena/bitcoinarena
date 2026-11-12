@@ -211,11 +211,14 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     o.checked.set(key, good);
     return good;
   };
+  const boundOf = (p) => !!(proposals && typeof proposals.bound === 'function' && proposals.bound(p));
   /** 'kept' (its prefix, signed by a bond of the census), 'other' (not this proposal's), or 'junk' (no bond signed it). */
   const keepVote = (p, o, v) => {
     const d = decodeVote(v.payload);
-    if (!d || toHex(d.idPrefix) !== p.id.slice(0, 16).toLowerCase()) return 'other';
-    const msg = voteMessage(fromHex(p.id), d.choice);
+    // a bound proposal (kanban #2125) reads only the 80-byte seq votes, an older one only the 77-byte ones
+    const bound = boundOf(p);
+    if (!d || d.bound !== bound || toHex(d.idPrefix) !== p.id.slice(0, 2 * d.idPrefix.length).toLowerCase()) return 'other';
+    const msg = bound ? voteMessage(fromHex(p.id), d.choice, d.seq) : voteMessage(fromHex(p.id), d.choice);
     const results = o.census.map((b) => { let good = false; try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; } return [pairKey(d.signature, msg, b.pubkey), good]; });
     if (!results.some(([, good]) => good)) return 'junk';     // nothing remembered for junk: memory grows with kept votes only
     for (const [key, good] of results) o.checked.set(key, good);
@@ -318,8 +321,10 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         }
         if (o.dirty) {
           // a MONEY vote counts bonds of rule 1's age at publication (kanban #1335): the network's funding season
+          // a BOUND proposal (kanban #2125/#2562) is read by seq: the highest seq per bond inside the phase
           o.result = tally({ proposal: { class: CLASS[p.class] }, standing: { id: fromHex(p.id), votingFrom: p.votingFrom, votingUntil: p.votingUntil, publishedAt: p.publishedAt },
-            census: o.census, votes: o.votes, verify: (sig, msg, pk) => checkedVerify(o, sig, msg, pk), ageBlocks: (() => { try { return fundingScheduleFor(fromHex(p.networkId)).season; } catch { return null; } })() });
+            census: o.census, votes: o.votes, verify: (sig, msg, pk) => checkedVerify(o, sig, msg, pk), ageBlocks: (() => { try { return fundingScheduleFor(fromHex(p.networkId)).season; } catch { return null; } })(),
+            bound: boundOf(p) });
           o.dirty = false;
         }
         // DECIDED ONCE: the whole phase read, and its last block deep enough - no later than the block before its activation

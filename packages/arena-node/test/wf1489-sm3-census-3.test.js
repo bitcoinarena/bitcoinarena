@@ -6,13 +6,14 @@
 // repeal R before the proposal P it repeals: P is not held yet, so nothing is pending and the history is the genesis alone, R
 // reads as an ordinary proposal and is kept on the ordinary schedule. Every other seat keeps it as a repeal (27A.7.6, review 0).
 // The two keep different voting windows for one proposal - they count different blocks and can decide it differently, for good.
+// RULED 2026-11-12 (kanban #2012 (c), built #2562): bound deposits commit H(proposal), so a seat takes a proposal at any time (tip 300 here).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { createProposals } from '../src/proposals.js';
 import { createBallotTally } from '../src/ballot-tally.js';
 import { encodeConfigProposalBody, proposalBodyId, CLASS, SCHEDULES, REPEAL_SCHEDULES, MIN_DECIDE_DEPTHS, configHashOf } from '../../arena-protocol/src/ballot.js';
-import { depositOutputsExpected } from '../../arena-protocol/src/ballot-chain.js';
+import { depositOutputsExpected, depositCommitmentScript } from '../../arena-protocol/src/ballot-chain.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
@@ -30,24 +31,26 @@ const chain = new Map();             // txid (display) -> { raw, height }
 const BLOCK = { 200: '20'.repeat(32), 220: '22'.repeat(32) };
 function proposal({ fill, height, parent, config, activationHeight }) {
   const want = depositOutputsExpected(1000, SET);
-  const raw = tx(fill, want.outputs.map((o) => ({ sats: o.sats, script: o.script })));
+  // BOUND (kanban #2562): the deposit commits to its proposer and the proposal's bytes
+  const body = { networkId: NET, parent, configHash: configHashOf(config), config, class: CLASS.DESIGN, activationHeight, proposer };
+  const raw = tx(fill, [...want.outputs.map((o) => ({ sats: o.sats, script: o.script })), { sats: 0, script: depositCommitmentScript(body) }]);
   const depositTxid = Uint8Array.from(parseTransaction(raw).txid);
   chain.set(toHex(Uint8Array.from(depositTxid).reverse()), { raw, height, block: BLOCK[height] });
-  const p = { networkId: NET, parent, configHash: configHashOf(config), config, class: CLASS.DESIGN, activationHeight, proposer, depositTxid };
+  const p = { ...body, depositTxid };
   return { proposal: toHex(Uint8Array.from([...encodeConfigProposalBody(p), ...schnorr.sign(proposalBodyId(p), secret)])), blockHash: BLOCK[height] };
 }
 function seat() {
   let tally = null;
   const proposals = createProposals({ confirmedTx: async (txid, block) => { const t = chain.get(txid); return t && t.block === block ? { raw: t.raw, height: t.height } : null; },
     recipientsFor: () => SET, lowestBondMinSatsFor: () => 100000n, verify, scheduleFor: () => SCHEDULES.regtest, repealScheduleFor: () => REPEAL_SCHEDULES.regtest,
-    historyFor: (net, h) => tally.historyAt(net, h), censusAt: async () => [{ pubkey: proposer }], store: { read: () => [], write: () => {} } });
+    historyFor: (net, h) => tally.historyAt(net, h), censusAt: async () => [{ pubkey: proposer }], store: { read: () => [], write: () => {} }, bindHeightFor: () => 0 });   // regtest's gate (kanban #2562)
   // 2.0: the tally runs the #1196 depth rule; a regtest network decides at depth 1 (MIN_DECIDE_DEPTHS.regtest), as the schedule these proposals use
   tally = createBallotTally({ proposals, tipHeight: async () => 300, votesAt: async () => [], censusAt: async () => [], verify, genesisFor: () => GENESIS,
     minDecideDepthFor: () => MIN_DECIDE_DEPTHS.regtest });
   return proposals;
 }
 
-test('#1489 sm3-census-3: a seat that pulls a repeal before the proposal it repeals keeps it on the ordinary schedule, the others as a repeal', { todo: 'kanban #2012 (spec question): #1608 refuses a proposal pulled after its voting began, so this seat never takes it - waiting for the ruling' }, async () => {
+test('#1489 sm3-census-3: a seat that pulls a repeal before the proposal it repeals keeps it on the ordinary schedule, the others as a repeal', async () => {
   // P: G -> X, published at 200, activation 208 (regtest 1 / 6 / 1); R: X -> G again (a repeal), published at 220, activation 230
   const P = proposal({ fill: 1, height: 200, parent: GENESIS.configHash, config: X, activationHeight: 208 });
   const R = proposal({ fill: 2, height: 220, parent: configHashOf(X), config: G, activationHeight: 230 });
@@ -72,7 +75,7 @@ test('#1489 sm3-census-3: a seat that pulls a repeal before the proposal it repe
   assert.deepEqual(view(r2b), view(r1), 'one proposal, one schedule at every seat');
 });
 
-test('#1842: a repeal posted to a seat before the proposal it repeals is rescheduled when that proposal is decided there', { todo: 'kanban #2012 (spec question): #1608 refuses a proposal pulled after its voting began, so this seat never takes it - waiting for the ruling' }, async () => {
+test('#1842: a repeal posted to a seat before the proposal it repeals is rescheduled when that proposal is decided there', async () => {
   const P = proposal({ fill: 3, height: 200, parent: GENESIS.configHash, config: X, activationHeight: 208 });
   const R = proposal({ fill: 4, height: 220, parent: configHashOf(X), config: G, activationHeight: 230 });
   const s1 = seat();
