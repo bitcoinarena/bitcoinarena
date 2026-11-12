@@ -13,6 +13,14 @@ import { matchStep, matchRecordId, matchResultOf, MATCH_CONTINUE_MS } from '../.
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { pluginForRound } from './plugins.js';
 import { finalRerunResult } from './finality.js';
+import { OPEN } from './store.js';
+
+// A ROUND NOT YET DECIDED HERE (kanban #1748): held, its two entries named, and a result still missing while the round is open or closed
+// less than this long ago (its close waiting on its members, a slow peer's /reveals, a restart resuming closes one at a time). A later
+// round of the match is not kept while it is: kept now it would start a new match at 0:0 for good (INSERT OR IGNORE), and this seat would
+// sign another score than the seats that decided the two rounds in order. Past this a round with no result is taken as never decided.
+const UNDECIDED_GRACE_MS = 60 * 60 * 1000;
+const UNDECIDED = Symbol('undecided');
 
 /** The result most of a round's seats signed for one entry: { outcome, score } or null. */
 function agreedResult(round, rid, eid) {
@@ -30,7 +38,13 @@ function agreedResult(round, rid, eid) {
  * A ROUND'S MATCH RECORD at this seat: { round, game, identities [hex, hex], score [a, b], played, previousRound | null,
  * seat, signature } - kept once counted; null when the round is not a decided head-to-head round of two named identities.
  */
-export function matchOf(round, plugins, roundIdBytes, depth = 0) {
+export function matchOf(round, plugins, roundIdBytes) {
+  const m = matchAt(round, plugins, roundIdBytes, 0);
+  return m === UNDECIDED ? null : m;
+}
+
+// matchOf, or UNDECIDED: this round, or the round before it in the match, is not decided here yet - nothing is kept (kanban #1748)
+function matchAt(round, plugins, roundIdBytes, depth) {
   const rid = Buffer.from(roundIdBytes);
   const kept = round.db.prepare('SELECT record, sig FROM match_records WHERE round_id = ?').get(rid);
   if (kept) return { ...JSON.parse(kept.record), signature: kept.sig };
@@ -49,7 +63,10 @@ export function matchOf(round, plugins, roundIdBytes, depth = 0) {
     || (typeof round.consentedIdentityOf === 'function' && entry ? ((h) => (h ? { identity: Uint8Array.from(Buffer.from(h, 'hex')) } : null))(round.consentedIdentityOf(roundIdBytes, entry.playerPubkey)) : null);
   const named = entries.map((e) => ({ entryId: e.entryId, id: idOf(e), result: agreedResult(round, roundIdBytes, e.entryId) }));
   if (named.some((x) => !x.id)) return null;
-  if (named.some((x) => !x.result)) return null;                      // not decided yet: counted once it is
+  if (named.some((x) => !x.result)) {                                 // not decided yet: counted once it is
+    const recent = row.state === OPEN || (row.closed_ms != null && Number(round.now()) - Number(row.closed_ms) < UNDECIDED_GRACE_MS);
+    return recent ? UNDECIDED : null;
+  }
   const ids = named.map((x) => toHex(x.id.identity));
   if (ids[0] === ids[1]) return null;                                  // one player on both sides counts nothing
   // THE ROUND BEFORE IN THE MATCH: the last earlier round of this game either identity played; continued only if both
@@ -68,7 +85,8 @@ export function matchOf(round, plugins, roundIdBytes, depth = 0) {
   }
   let prev = null;
   if (previous && close - previous.closeMs <= MATCH_CONTINUE_MS) {
-    const pm = matchOf(round, plugins, previous.roundId, depth + 1);
+    const pm = matchAt(round, plugins, previous.roundId, depth + 1);
+    if (pm === UNDECIDED) return UNDECIDED;                            // the round before is still being decided here: keep nothing yet (kanban #1748)
     if (pm && pm.played && [...pm.identities].sort().join() === [...ids].sort().join()) prev = pm;
   }
   const results = Object.fromEntries(named.map((x, i) => [ids[i], matchResultOf(x.result.outcome, x.result.score)]));
