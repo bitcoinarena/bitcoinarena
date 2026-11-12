@@ -106,7 +106,9 @@
     const weekAll = Number(b.weekPaidSats ?? b.weekApprovedSats ?? 0);   // paid this week (Daniel 2026-11-12: "Das ist was diese Woche ausgezahlt wurde")
     s.append(stat('paid this week', `${sats(weekAll)} of ${sats(b.weeklyBudgetSats)}`),
       stat('approved in Season 1', sats(b.allApprovedSats)), stat('paid in Season 1', sats(b.paidSats)),
-      stat('links not yet claimed', `${b.openRewards.n} · ${sats(b.openRewards.s)}`), stat('new reports', String((b.counts && b.counts.new) || 0)));
+      stat('links not yet claimed', `${b.openRewards.n} · ${sats(b.openRewards.s)}`),
+      // kanban #2287: links being paid on their own line (void links are in neither)
+      ...(b.payingRewards && b.payingRewards.n ? [stat('links being paid', `${b.payingRewards.n} · ${sats(b.payingRewards.s)}`)] : []), stat('new reports', String((b.counts && b.counts.new) || 0)));
     $('weekbar').style.width = `${Math.min(100, (100 * weekAll) / Math.max(1, b.weeklyBudgetSats))}%`;
     // REAL SATS ON MAINNET (kanban #1450, Daniel 2026-11-11: bounties are real Lightning payments on mainnet): said by the faucet's payout network
     $('weektext').textContent = (b.network === 'mainnet' ? 'Mainnet sats: real money, paid over Lightning from the bounty wallet.' : 'Testnet sats, no value.') + ' The weekly budget and the per-player limit are the faucet\'s reward rules.';
