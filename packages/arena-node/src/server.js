@@ -2148,6 +2148,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const listsOf = new Map();   // seat -> its /reserves?all=1 answer (a promise; null when it did not answer)
     const listOf = (u) => { if (!listsOf.has(u)) listsOf.set(u, fetch(`${u}/reserves?all=1`, { signal: AbortSignal.timeout(8000) }).then((r) => r.json()).catch(() => null)); return listsOf.get(u); };
     let checks = 0, kept = 0, later = 0;
+    // EACH SEAT ITS OWN SHARE OF THE CHECKS (kanban #2521): the RESERVE_PEER_CHECKS budget was one for all seats, so one seat listed
+    // first with 200 fresh made-up outpoints each pass took every check and the rows the honest seats list were never asked. Now each
+    // seat's rows are checked against its own share (the budget split over the seats, at least RESERVE_PEER_CHECKS_MIN each), and a row
+    // that did not verify is backed off and passed over for the seat that listed it only - another seat listing the same outpoint still
+    // has its own row asked (so a seat cannot shadow an honest row by listing it first with wrong fields).
+    const RESERVE_PEER_CHECKS_MIN = 4;
+    const perSeat = Math.max(RESERVE_PEER_CHECKS_MIN, Math.floor(RESERVE_PEER_CHECKS / Math.max(1, seats.length)));
+    const checksOf = new Map();   // seat -> checks used this pass
     for (const fedHex of Object.keys(g)) {
       const key = await keyFor(fedHex);
       const port = key ? await portOf(fedHex) : null;
@@ -2159,16 +2167,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const f = (r.federations || []).find((x) => x.federationId === fedHex); listed = f && Array.isArray(f.paidIn) ? f.paidIn : []; }
         catch { continue; }
         for (const row of listed) {
-          if (!row || seen.has(row.outpoint) || checks >= RESERVE_PEER_CHECKS) continue;
-          seen.add(row.outpoint);
+          if (!row || seen.has(row.outpoint) || seen.has(`${u} ${row.outpoint}`) || (checksOf.get(u) || 0) >= perSeat) continue;
+          seen.add(`${u} ${row.outpoint}`);
           const [tx, idx] = String(row.outpoint).split(':');
-          try { if (round.donationOutputAt({ txid: fromHex(tx), outIdx: idx })) continue; } catch { continue; }
-          const missKey = `${fedHex}/${row.outpoint}`;
+          try { if (round.donationOutputAt({ txid: fromHex(tx), outIdx: idx })) { seen.add(row.outpoint); continue; } } catch { continue; }
+          const missKey = `${fedHex}/${u}/${row.outpoint}`;
           const missed = reserveMissed.get(missKey);
           if (missed && now() < missed.nextAt) { later++; continue; }
-          checks++;
+          checks++; checksOf.set(u, (checksOf.get(u) || 0) + 1);
           const v = await verifyPeerReserveRow({ row, port, reserveKey: key, federationId: fromHex(fedHex) }).catch((e) => ({ ok: false, why: e.message }));
-          if (v.ok) { reserveMissed.delete(missKey); kept++; round.putDonationOutputs([v.row]); console.log(`[reserves] ${fedHex.slice(0, 8)}: kept ${row.amountMsat} msat at ${row.outpoint.slice(0, 16)}… from ${u}`); }
+          if (v.ok) { seen.add(row.outpoint); reserveMissed.delete(missKey); kept++; round.putDonationOutputs([v.row]); console.log(`[reserves] ${fedHex.slice(0, 8)}: kept ${row.amountMsat} msat at ${row.outpoint.slice(0, 16)}… from ${u}`); }
           else {
             const misses = (missed ? missed.misses : 0) + 1;
             const waitMs = Math.min(RESERVE_RETRY_FIRST_MS * 2 ** (misses - 1), RESERVE_RETRY_MAX_MS);
