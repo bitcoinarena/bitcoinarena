@@ -307,7 +307,7 @@ test('#1342 a node bounty: 10,000 from its own pot for a node report; one per pe
   assert.equal(first.ok, true, first.why); assert.equal(first.report.amountSats, 10000);
   assert.match(again.why, /one node bounty per person/);
   assert.match(front.why, /for a node report/);
-  assert.equal(bar.weekApprovedSats, 0, 'the node bounty is not in the bug budget');
+  assert.equal(bar.weekApprovedSats, 10000, 'the week\'s figure counts every approval of the week (Daniel 2026-11-12: "Überall muss 56000 stehen")');
   assert.equal(bar.weekOutsideBudgetSats, 10000, 'and it is shown as approved this week outside the budget (Daniel 2026-11-12: 46,000 beside 56,000)');
 });
 

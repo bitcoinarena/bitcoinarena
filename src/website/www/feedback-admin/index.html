@@ -103,7 +103,7 @@
     // EVERYTHING THIS WEEK APPROVED, IN ONE FIGURE (Daniel 2026-11-12: "die bug bounties haben erst gestern begonnen und es war alles die selbe
     // Woche. Es muss deckungsgleich sein"): the week's figure counts every approval of the last 7 days - with this week's whole history it equals
     // "approved in all". The critical and node part is named under it: by the rule it never blocks another approval (outside the budget)
-    const weekAll = Number(b.weekApprovedSats || 0) + Number(b.weekOutsideBudgetSats || 0);
+    const weekAll = Number(b.weekApprovedSats || 0);   // every approval of the week, critical and node ones too (feedback-store budget)
     s.append(stat('approved this week' + (Number(b.weekOutsideBudgetSats) > 0 ? ` (${sats(b.weekOutsideBudgetSats)} of it critical: outside the budget)` : ''), `${sats(weekAll)} of ${sats(b.weeklyBudgetSats)}`),
       stat('approved in all', sats(b.allApprovedSats)), stat('paid', sats(b.paidSats)),
       stat('links not yet claimed', `${b.openRewards.n} · ${sats(b.openRewards.s)}`), stat('new reports', String((b.counts && b.counts.new) || 0)));
