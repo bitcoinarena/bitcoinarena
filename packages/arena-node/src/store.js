@@ -15,6 +15,7 @@
 // Nothing here steps the core. The node stores and serves; it does not judge.
 // Verification arrives with the checkpoints and is measured on its own.
 import { DatabaseSync } from 'node:sqlite';
+import { chmodSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 export const OPEN = 0, CLOSED = 1;
@@ -69,6 +70,9 @@ export function openStore(path = ':memory:') {
   // file read-only and reads a run's rows itself, instead of the thread that answers /play reading them and handing
   // them across. ':memory:' names no file, and those rows are handed across as before.
   db.arenaPath = path === ':memory:' ? null : path;
+  // THE NODE'S SECRETS LIVE IN THIS FILE (feedback #021, kanban #2570: node.db was 0644 beside a 0600 seed.hex): owner-only, as
+  // the seed and state are. SQLite gives its -wal and -shm files the database's mode. A path it cannot change (not a file) is left.
+  if (db.arenaPath) { try { chmodSync(path, 0o600); } catch { /* not a plain file of ours */ } }
   // EVERY STATEMENT COMPILED ONCE (NODE-OPT-1648, 2026-10-02: "Optimize the node software for CPU, memory, and
   // performance"): node:sqlite keeps no statement cache, and the store is asked through db.prepare(sql) inline - a tick
   // batch alone compiled seven statements per call; profiled on a testnet4 seat during a live round, prepare and exec were
