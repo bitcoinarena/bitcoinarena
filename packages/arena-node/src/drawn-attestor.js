@@ -5,7 +5,8 @@
 // no attestor daemons: each round's 7 attestors are node keys of its census (sortition.js drawAttestors), and a seat drawn for a round
 // does what arena-attestor's daemon does for a fixed key:
 //
-//   READ.    Its own price, every READ_MS (the seat's feed read, cents), kept for KEEP_MS (2 h) and while a round that needs it is due (kanban #2186).
+//   READ.    Its own price, every READ_MS (the seat's feed read, cents), kept for KEEP_MS (the longest market window + its due time,
+//            kanban #2406) and while a round that needs it is due (kanban #2186).
 //   SIGN.    Once the round's window has ended (+ SETTLE_MS), the market's rule over its own readings (up-down.js upDownOutcome) and
 //            the attestation body {round, outcome, observed_at = the window's end}, signed BIP-340 with its node key. One word a
 //            round: kept, never signed again differently.
@@ -27,7 +28,13 @@ export const DUE_AFTER_END_MS = 30 * 60 * 1000;
 // KEPT AT LEAST 2 H, as the fixed daemon (arena-attestor.mjs KEEP_MS), AND NEVER BELOW THE READING IN FORCE A MINUTE BEFORE THE START OF
 // A ROUND STILL DUE (kanban #2186, #1489 refute of #1844): 40 min dropped the reading before a 15 min window's start 24 min after its end,
 // while server.js keeps the round due 30 min - a seat back 25 min after the end read the whole window and could not sign it.
-export const KEEP_MS = 2 * 3600 * 1000;
+// AND NEVER BELOW THE LONGEST LEGAL MARKET WINDOW, DUE, AND THE MINUTE BEFORE IT (kanban #2406, #1489 a44 refute 91-s2): a drawn
+// market may run on any period a day divides (manifest.js seriesPeriodFits), and a round is due only once its window ENDED - so with
+// 2 h a 3 h window's reading in force a minute before its start was pruned 2 h in, while the round was not yet due; no seat could read
+// the price to beat and every round of the market went VOID. A day (the longest period a day divides) + DUE_AFTER_END_MS + 60 s:
+// one reading every READ_MS, about 8,900 rows at most.
+export const MAX_MARKET_PERIOD_MS = 24 * 3600 * 1000;
+export const KEEP_MS = Math.max(2 * 3600 * 1000, MAX_MARKET_PERIOD_MS + DUE_AFTER_END_MS + Number(UP_DOWN_AVERAGE_MS));
 export const SETTLE_MS = 5000;
 export const ASK_MS = 4000;
 
