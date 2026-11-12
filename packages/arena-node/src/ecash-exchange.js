@@ -126,6 +126,15 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
   async function step({ id, from, to, ecash, want }) {
     let r = get.get(id);
     if (r && r.state === EXCHANGE.PAID) return paidAnswer(r, true);
+    // NOT E-CASH, NO ROW (kanban #2384, #2436, audit44 refute 21 s2): a string the federation's own base32 cannot read (decodeEcashBytes is
+    // its decode_prefixed_bytes exactly) is never reissued anywhere - the tool fails before it reaches a guardian. Written as a RECEIVING row
+    // and asked, it stayed RECEIVING with receive_asked 1 for good, and #2143 counted it as owed at the stranger's want_msat and in the hour:
+    // garbage posted for free pinned the seat's balance (honest exchanges 409 "holds 0 sat free") and spent its hour (429). Refused 400
+    // before anything is written; a row such a string left from before is closed REFUSED (it never held notes) and counts no more.
+    if (!decodeEcashBytes(ecash)) {
+      if (r && r.state === EXCHANGE.RECEIVING) transition(id, EXCHANGE.RECEIVING, EXCHANGE.REFUSED, { why: 'not e-cash: the string does not decode' });
+      return refuse(400, 'that is not e-cash: the string does not decode as fedimint notes');
+    }
     // A TAKEN ROW IS NEVER ANSWERED 4xx (kanban #1583, audit #1489 sm1-page-2): the page reads 400/404/409/429 as "this seat took nothing",
     // takes its notes back (Rejected - the seat holds them) and gives the exchange up as refused for good. A row whose notes this seat took or
     // may have taken (TAKEN, SENDING, RECEIVING asked before) meets a passing condition here - its client of a federation not up yet after a
@@ -233,6 +242,11 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
           return refuse(503, 'that e-cash is taken here and its amount cannot be read back yet: held, nothing paid twice');
         }
         carried = BigInt(got.carriedMsat);
+      } else if (got.state === 'Invalid') {
+        // NOT NOTES OF THIS FEDERATION (kanban #2384, #2436): the tool could not read them as e-cash, or they are another federation's, or of
+        // a denomination it does not take - answered before anything reached a guardian, so nothing was taken: closed for good, never owed
+        transition(id, EXCHANGE.RECEIVING, EXCHANGE.REFUSED, { why: `not e-cash of this federation: ${String(got.why || 'invalid').slice(0, 200)}` });
+        return refuse(400, `that is not e-cash of federation ${from.slice(0, 8)}: ${String(got.why || 'invalid').slice(0, 120)}`);
       } else {
         transition(id, EXCHANGE.RECEIVING, EXCHANGE.REFUSED, { why: `the federation said ${got.state}` });
         return refuse(409, `federation ${from.slice(0, 8)} did not reissue that e-cash: ${got.state} (spent before?)`);
