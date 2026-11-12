@@ -5762,7 +5762,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // AN ENTRY'S STAKE LOCK AND FEE LOCK, CHECKED WITH THE FEDERATION AND KEPT: what POST /lock and POST /fee-lock do, and what a seat does
   // for an order a certified batch names that never reached it (replayOrder below). Answers verifyStakeLock's / verifyFeeLock's answer.
-  const takeStakeLock = async (eid, fields, timing = {}) => {
+  // `atMs` (kanban #1805): the time the door (POST /lock, POST /fee-lock) checked the round's lock close, before any await; kept as the lock's
+  // verified_ms. A repair from peers and a replayed order pass none: their rows carry the time they are written (or the vouched time, keepLockTimes).
+  const takeStakeLock = async (eid, fields, timing = {}, atMs = undefined) => {
     const stored = round.entry(eid);
     if (!stored) return { ok: false, status: 404, why: 'this node holds no such entry' };
     const se = decodeEntryContract(stored);
@@ -5776,14 +5778,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (ef.ok) { const t = Date.now(); reserveKey = await reserveKeyFor(toHex(ef.federationId)); timing.reserveKeyMs = Date.now() - t; } split = roundSplitBps(feesFor(rcx)); }
     try {
       const t = Date.now(); const port = (await portOfEntryBytes(stored)) || stakeLocks; timing.portMs = Date.now() - t;
-      return await verifyStakeLock({ round, port, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split, timing, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid) });
+      return await verifyStakeLock({ round, port, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split, timing, atMs, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid) });
     } catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
   };
-  const takeFeeLock = async (eid, fields) => {
+  const takeFeeLock = async (eid, fields, atMs = undefined) => {
     const stored = round.entry(eid);
     if (!stored) return { ok: false, status: 404, why: 'this node holds no such entry' };
     const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
-    try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid) }); }
+    try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, atMs, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid) }); }
     catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
   };
   // A ROUND WHOSE ENTRIES AND LOCKS A SEAT HANDS ON (kanban #1216): every round it holds that is a game's - head-to-head (kanban #1068) or replayed;
@@ -5822,7 +5824,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!c || typeof c.entryCloseMs !== 'bigint') return null;
     return headToHeadRound(e.roundId) !== null ? c.entryCloseMs - 1n : c.entryCloseMs + BigInt(grace);
   };
-  const lockAfterCloseRefusal = (storedEntry, eid, kind) => {
+  // `doorMs` (kanban #1805): the door's own time, taken once - the same time the lock row then keeps (takeStakeLock / takeFeeLock atMs)
+  const lockAfterCloseRefusal = (storedEntry, eid, kind, doorMs = round.now()) => {
     const grace = round.entryCloseGraceMs;
     let e; try { e = decodeEntryContract(new Uint8Array(storedEntry)); } catch { return null; }
     if (e.limitPrice !== undefined && e.limitPrice !== null) return null;
@@ -5840,7 +5843,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // handed nothing and the round, one seated player short, went VOID. The entry relay carries an honest join's locks before the close.
     const h2h = headToHeadRound(e.roundId) !== null;
     const allowed = h2h ? 0 : grace;
-    const now = BigInt(Math.floor(Number(round.now())));
+    const now = BigInt(Math.floor(Number(doorMs)));
     if (h2h ? now < c.entryCloseMs : now <= c.entryCloseMs + BigInt(grace)) return null;
     if (held()) return null;
     return `that round's entry closed at ${c.entryCloseMs} (and ${allowed} ms for a join on its way) and it is ${now}: a ${what} lock new to this seat is not taken (kanban #1260, #1554)`;
@@ -11779,12 +11782,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
         { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId, { held: true }); if (why) return text(res, 409, `lock refused: ${why}`); }   // kanban #1848
-        { const why = lockAfterCloseRefusal(stored, eid, 'stake'); if (why) return text(res, 409, `lock refused: ${why}`); }
+        // THE DOOR'S TIME (kanban #1805, #1551 refute 0 s2, #1489): read once, before any await, checked against the lock close here and kept as the
+        // lock's verified_ms. Kept as the federation's answer time, an honest head-to-head lock handed before the close (live: a lock takes 2.2-2.7 s,
+        // the handout lead is 2 s) was written after it, and seatedEntriesOf (#1783) seated nobody: the honest winner signed VOID 0.
+        const doorMs = Math.floor(Number(round.now()));
+        { const why = lockAfterCloseRefusal(stored, eid, 'stake', doorMs); if (why) return text(res, 409, `lock refused: ${why}`); }
         // WHERE A SLOW LOCK'S TIME WENT (kanban #605: POST /lock took up to 107 s on the test host seats, 0 ms on the loop)
         // AND EVERY LOCK'S STEPS, NOT ONLY A SLOW ONE'S (kanban #618, step-log.js): the federation's own steps (verifyStakeLock's timing) with them
         const steps = stepLog('lock', toHex(eid), { keep: txRecord.keep }).on(res); steps.at('entry');
         const lockTimed = (said) => { steps.took(timing).at(said.slice(0, 40)); };
-        const got = await takeStakeLock(eid, fields, timing);
+        const got = await takeStakeLock(eid, fields, timing, doorMs);
         lockTimed(got.ok ? 'verified' : got.why.slice(0, 60));
         if (!got.ok) return text(res, 409, got.why);
         handLocksOn(stored, eid);   // every round's (kanban #1216), a head-to-head lock before its close (kanban #1598), a pool's plain pick's too (kanban #1790)
@@ -11809,8 +11816,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // NAMED ONLY ONCE THE ENTRY IS HELD HERE (kanban #1688): a stranger's fee lock for a made-up id kept a tx_steps row under that id
         const steps = stepLog('fee-lock', toHex(eid), { keep: txRecord.keep }).on(res); steps.at('body');   // (kanban #618, step-log.js)
         { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId, { held: true }); if (why) return text(res, 409, `lock refused: ${why}`); }   // kanban #1848
-        { const why = lockAfterCloseRefusal(stored, eid, 'fee'); if (why) return text(res, 409, `lock refused: ${why}`); }
-        const got = await takeFeeLock(eid, fields);
+        const doorMs = Math.floor(Number(round.now()));   // the door's time, as POST /lock's (kanban #1805)
+        { const why = lockAfterCloseRefusal(stored, eid, 'fee', doorMs); if (why) return text(res, 409, `lock refused: ${why}`); }
+        const got = await takeFeeLock(eid, fields, doorMs);
         steps.at(got.ok ? 'verified' : 'refused');
         if (!got.ok) return text(res, 409, got.why);
         handLocksOn(stored, eid);   // a fee lock that came after its stake lock's pass (kanban #1790)

@@ -127,6 +127,12 @@ const namedBatchRow = (r) => ({ bodyId: r.body_id, txid: r.txid, signers: JSON.p
 export const FOREIGN_RECEIPTS_KEPT = 4096;
 export const FOREIGN_RECEIPTS_MAX_AGE_MS = 24 * 3600000;
 
+// THE DOOR'S TIME OF A LOCK (kanban #1805, #1551 refute 0 s2, #1489): a finite time no later than now, else now - never a time after this seat's clock
+const lockDoorMs = (atMs, now) => {
+  const n = Math.floor(Number(now)), a = Math.floor(Number(atMs));
+  return atMs === null || atMs === undefined || !Number.isFinite(a) || a > n ? n : a;
+};
+
 export class Round {
   /** How long openHeld trusts its last count of the open rows when this store wrote none (kanban #786). */
   static OPEN_HELD_MS = 250;
@@ -2163,9 +2169,10 @@ export class Round {
   }
 
 
-  putStakeSeen({ entryId, paidMsat }) {
+  // `atMs` (kanban #1805): the time the seat's door took the lock that counts the stake, when a door did (stake-lock-signer-node.js); else now
+  putStakeSeen({ entryId, paidMsat, atMs }) {
     this.db.prepare('INSERT OR IGNORE INTO stake_seen (entry_id, paid_msat, seen_ms) VALUES (?, ?, ?)')
-      .run(Buffer.from(entryId), String(paidMsat), this.now());
+      .run(Buffer.from(entryId), String(paidMsat), lockDoorMs(atMs, this.now()));
     // AND THE TICK THE PLAYER HAD REACHED BY THEN, which is where §15's start window opens. Written in the
     // same breath and once, because it is a fact about this instant: any later reading would be a different
     // tick. The highest tick already RECEIVED - not one the client asserts - so it is pinned by the same
@@ -2688,11 +2695,18 @@ export class Round {
       .filter((l) => String(l.fields.refundPk).toLowerCase() === String(refundHex).toLowerCase());
   }
 
-  /** A stake lock this signer node verified: the handed contract (JSON), its id, its outpoint. */
-  putStakeLock({ entryId, roundId, outpoint, fields, contractId }) {
-    this.db.prepare('INSERT OR REPLACE INTO stake_locks (entry_id, round_id, outpoint, fields, contract_id, verified_ms) VALUES (?, ?, ?, ?, ?, ?)')
+  /**
+   * A stake lock this signer node verified: the handed contract (JSON), its id, its outpoint. `atMs` (kanban #1805): the time this seat's door
+   * (POST /lock) took the request and checked the round's lock close, before the federation was asked; verified_ms keeps it, so a lock handed
+   * in time is in time however long the federation took to answer. A lock that came another way (a repair from peers, a replayed order) has none: now.
+   */
+  putStakeLock({ entryId, roundId, outpoint, fields, contractId, atMs }) {
+    // a lock handed again keeps its first time (kanban #1805): a page re-handing a held lock after the close does not move it past the close
+    const at = lockDoorMs(atMs, this.now());
+    this.db.prepare('INSERT OR REPLACE INTO stake_locks (entry_id, round_id, outpoint, fields, contract_id, verified_ms) VALUES (?, ?, ?, ?, ?, '
+      + 'MIN(?, COALESCE((SELECT verified_ms FROM stake_locks WHERE entry_id = ?), ?)))')
       .run(Buffer.from(entryId), Buffer.from(roundId), `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`,
-        JSON.stringify(fields), contractId, this.now());
+        JSON.stringify(fields), contractId, at, Buffer.from(entryId), at);
   }
 
   /**
@@ -3396,11 +3410,14 @@ export class Round {
       ...(r.signers ? { signers: JSON.parse(r.signers) } : {}) } : null;
   }
 
-  /** A fee lock this signer node verified (Pick A): the handed contract (JSON), its id, its outpoint. */
-  putFeeLock({ entryId, roundId, outpoint, fields, contractId }) {
-    this.db.prepare('INSERT OR REPLACE INTO fee_locks (entry_id, round_id, outpoint, fields, contract_id, verified_ms) VALUES (?, ?, ?, ?, ?, ?)')
+  /** A fee lock this signer node verified (Pick A): the handed contract (JSON), its id, its outpoint. `atMs`: its door's time, as putStakeLock's (kanban #1805). */
+  putFeeLock({ entryId, roundId, outpoint, fields, contractId, atMs }) {
+    // a lock handed again keeps its first time (kanban #1805): a page re-handing a held lock after the close does not move it past the close
+    const at = lockDoorMs(atMs, this.now());
+    this.db.prepare('INSERT OR REPLACE INTO fee_locks (entry_id, round_id, outpoint, fields, contract_id, verified_ms) VALUES (?, ?, ?, ?, ?, '
+      + 'MIN(?, COALESCE((SELECT verified_ms FROM fee_locks WHERE entry_id = ?), ?)))')
       .run(Buffer.from(entryId), Buffer.from(roundId), `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`,
-        JSON.stringify(fields), contractId, this.now());
+        JSON.stringify(fields), contractId, at, Buffer.from(entryId), at);
   }
 
   feeLock(entryIdBytes) {
