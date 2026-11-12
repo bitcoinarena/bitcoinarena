@@ -28,6 +28,9 @@ release commit and brings this file up to date with it - new machines added, cha
 13. [State the 2026-11-10 audits (5, 6) introduced or changed](#13-state-the-2026-11-10-audits-5-6-introduced-or-changed)
 14. [State audit 2026-11-12](#14-state-audit-2026-11-12)
 
+14. [State the 2026-11-10 evening range introduced or changed](#14-state-the-2026-11-10-evening-range-introduced-or-changed-audit-7-base-eb7fd30fc-head-c41b4ac4d)
+15. [State audit 2026-11-12](#15-state-audit-2026-11-12)
+
 ## 1. Rounds and settlement
 
 *From #1204, `settlement.md`.*
@@ -1589,3 +1592,41 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 #### SM-I4 (change) Auto-update record vs the update journal's resume (kanban #1581, audit #1489 sm1-node-2)
 - Invariant: every rollback of a release on this node is in auto-update.json (`rolledBack: true`, `to` = its VERSION, `commit` = its COMMIT) before the next check reads it - the updater's own (updateOnce), one that threw (#1440), and one the journal's resume made after its updater died (`resumeUpdate`, `resumed: true`; at the service's start through `resumeUnderLock`, or inside `updateNode`). So the #1369 day's wait applies to all of them.
 - `updateNode` with `retryRolledBack: false` (the auto updater, unless `bitcoinarena update` forces it) does not move to the release its own resume rolled back in the same call; it answers rolled back.
+
+## 15. State audit 2026-11-12
+
+#### SM-H2H-SEAT x SM-H2H-CLOSE x SM-H2H-SETTLE (change) Seated is not played (kanban #1626)
+- Seated (round.js `seatedEntriesOf`, #1437): in a paying round an entry with its stake seen OR its stake lock verified and waiting for its fee lock. It holds a seat at the /entry and /lock doors (`waitsForFeeLock` still blocks a third player).
+- Played (round.js `seatedEntriesOf(..., { played: true })`, #1544 in 2.0): in a paying round only an entry whose stake this seat counted (`stake_seen`) - the same set the settlement takes (settlement.js `entriesOnRecord`). A free round plays every entry.
+- Invariant: an entry is signed DELIVERED / FAILED / FORFEIT in a paying head-to-head round only if it is in the settlement. `#headToHeadClose`, the reveal door's early close and the match record (match.js `matchOf`) read the played set. An entry still waiting for its fee lock at the close is signed VOID; its counted opponent, alone, is VOID too (fewer than the game's players) and gets its stake back.
+
+#### SM-C-1 / SM-7 (change) Send attempt N+1: two seats proposing at once meet (kanban #1629)
+- A peer checking another seat's attempt N+1 (`checkResend`, `/resend-sends`) counts as used only the gateways of attempts <= N (`usedGateways(..., upTo)`), both for the next gateway and for the list `sendPlanStands` checks; its own kept PLANNED attempt N+1 is the competitor, not an earlier attempt. So two seats that each kept their own attempt N+1 through the same next gateway reach the #1241 lower-hash replace and end on one hash; before, each refused the other's offer ("no other live gateway") and no attempt N+1 reached the threshold.
+- `proposeResend` picks its gateway by the same bound.
+- A kept attempt N+1 this seat already gave a share on (a `resend` or `auth` pair with a list) is never replaced: a swap after signing cannot strand a funded attempt.
+
+#### Ballot tally per proposal (ballot-tally.js `open`, `readHash`; kanban #1633)
+- The votes a count holds come from one chain: every height a pass read for a proposal (and the block it went on from) is asked again before the count is tallied or decided. A hash that differs, or a height above the tip now, drops the proposal's open count and the vote cache; its phase is read again from its first block on the next pass. A decided outcome never counts a vote from a block that is not below its anchor on this seat's chain.
+
+#### Seat e-cash exchange (ecash-exchange.js, `ecash_exchanges.state`; kanban #1637)
+- Invariant: the seat reissues a player's notes only when it can pay them and the payout fits its hour. Both checks run before EVERY reissue ask: on a new row and on every retry of a row in RECEIVING, not only when the row is made.
+- "Can pay": the seat's balance in `to` less what it owes there already (`pay_msat` of every SENDING row, the taken amount up to `want_msat` of every TAKEN row) is at least the row's `want_msat`.
+- A check that fails on a row that never asked (`receive_asked` 0) answers 409/429 and leaves the row in RECEIVING, nothing taken. On a row whose earlier ask may have reached the federation (`receive_asked` 1, or NULL from before #1204) it answers 503 and holds the row in RECEIVING (`why` names the reason); the same notes asked again later go on once the seat can pay.
+- The hour counts a payout by `pay_ms`, the time TAKEN -> SENDING named it (a row from before: `made_ms`), so a late retry counts in the hour it pays.
+
+#### SM-O1 (add) Owner binding across a crash (main.js `ownerFiles`, owner.js `createOwner`, durable-json.js; kanban #1630)
+- `<db>.owner.json` (and `<db>.operator-tokens.json`, `<db>.retire.json`) is written atomically: `<file>.bak` first, then the file, each a temp file + fsync + rename. A reader sees the value before or after a write, never a torn one.
+- An absent file (ENOENT) is "no owner" as before. A file that exists but does not parse is read from `<file>.bak`; with no good `.bak` the node refuses to start (`DurableJsonUnreadable`). A claimed node never comes back unclaimed, never writes a new claim code over an owner, and keeps its owner's `leaving` and `settings` across any crash.
+
+#### SM-E1 (change) Refused lock vs stake lock of an entry (kanban #1639)
+- One outpoint is never both a lock this seat returns (kept in `refused_locks`, or fated RETURNING in `lock_fates`) and a verified stake or fee lock of an entry. `verifyStakeLock` and `verifyFeeLock` refuse such an outpoint before the federation is asked and again right before the write (`returnedHere`, `refusedLockAt`); this covers `takeEntryParts`/`membersKnown`, which call `takeStakeLock` directly. The reverse already held: POST /refused-lock and a refused lock's forfeit refuse an outpoint that stakes an entry.
+- A round that flips back from refused to offered does not take the lock the player handed back: the page locks anew; the kept lock comes back by its forfeit while the round is refused, or at its expiry.
+
+#### SM-B15 (change) Ballot tally: a recount after a reorg keeps the outcome in force (kanban #1635)
+- A reorg below a decided proposal's anchor moves it PASSED | FAILED -> COUNTING (`undecide`) as before, but the outcome it had stays in force for the live config (`live`, `spans`, `historyAt`, so configServesRound and configForNewRound) until the recount decides it again: the new outcome then rules (the same one when no vote moved). Invariant: an undecide alone never changes the config live at the tip.
+- The replaced outcome is kept in memory and in the record (`undecided.outcome`, proposals.js), so a restart mid-recount still holds it.
+- ORPHANED holds nothing: its publication block left, so `undecided.outcome` is dropped at the orphan move and the replaced config is live again at once.
+
+#### SM-C15 (change) Config proposal: its schedule follows the history at its publication (kanban #1631)
+- Invariant: a kept proposal's `repeal`, `votingFrom` and `votingUntil` are always those the history live at its publication height gives (`historyAt(net, publishedAt)`, 27A.7.6), at every seat - never the ones frozen when this seat first took it. A seat that took a repeal before it heard of the proposal it repeals (posted to one seat; the peer pull runs every 10 min) no longer keeps the ordinary window for good.
+- Each tally pass asks `proposals.reschedule(id)` for every kept, non-orphaned proposal before counting it: `pending` (a proposal activating by then is undecided here: a COUNTING one is not counted this pass), `same`, or `moved` - the record's schedule rewritten from that history (written to the store first; compare-and-set on the record), a decided one back to COUNTING and counted on its new window, and one whose activation is before the end of its cooldown under that schedule FAILED as void (`decided.void`), anchored at its publication block. A record moved carries `rescheduled: { at, was }`.

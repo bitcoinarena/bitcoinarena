@@ -69,15 +69,29 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
     for (const [hash, p] of pending) {
       let got;
       try { got = await lookup({ name: p.name, paymentHash: hash }); } catch (e) { log(`lookup ${hash.slice(0, 16)} failed: ${e.message}`); continue; }
-      if (got && got.settled) {
-        const receipt = signNostr(zapReceiptTemplate({ request: JSON.parse(p.description), description: p.description, invoice: p.invoice,
-          preimage: got.preimage || null, paidAtS: got.settledAtS || nowS }), { secret, curve });
-        pending.delete(hash); save();
-        receipts.push(receipt);
-        log(`zap paid ${p.name} ${hash.slice(0, 16)} -> receipt ${receipt.id.slice(0, 16)}`);
-        try { await publish(receipt, p.relays); } catch (e) { log(`publish ${receipt.id.slice(0, 16)} failed: ${e.message}`); }
-      } else if (p.until < nowS) { pending.delete(hash); save(); log(`zap ${hash.slice(0, 16)} expired unpaid`); }
+      if (got && got.settled) await paid(hash, p, got, nowS);
+      else if (p.until < nowS) { pending.delete(hash); save(); log(`zap ${hash.slice(0, 16)} expired unpaid`); }
     }
+  }
+  async function paid(hash, p, got, nowS) {
+    const receipt = signNostr(zapReceiptTemplate({ request: JSON.parse(p.description), description: p.description, invoice: p.invoice,
+      preimage: got.preimage || null, paidAtS: got.settledAtS || nowS }), { secret, curve });
+    pending.delete(hash); save();
+    receipts.push(receipt);
+    log(`zap paid ${p.name} ${hash.slice(0, 16)} -> receipt ${receipt.id.slice(0, 16)}`);
+    try { await publish(receipt, p.relays); } catch (e) { log(`publish ${receipt.id.slice(0, 16)} failed: ${e.message}`); }
+  }
+  // THE CAP EVICTS, IT DOES NOT REFUSE (kanban #1619): the per-payer bound counts by the zap request's pubkey, and Nostr keys are
+  // free - 100 fresh keys x 10 unpaid requests filled ZAP_PENDING_MAX and refused every honest zap for expiryS (an hour), for
+  // nothing. At the cap the OLDEST open zap is dropped instead (an unpaid invoice just expires at LND), after one last lookup so a
+  // zap that was paid meanwhile still gets its receipt.
+  function evictOldest() {
+    const [hash, p] = pending.entries().next().value;
+    pending.delete(hash); save();
+    log(`zap ${hash.slice(0, 16)} dropped at the open-zap cap`);
+    lookup({ name: p.name, paymentHash: hash })
+      .then((got) => (got && got.settled ? paid(hash, p, got, Math.floor(Date.now() / 1000)) : null))
+      .catch((e) => log(`lookup ${hash.slice(0, 16)} failed: ${e.message}`));
   }
   let busy = false;
   const timer = setInterval(() => { if (busy) return; busy = true; watch().finally(() => { busy = false; }); }, watchMs);
@@ -124,8 +138,9 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
           return refuse('that zap request is already invoiced');
         }
         if (minting.has(request.id)) return refuse('that zap request is being invoiced; ask again');
-        if (pending.size + minting.size >= ZAP_PENDING_MAX) return refuse('too many zaps are open here; try again later');
         if (open.filter(([, r]) => r.pubkey === request.pubkey).length >= ZAP_PENDING_PER_PAYER) return refuse('too many open zaps from that key');
+        while (pending.size > 0 && pending.size + minting.size >= ZAP_PENDING_MAX) evictOldest();
+        if (pending.size + minting.size >= ZAP_PENDING_MAX) return refuse('too many zaps are open here; try again later');
       } else {
         const comment = u.searchParams.get('comment');
         if (comment && comment.length > ZAP_COMMENT_MAX) return refuse(`a comment is at most ${ZAP_COMMENT_MAX} characters`);

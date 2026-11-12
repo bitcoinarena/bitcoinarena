@@ -790,7 +790,18 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const key = `${w.ridHex}:${w.role}`;
     if (!signedAt.has(key)) signedAt.set(key, nowMs());
     if (nowMs() < signedAt.get(key) + WITHHELD_SIG_MS) return [];
-    return signed.seated.filter((k) => k !== me && !db.prepare('SELECT 1 FROM seat_sigs WHERE round_id = ? AND role = ? AND node = ?').get(w.t.rid, w.role, k));
+    // ONLY A SEATING BEFORE THIS ONE IS NO SIGNATURE (kanban #1609, wf1489 r4 gossip-1): a member that hands out a valid signature over a smaller seating
+    // that comes before this node's in #738's order - the first 5 drawn, itself among them - was not a withholder here and set off no re-sign either (a
+    // seating before ours is the one #738 expects it to leave), so it never moved and the round stood uncertified to its start, the #1509 effect again. A
+    // member counts as signing only by a signature over this node's seating or over one not before it; one known to come before it, WITHHELD_SIG_MS on,
+    // withholds. A seating not remembered here (after a restart) still counts, as before.
+    const id = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: signed.seated.map(fromHex) }));
+    const signs = (k) => db.prepare('SELECT seating FROM seat_sigs WHERE round_id = ? AND role = ? AND node = ?').all(w.t.rid, w.role, k).some((r) => {
+      if (r.seating === id) return true;
+      const other = seatings.get(`${w.ridHex}:${w.role}:${r.seating}`);
+      return !other || !seatingBefore(w, other, signed.seated);
+    });
+    return signed.seated.filter((k) => k !== me && !signs(k));
   }
   /** The member of this node's seating that signed a seating not before it, and that seating's id (kanban #738), or null while it may still stand. */
   function canNeverStand(w) {

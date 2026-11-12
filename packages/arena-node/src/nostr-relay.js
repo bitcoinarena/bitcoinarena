@@ -26,8 +26,10 @@ const MAX_EVENT_BYTES = 64 * 1024, MAX_SUBS = 20, MAX_FILTERS = 10, MAX_LIMIT = 
 // THE RELAY IS NOT ANYBODY'S DISK (kanban #1513, #1489 r1-nostr-3): the only limit was 60 messages per 10 s per socket, and sockets
 // are free, so one fresh key kept any number of events (kind 8, 9735, or 30078/30762/30009 under new `d`s, up to 64 KB each). Now:
 //   - per author at most AUTHOR_EVENTS events and AUTHOR_BYTES bytes; a new one past that pushes out that author's OWN oldest
-//     (nobody else's), so a node's newest round results and badges are always kept;
-//   - in total at most TOTAL_EVENTS events and TOTAL_BYTES bytes; past that a new event is refused ('blocked: the relay is full');
+//     (nobody else's; its regular events and round results before its one-per-key events, kanban #1621), so a node's newest
+//     round results and badges, and its badge definitions, are always kept;
+//   - in total at most TOTAL_EVENTS events and TOTAL_BYTES bytes; past that a new regular event is refused ('blocked: the relay is full'),
+//     a replaceable or parameterized one pushes out the oldest event of the author holding the most (kanban #1620);
 //   (no cap on sockets per address: behind the tunnel every player comes from the same local address; the quotas bound the disk);
 //   - a REQ reads only the rows its ids/authors/kinds/since/until select (SQL on indexed columns), not the whole table.
 const AUTHOR_EVENTS = 500, AUTHOR_BYTES = 4 * 1024 * 1024, TOTAL_EVENTS = 200000, TOTAL_BYTES = 512 * 1024 * 1024;
@@ -113,9 +115,16 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const all = db.prepare('SELECT json FROM events ORDER BY created_at DESC');
   // kanban #1513: quotas (see AUTHOR_EVENTS above)
   const authorUse = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(json)), 0) AS b FROM events WHERE pubkey = ?');
-  const authorOldest = db.prepare('SELECT id FROM events WHERE pubkey = ? ORDER BY created_at ASC, id DESC LIMIT 1');
+  // kanban #1621 (#1489 r4-nostr-2): the oldest by created_at alone was always a node's badge definitions (kind 30009, dated
+  // BADGES_AT_S and published once), so ~500 rounds later its awards named definitions the relay no longer held. An author's
+  // one-per-key events (replaceable: 0, 3, 10000-19999; parameterized replaceable but not a round's own 30762) now go only
+  // after all its regular events and round results are gone; among each group the oldest still goes first.
+  const authorOldest = db.prepare(`SELECT id FROM events WHERE pubkey = ? ORDER BY
+    (kind = 0 OR kind = 3 OR (kind >= 10000 AND kind < 20000) OR (kind >= 30000 AND kind < 40000 AND kind != 30762)) ASC,
+    created_at ASC, id DESC LIMIT 1`);
   const dropId = db.prepare('DELETE FROM events WHERE id = ?');
   const has = db.prepare('SELECT 1 AS x FROM events WHERE id = ?');
+  const heaviest = db.prepare('SELECT pubkey FROM events GROUP BY pubkey ORDER BY COUNT(*) DESC, pubkey ASC LIMIT 1');   // kanban #1620
   const totalUse = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(json)), 0) AS b FROM events');
   const lim = { authorEvents: AUTHOR_EVENTS, authorBytes: AUTHOR_BYTES, totalEvents: TOTAL_EVENTS, totalBytes: TOTAL_BYTES, ...limits };
   const total = { ...totalUse.get() };
@@ -203,7 +212,24 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
           const json = JSON.stringify(e);
           if (!has.get(e.id)) {   // a copy already kept changes nothing (as INSERT OR IGNORE did)
             // kanban #1513: the relay's total first (refused when full), then the author's own quota (their oldest goes)
-            if (total.n + 1 > lim.totalEvents || total.b + json.length > lim.totalBytes) return send(['OK', e.id, false, 'blocked: the relay is full']);
+            // A FULL RELAY STILL TAKES THE GAME'S STATE (kanban #1620, #1489 r4-nostr-1): keys are free, so strangers filled the total with
+            // regular events (kind 8 / 9735) 500 at a time under ~400 keys, each inside its own quota, and from then on every author was
+            // refused - a new player's game seed (30078, the login failed), every node's round result (30762, which publishPass never sends
+            // again). Past the total a regular event is still refused; a replaceable or parameterized one (one per author, kind and `d`:
+            // profile, relay list, seed, result, badge definition) makes room instead: the oldest event of the author holding the most goes.
+            const isFull = () => total.n + 1 > lim.totalEvents || total.b + json.length > lim.totalBytes;
+            if (isFull() && (isReplaceable(e.kind) || isParam(e.kind))) {
+              for (let guard = 0; isFull() && guard < 64; guard++) {
+                const h = heaviest.get();
+                const old = h && authorOldest.get(h.pubkey);
+                if (!old) break;
+                const u0 = authorUse.get(h.pubkey);
+                dropId.run(old.id);
+                const u1 = authorUse.get(h.pubkey);
+                total.n += u1.n - u0.n; total.b += u1.b - u0.b;
+              }
+            }
+            if (isFull()) return send(['OK', e.id, false, 'blocked: the relay is full']);
             const before = authorUse.get(e.pubkey);
             if (put.run(e.id, e.pubkey, e.kind, e.created_at, d, json).changes) tagRows(e);   // kanban #1543: its tags indexed with it
             if (isReplaceable(e.kind) || isParam(e.kind)) drop.run(e.pubkey, e.kind, d, e.id);

@@ -7,7 +7,7 @@
 // app by relative path with "/"). Now the app takes it from arena-sdk/core-hash, and the node from here:
 //
 //   a tree (a core with `root`): every .js file below root, sorted by its path relative to root with "/" on every system, hashed
-//       as `rel \0 bytes \0` for each - the Round Contract's sim_wasm_hash (sorted sources, never a bundle: a bundle's hash
+//       as `rel \0 bytes \0` for each (a tree holding a NUL: length-framed, see coreTree, kanban #1625) - the Round Contract's sim_wasm_hash (sorted sources, never a bundle: a bundle's hash
 //       depends on the bundler version, and nothing that pins money should have a toolchain in its trust path)
 //   one file (a core with only `url`): sha256 of its bytes
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -34,13 +34,30 @@ export function coreTreeFiles(root) {
   return files.sort((a, b) => { const x = coreRelPath(base, a), y = coreRelPath(base, b); return x < y ? -1 : x > y ? 1 : 0; });
 }
 
+// A NUL INSIDE A FILE CANNOT MOVE A FILE BOUNDARY (kanban #1625): `rel \0 bytes \0` says where a file ends only while no file
+// holds a NUL, and a NUL is legal in a JS comment or string - a.js carrying "//\0b.js\0 ..." hashed the same as a.js cut at the
+// NUL plus a b.js, two programs under one sim hash. A tree with no NUL in any name or file hashes exactly as before (every pinned
+// hash stays); a tree with one is hashed framed - a NUL tag first (the old stream starts with a file name, never a NUL), then for
+// each file u32 length of rel, rel, u64 length of bytes, bytes - so no two different trees share a hash.
+const NUL_TREE_TAG = Buffer.from('\0arena-core-tree-framed\0');
+const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
+const u64 = (n) => { const b = Buffer.alloc(8); b.writeBigUInt64BE(BigInt(n)); return b; };
+
 /** A tree's hash and its files: { hash (64 hex), files: Map(rel -> bytes) } - each file read once. */
 export function coreTree(root) {
-  const base = pathOf(root), h = createHash('sha256'), files = new Map();
+  const base = pathOf(root), files = new Map();
+  let nul = false;
   for (const f of coreTreeFiles(base)) {
     const rel = coreRelPath(base, f), bytes = readFileSync(f);
-    h.update(rel); h.update('\0'); h.update(bytes); h.update('\0');
+    if (rel.includes('\0') || bytes.includes(0)) nul = true;
     files.set(rel, bytes);
+  }
+  const h = createHash('sha256');
+  if (nul) {
+    h.update(NUL_TREE_TAG);
+    for (const [rel, bytes] of files) { const r = Buffer.from(rel); h.update(u32(r.length)); h.update(r); h.update(u64(bytes.length)); h.update(bytes); }
+  } else {
+    for (const [rel, bytes] of files) { h.update(rel); h.update('\0'); h.update(bytes); h.update('\0'); }
   }
   return { hash: h.digest('hex'), files };
 }

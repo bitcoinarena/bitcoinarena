@@ -81,7 +81,8 @@ const feeLine = (payouts) => {
   return `${n} signer node(s) ${nodes} msat${d ? ` and ${d} donation key(s) ${gifts} msat` : ''}`;
 };
 
-// THE NONCE PAIRS KEPT PER SETTLEMENT (kanban #1489): each /settle-commit hands out a pair of its own; the oldest goes past this many.
+// THE NONCE PAIRS KEPT PER SETTLEMENT (kanban #1489): each /settle-commit hands out a pair of its own; the oldest goes past this many,
+// once its asker's pass is over (kanban #1610).
 export const PAIRS_KEPT = 64;
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).sort().join('|');
 // `code` (settle-backoff.js REFUSAL, kanban #1186): what a sweep decides by - never the text
@@ -2250,12 +2251,20 @@ export class LockSettlement {
     // seat and no pass reached the threshold. Now no pair is handed out twice: a list from outside spends only the pair its own commit drew. The last PAIRS_KEPT are kept.
     const prior = this.pairs.get(key);
     const held = (Array.isArray(prior) ? prior : []).filter((p) => toHex(p.message) === toHex(m.message));
+    // NO PAIR IS PUSHED OUT WHILE ITS ASKER MAY STILL NAME IT (kanban #1610): /settle-commit answers anyone below the signed-ask height (and any seat
+    // above it), so PAIRS_KEPT commits between an asker's commit and its share request evicted the asker's pair, its share was refused at every seat
+    // ("does not carry this signer node's own commitment") and no pass reached the threshold. A pair is kept for the asker's whole pass - its commit
+    // ask, the grace and its share ask - and past PAIRS_KEPT only a pair older than that goes; with none, the new commit is refused, not a held pair.
+    const now = Number(this.now());
+    const keptMs = 2 * this.peerAskMs + this.peerGraceMs;
+    while (held.length >= PAIRS_KEPT && !(now - Number(held[0].at ?? 0) < keptMs)) held.shift();
+    if (held.length >= PAIRS_KEPT) return refuse(`this signer node holds ${PAIRS_KEPT} unspent nonce pairs of that settlement handed out in the last ${keptMs} ms: ask again shortly`, 503);
     const hiding = nonceGenerate340(this.random(32), m.signerNode.share);
     const binding = nonceGenerate340(this.random(32), m.signerNode.share);
-    const pair = { message: m.message, hiding, binding, list: null, share: null,
+    const pair = { message: m.message, hiding, binding, list: null, share: null, at: now,
       commitment: { id: m.signerNode.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) } };
     held.push(pair);
-    this.pairs.set(key, held.slice(-PAIRS_KEPT));
+    this.pairs.set(key, held);
     if (stallsOut(m.contract)) {
       const word = signSettlementCommit({ roundId: roundIdBytes, settlementTxid: fromHex(m.txid), hiding: pair.commitment.hiding, binding: pair.commitment.binding },
         this.round.pubkey, (digest) => schnorr.sign(digest, this.round.identity.secret));
