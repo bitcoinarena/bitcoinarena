@@ -173,6 +173,9 @@ const MEMORY = [
   ['copies through map', { top: 'const keep = [];', step: 'const big = new Float64Array(1 << 20); for (;;) keep.push(big.map((x) => x + 1))' }, /asked for more than 64 MB of arrays/],
   ['copies through toReversed (no constructor)', { top: 'const keep = [];', step: 'const big = new Float64Array(1 << 20); for (;;) keep.push(big.toReversed())' }, /asked for more than 64 MB of arrays/],
   ['one array past the budget at once', { step: 'st.note = new Float64Array(1 << 24).length' }, /asked for more than 64 MB of arrays/],
+  // (kanban #1622) a kind missing from a hand-written list - Float16Array on node 24 - is wrapped like every other
+  ['Float16Array in a loop', { top: 'const keep = [];', step: 'for (;;) keep.push(new Float16Array(1 << 20))' }, /asked for more than 64 MB of arrays/],
+  ['Float16Array copies through slice', { top: 'const keep = [];', step: 'const big = new Float16Array(1 << 20); for (;;) keep.push(big.slice())' }, /asked for more than 64 MB of arrays/],
   ['an ArrayBuffer grown by transfer or resize', { step: 'new ArrayBuffer(8, { maxByteLength: 1 << 30 }).resize(1 << 30)' }, /resize is not a function/],
   ['at load: the top level', { top: 'const keep = []; for (;;) keep.push(new Uint8Array(1 << 23));' }, /asked for more than 64 MB of arrays/],
 ];
