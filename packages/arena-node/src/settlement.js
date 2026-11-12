@@ -40,6 +40,7 @@ import { inSessionLane } from './stake-lock-signer-node.js';
 import { splitByFederation } from '../../arena-protocol/src/federation-settlement.js';
 import { pluginForRound, payoutRuleOfRound } from './plugins.js';
 import { heldOutcomes, marketFinalityOf, attestedTable } from './game-market.js';
+import { jsonUpTo, BODY_MOST } from './body-read.js';
 import { lockSettlement, lateLockSettlement, attestedLockSettlement, bookLockSettlement, RESERVE_LATER_PK } from '../../arena-protocol/src/lock-settlement.js';
 import { fallbackInputs } from './fallback-inputs.js';
 import { fallbackFiler } from '../../arena-protocol/src/fallback-claim.js';
@@ -688,7 +689,7 @@ export class LockSettlement {
     // EVERY SEAT IS READ, there is no threshold to a cancel; a seat that does not answer in time is as one that is down
     const asked = await askPeers(this.peersFor(roundIdBytes), async (peer, signal) => {
       const answer = await this.fetcher(`${peer}/cancels?round=${toHex(roundIdBytes)}`, { signal });
-      return answer.ok ? answer.json() : null;
+      return answer.ok ? jsonUpTo(answer, BODY_MOST) : null; // kanban #2458: capped, past it that seat counts as unheard
     }, { boundMs: this.peerReadMs });
     for (const { value: body } of asked) {
       for (const c of (body && Array.isArray(body.cancels) ? body.cancels : [])) {

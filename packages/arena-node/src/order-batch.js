@@ -38,6 +38,7 @@ import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
 import { pluginForRound } from './plugins.js';
 import { marketOfRound } from '../../arena-protocol/src/manifest.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
+import { jsonUpTo, BODY_MOST } from './body-read.js';
 
 const refuse = (why, status = 409) => ({ ok: false, status, why });
 const verifyEd = verifyEd25519Kept;   // kept per (sig, msg, key) - verified.js (kanban #576)
@@ -953,7 +954,7 @@ export class OrderBook {
     try {
       const r = await Promise.race([this.fetcher(url, ac ? { ...opts, signal: ac.signal } : opts), late]);
       if (!r.ok) return { ok: false, why: String(await Promise.race([r.text(), late])).trim() };
-      return { ok: true, body: await Promise.race([r.json(), late]) };
+      return { ok: true, body: await Promise.race([jsonUpTo(r, BODY_MOST), late]) }; // kanban #2458: capped at what a door takes
     } catch (e) { return { ok: false, why: e.message }; } finally { clearTimeout(timer); }
   }
 
@@ -1359,7 +1360,7 @@ export class OrderBook {
         const after = cursors.get(base);
         const r = await Promise.race([this.fetcher(`${base}/book-certificates?round=${rid}${after === undefined ? '' : `&after=${after}`}`, ac ? { signal: ac.signal } : undefined), late]);
         if (!r.ok) throw new Error(`answered ${r.status}`);
-        body = await Promise.race([r.json(), late]);
+        body = await Promise.race([jsonUpTo(r, BODY_MOST), late]); // kanban #2458: capped
         if (!body || !Array.isArray(body.certificates)) throw new Error('answered no list of certificates');
       } catch (e) { state.unheard.push(`${base}: ${e.message}`); return; } finally { clearTimeout(timer); }
       const next = await this.#take(roundIdBytes, rid, base, body, held, state, cursors.get(base));

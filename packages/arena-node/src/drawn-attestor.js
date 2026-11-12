@@ -24,6 +24,9 @@ import { toHex } from '../../arena-protocol/src/hash.js';
 import { combine, wordToJson, wordFromJson } from '../../arena-attestor/src/attestor.js';
 import { MARKET_RULE } from '../../arena-protocol/src/manifest.js';
 import { outcomeIndex } from '../../arena-protocol/src/market-rule.js';
+import { jsonUpTo } from './body-read.js';
+// the most of one drawn seat's GET /attestation-word answer that is read (kanban #2458)
+const WORD_ANSWER_MAX = 16 * 1024;
 
 export const READ_MS = 10000;
 export const KEEP_MS = 40 * 60 * 1000;
@@ -173,7 +176,8 @@ export class DrawnAttestor {
       const theirs = await Promise.all((this.peersFor(r.roundId) || []).map(async (base) => {
         try {
           const res = await this.fetcher(`${String(base).replace(/\/+$/, '')}/attestation-word?round=${id}`, { signal: AbortSignal.timeout(ASK_MS) });
-          return res.status === 200 ? wordFromJson(await res.json()) : null;
+          // kanban #2458: a word is under 1 kB - an answer past WORD_ANSWER_MAX counts as no word, like a 404
+          return res.status === 200 ? wordFromJson(await jsonUpTo(res, WORD_ANSWER_MAX)) : null;
         } catch { return null; }
       }));
       // each word checked with the drawn attestors' scheme (BIP-340, kanban #1487): a junk signature counts for nothing and never replaces a good one
