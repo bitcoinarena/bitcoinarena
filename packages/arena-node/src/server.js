@@ -4985,7 +4985,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHICH ROUND IS HEAD-TO-HEAD (kanban #1068, #1071): declared here, filled in below. A close sweep can fire while the server is still being set up
   // (measured 2026-11-03 on a restarted seat: "Cannot access 'headToHeadRound' before initialization" from afterClose, and the seat exited); until then a close
   // waits (kanban #1587, below) - it is no longer closed as before #1071.
-  let headToHeadRound = () => null, headToHeadReady = false, relayedRound = () => null, pullPickLocks = async () => {};
+  let headToHeadRound = () => null, headToHeadReady = false, relayedRound = () => null, pullPickLocks = async () => {}, lockTakenStatement = null;   // lockTakenStatement: kanban #2483
   // NO CLOSE LOGIC RUNS BEFORE THE SEAT CAN LEARN WHO IS IN A ROUND (kanban #1587): the start's own close sweep runs inside serve(), before
   // `headToHeadReady`, and a seat restarted past a head-to-head round's end signed VOID 0 over the one entry it held while the threshold signed
   // FAILED / DELIVERED - final, one result per entry. A close asked for before then waits for it; and one round's close logic runs once at a time
@@ -6276,6 +6276,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, atMs, atUntilMs, namersAtPeers, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid) }); }
     catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}`, ...(e && e.ofFields ? { ofFields: true } : {}) }; }
   };
+  // WHEN THIS SEAT TOOK A LOCK, SIGNED (kanban #2483, refutes #2225 on the honest path): a seat that verified a head-to-head lock before the
+  // entry close says so under its own key at GET /order-locks - the entry, the lock kind, the lock's fields and the round-clock time it was
+  // verified here (verified_ms). takeEntryParts takes a lock new to it after the close on one committee seat's statement dated before the
+  // close (an honest seat cannot have held it before then unless it took it in time), or on the round's threshold of peers serving it (#2225).
+  const LOCK_TAKEN_TAG = new TextEncoder().encode('arena/lock-taken-before-close/v1');
+  const lockTakenDigest = (eid, kind, fields, atMs) => {
+    const k = new TextEncoder().encode(kind), f = sha256(new TextEncoder().encode(JSON.stringify(fields)));
+    const at = new Uint8Array(8); new DataView(at.buffer).setBigUint64(0, BigInt(Math.max(0, Math.floor(Number(atMs)))));
+    return sha256(new Uint8Array([...LOCK_TAKEN_TAG, ...new Uint8Array(eid), k.length, ...k, ...f, ...at]));
+  };
+  lockTakenStatement = (eid, kind, fields, atMs) => ({ atMs: Math.floor(Number(atMs)), by: toHex(round.pubkey), sig: toHex(schnorr.sign(lockTakenDigest(eid, kind, fields, atMs), round.identity.secret)) });
+  // a peer's statement that it took this very lock before `closeMs`, signed by a committee seat of the round other than this one
+  const takenBeforeClose = (rid, eid, kind, fields, said, closeMs) => {
+    try {
+      if (!said || typeof said !== 'object' || !Number.isSafeInteger(said.atMs) || said.atMs < 0 || BigInt(said.atMs) >= closeMs) return false;
+      const by = String(said.by || ''), sig = String(said.sig || '');
+      if (!/^[0-9a-f]{64}$/i.test(by) || !/^[0-9a-f]{128}$/i.test(sig) || by.toLowerCase() === toHex(round.pubkey)) return false;
+      if (!round.signerNodes(rid).some((s) => toHex(s) === by.toLowerCase())) return false;
+      return schnorr.verify(fromHex(sig), lockTakenDigest(eid, kind, fields, said.atMs), fromHex(by));
+    } catch { return false; }
+  };
   // A ROUND WHOSE ENTRIES AND LOCKS A SEAT HANDS ON (kanban #1216): every round it holds that is a game's - head-to-head (kanban #1068) or replayed;
   // a market's orders have their own way (order-batch.js replayOrder)
   // NO LOCK NEW TO THIS SEAT AFTER ITS ROUND'S ENTRY CLOSE (kanban #1260, audit 4 #1257 PLAYER-1, seats-2): #1216 closed the entry door only. A lock still
@@ -6531,6 +6552,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let why = null;
     if (!round.stakeLock(eid) || (round.feeLock && !round.feeLock(eid))) {
       let answers = await ofPeers(`/order-locks?entry=${entryHex}`, (r) => peerJsonUpTo(r, LOCKS_MAX_BYTES));   // capped (#1870, #1901)
+      // OR ONE COMMITTEE SEAT'S SIGNED WORD THAT IT TOOK THAT VERY LOCK BEFORE THE CLOSE (kanban #2483, refutes #2225 on the honest path): the
+      // peers exclude this seat, so with a threshold above n - 1 (2-of-2) no lock missing here at the close could ever be taken - an honest
+      // lock that reached one seat before the close left that seat playing the entry and this one signing VOID, the round never settled.
+      // A lock first handed after the close has no such statement from an honest seat (verified_ms is the round-clock time it was taken).
+      let closeMs = null;
+      try { const hc = headToHeadRound(entry.roundId); closeMs = hc && typeof hc.entryCloseMs === 'bigint' ? hc.entryCloseMs : null; } catch { closeMs = null; }
+      const signedBefore = (a, k) => closeMs !== null && !!a && !!a[k] && takenBeforeClose(rid, eid, k, a[k], a.taken && a.taken[k], closeMs);
       // PAST THE LOCK CLOSE, NOT FROM ONE SEAT (kanban #1783, #1551 refute 0, #1489): #1551 and #1260 refuse a lock new to a seat at its door once its round's
       // lock close passed (head-to-head: the entry close, when the moves turn public), but this repair took a lock from any single peer's GET /order-locks.
       // One seat that took a late lock (its operator, or a patched build) so handed it to every honest seat: the player locked only when the revealed move
@@ -6546,7 +6574,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const inTime = (l, k) => l && l[k] && Number.isSafeInteger(l[`${k}VerifiedMs`]) && BigInt(l[`${k}VerifiedMs`]) <= closedAt;
         const lacks = ['stake', ...(round.feeLock ? ['fee'] : [])].filter((k) => !(k === 'stake' ? round.stakeLock(eid) : round.feeLock(eid)));
         const timely = answers.filter((l) => lacks.every((k) => !l[k] || inTime(l, k)) && lacks.some((k) => inTime(l, k)));
-        if (timely.length < needed) {
+        // or one committee seat's signed word for each kind it serves (kanban #2483): taken at that seat's time
+        const signedOnes = timely.length < needed ? answers.filter((l) => lacks.every((k) => !l[k] || signedBefore(l, k)) && lacks.some((k) => signedBefore(l, k))) : [];
+        if (timely.length < needed && signedOnes.length) {
+          const l = signedOnes[0];
+          vouchedMs = Math.max(...lacks.filter((k) => l[k]).map((k) => l.taken[k].atMs));
+          answers = [l];
+        } else if (timely.length < needed) {
           if (answers.length) console.log(`[entry] ${entryHex.slice(0, 16)}: its locks are new to this seat past the round's lock close, and ${timely.length} of the ${needed} other seats needed took them by then: not taken (kanban #1783)`);
           answers = [];
         } else {
@@ -11819,9 +11853,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const fieldsOf = (row) => (row ? (typeof row.fields === 'string' ? JSON.parse(row.fields) : row.fields) : null);
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         // and when this seat verified each (kanban #1783): a seat repairing a lock past its round's lock close takes it only when the round's threshold
-        // of seats verified it before that close
+        // of seats verified it before that close; and each with this seat's signed word of when it verified it (kanban #2483): what a seat that missed
+        // it before the close takes it on
+        const taken = {};
+        try { if (st) taken.stake = lockTakenStatement(eid, 'stake', fieldsOf(st), st.verifiedMs); if (fe) taken.fee = lockTakenStatement(eid, 'fee', fieldsOf(fe), fe.verifiedMs); } catch { /* served without */ }
         return res.end(JSON.stringify({ entry: eid.toString('hex'), stake: fieldsOf(st), fee: fieldsOf(fe),
-          stakeVerifiedMs: st ? st.verifiedMs : null, feeVerifiedMs: fe ? fe.verifiedMs : null }));
+          stakeVerifiedMs: st ? st.verifiedMs : null, feeVerifiedMs: fe ? fe.verifiedMs : null, taken }));
       }
       if (req.method === 'GET' && url.pathname === '/entry') {
         const eid = Buffer.from(url.searchParams.get('id') || '', 'hex');
