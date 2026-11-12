@@ -2149,3 +2149,7 @@ State machine audit round 9 (#1489, base f64efd1bb). Each machine as it stands a
 #### SM6 + SM3 (change) Retirement record only over an empty federation (kanban #1980)
 - A retirement record (CLOSED, no successor) is built and signed only while the reserve its body names is 0 (`bodyFor`: `retiringOf` and `reserveSats === 0`). The owners' consents are checked once when given and kept; money paid in before the next gather leaves the record OPEN at its reserve, and the retirement goes on once the federation is empty again.
 - The retire timer sets a guardian aside only over a CLOSED record naming reserve 0.
+#### SM-I3 (add) Node update: update.lock taken over (kanban #1975)
+- A stale update.lock (from before the boot, its pid gone, or older than `staleMs`) is taken over by `renameSync(update.lock, update.lock.taking-<pid>-<ms>-<rand>)`, never by removing it. Of two updaters that judged the same dead holder, one rename succeeds; the other finds no file and reads again.
+- The moved file must be byte for byte the lock that was judged stale. When it is, it is kept as `update.lock.stale` (the last one taken over) and the updater creates its own lock with `wx`. When it is not (another updater made its lock in between), it is put back by `linkSync`, which never lands over a newer lock, and this updater waits for that holder.
+- Invariant: at most one updater returns from `takeUpdateLock` holding a node's lock, and the lock on disk names that one, so its `release()` frees the node (#809: one update of a node at a time).
