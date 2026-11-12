@@ -16,9 +16,10 @@ import { TESTNET4_DONATION_SET } from '../src/testnet4-donation-set.js';
 import { TEST_DONATION_SET_TESTNET4 } from '../src/test-donation-sets.js';
 import { TYPE_DONATION_SET_KEYS } from '../src/constants.js';
 import { toHex } from '../src/hash.js';
+import { pointKey } from './point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const key = (prefix, fill) => Uint8Array.of(prefix, ...new Uint8Array(32).fill(fill));
+const key = (prefix, fill) => pointKey(prefix, fill);
 const DEVS = [
   { recipientPk: key(0x02, 0xa1), shareBps: 6667, label: 'dev a' },
   { recipientPk: key(0x03, 0xb2), shareBps: 3333, label: 'dev b' },

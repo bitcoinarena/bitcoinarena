@@ -51,6 +51,7 @@ import { ArenaText, ArenaBits } from './arena-text.js';   // the page's React li
 import { TRUCK_68E2_HASH } from '../../nextblock/plugin/truck-cores.js';   // the truck versions 1-4 name (kanban #523: the tree now builds a5c5766a)
 
 const b32 = (n) => new Uint8Array(32).fill(n);
+import { pointKey } from '../../arena-protocol/test/point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 const rand = (n) => new Uint8Array(randomBytes(n));
 const sha256 = (s) => new Uint8Array(createHash('sha256').update(s).digest());
 const SET = TEST_DONATION_SET_REGTEST;
@@ -535,7 +536,7 @@ test('a signer node missing, a signer node serving another set, a forged set, or
   assert.equal((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: honest }) })).ok, true);
   // a game set its manifest does not name is no game set: the game dev's half is never routed to it
   (await import('../src/donation-pay.js')).forgetGameSets();
-  const strayGame = [{ recipientPk: Uint8Array.from([0x02, ...b32(0x5e)]), label: 'not the game dev', shareBps: 10000 }];
+  const strayGame = [{ recipientPk: pointKey(0x02, 0x5e), label: 'not the game dev', shareBps: 10000 }];
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: honest }, [], strayGame) })).why,
     /not the set the game's manifest names/);
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest }) })).why, /not every signer node/);
