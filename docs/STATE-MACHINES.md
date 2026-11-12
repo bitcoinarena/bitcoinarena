@@ -1988,3 +1988,6 @@ Files: `owner-leave.js` leaveStatus.
 #### SM-P (add) Wallet store packing (`packWallets`, `walletStoreFor`, `lockStoreFor`; kanban #1978)
 - Invariant: one wallet key is held in one row. A `put` under the packed key removes the raw row of the same key (`prefix + k`) once the packed write took, as `remove` already removes both.
 - A packing pass that meets a raw row whose packed key already exists keeps the packed row (the newer value, the wallet's own write) and only removes the raw row; it never writes the raw (older) value over it. A pass stopped by a full browser, followed by wallet writes and another pass, so never rolls a wallet key back.
+#### SM-21 x SM-22 (add) Feedback report and its reward link are written together (kanban #2020)
+- Invariant: a reward link is `void` only when its report is `rejected`; an `accepted` report's link is `open`, `paying` or `paid`. A `paid` link and a `paid` report land together.
+- Every write that touches a report and its link, or a row and its `report_moves` line (`move`, `approve`, `createReward`, `paidNow`), runs in one `BEGIN IMMEDIATE ... COMMIT` (inside a caller's transaction, as part of that one). A kill between the link's void and the report's `rejected` leaves neither: after the restart the report is accepted and its link open, and the admin's rejection can be made again.
