@@ -1914,3 +1914,7 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 #### SM-I3 (change) Node update: the keep-the-database decision is made after the stop (kanban #2097)
 - `rollBack` stops the moving services first and only then reads `dbChangedSince(home, backup)`; `keepDb` is the caller's `served` OR that read. The callers' earlier reads (moveNode after the wait, `failedAfterStop`, `resumeUpdate`) only set `served` in ROLLING_BACK; the final answer is the `dbKept` recorded at ROLLED_BACK.
 - Invariant: a node.db (or WAL) the new release wrote at any time before its stop returned is never replaced by the backup - a nonce it used, a lock or an entry it took survives the rollback.
+#### SM-L2 (change) Collect record: its invite names its round's federation (kanban #2104)
+- A collect record's invite names the federation its round is in. The 24 h scan (`findTheRoundsOwed`) chooses it per found round as the join does (`inviteForRound`): the lobby's when it names the round's federation, else that federation's verified status (`ARENA_FED_LOADS`), else the invite this browser opened that federation's wallet with. With none known the round is not kept, and the next scan finds it again.
+- A record kept before with another federation's invite is repaired on read (`recordsToCollect` with `loads`): only its invite is rewritten, its done, lock and savedMs stay.
+- A federation's remembered invite (`arena.federation.invite.<fed>`) is never an invite that reads as another federation's (`rememberInvite`).

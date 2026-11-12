@@ -19,6 +19,7 @@
 // the entry uses that lock instead of dealing and paying again.
 import { ANCESTOR_TAG } from '../../arena-protocol/src/ancestor.js';
 import { noteInvite, wholeInvite } from './guardian-invites.js';
+import { readInvite } from '../../arena-node/src/invite.js';
 import { taggedHash, toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { TAG } from '../../arena-protocol/src/constants.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
@@ -2776,6 +2777,22 @@ export function saveCollect(storage, { roundIdHex, round, invite, nodes, seed, s
   } catch { return false; }
 }
 
+// ONLY THE INVITE OF A KEPT RECORD IS REWRITTEN (kanban #2104): its done, lock and savedMs (the order records are collected in) stay
+function repairCollectInvite(storage, r, invite) {
+  try {
+    for (const key of [collectKey(r.roundIdHex, r.seed, r.order), ...(r.order ? [] : [`${COLLECT_NOTE}${r.roundIdHex}`])]) {
+      const was = storage.getItem(key);
+      if (!was) continue;
+      const rec = JSON.parse(was);
+      if (rec.roundIdHex !== r.roundIdHex || rec.seed !== toHex(r.seed)) continue;
+      rec.invite = invite;
+      putRoomy(storage, key, JSON.stringify(rec));
+      return true;
+    }
+  } catch { /* repaired at the next read */ }
+  return false;
+}
+
 /** Every collect this tab keeps, oldest first; an unreadable record is skipped. */
 export function savedCollects(storage, { seed = null } = {}) {
   const out = [];
@@ -2818,11 +2835,17 @@ export function browserSeedHexes(storage, tabSeed = null) {
  * phrase; and, apart, the records whose seed no saved phrase holds - no key is left to redeem them, so they are named
  * `uncollectable` and paid into no other wallet.
  */
-export function recordsToCollect(storage, { tabSeed = null } = {}) {
+export function recordsToCollect(storage, { tabSeed = null, loads = null } = {}) {
   const seeds = browserSeedHexes(storage, tabSeed);
   const mine = tabSeed instanceof Uint8Array ? toHex(tabSeed) : String(tabSeed || '').toLowerCase();
   const collectable = [], uncollectable = [];
   for (const r of savedCollects(storage, {})) {
+    // A RECORD KEPT WITH ANOTHER FEDERATION'S INVITE IS REPAIRED (kanban #2104): one the 24 h scan wrote before the fix (the lobby's invite for a round of
+    // another federation) gets its round's own federation's invite once one is known (inviteForRound), so its wallet opens and the payout is collected
+    if (r.invite) {
+      const good = inviteForRound({ round: r.round, lobby: r.invite, loads, storage });
+      if (good && good !== r.invite && repairCollectInvite(storage, r, good)) r.invite = good;
+    }
     const hex = toHex(r.seed);
     if (seeds.includes(hex)) collectable.push(Object.assign(r, { own: hex === mine }));
     else uncollectable.push(Object.assign(r, { own: false, why: 'its seed is not kept in this browser: no key is left to collect it' }));
@@ -4193,5 +4216,33 @@ export function rememberedInvite(storage, federationId) {
   try { return (storage && storage.getItem(INVITE_PREFIX + fedHexOf(federationId))) || null; } catch { return null; }
 }
 function rememberInvite(storage, federationId, invite) {
-  try { if (storage && fedHexOf(federationId) && invite) storage.setItem(INVITE_PREFIX + fedHexOf(federationId), String(invite)); } catch { /* not kept */ }
+  // NEVER ANOTHER FEDERATION'S INVITE (kanban #2104, state audit 2026-11-12 SM7-PAGE-1): a record kept with the lobby's invite (federation A) for a round of
+  // federation B opened B's wallet with A's invite - the join was refused, but this line had already written A's invite as B's remembered one, and every
+  // later read of B that fell back on it broke too. An invite that reads as another federation's is not remembered.
+  try { if (storage && fedHexOf(federationId) && invite && !inviteNamesAnother(invite, fedHexOf(federationId))) storage.setItem(INVITE_PREFIX + fedHexOf(federationId), String(invite)); } catch { /* not kept */ }
+}
+// the invite is readable and names a federation other than `fidHex` (an unreadable one proves nothing and is left to the lock client's own check)
+function inviteNamesAnother(invite, fidHex) {
+  let f; try { f = readInvite(invite).federationId; } catch { return false; }
+  return !!f && String(f).toLowerCase() !== String(fidHex).toLowerCase();
+}
+const inviteNames = (invite, fidHex) => { try { const f = readInvite(invite).federationId; return !!f && String(f).toLowerCase() === String(fidHex).toLowerCase(); } catch { return false; } };
+
+/**
+ * THE INVITE A COLLECT RECORD OF `round` IS KEPT WITH (kanban #2104, state audit 2026-11-12 SM7-PAGE-1): the round's own federation's, chosen as the join
+ * chooses it (index.html joinTheRoundIfOneWasNamed) - `lobby` when it names the round's federation, else the verified status of that federation the page
+ * read (`loads`, ARENA_FED_LOADS: fid -> { invite }), else the invite this browser opened that federation's wallet with before. The 24 h scan kept every round
+ * it found with the lobby's invite: a round of another federation was a record whose wallet never opened (the lock client refuses an invite to federation A
+ * for a stake in B), collected by no pass, and never written again. `null` when `lobby` names another federation and no invite of the round's is known
+ * yet (the record is not written, and the next scan finds the round again); `lobby` unchanged when the round names no federation or `lobby` is unreadable.
+ */
+export function inviteForRound({ round, lobby = null, loads = null, storage = null } = {}) {
+  const fid = round && round.federationId instanceof Uint8Array && round.federationId.length === 32 ? toHex(round.federationId) : null;
+  if (!fid || !lobby || !inviteNamesAnother(lobby, fid)) return lobby || null;
+  let st = null;
+  try { st = loads && typeof loads.get === 'function' ? loads.get(fid) : null; } catch { st = null; }
+  if (st && st.invite && inviteNames(st.invite, fid)) return st.invite;
+  const kept = rememberedInvite(storage, fid);
+  if (kept && inviteNames(kept, fid)) return kept;
+  return null;
 }

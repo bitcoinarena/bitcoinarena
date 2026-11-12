@@ -5002,7 +5002,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // seed that joined it; a later tab collects it whatever phrase it took itself. Records of a seed no saved phrase holds
     // are named uncollectable and paid into no other wallet.
     function keptRecords() {
-      return ARENACLIENT.recordsToCollect ? ARENACLIENT.recordsToCollect(vault(), { tabSeed: collectSeed() })
+      // (kanban #2104: a record kept with another federation's invite gets its round's own, from the federations this page read)
+      return ARENACLIENT.recordsToCollect ? ARENACLIENT.recordsToCollect(vault(), { tabSeed: collectSeed(), loads: window.ARENA_FED_LOADS })
         : { seeds: [], collectable: ARENACLIENT.savedCollects(vault(), { seed: collectSeed() }), uncollectable: [] };
     }
     // ANOTHER PHRASE'S WALLET, NEVER WHILE ANOTHER TAB HOLDS IT (2026-10-01: two clients on one wallet spent one note
@@ -5092,8 +5093,16 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             + (mine.length ? ' (' + mine.map((f) => f.roundIdHex.slice(0, 8) + (f.payout ? ' payout' : '') + (f.lock ? ' lock' : '')).join(', ') + ')' : '')
             + ', ' + knownBySeed.get(hex).length + ' already kept');
         }
-        for (const f of found)
-          ARENACLIENT.saveCollect(vault(), { roundIdHex: f.roundIdHex, round: f.round, invite: named.federation, nodes: named.nodes, seed: f.seed, order: f.order || 0 });
+        // EACH FOUND ROUND IS KEPT WITH ITS OWN FEDERATION'S INVITE (kanban #2104, state audit 2026-11-12 SM7-PAGE-1): the lobby's invite (federation A) for a
+        // round of federation B was a record whose wallet never opened - the lock client refuses it, every pass said "Collect failed", and this scan never
+        // wrote the record again (a kept round is skipped). The invite is chosen as the join chooses it (ARENA_FED_LOADS, then the one this browser used);
+        // with none known yet the round is not kept, and the next scan finds it again.
+        for (const f of found) {
+          const invite = ARENACLIENT.inviteForRound
+            ? ARENACLIENT.inviteForRound({ round: f.round, lobby: named.federation, loads: window.ARENA_FED_LOADS, storage: vault() }) : named.federation;
+          if (!invite) { console.log('[arena] owed: round ' + f.roundIdHex.slice(0, 8) + ' is in a federation whose invite this page does not know yet - kept at the next scan'); continue; }
+          ARENACLIENT.saveCollect(vault(), { roundIdHex: f.roundIdHex, round: f.round, invite, nodes: named.nodes, seed: f.seed, order: f.order || 0 });
+        }
         window.ARENA_FOUND_OWED = found.map((f) => f.roundIdHex);
         if (found.length) window.ARENA_TRACK('winnings-found', { rounds: found.length });
         if (found.length) { console.log('[arena] owed: ' + found.length + ' round(s) settled in the last 24 h name a key of this browser'); lookThePayout(); }
