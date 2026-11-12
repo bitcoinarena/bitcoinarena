@@ -270,6 +270,37 @@ import { setTagNetwork } from '../../arena-protocol/src/tag-switch.js';
 import { keptRead } from './kept-read.js';
 import { readBody } from './body-read.js';
 
+// ANOTHER SEAT'S ANSWER TO A SEAT-TO-SEAT GET, READ UP TO A CAP (kanban #1900, #1942, bypass of #1550 / #1744): verify.js
+// capped every peer pull before a signature, but server.js still read a peer's /entry-void (lateByPeers, run for any first
+// mark this seat does not hold - a stranger's junk mark included) with a bare r.json(), and every peer's /final-sig (the
+// finality watch's gather, again and again until FINAL) with a bare arrayBuffer(). Measured: 3 junk frames read 384 MiB of
+// one peer's /entry-void (RSS +621 MiB); one /final-sig ask read 192 MiB (RSS +757 MiB). Now each such body is read chunk by
+// chunk and dropped, the connection cut, as soon as it passes the cap of what that door can honestly answer; an answer that
+// is not read (not 200) has its body cancelled. A peer that answers too much proves nothing and is treated as down.
+/** GET /entry-void: one ENTRY_VOID record as JSON (the same cap verify.js uses, kanban #1744). */
+const SEAT_ENTRY_VOID_BYTES = 1024 * 1024;
+/** One contract or one handout or one record as bytes or JSON (/round, /entry, /handout, /order-locks, /payout-address). */
+const SEAT_RECORD_BYTES = 4 * 1024 * 1024;
+/** A listing (/cancels of a round). */
+const SEAT_LISTING_BYTES = 16 * 1024 * 1024;
+async function seatBody(answer, cap) {
+  const declared = Number(answer.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > cap) { await dropSeatBody(answer); throw new Error(`answer of ${declared} bytes is past ${cap}`); }
+  if (!answer.body) return new Uint8Array(0);
+  const parts = []; let n = 0;
+  for await (const chunk of answer.body) {
+    n += chunk.length;
+    if (n > cap) { await dropSeatBody(answer); throw new Error(`answer past ${cap} bytes`); }
+    parts.push(chunk);
+  }
+  const out = new Uint8Array(n); let at = 0;
+  for (const c of parts) { out.set(c, at); at += c.length; }
+  return out;
+}
+const seatJson = async (answer, cap) => JSON.parse(Buffer.from(await seatBody(answer, cap)).toString('utf8'));
+/** An answer this seat does not read: its body dropped unread (kanban #1900). */
+async function dropSeatBody(answer) { try { await answer.body?.cancel(); } catch { /* gone */ } }
+
 // who sits at each head-to-head round's table, per seat (POST /here): round hex -> identity key hex -> last said (ms)
 const presenceByRound = new WeakMap();
 const presenceTables = (round) => { let t = presenceByRound.get(round); if (!t) { t = new Map(); presenceByRound.set(round, t); } return t; };
@@ -978,8 +1009,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (Date.now() - t0 > LEARN_MS) break;
         try {
           const r = await fetch(`${b}/round?id=${rid}`, { signal: AbortSignal.timeout(2500) });
-          if (!r.ok) continue;
-          const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
+          if (!r.ok) { await dropSeatBody(r); continue; }
+          const c = decodeRoundContract(await seatBody(r, SEAT_RECORD_BYTES));   // kanban #1900
           if (c.gameId instanceof Uint8Array) { roundApps.set(rid, toHex(c.gameId)); roundTimes.set(rid, timesOf(c)); break; }
         } catch { /* the next seat */ }
       }
@@ -998,8 +1029,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (Date.now() - t0 > LEARN_MS) break;
         try {
           const x = await fetch(`${b}/entry?id=${eid}`, { signal: AbortSignal.timeout(2500) });
-          if (!x.ok) continue;
-          entryPlayers.set(eid, toHex(decodeEntryContract(new Uint8Array(await x.arrayBuffer())).playerPubkey)); break;
+          if (!x.ok) { await dropSeatBody(x); continue; }
+          entryPlayers.set(eid, toHex(decodeEntryContract(await seatBody(x, SEAT_RECORD_BYTES)).playerPubkey)); break;
         } catch { /* the next seat */ }
       }
     }
@@ -2374,8 +2405,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     for (const peer of verifier.peersOf(c.roundId)) {
       try {
         const r = await fetch(`${String(peer).replace(/\/+$/, '')}/entry-void?entry=${toHex(c.entryId)}`, { signal: AbortSignal.timeout(1500) });
-        if (!r.ok) continue;
-        const got = await r.json();
+        if (!r.ok) { await dropSeatBody(r); continue; }
+        const got = await seatJson(r, SEAT_ENTRY_VOID_BYTES);   // kanban #1900
         // SAME-MARK VOID EVIDENCE ONLY (M3.3-34, ruled 2026-09-12, path 1): a
         // peer's Void of a DIFFERENT first mark is the player's second first
         // mark. Measured before: this signer node took it as a normal mark (the peer's
@@ -2452,8 +2483,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const eid = Buffer.from(entryHex, 'hex');
     if (!round.entry(eid)) {
       const r = await fetch(`${base}/entry?id=${entryHex}`, { signal: AbortSignal.timeout(10000) });
-      if (!r.ok) return { ok: false, why: `${base} holds no entry ${entryHex.slice(0, 16)}` };
-      round.importEntry(new Uint8Array(await r.arrayBuffer()), entryHex);
+      if (!r.ok) { await dropSeatBody(r); return { ok: false, why: `${base} holds no entry ${entryHex.slice(0, 16)}` }; }
+      round.importEntry(await seatBody(r, SEAT_RECORD_BYTES), entryHex);   // kanban #1900
     }
     // AND ITS HANDOUT (measured 2026-10-24 16:51Z on fed2-3 after the entry and locks were replayed: "a loser's P could not be opened: this node
     // accepted no handout for that entry"): the stake's shares, this seat's own among them, checked as POST /handout checks them, and then
@@ -2462,16 +2493,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const ref = entry.vssSharesRef;
     if (ref && !ref.every((b) => b === 0) && !round.handout(ref)) {
       const h = await fetch(`${base}/handout?id=${toHex(ref)}`, { signal: AbortSignal.timeout(10000) });
-      if (!h.ok) return { ok: false, why: `${base} answered ${h.status} for the order's handout` };
-      const bytes = new Uint8Array(await h.arrayBuffer());
+      if (!h.ok) { await dropSeatBody(h); return { ok: false, why: `${base} answered ${h.status} for the order's handout` }; }
+      const bytes = await seatBody(h, SEAT_RECORD_BYTES);
       const same = stakePointIsTheHandouts(entry, decodeHandout(bytes));
       if (!same.ok) return { ok: false, why: `its handout: ${same.why}` };
       const took = await takeHandout(bytes);
       if (!took.ok) return { ok: false, why: `its handout: ${took.why}` };
     }
     const l = await fetch(`${base}/order-locks?entry=${entryHex}`, { signal: AbortSignal.timeout(10000) });
-    if (!l.ok) return { ok: false, why: `${base} answered ${l.status} for the order's locks` };
-    const locks = await l.json();
+    if (!l.ok) { await dropSeatBody(l); return { ok: false, why: `${base} answered ${l.status} for the order's locks` }; }
+    const locks = await seatJson(l, SEAT_RECORD_BYTES);
     if (locks.stake && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, lockFieldsFromJson(locks.stake)); if (!g.ok) return { ok: false, why: `its stake lock: ${g.why}` }; }
     if (locks.fee && round.feeLock && !round.feeLock(eid)) { const g = await takeFeeLock(eid, lockFieldsFromJson(locks.fee)); if (!g.ok) return { ok: false, why: `its fee lock: ${g.why}` }; }
     console.log(`[orders] replayed order ${entryHex.slice(0, 16)} from ${base}: its entry and locks are held here now`);
@@ -2936,7 +2967,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     for (const peer of verifier.peersOf(rid)) {
       try {
         const r = await fetch(`${String(peer).replace(/\/+$/, '')}/lock-settlement?round=${toHex(rid)}`, { signal: AbortSignal.timeout(3000) });
-        const j = await r.json();
+        // kanban #1744 (bypass of #1550): read up to PEER_LISTING_BYTES, not whole - a peer's settlement is a small record
+        const j = await jsonUpTo(r, PEER_LISTING_BYTES);
         if ((j.state === 'SUBMITTING' || j.state === 'ACCEPTED') && j.signature && j.message
           && schnorr.verify(fromHex(j.signature), fromHex(j.message), claimPk.subarray(1))
           && await thisRoundsMessage(rid, fromHex(j.message))) return true;
@@ -3368,8 +3400,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const ask = (peers) => Promise.all(peers.map(async (peer) => {
       try {
         const r = await fetch(`${String(peer).replace(/\/+$/, '')}/final-sig?round=${toHex(rid)}&entry=${toHex(eid)}`, { signal: AbortSignal.timeout(3000) });
-        if (r.status !== 200) return;
-        takeFinalSig(rid, eid, new Uint8Array(await r.arrayBuffer()), f);
+        if (r.status !== 200) { await dropSeatBody(r); return; }
+        takeFinalSig(rid, eid, await seatBody(r, SIGNED_FINAL_SIG_BYTES), f);   // one signed FINAL record (kanban #1942)
       } catch { /* a peer that does not answer signs nothing here */ }
     }));
     await ask(peersHere);
@@ -4602,7 +4634,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const said = await Promise.all(settlementPeers(roundId).map(async (peer) => {
       try {
         const r = await fetch(`${String(peer).replace(/\/+$/, '')}/cancels?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(2000) });
-        const body = r.ok ? await r.json() : null;
+        const body = r.ok ? await seatJson(r, SEAT_LISTING_BYTES) : (await dropSeatBody(r), null);   // kanban #1900
         return !!(body && Array.isArray(body.cancels) && body.cancels.some((x) => x && x.entry === want));
       } catch { return false; }
     }));
@@ -4628,8 +4660,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       let entry;
       try {
         const r = await peerGet(`${base}/entry?id=${entryHex}`);
-        if (!r.ok) continue;
-        entry = decodeEntryContract(new Uint8Array(await r.arrayBuffer()));
+        if (!r.ok) { await dropSeatBody(r); continue; }
+        entry = decodeEntryContract(await seatBody(r, SEAT_RECORD_BYTES));   // kanban #1900
       } catch { continue; }
       if (toHex(idOfEntry(entry)) !== entryHex || toHex(entry.roundId) !== toHex(rid)) continue;   // the bytes hash to the id, of this round
       // kanban #2063: only results about THIS entry (its reveal record, verify.js) - a VOID still counts here: taking the entry gives it no seat,
@@ -4642,8 +4674,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // passes that peer over like a missing entry, and the next holder is asked. It never throws out of here (membersKnown would reject).
         try {
           const h = await peerGet(`${base}/handout?id=${toHex(ref)}`);
-          if (!h.ok) { why = `${base} answered ${h.status} for its handout`; continue; }
-          const bytes = new Uint8Array(await h.arrayBuffer());
+          if (!h.ok) { await dropSeatBody(h); why = `${base} answered ${h.status} for its handout`; continue; }
+          const bytes = await seatBody(h, SEAT_RECORD_BYTES);   // kanban #1900
           const same = stakePointIsTheHandouts(entry, decodeHandout(bytes));
           if (!same.ok) { why = `${base}'s handout: ${same.why}`; continue; }
           const took = await takeHandout(bytes, { accepted: true });
@@ -4662,11 +4694,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const eid = fromHex(entryHex), entry = decodeEntryContract(round.entry(eid));
     if (entry.stakeMsat === 0n) return null;
     const ofPeers = async (path, read) => (await Promise.all([...new Set(from)].map(async (base) => {   // each peer once (kanban #1823: its answers are counted)
-      try { const r = await peerGet(`${base}${path}`); return r.ok ? await read(r) : null; } catch { return null; }
+      try { const r = await peerGet(`${base}${path}`); return r.ok ? await read(r) : (await dropSeatBody(r), null); } catch { return null; }
     }))).filter(Boolean);
     let why = null;
     if (!round.stakeLock(eid) || (round.feeLock && !round.feeLock(eid))) {
-      let answers = await ofPeers(`/order-locks?entry=${entryHex}`, (r) => r.json());
+      let answers = await ofPeers(`/order-locks?entry=${entryHex}`, (r) => seatJson(r, SEAT_RECORD_BYTES));   // kanban #1900
       // A LOCK THIS SEAT'S DOOR WOULD REFUSE COMES ONLY FROM A THRESHOLD OF SEATS (kanban #1916, refute of #1760 / #1479 / feedback #007 via kanban #1489):
       // #1760 shut POST /lock and /fee-lock to a head-to-head lock new to a seat from the close, but here every entry this seat holds took its peers'
       // locks with no close check. So a player stood one lockless entry per move under fresh keys, read the honest reveal after the close, handed only
@@ -4716,7 +4748,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
     }
     if (!round.payoutAddress(eid)) {
-      for (const named of await ofPeers(`/payout-address?entry=${entryHex}`, (r) => r.json())) {
+      for (const named of await ofPeers(`/payout-address?entry=${entryHex}`, (r) => seatJson(r, SEAT_RECORD_BYTES))) {
         try {
           const signed = new TextEncoder().encode(String(named.signed)), sig = fromHex(String(named.signature));
           if (!ed25519.verify(sig, signed, entry.sessionPubkey)) continue;
@@ -12027,6 +12059,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (firstMark) { try { round.playerSigned(firstMark.bytes); markVerifies = true; } catch { markVerifies = false; } }
         if (firstMark && markVerifies && !round.holdsMark(checkpointId(firstMark.c))) {
           const own = lateEvidenceHere(firstMark.c, null);
+          // (kanban #1900: the same rule as #1862 above - only a mark the entry's session key signed is asked about)
           const found = own ? { late: own, receipts: [] } : await lateByPeers(firstMark.c, firstMark.bytes);
           if (found && found.twoFirst) {
             gatherOnProof(firstMark.c.roundId, firstMark.c.entryId);
