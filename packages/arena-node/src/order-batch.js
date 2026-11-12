@@ -123,6 +123,8 @@ export const SELL_PENDING_MAX = 16;
 const SELL_CHECKED_MAX = 65536;
 // kanban #1933, #1969: the rounds whose parsed certified book a seat keeps (the least recently read goes first)
 const REPLAY_ROUNDS_MAX = 64;
+// at most this many pending items of one seat's proposal are read by a leader (kanban #1934, #1971, #2004)
+const PENDING_PER_PROPOSAL = 64;
 
 export class OrderBook {
   constructor(round, { plugins, peersFor = () => [], fetcher = (u, o) => fetch(u, o), now = () => Date.now(), intervalMs = Number(BATCH_MS), feesFor = null,
@@ -337,6 +339,44 @@ export class OrderBook {
     const unsold = p && (o === 0 || o === 1) ? p.shares[o] - p.shares[1 - o] : 0n;
     if (unsold <= 0n) return refuse(`entry ${c.sell.entry.slice(0, 16)} holds no unsold share of outcome ${c.sell.outcome} in the certified book: nothing to sell`);
     return { ok: true };
+  }
+
+  /**
+   * THE DOOR'S RULES ON A PEER'S PROPOSAL, BEFORE ANY SIGNATURE IS CHECKED (kanban #1728, #1797, a bypass of #1547): ask() refused an
+   * unbacked sell and bounded one entry's pending sells, but the leader took every sell a seat's GET /batch-proposal handed it and
+   * verified each one's Ed25519 signature - a fresh nonce a cache miss, and a refused verify never cached. One seat serving 3000 sells
+   * of an entry holding nothing (or signed by a stranger's key) made lead() take about 4 s and the batch pass its 2 s signing limit,
+   * every batch. Now, per proposal: a sell whose entry holds no unsold share of that outcome in this leader's certified ledger is dropped
+   * (a Map lookup), and at most SELL_PENDING_MAX sells per entry are kept (the lowest ids). The verify work of a batch is bounded by
+   * seats x backed entries x SELL_PENDING_MAX. A sell dropped here stays unbatched where it is held; nothing honest is lost - an
+   * honest seat keeps at most SELL_PENDING_MAX per entry, of entries its certified ledger backs. Not a protocol rule: what the leader
+   * proposes is checked by every seat as before.
+   */
+  #sellsWorthChecking(roundIdBytes, L, list) {
+    if (!Array.isArray(list) || !list.length) return [];
+    const byEntry = new Map();
+    for (const s of list) {
+      if (!s || !isHex(s.entry, 32) || !isHex(s.signature, 64) || !/^[0-9]{1,20}$/.test(String(s.price)) || !/^[0-9]{1,20}$/.test(String(s.sharesMsat))
+        || !/^[0-9]{1,20}$/.test(String(s.nonce))) continue;
+      if (L.ok) {
+        const p = L.positions.get(s.entry);
+        const o = Number(s.outcome);
+        const unsold = p && (o === 0 || o === 1) ? p.shares[o] - p.shares[1 - o] : 0n;
+        if (unsold <= 0n) continue;
+      }
+      let id;
+      try { id = toHex(sellId({ roundId: roundIdBytes, entryId: fromHex(s.entry), outcome: s.outcome, price: BigInt(s.price), sharesMsat: BigInt(s.sharesMsat), nonce: BigInt(s.nonce) })); }
+      catch { continue; }
+      if (!byEntry.has(s.entry)) byEntry.set(s.entry, []);
+      byEntry.get(s.entry).push([id, s]);
+    }
+    const out = [];
+    for (const xs of byEntry.values()) {
+      xs.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+      const seen = new Set();
+      for (const [id, s] of xs) { if (seen.has(id)) continue; seen.add(id); out.push(s); if (seen.size >= SELL_PENDING_MAX) break; }
+    }
+    return out;
   }
 
   /** GET /batch-proposal: this seat's unbatched orders, cancels and sells before batch k's cutoff, and its pending batches. */
@@ -818,10 +858,37 @@ export class OrderBook {
       if (cutoff < m.contract.committeeTimeMs || cutoff > m.contract.entryCloseMs + BigInt(this.intervalMs)) return false;
       const leader = toHex(this.leaderOf(m.contract, k));
       if (String(x.record.leader) !== leader) return false;
+      // the leader's signature over the CLAIMED id first (kanban #1934, #1971, #2004): a forged item costs one Schnorr verify and stops
+      // its proposal's pending list (lead()), never a #recordId of its cancels and sells first
+      if (!verifySchnorr(fromHex(String(x.record.leaderSig)), fromHex(String(x.batchId)), fromHex(leader))) return null;
       const rec = this.#recordId(roundIdBytes, x.record);
-      if (!rec.ok || rec.id !== String(x.batchId)) return false;
-      return verifySchnorr(fromHex(String(x.record.leaderSig)), fromHex(rec.id), fromHex(leader));
+      if (!rec.ok || rec.id !== String(x.batchId)) return null;
+      return true;
     } catch { return false; }
+  }
+
+  /**
+   * A PROPOSAL'S PENDING ITEMS, BOUNDED (kanban #1934, #1971, #2004, a bypass of #1547/#1728): every item of a seat's pending list went
+   * through #recordId (an Ed25519 verify per cancel and sell) and a Schnorr verify of its leaderSig, without bound - 3000 invented items
+   * of one seat's GET /batch-proposal made lead() take 2-5 s and the batch pass its signing limit. An honest seat holds one record per k,
+   * so per proposal: at most one item per k, at most PENDING_PER_PROPOSAL items, and nothing more of that list after the first item whose
+   * signature or record does not stand (malformed items are skipped for free). Not a protocol rule.
+   */
+  #pendingWorthTaking(roundIdBytes, m, list) {
+    const out = [];
+    if (!Array.isArray(list)) return out;
+    const ks = new Set();
+    for (const x of list) {
+      if (out.length >= PENDING_PER_PROPOSAL) break;
+      const kk = x && typeof x === 'object' ? String(x.k) : '';
+      if (ks.has(kk)) continue;
+      const st = this.#pendingStands(roundIdBytes, m, x);
+      if (st === null) break;
+      if (!st) continue;
+      ks.add(kk);
+      out.push(x);
+    }
+    return out;
   }
 
   /**
@@ -848,8 +915,7 @@ export class OrderBook {
     // record at all - made every leader's lead() refuse "still undecided" or throw, for every batch after: no seat signs it and none can
     // decline it, #askStands refusing an unsigned set). Checked as #askStands checks a void ask: k inside the round's book, the record
     // reads, its id is the batchId named, and k's leader signed that id; anything else is skipped, never thrown on.
-    for (const p of proposals) for (const x of Array.isArray(p.pending) ? p.pending : []) {
-      if (!this.#pendingStands(roundIdBytes, m, x)) continue;
+    for (const p of proposals) for (const x of this.#pendingWorthTaking(roundIdBytes, m, p.pending)) {
       if (!pending.has(String(x.k))) pending.set(String(x.k), { ids: new Map(), sigs: [] });
       const q = pending.get(String(x.k));
       if (x.ownSig) q.sigs.push({ seat: p.seat, signature: x.ownSig, batchId: x.batchId });
@@ -884,22 +950,35 @@ export class OrderBook {
     // so junk costs no signature check (the leader's own proposal() synced what is tradable here)
     const tradableQ = this.db.prepare('SELECT 1 FROM market_orders WHERE order_id = ? AND round_id = ?'), ridB = Buffer.from(roundIdBytes), tradable = new Map();
     const tradableHere = (e) => { if (!isHex(e, 32)) return false; if (!tradable.has(e)) tradable.set(e, !!tradableQ.get(e, ridB)); return tradable.get(e); };
+    const held = this.ledger(roundIdBytes);
     for (const p of proposals) {
-      const cancelTried = new Set(), sellTried = new Map();
+      // A PROPOSAL'S CANCELS AS ITS SELLS (kanban #1934, #1971, #2004, a bypass of #1547/#1728): every cancel a seat listed cost an Ed25519
+      // verify - one order's cancel id signed by 3000 stranger keys made lead() take seconds. A cancel id is one per order, so each order is
+      // tried once per proposal (and not at all once this set holds its cancel or the book batched it), only an order tradable here, at most
+      // MAX_PROPOSAL_SELLS of them (#1722), and nothing more of the proposal's cancels after one its order's session key did not sign
+      const cancelTried = new Set();
       for (const c of Array.isArray(p.cancels) ? p.cancels : []) {
         if (cancelTried.size >= MAX_PROPOSAL_SELLS) break;
-        const e = c && typeof c.entry === 'string' ? c.entry : null;
-        if (!e || cancelTried.has(e) || !tradableHere(e)) continue;
-        cancelTried.add(e);
-        const x = this.#cancelStands(roundIdBytes, c); if (x.ok && !cancels.has(x.id) && !eventBatched(x.id)) cancels.set(x.id, c);
+        if (!c || !isHex(c.entry, 32) || !isHex(c.signature, 64) || cancelTried.has(c.entry) || !tradableHere(c.entry)) continue;
+        cancelTried.add(c.entry);
+        let cid;
+        try { cid = toHex(cancelId({ roundId: roundIdBytes, entryId: fromHex(c.entry) })); } catch { continue; }
+        if (cancels.has(cid) || eventBatched(cid)) continue;
+        const x = this.#cancelStands(roundIdBytes, c);
+        if (!x.ok && x.status === 403) break;
+        if (x.ok) cancels.set(x.id, c);
       }
+      const sellTried = new Map();
       let tried = 0;
-      for (const s of Array.isArray(p.sells) ? p.sells : []) {
+      for (const s of this.#sellsWorthChecking(roundIdBytes, held, p.sells)) {
         if (tried >= MAX_PROPOSAL_SELLS) break;
         const e = s && typeof s.entry === 'string' ? s.entry : null;
         if (!e || (sellTried.get(e) || 0) >= MAX_UNBATCHED_SELLS || !tradableHere(e)) continue;
         sellTried.set(e, (sellTried.get(e) || 0) + 1); tried++;
-        const x = this.#sellStands(roundIdBytes, s); if (x.ok && !sells.has(x.id) && !eventBatched(x.id)) sells.set(x.id, s);
+        const x = this.#sellStands(roundIdBytes, s);
+        // a seat that hands over a sell its entry's session key did not sign is not read further in this batch (kanban #1728, #1797)
+        if (!x.ok && x.status === 403) break;
+        if (x.ok && !sells.has(x.id) && !eventBatched(x.id)) sells.set(x.id, s);
       }
     }
     const record = { k: String(k), orders, cancels: [...cancels.values()], sells: [...sells.values()], leader: toHex(this.round.pubkey) };
