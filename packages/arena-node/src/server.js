@@ -4344,10 +4344,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             const sig = fromHex(c.sig);
             if (!lockClaimHolds(cb, new Uint8Array(cid), sig).ok) continue;
             if (round.entry(cid)) round.putLockClaim(new Uint8Array(cid), sig);
-            claimed.push({ entryId: new Uint8Array(cid) });
+            claimed.push({ entryId: new Uint8Array(cid), entry: ce }); // its bytes decoded: the signer checks its stake point (kanban #2069)
           } catch { /* one bad claim adds nothing */ }
         }
-        return { entryId: new Uint8Array(id), joinedMs: Number(body.joinedMs), claimed };
+        return { entryId: new Uint8Array(id), joinedMs: Number(body.joinedMs), entry: e, claimed };
       } catch { return null; }
     }));
     return said.filter(Boolean);
