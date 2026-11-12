@@ -19209,7 +19209,14 @@ const seatBaseOf = (node) => {
       return { base: (u.origin + u.pathname.replace(/\/{2,}/g, '/')).replace(/\/+$/, ''), origin: u.origin };
   } catch { /* not a URL: its own spelling */ }
   const base = s.replace(/\/+$/, '');
-  return { base, origin: base };
+  // THE BUDGET IS WHERE THE FETCH GOES, NEVER A RAW SPELLING (kanban #2013, #1876, #1531 skeptic 3, #1489): a spelling with a fragment,
+  // a query or a user ("http://evil#1" ... "http://evil#63", "http://evil?x", "http://u@evil") was not folded above and fell back to
+  // its raw string as its "origin" - 64 of them took 64 budgets, though fetch asks the one seat http://evil for every one, and the
+  // made-up locks they named outranked the honest seats' real lock. The origin is the one of the URL actually requested (resolved
+  // against the page as fetch does); a spelling with no such origin (not a URL, data:, ...) names no lock that counts
+  let origin;
+  try { origin = new URL(`${base}/stake-lock`, globalThis.location && globalThis.location.href || undefined).origin; } catch { origin = undefined; }
+  return { base, origin: origin && origin !== 'null' ? origin : undefined };
 };
 async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) {
   const refund = toHex(refundKeyOf(playerPubkey));
