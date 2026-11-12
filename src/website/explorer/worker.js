@@ -250,24 +250,35 @@ async function backfill(env) {
 
 // THE METRICS (kanban #676, 2026-10-25: "Explorer also shows volume in Sats / btc per day, current protocol reserve in sats / btc, and total
 // referrer fees accumulated in sats / btc", "This is On a metrics page"): each minute every seat's GET /reserves and GET /referral-fees, kept in
-// KV - per federation the reserve the most up-to-date seat holds (the largest), per website the most any seat indexed; the volume per day
+// KV - per federation the reserve the seats agree on (the median), per website the median fee the seats indexed; the volume per day
 // is read from D1's transactions when asked
+// ONE SEAT DOES NOT SET THE RESERVE (kanban #1534): the largest any seat said was kept, so one seat of 14 could show 21M BTC or hide a
+// drain behind an old, higher reserve, and BigInt() of one malformed amount threw for the whole read (the metrics went stale for everyone).
+// Each amount is now checked (msatOf: 1-20 digits, else that seat's row is skipped) and each figure is the median of the seats that report it.
+const msatOf = (v) => ((typeof v === 'string' || (typeof v === 'number' && Number.isSafeInteger(v))) && /^\d{1,20}$/.test(String(v)) ? BigInt(v) : null);
+const median = (list) => { const s = [...list].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)); return s[Math.floor((s.length - 1) / 2)]; };
 async function readMetrics(env) {
   const [res, ref] = await Promise.all([
     Promise.all(SEATS.map((seat) => ask(`${seat}/reserves`, READ_MS))),
     Promise.all(SEATS.map((seat) => ask(`${seat}/referral-fees`, READ_MS)))]);
   const feds = new Map(), sites = new Map();
+  const heldBy = new Map();
   for (const a of res) for (const f of (a.body && Array.isArray(a.body.federations) ? a.body.federations : [])) {
-    const m = BigInt(f.heldMsat || 0); if (!feds.has(f.federationId) || m > feds.get(f.federationId)) feds.set(f.federationId, m);
+    const m = f && typeof f.federationId === 'string' ? msatOf(f.heldMsat) : null; if (m === null) continue;
+    if (!heldBy.has(f.federationId)) heldBy.set(f.federationId, []); heldBy.get(f.federationId).push(m);
   }
+  for (const [id, list] of heldBy) feds.set(id, median(list));
   // and each program's name, as its key said it (kanban #675): the newest any seat holds
   const names = new Map();
   for (const a of ref) for (const p of (a.body && Array.isArray(a.body.programs) ? a.body.programs : [])) {
     if (!names.has(p.site) || Number(p.atMs) > names.get(p.site).atMs) names.set(p.site, { name: p.name, atMs: Number(p.atMs) });
   }
+  const feesBy = new Map();
   for (const a of ref) for (const x of (a.body && Array.isArray(a.body.sites) ? a.body.sites : [])) {
-    const m = BigInt(x.msat || 0); if (!sites.has(x.site) || m > sites.get(x.site).msat) sites.set(x.site, { msat: m, payouts: x.payouts });
+    const m = x && typeof x.site === 'string' ? msatOf(x.msat) : null; if (m === null) continue;
+    if (!feesBy.has(x.site)) feesBy.set(x.site, []); feesBy.get(x.site).push({ msat: m, payouts: Number.isSafeInteger(x.payouts) ? x.payouts : 0 });
   }
+  for (const [site, list] of feesBy) { const mid = median(list.map((r) => r.msat)); sites.set(site, list.find((r) => r.msat === mid)); }
   for (const [site] of names) if (!sites.has(site)) sites.set(site, { msat: 0n, payouts: 0 });
   const sum = (it) => [...it].reduce((t, m) => t + m, 0n);
   const m = { readAt: new Date().toISOString(), seats: { reserves: res.filter((a) => a.body).length, referral: ref.filter((a) => a.body).length, of: SEATS.length },
@@ -303,22 +314,30 @@ async function readContributions() {
 const DAY_MS = 86400000, VOLUME_DAYS = 30;
 // THE RESERVE OVER TIME (kanban #1095, the owner 2026-11-03: "Gespielte Runden auf Explorer auch grafisch darstellen, auch Volume, und Reserven"):
 // every payment into a federation's reserve carries its time (GET /reserves?all=1, paidIn[].at), so the history is rebuilt from the start, not
-// only recorded from now. Read once an hour from three seats; per federation the longest list (the most up-to-date seat); per UTC day the
-// reserve held at its end, summed over the federations. Payouts out of the reserve (none yet) are taken off on their day.
+// only recorded from now. Read once an hour from three seats; per federation and UTC day the median of what the seats say came in that day
+// (kanban #1534: not the longest list, which one seat could pad; an amount that does not parse skips that payment, never the read); the
+// reserve held at each day's end, summed over the federations. Payouts out of the reserve (none yet) are taken off on their day.
 const HISTORY_SEATS = [0, 1, 7];
 async function readReserveHistory(env) {
   const answers = await Promise.all(HISTORY_SEATS.map((i) => ask(`${SEATS[i]}/reserves?all=1`, 45000)));
-  const best = new Map();
-  for (const a of answers) for (const f of (a.body && Array.isArray(a.body.federations) ? a.body.federations : [])) {
-    const paid = Array.isArray(f.paidIn) ? f.paidIn : [];
-    if (!best.has(f.federationId) || paid.length > best.get(f.federationId).length) best.set(f.federationId, paid);
+  const best = new Map();   // federation -> one per-day map per seat that reports it
+  for (const a of answers) {
+    const seen = new Set();
+    for (const f of (a.body && Array.isArray(a.body.federations) ? a.body.federations : [])) {
+      if (!f || typeof f.federationId !== 'string' || seen.has(f.federationId)) continue; seen.add(f.federationId);
+      const day = new Map();
+      for (const x of (Array.isArray(f.paidIn) ? f.paidIn : [])) {
+        const t = x ? Date.parse(x.at) : NaN, m = x ? msatOf(x.amountMsat) : null; if (!Number.isFinite(t) || m === null) continue;
+        const d = new Date(Math.floor(t / DAY_MS) * DAY_MS).toISOString().slice(0, 10);
+        day.set(d, (day.get(d) || 0n) + m);
+      }
+      if (!best.has(f.federationId)) best.set(f.federationId, []); best.get(f.federationId).push(day);
+    }
   }
   if (!best.size) return null;
   const perDay = new Map();
-  for (const paid of best.values()) for (const x of paid) {
-    const t = Date.parse(x.at); if (!Number.isFinite(t)) continue;
-    const d = new Date(Math.floor(t / DAY_MS) * DAY_MS).toISOString().slice(0, 10);
-    perDay.set(d, (perDay.get(d) || 0n) + BigInt(x.amountMsat || 0));
+  for (const views of best.values()) {
+    for (const d of new Set(views.flatMap((v) => [...v.keys()]))) perDay.set(d, (perDay.get(d) || 0n) + median(views.map((v) => v.get(d) || 0n)));
   }
   const days = [...perDay.keys()].sort();
   const out = []; let held = 0n;
