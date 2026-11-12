@@ -3656,6 +3656,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE DRAWN ATTESTOR'S WORDS AND OPENING VALUES, KEPT (kanban #1376): a restarted seat serves the word it signed - never a second one from a later read
   // the drawn attestor's words and starts in the seat's database (kanban #1376; drawn-attestor.js drawnStoreOf)
   const drawnStore = drawnHosted ? drawnStoreOf(round.db) : null;
+  const drawnDelivered = new Map();   // round hex -> the seats' base URLs that took its combined attestation (200/201, kanban #1989)
   const drawnAttestor = drawnHosted ? new DrawnAttestor({
     store: drawnStore,
     readPrice: () => prices.readPrice(), selfKey: toHex(round.pubkey), sign: (d) => schnorr.sign(d, round.identity.secret),
@@ -3688,12 +3689,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       return out;
     },
+    // HANDED UNTIL TAKEN (kanban #1989): the push was made once and every answer dropped, so a settlement seat restarting or slow in
+    // those ~20 s never held the attestation, stayed OPEN and turned VOID at the deadline while the others were FINAL. Now the seats that
+    // answered 200/201 are kept per round, and the rest are asked again on every pass while the round is due ({ delivered: false })
     hold: async (bytes, rid) => {
-      const got = holdOutcome(rid, bytes, decodeAttestation(bytes), false);
-      if (!got.held) { console.log(`[attest] ${toHex(rid).slice(0, 16)}: the combined attestation was not held here: ${got.why}`); return false; }
-      const to = new Set([...committeePeers(rid, 'settlement').peers, ...drawnAttestor.peersFor(rid)]);
-      await Promise.all([...to].map((base) => fetch(`${base}/outcome?round=${toHex(rid)}`, { method: 'POST', body: bytes, signal: AbortSignal.timeout(8000) }).catch(() => null)));
-      return true;
+      const hex = toHex(rid);
+      let took = drawnDelivered.get(hex);
+      if (!took) {
+        const got = holdOutcome(rid, bytes, decodeAttestation(bytes), false);
+        if (!got.held) { console.log(`[attest] ${hex.slice(0, 16)}: the combined attestation was not held here: ${got.why}`); return false; }
+        drawnDelivered.set(hex, took = new Set());
+        for (const k of [...drawnDelivered.keys()].slice(0, Math.max(0, drawnDelivered.size - 512))) drawnDelivered.delete(k);
+      }
+      const to = new Set([...committeePeers(rid, 'settlement').peers, ...drawnAttestor.peersFor(rid)].filter((b) => !took.has(b)));
+      await Promise.all([...to].map(async (base) => {
+        try { const res = await fetch(`${base}/outcome?round=${hex}`, { method: 'POST', body: bytes, signal: AbortSignal.timeout(8000) }); if (res.status === 200 || res.status === 201) took.add(base); } catch { /* asked again next pass */ }
+      }));
+      return { held: true, delivered: [...to].every((b) => took.has(b)) };
     },
   }) : null;
   if (drawnAttestor) {
