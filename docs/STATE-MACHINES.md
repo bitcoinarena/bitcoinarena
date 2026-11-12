@@ -1542,3 +1542,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-8 (change) Kept first send plan: the held plan is the lowest (kanban #1782)
+- `planKey` counts a held row (no invoice, payment hash '') as '!', below every hex hash: a plan with more held rows sorts lower than one with fewer, and the all-held plan lowest of all. Hole 1 (a)'s re-proposal with the unreachable donation recipients HELD therefore replaces the first plan at the seats that kept it (`check`, `adoptPeerPlan` take only a lower key), and the round's seats meet on the plan every seat can check. Before, the held key ':' sorted above about 86 % of first plans, the seats split between the two for good and the walk-away never settled.
