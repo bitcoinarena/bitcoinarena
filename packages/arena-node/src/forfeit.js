@@ -533,8 +533,22 @@ export class Forfeit {
    * THE FORFEIT, asked by anyone: the one this signer node keeps, or - if it is due -
    * made now with its peers, checked under the claim key, kept, and handed to
    * them.
+   *
+   * ONE PASS PER LOCK AT A TIME (kanban #1489, #1910 - as settle() with #settling): GET /forfeit answers anyone, and two passes of this seat at once
+   * shared its one slot at every peer (nonce-pairs.js: a seat's signed ask while its pair is unspent is handed that same pair back), each with its own
+   * SELF commitment - so the two lists differed, each peer signed whichever share reached it first and refused the other ("keeps no second pair"),
+   * and the refused pass filled the withheld map for the same query. A second ask while one runs waits for that one's answer instead.
    */
   async forfeit(roundIdBytes, entryIdBytes, kind = 'stake') {
+    const k = `${toHex(roundIdBytes)}:${toHex(entryIdBytes)}:${kind === 'fee' ? 'fee' : 'stake'}`;
+    if (this.#forfeiting.has(k)) return this.#forfeiting.get(k);
+    const p = this.#forfeitOnce(roundIdBytes, entryIdBytes, kind).finally(() => this.#forfeiting.delete(k));
+    this.#forfeiting.set(k, p);
+    return p;
+  }
+  #forfeiting = new Map();   // `${round}:${entry}:${kind}` -> the running pass's answer (kanban #1910)
+
+  async #forfeitOnce(roundIdBytes, entryIdBytes, kind) {
     const kept = this.round.forfeit(keptUnder(entryIdBytes, kind));
     if (kept) return { ok: true, ...kept, kept: true };
     const m = await this.message(roundIdBytes, entryIdBytes, kind);
