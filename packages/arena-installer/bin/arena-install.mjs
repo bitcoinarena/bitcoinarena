@@ -52,6 +52,14 @@ import { levelFlags, levelOf, createLog, traceRuntime } from '../../arena-node/s
 const flags = levelFlags(process.argv.slice(2));
 if (flags.bad) { console.error(flags.bad); process.exit(2); }
 const args = flags.rest;
+// --help / -h: this file's usage above, nothing started (feedback #021, kanban #2570: "./arena-install --help prints no usage. It starts the setup server")
+if (args.includes('--help') || args.includes('-h')) {
+  const { readFileSync } = await import('node:fs');
+  const head = readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n');
+  const from = head.findIndex((l) => /^\/\/ THE INSTALLER/.test(l)), to = head.findIndex((l, i) => i > from && /^\/\/ The release root/.test(l));
+  console.log(head.slice(from, to > from ? to : undefined).map((l) => l.replace(/^\/\/ ?/, '')).join('\n').trimEnd());
+  process.exit(0);
+}
 const level = levelOf({ flag: flags.level, env: process.env });
 if (level.bad) console.error(level.bad);
 const log = createLog({ level: level.level });
