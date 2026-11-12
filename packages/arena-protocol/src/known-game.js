@@ -109,6 +109,16 @@ export function termsOfKnownGame(gameId) {
 }
 
 /**
+ * A PINNED MARKET'S ROUND PERIOD (kanban #1852, #1515): the grid its rounds run on, as its manifest's round_period says it - 0n for a
+ * market on no grid. The page checks a period market's outcome was observed at its round's own window end (attested.js marketWindowOf),
+ * as the seats do: an attestation of another window is not this round's outcome.
+ */
+export function periodOfKnownGame(gameId) {
+  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
+  return game && game.attested && game.periodMs ? BigInt(game.periodMs) : 0n;
+}
+
+/**
  * A TABLE'S ANCHOR (2026-10-13 pick (c): "A waiting player gets one committee and one key for that table, then
  * 8-second rounds on that key until the table is empty"). For a round of a game whose known entry says `seatsPerTable` - a v2 round of
  * a grid series, one series being one table - the round the table is drawn and seated by: its series' round 0. Every round of the

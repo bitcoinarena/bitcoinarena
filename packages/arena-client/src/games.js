@@ -12,35 +12,58 @@
 //   file the manifest does not name is never run. The page then runs it in the same origin, so the wallet and the seed
 //   (sessionStorage / localStorage) are the one the player already has.
 import { gameInfoDigest } from '../../arena-protocol/src/game-info.js';
-import { decodeManifest, gameIdOf, isAttested } from '../../arena-protocol/src/manifest.js';
+import { decodeManifest, gameIdOf, isAttested, manifestBodyId } from '../../arena-protocol/src/manifest.js';
 import { KNOWN_GOOD_GAMES } from '../../arena-protocol/src/known-games.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 const GAMES_ANSWER_MS = 6000;
 
+// ITS DEVELOPER SIGNED IT (kanban #1810): the signature over the manifest body's id (manifest.js manifestStands' first rule), by
+// the developer key the manifest names. The client carries no crypto library (the bundle is its own source, nothing from npm): the
+// check is the platform's Ed25519 (WebCrypto, as the page's pageEd25519Verify and Node's), or a `verify(sig, msg, key)` handed in
+// (sync or async). Each game id is checked once per call, however many seats list it.
+const webCryptoEd25519Verify = async (sig, msg, key) => {
+  try {
+    const k = await globalThis.crypto.subtle.importKey('raw', key, { name: 'Ed25519' }, false, ['verify']);
+    return (await globalThis.crypto.subtle.verify({ name: 'Ed25519' }, k, sig, msg)) === true;
+  } catch { return false; }
+};
+const developerSigned = async (m, verify) => { try { return (await verify(m.signature, manifestBodyId(m), m.gameDevPubkey)) === true; } catch { return false; } };
+
 /**
  * THE GAMES THE NAMED NODES HOST: [{ id, name, title, icon, attested, known, manifest, manifestHex, nodes }], the pinned
  * games first, then by how many nodes host each; and the nodes that did not answer or served something that is not a game.
  */
-export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSWER_MS } = {}) {
+export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSWER_MS, verify = webCryptoEd25519Verify } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('the games are asked of the nodes a lobby was named, and it was named none');
   const unique = [...new Set(nodes.map((n) => String(n).replace(/\/+$/, '')))];
   const byId = new Map();
   const refused = [];
+  // the addresses that answered a list - by address, not by the node key a node says it has: that key is signed by nobody, and
+  // a node naming another's key would push the other's title out of the count below (kanban #2033)
+  const answered = new Set();
+  const signedById = new Map();   // game id -> its developer signed it (kanban #1810), checked once
   const answers = await Promise.all(unique.map((node) => fetcher(`${node}/games`, { signal: AbortSignal.timeout(answerMs) })
     .then(async (r) => ({ r, body: r.ok ? await r.json() : null }), (e) => ({ e }))));
   for (const [k, node] of unique.entries()) {
     const { r, body, e } = answers[k];
     if (e) { refused.push(`${node}: ${e.message}`); continue; }
     if (!r.ok) { refused.push(`${node}: answered ${r.status}`); continue; }
+    answered.add(node);
     for (const g of (body && Array.isArray(body.games)) ? body.games : []) {
       const id = String(g && g.id).toLowerCase();
       let manifest;
       try { manifest = decodeManifest(fromHex(String(g.manifest))); } catch (err) { refused.push(`${node}: game ${id.slice(0, 16)}: ${err.message}`); continue; }
       if (toHex(gameIdOf(manifest)) !== id) { refused.push(`${node}: game ${id.slice(0, 16)}: its manifest is another game`); continue; }
+      // A MANIFEST ITS DEVELOPER DID NOT SIGN IS NOT A GAME (kanban #1810: one seat listed nextblock's manifest as version + 1 with a
+      // zero signature, under the id that copy hashes to, and oneTilePerGame - newest version of "developer key:name" - gave it the
+      // nextblock tile on every page, a game id no honest seat hosts): the hash only says the seat served those bytes, the signature
+      // says the developer made them
+      if (!signedById.has(id)) signedById.set(id, await developerSigned(manifest, verify));
+      if (!signedById.get(id)) { refused.push(`${node}: game ${id.slice(0, 16)}: its signature is not its developer key ${toHex(manifest.gameDevPubkey).slice(0, 16)}'s`); continue; }
       if (!byId.has(id)) {
-        byId.set(id, { id, name: manifest.gameName, title: typeof g.title === 'string' && g.title ? g.title : manifest.gameName,
-          icon: typeof g.icon === 'string' && g.icon ? `${node}/${g.icon.replace(/^\/+/, '')}` : null, attested: isAttested(manifest),
+        // the title and icon are settled below, from what the answering nodes agree on (kanban #2033), never from one node
+        byId.set(id, { id, name: manifest.gameName, title: manifest.gameName, icon: null, attested: isAttested(manifest),
           known: Object.prototype.hasOwnProperty.call(KNOWN_GOOD_GAMES, id), devKey: toHex(manifest.gameDevPubkey),
           manifest, manifestHex: String(g.manifest).toLowerCase(), nodes: [],
           // ITS SIGNED DESCRIPTION, AS HANDED: checked against the developer key by checkedGameInfo, never taken
@@ -50,6 +73,8 @@ export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSW
           live: { rounds: 0, players: 0 } });
       }
       const got = byId.get(id);
+      if (!got.named) Object.defineProperty(got, 'named', { value: [], enumerable: false });
+      if (!got.named.some((n) => n.node === node)) got.named.push({ node, title: typeof g.title === 'string' && g.title ? g.title : null, icon: typeof g.icon === 'string' && g.icon ? g.icon : null });
       // ONE NODE, COUNTED ONCE (2026-10-14 07:42Z, a phone off the tailnet: "28 nodes" for 14): a seat reached at two
       // addresses (its Funnel name and its named tunnel) answers both with the same node key; it hosts the game once
       const key = body && /^[0-9a-f]{64}$/i.test(String(body.node)) ? String(body.node).toLowerCase() : node;
@@ -63,6 +88,24 @@ export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSW
         got.live.players = Math.max(got.live.players, Number(g.live.players) || 0);
       }
     }
+  }
+  // A GAME'S TITLE AND ICON ARE SIGNED BY NOBODY (kanban #2033, after #1716, #1902, #1541, #1489): the manifest signs only its
+  // gameName. One seat in the lobby's node list could list the genuine, pinned Next Block as "Refunds: send sats to evil.example"
+  // for every player, so a node's title or icon stands only when more than half of the addresses that answered a list name it
+  // byte-identical; otherwise the tile shows the manifest's signed gameName and no icon. The icon is loaded from the first
+  // node, in the lobby's order, that named the agreed one.
+  const agreed = (named, pick) => {
+    const count = new Map();
+    for (const n of named) { const v = pick(n); if (v !== null) count.set(v, (count.get(v) || 0) + 1); }
+    for (const [v, c] of count) if (c * 2 > answered.size) return v;
+    return null;
+  };
+  for (const got of byId.values()) {
+    const named = got.named || [];
+    const title = agreed(named, (n) => n.title);
+    if (title !== null) got.title = title;
+    const icon = agreed(named, (n) => n.icon);
+    if (icon !== null) { const from = named.find((n) => n.icon === icon).node; got.icon = `${from}/${icon.replace(/^\/+/, '')}`; }
   }
   const games = [...byId.values()].sort((a, b) => (Number(b.known) - Number(a.known)) || (b.nodes.length - a.nodes.length) || (a.name < b.name ? -1 : 1));
   return { games, refused };
@@ -90,8 +133,10 @@ export function oneTilePerGame(games) {
     // `older`: the other versions, each with its own info - a description its developer signed for that version's id, which
     // the tile shows while the shown version carries none that stands (checkedGameInfoOfTile)
     // WHAT THE LOBBY LISTS, THE TILE COUNTS (2026-10-31: "keine Runden fuer next block", while the seats held v6's rounds and hosted v7
-    // with none): Next Block's lobby shows every version's rounds (ARENA_GAME_IDS), so its tile adds them up
-    const live = shown.name === 'nextblock' && shown.live ? { live: versions.reduce((n, g) => ({ rounds: n.rounds + (Number(g.live && g.live.rounds) || 0), players: n.players + (Number(g.live && g.live.players) || 0) }), { rounds: 0, players: 0 }) } : {};
+    // with none): Next Block's lobby shows every version's rounds (ARENA_GAME_IDS), so its tile adds them up.
+    // ROCK PAPER SCISSORS THE SAME (Daniel 2026-11-12 ~06:50Z "Es wird keine rps runde angezeigt": RPS v10 was hosted before any v10 table
+    // was posted, its lobby read every version - index.html everyVersion - but the tile counted v10 alone: "14 | 0 | 0" beside 44 open v9 rounds)
+    const live = (shown.name === 'nextblock' || shown.name === 'rock-paper-scissors') && shown.live ? { live: versions.reduce((n, g) => ({ rounds: n.rounds + (Number(g.live && g.live.rounds) || 0), players: n.players + (Number(g.live && g.live.players) || 0) }), { rounds: 0, players: 0 }) } : {};
     out.push(Object.assign({}, shown, live, { versions: versions.map((g) => g.id), older: versions.filter((g) => g !== shown) }));
   }
   return out;

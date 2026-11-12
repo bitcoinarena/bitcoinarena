@@ -32,6 +32,7 @@ import { attestedClaimKey } from '../../arena-client/src/join.js';
 import { lockFromClient } from '../../arena-client/src/lock-result.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
 import { decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
+import { markBot, entryKeys } from './mark-bot.mjs';   // kanban #2035: every live entry marked bot in the explorer
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
@@ -125,6 +126,8 @@ try {
     feePreimage: fee ? fee.preimage : new Uint8Array(32), stakeLockOutpoint: lk.outpoint,
     feeLockOutpoint: fee ? fee.outpoint : { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: att.ref };
   const eid = entryId(entry);
+  // MARKED BOT IN THE EXPLORER AS IT GOES OUT (kanban #2035): by the admin code, so the real-player count stays true
+  const marking = markBot(entryKeys(eid, entry));
   const signerNodes = [];
   for (const n of nodes) {
     const h = await fetch(`${n}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
@@ -136,6 +139,7 @@ try {
       lock: l.status, lockSaid: (await l.text()).trim().slice(0, 160) });
   }
   say({ step: 'handed over', entry: toHex(eid).slice(0, 16), signerNodes });
+  say({ step: 'marked bot', entry: toHex(eid).slice(0, 16), ...await marking });
   if (signerNodes.filter((x) => x.lock >= 200 && x.lock < 300).length < needed) code = 1;
 } catch (e) {
   code = 1;

@@ -31,6 +31,7 @@ import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_DONATION_SET, TYPE_DONATION_SET_KEYS, TYPE_DONATION_SET_KEYS_VESTING, TAG } from './constants.js';
 import { isRefund } from './payout.js';
 import { encodeContributionAgreement, decodeContributionAgreement, agreementStands, setSharesAt } from './contribution.js';
+import { isCompressedPoint } from './point.js';
 
 /** Basis points, and 22A's MUST: the shares sum to exactly this. */
 export const DONATION_BPS_TOTAL = 10000;
@@ -90,7 +91,9 @@ export function isMixedCase(lnurl) {
 export const RECIPIENT_KEY_BYTES = 33;
 /** A recipient's label is for the screen, short: at most this many characters. */
 export const RECIPIENT_LABEL_MAX = 48;
-export const isRecipientKey = (b) => b instanceof Uint8Array && b.length === RECIPIENT_KEY_BYTES && (b[0] === 0x02 || b[0] === 0x03);
+// A POINT, NOT A PREFIX (kanban #1489, #1675): a recipient key is paid an output of the round's one settlement transaction, whose
+// tool parses every payout key as a point - a 0x02 || 0xff*32 in an app's set would make every donating round of that app unsettleable.
+export const isRecipientKey = (b) => b instanceof Uint8Array && b.length === RECIPIENT_KEY_BYTES && isCompressedPoint(b);
 /** Does this set pay keys in the federation (FEDERATION.md, 2026-10-03) rather than LNURLs? */
 const paysKeys = (recipients) => Array.isArray(recipients) && recipients.length > 0
   && recipients.some((r) => r && r.recipientPk !== undefined);

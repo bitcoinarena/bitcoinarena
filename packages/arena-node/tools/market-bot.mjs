@@ -31,11 +31,14 @@ import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
 import { clientSettlementSignerNodes } from '../../arena-client/src/committee.js';
 import { decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
+import { markBot, entryKeys } from './mark-bot.mjs';   // kanban #2035: every live entry marked bot in the explorer
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { lockClaimDigest } from '../../arena-protocol/src/lock-claim.js';
 import { TICK, sellId } from '../../arena-protocol/src/order-book.js';
 import { lockEntry } from './entry-locks.mjs';
 import { saveLock, lookOwed, collectOwed } from '../../arena-client/src/page-lock.js';
@@ -383,6 +386,8 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
     stakePoint: dealt.handout.commitments[0], ...locks.entryFields, claimKeyAttestationRef: att.ref,
     pick: Number(rung.outcome), limitPrice: Number(rung.price), orderExpiryMs: 0n, bot: true };
   const eid = entryId(entry);
+  // MARKED BOT IN THE EXPLORER AS IT GOES OUT (kanban #2035): by the admin code, so the real-player count stays true
+  markBot(entryKeys(eid, entry)).then((m) => { if (!m.ok) say({ step: 'not marked bot', entry: toHex(eid).slice(0, 16), why: m.why }); });
   // EVERY SEAT AT ONCE (2026-10-23 ~19:45Z: "Wie lange dauert nun eine btc up down Order über die api?"): the seats were handed the
   // order one after another - handout, entry, fee lock, lock, each lock checked by that seat with the federation - so an order waited for
   // seven seats in a row. Each seat's four posts stay in order; the seats run side by side. `ms`: the whole order, the locks at the
@@ -409,6 +414,9 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
       // A SEAT THAT REFUSED THE ENTRY GETS NO LOCKS (2026-10-24, the explorer: "Some show 404"): a node not seated for the round
       // holds no entry, so its lock doors could only answer 404
       if (en.status < 200 || en.status >= 300) { said.push({ seat: n.replace(/^https?:\/\//, ''), entry: en.status, why: enWhy }); return; }
+      // THE PLAYER'S LOCK CLAIM (kanban #2069, #2088): a signature by the stake point over the entry id, as the page sends it - a seat then hands
+      // these locks only to a claimed entry, never to a copy under another stake point. Never fatal.
+      try { await fetch(`${n}/lock-claim?entry=${toHex(eid)}`, { method: 'POST', body: schnorr.sign(lockClaimDigest(eid), p), signal: limit() }).then((r) => r.text()); } catch { /* the seats show it to each other */ }
       await accepted;
       if (locks.fee) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(locks.fee.fields)), signal: limit() });
       const l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(locks.stake.fields)), signal: limit() });

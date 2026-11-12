@@ -25,6 +25,7 @@ import { attestedClaimKey } from '../../arena-client/src/join.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
 import { hiddenMove, moveCommitment, revealMove } from '../../arena-client/src/head-to-head.js';
 import { decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
+import { markBot, entryKeys } from './mark-bot.mjs';   // kanban #2035: every live entry marked bot in the explorer
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { entrySplit, lockEntry } from './entry-locks.mjs';
@@ -36,6 +37,7 @@ import { sharedWorldOf } from '../../arena-protocol/src/known-game.js';
 import { matchProofId, presenceId } from '../../arena-protocol/src/match.js';
 import { encodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-name.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { lockClaimDigest } from '../../arena-protocol/src/lock-claim.js';
 
 const env = process.env;
 const nodes = String(env.NODES || '').split(',').map((u) => u.trim().replace(/\/+$/, '')).filter(Boolean);
@@ -156,6 +158,8 @@ async function enter(c, rid, ready) {
   const hidden = hiddenMove(randomInt(3), rand);      // evenly: rock, paper, scissors
   entry.commit = moveCommitment({ roundId: rid, sessionPubkey: entry.sessionPubkey, move: hidden.move, salt: hidden.salt });
   const eid = entryId(entry);
+  // MARKED BOT IN THE EXPLORER AS IT GOES OUT (kanban #2035): by the admin code, so the real-player count stays true
+  markBot(entryKeys(eid, entry)).then((m) => { if (!m.ok) log({ step: 'not marked bot', entry: toHex(eid).slice(0, 8), why: m.why }); });
   appendFileSync(join(DIR, 'keys.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), round: roundHex, entry: toHex(eid), player: 'bot', secret: toHex(me.secret),
     stake: `${toHex(locks.stake.outpoint.txid)}:${locks.stake.outpoint.outIdx}`, fee: locks.fee ? `${toHex(locks.fee.outpoint.txid)}:${locks.fee.outpoint.outIdx}` : null })}\n`);
   const hand = locks.fee ? locks.fee.fields : null;
@@ -164,6 +168,9 @@ async function enter(c, rid, ready) {
   const posts = nodes.map(async (n) => {
     await order.put.posted.get(n);
     const en = await fetch(`${n}/entry`, { method: 'POST', signal: AbortSignal.timeout(POST_MS), body: encodeEntryContract(entry) }).catch(() => ({ status: 0, text: async () => 'no answer' }));
+    // THE PLAYER'S LOCK CLAIM (kanban #2069, #2088): a signature by the stake point over the entry id, as the page sends it - a seat then hands
+    // these locks only to a claimed entry, never to a copy under another stake point. Never fatal.
+    if (en.status >= 200 && en.status < 300) { try { await fetch(`${n}/lock-claim?entry=${toHex(eid)}`, { method: 'POST', signal: AbortSignal.timeout(POST_MS), body: schnorr.sign(lockClaimDigest(eid), s.p) }).then((r) => r.text()); } catch { /* the seats show it to each other */ } }
     return { node: n, entry: en.status, why: en.text ? (await en.text().catch(() => '')).trim().slice(0, 120) : '' };
   });
   const said = [];

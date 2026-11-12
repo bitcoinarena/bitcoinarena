@@ -13,9 +13,10 @@ import { gameIdOf } from '../../arena-protocol/src/manifest.js';
 import { RESERVES_VERSION } from '../../arena-protocol/src/constants.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { MANIFEST_V3 } from '../../nextblock/plugin/nextblock-v3.js';
+import { pointKey } from '../../arena-protocol/test/point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const pk33 = (n) => Uint8Array.from([0x02, ...b32(n)]);
+const pk33 = (n) => pointKey(0x02, n);
 const verify = (s, m, k) => schnorr.verify(s, m, k);
 const NOW = 1792090683000;
 const NODES = [b32(0x31), b32(0x32), b32(0x33)];

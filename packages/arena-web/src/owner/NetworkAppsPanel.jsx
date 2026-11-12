@@ -20,6 +20,14 @@ export function parentOf(g, hosted) {
 /** What another node offers that this one does not run, each with the hosted version it would update. */
 export const offersOf = (games, hosted) => (games || []).filter((g) => !hosted.some((h) => h.id === g.id)).map((g) => ({ g, parent: parentOf(g, hosted) }));
 
+/**
+ * A NODE LOOKED AT BY ITS ADDRESS NAMES ITS GAMES WITH A TITLE NOBODY SIGNED (kanban #2033, after #1716, #1489): that one node could
+ * list any game under "Refunds: send sats to evil.example". Its card shows the game's id until the package is checked in this browser,
+ * then the gameName its developer signed (checkPackage's `name`) - never the node's title or name.
+ */
+export const lookTitle = (g, check) => (check && check.report && check.report.gameId === (g && g.id) && typeof check.report.name === 'string' && check.report.name
+  ? check.report.name : `game ${String((g && g.id) || '').slice(0, 12)}…`);
+
 export class Report extends React.Component {
   render() {
     const r = this.props.report;
@@ -70,12 +78,15 @@ export class NetworkAppsPanel extends React.Component {
     return false;
   }
   async take({ g, parent, from }) {
+    // a game from a node looked at by address is named as its card names it (lookTitle, kanban #2033)
+    const looked = !!this.state.look && (this.state.look.offers || []).some((o) => o.g === g);
+    const shown = looked ? lookTitle(g, this.state.checks[g.id]) : (g.title || g.name);
     this.setCheck(g.id, { state: 'taking' });
     try {
       const res = parent ? await this.props.api.post('/owner/plugins/update', await this.props.api.signed('update', { game: g.id, from, replaces: parent.id }))
         : await this.props.api.post('/owner/plugins/install', await this.props.api.signed('install', { game: g.id, from }));
       this.setCheck(g.id, { state: 'taken', report: res, why: null });
-      this.setState({ done: `${g.title || g.name} v${g.version} ${parent ? 'updated' : 'installed'} - running now ✓` });
+      this.setState({ done: `${shown} v${g.version} ${parent ? 'updated' : 'installed'} - running now ✓` });
       await this.reloadMine(); await this.search(false);
       if (this.props.onChanged) this.props.onChanged();
       return true;
@@ -127,8 +138,8 @@ export class NetworkAppsPanel extends React.Component {
         {lookError ? <p className="err">{lookError}</p> : null}
         {look && !look.offers.length ? <p className="sub">That node has nothing this node does not already have.</p> : null}
         {look && look.offers.length ? <div className="app-grid">{look.offers.map(({ g, parent }) => (
-          <div key={g.id} className="app-card"><div className="app-head"><span className="app-ic" aria-hidden="true">{(g.title || g.name || '?').slice(0, 1).toUpperCase()}</span>
-            <b className="app-name">{g.title || g.name}</b><span className="pill">{g.attested ? 'market' : 'game'}</span></div>
+          <div key={g.id} className="app-card"><div className="app-head"><span className="app-ic" aria-hidden="true">{lookTitle(g, this.state.checks[g.id]).slice(0, 1).toUpperCase()}</span>
+            <b className="app-name">{lookTitle(g, this.state.checks[g.id])}</b><span className="pill">{g.attested ? 'market' : 'game'}</span></div>
             <div className="app-foot"><code className="sub">{g.id.slice(0, 12)}…</code><Button onClick={() => this.check({ g, parent, from: look.from, auto: false })}>Check{parent ? ' update' : ''}</Button></div>
             {this.checkBox(g)}</div>))}</div> : null}
       </div>
