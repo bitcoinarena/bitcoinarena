@@ -4711,7 +4711,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         rememberHidden({ roundIdHex: named.roundIdHex, entryIdHex: sent.entryId, move: hidden.move, saltHex: ARENACLIENT.toHex(hidden.salt),
           nodes: named.nodes, entryCloseMs: String(named.round.entryCloseMs), gameId: ARENACLIENT.toHex(named.round.gameId),
           endMs: String(ARENACLIENT.roundEndMs(named.round)),   // its reveal deadline: the result stands by then at the latest
-          committee: (window.ARENA_ROUND_COMMITTEE || {})[named.roundIdHex] || null });   // kanban #2561: the seats whose lock set certificate it waits for
+          committee: (window.ARENA_ROUND_COMMITTEE || {})[named.roundIdHex] || null,   // kanban #2561: the seats whose lock set certificate it waits for
+          protocolVersion: Number(named.round.protocolVersion || 1) });   // kanban #2561: only a round of 28 or later waits for a certificate
         window.ARENA_HIDDEN = { round: named.roundIdHex, entryIdHex: sent.entryId, move: hidden.move };
         return;
       }
@@ -7962,6 +7963,14 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             random: (n) => crypto.getRandomValues(new Uint8Array(n)), curve: window.ARENA_CURVE }); } catch (e) { console.warn('[arena] no identity on the reveal: ' + e.message); }
           // NOT BEFORE THE ROUND'S LOCK SET IS CERTIFIED (protocol 28, kanban #2561): the seats' threshold-signed set of locked entries, checked here
           // against the seats this tab dealt its stake to; a round below 28 is revealed at once, as before. Shown as part of the wait.
+          // A ROUND BELOW 28 IS REVEALED AT ONCE, ON ITS OWN CONTRACT'S WORD (kanban #2561, measured on the arena-2561 preview 2026-11-12: seats
+          // without GET /lock-set - every seat below audit51 - answered 404, the page read "nobody answered" as "wait", gave up at close + 3 s
+          // as VOID and never revealed: "Not revealed - you lose"). The seats are asked only for a round of 28 or later; a record kept before
+          // this page (no version) is asked as before.
+          if (h.protocolVersion !== undefined && h.protocolVersion !== null && Number(h.protocolVersion) < 28) {
+            const seats = await ARENACLIENT.revealMove({ entryIdHex: h.entryIdHex, move: h.move, salt: h.saltHex, nodes: h.nodes, identity });
+            return { ok: seats.some((x) => x.status === 201 || x.status === 200), seats };
+          }
           const said = await ARENACLIENT.revealWhenCertified({ roundIdHex: id, entryIdHex: h.entryIdHex, move: h.move, salt: h.saltHex, nodes: h.nodes, identity,
             committee: h.committee || null, verify: window.ARENA_CURVE && window.ARENA_CURVE.verify ? (sg, m, k) => window.ARENA_CURVE.verify(sg, m, k) : null,
             entryCloseMs: h.entryCloseMs, onWait: () => { const j = window.ARENA_JOIN; if (j && j.round === id) j.stage = 'the seats are certifying the locked entries'; } });
