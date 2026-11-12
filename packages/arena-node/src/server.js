@@ -6048,6 +6048,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!why) break;
       }
       if (!why && vouchedMs !== null && round.keepLockTimes) round.keepLockTimes(eid, vouchedMs);   // kanban #1783: seated as the seats that took it in time seat it
+      // A LOCK NO THRESHOLD OF SEATS CLAIMS IS NO REASON TO WAIT (kanban #1823, audit #1489 r6-h2h-3): the last failing answer was the wait, so for an entry
+      // nobody locked (an abandoned join, a stranger's lockless entry) ONE peer answering 200 with junk lock fields kept this seat waiting on every pass until
+      // the result window ran out, and it signed nothing for the round's real players. A lock that fails here is the answering peer's fault; this seat waits
+      // for one only while at least the round's threshold of peers say they verified a lock of it - only then can the entry be seated without this seat.
+      if (why) {
+        let needed = Infinity;
+        try { needed = roundThreshold(slotsForRole(decodeRoundContract(new Uint8Array(round.get(rid).contract)), 'settlement')); } catch { /* no threshold read: no wait */ }
+        if (answers.length < needed) why = null;
+      }
     }
     if (!round.payoutAddress(eid)) {
       for (const named of await ofPeers(`/payout-address?entry=${entryHex}`, (r) => r.json())) {
