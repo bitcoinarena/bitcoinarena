@@ -269,8 +269,9 @@ test('a head-to-head client is given the last moment a tap goes in as the close,
   };
   for (const [lockSeen, free] of [[[], false], [[900, 2700], false], [[7000], false], [[], true]]) {
     const { lastTapLeft, need } = run(3, lockSeen, free);
-    assert.ok(lastTapLeft >= need + 1000, `the last offered tap has ${lastTapLeft} ms left, the page takes it from ${need} ms (+1 s margin)`);
-    assert.ok(lastTapLeft <= need + 1000, 'and the round is not cut shorter than that');
+    const margin = Number(/H2H_TAP_MARGIN_MS = (\d+)/.exec(def)[1]);
+    assert.ok(margin >= 2500, 'room for the join\'s steps before the page checks the lead again (measured 1.6 s)');
+    assert.equal(lastTapLeft, need + margin, `the last offered tap has ${lastTapLeft} ms left, the page takes it from ${need} ms (+ the margin)`);
   }
   assert.equal(run(1, [], false).given, 1_000_000, 'a game that is not head-to-head keeps its close');
 });
