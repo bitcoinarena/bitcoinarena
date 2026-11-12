@@ -49,7 +49,8 @@ export function verifyPackage(pkg, { verify, want = null, parentOf } = {}) {
   for (const c of pkg.cores) {
     const t = trialRun(Buffer.from(c.source, 'base64').toString('utf8'), manifest, { name: c.name || String(c.hash).slice(0, 16) });
     r.checks.push({ check: `core ${c.hash.slice(0, 12)}… runs in the sandbox`, ok: t.ok, detail: t.ok ? `${t.cases} move combinations, each answered the same twice` : t.why });
-    if (!t.ok) return { ...r, ok: false, why: `the trial run refuses it: ${t.why}` };
+    // `trial` (kanban #1880, #1913): the verdict on these signed bytes, which a seat may remember; `retry`: none yet (try again)
+    if (!t.ok) return { ...r, ok: false, trial: !t.retry, retry: !!t.retry, why: `the trial run refuses it: ${t.why}` };
   }
   return r;
 }
