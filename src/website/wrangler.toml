@@ -22,7 +22,8 @@ binding = "ASSETS"
 # kanban #973: images, scripts and the icon go past the Worker, where they are free; pages and /api still run it
 run_worker_first = ["/*", "!/img/*", "!/js/*", "!/favicon.ico"]
 
-#: the phones' ?bench=1 results, kept 30 days (read with `wrangler kv key list --binding BENCH`)
+#: the phones' ?bench=1 results, kept 30 days (read with `wrangler kv key list --binding BENCH`) - only a post to /__bench?key=<secret BENCH_KEY>
+# (kanban #1703, #1768: a stranger's run spends no KV put); every run is in Workers Logs below
 [[kv_namespaces]]
 binding = "BENCH"
 id = "83351bd43e524815a441e37295a53ba8"
@@ -32,6 +33,10 @@ id = "83351bd43e524815a441e37295a53ba8"
 [[kv_namespaces]]
 binding = "CHAIN"
 id = "f53d379e2f6d41a3a5ab590150d979b8"
+
+#: kanban #1703, #1768: the Worker's console lines (every /__bench run) kept by Cloudflare, read in the dashboard without wrangler tail running
+[observability]
+enabled = true
 
 [triggers]
 crons = ["*/2 * * * *"]
