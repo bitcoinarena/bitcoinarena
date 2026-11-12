@@ -208,7 +208,9 @@ const median = (list) => { const s = [...list].sort((a, b) => (a < b ? -1 : a > 
 // answered), keeps the first row per key of each seat, and gives a key a value only when a strict majority of the answering seats list it;
 // its value is the lower median over all answering seats, a seat that does not list the key counting 0 (with a strict majority listing it,
 // that median is always one of the listed values). pick(row) -> bigint or null (null: the row is skipped).
-function byQuorum(perSeat, keyOf, pick) {
+// A MAJORITY OF ALL SEATS, NOT OF THOSE THAT ANSWERED (kanban #1993, #2007, #2040, #2059; #1534 did not hold): a key needs more than half of `of`
+// (every seat asked, SEATS.length) listing it - with 13 seats timed out the one fast seat was the whole quorum and replaced the kept figures.
+function byQuorum(perSeat, keyOf, pick, of = SEATS.length) {
   const rows = new Map();   // key -> [{ v, row }] one per seat
   for (const list of perSeat) {
     const seen = new Set();
@@ -221,34 +223,49 @@ function byQuorum(perSeat, keyOf, pick) {
   }
   const n = perSeat.length, out = new Map();
   for (const [k, list] of rows) {
-    if (2 * list.length <= n) continue;
+    if (2 * list.length <= Math.max(n, of)) continue;
     const mid = median([...list.map((r) => r.v), ...Array(n - list.length).fill(0n)]);
     out.set(k, list.find((r) => r.v === mid) || { v: mid, row: null });
   }
   return out;
 }
+// (kanban #1993, #2007, #2040, #2059) a part of the figures - the reserve, the referral fees - is replaced only when more than half of ALL seats
+// answered it; with fewer the kept part stays (and the read says so in the log). A program (a site's name, kanban #675) is an object with a
+// string site, a string name and a finite atMs, else it is skipped (one seat's programs: [null] threw for the whole read); its name is the
+// (site, name) a majority of all seats list, one per site per seat - never "the newest any seat holds" by that seat's own atMs - and a site
+// gets a zero-fee row only from such a name.
+const programOf = (p) => (p && typeof p === 'object' && typeof p.site === 'string' && typeof p.name === 'string' && Number.isFinite(Number(p.atMs)) ? p : null);
 async function readMetrics(env) {
   const [res, ref] = await Promise.all([
     Promise.all(SEATS.map((seat) => ask(`${seat}/reserves`, READ_MS))),
     Promise.all(SEATS.map((seat) => ask(`${seat}/referral-fees`, READ_MS)))]);
+  const kept = JSON.parse((await stateGet(env, 'metrics')) || 'null');
+  const quorum = (n) => 2 * n > SEATS.length;
   const feds = new Map(), sites = new Map();
   const resSeats = res.filter((a) => a.body && Array.isArray(a.body.federations)).map((a) => a.body.federations);
   for (const [id, x] of byQuorum(resSeats, (f) => (f ? f.federationId : null), (f) => msatOf(f.heldMsat))) feds.set(id, x.v);
-  // and each program's name, as its key said it (kanban #675): the newest any seat holds
+  const refAnswered = ref.filter((a) => a.body && Array.isArray(a.body.sites));
+  const progSeats = refAnswered.map((a) => {
+    const one = new Map();
+    for (const p of (Array.isArray(a.body.programs) ? a.body.programs : [])) { const q = programOf(p); if (q && !one.has(q.site)) one.set(q.site, q); }
+    return [...one.values()];
+  });
   const names = new Map();
-  for (const a of ref) for (const p of (a.body && Array.isArray(a.body.programs) ? a.body.programs : [])) {
-    if (!names.has(p.site) || Number(p.atMs) > names.get(p.site).atMs) names.set(p.site, { name: p.name, atMs: Number(p.atMs) });
-  }
-  const refSeats = ref.filter((a) => a.body && Array.isArray(a.body.sites)).map((a) => a.body.sites);
+  for (const [, x] of byQuorum(progSeats, (p) => JSON.stringify([p.site, p.name]), () => 1n)) names.set(x.row.site, x.row.name);
+  const refSeats = refAnswered.map((a) => a.body.sites);
   for (const [site, x] of byQuorum(refSeats, (r) => (r ? r.site : null), (r) => msatOf(r.msat))) {
     sites.set(site, { msat: x.v, payouts: x.row && Number.isSafeInteger(x.row.payouts) ? x.row.payouts : 0 });
   }
   for (const [site] of names) if (!sites.has(site)) sites.set(site, { msat: 0n, payouts: 0 });
   const sum = (it) => [...it].reduce((t, m) => t + m, 0n);
-  const m = { readAt: new Date().toISOString(), seats: { reserves: res.filter((a) => a.body).length, referral: ref.filter((a) => a.body).length, of: SEATS.length },
-    reserve: { msat: String(sum(feds.values())), federations: [...feds].map(([federation, msat]) => ({ federation, msat: String(msat) })) },
-    referral: { msat: String(sum([...sites.values()].map((x) => x.msat))), sites: [...sites].map(([site, x]) => ({ site, name: names.has(site) ? names.get(site).name : null, msat: String(x.msat), payouts: x.payouts }))
-      .sort((a, b) => (BigInt(b.msat) > BigInt(a.msat) ? 1 : BigInt(b.msat) < BigInt(a.msat) ? -1 : 0)) } };
+  const resOk = quorum(resSeats.length), refOk = quorum(refSeats.length);
+  if (!resOk || !refOk) console.log(JSON.stringify({ metricsShort: { reserves: resSeats.length, referral: refSeats.length, of: SEATS.length, kept: !!kept } }));
+  if (!resOk && !refOk) return kept;
+  const reserve = resOk ? { msat: String(sum(feds.values())), federations: [...feds].map(([federation, msat]) => ({ federation, msat: String(msat) })) }
+    : kept ? kept.reserve : null;
+  const referral = refOk ? { msat: String(sum([...sites.values()].map((x) => x.msat))), sites: [...sites].map(([site, x]) => ({ site, name: names.has(site) ? names.get(site) : null, msat: String(x.msat), payouts: x.payouts }))
+    .sort((a, b) => (BigInt(b.msat) > BigInt(a.msat) ? 1 : BigInt(b.msat) < BigInt(a.msat) ? -1 : 0)) } : kept ? kept.referral : null;
+  const m = { readAt: new Date().toISOString(), seats: { reserves: resSeats.length, referral: refSeats.length, of: SEATS.length }, reserve, referral };
   await statePut(env, 'metrics', JSON.stringify(m));
   return m;
 }
@@ -260,8 +277,25 @@ const DAY_MS = 86400000, VOLUME_DAYS = 30;
 // (kanban #1534: not the longest list, which one seat could pad; an amount that does not parse skips that payment, never the read); the
 // reserve held at each day's end, summed over the federations. Payouts out of the reserve (none yet) are taken off on their day.
 const HISTORY_SEATS = [0, 1, 7];
+// (kanban #1993, #2007, #2040, #2059) THREE ANSWERS OR THE KEPT HISTORY: with one history seat slow the lower median of the other two was the
+// smaller one (one seat set every day to 0), with two slow the third alone was the history. A history seat that does not answer is replaced by
+// the next seat (at most HISTORY_ROUNDS rounds of asking); fewer than HISTORY_SEATS.length answers leave the kept history. A payment's time
+// counts only from HISTORY_FROM_MS to now, and a day enters the history only when its median is above 0: one seat naming a payment in 1900
+// (or year -271821, ~1e8 days) no longer starts the history there.
+const HISTORY_ROUNDS = 3, HISTORY_FROM_MS = Date.UTC(2026, 7, 1);
 async function readReserveHistory(env) {
-  const answers = await Promise.all(HISTORY_SEATS.map((i) => ask(`${SEATS[i]}/reserves?all=1`, 45000)));
+  const want = HISTORY_SEATS.length;
+  const order = [...HISTORY_SEATS, ...SEATS.map((_, i) => i).filter((i) => !HISTORY_SEATS.includes(i))];
+  const answers = [];
+  for (let round = 0, next = 0; round < HISTORY_ROUNDS && answers.length < want && next < order.length; round++) {
+    const ask1 = order.slice(next, next + want - answers.length); next += ask1.length;
+    const got = await Promise.all(ask1.map((i) => ask(`${SEATS[i]}/reserves?all=1`, 45000)));
+    answers.push(...got.filter((a) => a.body && Array.isArray(a.body.federations)));
+  }
+  if (answers.length < want) {
+    console.log(JSON.stringify({ reserveHistoryShort: { answered: answers.length, of: want } }));
+    return JSON.parse((await stateGet(env, 'reserve-history')) || 'null');
+  }
   // (kanban #1709, #1773, #1821, #1855): a federation counts only when a strict majority of the history seats that answered list it, and each
   // day's median is over all of them - a seat that does not list the federation (or has nothing that day) counts 0
   const answered = answers.filter((a) => a.body && Array.isArray(a.body.federations));
@@ -272,7 +306,8 @@ async function readReserveHistory(env) {
       if (!f || typeof f.federationId !== 'string' || seen.has(f.federationId)) continue; seen.add(f.federationId);
       const day = new Map();
       for (const x of (Array.isArray(f.paidIn) ? f.paidIn : [])) {
-        const t = x ? Date.parse(x.at) : NaN, m = x ? msatOf(x.amountMsat) : null; if (!Number.isFinite(t) || m === null) continue;
+        const t = x ? Date.parse(x.at) : NaN, m = x ? msatOf(x.amountMsat) : null;
+        if (!Number.isFinite(t) || t < HISTORY_FROM_MS || t > Date.now() || m === null) continue;
         const d = new Date(Math.floor(t / DAY_MS) * DAY_MS).toISOString().slice(0, 10);
         day.set(d, (day.get(d) || 0n) + m);
       }
@@ -284,7 +319,10 @@ async function readReserveHistory(env) {
   const perDay = new Map();
   for (const views of kept) {
     const all = [...views, ...Array(answered.length - views.length).fill(new Map())];
-    for (const d of new Set(views.flatMap((v) => [...v.keys()]))) perDay.set(d, (perDay.get(d) || 0n) + median(all.map((v) => v.get(d) || 0n)));
+    for (const d of new Set(views.flatMap((v) => [...v.keys()]))) {
+      const mid = median(all.map((v) => v.get(d) || 0n));
+      if (mid > 0n) perDay.set(d, (perDay.get(d) || 0n) + mid);
+    }
   }
   const days = [...perDay.keys()].sort();
   const out = []; let held = 0n;
