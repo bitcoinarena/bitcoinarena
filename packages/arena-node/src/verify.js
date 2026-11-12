@@ -846,8 +846,16 @@ export class Verifier {
    * result about this round and this entry's player, read from the peers' GET /results. What a seat short of an entry needs before it takes it past its
    * door, so no record is believed for who sent it. A FINAL signature stands on these results, so counting them counts every FINAL too.
    */
-  async signersNaming(roundIdBytes, entryIdBytes, playerPubkey) {
+  //
+  // ONLY RESULTS ABOUT THIS ENTRY, AND FOR A LOCK ONLY SEATED ONES (kanban #2063, refute of #1916 / #1479 / feedback #007 via kanban #1489): a result
+  // names a player key, not an entry, and VOID was counted like any other - so an honest seat's VOID for a lockless winner (#1437) and one colluding
+  // seat's DELIVERED made "two seats signed results naming it" at a later honest seat, which took the colluder's late locks past its door (#1916's
+  // exception) and paid the winner. Now, given `entry` (its decoded contract), a head-to-head round's result counts only when its transcript hash is
+  // this entry's reveal record (entry id || move || salt for a reveal that opens its commitment, entry id || 0xff for none, #revealRecord), and with
+  // `seated` only a result of an entry the seat played counts (not VOID): an honest seat signs one only for an entry backed by a lock it held.
+  async signersNaming(roundIdBytes, entryIdBytes, playerPubkey, { seated = false, entry = null } = {}) {
     const committee = new Set(this.round.signerNodes(roundIdBytes).map(hex)), signers = new Set();
+    const aboutIt = entry ? await this.#recordHashesOf(roundIdBytes, entryIdBytes, entry) : null;
     await Promise.all(this.peersOf(roundIdBytes).map(async (peer) => {
       let body;
       try {
@@ -864,6 +872,8 @@ export class Verifier {
           const result = decodePlayerResult(signedBody);
           if (hex(result.roundId) !== hex(roundIdBytes) || hex(result.playerPubkey) !== hex(playerPubkey) || !committee.has(hex(result.nodePubkey))) continue;
           const key = hex(result.nodePubkey);
+          if (seated && result.outcome === VOID) continue;                                   // kanban #2063: a VOID seats nobody
+          if (aboutIt && !aboutIt.has(hex(result.transcriptHash))) continue;                 // kanban #2063: about another entry, or no reveal of this one
           if (signers.has(key) || tried.has(key)) continue;
           tried.add(key);
           if (schnorr.verify(signature, resultId(result), result.nodePubkey)) signers.add(hex(result.nodePubkey));
@@ -871,6 +881,39 @@ export class Verifier {
       }
     }));
     return signers;
+  }
+
+  /**
+   * THE TRANSCRIPT HASHES A RESULT ABOUT THIS ENTRY CAN CARRY (kanban #2063): in a head-to-head round its reveal record's - no reveal, or a reveal
+   * that opens the entry's commitment (this seat's own, else each peer's GET /reveals, checked as carryReveals checks it). null for a replayed
+   * round, whose transcript hash names a run this seat cannot rebuild here: there the player key alone binds the result (one entry per key, #1479).
+   */
+  async #recordHashesOf(roundIdBytes, entryIdBytes, entry) {
+    const row = this.round.get(roundIdBytes);
+    let found = null;
+    try { found = row ? this.#headToHead(decodeRoundContract(new Uint8Array(row.contract))) : null; } catch { found = null; }
+    if (!found) return null;
+    const out = new Set([hex(transcriptBytesHash(this.#revealRecord(entryIdBytes, null)))]);
+    const opens = (move, salt) => {
+      if (!(entry.commit instanceof Uint8Array) || !Number.isInteger(move) || move < 0 || move > 254) return false;
+      try { return hex(headToHeadCommit({ roundId: entry.roundId, entryKey: entry.sessionPubkey, move, salt })) === hex(entry.commit); } catch { return false; }
+    };
+    const own = (typeof this.round.revealsOf === 'function' ? this.round.revealsOf(roundIdBytes) : []).find((r) => hex(r.entryId) === hex(entryIdBytes));
+    if (own && opens(own.move, own.salt)) { out.add(hex(transcriptBytesHash(this.#revealRecord(entryIdBytes, own)))); return out; }
+    for (const peer of this.peersOf(roundIdBytes)) {
+      let body;
+      try {
+        const answer = await peerFetch(`${peer}/reveals?round=${hex(roundIdBytes)}`);
+        if (!answer.ok) continue;
+        body = JSON.parse((await capped(answer, 65536 + 1024 * 1024)).toString('utf8'));
+      } catch { continue; }
+      for (const r of (body && Array.isArray(body.reveals) ? body.reveals : [])) {
+        if (String(r.entry) !== hex(entryIdBytes) || !/^[0-9a-f]{64}$/i.test(String(r.salt))) continue;
+        const salt = new Uint8Array(Buffer.from(String(r.salt), 'hex'));
+        if (opens(r.move, salt)) out.add(hex(transcriptBytesHash(this.#revealRecord(entryIdBytes, { move: r.move, salt }))));
+      }
+    }
+    return out;
   }
 
   /**
