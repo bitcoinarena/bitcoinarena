@@ -56,6 +56,10 @@ import { SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.
 import { instancesChoice, instancesNote, INSTANCES_MAX, RAM_FROM } from './instances.js';
 import { INSTANCE, PORT_OFFSET } from './instance.js';
 import { QUIET } from '../../arena-node/src/log-level.js';
+// kanban #2227 (#1489 a44 refute of #1630): the owner binding is written as the node writes it - <file>.bak first, then the file, each
+// atomic - so a crash in the wizard's write never leaves a torn owner.json beside a .bak naming the PREVIOUS owner (the node reads a
+// torn file from its .bak: before, that handed a re-run node back to the old key and its old leave).
+import { writeDurableJson } from '../../arena-node/src/durable-json.js';
 
 export const TOKEN_MS = 30 * 60000;        // the setup token's life
 // A SESSION LASTS A WEEK IDLE AND OUTLIVES AN INSTALLER RESTART (ruling 8: "Tells user to bookmark this page as it can take days on
@@ -638,7 +642,7 @@ const serviceRun = async (b) => {
         let own;
         try { own = adoptIdentity(db, seedOfNsec(b.nsec).secret); } finally { db.close(); }
         if (!own) return { ok: false, why: 'this node folder has another node identity already: set up another node folder for that' };
-        writeFileSync(state.path('node.db.owner.json'), JSON.stringify({ pubkey: owner, claimedAtMs: now, nostrSeed: true }) + '\n', { mode: 0o600 });
+        writeDurableJson(state.path('node.db.owner.json'), { pubkey: owner, claimedAtMs: now, nostrSeed: true });
         done.owner = now;
       }
       state.save({ origin: action, control, seedOwnerPubkey: pubkey, emergencyPubkey: em.pubkey, done, ...(owner ? { owner: { mode: 'nostr', pubkey: owner } } : {}) });
@@ -702,7 +706,7 @@ const serviceRun = async (b) => {
       let pubkey, mode;
       if (b.mode === 'nostr') { pubkey = nostrPubkeyHex(b.npub); mode = 'nostr'; if (!pubkey) return { ok: false, why: 'that is neither an npub nor 64 hex characters' }; }
       else { pubkey = s.seedOwnerPubkey; mode = 'seed'; }
-      writeFileSync(state.path('node.db.owner.json'), JSON.stringify({ pubkey, claimedAtMs: Date.now() }) + '\n', { mode: 0o600 });
+      writeDurableJson(state.path('node.db.owner.json'), { pubkey, claimedAtMs: Date.now() });
       mark('owner', { owner: { mode, pubkey } });
       return { ok: true, owner: { mode, pubkey } };
     },
