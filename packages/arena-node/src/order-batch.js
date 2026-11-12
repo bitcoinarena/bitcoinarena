@@ -148,6 +148,12 @@ const PENDING_PER_PROPOSAL = 64;
 export const SIG_TRIES_PER_SEAT = 2;
 // the pending batches one proposal is read for: one item per k, at most this many k (an honest seat holds one or two pending)
 export const PROPOSAL_PENDING_MAX = 16;
+// ONE PEER'S /book-certificates ANSWER IS BOUNDED WHERE IT IS TAKEN (kanban #2485; a44 refute of #1686): #take tries one certificate per
+// k of an answer and at most SYNC_TAKE_MAX certificates not held here, yielding the event loop every SYNC_TAKE_YIELD of them - one round
+// seat's answer of 20,000 junk-signed certificates for one k held the reading seat's loop 19.1 s (one leaderSig verify each) and its
+// honest peers' answers timed out. What is left of a long honest list is read on the next pass (the cursor stays below it).
+export const SYNC_TAKE_MAX = 256;
+export const SYNC_TAKE_YIELD = 32;
 
 export class OrderBook {
   constructor(round, { plugins, peersFor = () => [], fetcher = (u, o) => fetch(u, o), now = () => Date.now(), intervalMs = Number(BATCH_MS), feesFor = null,
@@ -475,7 +481,10 @@ export class OrderBook {
   #recordId(roundIdBytes, record) {
     const ids = [...record.orders];
     const events = [];
-    for (const c of record.cancels || []) { const x = this.#cancelStands(roundIdBytes, c); if (!x.ok) return x; ids.push(x.id); events.push(x.id); }
+    // ONE CANCEL PER ENTRY (kanban #2485): a record naming an entry's cancel twice is refused before its signature is verified again
+    const cancelled = new Set();
+    for (const c of record.cancels || []) { if (c && cancelled.has(String(c.entry))) return refuse('a batch cancels one entry twice', 400); if (c) cancelled.add(String(c.entry));
+      const x = this.#cancelStands(roundIdBytes, c); if (!x.ok) return x; ids.push(x.id); events.push(x.id); }
     const sells = [];
     for (const s of record.sells || []) { const x = this.#sellStands(roundIdBytes, s); if (!x.ok) return x; ids.push(x.id); sells.push(x.sell); events.push(x.id); }
     let id;
@@ -1384,9 +1393,19 @@ export class OrderBook {
       if (!held.has(String(k))) state.complete = false;
       if (/^[0-9]{1,15}$/.test(String(k))) below = Math.min(below, Number(k));
     }
+    let tried = 0;
     for (const cert of body.certificates) {
       const k = cert && cert.record ? String(cert.record.k) : null;
       if (k === null || !/^[0-9]{1,15}$/.test(k)) continue;
+      // ONE CERTIFICATE PER k OF ONE ANSWER (kanban #2485): an honest seat lists each batch once; a repeat is not looked at
+      if (done.has(k)) continue;
+      // AT MOST SYNC_TAKE_MAX NOT HELD HERE PER ANSWER (kanban #2485): the rest waits for the next pass - the read is not kept and the
+      // cursor stays below the first batch left
+      if (!held.has(k)) {
+        if (tried >= SYNC_TAKE_MAX) { state.complete = false; below = Math.min(below, Number(k)); continue; }
+        tried += 1;
+        if (tried % SYNC_TAKE_YIELD === 0) await new Promise((resolve) => setImmediate(resolve));
+      }
       done.set(k, false);
       // A BATCH HELD HERE WHOSE ORDER IS NOT WHOLE HERE (kanban #620, fed2-3 16:51Z: the entry and locks replayed, then "a loser's P could
       // not be opened: this node accepted no handout for that entry"): what is missing is replayed from this peer
