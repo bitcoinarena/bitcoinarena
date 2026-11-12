@@ -7,6 +7,10 @@
 // list is never read by its pubkey alone.
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes } from 'node:crypto';
+import { lookup as dnsLookup } from 'node:dns/promises';
+import { BlockList, isIP } from 'node:net';
+import { request as httpsRequest } from 'node:https';
+import { Readable } from 'node:stream';
 import { lnurlFor, urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { eventId, eventRefusal } from './nostr-relay.js';
 import { BIP39_ENGLISH } from '../../arena-client/src/bip39-wordlist.js';
@@ -471,10 +475,72 @@ export function imageKind(bytes) {
 // a reward's comment: at most this many characters (LUD-12 wallets take 100-255; the address's own commentAllowed cuts it further)
 export const COMMENT_MOST = 200;
 
-// A PUBLIC NAME ONLY (kanban #1511): an IP literal, localhost or a local-only name is never fetched
+// A PUBLIC NAME ONLY (kanban #1511): an IP literal, localhost or a local-only name is never fetched.
+// NEVER INSIDE THE FAUCET'S OWN NETWORK (kanban #2045, #2064, refute 3 of #1537): the spelling alone let through names that answer only inside -
+// a tailnet (MagicDNS *.ts.net, tailscale serve's tailnet-only HTTPS on the Beelink) and public spellings of 127.0.0.1 (127.0.0.1.nip.io), on any
+// port. So a *.ts.net name and the faucet's own team hosts (FAUCET_TEAM_HOSTS) are refused by name, a caller's address is asked only on 443 (LUD-16
+// addresses always are), and every name is resolved before it is fetched: one internal address in its answer (askableAddresses) refuses it,
+// and the connection goes to the address that was checked (pinnedFetch), so a second DNS answer cannot swap it.
+function teamHosts() { return String(process.env.FAUCET_TEAM_HOSTS || 'tn4.bitcoin-arena.io').split(',').map((x) => x.trim().toLowerCase().replace(/\.$/, '')).filter(Boolean); }
 function publicHost(url) {
-  let host = ''; try { host = new URL(url).hostname.toLowerCase().replace(/\.$/, ''); } catch { host = ''; }
-  return !(!host || /^\[|^\d+(\.\d+){3}$|^\d+$|^0x/i.test(host) || !host.includes('.') || /(^|\.)(localhost|local|internal|lan|home|arpa|localdomain|intranet)$/.test(host));
+  let u = null; try { u = new URL(url); } catch { u = null; }
+  const host = u ? u.hostname.toLowerCase().replace(/\.$/, '') : '';
+  if (!host || /^\[|^\d+(\.\d+){3}$|^\d+$|^0x/i.test(host) || !host.includes('.') || /(^|\.)(localhost|local|internal|lan|home|arpa|localdomain|intranet|ts\.net|beta\.tailscale\.net)$/.test(host)) return false;
+  if (u.protocol !== 'https:' || (u.port && u.port !== '443') || u.username || u.password) return false;
+  return !teamHosts().some((t) => host === t || host.endsWith(`.${t}`));
+}
+// every address a caller's name may never reach: this host, private networks, the tailnet (CGNAT 100.64/10, fd7a:115c:a1e0::/48 inside fc00::/7),
+// link-local, multicast, documentation and reserved ranges
+const INSIDE = new BlockList();
+for (const [a, n] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24],
+  ['192.88.99.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4]]) INSIDE.addSubnet(a, n, 'ipv4');
+for (const [a, n] of [['::', 128], ['::1', 128], ['::', 96], ['100::', 64], ['2001:db8::', 32], ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8]]) INSIDE.addSubnet(a, n, 'ipv6');
+function v4Inside(a) { return isIP(a) !== 4 || INSIDE.check(a, 'ipv4'); }
+function v6Words(a) {   // the 8 16-bit words of an IPv6 address (a dotted IPv4 tail too)
+  let s = a.toLowerCase().split('%')[0]; const tail = /(\d+\.\d+\.\d+\.\d+)$/.exec(s);
+  if (tail) { const b = tail[1].split('.').map(Number); s = s.slice(0, -tail[1].length) + ((b[0] << 8) | b[1]).toString(16) + ':' + ((b[2] << 8) | b[3]).toString(16); }
+  const [h, t] = s.split('::'); const hw = h ? h.split(':') : [], tw = t !== undefined && t ? t.split(':') : [];
+  const w = t === undefined ? hw : [...hw, ...Array(8 - hw.length - tw.length).fill('0'), ...tw];
+  return w.map((x) => parseInt(x || '0', 16));
+}
+const v4Of = (hi, lo) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+export function insideAddress(address) {
+  const a = String(address || '');
+  if (isIP(a) === 4) return v4Inside(a);
+  if (isIP(a) !== 6) return true;
+  if (INSIDE.check(a.split('%')[0], 'ipv6')) return true;
+  const w = v6Words(a);
+  if (w.slice(0, 5).every((x) => x === 0) && w[5] === 0xffff) return v4Inside(v4Of(w[6], w[7]));   // ::ffff:a.b.c.d
+  if (w[0] === 0x64 && w[1] === 0xff9b) return v4Inside(v4Of(w[6], w[7]));                         // NAT64 64:ff9b::a.b.c.d
+  if (w[0] === 0x2002) return v4Inside(v4Of(w[1], w[2]));                                            // 6to4 2002:abcd:...
+  if (w[0] === 0x2001 && w[1] === 0) return true;                                                    // Teredo
+  return false;
+}
+// the addresses a name answers, all of them public, or an Error: 'inside' for any internal one, 'unresolved' when it answers none
+export async function askableAddresses(host, lookupFn = dnsLookup) {
+  let got; try { got = await lookupFn(host, { all: true, verbatim: true }); } catch { got = []; }
+  const list = (Array.isArray(got) ? got : [got]).filter((x) => x && x.address).map((x) => ({ address: String(x.address), family: Number(x.family) || isIP(String(x.address)) }));
+  if (!list.length) throw Object.assign(new Error('could not be reached'), { code: 'unresolved' });
+  if (list.some((x) => insideAddress(x.address))) throw Object.assign(new Error('is not on a public address'), { code: 'inside' });
+  return list;
+}
+// A GET to the address that was checked (kanban #2045, #2064): never a second lookup, never a pooled socket; TLS is checked for the name
+export function pinnedFetch(url, { signal, headers, pin } = {}) {
+  return new Promise((ok, no) => {
+    const to = pin && (pin.find((x) => x.family === 4) || pin[0]); if (!to) { no(new Error('fetch failed: no checked address')); return; }
+    const u = new URL(url);
+    if (u.protocol !== 'https:') { no(new Error('fetch failed: not https')); return; }
+    const lookup = (h, o, cb) => { if (typeof o === 'function') cb = o; if (o && o.all) cb(null, [{ address: to.address, family: to.family }]); else cb(null, to.address, to.family); };
+    const req = httpsRequest(u, { method: 'GET', headers, signal, agent: false, lookup, servername: u.hostname });
+    req.on('error', no);
+    req.on('response', (res) => {
+      const h = new Headers(); for (const [k, v] of Object.entries(res.headers)) for (const x of [].concat(v)) h.append(k, String(x));
+      const status = res.statusCode || 502, none = [204, 205, 304].includes(status);
+      if (none) res.resume();
+      try { ok(new Response(none ? null : Readable.toWeb(res), { status: Math.min(599, Math.max(200, status)), headers: h })); } catch (e) { res.destroy(); no(e); }
+    });
+    req.end();
+  });
 }
 /**
  * WHERE AN ADDRESS IS ASKED, BEFORE ANYTHING IS FETCHED (kanban #1873, #1905): { ok, url } for a Lightning address or an LNURL on a public HTTPS
@@ -497,8 +563,11 @@ export function lnAddressUrl(address) {
 // redirect (any 3xx is "no payments at that address"), and at most LN_ANSWER_MOST bytes of body are read.
 export const LN_ANSWER_MOST = 65536;
 const REDIRECT = Symbol('redirect');
-async function walletJson(fetchFn, url, timeoutMs) {
-  const r = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' }, redirect: 'manual' });
+async function walletJson(fetchFn, url, timeoutMs, lookupFn) {
+  // every URL asked (the address and its callback) is checked by name and by every address it resolves to, and the connection is pinned to them
+  if (!publicHost(url)) throw Object.assign(new Error('is not on a public name'), { code: 'inside' });
+  const pin = await askableAddresses(new URL(url).hostname.replace(/\.$/, ''), lookupFn);
+  const r = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' }, redirect: 'manual', pin });
   if (r.type === 'opaqueredirect' || (r.status >= 300 && r.status < 400)) { try { if (r.body && r.body.cancel) await r.body.cancel(); } catch { /* gone */ } return { r, j: REDIRECT }; }
   if (!r.ok) { try { if (r.body && r.body.cancel) await r.body.cancel(); } catch { /* gone */ } return { r, j: undefined }; }
   if (!r.body || typeof r.body.getReader !== 'function') return { r, j: await r.json() };   // a test's stand-in fetch
@@ -512,16 +581,16 @@ async function walletJson(fetchFn, url, timeoutMs) {
   return { r, j: JSON.parse(Buffer.concat(parts.map((x) => Buffer.from(x))).toString('utf8')) };
 }
 
-export async function lnAddressWorks(address, { fetchFn = fetch, timeoutMs = 8000 } = {}) {
+export async function lnAddressWorks(address, { fetchFn = pinnedFetch, timeoutMs = 8000, lookupFn = dnsLookup } = {}) {
   const u = lnAddressUrl(address);
   if (!u.ok) return u;
   let j;
   try {
-    const got = await walletJson(fetchFn, u.url, timeoutMs);
+    const got = await walletJson(fetchFn, u.url, timeoutMs, lookupFn);
     if (got.j === REDIRECT) return { ok: false, why: 'its wallet does not take payments at that address' };
     if (!got.r.ok) return { ok: false, why: `its wallet answered ${got.r.status}` };
     j = got.j;
-  } catch (e) { return { ok: false, why: /abort|timeout/i.test(String(e && e.name) + String(e && e.message)) ? 'its wallet did not answer in time' : 'its wallet could not be reached' }; }
+  } catch (e) { if (e && e.code === 'inside') return { ok: false, why: 'its wallet must be on a public name' }; return { ok: false, why: /abort|timeout/i.test(String(e && e.name) + String(e && e.message)) ? 'its wallet did not answer in time' : 'its wallet could not be reached' }; }
   if (!j || j.status === 'ERROR') return { ok: false, why: `its wallet said: ${String((j && j.reason) || 'error').slice(0, 120)}` };
   if (j.tag !== 'payRequest' || typeof j.callback !== 'string' || !/^https:\/\//.test(j.callback)) return { ok: false, why: 'its wallet does not take payments at that address' };
   return { ok: true, minSats: Math.ceil(Number(j.minSendable || 0) / 1000), maxSats: Math.floor(Number(j.maxSendable || 0) / 1000) };
@@ -532,12 +601,12 @@ export async function lnAddressWorks(address, { fetchFn = fetch, timeoutMs = 800
  * amount (msat) and the comment (LUD-12, only when the wallet takes one, cut to its commentAllowed). Answers { ok, invoice, commentSent } or { ok: false, why }.
  * The caller's decode() then checks the invoice is for exactly the amount (claim()).
  */
-export async function lnAddressInvoice(address, sats, comment = '', { fetchFn = fetch, timeoutMs = 10000 } = {}) {
+export async function lnAddressInvoice(address, sats, comment = '', { fetchFn = pinnedFetch, timeoutMs = 10000, lookupFn = dnsLookup } = {}) {
   // the same address rules as the check (kanban #1873, #1905): a public name, one request per URL, no redirect followed, the body capped
   const u = lnAddressUrl(address);
   if (!u.ok) return { ok: false, why: u.why === 'its wallet must be on a public name' ? u.why : 'not a Lightning address or an LNURL' };
   const url = u.url;
-  const get = async (x) => { if (!publicHost(x)) throw new Error('is not on a public name'); const { r, j } = await walletJson(fetchFn, x, timeoutMs); if (j === REDIRECT) throw new Error(`answered ${r.status} (a redirect, not followed)`); if (!r.ok) throw new Error(`answered ${r.status}`); return j; };
+  const get = async (x) => { if (!publicHost(x)) throw new Error('is not on a public name'); const { r, j } = await walletJson(fetchFn, x, timeoutMs, lookupFn); if (j === REDIRECT) throw new Error(`answered ${r.status} (a redirect, not followed)`); if (!r.ok) throw new Error(`answered ${r.status}`); return j; };
   let p; try { p = await get(url); } catch (e) { return { ok: false, why: `its wallet: ${e.message}` }; }
   if (!p || p.status === 'ERROR' || p.tag !== 'payRequest' || !/^https:\/\//.test(String(p.callback || ''))) return { ok: false, why: `its wallet takes no payment there${p && p.reason ? `: ${String(p.reason).slice(0, 120)}` : ''}` };
   const msat = Number(sats) * 1000;

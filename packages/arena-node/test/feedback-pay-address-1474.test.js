@@ -56,15 +56,17 @@ test('#1474 an invoice for another amount is refused; a report without an addres
 
 test('#1474 lnAddressInvoice: LUD-16 pay request, amount in msat, the comment cut to the wallet\'s commentAllowed (none when it takes none), its bounds kept', async () => {
   const calls = [];
+  // kanban #2045, #2064: a wallet's name is resolved before it is asked; these stand-in wallets answer on a public address
+  const lookupFn = async () => [{ address: '93.184.215.14', family: 4 }];
   const wallet = (commentAllowed) => async (u) => { calls.push(u); const url = new URL(u);
     if (url.pathname.startsWith('/.well-known/lnurlp/')) return { ok: true, json: async () => ({ tag: 'payRequest', callback: 'https://w.example/cb', minSendable: 1000, maxSendable: 10000000, commentAllowed }) };
     return { ok: true, json: async () => ({ pr: `lnbc${url.searchParams.get('amount')}`, routes: [] }) }; };
-  const r = await lnAddressInvoice('Name@W.example', 5000, 'x'.repeat(300), { fetchFn: wallet(200) });
+  const r = await lnAddressInvoice('Name@W.example', 5000, 'x'.repeat(300), { lookupFn, fetchFn: wallet(200) });
   assert.deepEqual([r.ok, r.invoice, r.commentSent.length], [true, 'lnbc5000000', 200]);
   assert.equal(calls[0], 'https://w.example/.well-known/lnurlp/name');
   assert.equal(new URL(calls[1]).searchParams.get('comment').length, 200);
-  calls.length = 0; const n = await lnAddressInvoice('name@w.example', 5000, 'hello', { fetchFn: wallet(0) });
+  calls.length = 0; const n = await lnAddressInvoice('name@w.example', 5000, 'hello', { lookupFn, fetchFn: wallet(0) });
   assert.equal(n.commentSent, ''); assert.equal(new URL(calls[1]).searchParams.has('comment'), false);
-  const big = await lnAddressInvoice('name@w.example', 20000, '', { fetchFn: wallet(10) });
+  const big = await lnAddressInvoice('name@w.example', 20000, '', { lookupFn, fetchFn: wallet(10) });
   assert.match(big.why, /takes 1 to 10000 sat/);
 });
