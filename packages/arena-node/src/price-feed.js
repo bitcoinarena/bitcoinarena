@@ -77,6 +77,37 @@ export const HELD_LOG_EVERY_MS = 600000;
 export const DEFAULT_TOLERANCE = 0.0005;
 const verify = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
 const refuse = (why, status = 409) => ({ ok: false, status, why });
+// kanban #1489 / #1770: ONLY WELL-FORMED SIGNATURES TRAVEL. One committee seat answering the leader's POST /price-sign with
+// { key, signature: 'a' } was counted nothing, but its junk was kept raw (in memory, and in price_ends for an end, so across a
+// restart), handed to every seat and served by GET /price-samples to every page, whose hex2u8 (`"a".match(/../g)` is null)
+// threw inside core.step for every player of the round. A signature is a 64-hex key and a 128-hex signature (lowercase).
+const HEX64 = /^[0-9a-f]{64}$/i, HEX128 = /^[0-9a-f]{128}$/i;
+const sigShape = (s) => {
+  if (!s || typeof s !== 'object') return null;
+  const key = typeof s.key === 'string' ? s.key : s.key instanceof Uint8Array && s.key.length === 32 ? toHex(s.key) : null;
+  const sig = typeof s.signature === 'string' ? s.signature : s.signature instanceof Uint8Array && s.signature.length === 64 ? toHex(s.signature) : null;
+  return key && sig && HEX64.test(key) && HEX128.test(sig) ? { key: key.toLowerCase(), signature: sig.toLowerCase() } : null;
+};
+/** Well-formed signatures, one per key (the first): what is read back from a store written before #1770. */
+const wellFormedSigs = (sigs) => {
+  const out = [], seen = new Set();
+  for (const s of Array.isArray(sigs) ? sigs : []) { const x = sigShape(s); if (x && !seen.has(x.key)) { seen.add(x.key); out.push(x); } }
+  return out;
+};
+/**
+ * THE SIGNATURES THAT COUNTED (kanban #1770, as game-market standingSigs): one per key priceAttestationStands counted (`signed`),
+ * each the one that verifies over `id` - only these are kept and handed out, never what a body carried besides.
+ */
+const countedSigs = (id, sigs, signed) => {
+  const want = new Set((signed || []).map((k) => String(k).toLowerCase())), out = [], seen = new Set();
+  for (const s of Array.isArray(sigs) ? sigs : []) {
+    const x = sigShape(s);
+    if (!x || !want.has(x.key) || seen.has(x.key)) continue;
+    if (!verify(fromHex(x.signature), id, fromHex(x.key))) continue;
+    seen.add(x.key); out.push(x);
+  }
+  return out;
+};
 const NO_PROPOSAL = 'a round of protocol 5 takes no proposed price: each seat signs its own reading (POST /price-reading) and the sample is their median';
 /**
  * A LEGACY SAMPLE'S STATE AT THIS SEAT (kanban #1181), per (round, k) and per round's tape, one transition function:
@@ -190,7 +221,8 @@ export class PriceFeed {
     if (!this.ends) return null;
     let r = null; try { r = this.ends.get.get(roundHex, k); } catch { r = null; }
     if (!r) return null;
-    const x = { k: Number(r.k), tick: Number(r.tick), priceCents: Number(r.cents), sigs: JSON.parse(r.sigs) };
+    let sigs = []; try { sigs = wellFormedSigs(JSON.parse(r.sigs)); } catch { sigs = []; }   // kanban #1770: a row written before it may hold junk
+    const x = { k: Number(r.k), tick: Number(r.tick), priceCents: Number(r.cents), sigs };
     if (!this.samples.has(roundHex)) this.samples.set(roundHex, new Map());
     this.samples.get(roundHex).set(k, x);
     return x;
@@ -332,7 +364,7 @@ export class PriceFeed {
       const had = this.tapes.get(body.round);
       const step = legacySampleStep({ signed: null, held: had ? toHex(priceTapeId({ roundId: rid, tick: 0, prices: had.prices })) : null }, { kind: 'hold', value: toHex(id) });
       if (!step.ok) return refuse(step.why);
-      if (!step.again) this.tapes.set(body.round, { tick: 0, prices: body.prices, sigs: body.sigs });
+      if (!step.again) this.tapes.set(body.round, { tick: 0, prices: body.prices, sigs: countedSigs(id, body.sigs, s.signed) });   // kanban #1770
       return { ok: true };
     }
     const k = Number(body.k);
@@ -345,12 +377,13 @@ export class PriceFeed {
     const step = legacySampleStep({ signed: null, held: had ? had.priceCents : null }, { kind: 'hold', value: body.priceCents });
     if (!step.ok) return refuse(step.why);
     if (step.again) return { ok: true };
+    const sigs = countedSigs(id, body.sigs, s.signed);   // kanban #1770: only the signatures that counted are kept and served
     if (this.ends && (k === 0 || k === closeSampleK(Number(c.contract.blockTicks)))) {
-      let ch = 1; try { ch = this.ends.putFirst.run(body.round, k, sample.tick, body.priceCents, JSON.stringify(body.sigs)).changes; } catch { ch = 1; /* kept in memory */ }
+      let ch = 1; try { ch = this.ends.putFirst.run(body.round, k, sample.tick, body.priceCents, JSON.stringify(sigs)).changes; } catch { ch = 1; /* kept in memory */ }
       if (ch !== 1) return refuse('another attested value of that moment is held here: the first stands');
     }
     if (!this.samples.has(body.round)) this.samples.set(body.round, new Map());
-    this.samples.get(body.round).set(k, { k, tick: sample.tick, priceCents: body.priceCents, sigs: body.sigs });
+    this.samples.get(body.round).set(k, { k, tick: sample.tick, priceCents: body.priceCents, sigs });
     return { ok: true };
   }
 
@@ -409,7 +442,8 @@ export class PriceFeed {
     await Promise.all(this.peersFor(roundIdBytes).map(async (base) => {
       try {
         const r = await this.fetcher(`${String(base).replace(/\/+$/, '')}/price-sign`, { method: 'POST', body: JSON.stringify(body), signal: AbortSignal.timeout(5000) });
-        if (r.ok) { const j = await r.json(); if (j && j.key && j.signature) sigs.push({ key: j.key, signature: j.signature }); }
+        // kanban #1770: only a 64-hex key with a 128-hex signature is taken; junk is neither counted nor handed out
+        if (r.ok) { const j = await r.json(); const x = sigShape(j); if (x) sigs.push(x); }
       } catch { /* that seat counts nothing */ }
     }));
     return sigs;
@@ -430,7 +464,8 @@ export class PriceFeed {
     const sigs = [{ key: own.key, signature: own.signature }, ...await this.#ask(roundIdBytes, { round: rh, kind: 'sample', k, priceCents, leaderSig: own.signature })];
     const held = this.hold({ round: rh, kind: 'sample', k, priceCents, sigs });
     if (!held.ok) return held;
-    await this.#handOut(roundIdBytes, { round: rh, kind: 'sample', k, priceCents, sigs });
+    // kanban #1770: what is handed out is what this seat kept - the signatures that counted, never a peer's junk
+    await this.#handOut(roundIdBytes, { round: rh, kind: 'sample', k, priceCents, sigs: (this.#held(rh, k) || { sigs }).sigs });
     return { ok: true, k, priceCents, signed: sigs.length };
   }
 
@@ -447,7 +482,7 @@ export class PriceFeed {
     const sigs = [{ key: own.key, signature: own.signature }, ...await this.#ask(roundIdBytes, { round: rh, kind: 'tape', prices, leaderSig: own.signature })];
     const held = this.hold({ round: rh, kind: 'tape', prices, sigs });
     if (!held.ok) return held;
-    await this.#handOut(roundIdBytes, { round: rh, kind: 'tape', prices, sigs });
+    await this.#handOut(roundIdBytes, { round: rh, kind: 'tape', prices, sigs: (this.tapes.get(rh) || { sigs }).sigs });   // kanban #1770
     return { ok: true, signed: sigs.length };
   }
 
