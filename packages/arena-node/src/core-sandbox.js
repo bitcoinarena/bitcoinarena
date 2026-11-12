@@ -159,13 +159,18 @@ function deathOf(sup, id) {
 
 /** ONE CORE THREAD (core-host.js), started by this thread's supervisor and loaded: { call(op, input, within) answering the
  *  driver's JSON, end(why), lastEnd, highWaterMb }. Throws when the core does not load. */
-function startThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, arrayBudget, liveCap, heap, rssBackstop, answerMax = ANSWER_MAX, until = null, lingerAs = null }) {
+function startThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, arrayBudget, liveCap, heap, rssBackstop, answerMax = ANSWER_MAX, until = null, lingerAs = null, loadUntil = null }) {
   // `lingerAs`: the label an ended, not yet gone thread is kept under for lingeringCores (the plugin trial's, kanban #1880) - never
   // the core's own name, which stays the seat's (kanban #1694)
   // `until` (kanban #1719, #1538): ONE ABSOLUTE DEADLINE (a Date.now() time) for the load AND the meta ask loadCore makes
   // itself - the plugin trial gives load, meta and every decide call one TRIAL_MS in total; meta reads DECIDE's fields, which
   // may be getters, so without it load + meta held the seat's thread up to loadMs + askMs
-  const leftOf = (ms) => (Number.isFinite(until) ? Math.max(1, Math.min(ms, until - Date.now())) : ms);
+  // `loadUntil` (kanban #2058, #2078): the same one deadline for the load and its meta ask ONLY - the first load of a core a seat
+  // has just adopted (plugin-package.js registrationFromPackage) is bounded like the trial, and the box it gives is kept with
+  // the installed core's own deadlines from then on
+  let loading = true;
+  const by = () => Math.min(Number.isFinite(until) ? until : Infinity, loading && Number.isFinite(loadUntil) ? loadUntil : Infinity);
+  const leftOf = (ms) => (Number.isFinite(by()) ? Math.max(1, Math.min(ms, by() - Date.now())) : ms);
   const sup = supervisorOf();
   const id = sup.next++;
   const ctrl = new Int32Array(new SharedArrayBuffer(8 * 4));
@@ -190,7 +195,7 @@ function startThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, ar
     if (ended) return;
     ended = why;
     const t0 = Date.now();
-    const waitMs = Number.isFinite(until) ? Math.max(0, Math.min(EXIT_WAIT_MS, until + UNTIL_EXIT_GRACE_MS - t0)) : EXIT_WAIT_MS;
+    const waitMs = Number.isFinite(by()) ? Math.max(0, Math.min(EXIT_WAIT_MS, by() + UNTIL_EXIT_GRACE_MS - t0)) : EXIT_WAIT_MS;
     if (!gone()) sup.worker.postMessage({ type: 'end', id });
     while (!gone() && Date.now() - t0 < waitMs) Atomics.wait(ctrl, C.STATE, Atomics.load(ctrl, C.STATE), Math.max(1, Math.min(10, waitMs - (Date.now() - t0))));
     if (!gone()) lingering.add({ ctrl, name: lingerAs || name });
@@ -229,6 +234,7 @@ function startThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, ar
     throw new Error(ended);
   };
   const loaded = wait(leftOf(loadMs), 'loading');
+  loading = false;   // (kanban #2058) the load's own bound ends with the load
   if (!loaded.ok) { end(loaded.why); throw new Error(loaded.why); }
 
   // `within`: a shorter deadline for this one call (kanban #1538: the plugin trial run gives all its calls one deadline in total)
@@ -277,9 +283,9 @@ const PURE_MAX = 4096;
  * plugin trial, which wants to see what an adapter keeps across calls). The small asks (PURE) are answered once per input.
  */
 export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry,
-  arrayBudget = ARRAY_BUDGET, liveCap = 0, oneThread = false, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, answerMax = ANSWER_MAX, until = null, lingerAs = null } = {}) {
-  // answerMax (kanban #1691), until (kanban #1719) and lingerAs (kanban #1880) reach every thread this core starts
-  const opts = { callMs, stepMs, askMs, loadMs, name, arrayBudget, liveCap, heap, rssBackstop, answerMax, until, lingerAs };
+  arrayBudget = ARRAY_BUDGET, liveCap = 0, oneThread = false, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, answerMax = ANSWER_MAX, until = null, lingerAs = null, loadUntil = null } = {}) {
+  // answerMax (kanban #1691), until (kanban #1719), lingerAs (kanban #1880) and loadUntil (kanban #2058) reach every thread this core starts
+  const opts = { callMs, stepMs, askMs, loadMs, name, arrayBudget, liveCap, heap, rssBackstop, answerMax, until, lingerAs, loadUntil };
   const leftOf = (ms) => (Number.isFinite(until) ? Math.max(1, Math.min(ms, until - Date.now())) : ms);
   const kept = startThread({ files, entry }, opts);
   let ended = null;

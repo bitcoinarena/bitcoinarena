@@ -1209,7 +1209,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (replaces !== null) { const chain = [...chainOf(hosted.get(replaces)), hosted.get(replaces).manifest]; pkg = { ...pkg, ancestors: chain.map((m) => toHex(encodeManifest(m))) }; }
     if (replaces !== null) {
       const u = checkUpdate(installedInfo(replaces), v);
-      if (!u.ok) { console.log(`[plugins] refused update ${game.slice(0, 16)} of ${replaces.slice(0, 16)}: ${u.why}`); return { ...v, ok: false, status: 422, why: u.why }; }
+      if (!u.ok) { console.log(`[plugins] refused update ${game.slice(0, 16)} of ${replaces.slice(0, 16)}: ${u.why}`); return { ...v, ok: false, status: 422, checked: true, why: u.why }; }
     }
     // NAMED BY ITS SIGNED MANIFEST, TITLED AS THE VERSION IT REPLACES (kanban #1541): never by what the serving seat wrote
     const named = decodeManifest(fromHex(String(pkg.manifest))).gameName;
@@ -1219,10 +1219,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       cores: pkg.cores.map((c) => { const m = signedCores.find((s) => toHex(s.hash) === c.hash); return { ...c, configs: m ? m.configs.map(toHex) : [] }; }) };
     const at = installPackage(pluginsDir, pkg, game, { title: pkg.title });   // the title kept apart, as this seat's (kanban #1716, #1780)
     let reg;
-    try { reg = await registrationFromPackage(at, pkg, { title: pkg.title }); } catch (e) { return { ok: false, status: 500, why: `kept, but it does not load: ${e.message}` }; }
+    // A PACKAGE THAT DOES NOT LOAD IS NOT KEPT (kanban #2058, #2078): its directory is moved aside (never deleted), so no start
+    // loads it again (loadInstalled reads only game-id directories). `loads: false` - a verdict on bytes already checked against
+    // the game id (autoUpdate remembers it like the trial's); `checked` - it reached the checks, so the sweep is done with it.
+    try { reg = await registrationFromPackage(at, pkg, { title: pkg.title }); }
+    catch (e) {
+      try { renameSync(at, joinPath(pluginsDir, `.removed-${Date.now()}-${game}`)); } catch { /* left where it is */ }
+      console.log(`[plugins] refused ${game.slice(0, 16)} from ${from}: it does not load: ${e.message}`);
+      return { ok: false, status: 500, checked: true, loads: false, why: `it passed the checks, but it does not load: ${e.message}` };
+    }
     // a package this seat cannot host is refused, never thrown out of an autoUpdate sweep (kanban #1814)
     let entry;
-    try { entry = hostedPlugins([reg]).get(game); } catch (e) { return { ok: false, status: 422, why: `kept, but it cannot be hosted: ${e.message}` }; }
+    try { entry = hostedPlugins([reg]).get(game); } catch (e) { return { ok: false, status: 422, checked: true, why: `kept, but it cannot be hosted: ${e.message}` }; }
     hosted.set(game, entry);
     if (replaces !== null) superseded.set(replaces, game);
     console.log(`[plugins] ${replaces ? `updated ${replaces.slice(0, 16)} to` : 'installed'} ${v.name} v${v.version} (${game.slice(0, 16)}) from ${from}: running now`);
@@ -1331,9 +1339,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         tried.add(parent);
         const r = await takeGame({ game: id, from, replaces: parent });
         // a version that reached the trial (taken or refused by it) is done for this sweep, and so is its parent's one trial;
-        // one a seat did not hand over, or handed other bytes for, may still come whole from the next source (kanban #1880, #1913)
-        if (r.ok || r.trial || r.retry) { seen.add(id); trialedParent.add(parent); }
-        if (r.trial) { if (trialRefused.size >= TRIAL_REFUSED_MAX) trialRefused.delete(trialRefused.keys().next().value); trialRefused.set(id, Date.now()); }
+        // one a seat did not hand over, or handed other bytes for, may still come whole from the next source
+        // (kanban #2058, #2078) and so is one that passed the checks and was refused after them - it does not load, or is no
+        // update of its parent: `checked`. Its not loading is a verdict on the checked bytes, kept like the trial's
+        if (r.ok || r.trial || r.retry || r.checked) { seen.add(id); trialedParent.add(parent); }
+        if (r.trial || r.loads === false) { if (trialRefused.size >= TRIAL_REFUSED_MAX) trialRefused.delete(trialRefused.keys().next().value); trialRefused.set(id, Date.now()); }
         console.log(`[plugins] automatic update of ${parent.slice(0, 16)} from ${from}: ${r.ok ? 'taken' : r.why}`);
         if (!r.ok && r.status === 502) break;
       }
