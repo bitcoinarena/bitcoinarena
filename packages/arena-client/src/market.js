@@ -273,6 +273,26 @@ export async function webCryptoEd25519(signature, message, key) {
 }
 
 /**
+ * THE SIGNATURES THIS PAGE CHECKS (kanban #1616): at most one per attestor. A list longer than the attestor set is not checked at
+ * all - attestationStands / valueAttestationStands refuse it on its length (#1546) - and of a shorter one only the keys the set
+ * names, each key:signature once. One seat's GET /outcome padded to the u16 limit (65,535 signatures) made every player's market
+ * page run 65,535 WebCrypto verifications each 10 s re-read. Fills `said`; null when the verifier cannot answer.
+ */
+async function checkSignaturesOnce(signatures, attestors, digest, verifyFn, said) {
+  const sigs = signatures || [];
+  const named = new Set((attestors || []).map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))));
+  if (sigs.length > named.size) return false;
+  for (const s of sigs) {
+    const id = `${toHex(s.key)}:${toHex(s.signature)}`;
+    if (!named.has(toHex(s.key)) || said.has(id)) continue;
+    const v = await verifyFn(s.signature, digest, s.key);
+    if (v === null) return null;
+    said.set(id, v === true);
+  }
+  return true;
+}
+
+/**
  * IS THE SEATS' OUTCOME THE ATTESTORS'? The attestation's own bytes (GET /outcome), checked against the market this page
  * pinned (or confirmed): its round, an outcome in range, the threshold of distinct named attestors, every signature good.
  * `verify(signature, digest, key)` may be async (WebCrypto); a verifier that cannot answer leaves it `unverifiable`.
@@ -287,11 +307,8 @@ export async function checkAttestation({ attestationHex, market, roundIdHex, ver
     return { verified: false, unverifiable: true, why: 'this market draws its attestors per round, and this page has not derived this round\'s 7 yet: the outcome is shown unverified' };
   const digest = attestationBodyId(a);
   const said = new Map();
-  for (const s of a.signatures) {
-    const v = draws ? await verifySchnorr(s.signature, digest, s.key) : await verify(s.signature, digest, s.key);
-    if (v === null) return { verified: false, unverifiable: true, why: 'this browser cannot check Ed25519 signatures: the outcome is shown unverified' };
-    said.set(`${toHex(s.key)}:${toHex(s.signature)}`, v === true);
-  }
+  const r = await checkSignaturesOnce(a.signatures, draws ? drawn : market.attestors, digest, draws ? verifySchnorr : verify, said);
+  if (r === null) return { verified: false, unverifiable: true, why: 'this browser cannot check Ed25519 signatures: the outcome is shown unverified' };
   const manifest = { gameName: market.name, resultType: RESULT_TYPE.ATTESTED, outcomes: market.outcomes,
     attestors: draws ? [] : market.attestors.map((k) => fromHex(k)), attestThreshold: draws ? 0 : market.threshold, ...(draws ? { attestDraw: market.attestDraw } : {}) };
   const stands = attestationStands(a, { manifest, roundIdBytes: fromHex(roundIdHex), ...(draws ? { drawn } : {}),
@@ -344,11 +361,8 @@ export async function checkMarketOutcome({ outcome: o, market, roundIdHex, sourc
       try { a = decodeValueAttestation(fromHex(String(o.attestation))); } catch (e) { return { verified: false, why: `not a value attestation: ${e.message}` }; }
       const digest = valueAttestationBodyId(a);
       const said = new Map();
-      for (const x of a.signatures) {
-        const v = await verify(x.signature, digest, x.key);
-        if (v === null) return { verified: false, unverifiable: true, why: 'this browser cannot check Ed25519 signatures: the value is shown unverified' };
-        said.set(`${toHex(x.key)}:${toHex(x.signature)}`, v === true);
-      }
+      const r = await checkSignaturesOnce(a.signatures, (market.manifest && market.manifest.attestors) || market.attestors || [], digest, verify, said);
+      if (r === null) return { verified: false, unverifiable: true, why: 'this browser cannot check Ed25519 signatures: the value is shown unverified' };
       // clamped to the bounds THIS round is paid between - a scalar template's round names its own (2026.0.8)
       const st = valueAttestationStands(a, { manifest: { ...market.manifest, scalar: market.scalar }, roundIdBytes: fromHex(roundIdHex),
         verify: (sig, _d, key) => said.get(`${toHex(key)}:${toHex(sig)}`) === true });
