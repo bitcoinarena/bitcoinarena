@@ -272,6 +272,18 @@ export class Round {
    * member for the same mark is that member contradicting itself, and it is
    * refused by name rather than stored beside the first.
    */
+  /**
+   * THIS VERY RECEIPT, BYTE FOR BYTE, ALREADY HELD (kanban #1569): the /play door asks before it takes one, so a public
+   * receipt sent again and again starts no new replay - only a receipt that adds something can complete a run.
+   */
+  holdsReceipt(bytes) {
+    if (!(bytes instanceof Uint8Array) || bytes.length !== SIGNED_RECEIPT_BYTES) return false;
+    let r;
+    try { r = decodeCheckpointReceipt(splitSignedReceipt(bytes).body); } catch { return false; }
+    const row = this.db.prepare('SELECT bytes FROM receipts WHERE checkpoint_id = ? AND node_pubkey = ?').get(r.checkpointId, r.nodePubkey);
+    return !!row && Buffer.from(row.bytes).equals(Buffer.from(bytes));
+  }
+
   takeReceipt(bytes) {
     if (bytes.length !== SIGNED_RECEIPT_BYTES)
       throw new Error(`a signed receipt is ${SIGNED_RECEIPT_BYTES} bytes, got ${bytes.length}`);
