@@ -17,9 +17,10 @@ import { splitByFederation } from '../src/federation-settlement.js';
 import { splitTwoSets } from '../src/donation.js';
 import { TEST_DONATION_SET_KEYS_REGTEST } from '../src/test-donation-set-keys-regtest.js';
 import { toHex } from '../src/hash.js';
+import { pointKey } from './point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const key33 = (n) => { const k = new Uint8Array(33).fill(n); k[0] = 2; return k; };
+const key33 = (n) => pointKey(2, n);
 const DEV = (() => { const { privateKey, publicKey } = generateKeyPairSync('ed25519'); return { key: privateKey, pub: new Uint8Array(publicKey.export({ type: 'spki', format: 'der' }).subarray(-32)) }; })();
 const BODY = {
   gameName: 'btc-up-down', gameDevPubkey: DEV.pub, version: 1, parentManifestId: NO_PARENT, resultType: RESULT_TYPE.ATTESTED,
