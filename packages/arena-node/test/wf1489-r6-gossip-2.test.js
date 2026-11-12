@@ -19,6 +19,7 @@ import { donationSetId as idOfDonationSet } from '../../arena-protocol/src/donat
 import { encodeSlashProof, slashProofId, joinSlashEvidence } from '../../arena-protocol/src/slash.js';
 import { encodePlayerResult, resultId, joinSignedResult } from '../../arena-protocol/src/result.js';
 import { transcriptBytesHash } from '../../arena-protocol/src/posting.js';
+import { encodeTranscript } from '../../arena-protocol/src/transcript.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { openStore } from '../src/store.js';
@@ -64,8 +65,9 @@ test('a stranger\'s made-up slash proofs cannot fill the relay store and shut ou
       await res.text();
       if (res.status === 201) kept++; else if (res.status === 507) full++;
     }
-    // the honest relay write after it: a held entry's reveal record (entry id || move || salt), which PUT /transcript keeps
-    const record = new Uint8Array(65); record.set(eid, 0); record[32] = 1; record.set(b32(9), 33);
+    // the honest relay write after it: a held entry's transcript, which PUT /transcript keeps (not a made-up reveal record: since
+    // #1824 that door keeps a reveal record only when it opens a head-to-head entry's commitment, and this entry is Next Block's)
+    const record = encodeTranscript({ roundId: rid, entryId: eid, batches: [], marks: [] });
     const res = await fetch(`http://127.0.0.1:${seat.port}/transcript/${toHex(transcriptBytesHash(record))}`, { method: 'PUT', body: record });
     const why = await res.text();
     console.log(`stranger's made-up slash proofs: ${kept} kept, ${full} refused as full; then a held entry's record: ${res.status} ${why}`);
