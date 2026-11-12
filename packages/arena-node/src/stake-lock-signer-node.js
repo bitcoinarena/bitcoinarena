@@ -193,11 +193,60 @@ function otherStakedUnderKey(round, entry, entryIdBytes, kind) {
 //   among the player's own claimed entries to the one this seat took first. A peer can show a claim, never forge one.
 // - WITHOUT ANY CLAIM (a page from before the claim): this seat's own first namer stands, and a peer's answer can only REFUSE - a peer naming
 //   another entry first is a conflict, and the entry is refused; it never makes another entry the first. A dishonest seat can refuse, not rob.
+// A CLAIM COUNTS ONLY FOR THE LOCK IT CAN BE THE PLAYER'S FOR (kanban #2069, #2088, #1489 refute of ce2708047): the claim is signed by the
+// entry's OWN stake point, and the copier picks that point himself - a copy with his own stake point P' (his own handout under the player's
+// key), the player's stake and fee lock outpoints and F carried a valid claim by p', and the claimed branch handed it the player's fee lock
+// (bound to H(F), the refund key and the amount only) at a seat it reached first, and - when the player sent no claim (an older page, the tools)
+// - at EVERY seat. So a claimed entry counts for a lock outpoint only when its stake point is the one that lock commits to:
+// - a STAKE lock commits to the stake point itself (its payment image is the entry's stake point, lockMatchesEntry): only entries with the
+//   stake point of the entry being checked count - a copy under another stake point could never be staked by that lock;
+// - a FEE lock commits to no point, so it is anchored by the entry's stake lock: a claimed entry counts only when this seat holds a verified
+//   stake lock at its stake outpoint for an entry of the same stake point. An unanchored claim (no stake lock here yet) is ignored, and the
+//   first-namer rule below decides - a claim never outranks an earlier unclaimed namer it cannot be anchored to.
+// The same test drops namers that provably cannot be the lock's own from the first-namer rule (a stake namer of another stake point; a fee
+// namer whose stake outpoint this seat holds staked under another stake point). No protocol rule changes.
+const hexOf = (b) => (b instanceof Uint8Array ? Buffer.from(b).toString('hex') : '');
+function decodedOf(x) {
+  if (!x) return null;
+  if (x.entry && typeof x.entry === 'object' && !(x.entry instanceof Uint8Array)) return x.entry;
+  try { return x.bytes ? decodeEntryContract(new Uint8Array(x.bytes)) : null; } catch { return null; }
+}
+// the stake point the stake lock this seat holds at `e`'s stake outpoint was verified for, or null when it holds none
+function stakePointLockedAt(round, e) {
+  const o = e && e.stakeLockOutpoint;
+  if (!o || zero(o.txid) || typeof round.stakeLockAt !== 'function') return null;
+  const at = round.stakeLockAt(o);
+  if (!at) return null;
+  const held = typeof round.entry === 'function' ? round.entry(at.entryId) : null;
+  if (!held) return null;
+  try { return hexOf(decodeEntryContract(new Uint8Array(held)).stakePoint); } catch { return null; }
+}
+// does a claim by `e` count for this lock (see above)
+function claimFits(round, entry, kind, e) {
+  if (!e || zero(e.stakePoint)) return false;
+  if (kind === 'stake') return hexOf(e.stakePoint) === hexOf(entry.stakePoint);
+  const locked = stakePointLockedAt(round, e);
+  return !!locked && locked === hexOf(e.stakePoint);
+}
+// can `e` provably never be this lock's own entry
+function provablyNotTheLocks(round, entry, kind, e) {
+  if (!e) return false;
+  if (kind === 'stake') return !zero(entry.stakePoint) && hexOf(e.stakePoint) !== hexOf(entry.stakePoint);
+  const locked = stakePointLockedAt(round, e);
+  return !!locked && locked !== hexOf(e.stakePoint);
+}
+function claimedHere(round, entry, kind, outpoint) {
+  if (typeof round.claimedNamingsOfLock !== 'function') return [];
+  return round.claimedNamingsOfLock(kind, outpoint, entry.playerPubkey).filter((c) => claimFits(round, entry, kind, decodedOf(c)));
+}
 function claimedNamers(round, entry, kind, outpoint, atPeers) {
   const ids = new Set();
-  if (typeof round.claimedNamingsOfLock === 'function')
-    for (const c of round.claimedNamingsOfLock(kind, outpoint, entry.playerPubkey)) ids.add(Buffer.from(c.entryId).toString('hex'));
-  for (const p of atPeers || []) for (const c of (p && p.claimed) || []) if (c && c.entryId) ids.add(Buffer.from(c.entryId).toString('hex'));
+  for (const c of claimedHere(round, entry, kind, outpoint)) ids.add(Buffer.from(c.entryId).toString('hex'));
+  for (const p of atPeers || []) for (const c of (p && p.claimed) || []) {
+    if (!c || !c.entryId) continue;
+    const e = decodedOf(c) || (typeof round.entry === 'function' && round.entry(c.entryId) ? decodeEntryContract(new Uint8Array(round.entry(c.entryId))) : null);
+    if (claimFits(round, entry, kind, e)) ids.add(Buffer.from(c.entryId).toString('hex'));
+  }
   return ids;
 }
 function namedFirstByAnother(round, entry, entryIdBytes, kind, outpoint, atPeers = []) {
@@ -206,14 +255,17 @@ function namedFirstByAnother(round, entry, entryIdBytes, kind, outpoint, atPeers
   if (claimed.size) {
     if (!claimed.has(me)) return true;
     // the player's own claimed entries (a reload's second entry): the one this seat took first
-    const here = typeof round.claimedNamingsOfLock === 'function' ? round.claimedNamingsOfLock(kind, outpoint, entry.playerPubkey) : [];
+    const here = claimedHere(round, entry, kind, outpoint);
     return here.length > 0 && Buffer.from(here[0].entryId).toString('hex') !== me;
   }
+  const notIt = (x) => provablyNotTheLocks(round, entry, kind, decodedOf(x));
   let first = null;
-  if (typeof round.firstNamingOfLock === 'function') { const f = round.firstNamingOfLock(entry.roundId, kind, outpoint, entry.playerPubkey); first = f ? f.entryId : null; }
-  else if (typeof round.firstEntryNamingLock === 'function') first = round.firstEntryNamingLock(entry.roundId, kind, outpoint);
+  if (typeof round.firstNamingOfLock === 'function') {
+    const f = round.firstNamingOfLock(entry.roundId, kind, outpoint, entry.playerPubkey, (bytes) => !notIt({ bytes }));
+    first = f ? f.entryId : null;
+  } else if (typeof round.firstEntryNamingLock === 'function') first = round.firstEntryNamingLock(entry.roundId, kind, outpoint);
   if (first && Buffer.from(first).toString('hex') !== me) return true;
-  for (const p of atPeers || []) if (p && p.entryId && Buffer.from(p.entryId).toString('hex') !== me) return true;
+  for (const p of atPeers || []) if (p && p.entryId && Buffer.from(p.entryId).toString('hex') !== me && !notIt(p)) return true;
   return false;
 }
 // what the round's other seats answer for this outpoint; never fatal - a seat that does not answer adds nothing

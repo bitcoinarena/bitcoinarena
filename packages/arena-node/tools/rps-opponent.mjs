@@ -35,6 +35,7 @@ import { sharedWorldOf } from '../../arena-protocol/src/known-game.js';
 import { matchProofId, presenceId } from '../../arena-protocol/src/match.js';
 import { encodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-name.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { lockClaimDigest } from '../../arena-protocol/src/lock-claim.js';
 
 const env = process.env;
 const nodes = String(env.NODES || '').split(',').map((u) => u.trim().replace(/\/+$/, '')).filter(Boolean);
@@ -146,6 +147,9 @@ async function enter(c, rid, ready) {
     const o = () => ({ method: 'POST', signal: AbortSignal.timeout(POST_MS) });
     const h = await fetch(`${n}/handout`, { ...o(), body: encodeHandout(dealt.handout) }).catch(() => ({ status: 0 }));
     const en = await fetch(`${n}/entry`, { ...o(), body: encodeEntryContract(entry) }).catch(() => ({ status: 0, text: async () => 'no answer' }));
+    // THE PLAYER'S LOCK CLAIM (kanban #2069, #2088): a signature by the stake point over the entry id, as the page sends it - a seat then hands
+    // these locks only to a claimed entry, never to a copy under another stake point. Never fatal.
+    if (en.status >= 200 && en.status < 300) { try { await fetch(`${n}/lock-claim?entry=${toHex(eid)}`, { ...o(), body: schnorr.sign(lockClaimDigest(eid), s.p) }).then((r) => r.text()); } catch { /* the seats show it to each other */ } }
     return { node: n, handout: h.status, entry: en.status, why: en.text ? (await en.text().catch(() => '')).trim().slice(0, 120) : '' };
   });
   const said = [];
