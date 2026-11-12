@@ -2419,7 +2419,7 @@ test('a wallet is packed in place: nothing is lost, it takes under a third of th
 // lock and the donation outputs in ONE transaction (the seats' verifyEntryGifts reads the donations in the stake's transaction), each lock naming
 // the round's settlement seats' node keys in the contract's order, its threshold and its round, its id checked here against the fields.
 test('a protocol-27 round: one arenaLockSubmit with stake, fee and donations, no claim key, the lock JSON the seats are handed names the seats', async () => {
-  const DEVS = [{ recipientPk: Uint8Array.of(2, ...b32(0xa1)), shareBps: 6667, label: 'dev a' }, { recipientPk: Uint8Array.of(3, ...b32(0xb2)), shareBps: 3333, label: 'dev b' }];
+  const DEVS = [{ recipientPk: pointKey(2, 0xa1), shareBps: 6667, label: 'dev a' }, { recipientPk: pointKey(3, 0xb2), shareBps: 3333, label: 'dev b' }];   // curve points (kanban #1675)
   const round27 = { ...round, stakeMsat: 100000n, protocolVersion: 27 };
   const rid27 = b32(0x27);
   const go = async (arena, extra = {}) => {

@@ -326,7 +326,8 @@ function otherStakedUnderKey(round, entry, entryIdBytes, kind) {
 //   first-namer rule below decides - a claim never outranks an earlier unclaimed namer it cannot be anchored to.
 // The same test drops namers that provably cannot be the lock's own from the first-namer rule (a stake namer of another stake point; a fee
 // namer whose stake outpoint this seat holds staked under another stake point). No protocol rule changes.
-const hexOf = (b) => (b instanceof Uint8Array ? Buffer.from(b).toString('hex') : '');
+// (kanban #2069) a stake point as hex, '' for none - 2.0 already imports toHex as hexOf, so this one has its own name
+const pointHexOf = (b) => (b instanceof Uint8Array ? Buffer.from(b).toString('hex') : '');
 function decodedOf(x) {
   if (!x) return null;
   if (x.entry && typeof x.entry === 'object' && !(x.entry instanceof Uint8Array)) return x.entry;
@@ -340,21 +341,21 @@ function stakePointLockedAt(round, e) {
   if (!at) return null;
   const held = typeof round.entry === 'function' ? round.entry(at.entryId) : null;
   if (!held) return null;
-  try { return hexOf(decodeEntryContract(new Uint8Array(held)).stakePoint); } catch { return null; }
+  try { return pointHexOf(decodeEntryContract(new Uint8Array(held)).stakePoint); } catch { return null; }
 }
 // does a claim by `e` count for this lock (see above)
 function claimFits(round, entry, kind, e) {
   if (!e || zero(e.stakePoint)) return false;
-  if (kind === 'stake') return hexOf(e.stakePoint) === hexOf(entry.stakePoint);
+  if (kind === 'stake') return pointHexOf(e.stakePoint) === pointHexOf(entry.stakePoint);
   const locked = stakePointLockedAt(round, e);
-  return !!locked && locked === hexOf(e.stakePoint);
+  return !!locked && locked === pointHexOf(e.stakePoint);
 }
 // can `e` provably never be this lock's own entry
 function provablyNotTheLocks(round, entry, kind, e) {
   if (!e) return false;
-  if (kind === 'stake') return !zero(entry.stakePoint) && hexOf(e.stakePoint) !== hexOf(entry.stakePoint);
+  if (kind === 'stake') return !zero(entry.stakePoint) && pointHexOf(e.stakePoint) !== pointHexOf(entry.stakePoint);
   const locked = stakePointLockedAt(round, e);
-  return !!locked && locked !== hexOf(e.stakePoint);
+  return !!locked && locked !== pointHexOf(e.stakePoint);
 }
 function claimedHere(round, entry, kind, outpoint) {
   if (typeof round.claimedNamingsOfLock !== 'function') return [];

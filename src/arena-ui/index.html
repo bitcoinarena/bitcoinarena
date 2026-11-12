@@ -7783,7 +7783,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const hereProofs = new Map();
       const resultsSeen = new Map();   // round -> its two entries as a seat last said them
       // BOTH MOVES ARE OPEN, SO THE ROUND IS DECIDED (kanban #947): the seats' signatures take seconds more; until they are in, the two uncovered moves say who won, by the same rule, and the signed result then stands in its place
-      const provisional = (held, moves) => { const [a, b] = held.entries, ma = moves[a.entry], mb = moves[b.entry]; if (!Number.isInteger(ma) || !Number.isInteger(mb)) return held;
+      // NO VERDICT FROM A SEAT'S UNSIGNED ANSWER (kanban #1391, as 1.9 has it; needed by the #1673 / #2329 vote ported from 1.9): with one move not yet
+      // open, a seat's own unsigned outcome was handed on as it stood; an entry no seat signed and no two open moves decide has no outcome yet
+      const undecided = (held) => ({ ...held, entries: held.entries.map((e) => (e.signedBy > 0 ? e : { ...e, outcome: null, score: null })) });
+      const provisional = (held, moves) => { const [a, b] = held.entries, ma = moves[a.entry], mb = moves[b.entry]; if (!Number.isInteger(ma) || !Number.isInteger(mb)) return undecided(held);
         const w = (ma - mb + 3) % 3, of = (e, won) => ({ ...e, provisional: true, signedBy: 1, outcome: won === false ? 'FAILED' : 'DELIVERED', score: won === true ? 2 : won === false ? 0 : 1 });
         return { ...held, entries: [of(a, w === 0 ? null : w === 1), of(b, w === 0 ? null : w === 2)] }; };
       // THE PROVISIONAL VERDICT IS CHECKED (audit 5, kanban #1406): the client shows the winner once, from the open moves, and moves on before the seats sign;
