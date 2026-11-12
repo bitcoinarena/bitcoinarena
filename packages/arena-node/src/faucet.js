@@ -88,7 +88,12 @@ export function playerGrantDecide({ kind, account, ip = null, invoiceSats, nowMs
   const key = ipKey(ip);
   if (key && today.filter((p) => ipKey(p.ip) === key).length >= PLAYER_PER_IP_PER_DAY) return { ok: false, why: 'this address took all it can today: try again tomorrow' };
   if (kind === 'welcome' && paid.some((p) => p.account === account && p.kind === 'welcome')) return { ok: false, why: 'this account already has its welcome sats' };
-  if (kind === 'topup' && today.filter((p) => p.account === account && p.kind === 'topup').length >= PLAYER_TOPUPS_PER_DAY) return { ok: false, why: `the faucet gives an account ${PLAYER_TOPUPS_PER_DAY} top-ups a day: try again tomorrow` };
+  // AN UNSURE PAYMENT IS NOT A FREE ONE (state audit 2026-11-12, kanban #1628): a grant whose payer timed out is taken off `players` and parked in
+  // `unsure` until the sweep reads its final word - and lnd may still pay it. Asked again meanwhile (a new invoice), the account was paid at once and
+  // the first payment, landing after all, was booked again: two welcomes. An unsure grant counts as taken until the sweep rebooks or forgets it
+  const unsure = ((book && book.unsure) || []).filter((u) => u.account === account && u.kind === kind);
+  if (kind === 'welcome' && unsure.length) return { ok: false, why: 'your welcome is still being checked: try again in a few minutes' };
+  if (kind === 'topup' && today.filter((p) => p.account === account && p.kind === 'topup').length + unsure.filter((u) => Math.floor(u.atMs / DAY_MS) === day).length >= PLAYER_TOPUPS_PER_DAY) return { ok: false, why: `the faucet gives an account ${PLAYER_TOPUPS_PER_DAY} top-ups a day: try again tomorrow` };
   return { ok: true, grant: granted };
 }
 
