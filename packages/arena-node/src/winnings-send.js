@@ -534,13 +534,25 @@ export class WinningsSend {
     // one unspent pair handed to every asker let a stranger ask for it and at once spend it on a list of made-up commitments, so the honest
     // asker's list was refused ("keeps no second pair") at every seat and the winner's auth (or a re-send's txid) never formed. Now each ask
     // draws its own pair, kept by its commitment, and a share spends only the pair its own list carries. At most PAIRS_PER_SEND are kept per
-    // message, the oldest dropped first (a dropped pair signs nothing; its asker asks again). A spent pair is still never handed out again (#1074).
+    // message, and none pushed out while its asker's pass may still name it (#2237 below). A spent pair is still never handed out again (#1074).
+    // NO PAIR IS PUSHED OUT WHILE ITS ASKER MAY STILL NAME IT (kanban #2237, the settlement's #1610 here): dropping the oldest of PAIRS_PER_SEND
+    // let a stranger's 256 commits between an honest asker's commit and its share push out the asker's pair, every seat refused the honest
+    // list ("does not carry this signer node's own commitment") and the send never signed. A pair is kept for its asker's whole pass - the
+    // commit ask, the grace and the share ask - and past PAIRS_PER_SEND only a pair older than that goes; with none, the new commit is refused
+    // (503, ask again shortly), not a held pair. Both kinds (auth, resend) and the late sender go through here.
+    const now = Number(this.round.now());
+    const keptMs = 2 * this.peerAskMs + this.peerGraceMs;
+    for (const [k, p] of at.held) {
+      if (at.held.size < PAIRS_PER_SEND || now - p.at < keptMs) break;
+      at.held.delete(k);
+    }
+    if (at.held.size >= PAIRS_PER_SEND)
+      return refuse(`this signer node holds ${PAIRS_PER_SEND} nonce pairs of that ${kind} handed out in the last ${keptMs} ms: ask again shortly`, 503);
     const hiding = nonceGenerate340(this.random(32), built.signerNode.share);
     const binding = nonceGenerate340(this.random(32), built.signerNode.share);
-    const pair = { hiding, binding, list: null, share: null,
+    const pair = { hiding, binding, list: null, share: null, at: now,
       commitment: { id: built.signerNode.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) } };
     at.held.set(commitmentKey(pair.commitment), pair);
-    while (at.held.size > PAIRS_PER_SEND) at.held.delete(at.held.keys().next().value);
     return { ok: true, commitment: pair.commitment, message };
   }
 
