@@ -5111,22 +5111,35 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // handout this seat holds for the round and whose A0 is the entry's stake point (handouts are bounded per round, kanban #1605), at most
   // PENDING_PER_POINT entries per stake point (the first ones: a copier of a public handout cannot push the player's own entry out) and
   // PENDING_MAX in all.
-  const PENDING_PER_POINT = 4, PENDING_MAX = 4096;
+  const PENDING_PER_POINT = 4, PENDING_MAX = 4096, PENDING_POINT_FULL = 'that stake point already has entries held aside';
   const pendingLockless = new Map();   // `${rid}|${entry id}` -> { contract, point: `${rid}|${stake point}`, untilMs }
   const pendingLive = (p, nowMs = round.now()) => p && p.untilMs > nowMs;
-  const holdLockless = (contract) => {
+  // ONLY THE HANDOUT'S OWN PLAYER (kanban #2438, #2490, a44 refute 75 s2 of #2174): a handout is public bytes every seat of the round holds before the
+  // entry, so a seat of the round, or anyone it reached, posted 4 entries of fresh player keys naming the honest handout and its stake point: they took
+  // every held-aside slot of that point first, the honest entry met the cap again (refused at every seat, its lock 404) and its stake lock, already made,
+  // seated nobody. A handout is dealt to one player key (the refund key of its lock is that player's, stakeLockMadeFor): an entry of another player
+  // can never be paid by a lock for that A0, so it is refused at the cap as before #2174 and never held aside, and never asks the federation.
+  // Answers null when the entry may be held aside or entered past the cap, else why not.
+  const locklessHandoutWhy = (contract) => {
     const ref = contract.vssSharesRef;
     if (!(ref instanceof Uint8Array) || ref.every((b) => b === 0)) return 'no handout';
     const held = round.handout(ref);
     if (!held || toHex(held.roundId) !== toHex(contract.roundId)) return 'no handout';
-    if (toHex(decodeHandout(new Uint8Array(held.bytes)).commitments[0]) !== toHex(contract.stakePoint)) return 'not the handout\'s stake point';
+    let h;
+    try { h = decodeHandout(new Uint8Array(held.bytes)); } catch { return 'no handout'; }
+    if (toHex(h.commitments[0]) !== toHex(contract.stakePoint)) return 'not the handout\'s stake point';
+    if (toHex(h.playerPubkey) !== toHex(contract.playerPubkey)) return 'not the handout\'s player';
+    return null;
+  };
+  const holdLockless = (contract) => {
+    { const why = locklessHandoutWhy(contract); if (why) return why; }
     const nowMs = round.now(), eidHex = toHex(idOfEntry(contract)), key = `${toHex(contract.roundId)}|${eidHex}`;
     if (pendingLive(pendingLockless.get(key), nowMs)) return null;
     if (pendingLockless.size >= PENDING_MAX) for (const [k, p] of pendingLockless) if (!pendingLive(p, nowMs)) pendingLockless.delete(k);
     if (pendingLockless.size >= PENDING_MAX) return 'too many held aside';
     const point = `${toHex(contract.roundId)}|${toHex(contract.stakePoint)}`;
     let n = 0; for (const p of pendingLockless.values()) if (p.point === point && pendingLive(p, nowMs)) n++;
-    if (n >= PENDING_PER_POINT) return 'that stake point already has entries held aside';
+    if (n >= PENDING_PER_POINT) return PENDING_POINT_FULL;
     pendingLockless.set(key, { contract, point, untilMs: nowMs + LOCKLESS_HOLD_MS });
     return null;
   };
@@ -5145,8 +5158,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return true;
   };
   // THE FEDERATION HOLDS THIS ENTRY'S OWN STAKE LOCK: a lock at its stake_lock_outpoint whose contract is the one the entry names (its stake point, its
-  // net stake, the round's claim key, the player's refund key, the expiration the federation holds), named first here by no other entry. A stake point
-  // is asked at most once per LOCKLESS_PROBE_MS, so a flood of hand-overs costs at most one federation read per held-aside stake point each time.
+  // net stake, the round's claim key, the player's refund key, the expiration the federation holds), named first here by no other entry. An entry
+  // is asked at most once per LOCKLESS_PROBE_MS, so a flood of hand-overs costs at most one federation read per held-aside entry each time.
+  // BY ENTRY, NOT BY STAKE POINT (kanban #2438, #2490, a44 refute 75 s2 of #2174): keyed by round and stake point, a copier's own held entry under the
+  // honest stake point, handed a junk lock just before each honest hand-over, spent the point's one read a second - the honest POST /lock found no
+  // entry 5 of 5 times at both seats. Now each entry has its own read, and only the handout player's entries are asked (locklessHandoutWhy).
   const LOCKLESS_PROBE_MS = 1000;
   const locklessProbed = new Map();
   const stakeLockHeldAtEntry = async (contract) => {
@@ -5156,9 +5172,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const first = typeof round.firstEntryNamingLock === 'function' ? round.firstEntryNamingLock(contract.roundId, 'stake', op) : null;
       if (first && toHex(first) !== toHex(idOfEntry(contract))) return false;
       if (round.stakeLockAt && round.stakeLockAt(op)) return false;
-      const key = `${toHex(contract.roundId)}|${toHex(contract.stakePoint)}`, nowMs = round.now();
+      if (locklessHandoutWhy(contract)) return false;
+      const key = `${toHex(contract.roundId)}|${toHex(idOfEntry(contract))}`, nowMs = round.now();
       if ((locklessProbed.get(key) || 0) > nowMs) return false;
-      if (locklessProbed.size > 4096) locklessProbed.clear();   // stale stake points only cost one more read each
+      if (locklessProbed.size > 4096) for (const [k, t] of locklessProbed) if (t <= nowMs) locklessProbed.delete(k);   // only the spent ones go
+      if (locklessProbed.size > 4096) return false;
       locklessProbed.set(key, nowMs + LOCKLESS_PROBE_MS);
       const row = round.get(contract.roundId);
       if (!row) return false;
@@ -10064,10 +10082,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         catch (e) {
           // PAST THE LOCKLESS CAP, HELD ASIDE UNTIL ITS STAKE LOCK IS HANDED (kanban #2174, a44 refute of #1745): answered with its id as a taken
           // entry is, entered at POST /lock or /fee-lock once the federation holds its lock (enterPendingLockless)
-          if (e.code !== LOCKLESS_CAP || holdLockless(contract) !== null) throw e;
-          steps.named(toHex(idOfEntry(contract))).at('held aside for its lock');
-          res.writeHead(201, { 'content-type': 'application/octet-stream', 'x-arena-entry': 'held-for-lock', ...CORS });
-          return res.end(Buffer.from(idOfEntry(contract)));
+          if (e.code !== LOCKLESS_CAP) throw e;
+          const holdWhy = holdLockless(contract);
+          // A FULL STAKE POINT STILL SEATS THE ENTRY WHOSE STAKE LOCK THE FEDERATION ALREADY HOLDS (kanban #2438, #2490, a44 refute 75 s2 of #2174):
+          // an entry carries no signature of its player, so copies naming the handout player's own key could still take the point's
+          // PENDING_PER_POINT slots first. The page and the bot lock before they post the entry (kanban #1596): when the slots are full the
+          // federation is asked once for this entry, and the one it holds the lock of is entered past the cap here, as POST /lock would enter it
+          if (holdWhy === PENDING_POINT_FULL && await stakeLockHeldAtEntry(contract)) joined = round.enter(contract, { stakeLockHeld: true });
+          else {
+            if (holdWhy !== null) throw e;
+            steps.named(toHex(idOfEntry(contract))).at('held aside for its lock');
+            res.writeHead(201, { 'content-type': 'application/octet-stream', 'x-arena-entry': 'held-for-lock', ...CORS });
+            return res.end(Buffer.from(idOfEntry(contract)));
+          }
         }
         steps.named(toHex(joined)).at('stored');
         // A CLIENT'S COPY GOES ON TO THE SEATS IT DID NOT REACH (kanban #1068, entry-relay.js)
