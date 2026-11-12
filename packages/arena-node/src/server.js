@@ -11416,7 +11416,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const got = sender.paid(r8, eHex, pre);
           return got.ok ? text(res, 201, 'the winning is kept as paid') : text(res, got.status || 409, got.why);
         }
-        const built = late8 ? await settlements.lateMessage(r8, late8) : await settlements.message(r8);
+        // AN ACCEPTED ROUND'S SENDS ARE SIGNED AGAINST THE TXID THAT LANDED (kanban #1988), not a rebuild a restart may make otherwise
+        const built = late8 ? await settlements.lateMessage(r8, late8) : await settlements.sendsBuilt(r8);
         if (!built.ok) return text(res, built.status || 409, built.why);
         const kind = url.searchParams.get('kind') === 'resend' ? 'resend' : 'auth';
         const attempt = url.searchParams.has('attempt') ? Number(url.searchParams.get('attempt')) : null;
@@ -11455,7 +11456,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!by.ok) return text(res, by.status || 403, `this seat takes a re-send only from a seat of the round: ${by.why}`);
         const late8 = lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null;
         if (late8 && !round.lateLockSettlement(new Uint8Array(rid), late8)) return text(res, 409, 'no late settlement for that entry');
-        const built = late8 ? await settlements.lateMessage(new Uint8Array(rid), late8) : await settlements.message(new Uint8Array(rid));
+        const built = late8 ? await settlements.lateMessage(new Uint8Array(rid), late8) : await settlements.sendsBuilt(new Uint8Array(rid));
         if (!built.ok) return text(res, built.status || 409, built.why);
         const sender = late8 ? settlements.lateWinningsFor(new Uint8Array(rid), late8) : winnings;
         const got = await sender.checkResend(new Uint8Array(rid), built, proposed, { from: by.who });

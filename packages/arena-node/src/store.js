@@ -1035,6 +1035,14 @@ export function openStore(path = ':memory:') {
       made_ms      INTEGER NOT NULL,
       PRIMARY KEY (round_id, txid)
     );
+    -- WHERE EACH SEND'S FIRST CONTRACT SITS IN A SETTLEMENT TXID (kanban #1988): per payout output, in order, its kind, payment hash and donation send
+    -- id - kept with the txid, so a round ACCEPTED on it drives its sends against what landed, not against a rebuild a restart may make otherwise
+    CREATE TABLE IF NOT EXISTS lock_settlement_payout_keys (
+      round_id     BLOB NOT NULL,
+      txid         TEXT NOT NULL,
+      payouts      TEXT NOT NULL,
+      PRIMARY KEY (round_id, txid)
+    );
     -- A LATE LOSER'S SECOND SETTLEMENT (§13A, RULED 2026-09-24, slice C3b-1): one per (round, entry), never a second
     -- row under the round's key - an entry the round's settlement left out while it was in its re-run window, which
     -- then ended FAILED or FORFEIT. The same intent and state as the round's own settlement row.
