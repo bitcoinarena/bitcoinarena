@@ -28,6 +28,7 @@
 // slots wait on a ruling (PRIORITIES).
 import { decodeEntryContract, decodeRoundContract, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { lockMatchesEntry, lockFieldsFromJson, lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
+import { STAKE_EXPIRY_BLOCKS } from '../../arena-protocol/src/constants.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { donationOutputsExpected } from '../../arena-protocol/src/donation.js';
 import { reservesEntryExpected, paysReserves, giftsInFeeLock, entryGiftsInFee, giftsFeeBps, ROUND_SPLIT_BPS } from '../../arena-protocol/src/reserves.js';
@@ -351,7 +352,19 @@ const expirationOf = async (port, outpoint, st, fields) => {
 // `atUntilMs` (kanban #1822, #1551 refute 0 s3): the last moment the federation's answer may come back and `atMs` still count (server.js
 // H2H_DOOR_TIME_KEPT_MS, a head-to-head round's) - an answer after it is after a move may be public, and the lock keeps the answer time; so does
 // an answer that comes back once this seat holds another entry's reveal of the round (kanban #1846). `doorTimeDropped` in the answer then.
-export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined, timing = {}, namersAtPeers = null, atMs = undefined, atUntilMs = undefined }) {
+// A LOCK A CERTIFIED BATCH ALREADY NAMES IS NOT VERIFIED FOR THE FIRST TIME HERE (kanban #1992, state audit 2026-11-12): a seat that caught up
+// more than 12 blocks after an order was locked replayed it (order-batch.js replayOrder), and the first-verification freshness rule refused its
+// locks for good - it held the certified batch without them and built another settlement than the seats that hold it. The threshold already
+// verified that lock in time; `certified` (set only by replayOrder, for an order of a batch whose certificate this seat checked) checks every
+// field with the federation as before but asks freshness at the lock's own height, and refuses a lock the federation no longer holds unexpired.
+function heightToCheckAt(st, fields, contract, certified) {
+  if (!certified) return { ok: true, height: st.blockCount };
+  if (!(Number(st.stored.blocksLeft) >= 1)) return { ok: false, why: 'that lock has expired at the federation: a replayed order needs a lock still held' };
+  const lockHeight = fields.expiration - (contract.stakeExpiryBlocks ?? STAKE_EXPIRY_BLOCKS);
+  return { ok: true, height: Math.max(0, Math.min(st.blockCount, lockHeight)) };
+}
+
+export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined, timing = {}, namersAtPeers = null, atMs = undefined, atUntilMs = undefined, certified = false }) {
   const stored = round.entry(entryIdBytes);
   if (!stored) return { ok: false, why: 'this node holds no such entry' };
   const entry = decodeEntryContract(stored);
@@ -397,7 +410,9 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
     st = ex.st; }
   if (!(claimPk instanceof Uint8Array)) return { ok: false, why: 'this signer node holds no claim key for that round' };
 
-  const matches = lockMatchesEntry({ lock: fields, entry, kind: 'stake', claimPk, height: st.blockCount, expiryBlocks: contract.stakeExpiryBlocks });
+  const at = heightToCheckAt(st, fields, contract, certified);
+  if (!at.ok) return at;
+  const matches = lockMatchesEntry({ lock: fields, entry, kind: 'stake', claimPk, height: at.height, expiryBlocks: contract.stakeExpiryBlocks });
   if (!matches.ok) return matches;
 
   // AND ITS DONATION, IN THE SAME TRANSACTION (2026-10-03): a stake whose donation outputs are wrong or missing is
@@ -442,7 +457,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
  * by field against the entry as the stake lock is. It is claimed for the round's
  * sitting signer nodes in the one settlement, whatever the result.
  */
-export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk, namersAtPeers = null, atMs = undefined, atUntilMs = undefined }) {   // `atMs`, `atUntilMs`: as verifyStakeLock's (kanban #1805, #1822)
+export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk, namersAtPeers = null, atMs = undefined, atUntilMs = undefined, certified = false }) {   // `atMs`, `atUntilMs`: as verifyStakeLock's (kanban #1805, #1822)
   const stored = round.entry(entryIdBytes);
   if (!stored) return { ok: false, why: 'this node holds no such entry' };
   const entry = decodeEntryContract(stored);
@@ -478,7 +493,9 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
     if (!ex.ok) return { ok: false, why: 'that fee contract\'s expiration is not the one the federation holds', readStraddle: true };
     st = ex.st; }
   if (!(claimPk instanceof Uint8Array)) return { ok: false, why: 'this signer node holds no claim key for that round' };
-  const matches = lockMatchesEntry({ lock: fields, entry, kind: 'fee', claimPk, height: st.blockCount, expiryBlocks: contract.stakeExpiryBlocks });
+  const at = heightToCheckAt(st, fields, contract, certified);
+  if (!at.ok) return at;
+  const matches = lockMatchesEntry({ lock: fields, entry, kind: 'fee', claimPk, height: at.height, expiryBlocks: contract.stakeExpiryBlocks });
   if (!matches.ok) return matches;
   if (feeTaken()) return { ok: false, why: 'that fee lock already pays the fee of another entry in this round: one lock is one entry' };
   { const back = returnedHere(round, outpoint); if (back) return { ok: false, why: back }; }
