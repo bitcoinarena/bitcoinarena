@@ -85,6 +85,15 @@ export function checkPackage(pkg, { verify, want = null, parentOf = () => null }
   const named = new Set(manifest.cores.map((c) => toHex(c.hash)));
   if (!add('it carries every core its manifest names', (pkg.cores || []).length === named.size, `${(pkg.cores || []).length} of ${named.size}`))
     return out(`its manifest names ${named.size} core(s) and the package carries ${(pkg.cores || []).length}`, who);
+  // EACH NAMED CORE ONCE (kanban #2240, refute of #1814): the count alone let a relaying seat list one signed core twice and
+  // drop another - the package then passed and was hosted without that core (every round on it refused, kept on disk that
+  // way). The package's cores must be exactly the manifest's set: no core twice, none missing.
+  const carried = new Set();
+  for (const c of pkg.cores || []) {
+    if (!add(`core ${String(c && c.hash).slice(0, 12)}… is carried once`, !carried.has(String(c && c.hash))))
+      return out(`core ${String(c && c.hash).slice(0, 16)} is in the package twice, so a core its manifest names is missing`, who);
+    carried.add(String(c && c.hash));
+  }
   for (const c of pkg.cores || []) {
     const src = fromBase64(c.source);
     const h = shaHex(src);
