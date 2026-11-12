@@ -49,6 +49,10 @@ export const ARRAY_BUDGET = 64 * 1024 * 1024;
 export const HEAP_LIMITS = Object.freeze({ maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: 16 });
 /** THE BACKSTOP: how far this process may grow while one call into a core runs - read every 2 ms by the core supervisor. */
 export const RSS_BACKSTOP = 512 * 1024 * 1024;
+/** THE LONGEST ANSWER a core may give one call, in characters (kanban #1691): the node copies it into its own thread and
+ *  parses it there, where no limit of the core's thread applies. A replay's answer is a few kB (three truck words a picture);
+ *  4 MB parses in well under ASK_MS. core-host.js refuses a longer one before it is posted, and the node again before it is read. */
+export const ANSWER_MAX = 4 * 1024 * 1024;
 /** The supervisor ends a core this far below the backstop: it reads the process every 2 ms, and a core allocating at full
  *  speed keeps going for the moments its isolate takes to stop (measured on the card). */
 const BACKSTOP_MARGIN_MB = 96;
@@ -143,7 +147,7 @@ function deathOf(sup, id) {
  */
 export function loadCore({ files, entry }, options = {}) {
   const { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry,
-    arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, oneReplay = false } = options;
+    arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, answerMax = ANSWER_MAX, oneReplay = false } = options;
   const sup = supervisorOf();
   const id = sup.next++;
   const ctrl = new Int32Array(new SharedArrayBuffer(8 * 4));
@@ -153,7 +157,7 @@ export function loadCore({ files, entry }, options = {}) {
   // stops, so the line it must never cross is the backstop itself, not the trigger
   const triggerMb = Math.max(1, Math.round(rssBackstop / 1048576) - BACKSTOP_MARGIN_MB);
   sup.worker.postMessage({ type: 'spawn', id, files: [...files], entry, name, port: port2, ctrl: ctrl.buffer, arrayBudget, liveCap,
-    heap: { ...heap }, triggerMb }, [port2]);
+    answerMax, heap: { ...heap }, triggerMb }, [port2]);
   let ended = null;
   let lastEnd = null;
   const rssMb = () => Math.round(process.memoryUsage.rss() / 1048576);
@@ -213,7 +217,11 @@ export function loadCore({ files, entry }, options = {}) {
     // A CORE AT ITS ARRAY BUDGET IS ENDED, not asked again: it could catch the refusal and keep going, and what it holds goes
     // with its thread
     if (!a.ok && /asked for more than \d+ MB of arrays/.test(a.why)) { end(`${a.why}: its thread was ended, and it is not run again`); throw new Error(ended); }
+    // kanban #1691: past its answer size the core is ended, as core-host.js does - and an answer that is not a string of at most
+    // ANSWER_MAX characters is never parsed in this thread
+    if (!a.ok && /its answer was longer than/.test(a.why)) { end(`${a.why}: its thread was ended, and it is not run again`); throw new Error(ended); }
     if (!a.ok) throw new Error(a.why);
+    if (typeof a.json !== 'string' || a.json.length > answerMax) { end(`the core answered ${op} with more than ${answerMax} characters: its thread was ended, and it is not run again`); throw new Error(ended); }
     return revive(a.json);
   };
   // A REPLAY RUNS ON A FRESH CORE THREAD OF ITS OWN (kanban #1624): a core that recursed until V8's "Maximum call stack size
