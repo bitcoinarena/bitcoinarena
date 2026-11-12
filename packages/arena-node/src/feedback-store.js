@@ -471,7 +471,17 @@ export function imageKind(bytes) {
 // a reward's comment: at most this many characters (LUD-12 wallets take 100-255; the address's own commentAllowed cuts it further)
 export const COMMENT_MOST = 200;
 
-export async function lnAddressWorks(address, { fetchFn = fetch, timeoutMs = 8000 } = {}) {
+// A PUBLIC NAME ONLY (kanban #1511): an IP literal, localhost or a local-only name is never fetched
+function publicHost(url) {
+  let host = ''; try { host = new URL(url).hostname.toLowerCase().replace(/\.$/, ''); } catch { host = ''; }
+  return !(!host || /^\[|^\d+(\.\d+){3}$|^\d+$|^0x/i.test(host) || !host.includes('.') || /(^|\.)(localhost|local|internal|lan|home|arpa|localdomain|intranet)$/.test(host));
+}
+/**
+ * WHERE AN ADDRESS IS ASKED, BEFORE ANYTHING IS FETCHED (kanban #1873, #1905): { ok, url } for a Lightning address or an LNURL on a public HTTPS
+ * name, else { ok: false, why }. The faucet takes a slot of its address-check minute only for an address that passes this, so text that is no
+ * address costs nothing and can never fill the minute.
+ */
+export function lnAddressUrl(address) {
   const a = String(address || '').trim();
   let url = null;
   const m = /^([a-z0-9._+-]+)@([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/i.exec(a);
@@ -479,13 +489,38 @@ export async function lnAddressWorks(address, { fetchFn = fetch, timeoutMs = 800
   else if (/^lnurl1[02-9ac-hj-np-z]+$/i.test(a)) { try { url = urlOfLnurl(a.toLowerCase()); } catch { url = null; } }
   if (!url || !/^https:\/\//.test(url)) return { ok: false, why: 'that is not a Lightning address (name@wallet.com) or an LNURL' };
   // NEVER AN INTERNAL HOST (kanban #1511): an LNURL can name any URL, so an IP literal, localhost or a local-only name is refused before any fetch
-  let host = ''; try { host = new URL(url).hostname.toLowerCase().replace(/\.$/, ''); } catch { host = ''; }
-  if (!host || /^\[|^\d+(\.\d+){3}$|^\d+$|^0x/i.test(host) || !host.includes('.') || /(^|\.)(localhost|local|internal|lan|home|arpa|localdomain|intranet)$/.test(host)) return { ok: false, why: 'its wallet must be on a public name' };
+  if (!publicHost(url)) return { ok: false, why: 'its wallet must be on a public name' };
+  return { ok: true, url };
+}
+// ONE CHECK IS ONE REQUEST (kanban #1873, #1905): fetch followed up to 20 redirects of the caller's host, to any host - an internal one too, past the
+// #1511 guard that saw only the first URL - so one counted check was up to 21 fetches. A wallet's answer is taken only from the URL asked: never a
+// redirect (any 3xx is "no payments at that address"), and at most LN_ANSWER_MOST bytes of body are read.
+export const LN_ANSWER_MOST = 65536;
+const REDIRECT = Symbol('redirect');
+async function walletJson(fetchFn, url, timeoutMs) {
+  const r = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' }, redirect: 'manual' });
+  if (r.type === 'opaqueredirect' || (r.status >= 300 && r.status < 400)) { try { if (r.body && r.body.cancel) await r.body.cancel(); } catch { /* gone */ } return { r, j: REDIRECT }; }
+  if (!r.ok) { try { if (r.body && r.body.cancel) await r.body.cancel(); } catch { /* gone */ } return { r, j: undefined }; }
+  if (!r.body || typeof r.body.getReader !== 'function') return { r, j: await r.json() };   // a test's stand-in fetch
+  if (Number(r.headers && r.headers.get && r.headers.get('content-length')) > LN_ANSWER_MOST) { try { await r.body.cancel(); } catch { /* gone */ } throw new Error('answered too much'); }
+  const reader = r.body.getReader(), parts = []; let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read(); if (done) break;
+    n += value.byteLength; if (n > LN_ANSWER_MOST) { try { await reader.cancel(); } catch { /* gone */ } throw new Error('answered too much'); }
+    parts.push(value);
+  }
+  return { r, j: JSON.parse(Buffer.concat(parts.map((x) => Buffer.from(x))).toString('utf8')) };
+}
+
+export async function lnAddressWorks(address, { fetchFn = fetch, timeoutMs = 8000 } = {}) {
+  const u = lnAddressUrl(address);
+  if (!u.ok) return u;
   let j;
   try {
-    const r = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } });
-    if (!r.ok) return { ok: false, why: `its wallet answered ${r.status}` };
-    j = await r.json();
+    const got = await walletJson(fetchFn, u.url, timeoutMs);
+    if (got.j === REDIRECT) return { ok: false, why: 'its wallet does not take payments at that address' };
+    if (!got.r.ok) return { ok: false, why: `its wallet answered ${got.r.status}` };
+    j = got.j;
   } catch (e) { return { ok: false, why: /abort|timeout/i.test(String(e && e.name) + String(e && e.message)) ? 'its wallet did not answer in time' : 'its wallet could not be reached' }; }
   if (!j || j.status === 'ERROR') return { ok: false, why: `its wallet said: ${String((j && j.reason) || 'error').slice(0, 120)}` };
   if (j.tag !== 'payRequest' || typeof j.callback !== 'string' || !/^https:\/\//.test(j.callback)) return { ok: false, why: 'its wallet does not take payments at that address' };
@@ -498,12 +533,11 @@ export async function lnAddressWorks(address, { fetchFn = fetch, timeoutMs = 800
  * The caller's decode() then checks the invoice is for exactly the amount (claim()).
  */
 export async function lnAddressInvoice(address, sats, comment = '', { fetchFn = fetch, timeoutMs = 10000 } = {}) {
-  const a = String(address || '').trim();
-  const m = /^([a-z0-9._+-]+)@([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/i.exec(a);
-  let url = m ? `https://${m[2].toLowerCase()}/.well-known/lnurlp/${encodeURIComponent(m[1].toLowerCase())}` : null;
-  if (!url && /^lnurl1[02-9ac-hj-np-z]+$/i.test(a)) { try { url = urlOfLnurl(a.toLowerCase()); } catch { url = null; } }
-  if (!url || !/^https:\/\//.test(url)) return { ok: false, why: 'not a Lightning address or an LNURL' };
-  const get = async (u) => { const r = await fetchFn(u, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } }); if (!r.ok) throw new Error(`answered ${r.status}`); return r.json(); };
+  // the same address rules as the check (kanban #1873, #1905): a public name, one request per URL, no redirect followed, the body capped
+  const u = lnAddressUrl(address);
+  if (!u.ok) return { ok: false, why: u.why === 'its wallet must be on a public name' ? u.why : 'not a Lightning address or an LNURL' };
+  const url = u.url;
+  const get = async (x) => { if (!publicHost(x)) throw new Error('is not on a public name'); const { r, j } = await walletJson(fetchFn, x, timeoutMs); if (j === REDIRECT) throw new Error(`answered ${r.status} (a redirect, not followed)`); if (!r.ok) throw new Error(`answered ${r.status}`); return j; };
   let p; try { p = await get(url); } catch (e) { return { ok: false, why: `its wallet: ${e.message}` }; }
   if (!p || p.status === 'ERROR' || p.tag !== 'payRequest' || !/^https:\/\//.test(String(p.callback || ''))) return { ok: false, why: `its wallet takes no payment there${p && p.reason ? `: ${String(p.reason).slice(0, 120)}` : ''}` };
   const msat = Number(sats) * 1000;
