@@ -348,6 +348,16 @@ const bountyStatus = async (hash) => {
   // "not initiated" (NONE -> failed) when this payer never paid it - a list read is only the fallback when trackpayment gave no answer
   return !p ? 'unknown' : p.status === 'SUCCEEDED' ? 'paid' : p.status === 'FAILED' ? 'failed' : 'unknown';
 };
+// THE BOUNTY WALLET'S IDENTITY (kanban #2177, #1489 a44-refute-76): written on a reward with its paying compare-and-set and compared by settle, so a
+// wallet that replaced the payer on the same network is never asked about the old one's payment ("not initiated" read as failed paid the holder twice).
+// The network, the node key (lncli getinfo, read until it answers once), the lnddir and the rpcserver: a different value of any is another wallet.
+let BOUNTY_PAYER_KEY = null;
+const bountyPayerId = async () => {
+  if (!BOUNTY_PAYER) return null;
+  if (!BOUNTY_PAYER_KEY) { const r = await lncli(BOUNTY_PAYER, ['getinfo']); let k = null; try { k = r.ok ? JSON.parse(r.out).identity_pubkey : null; } catch { k = null; }
+    if (typeof k === 'string' && /^[0-9a-f]{66}$/.test(k)) BOUNTY_PAYER_KEY = k; }
+  return `${BOUNTY_NETWORK} ${BOUNTY_PAYER_KEY || 'no-key'} ${BOUNTY_PAYER.dir} ${BOUNTY_PAYER.rpcserver}`;
+};
 // THE ADMIN (kanban #1342 section 4): the owner's code, held to its hash as the explorer holds it (#1092); the rules, our keys, who played
 const ADMIN_SHA = String(env.FAUCET_ADMIN_SHA256 || '').trim().toLowerCase();
 const isAdmin = (req) => { const code = String(req.headers['x-arena-admin'] || '').trim(); if (!/^[0-9a-f]{64}$/.test(ADMIN_SHA) || !code) return false;
@@ -403,7 +413,7 @@ const playedFor = (r) => !!(r && S2 && S2.playedMarkOf && S2.playedMarkOf(r.id))
 PLAYED.fresh().catch(() => 0);   // kanban #1484: the list is read at start, so the admin page never waits for it
 // ONE SETTLE PASS AT A TIME (kanban #1571): a pass waits up to 20 s a paying row on lncli, so passes overlapped and decided on stale rows
 let settling = false;
-if (FEEDBACK && BOUNTY_PAYER) setInterval(() => { if (settling) return; settling = true; FEEDBACK.settle({ status: bountyStatus, network: BOUNTY_NETWORK }).catch(() => {}).finally(() => { settling = false; }); }, 60000).unref();
+if (FEEDBACK && BOUNTY_PAYER) setInterval(() => { if (settling) return; settling = true; bountyPayerId().then((payer) => FEEDBACK.settle({ status: bountyStatus, network: BOUNTY_NETWORK, payer })).catch(() => {}).finally(() => { settling = false; }); }, 60000).unref();
 
 /** A player's grant: read the invoice, decide, keep it in the book BEFORE paying (a crash pays nobody twice), and take it out again if no payer could pay. */
 /** Each payer's own node key, read once (lncli getinfo); a payer whose node is the invoice's destination goes last. */
@@ -890,7 +900,7 @@ createServer((req, res) => {
           // withdraw link stays the fallback (a wallet that gives no invoice, a failed route) and is answered too
           if (b.payTo === 'link' || !FEEDBACK.addressOf(b.id) || w.reward.state !== 'open') return send(200, { ...w, lnurl, address: FEEDBACK.addressOf(b.id) });
           if (!BOUNTY_PAYER || !bountyOn()) return send(200, { ...w, lnurl, paid: { ok: false, why: 'rewards are off' } });
-          return oneBounty(() => FEEDBACK.payToAddress(w.reward.k1, { invoiceFor: (a, sats, c) => lnAddressInvoice(a, sats, c), decode: bountyDecode, pay: bountyPay, network: BOUNTY_NETWORK }))
+          return oneBounty(async () => FEEDBACK.payToAddress(w.reward.k1, { invoiceFor: (a, sats, c) => lnAddressInvoice(a, sats, c), decode: bountyDecode, pay: bountyPay, network: BOUNTY_NETWORK, payer: await bountyPayerId() }))
             .then((paid) => send(200, { ...w, reward: paid.reward || w.reward, lnurl: paid.ok ? null : lnurl, paid }), (e) => send(200, { ...w, lnurl, paid: { ok: false, why: e.message } })); }
         // A SEASON 2 REWARD PAYS WHAT IS PAYABLE NOW (kanban #2756, #1489 r7-faucet-3; the owner 2026-11-14, #2641): the reporter's links read again
         // and S2.payable's amount - a community bonus lost since the approval is not paid - caps the link and the address payout
@@ -940,7 +950,7 @@ createServer((req, res) => {
       if (!m[2]) return send(200, FEEDBACK.withdrawRequest(m[1], { base: PUBLIC_BASE, network: BOUNTY_NETWORK }));
       const q = new URL(req.url, 'http://x').searchParams;
       if (q.get('k1') !== m[1]) return send(200, { status: 'ERROR', reason: 'k1 does not match the link' });
-      return oneBounty(() => FEEDBACK.claim(m[1], q.get('pr') || '', { decode: bountyDecode, pay: bountyPay, network: BOUNTY_NETWORK })).then((r) => send(200, r), () => send(200, { status: 'ERROR', reason: 'try again in a minute' }));
+      return oneBounty(async () => FEEDBACK.claim(m[1], q.get('pr') || '', { decode: bountyDecode, pay: bountyPay, network: BOUNTY_NETWORK, payer: await bountyPayerId() })).then((r) => send(200, r), () => send(200, { status: 'ERROR', reason: 'try again in a minute' }));
     } }
   // A SCREENSHOT FOR A REPORT (the owner 2026-11-07): the raw image, before the report is signed; answers its SHA-256, which the report then names
   if (path === '/feedback/screenshot') {
