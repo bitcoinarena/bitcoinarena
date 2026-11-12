@@ -2085,8 +2085,15 @@ export class Round {
       try { const row = this.get(roundIdBytes); close = row ? BigInt(decodeRoundContract(new Uint8Array(row.contract)).entryCloseMs) : null; } catch { close = null; }
     }
     const inTime = (ms) => close === null || (ms !== null && ms !== undefined && BigInt(Math.floor(Number(ms))) < close);
+    // A STAKE LOCK STILL WAITING FOR ITS FEE LOCK SEATS NO ONE ONCE THE FEE DOOR IS SHUT (kanban #1861, #1551 refute c1551b-0, #1489): from the
+    // close no fee lock new to a head-to-head seat is taken (#1551), and a stake counts only with its fee lock (pick a), so such an entry can never
+    // be counted - it has no place in the settlement. Seated, it was played at no risk: when it lost, the honest winner was signed DELIVERED but no
+    // loser's lock was claimed and nothing was paid (its stake came back by refund); when it won, it took the score. Now only a counted stake (seen
+    // before the close) seats it, and the entry is VOID as a lockless one (#1437). A fee lock whose door time stands before the close but whose
+    // federation answer comes back after it writes the stake seen at that door time (#1805, #1822), which seats the entry again.
+    const feeDoorShut = close !== null && BigInt(Math.floor(Number(this.now()))) >= close;
     const locked = all.filter(({ entryId }) => { const seen = this.stakeSeen(entryId), lock = this.stakeLock(entryId);
-      return (!!seen && inTime(seen.seenMs)) || (!!lock && inTime(lock.verifiedMs)); });
+      return (!!seen && inTime(seen.seenMs)) || (!feeDoorShut && !!lock && inTime(lock.verifiedMs)); });
     // `played` (kanban #1544) keeps of the seats only the entries whose stake is SEEN - the seats themselves are the same as the door's (#1588)
     const playedOnly = (list) => played ? list.filter(({ entryId }) => !!this.stakeSeen(entryId)) : list;
     const players = this.#headToHeadPlayers(roundIdBytes);
