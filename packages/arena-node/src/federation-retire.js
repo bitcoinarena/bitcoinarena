@@ -13,6 +13,7 @@
 //             and starts a guardian in setup, so it can be drawn into the next founding (node-start.js guardianControl.retire).
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { readDurableJson, writeDurableJson } from './durable-json.js';
 
 /** Does a guardian's `admin audit` say the federation holds nothing? Every module at net assets 0, and the total too. */
 export function holdsNothing(audit) {
@@ -46,8 +47,9 @@ export async function auditGuardian({ run, dataDir }) {
 /** The owners' consents, kept in one JSON file: federation id hex -> { atMs }. */
 export function createRetireBook(file) {
   let book = {};
-  try { if (file) book = JSON.parse(readFileSync(file, 'utf8')) || {}; } catch { book = {}; }
-  const save = () => { if (file) { try { writeFileSync(file, JSON.stringify(book)); } catch { /* kept in memory */ } } };
+  // kanban #1630: written atomically with a .bak (durable-json.js), a torn file read from its .bak - a crash never drops a consent
+  try { if (file) book = readDurableJson(file, {}) || {}; } catch { book = {}; }
+  const save = () => { if (file) { try { writeDurableJson(file, book); } catch { /* kept in memory */ } } };
   return {
     has: (fid) => Object.prototype.hasOwnProperty.call(book, String(fid).toLowerCase()),
     add: (fid, info = {}) => { book[String(fid).toLowerCase()] = { atMs: Date.now(), ...info }; save(); },

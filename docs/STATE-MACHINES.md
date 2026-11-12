@@ -26,6 +26,8 @@ release commit and brings this file up to date with it - new machines added, cha
 11. [State the 2026-11-06 fixes introduced or changed](#11-state-the-2026-11-06-fixes-introduced-or-changed)
 12. [The page, its storage and its frames](#12-the-page-its-storage-and-its-frames)
 13. [State the 2026-11-10 audits (5, 6) introduced or changed](#13-state-the-2026-11-10-audits-5-6-introduced-or-changed)
+14. [State the 2026-11-10 evening range introduced or changed](#14-state-the-2026-11-10-evening-range-introduced-or-changed-audit-7-base-eb7fd30fc-head-c41b4ac4d)
+15. [State audit 2026-11-12](#15-state-audit-2026-11-12)
 
 ## 1. Rounds and settlement
 
@@ -1542,3 +1544,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-O1 (add) Owner binding across a crash (main.js `ownerFiles`, owner.js `createOwner`, durable-json.js; kanban #1630)
+- `<db>.owner.json` (and `<db>.operator-tokens.json`, `<db>.retire.json`) is written atomically: `<file>.bak` first, then the file, each a temp file + fsync + rename. A reader sees the value before or after a write, never a torn one.
+- An absent file (ENOENT) is "no owner" as before. A file that exists but does not parse is read from `<file>.bak`; with no good `.bak` the node refuses to start (`DurableJsonUnreadable`). A claimed node never comes back unclaimed, never writes a new claim code over an owner, and keeps its owner's `leaving` and `settings` across any crash.
