@@ -434,6 +434,10 @@ if (url) {
       // the old block's hash it was answered for three days once the chain went back to it. The census height is read again, and the
       // view's own block there must be the key's block (the one the cache holds under that hash; a view the index served names its
       // top hash, censusBlocks); otherwise nothing is kept: read again
+      // BY THE HASH THE VIEW READ IT UNDER, NOT BY THE CACHE (kanban #2191, #1489 a44 refute 95): the check passed whenever the cache did
+      // not hold the key's block (a restart, or evicted) - a chain going A -> B -> A during the walk re-read A's hash at the end, the view
+      // was all branch B, and B's census was kept under A's hash for three days (two seats, one ballot, two censuses: invariant #786).
+      // blocksOver names the hash each block came under; the census height's must be the key's, whatever the cache holds
       // A FAILED READ IS NOT A REORG (kanban #3084, feedback #364): the census height's hash is asked up to twice; a read that still fails says so
       let tipHash = null, readWhy = null;
       if (census.ok) for (let tries = 0; tries < 2 && tipHash === null; tries++) { try { tipHash = String(await call('getblockhash', [height])); } catch (e) { readWhy = String((e && e.message) || e).slice(0, 160); } }
@@ -441,9 +445,11 @@ if (url) {
       if (census.ok) {
         let same = false;
         try {
-          const atHeight = viewRead && viewRead.blocks ? viewRead.blocks[height - viewRead.firstHeight] : undefined;
-          const keptBlock = blocksKept.get(hash);
-          const viewsBlock = viewRead && typeof viewRead.topHash === 'string' ? viewRead.topHash === hash : (keptBlock === undefined || keptBlock === atHeight);
+          const at = viewRead && viewRead.blocks ? height - viewRead.firstHeight : -1;
+          const atHeight = at >= 0 ? viewRead.blocks[at] : undefined;
+          const atHash = at >= 0 && Array.isArray(viewRead.hashes) ? viewRead.hashes[at] : undefined;
+          // a view the index served names its top hash (2.0); a view read block by block names each block's hash (kanban #2191)
+          const viewsBlock = viewRead && typeof viewRead.topHash === 'string' ? viewRead.topHash === hash : atHash === hash;
           same = tipHash === hash && atHeight !== undefined && viewsBlock;
         } catch { same = false; }
         if (!same) return { ok: false, why: 'the chain reorganised during this census read: read again' };
