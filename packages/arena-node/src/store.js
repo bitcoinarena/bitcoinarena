@@ -1402,6 +1402,15 @@ export function openStore(path = ':memory:') {
       seen_ms  INTEGER NOT NULL
     );
 
+    -- ONE RELAYED SLASH PROOF PER ACCUSED SIGNED RESULT (kanban #2248, a45 refute of #1816): the key is
+    -- round id || accused node || player || signed result id (128 bytes), the proof is the one PUT /slash kept for it.
+    -- A proof's other fields (its bond outpoint, its transcript hash) are free to whoever re-wraps a public signed
+    -- result, so without this one signed result minted 2^32+ distinct proofs into the relay store.
+    CREATE TABLE IF NOT EXISTS relayed_slash (
+      accused  BLOB PRIMARY KEY,
+      proof_id BLOB NOT NULL
+    );
+
     -- AN OBJECTION AGAINST A RUN, 13A. Only what the pool needs to know that
     -- one exists: the run it is against and when it arrived. The objection
     -- PROTOCOL - who may file, what it costs, how it is settled - is not here
