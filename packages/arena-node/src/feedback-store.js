@@ -7,9 +7,7 @@
 // list is never read by its pubkey alone.
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes } from 'node:crypto';
-import { lookup as dnsLookup } from 'node:dns';
-import { BlockList, isIP } from 'node:net';
-import { request as httpsRequest } from 'node:https';
+import { walletUrlRefusal, publicFetch, checkedFetch, internalAddress } from './public-fetch.js';
 import { lnurlFor, urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { eventId, eventRefusal } from './nostr-relay.js';
 import { BIP39_ENGLISH } from '../../arena-client/src/bip39-wordlist.js';
@@ -512,7 +510,7 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
     await Promise.all(games.map(async (g) => {
       for (const seat of seats) {
         try {
-          const r = await fetcher(`${String(seat).replace(/\/$/, '')}/season?scope=network&game=${encodeURIComponent(g)}&days=${days}`, { signal: AbortSignal.timeout(20000) });
+          const r = await fetcher(`${String(seat).replace(/\/$/, '')}/season?scope=network&game=${encodeURIComponent(g)}&days=${days}`, { signal: AbortSignal.timeout(20000), redirect: 'error' });   // kanban #1884: a configured seat is asked as given, never redirected
           if (!r.ok) continue;
           const b = await r.json();
           for (const row of b.rows || []) if (Number(row.rounds) > 0 && /^[0-9a-f]{64}$/i.test(String(row.player || ''))) {
@@ -558,89 +556,37 @@ export function imageKind(bytes) {
 // a reward's comment: at most this many characters (LUD-12 wallets take 100-255; the address's own commentAllowed cuts it further)
 export const COMMENT_MOST = 200;
 
-// NEVER AN INTERNAL HOST (kanban #1511, #1677): an LNURL, a Lightning address's domain and a wallet's callback can name any URL, so an IP literal,
-// localhost or a local-only name is refused before any fetch - one test for the address and the callback, at send (lnAddressWorks) and at payout
-// (lnAddressInvoice), so the faucet's process never asks a host the reporter picked inside our network.
-export function publicHttpsUrl(u) {
-  if (!/^https:\/\//.test(String(u || ''))) return false;
-  let host = ''; try { host = new URL(String(u)).hostname.toLowerCase().replace(/\.$/, ''); } catch { host = ''; }
-  return !(!host || /^\[|^\d+(\.\d+){3}$|^\d+$|^0x/i.test(host) || !host.includes('.') || /(^|\.)(localhost|local|internal|lan|home|arpa|localdomain|intranet)$/.test(host));
-}
+// ---- A WALLET IS ASKED ON THE PUBLIC INTERNET ONLY (kanban #1511, #1677, #1689, #1746, #1809, #1962) ----
+// The guard lives in public-fetch.js (kanban #1919: every seat's payout asks use it too) and is re-exported here: a public name
+// (walletUrlRefusal - no IP literal, no local-only or tailnet name, the default HTTPS port only), a public resolved address (guardedLookup in
+// publicFetch: DNS rebinding between the check and the connect cannot swap it), and a redirect followed by hand only - at most REDIRECTS_MOST
+// hops, each Location checked exactly as the first URL (#1962: name@own-domain answering 301 to its wallet provider works; #1746: a 302 to an
+// internal URL is never fetched). An injected fetchFn is asked with redirect: 'manual' and its hops are checked the same way.
+export { internalAddress, walletUrlRefusal, guardedLookup, publicFetch } from './public-fetch.js';
+// the names #1511 / #1809 gave these checks, kept for their callers: a URL on a public name, an address that is global, one pinned GET
+export const publicHttpsUrl = (u) => !walletUrlRefusal(u);
+export const addressIsGlobal = (address) => !internalAddress(address);
+export const walletFetch = (url, { signal, headers } = {}) => publicFetch(url, { signal, headers });
+const walletGet = (fetchFn, u, timeoutMs) => checkedFetch(u, { fetchFn, signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } });
 
-// NEVER AN INTERNAL HOST BY WHERE THE NAME LEADS (kanban #1809, #1489 r6): #1511 judged the host by its spelling, so a public name that resolves to
-// 127.0.0.1 (127.0.0.1.nip.io, localtest.me) or a tailnet MagicDNS name (*.ts.net) was fetched. Now the name is resolved and every address it gives must
-// be global (no loopback, private, link-local, CGNAT 100.64/10 - Tailscale -, ULA, documentation, multicast or reserved), *.ts.net is refused by name,
-// and only the default HTTPS port is asked. The default fetcher connects only to an address that passed this check (its lookup is the guard, so DNS
-// rebinding between the check and the connect cannot swap it) and follows no redirect.
-const NOT_GLOBAL = new BlockList();
-for (const [net, bits] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24],
-  ['192.88.99.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4]]) NOT_GLOBAL.addSubnet(net, bits, 'ipv4');
-for (const [net, bits] of [['::', 127], ['100::', 64], ['2001::', 23], ['2001:db8::', 32], ['2002::', 16], ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8]]) NOT_GLOBAL.addSubnet(net, bits, 'ipv6');
-export function addressIsGlobal(address) {
-  const a = String(address || '').toLowerCase().replace(/^\[|\]$/g, '');
-  const v = isIP(a);
-  if (v === 4) return !NOT_GLOBAL.check(a, 'ipv4');
-  if (v !== 6) return false;
-  // an IPv4 address carried in IPv6 (mapped ::ffff:a.b.c.d, NAT64 64:ff9b::/96, the old compatible ::a.b.c.d) is judged as that IPv4 address
-  const tail = /^(?:::ffff:|64:ff9b::|::)(\d+\.\d+\.\d+\.\d+)$/.exec(a);
-  if (tail) return addressIsGlobal(tail[1]);
-  const hex = /^(?:::ffff:|64:ff9b::)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(a);
-  if (hex) { const x = parseInt(hex[1], 16), y = parseInt(hex[2], 16); return addressIsGlobal(`${x >> 8}.${x & 255}.${y >> 8}.${y & 255}`); }
-  if (/^64:ff9b:/.test(a) || /^::ffff:/.test(a)) return false;
-  return !NOT_GLOBAL.check(a, 'ipv6');
-}
-// dns.lookup that answers only global addresses (an error naming the host otherwise) - the default fetcher's connect lookup and the check before any fetch
-function globalLookup(hostname, options, cb) {
-  if (typeof options === 'function') { cb = options; options = {}; }
-  dnsLookup(hostname, { all: true, verbatim: true }, (err, list) => {
-    if (err) return cb(err);
-    if (!list || !list.length || list.some((x) => !addressIsGlobal(x.address))) { const e = new Error(`${hostname} leads to an internal address`); e.code = 'EINTERNALHOST'; return cb(e); }
-    if (options && options.all) return cb(null, list);
-    return cb(null, list[0].address, list[0].family);
-  });
-}
-// 'internal' (refuse), 'ok', or 'unresolved' (the name does not resolve now: the fetch will fail on its own, and the default fetcher re-checks at connect)
-export function hostReach(url) {
-  let u; try { u = new URL(url); } catch { return Promise.resolve('internal'); }
-  const host = u.hostname.toLowerCase().replace(/\.$/, '');
-  if (u.protocol !== 'https:' || (u.port && u.port !== '443') || u.username || u.password) return Promise.resolve('internal');
-  if (!host || /^\[|^\d+(\.\d+){3}$|^\d+$|^0x/i.test(host) || !host.includes('.') || /(^|\.)(localhost|local|internal|lan|home|arpa|localdomain|intranet|ts\.net|beta\.tailscale\.net)$/.test(host)) return Promise.resolve('internal');
-  return new Promise((resolve) => globalLookup(host, {}, (err) => resolve(!err ? 'ok' : err.code === 'EINTERNALHOST' ? 'internal' : 'unresolved')));
-}
-// the default fetcher: an HTTPS GET pinned to the checked address, no redirect followed, at most 64 KB read
-const WALLET_ANSWER_MOST = 64 * 1024;
-export function walletFetch(url, { signal, headers } = {}) {
-  return new Promise((resolve, reject) => {
-    const req = httpsRequest(url, { method: 'GET', headers, lookup: globalLookup, signal }, (res) => {
-      const parts = []; let n = 0;
-      res.on('data', (c) => { n += c.length; if (n > WALLET_ANSWER_MOST) { req.destroy(new Error('its answer is too large')); return; } parts.push(c); });
-      res.on('end', () => resolve(new Response(Buffer.concat(parts), { status: res.statusCode >= 200 && res.statusCode <= 599 ? res.statusCode : 502 })));
-      res.on('error', reject);
-    });
-    req.on('error', reject);
-    req.end();
-  });
-}
-
-export async function lnAddressWorks(address, { fetchFn = walletFetch, timeoutMs = 8000 } = {}) {
+export async function lnAddressWorks(address, { fetchFn = publicFetch, timeoutMs = 8000 } = {}) {
   const a = String(address || '').trim();
   let url = null;
   const m = /^([a-z0-9._+-]+)@([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/i.exec(a);
   if (m) url = `https://${m[2].toLowerCase()}/.well-known/lnurlp/${encodeURIComponent(m[1].toLowerCase())}`;
   else if (/^lnurl1[02-9ac-hj-np-z]+$/i.test(a)) { try { url = urlOfLnurl(a.toLowerCase()); } catch { url = null; } }
   if (!url || !/^https:\/\//.test(url)) return { ok: false, why: 'that is not a Lightning address (name@wallet.com) or an LNURL' };
-  // NEVER AN INTERNAL HOST (kanban #1511, the test shared with the payout since #1677)
-  if (!publicHttpsUrl(url)) return { ok: false, why: 'its wallet must be on a public name' };
-  // and by where the name leads (kanban #1809)
-  if (await hostReach(url) === 'internal') return { ok: false, why: 'its wallet must be on a public name' };
+  // NEVER AN INTERNAL HOST (kanban #1511, #1689, #1746, #1962): by name here, by resolved address in publicFetch's lookup, each redirect hop the same
+  const refused = walletUrlRefusal(url); if (refused) return { ok: false, why: refused };
   let j;
   try {
-    const r = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } });
+    const r = await walletGet(fetchFn, url, timeoutMs);
     if (!r.ok) return { ok: false, why: `its wallet answered ${r.status}` };
     // read to at most LNURL_MAX_BYTES (kanban #1563): the address is named by anyone who posts a report, and r.json() took a stranger's
     // whole answer - hundreds of MB ran the faucet (welcomes, node faucet, the mainnet bounty payer) out of memory
     j = await readJsonBounded(r);
   } catch (e) { if (/LNURL answer may be/.test(String(e && e.message))) return { ok: false, why: 'its wallet answered too much' };
+    if (e && e.code === 'EINTERNALHOST') return { ok: false, why: 'its wallet must be on a public name' };
     return { ok: false, why: /abort|timeout/i.test(String(e && e.name) + String(e && e.message)) ? 'its wallet did not answer in time' : 'its wallet could not be reached' }; }
   if (!j || j.status === 'ERROR') return { ok: false, why: `its wallet said: ${String((j && j.reason) || 'error').slice(0, 120)}` };
   if (j.tag !== 'payRequest' || typeof j.callback !== 'string' || !/^https:\/\//.test(j.callback)) return { ok: false, why: 'its wallet does not take payments at that address' };
@@ -653,16 +599,17 @@ export async function lnAddressWorks(address, { fetchFn = walletFetch, timeoutMs
  * amount (msat) and the comment (LUD-12, only when the wallet takes one, cut to its commentAllowed). Answers { ok, invoice, commentSent } or { ok: false, why }.
  * The caller's decode() then checks the invoice is for exactly the amount (claim()).
  */
-export async function lnAddressInvoice(address, sats, comment = '', { fetchFn = walletFetch, timeoutMs = 10000 } = {}) {
+export async function lnAddressInvoice(address, sats, comment = '', { fetchFn = publicFetch, timeoutMs = 10000 } = {}) {
   const a = String(address || '').trim();
   const m = /^([a-z0-9._+-]+)@([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/i.exec(a);
   let url = m ? `https://${m[2].toLowerCase()}/.well-known/lnurlp/${encodeURIComponent(m[1].toLowerCase())}` : null;
   if (!url && /^lnurl1[02-9ac-hj-np-z]+$/i.test(a)) { try { url = urlOfLnurl(a.toLowerCase()); } catch { url = null; } }
   if (!url || !/^https:\/\//.test(url)) return { ok: false, why: 'not a Lightning address or an LNURL' };
-  // NEVER AN INTERNAL HOST AT PAYOUT EITHER (kanban #1677): the #1511 test, before the address's fetch and before its callback's
-  if (!publicHttpsUrl(url)) return { ok: false, why: 'its wallet must be on a public name' };
-  // and by where the name leads, for the address and for the callback it names (kanban #1809); every answer read bounded (kanban #1563)
-  const get = async (u) => { if (await hostReach(u) === 'internal') throw new Error('must be on a public name'); const r = await fetchFn(u, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } }); if (!r.ok) throw new Error(`answered ${r.status}`); return readJsonBounded(r).catch((e) => { throw /LNURL answer may be/.test(e.message) ? new Error('answered too much') : e; }); };
+  // the same guard as lnAddressWorks on BOTH GETs, the callback's included (kanban #1677, #1689, #1746, #1809, #1962): a public name, a public
+  // address, each redirect hop checked; every answer read bounded (kanban #1563)
+  const get = async (u) => { const refused = walletUrlRefusal(u); if (refused) throw new Error(refused);
+    let r; try { r = await walletGet(fetchFn, u, timeoutMs); } catch (e) { throw new Error(e && e.code === 'EINTERNALHOST' ? 'its wallet must be on a public name' : 'could not be reached'); }
+    if (!r.ok) throw new Error(`answered ${r.status}`); return readJsonBounded(r).catch((e) => { throw /LNURL answer may be/.test(e.message) ? new Error('answered too much') : e; }); };
   let p; try { p = await get(url); } catch (e) { return { ok: false, why: `its wallet: ${e.message}` }; }
   if (!p || p.status === 'ERROR' || p.tag !== 'payRequest' || !/^https:\/\//.test(String(p.callback || ''))) return { ok: false, why: `its wallet takes no payment there${p && p.reason ? `: ${String(p.reason).slice(0, 120)}` : ''}` };
   if (!publicHttpsUrl(p.callback)) return { ok: false, why: 'its wallet must be on a public name' };
