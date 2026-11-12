@@ -80,9 +80,14 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
   const markAsked = db.prepare("UPDATE ecash_exchanges SET receive_asked = 1 WHERE id = ? AND state = 'receiving'");
   const get = db.prepare('SELECT * FROM ecash_exchanges WHERE id = ?');
   // an hour's spend counts what is out or on its way out, by the time its payout was named (kanban #1637; a row from before: when it was made)
-  const lastHour = db.prepare("SELECT out_msat, pay_msat FROM ecash_exchanges WHERE state IN ('paid', 'sending') AND COALESCE(pay_ms, made_ms) >= ?");
-  // what the seat owes out of its notes already: payouts named and not yet paid, notes taken whose payout is not named yet (kanban #1637)
-  const owedRows = db.prepare("SELECT state, in_msat, want_msat, pay_msat FROM ecash_exchanges WHERE to_fed = ? AND state IN ('taken', 'sending')");
+  // - and a RECEIVING row whose reissue was asked (receive_asked 1, or NULL from before #1204) at what it asked for (kanban #2143, audit44
+  // refute 21): its notes may be with the seat already, its answer lost; the row being checked is not counted against itself
+  const ASKED_RECEIVING = "(state = 'receiving' AND (receive_asked IS NULL OR receive_asked = 1))";
+  const lastHour = db.prepare(`SELECT state, out_msat, pay_msat, want_msat FROM ecash_exchanges WHERE id != ? AND (state IN ('paid', 'sending') OR ${ASKED_RECEIVING}) AND COALESCE(pay_ms, made_ms) >= ?`);
+  // what the seat owes out of its notes already: payouts named and not yet paid, notes taken whose payout is not named yet (kanban #1637),
+  // and reissues asked whose answer never came (kanban #2143): a RECEIVING row that asked may hold the player's notes - a new exchange paid
+  // out of the seat's notes meanwhile left that player's retry with notes taken and nothing to pay him with. Counted at want_msat
+  const owedRows = db.prepare(`SELECT state, in_msat, want_msat, pay_msat FROM ecash_exchanges WHERE to_fed = ? AND id != ? AND (state IN ('taken', 'sending') OR ${ASKED_RECEIVING})`);
   let queue = Promise.resolve();
   const hex64 = /^[0-9a-f]{64}$/;
   const refuse = (status, why) => ({ ok: false, status, why });
@@ -162,12 +167,13 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
     // other exchanges had spent the seat's notes in `to` meanwhile - the retry took the player's notes and the payout then failed
     if (!r || r.state === EXCHANGE.RECEIVING) {
       const w = r ? BigInt(r.want_msat || want) : want;
-      const paidHour = lastHour.all(now() - 3_600_000).reduce((t, x) => t + BigInt(x.out_msat || x.pay_msat || 0), 0n);
+      const paidHour = lastHour.all(id, now() - 3_600_000).reduce((t, x) => t + BigInt((x.state === EXCHANGE.RECEIVING ? x.want_msat : (x.out_msat || x.pay_msat)) || 0), 0n);
       let no = null;
       if (paidHour + w > perHourMsat) no = refuse(429, `this seat's exchanges for this hour are spent (${perHourMsat / 1000n} sat an hour)`);
       else {
-        const owed = owedRows.all(to).reduce((t, x) => {
+        const owed = owedRows.all(to, id).reduce((t, x) => {
           if (x.state === EXCHANGE.SENDING) return t + BigInt(x.pay_msat || 0);
+          if (x.state === EXCHANGE.RECEIVING) return t + BigInt(x.want_msat || 0);   // kanban #2143: an asked reissue, at what it asked
           const a = BigInt(x.in_msat || 0), b = BigInt(x.want_msat || x.in_msat || 0);
           return t + (a < b ? a : b);
         }, 0n);
