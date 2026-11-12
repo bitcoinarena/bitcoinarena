@@ -1499,6 +1499,10 @@ export function openStore(path = ':memory:') {
   db.exec('CREATE INDEX IF NOT EXISTS relayed_round ON relayed (round_id)');
   // A STORE MADE BEFORE A NONCE ROW CARRIED ITS SIGNING ATTEMPT gets the column:
   // every row it already holds was attempt 0.
+  // EVERY LOCK FOR ONE HANDOUT, EACH UNDER ITS OWN ID (kanban #1669, #1735, #1881): a refused round's lock row names the handout it
+  // belongs to; a row from before names none, and belongs to the handout whose id it is kept under
+  if (!db.prepare('PRAGMA table_info(refused_locks)').all().some((c) => c.name === 'of_handout'))
+    db.exec('ALTER TABLE refused_locks ADD COLUMN of_handout BLOB');
   if (!db.prepare('PRAGMA table_info(pool_nonces)').all().some((c) => c.name === 'attempt'))
     db.exec('ALTER TABLE pool_nonces ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0');
   // AN OBJECTION NAMES ITS BLOCK (§13A, RULED 2026-09-24): the window places it by that block, not by when it came.
