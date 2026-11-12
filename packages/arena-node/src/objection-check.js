@@ -25,6 +25,7 @@ import { entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';
 import { resultFrom, runId } from './verdict.js';
 import { replay } from './replay.js';
 import { dissentsOn } from './test-dissent.js';
+import { loadValueRefusal } from './load-checks.js';
 
 const hex = (b) => [...b].map((v) => v.toString(16).padStart(2, '0')).join('');
 const NOBODY = new Uint8Array(32);
@@ -54,15 +55,65 @@ export function inputsFormOf(j) {
 }
 
 /**
+ * WHY THE LOADS OF A LIVE RUN'S INPUTS ARE ONES THE BATCH DOOR NEVER TAKES, or null (kanban #1952, #1990 - a refute of
+ * #1488, Hexbox #011). A live run's inputs travel beside the transcript as free JSON, bound only by the receipted marks'
+ * state hashes - which the player computed himself. So a player sent the seats an honest bed, signed his mark over a full
+ * bed at 0 sats / 0 BTC, got it receipted, and objected with inputs carrying that bed: the replay reproduced the mark, gave
+ * +41 %, and the objection held (a second one after the re-run VOIDed the entry). The same rules as Round.batch's
+ * loadsRefusal, on the whole run: every load's values (loadValueRefusal), at most one a tick, at a tick the run reaches
+ * (its first .. one past its last, a batch of no ticks reaching the next), and before the first tick with a control word.
+ */
+export function inputsLoadRefusal(form) {
+  const loads = form.loads || [];
+  if (!loads.length) return null;
+  const first = form.ticks.length ? form.ticks[0].tick : null;
+  const last = form.ticks.length ? form.ticks[form.ticks.length - 1].tick : null;
+  const driven = form.ticks.find((r) => r.words.slice(0, 4).some((w) => w !== 0));
+  const seen = new Set();
+  for (const l of loads) {
+    const tick = l[0];
+    if (first === null || tick < first || tick > last + 1)
+      return `the load at tick ${tick} is not at a tick those inputs reach (${first} .. ${last === null ? null : last + 1}): a load goes out with the batch that reaches its tick`;
+    if (seen.has(tick)) return `two loads at tick ${tick}: a page declares at most one a tick`;
+    seen.add(tick);
+    const why = loadValueRefusal(l);
+    if (why) return why;
+    if (driven && driven.tick < tick)
+      return `the load at tick ${tick} comes after the truck was driven at tick ${driven.tick}: a bed is declared before ROLL OUT`;
+  }
+  return null;
+}
+
+/**
+ * WHERE A LIVE RUN'S INPUTS DIFFER FROM WHAT THIS SEAT STORED, or null (kanban #1952, #1990). Every input a seat stores
+ * came in a batch the entry's session key signed (Round.signedBatch, or a signed mark endorsing it), so over the ticks the
+ * seat holds, inputs other than its stored ones are not the run the player sent - they are a run he signed marks over
+ * and never played. Compared over the ticks both hold: from the run's start to the earlier of the seat's last held tick
+ * and the inputs' last tick. A seat holding no tick of the run binds nothing (the stranger's checker never passes one).
+ */
+export function inputsDifferFromStored(form, stored) {
+  if (!stored || !Array.isArray(stored.ticks) || !stored.ticks.length || !form.ticks.length) return null;
+  const upto = Math.min(stored.ticks[stored.ticks.length - 1].tick, form.ticks[form.ticks.length - 1].tick) + 1;
+  const tickRows = (rows) => JSON.stringify(rows.filter((r) => r.tick < upto).map((r) => [r.tick, [...r.words]]));
+  if (tickRows(form.ticks) !== tickRows(stored.ticks)) return 'ticks';
+  for (const name of ['liquidations', 'loads', 'samples', 'tapes']) {
+    const rows = (x) => JSON.stringify((x || []).filter((r) => r[0] < upto).map((r) => [...r]));
+    if (rows(form[name]) !== rows(stored[name])) return name;
+  }
+  return null;
+}
+
+/**
  * CHECK ONE OBJECTION BUNDLE. `bundle` the bytes posted; `roundId`, `entryId` the run it is filed against; `entry` that
  * entry's signed contract; `contract` the round's; `committee` its signer nodes' keys; `signedResultId` the run the
  * committee signed (the agreed re-run's, for a second objection); `core` the round's core as the seat resolves it
  * (with its `runTicks` and `world`); `roundRandomness` the round's beacon; `verify(sig, msg, pubkey)` BIP-340.
  * `replayRun(form, entry, options)` defaults to the core's own `replay`; a seat hands its worker pool's, same answer.
+ * `storedInputs` (a seat's own readTranscript of the entry, optional): a live run's inputs must be the ones it stored.
  * Returns `{ holds, step, why, ... }` - `step` names the check that refused.
  */
 export async function checkObjectionBundle({ bundle, roundId, entryId, entry, contract, committee, signedResultId,
-  core, roundRandomness, verify, replayRun = async (form, e, options) => replay(form, e, options) }) {
+  core, roundRandomness, verify, storedInputs = null, replayRun = async (form, e, options) => replay(form, e, options) }) {
   const no = (step, why) => ({ holds: false, step, why });
   if (!(bundle instanceof Uint8Array) || !bundle.length)
     return no('bundle', 'an objection carries its transcript and receipts (13A)');
@@ -119,6 +170,13 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
     const reaches = form.ticks[form.ticks.length - 1].tick;
     if (Number.isInteger(chain.throughTick) && reaches >= chain.throughTick)
       return no('entry', `those inputs reach tick ${reaches}, past the last receipted mark at ${chain.throughTick}`);
+    // NO LOAD THE BATCH DOOR REFUSES (kanban #1952, #1990): what a live run's inputs carry is held to the same rules
+    const loadWhy = inputsLoadRefusal(form);
+    if (loadWhy) return no('inputs', `those inputs carry a load no honest bed declares: ${loadWhy}`);
+    // AND, AT A SEAT, THE RUN IT STORED (kanban #1952, #1990): inputs the player's session key never signed are not his run
+    const differs = inputsDifferFromStored(form, storedInputs);
+    if (differs)
+      return no('inputs', `those inputs' ${differs} are not the ones this seat stored for that entry, which the player's session key signed: a mark over inputs never sent is the player's own, not the committee's`);
   }
 
   // 6. EVERY CHECKPOINT HAS A RECEIPT SIGNED BY A COMMITTEE MEMBER. A receipt from anyone else, or one whose signature
