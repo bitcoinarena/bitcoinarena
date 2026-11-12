@@ -26,20 +26,24 @@ export const NODE_WAIT_MS = 8000;
 export async function secureTranscript({ roundId, entryId, nodes, finalTick, mirror = null, fetcher = fetch, need = NODES_HOLDING, waitMs = NODE_WAIT_MS } = {}) {
   const q = `round=${toHex(roundId)}&entry=${toHex(entryId)}`;
   const said = [];
-  const held = await Promise.all([...new Set(nodes || [])].map(async (base) => {
-    // kanban #1508: the fetch and its body read race one timer; the abort also ends a fetcher that honours the signal
+  // kanban #1508, #1687: every request this function makes - each node's GET /transcript and the mirror's POST - races one timer
+  // (fetch and body read together); the abort also ends a fetcher that honours the signal. Kept inside the function: the page runs
+  // this function out of the bundle, and the #1687 check runs exactly that text.
+  const bounded = async (url, init, read) => {
     const ac = new AbortController();
     let timer;
     const late = new Promise((_, no) => { timer = setTimeout(() => { ac.abort(); no(new Error(`no answer in ${waitMs} ms`)); }, waitMs); });
+    try { return await Promise.race([late, (async () => read(await fetcher(url, { ...init, signal: ac.signal })))()]); }
+    finally { clearTimeout(timer); }
+  };
+  const held = await Promise.all([...new Set(nodes || [])].map(async (base) => {
     try {
-      return await Promise.race([late, (async () => {
-        const r = await fetcher(`${String(base).replace(/\/+$/, '')}/transcript?${q}`, { signal: ac.signal });
+      return await bounded(`${String(base).replace(/\/+$/, '')}/transcript?${q}`, {}, async (r) => {
         if (!r.ok) { said.push(`${base}: ${r.status}`); return null; }
         const ticks = Number(r.headers.get('x-ticks')), hash = String(r.headers.get('x-transcript-hash') || '').toLowerCase();
         return { base, ticks, hash, bytes: new Uint8Array(await r.arrayBuffer()) };
-      })()]);
+      });
     } catch (e) { said.push(`${base}: ${e.message}`); return null; }
-    finally { clearTimeout(timer); }
   }));
   const groups = new Map();
   for (const h of held) {
@@ -58,7 +62,8 @@ export async function secureTranscript({ roundId, entryId, nodes, finalTick, mir
     if (!copy) mirrorWhy = 'no node\'s bytes hash to the transcript the nodes agree on';
     else {
       try {
-        const r = await fetcher(`${String(mirror).replace(/\/+$/, '')}/transcript?${q}`, { method: 'POST', body: copy.bytes });
+        // kanban #1687: a mirror that takes the POST and never answers no longer holds "safe" once the nodes agree
+        const r = await bounded(`${String(mirror).replace(/\/+$/, '')}/transcript?${q}`, { method: 'POST', body: copy.bytes }, async (r) => r);
         mirrored = r.ok; if (!r.ok) mirrorWhy = `the mirror answered ${r.status}`;
       } catch (e) { mirrorWhy = e.message; }
     }
