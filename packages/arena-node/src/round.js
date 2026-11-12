@@ -1852,7 +1852,29 @@ export class Round {
   seatedEntriesOf(roundIdBytes, stakeMsat) {
     const all = this.entriesOf(roundIdBytes);
     if (stakeMsat === 0n) return all;
-    return all.filter(({ entryId }) => !!this.stakeSeen(entryId) || !!this.stakeLock(entryId));
+    // BACKED BEFORE THE ENTRY CLOSE (kanban #1783, #1551 refute 0, #1489): from the close a head-to-head round's moves are public (GET /reveals), and
+    // no door takes a lock new to it from then on (#1551). A lock or a seen stake this seat wrote only after the close - however it got here: a
+    // patched door, an operator's hand, a lock pulled from one peer - backs no seat, or a player locked only once the revealed move let him win.
+    // A lock repaired from peers keeps the time the round's threshold of seats took it (keepLockTimes). Only on a seat that keeps the lock close
+    // (entryCloseGraceMs set, as every live seat's is).
+    let close = null;
+    if (this.entryCloseGraceMs !== null && this.entryCloseGraceMs !== undefined) {
+      try { const row = this.get(roundIdBytes); close = row ? BigInt(decodeRoundContract(new Uint8Array(row.contract)).entryCloseMs) : null; } catch { close = null; }
+    }
+    const inTime = (ms) => close === null || (ms !== null && ms !== undefined && BigInt(Math.floor(Number(ms))) < close);
+    return all.filter(({ entryId }) => { const seen = this.stakeSeen(entryId), lock = this.stakeLock(entryId);
+      return (!!seen && inTime(seen.seenMs)) || (!!lock && inTime(lock.verifiedMs)); });
+  }
+
+  /**
+   * A LOCK TAKEN FROM PEERS PAST ITS ROUND'S LOCK CLOSE KEEPS THE TIME THE ROUND'S SEATS TOOK IT (kanban #1783): `ms` is the time at least the
+   * round's threshold of its other seats said they verified it (GET /order-locks), which is before that close; the rows only ever move earlier.
+   */
+  keepLockTimes(entryIdBytes, ms) {
+    const id = Buffer.from(entryIdBytes), at = Math.floor(Number(ms));
+    this.db.prepare('UPDATE stake_locks SET verified_ms = ? WHERE entry_id = ? AND verified_ms > ?').run(at, id, at);
+    this.db.prepare('UPDATE fee_locks SET verified_ms = ? WHERE entry_id = ? AND verified_ms > ?').run(at, id, at);
+    this.db.prepare('UPDATE stake_seen SET seen_ms = ? WHERE entry_id = ? AND seen_ms > ?').run(at, id, at);
   }
 
   /**
