@@ -254,8 +254,8 @@ async function backfill(env) {
 // is read from D1's transactions when asked
 // ONE SEAT DOES NOT SET THE RESERVE (kanban #1534): the largest any seat said was kept, so one seat of 14 could show 21M BTC or hide a
 // drain behind an old, higher reserve, and BigInt() of one malformed amount threw for the whole read (the metrics went stale for everyone).
-// Each amount is now checked (msatOf: 1-20 digits, else that seat's row is skipped) and each figure is the median of the seats that report it.
-const msatOf = (v) => ((typeof v === 'string' || (typeof v === 'number' && Number.isSafeInteger(v))) && /^\d{1,20}$/.test(String(v)) ? BigInt(v) : null);
+// Each amount is now checked (heldMsatOf: 1-20 digits, else that seat's row is skipped) and each figure is the median of the seats that report it.
+const heldMsatOf = (v) => ((typeof v === 'string' || (typeof v === 'number' && Number.isSafeInteger(v))) && /^\d{1,20}$/.test(String(v)) ? BigInt(v) : null);
 const median = (list) => { const s = [...list].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)); return s[Math.floor((s.length - 1) / 2)]; };
 async function readMetrics(env) {
   const [res, ref] = await Promise.all([
@@ -264,7 +264,7 @@ async function readMetrics(env) {
   const feds = new Map(), sites = new Map();
   const heldBy = new Map();
   for (const a of res) for (const f of (a.body && Array.isArray(a.body.federations) ? a.body.federations : [])) {
-    const m = f && typeof f.federationId === 'string' ? msatOf(f.heldMsat) : null; if (m === null) continue;
+    const m = f && typeof f.federationId === 'string' ? heldMsatOf(f.heldMsat) : null; if (m === null) continue;
     if (!heldBy.has(f.federationId)) heldBy.set(f.federationId, []); heldBy.get(f.federationId).push(m);
   }
   for (const [id, list] of heldBy) feds.set(id, median(list));
@@ -275,7 +275,7 @@ async function readMetrics(env) {
   }
   const feesBy = new Map();
   for (const a of ref) for (const x of (a.body && Array.isArray(a.body.sites) ? a.body.sites : [])) {
-    const m = x && typeof x.site === 'string' ? msatOf(x.msat) : null; if (m === null) continue;
+    const m = x && typeof x.site === 'string' ? heldMsatOf(x.msat) : null; if (m === null) continue;
     if (!feesBy.has(x.site)) feesBy.set(x.site, []); feesBy.get(x.site).push({ msat: m, payouts: Number.isSafeInteger(x.payouts) ? x.payouts : 0 });
   }
   for (const [site, list] of feesBy) { const mid = median(list.map((r) => r.msat)); sites.set(site, list.find((r) => r.msat === mid)); }
@@ -327,7 +327,7 @@ async function readReserveHistory(env) {
       if (!f || typeof f.federationId !== 'string' || seen.has(f.federationId)) continue; seen.add(f.federationId);
       const day = new Map();
       for (const x of (Array.isArray(f.paidIn) ? f.paidIn : [])) {
-        const t = x ? Date.parse(x.at) : NaN, m = x ? msatOf(x.amountMsat) : null; if (!Number.isFinite(t) || m === null) continue;
+        const t = x ? Date.parse(x.at) : NaN, m = x ? heldMsatOf(x.amountMsat) : null; if (!Number.isFinite(t) || m === null) continue;
         const d = new Date(Math.floor(t / DAY_MS) * DAY_MS).toISOString().slice(0, 10);
         day.set(d, (day.get(d) || 0n) + m);
       }

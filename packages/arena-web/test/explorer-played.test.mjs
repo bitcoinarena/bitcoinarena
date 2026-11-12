@@ -64,7 +64,7 @@ test('the bots\' files give only their entry ids: market-bot orders.json and rps
   assert.deepEqual(entryIdsOf(`{"round":"${hex(1)}","entry":"${hex(3)}","secret":"${hex(9)}"}\n{"entry":"${hex(4)}"}\nnot json\n`), [hex(3), hex(4)]);
 });
 
-test('the reserve over time, rebuilt from the payments in (kanban #1095): per federation the longest list of the three seats asked, held at each day\'s end', async () => {
+test('the reserve over time, rebuilt from the payments in (kanban #1095): per federation and day the median of the seats asked (kanban #1534: no longer the longest list), held at each day\'s end', async () => {
   const { env } = store();
   const day = (d, h = 12) => new Date(Date.UTC(2026, 9, d, h)).toISOString();
   const real = globalThis.fetch;
@@ -89,6 +89,7 @@ test('the reserve over time, rebuilt from the payments in (kanban #1095): per fe
   assert.equal(m.reserveHistory.federations, 2);
   assert.deepEqual(m.reserveHistory.days.slice(0, 4), [
     { day: '2026-10-28', inMsat: '1500', heldMsat: '1500' }, { day: '2026-10-29', inMsat: '7000', heldMsat: '8500' },
-    { day: '2026-10-30', inMsat: '2000', heldMsat: '10500' }, { day: '2026-10-31', inMsat: '0', heldMsat: '10500' }]);
+    // 10-30: only guardian-1 says 2000 came in, guardian-2 says 0 - the median (the lower of two) is 0, so one seat alone adds nothing (kanban #1534)
+    { day: '2026-10-30', inMsat: '0', heldMsat: '8500' }, { day: '2026-10-31', inMsat: '0', heldMsat: '8500' }]);
   assert.equal(m.reserveHistory.days.at(-1).day, new Date().toISOString().slice(0, 10), 'every day to today');
 });
