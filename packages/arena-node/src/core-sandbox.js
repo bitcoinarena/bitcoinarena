@@ -60,6 +60,24 @@ export const ANSWER_MAX = 4 * 1024 * 1024;
 const BACKSTOP_MARGIN_MB = 96;
 /** After a core is ended: how long the node waits for its supervisor to say the thread is gone. */
 const EXIT_WAIT_MS = 3000;
+/** A load with ONE ABSOLUTE DEADLINE (`until`, the plugin trial) waits for its thread's end at most this far past it (kanban
+ *  #1880, #1913): an idle thread is gone in a few ms, and one in an uninterruptible builtin is not waited for (see `lingering`). */
+const UNTIL_EXIT_GRACE_MS = 100;
+// THREADS ENDED BUT NOT YET GONE (kanban #1880, #1913): a core inside ONE long builtin (a sort, a parse) does not take V8's
+// TerminateExecution until the builtin returns, so end() waiting EXIT_WAIT_MS held the seat's thread past a deadline the caller
+// set - twice, once in the deadline's end() and once in the caller's. A load with `until` does not wait past it: the supervisor
+// has been told to end the thread (it dies the moment the builtin returns, inside its heap limits), and it is kept here by its
+// load's name, so a caller can refuse to start another while one still lingers (plugin-trial.js).
+const lingering = new Set();
+/** How many ended core threads named `name` (every one when null) are not yet gone. */
+export function lingeringCores(name = null) {
+  let n = 0;
+  for (const l of [...lingering]) {
+    if (Atomics.load(l.ctrl, C.STATE) === EXITED) { lingering.delete(l); continue; }
+    if (name === null || l.name === name) n++;
+  }
+  return n;
+}
 const DEADLINE = { replay: 'callMs', stepTo: 'stepMs' };
 
 /** A core's files as core-hash.js hashes a tree (the rule an app takes from arena-sdk/core-hash, kanban #691): the hash, and each file's text by path. */
@@ -149,11 +167,16 @@ function deathOf(sup, id) {
  */
 export function loadCore({ files, entry }, options = {}) {
   const { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry,
-    arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, oneReplay = false, answerMax = ANSWER_MAX, until = null } = options;
+    arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, oneReplay = false, answerMax = ANSWER_MAX, until = null, loadUntil = null } = options;
   // `until` (kanban #1719, #1538): ONE ABSOLUTE DEADLINE (a Date.now() time) for the load AND the meta ask loadCore makes
   // itself - the plugin trial gives load, meta and every decide call one TRIAL_MS in total; meta reads DECIDE's fields, which
   // may be getters, so without it load + meta held the seat's thread up to loadMs + askMs
-  const leftOf = (ms) => (Number.isFinite(until) ? Math.max(1, Math.min(ms, until - Date.now())) : ms);
+  // `loadUntil` (kanban #2058, #2078): the same one deadline for the load and its meta ask ONLY - the first load of a core a seat
+  // has just adopted (plugin-package.js registrationFromPackage) is bounded like the trial, and the box it gives is kept with
+  // the installed core's own deadlines from then on
+  let loading = true;
+  const by = () => Math.min(Number.isFinite(until) ? until : Infinity, loading && Number.isFinite(loadUntil) ? loadUntil : Infinity);
+  const leftOf = (ms) => (Number.isFinite(by()) ? Math.max(1, Math.min(ms, by() - Date.now())) : ms);
   const sup = supervisorOf();
   const id = sup.next++;
   const ctrl = new Int32Array(new SharedArrayBuffer(8 * 4));
@@ -172,11 +195,16 @@ export function loadCore({ files, entry }, options = {}) {
   const gone = () => Atomics.load(ctrl, C.STATE) === EXITED;
   /** END THE CORE'S THREAD and wait - in slices - for its supervisor to say the thread is gone: what it held goes with it,
    *  before the node answers. At most EXIT_WAIT_MS. */
+  // ONCE ONLY, AND NEVER PAST `until` + UNTIL_EXIT_GRACE_MS (kanban #1880, #1913): a second end() (the caller's, after the
+  // deadline's own) does not wait again, and a thread still inside a builtin is left to its supervisor (`lingering`)
   const end = (why) => {
+    if (ended) return;
     ended = why;
     const t0 = Date.now();
+    const waitMs = Number.isFinite(by()) ? Math.max(0, Math.min(EXIT_WAIT_MS, by() + UNTIL_EXIT_GRACE_MS - t0)) : EXIT_WAIT_MS;
     if (!gone()) sup.worker.postMessage({ type: 'end', id });
-    while (!gone() && Date.now() - t0 < EXIT_WAIT_MS) Atomics.wait(ctrl, C.STATE, Atomics.load(ctrl, C.STATE), 10);
+    while (!gone() && Date.now() - t0 < waitMs) Atomics.wait(ctrl, C.STATE, Atomics.load(ctrl, C.STATE), Math.max(1, Math.min(10, waitMs - (Date.now() - t0))));
+    if (!gone()) lingering.add({ ctrl, name });
     lastEnd = { exitMs: Date.now() - t0, exited: gone(), rssMb: rssMb(), highMb: Atomics.load(ctrl, C.HIGH_MB) };
     Atomics.store(ctrl, C.CALL, 0);
   };
@@ -239,21 +267,24 @@ export function loadCore({ files, entry }, options = {}) {
   // overflow cannot be made sticky like the array budget: V8 builds and throws it without running any code a sandbox could
   // hook (not even the debugger hears it). So the replay - the call whose answer a seat signs - starts from the same history
   // every time: a thread loaded for it alone (~45 ms), ended after it. A thread that ends that way (a deadline, the array
-  // budget, its heap, the backstop) ends this core too, as before. What this does not close: two machines (another CPU,
+  // budget, its heap, the backstop) fails that replay ALONE (kanban #2008, #1539): what it held goes with its thread, but this
+  // core and its kept thread go on - a heap death is set by the input (every seat that runs it dies), so ending the core made
+  // every later round fail on the seats that had replayed it while seats on other committees answered the same round: the
+  // seat's history decided its answer again. What this does not close: two machines (another CPU,
   // another node build) still count a different depth - that is a core's own nondeterminism, as with any engine limit.
   let lastOne = null;
   const replayFresh = (input, within) => {
     if (ended) throw new Error(ended);
-    const one = loadCore({ files, entry }, { ...options, oneReplay: true });
+    const one = loadCore({ files, entry }, { ...options, loadUntil: null, oneReplay: true });   // kanban #2058: a replay's thread has its own deadlines
     lastOne = one;
     try { return one.call('replay', input, within); } catch (e) {
-      const why = one.endedWhy();
-      if (why) { end(why); lastEnd = one.lastEnd(); }
+      if (one.endedWhy()) lastEnd = one.lastEnd();   // kanban #2008: that call fails, the core is not ended
       throw e;
     } finally { if (!one.endedWhy()) one.end(); }
   };
   const call = (op, input = {}, within = null) => (String(op) === 'replay' && !oneReplay ? replayFresh(input, within) : callHere(op, input, within));
-  const meta = callHere('meta', {}, Number.isFinite(until) ? leftOf(askMs) : null);   // kanban #1719
+  const meta = callHere('meta', {}, Number.isFinite(by()) ? leftOf(askMs) : null);   // kanban #1719, #2058
+  loading = false;
   return Object.freeze({ call, meta, end: () => end('ended by the node'), lastEnd: () => lastEnd, endedWhy: () => ended,
     highWaterMb: () => (lastOne ? lastOne.highWaterMb() : Atomics.load(ctrl, C.HIGH_MB)) });
 }

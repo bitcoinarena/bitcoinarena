@@ -548,7 +548,14 @@ export function vestedShares(recipients, height, shareOf = undefined) {
   const out = recipients.map((r, i) => ({ recipientPk: r.recipientPk, label: r.label,
     shareBps: r.vesting ? now[i] : (othersBase > 0 ? Math.floor((r.shareBps * rest) / othersBase) : 0) }));
   const short = DONATION_BPS_TOTAL - out.reduce((t, x) => t + x.shareBps, 0);
+  // The remainder goes to the first plain recipient; when every recipient vests (allowed
+  // when the targets sum to 10000) there is none, and the set summed to 9999 at
+  // intermediate heights, which splitDonation / splitTwoSets refuse (kanban #1863). Then it
+  // goes to the first recipient as published, as splitDonation does - or, should that share
+  // not absorb a negative remainder, the first one that can.
   const first = recipients.findIndex((r) => !r.vesting);
-  if (short && first >= 0) out[first].shareBps += short;
+  let to = first >= 0 ? first : 0;
+  if (out[to].shareBps + short < 0) to = out.findIndex((x) => x.shareBps + short >= 0);
+  if (short && to >= 0) out[to].shareBps += short;
   return out;
 }

@@ -58,9 +58,17 @@ import { tweakPoint, combine, pointFromScalar } from './curve.js';
 import { keyedPay, payoutOf, PAYOUT, runPayouts } from './keyed-payout.js';
 import { nonceGen, bondSigningContext, bondPartialSign, MusigError } from './musig2.js';
 import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
+import { bodyBudget } from './body-budget.js';
 
 // the arbiter's body limits (kanban #1724, #1794; see serveArbiter)
 const ARBITER_CLAIM_MOST = 1024 * 1024;
+// ALL ARBITER BODIES IN FLIGHT SHARE ONE BUDGET (kanban #1911, #1953): the limits above are per request, so 150 parallel unfinished
+// claim bodies just under 1 MiB pinned ~150 MiB. 8 MiB together (ARENA_ARBITER_BODY_BUDGET), counted on bytes received, one address
+// at most half, a small body always admitted from a reserve, a body silent for 10 s dropped (body-budget.js, as server.js)
+const ARBITER_BODY_BUDGET = Math.max(ARBITER_CLAIM_MOST, Number(process.env.ARENA_ARBITER_BODY_BUDGET) > 0 ? Number(process.env.ARENA_ARBITER_BODY_BUDGET) : 8 * ARBITER_CLAIM_MOST);
+const arbiterBodies = bodyBudget({ total: ARBITER_BODY_BUDGET, perAddress: Math.max(ARBITER_CLAIM_MOST, Math.floor(ARBITER_BODY_BUDGET / 2)), reserve: 1024 * 1024, smallMost: ARBITER_DOOR_MOST, defaultMax: ARBITER_CLAIM_MOST });
+// a request not received whole within 30 s ends (ARENA_ARBITER_REQUEST_TIMEOUT_MS; Node's default is 300 s)
+const ARBITER_REQUEST_MS = Number(process.env.ARENA_ARBITER_REQUEST_TIMEOUT_MS) > 0 ? Number(process.env.ARENA_ARBITER_REQUEST_TIMEOUT_MS) : 30000;
 
 /** THE ROUND'S CORE, as a seat's verifier resolves it (verify.js #coreOf): its plugin's, with the round's world rule. */
 export function coreForRound(contract, roundIdBytes, plugins) {
@@ -694,10 +702,14 @@ export { REPLAY_CONTRADICTS, AUDIT_CONTRADICTED };
 export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', posted = [], payouts = () => [], claims = null, liquidationPayouts = () => [] }) {
   const { createServer } = await import('node:http');
   const party = musigParty({ set, allow });
+  // ALL ARBITER BODIES SHARE ONE BUDGET, COUNTED ON BYTES RECEIVED (kanban #1911, #1953; 2.0 port: body-read.js's readBody stays the
+  // seat's): a refused body is answered (413 / 503) before its socket ends
+  const readBody = async (req, max) => (await arbiterBodies.read(req, max)).toString('utf8');
   const server = createServer(async (req, res) => {
+    arbiterBodies.attach(req, res);
     const answer = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); res.end(JSON.stringify(body)); };
     // kanban #1592 / #1469: a body past its limit was dropped and the request ended - answer 413 while the socket still takes it
-    const tooBig = (e) => { if (!(e && e.tooLarge)) return false; try { res.setHeader('connection', 'close'); answer(413, { ok: false, why: e.message }); } catch { /* gone */ } return true; };
+    const tooBig = (e) => { if (!(e && (e.tooLarge || e.busy))) return false; try { res.setHeader('connection', 'close'); answer(e.tooLarge ? 413 : 503, { ok: false, why: e.message }); } catch { /* gone */ } return true; };   // busy: kanban #1911
     const url = new URL(req.url, 'http://x');
     if (req.method === 'GET' && url.pathname === '/status')
       return answer(200, { network: set.network, k: set.k, members: set.members.map((m) => toHex(m.key)), posted });
@@ -737,6 +749,7 @@ export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', p
     const r = party.partial({ sessionId: String(body.sessionId), aggnonce: String(body.aggnonce || '') });
     return answer(r.ok ? 200 : 409, r);
   });
+  server.requestTimeout = ARBITER_REQUEST_MS; server.headersTimeout = Math.min(server.headersTimeout || 60000, ARBITER_REQUEST_MS);   // kanban #1911, #1953
   await new Promise((r) => server.listen(port, host, r));
-  return { port: server.address().port, close: () => new Promise((r) => server.close(r)) };
+  return { port: server.address().port, server, close: () => new Promise((r) => server.close(r)) };
 }

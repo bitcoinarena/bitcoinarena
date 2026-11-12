@@ -233,8 +233,11 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       tip = now;
       // THE PROPOSER CHECK OF RECORDS KEPT BEFORE THIS START (kanban #1670, proposals.js recheck): one not checked yet reads as
       // ORPHANED and is not counted; one whose census was not readable at the start is asked again here, before anything is counted
-      if (typeof proposals.recheck === 'function' && typeof proposals.unchecked === 'function' && proposals.unchecked()) {
-        try { await proposals.recheck(); } catch (e) { log(`[ballot] the proposer check did not run: ${e.message}`); }
+      // - on the branch of each one's own publication block (kanban #2032): this tally's block reader goes with it, and an
+      // `unbonded` record not yet confirmed on its own block is read again too
+      if (typeof proposals.recheck === 'function' && typeof proposals.unchecked === 'function'
+        && (proposals.unchecked() || (typeof proposals.toReview === 'function' && typeof blockHashAt === 'function' && proposals.toReview()))) {
+        try { await proposals.recheck(typeof blockHashAt === 'function' ? { blockHashAt } : {}); } catch (e) { log(`[ballot] the proposer check did not run: ${e.message}`); }
       }
       // A CHAIN THAT DID NOT ANSWER IS NO REORG (kanban #1152): the pass stops here - nothing taken back, orphaned or written
       try { reorged = await followReorgs(); } catch (e) {
@@ -410,7 +413,9 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       const sources = cls === CLASS.SOURCES;
       // (one invalid on its face is never decided, so it holds nothing up)
       // a record whose proposer is not checked yet (kanban #1670) may be a PASSED one: its outcome is not known here yet either
-      const pending = (typeof proposals.unchecked === 'function' && proposals.unchecked(net) > 0)
+      // (kanban #1865: only one stored OPEN and activating by `height` - a decided one is held with its outcome, see proposals.js)
+      const pending = (typeof proposals.openUnchecked === 'function' ? proposals.openUnchecked(net, height) > 0
+        : typeof proposals.unchecked === 'function' && proposals.unchecked(net) > 0)
         || proposals.list().some((p) => p.networkId === net && stateOf(p) === S.COUNTING && counted(p) && !ruleOf(p).invalid && p.activationHeight <= height && (bodyOf(p).class === CLASS.SOURCES) === sources);
       if (pending) return null;
       return sources ? liveConfig({ genesis: SOURCES_GENESIS, passed: passedSources(net), height }).history : liveConfig({ genesis: genesisFor(net), passed: passedOf(net), height }).history;
