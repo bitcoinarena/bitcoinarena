@@ -96,11 +96,19 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   db.exec(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, pubkey TEXT, kind INTEGER, created_at INTEGER, d TEXT, json TEXT);
     CREATE INDEX IF NOT EXISTS ev_author ON events (pubkey, kind, d);
     CREATE INDEX IF NOT EXISTS ev_time ON events (created_at);
-    CREATE INDEX IF NOT EXISTS ev_kind_time ON events (kind, created_at);`);   // kanban #1513: REQs read by index
+    CREATE INDEX IF NOT EXISTS ev_kind_time ON events (kind, created_at);
+    CREATE TABLE IF NOT EXISTS tags (id TEXT, name TEXT, value TEXT);
+    CREATE INDEX IF NOT EXISTS tag_value ON tags (name, value);
+    CREATE INDEX IF NOT EXISTS tag_id ON tags (id);
+    CREATE TRIGGER IF NOT EXISTS ev_tags_drop AFTER DELETE ON events BEGIN DELETE FROM tags WHERE id = old.id; END;`);   // kanban #1513: REQs read by index; #1543: tags too
+  // kanban #1543: each event's single-letter tags (#p, #e, #d, ...) are kept in their own indexed table so a #<letter> filter is answered from the
+  // index; a store written before has them filled in once here.
+  const putTag = db.prepare('INSERT INTO tags (id, name, value) VALUES (?, ?, ?)');
+  const tagRows = (e) => { for (const t of e.tags) if (t[0].length === 1 && t.length > 1) putTag.run(e.id, t[0], t[1]); };
+  if (!db.prepare('SELECT 1 FROM tags LIMIT 1').get()) for (const r of db.prepare('SELECT json FROM events').all()) tagRows(JSON.parse(r.json));
   const put = db.prepare('INSERT OR IGNORE INTO events (id, pubkey, kind, created_at, d, json) VALUES (?, ?, ?, ?, ?, ?)');
   const newest = db.prepare('SELECT id, created_at FROM events WHERE pubkey = ? AND kind = ? AND d = ? ORDER BY created_at DESC, id ASC LIMIT 1');
   const drop = db.prepare('DELETE FROM events WHERE pubkey = ? AND kind = ? AND d = ? AND id != ?');
-  const all = db.prepare('SELECT json FROM events ORDER BY created_at DESC');
   // kanban #1513: quotas (see AUTHOR_EVENTS above)
   const authorUse = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(json)), 0) AS b FROM events WHERE pubkey = ?');
   const authorOldest = db.prepare('SELECT id FROM events WHERE pubkey = ? ORDER BY created_at ASC, id DESC LIMIT 1');
@@ -119,28 +127,40 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     res.end(/nostr\+json/.test(req.headers.accept || '') ? JSON.stringify(info) : `${name}: a Nostr relay (wss). ${description}\n`);
   });
   const wss = new WebSocketServer({ server, maxPayload: MAX_EVENT_BYTES * 2 });
-  // kanban #1513: the rows a filter can match, by SQL on the indexed columns (ids and authors are matched whole, as matches() does)
-  const rowsFor = (f) => {
+  // A FILTER IS ANSWERED BY SQL, NOT BY A SCAN (kanban #1543): stored() used to walk every row of the store and JSON.parse each one, once per filter,
+  // until `limit` matched - a filter matching nothing (an unknown author) parsed the whole store, ten times a REQ, sixty REQs per 10 s per socket, and the
+  // relay's one event loop (NIP-46 signing, NWC payments, logins) stalled for everyone. Now ids, authors, kinds, since, until and #<letter> tags are a
+  // WHERE on indexed columns with LIMIT, so a filter parses at most `limit` rows (MAX_LIMIT), all of which match; matches() still checks each one.
+  const sqlFor = (f) => {
     const where = [], args = [];
-    const inList = (col, vals) => { where.push(vals.length ? `${col} IN (${vals.map(() => '?').join(',')})` : '0'); args.push(...vals); };
-    if (Array.isArray(f.ids)) inList('id', f.ids);
-    if (Array.isArray(f.authors)) inList('pubkey', f.authors);
-    if (Array.isArray(f.kinds)) inList('kind', f.kinds);
-    if (Number.isInteger(f.since)) { where.push('created_at >= ?'); args.push(f.since); }
-    if (Number.isInteger(f.until)) { where.push('created_at <= ?'); args.push(f.until); }
-    if (!where.length) return all.iterate();
-    return db.prepare(`SELECT json FROM events WHERE ${where.join(' AND ')} ORDER BY created_at DESC`).iterate(...args);
+    const hexIn = (col, list) => {   // full 64-hex values by equality, NIP-01 prefixes as an index range [prefix, prefix + 'g')
+      const full = list.filter((x) => x.length === 64), pre = list.filter((x) => x.length < 64), or = [];
+      if (full.length) { or.push(`${col} IN (${full.map(() => '?').join(',')})`); args.push(...full); }
+      for (const x of pre) { or.push(`(${col} >= ? AND ${col} < ?)`); args.push(x, `${x}g`); }
+      where.push(`(${or.join(' OR ')})`);
+    };
+    for (const k of ['ids', 'authors', 'kinds']) if (Array.isArray(f[k]) && !f[k].length) return null;   // an empty list matches nothing
+    if (f.ids) hexIn('id', f.ids);
+    if (f.authors) hexIn('pubkey', f.authors);
+    if (f.kinds) { where.push(`kind IN (${f.kinds.map(() => '?').join(',')})`); args.push(...f.kinds); }
+    if (f.since !== undefined) { where.push('created_at >= ?'); args.push(f.since); }
+    if (f.until !== undefined) { where.push('created_at <= ?'); args.push(f.until); }
+    for (const [k, vals] of Object.entries(f)) {
+      if (k[0] !== '#' || k.length !== 2) continue;
+      if (!vals.length) return null;
+      where.push(`id IN (SELECT id FROM tags WHERE name = ? AND value IN (${vals.map(() => '?').join(',')}))`); args.push(k[1], ...vals);
+    }
+    args.push(Math.min(Number.isInteger(f.limit) ? f.limit : MAX_LIMIT, MAX_LIMIT));
+    return { sql: `SELECT json FROM events${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT ?`, args };
   };
   const stored = (filters) => {
     const out = new Map();
     for (const f of filters) {
-      const limit = Math.min(Number.isInteger(f.limit) ? f.limit : MAX_LIMIT, MAX_LIMIT);
-      let n = 0;
-      for (const row of rowsFor(f)) {
+      const q = sqlFor(f);
+      if (!q) continue;
+      for (const row of db.prepare(q.sql).iterate(...q.args)) {
         const e = JSON.parse(row.json);
-        if (!matches(f, e)) continue;
-        if (!out.has(e.id)) out.set(e.id, e);
-        if (++n >= limit) break;
+        if (matches(f, e) && !out.has(e.id)) out.set(e.id, e);
       }
     }
     return [...out.values()].sort((a, b) => b.created_at - a.created_at);
@@ -175,7 +195,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
             // kanban #1513: the relay's total first (refused when full), then the author's own quota (their oldest goes)
             if (total.n + 1 > lim.totalEvents || total.b + json.length > lim.totalBytes) return send(['OK', e.id, false, 'blocked: the relay is full']);
             const before = authorUse.get(e.pubkey);
-            put.run(e.id, e.pubkey, e.kind, e.created_at, d, json);
+            if (put.run(e.id, e.pubkey, e.kind, e.created_at, d, json).changes) tagRows(e);   // kanban #1543: its tags indexed with it
             if (isReplaceable(e.kind) || isParam(e.kind)) drop.run(e.pubkey, e.kind, d, e.id);
             let use = authorUse.get(e.pubkey);
             while (use.n > 1 && (use.n > lim.authorEvents || use.b > lim.authorBytes)) {
