@@ -6002,6 +6002,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return said.some(Boolean);
   };
   const entryRelay = createEntryRelay({
+    nowMs: () => Number(round.now()),   // the round's clock, which its entry close is on (kanban #1760)
     peersOf: (rid) => verifier.peersOf(rid),
     entryOf: (hex) => { const e = round.entry(fromHex(hex)); return e ? new Uint8Array(e) : null; },
     handoutOf: (hex) => { const e = round.entry(fromHex(hex)); const ref = e ? decodeEntryContract(e).vssSharesRef : null;
