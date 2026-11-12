@@ -43,6 +43,32 @@ const FEWEST = (() => {
 export const fewestParcels = (room) =>
   (Number.isInteger(room) && room >= 0 && room <= BED_ROOM_UNITS ? FEWEST[room] : -1);
 
+// THE FEWEST SATS EACH ROOM PAYS (kanban #1740, #1800 - a refute of #1488: a full bed at 1 sat a parcel, 7 sats, scored
+// C = 1 at heat 22/65536, Hexbox #011's attack 1 by another price). A parcel is a transaction in the mempool, and a
+// mempool takes none below the minimum relay feerate: 0.1 sat/vB since Bitcoin Core 29.1 (it was 1), Core's GetFee
+// truncating. The size class sets the fewest vbytes a parcel of it has - 65 (MIN_STANDARD_TX_NONWITNESS_SIZE), then the
+// class bounds of roomFor, 250, 600 and 1500 - so a parcel of each class pays at least 6, 25, 60 and 150 sats. A room is
+// owed the cheapest set of parcels that makes it: a full bed is at least 98 sats (heat 321/65536, not 22), and a heat that
+// follows C is the attested-transaction load of a later game version. Every page load measured on testnet4 pays far more.
+/** The fewest sats a parcel of each size class pays (0.1 sat/vB of the class's fewest vbytes), PARCEL_ROOMS' order. */
+export const PARCEL_FEWEST_SATS = Object.freeze([6, 25, 60, 150]);
+const CHEAPEST = (() => {
+  const n = new Int32Array(BED_ROOM_UNITS + 1).fill(-1);
+  n[0] = 0;
+  for (let r = 0; r <= BED_ROOM_UNITS; r++) {
+    if (n[r] < 0) continue;
+    for (let i = 0; i < PARCEL_ROOMS.length; i++) {
+      const t = r + PARCEL_ROOMS[i], f = n[r] + PARCEL_FEWEST_SATS[i];
+      if (t <= BED_ROOM_UNITS && (n[t] < 0 || n[t] > f)) n[t] = f;
+    }
+  }
+  return n;
+})();
+
+/** The fewest sats a bed of this room pays at the minimum relay feerate, or -1 when no bed of parcels takes this room. */
+export const fewestSats = (room) =>
+  (Number.isInteger(room) && room >= 0 && room <= BED_ROOM_UNITS ? CHEAPEST[room] : -1);
+
 /**
  * Why this load could not come from an honest bed, or null. `load` is [tick, fee, btc] or [tick, fee, btc, room].
  * The values alone - where it sits in the run is loadsRefusal's.
@@ -62,16 +88,25 @@ export function loadValueRefusal([tick, fee, btc, room]) {
     return `the load at tick ${tick} is an empty bed carrying ${fee} sats and ${btc} hundredths of a BTC: an empty bed carries nothing`;
   if (fee < parcels)
     return `the load at tick ${tick} fills ${room} room units - ${parcels} parcels at the fewest - and pays ${fee} sats: every parcel is a transaction that pays at least 1 sat`;
+  const sats = fewestSats(room);
+  if (fee < sats)
+    return `the load at tick ${tick} fills ${room} room units - ${parcels} parcels at the fewest - and pays ${fee} sats: parcels that fill it pay at least ${sats} sats at the minimum relay feerate (0.1 sat/vB)`;
   return null;
 }
 
 /**
  * Why the loads of this batch are refused, or null. `b` the decoded batch, `at` its ticks (batchTicks), `drivenBefore()`
- * true when a tick of this entry the seat already holds carries a non-zero control word (only asked when a load comes).
+ * true when a tick of this entry the seat already holds carries a non-zero control word (only asked when a load comes),
+ * `next` the tick this entry's next batch has to start at (Round.nextTick).
  */
-export function loadsRefusal(b, at, drivenBefore) {
+export function loadsRefusal(b, at, drivenBefore, next) {
   const loads = b.loads || [];
   if (!loads.length) return null;
+  // NOT DECLARED AHEAD (kanban #1740, #1800 - a refute of #1488): Round.batch holds a batch's first tick to the next one
+  // only when it carries ticks, so a batch of no ticks at firstTick 398, sent before the truck moved, put a full bed at
+  // the gate that the replay applied after a whole run driven empty. A batch of no ticks reaches the next tick, no other.
+  if (!at.length && b.firstTick !== next)
+    return `the loads of a batch of no ticks at ${b.firstTick} are not at the next tick of this run (${next}): a load goes out with the batch that reaches its tick`;
   // the ticks this batch carries; a batch of no ticks reaches the one it starts at (a load there goes before that tick)
   const first = b.firstTick, last = at.length ? at[at.length - 1] : b.firstTick;
   const ticks = new Set();
