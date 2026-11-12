@@ -249,8 +249,25 @@ async function peerHead(answer, cap) {
  * POST /proof-pull, and again at every close. Now each peer gives at most this many.
  */
 const EQUIVOCATION_PAIRS_PER_PEER = 32;
-/** A peer's /entry-void answer is one small JSON object (kanban #1632). */
-const ENTRY_VOID_MAX_BYTES = 4096;
+/**
+ * A PEER'S /entry-void ANSWER IS ONE SMALL JSON OBJECT (kanban #1632, #2163): why, the first mark, the evidence (a signed
+ * mark), the seat's own receipt, a receipt per committee seat and an offer per seat. #1632 set 4096, about 3.9 KB away
+ * from an honest answer at 7 seats; 64 KB holds an honest one for a committee far past any the census seats, and parses in
+ * well under a millisecond. Every reader of the door uses this one cap: verify.js (#equivocationProven, #peerVoidBefore)
+ * and server.js lateByPeers through peerEntryVoid.
+ */
+const ENTRY_VOID_MAX_BYTES = 64 * 1024;
+/**
+ * ONE PEER'S GET /entry-void, timed and capped (kanban #2163): the parsed answer, or null when the peer holds none (any
+ * status but 200). Throws when the peer is down, too slow or answers past ENTRY_VOID_MAX_BYTES - it then proves nothing.
+ * Before, server.js lateByPeers read this door with a bare fetch + r.json(): one peer's 120 MB answer, sent inside the
+ * 1.5 s timeout, held the seat's thread 4.3 s per /play message carrying a first mark the seat did not hold.
+ */
+export async function peerEntryVoid(peer, entryIdHex, waitMs = PEER_WAIT_MS) {
+  const r = await fetch(`${String(peer).replace(/\/+$/, '')}/entry-void?entry=${entryIdHex}`, { signal: AbortSignal.timeout(waitMs) });
+  if (r.status !== 200) { try { await r.body?.cancel(); } catch { /* gone */ } return null; }
+  return JSON.parse(Buffer.from(await peerBody(r, ENTRY_VOID_MAX_BYTES)).toString('utf8'));
+}
 /**
  * A PEER'S GET /results ANSWER IS BOUNDED (kanban #1634): it was read whole (fetch + arrayBuffer, no #1550 cap) and every
  * record that named the round, the player and a committee key cost a schnorr.verify, all in one synchronous block - one
