@@ -43,10 +43,21 @@ const LOCKDOWN = `'use strict';
   const back = new FR((n) => { live -= n; });
   const take = (n) => { if (over !== null || !(n >= 0) || used + n > budget) { over = said; throw new RangeErr(said); } };
   const keep = (o) => { const n = o.byteLength; used += n; live += n; back.register(o, n); return o; };
-  const KINDS = ['ArrayBuffer', 'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array',
-    'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array'];
-  const sizeOf = { ArrayBuffer: 1, Int8Array: 1, Uint8Array: 1, Uint8ClampedArray: 1, Int16Array: 2, Uint16Array: 2, Int32Array: 4, Uint32Array: 4,
-    Float32Array: 4, Float64Array: 8, BigInt64Array: 8, BigUint64Array: 8 };
+  // (kanban #1622) the kinds are read from the realm itself, never from a list: every own global whose prototype chain
+  // reaches %TypedArray% (Float16Array on node 24 was missing from the old list and allocated outside the budget and the
+  // live cap), plus ArrayBuffer - so a typed-array kind a later V8 adds is wrapped too. Its size is its BYTES_PER_ELEMENT.
+  const TA0 = Object.getPrototypeOf(Int8Array);
+  const KINDS = ['ArrayBuffer'], sizeOf = { ArrayBuffer: 1 };
+  for (const k of Object.getOwnPropertyNames(globalThis)) {
+    const d = Object.getOwnPropertyDescriptor(globalThis, k), K = d && d.value;
+    if (typeof K !== 'function' || K === TA0) continue;
+    let p = Object.getPrototypeOf(K);
+    while (p !== null && p !== TA0) p = Object.getPrototypeOf(p);
+    if (p !== TA0) continue;
+    const b = K.BYTES_PER_ELEMENT;
+    if (!Number.isInteger(b) || b < 1) throw new RangeErr('the typed array kind ' + k + ' has no element size');
+    KINDS.push(k); sizeOf[k] = b;
+  }
   for (const k of KINDS) {
     const K = globalThis[k];
     const W = new P(K, { construct(t, a, nt) {
