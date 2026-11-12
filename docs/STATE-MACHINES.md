@@ -2026,3 +2026,8 @@ Files: `owner-leave.js` leaveStatus.
 #### SM-21 x SM-22 (add) Feedback report and its reward link are written together (kanban #2020)
 - Invariant: a reward link is `void` only when its report is `rejected`; an `accepted` report's link is `open`, `paying` or `paid`. A `paid` link and a `paid` report land together.
 - Every write that touches a report and its link, or a row and its `report_moves` line (`move`, `approve`, `createReward`, `paidNow`), runs in one `BEGIN IMMEDIATE ... COMMIT` (inside a caller's transaction, as part of that one). A kill between the link's void and the report's `rejected` leaves neither: after the restart the report is accepted and its link open, and the admin's rejection can be made again.
+- **Faucet queues: a bounty payment never holds a welcome (kanban #2023).** tools/faucet.mjs runs three queues: `one()` for the players' grants
+  (welcome, gift, pay), `oneAdmin()` for the admin's doors (#1419), and `oneBounty()` for every payment on the bounty payer - a reward's LNURL-withdraw
+  callback (`claim`) and the admin's pay-to-address (`payToAddress`). Invariant: no payinvoice on the bounty payer runs in the players' queue, so a
+  welcome asked while a reward payment hangs (75 s lncli, 20 s more for a pay-to-address) is answered within the page's 45 s. Two claims of one link
+  stay apart through claim()'s `open -> paying` compare-and-set, not through a queue. Test: test/wf1489-sm6-faucet-3.test.js.
