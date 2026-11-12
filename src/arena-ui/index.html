@@ -4209,8 +4209,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
                   seed, LockClient: wasm.LockClient, storage: vault(), status: st, successor: { ...su, invite: su.invite || named.federation },
                   onState: (m) => onStep(m.state === 'moving' ? `moving your balance out of federation ${old.slice(0, 8)} (being replaced): ${Math.floor(Number(m.leftMsat) / 1000)} sat to go`
                     : m.state === 'stopped' ? `the move out of federation ${old.slice(0, 8)} stopped (${m.why}) - your notes stay there; it is tried again at your next join` : `moved from federation ${old.slice(0, 8)}`) });
-                window.ARENA_MIGRATED = { from: old, to: here, moved: String(moved.moved), chunks: moved.chunks, state: moved.state };
-                console.log(`[arena] succession: moved ${moved.moved} msat in ${moved.chunks} chunk(s) from ${old.slice(0, 16)} to ${here.slice(0, 16)} (${moved.state})`);
+                window.ARENA_MIGRATED = { from: old, to: here, moved: String(moved.moved), chunks: moved.chunks ?? moved.movedChunks, state: moved.state };
+                console.log(`[arena] succession: moved ${moved.moved} msat in ${moved.chunks ?? moved.movedChunks} chunk(s) from ${old.slice(0, 16)} to ${here.slice(0, 16)} (${moved.state})`);
               }
             } catch (e) { console.warn('[arena] succession move: ' + e.message); }
           };
@@ -9523,9 +9523,12 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               gateways: window.ARENA_LEDGER_GATEWAYS || [],
               onState: (m) => console.log(`[arena] moving out of federation ${fid.slice(0, 8)} (${st.status}) into ${String(target.federation).slice(0, 8)}: ${m.state}`
                 + (m.leftMsat !== undefined ? `, ${Math.floor(Number(m.leftMsat) / 1000)} sat to go` : '') + (m.why ? ` (${m.why})` : '')) });
-            if (String(r.moved) === '0' && Number(r.chunks) === 0) evacuatedEmpty.add(fid);
-            window.ARENA_EVACUATED = { from: fid, to: String(target.federation), state: r.state, moved: String(r.moved), chunks: r.chunks };
-            console.log(`[arena] out of federation ${fid.slice(0, 16)}: ${r.state}, ${r.moved} msat in ${r.chunks} chunk(s) to ${String(target.federation).slice(0, 16)}`);
+            // EMPTY ONLY WHEN THE RUN ENDED 'moved' WITH NOTHING TO MOVE (kanban #2427 / #2484): a stop - for storage ('unkept') or any other - left
+            // the notes in the failing federation, so it is tried again at the next status read; a stop for storage also says the storage is full
+            if (r.state === 'moved' && String(r.moved) === '0' && Number(r.chunks) === 0) evacuatedEmpty.add(fid);
+            if (r.state === 'unkept') window.ARENA_MONEY_ALERT.full();
+            window.ARENA_EVACUATED = { from: fid, to: String(target.federation), state: r.state, moved: String(r.moved), chunks: r.chunks ?? r.movedChunks };
+            console.log(`[arena] out of federation ${fid.slice(0, 16)}: ${r.state}, ${r.moved} msat in ${r.chunks ?? r.movedChunks} chunk(s) to ${String(target.federation).slice(0, 16)}`);
             if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
           } catch (e) { console.warn('[arena] the move out of federation ' + fid.slice(0, 16) + ' stopped: ' + (e && e.message ? e.message : e)); }
           finally { evacuating.delete(fid); }
