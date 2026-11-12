@@ -69,11 +69,16 @@ export function decodeShareAnswer(bytes) {
   };
 }
 
+/** An order (§0A.7b): an entry with a limit price; every other entry is a plain pick. */
+const isOrderEntry = (e) => e.limitPrice !== undefined && e.limitPrice !== null;
+
 export class StakeSecrets {
-  constructor(round, { curve, peers = [], fetcher = fetch, random, peersFor = null, bookStanding = null, shareAskMs = SHARE_ASK_MS } = {}) {
+  constructor(round, { curve, peers = [], fetcher = fetch, random, peersFor = null, bookStanding = null, isBook = null, shareAskMs = SHARE_ASK_MS } = {}) {
     this.shareAskMs = shareAskMs;
     // AN ORDER OF AN ORDER BOOK (comment 1127): the book's word on it - filled or not
     this.bookStanding = bookStanding;
+    // rid -> whether the round is an order book (order-batch.js isBook, as forfeit.js takes it; kanban #1594)
+    this.isBook = isBook;
     // WHAT AN ENTRY'S SHARES OPEN TO, KEPT (kanban #587, measured 2026-10-23 on an idle seat: ECDH in openShare/openMyShare 4.5 % of
     // its main thread - every settle pass and every peer's GET /share opened the same envelopes again): an entry's handout and its
     // dealt shares never change, so this node's own opened share, and a stake secret once reconstructed and checked against the
@@ -130,6 +135,15 @@ export class StakeSecrets {
     return got;
   }
 
+  /** Whether the round is an order book (§0A.7b): the server's isBook, or - without one - the book's own word on a plain pick of it
+   *  (order-batch.js standing names a plain pick wrongType exactly in a book). A round with no plain pick counts no pool entry either way. */
+  #roundIsBook(roundIdBytes) {
+    if (typeof this.isBook === 'function') return !!this.isBook(roundIdBytes);
+    if (!this.bookStanding) return false;
+    return this.round.entriesOf(roundIdBytes).some(({ entryId, entry }) => !isOrderEntry(entry)
+      && !!(this.bookStanding(roundIdBytes, entryId) || {}).wrongType);
+  }
+
   /**
    * MAY THIS NODE HAND ITS SHARE TO A SIGNER NODE? 23.4's conditions, and no others.
    *
@@ -162,8 +176,17 @@ export class StakeSecrets {
         }
         // A SCALAR MARKET (feature 8): a lock is claimed when its entry gets back less than its net stake - by the table
         // the settlement pays (game-market.js attestedTable over the entries whose stake this seat saw), and only then
-        if (isScalar(found.plugin.manifest)) {
+        // ONLY IN A POOL, AND OVER THE POOL'S ENTRIES (kanban #1594, after #1436): #attestedPlan and forfeit #marketRefund count only the
+        // round's kind (§0A.7b) - a pool's plain picks; an order in a pool is no entry of it and comes back whole (wrongType). This door
+        // counted every entry whose stake it saw, orders too: a plain pick the settlement claims could come out 'won' here, its share was
+        // withheld, its P never opened and the settlement never formed. A scalar BOOK falls through to the book's door below (#bookPlan
+        // claims exactly the filled orders, scalar or not); a plain pick in a book is refused there by its wrongType.
+        if (isScalar(found.plugin.manifest) && !this.#roundIsBook(roundIdBytes)) {
+          const asked = this.round.entry(entryIdBytes);
+          if (asked && isOrderEntry(decodeEntryContract(asked)))
+            return { ok: false, why: 'an order in a round that ended a pool (§0A.7b): not an entry of that round, its stake comes back - its stake secret stays sealed' };
           const counted = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.stakeSeen || this.round.stakeSeen(entryId))
+            .filter(({ entry: e }) => !isOrderEntry(e))
             .map(({ entryId, entry: e }) => ({ entryId, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat, pick: e.pick }));
           let t;
           try { t = attestedTable(found.plugin.manifest, counted, f, contract); } catch (e) { return { ok: false, why: `no scalar table for that round: ${e.message}` }; }
