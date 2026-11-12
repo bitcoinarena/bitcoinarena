@@ -3116,7 +3116,18 @@ export class Round {
     if (!c || this.firstMarkHeld(c.roundId, c.entryId)) return false;
     const kept = this.db.prepare('INSERT OR IGNORE INTO refused_first_marks (entry_id, round_id, mark, why, at_ms) VALUES (?, ?, ?, ?, ?)')
       .run(c.entryId, c.roundId, bytes, String(why || 'refused').slice(0, 300), this.now()).changes > 0;
-    this.noteEvidenceBlock(c.roundId, c.entryId, checkpointId(c));
+    // ONE EVIDENCE RECORD PER KEPT REFUSAL, NOT ONE PER MARK OFFERED (kanban #1738, #1548, #1489): the table keeps one
+    // refused first mark per entry, so only that mark is evidence here. A different on-time first mark refused after it
+    // is not kept and writes no evidence_blocks row either - as keepOffered refuses without a row once its cap is full.
+    // Before, every distinct signed first mark the player sent (POST /first-mark, the /play socket) wrote one more row
+    // for that entry at every seat, without bound. The kept mark offered again is still recorded (under the tip now).
+    const id = checkpointId(c);
+    let isHeld = kept;
+    if (!kept) {
+      const held = this.db.prepare('SELECT mark FROM refused_first_marks WHERE entry_id = ?').get(c.entryId);
+      try { isHeld = !!held && same(checkpointId(decodeCheckpoint(splitSigned(new Uint8Array(held.mark)).body)), id); } catch { isHeld = false; }
+    }
+    if (isHeld) this.noteEvidenceBlock(c.roundId, c.entryId, id);
     return kept;
   }
 
