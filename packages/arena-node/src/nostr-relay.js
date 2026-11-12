@@ -134,15 +134,34 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     CREATE INDEX IF NOT EXISTS ev_author ON events (pubkey, kind, d);
     CREATE INDEX IF NOT EXISTS ev_time ON events (created_at);
     CREATE INDEX IF NOT EXISTS ev_kind_time ON events (kind, created_at);
-    CREATE TABLE IF NOT EXISTS tags (id TEXT, name TEXT, value TEXT);
+    CREATE TABLE IF NOT EXISTS tags (id TEXT, name TEXT, value TEXT, created_at INTEGER);
     CREATE INDEX IF NOT EXISTS tag_value ON tags (name, value);
     CREATE INDEX IF NOT EXISTS tag_id ON tags (id);
     CREATE TRIGGER IF NOT EXISTS ev_tags_drop AFTER DELETE ON events BEGIN DELETE FROM tags WHERE id = old.id; END;`);   // kanban #1513: REQs read by index; #1543: tags too
+  // A TAG IS READ NEWEST FIRST FROM ITS OWN INDEX (kanban #2246, #2258, #2275; #1489 a45-refute-11): each tag row carries its event's
+  // created_at, so a #<letter> condition is walked newest first from tags (name, value, created_at) instead of a correlated EXISTS over
+  // the whole store; (id, name, value) makes the EXISTS that checks a tag on one row an index seek, however many tags that event repeats;
+  // events (pubkey, created_at) walks an author newest first. A store written before gets the column and its values once here (and any
+  // row written without one, on every start, through tag_unfilled).
+  if (!db.prepare('PRAGMA table_info(tags)').all().some((c) => c.name === 'created_at')) db.exec('ALTER TABLE tags ADD COLUMN created_at INTEGER');
+  db.exec(`CREATE INDEX IF NOT EXISTS tag_value_time ON tags (name, value, created_at);
+    CREATE INDEX IF NOT EXISTS tag_id_nv ON tags (id, name, value);
+    CREATE INDEX IF NOT EXISTS tag_unfilled ON tags (id) WHERE created_at IS NULL;
+    CREATE INDEX IF NOT EXISTS ev_author_time ON events (pubkey, created_at);
+    UPDATE tags INDEXED BY tag_unfilled SET created_at = COALESCE((SELECT created_at FROM events WHERE events.id = tags.id), 0) WHERE created_at IS NULL;`);
   // kanban #1543: each event's single-letter tags (#p, #e, #d, ...) are kept in their own indexed table so a #<letter> filter is answered from the
   // index; a store written before has them filled in once here.
-  const putTag = db.prepare('INSERT INTO tags (id, name, value) VALUES (?, ?, ?)');
+  const putTag = db.prepare('INSERT INTO tags (id, name, value, created_at) VALUES (?, ?, ?, ?)');
   // kanban #1753: a tag that is not [name, value, ...] of strings is skipped (a store may hold one kept before the door refused it)
-  const tagRows = (e) => { for (const t of (Array.isArray(e.tags) ? e.tags : [])) if (Array.isArray(t) && t.length > 1 && typeof t[0] === 'string' && t[0].length === 1 && typeof t[1] === 'string') putTag.run(e.id, t[0], t[1]); };
+  // kanban #2258: each (name, value) once per event - an event repeating [a, x] a thousand times is one row, not a thousand
+  const tagRows = (e) => {
+    const seen = new Set();
+    for (const t of (Array.isArray(e.tags) ? e.tags : [])) {
+      if (!(Array.isArray(t) && t.length > 1 && typeof t[0] === 'string' && t[0].length === 1 && typeof t[1] === 'string')) continue;
+      const k = `${t[0]}\u0000${t[1]}`;
+      if (!seen.has(k)) { seen.add(k); putTag.run(e.id, t[0], t[1], Number.isInteger(e.created_at) ? e.created_at : 0); }
+    }
+  };
   if (!db.prepare('SELECT 1 FROM tags LIMIT 1').get()) for (const r of db.prepare('SELECT json FROM events').all()) tagRows(JSON.parse(r.json));
   const put = db.prepare('INSERT OR IGNORE INTO events (id, pubkey, kind, created_at, d, json) VALUES (?, ?, ?, ?, ?, ?)');
   const newest = db.prepare('SELECT id, created_at FROM events WHERE pubkey = ? AND kind = ? AND d = ? ORDER BY created_at DESC, id ASC LIMIT 1');
@@ -183,9 +202,18 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   // kinds, each #<letter>) is counted from its own index, at most DRIVE_ROWS+1 rows, and the smallest set drives the query (joined to events by
   // primary key, every other condition checked on that row); when every condition is bigger than DRIVE_ROWS, a filter of one condition reads its
   // index as before (every row it reads matches), and a filter of several examines only the newest SCAN_ROWS events.
-  const DRIVE_ROWS = 2000, SCAN_ROWS = 20000;
-  const sqlFor = (f) => {
+  // NO WINDOW OF THE NEWEST, AND EVERY INDEX READ COUNTED (kanban #2246, #2258, #2275; #1489 a45-refute-11): the one-condition path's WHERE
+  // was the correlated EXISTS, so {"#a":["old"]} on 3000 old rows under 150,000 newer ones walked the whole store; a drive count of DISTINCT
+  // ids read every duplicate tag row; and the several-condition path looked only at the newest SCAN_ROWS events, so a recipient's zap read
+  // ({kinds:[9735],"#p":[R]}) answered nothing once 20,000 newer events existed. Now a count reads at most DRIVE_ROWS+1 index rows (not
+  // distinct ids); when nothing drives, one condition is WALKED newest first from its own created_at-ordered index (a tag value from
+  // tag_value_time, a kind from ev_kind_time, an author from ev_author_time, else the store from ev_time), the time window inside the walk,
+  // every other condition checked on each row it reads, at most SCAN_ROWS rows for one REQ (all its filters together). Every match of a filter is found unless that budget
+  // ran out first - then the client is told (NOTICE 'error: filter too broad ...') rather than given a silent EOSE.
+  const DRIVE_ROWS = 2000, SCAN_ROWS = 20000, CHECK_BATCH = 250;
+  const plan = (f, budget) => {
     const conds = [], time = [], timeArgs = [];
+    const timeOn = (col) => ({ sql: [f.since !== undefined ? `${col} >= ?` : null, f.until !== undefined ? `${col} <= ?` : null].filter(Boolean), args: [f.since, f.until].filter((x) => x !== undefined) });
     const hexIn = (col, list) => {   // full 64-hex values by equality, NIP-01 prefixes as an index range [prefix, prefix + 'g')
       const full = list.filter((x) => x.length === 64), pre = list.filter((x) => x.length < 64), or = [], args = [];
       if (full.length) { or.push(`${col} IN (${full.map(() => '?').join(',')})`); args.push(...full); }
@@ -193,46 +221,101 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
       return { where: `(${or.join(' OR ')})`, args };
     };
     for (const k of ['ids', 'authors', 'kinds']) if (Array.isArray(f[k]) && !f[k].length) return null;   // an empty list matches nothing
-    const onEvents = (c) => ({ ...c, drive: `SELECT e.id AS id FROM events e WHERE ${c.where}`, driveArgs: c.args });
-    if (f.ids) conds.push(onEvents(hexIn('e.id', f.ids)));
-    if (f.authors) conds.push(onEvents(hexIn('e.pubkey', f.authors)));
-    if (f.kinds) conds.push(onEvents({ where: `e.kind IN (${f.kinds.map(() => '?').join(',')})`, args: [...f.kinds] }));
+    const tE = timeOn('e.created_at'), tC = timeOn('created_at');
+    const and = (ws) => (ws.length ? ` AND ${ws.join(' AND ')}` : '');
+    // a stream: (id, created_at, rowid) rows of one index, newest first, the time window applied inside the index, read in keyset pages
+    const stream = (from, eq, args) => ({ sql: `SELECT id, created_at AS t, rowid AS rid FROM ${from} WHERE ${eq}${and(tC.sql)} AND created_at <= ? AND (created_at < ? OR rowid < ?) ORDER BY created_at DESC, rowid DESC LIMIT ?`, args: [...args, ...tC.args] });
+    const onEvents = (c, timed) => ({ ...c, drive: `SELECT e.id AS id FROM events e WHERE ${c.where}${timed ? and(tE.sql) : ''}`, driveArgs: [...c.args, ...(timed ? tE.args : [])] });
+    if (f.ids) conds.push({ ...onEvents(hexIn('e.id', f.ids), false), streams: null });
+    if (f.authors) conds.push({ ...onEvents(hexIn('e.pubkey', f.authors), true),
+      streams: f.authors.every((a) => a.length === 64) ? [...new Set(f.authors)].map((a) => stream('events INDEXED BY ev_author_time', 'pubkey = ?', [a])) : null });
+    if (f.kinds) conds.push({ ...onEvents({ where: `e.kind IN (${f.kinds.map(() => '?').join(',')})`, args: [...f.kinds] }, true),
+      streams: [...new Set(f.kinds)].map((k) => stream('events INDEXED BY ev_kind_time', 'kind = ?', [k])) });
     if (f.since !== undefined) { time.push('e.created_at >= ?'); timeArgs.push(f.since); }
     if (f.until !== undefined) { time.push('e.created_at <= ?'); timeArgs.push(f.until); }
     for (const [k, vals] of Object.entries(f)) {
       if (k[0] !== '#' || k.length !== 2) continue;
       if (!vals.length) return null;
       const inV = `value IN (${vals.map(() => '?').join(',')})`, args = [k[1], ...vals];
-      conds.push({ where: `EXISTS (SELECT 1 FROM tags t WHERE t.id = e.id AND t.name = ? AND t.${inV})`, args,
-        drive: `SELECT DISTINCT id FROM tags WHERE name = ? AND ${inV}`, driveArgs: args });
+      conds.push({ where: `EXISTS (SELECT 1 FROM tags t INDEXED BY tag_id_nv WHERE t.id = e.id AND t.name = ? AND t.${inV})`, args,
+        count: `SELECT id FROM tags INDEXED BY tag_value_time WHERE name = ? AND ${inV}${and(tC.sql)}`,
+        drive: `SELECT DISTINCT id FROM tags INDEXED BY tag_value_time WHERE name = ? AND ${inV}${and(tC.sql)}`, driveArgs: [...args, ...tC.args],
+        streams: [...new Set(vals)].map((v) => stream('tags INDEXED BY tag_value_time', 'name = ? AND value = ?', [k[1], v])) });
     }
     const limit = Math.min(Number.isInteger(f.limit) ? f.limit : MAX_LIMIT, MAX_LIMIT);
-    const whereOf = (cs) => { const w = [...cs.map((c) => c.where), ...time]; return { sql: w.length ? ` WHERE ${w.join(' AND ')}` : '', args: [...cs.flatMap((c) => c.args), ...timeArgs] }; };
+    const w = (() => { const ws = [...conds.map((c) => c.where), ...time]; return { sql: ws, args: [...conds.flatMap((c) => c.args), ...timeArgs] }; })();
     let best = null;
-    for (const c of conds) {
-      const n = db.prepare(`SELECT COUNT(*) AS n FROM (${c.drive} LIMIT ${DRIVE_ROWS + 1})`).get(...c.driveArgs).n;
+    for (const c of conds) {   // kanban #2258: index ROWS read, at most DRIVE_ROWS+1 - a thousand copies of one tag are a thousand rows
+      const n = db.prepare(`SELECT COUNT(*) AS n FROM (${c.count || c.drive} LIMIT ${DRIVE_ROWS + 1})`).get(...c.driveArgs).n;
       if (n <= DRIVE_ROWS && (!best || n < best.n)) best = { c, n };
     }
     if (best) {   // the smallest set drives: at most DRIVE_ROWS rows are read and sorted
-      const w = whereOf(conds);
-      return { sql: `SELECT e.json AS json FROM (${best.c.drive}) d CROSS JOIN events e ON e.id = d.id${w.sql} ORDER BY e.created_at DESC LIMIT ?`, args: [...best.c.driveArgs, ...w.args, limit] };
+      return { limit, sql: `SELECT e.json AS json FROM (${best.c.drive}) d CROSS JOIN events e ON e.id = d.id WHERE ${['1', ...w.sql].join(' AND ')} ORDER BY e.created_at DESC LIMIT ?`,
+        args: [...best.c.driveArgs, ...w.args, limit] };
     }
-    if (conds.length <= 1) { const w = whereOf(conds); return { sql: `SELECT e.json AS json FROM events e${w.sql} ORDER BY e.created_at DESC LIMIT ?`, args: [...w.args, limit] }; }
-    const tw = time.length ? ` WHERE ${time.join(' AND ')}` : '', w = whereOf(conds);
-    return { sql: `SELECT e.json AS json FROM (SELECT id FROM events e${tw} ORDER BY e.created_at DESC LIMIT ${SCAN_ROWS}) d CROSS JOIN events e ON e.id = d.id${w.sql} ORDER BY e.created_at DESC LIMIT ?`,
-      args: [...timeArgs, ...w.args, limit] };
+    // kanban #2246, #2275: nothing is small - walk the smallest condition newest first (each counted from its index, at most SCAN_ROWS+1
+    // rows, never more than the smallest so far), at most SCAN_ROWS index rows: a condition of SCAN_ROWS rows or fewer is walked to its end.
+    // These counts too come out of the REQ's budget (budget.count): many big conditions are not counted once it is spent.
+    let walk = null;
+    for (const c of conds) {
+      if (!c.streams) continue;
+      const cap = Math.min(SCAN_ROWS, walk ? walk.n : SCAN_ROWS, budget.count);
+      if (cap <= 0) { if (!walk) walk = { ...c, n: Infinity }; continue; }
+      const n = db.prepare(`SELECT COUNT(*) AS n FROM (${c.count || c.drive} LIMIT ${cap + 1})`).get(...c.driveArgs).n;
+      budget.count -= n;
+      if (!walk || n < walk.n) walk = { ...c, n };
+    }
+    const streams = walk ? walk.streams : [stream('events INDEXED BY ev_time', '1', [])];
+    return { limit, streams, check: w };
+  };
+  // the rows of a walk: candidates newest first (several streams merged by created_at, each read in keyset pages), each batch checked
+  // against every condition in SQL; at most SCAN_ROWS candidates for the whole REQ (budget), and at most a quarter more rows read ahead
+  const walkRows = (q, budget) => {
+    const out = [], seen = new Set(), heap = [], stmts = new Map();
+    const where = q.check.sql.length ? ` AND ${q.check.sql.join(' AND ')}` : '';
+    // CROSS JOIN: each candidate is looked up by primary key (a bare IN beside kind IN (...) let SQLite walk ev_kind_time instead)
+    const check = db.prepare(`SELECT e.json AS json FROM (SELECT value AS id FROM json_each(?)) d CROSS JOIN events e ON e.id = d.id WHERE 1${where} ORDER BY e.created_at DESC`);
+    const checkBatch = (ids) => { for (const r of check.all(JSON.stringify(ids), ...q.check.args)) if (out.length < q.limit) out.push(r.json); };
+    const page = Math.max(8, Math.min(512, Math.floor(Math.max(budget.left, 32) / 4 / q.streams.length)));
+    const fill = (s) => {
+      let st = stmts.get(s.sql);
+      if (!st) stmts.set(s.sql, (st = db.prepare(s.sql)));
+      s.buf = st.all(...s.args, s.t, s.t, s.rid, page); s.pos = 0; s.end = s.buf.length < page;
+      if (s.buf.length) { const l = s.buf[s.buf.length - 1]; s.t = l.t; s.rid = l.rid; }
+      return s.buf.length > 0;
+    };
+    const at = (i) => heap[i].buf[heap[i].pos].t;
+    const up = (i) => { while (i > 0) { const p = (i - 1) >> 1; if (at(p) >= at(i)) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
+    const down = (i) => { for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && at(l) > at(m)) m = l; if (r < heap.length && at(r) > at(m)) m = r; if (m === i) break; [heap[m], heap[i]] = [heap[i], heap[m]]; i = m; } };
+    for (const s0 of q.streams) { const s = { ...s0, t: Number.MAX_SAFE_INTEGER, rid: Number.MAX_SAFE_INTEGER }; if (fill(s)) { heap.push(s); up(heap.length - 1); } }
+    let broad = false, batch = [];
+    while (heap.length && out.length < q.limit) {
+      if (budget.left <= 0) { broad = true; break; }
+      const s = heap[0], row = s.buf[s.pos++]; budget.left--;
+      if (!seen.has(row.id)) { seen.add(row.id); batch.push(row.id); }
+      if (s.pos >= s.buf.length && (s.end || !fill(s))) { const last = heap.pop(); if (heap.length && last !== s) { heap[0] = last; down(0); } } else down(0);
+      if (batch.length >= CHECK_BATCH) { checkBatch(batch); batch = []; }
+    }
+    if (batch.length && out.length < q.limit) checkBatch(batch);
+    return { rows: out, broad: broad && out.length < q.limit };
   };
   const stored = (filters) => {
-    const out = new Map();
+    const out = new Map(), budget = { left: SCAN_ROWS, count: 4 * SCAN_ROWS };   // kanban #2246: one REQ checks at most SCAN_ROWS walked candidates and counts at most 4 x SCAN_ROWS rows to choose its walks, all its filters together
+    let broad = false;
     for (const f of filters) {
-      const q = sqlFor(f);
+      const q = plan(f, budget);
       if (!q) continue;
-      for (const row of db.prepare(q.sql).iterate(...q.args)) {
-        const e = JSON.parse(row.json);
+      let rows;
+      if (q.sql) rows = db.prepare(q.sql).all(...q.args).map((r) => r.json);
+      else { const r = walkRows(q, budget); rows = r.rows; broad = broad || r.broad; }
+      for (const json of rows) {
+        const e = JSON.parse(json);
         if (matches(f, e) && !out.has(e.id)) out.set(e.id, e);
       }
     }
-    return [...out.values()].sort((a, b) => b.created_at - a.created_at);
+    const events = [...out.values()].sort((a, b) => b.created_at - a.created_at);
+    events.broad = broad;
+    return events;
   };
   // A SUBSCRIBER THAT DOES NOT READ IS DROPPED (kanban #1542): every matching subscription of every client gets its own copy of each
   // event, and ws.send queues it in this process when the peer stops reading - ephemeral events too, which are never stored. A
@@ -322,7 +405,10 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
         { const bad = filters.map(filterRefusal).find(Boolean); if (bad) return send(['CLOSED', sid, `invalid: ${bad}`]); }   // kanban #1470
         if (!subs.has(sid) && subs.size >= MAX_SUBS) return send(['CLOSED', sid, `blocked: at most ${MAX_SUBS} subscriptions`]);
         subs.set(sid, filters.map(compileFilter));   // kanban #1752: Sets, built once
-        for (const e of stored(filters)) send(['EVENT', sid, e]);
+        const found = stored(filters);
+        for (const e of found) send(['EVENT', sid, e]);
+        // kanban #2275: a walk that ran out of its budget says so - the answer may miss older matches
+        if (found.broad) send(['NOTICE', `error: filter too broad, this REQ examined ${SCAN_ROWS} rows and some of its filters may miss older matches; narrow them (since/until, fewer values)`]);
         return send(['EOSE', sid]);
       }
       if (m[0] === 'CLOSE') { subs.delete(String(m[1] || '')); return undefined; }
