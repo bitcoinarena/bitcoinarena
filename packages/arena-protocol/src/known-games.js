@@ -64,6 +64,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: 'e47762fea394d539fe33a117bb410e318e8ae6c0e23d333babe3bed0e8e998d8', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '647425b6e6a053a0e29ff6fc188b4b3b64360b7703cf956a0c2e62d96bcc8ae9': Object.freeze({
     name: 'btc-updown-15m',
@@ -76,6 +77,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: 'e47762fea394d539fe33a117bb410e318e8ae6c0e23d333babe3bed0e8e998d8', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '850a05e817c295c677cdddd0833e390955daa351008eb49fcb144b9ae023ff0b': Object.freeze({
     name: 'btc-updown-15m',
@@ -88,6 +90,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: 'e47762fea394d539fe33a117bb410e318e8ae6c0e23d333babe3bed0e8e998d8', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   'fc98353b00f69133210b6e3e79392f3a1faf6bdde466e50459627a7081129f4b': Object.freeze({
     name: 'rock-paper-scissors',
@@ -174,6 +177,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   'f5f3f18753b4167fe36d2e18f72c72b6e5cfea93cd5ef98c716d3b9137890375': Object.freeze({
     name: 'btc-updown-15m',
@@ -188,6 +192,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '122a4478c7bf905996155e8136b165706a9f1a2b45a72d92871ec96c5a6e3a40': Object.freeze({
     name: 'btc-updown-15m',
@@ -202,6 +207,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '6f4174f6ccf973683fc36faae6afe42ab73f0ad4cf1e69b657c7a05e5034eedb': Object.freeze({
     name: 'btc-updown-15m',
@@ -216,6 +222,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '8b9fceafac13fe11ccb81df7cd3eb67809d96c40b027689cfd570a660f7cbaaa': Object.freeze({
     name: 'btc-updown-15m',
@@ -230,6 +237,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '33b8b298a55ed50e9da12d2cee8a394f206841c7702c3ea8f613ab331dcc5b31': Object.freeze({
     name: 'btc-updown-15m',
@@ -244,6 +252,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   'c5478ded0e29d0f394d30b97400729b28bb852806bed60cf9366e18f2f314256': Object.freeze({
     name: 'btc-updown-15m',
@@ -258,6 +267,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '50ae86410ae55b8c2d3d08c5edf5b6fb53cd0834900b58b0fdef02ac999bb9ea': Object.freeze({
     name: 'btc-updown-15m',
@@ -272,6 +282,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   'ade9f9792562e603f307b638160a5fef51c17665082aa713692060cd089002af': Object.freeze({
     name: 'btc-updown-15m',
@@ -286,6 +297,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '5c77c967d4e2c6798ec4fbc2bba246e8ff14779ead6da9b004e4f74c2e9ff519': Object.freeze({
     name: 'btc-updown-15m',
@@ -300,6 +312,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '51f7c1fb4997064fb90f8bed8b17502e57f12eedbca58a2bcf3f3bb28e82ab8e': Object.freeze({
     name: 'btc-updown-15m',
@@ -314,6 +327,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '7432324ab5a82bebb6bfba44a964204ab5c26b04fd41c83239a198b1f109a781': Object.freeze({
     name: 'btc-updown-15m',
@@ -328,6 +342,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   'fa9a348f9ac4441a05e8ee134d4f3615c758e907626539ef453107e306aaef72': Object.freeze({
     name: 'btc-updown-15m',
@@ -342,6 +357,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   'fe07fe23585bc61ae8dfd2f1ef4a15258025ca416ed3772920fd624ff0b852ac': Object.freeze({
     name: 'btc-updown-15m',
@@ -356,6 +372,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '0860b4a7b5007bf5e21d421b66a3773bba892d9a8747602d5a8bb4cdaf3e3584': Object.freeze({
     name: 'btc-updown-15m',
@@ -370,6 +387,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '8be37be1196aa62cca1f7066b40ccad10f7b33555b5315b3b174568e3585fa8c': Object.freeze({
     name: 'btc-updown-15m',
@@ -384,6 +402,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '5add5235b912410e9afaf2d7b38fab7deeb82fe455bbc730f5c38da1d7b81dbc': Object.freeze({
     name: 'btc-updown-15m',
@@ -398,6 +417,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '600ef6dde43f818e8ff46a78da9fb8c907fcbaa01ea5af59a756dc2c62459613': Object.freeze({
     name: 'btc-updown-15m',
@@ -412,6 +432,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   'ac082fd8491611d4f2a8c1d1b977b2b3389d1e2f12fee3832fdf6ce0c3bf6d9a': Object.freeze({
     name: 'btc-updown-15m',
@@ -426,6 +447,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '04f468bf514c2af3cefee153d1cccf7b06c18ce1cb08f8e5fede7e92338857d6': Object.freeze({
     name: 'btc-updown-15m',
@@ -440,6 +462,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '5fba7f5e0d4eb5da10c1eb6472ba862f8099e7c2e94be4645c483eb3a03b4a4f': Object.freeze({
     name: 'btc-updown-15m',
@@ -454,6 +477,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '9a49869c11c5cd52cf0e5a2ca49f42a549c20f7b86f1fbd9fba0f065bc608556': Object.freeze({
     name: 'btc-updown-15m',
@@ -468,6 +492,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '90fcf7464f555e003049361ee370f392c766146dd840032cd6954640047711ea': Object.freeze({
     name: 'btc-updown-15m',
@@ -482,6 +507,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
     fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
   }),
   '13699356aae534eeb753de4d441dc223698f429f25aeb30ea3e25f4b4e24993e': Object.freeze({
     name: 'rock-paper-scissors',
@@ -627,6 +653,7 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       threshold: 0, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']), attestDraw: Object.freeze({ count: 7, threshold: 5 }) }),
     fee: Object.freeze({ nodeBps: 40, donationBps: 60 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
     requiredProtocolVersion: 2,
   }),
   'bb29d4291673b4bd019216bc8da4d749ef3996e6184aa5d1f68a4feea3b0ed8c': Object.freeze({

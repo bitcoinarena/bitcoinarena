@@ -20,6 +20,7 @@ if (!args.length) { console.error('usage: node known-games.js <game module expor
 const prior = existsSync(OUT) ? (await import(OUT)) : { KNOWN_GOOD_GAMES: {} };
 const games = Object.fromEntries(Object.entries(prior.KNOWN_GOOD_GAMES).map(([id, g]) => [id, { name: g.name, cores: g.cores, sharedWorld: g.sharedWorld || [],
   gameDonationSetId: g.gameDonationSetId, ...(g.attested ? { attested: g.attested } : {}), ...(g.fee ? { fee: g.fee } : {}), ...(g.terms ? { terms: g.terms } : {}),
+  ...(g.periodMs ? { periodMs: g.periodMs } : {}),
   ...(g.requiredProtocolVersion ? { requiredProtocolVersion: g.requiredProtocolVersion } : {}), ...(g.payoutShares ? { payoutShares: [...g.payoutShares] } : {}) }]));
 for (const path of args) {
   const { KNOWN_GAME } = await import(pathToFileURL(resolve(path)).href);
@@ -34,6 +35,9 @@ for (const path of args) {
     ...(m.marketTerms ? { fee: { nodeBps: m.marketTerms.nodeFeeBps, donationBps: m.marketTerms.donationBps } } : {}),
     // AND ITS TERMS' CLOCK: resolution delay and void deadline, which its rounds' lock span is checked by
     ...(m.marketTerms ? { terms: { resolveAfterCloseMs: String(m.marketTerms.resolveAfterCloseMs), deadlineAfterResolveMs: String(m.marketTerms.deadlineAfterResolveMs) } } : {}),
+    // A MARKET ON A GRID (kanban #1852, #1515): its round period, so the page checks an outcome was observed at the round's own window
+    // end (attested.js marketWindowOf) as the seats do - a market that names none runs on no grid
+    ...(isAttested(m) && m.roundPeriodMs > 0n ? { periodMs: String(m.roundPeriodMs) } : {}),
     // THE PROTOCOL VERSION IT REQUIRES, when its manifest names one
     ...(m.requiredProtocolVersion ? { requiredProtocolVersion: m.requiredProtocolVersion } : {}),
     // ITS TOP SPLIT, when its manifest pays by one: the shares in bps, 1st place first
@@ -57,7 +61,8 @@ ${Object.entries(g.cores).map(([c, cs]) => `      '${c}': Object.freeze([${list(
     attested: Object.freeze({ outcomes: Object.freeze(${JSON.stringify(g.attested.outcomes).replace(/"/g, "'")}), attestors: Object.freeze([${list(g.attested.attestors)}]),
       threshold: ${g.attested.threshold}, devKey: '${g.attested.devKey}', networks: Object.freeze([${list(g.attested.networks)}])${g.attested.attestDraw ? `, attestDraw: Object.freeze({ count: ${g.attested.attestDraw.count}, threshold: ${g.attested.attestDraw.threshold} })` : ''} }),` : ''}${g.fee ? `
     fee: Object.freeze({ nodeBps: ${g.fee.nodeBps}, donationBps: ${g.fee.donationBps} }),` : ''}${g.terms ? `
-    terms: Object.freeze({ resolveAfterCloseMs: '${g.terms.resolveAfterCloseMs}', deadlineAfterResolveMs: '${g.terms.deadlineAfterResolveMs}' }),` : ''}${g.requiredProtocolVersion ? `
+    terms: Object.freeze({ resolveAfterCloseMs: '${g.terms.resolveAfterCloseMs}', deadlineAfterResolveMs: '${g.terms.deadlineAfterResolveMs}' }),` : ''}${g.periodMs ? `
+    periodMs: '${g.periodMs}',` : ''}${g.requiredProtocolVersion ? `
     requiredProtocolVersion: ${g.requiredProtocolVersion},` : ''}${g.payoutShares ? `
     payoutShares: Object.freeze([${g.payoutShares.join(', ')}]),` : ''}
   }),`).join('\n')}
