@@ -16,9 +16,9 @@ import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH, NEXTBLOCK_GAME_ID } from '../../
 import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../arena-protocol/src/donation.js';
-import { encodeSlashProof, slashProofId, joinSlashEvidence } from '../../arena-protocol/src/slash.js';
+// 2.0 (kanban #1489 port of #1816): PUT /slash takes a complete fraud proof (5A.3B), its id H(fraud_proof)
+import { encodeSlashProof, joinSlashEvidence, encodeFraudProof, fraudProofHash } from '../../arena-protocol/src/slash.js';
 import { encodePlayerResult, resultId, joinSignedResult } from '../../arena-protocol/src/result.js';
-import { transcriptBytesHash } from '../../arena-protocol/src/posting.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { openStore } from '../src/store.js';
@@ -43,7 +43,8 @@ function junkProof() {
   const r = { roundId: new Uint8Array(randomBytes(32)), playerPubkey: b32(1), outcome: 'DELIVERED', score: 1, transcriptHash: b32(2), simCoreHash: b32(3), nodePubkey: b32(4) };
   const signed = joinSignedResult(encodePlayerResult(r), new Uint8Array(64));
   const p = { roundId: r.roundId, playerPubkey: r.playerPubkey, nodePubkey: r.nodePubkey, transcriptHash: r.transcriptHash, signedResultId: resultId(r), bondTxid: b32(5), bondVout: 0 };
-  return { id: toHex(slashProofId(p)), bytes: joinSlashEvidence(encodeSlashProof(p), signed) };
+  const bytes = encodeFraudProof({ evidence: joinSlashEvidence(encodeSlashProof(p), signed) });
+  return { id: toHex(fraudProofHash(bytes)), bytes };
 }
 
 test('a stranger\'s made-up slash proofs cannot fill the relay store and shut out a held entry\'s transcript', async () => {
@@ -64,12 +65,9 @@ test('a stranger\'s made-up slash proofs cannot fill the relay store and shut ou
       await res.text();
       if (res.status === 201) kept++; else if (res.status === 507) full++;
     }
-    // the honest relay write after it: a held entry's reveal record (entry id || move || salt), which PUT /transcript keeps
-    const record = new Uint8Array(65); record.set(eid, 0); record[32] = 1; record.set(b32(9), 33);
-    const res = await fetch(`http://127.0.0.1:${seat.port}/transcript/${toHex(transcriptBytesHash(record))}`, { method: 'PUT', body: record });
-    const why = await res.text();
-    console.log(`stranger's made-up slash proofs: ${kept} kept, ${full} refused as full; then a held entry's record: ${res.status} ${why}`);
+    console.log(`stranger's made-up slash proofs: ${kept} kept, ${full} refused as full; relayed bytes now ${r.relayedBytes()}`);
     assert.equal(kept, 0, `the seat kept ${kept} slash proofs about rounds it does not hold, from a stranger`);
-    assert.equal(res.status, 201, 'the held entry\'s record was refused after the stranger filled the relay store');
+    assert.equal(full, 0, 'the stranger\'s proofs filled the relay store');
+    assert.equal(r.relayedBytes(), 0, 'the stranger\'s proofs took room in the relay store');
   } finally { await seat.close(); }
 });
