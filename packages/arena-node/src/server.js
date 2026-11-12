@@ -36,7 +36,7 @@ import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { guardianThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
 import { nostrResults, publishRelays } from './nostr-results.js';
-import { createReachCheck } from './reach-check.js';
+import { createReachCheck, askerAddress } from './reach-check.js';
 import { ownBondOf, ownBondsOf, outputOfEntry, ownOutputsOnChain, lockAt, withdrawSpend } from './bond-withdraw.js';
 import { BOND_TEMPLATE_V2 } from '../../arena-protocol/src/bond-script.js';
 import { latestReleaseReader } from './release-latest.js';
@@ -312,9 +312,51 @@ const seatJson = async (answer, cap) => JSON.parse(Buffer.from(await seatBody(an
 /** An answer this seat does not read: its body dropped unread (kanban #1900). */
 async function dropSeatBody(answer) { try { await answer.body?.cancel(); } catch { /* gone */ } }
 
-// who sits at each head-to-head round's table, per seat (POST /here): round hex -> identity key hex -> last said (ms)
+// who sits at each head-to-head round's table, per seat (POST /here): round hex -> identity key hex -> { at, since, said, stay, src }
 const presenceByRound = new WeakMap();
 const presenceTables = (round) => { let t = presenceByRound.get(round); if (!t) { t = new Map(); presenceByRound.set(round, t); } return t; };
+// THE ORDER OF SAYS, EXACT (kanban #2385): two says in one millisecond are still one before the other
+let presenceSeq = 0;
+// WHERE A PRESENCE CAME FROM (kanban #2385, #2437): the asker's address (behind cloudflared / tailscale serve the address the proxy saw,
+// reach-check.js askerAddress); an IPv6 address by its /48, so one holder of a block of addresses is one source, not 65,536
+export function presenceSource(req) {
+  const a = askerAddress(req);
+  if (!a.includes(':')) return a;
+  const [head, tail] = a.toLowerCase().split('::');
+  const left = head ? head.split(':') : [], right = tail !== undefined && tail ? tail.split(':') : [];
+  const groups = tail === undefined ? left : [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right];
+  return groups.slice(0, 3).map((g) => g || '0').join(':') + '::/48';
+}
+// WHOM A FULL TABLE DROPS (kanban #2385, #2437, audit44 refute s2 of #1645/#2147): `t` is the table (key -> { said, stay, src }),
+// `named` the identities a name record of the round names, `src` the newcomer's source. Answers the key to drop, or null if all are named.
+// Keys cost nothing and every order rule (drop the oldest said, drop the newest stay) is gamed by saying at the right moment. What a
+// stranger cannot make for free is ADDRESSES: the seat drops from the source that holds the most unnamed keys at the table (the
+// newcomer's own counted), so 32 throwaway keys from one address only ever push out each other - never a player who sits from
+// another address, however early or late she came, however often she comes back. Inside that source it drops the key said longest
+// ago, but never the source's longest unbroken stay (a player behind the same address who sat first keeps her seat while later keys
+// churn). When every source holds one key, the same rule runs over the whole table.
+export function presenceToDrop(t, named, src) {
+  const count = new Map([[src, 1]]);
+  for (const [k, p] of t) if (!named.has(k)) count.set(p.src, (count.get(p.src) || 0) + 1);
+  let most = 0; for (const n of count.values()) if (n > most) most = n;
+  const pick = (inSource) => {
+    let first = null, firstStay = Infinity;
+    for (const [k, p] of t) if (!named.has(k) && inSource(p) && p.stay < firstStay) { firstStay = p.stay; first = k; }
+    let drop = null, dropSaid = Infinity;
+    for (const [k, p] of t) if (!named.has(k) && inSource(p) && k !== first && p.said < dropSaid) { dropSaid = p.said; drop = k; }
+    return drop;
+  };
+  if (most > 1) {
+    // the newcomer's own source first when it is among the largest, else the largest whose key said longest ago is oldest
+    const largest = [...count].filter(([, n]) => n === most).map(([s]) => s);
+    const order = largest.includes(src) ? [src, ...largest.filter((s) => s !== src)] : largest;
+    for (const s of order) { const d = pick((p) => p.src === s); if (d !== null) return d; }
+  }
+  const d = pick(() => true);
+  if (d !== null) return d;
+  for (const [k] of t) if (!named.has(k)) return k;
+  return null;
+}
 
 // EVERY BODY HAS A LIMIT (kanban #1469; one reader for every server since kanban #1592): see body-read.js - and in this server all bodies in
 // flight share one budget besides (kanban #1724, #1794, #1911, #1953: `read` below, body-budget.js)
@@ -10570,23 +10612,38 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // player who arrives during it still gets a slot, and her next say (every 2 s) takes it back. A named identity is dropped only when
           // all 32 are named (then the one said longest ago). The table map follows the same rule: a full map drops the table whose
           // stay began last (the newest of its keys' oldest stays), so tables that have stood longest keep their place.
-          const sinceOf = (tt) => { let s = Infinity; for (const p of tt.values()) if (p.since < s) s = p.since; return s; };
+          // SOURCES, NOT ORDER (kanban #2385, #2437, audit44 refute s2): #2147's "drop the newest stay" let a stranger who filled the table
+          // BEFORE the players came leave them one slot to knock each other off, and one fresh key said after a (re)arriving player took his
+          // seat. Each key now also keeps the source it was said from, and a full table makes room from the source that holds the most
+          // keys (presenceToDrop): a stranger's keys only push out his own. A full map drops a table only one source sits at - the one
+          // said to longest ago of the source that sits alone at the most tables - else, as before, the table whose stay began last.
+          const src = presenceSource(req);
           if (!tables.has(ridHex) && tables.size >= 256) {
-            let drop = null, dropSince = -Infinity;
-            for (const [rid, tt] of tables) { const s = sinceOf(tt); if (s >= dropSince) { dropSince = s; drop = rid; } }
+            const solo = new Map();   // source -> [table round hex, last said]
+            for (const [rid, tt] of tables) {
+              const srcs = new Set([...tt.values()].map((p) => p.src));
+              if (srcs.size !== 1) continue;
+              const s1 = [...srcs][0], last = Math.max(...[...tt.values()].map((p) => p.said));
+              const e = solo.get(s1) || { n: 0, rid: null, last: Infinity }; e.n++; if (last < e.last) { e.last = last; e.rid = rid; } solo.set(s1, e);
+            }
+            let drop = null, most = 1;
+            for (const e of solo.values()) if (e.n > most) { most = e.n; drop = e.rid; }
+            if (drop === null) {
+              let dropStay = -Infinity;
+              for (const [rid, tt] of tables) { let s0 = Infinity; for (const p of tt.values()) if (p.stay < s0) s0 = p.stay; if (s0 >= dropStay) { dropStay = s0; drop = rid; } }
+            }
             tables.delete(drop);
           }
           const t = tables.get(ridHex) || new Map();
           if (!t.has(body.key) && t.size >= 32) {
             const named = typeof round.namedIdentitiesOfRound === 'function' ? round.namedIdentitiesOfRound(new Uint8Array(id)) : new Set();
-            let drop = null, dropSince = -Infinity;
-            for (const [k, p] of t) if (!named.has(k) && p.since >= dropSince) { dropSince = p.since; drop = k; }
+            let drop = presenceToDrop(t, named, src);
             if (drop === null && !named.has(body.key)) return text(res, 503, 'that table is full');
-            if (drop === null) { let dropAt = Infinity; for (const [k, p] of t) if (p.at < dropAt) { dropAt = p.at; drop = k; } }
+            if (drop === null) { let dropAt = Infinity; for (const [k, p] of t) if (p.said < dropAt) { dropAt = p.said; drop = k; } }
             t.delete(drop);
           }
-          const was = t.get(body.key);
-          t.set(body.key, { at: now, since: was ? was.since : now });
+          const was = t.get(body.key), seq = ++presenceSeq;
+          t.set(body.key, { at: now, since: was ? was.since : now, said: seq, stay: was ? was.stay : seq, src });
           tables.set(ridHex, t);
         }
         const t = tables.get(ridHex) || new Map();
