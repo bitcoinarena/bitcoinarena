@@ -9,12 +9,20 @@
 // it there as it checks a client's copy, entry close included, so this adds no trust in the seat that hands it. Only a copy from a client is
 // handed on (RELAY_HEADER marks a seat's), and only to a seat that does not hold it. A market has its own way (order-batch.js replayOrder), and a
 // replayed game's client sends its entry again with its batches.
+import { jsonUpTo } from './peer-read.js';
+
 export const RELAY_HEADER = 'x-arena-relayed';
 const AFTER_MS = 700, SPREAD_MS = 500;      // after the client's own posts have had their time, and not all seats at the same moment
 const LOCK_AFTER_MS = 1500;                 // and a lock after the entry it needs
 const CLOSE_MARGIN_MS = 300;                // an entry taken just before entry close goes at once: the seats' doors shut there
 const WAIT_MS = 4000, TRIES = 3, AGAIN_MS = 2000, KEPT = 2048;
 const VIEW_WAIT_MS = 3000;                  // a dead peer may not hold a seat's close for longer than this
+// AND MAY NOT MAKE IT BUFFER MORE THAN THIS (kanban #2244, refute of #1829): a GET /api/round-result answer is one row of a few hundred
+// bytes per entry of the round; 1 MB holds thousands. One committee seat answering tens of MB was buffered and parsed whole by every
+// honest committee seat, for every peer, on every membersKnown pass (about every 2 s until the result window).
+export const VIEW_MAX_BYTES = 1024 * 1024;
+// and a GET /order-locks answer (handLocks) is one seat's stake and fee lock for one entry (kanban #2327, #2343)
+export const LOCKS_MAX_BYTES = 64 * 1024;
 
 // AND THE DOOR DECIDES NOTHING ABOUT WHO IS IN THE ROUND (kanban #1071, §17). A seat's door is its own: the backup rule, and every other refusal, says whether this
 // seat takes a new entry now. Handing an entry on cannot help a door that refused it, so before a head-to-head seat signs anything it looks at the entries its peers
@@ -55,7 +63,7 @@ export const seatView = (fetcher) => async (base, roundHex) => {
   const r = await fetcher(`${base}/api/round-result?round=${roundHex}`, { signal: AbortSignal.timeout(VIEW_WAIT_MS) });
   if (r.status === 404) return new Set();                  // it holds no such round, so it holds no entry of it
   if (!r.ok) throw new Error(`${r.status}`);
-  const j = await r.json();
+  const j = await jsonUpTo(r, VIEW_MAX_BYTES);           // kanban #2244: capped
   return new Set((j.players || []).map((p) => String(p.entry)));
 };
 
@@ -99,7 +107,9 @@ export function createEntryRelay({ peersOf, entryOf, handoutOf, locksOf, fetcher
       const again = await Promise.all(left.map(async (base) => {
         try {
           const r = await ask(`${base}/order-locks?entry=${entryHex}`);
-          const has = r.status === 200 ? await r.json() : r.status === 404 ? {} : null;
+          // kanban #2327, #2343 (refute of #1829 / #2244): an order-locks answer is two lock rows, a few hundred bytes - read up to LOCKS_MAX_BYTES,
+          // so a peer answering tens of MB is not buffered and parsed whole on every one of TRIES passes; a refused read is no answer
+          const has = r.status === 200 ? await jsonUpTo(r, LOCKS_MAX_BYTES).catch(() => null) : r.status === 404 ? {} : null;
           if (!has) return null;
           let short = false;
           for (const [door, have, fields] of [['lock', has.stake, held.stake], ['fee-lock', has.fee, held.fee]]) {
