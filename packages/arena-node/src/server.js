@@ -362,6 +362,8 @@ export const GHOST_BACKLOG_BYTES = 262144;
 // every honest hand-on lands while the peer doors are still open (#1520 stays closed), and no seat's word is needed after the close.
 export const CANCEL_PLAYER_DOOR_MARGIN_MS = 800;
 export const CANCEL_HANDON_RETRY_MS = 250;
+// the held door's peer ask ends this long before the close, so its yes still lands before it (kanban #2076)
+export const CANCEL_HELD_ASK_MARGIN_MS = 25;
 /** Which cancel door is open at `nowMs` for a round closing at `entryCloseMs`: 'open', 'held' (only a cancel a round seat holds), or 'closed'. */
 export function cancelDoorAt(nowMs, entryCloseMs, relayed) {
   const now = BigInt(Math.floor(Number(nowMs))), close = BigInt(entryCloseMs);
@@ -4393,6 +4395,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // before the close and the peers' doors at it, so the hand-on has that margin to land; it is kept in market_cancel_handons, so a restart (or a
   // slow or refused try) does not lose it, and retried every CANCEL_HANDON_RETRY_MS. A handed-on take is not handed on again.
   const handOnHeldBy = new Map();   // entry hex -> the peers that answered they hold it
+  // EACH PEER'S TRY RUNS ON ITS OWN (kanban #2076): a hung seat's try (bounded by the close) no longer holds back the retries to the other
+  // seats - the timer starts every peer's next try while that one is still out, and skips only a peer whose try is in flight
+  const handOnInFlight = new Set();   // `${entry hex} ${peer}`
   const handCancelsOn = async (onlyEntryHex = null) => {
     const due = typeof round.cancelHandOnsDue === 'function' ? round.cancelHandOnsDue() : [];
     await Promise.all(due.filter((d) => !onlyEntryHex || toHex(d.entryId) === onlyEntryHex).map(async (d) => {
@@ -4402,38 +4407,52 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const peers = settlementPeers(d.roundId).map((p) => String(p).replace(/\/+$/, ''));
       const held = handOnHeldBy.get(hex) || new Set();
       handOnHeldBy.set(hex, held);
-      const said = await Promise.all(peers.filter((p) => !held.has(p)).map(async (peer) => {
+      const said = await Promise.all(peers.filter((p) => !held.has(p) && !handOnInFlight.has(`${hex} ${p}`)).map(async (peer) => {
+        const key = `${hex} ${peer}`;
+        handOnInFlight.add(key);
         try {
           const r = await fetch(`${peer}/cancel?entry=${hex}`, { method: 'POST', body: d.signature, headers: { [RELAY_HEADER]: '1' },
             signal: AbortSignal.timeout(Math.max(50, Math.min(2000, left))) });
           if (r.status === 200 || r.status === 201) held.add(peer);
           return r.status;
-        } catch { return 0; }
+        } catch { return 0; } finally { handOnInFlight.delete(key); }
       }));
       if (peers.length && peers.every((p) => held.has(p))) { round.cancelHandOnDone(d.entryId); handOnHeldBy.delete(hex); }
       if (said.length) console.log(`[cancel] ${toHex(d.roundId).slice(0, 16)} ${hex.slice(0, 16)}: handed on, ${held.size} of ${peers.length} seats hold it (${said.join(' ')})`);
     }));
   };
-  let handOnRunning = false;
   const cancelHandOnTimer = setInterval(() => {
-    if (handOnRunning || shuttingDown) return;
-    handOnRunning = true;
-    handCancelsOn().catch((e) => console.error(`[cancel] hand-on: ${e.message}`)).finally(() => { handOnRunning = false; });
+    if (shuttingDown) return;
+    handCancelsOn().catch((e) => console.error(`[cancel] hand-on: ${e.message}`));
   }, CANCEL_HANDON_RETRY_MS);
   if (cancelHandOnTimer.unref) cancelHandOnTimer.unref();
   // DOES ANOTHER SEAT OF THE ROUND HOLD THIS CANCEL (kanban #1520, #1875): asked only for a handed-on cancel that arrives in the last
-  // CANCEL_PLAYER_DOOR_MARGIN_MS before the close, when the player's own door is shut
-  const aSeatHoldsCancel = async (roundId, eid) => {
-    const want = toHex(eid);
-    const said = await Promise.all(settlementPeers(roundId).map(async (peer) => {
-      try {
-        const r = await fetch(`${String(peer).replace(/\/+$/, '')}/cancels?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(2000) });
-        const body = r.ok ? await r.json() : null;
-        return !!(body && Array.isArray(body.cancels) && body.cancels.some((x) => x && x.entry === want));
-      } catch { return false; }
-    }));
-    return said.some(Boolean);
-  };
+  // CANCEL_PLAYER_DOOR_MARGIN_MS before the close, when the player's own door is shut.
+  // THE FIRST SEAT THAT LISTS IT IS ENOUGH, AND THE ASK ENDS BEFORE THE CLOSE (kanban #2076, #1489 v1-refute-33 s3): the ask used to wait 2 s
+  // for every peer (Promise.all), so one hung, overloaded or colluding seat that never answers GET /cancels held every take in this margin past
+  // the close, where it was refused - seat A held the cancel and the others did not, the #1520 split. Now every peer is asked at once, the
+  // answer is yes as soon as one lists it (the others are aborted), and the whole ask is bounded by the time left to the close less
+  // CANCEL_HELD_ASK_MARGIN_MS, so a silent third seat can only make the answer no, never late.
+  const aSeatHoldsCancel = (roundId, eid, closeMs) => new Promise((resolve) => {
+    const want = toHex(eid), peers = settlementPeers(roundId);
+    const budget = Number(closeMs) - Number(round.now()) - CANCEL_HELD_ASK_MARGIN_MS;
+    if (!(budget > 0) || !peers.length) return resolve(false);
+    const stop = new AbortController();
+    let open = peers.length, settled = false;
+    const finish = (v) => { if (settled) return; settled = true; clearTimeout(timer); stop.abort(); resolve(v); };
+    const timer = setTimeout(() => finish(false), Math.min(2000, budget));
+    for (const peer of peers) {
+      (async () => {
+        try {
+          const r = await fetch(`${String(peer).replace(/\/+$/, '')}/cancels?round=${toHex(roundId)}`, { signal: stop.signal });
+          const body = r.ok ? await r.json() : null;
+          if (body && Array.isArray(body.cancels) && body.cancels.some((x) => x && x.entry === want)) finish(true);
+        } catch { /* no answer is a no */ }
+        open -= 1;
+        if (open === 0) finish(false);
+      })();
+    }
+  });
   const entryRelay = createEntryRelay({
     peersOf: (rid) => verifier.peersOf(rid),
     entryOf: (hex) => { const e = round.entry(fromHex(hex)); return e ? new Uint8Array(e) : null; },
@@ -9507,7 +9526,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // at once, and the player's answer waits for that first try, so the other seats hold it well before the close.
         const relayed = req.headers[RELAY_HEADER] === '1';
         const door = cancelDoorAt(round.now(), c.entryCloseMs, relayed);
-        if (door === 'closed' || (door === 'held' && !(await aSeatHoldsCancel(entry.roundId, new Uint8Array(eid))) ))
+        if (door === 'closed' || (door === 'held' && !(await aSeatHoldsCancel(entry.roundId, new Uint8Array(eid), c.entryCloseMs)) ))
           return text(res, 409, BigInt(Math.floor(Number(round.now()))) >= c.entryCloseMs
             ? `entries closed at ${new Date(Number(c.entryCloseMs)).toISOString()}: that order is in the round now, and its fee is due`
             : `cancels close ${CANCEL_PLAYER_DOOR_MARGIN_MS} ms before the entry close (${new Date(Number(c.entryCloseMs)).toISOString()}), so every seat holds the same ones: that order stays in the round`);
