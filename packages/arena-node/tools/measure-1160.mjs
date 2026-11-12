@@ -18,7 +18,7 @@ function seat({ lostReceive = 0, lostSend = 0 }) {
   const ports = {
     [A]: { ecashBalance: async () => 0n, ecashReceive: async (e) => {
       if (received.has(e)) return { state: 'AlreadyReceived', msat: 0n, earlier: 'Success', carriedMsat: 100_000n };
-      received.add(e); if (lostReceive-- > 0) throw new Error('timed out'); return { state: 'Success', msat: 100_000n }; } },
+      received.add(e); if (lostReceive-- > 0) throw new Error('timed out'); return { state: 'Success', msat: 100_000n, carriedMsat: 100_000n }; } },
     [B]: { ecashBalance: async () => holds, ecashSent: async (k) => (log.has(k) ? { found: true, ...log.get(k) } : { found: false }),
       ecashSend: async (m, { key = null } = {}) => { if (key && log.has(key)) return log.get(key);
         holds -= m; const out = { ecash: `fedimintB-${++n}`, msat: m }; if (key) log.set(key, out); if (lostSend-- > 0) throw new Error('timed out'); return out; } },

@@ -398,7 +398,8 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
     /**
      * E-cash reissued into the seat's client here: { state: 'Success' | 'Rejected' | 'AlreadyReceived', msat } (kanban #614). An
      * AlreadyReceived from a tool of kanban #1160 also says how the earlier receive of that string ended (`earlier`) and what it carried
-     * (`carriedMsat`); an older tool says neither.
+     * (`carriedMsat`); an older tool says neither. A Success from a tool of kanban #1936 says `carriedMsat` too: what the notes carry,
+     * where `msat` is only the client's balance change in that run.
      */
     async ecashReceive(ecash) {
       const j = await run(bin, ['--mode', 'ecash-receive', '--data-dir', dataDir, '--ecash', String(ecash)], timeoutMs);

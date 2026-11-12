@@ -1961,3 +1961,8 @@ Files: `owner-leave.js` leaveStatus.
 #### SM-22 (invariant) Feedback reward link: one payment, one reward (#1925)
 - A payment hash is held by at most one reward in paying or paid: `claim` refuses an invoice whose hash another reward holds ("that invoice was used for another reward"), inside the open -> paying compare-and-set, and the partial unique index `rewards_by_payment` (payment_hash, states paying and paid) refuses a second holder too.
 - `settle` credits a hash only to the reward that holds it paid, or took it first (earliest `tried_ms`): any other paying reward on that hash goes back to open, its report stays accepted. A file from before that already holds two on one hash opens without the index.
+#### Seat e-cash exchange (ecash-exchange.js, kanban #1936): a row is booked by its own notes
+- receiving -> taken books `in_msat` = what the row's own notes carried: the tool's `carried_msat` (`e.amount()`), on a Success as on an AlreadyReceived of this row's own earlier ask. The tool's `msat` (the client's balance after the run less before) is never booked: a reissue left by an earlier, killed run finishes in the next run and counts in, and a balance that has not risen yet counts 0.
+- A Success without `carried_msat` (a tool from before #1936) books nothing: the row stays RECEIVING (503, ask again); the retry's AlreadyReceived says the amount.
+- A row TAKEN with `in_msat` 0 (booked before the fix) is not refused for good: the tool is asked again, and an AlreadyReceived with earlier Success and `carried_msat` > 0 sets `in_msat` once (guarded on state taken and in_msat 0); anything else holds it (503).
+- Invariant: what the seat pays out for exchanges never exceeds what the notes handed in carried, and notes taken on a Success are paid.
