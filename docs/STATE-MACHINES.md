@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-C15 (change) Config proposal: its schedule follows the history at its publication (kanban #1631)
+- Invariant: a kept proposal's `repeal`, `votingFrom` and `votingUntil` are always those the history live at its publication height gives (`historyAt(net, publishedAt)`, 27A.7.6), at every seat - never the ones frozen when this seat first took it. A seat that took a repeal before it heard of the proposal it repeals (posted to one seat; the peer pull runs every 10 min) no longer keeps the ordinary window for good.
+- Each tally pass asks `proposals.reschedule(id)` for every kept, non-orphaned proposal before counting it: `pending` (a proposal activating by then is undecided here: a COUNTING one is not counted this pass), `same`, or `moved` - the record's schedule rewritten from that history (written to the store first; compare-and-set on the record), a decided one back to COUNTING and counted on its new window, and one whose activation is before the end of its cooldown under that schedule FAILED as void (`decided.void`), anchored at its publication block. A record moved carries `rescheduled: { at, was }`.
