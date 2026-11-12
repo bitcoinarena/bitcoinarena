@@ -295,7 +295,7 @@ export async function advanceEcashExchange({ storage, key, rec, walletFrom, wall
  * back, and only then is the next offering seat handed new ones. Answers { ok, from, to, msat, state, short, why }.
  */
 export async function exchangeEcashInto({ storage, from, to, needMsat, seats, walletFrom, walletTo, fetcher = fetch, put = putRoomy,
-  nowMs = Date.now(), onStep = () => {}, timeoutMs = 60000, offerTimeoutMs = 8000, maxSeats = 3 }) {
+  nowMs = Date.now(), onStep = () => {}, timeoutMs = 60000, offerTimeoutMs = 8000, maxSeats = 3, phrase16 = null }) {
   const need = BigInt(needMsat);
   const offering = [];
   for (const seat of seats || []) {
@@ -312,7 +312,7 @@ export async function exchangeEcashInto({ storage, from, to, needMsat, seats, wa
   for (let i = 0; i < offering.length; i++) {
     const seat = offering[i];
     const key = `${ECASH_EXCHANGE_PREFIX}${nowMs}.${i}`;
-    const s = await sendKeptEcash({ storage, key, wallet: walletFrom, amountMsat: need, fields: { kind: 'exchange', from, to, msat: String(need), seat }, put, nowMs });
+    const s = await sendKeptEcash({ storage, key, wallet: walletFrom, amountMsat: need, fields: { kind: 'exchange', from, to, msat: String(need), seat, ...(phrase16 ? { fromKey: String(phrase16).slice(0, 16) } : {}) }, put, nowMs });
     if (!s.sent || s.memoryOnly) return { ok: false, from, why: s.why || 'nothing sent' };
     let rec;
     try { rec = moveEcashTransfer(storage, key, s.rec, 'handed', { seat, handedAtMs: nowMs }, put); }
@@ -329,12 +329,24 @@ export async function exchangeEcashInto({ storage, from, to, needMsat, seats, wa
   return { ok: false, from, why: why || 'every offering seat refused' };
 }
 
-/** EVERY EXCHANGE THIS BROWSER KEEPS, moved on: `walletFor(federationHex)` opens a wallet. Answers one row per record acted on. */
-export async function resumeEcashExchanges({ storage, keys, walletFor, fetcher = fetch, seats = [], nowMs = Date.now(), put = putRoomy, timeoutMs = 30000 }) {
+/**
+ * EVERY EXCHANGE OF THIS TAB'S PHRASE, moved on: `walletFor(federationHex)` opens a wallet of the phrase `phrase16`. Answers one row per
+ * record acted on.
+ * ONE PHRASE'S EXCHANGE IS FINISHED ONLY INTO THAT PHRASE'S WALLETS (kanban #1641, the 2026-11-12 state audit): the records are shared
+ * by every tab of the browser, and two tabs may be two players. A record named no phrase, so tab B (phrase P2) resumed tab A's (P1)
+ * handed record and received the seat's e-cash for P1's notes into P2's wallet, then removed the record - while A still held P1. Now
+ * exchangeEcashInto writes the sending phrase (fromKey, as the merge records do) and a record of another phrase is left alone: its own
+ * tab, or the next tab opened on it, moves it on. A record of an older page names no phrase and is moved only when the caller says the
+ * browser keeps one phrase (`takeUnnamed`, as scanLostDeposits' dropUnnamed).
+ */
+export async function resumeEcashExchanges({ storage, keys, walletFor, fetcher = fetch, seats = [], nowMs = Date.now(), put = putRoomy, timeoutMs = 30000,
+  phrase16 = null, takeUnnamed = false }) {
+  const mine = phrase16 ? String(phrase16).slice(0, 16) : null;
   const out = [];
   for (const key of (keys || []).filter((k) => String(k).startsWith(ECASH_EXCHANGE_PREFIX))) {
     const rec = readEcashTransfer(storage, key);
     if (!rec || ['short', 'refused', 'unreadable'].includes(rec.state)) continue;
+    if (rec.fromKey ? rec.fromKey !== mine : !takeUnnamed) continue;   // another phrase's (kanban #1641), or unnamed in a browser of many phrases
     try {
       const walletFrom = await walletFor(rec.from);
       const r = await advanceEcashExchange({ storage, key, rec, walletFrom, walletTo: () => walletFor(rec.to), fetcher, seats, nowMs, put, timeoutMs });
