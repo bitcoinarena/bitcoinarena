@@ -89,12 +89,16 @@ export function createEntryRelay({ peersOf, entryOf, handoutOf, locksOf, fetcher
       + `${handed.some((x) => x !== 'took') ? ` (${[...new Set(handed.filter((x) => x !== 'took'))].join(', ').slice(0, 80)})` : ''}`);
   };
 
-  const handLocks = async (roundId, entryHex) => {
+  const handLocks = async (roundId, entryHex, closeMs = null) => {
     const held = locksOf(entryHex);
     if (!held.stake && !held.fee) return;
     let left = bases(roundId), took = 0;
-    for (let i = 0; i < TRIES && left.length; i++) {
-      if (i) await new Promise((r) => setTimeout(r, againMs));
+    const tries = closeMs === null || closeMs === undefined ? TRIES : TRIES + 5;
+    for (let i = 0; i < tries && left.length; i++) {
+      // BEFORE A HEAD-TO-HEAD CLOSE THE NEXT TRY COMES SOONER (kanban #1760): the entry handed on in the same moment may not have landed yet, and the
+      // seats' lock doors shut at the close
+      const close = closeMs === null || closeMs === undefined ? NaN : Number(closeMs) - nowMs();
+      if (i) await new Promise((r) => setTimeout(r, Number.isFinite(close) && close > 0 ? Math.max(50, Math.min(againMs, close / 3)) : againMs));
       // A SEAT STILL WITHOUT THE ENTRY answers 404 to a lock: asked again, the entry may be on its way
       const again = await Promise.all(left.map(async (base) => {
         try {
@@ -123,12 +127,13 @@ export function createEntryRelay({ peersOf, entryOf, handoutOf, locksOf, fetcher
       later(Math.max(0, Math.min(afterMs + Math.random() * spreadMs, Number.isFinite(left) ? left : Infinity)), () => handEntry(roundId, entryHex));
     },
     /** A client's copy of a lock was verified here. Both of an entry's locks go in one pass. `closeMs` (optional): the round's entry close -
-     *  a head-to-head seat takes no lock new to it from the close on (kanban #1598), so a lock taken just before it goes at once, as an entry does. */
+     *  a head-to-head seat takes no lock new to it from the close on (kanban #1598, #1760), so a lock taken just before it goes at once, as an entry
+     *  does, and its later tries come sooner before the close. */
     lockTaken(roundId, entryHex, closeMs = null) {
       if (!once(lockPasses, entryHex)) return;
       const left = closeMs === null || closeMs === undefined ? Infinity : Number(closeMs) - nowMs() - CLOSE_MARGIN_MS;
       later(Math.max(0, Math.min(lockAfterMs + Math.random() * spreadMs, Number.isFinite(left) ? left : Infinity)),
-        async () => { lockPasses.delete(entryHex); await handLocks(roundId, entryHex); });
+        async () => { lockPasses.delete(entryHex); await handLocks(roundId, entryHex, closeMs); });
     },
   };
 }
