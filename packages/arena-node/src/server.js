@@ -7473,7 +7473,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // node signed for it (kept in its store), or the operator's own `seq` when that is higher. Any other id: the 77-byte vote.
           const kept = proposals && typeof proposals.list === 'function' ? proposals.list().find((r) => r.id === id) : null;
           let seq = null;
-          if (kept && typeof proposals.bound === 'function' && proposals.bound(kept)) {
+          // AND A FUNDING, FEE OR LEADERBOARD PROPOSAL past the gate (feedback #031, kanban #2580): the funding book counts those
+          // bound (#2576), so a 77-byte vote for one was dropped and nothing could pass; an id neither book holds is signed bound
+          // when this seat's chain is past its network's gate (a config proposal not kept here yet)
+          const fundingBound = !kept && fundingBook && typeof fundingBook.boundOf === 'function' ? fundingBook.boundOf(id) : null;
+          let unknownBound = false;
+          if (!kept && fundingBound === null) {
+            let tipNow = NaN; try { tipNow = typeof chainTip === 'function' ? Number(await chainTip()) : NaN; } catch { tipNow = NaN; }
+            let net = null; try { net = chainNetworkName(); } catch { net = null; }
+            unknownBound = Number.isInteger(tipNow) && tipNow >= ballotBindHeight(net === 'regtest' || net === 'testnet4' ? net : 'mainnet');
+          }
+          if ((kept && typeof proposals.bound === 'function' && proposals.bound(kept)) || fundingBound === true || unknownBound) {
             round.db.exec('CREATE TABLE IF NOT EXISTS ballot_vote_seq (proposal TEXT PRIMARY KEY, seq INTEGER NOT NULL)');
             const last = round.db.prepare('SELECT seq FROM ballot_vote_seq WHERE proposal = ?').get(id);
             const asked = body.seq === undefined ? null : Number(body.seq);
