@@ -1920,3 +1920,6 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 - A federation's remembered invite (`arena.federation.invite.<fed>`) is never an invite that reads as another federation's (`rememberInvite`).
 #### SM-I2 (add) On-chain action + advertisement in force: the games refresh (kanban #2181)
 - Every advertisement update is built inside its action's `build(s2)` from s2 alone: the games refresh (`refreshHostedGames`, run by the updater after KEPT) takes the roles from s2, not from the state it read before loading the new release's apps. A roles change the owner page finished meanwhile (roles action DONE, state.json roles = the new ones) is therefore carried by the later games update too: the update sent last, the one the census reads, advertises the roles state.json holds.
+#### SM-T4 (change) Play socket: one attempt at a time (kanban #2213)
+- Each `connect()` is the current attempt (`connectingSock`); only that socket may become `this.sock` on 'open'. A socket that opens after a newer attempt started, or after connectFirst gave up on it, is closed at once and never takes the client's place.
+- connectFirst's timeout closes the pending attempt itself (not only `this.sock`), so after connectFirst answers the client's socket is the one it answered with: one socket feeds `said`, and every reply goes to its own send.
