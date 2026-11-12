@@ -361,3 +361,40 @@ test('#030: five genuine receipts of another mark, served by one seat, do not VO
     assert.equal(toHex(fresh.head), toHex(second.id));
   } finally { globalThis.fetch = realFetch; await node.close(); }
 });
+
+// feedback #032 (Hexbox): a home seat that serves EVERY mark, newest first. Nothing withheld, nothing forged - the client must still
+// take the newest by tick, after a reload and after a socket drop, and the next mark follows it (no second child, no FORFEIT).
+test('#032: a home list out of tick order moves no head back, after a reload or a drop', async () => {
+  const { node, client, rid, eid } = await rig();
+  const realFetch = globalThis.fetch;
+  try {
+    await inputs(client, rid, eid);
+    const first = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
+    await gossipCarry(client, first); carry(client, first);
+    const second = await client.checkpoint(driven(120), { roundId: rid, entryId: eid, tick: 120 });
+    await gossipCarry(client, second); carry(client, second);
+    globalThis.fetch = async (url, opts) => {
+      const r = await realFetch(url, opts);
+      if (!/\/checkpoints\?/.test(String(url))) return r;
+      const all = new Uint8Array(await r.arrayBuffer());
+      const out = new Uint8Array(all.length);
+      for (let i = 0, n = all.length / SIGNED_CHECKPOINT_BYTES; i < n; i++)
+        out.set(all.subarray((n - 1 - i) * SIGNED_CHECKPOINT_BYTES, (n - i) * SIGNED_CHECKPOINT_BYTES), i * SIGNED_CHECKPOINT_BYTES);
+      return new Response(out, { status: 200 });   // [M1, M0]: every mark, newest first
+    };
+    // (b) a drop: the same client resumes
+    await client.resume({ roundId: rid, entryId: eid });
+    assert.equal(toHex(client.head), toHex(second.id), 'after a drop the head stays the newest mark');
+    // (a) a reload: a fresh client
+    const fresh = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
+    fresh.nodes = client.nodes; fresh.gameVerifySlots = client.gameVerifySlots;
+    await fresh.resumeAfterReload({ roundId: rid, entryId: eid, blockTicks: BLOCK_TICKS });
+    globalThis.fetch = realFetch;
+    console.log(`  #032 reversed list: drop head ${toHex(client.head).slice(0, 16)}, reload head ${toHex(fresh.head).slice(0, 16)} (second ${toHex(second.id).slice(0, 16)})`);
+    assert.equal(toHex(fresh.head), toHex(second.id), 'after a reload the head is the newest mark');
+    const next = await fresh.checkpoint(driven(180), { roundId: rid, entryId: eid, tick: 180 });
+    const fork = await provesEquivocation(second.bytes, next.bytes, sessionPubkey,
+      (s, m, k) => { try { return ed25519.verify(s, m, k); } catch { return false; } });
+    assert.equal(fork.ok, false, 'no second child of an older mark');
+  } finally { globalThis.fetch = realFetch; await node.close(); }
+});
