@@ -618,7 +618,7 @@ export async function withPendingObjection(round, rid, eid, arrivedMs, check) {
   try { return await check(); } finally { if (pend) round.dropPendingObjection(rid, eid, arrivedMs); }
 }
 
-export function objectionIntake(round, rid, eid, blockHash = null, bundle = null, arrivedMs = null) {
+export function objectionIntake(round, rid, eid, blockHash = null, bundle = null, arrivedMs = null, checkedAgainst = null) {
   try {
     // AN ENTRY FINAL HERE STAYS FINAL (kanban #1173): an objection that reaches it is dated no earlier than the final_after it went FINAL past, so it is
     // kept as evidence (late) and suspends nothing - this seat may have signed FINAL, released P or acked on it already
@@ -645,6 +645,13 @@ export function objectionIntake(round, rid, eid, blockHash = null, bundle = null
     // THE RE-RUN'S OWN WINDOW IS OVER FOR THIS SEAT at the round's end + 1805 s on its clock (§13A, WINDOW-10-SPEC).
     if (agreedRerun && f.finalAfterMs !== undefined && BigInt(arrivedMs ?? round.now()) >= BigInt(f.finalAfterMs))
       return { status: 409, text: 'the re-run\'s objection window has closed' };
+    // A SECOND OBJECTION IS ONE CHECKED AGAINST THE AGREED RE-RUN (kanban #2429, §13A C2b): a copy of the first objection (a relay's, a page retry) that
+    // waited in the entry's check queue was checked against the FIRST run, read before the re-run was agreed - stored here as the second objection it
+    // voided an honest re-run (the objector's own run) and slashed its signers. It is the first objection again: nothing stored
+    const ranAgainst = checkedAgainst instanceof Uint8Array ? toHex(checkedAgainst) : checkedAgainst;
+    if (agreedRerun && ranAgainst !== null && ranAgainst !== undefined
+      && String(ranAgainst).toLowerCase() !== (f.rerun.runId instanceof Uint8Array ? toHex(f.rerun.runId) : String(f.rerun.runId).toLowerCase()))
+      return { status: 200, text: 'already objected' };
     if (f.state === PROVISIONALLY_FINAL && agreedRerun)
       return round.objectRerun(rid, eid, blockHash, bundle, arrivedMs) ? { status: 201, text: 'objected' } : { status: 200, text: 'already objected' };
     if (agreedRerun) return { status: 409, text: 'the re-run\'s objection window has closed' };
@@ -15069,7 +15076,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // no ack. Before, it was stored only after the replay, with its arrival time, so a seat that went FINAL meanwhile flipped back after acting on it
         const checked = await withPendingObjection(round, new Uint8Array(rid), new Uint8Array(eid), arrivedMs, () => verifier.checkObjection(new Uint8Array(rid), new Uint8Array(eid), bundle,
           typeof against === 'string' ? new Uint8Array(Buffer.from(against, 'hex')) : against instanceof Uint8Array ? against : null)
-          .then((c) => (c.holds ? { ...c, taken: objectionIntake(round, rid, eid, /^[0-9a-f]{64}$/.test(blockHex) ? new Uint8Array(Buffer.from(blockHex, 'hex')) : null, bundle, arrivedMs) } : c)));
+          .then((c) => (c.holds ? { ...c, taken: objectionIntake(round, rid, eid, /^[0-9a-f]{64}$/.test(blockHex) ? new Uint8Array(Buffer.from(blockHex, 'hex')) : null, bundle, arrivedMs, against ?? null) } : c)));
         console.log(`[objection] ${toHex(eid).slice(0, 16)} ${checked.holds ? 'holds' : `refused at ${checked.step}`}: ${checked.why}`
           + (checked.replayedRunId ? ` (replayed run ${checked.replayedRunId.slice(0, 16)} ${checked.replayed.outcome} ${checked.replayed.score}, `
             + `claimed ${checked.claimedRunId.slice(0, 16)}, signed run ${checked.signedRunId.slice(0, 16)})` : '')
