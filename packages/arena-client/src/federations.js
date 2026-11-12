@@ -121,6 +121,12 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
         if (n >= FEDERATION_ROWS_PER_SEAT || (!n && rows.size >= FEDERATIONS_PER_SEAT)) continue;
         rows.set(fid, n + 1);
         const hex = String(f.record).toLowerCase();
+        // THE RECORD IS FILED UNDER THE FEDERATION IT NAMES, NEVER UNDER THE SEAT'S LABEL (kanban #2154, #2222, a44 refute of #1684): one seat
+        // listed federation A's genuine OPEN record under B's id and B, HALTED by its own guardians, showed OPEN. The body is decoded first
+        // (cheap, no signature checked) and a row whose record names another federation than its label is refused before any verify
+        let named = null;
+        try { named = bytesToHex(splitSignedRecord(hexToBytes(hex)).record.federationId); } catch { /* verify says why */ }
+        if (named !== null && named !== fid) { add(refused, fid, `${u}: that record is of another federation`); continue; }
         if (!seen.has(fid)) seen.set(fid, new Map());
         if (!seen.get(fid).has(hex)) seen.get(fid).set(hex, []);
         seen.get(fid).get(hex).push(u);
@@ -152,7 +158,8 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
     const hexes = [...byHex.keys()];
     const verdicts = verifyFederationRecords(hexes.map(hexToBytes), { census, verify, inviteFederationId, guardianKeys: keysOf(fid), tip: bound });
     hexes.forEach((hex, i) => {
-      const v = verdicts[i];
+      // a record stands only for the federation it names (kanban #2154)
+      const v = verdicts[i].ok && verdicts[i].record && bytesToHex(verdicts[i].record.federationId) !== fid ? { ok: false, why: 'that record is of another federation' } : verdicts[i];
       for (const u of byHex.get(hex)) {
         // ITS GUARDIANS, for a join one guardian cannot serve (guardian-invites.js) - ONLY ONCE THE RECORD VERIFIES (kanban #1556: one seat
         // answering first with an unsigned record naming the player's federation took every peer slot, so the join fallback named only its hosts)
