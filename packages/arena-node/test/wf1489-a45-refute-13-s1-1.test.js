@@ -12,6 +12,11 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 // a small relay store (the live default is 256 MiB), so the test fills it with 200 records instead of ~4 million
 process.env.ARENA_RELAY_MOST = String(200 * 65);
+// the 1.9.17 merge's unnamed-transcript caps (kanban #1725, #1795: RELAY_MOST / 32 per entry, / 8 per round) sit under one fork at this
+// test's small pool; the per-entry bound under test here is #2242's
+process.env.ARENA_RELAY_ENTRY_MOST = String(200 * 65);
+process.env.ARENA_RELAY_ROUND_MOST = String(200 * 65);
+process.env.ARENA_RELAY_UNNAMED_MOST = String(200 * 65);
 const { ed25519 } = await import('@noble/curves/ed25519.js');
 const { lockRound, lockAndPlay } = await import('./lock-round-fixture.js');
 const { b32 } = await import('./window-fixture.js');

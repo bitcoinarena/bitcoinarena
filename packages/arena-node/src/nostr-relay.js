@@ -305,7 +305,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   // And a stranger flooding both indexes of {kinds:[9735],"#p":[R]} with newer non-matches (9735 to others, kind 8 to R) buried R's
   // receipts whichever was walked: each tag row now carries its event's kind, and a tag condition beside kinds (values x kinds at most
   // LIST_MOST) is also counted, driven and walked from tags (name, value, kind, created_at) - exactly R's own kind-9735 rows, newest first.
-  const DRIVE_ROWS = 2000, SCAN_ROWS = 20000, CHECK_BATCH = 250, WORK_ROWS = 4 * SCAN_ROWS;
+  const DRIVE_ROWS = 2000, SCAN_ROWS = 20000, CHECK_BATCH = 250, WORK_ROWS = 4 * SCAN_ROWS, WALK_COUNT_ROWS = 2 * DRIVE_ROWS;
   const plan = (f, budget) => {
     const conds = [], pairs = [], time = [], timeArgs = [];
     const timeOn = (col) => ({ sql: [f.since !== undefined ? `${col} >= ?` : null, f.until !== undefined ? `${col} <= ?` : null].filter(Boolean), args: [f.since, f.until].filter((x) => x !== undefined) });
@@ -386,7 +386,9 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     let walk = null;
     for (const c of drivers) {
       if (!c.streams) continue;
-      const cap = Math.min(SCAN_ROWS, walk ? walk.n : SCAN_ROWS, budget.count);
+      // counted at most WALK_COUNT_ROWS+1 rows each (kanban #1720 with #2246): what is walked is still bounded by SCAN_ROWS, but choosing it no
+      // longer reads up to SCAN_ROWS index rows per condition, so a REQ's cost does not grow with the store (a tie goes to the first: pairs lead)
+      const cap = Math.min(WALK_COUNT_ROWS, walk ? walk.n : WALK_COUNT_ROWS, budget.count);
       if (cap <= 0) { if (!walk) walk = { c, n: Infinity }; continue; }
       const n = db.prepare(`SELECT COUNT(*) AS n FROM (${c.count || c.drive} LIMIT ${cap + 1})`).get(...c.driveArgs).n;
       budget.count -= n + c.seeks;
