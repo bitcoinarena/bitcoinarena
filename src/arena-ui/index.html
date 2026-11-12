@@ -7931,52 +7931,50 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // every call waited for every seat (a dead tunnel in the list: 5 s on each poll). Now each seat has one vote per entry and one for the match record
           // (identities, score, played, previousRound and which entry is which, as one key); a value counts when at least `agree` seats give it and more than
           // give any other. signedBy is the agree-th largest among the seats that give the counted pair: a number that many seats reach. The answers are
-          // counted as they come, and the call settles once the seats still out could not change any of it; the rest are aborted. A match record only one
-          // seat gives (the others have none yet) is kept when that seat's players are the counted ones and no other such seat gives a different one.
+          // counted as they come, and the call settles once the seats still out could not change any of it; the rest are aborted.
+          // NO LONE MATCH RECORD (kanban #2057, #1489 v1-refute-4-s3, the bypass of 8620bc1ce): a record only one seat gave was kept when that seat's signed
+          // pairs matched the counted ones - the pairs are public at every seat's /api/round-result, and a seat with no signed pair passed vacuously, so one
+          // seat could copy them and set the score across rounds and whose identity is whose while the honest seats had none (matchOf null). A match record
+          // is now shown only by the vote above (at least `agree` seats, more than any other; every seat of a one-seat list), and otherwise none.
           const winner = (counts, out) => {   // { v: the counted value or null, fixed: the seats still out cannot change that }
             const r = [...counts.values()].sort((x, y) => y.seats - x.seats), a = r[0] ? r[0].seats : 0, b = r[1] ? r[1].seats : 0;
             const top = a >= agree && a > b ? r[0] : null;
             return { v: top, fixed: out === 0 || (top ? a > b + out : a + out < agree) };
           };
           const tally = (answers, out) => {
-            const named = new Map(), matches = new Map(), seats = []; let empty = false, settled = out < agree;   // an entry no seat named yet cannot get in
+            const named = new Map(), matches = new Map(); let empty = false, settled = out < agree;   // an entry no seat named yet cannot get in
             for (const j of answers) {
               if (!j) continue;
               // A SEAT THAT WAS NOT DRAWN ANSWERS 200 WITH NO PLAYERS (2026-10-30: "beide orders werden abgesendet aber es gibt kein Ergebnis": round
               // 1b995103 settled, 5 signed, and seven seats ahead of the signers in the list said nothing): the other seats count
               if (!Array.isArray(j.players) || !j.players.length) { empty = true; continue; }
-              const seen = new Set(), votes = new Map();   // one vote per seat and entry: the first it lists
+              const seen = new Set();   // one vote per seat and entry: the first it lists
               for (const p of j.players) {
                 if (!p || typeof p.entry !== 'string' || seen.has(p.entry)) continue; seen.add(p.entry);
                 if (!named.has(p.entry)) named.set(p.entry, { seats: 0, said: new Map() });
                 const e = named.get(p.entry); e.seats += 1;
                 if (p.outcome && Number(p.signedBy) > 0) { const k = String(p.outcome) + '|' + String(p.score); const v = e.said.get(k) || { outcome: p.outcome, score: p.score, seats: 0, signs: [] };
-                  v.seats += 1; v.signs.push(Number(p.signedBy)); e.said.set(k, v); votes.set(p.entry, k); }
+                  v.seats += 1; v.signs.push(Number(p.signedBy)); e.said.set(k, v); }
               }
               // AND THE SCORE ACROSS ROUNDS: a seat's signed match record, with whose identity is whose - one vote per seat, its own fields (seat, signature) not in the key
               const m = j.match;
               if (m && typeof m === 'object') {
                 const by = m.players && typeof m.players === 'object' ? m.players : {};
                 const k = JSON.stringify([m.identities, m.score, m.played, m.previousRound || null, Object.keys(by).sort().map((x) => [x, by[x]])]);
-                const v = matches.get(k) || { m, seats: 0 }; v.seats += 1; matches.set(k, v); seats.push({ votes, k, m });
+                const v = matches.get(k) || { m, seats: 0 }; v.seats += 1; matches.set(k, v);
               }
             }
             // A SEAT THAT HOLDS ONLY ONE OF TWO IS NOT THE ROUND (kanban #947, 2026-11-01: "das Ergebnis nicht konsistent"): an entry reaches the seats one by one;
             // it is in the round once enough seats hold it
-            const entries = [], counted = new Map();
+            const entries = [];
             for (const [entry, e] of named) {
               if (e.seats + out < agree) continue;
               if (e.seats < agree) { settled = false; continue; }
               const w = winner(e.said, out); if (!w.fixed) settled = false;
-              if (w.v) counted.set(entry, String(w.v.outcome) + '|' + String(w.v.score));
               entries.push(w.v ? { entry, outcome: w.v.outcome, score: w.v.score, signedBy: [...w.v.signs].sort((x, y) => y - x)[agree - 1] } : { entry, outcome: null, score: null, signedBy: 0 });
             }
             const mw = winner(matches, out); if (!mw.fixed) settled = false;
-            let m = mw.v && mw.v.m;
-            if (!m && settled && entries.length) {   // the lone record: from a seat none of whose signed pairs the vote outvoted, and no such seat says another
-              const kept = seats.filter((x) => [...x.votes].every(([en, k]) => !counted.has(en) || counted.get(en) === k));
-              if (kept.length && kept.every((x) => x.k === kept[0].k)) m = kept[0].m;
-            }
+            const m = mw.v && mw.v.m;   // the vote's record or none (kanban #2057: no lone-record exception)
             return { entries, empty, settled, match: m ? { identities: m.identities, names: m.names || [], score: m.score, played: m.played,
               continued: !!m.previousRound, byEntry: m.players || {}, seat: m.seat, signature: m.signature } : null };
           };
