@@ -328,6 +328,44 @@ export class OrderBook {
     return { ok: true };
   }
 
+  /**
+   * THE DOOR'S RULES ON A PEER'S PROPOSAL, BEFORE ANY SIGNATURE IS CHECKED (kanban #1728, #1797, a bypass of #1547): ask() refused an
+   * unbacked sell and bounded one entry's pending sells, but the leader took every sell a seat's GET /batch-proposal handed it and
+   * verified each one's Ed25519 signature - a fresh nonce a cache miss, and a refused verify never cached. One seat serving 3000 sells
+   * of an entry holding nothing (or signed by a stranger's key) made lead() take about 4 s and the batch pass its 2 s signing limit,
+   * every batch. Now, per proposal: a sell whose entry holds no unsold share of that outcome in this leader's certified ledger is dropped
+   * (a Map lookup), and at most SELL_PENDING_MAX sells per entry are kept (the lowest ids). The verify work of a batch is bounded by
+   * seats x backed entries x SELL_PENDING_MAX. A sell dropped here stays unbatched where it is held; nothing honest is lost - an
+   * honest seat keeps at most SELL_PENDING_MAX per entry, of entries its certified ledger backs. Not a protocol rule: what the leader
+   * proposes is checked by every seat as before.
+   */
+  #sellsWorthChecking(roundIdBytes, L, list) {
+    if (!Array.isArray(list) || !list.length) return [];
+    const byEntry = new Map();
+    for (const s of list) {
+      if (!s || !isHex(s.entry, 32) || !isHex(s.signature, 64) || !/^[0-9]{1,20}$/.test(String(s.price)) || !/^[0-9]{1,20}$/.test(String(s.sharesMsat))
+        || !/^[0-9]{1,20}$/.test(String(s.nonce))) continue;
+      if (L.ok) {
+        const p = L.positions.get(s.entry);
+        const o = Number(s.outcome);
+        const unsold = p && (o === 0 || o === 1) ? p.shares[o] - p.shares[1 - o] : 0n;
+        if (unsold <= 0n) continue;
+      }
+      let id;
+      try { id = toHex(sellId({ roundId: roundIdBytes, entryId: fromHex(s.entry), outcome: s.outcome, price: BigInt(s.price), sharesMsat: BigInt(s.sharesMsat), nonce: BigInt(s.nonce) })); }
+      catch { continue; }
+      if (!byEntry.has(s.entry)) byEntry.set(s.entry, []);
+      byEntry.get(s.entry).push([id, s]);
+    }
+    const out = [];
+    for (const xs of byEntry.values()) {
+      xs.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+      const seen = new Set();
+      for (const [id, s] of xs) { if (seen.has(id)) continue; seen.add(id); out.push(s); if (seen.size >= SELL_PENDING_MAX) break; }
+    }
+    return out;
+  }
+
   /** GET /batch-proposal: this seat's unbatched orders, cancels and sells before batch k's cutoff, and its pending batches. */
   proposal(roundIdBytes, k) {
     this.#syncTradable(roundIdBytes);
@@ -758,9 +796,15 @@ export class OrderBook {
     const cancels = new Map();
     const sells = new Map();
     const eventBatched = (id) => { const r = this.db.prepare('SELECT batch FROM market_book_events WHERE event_id = ?').get(id); return !!r && r.batch !== null; };
+    const held = this.ledger(roundIdBytes);
     for (const p of proposals) {
       for (const c of p.cancels || []) { const x = this.#cancelStands(roundIdBytes, c); if (x.ok && !cancels.has(x.id) && !eventBatched(x.id)) cancels.set(x.id, c); }
-      for (const s of p.sells || []) { const x = this.#sellStands(roundIdBytes, s); if (x.ok && !sells.has(x.id) && !eventBatched(x.id)) sells.set(x.id, s); }
+      for (const s of this.#sellsWorthChecking(roundIdBytes, held, p.sells)) {
+        const x = this.#sellStands(roundIdBytes, s);
+        // a seat that hands over a sell its entry's session key did not sign is not read further in this batch (kanban #1728, #1797)
+        if (!x.ok && x.status === 403) break;
+        if (x.ok && !sells.has(x.id) && !eventBatched(x.id)) sells.set(x.id, s);
+      }
     }
     const record = { k: String(k), orders, cancels: [...cancels.values()], sells: [...sells.values()], leader: toHex(this.round.pubkey) };
     // a sell beyond what its entry holds unsold is left out (the seats would refuse the whole set over it) - by its id, once (kanban #1526:
