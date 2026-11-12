@@ -268,6 +268,7 @@ import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
 import { decodeCommitments, encodeCommitments, encodeShare } from './pool-wire.js';
 import { setTagNetwork } from '../../arena-protocol/src/tag-switch.js';
 import { keptRead } from './kept-read.js';
+import { bodyBudget } from './body-budget.js';
 
 // who sits at each head-to-head round's table, per seat (POST /here): round hex -> identity key hex -> last said (ms)
 const presenceByRound = new WeakMap();
@@ -284,35 +285,15 @@ const RELAY_MOST = Number(process.env.ARENA_RELAY_MOST) > 0 ? Number(process.env
 // ALL BODIES IN FLIGHT SHARE ONE BUDGET (kanban #1724, #1794, refute of #1469): the limit above is per request, so a stranger who
 // opened many connections and sent just under it on each, never ending the body, kept every partial body (measured: 48 bodies
 // of ~3.9 MiB pinned +190 MiB). BODY_BUDGET (four bodies at the limit, 32 MiB by default; ARENA_BODY_BUDGET, never below BODY_MOST) is
-// what all unfinished bodies of this process may hold together; a chunk past it ends that request (503 where it can still be said)
-// and frees what it held. A door's message is a few kilobytes, so honest traffic never comes near it.
+// what all unfinished bodies of this process may hold together.
+// COUNTED ON BYTES RECEIVED, NEVER ON A DECLARED LENGTH (kanban #1911, #1953): taking the share from Content-Length let four idle
+// connections declaring 8 MiB each hold the whole budget for free and cut every honest POST off. Now an idle socket holds nothing,
+// one address takes at most half the budget, a small body always finds room in a reserve, a body silent for 10 s is dropped, and a
+// refused body is answered (413 / 503) before its socket ends - see body-budget.js.
 const BODY_BUDGET = Math.max(BODY_MOST, Number(process.env.ARENA_BODY_BUDGET) > 0 ? Number(process.env.ARENA_BODY_BUDGET) : 4 * BODY_MOST);
-let bodiesInFlight = 0;
-const read = (req, max = BODY_MOST) => new Promise((resolve, reject) => {
-  const parts = []; let size = 0; let held = 0; let done = false;
-  const finish = () => { if (done) return false; done = true; bodiesInFlight -= held; parts.length = 0; return true; };
-  const refuse = (e) => { if (!finish()) return; reject(e); try { req.destroy(); } catch { /* gone */ } };
-  const tooLarge = () => { const e = new Error(`a body of more than ${max} bytes`); e.tooLarge = true; return e; };
-  const busy = () => { const e = new Error('this node holds as many unfinished bodies as it takes; try again'); e.busy = true; return e; };
-  // a declared length is taken from the budget before a byte is read, so a refused body costs nothing (kanban #1724, #1794)
-  const declared = Number(req.headers && req.headers['content-length']);
-  if (Number.isSafeInteger(declared) && declared > 0) {
-    if (declared > max) return refuse(tooLarge());
-    if (bodiesInFlight + declared > BODY_BUDGET) return refuse(busy());
-    held = declared; bodiesInFlight += declared;
-  }
-  // A DOOR'S OWN LIMIT (kanban #1271): past `max` bytes the body is not kept, the request ends, and the door answers 413
-  req.on('data', (c) => {
-    if (done) return;
-    if (size + c.length > max) return refuse(tooLarge());
-    const grow = Math.max(0, size + c.length - held);
-    if (grow && bodiesInFlight + grow > BODY_BUDGET) return refuse(busy());
-    size += c.length; held += grow; bodiesInFlight += grow; parts.push(c);
-  });
-  req.on('end', () => { if (done) return; const body = new Uint8Array(Buffer.concat(parts)); finish(); resolve(body); });
-  req.on('error', (e) => { if (finish()) reject(e); });
-  req.on('close', () => { if (finish()) reject(new Error('the request ended before its body')); });
-});
+const BODY_IDLE_MS = Number(process.env.ARENA_BODY_IDLE_MS) > 0 ? Number(process.env.ARENA_BODY_IDLE_MS) : 10000;
+const bodies = bodyBudget({ total: BODY_BUDGET, perAddress: Math.max(BODY_MOST, Math.floor(BODY_BUDGET / 2)), idleMs: BODY_IDLE_MS, defaultMax: BODY_MOST });
+const read = async (req, max = BODY_MOST) => new Uint8Array(await bodies.read(req, max));
 
 // A BROWSER IS THE CLIENT, and a browser will never be on this origin.
 //
@@ -6300,6 +6281,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   const http = (tls ? (h) => createHttpsServer({ cert: tls.cert, key: tls.key }, h) : createServer)(async (req, res) => {
     try {
+      bodies.attach(req, res);   // a refused body's socket ends after its answer (kanban #1911, #1953)
       const url = new URL(req.url, 'http://node');
       // THE NODE'S GATEWAY AT ITS PUBLIC ADDRESS (spec §23A.9): /gateway/... carried byte for byte to the gateway on
       // this machine (ARENA_GATEWAY_PORT, written by the installer), as /guardian is to the guardian - clients of its federation reach the

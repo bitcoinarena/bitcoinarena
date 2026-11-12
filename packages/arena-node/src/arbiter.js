@@ -38,10 +38,18 @@ import { tweakPoint, combine } from './curve.js';
 import { keyedPay, runPayouts } from './keyed-payout.js';
 import { nonceGen, bondSigningContext, bondPartialSign, MusigError } from './musig2.js';
 import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
+import { bodyBudget } from './body-budget.js';
 
 // the arbiter's body limits (kanban #1724, #1794; see serveArbiter)
 const ARBITER_MUSIG_MOST = 64 * 1024;
 const ARBITER_CLAIM_MOST = 1024 * 1024;
+// ALL ARBITER BODIES IN FLIGHT SHARE ONE BUDGET (kanban #1911, #1953): the limits above are per request, so 150 parallel unfinished
+// claim bodies just under 1 MiB pinned ~150 MiB. 8 MiB together (ARENA_ARBITER_BODY_BUDGET), counted on bytes received, one address
+// at most half, a small body always admitted from a reserve, a body silent for 10 s dropped (body-budget.js, as server.js)
+const ARBITER_BODY_BUDGET = Math.max(ARBITER_CLAIM_MOST, Number(process.env.ARENA_ARBITER_BODY_BUDGET) > 0 ? Number(process.env.ARENA_ARBITER_BODY_BUDGET) : 8 * ARBITER_CLAIM_MOST);
+const arbiterBodies = bodyBudget({ total: ARBITER_BODY_BUDGET, perAddress: Math.max(ARBITER_CLAIM_MOST, Math.floor(ARBITER_BODY_BUDGET / 2)), reserve: 1024 * 1024, smallMost: ARBITER_MUSIG_MOST, defaultMax: ARBITER_CLAIM_MOST });
+// a request not received whole within 30 s ends (ARENA_ARBITER_REQUEST_TIMEOUT_MS; Node's default is 300 s)
+const ARBITER_REQUEST_MS = Number(process.env.ARENA_ARBITER_REQUEST_TIMEOUT_MS) > 0 ? Number(process.env.ARENA_ARBITER_REQUEST_TIMEOUT_MS) : 30000;
 
 /** THE ROUND'S CORE, as a seat's verifier resolves it (verify.js #coreOf): its plugin's, with the round's world rule. */
 export function coreForRound(contract, roundIdBytes, plugins) {
@@ -400,23 +408,14 @@ export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', p
   // JSON.parse, so one large POST filled the memory of the service that signs slash and liquidation payouts). A nonce or partial
   // request is a few hundred bytes (ARBITER_MUSIG_MOST, 64 KiB); a claim carries notes (ARBITER_CLAIM_MOST, 1 MiB). Past it the body
   // is dropped, the request ended, and the door answers 413 where it still can.
-  const readBody = (req, max) => new Promise((resolve, reject) => {
-    const parts = []; let size = 0; let done = false;
-    req.on('data', (c) => {
-      if (done) return;
-      size += c.length;
-      if (size > max) { done = true; parts.length = 0; const e = new Error(`a body of more than ${max} bytes`); e.tooLarge = true; reject(e); try { req.destroy(); } catch { /* gone */ } return; }
-      parts.push(c);
-    });
-    req.on('end', () => { if (!done) { done = true; resolve(Buffer.concat(parts).toString('utf8')); } });
-    req.on('error', (e) => { if (!done) { done = true; parts.length = 0; reject(e); } });
-    req.on('close', () => { if (!done) { done = true; parts.length = 0; reject(new Error('the request ended before its body')); } });
-  });
+  // the bytes count against the arbiter's shared budget (kanban #1911, #1953); a refused body is answered before its socket ends
+  const readBody = async (req, max) => (await arbiterBodies.read(req, max)).toString('utf8');
   const jsonBody = async (req, res, max, answer) => {
-    let raw; try { raw = await readBody(req, max); } catch (e) { if (e && e.tooLarge) { try { answer(413, { ok: false, why: e.message }); } catch { /* gone */ } } return null; }
+    let raw; try { raw = await readBody(req, max); } catch (e) { if (e && (e.tooLarge || e.busy)) { try { answer(e.tooLarge ? 413 : 503, { ok: false, why: e.message }); } catch { /* gone */ } } return null; }
     try { return { body: JSON.parse(raw) }; } catch { answer(400, { ok: false, why: 'a JSON body' }); return null; }
   };
   const server = createServer(async (req, res) => {
+    arbiterBodies.attach(req, res);
     const answer = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); res.end(JSON.stringify(body)); };
     const url = new URL(req.url, 'http://x');
     if (req.method === 'GET' && url.pathname === '/status')
@@ -458,6 +457,7 @@ export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', p
     const r = party.partial({ sessionId: String(body.sessionId), aggnonce: String(body.aggnonce || '') });
     return answer(r.ok ? 200 : 409, r);
   });
+  server.requestTimeout = ARBITER_REQUEST_MS; server.headersTimeout = Math.min(server.headersTimeout || 60000, ARBITER_REQUEST_MS);   // kanban #1911, #1953
   await new Promise((r) => server.listen(port, host, r));
-  return { port: server.address().port, close: () => new Promise((r) => server.close(r)) };
+  return { port: server.address().port, server, close: () => new Promise((r) => server.close(r)) };
 }
