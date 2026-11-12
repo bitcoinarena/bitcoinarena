@@ -85,7 +85,19 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
     if (r && typeof r.depositTxid === 'string') return r.depositTxid;
     try { const b = fromHex(String(r.proposal)); return toHex(decodeConfigProposalBody(b.subarray(0, b.length - 64)).depositTxid); } catch { return null; }
   };
-  const backedBy = (depositHex, id) => [...held.values()].find((r) => r.id !== id && depositTxidOf(r) === depositHex) || null;
+  // A DEPOSIT ITS OWN PROPOSER SIGNED TWICE (kanban #1840): the first-kept rule above decided by ARRIVAL ORDER, so two proposals of
+  // one proposer over one deposit (a resend with an edit, or both posted at once) reaching two seats in different orders left seat 1
+  // counting A and seat 2 counting B, each refusing the other's in the peer pull for good - different configs live. Now such a
+  // competitor is KEPT (and pulled) like any proposal, up to SAME_DEPOSIT_KEPT per deposit, and a deposit that backs more than
+  // one kept proposal backs NONE: every one of them is void (counts(): not tallied, not live, phase 'void'). Contested is monotonic
+  // and read from the set alone, so every seat that holds two of them answers the same. Another proposer naming a kept deposit
+  // is still refused by name (the deposit is not his).
+  const SAME_DEPOSIT_KEPT = 8;
+  const backedBy = (depositHex, id, proposerHex = null) => [...held.values()].find((r) => r.id !== id && depositTxidOf(r) === depositHex
+    && (proposerHex === null || String(r.proposer || '').toLowerCase() !== proposerHex)) || null;
+  const sameDeposit = (depositHex, id) => [...held.values()].filter((r) => r.id !== id && depositTxidOf(r) === depositHex);
+  /** COUNTED: the only kept proposal its deposit backs (kanban #1840). */
+  const counts = (id) => { const r = held.get(id); if (!r) return false; const d = depositTxidOf(r); return !!d && sameDeposit(d, id).length === 0; };
   const api = {
     async add({ proposal: hex, blockHash }) {
       if (!/^[0-9a-f]+$/i.test(String(hex || '')) || String(hex).length < 130) return { ok: false, status: 400, why: 'a proposal is the hex of its body and its 64-byte signature' };
@@ -130,8 +142,10 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
           return { ok: false, status: 422, why: `the proposer holds no active bond in the census at height ${dep.publishedAt} (27A.7.2)` };
       }
       // checked on a proposal that stands on its face and on the chain: refused by its own fault first, then by the deposit (#1489)
-      const other = backedBy(depositHex, id);
+      const other = backedBy(depositHex, id, toHex(p.proposer));
       if (other) return { ok: false, status: 409, why: `that deposit (deposit_txid) already backs proposal ${other.id}: one deposit pays for one proposal` };
+      if (sameDeposit(depositHex, id).length >= SAME_DEPOSIT_KEPT)
+        return { ok: false, status: 409, why: `that deposit already backs ${SAME_DEPOSIT_KEPT} proposals of this proposer: all of them are void (kanban #1840)` };
       const kept = { id, proposal: toHex(bytes), networkId: net, parent: toHex(p.parent), configHash: toHex(p.configHash), class: stands.class,
         proposer: toHex(p.proposer), publishedAt: dep.publishedAt, depositSats: String(dep.depositSats), votingFrom: stands.votingFrom,
         votingUntil: stands.votingUntil, activationHeight: stands.activationHeight, repeal: stands.repeal, depositTxid: depositHex,
@@ -157,6 +171,7 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       return { ok: true, status: 201, ...kept };
     },
     list: () => [...held.values()].sort((a, b) => b.publishedAt - a.publishedAt),
+    counts,
     transition,
     /** THE OUTCOME, WRITTEN ONCE (ballot-tally.js): COUNTING -> PASSED | FAILED - not tallied again, across restarts too. */
     decide: (id, outcome) => transition(id, S.COUNTING, outcome && outcome.passed ? S.PASSED : S.FAILED, { outcome }),
