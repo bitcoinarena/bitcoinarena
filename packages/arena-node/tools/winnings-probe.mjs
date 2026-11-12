@@ -163,7 +163,7 @@ const stores = Array.from({ length: N }, (_, i) => join(dir, `${'abcdefg'[i]}.db
 const up = async (ports = []) => {
   const nodes = [];
   for (const [i, path] of stores.entries()) nodes.push(await serve(openStore(path), { plugins: [NEXTBLOCK], port: ports[i] || 0, ...opts, stakeLocks: slot.port, poolCurve: curve,
-    finality: { everyMs: 500 }, lnurlFetch, winningsEveryMs: 3000, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor,
+    finality: { everyMs: 500 }, lnurlFetch, lnurlLocalHosts: [`127.0.0.1:${lnurlServer.address().port}`], winningsEveryMs: 3000, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor,
     ...(WALK ? { donationSets: [TEST_DONATION_SET_REGTEST], doorSweepMs: 250 } : {}) }));
   for (const d of nodes) d.round.chainView = CLOCK.chainView();
   for (const d of nodes) {
