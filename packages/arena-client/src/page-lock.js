@@ -2817,28 +2817,50 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
   // the request and never answered stalled the scan for good - a winner whose tab closed was never shown what the honest seats list.
   // The deadline holds the answer's body too, and holds even for a fetcher that ignores the signal.
   const since = Math.max(0, Math.floor(Number(sinceMs) || 0));
+  // ONE HOST IS ONE SEAT'S ALLOWANCE, HOWEVER MANY node= ENTRIES NAME IT (kanban #1832, #1489 v1-refute-10): a lobby link's node=
+  // list has no cap and no dedup (lobby.js lobbyQuery, join.js joinQuery), and the scan runs as soon as the link opens - eight path
+  // spellings of one liar host were eight seats with 500 made-up ids each, 132,000 derivations and 26.7 s for one phrase. Now each
+  // node string is read once, at most OWED_NODES_MAX of them; every node on one host shares one OWED_SETTLED_MAX allowance; and
+  // the whole scan derives keys for at most OWED_SCAN_IDS_MAX ids, taken host by host in turn, so the entry count cannot scale it.
+  const scanNodes = [...new Set(nodes.map(base))].slice(0, OWED_NODES_MAX);
+  nodes = scanNodes;
+  const hostOf = (n) => { try { return new URL(n).hostname.toLowerCase(); } catch { return n.toLowerCase(); } };
   const lists = await Promise.all(nodes.map((node) => owedRead(async (signal) => {
     const r = await fetcher(`${base(node)}/settled?since=${since}`, { signal });
     return r.ok ? r.json() : null;
   })));
-  for (const got of lists) {
-    // AT MOST OWED_SETTLED_MAX ROUNDS FROM ONE SEAT, NEWEST FIRST, EACH ONCE (kanban #1489)
+  // AT MOST OWED_SETTLED_MAX ROUNDS FROM ONE HOST, NEWEST FIRST, EACH ID ONCE PER SEAT (kanban #1489, #1832)
+  const byHost = new Map();
+  lists.forEach((got, n) => {
     const all = got && Array.isArray(got.rounds) ? got.rounds.filter((x) => x && typeof x === 'object') : null;
-    if (!all) continue;
-    const cap = Math.min(OWED_SETTLED_MAX, OWED_LIST_MAX);
-    const newest = all.length > cap
-      ? all.map((x, i) => ({ x, i, ms: Number(x.madeMs) || 0 })).sort((a, b) => (b.ms - a.ms) || (b.i - a.i)).slice(0, cap).map((y) => y.x)
-      : all;
-    const seen = new Set();
-    for (const x of newest) {
+    if (!all) return;
+    const h = hostOf(nodes[n]);
+    if (!byHost.has(h)) byHost.set(h, []);
+    const seen = new Set(), rows = byHost.get(h);
+    all.forEach((x, i) => {
       const id = String(x.id || '').toLowerCase();
-      if (!/^[0-9a-f]{64}$/.test(id) || seen.has(id)) continue;
+      if (!/^[0-9a-f]{64}$/.test(id) || seen.has(id)) return;
       seen.add(id);
-      const l = listed.get(id) || { payouts: new Set(), refunds: new Set() };
-      for (const k of (Array.isArray(x.payouts) ? x.payouts : []).slice(0, OWED_KEYS_PER_ROUND)) l.payouts.add(String(k).toLowerCase());
-      for (const k of (Array.isArray(x.refunds) ? x.refunds : []).slice(0, OWED_KEYS_PER_ROUND)) l.refunds.add(String(k).toLowerCase());
-      listed.set(id, l);
-    }
+      rows.push({ x, id, n, i, ms: Number(x.madeMs) || 0 });
+    });
+  });
+  const cap = Math.min(OWED_SETTLED_MAX, OWED_LIST_MAX);
+  const queues = [...byHost.values()].map((rows) => {
+    rows.sort((a, b) => (b.ms - a.ms) || (a.n - b.n) || (b.i - a.i));
+    const ids = [], keep = new Set();
+    for (const r of rows) { if (keep.size >= cap) break; if (!keep.has(r.id)) { keep.add(r.id); ids.push(r.id); } }
+    return { ids, rows: rows.filter((r) => keep.has(r.id)) };
+  });
+  // the scan's whole budget, host by host in turn (newest first within each): a host listing many cannot crowd the others out
+  const taken = new Set();
+  for (let k = 0; taken.size < OWED_SCAN_IDS_MAX && queues.some((q) => k < q.ids.length); k++)
+    for (const q of queues) { if (k < q.ids.length && taken.size < OWED_SCAN_IDS_MAX) taken.add(q.ids[k]); }
+  // in the order the seats listed them (seat by seat, as before): only which ids are kept is chosen newest first
+  for (const { x, id } of queues.flatMap((q) => q.rows).filter((r) => taken.has(r.id)).sort((a, b) => (a.n - b.n) || (a.i - b.i))) {
+    const l = listed.get(id) || { payouts: new Set(), refunds: new Set() };
+    for (const k of (Array.isArray(x.payouts) ? x.payouts : []).slice(0, OWED_KEYS_PER_ROUND)) l.payouts.add(String(k).toLowerCase());
+    for (const k of (Array.isArray(x.refunds) ? x.refunds : []).slice(0, OWED_KEYS_PER_ROUND)) l.refunds.add(String(k).toLowerCase());
+    listed.set(id, l);
   }
   const found = [];
   const contracts = new Map();
@@ -2893,6 +2915,9 @@ export const forgetOwedRounds = () => OWED_ROUNDS.clear();
 export const ORDER_SCAN = 32;
 // how many rounds of one seat's /settled one owed scan derives keys for (newest first), and keys of one round it takes from one seat (kanban #1489)
 export const OWED_SETTLED_MAX = 500, OWED_KEYS_PER_ROUND = 4096;
+// how many node= entries one owed scan reads (each distinct node string once), and how many ids the whole scan derives keys for,
+// over every host (kanban #1832): a federation lobby names 7-14 seats, and they list the same settled rounds
+export const OWED_NODES_MAX = 32, OWED_SCAN_IDS_MAX = 2000;
 
 /**
  * THE ROUND'S FEDERATION WALLET IN THIS TAB - the one the payout and the stake were
