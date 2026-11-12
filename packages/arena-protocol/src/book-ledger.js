@@ -16,9 +16,30 @@
 //                       order); each claimed entry gets its winnings, less its sells' debt and fee, plus the rest of N and
 //                       of F it did not spend (the owner: "(a)" - a cancelled or partly filled order's rest comes back here,
 //                       as a seller's proceeds do); the fees due go to the nodes and the donation.
-import { clearBatch, YES, NO } from './order-book.js';
+import { YES, NO, PRICE_SCALE } from './order-book.js';
 
 const byIdOrder = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+const demandAt = (o, q) => (q <= o.price ? (o.net * PRICE_SCALE) / q : 0n);   // order-book.js clearBatch's, the same
+
+// THE LEDGER KEEPS ITS RESTING SELLS INDEXED (kanban #1722, #1791): it summed `offered` over every resting sell for each new sell and
+// handed every resting sell to clearBatch in every batch - one small filled order posting 16 tiny never-filled sells at each of the 7
+// seats every batch made one replay take 15 s after two minutes (26,880 resting), and every seat replays per POST /sell, lead and
+// accept. Now each (entry, outcome) keeps its offered total, each entry its sells, and each side its sells by limit with their total:
+// a batch costs its new sells, its buys x its prices and the sells it fills, not every resting sell. The rules are clearBatch's, to
+// the msat (one clearing price, the short side whole, the long side by limit, the marginal limit pro rata, the msat left in id order;
+// test/book-ledger-indexed-1791.test.js holds this ledger to the one over clearBatch on random books).
+function sellChecked(o, seenIds) {
+  if (typeof o.id !== 'string' || seenIds(o.id)) throw new Error('every order in a batch is named once, by its hex id');
+  if (o.outcome !== YES && o.outcome !== NO) throw new Error('an order buys outcome 0 or 1');
+  if (typeof o.price !== 'bigint' || o.price < 1n || o.price >= PRICE_SCALE) throw new Error('a price is inside the scale');
+  if (typeof o.sharesMsat !== 'bigint' || o.sharesMsat <= 0n) throw new Error('a sell names the shares it sells, a positive BigInt');
+}
+function buyChecked(o, seenIds) {
+  if (typeof o.id !== 'string' || seenIds(o.id)) throw new Error('every order in a batch is named once, by its hex id');
+  if (o.outcome !== YES && o.outcome !== NO) throw new Error('an order buys outcome 0 or 1');
+  if (typeof o.price !== 'bigint' || o.price < 1n || o.price >= PRICE_SCALE) throw new Error('a price is inside the scale');
+  if (typeof o.stakeMsat !== 'bigint' || o.stakeMsat <= 0n) throw new Error('a stake is a positive BigInt msat');
+}
 
 /**
  * THE LEDGER. `batches`: the certified batches in order, each { k, cutoffMs (BigInt), orders: [{ id, outcome, price, stakeMsat,
@@ -31,6 +52,10 @@ export function bookLedger({ batches, feeBps }) {
   const sells = new Map();              // sell id -> its resting sell (the rest of its shares)
   // EVERY SELL ONCE (kanban #1150): a signed sell carried by a later batch too was set again at its full size - one signature, two sales
   const seenSells = new Set();
+  const offered = new Map();            // entry|outcome -> the shares its resting sells offer
+  const sellsOf = new Map();            // entry -> the ids of its resting sells
+  // each side of the clear (a sell of outcome o is a buy of 1 - o at the limit 1 - p) -> limit -> { price, total, ids }
+  const sellLevels = [new Map(), new Map()];
   const refused = [];
   const out = [];
   const position = (o) => {
@@ -40,6 +65,31 @@ export function bookLedger({ batches, feeBps }) {
         sellDebt: 0n, sellFee: 0n, cancelled: false, filledBeforeCancel: false });
     }
     return positions.get(o.id);
+  };
+  const offerKey = (x) => `${x.entry}|${x.outcome}`;
+  const levelOf = (x) => sellLevels[1 - x.outcome].get(String(PRICE_SCALE - x.price));
+  const addSell = (x) => {
+    sells.set(x.id, x);
+    offered.set(offerKey(x), (offered.get(offerKey(x)) || 0n) + x.sharesMsat);
+    if (!sellsOf.has(x.entry)) sellsOf.set(x.entry, new Set());
+    sellsOf.get(x.entry).add(x.id);
+    const side = sellLevels[1 - x.outcome], key = String(PRICE_SCALE - x.price);
+    if (!side.has(key)) side.set(key, { price: PRICE_SCALE - x.price, total: 0n, ids: new Set() });
+    const l = side.get(key); l.total += x.sharesMsat; l.ids.add(x.id);
+  };
+  const dropSell = (id) => {
+    const x = sells.get(id);
+    sells.delete(id);
+    offered.set(offerKey(x), offered.get(offerKey(x)) - x.sharesMsat);
+    sellsOf.get(x.entry).delete(id);
+    const l = levelOf(x); l.total -= x.sharesMsat; l.ids.delete(id);
+    if (!l.ids.size) sellLevels[1 - x.outcome].delete(String(PRICE_SCALE - x.price));
+  };
+  const restSell = (id, rest) => {
+    const x = sells.get(id), less = x.sharesMsat - rest;
+    sells.set(id, { ...x, sharesMsat: rest });
+    offered.set(offerKey(x), offered.get(offerKey(x)) - less);
+    levelOf(x).total -= less;
   };
   for (const b of batches) {
     // 1. NEW ORDERS
@@ -54,7 +104,7 @@ export function bookLedger({ batches, feeBps }) {
       const p = positions.get(e);
       if (!p) { refused.push({ id: e, why: 'a cancel of an order the book does not hold' }); continue; }
       buys.delete(e);
-      for (const [sid, x] of [...sells]) if (x.entry === e) sells.delete(sid);
+      for (const sid of [...(sellsOf.get(e) || [])]) dropSell(sid);
       if (!p.cancelled) { p.cancelled = true; p.filledBeforeCancel = p.cost > 0n || p.sellDebt > 0n; }
     }
     // 3. EXPIRY
@@ -65,23 +115,91 @@ export function bookLedger({ batches, feeBps }) {
       if (!p) { refused.push({ id: s.id, why: 'a sell of an entry the book does not hold' }); continue; }
       if (seenSells.has(s.id)) { refused.push({ id: s.id, why: 'that sell is in the book already: a signed sell is sold once' }); continue; }
       seenSells.add(s.id);
-      const offered = [...sells.values()].filter((x) => x.entry === s.entry && x.outcome === s.outcome).reduce((t, x) => t + x.sharesMsat, 0n);
-      const unsold = p.shares[s.outcome] - p.shares[1 - s.outcome] - offered;
+      const unsold = p.shares[s.outcome] - p.shares[1 - s.outcome] - (offered.get(offerKey(s)) || 0n);
       if (s.sharesMsat > unsold) { refused.push({ id: s.id, why: `that sell offers ${s.sharesMsat} of outcome ${s.outcome} and its entry holds ${unsold > 0n ? unsold : 0n} unsold` }); continue; }
-      sells.set(s.id, { ...s, sell: true });
+      sellChecked(s, (id) => sells.has(id));   // what clearBatch asks of a sell, asked once: a resting sell only shrinks
+      addSell({ ...s, sell: true });
     }
-    // 5. THE CLEAR
-    const cleared = clearBatch({ orders: [...buys.values(), ...sells.values()], feeBps });
+    // 5. THE CLEAR (clearBatch's, over the indexed book)
+    if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps >= 10000) throw new Error('a fee is 0 to 9999 bps');
+    const bought = [...buys.values()].sort((x, y) => byIdOrder(x.id, y.id));
+    for (const o of bought) buyChecked(o, (id) => sells.has(id));
+    const buySides = [bought.filter((o) => o.outcome === YES), bought.filter((o) => o.outcome === NO)];
+    const sellSides = sellLevels.map((side) => {
+      const ls = [...side.values()].sort((x, y) => (x.price < y.price ? -1 : x.price > y.price ? 1 : 0));
+      const suffix = new Array(ls.length + 1).fill(0n);
+      for (let i = ls.length - 1; i >= 0; i--) suffix[i] = suffix[i + 1] + ls[i].total;
+      return { ls, suffix };
+    });
+    // the sells of side k wanting at q: every limit at or above q
+    const sellDemand = (k, q) => {
+      const { ls, suffix } = sellSides[k];
+      let lo = 0, hi = ls.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (ls[mid].price >= q) hi = mid; else lo = mid + 1; }
+      return suffix[lo];
+    };
+    const cands = new Set();
+    for (const o of bought) cands.add(String(o.outcome === YES ? o.price : PRICE_SCALE - o.price));
+    for (let k = 0; k < 2; k++) for (const l of sellSides[k].ls) cands.add(String(k === YES ? l.price : PRICE_SCALE - l.price));
+    const candidates = [...cands].map(BigInt).sort((a, c) => (a < c ? -1 : 1));
+    let best = null;
+    for (const pi of candidates) {
+      const q = [pi, PRICE_SCALE - pi];
+      const d = [0, 1].map((k) => buySides[k].reduce((t, o) => t + demandAt(o, q[k]), 0n) + sellDemand(k, q[k]));
+      const v = d[0] < d[1] ? d[0] : d[1];
+      if (v === 0n) continue;
+      const gap = d[0] > d[1] ? d[0] - d[1] : d[1] - d[0];
+      if (!best || v > best.v || (v === best.v && gap < best.gap)) best = { pi, v, gap, d };
+    }
+    const fills = new Map();   // id -> payout, only what this batch fills
+    if (best) {
+      const q = [best.pi, PRICE_SCALE - best.pi];
+      for (let k = 0; k < 2; k++) {
+        // THE SHORT SIDE FILLS WHOLE; THE LONG SIDE BY LIMIT, BETTER FIRST, THE MARGINAL LIMIT PRO RATA
+        let left = best.v;
+        const byLimit = new Map();
+        for (const o of buySides[k]) { const w = demandAt(o, q[k]); if (w > 0n) { const key = String(o.price); if (!byLimit.has(key)) byLimit.set(key, { buys: [], level: null }); byLimit.get(key).buys.push({ id: o.id, want: w }); } }
+        for (const l of sellSides[k].ls) if (q[k] <= l.price) { const key = String(l.price); if (!byLimit.has(key)) byLimit.set(key, { buys: [], level: null }); byLimit.get(key).level = l; }
+        const limits = [...byLimit.keys()].map(BigInt).sort((a, c) => (a > c ? -1 : 1));
+        for (const lim of limits) {
+          if (left === 0n) break;
+          const g = byLimit.get(String(lim));
+          const total = g.buys.reduce((t, x) => t + x.want, 0n) + (g.level ? g.level.total : 0n);
+          const members = () => [...g.buys, ...(g.level ? [...g.level.ids].map((id) => ({ id, want: sells.get(id).sharesMsat })) : [])];
+          if (total <= left) { for (const x of members()) fills.set(x.id, x.want); left -= total; continue; }
+          const group = members().sort((x, y) => byIdOrder(x.id, y.id));
+          let given = 0n;
+          for (const x of group) { const f = (x.want * left) / total; fills.set(x.id, f); given += f; }
+          for (const x of group) { if (given === left) break; if (fills.get(x.id) < x.want) { fills.set(x.id, fills.get(x.id) + 1n); given += 1n; } }
+          left = 0n;
+        }
+      }
+    }
+    const qOf = (side) => (side === YES ? (best ? best.pi : 0n) : (best ? PRICE_SCALE - best.pi : 0n));
+    const rows = [];
+    // every buy's row (clearBatch's), and every sell's that filled - one that did not stays as it rests
+    for (const o of bought) {
+      const payoutMsat = fills.get(o.id) || 0n;
+      let costMsat = payoutMsat === 0n ? 0n : (payoutMsat * qOf(o.outcome) + PRICE_SCALE - 1n) / PRICE_SCALE;
+      if (costMsat > o.net) costMsat = o.net;
+      const feeMsat = o.fullNet === 0n ? 0n : (o.fullFee * costMsat) / o.fullNet;
+      rows.push({ id: o.id, outcome: o.outcome, price: o.price, payoutMsat, costMsat, feeMsat, refundMsat: o.stakeMsat - costMsat - feeMsat, restNetMsat: o.net - costMsat });
+    }
+    for (const [id, payoutMsat] of fills) {
+      if (buys.has(id) || payoutMsat === 0n) continue;
+      const x = sells.get(id), side = 1 - x.outcome;
+      const costMsat = (payoutMsat * qOf(side) + PRICE_SCALE - 1n) / PRICE_SCALE;
+      const feeMsat = ((payoutMsat - costMsat) * BigInt(feeBps)) / 10000n;
+      rows.push({ id, sell: true, outcome: side, sold: x.outcome, price: x.price, payoutMsat, costMsat, feeMsat, refundMsat: 0n, restSharesMsat: x.sharesMsat - payoutMsat });
+    }
+    rows.sort((x, y) => byIdOrder(x.id, y.id));
     // 6. THE FILLS
-    const fills = cleared.fills.filter((f) => f.payoutMsat > 0n);
-    for (const f of cleared.fills) {
+    for (const f of rows) {
       if (f.sell) {
         const s = sells.get(f.id);
-        if (f.payoutMsat > 0n) {
-          const p = positions.get(s.entry);
-          p.shares[f.outcome] += f.payoutMsat; p.sellDebt += f.costMsat; p.sellFee += f.feeMsat;
-        }
-        if (f.restSharesMsat > 0n) sells.set(f.id, { ...s, sharesMsat: f.restSharesMsat }); else sells.delete(f.id);
+        const p = positions.get(s.entry);
+        p.shares[f.outcome] += f.payoutMsat; p.sellDebt += f.costMsat; p.sellFee += f.feeMsat;
+        if (f.restSharesMsat > 0n) restSell(f.id, f.restSharesMsat); else dropSell(f.id);
         continue;
       }
       const p = positions.get(f.id);
@@ -89,7 +207,7 @@ export function bookLedger({ batches, feeBps }) {
       const o = buys.get(f.id);
       if (f.restNetMsat > 0n) buys.set(f.id, { ...o, net: f.restNetMsat }); else buys.delete(f.id);
     }
-    out.push({ k: b.k, price: cleared.price, fills });
+    out.push({ k: b.k, price: best ? best.pi : null, fills: rows.filter((f) => f.payoutMsat > 0n) });
   }
   // THE FEE A BUY OWES: its fee lock's share of what its fills spent, F x cost / N - the same over one batch or many
   for (const p of positions.values()) p.buyFee = p.N === 0n ? 0n : (p.F * p.cost) / p.N;

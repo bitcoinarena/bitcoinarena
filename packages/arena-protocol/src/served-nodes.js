@@ -109,7 +109,22 @@ export function mergeServedRounds(held) {
       if (!into.copies.has(committee)) into.copies.set(committee, { committee: r.committee, seats: 0 });
       into.copies.get(committee).seats++;
       if (into.copies.size > 1) conflicts.add(k);
-      for (const f of r.finals || []) if (f instanceof Uint8Array) into.finals.set(hx(f), f);
+      // kanban #1815: what one seat's answer makes the reader verify is bounded. A round counts once per node, so from each seat's
+      // answer at most two FINALs per signer are kept - its earliest and its latest (a node's FINALs on one round fall inside minutes,
+      // so when any of them lies in a window, one of these two does) - and at most SERVED_COMMITTEE_MAX signers, the first listed (a
+      // seat keeps FINALs only from the round's committee). What is no FINAL at all is not kept; servedNodes still checks the rest.
+      // Measured before: one padded answer of 20,000 made-up FINALs under a real committee's keys, junk signatures, cost 20,003
+      // BIP-340 checks (28 s on a seat's main thread) on every item purchase and funding decision.
+      const bySigner = new Map();
+      for (const f of Array.isArray(r.finals) ? r.finals : []) {
+        if (!(f instanceof Uint8Array)) continue;
+        let x; try { const { signature } = splitSignedFinalSig(f); x = decodeFinalSig(f.subarray(0, f.length - signature.length)); } catch { continue; }
+        const key = hx(x.signerPubkey), b = bySigner.get(key);
+        if (!b) { if (bySigner.size < SERVED_COMMITTEE_MAX) bySigner.set(key, { first: [x.signedAtMs, f], last: [x.signedAtMs, f] }); continue; }
+        if (x.signedAtMs < b.first[0]) b.first = [x.signedAtMs, f];
+        if (x.signedAtMs > b.last[0]) b.last = [x.signedAtMs, f];
+      }
+      for (const b of bySigner.values()) for (const [, f] of [b.first, b.last]) into.finals.set(hx(f), f);
     }
   }
   const pick = (copies) => { let best = null; for (const c of copies.values()) if (!best || c.seats > best.seats) best = c; return best.committee; };

@@ -102,9 +102,32 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
     m.set(toHex(o.observer), o);
     return true;
   }
-  const persist = () => save({ observations: [...kept.values()].flatMap((m) => [...m.values()].map(asJson)),
+  // A STORED OBSERVATION IS HELD TO THE SAME RULE AS ONE TAKEN (kanban #2282, refute of #1819): load() reads the halts file before the
+  // federation records and the census are known, so a file a pre-#1819 build filled (one census seat's observations of 300 made-up
+  // federations, 4.06 MB rewritten on every fresh observation) was held again after the upgrade and carried by every later save. An
+  // observation stands only when its federation's record is held, its answering list is no longer than that record's guardians and its
+  // observer is a census seat; list() answers only those, and persist() drops the rest from memory and from the file (a one-time prune of
+  // an old file at its first save). A criterion whose source is still empty (no record or no census seat known yet) drops nothing.
+  function standing(fid, o, seats) {
+    const held = records.recordOf(fid);
+    if (!held) return false;
+    if ((o.answering || []).length > (held.record.guardians || []).length) return false;
+    return !seats || seats.has(toHex(o.observer));
+  }
+  const censusSet = () => { const s = new Set((censusSeats() || []).map(toHex)); return s.size ? s : null; };
+  function prune() {
+    if (!(records.list() || []).length) return;
+    const seats = censusSet();
+    for (const [fid, m] of [...kept]) {
+      const keepM = new Map([...m].filter(([, o]) => standing(fid, o, seats)));
+      if (keepM.size === m.size) continue;
+      if (keepM.size) kept.set(fid, keepM);
+      else kept.delete(fid);
+    }
+  }
+  const persist = () => { prune(); return save({ observations: [...kept.values()].flatMap((m) => [...m.values()].map(asJson)),
     guardianObservations: [...keptG.values()].flatMap((m) => [...m.values()].map(asJsonG)),
-    seen: Object.fromEntries([...seen].map(([fid, w]) => [fid, { session: w.session, firstHeight: w.firstHeight, heard: !!w.heard, ...(w.rule ? { rule: w.rule } : {}), at: w.at }])) });
+    seen: Object.fromEntries([...seen].map(([fid, w]) => [fid, { session: w.session, firstHeight: w.firstHeight, heard: !!w.heard, ...(w.rule ? { rule: w.rule } : {}), at: w.at }])) }); };
 
   /** One pass over every federation this seat holds a record of; answers what it saw and signed. */
   async function observe() {
@@ -147,6 +170,13 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
     let o; try { o = decodeWithSig(said || {}); } catch (e) { return { ok: false, status: 400, why: `not a halt observation: ${e.message}` }; }
     const seats = new Set((censusSeats() || []).map(toHex));
     if (!seats.has(toHex(o.observer))) return { ok: false, status: 409, why: 'that observer is not an active seat of this seat\'s census' };
+    // ONLY OF A FEDERATION THIS SEAT HOLDS A RECORD OF, ITS ANSWERING LIST NO LONGER THAN THE RECORD'S GUARDIANS (kanban #1819, audit #1489 r6
+    // gossip): keep() opened an entry for any federation id and each fresh one rewrote the whole halts file, so one census seat signing
+    // observations of 600 made-up federations was held 600 times and 2,438 MB went to disk. proofOf answers only for a held record, so such an
+    // observation never counted; one that arrives before its record is refused and taken from the observer's next pass (it posts every pass).
+    const held = records.recordOf(toHex(o.federationId));
+    if (!held) return { ok: false, status: 409, why: 'this seat holds no record of that federation' };
+    if ((o.answering || []).length > (held.record.guardians || []).length) return { ok: false, status: 409, why: 'that observation names more answering guardians than the record lists' };
     if (!verify(o.signature, haltObservationId(o), o.observer)) return { ok: false, status: 409, why: 'that observation is not signed by its seat' };
     const fresh = keep(o);
     if (fresh) persist();
@@ -190,7 +220,8 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
   const haltedFederations = () => [...kept.keys()].filter((fid) => proofOf(fid));
   /** The halt a liquidation counts from: { height, proof } or null. */
   const haltOf = (fid) => { const p = proofOf(fid); return p ? { height: p.haltHeight, proof: p } : null; };
-  const list = (fid) => [...(kept.get(String(fid).toLowerCase()) || new Map()).values()].map(asJson);
+  const list = (fid) => { const f = String(fid).toLowerCase(); const seats = censusSet();
+    return [...(kept.get(f) || new Map()).values()].filter((o) => standing(f, o, seats)).map(asJson); };   // kanban #2282
   const listGuardian = (fid) => [...(keptG.get(String(fid).toLowerCase()) || new Map()).values()].map(asJsonG);
   /** The signed observations held of a federation, as a bound proof carries them (kanban #1269). */
   const observationsOf = (fid) => [...(kept.get(String(fid).toLowerCase()) || new Map()).values()];

@@ -28,6 +28,7 @@ import { blockRandom, blockRandomReady } from '../../arena-protocol/src/block-ra
 import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS, SERVED_HELD_MAX } from '../../arena-protocol/src/served-nodes.js';
 import { decodePurchase } from '../../arena-protocol/src/purchase.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
+import { textUpTo, jsonUpTo, listedGames, PEER_LISTING_BYTES, PEER_PACKAGE_BYTES } from './peer-read.js';   // kanban #1540, #1723
 import { keepItemPurchase, itemsOwned, purchasesSince } from './item-purchase-seat.js';
 import { keepDonationGift, giftsOf, giftsSince } from './donation-gift-seat.js';
 import { decodeDonationGift, GIFT_TO_GAME, GIFT_TO_PLAYER, GIFT_TO_BOTH, playerGiftRecipients } from '../../arena-protocol/src/donation-gift.js';
@@ -273,7 +274,7 @@ import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
 import { outageOutcome } from '../../arena-protocol/src/entry-void.js';
 import { ENTRY_VOID, netStakeMsat, withGoneStakes } from '../../arena-protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/objection.js';
-import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
+import { transcriptBytesHash, SIGNED_POSTING_BYTES, decodeTranscriptPosting, splitSignedPosting } from '../../arena-protocol/src/posting.js';
 import { decodeTranscript } from '../../arena-protocol/src/transcript.js';   // the relay door's check (kanban #1532)
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedAppsCheck, payoutRuleOfRound } from './plugins.js';
@@ -345,6 +346,17 @@ const read = readRequestBody;
 // in 2.0 it also carries the SEEN groups (present and left-out lists), the justifications of second signatures and the bonds' presigs, so the
 // bound is 1 MiB - far above any committee's, and an eighth of the 8 MiB body a padded certificate came in under
 const SEATING_CERT_MOST = 1024 * 1024;
+// AND NO ONE PARTY FILLS IT FOR THE OTHERS (kanban #1725, #1795, refute of #1532: the cap was one pool, and one held entry filled it with
+// many different decodable transcripts - random marks the door does not check - so every honest transcript and slash proof got 507).
+// A transcript no held result or posting of its entry names (UNNAMED) may take at most RELAY_ENTRY_MOST bytes per entry (RELAY_MOST/32:
+// 8 MiB live, one body), RELAY_ROUND_MOST per round (RELAY_MOST/8) and RELAY_UNNAMED_MOST over all (RELAY_MOST/2). Transcripts together
+// stop RELAY_SLASH_RESERVE (RELAY_MOST/8) short of the pool: that part is left for slash proofs. A transcript a held result names is
+// the one the run is settled on: it passes the unnamed caps (there are at most a committee's worth of such hashes per entry).
+const relayPart = (env, div) => (Number(process.env[env]) > 0 ? Number(process.env[env]) : Math.floor(RELAY_MOST / div));
+const RELAY_ENTRY_MOST = relayPart('ARENA_RELAY_ENTRY_MOST', 32);
+const RELAY_ROUND_MOST = relayPart('ARENA_RELAY_ROUND_MOST', 8);
+const RELAY_UNNAMED_MOST = relayPart('ARENA_RELAY_UNNAMED_MOST', 2);
+const RELAY_SLASH_RESERVE = relayPart('ARENA_RELAY_SLASH_RESERVE', 8);
 
 // A BROWSER IS THE CLIENT, and a browser will never be on this origin.
 //
@@ -406,7 +418,8 @@ const hexOf = (b) => Buffer.from(b).toString('hex');
  */
 export const GHOST_BACKLOG_BYTES = 262144;
 // HOW LONG AFTER THE ENTRY CLOSE A SEAT STILL TAKES A CANCEL ANOTHER SEAT TOOK IN TIME AND HANDED ON (kanban #1520): the hand-on's own
-// bound (4 s, handCancelOn) plus a margin - far shorter than any market's outcome, so no cancel is signed knowing it (kanban #1435)
+// bound (4 s, handCancelOn) plus a margin - for a market whose outcome comes at least that long after its close, so no cancel is signed
+// knowing it (kanban #1435); a market whose outcome is out sooner has CANCEL_HANDON_KNOWN_GRACE_MS (kanban #1702)
 export const CANCEL_HANDON_GRACE_MS = 5000;
 // ANOTHER SEAT'S ANSWER IS READ ONLY UP TO A BOUND (kanban #1553): a game package (GET /plugin) is its manifest, chain, cores and
 // clients - a few hundred kB to a few MB for the real apps - and a GET /games listing far less. r.json() took any length: a seat
@@ -433,6 +446,51 @@ export const readJsonCapped = async (r, maxBytes) => JSON.parse(await readTextCa
 // THE STAKE LOCK A LOCK-FIRST CLIENT SHOWS WITH ITS HANDOUT (kanban #1596, after #1485): JSON { outpoint: "txid:index", fields, federation? }.
 // Inside a head-to-head round's handout lead a handout is taken only with one the federation holds (takeHandout, stakeLockMadeFor)
 export const STAKE_LOCK_HEADER = 'x-arena-stake-lock';
+// AND ONLY HALF A SECOND WHERE THE OUTCOME IS OUT BY THEN (kanban #1702, #1489 v1-refute-33): in the grace a seat trusts any one round seat's word
+// (GET /cancels) that it took the cancel in time, so ONE colluding seat may list a loser's cancel it got after the close and every honest seat
+// takes it. A market whose outcome is fixed at the close - a grid market (its window ends at the entry close: the price at the close), or one
+// whose resolution time is less than the grace after the close, or one naming no resolution time at all (attestationTimely takes an
+// observation at the close) - would give that seat CANCEL_HANDON_GRACE_MS knowing the outcome: the #1435 attack. Such a market's grace is only
+// the hand-on's network time: an honest take in the last 300 ms before the close is handed on at once (handCancelOn), and one before that at
+// close - 300 ms, so the hand-on lands within a round trip of the close. More holders (f + 1) cannot be asked for instead: a take at one seat
+// just before the close is held by that seat alone when the others hear of it, and refusing it there splits the tables again (#1520).
+export const CANCEL_HANDON_KNOWN_GRACE_MS = 500;
+/** How long after its entry close a seat takes a handed-on cancel for this market round (kanban #1520, #1702): see the two figures above. */
+export function cancelHandOnGraceMs(contract, manifest) {
+  const grid = marketWindowOf(contract, manifest);
+  if (!grid.ok) return CANCEL_HANDON_KNOWN_GRACE_MS;
+  if (grid.window && grid.window.endMs < BigInt(contract.entryCloseMs) + BigInt(CANCEL_HANDON_GRACE_MS)) return CANCEL_HANDON_KNOWN_GRACE_MS;
+  let terms = null;
+  try { terms = roundTermsOf(manifest, contract); } catch { terms = null; }
+  const after = terms && typeof terms.resolveAfterCloseMs === 'bigint' ? terms.resolveAfterCloseMs : 0n;
+  return after < BigInt(CANCEL_HANDON_GRACE_MS) ? CANCEL_HANDON_KNOWN_GRACE_MS : CANCEL_HANDON_GRACE_MS;
+}
+
+/**
+ * A HEAD-TO-HEAD DOOR TIME COUNTS ONLY FOR A LOCK THE FEDERATION HELD BEFORE ANY MOVE WAS PUBLIC (kanban #1822, #1551 refute 0 s3, #1805, #1489).
+ * #1805 keeps the time POST /lock / POST /fee-lock checked the close as the lock's verified_ms, so an honest lock handed just before the close
+ * seats its entry although the federation answers 2.2-2.7 s later. But an entry only names its lock's outpoint: the player could hand the locks
+ * before the close with the transaction built and held back, read the opponent's move once revealed, and submit it only when his move won -
+ * the late federation read then found it and the door time seated him. Now:
+ *  - no seat serves a paying head-to-head round's reveals (GET /reveals) before its entry close + H2H_REVEAL_HOLD_MS, so no move is public
+ *    from an honest seat before then;
+ *  - a door time is kept only when the federation answer that found the lock came back by the entry close + H2H_DOOR_TIME_KEPT_MS, i.e. the
+ *    lock was on the federation before any reveal was served (the 500 ms between the two: seats' clocks that disagree a little). A lock
+ *    found later keeps the answer time, as before #1805 (df616e824), and seats nobody.
+ * Live an honest lock handed at the handout lead (2 s before the close) is answered 0.2-0.7 s after it.
+ * NOT WHEN THE SEAT ANSWERED, BUT WHAT IT HELD THEN (kanban #1846, #1847, #1551 refute 0 s4): the hold is only an honest seat's, and the honest page
+ * posts its reveal to every committee seat at the close, so one colluding seat had the move at close + 0 and a lock submitted then came back well
+ * within 1250 ms; and an honest lock answered 1.3 s after the close (a busy read lane, #605) seated nobody. Now a door time is dropped when the
+ * federation's answer comes back once the seat holds another entry's reveal of the round - the honest reveal reaches the honest seats when it
+ * reaches the colluding one - or after the close + H2H_REVEAL_HOLD_MS, when the seat would serve the moves itself; a slow answer before any move
+ * arrived keeps it. A door that drops it answers 409 (the lock is held, but seats no one), so the page knows.
+ */
+export const H2H_REVEAL_HOLD_MS = 1750;
+export const H2H_DOOR_TIME_KEPT_MS = H2H_REVEAL_HOLD_MS;   // kanban #1846: was 1250, which unseated honest slow reads (#1847)
+
+// THE DOOR'S ANSWER WHEN A HEAD-TO-HEAD LOCK'S DOOR TIME IS DROPPED (kanban #1847): held, written with the answer time, after the close - it seats no one
+const DOOR_TIME_DROPPED = (kind) => `${kind} lock held, but it seats no one: the federation answered only after the round's entry close, once a move `
+  + `of the round had reached this seat (or past the close + ${H2H_REVEAL_HOLD_MS} ms), so it cannot count as on the federation before the move was known (kanban #1846)`;
 
 export const NOTHING_IS_FUNDED = () => false;
 
@@ -1017,7 +1075,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // kanban #1533: POST /address-announcement takes only a node of the census last read for addresses (none read yet: bounded by the book)
   let addressCensus = null;
   const addressBook = createAddressBook({ db, verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
-    isCensusNode: (hex) => (addressCensus ? addressCensus.has(String(hex)) : null) });
+    isCensusNode: (hex) => (addressCensus ? addressCensus.has(String(hex)) : null), ownKey: (() => { try { return toHex(round.pubkey); } catch { return null; } })() });   // kanban #1712: its own kept outside the census
   // EVERY COMMITTEE PEER AT ITS ANNOUNCED ADDRESS FIRST (kanban #757): roster.js endpointsOf with the address book's resolver -
   // a node whose quick tunnel restarted is dialed where its signed announcement says, not at its bond's dead endpoint
   const peerEndpointsOf = (committee, selfPubkey) => endpointsOf(committee, selfPubkey, addressBook.endpointOf);
@@ -1193,29 +1251,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const held = [...hosted.values()].filter((g) => g.manifest.source && toHex(g.manifest.gameDevPubkey) === dev).length;
     return held >= MARKETS_PER_DEV ? `this developer already has ${MARKETS_PER_DEV} markets` : null;
   }
-  // ANOTHER SEAT'S ANSWER, READ UP TO A BOUND (kanban #1540): a seat in the census or the peers list could answer GET /games,
-  // /plugin or /network with hundreds of MB, and `await r.json()` held all of it and its parsed objects at once (measured: one
-  // 120 MB /games listing grew the reading seat's heap 218 MB and held its event loop 3.6 s). The body is read chunk by chunk
-  // and refused, the connection dropped, as soon as it passes `maxBytes`.
-  const PEER_LISTING_BYTES = LISTING_ANSWER_MAX_BYTES, PEER_LISTING_GAMES = 64, PEER_PACKAGE_BYTES = PACKAGE_ANSWER_MAX_BYTES;
-  const textUpTo = async (r, maxBytes) => {
-    const said = Number(r.headers.get('content-length'));
-    if (said > maxBytes) { try { await r.body?.cancel(); } catch { /* dropped */ } throw new Error(`its answer is ${said} bytes, more than ${maxBytes}`); }
-    if (!r.body) return '';
-    const reader = r.body.getReader();
-    const chunks = []; let n = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      n += value.length;
-      if (n > maxBytes) { reader.cancel().catch(() => {}); throw new Error(`its answer passed ${maxBytes} bytes`); }
-      chunks.push(value);
-    }
-    return Buffer.concat(chunks.map((x) => Buffer.from(x.buffer, x.byteOffset, x.byteLength))).toString('utf8');
-  };
-  const jsonUpTo = async (r, maxBytes) => JSON.parse(await textUpTo(r, maxBytes));
-  // a seat's games, at most PEER_LISTING_GAMES of them: the rest of a longer list is not read (kanban #1540)
-  const listedGames = (got) => (got && Array.isArray(got.games) ? got.games.slice(0, PEER_LISTING_GAMES) : []);
+  // ANOTHER SEAT'S ANSWER, READ UP TO A BOUND (kanban #1540): textUpTo / jsonUpTo / listedGames live in peer-read.js since #1723,
+  // shared with the duty poster's own read of the census seats' GET /games
   async function takeGame({ game, from, replaces = null }) {
     if (!pluginsDir) return { ok: false, status: 409, why: 'this seat keeps no installed games (no plugins directory)' };
     from = String(from || '').replace(/\/+$/, '');
@@ -1243,11 +1280,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     // NAMED BY ITS SIGNED MANIFEST, TITLED AS THE VERSION IT REPLACES (kanban #1541): never by what the serving seat wrote
     const named = decodeManifest(fromHex(String(pkg.manifest))).gameName;
-    pkg = { ...pkg, name: named, title: replaces !== null ? (hosted.get(replaces).title || named) : named };
-    const at = installPackage(pluginsDir, pkg, game);
+    // and each core's configs the manifest's (kanban #1814), so the package.json kept on disk loads the same at the next start
+    const signedCores = decodeManifest(fromHex(String(pkg.manifest))).cores;
+    pkg = { ...pkg, name: named, title: replaces !== null ? (hosted.get(replaces).title || named) : named,
+      cores: pkg.cores.map((c) => { const m = signedCores.find((s) => toHex(s.hash) === c.hash); return { ...c, configs: m ? m.configs.map(toHex) : [] }; }) };
+    const at = installPackage(pluginsDir, pkg, game, { title: pkg.title });   // the title kept apart, as this seat's (kanban #1716, #1780)
     let reg;
     try { reg = await registrationFromPackage(at, pkg, { title: pkg.title }); } catch (e) { return { ok: false, status: 500, why: `kept, but it does not load: ${e.message}` }; }
-    const entry = hostedPlugins([reg]).get(game);
+    // a package this seat cannot host is refused, never thrown out of an autoUpdate sweep (kanban #1814)
+    let entry;
+    try { entry = hostedPlugins([reg]).get(game); } catch (e) { return { ok: false, status: 422, why: `kept, but it cannot be hosted: ${e.message}` }; }
     hosted.set(game, entry);
     if (replaces !== null) superseded.set(replaces, game);
     console.log(`[plugins] ${replaces ? `updated ${replaces.slice(0, 16)} to` : 'installed'} ${v.name} v${v.version} (${game.slice(0, 16)}) from ${from}: running now`);
@@ -1411,14 +1453,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const id = toHex(gameIdOf(m));
         if (id !== String(g.id).toLowerCase()) continue;              // a listing whose manifest is another game is not read
         const info = g.info ? gameInfoStands(g.info, { gameId: gameIdOf(m), manifest: m, verify: verifyEd25519 }) : null;
-        const row = byId.get(id) || { id, name: m.gameName, title: String(g.title || m.gameName).slice(0, 80), type: gameTypeOf(m), version: m.version,
+        // THE TITLE IS NOT THE LISTING SEAT'S (kanban #1716, #1780, as #1541 for hosted games): `title` is signed by nobody, so a
+        // seat could list a genuine signed game under a title of its choosing; the row is titled below from what this seat trusts
+        const row = byId.get(id) || { id, name: m.gameName, title: m.gameName, type: gameTypeOf(m), version: m.version,
           devKey: toHex(m.gameDevPubkey), parent: toHex(m.parentManifestId), sourced: !!m.source, description: null, website: null, lightning: null, infoSigned: false, seats: [] };
         if (info && info.ok && !row.infoSigned) Object.assign(row, { description: info.description, website: info.website, lightning: info.lightning || null, infoSigned: true });
         row.seats.push(from);
         byId.set(id, row);
       }
     }));
-    const games = [...byId.values()].map((g) => ({ ...g, hostedHere: hosted.has(g.id),
+    // titled as hosted here (this version, else the version it updates), else by its manifest's signed gameName
+    const trustedTitle = (g) => { const h = hosted.get(g.id) || hosted.get(g.parent); return String((h && h.title) || g.name).slice(0, 80); };
+    const games = [...byId.values()].map((g) => ({ ...g, title: trustedTitle(g), hostedHere: hosted.has(g.id),
       updateOf: hosted.has(g.parent) && !hosted.has(g.id) ? g.parent : null })).sort((a, b) => a.title.localeCompare(b.title) || a.version - b.version);
     Object.assign(networkApps, { atMs: Date.now(), seats: asked.sort((a, b) => a.seat.localeCompare(b.seat)), games });
     return networkApps;
@@ -1488,9 +1534,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try {
           const r = await seasonFetch(`${seats[i]}/season-rounds?game=${ids.join(',')}&days=${days}`, { signal: AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS) });
           if (!r.ok) continue;
-          const j = await r.json();
+          // READ UP TO A BOUND (kanban #1856): a bare `await r.json()` held a peer's whole answer - one seat answering with
+          // hundreds of MB exhausted this seat's memory, and on the badge path each padded round was then schnorr-verified in
+          // this thread. Read like every other peer listing (#1540): past PEER_LISTING_BYTES the seat counts as not answered.
+          const j = await jsonUpTo(r, PEER_LISTING_BYTES);
           if (!j || !Array.isArray(j.rounds) || (keyed && j.roundKeys !== true)) continue;
           const node = typeof j.node === 'string' && /^[0-9a-f]{64}$/i.test(j.node) ? j.node.toLowerCase() : null;
+          // THE HONEST SHAPE ONLY (kanban #2355, #1489 a45-refute-22-s2, refute of #1856): an honest seat's GET /season-rounds (season-read.js
+          // signedSeasonRoundsJson) hands on each round once, with no signature or its OWN one (the node its answer names). An answer with a
+          // round twice, a second signature or one of another node is not a seat's own account: the seat counts as not answered, before
+          // anything is verified - so one seat costs at most one verify per round it was drawn for.
+          { const seen = new Set(); let honest = true;
+            for (const x of j.rounds) {
+              const rid = x && typeof x === 'object' ? String(x.roundId || '').toLowerCase() : '';
+              if (!/^[0-9a-f]{64}$/.test(rid)) continue;                   // left for the merge to refuse by name, never verified
+              if (seen.has(rid)) { honest = false; break; }
+              seen.add(rid);
+              const sigs = x.sigs;
+              if (sigs !== undefined && (!Array.isArray(sigs) || sigs.length > 1
+                || (sigs.length === 1 && (!node || !sigs[0] || String(sigs[0].node || '').toLowerCase() !== node)))) { honest = false; break; }
+            }
+            if (!honest) continue; }
           answers[i] = { seat: seats[i], node, rounds: seasonRoundsFromJson(j.rounds) };
         } catch { /* missing: no answer in time, or none that reads */ }
       }
@@ -2121,13 +2185,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const payoutPeer = (base) => ({
     // kanban #1159: every ask carries the asking guardian seat's node key and its signature
     commit: async (b) => { const r = await fetch(`${base}/reserve-payout/commit`, { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ plan: b.plan, kind: b.kind, txid: b.txid || null, from: b.from, sig: b.sig }), signal: AbortSignal.timeout(60000) }); const j = await r.json();
+      body: JSON.stringify({ plan: b.plan, kind: b.kind, txid: b.txid || null, from: b.from, sig: b.sig }), signal: AbortSignal.timeout(60000) }); const j = await jsonUpTo(r, PEER_LISTING_BYTES);
       return j.ok ? { ok: true, commitment: { id: Number(j.commitment.id), hiding: fromHex(j.commitment.hiding), binding: fromHex(j.commitment.binding) } } : j; },
     share: async (b) => { const r = await fetch(`${base}/reserve-payout/share`, { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ planId: b.planId, kind: b.kind, commitments: b.commitments.map((c) => ({ id: c.id, hiding: toHex(c.hiding), binding: toHex(c.binding) })), from: b.from, sig: b.sig }), signal: AbortSignal.timeout(60000) });
-      const j = await r.json(); return j.ok ? { ok: true, share: BigInt('0x' + j.share) } : j; },
-    // ITS WINNERS OF A LEADERBOARD PAYOUT (kanban #1153): the list it planned for, else its frozen read, each with its signed evidence
-    winners: async (id) => { const r = await fetch(`${base}/leaderboard-winners?proposal=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(30000) }); return r.ok ? r.json() : null; },
+      const j = await jsonUpTo(r, PEER_LISTING_BYTES); return j.ok ? { ok: true, share: BigInt('0x' + j.share) } : j; },
+    // ITS WINNERS OF A LEADERBOARD PAYOUT (kanban #1153): the list it planned for, else its frozen read, each with its signed evidence.
+    // READ UP TO A BOUND (kanban #2382, #2383, #1489 a45-refute-22-s3: #1856's second copy): a bare `r.json()` held a guardian peer's
+    // whole answer, hundreds of MB of padded evidence. The evidence is a season's signed rounds, so it is read up to what one seat's
+    // season is read up to (SEASON_PEER_ANSWER_BYTES); past it the peer has not answered. Its copies of one account cost no second
+    // verify (leaderboard-freeze.js peerEvidence, season.js mergeSignedSeasonAccounts).
+    // commit / share: small answers, read up to PEER_LISTING_BYTES like every other peer answer.
+    winners: async (id) => { const r = await fetch(`${base}/leaderboard-winners?proposal=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(30000) });
+      if (!r.ok) { try { await r.body?.cancel(); } catch { /* dropped */ } return null; } return jsonUpTo(r, SEASON_PEER_ANSWER_BYTES); },
   });
   const reserveSpent = () => (reservePayouts ? reservePayouts.spent() : new Set());
   // the reserves this seat holds unspent, over every federation, in sat (rule 4's base); the chain tip the funding loop saw last
@@ -3249,8 +3319,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     holdsOf: (rid, contract) => holdsOfRound(rid, contract),
     log: (m) => console.log(m), windowOf: marketWindowFor,
     // A V2 ROUND'S SEATS (2026.0.2): the settlement seating's certified seated set is the round's 7 signer nodes
-    onSeated: (rid, role, seated, contract = null) => {
+    onSeated: (rid, role, seated, contract = null, { replaced = false } = {}) => {
       if (role !== 'settlement') return;
+      // a certificate that replaced the one held (kanban #1681, #1741: a withholding member left out) seats the table's rounds again
+      if (replaced) tablesSeated.delete(toHex(rid));
       // A TABLE'S LATER SEATING (kanban #1020): it seats that check-in and the rounds after it
       let later = null; try { const t = tableAnchorOf(contract || decodeRoundContract(new Uint8Array(round.get(rid).contract))); later = t && !t.first ? t : null; } catch { later = null; }
       if (later) { reseatTable(later.anchorId, contract ? contract.roundIndex : decodeRoundContract(new Uint8Array(round.get(rid).contract)).roundIndex); return; }
@@ -3789,7 +3861,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     for (const peer of verifier.peersOf(rid)) {
       try {
         const r = await fetch(`${String(peer).replace(/\/+$/, '')}/lock-settlement?round=${toHex(rid)}`, { signal: AbortSignal.timeout(3000) });
-        const j = await r.json();
+        // kanban #1744 (bypass of #1550): read up to PEER_LISTING_BYTES, not whole - a peer's settlement is a small record
+        const j = await jsonUpTo(r, PEER_LISTING_BYTES);
         if ((j.state === 'SUBMITTING' || j.state === 'ACCEPTED') && j.signature && j.message
           && schnorr.verify(fromHex(j.signature), fromHex(j.message), claimPk.subarray(1))
           && await thisRoundsMessage(rid, fromHex(j.message))) return true;
@@ -4196,8 +4269,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   function takeFinalSig(rid, eid, bytes, f = resultFinality(round, rid, eid)) {
     let x;
     try { x = decodeFinalSig(splitSignedFinalSig(bytes).body); } catch (e) { return { kept: 'refused', why: e.message }; }
+    // ONLY AN ENTRY OF THE ROUND, ONLY THE RUN THIS SEAT HOLDS, ONE ROW PER SEAT (kanban #1817): final_sigs is keyed
+    // (round, entry, run, signer), and nothing here asked whether the entry was the round's or which run it named - one
+    // committee seat signed FINAL over 400 invented (entry, run) pairs and every honest seat kept 400 rows, each re-verified
+    // on every GET /served, item purchase and funding signal (444 ms measured), and each counted the seat as having served.
+    // Now an entry the round does not hold is refused, a run other than the one this seat may sign is refused (finalSigFault
+    // "about another run"), and while this seat holds no run yet only a seat's first FINAL on the entry is kept.
+    const owner = round.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(eid);
+    if (!owner || toHex(owner.round_id) !== toHex(rid)) return { kept: 'refused', why: 'not an entry of that round' };
+    const holdRun = (f && f.signable && f.signable.runId) || null;
+    if (!holdRun) {
+      const had = round.db.prepare('SELECT run_id FROM final_sigs WHERE round_id = ? AND entry_id = ? AND signer_pubkey = ?').all(rid, eid, x.signerPubkey);
+      if (had.some((r) => toHex(r.run_id) !== toHex(x.runId))) return { kept: 'refused', why: 'this seat already holds that signer\'s FINAL on another run of the entry' };
+    }
     const seenMs = round.now();
-    const fault = finalSigFault({ bytes, seenMs }, { roundId: rid, entryId: eid, runId: null,
+    const fault = finalSigFault({ bytes, seenMs }, { roundId: rid, entryId: eid, runId: holdRun,
       committee: round.signerNodes(rid), finalAfterMs: f.finalAfterMs ?? 0n, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
     const kept = round.putFinalSig(rid, eid, x, bytes, fault, seenMs);
     if (kept === 'evidence') console.log(`[final] ${toHex(eid).slice(0, 16)} a FINAL signature of ${toHex(x.signerPubkey).slice(0, 16)} does not count: ${fault.why}`);
@@ -4547,7 +4633,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   let headToHeadReadyGo = () => {};
   const headToHeadReadyAt = new Promise((go) => { headToHeadReadyGo = go; });
   const closingNow = new Map();
-  const H2H_HANDOUT_LEAD_MS = h2hHandoutLeadMs;   // kanban #1485: a head-to-head handout this close to the entry close is refused (takeHandout); a lock alone takes 2.2-2.7 s
+  // kanban #1485: a head-to-head handout this close to the entry close is refused (takeHandout). `h2hHandoutLeadMs` is the slowest lock the seats measured
+  // (2.7 s, tx_steps of round 77bd9609); kanban #1742 (#1489 refute of #1485): a lead of only that lets a handout through that the order cannot land behind - a
+  // lock as slow as the fix's own measurement, then the entry post, reaches the seats after the close, the lock is made (developers' and reserves' parts
+  // spent) and every seat refuses the entry, the outcome of feedback #010. The door now keeps half the lock again for the entry post and a lock slower than
+  // any measured (the measured spread: 2.7 s against a 2 s lead, 1.35x): a handout is taken only with more than H2H_HANDOUT_LEAD_MS left. This is the guard
+  // that stands for a player whose clock runs slow - every page guard reads the player's own Date.now(), this one the seat's clock.
+  const H2H_HANDOUT_LEAD_MS = Math.ceil(Number(h2hHandoutLeadMs) * 3 / 2);
   function afterClose(roundIdBytes) {
     const key = toHex(roundIdBytes);
     const running = closingNow.get(key);
@@ -5754,9 +5846,36 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // AN ENTRY'S STAKE LOCK AND FEE LOCK, CHECKED WITH THE FEDERATION AND KEPT: what POST /lock and POST /fee-lock do, and what a seat does
   // for an order a certified batch names that never reached it (replayOrder below). Answers verifyStakeLock's / verifyFeeLock's answer.
-  const takeStakeLock = async (eid, fields, timing = {}) => {
+  // WHICH ENTRY THE ROUND'S OTHER SEATS TOOK FIRST NAMING A LOCK OUTPOINT (kanban #1692, #1758): a copy of a player's entry posted to the seats
+  // the page had not reached yet was the first there and kept the player's lock. Each seat of the round is asked (GET /lock-namer), beside
+  // the federation; an answer counts only when its bytes are an entry of that id naming that outpoint under the same player key. A seat that
+  // does not answer in time adds nothing. stake-lock-signer-node.js namedFirstByAnother then hands the lock to the entry taken earliest.
+  const namersAtPeers = async ({ kind, outpoint, entry }) => {
+    const field = kind === 'fee' ? 'feeLockOutpoint' : 'stakeLockOutpoint';
+    const op = `${toHex(outpoint.txid)}:${outpoint.outIdx}`;
+    const peers = [...new Set((verifier.peersOf(entry.roundId) || []).map((x) => String(x).replace(/\/+$/, '')))];
+    const said = await Promise.all(peers.map(async (base) => {
+      try {
+        const r = await fetch(`${base}/lock-namer?kind=${kind}&outpoint=${op}&player=${toHex(entry.playerPubkey)}`, { signal: AbortSignal.timeout(1500) });
+        if (!r.ok) return null;
+        const body = await jsonUpTo(r, 65536);   // one entry's answer, read up to a bound
+        if (!body || typeof body.entry !== 'string' || typeof body.bytes !== 'string' || !Number.isFinite(body.joinedMs)) return null;
+        const bytes = fromHex(body.bytes), e = decodeEntryContract(bytes), id = idOfEntry(e);
+        if (toHex(id) !== body.entry.toLowerCase()) return null;
+        const o = e[field];
+        if (!o || toHex(o.txid) !== toHex(outpoint.txid) || o.outIdx !== outpoint.outIdx) return null;
+        if (toHex(e.playerPubkey) !== toHex(entry.playerPubkey)) return null;
+        return { entryId: new Uint8Array(id), joinedMs: Number(body.joinedMs) };
+      } catch { return null; }
+    }));
+    return said.filter(Boolean);
+  };
+  // `atMs` (kanban #1805): the time the door (POST /lock, POST /fee-lock) checked the round's lock close, before any await; kept as the lock's
+  // verified_ms. A repair from peers and a replayed order pass none: their rows carry the time they are written (or the vouched time, keepLockTimes).
+  const takeStakeLock = async (eid, fields, timing = {}, atMs = undefined) => {
     const stored = round.entry(eid);
     if (!stored) return { ok: false, status: 404, why: 'this node holds no such entry' };
+    const atUntilMs = atMs === undefined ? undefined : doorTimeUntilOf(stored);   // kanban #1822
     const se = decodeEntryContract(stored);
     const claimPk = claimKeyOf(se.roundId);
     // THE ROUND'S DONATION SET, so the donation outputs in the same transaction are checked with the stake (2026-10-03)
@@ -5768,14 +5887,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (ef.ok) { const t = Date.now(); reserveKey = await reserveKeyFor(toHex(ef.federationId)); timing.reserveKeyMs = Date.now() - t; } split = roundSplitBps(feesFor(rcx)); }
     try {
       const t = Date.now(); const port = (await portOfEntryBytes(stored)) || stakeLocks; timing.portMs = Date.now() - t;
-      return await verifyStakeLock({ round, port, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split, timing, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid) });
+      return await verifyStakeLock({ round, port, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split, timing, atMs, atUntilMs, namersAtPeers, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid) });
     } catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
   };
-  const takeFeeLock = async (eid, fields) => {
+  const takeFeeLock = async (eid, fields, atMs = undefined) => {
     const stored = round.entry(eid);
     if (!stored) return { ok: false, status: 404, why: 'this node holds no such entry' };
     const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
-    try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid) }); }
+    const atUntilMs = atMs === undefined ? undefined : doorTimeUntilOf(stored);   // kanban #1822
+    try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, atMs, atUntilMs, namersAtPeers, namedGate: (c, fid) => namedClaimGate.refusalNow(c, fid) }); }
     catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
   };
   // A ROUND WHOSE ENTRIES AND LOCKS A SEAT HANDS ON (kanban #1216): every round it holds that is a game's - head-to-head (kanban #1068) or replayed;
@@ -5805,7 +5925,29 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (held) return null;
     return `that head-to-head round's entry closed at ${c.entryCloseMs} and it is ${now}: its moves can be revealed now, so a ${kind === 'fee' ? 'fee' : 'stake'} lock new to this seat is not taken (kanban #1598, #1479)`;
   };
-  const lockAfterCloseRefusal = (storedEntry, eid, kind) => {
+  // THE LAST MOMENT A LOCK NEW TO THIS SEAT IS TAKEN FOR AN ENTRY (decoded): the door's rule below, and the repair from peers (takeEntryParts, kanban #1783)
+  // keeps it too. null: no such close (no grace configured, an order, a round that is not relayed).
+  const lockCloseOf = (e) => {
+    const grace = round.entryCloseGraceMs;
+    if (grace === null || grace === undefined || e.limitPrice !== undefined) return null;
+    const c = relayedRound(e.roundId);
+    if (!c || typeof c.entryCloseMs !== 'bigint') return null;
+    return headToHeadRound(e.roundId) !== null ? c.entryCloseMs - 1n : c.entryCloseMs + BigInt(grace);
+  };
+  // THE LAST MOMENT A FEDERATION ANSWER MAY COME BACK AND THE LOCK STILL KEEP ITS DOOR TIME (kanban #1822, #1551 refute 0 s3): a head-to-head
+  // round's entry close + H2H_DOOR_TIME_KEPT_MS - before any honest seat serves its reveals (H2H_REVEAL_HOLD_MS). undefined: no such bound (a
+  // round that is not head-to-head keeps its door time as #1805 made it).
+  const doorTimeUntilOf = (storedEntry) => {
+    let e; try { e = decodeEntryContract(new Uint8Array(storedEntry)); } catch { return undefined; }
+    if (e.limitPrice !== undefined || headToHeadRound(e.roundId) === null) return undefined;
+    const row = round.get(e.roundId);
+    let c; try { c = row ? decodeRoundContract(new Uint8Array(row.contract)) : null; } catch { c = null; }
+    // a head-to-head round this seat cannot read the close of: no door time at all (the answer time, as before #1805)
+    if (!c || typeof c.entryCloseMs !== 'bigint') return -Infinity;
+    return Number(c.entryCloseMs) + H2H_DOOR_TIME_KEPT_MS;
+  };
+  // `doorMs` (kanban #1805): the door's own time, taken once - the same time the lock row then keeps (takeStakeLock / takeFeeLock atMs)
+  const lockAfterCloseRefusal = (storedEntry, eid, kind, doorMs = round.now()) => {
     const grace = round.entryCloseGraceMs;
     let e; try { e = decodeEntryContract(new Uint8Array(storedEntry)); } catch { return null; }
     if (e.limitPrice !== undefined && e.limitPrice !== null) return null;
@@ -5823,7 +5965,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // handed nothing and the round, one seated player short, went VOID. The entry relay carries an honest join's locks before the close.
     const h2h = headToHeadRound(e.roundId) !== null;
     const allowed = h2h ? 0 : grace;
-    const now = BigInt(Math.floor(Number(round.now())));
+    const now = BigInt(Math.floor(Number(doorMs)));
     if (h2h ? now < c.entryCloseMs : now <= c.entryCloseMs + BigInt(grace)) return null;
     if (held()) return null;
     return `that round's entry closed at ${c.entryCloseMs} (and ${allowed} ms for a join on its way) and it is ${now}: a ${what} lock new to this seat is not taken (kanban #1260, #1554)`;
@@ -5954,18 +6096,54 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const takeEntryParts = async (rid, entryHex, from) => {
     const eid = fromHex(entryHex), entry = decodeEntryContract(round.entry(eid));
     if (entry.stakeMsat === 0n) return null;
-    const ofPeers = async (path, read) => (await Promise.all(from.map(async (base) => {
+    const ofPeers = async (path, read) => (await Promise.all([...new Set(from)].map(async (base) => {   // each seat once: a count is read off these (kanban #1783)
       try { const r = await peerGet(`${base}${path}`); return r.ok ? await read(r) : null; } catch { return null; }
     }))).filter(Boolean);
     let why = null;
     if (!round.stakeLock(eid) || (round.feeLock && !round.feeLock(eid))) {
-      for (const locks of await ofPeers(`/order-locks?entry=${entryHex}`, (r) => r.json())) {
+      let answers = await ofPeers(`/order-locks?entry=${entryHex}`, (r) => r.json());
+      // PAST THE LOCK CLOSE, NOT FROM ONE SEAT (kanban #1783, #1551 refute 0, #1489): #1551 and #1260 refuse a lock new to a seat at its door once its round's
+      // lock close passed (head-to-head: the entry close, when the moves turn public), but this repair took a lock from any single peer's GET /order-locks.
+      // One seat that took a late lock (its operator, or a patched build) so handed it to every honest seat: the player locked only when the revealed move
+      // let it win, and was seated and paid. Past that close a lock new to this seat is taken only when at least the round's threshold of its other seats
+      // say (GET /order-locks stakeVerifiedMs / feeVerifiedMs) they verified it by that close - as honest seats' doors do - and it keeps that time here
+      // (round.keepLockTimes; a head-to-head round seats only locks held before its close, round.js seatedEntriesOf). Otherwise the entry stays unlocked
+      // here (not seated), with no wait: no honest seat takes it later. A lock that reached most seats in time is still repaired.
+      const closedAt = lockCloseOf(entry);
+      let vouchedMs = null;
+      if (closedAt !== null && BigInt(Math.floor(Number(round.now()))) > closedAt) {
+        const needed = roundThreshold(slotsForRole(decodeRoundContract(new Uint8Array(round.get(rid).contract)), 'settlement'));   // 2.0: the settlement role's slots
+        // each kind this seat lacks, held by that peer and verified there by the close (older builds name no time: not counted)
+        const inTime = (l, k) => l && l[k] && Number.isSafeInteger(l[`${k}VerifiedMs`]) && BigInt(l[`${k}VerifiedMs`]) <= closedAt;
+        const lacks = ['stake', ...(round.feeLock ? ['fee'] : [])].filter((k) => !(k === 'stake' ? round.stakeLock(eid) : round.feeLock(eid)));
+        const timely = answers.filter((l) => lacks.every((k) => !l[k] || inTime(l, k)) && lacks.some((k) => inTime(l, k)));
+        if (timely.length < needed) {
+          if (answers.length) console.log(`[entry] ${entryHex.slice(0, 16)}: its locks are new to this seat past the round's lock close, and ${timely.length} of the ${needed} other seats needed took them by then: not taken (kanban #1783)`);
+          answers = [];
+        } else {
+          // the time at least `needed` of them name: the latest of the earliest `needed`
+          const times = timely.map((l) => Math.max(...lacks.filter((k) => l[k]).map((k) => l[`${k}VerifiedMs`]))).sort((x, y) => x - y);
+          vouchedMs = times[needed - 1];
+          answers = timely;
+        }
+      }
+      for (const locks of answers) {
         why = null;
         try {
           if (locks.stake && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, lockFieldsFromJson(locks.stake)); if (!g.ok) why = `its stake lock: ${g.why}`; }
           if (locks.fee && round.feeLock && !round.feeLock(eid)) { const g = await takeFeeLock(eid, lockFieldsFromJson(locks.fee)); if (!g.ok) why = `its fee lock: ${g.why}`; }
         } catch (e) { why = e.message; }
         if (!why) break;
+      }
+      if (!why && vouchedMs !== null && round.keepLockTimes) round.keepLockTimes(eid, vouchedMs);   // kanban #1783: seated as the seats that took it in time seat it
+      // A LOCK NO THRESHOLD OF SEATS CLAIMS IS NO REASON TO WAIT (kanban #1823, audit #1489 r6-h2h-3): the last failing answer was the wait, so for an entry
+      // nobody locked (an abandoned join, a stranger's lockless entry) ONE peer answering 200 with junk lock fields kept this seat waiting on every pass until
+      // the result window ran out, and it signed nothing for the round's real players. A lock that fails here is the answering peer's fault; this seat waits
+      // for one only while at least the round's threshold of peers say they verified a lock of it - only then can the entry be seated without this seat.
+      if (why) {
+        let needed = Infinity;
+        try { needed = roundThreshold(slotsForRole(decodeRoundContract(new Uint8Array(round.get(rid).contract)), 'settlement')); } catch { /* no threshold read: no wait */ }
+        if (answers.length < needed) why = null;
       }
     }
     if (!round.payoutAddress(eid)) {
@@ -6095,7 +6273,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // NO HANDOUT FOR A HEAD-TO-HEAD ROUND THAT CLOSES BEFORE ITS ORDER CAN LAND (kanban #1485, Daniel 2026-11-11: "Er sollte keine fees entgegen nehmen wenn
     // die order nicht angenommen wird"; feedback #010, round 77bd9609: this door took a handout 1.8 s after the close, the player's page locked the stake, and
     // every seat refused the entry - the developers' and reserves' parts of that lock stayed spent). A head-to-head round takes no entry from its close, and a
-    // lock takes 2.2-2.7 s at the seats: a handout with less than H2H_HANDOUT_LEAD_MS left is refused, so the page locks nothing
+    // lock takes 2.2-2.7 s at the seats: a handout with less than H2H_HANDOUT_LEAD_MS left (the lock and the entry post, kanban #1742) is refused, so the page locks nothing
     // BUT ONLY A HANDOUT NO SEAT OF THE ROUND HAS TAKEN YET (kanban #1595, the #1489 audit of #1485): the seat-to-seat relay (entry-relay.js) hands an
     // entry's handout on 0.7-1.2 s after the first seat took it, through this same door, and the lead refused it there - the entry a client sent in
     // time then never reached the seat its post missed, too few seats held it, and the lock already made was spent for nothing: the very loss #1485
@@ -8092,6 +8270,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // The message is the reason - "the round is closed", "no such entry" -
       // because a node that answers "400" to everything makes a client guess.
       if (e && e.tooLarge) { try { return text(res, 413, e.message); } catch { return undefined; } }   // kanban #1469
+      if (e && e.busy) { try { return text(res, 503, e.message); } catch { return undefined; } }   // kanban #1724, #1794
       return text(res, 400, e.message);
     }
   });
@@ -10956,6 +11135,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       // AN ORDER'S LOCKS AS THIS SEAT VERIFIED THEM (kanban #620): the stake lock's and the fee lock's fields - what the federation holds at
       // the outpoints the entry names - for a seat that holds the order's certified batch but never received its locks (replayOrder)
+      // THE ENTRY THIS SEAT TOOK FIRST NAMING A LOCK OUTPOINT (kanban #1692, #1758): what a seat of the round asks before it verifies a lock
+      // (namersAtPeers) - in any round this seat holds, of that player key; its bytes, so the asker checks what it is told. Entries are public.
+      if (req.method === 'GET' && url.pathname === '/lock-namer') {
+        const kind = url.searchParams.get('kind'), m = /^([0-9a-f]{64}):([0-9]{1,10})$/i.exec(url.searchParams.get('outpoint') || '');
+        const player = Buffer.from(url.searchParams.get('player') || '', 'hex');
+        if ((kind !== 'stake' && kind !== 'fee') || !m || player.length !== 32) return text(res, 400, 'GET /lock-namer?kind=stake|fee&outpoint=<txid>:<index>&player=<player key>');
+        const first = round.firstNamingOfLock(null, kind, { txid: fromHex(m[1].toLowerCase()), outIdx: BigInt(m[2]) }, new Uint8Array(player));
+        if (!first) return text(res, 404, 'this seat holds no entry naming that lock');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ entry: toHex(first.entryId), joinedMs: first.joinedMs, bytes: toHex(first.bytes) }));
+      }
       if (req.method === 'GET' && url.pathname === '/order-locks') {
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'GET /order-locks?entry=<entry id>');
@@ -10963,7 +11153,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!st && !fe) return text(res, 404, 'this seat verified no lock of that entry');
         const fieldsOf = (row) => (row ? (typeof row.fields === 'string' ? JSON.parse(row.fields) : row.fields) : null);
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ entry: eid.toString('hex'), stake: fieldsOf(st), fee: fieldsOf(fe) }));
+        // and when this seat verified each (kanban #1783): a seat repairing a lock past its round's lock close takes it only when the round's threshold
+        // of seats verified it before that close
+        return res.end(JSON.stringify({ entry: eid.toString('hex'), stake: fieldsOf(st), fee: fieldsOf(fe),
+          stakeVerifiedMs: st ? st.verifiedMs : null, feeVerifiedMs: fe ? fe.verifiedMs : null }));
       }
       if (req.method === 'GET' && url.pathname === '/entry') {
         const eid = Buffer.from(url.searchParams.get('id') || '', 'hex');
@@ -11622,8 +11815,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // its expiry. Up to CANCEL_HANDON_GRACE_MS after the close a seat still takes a handed-on cancel, but only one a round seat already
         // holds (it asks their GET /cancels), so a seat's own door, closed at the close, is where every cancel starts: a player who posts one
         // late himself, with or without the hand-on mark, finds no seat holding it and is refused. Such a take is not handed on again.
+        // A market whose outcome is out at the close has only CANCEL_HANDON_KNOWN_GRACE_MS (kanban #1702): one colluding seat's list is no
+        // proof, so the window it opens is cut to the hand-on's own network time (cancelHandOnGraceMs).
         const closed = BigInt(round.now()) >= c.entryCloseMs;
-        if (closed && !(req.headers[RELAY_HEADER] === '1' && BigInt(round.now()) < c.entryCloseMs + BigInt(CANCEL_HANDON_GRACE_MS)
+        if (closed && !(req.headers[RELAY_HEADER] === '1' && BigInt(round.now()) < c.entryCloseMs + BigInt(cancelHandOnGraceMs(c, found.plugin.manifest))
             && await aSeatHoldsCancel(entry.roundId, new Uint8Array(eid))))
           return text(res, 409, `entries closed at ${new Date(Number(c.entryCloseMs)).toISOString()}: that order is in the round now, and its fee is due`);
         if (round.putCancel({ roundId: entry.roundId, entryId: new Uint8Array(eid), signature, receivedMs: round.now() }) && !closed)
@@ -11647,6 +11842,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (id.length !== 32) return text(res, 400, 'that is not a round id');
         if (!round.get(id)) return text(res, 404, 'this node holds no such round');
+        // NO MOVE PUBLIC BEFORE THE CLOSE + H2H_REVEAL_HOLD_MS IN A PAYING ROUND (kanban #1822, #1551 refute 0 s3): until then a lock handed at the
+        // door before the close may still be answered by the federation and keep its door time; a move read here first let a player submit his
+        // held-back lock only when his own move won. The reveals are kept, and served from then on; `heldUntilMs` says when.
+        { let c = null; try { c = decodeRoundContract(new Uint8Array(round.get(id).contract)); } catch { c = null; }
+          if (c && c.stakeMsat > 0n && typeof c.entryCloseMs === 'bigint' && headToHeadRound(new Uint8Array(id)) !== null) {
+            const until = Number(c.entryCloseMs) + H2H_REVEAL_HOLD_MS;
+            if (Math.floor(Number(round.now())) < until) {
+              res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+              return res.end(JSON.stringify({ round: toHex(id), reveals: [], heldUntilMs: until }));
+            }
+          } }
         // PROTOCOL 28 (kanban #2561): no move public before this seat holds the certified lock set, and only its entries' moves
         let certifiedOnly = null;
         if (lockSetRound(new Uint8Array(id))) {
@@ -11730,14 +11936,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
         { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId, { held: true }); if (why) return text(res, 409, `lock refused: ${why}`); }   // kanban #1848
-        { const why = lockAfterCloseRefusal(stored, eid, 'stake'); if (why) return text(res, 409, `lock refused: ${why}`); }
+        // THE DOOR'S TIME (kanban #1805, #1551 refute 0 s2, #1489): read once, before any await, checked against the lock close here and kept as the
+        // lock's verified_ms. Kept as the federation's answer time, an honest head-to-head lock handed before the close (live: a lock takes 2.2-2.7 s,
+        // the handout lead is 2 s) was written after it, and seatedEntriesOf (#1783) seated nobody: the honest winner signed VOID 0.
+        const doorMs = Math.floor(Number(round.now()));
+        { const why = lockAfterCloseRefusal(stored, eid, 'stake', doorMs); if (why) return text(res, 409, `lock refused: ${why}`); }
         // WHERE A SLOW LOCK'S TIME WENT (kanban #605: POST /lock took up to 107 s on the test host seats, 0 ms on the loop)
         // AND EVERY LOCK'S STEPS, NOT ONLY A SLOW ONE'S (kanban #618, step-log.js): the federation's own steps (verifyStakeLock's timing) with them
         const steps = stepLog('lock', toHex(eid), { keep: txRecord.keep }).on(res); steps.at('entry');
         const lockTimed = (said) => { steps.took(timing).at(said.slice(0, 40)); };
-        const got = await takeStakeLock(eid, fields, timing);
+        const got = await takeStakeLock(eid, fields, timing, doorMs);
         lockTimed(got.ok ? 'verified' : got.why.slice(0, 60));
         if (!got.ok) return text(res, 409, got.why);
+        if (got.doorTimeDropped) return text(res, 409, DOOR_TIME_DROPPED('stake'));   // kanban #1847
         handLocksOn(stored, eid);   // every round's (kanban #1216), a head-to-head lock before its close (kanban #1598), a pool's plain pick's too (kanban #1790)
         // AN ORDER (comment 1127): tradable here once both its locks are verified - and only before its market's entry close
         const lateOrder = orderLockAfterClose(stored);
@@ -11760,10 +11971,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // NAMED ONLY ONCE THE ENTRY IS HELD HERE (kanban #1688): a stranger's fee lock for a made-up id kept a tx_steps row under that id
         const steps = stepLog('fee-lock', toHex(eid), { keep: txRecord.keep }).on(res); steps.at('body');   // (kanban #618, step-log.js)
         { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId, { held: true }); if (why) return text(res, 409, `lock refused: ${why}`); }   // kanban #1848
-        { const why = lockAfterCloseRefusal(stored, eid, 'fee'); if (why) return text(res, 409, `lock refused: ${why}`); }
-        const got = await takeFeeLock(eid, fields);
+        const doorMs = Math.floor(Number(round.now()));   // the door's time, as POST /lock's (kanban #1805)
+        { const why = lockAfterCloseRefusal(stored, eid, 'fee', doorMs); if (why) return text(res, 409, `lock refused: ${why}`); }
+        const got = await takeFeeLock(eid, fields, doorMs);
         steps.at(got.ok ? 'verified' : 'refused');
         if (!got.ok) return text(res, 409, got.why);
+        if (got.doorTimeDropped) return text(res, 409, DOOR_TIME_DROPPED('fee'));   // kanban #1847
         handLocksOn(stored, eid);   // a fee lock that came after its stake lock's pass (kanban #1790)
         const lateOrder = orderLockAfterClose(stored);
         if (decodeEntryContract(stored).limitPrice !== undefined && !lateOrder) orderBook.noteTradable(decodeEntryContract(stored).roundId);
@@ -13274,6 +13487,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return took.ok ? json(res, 200, took) : text(res, took.status || 409, took.why);
       }
       const slashed = /^\/slash\/([0-9a-f]{64})$/.exec(url.pathname);
+      // ONLY A PROOF ABOUT A ROUND THIS SEAT HOLDS (kanban #1816, audit #1489 round 6 gossip: a bypass of #1532 - the door checked only
+      // that the proof hashed to its id and named the result beside it, so a stranger PUT made-up proofs with zero signatures about
+      // random rounds until the relay cap #1532 shares with PUT /transcript was full, and every held entry's transcript was refused 507).
+      // Kept now only when the round is in this seat's store, the accused node is on its committee (the signer nodes the census
+      // assigned), the evidence names that round, node and player, and the evidence's signature is the accused node's.
+      // Returns why not, or null.
+      const slashOursWhy = (proof, body, sigOk) => {
+        if (!round.get(proof.roundId)) return 'this relay keeps only a slash proof about a round it holds';
+        if (!round.signerNodes(proof.roundId).some((k) => toHex(k) === toHex(proof.nodePubkey))) return 'the accused node is not on that round\'s committee';
+        if (toHex(body.roundId) !== toHex(proof.roundId) || toHex(body.nodePubkey) !== toHex(proof.nodePubkey) || toHex(body.playerPubkey) !== toHex(proof.playerPubkey))
+          return 'the evidence is not the accused node\'s result for that round and player';
+        let ok = false; try { ok = sigOk() === true; } catch { ok = false; }
+        return ok ? null : 'the signature on the evidence is not the accused node\'s';
+      };
       if (slashed && req.method === 'PUT') {
         const bytes = await read(req), u8 = new Uint8Array(bytes);
         if (!bytes.length) return text(res, 400, 'that is no proof');
@@ -13300,6 +13527,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         if (toHex(fraudProofHash(u8)) !== slashed[1]) return text(res, 409, 'those bytes are not the proof that hash names');
         let evidence, got; try { ({ evidence } = decodeFraudProof(u8)); got = readEvidence(evidence); } catch (e) { return text(res, 400, e.message); }
+        // 2.0 (kanban #1489 port of #1816): a result's or a re-run's proof is held to slashOursWhy - this seat holds the round, the accused is on its
+        // committee, the evidence is its own signed word for that round and player; any other kind is kept only about a round this seat holds
+        {
+          let why = null;
+          try {
+            if (got.kind === 'result') {
+              const sp = splitSignedResult(got.signedResult), body = decodePlayerResult(sp.body);
+              if (toHex(resultId(body)) !== toHex(got.proof.signedResultId)) why = 'the evidence is not the result the proof names';
+              else why = slashOursWhy(got.proof, body, () => schnorr.verify(sp.signature, resultId(body), body.nodePubkey));
+            } else if (got.kind === 'rerun') {
+              const sp = splitSignedRerun(got.signedRerun), rx = decodeRerunResult(sp.body);
+              if (toHex(rerunResultId(rx)) !== toHex(got.proof.signedResultId)) why = 'the evidence is not the re-run the proof names';
+              else why = slashOursWhy(got.proof, rx.result, () => schnorr.verify(sp.signature, rerunResultId(rx), rx.result.nodePubkey));
+            } else if (!(got.proof && got.proof.roundId instanceof Uint8Array && round.get(got.proof.roundId))) why = 'this relay keeps only a slash proof about a round it holds';
+          } catch (e) { why = `the evidence does not read: ${e.message}`; }
+          if (why) return text(res, 422, why);   // kanban #1816
+        }
         if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');   // kanban #1532
         round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
         // ANYONE PUBLISHES A FRAUD PROOF (5A.3B step 1): a pair that holds here, on this seat's own check, is a proof this seat holds, kept as if it had seen both results itself
@@ -13327,13 +13571,51 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // ONLY A TRANSCRIPT OF AN ENTRY THIS SEAT HOLDS (kanban #1532): the bytes decode as a transcript (decodeTranscript) whose entry is
         // in this seat's store under the round it names, or are a head-to-head reveal record (entry id || move || 32-byte salt, or
         // entry id || 0xff, verify.js #revealRecord) of an entry it holds. Random bytes, and transcripts of runs nobody entered here, are refused.
+        // AND A REVEAL RECORD ONLY IF IT IS THAT ENTRY'S OWN (kanban #1824, bypass of #1532): any 65 bytes naming a held entry were kept, so a stranger
+        // who knew one public entry id minted 2^256 "reveal records" (entry id || any move || random salt), each under its own hash, until the relay store
+        // was full and every honest transcript, reveal record and slash proof was refused (507). Now the entry's round must be a head-to-head game this
+        // seat hosts, and a 65-byte record must open the commitment the entry named (headToHeadCommit) with a move the game offers; the 33-byte
+        // no-reveal record (entry id || 0xff) has one hash per entry, so it is kept once.
+        const revealRecordOpens = (rec) => {
+          try {
+            const raw = round.entry(rec.subarray(0, 32));
+            if (!raw) return false;
+            const entry = decodeEntryContract(raw), row = round.get(entry.roundId);
+            if (!row) return false;
+            const found = pluginForRound(decodeRoundContract(new Uint8Array(row.contract)), hosted);
+            if (!found.ok || !found.headToHead) return false;
+            if (rec.length === 33) return true;
+            const move = rec[32];
+            if (!(move < found.plugin.manifest.moveCount)) return false;
+            return toHex(headToHeadCommit({ roundId: entry.roundId, entryKey: entry.sessionPubkey, move, salt: rec.slice(33, 65) })) === toHex(entry.commit);
+          } catch { return false; }
+        };
         const u8 = new Uint8Array(bytes), roundOfEntry = (eid) => { const r = round.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(eid); return r ? toHex(new Uint8Array(r.round_id)) : null; };
         let ours = false;
         try { const t = decodeTranscript(u8); ours = roundOfEntry(t.entryId) === toHex(t.roundId); }
-        catch { ours = (u8.length === 65 || (u8.length === 33 && u8[32] === 0xff)) && roundOfEntry(u8.subarray(0, 32)) !== null; }
+        catch { ours = (u8.length === 65 || (u8.length === 33 && u8[32] === 0xff)) && roundOfEntry(u8.subarray(0, 32)) !== null && revealRecordOpens(u8); }
         if (!ours) return text(res, 422, 'this relay keeps only the transcript of an entry it holds');
-        if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');
-        round.relayPut(Buffer.from(relayed[1], 'hex'), bytes);
+        // WHOSE BYTES THESE ARE, AND WHETHER A HELD RESULT NAMES THEM (kanban #1725, #1795): the caps above count per entry and round
+        const hashBytes = Buffer.from(relayed[1], 'hex');
+        let eid, rid;
+        try { const t = decodeTranscript(u8); eid = t.entryId; rid = t.roundId; }
+        catch { eid = u8.slice(0, 32); rid = new Uint8Array(round.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(eid).round_id); }
+        let named = false;
+        for (const x of round.results(rid, eid)) {
+          try { if (toHex(decodePlayerResult(splitSignedResult(x.bytes).body).transcriptHash) === relayed[1]) { named = true; break; } } catch { /* not readable: names nothing */ }
+        }
+        if (!named) for (const x of round.postings(rid, eid)) {
+          try { if (toHex(decodeTranscriptPosting(splitSignedPosting(x.bytes).body).transcriptHash) === relayed[1]) { named = true; break; } } catch { /* names nothing */ }
+        }
+        // the same bytes again are kept already (and become named once a held result names them): nothing more is counted
+        if (round.relayHas(hashBytes)) { round.relayPut(hashBytes, bytes, { entryId: eid, roundId: rid, named }); return text(res, 201, 'kept'); }
+        if (!named) {
+          if (round.relayedUnnamedBytes({ entryId: eid }) + bytes.length > RELAY_ENTRY_MOST) return text(res, 507, 'this relay keeps no more for that entry: no held result names this transcript, and its share for the entry is full');
+          if (round.relayedUnnamedBytes({ roundId: rid }) + bytes.length > RELAY_ROUND_MOST) return text(res, 507, 'this relay keeps no more for that round: no held result names this transcript, and its share for the round is full');
+          if (round.relayedUnnamedBytes() + bytes.length > RELAY_UNNAMED_MOST) return text(res, 507, 'this relay keeps no more transcripts no held result names: that share is full');
+        }
+        if (round.relayedBytes() + bytes.length > RELAY_MOST - RELAY_SLASH_RESERVE) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');
+        round.relayPut(hashBytes, bytes, { entryId: eid, roundId: rid, named });
         return text(res, 201, 'kept');
       }
       if (relayed && req.method === 'GET') {
@@ -13789,7 +14071,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let list = null;
     try { if (ballot && typeof ballot.censusEntriesAt === 'function' && chainNetworkId()) list = await ballot.censusEntriesAt(chainNetworkId(), Number(await chainTip())); } catch { list = null; }
     if (!list) { try { const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null; list = cn ? cn.entries : null; } catch { list = null; } }
-    if (list && list.length) { try { addressCensus = new Set(list.map((e) => Buffer.from(e.pubkey).toString('hex'))); } catch { /* keep the last one */ } }
+    if (list && list.length) { try { addressCensus = new Set(list.map((e) => Buffer.from(e.pubkey).toString('hex'))); addressBook.prune(); } catch { /* keep the last one */ } }   // kanban #1712: what the census does not name goes
     return list;
   };
   // THE OTHERS' NEWEST ADDRESSES, PULLED as well (address-book.js pullAnnouncements, kanban #577): a node a push missed learns them here
@@ -14289,6 +14571,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // and the whole announced grid: its game and first close, so a marker counts only for its own app's day (kanban #1204 FED-C1)
       announcedOf: (idHex) => announced.get(String(idHex)) || null });
   };
+  // A SLOW BODY IS DROPPED (kanban #1724, #1794): a request not received whole within REQUEST_MS (120 s, ARENA_REQUEST_TIMEOUT_MS;
+  // Node's default is 300 s) ends, and the budget share its body held is freed
+  const REQUEST_MS = Number(process.env.ARENA_REQUEST_TIMEOUT_MS) > 0 ? Number(process.env.ARENA_REQUEST_TIMEOUT_MS) : 120000;
+  http.requestTimeout = REQUEST_MS; http.headersTimeout = Math.min(http.headersTimeout || 60000, REQUEST_MS);
   return new Promise((resolve) => {
     http.listen(port, host, () => { dutyAttach(); resolve({
       http, wss, round, host, verifier, ghosts, roster, stakeSecrets, lockSets,

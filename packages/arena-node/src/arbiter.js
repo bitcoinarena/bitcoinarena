@@ -59,6 +59,9 @@ import { keyedPay, payoutOf, PAYOUT, runPayouts } from './keyed-payout.js';
 import { nonceGen, bondSigningContext, bondPartialSign, MusigError } from './musig2.js';
 import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
 
+// the arbiter's body limits (kanban #1724, #1794; see serveArbiter)
+const ARBITER_CLAIM_MOST = 1024 * 1024;
+
 /** THE ROUND'S CORE, as a seat's verifier resolves it (verify.js #coreOf): its plugin's, with the round's world rule. */
 export function coreForRound(contract, roundIdBytes, plugins) {
   const found = pluginForRound(contract, hostedPlugins(plugins));
@@ -715,7 +718,7 @@ export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', p
     if (url.pathname === '/liquidation-claims' && claims) {
       if (req.method === 'GET') { const p = await claims.plan(url.searchParams.get('federation')); return answer(p.ok ? 200 : (p.status || 409), p); }
       if (req.method === 'POST') {
-        let body; try { body = JSON.parse(Buffer.from(await readBody(req)).toString('utf8')); } catch (e) { return tooBig(e) || answer(400, { ok: false, why: 'a JSON body' }); }
+        let body; try { body = JSON.parse(Buffer.from(await readBody(req, Math.min(BODY_MOST, ARBITER_CLAIM_MOST))).toString('utf8')); } catch (e) { return tooBig(e) || answer(400, { ok: false, why: 'a JSON body' }); }   // a claim: 1 MiB at most (kanban #1724)
         // a pending-output claim (§23A.5 "Notes still in issuance at the halt") names `pending`; a note claim `ecash`
         const got = Array.isArray(body && body.pending) ? await claims.offerPending(body) : await claims.offer(body);
         return answer(got.ok ? 200 : (got.status || 409), got);
@@ -724,6 +727,7 @@ export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', p
     if (req.method !== 'POST' || !['/musig/nonce', '/musig/partial'].includes(url.pathname)) return answer(404, { ok: false, why: 'no such door' });
     // kanban #1592 (bypass of #1469): a MuSig door's message is a few hundred bytes - 64 KiB at most, read before any check
     let body; try { body = JSON.parse(Buffer.from(await readBody(req, Math.min(BODY_MOST, ARBITER_DOOR_MOST))).toString('utf8')); } catch (e) { return tooBig(e) || answer(400, { ok: false, why: 'a JSON body' }); }
+    if (!body || typeof body !== 'object') return answer(400, { ok: false, why: 'a JSON object' });   // kanban #1724
     if (url.pathname === '/musig/nonce') {
       const ok32 = (h) => /^[0-9a-f]{64}$/.test(String(h));
       if (!body.sessionId || !ok32(body.nodeKey) || !ok32(body.tweak) || !ok32(body.msg)) return answer(400, { ok: false, why: 'a session id, a node key, a tweak and a message (32 bytes each, hex)' });

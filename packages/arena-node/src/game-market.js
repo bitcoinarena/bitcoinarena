@@ -41,6 +41,28 @@ export const VALUE_HELD_OUTCOME = -1;
 /** A VOID held with no source result (a source that can never fit the market): its result id is 32 zero bytes. */
 export const NO_RESULT_ID = new Uint8Array(32);
 const SOURCES_KEPT = 4096;
+// A PEER SEAT'S ANSWER, READ UP TO A CAP (kanban #1829): GET /round (one source contract, under 1 kB) and GET /round-result (one
+// seat's signed result, a few kB) were read whole with arrayBuffer()/json(), so one seat of the census or the source committee
+// could make every honest seat that settles markets on games buffer - and JSON-parse - tens of MB on every sweep pass. The body is
+// read chunk by chunk and refused, the stream cancelled, once it passes the cap (a Content-Length over it is refused unread).
+const PEER_ANSWER_BYTES = 64 * 1024;
+async function bytesUpTo(r, maxBytes = PEER_ANSWER_BYTES) {
+  const said = Number(r.headers.get('content-length'));
+  if (said > maxBytes) { try { await r.body?.cancel(); } catch { /* dropped */ } throw new Error(`its answer is ${said} bytes, more than ${maxBytes}`); }
+  if (!r.body) return new Uint8Array(0);
+  const reader = r.body.getReader();
+  const parts = []; let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.length;
+    if (n > maxBytes) { reader.cancel().catch(() => {}); throw new Error(`its answer passed ${maxBytes} bytes`); }
+    parts.push(value);
+  }
+  const out = new Uint8Array(n); let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+}
 
 /**
  * EVERY STANDING OUTCOME A SEAT HOLDS FOR A ROUND, in an attestation's shape, oldest first: the attestations (decoded, with
@@ -222,7 +244,7 @@ export function gameMarkets({ round, plugins, committeeFor, verify, now = () => 
       try {
         const r = await fetcher(`${String(base).replace(/\/+$/, '')}/round?id=${hex}`, { signal: AbortSignal.timeout(timeoutMs) });
         if (!r.ok) { passed.push(`${base}: ${r.status}`); continue; }
-        bytes = new Uint8Array(await r.arrayBuffer());
+        bytes = await bytesUpTo(r); // kanban #1829: capped
         source = decodeRoundContract(bytes);
       } catch (e) { passed.push(`${base}: ${e.message}`); continue; }
       // THE PROTOCOL'S OWN CHECK: another contract than the named round, or a series round no held series derives, is refused
@@ -342,7 +364,7 @@ export function gameMarkets({ round, plugins, committeeFor, verify, now = () => 
     for (const base of endpointsOf(c.picked.committee, self, endpointOf)) {
       try {
         const r = await fetcher(`${base}/round-result?round=${hex}`, { signal: AbortSignal.timeout(timeoutMs) });
-        if (r.ok) answers.push(await r.json());
+        if (r.ok) answers.push(JSON.parse(new TextDecoder().decode(await bytesUpTo(r)))); // kanban #1829: capped
       } catch { /* the next seat */ }
     }
     const groups = new Map();

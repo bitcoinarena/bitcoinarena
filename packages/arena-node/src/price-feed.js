@@ -69,6 +69,9 @@ export const SERVE_AFTER_MS = 2500;
 export const ASK_ENDS_EVERY_MS = 30000;
 // the most of one peer's GET /price-samples?ks= answer that is read (kanban #1729): two samples of a committee's readings are a few kB
 export const FETCH_READINGS_MAX_BYTES = 256 * 1024;
+/** Protocol 5: a seat that has signed no result of a round yet asks the committee again for both ends, and the results they signed, at
+ *  most this often (kanban #1693 / #1759 / #1804). */
+export const ASK_RESULTS_EVERY_MS = 5000;
 /** The held maps' sizes are logged at most this often (kanban #742: the before/after on the live seats). */
 export const HELD_LOG_EVERY_MS = 600000;
 // THE TOLERANCE, 0.05 % (RULED 2026-10-14 ~21:50Z, interim D): at 0.5 % a seat signed any proposed price
@@ -559,15 +562,17 @@ export class PriceFeed {
    * go of. A read after that (an end asked again) is answered from the database and held again until the next tidy. Logs the
    * sizes at most every HELD_LOG_EVERY_MS. Answers the rounds let go of.
    */
+  // the per-round maps of the results (kanban #1375, #1693 / #1759 / #1804), made only once a result is asked of
+  #resultMaps() { return [this.firstResultAsk, this.peerResults, this.resultSigs].filter(Boolean); }
   tidy() {
     const now = this.now();
     const gone = new Set();
     if (this.ends) {
       const rounds = new Set();
-      for (const m of [this.samples, this.tapes, this.heard, this.heardTapes, this.endsAsked]) for (const rh of m.keys()) rounds.add(rh);
+      for (const m of [this.samples, this.tapes, this.heard, this.heardTapes, this.endsAsked, ...this.#resultMaps()]) for (const rh of m.keys()) rounds.add(rh);
       for (const m of [this.signed, this.mine, this.built]) for (const key of m.keys()) rounds.add(key.slice(0, 64));
       for (const rh of rounds) if (this.#finished(rh, now)) gone.add(rh);
-      for (const m of [this.samples, this.tapes, this.heard, this.heardTapes, this.endsAsked]) for (const rh of gone) m.delete(rh);
+      for (const m of [this.samples, this.tapes, this.heard, this.heardTapes, this.endsAsked, ...this.#resultMaps()]) for (const rh of gone) m.delete(rh);
       if (gone.size) for (const m of [this.signed, this.mine, this.built]) for (const key of m.keys()) if (gone.has(key.slice(0, 64))) m.delete(key);
       // a finished round signs nothing more: its signed rows go too (kanban #1181)
       if (gone.size && this.signedDb) for (const rh of gone) { try { this.signedDb.drop.run(rh); } catch { /* kept */ } }
@@ -719,7 +724,7 @@ export class PriceFeed {
         if (!all.length) return null;
         const s = this.#sample5(rh, rid, k, c);
         return { k, tick: sampleTick(k), priceCents: s ? s.priceCents : null, readings: all };
-      }).filter(Boolean), tape: null };
+      }).filter(Boolean), tape: null, ...this.#keptResultServed(rh) };
     }
     // a standing sample is served once the whole committee's readings are in, or SERVE_AFTER_MS after its moment
     const start = Number(c.contract.startTimeMs), n = c.committee.length, now = this.now();
@@ -738,9 +743,10 @@ export class PriceFeed {
    *  seat, all of `ks`, even when a reading of each key is already held - kanban #1516). */
   async #fetchReadings(roundIdBytes, ks, c, every = false) {
     const rh = toHex(roundIdBytes);
+    const results = [];   // the results the asked seats already signed (kanban #1693 / #1759 / #1804), as each served one
     for (const base of this.peersFor(roundIdBytes)) {
       const short = every ? ks.slice() : ks.filter((k) => this.#heardAt(rh, k).size < c.committee.length);
-      if (!short.length) return;
+      if (!short.length) return results;
       try {
         const r = await this.fetcher(`${String(base).replace(/\/+$/, '')}/price-samples?round=${rh}&ks=${short.join(',')}`, { signal: AbortSignal.timeout(10000) });
         if (!r.ok) continue;
@@ -762,8 +768,68 @@ export class PriceFeed {
             this.reading({ round: rh, kind: 'sample', k, priceCents: y.priceCents, key: y.key, signature: y.signature });
           }
         }
+        if (j && j.result && typeof j.result === 'object') results.push(j.result);
       } catch { /* the next seat */ }
     }
+    return results;
+  }
+
+  /** This seat's kept protocol-5 result, signed, with the readings it counted - served beside the ends (`ks`) so a seat that has not
+   *  signed yet can sign the same one (kanban #1693 / #1759 / #1804). A result kept before it carried its readings is not served. */
+  #keptResultServed(rh) {
+    const kept = this.#signedOf(rh, 'result5');
+    if (!kept) return {};
+    let r; try { r = JSON.parse(kept, (k, v) => (v && typeof v === 'object' && typeof v.$big === 'string' ? BigInt(v.$big) : v)); } catch { return {}; }
+    if (!r || !r.counted || typeof r.resultId !== 'string') return {};
+    if (!this.resultSigs) this.resultSigs = new Map();
+    let sig = this.resultSigs.get(rh);
+    if (!sig || sig.resultId !== r.resultId) { sig = { resultId: r.resultId, ...this.#sign(fromHex(r.resultId)) }; this.resultSigs.set(rh, sig); }
+    return { result: { resultId: r.resultId, counted: r.counted, key: sig.key, signature: sig.signature } };
+  }
+
+  /**
+   * A RESULT ANOTHER SEAT SIGNED, AS THIS SEAT CHECKS IT (kanban #1693 / #1759 / #1804): signed by a committee key over its id, made of
+   * readings that each verify (taken here as they come, so a second reading in it is known here too), and its id the result those
+   * readings make at this round's own ends. Answers { signer, id, got, open, close } or null.
+   */
+  #peerResult(x, rid, rh, c, endTick, kClose) {
+    try {
+      const signer = typeof x.key === 'string' ? x.key.toLowerCase() : '';
+      if (!/^[0-9a-f]{64}$/.test(signer) || !c.committee.some((m) => toHex(m) === signer)) return null;
+      if (typeof x.resultId !== 'string' || !/^[0-9a-f]{64}$/.test(x.resultId) || typeof x.signature !== 'string' || !/^[0-9a-f]{128}$/i.test(x.signature)) return null;
+      if (!verify(fromHex(x.signature), fromHex(x.resultId), fromHex(signer))) return null;
+      const ends = [];
+      for (const list of [x.counted && x.counted.open, x.counted && x.counted.close]) {
+        if (!Array.isArray(list) || list.length > c.committee.length) return null;
+        const seen = new Set(), out = [];
+        for (const y of list) {
+          const key = y && typeof y.key === 'string' ? y.key.toLowerCase() : '';
+          if (seen.has(key)) return null;
+          seen.add(key);
+          out.push({ key, priceCents: y.priceCents, signature: typeof y.signature === 'string' ? y.signature.toLowerCase() : '' });
+        }
+        ends.push(out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)));
+      }
+      const got = roundResultFromReadings({ roundId: rid, open: { tick: sampleTick(0), readings: ends[0] }, close: { tick: sampleTick(kClose), readings: ends[1] },
+        endTick, committee: c.committee, threshold: c.needed, verify });
+      if (!got.ok || toHex(roundResultId(got.result)) !== x.resultId) return null;
+      ends.forEach((list, i) => { for (const y of list) this.reading({ round: rh, kind: 'sample', k: i ? kClose : 0, priceCents: y.priceCents, key: y.key, signature: y.signature }); });
+      return { signer, id: x.resultId, got, open: ends[0], close: ends[1] };
+    } catch { return null; }
+  }
+
+  /** A checked result this seat may sign too: at each end it counts every key that read ONCE here, with that reading - it may differ
+   *  only in a key that read twice (which it counts with either reading or not at all) - so no seat can drop an honest reading by it. */
+  #fits(p, rh, kClose) {
+    for (const [k, list] of [[0, p.open], [kClose, p.close]]) {
+      const theirs = new Map(list.map((y) => [y.key, y]));
+      for (const [key, held] of this.#heardAt(rh, k)) {
+        if (held.length !== 1) continue;
+        const y = theirs.get(key);
+        if (!y || y.priceCents !== held[0].priceCents) return false;
+      }
+    }
+    return true;
   }
 
   async #result5(rid, rh, c, endTick, kClose) {
@@ -771,25 +837,50 @@ export class PriceFeed {
     // answer from then on - a result signed again over readings that arrived later could name another close, and two threshold-signed results
     // of one round void or split a market on it
     const kept = this.#signedOf(rh, 'result5');
-    if (kept) { try { const r = JSON.parse(kept, (k, v) => (v && typeof v === 'object' && typeof v.$big === 'string' ? BigInt(v.$big) : v)); return { ...r, ...this.#sign(fromHex(r.resultId)) }; } catch { /* not readable: signed anew below */ } }
+    if (kept) { try { const { counted, ...r } = JSON.parse(kept, (k, v) => (v && typeof v === 'object' && typeof v.$big === 'string' ? BigInt(v.$big) : v)); return { ...r, ...this.#sign(fromHex(r.resultId)) }; } catch { /* not readable: signed anew below */ } }
     if (!this.firstResultAsk) this.firstResultAsk = new Map();
     if (!this.firstResultAsk.has(rh)) this.firstResultAsk.set(rh, this.now());
     // THE ENDS ARE EXCHANGED BEFORE THE FIRST SIGNATURE (kanban #1516): a seat holding a reading of every key still asks every seat of the
-    // committee once. One seat that signs a second, different end reading and shows it to only some seats makes them count its key for
-    // none while the others count it - two closes, neither signed by 5 of 7, and no RoundResult of the round stands. Once every seat has
-    // asked all the others, a key that read twice is known at every seat that saw it at any of them, and they all drop it.
-    const exchanged = this.endsAsked.has(rh);
-    const short = [0, kClose].some((k) => this.#heardAt(rh, k).size < c.committee.length);
-    if ((short || !exchanged) && !(this.now() - (this.endsAsked.get(rh) ?? -Infinity) < ASK_ENDS_EVERY_MS)) {
+    // committee, for both ends. One seat that signs a second, different end reading and shows it to only some seats makes them count its key
+    // for none while the others count it - two closes, neither signed by 5 of 7, and no RoundResult of the round stands.
+    // ONE EXCHANGE WAS NOT ENOUGH (kanban #1693, #1759, #1804): the second reading can come after some seats signed (anyone can ask GET
+    // /round-result first, and POST /price-reading still takes it), or the seats that hold it miss the one exchange - and a signature is kept
+    // for good. So the exchange also brings back the result each asked seat ALREADY signed, with the readings it counted, and is asked again
+    // (every ASK_RESULTS_EVERY_MS) for as long as this seat has signed none. This seat signs the result most seats of the committee signed,
+    // among those it can check (#peerResult) and that fit what it holds (#fits: they count every key that read once here, with that reading,
+    // and differ only in a key that read twice) - its own result counted as one more. A seat that signs later therefore joins the seats that
+    // signed first instead of splitting from them, whichever readings came to it late; ties go to the lowest result id, so seats that see
+    // the same signed results choose the same one.
+    if (!(this.now() - (this.endsAsked.get(rh) ?? -Infinity) < ASK_RESULTS_EVERY_MS)) {
       this.endsAsked.set(rh, this.now());
-      await this.#fetchReadings(rid, [0, kClose], c, !exchanged);
+      const served = await this.#fetchReadings(rid, [0, kClose], c, true);
+      if (!this.peerResults) this.peerResults = new Map();
+      const m = this.peerResults.get(rh) || new Map();
+      for (const x of served) if (x && typeof x.key === 'string') m.set(x.key.toLowerCase(), x);
+      this.peerResults.set(rh, m);
     }
+    const me = toHex(this.round.identity.pubkey || this.round.pubkey);
+    // each checked first: its readings are taken here as they verify, so what fits is judged against everything held
+    const peers = [...((this.peerResults && this.peerResults.get(rh)) || new Map()).values()]
+      .map((x) => this.#peerResult(x, rid, rh, c, endTick, kClose)).filter((p) => p && p.signer !== me);
     const open = this.#sample5(rh, rid, 0, c), close = this.#sample5(rh, rid, kClose, c);
-    if (!open || !close) return refuse(`no ${!open ? 'opening sample (k 0)' : `closing sample (k ${kClose})`} of the round stands: fewer than ${c.needed} of the committee's readings are held here or by its committee`);
-    const got = roundResultFromReadings({ roundId: rid, open: { tick: open.tick, readings: open.readings }, close: { tick: close.tick, readings: close.readings },
-      endTick, committee: c.committee, threshold: c.needed, verify });
-    if (!got.ok) return refuse(got.why);
-    const x = got.result;
+    let mine = null, why = null;
+    if (!open || !close) why = `no ${!open ? 'opening sample (k 0)' : `closing sample (k ${kClose})`} of the round stands: fewer than ${c.needed} of the committee's readings are held here or by its committee`;
+    else {
+      const got = roundResultFromReadings({ roundId: rid, open: { tick: open.tick, readings: open.readings }, close: { tick: close.tick, readings: close.readings },
+        endTick, committee: c.committee, threshold: c.needed, verify });
+      if (!got.ok) why = got.why;
+      else mine = { signer: me, id: toHex(roundResultId(got.result)), got, open: open.readings, close: close.readings };
+    }
+    const votes = new Map();
+    for (const p of [...(mine ? [mine] : []), ...peers.filter((p) => this.#fits(p, rh, kClose))]) {
+      const v = votes.get(p.id) || { signers: new Set(), p };
+      v.signers.add(p.signer);
+      votes.set(p.id, v);
+    }
+    if (!votes.size) return refuse(why || 'no result of the round stands here');
+    const chosen = [...votes.values()].sort((a, b) => b.signers.size - a.signers.size || (a.p.id < b.p.id ? -1 : a.p.id > b.p.id ? 1 : 0))[0].p;
+    const got = chosen.got, x = got.result;
     // SIGNED ONCE THE READINGS ARE ALL IN, or two fetch periods after the first ask (kanban #1375): never over a set that is still filling
     const stillShort = [0, kClose].some((k) => this.#heardAt(rh, k).size < c.committee.length);
     if (stillShort && this.now() - this.firstResultAsk.get(rh) < 2 * ASK_ENDS_EVERY_MS)
@@ -797,12 +888,14 @@ export class PriceFeed {
     const id = roundResultId(x);
     const answer = { ok: true, round: rh, openCents: x.openCents, closeCents: x.closeCents, front: frontName(x.front), samples: got.samples, readings: got.readings,
       openTick: got.openTick, closeTick: got.closeTick, committee: c.committee.map(toHex), needed: c.needed, resultId: toHex(id) };
+    // the readings it counts are kept with it (served beside the ends, #keptResultServed), never in the answer
+    const keep = JSON.stringify({ ...answer, counted: { open: chosen.open, close: chosen.close } }, (k, v) => (typeof v === 'bigint' ? { $big: String(v) } : v));
     // KEPT BEFORE IT IS SIGNED (compare-and-set): a row already there names the one this seat signed
     if (this.signedDb) {
-      let ch = 0; try { ch = this.signedDb.put.run(rh, 'result5', JSON.stringify(answer, (k, v) => (typeof v === 'bigint' ? { $big: String(v) } : v))).changes; } catch { ch = 0; }
+      let ch = 0; try { ch = this.signedDb.put.run(rh, 'result5', keep).changes; } catch { ch = 0; }
       if (ch !== 1) { this.signed.delete(`${rh}:result5`); const again = this.#signedOf(rh, 'result5'); if (again) return this.#result5(rid, rh, c, endTick, kClose); }
     }
-    this.signed.set(`${rh}:result5`, JSON.stringify(answer, (k, v) => (typeof v === 'bigint' ? { $big: String(v) } : v)));
+    this.signed.set(`${rh}:result5`, keep);
     return { ...answer, ...this.#sign(id) };
   }
 

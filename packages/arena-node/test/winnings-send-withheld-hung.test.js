@@ -171,7 +171,8 @@ test('a nonce pair still signs one list once: the same list gets the same share,
   const eHex = toHex(ENTRY);
   const of = async (s) => (await s.commit(RID, eHex, s.built, 'auth', 0)).commitment;
   const five = [await of(a), await of(b), await of(c), await of(d), await of(e)].sort((x, y) => x.id - y.id);
-  const other = [await of(a), await of(b), await of(c), await of(d), await of(f)].sort((x, y) => x.id - y.id);
+  // (a's commitment on `other` is the one `five` spent: each ask draws a fresh pair since kanban #1806)
+  const other = [...five.filter((x) => x.id !== e.built.signerNode.id), await of(f)].sort((x, y) => x.id - y.id);
   const shared = await a.share(RID, eHex, a.built, five, 'auth', 0);
   assert.equal(shared.ok, true);
   assert.equal((await a.share(RID, eHex, a.built, five, 'auth', 0)).share, shared.share, 'the same list is answered with the same share');
