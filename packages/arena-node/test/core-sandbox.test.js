@@ -119,9 +119,9 @@ test('every run-time attack throws inside the sandbox: the replay is not ok, wit
 test('a dynamic import() gets no module: the core cannot even learn one exists', async () => {
   const c = core({ step: "import('node:net').then(() => { globalThis.got = 'net'; }, (e) => { globalThis.got = 'refused: ' + e.code; })", start: "st.note = String(globalThis.got)" });
   assert.equal(run(c).ok, true);
-  // the second run reads what the first one's import() came to - on one thread: a replay through sandboxFor runs on a fresh
-  // thread of its own (kanban #1624), so this test keeps both runs on one with oneReplay
-  const s = loadCore(coreFiles(c), { oneReplay: true });
+  // the second run reads what the first one's import() came to - on one thread: every call the node signs on runs on a fresh
+  // thread of its own through sandboxFor (kanban #1624, #1831), so this test keeps both runs on one with oneThread
+  const s = loadCore(coreFiles(c), { oneThread: true });
   const R = { seedWord: 1, config: {}, runTicks: 10, start: 0, words: [[0, 0, 0, 0, 0]], events: {}, marks: [], pictures: [] };
   s.call('replay', R);
   const out = s.call('replay', R);
