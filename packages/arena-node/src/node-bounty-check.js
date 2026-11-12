@@ -37,8 +37,10 @@ export const NODE_BOUNTY_AGREE = SEASON_NETWORK_AGREE;
 export const NODE_BOUNTY_DAYS = 1, NODE_BOUNTY_WINDOW = 7;
 
 // a seat's address as one string: scheme, lower-case host, the default port dropped (URL does that), no trailing slash - so one seat under
-// several spellings is one address (kanban #1682)
-export const seatBaseOf = (u) => { try { const x = new URL(String(u)); if (!/^https?:$/.test(x.protocol)) return '';
+// several spellings is one address (kanban #1682). A NODE'S ADVERT IS ws:// OR wss:// (kanban #1866, #1888: measured on a live seat's GET /roles,
+// 22 of 25 entries wss://): its http door is the same address with http(s) - as federation-records.js and server.js read it - so ws: is http:
+// and wss: is https:; dropping them left every such node without a witness address and no honest node could pass
+export const seatBaseOf = (u) => { try { const x = new URL(String(u).trim().replace(/^ws(s?):/i, 'http$1:')); if (!/^https?:$/.test(x.protocol)) return '';
   return `${x.protocol}//${x.host.toLowerCase()}${x.pathname.replace(/\/+$/, '')}`; } catch { return ''; } };
 // THE CENSUS THE CHECK TRUSTS (kanban #1682): node key -> its advertised endpoints, bonded entries only. `census` given as a list of
 // { node, endpoint, bondSats } (GET /roles's `nodes`), or read from `censusSeats` - seats the caller trusts (the faucet's own configured seats),
@@ -55,6 +57,10 @@ async function trustedCensus({ census, censusSeats, fetchJson }) {
     if (!/^[0-9a-f]{64}$/.test(k) || !bonded) continue;
     if (!out.has(k)) out.set(k, new Set());
     if (at) out.get(k).add(at);
+    // its newest signed address announcement (GET /roles `announced`, the census seat's addressBook.endpointOf - kanban #1866, #1888): a node
+    // that moved is still asked where it answers now
+    const moved = seatBaseOf(e && e.announced);
+    if (moved) out.get(k).add(moved);
   }
   return out;
 }
@@ -67,9 +73,12 @@ export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Da
   if (!/^[0-9a-f]{64}$/.test(n) || (me && !/^[0-9a-f]{64}$/.test(me))) return { ok: false, why: 'a node key (and, if given, an owner key), 64 hex each' };
   const bonded = await trustedCensus({ census, censusSeats, fetchJson });
   const inCensus = bonded.has(n);
-  // seat address -> the census node advertised there (kanban #1682): only such a seat's /served is a witness, for that one node key
+  // seat address -> the census nodes advertised there (kanban #1682): only such a seat's /served is a witness, for one of those node keys.
+  // ONE ADDRESS, SEVERAL NODES (kanban #1866, #1888): it was "neither" - one cheap bonded node advertising an honest witness's endpoint
+  // cancelled that witness for every committee it sat on. Now the door's own answer says which of them it is (its `node`, which must be one
+  // advertised there); an address one node advertises alone may answer without `node` (as before)
   const nodeAt = new Map();
-  for (const [k, ats] of bonded) for (const at of ats) if (!nodeAt.has(at)) nodeAt.set(at, k); else if (nodeAt.get(at) !== k) nodeAt.set(at, null);   // one address, two nodes: neither
+  for (const [k, ats] of bonded) for (const at of ats) { if (!nodeAt.has(at)) nodeAt.set(at, new Set()); nodeAt.get(at).add(k); }
   // the listed seats and every census endpoint (a committee's members are asked where the chain says they are)
   const urls = [...new Set([...(seats || []).map((u) => String(u).replace(/\/+$/, '')), ...nodeAt.keys()])];
   // THE OWNER: the node's own word, SIGNED BY THE NODE (audit 6, kanban #1418): any listed seat can answer GET /owner naming any node, and the last
@@ -103,10 +112,13 @@ export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Da
       try {
         // A WITNESS IS A CENSUS NODE AT ITS OWN ADVERTISED ENDPOINT (kanban #1682): any other listed seat's /served is not counted - three seats
         // of one operator invented a round naming a fresh key and passed; one seat under three spellings of its address was three seats
-        const witness = nodeAt.get(seatBaseOf(u));
-        if (!witness) return;
+        const there = nodeAt.get(seatBaseOf(u));
+        if (!there || !there.size) return;
         const j = await fetchJson(`${u}/served?from=${from}&to=${to}&finals=1`);
-        if (j && j.node !== undefined && String(j.node).toLowerCase() !== witness) return;   // a door answering as another node is not that node
+        // the door's `node` names the witness, and only a node advertised at this address; with several there, `node` is required
+        const said = j && j.node !== undefined && j.node !== null ? String(j.node).toLowerCase() : null;
+        const witness = said !== null ? (there.has(said) ? said : null) : there.size === 1 ? [...there][0] : null;
+        if (!witness) return;   // a door answering as another node is not that node
         for (const r of (j && j.held) || []) {
           const id = String(r && r.roundId).toLowerCase(), committee = (Array.isArray(r && r.committee) ? r.committee : []).map((k) => String(k).toLowerCase());
           // the claimed node and the witness both in the round's committee (a seat holds only the rounds it sat on)
