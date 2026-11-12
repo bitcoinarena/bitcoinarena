@@ -563,7 +563,12 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       for (const x of list) {
         const k = `${toHex(x.rid)}:${role}`;
         if (reseatVerdicts.has(k)) continue;
-        const stands = seatedInDrawOrder(x.seated, drawn);
+        // AND AT A ROUND THAT IS A CHECK-IN BY TODAY'S RULE (measured 2026-11-12 16:4xZ: the fed2 seats held a correctly drawn seating at round 283 of table
+        // a46fcbb3, signed under an older check-in rule; the guardian seats refused it - "that round of its table is no check-in" - and stayed on round 0)
+        let isCheckIn = true;
+        try { const row = round.get(x.rid); const c = row ? decodeRoundContract(new Uint8Array(row.contract)) : contractOf(x.rid, x.index);
+          if (c) isCheckIn = checkInOf(c, tableAnchorOf(c)); } catch { isCheckIn = true; }
+        const stands = isCheckIn && seatedInDrawOrder(x.seated, drawn);
         reseatVerdicts.set(k, stands);
         if (reseatVerdicts.size > 200000) reseatVerdicts.delete(reseatVerdicts.keys().next().value);
         pass.checked++;

@@ -24,6 +24,7 @@ test('#2564 the agent skips a stale check-in seating where a round is seated, an
   assert.ok(src.includes('(keepStale || !staleReseats.has(`${toHex(later[i].rid)}:${role}`))'), 'tableSeatingAt skips a stale one');
   assert.ok(src.includes('later[i].index <= index && !staleReseats.has(`${toHex(later[i].rid)}:${role}`)) return later[i].rid;'), 'seatRoundOf skips it too');
   assert.ok(src.includes('return tableSeatingAt(a, role, index, { keepStale: withEntries });'), 'a round with entries keeps its seats');
+  assert.ok(src.includes('const stands = isCheckIn && seatedInDrawOrder(x.seated, drawn);') && src.includes('isCheckIn = checkInOf(c, tableAnchorOf(c));'), 'a seating at a round that is no check-in by today\'s rule is not used either (round 283 of a46fcbb3)');
   assert.ok(src.includes("if (process.env.ARENA_CHECKIN_DRAW_CHECK === '1') { try { checkReseats(); }"), 'the check runs only when switched on (it would move every table back while check-ins are drawn wrong)');
   assert.ok(/RESEAT_CHECK_MS = 60000, RESEAT_DRAWS = 8;/.test(src) && src.includes('let drawn = tableDraws.get(key);'), 'one draw per table, kept; at most 8 new draws a pass (fed2-1 held 46,728 seatings)');
 });
