@@ -421,7 +421,6 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   const donated = await verifyEntryGifts({ round, port, entry, contract, entryIdBytes, recipients: donationRecipients, reserveKey, federationId: fed.federationId, split });
   timing.giftsMs = Date.now() - t;
   if (!donated.ok) return donated;
-  if (donated.rows.length && round.putDonationOutputs) round.putDonationOutputs(donated.rows);
 
   // ONE LOCK IS ONE ENTRY, AGAIN AT THE WRITE (kanban #1214, audit 3 #1210 CONC-1): the check above was read before the federation was
   // asked, and two hand-overs of one lock for two entries at the same moment both passed it - one lock staked two entries. Read again
@@ -432,8 +431,18 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
     if (namedFirstByAnother(round, entry, entryIdBytes, 'stake', outpoint, stakeNamers)) return { ok: false, why: stakeNamedFirstWhy };
     const back = returnedHere(round, outpoint);
     if (back) return { ok: false, why: back };
+    // ONE DONATION OUTPUT IS ONE ENTRY'S, AGAIN AT THE WRITE (kanban #2092): verifyDonationOutputs read donationOutputAt before the
+    // federation was asked, so two hand-overs of two entries naming the same donation outputs, in flight together, both passed - one
+    // entry played on the other's donation, and its rows (INSERT OR REPLACE) relabelled the first entry's. Read again here, and the rows
+    // are kept only now, after every re-check passed: a hand-over refused here keeps nothing.
+    for (const r of donated.rows) {
+      const held = round.donationOutputAt ? round.donationOutputAt(r.outpoint) : null;
+      if (held && !Buffer.from(held.entryId).equals(Buffer.from(entryIdBytes)))
+        return { ok: false, why: 'that donation output already pays for another entry: one output is one entry\'s' };
+    }
     if (otherStakedUnderKey(round, entry, entryIdBytes, 'stake', { yieldNow: true }))   // last: it may let another entry's rows go (kanban #2477)
       return { ok: false, why: 'another entry of that player key is already staked in this round: one player key stakes one entry' }; }
+  if (donated.rows.length && round.putDonationOutputs) round.putDonationOutputs(donated.rows);
   round.putStakeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id), atMs });
   // IN A ROUND WHOSE GATE MINTS, THE STAKE COUNTS ONLY WITH ITS FEE LOCK (pick a): kept,
   // verified, and not seen - no play, no place in the settlement - until the fee lock is.
