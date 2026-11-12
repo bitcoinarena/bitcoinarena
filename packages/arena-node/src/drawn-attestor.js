@@ -37,6 +37,28 @@ export const MAX_MARKET_PERIOD_MS = 24 * 3600 * 1000;
 export const KEEP_MS = Math.max(2 * 3600 * 1000, MAX_MARKET_PERIOD_MS + DUE_AFTER_END_MS + Number(UP_DOWN_AVERAGE_MS));
 export const SETTLE_MS = 5000;
 export const ASK_MS = 4000;
+// kanban #2461: the longest stretch between two of this seat's readings it still counts as having read (two missed reads)
+export const READ_GAP_MS = 3 * READ_MS;
+
+/**
+ * WAS THE WINDOW READ (kanban #2461, state audit 2026-11-12): upDownPrices takes each reading as in force until the next, so a seat
+ * that was down over the window's end and came back with the readings from before its downtime (#1844 restores them) would sign the
+ * END PRICE from a reading minutes old. Each of the two 60 s averages counts only when this seat read it: a reading at most
+ * READ_GAP_MS before the average's first moment, no gap over READ_GAP_MS between readings inside it, and one at most READ_GAP_MS
+ * before its last moment. A window not read is signed by nobody here - as before #1844 for a seat without the readings.
+ */
+export function windowRead(samples, { startMs, endMs }, gapMs = BigInt(READ_GAP_MS)) {
+  const at = samples.map((x) => x.atMs).filter((t) => typeof t === 'bigint').sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  for (const to of [startMs, endMs]) {
+    const from = to - UP_DOWN_AVERAGE_MS;
+    const inForce = at.filter((t) => t <= from);
+    let last = inForce.length ? inForce[inForce.length - 1] : null;
+    if (last === null || from - last > gapMs) return false;
+    for (const t of at.filter((y) => y > from && y < to)) { if (t - last > gapMs) return false; last = t; }
+    if (to - last > gapMs) return false;
+  }
+  return true;
+}
 
 export class DrawnAttestor {
   /**
@@ -125,7 +147,8 @@ export class DrawnAttestor {
     const drawn = this.attestorsFor(roundId);
     if (!drawn || !drawn.includes(this.selfKey)) return null;
     if (BigInt(this.now()) < window.endMs + BigInt(SETTLE_MS)) return null;
-    const out = upDownOutcome(this.samples, window);
+    // kanban #2461: only a window this seat read is signed - never its end price from a reading before a downtime
+    const out = windowRead(this.samples, window) ? upDownOutcome(this.samples, window) : { ok: false };
     if (!out.ok) { this.words.set(id, null); return null; }
     const body = { roundId, outcome: out.outcome, observedAtMs: window.endMs };
     let word = { body, key: this.selfKey, signature: toHex(this.sign(attestationBodyId(body))), priceToBeat: out.priceToBeat, endPrice: out.endPrice, label: out.label };
