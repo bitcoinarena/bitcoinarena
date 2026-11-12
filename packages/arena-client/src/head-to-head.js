@@ -5,6 +5,8 @@
 // game's own (its client and its decide adapter). The commitment is the protocol's (arena-protocol head-to-head.js); the
 // entry itself is built and handed over as a market pick's is (join.js entryFor, market.js submitPick), with `commit` set.
 import { headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
+import { lockSetCertificateStands, LOCK_SET_WINDOW_MS } from '../../arena-protocol/src/lock-set.js';
+import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 
 const h2hHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
@@ -85,4 +87,66 @@ export async function revealsOfRound({ roundIdHex, nodes, fetcher = fetch, timeo
     if (ranked[0][1] >= need && (ranked.length === 1 || ranked[0][1] > ranked[1][1])) out[entry] = ranked[0][0];
   }
   return out;
+}
+
+// THE CERTIFIED LOCK SET (protocol 28, kanban #2561, ruling #2116 (b)): in a paying head-to-head round of protocol 28 no seat takes a reveal
+// before the round's committee has certified, at its threshold, the set of entries whose stake it saw locked before the close - and the
+// page reveals only once it has seen that certificate itself. Without one by the close + 3 s the round is VOID: every stake comes back.
+export const H2H_LOCK_SET_POLL_MS = 150;
+const h2hFromHex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => parseInt(x, 16));
+
+/**
+ * What the round's seats say of its lock set, once: { required (true / false / null: nobody answered), certified: { entries, atMs } | null,
+ * void }. A certificate counts only if it stands against `committee` (hex keys, the round's seats the page dealt its stake to) under
+ * `verify` (BIP-340); without a committee, only one at least two seats serve with the same entries (one seat on a one-seat list).
+ */
+export async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = null, entryCloseMs, fetcher = fetch, timeoutMs = H2H_SEAT_ASK_MS }) {
+  const said = await Promise.all(nodes.map(async (node) => {
+    try {
+      return await h2hAsk(async (signal) => {
+        const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-set?round=${roundIdHex}`, { signal, cache: 'no-store' });
+        if (!r.ok) { try { r.body && r.body.cancel && await r.body.cancel(); } catch { /* gone */ } return null; }
+        return h2hJson(r);
+      }, timeoutMs);
+    } catch { return null; }
+  }));
+  const answered = said.filter((x) => x && typeof x === 'object');
+  if (!answered.length) return { required: null, certified: null, void: false };
+  if (!answered.some((x) => x.required === true)) return { required: false, certified: null, void: false };
+  let certified = null;
+  const byEntries = new Map();
+  for (const x of answered) {
+    if (!x.certificate || !/^[0-9a-f]+$/.test(String(x.certificate))) continue;
+    if (committee && committee.length && typeof verify === 'function') {
+      const st = lockSetCertificateStands(h2hFromHex(x.certificate), { roundId: h2hFromHex(roundIdHex), committee, threshold: receiptsNeeded(committee.length),
+        entryCloseMs: BigInt(entryCloseMs), verify });
+      if (st.ok) { certified = { entries: st.entries, atMs: st.atMs }; break; }
+    } else if (Array.isArray(x.entries)) {
+      const k = [...x.entries].sort().join(',');
+      byEntries.set(k, (byEntries.get(k) || 0) + 1);
+      if (byEntries.get(k) >= Math.min(2, nodes.length)) { certified = { entries: [...x.entries].sort(), atMs: Number(x.certifiedAtMs) || null }; break; }
+    }
+  }
+  return { required: true, certified, void: !certified && answered.some((x) => x.void === true) };
+}
+
+/**
+ * REVEAL ONCE THE LOCK SET IS CERTIFIED (the page's reveal in a round of protocol 28; a round below it is revealed at once, as before).
+ * Asks the seats every H2H_LOCK_SET_POLL_MS; `onWait(state)` is told 'certifying' while it waits. Answers revealMove's seats with
+ * { certified }, or { void: true } / { notCertified: true } with why - never a reveal before a certificate this page checked.
+ */
+export async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, identity = null, committee = null, verify = null, entryCloseMs,
+  fetcher = fetch, now = () => Date.now(), timeoutMs = H2H_SEAT_ASK_MS, onWait = null, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)) }) {
+  const giveUpAt = Number(entryCloseMs) + LOCK_SET_WINDOW_MS + 6000;
+  for (;;) {
+    const got = await lockSetOfSeats({ roundIdHex, nodes, committee, verify, entryCloseMs, fetcher, timeoutMs });
+    if (got.required === false) return { seats: await revealMove({ entryIdHex, move, salt, nodes, identity, fetcher, timeoutMs }), certified: null };
+    if (got.certified) {
+      if (!got.certified.entries.includes(String(entryIdHex))) return { seats: [], notCertified: true, why: 'your entry is not in the round\'s certified lock set: it is not played, its stake comes back' };
+      return { seats: await revealMove({ entryIdHex, move, salt, nodes, identity, fetcher, timeoutMs }), certified: got.certified };
+    }
+    if (got.void || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
+    if (onWait) { try { onWait('certifying'); } catch { /* the page's own */ } }
+    await sleep(H2H_LOCK_SET_POLL_MS);
+  }
 }

@@ -806,8 +806,15 @@ export class Verifier {
     // AND IN A PAYING ROUND ONLY THE ENTRIES BACKED BY A LOCK ARE PLAYED (kanban #1437, audit 8 R3): one with no lock took no seat, is played against
     // nobody and is signed VOID - its reveal cannot change the seated players' verdicts. Its stake SEEN, not only its stake lock waiting for its
     // fee lock (kanban #1544): the settlement counts only a seen stake, so an unseen one played was a stake never at risk
-    const seated = new Set((typeof this.round.seatedEntriesOf === 'function' ? this.round.seatedEntriesOf(roundIdBytes, contract.stakeMsat, { played: true }) : entries).map(({ entryId }) => hex(entryId)));
+    let seated = new Set((typeof this.round.seatedEntriesOf === 'function' ? this.round.seatedEntriesOf(roundIdBytes, contract.stakeMsat, { played: true }) : entries).map(({ entryId }) => hex(entryId)));
     const decided = (async () => {
+      // PROTOCOL 28: ONLY THE CERTIFIED LOCK SET IS PLAYED (kanban #2561, ruling #2116 (b)) - this seat's certificate, else one pulled from the
+      // peers now; none standing anywhere it asked and every entry is VOID, every stake back (never a partial round)
+      if (this.lockSets && typeof this.lockSetRound === 'function' && this.lockSetRound(roundIdBytes)) {
+        const cert = await this.lockSets.settle(roundIdBytes);
+        seated = new Set(cert ? cert.entries : []);
+        if (!cert) console.log(`[h2h] ${hex(roundIdBytes).slice(0, 16)}: no certified lock set - every entry VOID (kanban #2561)`);
+      }
       const carried = await this.carryReveals(roundIdBytes, entries, found.plugin.manifest.moveCount);
       const held = new Map(this.round.revealsOf(roundIdBytes).map((r) => [hex(r.entryId), r]));
       // NO VERDICT WHILE THE REVEAL SET IS OPEN (kanban #1589, audit 2026-11-12 sm1-h2h-2): a reveal may stand at one seat only (the page

@@ -314,7 +314,7 @@ out += '         marketLines: marketLines, quietOrders: quietOrders, webCryptoEd
 // A SCALAR MARKET'S VALUE AND A MARKET ON A GAME'S SOURCE RESULT, CHECKED BY THE PAGE (protocols 7 and 6)
 out += '         checkMarketOutcome: checkMarketOutcome, scalarValueLine: scalarValueLine, fetchSeriesTemplate: fetchSeriesTemplate, seriesRoundCheck: seriesRoundCheck, roundOfPick: roundOfPick,\n';
 // A HEAD-TO-HEAD ROUND: the hidden move, its commitment, its reveal, and the reveals the seats hold
-out += '         hiddenMove: hiddenMove, moveCommitment: moveCommitment, revealMove: revealMove, revealsOfRound: revealsOfRound,\n';
+out += '         hiddenMove: hiddenMove, moveCommitment: moveCommitment, revealMove: revealMove, revealsOfRound: revealsOfRound, lockSetOfSeats: lockSetOfSeats, revealWhenCertified: revealWhenCertified,\n';
 // THE SEASON BOARD: its lines from a /season answer, and the ask of the game's seats in turn
 out += '         seasonView: seasonView, fetchSeason: fetchSeason, fetchSeasonSnapshot, seasonPath: seasonPath, seasonSats: seasonSats, seasonScore: seasonScore,\n';
 out += '         SEASON_DAYS_CHOICES: SEASON_DAYS_CHOICES, SEASON_POLL_MS: SEASON_POLL_MS,\n';

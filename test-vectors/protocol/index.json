@@ -14,6 +14,7 @@
   "checkpoint",
   "receipt",
   "advert",
-  "founding"
+  "founding",
+  "lock-set"
  ]
 }

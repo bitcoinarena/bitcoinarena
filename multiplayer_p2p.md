@@ -6025,6 +6025,115 @@ in certified batches (`order-batch.js`).
 
 ---
 
+# 17A. Head-to-head rounds: the certified lock set *(RULED 2026-11-12 on #2116 (b); protocol 2026.0.28; kanban #2561)*
+
+A head-to-head round (Rock Paper Scissors) is decided over all of its entries at
+once: each player commits to a hidden move at entry, reveals it after the entry
+close, and the game's decide adapter judges the revealed moves
+(`arena-protocol/src/head-to-head.js`). A move is public as soon as one reveal is
+out. Before protocol 28 each seat decided alone, by its own clock and its peers'
+word, whether a stake lock came before any reveal (#1479, #1551, #1598). A session
+key is free, so a player could enter rock, paper and scissors under three keys
+with no lock, read the honest move and lock only the winner; every per-seat rule
+against that had another way round it (a clock ahead or behind, a partner lying
+about the time, a seat holding a reveal back, the order replay as a second lock
+door, an early reveal shutting honest locks out, a bogus in-flight lock).
+
+From protocol 28 one signed decision replaces them, for every **paying**
+head-to-head round whose contract names `protocol_version >= 28`. Rounds below 28
+and free rounds keep the earlier rules byte for byte.
+
+## 17A.1 The set
+
+```text
+LockSet = u8 0x50 || u16 version (28) || round_id[32] || vec<entry_id[32]>   (ascending, each once)
+set_id  = H("ARENA/v1/LockSet", LockSet)
+```
+
+The entries are those whose **stake the signing seat saw locked before the entry
+close** (its stake seen, by the federation, at a door time before `entry_close_ms`).
+No door takes a stake or fee lock new to a seat from the entry close on.
+
+## 17A.2 Signing
+
+From the entry close, by its own clock, each seat of the round's committee:
+
+1. **View.** Signs what it verified, under its own tag so it can never count as
+   a certificate signature: `BIP340(node_key, H("ARENA/v1/LockSetView", set_id || u64 at_ms))`.
+   The views go to every seat of the round (`POST /lock-set`) and are pulled
+   (`GET /lock-set?round=`).
+2. **Sign once.** When it holds every committee seat's view, or at the close +
+   1200 ms holding a threshold of them, it signs **one** set: the entries of its
+   own view that at least a threshold of views name.
+   `sig = BIP340(node_key, H("ARENA/v1/LockSetSignature", set_id || u64 at_ms))`, with `at_ms`
+   its own clock. The seat keeps that signature before it serves it and never
+   signs another set for the round, after a restart too, so two different sets can
+   never both gather a threshold of honest signatures. An entry only some seats
+   verified leaves the round instead of splitting the committee; a seat never signs
+   an entry it did not verify itself.
+3. **Certify.** Any threshold of signatures over one set is the certificate:
+
+```text
+LockSetCertificate = u8 0x51 || u16 version || u16 len || LockSet || vec<key[32] || u64 at_ms || sig[64]>   (keys ascending)
+```
+
+A certificate **stands** when at least the round's threshold (5 of 7, 2 of 2) of
+distinct committee keys signed the same set, each with
+`entry_close_ms <= at_ms <= entry_close_ms + 3000`. A signature outside the
+committee, outside that window, under the view tag, or over another set counts
+nothing. The certificate's time is the latest counted signer's `at_ms`.
+
+## 17A.3 What the certificate gates
+
+- **No seat takes or serves a reveal before it holds a certificate that
+  stands.** `POST /reveal` is refused until then, and `GET /reveals` serves no
+  move. The reveal window opens at the certificate and closes at the round's end
+  as before.
+- **Only certified entries are seated, revealed and decided.** A reveal of an
+  entry outside the set is refused; the decide plays the set's entries only and
+  signs every other entry `VOID`. A lock that arrives after the close, by any
+  door, is in no view and no set: it is not in the round, and goes back by
+  forfeit at once (`VOID`, its lock never claimed). A seat signs that forfeit
+  (`GET /forfeit`, and `?lock=fee` for the entry's fee lock) as soon as it holds
+  the certificate and the lock is not in it, as a refused round's lock (§23.2):
+  no result and no settlement to wait for. A certified entry's lock waits for its
+  round as before.
+- **No certificate by the close + 3 s: the round is `VOID`.** Every entry is
+  signed `VOID` and every stake comes back. Never a partial round. A seat that
+  holds no certificate when it decides first pulls one from every peer; a
+  certificate is a signed object, so one that formed anywhere in time counts
+  wherever it arrives. Every lock of a `VOID` round goes back by forfeit at once,
+  stake and fee lock, on the same rule: past the window, none held here and none
+  pulled from the peers when the forfeit is asked.
+- **The page** polls `GET /lock-set?round=`, checks the certificate against the
+  seats it dealt its stake to, and reveals only then (arena-client
+  `revealWhenCertified`). Past the window with none it says the round is void.
+
+## 17A.4 Why it holds
+
+With the reveal gated on a signed set, a clock behind or ahead, a lying
+partner or a slow honest seat changes only **whether** the certificate forms
+(and so whether the round plays or is VOID), never **which** entries count:
+
+- an entry needs a threshold of seats that verified its lock before their
+  own close, and those seats sign only once, from the close on;
+- no honest seat serves or takes a move before the certificate, so nobody holds
+  an honest move while the set can still change;
+- a seat with its clock behind may take a lock after the real close, but one
+  seat's view is below the threshold, and the certificate may already stand
+  without it.
+
+## 17A.5 Speed
+
+One signing round between the close and the reveal: views at the close, the
+signature as soon as every view is in (at the latest close + 1.2 s), the
+certificate as soon as a threshold of signatures is in. Measured on seven seats
+with one seat answering 1.5 s late and one down (`h2h-lock-set-2561.test.js`):
+the certificate at the close + 1.25 s, the page saw it at + 1.31 s, all six live
+seats signed both results at + 1.46 s. An 8 s round stays inside its slot.
+
+---
+
 # 18. P2P economics
 
 The house does not fund winnings. Fixed brackets (10 / 100 / 1,000 sat,
