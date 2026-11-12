@@ -539,12 +539,20 @@ test('a signer node missing, a signer node serving another set, a forged set, or
   const strayGame = [{ recipientPk: pointKey(0x02, 0x5e), label: 'not the game dev', shareBps: 10000 }];
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: honest }, [], strayGame) })).why,
     /not the set the game's manifest names/);
-  assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest }) })).why, /not every signer node/);
+  // ONE SEAT'S 404 COUNTS AS NO MORE THAN ITS SILENCE (kanban #1701, #1767): half of the nodes serving the checked set is enough on both
+  // paths - the dropped read below already let it through, so the seat's own 404 does too, reported as dissent; with no seat serving it, refused
+  const one404 = await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest }) });
+  assert.equal(one404.ok, true, one404.why);
+  assert.deepEqual(one404.dissent.map((d) => d.node), ['http://127.0.0.1:2']);
+  assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({}) })).why, /not every signer node/);
   // A READ THE CONNECTION DROPPED (kanban #803, "Load failed" on a phone) is a node that did not answer, not a refusal - and half must still serve
   const dropping = (ports, f) => async (url) => { if (ports.includes(new URL(url).port)) throw new TypeError('Load failed'); return f(url); };
   assert.equal((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: dropping(['2'], serving({ 1: honest })) })).ok, true);
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: dropping(['1', '2'], serving({})) })).why, /only 0 of 2 nodes served/);
-  assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: forged }) })).why, /serve different donation sets/);
+  // a forged set beside the honest one is that seat's dissent, as its 404 would be (kanban #1701, #1767); two sets neither of which checks are refused
+  assert.equal((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: forged }) })).ok, true);
+  const forged2 = signedBytes({ ...SET, signature: ed25519.sign(donationSetBodyId(SET), ed25519.utils.randomSecretKey()) });
+  assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: forged2, 2: forged }) })).why, /serve different donation sets/);
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: forged, 2: forged }) })).why, /not signed by the network's donation authority/);
 
   // A ROTATION, served by one signer node only: the old authority's set is no set once it is in force.
