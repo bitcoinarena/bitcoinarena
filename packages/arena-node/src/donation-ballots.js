@@ -34,6 +34,11 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
         else { const a = { ...decodeDonationApproval(body), signature, hex: r.hex }; const b = byId.get(r.proposal) || { approvals: [] }; b.approvals.push(a); byId.set(r.proposal, b); }
       } catch { /* a row that no longer decodes is not counted */ }
     }
+    // ONE ORDER ON EVERY SEAT (kanban #2068, #1524, wf1489 v1 refute-30 s4): the approvals were listed as they reached this seat
+    // (at_ms), so honest seats served the same approved set in different bytes and a page grouping their answers found no quorum.
+    // Oldest height first, then signer, then the bytes - the order the tally counts them in, the same on every seat that holds them.
+    const cmp = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
+    for (const b of byId.values()) b.approvals.sort((x, y) => x.atHeight - y.atHeight || cmp(toHex(x.signer), toHex(y.signer)) || cmp(x.hex, y.hex));
     return byId;
   };
   async function retally() {
