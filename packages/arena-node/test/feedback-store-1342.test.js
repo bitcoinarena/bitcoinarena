@@ -150,6 +150,26 @@ test('#1342 networkPlayers reads each game\'s network board from the first seat 
   for (const g of ['rock-paper-scissors', 'nextblock']) assert.ok(asked.includes(`https://seat.example/season?scope=network&game=${g}&days=90`), JSON.stringify(asked));
 });
 
+// kanban #2565 (measured 2026-11-12: a refresh while no seat answered emptied the list - every reward refused "not finished a round")
+test('#2565 a refresh no seat answers keeps the players last read; a game that is read again replaces its own', async () => {
+  const A = 'a1'.repeat(32), B = 'b2'.repeat(32), D = 'd4'.repeat(32);
+  let mode = 'up';
+  const fetcher = async (url) => { if (mode === 'down') throw new Error('down');
+    const game = new URL(url).searchParams.get('game');
+    if (mode === 'rps-only' && game !== 'rock-paper-scissors') throw new Error('down');
+    const rows = game === 'rock-paper-scissors' ? (mode === 'rps-only' ? [{ player: D, rounds: 1 }] : [{ player: A, rounds: 3 }]) : [{ player: B, rounds: 1 }];
+    return new Response(JSON.stringify({ rows }), { status: 200 }); };
+  const np = networkPlayers({ seats: ['https://seat.example'], games: ['rock-paper-scissors', 'nextblock'], fetcher });
+  assert.equal(await np.refresh(), 2);
+  mode = 'down';
+  assert.equal(await np.refresh(), 2, 'a refresh no seat answered emptied the list');
+  assert.deepEqual([np.played(A), np.played(B)], [true, true]);
+  assert.equal(np.history(A).rounds, 3);
+  mode = 'rps-only';
+  await np.refresh();
+  assert.deepEqual([np.played(A), np.played(B), np.played(D)], [false, true, true], 'the game read again replaces its own; the other keeps its last');
+});
+
 // ---- slice 3: one LNURL-withdraw per approved report, exact amount, single use, never expiring ----
 const BASE = 'https://testnet.example/api/faucet';
 const approved = (s, k, words, sats) => { const e = report(k, words); s.take(e); assert.equal(s.approve(e.id, sats, { played: () => true }).ok, true); return e.id; };
