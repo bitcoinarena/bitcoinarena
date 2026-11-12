@@ -11103,7 +11103,34 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (toHex(body.roundId) !== toHex(proof.roundId) || toHex(body.nodePubkey) !== toHex(proof.nodePubkey) || toHex(body.playerPubkey) !== toHex(proof.playerPubkey))
           return 'the evidence is not the accused node\'s result for that round and player';
         let ok = false; try { ok = sigOk() === true; } catch { ok = false; }
-        return ok ? null : 'the signature on the evidence is not the accused node\'s';
+        if (!ok) return 'the signature on the evidence is not the accused node\'s';
+        // AND THE PROOF'S FREE FIELDS ARE THE ONES A HOLDING PROOF HAS (kanban #2248, a45 refute of #1816): bondTxid, bondVout and
+        // transcriptHash were never checked, so one honest seat's public signed result re-wrapped with a fresh bondVout (2^32) or
+        // transcriptHash (2^256) each time made a new proof id that passed every check above, until RELAY_MOST was full and every honest
+        // transcript and slash proof was refused 507. A proof that can hold (arena-protocol slashHolds / slashHoldsOnRerun) names the
+        // transcript its evidence was signed about, a player of the round, and the bond the accused node advertised.
+        if (toHex(proof.transcriptHash) !== toHex(body.transcriptHash)) return 'the proof names a transcript its evidence was not signed about';
+        if (!round.entriesOf(proof.roundId).some((e) => toHex(e.entry.playerPubkey) === toHex(proof.playerPubkey))) return 'the player is not an entry of that round';
+        let adverts = null;
+        try { adverts = verifier.advertsFor ? verifier.advertsFor(proof.roundId) : null; } catch { adverts = null; }
+        if (adverts instanceof Map) {
+          const advert = adverts.get(toHex(proof.nodePubkey));
+          if (!advert) return 'the accused node advertised no bond for that round';
+          if (toHex(advert.bondTxid) !== toHex(proof.bondTxid) || advert.bondVout !== proof.bondVout) return 'the proof names a bond the accused node did not advertise';
+        }
+        return null;
+      };
+      // AT MOST ONE RELAYED PROOF PER ACCUSED SIGNED RESULT (kanban #2248): the same proof again is 200, another proof about the same
+      // signed result 409 and not kept - whatever its bond fields say, it cannot make room-filling copies of one signed result.
+      const slashKeep = (proof, bytes) => {
+        const accused = Buffer.concat([proof.roundId, proof.nodePubkey, proof.playerPubkey, proof.signedResultId].map((b) => Buffer.from(b)));
+        const id = Buffer.from(slashed[1], 'hex');
+        if (!round.relaySlashOf(accused) && round.relayedBytes() + bytes.length > RELAY_MOST)
+          return [507, 'this relay keeps no more: its store for relayed bytes is full'];   // kanban #1532
+        const got = round.relaySlashPut(accused, id, bytes);
+        if (got === 'kept') return [201, 'kept'];
+        if (got === 'same') return [200, 'already kept'];
+        return [409, 'this relay already keeps a slash proof about that signed result'];
       };
       if (slashed && req.method === 'PUT') {
         const bytes = await read(req);
@@ -11120,9 +11147,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try { const sp = splitSignedRerun(rr.signedRerun); rsig = sp.signature; rx = decodeRerunResult(sp.body); } catch { rx = null; }
           const rwhy = rx ? slashOursWhy(rr.proof, rx.result, () => schnorr.verify(rsig, rerunResultId(rx), rx.result.nodePubkey)) : 'the evidence is not a signed re-run result';
           if (rwhy) return text(res, 422, rwhy);   // kanban #1816
-          if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');   // kanban #1532
-          round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
-          return text(res, 201, 'kept');
+          const [code, said] = slashKeep(rr.proof, bytes);   // kanban #2248, #1532
+          return text(res, code, said);
         }
         let got;
         try { got = splitSlashEvidence(new Uint8Array(bytes)); } catch (e) { return text(res, 400, e.message); }
@@ -11136,9 +11162,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const why = slashOursWhy(got.proof, body, () => schnorr.verify(sp.signature, resultId(body), body.nodePubkey));
           if (why) return text(res, 422, why);   // kanban #1816
         }
-        if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');   // kanban #1532
-        round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
-        return text(res, 201, 'kept');
+        const [code, said] = slashKeep(got.proof, bytes);   // kanban #2248, #1532
+        return text(res, code, said);
       }
       if (slashed && req.method === 'GET') {
         const kept = round.relayGet(Buffer.from(slashed[1], 'hex'));
