@@ -28,17 +28,19 @@ const BUILDS = [
   ['blwp-core.js', 'packages/nextblock/tools/bundle.js', 'packages/nextblock/dist/blwp-core.js'],
 ];
 
-test('each script a page serves that decides money is the build of the source in this tree - in dist and in the WebGL template', () => {
+// ONE TEST PER SCRIPT (kanban #1690, #1523): these were one loop in one test, so the curve tool's ENOENT on the
+// MacBook threw before arena-client.js was compared, and a stale client bundle - one seat of seven still blocking
+// every world seed in the page - went unseen behind it. Each script is now built and compared on its own; one tool
+// failing says so by name and hides no other script.
+for (const [name, tool, built] of BUILDS) test(`${name} a page serves is the build of the source in this tree - in dist and in the WebGL template`, () => {
   const dir = mkdtempSync(join(tmpdir(), 'blwp-fresh-'));
   try {
     const stale = [];
-    for (const [name, tool, built] of BUILDS) {
-      execFileSync(process.execPath, [ROOT + tool], { env: { ...process.env, ARENA_BUNDLE_OUT: dir }, stdio: 'pipe' });
-      const fresh = readFileSync(join(dir, name));
-      if (Buffer.compare(fresh, readFileSync(ROOT + built))) stale.push(`${name}: dist is not the build of this source`);
-      if (Buffer.compare(fresh, readFileSync(TEMPLATE + name))) stale.push(`${name}: the WebGL template is not the build of this source`);
-    }
-    console.log(`  FACTS (freshness): ${stale.length ? stale.join('; ') : 'all three fresh in dist and the template'}`);
+    execFileSync(process.execPath, [ROOT + tool], { env: { ...process.env, ARENA_BUNDLE_OUT: dir }, stdio: 'pipe' });
+    const fresh = readFileSync(join(dir, name));
+    if (Buffer.compare(fresh, readFileSync(ROOT + built))) stale.push(`${name}: dist is not the build of this source`);
+    if (Buffer.compare(fresh, readFileSync(TEMPLATE + name))) stale.push(`${name}: the WebGL template is not the build of this source`);
+    console.log(`  FACTS (freshness): ${stale.length ? stale.join('; ') : `${name} fresh in dist and the template`}`);
     assert.deepEqual(stale, []);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

@@ -34,7 +34,7 @@ test('#1489 r6-h2h-3: one seat listed first cannot flip the head-to-head verdict
   const hidden = [{ roundIdHex: roundId, entryIdHex: mine, entryCloseMs: Date.now() - 60000, nodes: ['http://evil', 'http://h1', 'http://h2'] }];
   const fn = pageFunction(PAGE, ['readHidden', 'resultsSeen', 'revealsSeen', 'game', 'provisional', 'saidProvisionally', 'checkSigned', 'fetch', 'AbortSignal', 'window'],
     body, '', 'return ');
-  const result = fn(() => hidden, new Map(), new Map(), { manifest: { resultType: 3 } }, () => null, (id, p) => p, () => {}, fetch, { timeout: () => undefined }, {});
+  const result = fn(() => hidden, new Map(), new Map(), { manifest: { resultType: 3 } }, () => null, (id, p) => p, () => {}, fetch, { timeout: () => undefined, any: () => undefined }, {});   // AbortSignal.any: the page asks every seat at once since #1673 / #1867 (item 4)
   const got = await result(roundId);
   const me = got.entries.find((e) => e.entry === mine);
   console.log('  FACTS (r6-h2h-3):', JSON.stringify({ shownForMe: me, seatsSaid: { evil: 'FAILED', h1: 'DELIVERED 2', h2: 'DELIVERED 2' } }));

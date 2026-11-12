@@ -18,8 +18,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { vestedShares, splitDonation, splitTwoSets, donationSetStands, VESTING_DAY_BLOCKS } from '../src/donation.js';
+import { pointKey } from './point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
-const key = (n) => Uint8Array.from([0x02, ...new Uint8Array(32).fill(n)]);
+const key = (n) => pointKey(0x02, n);   // kanban #1675: a donation recipient key is a curve point
 
 // A valid all-vesting set: shares sum to 10000, targets sum to 10000.
 const ALL_VESTING = [

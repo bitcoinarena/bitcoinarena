@@ -7,7 +7,7 @@
  * drawn evenly. It decides nothing, and its name says what it is ("Test bot").
  *
  *   NODES=<seat url,...> WANTS=<faucet url>/opponent INVITES=<invite file,...> WASM_PKG=<dir> DIR=<its wallets and keys> node tools/rps-opponent.mjs
- *   [MOST_PER_HOUR=120] [MIN_LEFT_MS=900] [ONCE=1]
+ *   [MOST_PER_HOUR=120] [MIN_LEFT_MS=4050] [ONCE=1]
  *   FUND=<sat> instead: prints one invoice per federation (the wallets' top-up, paid from outside), waits for them, and exits.
  *
  * WALLETS: DIR/wallet-<federation>.json, kept across runs. DIR/keys.jsonl: each entry's player key and locks, as tn4-rps-paid's KEYS_FILE, for tn4-collect.mjs.
@@ -29,6 +29,7 @@ import { markBot, entryKeys } from './mark-bot.mjs';   // kanban #2035: every li
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { entrySplit, lockEntry } from './entry-locks.mjs';
+import { handoutThenLock, h2hLeadMs } from './h2h-order.mjs';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { worldIsShared } from '../../arena-protocol/src/seed.js';
@@ -36,11 +37,15 @@ import { sharedWorldOf } from '../../arena-protocol/src/known-game.js';
 import { matchProofId, presenceId } from '../../arena-protocol/src/match.js';
 import { encodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-name.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { lockClaimDigest } from '../../arena-protocol/src/lock-claim.js';
 
 const env = process.env;
 const nodes = String(env.NODES || '').split(',').map((u) => u.trim().replace(/\/+$/, '')).filter(Boolean);
 const DIR = env.DIR, NAME = 'Test bot';
-const MOST_PER_HOUR = Number(env.MOST_PER_HOUR || 400), MIN_LEFT_MS = Number(env.MIN_LEFT_MS || 900);
+// MIN_LEFT_MS (kanban #2043): the seats take a head-to-head handout only with more than ceil(h2hHandoutLeadMs * 1.5) left (node-start.js 2700 ms, so 4.05 s),
+// so an entry started with less could never be taken - it is not started
+const MOST_PER_HOUR = Number(env.MOST_PER_HOUR || 400), MIN_LEFT_MS = Number(env.MIN_LEFT_MS || 4050);
+const lockMsSeen = [];   // the bot's last locks' times (kanban #2043): its lead before a lock is the page's rule over them (h2h-order.mjs h2hLeadMs)
 const log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 const rand = (n) => new Uint8Array(randomBytes(n));
 const scalar = () => { for (;;) { const s = rand(32); const v = scalarFrom32(s); if (v > 0n && v < FIELD) return s; } };
@@ -120,7 +125,8 @@ async function enter(c, rid, ready) {
   const gate = feeLockPays({ contract: c, fees: { ppm: BigInt(w.rule.fee_ppm), baseMsat: BigInt(w.rule.fee_base_msat) } });
   const split = await splitFor(c, roundHex);
   steps.split = ms(t0);
-  if (Number(c.entryCloseMs) - Date.now() < 400) return { ok: false, why: 'too late to enter' };
+  // NOT UNDER THE SEATS' KEPT LEAD (kanban #2043): a handout posted with less than ceil(h2hHandoutLeadMs * 1.5) left is refused by every seat
+  if (Number(c.entryCloseMs) - Date.now() < 4050) return { ok: false, why: 'too late to enter' };
   const me = evenPlayer();
   const s = { p: scalar(), player: me.pubkey };
   s.point = feldmanGroup.pointFromScalar(scalarFrom32(s.p) % FIELD);
@@ -128,18 +134,21 @@ async function enter(c, rid, ready) {
   const e = rand(32);
   const dealt = await dealHandout({ preimage: s.p, signerNodes: c.nodes, roundId: rid, playerPubkey: s.player, ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
     coefficients: Array.from({ length: needed - 1 }, () => scalarFrom32(rand(32)) % FIELD), needed, curve: feldmanGroup });
-  // THE HANDOUT FIRST, THE LOCK ONLY ONCE ENOUGH SEATS TOOK IT (kanban #1596, the #1489 audit of #1485), as the page does: the bot locked first and posted
-  // the handout after, so a head-to-head seat's late-handout refusal (2 s before the close, node-start.js h2hHandoutLeadMs) came after its money - every
-  // order with 0.4-2 s left had its stake and fee locked and every seat refused it. Now a refused handout costs nothing: no lock is made
-  const handouts = nodes.map((n) => fetch(`${n}/handout`, { method: 'POST', signal: AbortSignal.timeout(POST_MS), body: encodeHandout(dealt.handout) })
-    .then(async (h) => ({ status: h.status, why: h.status === 201 ? '' : (await h.text().catch(() => '')).trim().slice(0, 120) }), () => ({ status: 0, why: 'no answer' })));
-  const dealtTo = [];
-  await new Promise((done) => { for (const p of handouts) p.then((x) => { dealtTo.push(x); if (dealtTo.filter((y) => y.status === 201).length >= needed || dealtTo.length === nodes.length) done(); }); });
+  // THE HANDOUT FIRST, THE LOCK AFTER, AS THE PAGE (kanban #2043, #1489 refute 3 of #1485/#1742/#1892, feedback #010): POST /handout to every seat, and the stake and
+  // fee lock only once `needed` seats took it and the time left on the seats' clock (their 201s' x-entry-close-in-ms) still covers the lock and the entry
+  // (h2hLockRefusal, the page's lead). Before, the bot locked first: with 0.9-4.05 s left it spent the developers' and reserves' parts, then every seat refused
+  // the handout 409 and the entry with it. A refused or late handout now leaves nothing locked.
+  const order = await handoutThenLock({ body: encodeHandout(dealt.handout), needed, nodes, entryCloseMs: c.entryCloseMs, leadMs: h2hLeadMs(lockMsSeen), waitMs: POST_MS,
+    lock: async () => {
+      const t = Date.now();
+      // SUBMITTED, NOT WAITED FOR (as market-bot.mjs, kanban #601): the guardians' agreement took over 30 s from the test host, in an 8 s round. The entry goes in at once, its locks after it
+      const l = await lockEntry({ lc: w.lc, c, split, stakePoint: s.point, player: s.player, claimPk: att.claimPk, gate, rand, expiry: Number(c.stakeExpiryBlocks), submitOnly: true });
+      lockMsSeen.push(Date.now() - t); if (lockMsSeen.length > 8) lockMsSeen.shift();
+      return l;
+    } });
   steps.handout = ms(t0);
-  if (dealtTo.filter((y) => y.status === 201).length < needed)
-    return { ok: false, why: `handout taken by ${dealtTo.filter((y) => y.status === 201).length} of ${nodes.length} seats (${needed} needed), nothing locked: ${[...new Set(dealtTo.map((y) => y.why).filter(Boolean))].join('; ').slice(0, 200)}` };
-  // SUBMITTED, NOT WAITED FOR (as market-bot.mjs, kanban #601): the guardians' agreement took over 30 s from the test host, in an 8 s round. The entry goes in at once, its locks after it
-  const locks = await lockEntry({ lc: w.lc, c, split, stakePoint: s.point, player: s.player, claimPk: att.claimPk, gate, rand, expiry: Number(c.stakeExpiryBlocks), submitOnly: true });
+  if (!order.ok) return { ok: false, why: order.why };
+  const locks = order.locks;
   const accepted = (locks.accepted || Promise.resolve()).then(() => { steps.accepted = ms(t0); });
   steps.locked = ms(t0);
   const session = ed25519.utils.randomSecretKey();
@@ -154,12 +163,15 @@ async function enter(c, rid, ready) {
   appendFileSync(join(DIR, 'keys.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), round: roundHex, entry: toHex(eid), player: 'bot', secret: toHex(me.secret),
     stake: `${toHex(locks.stake.outpoint.txid)}:${locks.stake.outpoint.outIdx}`, fee: locks.fee ? `${toHex(locks.fee.outpoint.txid)}:${locks.fee.outpoint.outIdx}` : null })}\n`);
   const hand = locks.fee ? locks.fee.fields : null;
-  // ENOUGH SEATS, NOT ALL OF THEM: a seat that is restarting never answered and held the bot for minutes (measured 2026-11-01). The rest go on behind
-  const posts = nodes.map(async (n, i) => {
-    const o = () => ({ method: 'POST', signal: AbortSignal.timeout(POST_MS) });
-    const h = await handouts[i];   // posted above, before the lock (kanban #1596)
-    const en = await fetch(`${n}/entry`, { ...o(), body: encodeEntryContract(entry) }).catch(() => ({ status: 0, text: async () => 'no answer' }));
-    return { node: n, handout: h.status, entry: en.status, why: en.text ? (await en.text().catch(() => '')).trim().slice(0, 120) : '' };
+  // ENOUGH SEATS, NOT ALL OF THEM: a seat that is restarting never answered and held the bot for minutes (measured 2026-11-01). The rest go on behind.
+  // Each seat's entry after its own handout post (a seat still answering its handout gets the entry once it did)
+  const posts = nodes.map(async (n) => {
+    await order.put.posted.get(n);
+    const en = await fetch(`${n}/entry`, { method: 'POST', signal: AbortSignal.timeout(POST_MS), body: encodeEntryContract(entry) }).catch(() => ({ status: 0, text: async () => 'no answer' }));
+    // THE PLAYER'S LOCK CLAIM (kanban #2069, #2088): a signature by the stake point over the entry id, as the page sends it - a seat then hands
+    // these locks only to a claimed entry, never to a copy under another stake point. Never fatal.
+    if (en.status >= 200 && en.status < 300) { try { await fetch(`${n}/lock-claim?entry=${toHex(eid)}`, { method: 'POST', signal: AbortSignal.timeout(POST_MS), body: schnorr.sign(lockClaimDigest(eid), s.p) }).then((r) => r.text()); } catch { /* the seats show it to each other */ } }
+    return { node: n, entry: en.status, why: en.text ? (await en.text().catch(() => '')).trim().slice(0, 120) : '' };
   });
   const said = [];
   const tookOf = () => said.filter((x) => x.entry >= 200 && x.entry < 300).length;
@@ -248,12 +260,19 @@ const sayAtTables = () => {
 setInterval(sayAtTables, 2000);
 const pass = async () => {
   const wants = (await (await fetch(env.WANTS, { signal: AbortSignal.timeout(3000) })).json()).wants || [];
-  for (const w of wants.slice(0, 4)) {
+  // FOUR REAL TABLES, NOT THE FIRST FOUR ROWS (kanban #1718, #1781): the list is anyone's, so the reading never stops at row 4 - it walks up to 16
+  // rows and reads the first 4 whose contract is a real round, a made-up round skipped without counting
+  let real = 0;
+  for (const w of wants.slice(0, 16)) {
+    if (real >= 4) break;
     // ONE BAD ROUND IS NOT THE WHOLE PASS (kanban #1535): a made-up round anyone posted throws here; skip it and read the next table
     const k = await contractOf(w.round).catch(() => null);
     if (!k) continue;
     const left = Number(k.c.entryCloseMs) - Date.now();
+    // ONLY AN OPEN TABLE COUNTS (kanban #1912, #1954, #1991): a real round that is over is still served by the seats, so four re-posted past
+    // rounds were counted as the 4 tables and the real player's table was never read; one that is over or already entered is skipped uncounted
     if (left <= 0 || k.entered) continue;
+    real++;
     tables.set(tableOf(k.c), Date.now() + 40000);
     sayHere(w.round, k);
     if (busy || left < MIN_LEFT_MS) continue;

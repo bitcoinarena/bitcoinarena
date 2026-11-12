@@ -44,6 +44,7 @@ import { pluginForRound } from './plugins.js';
 import { giftsInFeeLock } from '../../arena-protocol/src/reserves.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare, commitmentListRefusal } from './pool-wire.js';
 import { askPeers, PEER_ASK_MS, PEER_GRACE_MS } from './peer-ask.js';
+import { NoncePool, SignerLists, sharesRefused, BOUND_ELSEWHERE, PAIRS_PER_KEY, PAIRS_ALL as POOL_ALL, LIST_TRIALS } from './nonce-pool.js';
 
 // A FEE LOCK'S RETURN (2026-10-09: "orders can be cancelled at no cost"): kept under its own key beside
 // the stake lock's, so an entry's two returns never stand in each other's place
@@ -53,12 +54,12 @@ const keptUnder = (entryIdBytes, kind) => (kind === 'fee' ? feeReturnKey(entryId
 
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).sort().join('|');
 const refuse = (why, status = 409) => ({ ok: false, status, why });
-// A PAIR PER ASK (kanban #1521): a commitment names the pair it was drawn with; at most this many are kept per forfeit
-const commitmentKey = (c) => `${toHex(c.hiding)}:${toHex(c.binding)}`;
-const PAIRS_PER_FORFEIT = 256;
-// HOW LONG A PAIR HANDED OUT IS KEPT AT LEAST (kanban #1611): the asker's two rounds, and never less than this - a seat busy with a flood answers late
-const PAIR_HOLD_MIN_MS = 60000;
-
+// THE PAIRS (kanban #1521, #1699, #1764, #1996, #2011, #2044): one pair per ask, kept by its commitment, in nonce-pool.js - the same rule
+// as the settlement's and the winnings send's. A full pool no longer refuses a commit (a stranger who kept it full stopped every forfeit
+// with 503s): spent and old pairs make room first, then one young unspent pair at random, never of the oldest quarter, never the seat's own.
+export const PAIRS_PER_FORFEIT = PAIRS_PER_KEY;
+export const PAIRS_ALL = POOL_ALL;
+export const FORFEIT_LIST_TRIALS = LIST_TRIALS;
 /**
  * A COMMITMENT UNDER ANOTHER SEAT'S ID (kanban #1807): a peer's answer at the commit door names its own FROST id, and nothing else checked it. One seat
  * that answered under another's id (or this seat's) put two commitments for one participant on the list, signShare340 threw at the asker, the throw left
@@ -154,8 +155,12 @@ export class Forfeit {
     // ENTRY_VOID's evidence, handed to the other signer nodes before a Void lock is
     // forfeited: a signer node that was down records the Void only when shown it.
     this.onVoid = onVoid;
-    this.pairs = new Map();          // contract id hex -> Map(commitment key -> { hiding, binding, commitment, list, share }), a pair per ask (kanban #1521)
-    this.withheld = new Map();       // a forfeit's query -> the peers that gave this asker no share for it (kanban #1074)
+    // contract id hex -> the pairs handed out for that forfeit, each { commitment, hiding, binding, id, at, own, list, share } (nonce-pool.js, kanban #1521, #2011)
+    this.pairs = new NoncePool({ holdMs: () => this.pairHoldMs });
+    // HOW LONG AN UNSPENT PAIR IS KEPT FOR ITS ASKER (kanban #1699, #1764): an asker sends its list at most one commit ask (the bound and the grace) after
+    // the commit; twice that
+    this.pairHoldMs = 2 * (peerAskMs + peerGraceMs);
+    this.lists = new SignerLists();  // a forfeit's query -> the peers left off its next list, and its poisoned lists (kanban #1074, #1699)
   }
 
   /** WHAT THIS SIGNER NODE WILL SIGN, rebuilt from its own store - or the refusal. */
@@ -188,7 +193,7 @@ export class Forfeit {
     // this node's own record that it still refuses the round and that the lock stakes no entry here. No result, no window.
     let refused = null;
     if (!lock && this.round.refusedLock) {
-      const kept = this.round.refusedLock(entryIdBytes);
+      const kept = this.round.refusedLock(entryIdBytes, roundIdBytes);   // kanban #2029: the round's rows from before #1881 by their own id too
       if (kept && toHex(kept.roundId) === toHex(roundIdBytes)) {
         const why = this.refusedNow ? this.refusedNow(roundIdBytes) : null;
         if (!why) return refuse('this signer node offers that round: a lock kept for it as refused is not returned');
@@ -430,55 +435,37 @@ export class Forfeit {
    * anyone, and one pair handed to every asker let a stranger ask for it and at once spend it on a list of made-up commitments, so the honest
    * asker's list was refused ("keeps no second pair") at every seat he reached first and the forfeit never formed. Now each ask draws its own pair,
    * kept by its commitment, and a share request spends only the pair its own list carries: a stranger spends the pair he was given and no other.
-   * At most PAIRS_PER_FORFEIT are kept per forfeit.
-   * A PAIR HANDED OUT RECENTLY IS NEVER DROPPED FOR A NEWER ONE (kanban #1611): the oldest went first past the cap, so a stranger at the open door who
-   * sent 256 commits between an asker's commit and its share request dropped the asker's pair - its share and every peer's was refused ("that list does
-   * not carry this signer node's own commitment") and the forfeit (a qualifier's stake, an ENTRY_VOID refund, a cancelled order's locks) never formed
-   * while he went on. Now only a pair older than the asker's two rounds (commit and share, each within its bound; at least PAIR_HOLD_MIN_MS) is dropped; with the cap full of
-   * younger ones a door commit is refused, and the pairs already handed out still sign. This seat's own pass (`own`, never from the door) is not refused.
+   * A full pool refuses no commit (kanban #2011): nonce-pool.js makes room, and the seat's own pair (`own`, its own forfeit()) is never the one dropped.
    */
   async commit(roundIdBytes, entryIdBytes, kind = 'stake', { own = false } = {}) {
     const m = await this.message(roundIdBytes, entryIdBytes, kind);
     if (!m.ok) return m;
-    const key = toHex(m.message);
-    let held = this.pairs.get(key);
-    if (!held) { held = new Map(); this.pairs.set(key, held); }
-    const now = this.round.now ? this.round.now() : Date.now();
-    const holdMs = Math.max(2 * (this.peerAskMs + this.peerGraceMs), PAIR_HOLD_MIN_MS);
-    while (held.size >= PAIRS_PER_FORFEIT) {
-      const [oldest, p] = held.entries().next().value;
-      if (now - p.at <= holdMs) break;
-      held.delete(oldest);
-    }
-    if (held.size >= PAIRS_PER_FORFEIT && !own)
-      return refuse(`this signer node holds ${held.size} commitments to that forfeit handed out in the last ${Math.round(holdMs / 1000)} s: ask again later`, 503);
     const hiding = nonceGenerate340(this.random(32), m.signerNode.share);
     const binding = nonceGenerate340(this.random(32), m.signerNode.share);
-    const pair = { hiding, binding, list: null, share: null, at: now,
-      commitment: { id: m.signerNode.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) } };
-    held.set(commitmentKey(pair.commitment), pair);
-    return { ok: true, commitment: pair.commitment };
+    const commitment = { id: m.signerNode.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) };
+    const kept = this.pairs.add(toHex(m.message), { commitment, hiding, binding, id: commitment.id }, { own });
+    if (!kept.ok) return refuse(kept.why, kept.status);
+    return { ok: true, commitment };
   }
 
   /** ROUND TWO: this signer node's signature share, over the forfeit it rebuilt, for ONE commitment list - by the pair that list carries (kanban #1521). */
   async share(roundIdBytes, entryIdBytes, commitments, kind = 'stake') {
     const m = await this.message(roundIdBytes, entryIdBytes, kind);
     if (!m.ok) return m;
-    const held = this.pairs.get(toHex(m.message));
-    if (!held || !held.size) return refuse('this signer node committed to no forfeit of that lock');
+    if (!this.pairs.holds(toHex(m.message))) return refuse('this signer node committed to no forfeit of that lock');
     // NO LIST LONGER THAN A COMMITTEE (kanban #1672, as at /settle-share): refused before any curve work
     { const why = commitmentListRefusal(commitments, { needed: m.needed, nodes: m.nodes }); if (why) return refuse(why); }
     const own = commitments.find((c) => String(c.id) === String(m.signerNode.id));
-    const pair = own ? held.get(commitmentKey(own)) : null;
+    const pair = own ? this.pairs.get(toHex(m.message), own) : null;
     if (!pair) return refuse('that list does not carry this signer node\'s own commitment');
     if (commitments.length < m.needed) return refuse(`${commitments.length} commitments, and this round's key signs at ${m.needed}`);
     const key = listKey(commitments);
-    if (pair.list && pair.list !== key) return refuse('this signer node signed that forfeit over another list, and keeps no second pair');
+    if (pair.list && pair.list !== key) return refuse('this signer node signed that forfeit over another list, and keeps no second pair', BOUND_ELSEWHERE);
     { const r = this.#returning(roundIdBytes, m, 'a forfeit share given'); if (!r.ok) return refuse(r.why); }
     if (pair.share === null) {
-      pair.share = signShare340({ id: pair.commitment.id, share: m.signerNode.share, groupPublicKey: m.claimPk,
-        nonces: { hiding: pair.hiding, binding: pair.binding }, message: m.message, commitments, curve: this.curve });
-      pair.list = key;
+      // A SPENT PAIR KEEPS ITS LIST AND ITS SHARE, NEVER ITS NONCES (kanban #1699)
+      NoncePool.spend(pair, key, signShare340({ id: pair.id, share: m.signerNode.share, groupPublicKey: m.claimPk,
+        nonces: { hiding: pair.hiding, binding: pair.binding }, message: m.message, commitments, curve: this.curve }));
     }
     return { ok: true, share: pair.share };
   }
@@ -510,8 +497,14 @@ export class Forfeit {
     }
     const q = `round=${toHex(roundIdBytes)}&entry=${toHex(entryIdBytes)}${kind === 'fee' ? '&lock=fee' : ''}`;
     let signature;
+    // THE LISTS TRIED WHEN A LISTED SEAT SPENDS ITS PEERS' PAIRS (kanban #1699, #1764): every listed seat reads the whole list, and one of them
+    // posted each other listed seat a list of junk around its real commitment before the asker's list landed - each honest pair was spent, the
+    // asker's list refused at every seat, and so on every retry: one seat of seven held a 5-of-7 forfeit. A seat outside the list sees no
+    // commitment but its own, so the asker leaves out first the seats that gave a share while the others' pairs were spent (who else read the
+    // list?), and when that does not leave enough - or the culprit refused as well - tries the lists that leave out one seat, then two, ...
+    this.lists.begin(q);
     for (;;) {
-      const own = await this.commit(roundIdBytes, entryIdBytes, kind, { own: true });   // this seat's own pass is never refused at the cap (kanban #1611)
+      const own = await this.commit(roundIdBytes, entryIdBytes, kind, { own: true });
       if (!own.ok) return own;
       // EVERY PEER AT ONCE, WITHIN A BOUND (kanban #1074 as #1061): the list needs the threshold, so a hung seat costs the grace, not the forfeit
       const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
@@ -527,11 +520,12 @@ export class Forfeit {
       }
       if (signers.length < m.needed)
         return refuse(`${signers.length} of the ${m.needed} signer nodes the forfeit needs committed to it: ${refused.join('; ')}`);
-      const listed = this.#listed(q, signers, m.needed);
+      const listed = this.lists.listed(q, signers, m.needed);
       const combined = await this.#gatherShares(roundIdBytes, entryIdBytes, kind, m, q, listed);
-      if (combined.ok) { ({ signature } = combined); this.withheld.delete(q); break; }
-      // A SEAT THAT GAVE NO SHARE, OR ONE THAT DOES NOT STAND, is left off the next list while the threshold remains, and the forfeit is asked again at once
-      if (!this.#leaveOut(q, combined, listed, m.needed)) return combined;
+      if (combined.ok) { ({ signature } = combined); this.lists.done(q); break; }
+      // A SEAT THAT GAVE NO SHARE, OR ONE THAT DOES NOT STAND, is left off the next list while the threshold remains; a poisoned list
+      // tries the lists that leave out who read it (nonce-pool.js SignerLists, kanban #1699, #1764): asked again at once
+      if (!this.lists.again(q, combined, listed, m.needed, this.peersFor(roundIdBytes))) return combined;
     }
     { const r = this.#returning(roundIdBytes, m, 'a forfeit combined and kept'); if (!r.ok) return refuse(r.why); }
     this.round.putForfeit({ entryId: keptUnder(entryIdBytes, kind), roundId: roundIdBytes, message: m.message, signature, claimPk: m.claimPk });
@@ -539,25 +533,6 @@ export class Forfeit {
     await askPeers(this.peersFor(roundIdBytes), (base, signal) => this.fetcher(`${base}/forfeit-signature?${q}`, { method: 'POST', body: signature, signal }),
       { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: m.needed - 1 });
     return { ok: true, message: m.message, signature, claimPk: m.claimPk };
-  }
-
-  /** THE SEATS THAT SIGN THIS LIST (kanban #1074, settlement.js #listed): those that committed, less any that gave this asker no share for it while enough others remain. */
-  #listed(key, signers, needed) {
-    const out = this.withheld.get(key);
-    if (!out) return signers;
-    const kept = signers.filter((s) => !out.has(s.base));
-    return kept.length >= needed ? kept : signers;
-  }
-
-  /** A LIST THAT FAILED AT A SEAT: true when that seat is now left out and enough others remain; it grows by a seat each time, so it ends. */
-  #leaveOut(key, failed, listed, needed) {
-    const out = this.withheld.get(key) || new Set();
-    const fresh = (failed.withheld || []).filter((base) => !out.has(base));
-    for (const base of fresh) out.add(base);
-    if (!fresh.length || listed.filter((s) => !out.has(s.base)).length < needed) { this.withheld.delete(key); return false; }
-    this.withheld.set(key, out);
-    if (this.withheld.size > 4096) this.withheld.delete(this.withheld.keys().next().value);
-    return true;
   }
 
   /**
@@ -580,11 +555,12 @@ export class Forfeit {
     const peers = signers.filter((s) => s.base !== null);
     const asked = await askPeers(peers.map((s) => s.base), async (base, signal) => {
       const r = await this.fetcher(`${base}/forfeit-share?${q}`, { method: 'POST', body, signal });
-      if (!r.ok) return { why: (await r.text()).trim() };
+      if (!r.ok) return { status: r.status, why: (await r.text()).trim() };
       return { share: decodeShare(new Uint8Array(await r.arrayBuffer())) };
     }, { boundMs: this.peerAskMs });
-    const none = asked.filter((x) => !x.value || !('share' in x.value));
-    if (none.length) return { ...refuse(`${none[0].peer} gave no share: ${none[0].value ? none[0].value.why : none[0].error.message}`), withheld: none.map((x) => x.peer) };
+    // A PAIR SPENT ON ANOTHER LIST (kanban #1699, #1764): a pair drawn for this ask, so one who read this list spent it - the seat refusing is not at fault
+    const failed = sharesRefused(asked);
+    if (failed) return failed;
     const shares = [mine.share, ...asked.map((x) => x.value.share)];
     const { signature } = aggregate340({ commitments, message: m.message, groupPublicKey: m.claimPk, shares, curve: this.curve });
     if (schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return { ok: true, signature };
