@@ -3830,6 +3830,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // 2.0: a protocol-27 seat's entry is one { named, message, nonces } object, a FROST round's a list of handed pairs
     const held = settlements && settlements.pairs ? settlements.pairs.get(toHex(rid)) : null;
     if ((Array.isArray(held) ? held : held ? [held] : []).some((p) => p && p.message && toHex(p.message) === hx)) return true;
+    // the FROST pairs it handed for the round are in its nonce pool since #2044 (nonce-pool.js), each naming its message
+    const pool = settlements && settlements.noncePool && settlements.noncePool.pools ? settlements.noncePool.pools.get(toHex(rid)) : null;
+    if (pool && [...pool.values()].some((p) => p && p.message && toHex(p.message) === hx)) return true;
     if (typeof round.settlementTxidsOf === 'function' && round.settlementTxidsOf(rid).some((h) => toHex(h.message) === hx)) return true;
     if (!settlements || typeof settlements.message !== 'function') return false;
     const m = await settlements.message(rid).catch(() => null);

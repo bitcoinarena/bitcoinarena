@@ -36,6 +36,7 @@ import { stateOf } from './settlement-state.js';
 import { namedClaimKeys } from '../../arena-protocol/src/arena-lock.js';
 import { NamedNonces, aggregateBatch, encodeNamedCommitment, decodeNamedCommitment } from './named-settlement.js';
 import { askPeers, askWithin, PEER_ASK_MS, PEER_GRACE_MS } from './peer-ask.js';
+import { NoncePool, SignerLists, sharesRefused, BOUND_ELSEWHERE } from './nonce-pool.js';
 import { sendHoldOn } from './test-named-offence.js';
 import { invoicePayee } from '../../arena-protocol/src/bolt11.js';
 import { SEND } from './send-state.js';
@@ -101,8 +102,15 @@ export class WinningsSend {
     // THE DEFAULT LNURL FETCH (kanban #1919, #2236): the PUBLIC internet only (lnurlPublicFetch: https on a public name and address, redirects checked
     // hop by hop, .onion over http); the operator's own local recipients (lnurlLocal, and their callbacks on the same hosts) by the process's fetch
     if (!this.lnurlFetch) this.lnurlFetch = (u, o) => (this.lnurlLocalHost(u) ? fetch(u, o) : lnurlPublicFetch(u, o));
-    this.pairs = new Map();      // `${round}:${entry}:${attempt}` -> nonce pair for the auth signature
-    this.withheld = new Map();   // a signing's query -> the peers that gave this asker no share for it (kanban #1074)
+    this.pairs = new Map();      // `${kind}:${round}:${entry}:${attempt}` -> a protocol-27 S member's named nonce for that signature
+    // `${kind}:${round}:${entry}:${attempt}` -> the FROST pairs handed out for that signature, ONE PER ASK (nonce-pool.js, kanban #2011 - the forfeit's #1521
+    // rule): one unspent pair handed to every asker let a stranger ask for it and at once spend it on a list of made-up commitments, and every
+    // honest list was refused ("keeps no second pair") - the winner was never paid while he kept doing it
+    this.pairHoldMs = 2 * (this.peerAskMs + this.peerGraceMs);
+    this.noncePool = new NoncePool({ holdMs: () => this.pairHoldMs });
+    // the pair keys a FROST share was given on (kanban #1629): a kept re-send that one was signed on is never replaced - the pool drops spent pairs
+    this.signedKeys = new Set();
+    this.lists = new SignerLists();   // a signing's query -> the peers left off its next list, and its poisoned lists (kanban #1074, #2011)
     this.rebuilt = new Map();    // an unsigned re-send transaction, by everything it is built from
     this.resendSaid = new Map(); // `${round}:${entry}` -> the last reason a re-send's invoice did not stand, as said (kanban #1044)
   }
@@ -555,10 +563,11 @@ export class WinningsSend {
     let kept = this.rowOf(roundIdBytes, String(p.entry), prev.attempt + 1);
     // A LOWER RE-SEND REPLACES A KEPT ONE NOTHING WAS SIGNED ON YET (kanban #1241): the peers meet on the lowest hash any seat offered
     // ...and never one this seat already gave a share on (kanban #1629): a swap after signing could strand a funded attempt
-    const signedOn = ['resend', 'auth'].some((k) => { const x = this.pairs.get(`${k}:${toHex(roundIdBytes)}:${String(p.entry)}:${prev.attempt + 1}`); return !!(x && x.list); });
+    const signedOn = ['resend', 'auth'].some((k) => { const pk = `${k}:${toHex(roundIdBytes)}:${String(p.entry)}:${prev.attempt + 1}`; const x = this.pairs.get(pk); return !!(x && x.list) || this.signedKeys.has(pk); });
     if (kept && kept.paymentHash !== String(p.paymentHash).toLowerCase() && kept.state === 'PLANNED' && typeof this.round.replaceSendPlan === 'function'
       && String(p.paymentHash).toLowerCase() < kept.paymentHash && !signedOn) {
       this.pairs.delete(`resend:${toHex(roundIdBytes)}:${String(p.entry)}:${prev.attempt + 1}`);
+      this.noncePool.drop(`resend:${toHex(roundIdBytes)}:${String(p.entry)}:${prev.attempt + 1}`);
       this.round.replaceSendPlan({ roundId: roundIdBytes, entryId: prev.entryId, attempt: prev.attempt + 1, invoice: p.invoice, paymentHash: p.paymentHash,
         invoiceMsat: stands.invoiceMsat, payoutMsat: out, gatewayUrl: p.gatewayUrl, gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration), donation: !!prev.donation,
         why: `re-send checked here: a lower attempt ${prev.attempt + 1} than the one kept (signed by seat ${String(from).slice(0, 16)})` });
@@ -577,7 +586,7 @@ export class WinningsSend {
   }
 
   /** ROUND ONE: this signer node's commitment for the message of `kind` it rebuilt. */
-  async commit(roundIdBytes, entryHex, built, kind = 'auth', attempt = null, { hash = null } = {}) {
+  async commit(roundIdBytes, entryHex, built, kind = 'auth', attempt = null, { hash = null, own = false } = {}) {
     const row = this.rowOf(roundIdBytes, entryHex, attempt);
     if (!row) return refuse('this signer node holds no send plan for that entry', 404);
     // A COMMITMENT ONLY TO THE PLAN THE ASKER SIGNS FOR - the settlement's own guard (settlement.js `commit`), here for a
@@ -590,16 +599,14 @@ export class WinningsSend {
     if (!message) return refuse('this signer node cannot rebuild that message');
     const key = `${kind}:${toHex(roundIdBytes)}:${entryHex}:${row.attempt}`;
     if (built.named) return this.#commitNamed(built, key, message);
-    let pair = this.pairs.get(key);
-    // A PAIR THAT SIGNED A LIST IS SPENT (kanban #1074, the settlement's #1070): the next commit draws a new one, so a list one seat never completed binds nobody
-    if (!pair || toHex(pair.message) !== toHex(message) || pair.list) {
-      const hiding = nonceGenerate340(this.random(32), built.signerNode.share);
-      const binding = nonceGenerate340(this.random(32), built.signerNode.share);
-      pair = { message, hiding, binding, list: null, share: null,
-        commitment: { id: built.signerNode.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) } };
-      this.pairs.set(key, pair);
-    }
-    return { ok: true, commitment: pair.commitment };
+    // A FRESH PAIR FOR EVERY ASK (kanban #2011, the forfeit's #1521): a list from outside spends only the pair its own commit drew; a pair that signed a
+    // list is spent (kanban #1074) and never signs another. A full pool refuses no commit (nonce-pool.js); `own` the pair of this seat's own signing.
+    const hiding = nonceGenerate340(this.random(32), built.signerNode.share);
+    const binding = nonceGenerate340(this.random(32), built.signerNode.share);
+    const commitment = { id: built.signerNode.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) };
+    const kept = this.noncePool.add(key, { message, hiding, binding, commitment }, { own });
+    if (!kept.ok) return refuse(kept.why, kept.status);
+    return { ok: true, commitment, message };
   }
 
   /** ROUND TWO: the share over the message this signer node rebuilt, for one commitment list, once. */
@@ -607,21 +614,29 @@ export class WinningsSend {
     const row = this.rowOf(roundIdBytes, entryHex, attempt);
     if (!row) return refuse('this signer node holds no send plan for that entry', 404);
     const message = await this.messageFor(kind, roundIdBytes, row, built);
-    const pair = this.pairs.get(`${kind}:${toHex(roundIdBytes)}:${entryHex}:${row.attempt}`);
-    if (!message || !pair || toHex(pair.message) !== toHex(message)) return refuse(`this signer node committed to no ${kind} of that send`);
-    if (built.named) return this.#shareNamed(built, pair, commitments, kind);
+    const pk = `${kind}:${toHex(roundIdBytes)}:${entryHex}:${row.attempt}`;
+    if (built.named) {
+      const pair = this.pairs.get(pk);
+      if (!message || !pair || toHex(pair.message) !== toHex(message)) return refuse(`this signer node committed to no ${kind} of that send`);
+      return this.#shareNamed(built, pair, commitments, kind);
+    }
+    if (!message || !this.noncePool.holds(pk)) return refuse(`this signer node committed to no ${kind} of that send`);
     // NO LIST LONGER THAN A COMMITTEE (kanban #1672, as at /settle-share): refused before any curve work
     { const why = commitmentListRefusal(commitments, { needed: built.needed, nodes: built.contract && built.contract.nodes }); if (why) return refuse(why); }
-    const own = commitments.find((c) => String(c.id) === String(pair.commitment.id));
-    if (!own || toHex(own.hiding) !== toHex(pair.commitment.hiding) || toHex(own.binding) !== toHex(pair.commitment.binding))
-      return refuse('that list does not carry this signer node\'s own commitment');
+    // THE PAIR THE LIST NAMES (kanban #2011): the one whose commitment the list carries, of those this seat handed out for these bytes
+    const own = commitments.find((c) => String(c.id) === String(built.signerNode.id));
+    const found = own ? this.noncePool.get(pk, own) : null;
+    const pair = found && toHex(found.message) === toHex(message) ? found : null;
+    if (!pair) return refuse('that list does not carry this signer node\'s own commitment');
     if (commitments.length < built.needed) return refuse(`${commitments.length} commitments, and this round's key signs at ${built.needed}`);
     const key = listKey(commitments);
-    if (pair.list && pair.list !== key) return refuse(`this signer node signed that ${kind} over another list, and keeps no second pair`);
+    if (pair.list && pair.list !== key) return refuse(`this signer node signed that ${kind} over another list, and keeps no second pair`, BOUND_ELSEWHERE);
     if (pair.share === null) {
-      pair.share = signShare340({ id: pair.commitment.id, share: built.signerNode.share, groupPublicKey: built.claimPk,
-        nonces: { hiding: pair.hiding, binding: pair.binding }, message, commitments, curve: this.curve });
-      pair.list = key;
+      // A SPENT PAIR KEEPS ITS LIST AND ITS SHARE, NEVER ITS NONCES (the forfeit's #1699)
+      NoncePool.spend(pair, key, signShare340({ id: pair.commitment.id, share: built.signerNode.share, groupPublicKey: built.claimPk,
+        nonces: { hiding: pair.hiding, binding: pair.binding }, message, commitments, curve: this.curve }));
+      this.signedKeys.add(pk);
+      if (this.signedKeys.size > 65536) this.signedKeys.delete(this.signedKeys.values().next().value);
     }
     return { ok: true, share: pair.share };
   }
@@ -634,10 +649,11 @@ export class WinningsSend {
     const entryHex = toHex(row.entryId);
     const q = `round=${toHex(roundIdBytes)}&entry=${entryHex}&kind=${kind}&attempt=${row.attempt}&hash=${row.paymentHash}${this.scopeParam}`;
     if (built.named) return this.#signNamed(roundIdBytes, row, built, kind, q);
+    this.lists.begin(q);
     for (;;) {
-      const own = await this.commit(roundIdBytes, entryHex, built, kind, row.attempt);
+      const own = await this.commit(roundIdBytes, entryHex, built, kind, row.attempt, { own: true });
       if (!own.ok) return own;
-      const message = this.pairs.get(`${kind}:${toHex(roundIdBytes)}:${entryHex}:${row.attempt}`).message;
+      const { message } = own;
       const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
         const r = await this.fetcher(`${base}/send-commit?${q}`, { method: 'POST', signal });
         return r.ok ? { commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] } : null;
@@ -645,10 +661,11 @@ export class WinningsSend {
       const signers = [{ base: null, commitment: own.commitment }];
       for (const { peer: base, value } of asked) if (value && value.commitment) signers.push({ base, commitment: value.commitment });
       if (signers.length < built.needed) return refuse(`${signers.length} of ${built.needed} signer nodes committed to the ${kind}`);
-      const listed = this.#listed(q, signers, built.needed);
+      const listed = this.lists.listed(q, signers, built.needed);
       const combined = await this.#gatherShares(roundIdBytes, entryHex, built, kind, row.attempt, q, message, listed);
-      if (combined.ok) { this.withheld.delete(q); return combined; }
-      if (!this.#leaveOut(q, combined, listed, built.needed)) return combined;
+      if (combined.ok) { this.lists.done(q); return combined; }
+      // A SEAT THAT GAVE NO SHARE IS LEFT OUT; A LIST POISONED BY A LISTED SEAT (423) TRIES THE LISTS THAT LEAVE OUT WHO READ IT (nonce-pool.js, kanban #2011)
+      if (!this.lists.again(q, combined, listed, built.needed, this.peersFor(roundIdBytes))) return combined;
     }
   }
 
@@ -741,25 +758,6 @@ export class WinningsSend {
     return { ok: true, signature };
   }
 
-  /** THE SEATS THAT SIGN THIS LIST (settlement.js #listed): those that committed, less any that gave this asker no share for it while enough others remain. */
-  #listed(key, signers, needed) {
-    const out = this.withheld.get(key);
-    if (!out) return signers;
-    const kept = signers.filter((s) => !out.has(s.base));
-    return kept.length >= needed ? kept : signers;
-  }
-
-  /** A LIST THAT FAILED AT A SEAT: true when that seat is now left out and enough others remain; it grows by a seat each time, so it ends. */
-  #leaveOut(key, failed, listed, needed) {
-    const out = this.withheld.get(key) || new Set();
-    const fresh = (failed.withheld || []).filter((base) => !out.has(base));
-    for (const base of fresh) out.add(base);
-    if (!fresh.length || listed.filter((s) => !out.has(s.base)).length < needed) { this.withheld.delete(key); return false; }
-    this.withheld.set(key, out);
-    if (this.withheld.size > 4096) this.withheld.delete(this.withheld.keys().next().value);
-    return true;
-  }
-
   /** ROUND TWO: every seat on the list gives its share, all at once within the bound; a refusal names in `withheld` the seats that gave none or whose share does not stand. */
   async #gatherShares(roundIdBytes, entryHex, built, kind, attempt, q, message, signers) {
     const commitments = signers.map((x) => x.commitment).sort((x, y) => x.id - y.id);
@@ -769,11 +767,12 @@ export class WinningsSend {
     const peers = signers.filter((x) => x.base !== null);
     const asked = await askPeers(peers.map((x) => x.base), async (base, signal) => {
       const r = await this.fetcher(`${base}/send-share?${q}`, { method: 'POST', body, signal });
-      if (!r.ok) return { why: (await r.text()).trim() };
+      if (!r.ok) return { status: r.status, why: (await r.text()).trim() };
       return { share: decodeShare(new Uint8Array(await r.arrayBuffer())) };
     }, { boundMs: this.peerAskMs });
-    const none = asked.filter((x) => !x.value || !('share' in x.value));
-    if (none.length) return { ...refuse(`${none[0].peer} gave no ${kind} share: ${none[0].value ? none[0].value.why : none[0].error.message}`), withheld: none.map((x) => x.peer) };
+    // A PAIR SPENT ON ANOTHER LIST (kanban #2011, the forfeit's #1699): `poisoned`, and the seat refusing is not at fault
+    const failed = sharesRefused(asked, `${kind} share`);
+    if (failed) return failed;
     const shares = [mine.share, ...asked.map((x) => x.value.share)];
     const { signature } = aggregate340({ commitments, message, groupPublicKey: built.claimPk, shares, curve: this.curve });
     if (schnorr.verify(signature, message, built.claimPk.subarray(1))) return { ok: true, signature };
