@@ -1363,6 +1363,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // ONE SWEEP AT A TIME (kanban #1552): a sweep still waiting on a slow seat is not joined by the next one, so stalled sweeps and
   // their open fetches never pile up
   let autoUpdating = false;
+  // A VERSION THE TRIAL REFUSED IS NOT TRIED AGAIN (kanban #1880, #1913): a peer seat listed one refused, developer-signed version
+  // up to PEER_LISTING_GAMES times and every line was fetched and trialed again - N x TRIAL_MS of this seat's thread per sweep,
+  // every sweep. Its game id is the hash of its manifest, which names its cores' hashes, and the trial runs only bytes checked
+  // against them - so the trial's verdict is the verdict on that id, kept here (per process, for TRIAL_REFUSED_MS; bounded). A
+  // refusal before the trial (a seat handing other bytes) or a `retry` (no verdict yet) is not kept: no seat can make this one
+  // refuse another seat's genuine copy.
+  const TRIAL_REFUSED_MS = 24 * 3600000, TRIAL_REFUSED_MAX = 4096;
+  const trialRefused = new Map();
+  const refusedByTrial = (id) => { const at = trialRefused.get(id); if (at === undefined) return false; if (Date.now() - at < TRIAL_REFUSED_MS) return true; trialRefused.delete(id); return false; };
   const autoUpdate = async () => {
     if (autoUpdating) return;
     autoUpdating = true;
@@ -1370,6 +1379,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const autoUpdateSweep = async () => {
     if (!owner || !pluginsDir) return;
+    // EACH VERSION ONCE PER SWEEP, AND ONE TRIAL PER HOSTED GAME PER SWEEP (kanban #1880, #1913): every source and every line
+    const seen = new Set(), trialedParent = new Set();
     // ALWAYS ON (2026-10-26, the owner on the Apps section's switch "Update apps automatically": "Should always be enabled")
     const set = owner.storeSettings();
     // NAMED SOURCES, ELSE THE NETWORK'S OWN SEATS (found by this seat, not typed in)
@@ -1382,9 +1393,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const tried = new Set();
       for (const g of listedGames(got)) {
         if (typeof g?.id !== 'string' || hosted.has(g.id)) continue;
+        const gid = g.id.toLowerCase();
+        if (seen.has(gid) || refusedByTrial(gid)) continue;   // kanban #1880, #1913
         let m; try { m = decodeManifest(fromHex(String(g?.manifest || ''))); } catch { continue; }
         const parent = toHex(m.parentManifestId);
-        if (!hosted.has(parent) || superseded.has(parent) || tried.has(parent)) continue;
+        if (!hosted.has(parent) || superseded.has(parent) || tried.has(parent) || trialedParent.has(parent)) continue;
         let id; try { id = toHex(gameIdOf(m)); } catch { continue; }
         // the game asked for is the manifest's own id (kanban #1553) - a listing naming another id beside it is not asked at all (#1552)
         if (id !== g.id || hosted.has(id)) continue;
@@ -1393,6 +1406,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!u.ok) continue;
         tried.add(parent);
         const r = await takeGame({ game: id, from, replaces: parent });
+        // a version that reached the trial (taken or refused by it) is done for this sweep, and so is its parent's one trial;
+        // one a seat did not hand over, or handed other bytes for, may still come whole from the next source (kanban #1880, #1913)
+        if (r.ok || r.trial || r.retry) { seen.add(id); trialedParent.add(parent); }
+        if (r.trial) { if (trialRefused.size >= TRIAL_REFUSED_MAX) trialRefused.delete(trialRefused.keys().next().value); trialRefused.set(id, Date.now()); }
         console.log(`[plugins] automatic update of ${parent.slice(0, 16)} from ${from}: ${r.ok ? 'taken' : r.why}`);
         if (!r.ok && r.status === 502) break;
       }
