@@ -9,7 +9,7 @@
 // 256 MB of kept arrays, accepted). Now it runs exactly as the seat would run it once installed: core-sandbox.js loadCore from
 // the package's bytes (its own worker thread, heap limits, the 64 MB array budget, the RSS backstop, no Date or Math.random),
 // and the whole trial - load and every call - has ONE deadline, TRIAL_MS, inside a core ask's ASK_MS. The thread is ended after.
-import { loadCore, ASK_MS, ARRAY_BUDGET } from './core-sandbox.js';
+import { loadCore, ASK_MS, ARRAY_BUDGET, SINGLE_ENTRY } from './core-sandbox.js';
 import { RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 
 const VERDICTS = new Set(['WIN', 'DRAW', 'LOSS']);
@@ -17,12 +17,14 @@ const VERDICTS = new Set(['WIN', 'DRAW', 'LOSS']);
 export const TRIAL_MS = ASK_MS - 500;
 const MAX_CASES = 2000;
 
-export function trialRun(source, manifest, { ms = TRIAL_MS } = {}) {
+export function trialRun(source, manifest, { ms = TRIAL_MS, name = 'plugin trial' } = {}) {
   if (manifest.resultType !== RESULT_TYPE.HEAD_TO_HEAD) return { ok: true, cases: 0, why: 'no decide adapter to run (not a head-to-head game)' };
   const until = Date.now() + ms;
   const left = () => until - Date.now();
   let box;
-  try { box = loadCore({ files: new Map([['core.mjs', String(source)]]), entry: 'core.mjs' }, { name: 'plugin trial', loadMs: ms, askMs: ms, liveCap: ARRAY_BUDGET }); }   // kanban #1538: kept arrays refused at the budget
+  // kanban #1694: the same entry name and core name the seat loads it under (core-sandbox.js coreFiles), so the core cannot
+  // tell the trial from the seat by its module's identifier
+  try { box = loadCore({ files: new Map([[SINGLE_ENTRY, String(source)]]), entry: SINGLE_ENTRY }, { name, loadMs: ms, askMs: ms, liveCap: ARRAY_BUDGET }); }   // kanban #1538: kept arrays refused at the budget
   catch (e) { return { ok: false, cases: 0, why: `it does not load in the sandbox: ${e.message}` }; }
   try { return trialCases(box, manifest, left); } finally { box.end(); }
 }
