@@ -19,7 +19,7 @@ import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync } from 'node:fs';
-import { join as pathJoin } from 'node:path';
+import { join as pathJoin, dirname, basename } from 'node:path';
 import { PLAYER_GRANTS } from '../src/faucet.js';
 const PLAYER_WELCOME_SATS = PLAYER_GRANTS.welcome.invoiceSats;
 import { refillDecide, feedbackDecide, faucetDecide, playerGrantDecide, playerGrantTotals, ipKey, opponentWant, opponentWants, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
@@ -267,6 +267,12 @@ function takeEcash(federation, msat) {
   }
   return null;
 }
+// THE START SCAN (kanban #1835): a faucet killed between the take and the book write left the same stranded note. At start, a note in taken/ that no
+// book row names as its noteFile goes back to its shelf - only when the book file is there and reads (a lost book must not put given notes back)
+if (ECASH_POOL) { try { const b = JSON.parse(readFileSync(env.FAUCET_BOOK, 'utf8')); const named = new Set((b.players || []).map((x) => x.noteFile).filter(Boolean));
+  for (const fed of readdirSync(ECASH_POOL)) { const t = pathJoin(ECASH_POOL, fed, 'taken'); let fs = []; try { fs = readdirSync(t); } catch { continue; }
+    for (const f of fs) if (f.endsWith('.json') && !named.has(pathJoin(t, f))) { try { renameSync(pathJoin(t, f), pathJoin(ECASH_POOL, fed, f)); console.log(`${new Date().toISOString()} e-cash note ${f} back on the shelf: no welcome booked it`); } catch { /* next start */ } } }
+} catch { /* no book yet, or it does not read: nothing is put back */ } }
 function grantEcash(ask) {
   const book = readBook();
   book.players = book.players || [];
@@ -286,7 +292,9 @@ function grantEcash(ask) {
   if (!got) return null;
   const hash = createHash('sha256').update(got.ecash).digest('hex');
   book.players.push({ account: ask.account, kind: ask.kind, ip: ask.ip, sats: d.grant.invoiceSats, atMs: Date.now(), hash, ecash: true, noteFile: got.file });
-  saveBook(book);
+  // A NOTE LEAVES THE SHELF ONLY FOR A BOOKED WELCOME (state audit 2026-11-12, kanban #1835): a book write that failed (a full disk) left the note in
+  // taken/ with no row - nothing handed it out or put it back, and each retry took the next one. It goes back to the shelf before the 500
+  try { saveBook(book); } catch (e) { try { renameSync(got.file, pathJoin(dirname(dirname(got.file)), basename(got.file))); } catch { /* the start scan puts it back */ } throw e; }
   console.log(`${new Date().toISOString()} player ${ask.kind} ${d.grant.invoiceSats} sat as e-cash (${ask.ip || 'no ip'}): ${hash.slice(0, 16)}`);
   return { ok: true, sats: d.grant.sats, ecash: got.ecash };
 }
