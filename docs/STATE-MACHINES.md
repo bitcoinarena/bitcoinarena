@@ -586,7 +586,7 @@ Invariants: one owner; every POST door under /owner/ except claim calls `owner.a
 ##### SM-C9 Operator tokens (operator-tokens.js)
 Files: `operator-tokens.js` 33-79; first() called at start `server.js` 945 (1.9 869); door `server.js` 7266-7300.
 States: list of {id, hash, scopes}; [] -> (start) pairing token minted -> minted/revoked by owner signature (7612-7621).
-Invariant intended: a token exists only if the owner minted it or at first start. Conflated: an empty list after revoke-all reads as "first start" (71) (FED-C7).
+Invariant intended: a token exists only if the owner minted it or at first start. Conflated: an empty list after revoke-all reads as "first start" (71) (FED-C7). Fixed by kanban #2548: the file keeps `paired`, see section 15.
 Persisted: token file (store.write), pairing file 0600 + log line.
 
 ##### SM-C10 Own advertisement (advert-self.js)
@@ -1767,3 +1767,6 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 - The drain made POST /refused-lock read the round as refused (`unenteredReturnOfRound` -> `offerRefusalOfRound` without `held`) while POST /lock and POST /fee-lock still took a held entry's locks (#1848). A lock handed to the return door first - by anyone, every field is public - while the page's hand-over was in flight was kept as refused, and `returnedHere` (#1639) then refused it at /lock and at every repair: one seat staked the entry, the other never could.
 - Invariant: while a round is refused here only for new entries (`offerRefusalOfRound(rid)` set, `offerRefusalOfRound(rid, { held: true })` null) POST /refused-lock refuses (409) a lock that an entry held here names as its stake or fee lock outpoint (`firstEntryNamingLock`) and that the lock doors would still take for that entry (`lockAfterCloseRefusal` and `orderLockAfterClose` null). Such a lock is either taken at /lock (settled with the round) or, once the lock doors close, kept for its return - never kept as refused at one seat and staked at another.
 - Measured (test/wf1489-sm2-entry-6.test.js): seat a takes the lock (201) during the drain, the return door at seat b answers 409, seat b's /lock then takes it (201): both seats stake the entry.
+#### SM-C9 (change) Operator tokens: a revoke of every token survives a restart (kanban #2548, #1489 sm2-node-13)
+- The token file (`<db>.operator-tokens.json`) is `{ tokens, paired }`; `paired` turns true with the first token minted and never goes back. An older file (a bare list) is read as before, a list holding a token as paired.
+- Invariant: a token exists only because the owner minted it (a signed `operator-mint`) or because the node never had one (`first()` at the first start). After the owner revoked every token, a restart (update, reboot, the owner's restart button) mints nothing, logs no pairing URI and writes no `<db>.operator-pairing`; a new token is the owner's signed mint. Closes FED-C7.
