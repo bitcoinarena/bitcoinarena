@@ -120,6 +120,14 @@ export const TRANSCRIPT_BATCH_MAX_BYTES = 65535;
 
 /** Foreign receipts kept (kanban #1274): at most this many, none older than a day. */
 export const FOREIGN_RECEIPTS_KEPT = 4096;
+// WHAT ONE PEER'S /evidence-blocks ANSWERS CAN ADD HERE, PER ENTRY (kanban #1883, #1914, #1489; notePulledEvidenceBlock):
+// blocks per mark this seat holds itself (one per seat's tip a record was made at is the honest case), and records of
+// marks only the peer named.
+export const PULLED_BLOCKS_PER_MARK = 16;
+export const PULLED_UNKNOWN_PER_PEER = 128;
+// AND WHAT ONE PEER'S PAIRS CAN ADD HERE, PER ENTRY (kanban #2060, #1548, #1738, #1883, #1914, #1489; putForkPair and
+// putFirstMarkPair with `peer`): new fork pairs, and new first-mark pairs, at most this many each. One pair is the proof.
+export const PULLED_PAIRS_PER_PEER = 16;
 export const FOREIGN_RECEIPTS_MAX_AGE_MS = 24 * 3600000;
 
 // REFUSED LOCKS RANKED (kanban #1881): largest amount first, ties to the lower outpoint - the same order at every seat for the same locks
@@ -1705,20 +1713,42 @@ export class Round {
       .get(entryIdBytes, a, b, b, a);
   }
 
-  putForkPair({ a, b, receipted = false }) {
+  putForkPair({ a, b, receipted = false, peer = null }) {
     let ca, cb;
     try { ca = this.playerSigned(a); cb = this.playerSigned(b); } catch { return false; }
     if (same(a, b) || !same(ca.entryId, cb.entryId) || !same(ca.roundId, cb.roundId)) return false;
     if (ca.tick !== cb.tick && !same(ca.previousHash, cb.previousHash)) return false;
     const [x, y] = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? [a, b] : [b, a];
+    // A PAIR PULLED FROM A PEER (`peer`, its address) IS KEPT WITHIN A BOUND PER PEER, AND ITS MARKS' RECORDS AS PULLED (kanban
+    // #2060, #1548, #1738, #1883, #1914, #1489): before, every valid pair in a peer's /equivocation answer became a fork_pairs
+    // row and two evidence_blocks rows as this seat's OWN records (served on, outside #1883's per-peer bound) - one committee
+    // seat that holds a player's session key grew the entry's records at every honest seat without bound on every close
+    // retry (300 pairs a pull: 900 fork_pairs and 1800 own evidence rows after three). A pair already held is merged.
+    const held = this.db.prepare('SELECT 1 FROM fork_pairs WHERE entry_id = ? AND mark_a = ? AND mark_b = ?').get(ca.entryId, x, y);
+    if (peer !== null && !held && !this.#pulledPairRoom('fork_pairs', ca.entryId, peer)) return false;
     // `receipted`: both marks were receipted by a seat - this seat's own chain and a peer's (GET /checkpoints). Kept as the
-    // stronger of what any source said, so a pair first pulled unreceipted and then found in two chains counts.
-    this.db.prepare('INSERT INTO fork_pairs (round_id, entry_id, mark_a, mark_b, seen_ms, receipted) VALUES (?, ?, ?, ?, ?, ?) '
-      + 'ON CONFLICT (entry_id, mark_a, mark_b) DO UPDATE SET receipted = MAX(receipted, excluded.receipted)')
-      .run(ca.roundId, ca.entryId, x, y, this.now(), receipted ? 1 : 0);
-    this.noteEvidenceBlock(ca.roundId, ca.entryId, checkpointId(ca));
-    this.noteEvidenceBlock(cb.roundId, cb.entryId, checkpointId(cb));
+    // stronger of what any source said, so a pair first pulled unreceipted and then found in two chains counts. A pair
+    // kept on this seat's own record stays its own.
+    this.db.prepare('INSERT INTO fork_pairs (round_id, entry_id, mark_a, mark_b, seen_ms, receipted, pulled_from) VALUES (?, ?, ?, ?, ?, ?, ?) '
+      + 'ON CONFLICT (entry_id, mark_a, mark_b) DO UPDATE SET receipted = MAX(receipted, excluded.receipted)'
+      + (peer === null ? ', pulled_from = NULL' : ''))
+      .run(ca.roundId, ca.entryId, x, y, this.now(), receipted ? 1 : 0, peer === null ? null : String(peer));
+    this.#notePairEvidence(ca, peer);
+    this.#notePairEvidence(cb, peer);
     return true;
+  }
+
+  /** Room for one more new pair from `peer` in `table` for this entry (PULLED_PAIRS_PER_PEER; kanban #2060). */
+  #pulledPairRoom(table, entryIdBytes, peer) {
+    return this.db.prepare(`SELECT COUNT(*) n FROM ${table} WHERE entry_id = ? AND pulled_from = ?`).get(entryIdBytes, String(peer)).n
+      < PULLED_PAIRS_PER_PEER;
+  }
+
+  /** A kept pair's mark as evidence: this seat's own record, or (`peer`) a pulled one, within that peer's bound (kanban #2060). */
+  #notePairEvidence(c, peer) {
+    if (peer === null) return this.noteEvidenceBlock(c.roundId, c.entryId, checkpointId(c));
+    const tip = this.tipOf(c.roundId);
+    this.notePulledEvidenceBlock(c.entryId, checkpointId(c), tip && tip.length === 32 ? tip : new Uint8Array(32), undefined, peer);
   }
 
   /**
@@ -1764,17 +1794,24 @@ export class Round {
    * the same mark - the pair provesEquivocation checks. Anything else is not
    * kept. Answers whether the pair is held here now.
    */
-  putFirstMarkPair({ a, b }) {
+  putFirstMarkPair({ a, b, peer = null }) {
     let ca;
     let cb;
     try { ca = this.playerSigned(a); cb = this.playerSigned(b); } catch { return false; }
     if (same(a, b) || !same(ca.entryId, cb.entryId) || !same(ca.roundId, cb.roundId)) return false;
     if (!same(ca.previousHash, NO_PREVIOUS) || !same(cb.previousHash, NO_PREVIOUS)) return false;
     const [x, y] = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? [a, b] : [b, a];
-    this.db.prepare('INSERT OR IGNORE INTO first_mark_pairs (round_id, entry_id, first_a, first_b, seen_ms) VALUES (?, ?, ?, ?, ?)')
-      .run(ca.roundId, ca.entryId, x, y, this.now());
-    this.noteEvidenceBlock(ca.roundId, ca.entryId, checkpointId(ca));
-    this.noteEvidenceBlock(cb.roundId, cb.entryId, checkpointId(cb));
+    // A PAIR PULLED FROM A PEER (`peer`): within that peer's bound, its marks' records as pulled (kanban #2060, as putForkPair)
+    const held = this.db.prepare('SELECT 1 FROM first_mark_pairs WHERE entry_id = ? AND first_a = ? AND first_b = ?').get(ca.entryId, x, y);
+    if (peer !== null && !held && !this.#pulledPairRoom('first_mark_pairs', ca.entryId, peer)) return false;
+    if (held) {
+      if (peer === null) this.db.prepare('UPDATE first_mark_pairs SET pulled_from = NULL WHERE entry_id = ? AND first_a = ? AND first_b = ?').run(ca.entryId, x, y);
+    } else {
+      this.db.prepare('INSERT OR IGNORE INTO first_mark_pairs (round_id, entry_id, first_a, first_b, seen_ms, pulled_from) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(ca.roundId, ca.entryId, x, y, this.now(), peer === null ? null : String(peer));
+    }
+    this.#notePairEvidence(ca, peer);
+    this.#notePairEvidence(cb, peer);
     return true;
   }
 
@@ -2647,7 +2684,22 @@ export class Round {
   putStartForfeit({ entryId, roundId, markTick, lastTick, mark, why }) {
     this.db.prepare('INSERT OR IGNORE INTO start_forfeits (entry_id, round_id, mark_tick, last_tick, mark, why, decided_ms) '
       + 'VALUES (?, ?, ?, ?, ?, ?, ?)').run(entryId, roundId, markTick, lastTick, mark, why, this.now());
-    this.noteEvidenceBlock(roundId, entryId, mark);
+    // ONE EVIDENCE RECORD FOR THE KEPT LATE START, NOT ONE PER LATE FIRST MARK SENT (kanban #1883, #1914, #1738, #1489): the
+    // table keeps one late first mark per entry, so only that mark is evidence here - as #1738 made of putRefusedFirstMark.
+    // Before, every distinct late first mark the player sent (POST /first-mark, the /play socket, after the door FORFEIT
+    // too) wrote one more evidence_blocks row at every seat, without bound. The kept mark sent again is still recorded.
+    this.#noteKeptEvidence(roundId, entryId, mark, 'SELECT mark FROM start_forfeits WHERE entry_id = ?');
+  }
+
+  /** Record `mark` as evidence only when it is the mark `heldSql` (one row per entry, column `mark`) keeps for the entry. */
+  #noteKeptEvidence(roundId, entryId, mark, heldSql) {
+    const idOf = (m) => (m && m.length === 32 ? m : checkpointId(decodeCheckpoint(splitSigned(new Uint8Array(m)).body)));
+    let isHeld = false;
+    try {
+      const held = this.db.prepare(heldSql).get(entryId);
+      isHeld = !!held && !!held.mark && same(idOf(held.mark), idOf(mark));
+    } catch { isHeld = false; }
+    if (isHeld) this.noteEvidenceBlock(roundId, entryId, mark);
   }
 
   startForfeit(entryIdBytes) {
@@ -2949,14 +3001,58 @@ export class Round {
     if (!id) return;
     // A PULLED RECORD KEEPS WHEN ITS PEER MADE IT (`seenMs`); a record held twice keeps the earlier time.
     const at = Number.isSafeInteger(seenMs) ? seenMs : this.now();
+    // This seat's own record (pulled_from NULL), also where a peer's record of the same block was kept before.
     this.db.prepare('INSERT INTO evidence_blocks (entry_id, mark_id, block_hash, seen_ms) VALUES (?, ?, ?, ?) '
-      + 'ON CONFLICT (entry_id, mark_id, block_hash) DO UPDATE SET seen_ms = MIN(COALESCE(seen_ms, excluded.seen_ms), excluded.seen_ms)')
+      + 'ON CONFLICT (entry_id, mark_id, block_hash) DO UPDATE SET seen_ms = MIN(COALESCE(seen_ms, excluded.seen_ms), excluded.seen_ms), pulled_from = NULL')
       .run(entryIdBytes, id, block, at);
   }
 
-  /** Every evidence record this node holds for an entry's marks: [{ markId, block }]. */
-  evidenceBlocks(entryIdBytes) {
-    return this.db.prepare('SELECT mark_id, block_hash, seen_ms FROM evidence_blocks WHERE entry_id = ?').all(entryIdBytes)
+  /**
+   * A PEER'S RECORD OF A MARK, PULLED AT A CLOSE (#pullEvidenceBlocks), KEPT WITHIN A BOUND PER PEER (kanban #1883, #1914,
+   * #1548, #1738, #1489). A peer's GET /evidence-blocks answer is unsigned and names any ids: before, every { mark, block }
+   * in it became a row here, so one committee seat answering made-up ids on every close retry and at the re-run window grew
+   * any entry's evidence_blocks at every honest seat without bound (5000 ids a pull, 15000 rows after three), and the honest
+   * seats served them on to each other. Now, per peer and entry: for a mark this seat holds a record of itself, at most
+   * PULLED_BLOCKS_PER_MARK blocks; for any other mark (one a peer holds that this seat may pull as a pair next), at most
+   * PULLED_UNKNOWN_PER_PEER rows in all. A record already here (same mark and block) is always merged - it adds no row.
+   * The bound is per peer, so a lying seat fills only its own share and never an honest peer's. `peer` is its address.
+   * Answers whether the record is kept.
+   */
+  notePulledEvidenceBlock(entryIdBytes, markId, blockHash, seenMs, peer) {
+    if (!markId || markId.length !== 32 || !blockHash || blockHash.length !== 32) return false;
+    const from = String(peer || '?');
+    const at = Number.isSafeInteger(seenMs) ? seenMs : this.now();
+    const merge = this.db.prepare('UPDATE evidence_blocks SET seen_ms = MIN(COALESCE(seen_ms, ?), ?) '
+      + 'WHERE entry_id = ? AND mark_id = ? AND block_hash = ?').run(at, at, entryIdBytes, markId, blockHash);
+    if (merge.changes > 0) return true;
+    const own = !!this.db.prepare('SELECT 1 FROM evidence_blocks WHERE entry_id = ? AND mark_id = ? AND pulled_from IS NULL LIMIT 1')
+      .get(entryIdBytes, markId);
+    if (own) {
+      const n = this.db.prepare('SELECT COUNT(*) n FROM evidence_blocks WHERE entry_id = ? AND mark_id = ? AND pulled_from = ?')
+        .get(entryIdBytes, markId, from).n;
+      if (n >= PULLED_BLOCKS_PER_MARK) return false;
+    } else {
+      const n = this.db.prepare('SELECT COUNT(*) n FROM evidence_blocks e WHERE e.entry_id = ? AND e.pulled_from = ? AND NOT EXISTS '
+        + '(SELECT 1 FROM evidence_blocks o WHERE o.entry_id = e.entry_id AND o.mark_id = e.mark_id AND o.pulled_from IS NULL)')
+        .get(entryIdBytes, from).n;
+      if (n >= PULLED_UNKNOWN_PER_PEER) return false;
+    }
+    this.db.prepare('INSERT OR IGNORE INTO evidence_blocks (entry_id, mark_id, block_hash, seen_ms, pulled_from) VALUES (?, ?, ?, ?, ?)')
+      .run(entryIdBytes, markId, blockHash, at, from);
+    return true;
+  }
+
+  /**
+   * Every evidence record this node holds for an entry's marks: [{ markId, block }]. `served` (GET /evidence-blocks): only
+   * the records of marks this seat holds a record of itself - its own and the blocks peers named for them - never a pulled
+   * record of a mark only a peer named, so a peer's made-up ids are not handed on from seat to seat (kanban #1883, #1914).
+   */
+  evidenceBlocks(entryIdBytes, { served = false } = {}) {
+    const sql = served
+      ? 'SELECT mark_id, block_hash, seen_ms FROM evidence_blocks e WHERE e.entry_id = ? AND EXISTS '
+        + '(SELECT 1 FROM evidence_blocks o WHERE o.entry_id = e.entry_id AND o.mark_id = e.mark_id AND o.pulled_from IS NULL)'
+      : 'SELECT mark_id, block_hash, seen_ms FROM evidence_blocks WHERE entry_id = ?';
+    return this.db.prepare(sql).all(entryIdBytes)
       .map((r) => ({ markId: new Uint8Array(r.mark_id), block: new Uint8Array(r.block_hash), seenMs: r.seen_ms }));
   }
 
@@ -2998,7 +3094,9 @@ export class Round {
   putEntryVoid({ entryId, roundId, firstMark, evidenceKind, evidence = null, why, learned = 'own' }) {
     this.db.prepare('INSERT OR IGNORE INTO entry_voids (entry_id, round_id, first_mark, evidence_kind, evidence, why, decided_ms, learned) '
       + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(entryId, roundId, firstMark, evidenceKind, evidence, why, this.now(), learned);
-    this.noteEvidenceBlock(roundId, entryId, firstMark);
+    // The Void's first mark as kept (the first record stands): a later Void naming another first mark adds no evidence
+    // row (kanban #1883, #1914 - the same bound as putStartForfeit's).
+    this.#noteKeptEvidence(roundId, entryId, firstMark, 'SELECT first_mark AS mark FROM entry_voids WHERE entry_id = ?');
   }
 
   entryVoid(entryIdBytes) {
@@ -3036,7 +3134,18 @@ export class Round {
     if (!c || this.firstMarkHeld(c.roundId, c.entryId)) return false;
     const kept = this.db.prepare('INSERT OR IGNORE INTO refused_first_marks (entry_id, round_id, mark, why, at_ms) VALUES (?, ?, ?, ?, ?)')
       .run(c.entryId, c.roundId, bytes, String(why || 'refused').slice(0, 300), this.now()).changes > 0;
-    this.noteEvidenceBlock(c.roundId, c.entryId, checkpointId(c));
+    // ONE EVIDENCE RECORD PER KEPT REFUSAL, NOT ONE PER MARK OFFERED (kanban #1738, #1548, #1489): the table keeps one
+    // refused first mark per entry, so only that mark is evidence here. A different on-time first mark refused after it
+    // is not kept and writes no evidence_blocks row either - as keepOffered refuses without a row once its cap is full.
+    // Before, every distinct signed first mark the player sent (POST /first-mark, the /play socket) wrote one more row
+    // for that entry at every seat, without bound. The kept mark offered again is still recorded (under the tip now).
+    const id = checkpointId(c);
+    let isHeld = kept;
+    if (!kept) {
+      const held = this.db.prepare('SELECT mark FROM refused_first_marks WHERE entry_id = ?').get(c.entryId);
+      try { isHeld = !!held && same(checkpointId(decodeCheckpoint(splitSigned(new Uint8Array(held.mark)).body)), id); } catch { isHeld = false; }
+    }
+    if (isHeld) this.noteEvidenceBlock(c.roundId, c.entryId, id);
     return kept;
   }
 
