@@ -80,10 +80,13 @@ test('wf1489-v1-refute-4-s1-1: a Correction is said only on a result two seats s
 
 test('wf1489-v1-refute-4-s1-1: honest seats agreeing give the signed result, the match record kept; a one-seat list needs that seat only', async () => {
   const withMatch = { ...honest, match: { identities: ['x', 'y'], score: [1, 0], played: 1, players: {}, seat: 1, signature: 'ab' } };
-  const got = await makeGame({ a: withMatch, b: honest, c: { players: [] } }).result(RID);
+  // kanban #2057: two seats give the record; a record one seat alone gives is not shown (wf1489-v1-refute-4-s3-1)
+  const got = await makeGame({ a: withMatch, b: withMatch, c: { players: [] } }).result(RID);
   const mine = got.entries.find((e) => e.entry === ME);
   assert.equal(mine.outcome, 'DELIVERED'); assert.equal(mine.score, 2); assert.equal(mine.signedBy, 5); assert.ok(!mine.provisional);
   assert.deepEqual(got.match.identities, ['x', 'y']);
+  assert.equal((await makeGame({ a: withMatch, b: honest, c: { players: [] } }).result(RID)).match, null, 'one seat alone gives no match record');
+  assert.deepEqual((await makeGame({ a: withMatch }).result(RID)).match.identities, ['x', 'y'], 'a one-seat list: that seat');
   const one = (await makeGame({ a: honest }).result(RID)).entries.find((e) => e.entry === ME);
   assert.equal(one.score, 2); assert.ok(!one.provisional);
 });
