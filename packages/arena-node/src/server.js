@@ -1062,6 +1062,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const hostedParent = (id) => { const g = hosted.get(toHex(id)); return g ? g.manifest : null; };
   const installedInfo = (id) => { const g = hosted.get(id); return g ? { gameId: id, devKey: toHex(g.manifest.gameDevPubkey), version: g.manifest.version, parent: toHex(g.manifest.parentManifestId) } : null; };
+  // A NETWORK ROW IS AN UPDATE OF A HOSTED GAME only when checkUpdate takes it against that game (kanban #1902): its parent is
+  // hosted here, it is not, and the same developer signed a newer version - a stranger naming a hosted game as parent is not one
+  const updateOfHosted = (g) => (g && !hosted.has(g.id) && hosted.has(g.parent)
+    && checkUpdate(installedInfo(g.parent), { devKey: String(g.devKey), parent: g.parent, version: g.version }).ok ? g.parent : null);
   // ANOTHER SEAT'S ANSWER, READ UP TO A BOUND (kanban #1540): a seat in the census or the peers list could answer GET /games,
   // /plugin or /network with hundreds of MB, and `await r.json()` held all of it and its parsed objects at once (measured: one
   // 120 MB /games listing grew the reading seat's heap 218 MB and held its event loop 3.6 s). The body is read chunk by chunk
@@ -1269,9 +1273,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
     }));
     // titled as hosted here (this version, else the version it updates), else by its manifest's signed gameName
-    const trustedTitle = (g) => { const h = hosted.get(g.id) || hosted.get(g.parent); return String((h && h.title) || g.name).slice(0, 80); };
+    // ONLY A REAL UPDATE TAKES ITS PARENT'S TITLE (kanban #1902, after #1716/#1541): any developer can sign a manifest naming a game
+    // this seat hosts as parent, so the parent's title (and updateOf) go to a row only when checkUpdate - the rule an update is
+    // installed by - takes it: the same developer key, that parent, a newer version. Otherwise the row keeps its signed gameName.
+    const trustedTitle = (g) => { const h = hosted.get(g.id) || (updateOfHosted(g) ? hosted.get(g.parent) : null); return String((h && h.title) || g.name).slice(0, 80); };
     const games = [...byId.values()].map((g) => ({ ...g, title: trustedTitle(g), hostedHere: hosted.has(g.id),
-      updateOf: hosted.has(g.parent) && !hosted.has(g.id) ? g.parent : null })).sort((a, b) => a.title.localeCompare(b.title) || a.version - b.version);
+      updateOf: updateOfHosted(g) })).sort((a, b) => a.title.localeCompare(b.title) || a.version - b.version);
     Object.assign(networkApps, { atMs: Date.now(), seats: asked.sort((a, b) => a.seat.localeCompare(b.seat)), games });
     return networkApps;
   };
@@ -7953,7 +7960,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const ng = await networkAppsNow({ fresh: url.searchParams.get('fresh') === '1' });
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         // hosted here or not as of this ask: a game installed since the last read is not offered again
-        const games = ng.games.map((g) => ({ ...g, hostedHere: hosted.has(g.id), updateOf: hosted.has(g.parent) && !hosted.has(g.id) ? g.parent : null }));
+        const games = ng.games.map((g) => ({ ...g, hostedHere: hosted.has(g.id), updateOf: updateOfHosted(g) }));
         return res.end(JSON.stringify({ node: toHex(round.pubkey), atMs: ng.atMs, seats: ng.seats, games }));
       }
       if (req.method === 'GET' && url.pathname === '/games') {
