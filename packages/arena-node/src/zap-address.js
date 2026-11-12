@@ -31,6 +31,11 @@ const toHexB = (b) => Buffer.from(b).toString('hex');
 export const ZAP_PENDING_MAX = 1000;
 export const ZAP_PENDING_PER_PAYER = 10;
 export const ZAP_REFUSED_KEPT = 200;
+// PLAIN TIPS TOO (kanban #1754): the callback without `nostr` needs no key and no signature, and each call was one more LND invoice
+// (one `lncli addinvoice` child in tools/zap-address.mjs) with no bound at all. Open tip invoices (until their expiry) are capped
+// like open zaps, and so are the tip invoices being made at once.
+export const ZAP_TIPS_OPEN_MAX = ZAP_PENDING_MAX;
+export const ZAP_TIPS_MINTING_MAX = 16;
 
 /** What a plain (not zap) tip's invoice is hashed over (LUD-06: raw JSON, text/plain first, the address as text/identifier). */
 export const addressMetadata = (name, host) => JSON.stringify([['text/plain', `Zap ${name}@${host}`], ['text/identifier', `${name}@${host}`]]);
@@ -54,6 +59,9 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   const receipts = [];
   const refused = [];
   const minting = new Set();          // zap request ids whose invoice is being made right now (kanban #1514)
+  const tips = new Map();             // paymentHash -> until, each plain tip invoice still open (kanban #1754)
+  let tipsMinting = 0;                // plain tip invoices being made right now (kanban #1754)
+  const pruneTips = (nowS) => { for (const [h, until] of tips) if (until < nowS) tips.delete(h); };
   const requestOf = (p) => { try { return JSON.parse(p.description); } catch { return {}; } };
   if (statePath && existsSync(statePath)) {
     try { for (const p of JSON.parse(readFileSync(statePath, 'utf8')).pending || []) pending.set(p.paymentHash, p); } catch { /* a bad file starts empty */ }
@@ -144,12 +152,16 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
       } else {
         const comment = u.searchParams.get('comment');
         if (comment && comment.length > ZAP_COMMENT_MAX) return refuse(`a comment is at most ${ZAP_COMMENT_MAX} characters`);
+        pruneTips(Math.floor(Date.now() / 1000));
+        if (tipsMinting >= ZAP_TIPS_MINTING_MAX) return refuse('too many tips are being invoiced right now; ask again');
+        if (tips.size + tipsMinting >= ZAP_TIPS_OPEN_MAX) return refuse('too many tips are open here; try again later');
       }
       let made;
-      if (zap) minting.add(zap.request.id);
+      if (zap) minting.add(zap.request.id); else tipsMinting++;
       try { made = await invoice({ name, amountMsat, descriptionHash: hex(sha256hex(zap ? description : metadata)), expiryS }); }
       catch (e) { return refuse(`no invoice was made: ${String(e.message).slice(0, 160)}`); }
-      finally { if (zap) minting.delete(zap.request.id); }
+      finally { if (zap) minting.delete(zap.request.id); else tipsMinting--; }
+      if (!zap) tips.set(String(made.paymentHash), Math.floor(Date.now() / 1000) + expiryS);
       if (zap) {
         pending.set(made.paymentHash, { paymentHash: made.paymentHash, name, description, relays: zap.relays, invoice: made.request,
           amountMsat: String(amountMsat), until: Math.floor(Date.now() / 1000) + expiryS });
