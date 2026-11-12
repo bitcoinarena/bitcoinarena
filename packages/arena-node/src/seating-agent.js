@@ -158,6 +158,17 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (!check || check.refused) return { ok: false, why: `this node cannot draw that round yet${check ? `: ${check.refused}` : ''}` };
     const v = verifySeating(bytes, check);
     if (!v.ok) return v;
+    // KEPT ONLY IN ITS CANONICAL FORM (kanban #1711): verifySeating checks the seated members' signatures and nothing else, so a
+    // stranger who read them off GET /seating-batch could pad a standing certificate with 65,000 junk (nodePubkey, signature)
+    // pairs (6.2 MB), post it first, and every seat kept and served those bytes - the honest certificate after it then differed
+    // and was refused as "one seating twice". The seat keeps exactly the seated members' signatures, the bytes certify() makes.
+    { const by = new Map(v.seating.signatures.map((x) => [toHex(x.nodePubkey), x.signature]));
+      const canonical = encodeSeatingCertificate({ roundId: v.seating.roundId, role: v.seating.role, seated: v.seating.seated,
+        signatures: v.seating.seated.map((k) => ({ nodePubkey: k, signature: by.get(toHex(k)) })) });
+      if (Buffer.compare(Buffer.from(canonical), Buffer.from(bytes)) !== 0) {
+        bytes = canonical;
+        if (held && Buffer.compare(Buffer.from(held.cert), Buffer.from(bytes)) === 0) return { ok: true, kept: false };
+      } }
     // on a table only the first round and its check-ins hold a seating (kanban #1020)
     try { const a = tableAnchorOf(check.contract);
       if (a && !a.first && !checkInOf(check.contract, a)) return { ok: false, why: 'that round of its table is no check-in' }; } catch { /* the draw above read it */ }
