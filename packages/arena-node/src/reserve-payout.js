@@ -39,6 +39,7 @@ import { leaderboardCap } from '../../arena-protocol/src/leaderboard-winners.js'
 import { payeeOf } from './winnings-send.js';
 import { readJsonBounded } from './lnurl-read.js';
 import { hostReach, hostOf, walletFetch } from './public-fetch.js';
+import { commitmentPointsRefusal } from './pool-wire.js';
 
 
 /**
@@ -739,29 +740,53 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       if (!own.ok) return own;
       const ask = askOf({ ask: 'commit', kind, planId, txid: extra.txid || null });
       const signers = [{ peer: null, commitment: own.commitment }];
+      // EACH GUARDIAN SEAT UNDER ITS OWN ID (kanban #2372, the #1807 guard of forfeit.js / settlement.js / winnings-send.js, signer-guard.js): a commit
+      // answer went on the list under whatever id it named (server.js reads it as Number(j.commitment.id)), and one seat under another's id - or this
+      // seat's - made shareHere's signShare340 throw ('two commitments for participant N are one commitment') before `left` dropped anyone, so every
+      // pass asked the same peers and threw again. Now: an id that is not an integer of 1..members, this seat's own id, or nonces that are not
+      // secp256k1 points leave that peer out; a second peer naming an id already on this list is set aside for this pass only - the first one signs,
+      // and if it is the forger its share does not stand, it is left out, and the other is asked on the next pass.
+      const size = Array.isArray(g.members) ? g.members.length : 0;
+      const taken = new Set([String(g.signer.id)]);
       for (const peer of peers) {
         if (signers.length >= g.needed) break;
         if (left.has(peer) || peer === tryOut) continue;
-        try { const r = await peer.commit({ plan, kind, ...extra, ...ask }); if (r && r.ok) signers.push({ peer, commitment: r.commitment }); } catch { /* a peer down: the threshold decides */ }
+        let r = null;
+        try { r = await peer.commit({ plan, kind, ...extra, ...ask }); } catch { /* a peer down: the threshold decides */ }
+        if (!r || !r.ok) continue;
+        const c = r.commitment;
+        const id = c ? Number(c.id) : NaN;
+        const bad = !Number.isInteger(id) || id < 1 || (size > 0 && id > size) || String(id) === String(g.signer.id) || commitmentPointsRefusal(c);
+        if (bad) { left.add(peer); why = `a guardian seat committed to the ${kind} under an id or nonces that are not its own`; continue; }
+        if (taken.has(String(id))) continue;   // set aside for this pass: the first under that id signs
+        taken.add(String(id));
+        signers.push({ peer, commitment: { ...c, id } });
       }
       if (signers.length < g.needed) return refuse(`${signers.length} of ${g.needed} guardian seats committed to the ${kind}${why ? ` (${why})` : ''}`, 503);
       const commitments = signers.map((x) => x.commitment).sort((a, b) => a.id - b.id);
       const shares = [];
       let spoilt = false;
       for (const x of signers) {
-        const r = x.peer === null ? await shareHere({ planId, kind, commitments })
+        // a throw is a refusal, never an escape from sign() (kanban #2372)
+        const r = x.peer === null ? await shareHere({ planId, kind, commitments }).catch((e) => refuse(e.message))
           : await Promise.resolve(x.peer.share({ planId, kind, commitments, ...askOf({ ask: 'share', kind, planId, list: commitmentListOf(commitments) }) })).catch((e) => refuse(e.message));
         if (x.peer === null && (!r || !r.ok)) return refuse(`a ${kind} share was refused: ${r ? r.why : '?'}`);
         const P = x.peer !== null && pub ? (pub instanceof Map ? pub.get(String(x.commitment.id)) : pub[x.commitment.id]) : null;
-        const stands = r && r.ok && typeof r.share === 'bigint' && (x.peer === null || !pub || (P && verifyShare340({ id: x.commitment.id, share: r.share,
-          publicShare: typeof P === 'string' ? fromHex(P) : P, groupPublicKey: g.key, message: pairMessage(planId, kind, own.commitment), commitments, curve })));
+        let stands = false;
+        try {
+          stands = r && r.ok && typeof r.share === 'bigint' && (x.peer === null || !pub || (P && verifyShare340({ id: x.commitment.id, share: r.share,
+            publicShare: typeof P === 'string' ? fromHex(P) : P, groupPublicKey: g.key, message: pairMessage(planId, kind, own.commitment), commitments, curve })));
+        } catch { stands = false; }   // a check that throws does not stand (kanban #2372)
         if (!stands) { left.add(x.peer); spoilt = true; why = `a ${kind} share was refused or does not stand: ${r && !r.ok ? r.why : 'a bad share'}`; continue; }
         shares.push(r.share);
       }
       if (spoilt) continue;
       const message = pairMessage(planId, kind, own.commitment);
-      const { signature } = aggregate340({ commitments, message, groupPublicKey: g.key, shares, curve });
-      if (schnorr.verify(signature, message, g.key.subarray(1))) return { ok: true, signature };
+      let signature = null;
+      try { ({ signature } = aggregate340({ commitments, message, groupPublicKey: g.key, shares, curve })); } catch { signature = null; }   // kanban #2372
+      let verified = false;
+      try { verified = !!signature && schnorr.verify(signature, message, g.key.subarray(1)); } catch { verified = false; }
+      if (verified) return { ok: true, signature };
       why = `the ${kind} signature does not verify under the reserve key`;
       if (pub) return refuse(why);   // every share stood: nothing to leave off
       if (!suspects) suspects = signers.filter((x) => x.peer !== null).map((x) => x.peer);

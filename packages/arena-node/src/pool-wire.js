@@ -72,12 +72,20 @@ export function decodeCommitments(bytes) {
  */
 export function decodePeerCommitment(bytes) {
   const c = decodeCommitments(bytes)[0];
+  const why = commitmentPointsRefusal(c);
+  if (why) throw new Error(why);
+  return c;
+}
+
+/** Why a commitment's two nonces are not secp256k1 points (or one is the identity), or null - decodePeerCommitment's check, also run by reserve-payout.js sign (kanban #2372). */
+export function commitmentPointsRefusal(c) {
+  if (!c || typeof c !== 'object') return 'that answer carries no commitment';
   for (const which of ['hiding', 'binding']) {
     let P;
-    try { P = secp256k1.Point.fromBytes(c[which]); } catch { throw new Error(`that commitment's ${which} nonce is not a point of secp256k1`); }
-    if (P.equals(secp256k1.Point.ZERO)) throw new Error(`that commitment's ${which} nonce is the identity`);
+    try { P = secp256k1.Point.fromBytes(c[which]); } catch { return `that commitment's ${which} nonce is not a point of secp256k1`; }
+    if (P.equals(secp256k1.Point.ZERO)) return `that commitment's ${which} nonce is the identity`;
   }
-  return c;
+  return null;
 }
 
 /**
