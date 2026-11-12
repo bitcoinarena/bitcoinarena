@@ -268,7 +268,8 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
       const newer = newestUpdateOf({ txid: fromHex(u.txid).reverse(), vout: u.vout, height: u.height, nodePubkey: nodeKey, advert });
       out.push({ txid: u.txid, vout: u.vout, height: u.height, sats: Math.round(u.amount * 1e8), maturity: maturity.maturity, signed: signedBody,
         advert: newer ? newer.advert : advert, bondAdvert: advert, bondSignature: advertSignature, ...(ancestor ? { ancestor: true } : {}),
-        ...(newer ? { updatedBy: { txid: newer.txidHex, height: newer.height } } : {}) });
+        // its POSITION in its block too (kanban #2190): two updates of the node in one block are ordered by it, as the census orders them
+        ...(newer ? { updatedBy: { txid: newer.txidHex, height: newer.height, ...(Number.isInteger(newer.position) ? { position: newer.position } : {}) } } : {}) });
     }
     return out;
   }
@@ -323,7 +324,17 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
    * kept only if it names this bond, carries its node key, is signed by it and sits at or above the bond.
    */
   let markers = null;
+  /** A transaction's index in the block at `height` (getblock verbosity 1 lists the txids in block order), or null when it cannot be read. */
+  const blockTxids = new Map();
+  function positionIn(height, txidHex) {
+    try {
+      if (!blockTxids.has(height)) blockTxids.set(height, JSON.parse(cli('getblock', cli('getblockhash', String(height)), '1')).tx || []);
+      const i = blockTxids.get(height).indexOf(String(txidHex).toLowerCase());
+      return i >= 0 ? i : null;
+    } catch { return null; }
+  }
   function newestUpdateOf(bond) {
+    blockTxids.clear();
     const tsOfBody = (a) => { try { return a && a.timestamp !== undefined && a.timestamp !== null ? BigInt(a.timestamp) : null; } catch { return null; } };
     const ownTs = tsOfBody(bond.advert);
     if (!markers) {
@@ -346,10 +357,21 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
       // signed timestamp above the bond's own body; of equal ones the first mined, as the census counts only a strictly newer one.
       const ts = tsOfBody(read.advert);
       if (ts === null || (ownTs !== null && ts <= ownTs)) continue;
-      if (best && (ts < best.ts || (ts === best.ts && m.height >= best.height))) continue;
+      if (best && ts < best.ts) continue;
+      if (best && ts === best.ts) {
+        if (m.height > best.height) continue;
+        if (m.height === best.height) {
+          const pm = positionIn(m.height, m.txid), pb = best.position !== undefined ? best.position : positionIn(best.height, best.txidHex);
+          best.position = pb;
+          if (!(Number.isInteger(pm) && Number.isInteger(pb) && pm < pb)) continue;
+          best = { advert: read.advert, height: m.height, txidHex: m.txid, position: pm, ts };
+          continue;
+        }
+      }
       best = { advert: read.advert, height: m.height, txidHex: m.txid, ts };
     }
     if (best) delete best.ts;
+    if (best && best.position === undefined) best.position = positionIn(best.height, best.txidHex);
     return best;
   }
 
