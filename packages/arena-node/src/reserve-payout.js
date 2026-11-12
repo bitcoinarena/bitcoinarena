@@ -26,7 +26,7 @@
 //   NOT HERE      a re-try after a refund, a payout split over federations, giving up on an LNURL that stays silent.
 //
 // The transport is injected: `peers` are objects with commit / share (the seat's HTTP doors; direct calls in a test).
-import { schnorr } from '@noble/curves/secp256k1.js';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { signShare340, aggregate340, nonceGenerate340, verifyShare340 } from '../../arena-protocol/src/frost-bip340.js';
 import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpiration } from '../../arena-protocol/src/winnings-send.js';
 import { lnv2FeeMsat, largestPayoutMsat } from '../../arena-protocol/src/lock-settlement.js';
@@ -721,32 +721,65 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       for (const peer of peers) {
         if (signers.length >= g.needed) break;
         if (left.has(peer) || peer === tryOut) continue;
-        try { const r = await peer.commit({ plan, kind, ...extra, ...ask }); if (r && r.ok) signers.push({ peer, commitment: r.commitment }); } catch { /* a peer down: the threshold decides */ }
+        let r = null;
+        try { r = await peer.commit({ plan, kind, ...extra, ...ask }); } catch { /* a peer down: the threshold decides */ }
+        if (!r || !r.ok) continue;
+        // kanban #1715 (refute of #1527): a commitment is checked before it joins the list - a member id no other signer of this list holds,
+        // two valid points - or that peer is left off like a bad share; it can never make this seat's own share throw
+        const c = r.commitment, bad = commitmentFault(c, signers, g);
+        // an id a peer of this list holds already: one of the two is lying, and the share round names which - the newcomer only waits this
+        // turn (an honest peer asked second is not left off for good); this seat's own id, a non-member id or a bad point is left off
+        if (bad === 'taken') { why = `a guardian seat's ${kind} commitment names an id another peer of the list holds`; continue; }
+        if (bad) { left.add(peer); why = `a guardian seat's ${kind} commitment does not stand: ${bad}`; continue; }
+        signers.push({ peer, commitment: { id: c.id, hiding: c.hiding, binding: c.binding } });
       }
       if (signers.length < g.needed) return refuse(`${signers.length} of ${g.needed} guardian seats committed to the ${kind}${why ? ` (${why})` : ''}`, 503);
       const commitments = signers.map((x) => x.commitment).sort((a, b) => a.id - b.id);
       const shares = [];
       let spoilt = false;
       for (const x of signers) {
-        const r = x.peer === null ? await shareHere({ planId, kind, commitments })
-          : await Promise.resolve(x.peer.share({ planId, kind, commitments, ...askOf({ ask: 'share', kind, planId, list: commitmentListOf(commitments) }) })).catch((e) => refuse(e.message));
+        let r;
+        try {
+          r = x.peer === null ? await shareHere({ planId, kind, commitments })
+            : await Promise.resolve(x.peer.share({ planId, kind, commitments, ...askOf({ ask: 'share', kind, planId, list: commitmentListOf(commitments) }) })).catch((e) => refuse(e.message));
+        } catch (e) { r = refuse(`the ${kind} share could not be made: ${e && e.message}`); }
         if (x.peer === null && (!r || !r.ok)) return refuse(`a ${kind} share was refused: ${r ? r.why : '?'}`);
         const P = x.peer !== null && pub ? (pub instanceof Map ? pub.get(String(x.commitment.id)) : pub[x.commitment.id]) : null;
-        const stands = r && r.ok && typeof r.share === 'bigint' && (x.peer === null || !pub || (P && verifyShare340({ id: x.commitment.id, share: r.share,
-          publicShare: typeof P === 'string' ? fromHex(P) : P, groupPublicKey: g.key, message: pairMessage(planId, kind, own.commitment), commitments, curve })));
+        let stands = false;
+        // kanban #1715: whatever a peer supplied only spoils this turn, it never throws out of sign()
+        try { stands = !!(r && r.ok && typeof r.share === 'bigint' && (x.peer === null || !pub || (P && verifyShare340({ id: x.commitment.id, share: r.share,
+          publicShare: typeof P === 'string' ? fromHex(P) : P, groupPublicKey: g.key, message: pairMessage(planId, kind, own.commitment), commitments, curve })))); } catch { stands = false; }
         if (!stands) { left.add(x.peer); spoilt = true; why = `a ${kind} share was refused or does not stand: ${r && !r.ok ? r.why : 'a bad share'}`; continue; }
         shares.push(r.share);
       }
       if (spoilt) continue;
       const message = pairMessage(planId, kind, own.commitment);
-      const { signature } = aggregate340({ commitments, message, groupPublicKey: g.key, shares, curve });
-      if (schnorr.verify(signature, message, g.key.subarray(1))) return { ok: true, signature };
+      let signature = null;
+      try { ({ signature } = aggregate340({ commitments, message, groupPublicKey: g.key, shares, curve })); } catch { signature = null; }
+      let good = false; try { good = !!signature && schnorr.verify(signature, message, g.key.subarray(1)); } catch { good = false; }
+      if (good) return { ok: true, signature };
       why = `the ${kind} signature does not verify under the reserve key`;
       if (pub) return refuse(why);   // every share stood: nothing to leave off
       if (!suspects) suspects = signers.filter((x) => x.peer !== null).map((x) => x.peer);
       if (!suspects.length) return refuse(why);
     }
     return refuse(why || `the ${kind} was not signed`);
+  }
+  // kanban #1715: why a peer's commitment cannot join this list (null when it can) - a positive integer id that is a member's
+  // (1..members), held by no signer already in the list (this seat's own, another peer's), and hiding/binding two valid 33-byte points
+  function commitmentFault(c, signers, g) {
+    if (!c || typeof c !== 'object') return 'no commitment';
+    const n = Array.isArray(g.members) && g.members.length ? g.members.length : null;
+    if (!Number.isSafeInteger(c.id) || c.id < 1 || (n !== null && c.id > n)) return `id ${String(c.id).slice(0, 20)} is no member's`;
+    const holder = signers.find((x) => x.commitment.id === c.id);
+    if (holder && holder.peer === null) return `id ${c.id} is this seat's own`;
+    if (holder) return 'taken';
+    for (const k of ['hiding', 'binding']) {
+      const b = c[k];
+      if (!(b instanceof Uint8Array) || b.length !== 33) return `its ${k} is not a 33-byte point`;
+      try { secp256k1.Point.fromBytes(b); } catch { return `its ${k} is not a point on the curve`; }
+    }
+    return null;
   }
   const pairMessage = (planId, kind, commitment) => (pairs.get(`${planId}:${kind}`) || []).find((p) => p.commitment === commitment).message;
 
