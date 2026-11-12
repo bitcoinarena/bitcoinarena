@@ -6703,6 +6703,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A STAKE'S HANDOUT, CHECKED AND KEPT: what POST /handout does, and what a seat does for the handout of an order a certified batch names
   // that never reached it (replayOrder). The round's threshold, not the player's (M3.3-26); one polynomial; this seat's own share opens.
   // Answers { ok, id, signerNode } or { ok: false, status, why }.
+  const HANDOUTS_UNENTERED_MAX = Number(process.env.ARENA_HANDOUTS_UNENTERED_MAX || 256);   // kanban #1605
+  // A LOOSE HANDOUT IS THE PLAYER'S OWN FOR ITS HANDOUT->ENTRY TIME (kanban #2415, #2481): the page posts the handout, locks the stake (2-20 s,
+  // measured live) and only then posts the entry; inside this grace no other handout pushes it out. Past the cap, young ones are kept up to
+  // HANDOUTS_LOOSE_CEILING (then the oldest young one goes): to push a player's handout out inside its gap a stranger must post that many per
+  // seat in those seconds - 8192 in 20 s is ~400 a second per seat, more than one seat's door opens (256 in 0.75-1.3 s measured)
+  const HANDOUT_ENTRY_GRACE_MS = Number(process.env.ARENA_HANDOUT_ENTRY_GRACE_MS ?? 60000);
+  const HANDOUTS_LOOSE_CEILING = Math.max(HANDOUTS_UNENTERED_MAX, Number(process.env.ARENA_HANDOUTS_LOOSE_CEILING || 32 * HANDOUTS_UNENTERED_MAX));
   // WHETHER ONE OF THE ROUND'S OTHER SEATS ALREADY HOLDS THIS VERY HANDOUT (kanban #1595, #1485): its GET /handout answers the same bytes
   const aPeerHoldsHandout = async (rid, handout) => {
     const want = encodeHandout(handout), id = toHex(handoutId(handout));
@@ -6748,7 +6755,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     } catch (e) { return `the federation could not be asked: ${e.message}`; }
     return null;
   };
-  const HANDOUTS_UNENTERED_MAX = Number(process.env.ARENA_HANDOUTS_UNENTERED_MAX || 256);   // kanban #1605
   // `lockMade`: the STAKE_LOCK_HEADER a client sent with the handout, or null.
   const takeHandout = async (bytes, { accepted = false, lockMade = null } = {}) => {
     let handout;
@@ -6756,8 +6762,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const forRound = round.get(handout.roundId);
     if (!forRound) return { ok: false, status: 404, why: 'this node holds no such round, so it cannot say what its stakes open at' };
     const roundContract = decodeRoundContract(new Uint8Array(forRound.contract));
+    // THE STAKE LOCK THE CLIENT SHOWED WITH IT (kanban #1596), checked with the federation once, when something turns on it
+    let lockShownWhy;
+    const lockShown = async () => (lockShownWhy !== undefined ? lockShownWhy : (lockShownWhy = lockMade ? await stakeLockMadeFor(handout, lockMade) : 'none shown'));
     // NO STAKE IS DEALT FOR A ROUND THIS NODE REFUSES: nothing may be locked for it
-    { const why = accepted ? null : offerRefusal(roundContract); if (why) return { ok: false, status: 409, why: `handout refused: ${why}` }; }
+    // BUT A HANDOUT WHOSE STAKE IS LOCKED ALREADY IS TAKEN BACK (kanban #2415, #2481): the page's refused-round return (page-lock.js
+    // refusedReturn) re-hands its kept handout with that lock before POST /refused-lock, which keeps a lock only against a handout held here.
+    // A stranger's junk could push that handout out while the round was offered (#2136); refusing the re-hand here then left the stake locked
+    // to its expiry. The lock the federation holds (image A0, the player's refund key, the round's claim key) shows nothing new is dealt.
+    { const why = accepted ? null : offerRefusal(roundContract);
+      if (why && (!lockMade || (await lockShown()) !== null)) return { ok: false, status: 409, why: `handout refused: ${why}` }; }
     // NO HANDOUT FOR A HEAD-TO-HEAD ROUND WHOSE TABLE IS ALREADY FULL (kanban #2634, a bypass of #1485 found by the #1489 audit): #1485 refuses the
     // handout of an order that cannot land before the close, but a paid head-to-head round that already seats its game's players on locks took a
     // third player's handout in good time (201) - the page then made the federation lock and every seat refused the entry ("already seats ... 2
@@ -6794,7 +6808,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!accepted && headToHeadReady && headToHeadRound(handout.roundId) && nowMs > roundContract.entryCloseMs - BigInt(H2H_HANDOUT_LEAD_MS)) {
       const lockWhy = nowMs >= roundContract.entryCloseMs ? 'closed'
         : (await aPeerHoldsHandout(handout.roundId, handout)) ? null
-        : lockMade ? await stakeLockMadeFor(handout, lockMade) : 'none shown';
+        : lockMade ? await lockShown() : 'none shown';
       if (lockWhy !== null)
         return { ok: false, status: 409, why: `handout refused: that round's entries close at ${new Date(Number(roundContract.entryCloseMs)).toISOString()}, and a head-to-head order needs ${H2H_HANDOUT_LEAD_MS / 1000} s before it to lock and enter - nothing is locked, tap the next round${lockMade && lockWhy !== 'closed' ? ` (the stake lock shown: ${lockWhy})` : ''}` };
     }
@@ -6824,16 +6838,31 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // The 201 now says how many ms this seat had left at its answer (x-entry-close-in-ms); the page (arena-client seatCloseLeftMs) reads the close on the
     // seats' clock from it and makes no lock with less than the lead left, however long the funding took after the handout
     const closeInMs = Number(roundContract.entryCloseMs) - Number(round.now());
+    // AND OLDEST-FIRST ALONE PUSHED OUT THE PLAYER'S OWN HANDOUT (kanban #2415, #2481, the #1489 a44 refute of #2136): between POST /handout and
+    // POST /entry (the page locks its stake in that gap, 2-20 s) the round's oldest loose handout is that very one, and 256 free junk posts per
+    // seat in 0.75-1.3 s pushed it out - the entry was refused "publish the handout first" with the stake (and a lock-first client's fee) locked,
+    // and a steady flood had nobody enter the round; a locked, never-entered stake also lost its refused-round return. Now:
+    //  - a handout shown with its stake lock (the federation holds it: stakeLockMadeFor) is pinned for good (round.js pinHandout);
+    //  - a loose handout younger than HANDOUT_ENTRY_GRACE_MS is not pushed out by the cap: past it a new one takes the row of the oldest loose
+    //    one OLDER than the grace; when every loose one is young, the new one is kept beside them, up to HANDOUTS_LOOSE_CEILING, and only there
+    //    does the oldest young one go. A fresh handout still always lands (#2136), and the store stays bounded.
+    // Only when no loose handout may go (each one pinned by a real lock or named by an entry) is a new one refused
     const bytesOut = encodeHandout(handout);
+    const pin = async () => { if (lockMade && (await lockShown()) === null) round.pinHandout(id, handout.roundId); };
     if (!accepted && !round.handout(id) && round.handoutCount(handout.roundId) >= HANDOUTS_UNENTERED_MAX) {
-      const { loose, oldest } = round.looseHandouts(handout.roundId);
-      if (loose >= HANDOUTS_UNENTERED_MAX) {
-        if (!oldest || !round.replaceHandout(oldest, { id, roundId: handout.roundId, bytes: bytesOut }))
-          return { ok: false, status: 429, why: `handout refused: this round already holds ${HANDOUTS_UNENTERED_MAX} handouts that no entry names, each with a refused-round lock - nothing is locked, try the next round` };
+      const { loose, oldest, oldestYoung } = round.looseHandouts(handout.roundId, { graceMs: HANDOUT_ENTRY_GRACE_MS });
+      const goes = loose >= HANDOUTS_LOOSE_CEILING ? oldestYoung : loose >= HANDOUTS_UNENTERED_MAX ? oldest : null;
+      if (goes) {
+        if (!round.replaceHandout(goes, { id, roundId: handout.roundId, bytes: bytesOut }))
+          return { ok: false, status: 429, why: 'handout refused: this round\'s store changed under it - try again' };
+        await pin();
         return { ok: true, id, signerNode: mine.signerNode, closeInMs };
       }
+      if (loose >= HANDOUTS_LOOSE_CEILING)
+        return { ok: false, status: 429, why: `handout refused: this round already holds ${HANDOUTS_LOOSE_CEILING} handouts that no entry names and no stake lock pins - nothing is locked, try the next round` };
     }
     round.rememberHandout({ id, roundId: handout.roundId, bytes: bytesOut });
+    await pin();
     return { ok: true, id, signerNode: mine.signerNode, closeInMs };
   };
   // A LOCK THAT ENTERED NOTHING, ITS ROUND'S ENTRIES CLOSED (kanban #593, playtest 2026-10-23: a page's 100 sat stake for

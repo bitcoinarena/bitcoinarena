@@ -13,6 +13,9 @@ import { dealHandout, encodeHandout } from '../../arena-protocol/src/handout.js'
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 
 const CAP = 256;   // far above any honest round's players at one seat (a player deals one handout per join)
+// NO HANDOUT->ENTRY GRACE HERE (kanban #2415, #2481): a loose handout younger than the grace (60 s) is not pushed out and young ones are kept
+// past the cap up to its ceiling; this test is about the cap itself, the bound every handout falls under once its grace is over
+process.env.ARENA_HANDOUT_ENTRY_GRACE_MS = '0';
 
 test('#1489-r4-3 one stranger cannot store unbounded handouts for a round', { timeout: 240000 }, async () => {
   const w = await lockRound({});
