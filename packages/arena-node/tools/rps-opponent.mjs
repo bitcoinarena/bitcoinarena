@@ -245,10 +245,15 @@ const sayAtTables = () => {
 setInterval(sayAtTables, 2000);
 const pass = async () => {
   const wants = (await (await fetch(env.WANTS, { signal: AbortSignal.timeout(3000) })).json()).wants || [];
-  for (const w of wants.slice(0, 4)) {
+  // FOUR REAL TABLES, NOT THE FIRST FOUR ROWS (kanban #1718, #1781): the list is anyone's, so the reading never stops at row 4 - it walks up to 16
+  // rows and reads the first 4 whose contract is a real round, a made-up round skipped without counting
+  let real = 0;
+  for (const w of wants.slice(0, 16)) {
+    if (real >= 4) break;
     // ONE BAD ROUND IS NOT THE WHOLE PASS (kanban #1535): a made-up round anyone posted throws here; skip it and read the next table
     const k = await contractOf(w.round).catch(() => null);
     if (!k) continue;
+    real++;
     const left = Number(k.c.entryCloseMs) - Date.now();
     if (left <= 0 || k.entered) continue;
     tables.set(tableOf(k.c), Date.now() + 40000);
