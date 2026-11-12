@@ -67,6 +67,8 @@ export const SIGN_SLACK_MS = 15000;
 export const SERVE_AFTER_MS = 2500;
 /** Protocol 5: a seat short of an end's readings asks the committee again at most this often. */
 export const ASK_ENDS_EVERY_MS = 30000;
+// the most of one peer's GET /price-samples?ks= answer that is read (kanban #1729): two samples of a committee's readings are a few kB
+export const FETCH_READINGS_MAX_BYTES = 256 * 1024;
 /** The held maps' sizes are logged at most this often (kanban #742: the before/after on the live seats). */
 export const HELD_LOG_EVERY_MS = 600000;
 // THE TOLERANCE, 0.05 % (RULED 2026-10-14 ~21:50Z, interim D): at 0.5 % a seat signed any proposed price
@@ -77,6 +79,21 @@ export const HELD_LOG_EVERY_MS = 600000;
 export const DEFAULT_TOLERANCE = 0.0005;
 const verify = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
 const refuse = (why, status = 409) => ({ ok: false, status, why });
+// a peer's JSON answer read to at most `cap` bytes (kanban #1729): a streamed body is cut off past it and refused; an answer without a body
+// stream (a test's stub) is read as it is
+async function cappedJson(r, cap) {
+  if (!r.body || typeof r.body.getReader !== 'function') return r.json();
+  const reader = r.body.getReader(), parts = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > cap) { try { await reader.cancel(); } catch { /* gone */ } throw new Error(`an answer of more than ${cap} bytes`); }
+    parts.push(value);
+  }
+  return JSON.parse(Buffer.concat(parts).toString('utf8'));
+}
 const NO_PROPOSAL = 'a round of protocol 5 takes no proposed price: each seat signs its own reading (POST /price-reading) and the sample is their median';
 /**
  * A LEGACY SAMPLE'S STATE AT THIS SEAT (kanban #1181), per (round, k) and per round's tape, one transition function:
@@ -630,12 +647,15 @@ export class PriceFeed {
     let id;
     try { id = tape ? priceTapeReadingId({ roundId: rid, tick: 0, prices: body.prices }) : priceReadingId({ roundId: rid, tick: sampleTick(k), priceCents: body.priceCents }); }
     catch (e) { return refuse(e.message, 400); }
-    if (!verify(fromHex(signature), id, fromHex(key))) return refuse('that reading does not verify');
-    const r = tape ? { prices: body.prices.slice(), signature } : { priceCents: body.priceCents, signature };
+    // THE CHEAP CHECKS BEFORE THE SIGNATURE CHECK (kanban #1729): a reading already held (same key and signature or price), or one of a
+    // key that already read twice, changes nothing - it was dropped after a BIP-340 verify, so one committee seat repeating its readings
+    // in a GET /price-samples answer cost every honest seat one verify per copy. Such a reading is now dropped before the verify.
     const byKey = tape ? this.#tapeHeard(rh) : this.#heardAt(rh, k);
     const list = byKey.get(key) || [];
-    if (list.some((x) => x.signature === signature || (tape ? x.prices.every((p, i) => p === r.prices[i]) : x.priceCents === r.priceCents))) return { ok: true, kept: false };
+    if (list.some((x) => x.signature === signature || (tape ? x.prices.every((p, i) => p === body.prices[i]) : x.priceCents === body.priceCents))) return { ok: true, kept: false };
     if (list.length >= 2) return { ok: true, kept: false };   // a key that read twice counts for none already
+    if (!verify(fromHex(signature), id, fromHex(key))) return refuse('that reading does not verify');
+    const r = tape ? { prices: body.prices.slice(), signature } : { priceCents: body.priceCents, signature };
     byKey.set(key, [...list, r]);
     this.built.delete(`${rh}:${tape ? 'tape' : k}`);
     if (!tape && persist && this.ends && (k === 0 || k === kMax)) {
@@ -724,10 +744,23 @@ export class PriceFeed {
       try {
         const r = await this.fetcher(`${String(base).replace(/\/+$/, '')}/price-samples?round=${rh}&ks=${short.join(',')}`, { signal: AbortSignal.timeout(10000) });
         if (!r.ok) continue;
-        const j = await r.json();
-        for (const x of (j && j.samples) || []) {
-          if (!short.includes(Number(x.k))) continue;
-          for (const y of x.readings || []) this.reading({ round: rh, kind: 'sample', k: Number(x.k), priceCents: y.priceCents, key: y.key, signature: y.signature });
+        // ONE PEER'S ANSWER IS BOUNDED (kanban #1729): at most FETCH_READINGS_MAX_BYTES of it is read, and of each sample at most two readings
+        // of each committee key are checked - a key reads a sample once, twice already counts it for none - so a padded answer (one
+        // seat's readings repeated, or made-up signatures under committee keys) costs a bounded number of signature checks, not one a copy
+        const declared = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+        if (declared > FETCH_READINGS_MAX_BYTES) continue;
+        const j = await cappedJson(r, FETCH_READINGS_MAX_BYTES);
+        const seen = new Map();
+        for (const x of (j && Array.isArray(j.samples) ? j.samples : [])) {
+          const k = Number(x && x.k);
+          if (!short.includes(k) || !Array.isArray(x.readings)) continue;
+          for (const y of x.readings) {
+            if (!y || typeof y.key !== 'string') continue;
+            const at = `${k}:${y.key.toLowerCase()}`, n = seen.get(at) || 0;
+            if (n >= 2) continue;
+            seen.set(at, n + 1);
+            this.reading({ round: rh, kind: 'sample', k, priceCents: y.priceCents, key: y.key, signature: y.signature });
+          }
         }
       } catch { /* the next seat */ }
     }
