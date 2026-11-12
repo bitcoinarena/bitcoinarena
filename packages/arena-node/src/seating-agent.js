@@ -68,6 +68,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     CREATE TABLE IF NOT EXISTS seat_reseats (round_id BLOB NOT NULL, role TEXT NOT NULL, anchor TEXT NOT NULL, idx INTEGER NOT NULL, PRIMARY KEY (round_id, role));
     CREATE TABLE IF NOT EXISTS seat_equivocations (round_id BLOB NOT NULL, role TEXT NOT NULL, a BLOB NOT NULL, b BLOB NOT NULL,
       PRIMARY KEY (round_id, role));
+    CREATE TABLE IF NOT EXISTS seat_withheld (round_id BLOB NOT NULL, role TEXT NOT NULL, node TEXT NOT NULL, PRIMARY KEY (round_id, role, node));
   `);
   const me = toHex(round.pubkey);
   // THE SEATED LISTS OF THE SEATINGS SIGNED (kanban #738): `${rid}:${role}:${seating id}` -> node keys hex, for every seating a
@@ -637,16 +638,26 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const id = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: signed.seated.map(fromHex) }));
     return signed.seated.filter((k) => k !== me && !db.prepare('SELECT 1 FROM seat_sigs WHERE round_id = ? AND role = ? AND seating = ? AND node = ?').get(w.t.rid, w.role, id, k));
   }
+  // THE WITHHOLDERS THIS NODE LEFT A SEATING FOR, kept for the round and role (kanban #1887, #1921, #1965, wf1489 v1 refute-17-s2 of #1509). Only the members of the
+  // present seating counted as withholders before: after the move to S' (S less the withholder, the reserve in) the honest members' own older signatures over S - S
+  // does not come before S' - made S' 'never stand' in #738's check, and resign() took them back to S, which seats the withholder again. A second withholder (a
+  // colluding first reserve), a reserve that crashed after the close, or an honest reserve on a slow tick swung the seats S <-> S' every 30 s and voided the round.
+  // Now every withholder this node moved away from is written here, survives a restart, and is left out for good: no candidate of resign() seats one, and a
+  // signature over a seating that seats one is no reason in #738's check to move - such a seating can never stand.
+  const withheldOf = (w) => new Set(db.prepare('SELECT node FROM seat_withheld WHERE round_id = ? AND role = ?').all(w.t.rid, w.role).map((r) => r.node));
+  const seatsWithheld = (list, withheld) => list.some((k) => withheld.has(k));
   /** The member of this node's seating that signed a seating not before it (kanban #738), or one that withholds its signature (#1509), or null while the seating may still stand. */
   function canNeverStand(w) {
     if (db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(w.t.rid, w.role)) return null;
     const signed = mySignature(w.t.rid, w.role);
     if (!signed) return null;
+    const known = withheldOf(w);
     const id = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: signed.seated.map(fromHex) }));
     for (const r of db.prepare('SELECT node, seating FROM seat_sigs WHERE round_id = ? AND role = ? AND seating != ? AND node != ?').all(w.t.rid, w.role, id, me)) {
       if (!signed.seated.includes(r.node)) continue;
       const other = seatings.get(`${w.ridHex}:${w.role}:${r.seating}`);
-      if (other && !seatingBefore(w, other, signed.seated)) return r.node;
+      // a seating that seats a withholder this node left (kanban #1887, #1921, #1965): never a reason to move, it can never stand
+      if (other && !seatsWithheld(other, known) && !seatingBefore(w, other, signed.seated)) return r.node;
     }
     return withholdersOf(w)[0] || null;
   }
@@ -667,12 +678,16 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     // MEMBERS THAT WITHHOLD THEIR SIGNATURE (kanban #1509) are left out of every candidate: the seating of the PRESENTs held less them, never below the threshold.
     // Leaving a member out does not come after this node's seating in #738's order and nobody may have signed it yet, so the two checks below are not asked of it -
     // the withholder signed nothing, so no seating of it can stand that an honest member left; it is this node's own seating and another node's alike.
-    const withheld = new Set(withholdersOf(w));
-    if (withheld.size) {
+    // EVERY WITHHOLDER SEEN SO FAR, not only those of the present seating (kanban #1887, #1921, #1965): the seating less the new ones would seat the old ones again
+    const now = withholdersOf(w);
+    const known = withheldOf(w);
+    if (now.length) {
+      const withheld = new Set([...known, ...now]);
       const less = held.filter((k) => !withheld.has(k));
       if (less.length < receiptsNeeded(w.slots)) return;
       let best = null;
-      const own = seatedFrom({ drawn: w.drawnKeys, present: less, slots: w.slots }).map(toHex);
+      // and only the nodes that answer (kanban #979; #1921: the withheld branch took a reserve that died after the close, and 30 s later went back for it)
+      const own = seatedFrom({ drawn: w.drawnKeys, present: answeringOf(w, less), slots: w.slots }).map(toHex);
       const pick = new Map([[toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: own.map(fromHex) })), own]]);
       for (const r of db.prepare('SELECT DISTINCT seating FROM seat_sigs WHERE round_id = ? AND role = ? AND node != ?').all(w.t.rid, w.role, me)) {
         const other = seatings.get(`${w.ridHex}:${w.role}:${r.seating}`);
@@ -684,11 +699,13 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         if (!best || n > best.n || (n === best.n && id < best.id)) best = { id, list, n };
       }
       if (!best) return;
+      // kept before the signature: after a restart the round still leaves them out
+      for (const k of now) db.prepare('INSERT OR IGNORE INTO seat_withheld (round_id, role, node) VALUES (?, ?, ?)').run(w.t.rid, w.role, k);
       signSeatingOf(w, best.list.map(fromHex), held);
-      log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: re-signed the seating of ${best.list.length} (member(s) ${[...withheld].map((k) => k.slice(0, 8)).join(', ')} signed nothing in ${WITHHELD_SIG_MS / 1000} s)`);
+      log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: re-signed the seating of ${best.list.length} (member(s) ${now.map((k) => k.slice(0, 8)).join(', ')} signed nothing in ${WITHHELD_SIG_MS / 1000} s; ${withheld.size} left out in all)`);
       return;
     }
-    const own = seatedFrom({ drawn: w.drawnKeys, present: held, slots: w.slots }).map(toHex);
+    const own = seatedFrom({ drawn: w.drawnKeys, present: known.size && held.filter((k) => !known.has(k)).length >= receiptsNeeded(w.slots) ? held.filter((k) => !known.has(k)) : held, slots: w.slots }).map(toHex);
     candidates.set(toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: own.map(fromHex) })), own);
     for (const r of db.prepare('SELECT DISTINCT seating FROM seat_sigs WHERE round_id = ? AND role = ? AND node != ?').all(w.t.rid, w.role, me)) {
       const other = seatings.get(`${w.ridHex}:${w.role}:${r.seating}`);
@@ -696,7 +713,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     }
     let best = null;
     for (const [id, list] of candidates) {
-      if (!list.includes(me) || !seatingBefore(w, signed.seated, list)) continue;
+      // never back to a seating that seats a withholder this node left (kanban #1887, #1921, #1965)
+      if (!list.includes(me) || seatsWithheld(list, known) || !seatingBefore(w, signed.seated, list)) continue;
       const n = db.prepare('SELECT COUNT(*) AS n FROM seat_sigs WHERE round_id = ? AND role = ? AND seating = ? AND node != ?').get(w.t.rid, w.role, id, me).n;
       if (!n) continue;
       if (!best || n > best.n || (n === best.n && id < best.id)) best = { id, list, n };
