@@ -23,7 +23,7 @@ import { leaderboardVotePeriod, leaderboardPasses } from '../../arena-protocol/s
 export const FUNDING_SQL = `CREATE TABLE IF NOT EXISTS funding_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL, proposal TEXT NOT NULL, hex TEXT NOT NULL, at_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_signal_ends (proposal TEXT PRIMARY KEY, seen_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_outcomes (proposal TEXT PRIMARY KEY, outcome TEXT NOT NULL, decided_ms INTEGER NOT NULL);
-  CREATE TABLE IF NOT EXISTS funding_vote_census (proposal TEXT PRIMARY KEY, height INTEGER NOT NULL, census TEXT NOT NULL, hash TEXT);
+  CREATE TABLE IF NOT EXISTS funding_vote_census (proposal TEXT PRIMARY KEY, height INTEGER NOT NULL, census TEXT NOT NULL, hash TEXT, legacy INTEGER NOT NULL DEFAULT 0);
   CREATE TABLE IF NOT EXISTS funding_vote_blocks (proposal TEXT NOT NULL, height INTEGER NOT NULL, hash TEXT, votes TEXT NOT NULL, PRIMARY KEY (proposal, height));
   CREATE TABLE IF NOT EXISTS funding_vote_outcomes (proposal TEXT PRIMARY KEY, outcome TEXT NOT NULL, last_hash TEXT, decided_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_payments (proposal TEXT PRIMARY KEY, tranches INTEGER NOT NULL, cancelled TEXT, cancelled_k INTEGER);
@@ -111,7 +111,15 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   // A FEE PROPOSAL'S SIGNAL READ FROM THE CHAIN (kanban #1283, RULED #1277 B): the signal period's blocks, held by hash, a reorg of one re-decides
   db.exec('CREATE TABLE IF NOT EXISTS fee_chain_blocks (proposal TEXT NOT NULL, height INTEGER NOT NULL, hash TEXT, items TEXT NOT NULL, PRIMARY KEY (proposal, height))');
   // kanban #1749: the census is held to the hash of the block it was read at (a store from before has no column: added, rows without one)
-  if (!db.prepare('PRAGMA table_info(funding_vote_census)').all().some((c) => c.name === 'hash')) db.exec('ALTER TABLE funding_vote_census ADD COLUMN hash TEXT');
+  // kanban #2169 (a44-refute-63): only the rows of such a store are LEGACY - the one kind of census that may still take the first hash
+  // it finds; a row this build (or the #1749 build) wrote without a hash was read while getblockhash did not answer and is read again
+  const censusCols = () => db.prepare('PRAGMA table_info(funding_vote_census)').all().map((c) => c.name);
+  const preHash = !censusCols().includes('hash');
+  if (preHash) db.exec('ALTER TABLE funding_vote_census ADD COLUMN hash TEXT');
+  if (!censusCols().includes('legacy')) {
+    db.exec('ALTER TABLE funding_vote_census ADD COLUMN legacy INTEGER NOT NULL DEFAULT 0');
+    if (preHash) db.exec('UPDATE funding_vote_census SET legacy = 1 WHERE hash IS NULL');
+  }
   // kanban #2536: a payment's cancellation is held to the hash of the due block it was counted at (older rows: none, taken at the next pass)
   if (!db.prepare('PRAGMA table_info(funding_payments)').all().some((c) => c.name === 'cancelled_hash')) db.exec('ALTER TABLE funding_payments ADD COLUMN cancelled_hash TEXT');
   const rows = (kind) => db.prepare('SELECT id, proposal, hex, kind FROM funding_items WHERE kind = ? ORDER BY at_ms, id').all(kind);
@@ -133,8 +141,8 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   // THE VOTE (§27A.9.3 stage 2): opened only by a signal this seat decided passed; the census taken ONCE at the
   // vote's start (signalEnd); each voting block read once for this proposal's votes, held to by its hash; the outcome written once
   // when the last voting block is `decideDepth` deep, and reopened only when that counted block is reorged away
-  const voteCensus = (pid) => { const r = db.prepare('SELECT height, census, hash FROM funding_vote_census WHERE proposal = ?').get(pid);
-    return r ? { height: r.height, hash: r.hash || null, census: JSON.parse(r.census).map((b) => ({ pubkey: fromHex(b.pubkey), outpoint: b.outpoint, bondSats: BigInt(b.bondSats),
+  const voteCensus = (pid) => { const r = db.prepare('SELECT height, census, hash, legacy FROM funding_vote_census WHERE proposal = ?').get(pid);
+    return r ? { height: r.height, hash: r.hash || null, legacy: r.legacy === 1, census: JSON.parse(r.census).map((b) => ({ pubkey: fromHex(b.pubkey), outpoint: b.outpoint, bondSats: BigInt(b.bondSats),
       height: Number.isInteger(b.height) ? b.height : null, maturity: Number.isInteger(b.maturity) ? b.maturity : null })) } : null; };
   const voteBlocks = (pid) => db.prepare('SELECT height, hash, votes FROM funding_vote_blocks WHERE proposal = ? ORDER BY height').all(pid);
   const voteOutcome = (pid) => { const r = db.prepare('SELECT outcome, last_hash FROM funding_vote_outcomes WHERE proposal = ?').get(pid); return r ? { ...JSON.parse(r.outcome), lastHash: r.last_hash } : null; };
@@ -198,12 +206,15 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       // that read it later counted with the chain's - one vote, two outcomes, never healed. Now its block hash is stored with it and
       // checked every pass, decided or not: a different hash at period.from (never a missing one - an RPC error or a tip below it) drops
       // the census, the vote blocks and the outcome (a fee proposal's with it), and all are read again on this chain. A census stored
-      // without a hash (before this column, or while the hash could not be read) takes the hash it finds first.
+      // without a hash from a store before this column (legacy) takes the hash it finds first.
+      // NEVER ADOPTED WHEN READ BLIND (kanban #2169, a44-refute-63): a census stored while getblockhash did not answer (before === after
+      // as null === null, fixed below) is not legacy - adopting the first hash found pinned an abandoned branch's census to the block
+      // that replaced it. Such a row is dropped with its vote and read again, like a census whose block moved.
       const held0 = voteCensus(row.id);
       if (held0) {
         const fromHash = await hashAt(period.from);
-        if (fromHash && !held0.hash) db.prepare('UPDATE funding_vote_census SET hash = ? WHERE proposal = ? AND hash IS NULL').run(fromHash, row.id);
-        else if (fromHash && fromHash !== held0.hash) {
+        if (fromHash && !held0.hash && held0.legacy) db.prepare('UPDATE funding_vote_census SET hash = ? WHERE proposal = ? AND hash IS NULL').run(fromHash, row.id);
+        else if ((!held0.hash && !held0.legacy) || (fromHash && fromHash !== held0.hash)) {
           const own = !db.isTransaction;   // one step: the census never goes without its blocks and outcome
           if (own) db.exec('BEGIN IMMEDIATE');
           try {
@@ -244,7 +255,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         newest();
         if (!c) continue;
         const after = await hashAt(period.from);
-        if (before !== after) continue;
+        if (!before || before !== after) continue;   // kanban #2169: never stored without a known hash
         db.prepare('INSERT OR IGNORE INTO funding_vote_census (proposal, height, census, hash) VALUES (?, ?, ?, ?)').run(row.id, period.from,
           JSON.stringify(c.map((b) => ({ pubkey: toHex(b.pubkey), outpoint: b.outpoint, bondSats: String(b.bondSats),
             height: Number.isInteger(b.height) ? b.height : null, maturity: Number.isInteger(b.maturity) ? b.maturity : null }))), after);
