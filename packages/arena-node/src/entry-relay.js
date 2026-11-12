@@ -21,6 +21,8 @@ const VIEW_WAIT_MS = 3000;                  // a dead peer may not hold a seat's
 // bytes per entry of the round; 1 MB holds thousands. One committee seat answering tens of MB was buffered and parsed whole by every
 // honest committee seat, for every peer, on every membersKnown pass (about every 2 s until the result window).
 export const VIEW_MAX_BYTES = 1024 * 1024;
+// and a GET /order-locks answer (handLocks) is one seat's stake and fee lock for one entry (kanban #2327, #2343)
+export const LOCKS_MAX_BYTES = 64 * 1024;
 
 // AND THE DOOR DECIDES NOTHING ABOUT WHO IS IN THE ROUND (kanban #1071, §17). A seat's door is its own: the backup rule, and every other refusal, says whether this
 // seat takes a new entry now. Handing an entry on cannot help a door that refused it, so before a head-to-head seat signs anything it looks at the entries its peers
@@ -105,7 +107,9 @@ export function createEntryRelay({ peersOf, entryOf, handoutOf, locksOf, fetcher
       const again = await Promise.all(left.map(async (base) => {
         try {
           const r = await ask(`${base}/order-locks?entry=${entryHex}`);
-          const has = r.status === 200 ? await r.json() : r.status === 404 ? {} : null;
+          // kanban #2327, #2343 (refute of #1829 / #2244): an order-locks answer is two lock rows, a few hundred bytes - read up to LOCKS_MAX_BYTES,
+          // so a peer answering tens of MB is not buffered and parsed whole on every one of TRIES passes; a refused read is no answer
+          const has = r.status === 200 ? await jsonUpTo(r, LOCKS_MAX_BYTES).catch(() => null) : r.status === 404 ? {} : null;
           if (!has) return null;
           let short = false;
           for (const [door, have, fields] of [['lock', has.stake, held.stake], ['fee-lock', has.fee, held.fee]]) {

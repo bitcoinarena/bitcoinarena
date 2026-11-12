@@ -1088,7 +1088,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try {
           const x = await fetch(`${b}/entry?id=${eid}`, { signal: AbortSignal.timeout(2500) });
           if (!x.ok) continue;
-          entryPlayers.set(eid, toHex(decodeEntryContract(new Uint8Array(await x.arrayBuffer())).playerPubkey)); break;
+          // kanban #2327, #2343: an EntryContract is a few hundred bytes; read up to 64 kB (GET /owner/dev, which runs this, is public)
+          entryPlayers.set(eid, toHex(decodeEntryContract(await bytesUpTo(x, 64 * 1024)).playerPubkey)); break;
         } catch { /* the next seat */ }
       }
     }
