@@ -207,7 +207,7 @@ import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } 
 import { objectionWindowAllowed } from '../../arena-protocol/src/constants.js';   // kanban #1398
 import { TYPE_SETTLEMENT_ACK, TYPE_CHECKPOINT, TYPE_INPUT_BATCH, TYPE_SIGNED_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, TYPE_ABANDONED_PROOF, TYPE_THEFT_PROOF, TYPE_BOUND_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION, seatingRulesEpochOf } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
-import { MAX_SIGNED_INPUT_BATCH_BYTES, decodeInputBatch, splitSignedBatch } from '../../arena-protocol/src/batch.js';
+import { MAX_SIGNED_INPUT_BATCH_BYTES, decodeInputBatch, splitSignedBatch, batchId } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
 import { TAG, TYPE_CHECKPOINT_RECEIPT, PRESENCE_VERSION, noQuorumGoesToRerun } from '../../arena-protocol/src/constants.js';
 import { bearsAuthority } from '../../arena-protocol/src/frames.js';
@@ -2300,7 +2300,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // 2026-09-13, pick A): the returning signer node counts them itself. Measured
     // before: one receipt went, the returning signer node read 1 of 5, took the mark
     // late, and all seven signed FAILED - the hold settled into the pool.
-    const body = JSON.stringify({ mark: toHex(bytes), batches: batches.map((b) => toHex(b)), receipt: own ? toHex(own) : null,
+    // AND EACH BATCH'S SIGNATURE WHERE THIS SEAT HOLDS IT (kanban #1567), parallel to `batches`, null where none: the peer keeps
+    // the ones that verify, so it too can show a reloaded page which batches the page signed. A seat before ignores the field.
+    const signatures = batches.map((b) => { try { const s = round.batchSignature(c.roundId, c.entryId, batchId(decodeInputBatch(b))); return s ? toHex(s) : null; } catch { return null; } });
+    const body = JSON.stringify({ mark: toHex(bytes), batches: batches.map((b) => toHex(b)), signatures, receipt: own ? toHex(own) : null,
       receipts: voided ? round.receiptsOfMark(id).map((r) => toHex(r)) : [], ask,
       entryVoid: voided ? { kind: voided.evidenceKind, evidence: voided.evidence ? toHex(voided.evidence) : null } : null });
     const offers = held ? round.firstMarkOffers(c.entryId) : {};
@@ -9637,7 +9640,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         // ONLY THE BATCHES THE MARK ENDORSES (kanban #1503): its entry's chain from its start to the mark's input chain hash,
         // every one or none - a batch naming another entry, or a chain the mark does not end on, stores nothing.
-        const endorsed = round.batchesEndorsedBy(bytes, handed);
+        let handedSigs = [];
+        try { handedSigs = (Array.isArray(got.signatures) ? got.signatures : []).map((x) => (x ? fromHex(String(x)) : null)); } catch { handedSigs = []; }
+        const endorsed = round.batchesEndorsedBy(bytes, handed, handedSigs);
         if (!endorsed.ok) return answer(409, { why: endorsed.why });
         let receipt;
         try { receipt = round.checkpoint(bytes); }
@@ -10938,6 +10943,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(JSON.stringify({ stable: replayPublic, endpoints: [...found] }));
       }
 
+      // EACH BATCH'S SIGNATURE, IN THE TRANSCRIPT'S ORDER (kanban #1567, feedback #013 by Hexbox Tools): 64 bytes per batch
+      // GET /transcript serves - the player's session-key signature over that batch's id, or zeros where this seat took it
+      // bare. A reloaded page re-publishes a served batch only on a signature that verifies under its own session key, so
+      // a batch a seat wrote into its own store is never signed by the player's client and never reaches the committee.
+      if (req.method === 'GET' && url.pathname === '/batch-signatures') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (rid.length !== 32 || eid.length !== 32) return text(res, 400, 'batch signatures are asked for by round and entry');
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(round.batchSignatures(rid, eid)));
+      }
       if (req.method === 'GET' && url.pathname === '/transcript') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');

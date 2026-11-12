@@ -1913,6 +1913,15 @@ async function keptLockStake(ask) {
         console.warn(`[arena] #1162 an earlier stake lock for this round did not finish (${r.txid ? `transaction ${String(r.txid).slice(0, 16)}… submitted` : 'nothing answered'}): kept as arena.lock.orphan.${tag}.*`);
       }
     }
+    // A REFUSED RECORD IS KEPT ASIDE BEFORE THE NEW LOCK WRITES OVER IT (kanban #1584): 'refused' is read from a few "not stored" answers on a
+    // reload (reconcileKeptLock), not from the guardians' word - their consensus may still accept that transaction later, and its stake then
+    // sits under this player's refund key. Its outpoint, fields and stake stay named in arena.lock.orphan.*; with no room for that copy this
+    // PLAY is refused here, before anything is spent.
+    if (now.state === 'refused') {
+      const r = now.record;
+      putRoomy(storage, `arena.lock.orphan.${tag}.${Number(r.refusedMs || r.stateMs || Date.now())}`, JSON.stringify(r));
+      console.warn(`[arena] #1584 an earlier stake lock for this round was read "not stored" (transaction ${String((r.outpoint && r.outpoint.txid) || '').slice(0, 16)}…): kept as arena.lock.orphan.${tag}.*`);
+    }
     lockRecordStep(now.state, 'intent');
     // ROOM FIRST: the intent holds the record's room (`room`, given back when the record takes its place), so the record written after it
     // fits where it was; refused here, nothing is spent

@@ -26,7 +26,7 @@ release commit and brings this file up to date with it - new machines added, cha
 11. [State the 2026-11-06 fixes introduced or changed](#11-state-the-2026-11-06-fixes-introduced-or-changed)
 12. [The page, its storage and its frames](#12-the-page-its-storage-and-its-frames)
 13. [State the 2026-11-10 audits (5, 6) introduced or changed](#13-state-the-2026-11-10-audits-5-6-introduced-or-changed)
-15. [State audit 2026-11-12](#15-state-audit-2026-11-12)
+14. [State audit 2026-11-12](#14-state-audit-2026-11-12)
 
 ## 1. Rounds and settlement
 
@@ -1503,8 +1503,7 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 - Reserve payout: rows whose round this seat cannot read are `unknown` - taken as a co-signer, never picked as coordinator, never a SHORT while they could cover it (#1409).
 - Donation sets: a network's first set is its founding serial; a set's parent is the last set in force below it (#1407).
 
-
-## 15. State audit 2026-11-12
+## 14. State audit 2026-11-12
 
 #### Ballot tally memory (ballot-tally.js `lives` / `spansAll`) vs the kept outcome (kanban #1570)
 - Invariant: the serving rule (`spans`, configServesRound) and GET /config (`live`) always answer from every PASSED record in `ballot_proposals`, from the tally's construction on. `refreshLive()` runs when the tally is made (a restart reads the kept outcomes at once) and on every pass that read a tip, including one skipped because the chain did not answer the reorg check (#1152). A restarted seat never serves a round naming the config its own kept outcome replaced.
@@ -1564,3 +1563,16 @@ Audit 5 (#1399, base 1502786b) and audit 6 (#1415, base eb7fd30fc) for release 2
 
 #### SM-E (change) A held head-to-head lock outside the seats (forfeit.js `#outsideTheSeats`, kanban #1582 with #1588)
 - With #1588 (merged in #1489): /lock no longer refuses a head-to-head lock as "full", so the lock of a player left outside the seats (seats = the game's players by entry order) is HELD and verified, never refused. Its return is GET /forfeit (forfeit.js `#outsideTheSeats`): a held stake lock of a paying head-to-head entry not in `seatedEntriesOf` comes back once this seat's settlement is ACCEPTED and did not claim it.
+
+#### SM-C1 x SM-C2 (change) E-cash exchange: a seat's 4xx after it took the notes (kanban #1583)
+- Invariant: a page exchange record is `refused` (terminal, never asked again) only for notes that were never handed to a seat. While the seat's row is TAKEN or SENDING (or RECEIVING with `receive_asked`), the page record is `handed`, `reclaiming` or `answered`, never `refused`.
+- Seat (`ecash-exchange.js`): a row whose notes it took or may have taken (TAKEN, SENDING, RECEIVING asked before) is never answered 4xx for a passing condition: no client of a federation yet (a restart, guardians not answering at boot) or a halted federation answers 503 "ask again". The per-exchange cap is checked only for a new row. A new row, or a RECEIVING one never asked, may still be refused with 409.
+- Page (`ecash-transfer.js`): a Rejected take-back after a seat's refusal moves the record back to `handed` with `seatTook` (asked again, same seat, same notes), as after a silence. A record with `seatTook` that meets another refusal is asked again, never taken back from twice. Only `kept -> reclaiming` (`neverHanded`) goes to `refused` on Rejected.
+
+#### SM-T2 x SM-L2 (change) Kept round wallets and the collect record (kanban #1585)
+- A tab's round wallets (`roundWallets`) and the empty note (`arena.tabempty.<key>`) are keyed by round and phrase (`walletKey`: `<round id>.<seed hex 16>`), as the round's lock database is (`arena.lockdb.<round16>.<sha(lockSecretFor(seed, round))16>`). A record is looked at, and marked done with its `tabMsat`, only through its own phrase's round wallet: a second phrase's record in the same round never reads the first phrase's wallet or empty note, so its own wallet is never tidied away unread. The browser lock (`arena.round.<round id>`) stays per round. An empty note under the old round-only key is no longer read; that round's wallet is joined and read once more.
+
+#### SM-L1 (change) Stake lock record: a refused record is kept aside (kanban #1584)
+- `refused` is decided from three "not stored" reads 2 s apart on a reload (reconcileKeptLock), not from the guardians' word: their consensus can still accept that transaction afterwards.
+- refused -> intent (a new PLAY, keptLockStake) now first copies the refused record to `arena.lock.orphan.<tag>.<refusedMs>` (putRoomy); with no room for the copy the PLAY is refused before anything is spent.
+- Invariant: no lock record this browser wrote with an outpoint is overwritten without a copy - every transaction the page submitted stays named (outpoint, fields, stake) in `arena.lock.saved`, `arena.lock.intent` or `arena.lock.orphan`.
