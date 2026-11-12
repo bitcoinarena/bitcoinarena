@@ -859,8 +859,10 @@ export class Round {
     // Same as the round above: the id is the hash of the contract, so the same
     // entry sent twice is one player joining once.
     const id = entryId(contract);
-    this.db.prepare('INSERT OR IGNORE INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, ?)')
-      .run(id, contract.roundId, encodeEntryContract(contract), this.now());
+    const joined = this.now();
+    const put = this.db.prepare('INSERT OR IGNORE INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, ?)')
+      .run(id, contract.roundId, encodeEntryContract(contract), joined);
+    if (put.changes) this.#noteLockNames(id, contract, joined);
     return id;
   }
 
@@ -875,9 +877,20 @@ export class Round {
     const id = entryId(contract);
     if (Buffer.from(id).toString('hex') !== String(idHex).toLowerCase()) throw new Error('those bytes are another entry than the one named');
     if (!this.get(contract.roundId)) throw new Error('no such round');
-    this.db.prepare('INSERT OR IGNORE INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, ?)')
-      .run(id, contract.roundId, encodeEntryContract(contract), this.now());
+    const joined = this.now();
+    const put = this.db.prepare('INSERT OR IGNORE INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, ?)')
+      .run(id, contract.roundId, encodeEntryContract(contract), joined);
+    if (put.changes) this.#noteLockNames(id, contract, joined);
     return id;
+  }
+
+  // THE LOCK OUTPOINTS AN ENTRY NAMES, KEPT BESIDE IT (kanban #1692, #1758): read across every round by firstNamingOfLock
+  #noteLockNames(id, contract, joined) {
+    const ins = this.db.prepare('INSERT OR IGNORE INTO entry_lock_names (kind, outpoint, entry_id, player_pk, joined_ms) VALUES (?, ?, ?, ?, ?)');
+    for (const [kind, o] of [['stake', contract.stakeLockOutpoint], ['fee', contract.feeLockOutpoint]]) {
+      if (!o || !(o.txid instanceof Uint8Array) || o.txid.every((b) => b === 0)) continue;
+      ins.run(kind, `${Buffer.from(o.txid).toString('hex')}:${o.outIdx}`, id, Buffer.from(contract.playerPubkey || new Uint8Array(0)), joined);
+    }
   }
 
   /**
@@ -4092,19 +4105,44 @@ export class Round {
   }
 
   /**
-   * THE ENTRY THAT FIRST NAMED THIS LOCK OUTPOINT HERE (kanban #1489): the id of the earliest entry of the round (by the time this seat took it)
-   * whose `kind` ('stake' | 'fee') lock outpoint is `outpoint`, or null. A lock is handed only for the entry that named it first.
+   * THE ENTRY THAT FIRST NAMED THIS LOCK OUTPOINT HERE (kanban #1489), IN ANY ROUND (kanban #1692, #1758): the earliest entry this seat took (by
+   * joined_ms, then rowid) whose `kind` ('stake' | 'fee') lock outpoint is `outpoint` - in every round it holds, not only `roundIdBytes`: every round
+   * on the same seats has the same claim key, so a copy of a player's entry into another round matched the player's lock as well. With
+   * `playerPubkey`, only entries of that player key count: a lock's refund key is its entry's player key, so an entry of another key can never be
+   * staked by it and does not take it from the player. Market-cancelled entries are skipped. Answers { entryId, joinedMs, bytes } or null.
    */
-  firstEntryNamingLock(roundIdBytes, kind, outpoint) {
+  firstNamingOfLock(roundIdBytes, kind, outpoint, playerPubkey = null) {
     const field = kind === 'fee' ? 'feeLockOutpoint' : 'stakeLockOutpoint';
-    const rows = this.db.prepare(
-      'SELECT entry_id, contract FROM entries WHERE round_id = ? AND entry_id NOT IN (SELECT entry_id FROM market_cancels) ORDER BY joined_ms, rowid')
-      .all(roundIdBytes);
-    for (const r of rows) {
-      const o = decodeEntryContract(new Uint8Array(r.contract))[field];
-      if (o && same(o.txid, outpoint.txid) && o.outIdx === outpoint.outIdx) return new Uint8Array(r.entry_id);
+    const key = `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`;
+    const ofKey = (pk) => !playerPubkey || Buffer.from(pk || new Uint8Array(0)).equals(Buffer.from(playerPubkey));
+    let best = null;
+    const consider = (entryIdBytes, joinedMs, rowid, bytes) => {
+      if (best && (best.joinedMs < joinedMs || (best.joinedMs === joinedMs && best.rowid <= rowid))) return;
+      best = { entryId: new Uint8Array(entryIdBytes), joinedMs, rowid, bytes };
+    };
+    // every round, by the index written as entries are kept
+    for (const r of this.db.prepare(
+      'SELECT n.entry_id, n.player_pk, e.joined_ms, e.rowid AS rid, e.contract FROM entry_lock_names n JOIN entries e ON e.entry_id = n.entry_id '
+        + 'WHERE n.kind = ? AND n.outpoint = ? AND n.entry_id NOT IN (SELECT entry_id FROM market_cancels)').iterate(kind, key))
+      if (ofKey(r.player_pk)) consider(r.entry_id, Number(r.joined_ms), Number(r.rid), new Uint8Array(r.contract));
+    // and this round's own entries, which covers entries kept before the index existed
+    if (roundIdBytes) {
+      for (const r of this.db.prepare(
+        'SELECT entry_id, contract, joined_ms, rowid AS rid FROM entries WHERE round_id = ? AND entry_id NOT IN (SELECT entry_id FROM market_cancels)')
+        .iterate(roundIdBytes)) {
+        const e = decodeEntryContract(new Uint8Array(r.contract));
+        const o = e[field];
+        if (o && same(o.txid, outpoint.txid) && o.outIdx === outpoint.outIdx && ofKey(e.playerPubkey))
+          consider(r.entry_id, Number(r.joined_ms), Number(r.rid), new Uint8Array(r.contract));
+      }
     }
-    return null;
+    return best ? { entryId: best.entryId, joinedMs: best.joinedMs, bytes: best.bytes } : null;
+  }
+
+  /** The id of the entry that first named this lock outpoint here, in any round (firstNamingOfLock), or null. */
+  firstEntryNamingLock(roundIdBytes, kind, outpoint, playerPubkey = null) {
+    const f = this.firstNamingOfLock(roundIdBytes, kind, outpoint, playerPubkey);
+    return f ? f.entryId : null;
   }
 
   /** The entry a verified lock at this outpoint already stakes, or null: one lock is one entry. */

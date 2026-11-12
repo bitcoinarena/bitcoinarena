@@ -297,6 +297,18 @@ export function openStore(path = ':memory:') {
     -- the seat holds, contract blobs and all - SQLite's own time was the largest left in the seat.
     CREATE INDEX IF NOT EXISTS entries_by_round ON entries (round_id);
 
+    -- WHICH ENTRIES NAME A LOCK OUTPOINT, IN EVERY ROUND (kanban #1692, #1758): a lock goes to the first entry naming it in ANY round this seat
+    -- holds - every round on the same seats has the same claim key, so a copy into another round passed lockMatchesEntry. Written when an
+    -- entry is first kept; entries kept before this table are still read by their own round (Round.firstNamingOfLock).
+    CREATE TABLE IF NOT EXISTS entry_lock_names (
+      kind       TEXT NOT NULL,
+      outpoint   TEXT NOT NULL,
+      entry_id   BLOB NOT NULL,
+      player_pk  BLOB NOT NULL,
+      joined_ms  INTEGER NOT NULL,
+      PRIMARY KEY (kind, outpoint, entry_id)
+    );
+
     -- THIS NODE'S OWN KEY. One row, and the CHECK is what makes it one: a
     -- daemon with two identities would sign some receipts with each and a
     -- client checking them against the committee would be right to refuse
