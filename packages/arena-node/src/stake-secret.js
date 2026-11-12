@@ -200,6 +200,9 @@ export class StakeSecrets {
         if (!stored) return { ok: false, why: 'this node holds no such entry' };
         const entry = decodeEntryContract(stored);
         if (book && book.wrongType) return { ok: false, why: `${book.wrongType}: its stake secret stays sealed` };
+        // THE ROUND'S KIND NOT DECIDED HERE (kanban #1666): a batch holding orders is pending - once certified the round is a book and this
+        // plain pick's stake comes back whole, so no share of it is handed out before that batch is decided
+        if (book && book.kindPending) return { ok: false, why: `batch ${book.kindPending[0]} of the book is not decided at this seat, so neither is the round's kind: its stake secret stays sealed` };
         if (entry.pick === f.outcome) return { ok: false, why: 'that entry picked the outcome: its lock is its own, and its stake secret stays sealed' };
         const anyWinner = this.round.entriesOf(roundIdBytes).some(({ entryId, entry: e }) => e.pick === f.outcome && (e.limitPrice === undefined || e.limitPrice === null)
           && (!this.round.stakeSeen || this.round.stakeSeen(entryId)));

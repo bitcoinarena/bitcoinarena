@@ -1407,6 +1407,18 @@ export class OrderBook {
   }
 
   /**
+   * THE ROUND'S KIND NOT DECIDED YET AT THIS SEAT (kanban #1666, audit #1489): no certified batch holds an order (isBook false), but a batch this
+   * seat signed that holds one is still pending - it can be certified (its signers hold it) and then the round is a book (§0A.7b). Until it is
+   * certified or voided the round is neither a pool nor a book here: the pool settlement, a losing plain pick's share and a pool refund wait.
+   * Answers the undecided batches holding an order ([] once the round is a book, or when none holds one).
+   */
+  kindPending(roundIdBytes) {
+    if (this.isBook(roundIdBytes)) return [];
+    return this.db.prepare('SELECT k, record FROM market_batches WHERE round_id = ? AND certificate IS NULL ORDER BY k').all(Buffer.from(roundIdBytes))
+      .filter((r) => { try { return (JSON.parse(r.record).orders || []).length > 0; } catch { return true; } }).map((r) => Number(r.k));
+  }
+
+  /**
    * WHAT THE RETURN DOOR MAY DO WITH AN ORDER'S LOCKS (comment 1127): { book, filled, cancelled, inPending } - a filled order's
    * locks are closed until settlement (a whole return would hand back filled money); an unfilled order whose cancel a
    * certified batch carried comes back at once; an order in a batch not yet decided waits for it.
@@ -1415,7 +1427,12 @@ export class OrderBook {
     const raw = this.round.entry(entryIdBytes);
     if (!raw) return { book: false };
     // A PLAIN PICK IN A ROUND THAT BECAME A BOOK (§0A.7b, kanban #1411/#1417): not an entry of that round - its lock comes back at once, whole
-    if (!isOrder(decodeEntryContract(raw))) return { book: false, wrongType: this.isBook(roundIdBytes) ? 'a plain pick in a round that is an order book (§0A.7b): not an entry of that round, its stake comes back' : null };
+    // ... and while a batch holding an order is undecided here the round's kind is not decided (kanban #1666): `kindPending` names it
+    if (!isOrder(decodeEntryContract(raw))) {
+      if (this.isBook(roundIdBytes)) return { book: false, wrongType: 'a plain pick in a round that is an order book (§0A.7b): not an entry of that round, its stake comes back' };
+      const undecided = this.kindPending(roundIdBytes);
+      return { book: false, wrongType: null, ...(undecided.length ? { kindPending: undecided } : {}) };
+    }
     const L = this.ledger(roundIdBytes);
     if (!L.ok) return { book: true, filled: true, cancelled: false, inPending: false, why: L.why };
     const p = L.positions.get(toHex(entryIdBytes));
