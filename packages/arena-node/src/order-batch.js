@@ -745,9 +745,10 @@ export class OrderBook {
       state = moved.ok ? BATCH.DECLINED : this.#state(rid, k);
     }
     if (state === BATCH.DECLINED || state === BATCH.VOID) return declined();
-    const held = this.db.prepare('SELECT batch_id, own_sig, certificate FROM market_batches WHERE round_id = ? AND k = ?').get(rid, k);
+    const held = this.db.prepare('SELECT batch_id, own_sig, certificate, record FROM market_batches WHERE round_id = ? AND k = ?').get(rid, k);
     if (held.own_sig) return { ok: true, seat, signed: held.own_sig, batchId: held.batch_id };
-    return { ok: true, seat, batchId: held.batch_id, certificate: JSON.parse(held.certificate) };
+    // the certified record goes with the certificate (kanban #1886): the asker checks it is a set OF BATCH k before it takes k as decided
+    return { ok: true, seat, batchId: held.batch_id, certificate: JSON.parse(held.certificate), record: JSON.parse(held.record) };
   }
 
   /** POST /batch-void: enough seats declined batch k that the threshold can no longer be reached - its orders wait again. */
@@ -831,9 +832,17 @@ export class OrderBook {
         ...all.filter((a) => Array.isArray(a.certificate) && a.batchId === id).flatMap((a) => a.certificate)]);
       // A CERTIFICATE FOR ANOTHER SET DECIDES k (kanban #1697, #1762): k's leader signed two sets and the threshold signed the other one -
       // this set can never be certified (an honest seat signs one set per batch) and k is not pending: the book moves on
+      // ONLY A CERTIFICATE OF BATCH k (kanban #1886, refute of #1697/#1762): a seat answered the void ask for a half-signed k with the
+      // genuine certificate of an earlier batch - k was taken as decided, never voided, the seats that signed it held it pending for good
+      // and signed no later batch. The answer carries the certified record: it is batch k's (record.k), led and signed by k's leader, its
+      // ids hash to the batchId named under (round, k), and the threshold signed that id. Anything else is ignored and k goes on to void.
       if (counted.length < m.needed) {
-        const other = all.find((a) => Array.isArray(a.certificate) && isHex(String(a.batchId), 32) && a.batchId !== id && this.#counted(m, a.batchId, a.certificate).length >= m.needed);
-        if (other) return { state: 'DECIDED', batchId: other.batchId, why: `batch ${k} is certified under ${String(other.batchId).slice(0, 16)}` };
+        const other = all.find((a) => Array.isArray(a.certificate) && isHex(String(a.batchId), 32) && a.batchId !== id && this.#certificateOfK(roundIdBytes, m, k, a));
+        if (other) {
+          // stored here if it can be (this seat may hold the other set signed: two sets for one batch are not stored, k is decided still)
+          this.certify(roundIdBytes, { record: other.record, sigs: other.certificate });
+          return { state: 'DECIDED', batchId: other.batchId, why: `batch ${k} is certified under ${String(other.batchId).slice(0, 16)}` };
+        }
       }
       if (counted.length < m.needed) {
         const declines = all.filter((a) => a.declined).map((a) => ({ seat: a.seat, signature: a.declined }));
@@ -848,6 +857,24 @@ export class OrderBook {
     if (!mine.ok) return { state: 'PENDING', why: mine.why };
     await Promise.all(peers.map((b) => this.#post(b, `/batch-certificate?round=${rid}`, cert)));
     return { state: 'CERTIFIED', sigs: counted.length };
+  }
+
+  /**
+   * A void-ask answer's certificate is a certificate OF BATCH k (kanban #1886): its record is k's, led by k's leader, the ids it names
+   * hash under (round, k) to the batchId named, k's leader signed that id and the threshold of the round's seats did.
+   */
+  #certificateOfK(roundIdBytes, m, k, a) {
+    try {
+      const r = a.record;
+      if (!r || typeof r !== 'object' || !Array.isArray(r.orders) || String(r.k) !== String(k) || !isHex(String(r.leaderSig), 64)) return false;
+      const leader = toHex(this.leaderOf(m.contract, k));
+      if (String(r.leader) !== leader) return false;
+      const ids = this.#idsOf(roundIdBytes, r);
+      if (!ids || !ids.every((x) => isHex(x, 32))) return false;
+      const id = toHex(bookBatchId({ roundId: roundIdBytes, k: BigInt(k), orderIds: ids }));
+      if (id !== String(a.batchId) || !verifySchnorr(fromHex(String(r.leaderSig)), fromHex(id), fromHex(leader))) return false;
+      return this.#counted(m, id, a.certificate).length >= m.needed;
+    } catch { return false; }
   }
 
   /** A proposal's pending item a leader may decide (kanban #1519): k in the round's book, the record reads to batchId, k's leader signed it. */
