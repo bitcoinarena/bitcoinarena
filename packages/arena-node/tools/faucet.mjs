@@ -132,6 +132,11 @@ const one = (fn) => { const run = queue.then(fn, fn); queue = run.catch(() => {}
 // players' queue that held every welcome behind it past the page's 45 s
 let adminQueue = Promise.resolve();
 const oneAdmin = (fn) => { const run = adminQueue.then(fn, fn); adminQueue = run.catch(() => {}); return run; };
+// THE REWARDS' OWN QUEUE (state audit 2026-11-12, kanban #2023): a reward's LNURL claim and the admin's pay-to-address run a payinvoice on the bounty
+// payer (lncli's 75 s, a pay-to-address 20 s more for its fetches and decode); in the players' queue every welcome waited behind it past the page's 45 s
+// and was then dropped. They share no state with a welcome; two claims of one link are kept apart by claim()'s open->paying compare-and-set
+let bountyQueue = Promise.resolve();
+const oneBounty = (fn) => { const run = bountyQueue.then(fn, fn); bountyQueue = run.catch(() => {}); return run; };
 // a welcome answered again to the same caller (its address, an IPv6 /64) within this long: its first answer may never have reached the page
 const WELCOME_REISSUE_MS = 15 * 60 * 1000;
 
@@ -749,7 +754,7 @@ createServer((req, res) => {
           // withdraw link stays the fallback (a wallet that gives no invoice, a failed route) and is answered too
           if (b.payTo === 'link' || !FEEDBACK.addressOf(b.id) || w.reward.state !== 'open') return send(200, { ...w, lnurl, address: FEEDBACK.addressOf(b.id) });
           if (!BOUNTY_PAYER || !bountyOn()) return send(200, { ...w, lnurl, paid: { ok: false, why: 'rewards are off' } });
-          return one(async () => FEEDBACK.payToAddress(w.reward.k1, { invoiceFor: (a, sats, c) => lnAddressInvoice(a, sats, c), decode: bountyDecode, pay: bountyPay, network: BOUNTY_NETWORK, payer: await bountyPayerId() }))
+          return oneBounty(async () => FEEDBACK.payToAddress(w.reward.k1, { invoiceFor: (a, sats, c) => lnAddressInvoice(a, sats, c), decode: bountyDecode, pay: bountyPay, network: BOUNTY_NETWORK, payer: await bountyPayerId() }))
             .then((paid) => send(200, { ...w, reward: paid.reward || w.reward, lnurl: paid.ok ? null : lnurl, paid }), (e) => send(200, { ...w, lnurl, paid: { ok: false, why: e.message } })); }
         if (b.action === 'note') return send(200, FEEDBACK.note(b.id, { ticket: b.ticket, severity: b.severity, by }));
         return send(400, { ok: false, why: 'an action is approve, reject, duplicate, reward or note' });
@@ -758,14 +763,14 @@ createServer((req, res) => {
     }
     return send(404, { ok: false, why: 'no such admin door' });
   }
-  // A REWARD'S LNURL-WITHDRAW (kanban #1342, LUD-03): the request, then the callback that pays the wallet's invoice once - one at a time (one())
+  // A REWARD'S LNURL-WITHDRAW (kanban #1342, LUD-03): the request, then the callback that pays the wallet's invoice once - one at a time (oneBounty(), kanban #2023)
   { const m = /^\/lnurlw\/([0-9a-f]{64})(\/callback)?$/.exec(path);
     if (m) {
       if (!FEEDBACK || !BOUNTY_PAYER || !bountyOn()) return send(503, { status: 'ERROR', reason: 'rewards are off' });
       if (!m[2]) return send(200, FEEDBACK.withdrawRequest(m[1], { base: PUBLIC_BASE, network: BOUNTY_NETWORK }));
       const q = new URL(req.url, 'http://x').searchParams;
       if (q.get('k1') !== m[1]) return send(200, { status: 'ERROR', reason: 'k1 does not match the link' });
-      return one(async () => FEEDBACK.claim(m[1], q.get('pr') || '', { decode: bountyDecode, pay: bountyPay, network: BOUNTY_NETWORK, payer: await bountyPayerId() })).then((r) => send(200, r), () => send(200, { status: 'ERROR', reason: 'try again in a minute' }));
+      return oneBounty(async () => FEEDBACK.claim(m[1], q.get('pr') || '', { decode: bountyDecode, pay: bountyPay, network: BOUNTY_NETWORK, payer: await bountyPayerId() })).then((r) => send(200, r), () => send(200, { status: 'ERROR', reason: 'try again in a minute' }));
     } }
   // A SCREENSHOT FOR A REPORT (Daniel 2026-11-07): the raw image, before the report is signed; answers its SHA-256, which the report then names
   if (path === '/feedback/screenshot') {
