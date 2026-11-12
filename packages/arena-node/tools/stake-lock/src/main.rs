@@ -1103,10 +1103,16 @@ async fn ecash_sent(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
 }
 
 /// E-CASH IN (kanban #614): --ecash reissued into this client; prints {"mode", "state", "msat"} once the federation reissued it -
-/// "Success", "Rejected" (already spent) or "AlreadyReceived" - and the amount the string carried.
+/// "Success", "Rejected" (already spent) or "AlreadyReceived" - and the amount the string carried. "Invalid" (kanban #2384, #2436), with
+/// `why`, exit 0: not e-cash of this federation (it does not decode, another federation's, an uneconomical denomination) - answered before
+/// anything reached a guardian, so the seat closes the exchange for good instead of holding it as possibly taken.
 async fn ecash_receive(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
     let mint = client.get_first_module::<fedimint_mintv2_client::MintClientModule>()?;
-    let bytes = fedimint_core::base32::decode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, need(a, "ecash")?.trim())?;
+    let invalid = |why: String| -> anyhow::Result<()> { println!("{}", serde_json::json!({ "mode": "ecash-receive", "state": "Invalid", "msat": 0, "why": why })); Ok(()) };
+    let bytes: fedimint_mintv2_client::ECash = match fedimint_core::base32::decode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, need(a, "ecash")?.trim()) {
+        Ok(b) => b,
+        Err(e) => return invalid(format!("does not decode: {e:#}")),
+    };
     let before = client.get_balance_for_btc().await?.msats;
     let operation = match mint.receive(bytes, serde_json::Value::Null).await {
         Ok(op) => op,
@@ -1119,6 +1125,8 @@ async fn ecash_receive(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
             println!("{}", serde_json::json!({ "mode": "ecash-receive", "state": "AlreadyReceived", "msat": 0, "earlier": state, "carried_msat": e.amount().msats }));
             return Ok(());
         }
+        // kanban #2384, #2436: checked locally before any transaction is made - nothing reached a guardian
+        Err(e @ (fedimint_mintv2_client::ReceiveECashError::WrongFederation | fedimint_mintv2_client::ReceiveECashError::UneconomicalDenomination)) => return invalid(format!("{e}")),
         Err(e) => return Err(anyhow!("{e}")),
     };
     let state = mint.await_final_receive_operation_state(operation).await?;
