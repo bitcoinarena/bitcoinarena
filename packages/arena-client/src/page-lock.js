@@ -23,7 +23,7 @@ import { taggedHash, toHex, fromHex, sha256 } from '../../arena-protocol/src/has
 import { TAG } from '../../arena-protocol/src/constants.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
-import { feeBpsForRound, stakeOf } from './join.js';
+import { feeBpsForRound, stakeOf, splitForRound } from './join.js';
 import { refundKeyOf, lockFieldsToJson, lockFieldsFromJson } from '../../arena-protocol/src/stake-lock.js';
 import { decodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { lockFromClient } from './lock-result.js';
@@ -696,7 +696,7 @@ async function locksFor(round, client, donationMsat, donationRecipients = null) 
     throw new Error(`no stake is locked to this round: its federation charges a base fee of ${feeRule.baseMsat} msat `
       + 'on every input and output - a federation for BLWP runs with disable_base_fees (FEDERATION.md)');
   // its fee lock on what this entry stakes: an order's own amount, else the round's
-  const feeGate = feeLockPays({ contract: { ...round, stakeMsat: stakeOf(round) }, fees: feeRule, feeBps: feeBpsForRound(round) });
+  const feeGate = feeLockPays({ contract: { ...round, stakeMsat: stakeOf(round) }, fees: feeRule, feeBps: feeBpsForRound(round), split: splitForRound(round) });
   // A FEDERATION WITH NO FEES (0/0) quotes every lock exactly - its amount in whole notes - so the stake check needs no
   // allowance on top (2026-10-01: the 2 sat "reserve" made one 100 sat round ask 100.352 + 2.006)
   const zeroFees = !!feeRule && feeRule.baseMsat === 0n && feeRule.ppm === 0n;
@@ -1824,6 +1824,15 @@ async function keptLockStake(ask) {
         try { putRoomy(storage, `arena.lock.orphan.${tag}.${Number(r.atMs || 0)}`, JSON.stringify(r)); } catch { /* the next intent is refused for room below */ }
         console.warn(`[arena] #1162 an earlier stake lock for this round did not finish (${r.txid ? `transaction ${String(r.txid).slice(0, 16)}… submitted` : 'nothing answered'}): kept as arena.lock.orphan.${tag}.*`);
       }
+    }
+    // A REFUSED RECORD IS KEPT ASIDE BEFORE THE NEW LOCK WRITES OVER IT (kanban #1584): 'refused' is read from a few "not stored" answers on a
+    // reload (reconcileKeptLock), not from the guardians' word - their consensus may still accept that transaction later, and its stake then
+    // sits under this player's refund key. Its outpoint, fields and stake stay named in arena.lock.orphan.*; with no room for that copy this
+    // PLAY is refused here, before anything is spent.
+    if (now.state === 'refused') {
+      const r = now.record;
+      putRoomy(storage, `arena.lock.orphan.${tag}.${Number(r.refusedMs || r.stateMs || Date.now())}`, JSON.stringify(r));
+      console.warn(`[arena] #1584 an earlier stake lock for this round was read "not stored" (transaction ${String((r.outpoint && r.outpoint.txid) || '').slice(0, 16)}…): kept as arena.lock.orphan.${tag}.*`);
     }
     lockRecordStep(now.state, 'intent');
     // ROOM FIRST: the intent holds the record's room (`room`, given back when the record takes its place), so the record written after it

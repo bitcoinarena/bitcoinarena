@@ -37,7 +37,7 @@ import { playerSecretFor, refundFingerprint } from '../../arena-protocol/src/pla
 import { gameIsKnownGood, sharedWorldOf } from '../../arena-protocol/src/known-game.js';
 import { entryFeeMsat, feeMatchesEntry, NODE_FEE_BPS } from '../../arena-protocol/src/fee.js';
 import { feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
-import { paysReserves, RESERVES_NODE_FEE_BPS } from '../../arena-protocol/src/reserves.js';
+import { paysReserves, RESERVES_NODE_FEE_BPS, giftsInFeeLock, giftsFeeBps } from '../../arena-protocol/src/reserves.js';
 import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
 
 /**
@@ -49,8 +49,14 @@ const knownEntryBps = (gameId) => { const k = feeOfKnownGame(gameId); return k ?
 // A VERSION-11 GAME ROUND'S NODES TAKE 4 % (§27A.9.1); a market keeps its own (its fee lock holds its donation too)
 const knownIsMarket = (gameId) => { const k = feeOfKnownGame(gameId); return !!(k && k.donationBps !== undefined && k.donationBps !== null); };
 export const roundPaysReserves = (round) => !!round && paysReserves(round) && !knownIsMarket(round.gameId);
+// FROM PROTOCOL 27 (kanban #1486) A GAME ROUND'S FEE LOCK HOLDS THE DEVELOPERS' AND THE RESERVES' PARTS beside the nodes': the whole 10 %,
+// no donation and no reserve output at the lock - a refused or void entry gets them back with its stake, an accepted one pays them at settlement
+export const roundGiftsInFee = (round) => roundPaysReserves(round) && giftsInFeeLock(round);
+/** A protocol-27 round's split in force at its census height, as the page read it (GET /fees?height=); undefined (today's) without one. */
+export const splitForRound = (round) => (round && round.feeSet ? roundSplitBps(round.feeSet) : undefined);
 // `round.feeSet`: the fees in force at the round's census height, as the page read them from the nodes (GET /fees?height=)
 export const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps) ? round.feeBps
+  : roundGiftsInFee(round) ? giftsFeeBps(round.feeSet ? roundSplitBps(round.feeSet) : undefined)
   : roundPaysReserves(round) ? (round.feeSet ? roundSplitBps(round.feeSet).nodes : RESERVES_NODE_FEE_BPS) : knownEntryBps(round && round.gameId));
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { readWithOneRetry } from './reread.js';
