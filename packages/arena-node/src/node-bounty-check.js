@@ -8,7 +8,9 @@
 //   in census   the node is a bonded node of the chain's census as the TRUSTED census seats read it (GET /roles: the faucet's own configured seats),
 //               and drawn into committees; the days it served are its days online (kanban #1489 / #1682: "drawn" alone was only "committees > 0")
 //   witnesses   a round counts only held by NODE_BOUNTY_AGREE census nodes of that round's committee, each read at its own advertised endpoint
-//               (the census entry's endpoint, answering with that node key) and each node key once (kanban #1682)
+//               (the census entry's endpoint, answering with that node key) and each node key once (kanban #1682) - NEVER the node itself
+//               (kanban #2015, #2049: its own door was one of its three witnesses) - and confirmed by a TRUSTED census seat holding the same
+//               round with the same committee (kanban #2015, #2049: three cheap testnet4 bonds of one operator made a round up among themselves)
 // Answers { ok, node, checks: [{ key, label, ok, says }], passes } - `passes` only when every check holds. Team nodes are refused by `excluded`.
 import { splitSignedFinalSig, decodeFinalSig, finalSigId } from '../../arena-protocol/src/final-sig.js';
 import { SEASON_NETWORK_AGREE } from '../../arena-protocol/src/season.js';
@@ -80,7 +82,9 @@ export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Da
   const nodeAt = new Map();
   for (const [k, ats] of bonded) for (const at of ats) { if (!nodeAt.has(at)) nodeAt.set(at, new Set()); nodeAt.get(at).add(k); }
   // the listed seats and every census endpoint (a committee's members are asked where the chain says they are)
-  const urls = [...new Set([...(seats || []).map((u) => String(u).replace(/\/+$/, '')), ...nodeAt.keys()])];
+  // KANBAN #2015, #2049: the trusted census seats are asked too - a round counts only when one of them holds it (below)
+  const trusted = new Set((censusSeats || []).map(seatBaseOf).filter(Boolean));
+  const urls = [...new Set([...(seats || []).map((u) => String(u).replace(/\/+$/, '')), ...nodeAt.keys(), ...trusted])];
   // THE OWNER: the node's own word, SIGNED BY THE NODE (audit 6, kanban #1418): any listed seat can answer GET /owner naming any node, and the last
   // answer won - a seat of one's own named itself the owner of someone else's node. Only a statement the node key signed counts, at most a day old,
   // the newest of them; `at` (the team-host check) is where that statement was served
@@ -108,13 +112,22 @@ export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Da
     const from = today - d * DAY_MS, to = from + DAY_MS;
     // round id + committee -> the seats holding it and the FINALs they hold (kanban #1489: counted only when NODE_BOUNTY_AGREE seats agree)
     const rounds = new Map();
+    // KANBAN #2015, #2049: round id + committee keys a TRUSTED census seat holds. The census is testnet4's (a bond is 50,000 sat of faucet coin)
+    // and the bounty is paid in mainnet sat: three bonded nodes of one operator, each at its own advert, held a round they made up with the
+    // committee [k1, k2, k3], each signed its own FINAL, and all three keys passed. A round no seat the caller trusts holds is not counted
+    const confirmed = new Set();
     await Promise.all(urls.map(async (u) => {
       try {
         // A WITNESS IS A CENSUS NODE AT ITS OWN ADVERTISED ENDPOINT (kanban #1682): any other listed seat's /served is not counted - three seats
         // of one operator invented a round naming a fresh key and passed; one seat under three spellings of its address was three seats
-        const there = nodeAt.get(seatBaseOf(u));
-        if (!there || !there.size) return;
+        const there = nodeAt.get(seatBaseOf(u)), isTrusted = trusted.has(seatBaseOf(u));
+        if ((!there || !there.size) && !isTrusted) return;
         const j = await fetchJson(`${u}/served?from=${from}&to=${to}&finals=1`);
+        if (isTrusted) for (const r of (j && j.held) || []) {
+          const id = String(r && r.roundId).toLowerCase(), committee = (Array.isArray(r && r.committee) ? r.committee : []).map((k) => String(k).toLowerCase());
+          if (/^[0-9a-f]{64}$/.test(id) && committee.includes(n)) confirmed.add(`${id}:${[...committee].sort().join(',')}`);
+        }
+        if (!there || !there.size) return;
         // the door's `node` names the witness, and only a node advertised at this address; with several there, `node` is required
         const said = j && j.node !== undefined && j.node !== null ? String(j.node).toLowerCase() : null;
         const witness = said !== null ? (there.has(said) ? said : null) : there.size === 1 ? [...there][0] : null;
@@ -126,12 +139,14 @@ export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Da
           const key = `${id}:${[...committee].sort().join(',')}`;
           const e = rounds.get(key) || { id, seats: new Set(), finals: [] };
           if (e.seats.has(witness)) continue;   // one node key is one witness, under any address
-          e.seats.add(witness); if (Array.isArray(r.finals)) e.finals.push(...r.finals);
+          // KANBAN #2015, #2049: the node is never its own witness - its door's FINALs are read, but the NODE_BOUNTY_AGREE are other nodes
+          if (witness !== n) e.seats.add(witness);
+          if (Array.isArray(r.finals)) e.finals.push(...r.finals);
           rounds.set(key, e);
         }
       } catch { /* a seat that does not answer adds nothing */ }
     }));
-    const mine = [...new Map([...rounds.values()].filter((r) => r.seats.size >= NODE_BOUNTY_AGREE).map((r) => [r.id, r])).values()];   // one round, counted once
+    const mine = [...new Map([...rounds.entries()].filter(([k, r]) => r.seats.size >= NODE_BOUNTY_AGREE && confirmed.has(k)).map(([, r]) => [r.id, r])).values()];   // one round, counted once
     return { from, committees: mine.length, signed: mine.filter((r) => r.finals.some((f) => signerOf(f, r.id) === n)).length };
   }));
   const committees = perDay.reduce((t, x) => t + x.committees, 0), signed = perDay.reduce((t, x) => t + x.signed, 0);
