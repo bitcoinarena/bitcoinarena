@@ -148,6 +148,10 @@ const LOCKDOWN = `'use strict';
     globalThis[k] = W;
   }
   for (const m of ['transfer', 'transferToFixedLength', 'resize']) delete ArrayBuffer.prototype[m];
+  // AND EVERY STATIC FACTORY OF A TYPED ARRAY KIND THAT IS NOT from/of (feedback #024, kanban #2567): from/of build through \`this\` - the wrapped
+  // constructor, so they are counted - but a factory such as Uint8Array.fromHex / fromBase64 (V8 13.x+, not in node 24.22) allocates on the original,
+  // outside the budget and the live cap. Removed wherever the runtime has them, so a newer node cannot open the hole.
+  for (const k of KINDS) for (const m of ['fromHex', 'fromBase64']) { try { delete globalThis[k][m]; } catch { /* none */ } try { delete Object.getPrototypeOf(globalThis[k])[m]; } catch { /* none */ } }
   for (const m of ['toReversed', 'toSorted', 'with']) {
     const f = TAP[m];
     Object.defineProperty(TAP, m, { value: function (...a) { take(taBytes(this)); const o = apply(f, this, a); return keep(o, taBytes(o)); }, writable: false, configurable: false });
