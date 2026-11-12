@@ -198,10 +198,11 @@ export function votePeriodOf({ proposal, signal, schedule = FUNDING_SCHEDULES.sp
  * block going to the lower txid. ABSTAIN counts for turnout only. Passed: turnout >= 30 % of the bonded capital and YES >= 60 % of
  * YES + NO. Answers the weights in sat, the percentages, the bonds voted and `passed`.
  */
-export function fundingTally({ proposalId, census = [], votes = [], from, until, verify }) {
+export function fundingTally({ proposalId, census = [], votes = [], from, until, verify, bound = false }) {
+  // `bound` (kanban #2125): the seq votes, highest seq wins (ballot.js boundVotes); the funding book does not pass it yet (see #2562)
   // the last-vote rule and its replay guard are ballot.js lastVotes, shared with the ballot's tally (kanban #1668, #1734: this
   // count kept the replayed-vote hole after #1489 fixed it in tally() only - a copy of a bond's old YES undid its final NO here)
-  const latest = lastVotes({ proposalId, census, votes, from, until, verify, weightOf: (b) => BigInt(b.weight ?? b.bondSats) });
+  const latest = lastVotes({ proposalId, census, votes, from, until, verify, weightOf: (b) => BigInt(b.weight ?? b.bondSats), bound });
   const total = census.reduce((a, b) => a + BigInt(b.weight ?? b.bondSats), 0n);
   let yes = 0n, no = 0n, abstain = 0n;
   for (const x of latest.values()) { if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }
