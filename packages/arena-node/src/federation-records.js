@@ -263,7 +263,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   const historyOf = (fid) => {
     if (!historyRead.has(fid) && store && store.loadAt) {
       historyRead.add(fid);
-      try { for (const r of store.loadAt(fid) || []) { try { if (history.has(fid) && history.get(fid).has(Number(r.height))) continue; const rec = decodeFederationRecord(splitSignedRecord(fromHex(r.record)).body); remember(fid, Object.assign(Object.create(null), rec, { __hex: r.record })); } catch { /* skip */ } } } catch { /* none */ }
+      try { for (const r of store.loadAt(fid) || []) { try { if (history.has(fid) && history.get(fid).has(Number(r.height))) continue; const rec = decodeFederationRecord(splitSignedRecord(fromHex(r.record)).body); if (toHex(rec.federationId) !== fid) continue; remember(fid, Object.assign(Object.create(null), rec, { __hex: r.record })); } catch { /* skip */ } } } catch { /* none */ }
     }
     return history.get(fid) || null;
   };
@@ -288,6 +288,12 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // body again): at the same height a record that is not CLOSED never replaces one that is
     // AND A MIRROR NEVER WORSENS THE STATUS AT ONE HEIGHT (kanban #1157): recordStep. An older record still goes into the history, as
     // before; one refused at the kept height does not overwrite that height's
+    // A RECORD IS KEPT ONLY UNDER THE FEDERATION IT NAMES (kanban #2467, #2503, a44 refute of #1684): a seat's mirror filed a verified row
+    // under the peer's `federation` label, so one guardian node of B (or one census peer) listing federation A's genuine newer OPEN record
+    // under B's id made B OPEN at the mirroring seat - recordOf, inviteOf, GET /federations and every guard reading the kept status - and
+    // store.save(B, A's bytes) made it outlive a restart, the true older record of B refused as older. Every path (gather, mirror,
+    // restore, restoreNow) comes through here: a record naming another federation than its key is refused, a stored one included
+    try { if (!v || !v.record || toHex(v.record.federationId) !== String(fid).toLowerCase()) return false; } catch { return false; }
     const had = kept.get(fid);
     // A KEYLESS SEAT NEVER LOOSENS WHAT IT KEEPS (kanban #2613, feedback #042): a seat that holds no config keys for the federation cannot
     // tell its guardians from bonded strangers - 8 of them signing their own OPEN record (nominal 11, genuine + 1) made the genuine 7 of 7
@@ -694,6 +700,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         const mine = (Array.isArray(j.federations) ? j.federations : []).filter((x) => x && String(x.federation).toLowerCase() === fid).slice(0, MIRROR_ROWS_PER_ANSWER);
         const later = [];
         for (const x of mine) {
+          // the row's own record must name this federation, not only its label (kanban #2467, #2503)
+          let named = null; try { named = toHex(decodeFederationRecord(splitSignedRecord(fromHex(String(x.record))).body).federationId); } catch { named = null; }
+          if (named !== fid) { why = 'a peer listed a record of another federation under this one'; continue; }
           let v; try { v = verifyFederationRecord(fromHex(String(x.record)), { census: b.census.entries, verify, inviteFederationId, guardianKeys: keys }); } catch (e) { v = { ok: false, why: e.message }; }
           if (!v.ok && typeof censusAt === 'function') {
             let rec = null; try { rec = decodeFederationRecord(splitSignedRecord(fromHex(String(x.record))).body); } catch { rec = null; }
