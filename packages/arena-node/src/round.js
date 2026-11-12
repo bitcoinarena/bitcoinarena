@@ -4526,6 +4526,17 @@ export class Round {
     return out;
   }
 
+  /**
+   * EVERY ROUND THIS SEAT STORED A STAKE OR FEE LOCK AT THIS OUTPOINT FOR (kanban #2417, a44 refute of #1757/#2176): stake_locks and fee_locks
+   * are this seat's own tables, so one outpoint can sit under entries of two rounds here (a player names his round-1 lock in a round-2 entry at
+   * a seat that never stored it for round 1). Round ids as lowercase hex, distinct.
+   */
+  lockRoundsAt(outpointStr) {
+    const o = String(outpointStr).toLowerCase();
+    const rows = this.db.prepare('SELECT round_id FROM stake_locks WHERE lower(outpoint) = ? UNION SELECT round_id FROM fee_locks WHERE lower(outpoint) = ?').all(o, o);
+    return [...new Set(rows.map((r) => Buffer.from(r.round_id).toString('hex')))];
+  }
+
   /** The entry a verified lock at this outpoint already stakes, or null: one lock is one entry. */
   stakeLockAt(outpoint) {
     const r = this.db.prepare('SELECT entry_id FROM stake_locks WHERE outpoint = ?')
