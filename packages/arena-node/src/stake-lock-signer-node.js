@@ -325,6 +325,21 @@ const contractIdOfFields = (port, fields) => Promise.resolve().then(() => port.c
   throw Object.assign(new Error(e && e.message ? e.message : String(e)), { ofFields: true });
 });
 
+// AN EXPIRATION READ THAT STRADDLED A BLOCK (kanban #2377, a45 refute 14 of #1823 / #2255): the stock client's status mode asks the guardians
+// twice - block_count, then stored_at (blocks_left) - so a block between the two reads answers block_count + blocks_left one short of the
+// contract's real expiration. The contract id hashes the expiration with the rest of the contract, so when it equals the id the federation
+// holds at the entry's outpoint, the handed expiration IS the stored one and a mismatch is this seat's read, not the hander's fields. Read
+// the status once more; if it still does not add up, answer the mismatch marked `readStraddle` (the caller's own trouble, as the federation
+// not being asked is) - never a lock that passes.
+const expirationOf = async (port, outpoint, st, fields) => {
+  if (fields.expiration === st.blockCount + st.stored.blocksLeft) return { st, ok: true };
+  let again = null;
+  try { again = await port.status(outpoint); } catch { again = null; }
+  if (again && again.stored && String(again.stored.contractId) === String(st.stored.contractId)
+    && fields.expiration === again.blockCount + again.stored.blocksLeft) return { st: again, ok: true };
+  return { st, ok: false };
+};
+
 // `timing` (kanban #605): an object the caller reads afterwards - ms spent asking the federation, checking gifts and reading the fee gate
 export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined, timing = {}, namedGate = null }) {
   const stored = round.entry(entryIdBytes);
@@ -371,8 +386,9 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s stake_lock_outpoint' };
   if (String(id) !== String(st.stored.contractId))
     return { ok: false, why: 'the lock at that outpoint is not the contract handed over: its id is another' };
-  if (fields.expiration !== st.blockCount + st.stored.blocksLeft)
-    return { ok: false, why: 'that contract\'s expiration is not the one the federation holds' };
+  { const ex = await expirationOf(port, outpoint, st, fields);
+    if (!ex.ok) return { ok: false, why: 'that contract\'s expiration is not the one the federation holds', readStraddle: true };
+    st = ex.st; }
   if (!(claimPk instanceof Uint8Array)) return { ok: false, why: 'this signer node holds no claim key for that round' };
 
   const matches = lockMatchesEntry({ lock: fields, entry, kind: 'stake', claimPk, height: st.blockCount, expiryBlocks: contract.stakeExpiryBlocks });
@@ -455,8 +471,9 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
 
   if (String(id) !== String(st.stored.contractId))
     return { ok: false, why: 'the lock at that outpoint is not the fee contract handed over: its id is another' };
-  if (fields.expiration !== st.blockCount + st.stored.blocksLeft)
-    return { ok: false, why: 'that fee contract\'s expiration is not the one the federation holds' };
+  { const ex = await expirationOf(port, outpoint, st, fields);
+    if (!ex.ok) return { ok: false, why: 'that fee contract\'s expiration is not the one the federation holds', readStraddle: true };
+    st = ex.st; }
   if (!(claimPk instanceof Uint8Array)) return { ok: false, why: 'this signer node holds no claim key for that round' };
   const matches = lockMatchesEntry({ lock: fields, entry, kind: 'fee', claimPk, height: st.blockCount, expiryBlocks: contract.stakeExpiryBlocks });
   if (!matches.ok) return matches;
