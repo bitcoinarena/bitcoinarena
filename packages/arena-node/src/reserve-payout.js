@@ -35,7 +35,7 @@ import { lightningAddressEndpoint, payRequestStands, callbackFor, invoiceAnswers
 import { lnurlPublicFetch } from './public-fetch.js';
 import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
-import { moveSeedOf, moveSeedFor } from './reserve-move.js';
+import { moveSeedOf, moveSeedFor, moveIdOf } from './reserve-move.js';
 import { leaderboardCap } from '../../arena-protocol/src/leaderboard-winners.js';
 import { payeeOf } from './winnings-send.js';
 import { readJsonBounded } from './lnurl-read.js';
@@ -300,9 +300,20 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     if (!p || p.kind !== 'move' || p.proposal !== id) return null;
     return { id, from: p.federation, to: p.to, toKey: String(p.toKey).toLowerCase(), fromKey: String(p.reserveKey).toLowerCase(), decidableAt: Number(p.decidableAt) || 0 };
   };
+  // THE MOVE UNDER WAY FOR A LISTED ONE (kanban #2435): the lowest sequence of its (X, destination) whose record here is not finished -
+  // REFUNDED, SHORT or CLAIMED end a move, and reserves X still holds (the refund's return, an output that came later) move under the next
+  // sequence. PAID is not finished: its claim comes first. Every seat derives the same from the records it keeps (they go round).
+  const FINISHED_MOVE = new Set(['REFUNDED', 'SHORT', 'CLAIMED']);
+  const currentMove = (m) => {
+    for (let n = 0; ; n++) {
+      const id = n ? moveIdOf(m.from, m.to, n) : m.id;
+      const r = db.prepare('SELECT state FROM reserve_payouts WHERE proposal = ?').get(id);
+      if (!r || !FINISHED_MOVE.has(r.state)) return n ? { ...m, id, seq: n } : m;
+    }
+  };
   const moveOf = (id) => {
-    const m = (moves() || []).find((x) => x.id === id); if (m) knownMoves.set(id, m);
-    if (m || knownMoves.has(id)) return m || knownMoves.get(id);
+    for (const x of moves() || []) { const c = currentMove(x); if (x.id === id || c.id === id) { const m = x.id === id ? x : c; knownMoves.set(id, m); return m; } }
+    if (knownMoves.has(id)) return knownMoves.get(id);
     const h = heldMoveOf(id); if (h) knownMoves.set(id, h);   // kanban #2095: after a restart, from this seat's own row
     return h;
   };
@@ -1234,7 +1245,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       out.push({ id: r.proposal, ...(await claimMove(r.proposal, plan)) });
     }
     // the moves the records call for, and those under way here (planned or sent: no longer listed once their inputs are spent)
-    const todo = new Map((moves() || []).map((m) => { knownMoves.set(m.id, m); return [m.id, m]; }));
+    const todo = new Map((moves() || []).map((x) => { const m = currentMove(x); knownMoves.set(m.id, m); return [m.id, m]; }));   // kanban #2435
     for (const r of db.prepare(`SELECT * FROM reserve_payouts WHERE state IN ('PLANNED', 'SUBMITTING', 'SENT', 'REFUNDING', 'EXPIRED')`).all()) {
       const p = planOfRow(r); if (!p || p.kind !== 'move' || todo.has(r.proposal)) continue;
       const m = moveOf(r.proposal) || { id: r.proposal, from: p.federation, to: p.to, toKey: p.toKey, fromKey: p.reserveKey, decidableAt: Number(p.decidableAt) || 0 };
