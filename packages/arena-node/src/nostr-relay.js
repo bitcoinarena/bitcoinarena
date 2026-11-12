@@ -85,7 +85,8 @@ export function eventRefusal(e, { kinds = RELAY_KINDS, nowS = Math.floor(Date.no
   if (!HEX64.test(e.id || '') || !HEX64.test(e.pubkey || '') || !HEX128.test(e.sig || '')) return 'invalid: id, pubkey or sig';
   if (!Number.isInteger(e.kind) || e.kind < 0 || e.kind > 65535) return 'invalid: kind';
   if (!Number.isInteger(e.created_at) || e.created_at < 0) return 'invalid: created_at';
-  // kanban #1753: every tag has at least its name - an empty tag ([]) passed here, then threw in tagRows after the row was kept, past the quotas
+  // kanban #1960, #1994, #2009: every tag is a NON-EMPTY list of strings - an empty tag ([[]]) has no name, and it used to be stored and then
+  // throw in the tag index, half handled (no quota, no replaceable drop, no fan-out) and fatal to the next start.
   if (!Array.isArray(e.tags) || !e.tags.every((t) => Array.isArray(t) && t.length >= 1 && t.every((x) => typeof x === 'string'))) return 'invalid: tags';
   if (typeof e.content !== 'string') return 'invalid: content';
   if (kinds && !kinds.includes(e.kind)) return `blocked: this relay keeps only kinds ${kinds.join(', ')} (the game's)`;
@@ -183,10 +184,11 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   if (unsized.length) {
     const setSize = db.prepare('UPDATE events SET size = ? WHERE id = ?');
     db.exec('BEGIN');
-    for (const r of unsized) { const e = JSON.parse(r.json); setSize.run(eventSize(e, r.json, indexedTags(e).slice(0, MAX_TAG_ROWS)), r.id); }
+    // kanban #1960, #1994, #2009: a row that does not read is skipped, never fatal to the start
+    for (const r of unsized) { let e; try { e = JSON.parse(r.json); } catch { continue; } setSize.run(eventSize(e, r.json, indexedTags(e).slice(0, MAX_TAG_ROWS)), r.id); }
     db.exec('COMMIT');
   }
-  if (!db.prepare('SELECT 1 FROM tags LIMIT 1').get()) { db.exec('BEGIN'); for (const r of db.prepare('SELECT json FROM events').all()) tagRows(JSON.parse(r.json)); db.exec('COMMIT'); }
+  if (!db.prepare('SELECT 1 FROM tags LIMIT 1').get()) { db.exec('BEGIN'); for (const r of db.prepare('SELECT json FROM events').all()) { try { tagRows(JSON.parse(r.json)); } catch { /* unreadable row: not indexed (kanban #1960) */ } } db.exec('COMMIT'); }
   // kanban #1943, #1983: who holds what, per author and pool (see LOG_SHARE above) - temporary, so it is always rebuilt from the store itself
   db.exec(`CREATE TEMP TABLE IF NOT EXISTS holders (pubkey TEXT, pool INTEGER, n INTEGER, b INTEGER, first INTEGER, PRIMARY KEY (pubkey, pool));
     CREATE INDEX IF NOT EXISTS temp.holders_n ON holders (pool, n, first);
@@ -361,6 +363,10 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
       if (queued > lim.totalSlowBytes) shed();
     });
     ws.on('close', () => { clients.delete(c); clearInterval(refill); });
+    // kanban #1470, #1726, #1796, #1833: a frame ws itself refuses (over maxPayload, a text frame that is not UTF-8, a reserved bit set, a bad
+    // opcode) never reaches 'message' - ws emits 'error' on this socket and closes it. Without a listener the EventEmitter throws and the relay
+    // process ends for every player; with one, only this socket goes.
+    ws.on('error', () => { clients.delete(c); clearInterval(refill); try { ws.terminate(); } catch { /* already gone */ } });
     ws.on('message', (raw) => { try { onMessage(raw); } catch (err) { try { send(['NOTICE', 'error: that message could not be handled']); } catch { /* the socket is gone */ } } });   // kanban #1470: no message takes the relay down
     const onMessage = (raw) => {
       if (raw.length > MAX_EVENT_BYTES * 2) return send(['NOTICE', 'message too large']);
@@ -424,7 +430,11 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
                 }
               }
               if (verdict === 'kept') db.exec('COMMIT'); else db.exec('ROLLBACK');
-            } catch (err) { try { db.exec('ROLLBACK'); } catch { /* none open */ } throw err; }
+            } catch (err) {
+              // kanban #1960, #1994, #2009: a throw in the store step rolls all of it back and is answered - never thrown out of the socket's handler
+              try { db.exec('ROLLBACK'); } catch { /* none open */ }
+              return send(['OK', e.id, false, 'error: the event could not be stored']);
+            }
             if (verdict === 'full') return send(['OK', e.id, false, 'blocked: the relay is full']);
             if (verdict === 'older') return send(['OK', e.id, false, 'blocked: older than all this author already has, over the quota']);
           }
