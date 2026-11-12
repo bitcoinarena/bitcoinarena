@@ -4456,7 +4456,35 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }))).filter(Boolean);
     let why = null;
     if (!round.stakeLock(eid) || (round.feeLock && !round.feeLock(eid))) {
-      for (const locks of await ofPeers(`/order-locks?entry=${entryHex}`, (r) => r.json())) {
+      let answers = await ofPeers(`/order-locks?entry=${entryHex}`, (r) => r.json());
+      // A LOCK THIS SEAT'S DOOR WOULD REFUSE COMES ONLY FROM A THRESHOLD OF SEATS (kanban #1916, refute of #1760 / #1479 / feedback #007 via kanban #1489):
+      // #1760 shut POST /lock and /fee-lock to a head-to-head lock new to a seat from the close, but here every entry this seat holds took its peers'
+      // locks with no close check. So a player stood one lockless entry per move under fresh keys, read the honest reveal after the close, handed only
+      // the winner's locks to ONE colluding seat (or one on an older build with the grace), and every honest seat took them from that seat's
+      // GET /order-locks at its close - the honest player lost his stake. Every honest seat's door refuses a late lock, so a lock an honest seat holds
+      // came before the close (or the grace): where this seat's own door would refuse it now (lockAfterCloseRefusal), it is taken only when a threshold
+      // of the round's seats hand over the same lock fields, or a threshold signed results naming the entry (an entry the round accepted, §17). One
+      // seat, or fewer than the threshold, cannot add a lock any more; an honest lock that reached a threshold before the close still reaches the rest.
+      // A lock refused here is not waited for: the entry stands as lockless at this seat (#1437), so a colluder cannot hold its signatures back either.
+      const stored = round.entry(eid);
+      const lateKinds = ['stake', 'fee'].filter((k) => lockAfterCloseRefusal(stored, eid, k));
+      if (lateKinds.length && answers.length) {
+        const needed = roundThreshold(decodeRoundContract(new Uint8Array(round.get(rid).contract)).settlementSlots);
+        let accepted = false;
+        try { accepted = (await verifier.signersNaming(rid, eid, entry.playerPubkey)).size >= needed; } catch { accepted = false; }
+        if (!accepted) {
+          const kept = {};
+          for (const k of lateKinds) {
+            const groups = new Map();
+            for (const a of answers) { if (!a[k]) continue; const key = JSON.stringify(a[k]); groups.set(key, (groups.get(key) || 0) + 1); }
+            const best = [...groups.entries()].find(([, n]) => n >= needed);
+            kept[k] = best ? JSON.parse(best[0]) : null;
+          }
+          for (const k of lateKinds) if (!kept[k]) console.log(`[entry] ${entryHex.slice(0, 16)} ${k} lock after the close held by fewer than ${needed} seats: not taken (kanban #1916)`);
+          answers = answers.map((a) => { const b = { ...a }; for (const k of lateKinds) b[k] = kept[k]; return b; }).filter((a) => a.stake || a.fee);
+        }
+      }
+      for (const locks of answers) {
         why = null;
         try {
           if (locks.stake && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, lockFieldsFromJson(locks.stake)); if (!g.ok) why = `its stake lock: ${g.why}`; }
