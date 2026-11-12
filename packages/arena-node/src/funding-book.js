@@ -126,11 +126,14 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   // THE COUNT WITH THE FIVE RULES (§27A.9.5): only bonds 3 months old and locked 3 months past the vote vote, weighted by their age
   // (rules 1, 2); 60 % YES and YES at least 20 % of everyone who could vote (rule 3). `until` the vote's end, or a payment's due
   // height + 1 for its re-count (rule 5)
+  // A PROPOSAL PUBLISHED AT OR ABOVE ITS NETWORK'S BALLOT_BIND_HEIGHT is voted and counted bound (kanban #2576)
+  const boundFor = (o) => typeof bindHeightFor === 'function' && o && o.networkId instanceof Uint8Array && Number.isInteger(o.publishedHeight)
+    && o.publishedHeight >= bindHeightFor(toHex(o.networkId));
   const countOf = (pid, period, o, until = period.until) => { const c = voteCensus(pid); if (!c) return null;
     const w = voteWeights({ census: c.census, publishedHeight: o.publishedHeight, last: period.last, schedule });
     // THE BOUND VOTE PAST THE GATE (kanban #2576, left open by #2562): a proposal published at or above its network's BALLOT_BIND_HEIGHT
     // is counted by seq (highest inside the period counts, equal seq with two choices = ABSTAIN), as a config proposal's; below it, as before
-    const bound = typeof bindHeightFor === 'function' && o.networkId instanceof Uint8Array && Number.isInteger(o.publishedHeight) && o.publishedHeight >= bindHeightFor(toHex(o.networkId));
+    const bound = boundFor(o);
     return { ...fundingTally({ proposalId: fromHex(pid), census: w.voters, votes: votesHeld(pid), from: period.from, until, verify, bound }),
       votersEligible: w.voters.length, bondsInCensus: c.census.length }; };
   /** The last block a passed proposal's votes are read to: its last payment's due height (rule 5, at most four tranches). */
@@ -549,6 +552,16 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     itemsOf(pid) {
       return db.prepare("SELECT kind, hex, at_ms FROM funding_items WHERE kind IN ('signal', 'fee-approval') AND proposal = ? ORDER BY id").all(String(pid).toLowerCase())
         .map((r) => ({ kind: r.kind, hex: r.hex, atMs: String(r.at_ms) }));   // when this seat first held it (kanban #1279)
+    },
+    /**
+     * IS THIS FUNDING / FEE / LEADERBOARD PROPOSAL VOTED BOUND (feedback #031, kanban #2580)? true or false for one this seat holds,
+     * null for an id it does not - the operator vote door signs the 80-byte seq vote for a bound one, as the tally counts it
+     */
+    boundOf(id) {
+      const row = db.prepare("SELECT kind, hex FROM funding_items WHERE id = ? AND kind IN ('proposal', 'fee', 'leaderboard')").get(String(id));
+      if (!row) return null;
+      const r = read(row.kind, row.hex);
+      return r.ok ? boundFor(r.obj) : null;
     },
   };
   return book;
