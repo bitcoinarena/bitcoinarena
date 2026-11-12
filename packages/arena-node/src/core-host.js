@@ -58,9 +58,14 @@ const TRACK_MAX = 65536;
 // THIS THREAD'S GC (kanban #1721): a worker may not be started with --expose-gc (ERR_WORKER_INVALID_EXEC_ARGV, measured), so
 // the flag is set for the moment it takes to read V8's gc from a context made for it, and taken back - a core's context is
 // made after, without it ('gc' is in REMOVED besides, for a node started with the flag)
+// THE FLAG IS THE PROCESS'S (kanban #1489, merge of #1721 with #1813's concurrent cores): another core thread taking it back at the same
+// moment left this one's context without gc ("gc is not defined", the core's load failed) - so it is asked again a few times
 const GC = typeof globalThis.gc === 'function' ? globalThis.gc : (() => {
-  v8.setFlagsFromString('--expose-gc');
-  try { return vm.runInNewContext('gc'); } finally { v8.setFlagsFromString('--no-expose-gc'); }
+  for (let tries = 0; tries < 50; tries++) {
+    v8.setFlagsFromString('--expose-gc');
+    try { const g = vm.runInNewContext("typeof gc === 'function' ? gc : null"); if (g) return g; } finally { v8.setFlagsFromString('--no-expose-gc'); }
+  }
+  throw new Error('this core thread could not read V8\'s gc');
 })();
 const LOCKDOWN = `'use strict';
 (() => {
