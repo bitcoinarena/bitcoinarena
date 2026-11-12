@@ -1782,12 +1782,14 @@ export class Client {
     // are the ones just recovered, each verified here; a duplicate signer
     // cannot inflate the count and a receipt that fails its mark, the
     // committee or its signature never reached the count at all.
-    const { adopted, receipts } = await this.carriedHead({ roundId, entryId });
+    const { adopted, receipts, headWithheld } = await this.carriedHead({ roundId, entryId });
     if (adopted) this.head = adopted;
+    // a home seat whose list left this client's live head out (kanban #1732): the head is kept, and it is still live
+    const kept = headWithheld ? this.head : adopted;
 
     return { ticks: ok.ticks, batches: t.batches.length, nextTick: this.nextTick,
-             batchHead: this.batchHead, head: this.head, receipts,
-             live: adopted !== null, witnessed: adopted ? this.witnessed(adopted) : 0, transcript: t };
+             batchHead: this.batchHead, head: this.head, receipts, ...(headWithheld ? { headWithheld: true } : {}),
+             live: kept !== null, witnessed: kept ? this.witnessed(kept) : 0, transcript: t };
   }
 
   /**
@@ -1861,10 +1863,26 @@ export class Client {
     // disconnect is not an escape hatch, and a slow committee must still be
     // able to carry the run. What comes after that head is published again,
     // which is what lets the committee catch up.
+    //
+    // AND NEVER BEHIND A HEAD THIS CLIENT ALREADY HOLDS AS LIVE (kanban #1732). The list is one seat's word: a home seat
+    // that leaves its newest carried marks out of /checkpoints made the walk adopt an older live mark, and the next mark
+    // the player signed was a second child of a parent that already had a carried child - "two chains from one parent",
+    // which every honest seat signs FORFEIT. So when this client's own head is live (its own verified witnesses), the
+    // walk stops AT that head: only a mark served after it may be adopted, and a list that leaves the live head out
+    // moves nothing (`headWithheld`) - the head stays where this client can prove it belongs.
+    const ids = [];
+    for (let at = 0; at < cb.length; at += SIGNED_CHECKPOINT_BYTES)
+      ids.push(checkpointId(decodeCheckpoint(splitSigned(cb.subarray(at, at + SIGNED_CHECKPOINT_BYTES)).body)));
+    const headHex = toHex(this.head);
+    const headLive = headHex !== toHex(NO_PREVIOUS) && this.live(this.head);
+    let floor = 0;
+    if (headLive) {
+      floor = ids.findIndex((id) => toHex(id) === headHex);
+      if (floor < 0) return { adopted: null, receipts: marks.length, headWithheld: true };
+    }
     let adopted = null;
-    for (let at = cb.length - SIGNED_CHECKPOINT_BYTES; at >= 0; at -= SIGNED_CHECKPOINT_BYTES) {
-      const id = checkpointId(decodeCheckpoint(splitSigned(cb.subarray(at, at + SIGNED_CHECKPOINT_BYTES)).body));
-      if (this.live(id)) { adopted = id; break; }
+    for (let i = ids.length - 1; i >= floor; i--) {
+      if (this.live(ids[i])) { adopted = ids[i]; break; }
     }
     return { adopted, receipts: marks.length };
   }
