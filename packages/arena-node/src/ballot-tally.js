@@ -88,7 +88,21 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     }
     return b;
   };
-  const passedOf = (net) => proposals.list().filter((p) => p.networkId === net && stateOf(p) === S.PASSED)
+  // THE OUTCOME A RECOUNT REPLACES STAYS IN FORCE UNTIL THE RECOUNT ENDS (kanban #1635): a reorg below a decided proposal's anchor
+  // (undecide) used to drop it from the live config at once, so a repeal on the mainnet schedule decided 1 deep and live from 820
+  // went back to the config it replaced for the whole recount (720 blocks at 64 a pass, ~12 passes) after a 3-block reorg with no
+  // vote in it - rounds at census >= 820 naming the live config refused, new rounds handed the old one, seats recounting at
+  // different speeds disagreeing. Now a COUNTING proposal that was undecided keeps its last outcome for liveConfig until it is
+  // decided again (then the new outcome rules, the same one when no vote moved) or orphaned (its publication left: nothing held).
+  // Held in memory from the undecide, and read back after a restart from the record (proposals.js keeps it as undecided.outcome).
+  const heldOutcome = new Map();            // proposal id -> the outcome its recount replaces, while it is COUNTING again
+  const outcomeOf = (p) => {
+    const st = stateOf(p);
+    if (st === S.PASSED) return p.decided;
+    if (st !== S.COUNTING) return null;
+    return heldOutcome.get(p.id) || (p.undecided && p.undecided.outcome) || null;
+  };
+  const passedOf = (net) => proposals.list().filter((p) => { if (p.networkId !== net) return false; const o = outcomeOf(p); return !!(o && o.passed); })
     .map((p) => { const b = bodyOf(p); return { id: fromHex(p.id), parent: b.parent, configHash: b.configHash, config: b.config, activationHeight: p.activationHeight }; });
   const networks = () => new Set(proposals.list().map((p) => p.networkId));
   /** Recomputed when something was decided or the tip moved: a few proposals, so a few comparisons. */
@@ -142,6 +156,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         if (published === 'other') {
           if (proposals.orphan(p.id, { at: tip })) what = `its publication block left this chain${st === S.COUNTING ? '' : ` (it had ${st} at ${p.decided.decidedAt})`}: orphaned, kept with its bytes`;
         } else if (st !== S.COUNTING) {
+          if (p.decided) heldOutcome.set(p.id, p.decided);    // kanban #1635: in force until the recount decides
           if (proposals.undecide(p.id, `the chain under its outcome changed at ${p.decided.anchor.height}`)) what = `the chain under its outcome (${st} at ${p.decided.decidedAt}) changed: counted again`;
         } else what = 'the chain under its count changed: its votes are read again';
       }
@@ -172,7 +187,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       }
       if (reorged) refreshLive();
       for (const p of proposals.list().slice().sort((a, b) => a.votingFrom - b.votingFrom)) {
-        if (stateOf(p) !== S.COUNTING) { open.delete(p.id); continue; }       // decided, or orphaned: not counted
+        if (stateOf(p) !== S.COUNTING) { open.delete(p.id); heldOutcome.delete(p.id); continue; }       // decided, or orphaned: not counted
         if (tip < p.votingFrom) continue;                       // review: votes are not counted yet (27A.7.4)
         let o = open.get(p.id);
         if (!o) { o = { readTo: p.votingFrom - 1, readHash: null, census: null, votes: [], result: null, dirty: true }; open.set(p.id, o); }

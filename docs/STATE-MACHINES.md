@@ -1542,3 +1542,10 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-B15 (change) Ballot tally: a recount after a reorg keeps the outcome in force (kanban #1635)
+- A reorg below a decided proposal's anchor moves it PASSED | FAILED -> COUNTING (`undecide`) as before, but the outcome it had stays in force for the live config (`live`, `spans`, `historyAt`, so configServesRound and configForNewRound) until the recount decides it again: the new outcome then rules (the same one when no vote moved). Invariant: an undecide alone never changes the config live at the tip.
+- The replaced outcome is kept in memory and in the record (`undecided.outcome`, proposals.js), so a restart mid-recount still holds it.
+- ORPHANED holds nothing: its publication block left, so `undecided.outcome` is dropped at the orphan move and the replaced config is live again at once.
