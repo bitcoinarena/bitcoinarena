@@ -39,7 +39,7 @@ test('a node with a random key moves to the key from its words: the plan, then t
   assert.equal(n.sent.length, 0, 'the plan sends nothing');
   const r = await switchToSeedKey({ home: n.home, release: n.home, state: n.state, chainKit: n.chainKit, post: true });
   assert.equal(r.ok, true, r.why);
-  assert.equal(n.sent.length, 2, 'the funding and the bond');
+  assert.equal(n.sent.length, 4, 'the funding and the bond, then the old key\'s step-out (its funding and the update, kanban #1776)');
   const db = new DatabaseSync(join(n.home, 'node.db'));
   assert.equal(toHex(new Uint8Array(db.prepare('SELECT pubkey FROM identity WHERE one = 0').get().pubkey)), want, 'the node signs with the words\' key');
   assert.deepEqual(new Uint8Array(db.prepare('SELECT secret FROM identity_old').get().secret), n.random, 'the old key kept for its bond');
