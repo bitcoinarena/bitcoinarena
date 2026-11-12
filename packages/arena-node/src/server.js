@@ -14364,9 +14364,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           gatherOnProof(firstMark.c.roundId, firstMark.c.entryId);
           return sock.send('error FORFEIT: ' + TWO_FIRST_MARKS);
         }
-        if (firstMark && !round.holdsMark(checkpointId(firstMark.c))) {
+        // THE MARK'S SIGNATURE BEFORE ANY PEER IS ASKED (kanban #1862): firstMarkOf only decodes, so a stranger's
+        // first mark with a garbage signature for a public entry id made this seat fetch /entry-void from every peer
+        // (each awaited in this socket's queue) before handle() refused it - one free frame, one request per peer. A
+        // first mark that does not verify under its entry's session key goes straight on to handle(), which refuses it.
+        let markVerifies = false;
+        if (firstMark) { try { round.playerSigned(firstMark.bytes); markVerifies = true; } catch { markVerifies = false; } }
+        // NO PEER IS ASKED WHAT NO PEER CAN TELL (kanban #2267, a variant of #1862): the player's own late first mark is
+        // served to anyone at GET /start-forfeit, so it verifies, and a stranger replaying it made this seat fetch
+        // /entry-void from every peer on every frame. For a mark past the start line (or with no line known here)
+        // lateByPeers can find nothing - lateEvidenceHere answers null past the line and the two-first pair needs an
+        // on-time tick - so it is not asked. A REPLAY OF THE LATE START THIS SEAT ALREADY DECIDED (the same bytes it keeps
+        // as its start forfeit) is not forwarded again either, once every peer answered the forward that went with it.
+        const lineNow = firstMark ? round.startLine(firstMark.c.roundId, firstMark.c.entryId) : null;
+        const peersCanTell = !!lineNow && firstMark.c.tick <= lineNow.lastTick;
+        let replayOfDecided = false;
+        if (firstMark) {
+          const late = round.startForfeit(firstMark.c.entryId);
+          const said = firstMarkForwards.get(toHex(firstMark.c.entryId));
+          replayOfDecided = !!late && toHex(late.mark) === toHex(firstMark.bytes)
+            && Array.isArray(said) && said.every((x) => x.answer !== 'unanswered');
+        }
+        if (firstMark && markVerifies && !round.holdsMark(checkpointId(firstMark.c))) {
           const own = lateEvidenceHere(firstMark.c, null);
-          const found = own ? { late: own, receipts: [] } : await lateByPeers(firstMark.c, firstMark.bytes);
+          const found = own ? { late: own, receipts: [] } : (peersCanTell ? await lateByPeers(firstMark.c, firstMark.bytes) : null);
           if (found && found.twoFirst) {
             gatherOnProof(firstMark.c.roundId, firstMark.c.entryId);
             return sock.send('error FORFEIT: ' + TWO_FIRST_MARKS);
@@ -14387,7 +14408,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // otherwise be POSTed to every peer, and their 409s would overwrite the 'unanswered' §16's outage refund reads.
         let signedFirst = false;
         if (firstMark) { try { round.playerSigned(firstMark.bytes); signedFirst = true; } catch { signedFirst = false; } }
-        if (firstMark && signedFirst) forwardFirstMark(firstMark).catch((e) => console.error(`[first-mark] ${e.message}`));
+        if (firstMark && signedFirst) { if (!replayOfDecided) forwardFirstMark(firstMark).catch((e) => console.error(`[first-mark] ${e.message}`)); }
         else if (isBinary && new Uint8Array(data)[0] === TYPE_CHECKPOINT)
           afterMarkTaken(new Uint8Array(data)).catch((e) => console.error(`[first-mark] ${e.message}`));
         return handled;
