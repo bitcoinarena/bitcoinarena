@@ -1962,3 +1962,6 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 - A leaving seat owes a round it sits on until the round's `finalAfterMs` (end + W + `FINAL_TOLERANCE_MS`, window.js), not until end + W: it signs FINAL only then, and a head-to-head seat still learning the members (`membersKnown`) may sign its results as late as that. `GET /owner/leave` never answers `freeNow` before every held round's `finalAfterMs`; a paying round with entries stays owed until its settlement is ACCEPTED, as before.
 
 Files: `owner-leave.js` leaveStatus.
+#### Entry finality: a SUSPENDED entry's §13C decision is written (kanban #2326)
+- When the re-run window closes (end + 1205 s) short of the re-run threshold, `computeFinality` writes the §13C outcome (VOID, or FORFEIT on a proven equivocation) with `putNoQuorum`, as every other §13C door does, and only when asked at the seat's own clock (`nowMs <= round.now()`; a look ahead writes nothing).
+- From then on the written record is the entry's outcome at this seat: a proof of two first marks (or a fork) pulled later, even one its peer dated before the deadline, does not turn a VOID into a FORFEIT. `decidedHere` (round.noQuorum) is true, so the finality watch ends and `resumingCloses` does not re-run the close after a restart.
