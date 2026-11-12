@@ -12,6 +12,7 @@
 // stops when the queue empties. Nothing here polls, nothing ticks, and nothing
 // here reaches the core: `replay.js` remains the only file in this daemon that
 // does, and this file only decides which runs are handed to it.
+import { peerBody as sharedPeerBody } from './peer-body.js';
 import { sandboxFor } from './core-sandbox.js';
 import { windowsOf } from '../../arena-protocol/src/window.js';
 import { noQuorumGoesToRerun } from '../../arena-protocol/src/constants.js';
@@ -226,21 +227,8 @@ const OBJECTION_MEMORY_ENTRIES = 512;
 async function peerFetch(url, waitMs = PEER_WAIT_MS) {
   return fetch(url, { signal: AbortSignal.timeout(waitMs) });
 }
-/** The body of a peer's answer, at most `cap` bytes, read under the fetch's own deadline; throws past the cap. */
-async function peerBody(answer, cap = PEER_BODY_MAX_BYTES) {
-  const declared = Number(answer.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > cap) { try { await answer.body?.cancel(); } catch { /* gone */ } throw new Error(`answer of ${declared} bytes is past ${cap}`); }
-  if (!answer.body) return new Uint8Array(0);
-  const parts = []; let n = 0;
-  for await (const chunk of answer.body) {
-    n += chunk.length;
-    if (n > cap) { try { await answer.body.cancel(); } catch { /* gone */ } throw new Error(`answer past ${cap} bytes`); }
-    parts.push(chunk);
-  }
-  const out = new Uint8Array(n); let at = 0;
-  for (const c of parts) { out.set(c, at); at += c.length; }
-  return out;
-}
+/** The body of a peer's answer, at most `cap` bytes, read under the fetch's own deadline; throws past the cap (peer-body.js, shared since #1870/#1901). */
+const peerBody = (answer, cap = PEER_BODY_MAX_BYTES) => sharedPeerBody(answer, cap);
 /**
  * THE FIRST `cap` BYTES OF A PEER'S ANSWER, THE REST NEVER READ (kanban #1632): for an answer whose head is all this
  * seat uses (a peer's /equivocation pairs), so a padded answer is cut, not read whole, and an honest long one still counts.
