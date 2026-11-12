@@ -566,10 +566,30 @@ const leadsInternal = (u) => new Promise((resolve) => {
   let host; try { host = new URL(String(u)).hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, ''); } catch { resolve(true); return; }
   guardedLookup(host, {}, (err) => resolve(!!err && err.code === 'EINTERNALHOST'));
 });
+// NEVER INSIDE THE FAUCET'S OWN NETWORK (kanban #2045, #2064, refute 3 of #1537): the faucet's own team hosts (FAUCET_TEAM_HOSTS) are refused by
+// name too - the first URL and every redirect hop
+function teamHosts() { return String(process.env.FAUCET_TEAM_HOSTS || 'tn4.bitcoin-arena.io').split(',').map((x) => x.trim().toLowerCase().replace(/\.$/, '')).filter(Boolean); }
+const onTeamHost = (url) => { let h = ''; try { h = new URL(String(url)).hostname.toLowerCase().replace(/\.$/, ''); } catch { return true; } return teamHosts().some((t) => h === t || h.endsWith(`.${t}`)); };
+const walletRefusal = (url) => walletUrlRefusal(url) || (onTeamHost(url) ? 'its wallet must be on a public name' : null);
 const walletGet = async (fetchFn, u, timeoutMs) => {
   if (fetchFn !== publicFetch && await leadsInternal(u)) throw Object.assign(new Error('its wallet must be on a public name'), { code: 'EINTERNALHOST' });
-  return checkedFetch(u, { fetchFn, signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } });
+  return checkedFetch(u, { fetchFn, signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' }, refusal: walletRefusal });
 };
+/**
+ * WHERE AN ADDRESS IS ASKED, BEFORE ANYTHING IS FETCHED (kanban #1873, #1905): { ok, url } for a Lightning address or an LNURL on a public HTTPS
+ * name, else { ok: false, why }. The faucet takes a slot of its address-check minute only for an address that passes this, so text that is no
+ * address costs nothing and can never fill the minute.
+ */
+export function lnAddressUrl(address) {
+  const a = String(address || '').trim();
+  let url = null;
+  const m = /^([a-z0-9._+-]+)@([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/i.exec(a);
+  if (m) url = `https://${m[2].toLowerCase()}/.well-known/lnurlp/${encodeURIComponent(m[1].toLowerCase())}`;
+  else if (/^lnurl1[02-9ac-hj-np-z]+$/i.test(a)) { try { url = urlOfLnurl(a.toLowerCase()); } catch { url = null; } }
+  if (!url || !/^https:\/\//.test(url)) return { ok: false, why: 'that is not a Lightning address (name@wallet.com) or an LNURL' };
+  const refused = walletRefusal(url); if (refused) return { ok: false, why: refused };
+  return { ok: true, url };
+}
 
 export async function lnAddressWorks(address, { fetchFn = publicFetch, timeoutMs = 8000 } = {}) {
   const a = String(address || '').trim();
@@ -578,8 +598,8 @@ export async function lnAddressWorks(address, { fetchFn = publicFetch, timeoutMs
   if (m) url = `https://${m[2].toLowerCase()}/.well-known/lnurlp/${encodeURIComponent(m[1].toLowerCase())}`;
   else if (/^lnurl1[02-9ac-hj-np-z]+$/i.test(a)) { try { url = urlOfLnurl(a.toLowerCase()); } catch { url = null; } }
   if (!url || !/^https:\/\//.test(url)) return { ok: false, why: 'that is not a Lightning address (name@wallet.com) or an LNURL' };
-  // NEVER AN INTERNAL HOST (kanban #1511, #1689, #1746, #1962): by name here, by resolved address in publicFetch's lookup, each redirect hop the same
-  const refused = walletUrlRefusal(url); if (refused) return { ok: false, why: refused };
+  // NEVER AN INTERNAL HOST (kanban #1511, #1689, #1746, #1962, #2064): by name here, by resolved address in publicFetch's lookup, each redirect hop the same
+  const refused = walletRefusal(url); if (refused) return { ok: false, why: refused };
   let j;
   try {
     const r = await walletGet(fetchFn, url, timeoutMs);
@@ -609,7 +629,7 @@ export async function lnAddressInvoice(address, sats, comment = '', { fetchFn = 
   if (!url || !/^https:\/\//.test(url)) return { ok: false, why: 'not a Lightning address or an LNURL' };
   // the same guard as lnAddressWorks on BOTH GETs, the callback's included (kanban #1677, #1689, #1746, #1809, #1962): a public name, a public
   // address, each redirect hop checked; every answer read bounded (kanban #1563)
-  const get = async (u) => { const refused = walletUrlRefusal(u); if (refused) throw new Error(refused);
+  const get = async (u) => { const refused = walletRefusal(u); if (refused) throw new Error(refused);
     let r; try { r = await walletGet(fetchFn, u, timeoutMs); } catch (e) { throw new Error(e && e.code === 'EINTERNALHOST' ? 'its wallet must be on a public name' : 'could not be reached'); }
     if (!r.ok) throw new Error(`answered ${r.status}`); return readJsonBounded(r).catch((e) => { throw /LNURL answer may be/.test(e.message) ? new Error('answered too much') : e; }); };
   let p; try { p = await get(url); } catch (e) { return { ok: false, why: `its wallet: ${e.message}` }; }
