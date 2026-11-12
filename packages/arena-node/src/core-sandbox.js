@@ -54,6 +54,24 @@ export const RSS_BACKSTOP = 512 * 1024 * 1024;
 const BACKSTOP_MARGIN_MB = 96;
 /** After a core is ended: how long the node waits for its supervisor to say the thread is gone. */
 const EXIT_WAIT_MS = 3000;
+/** A load with ONE ABSOLUTE DEADLINE (`until`, the plugin trial) waits for its thread's end at most this far past it (kanban
+ *  #1880, #1913): an idle thread is gone in a few ms, and one in an uninterruptible builtin is not waited for (see `lingering`). */
+const UNTIL_EXIT_GRACE_MS = 100;
+// THREADS ENDED BUT NOT YET GONE (kanban #1880, #1913): a core inside ONE long builtin (a sort, a parse) does not take V8's
+// TerminateExecution until the builtin returns, so end() waiting EXIT_WAIT_MS held the seat's thread past a deadline the caller
+// set - twice, once in the deadline's end() and once in the caller's. A load with `until` does not wait past it: the supervisor
+// has been told to end the thread (it dies the moment the builtin returns, inside its heap limits), and it is kept here by its
+// load's name, so a caller can refuse to start another while one still lingers (plugin-trial.js).
+const lingering = new Set();
+/** How many ended core threads named `name` (every one when null) are not yet gone. */
+export function lingeringCores(name = null) {
+  let n = 0;
+  for (const l of [...lingering]) {
+    if (Atomics.load(l.ctrl, C.STATE) === EXITED) { lingering.delete(l); continue; }
+    if (name === null || l.name === name) n++;
+  }
+  return n;
+}
 const DEADLINE = { replay: 'callMs', stepTo: 'stepMs' };
 
 /** A core's files as core-hash.js hashes a tree (the rule an app takes from arena-sdk/core-hash, kanban #691): the hash, and each file's text by path. */
@@ -160,11 +178,16 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
   const gone = () => Atomics.load(ctrl, C.STATE) === EXITED;
   /** END THE CORE'S THREAD and wait - in slices - for its supervisor to say the thread is gone: what it held goes with it,
    *  before the node answers. At most EXIT_WAIT_MS. */
+  // ONCE ONLY, AND NEVER PAST `until` + UNTIL_EXIT_GRACE_MS (kanban #1880, #1913): a second end() (the caller's, after the
+  // deadline's own) does not wait again, and a thread still inside a builtin is left to its supervisor (`lingering`)
   const end = (why) => {
+    if (ended) return;
     ended = why;
     const t0 = Date.now();
+    const waitMs = Number.isFinite(until) ? Math.max(0, Math.min(EXIT_WAIT_MS, until + UNTIL_EXIT_GRACE_MS - t0)) : EXIT_WAIT_MS;
     if (!gone()) sup.worker.postMessage({ type: 'end', id });
-    while (!gone() && Date.now() - t0 < EXIT_WAIT_MS) Atomics.wait(ctrl, C.STATE, Atomics.load(ctrl, C.STATE), 10);
+    while (!gone() && Date.now() - t0 < waitMs) Atomics.wait(ctrl, C.STATE, Atomics.load(ctrl, C.STATE), Math.max(1, Math.min(10, waitMs - (Date.now() - t0))));
+    if (!gone()) lingering.add({ ctrl, name });
     lastEnd = { exitMs: Date.now() - t0, exited: gone(), rssMb: rssMb(), highMb: Atomics.load(ctrl, C.HIGH_MB) };
     Atomics.store(ctrl, C.CALL, 0);
   };
