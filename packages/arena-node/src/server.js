@@ -13385,6 +13385,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return took.ok ? json(res, 200, took) : text(res, took.status || 409, took.why);
       }
       const slashed = /^\/slash\/([0-9a-f]{64})$/.exec(url.pathname);
+      // ONLY A PROOF ABOUT A ROUND THIS SEAT HOLDS (kanban #1816, audit #1489 round 6 gossip: a bypass of #1532 - the door checked only
+      // that the proof hashed to its id and named the result beside it, so a stranger PUT made-up proofs with zero signatures about
+      // random rounds until the relay cap #1532 shares with PUT /transcript was full, and every held entry's transcript was refused 507).
+      // Kept now only when the round is in this seat's store, the accused node is on its committee (the signer nodes the census
+      // assigned), the evidence names that round, node and player, and the evidence's signature is the accused node's.
+      // Returns why not, or null.
+      const slashOursWhy = (proof, body, sigOk) => {
+        if (!round.get(proof.roundId)) return 'this relay keeps only a slash proof about a round it holds';
+        if (!round.signerNodes(proof.roundId).some((k) => toHex(k) === toHex(proof.nodePubkey))) return 'the accused node is not on that round\'s committee';
+        if (toHex(body.roundId) !== toHex(proof.roundId) || toHex(body.nodePubkey) !== toHex(proof.nodePubkey) || toHex(body.playerPubkey) !== toHex(proof.playerPubkey))
+          return 'the evidence is not the accused node\'s result for that round and player';
+        let ok = false; try { ok = sigOk() === true; } catch { ok = false; }
+        return ok ? null : 'the signature on the evidence is not the accused node\'s';
+      };
       if (slashed && req.method === 'PUT') {
         const bytes = await read(req), u8 = new Uint8Array(bytes);
         if (!bytes.length) return text(res, 400, 'that is no proof');
@@ -13411,6 +13425,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         if (toHex(fraudProofHash(u8)) !== slashed[1]) return text(res, 409, 'those bytes are not the proof that hash names');
         let evidence, got; try { ({ evidence } = decodeFraudProof(u8)); got = readEvidence(evidence); } catch (e) { return text(res, 400, e.message); }
+        // 2.0 (kanban #1489 port of #1816): a result's or a re-run's proof is held to slashOursWhy - this seat holds the round, the accused is on its
+        // committee, the evidence is its own signed word for that round and player; any other kind is kept only about a round this seat holds
+        {
+          let why = null;
+          try {
+            if (got.kind === 'result') {
+              const sp = splitSignedResult(got.signedResult), body = decodePlayerResult(sp.body);
+              if (toHex(resultId(body)) !== toHex(got.proof.signedResultId)) why = 'the evidence is not the result the proof names';
+              else why = slashOursWhy(got.proof, body, () => schnorr.verify(sp.signature, resultId(body), body.nodePubkey));
+            } else if (got.kind === 'rerun') {
+              const sp = splitSignedRerun(got.signedRerun), rx = decodeRerunResult(sp.body);
+              if (toHex(rerunResultId(rx)) !== toHex(got.proof.signedResultId)) why = 'the evidence is not the re-run the proof names';
+              else why = slashOursWhy(got.proof, rx.result, () => schnorr.verify(sp.signature, rerunResultId(rx), rx.result.nodePubkey));
+            } else if (!(got.proof && got.proof.roundId instanceof Uint8Array && round.get(got.proof.roundId))) why = 'this relay keeps only a slash proof about a round it holds';
+          } catch (e) { why = `the evidence does not read: ${e.message}`; }
+          if (why) return text(res, 422, why);   // kanban #1816
+        }
         if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');   // kanban #1532
         round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
         // ANYONE PUBLISHES A FRAUD PROOF (5A.3B step 1): a pair that holds here, on this seat's own check, is a proof this seat holds, kept as if it had seen both results itself
