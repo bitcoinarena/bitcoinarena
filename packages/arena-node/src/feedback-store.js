@@ -145,10 +145,15 @@ export function openFeedbackStore(path = ':memory:') {
     }
     if (changed && path !== ':memory:') db.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);'); }
   // A PAID REPORT FROM BEFORE GETS ITS APPROVAL TIME BACK (kanban #1786): paidNow used to move changed_ms to the payment time; the approval's move
-  // (report_moves, to 'accepted') still holds when it was approved
-  db.exec(`UPDATE reports SET changed_ms = (SELECT MAX(m.at_ms) FROM report_moves m WHERE m.id = reports.id AND m.to_state = 'accepted')
-    WHERE state = 'paid' AND EXISTS (SELECT 1 FROM report_moves m WHERE m.id = reports.id AND m.to_state = 'accepted')
-      AND changed_ms IS NOT (SELECT MAX(m.at_ms) FROM report_moves m WHERE m.id = reports.id AND m.to_state = 'accepted')`);
+  // (report_moves, to 'accepted') still holds when it was approved.
+  // ONLY THE APPROVAL ITSELF (kanban #2269, #1489 a44-refute-77-s2): createReward ("reward link made") and note() log a move accepted -> accepted
+  // too, days after the approval; taking the latest move to 'accepted' moved the approval time to that link or note at every restart, and a
+  // reward approved last week counted again toward the key's 3 a week and the week's budget. The approval is the one move approve() writes,
+  // new -> accepted. Running it on every open stays right: it writes back the approval time and nothing else (and repairs a file the old
+  // repair already moved to a link or note time).
+  db.exec(`UPDATE reports SET changed_ms = (SELECT MAX(m.at_ms) FROM report_moves m WHERE m.id = reports.id AND m.from_state = 'new' AND m.to_state = 'accepted')
+    WHERE state = 'paid' AND EXISTS (SELECT 1 FROM report_moves m WHERE m.id = reports.id AND m.from_state = 'new' AND m.to_state = 'accepted')
+      AND changed_ms IS NOT (SELECT MAX(m.at_ms) FROM report_moves m WHERE m.id = reports.id AND m.from_state = 'new' AND m.to_state = 'accepted')`);
   const get = db.prepare('SELECT * FROM reports WHERE id = ?');
   const row = (r) => (r ? { id: r.id, pubkey: r.pubkey, type: r.type, signedAt: r.signed_at, receivedMs: r.received_ms, happened: r.happened, expected: r.expected,
     game: r.game || null, round: r.round || null, build: r.build || null, state: r.state, reason: r.reason || null, duplicateOf: r.duplicate_of || null,
