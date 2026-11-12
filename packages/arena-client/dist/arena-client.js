@@ -32844,8 +32844,10 @@ function readClaim(storage, key) {
 // closed. Now every record names its payoutPk, and a phrase uses the plain key only when it is free or its own (an older record that names
 // no key is read as this phrase's, as before); a record another key wrote stays for that key, and this phrase keeps its own at
 // <key>.<16 hex of its key> - so each record is posted, and dropped as taken, only with the key it was written for.
+/** The slot a payout key moves to while another phrase holds the plain key (kanban #1771). */
+const ownClaimSlot = (base, pk) => `${base}.${String(pk).toLowerCase().slice(-64, -48)}`;
 function claimSlot(storage, base, pk) {
-  const own = `${base}.${String(pk).toLowerCase().slice(-64, -48)}`;
+  const own = ownClaimSlot(base, pk);
   if (storage.getItem(movedKey(storage, own)) != null) return own;
   const raw = storage.getItem(movedKey(storage, base));
   if (raw == null) return base;
@@ -33004,16 +33006,24 @@ async function presentNotes({ events, network, arbitration = arbitrationOf(netwo
         if (rec) { presented.add(recKey); rec = await presentKept(recKey, rec); }
       }
     }
-    // EVERY SPILL RECORD OF THIS CLAIM (kanban #2184): presented, posted and dropped as taken exactly as the claim's own record
+    // EVERY SPILL RECORD OF THIS CLAIM (kanban #2184): presented, posted and dropped as taken exactly as the claim's own record.
+    // UNDER BOTH SLOTS THIS PAYOUT KEY CAN HAVE (kanban #2407, refute of #2184 on eba26f708): claimSlot moves with storage - the plain key
+    // while it is free or this phrase's, <base>.<16 hex> while the browser's other phrase holds it - so notes spilled under one slot were
+    // never scanned after a reload under the other (and the other phrase skips them by payoutPk): kept, never presented, worthless once the
+    // window closed. Both candidate slots' spill records are read; a record presented here must name this payout key (one at this pass's own
+    // slot that names none is an older one, read as this phrase's as before).
     if (Number.isInteger(height)) {
-      for (let n = 0; n < CLAIM_SPILL_SLOTS; n++) {
-        const k = spillClaimKey(eKey, n);
+      const plainKey = pendingClaimKey(fid);
+      const spillKeys = [];
+      for (const slot of [...new Set([eKey, plainKey, ownClaimSlot(plainKey, pk)])]) for (let n = 0; n < CLAIM_SPILL_SLOTS; n++) spillKeys.push([slot, spillClaimKey(slot, n)]);
+      for (const [slot, k] of spillKeys) {
         if (presented.has(k)) continue;
         const raw = read(k);
         if (raw == null) continue;
         let sr = null;
         try { sr = JSON.parse(raw); } catch { sr = null; }
-        if (!sr || sr.v !== 2 || typeof sr.ecash !== 'string' || (sr.payoutPk && String(sr.payoutPk).toLowerCase() !== pk)) continue;
+        if (!sr || sr.v !== 2 || typeof sr.ecash !== 'string') continue;
+        if (sr.payoutPk ? String(sr.payoutPk).toLowerCase() !== pk : slot !== eKey) continue;
         try {
           if ((sr.state === 'posted' || sr.answered) && taken) { step(k, sr, 'none'); out.push({ federation: fid, ok: true, taken: true, why: 'the arbitration set lists this claim as accepted' }); continue; }
           await presentKept(k, sr);
