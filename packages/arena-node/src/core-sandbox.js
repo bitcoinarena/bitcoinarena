@@ -138,7 +138,11 @@ function deathOf(sup, id) {
  * from then on.
  */
 export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry,
-  arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP } = {}) {
+  arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, until = null } = {}) {
+  // `until` (kanban #1719, #1538): ONE ABSOLUTE DEADLINE (a Date.now() time) for the load AND the meta ask loadCore makes
+  // itself - the plugin trial gives load, meta and every decide call one TRIAL_MS in total; meta reads DECIDE's fields, which
+  // may be getters, so without it load + meta held the seat's thread up to loadMs + askMs
+  const leftOf = (ms) => (Number.isFinite(until) ? Math.max(1, Math.min(ms, until - Date.now())) : ms);
   const sup = supervisorOf();
   const id = sup.next++;
   const ctrl = new Int32Array(new SharedArrayBuffer(8 * 4));
@@ -196,7 +200,7 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
     end(`the core did not stop within ${ms} ms (${what}): its thread was ended, and it is not run again`);
     throw new Error(ended);
   };
-  const loaded = wait(loadMs, 'loading');
+  const loaded = wait(leftOf(loadMs), 'loading');
   if (!loaded.ok) { end(loaded.why); throw new Error(loaded.why); }
 
   // `within`: a shorter deadline for this one call (kanban #1538: the plugin trial run gives all its calls one deadline in total)
@@ -211,7 +215,7 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
     if (!a.ok) throw new Error(a.why);
     return revive(a.json);
   };
-  const meta = call('meta');
+  const meta = call('meta', {}, Number.isFinite(until) ? leftOf(askMs) : null);
   return Object.freeze({ call, meta, end: () => end('ended by the node'), lastEnd: () => lastEnd, highWaterMb: () => Atomics.load(ctrl, C.HIGH_MB) });
 }
 
