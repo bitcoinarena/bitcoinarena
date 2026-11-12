@@ -15,6 +15,8 @@ import { testHeadToHeadGame, testDonationSet } from './plugins/sign.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { encodeManifest } from '../../arena-protocol/src/manifest.js';
 
+// 2.0 (kanban #1489 port of #1880): a trial loads each core under its own name, as the seat does (#1694), not 'plugin trial' - so every
+// lingering core thread is waited for here
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 function pkgOf(src, { name, moveCount = 4 }) {
   const core = { name, hash: sha(Buffer.from(src)), configs: new Map([['11'.repeat(32), {}]]) };
@@ -36,8 +38,8 @@ const CASES = [
 test('#1880/#1913: each uninterruptible builtin, measured alone, holds the seat\'s thread at most ASK_MS; the next trial waits for nothing', async () => {
   let n = 0;
   for (const [what, src] of CASES) {
-    for (let t = Date.now(); lingeringCores('plugin trial') && Date.now() - t < 60000;) await new Promise((r) => setTimeout(r, 50));
-    assert.equal(lingeringCores('plugin trial'), 0, 'the earlier trial\'s thread is gone once its builtin returns');
+    for (let t = Date.now(); lingeringCores() && Date.now() - t < 60000;) await new Promise((r) => setTimeout(r, 50));
+    assert.equal(lingeringCores(), 0, 'the earlier trial\'s thread is gone once its builtin returns');
     const pkg = pkgOf(src, { name: `alone-${n++}` });
     const t0 = Date.now();
     const v = verifyPackage(pkg, { verify: verifyEd25519 });
@@ -46,13 +48,13 @@ test('#1880/#1913: each uninterruptible builtin, measured alone, holds the seat\
     assert.equal(v.ok, false); assert.equal(v.trial, true, `${what}: a verdict of the trial, not a retry`);
     assert.ok(held <= ASK_MS, `${what}: held ${held} ms (ASK_MS ${ASK_MS}, TRIAL_MS ${TRIAL_MS})`);
     // a trial started while that thread still sorts is refused at once, as no verdict
-    if (lingeringCores('plugin trial')) {
+    if (lingeringCores()) {
       const t1 = Date.now(); const w = verifyPackage(pkgOf(CASES[0][1].replace('name: "x"', 'name: "w"'), { name: `retry-${n}` }), { verify: verifyEd25519 });
       assert.ok(Date.now() - t1 <= 200); assert.equal(w.retry, true); assert.notEqual(w.trial, true);
     }
   }
   // and an honest adapter is taken once the threads are gone
-  for (let t = Date.now(); lingeringCores('plugin trial') && Date.now() - t < 60000;) await new Promise((r) => setTimeout(r, 50));
+  for (let t = Date.now(); lingeringCores() && Date.now() - t < 60000;) await new Promise((r) => setTimeout(r, 50));
   const ok = verifyPackage(pkgOf(`export const DECIDE = { name: "h", decide(moves) { const out = {}; for (const m of moves) out[m.key] = "DRAW"; return out; } };`, { name: 'honest' }), { verify: verifyEd25519 });
   assert.equal(ok.ok, true, ok.why);
 });
