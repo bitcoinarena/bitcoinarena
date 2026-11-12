@@ -67,6 +67,9 @@ import { statesBefore } from './send-state.js';
 export const RECEIPTS_FOR_CANONICAL = receiptsNeeded(7);
 // A LATE ENTRY'S JOIN TICK MAY TRAIL THE ROUND'S CLOCK BY THIS MUCH: the device's clock and the post.
 export const LATE_ENTRY_TICK_SLACK_MS = 10000n;
+// THE LOCKLESS ENTRIES A PAYING HEAD-TO-HEAD ROUND TAKES (kanban #1745): per player of its game, joined within the last minute
+export const LOCKLESS_PER_SEAT = 3;
+export const LOCKLESS_HOLD_MS = 60000;
 
 /**
  * A STORED ROUND THIS NETWORK CANNOT PARSE IS ABSENT (RULED 2026-09-22 22:59, §23.6): "a record
@@ -733,6 +736,18 @@ export class Round {
         const me = entryId(contract);   // seats counted by entry id (kanban #1479)
         const seated = this.seatedEntriesOf(contract.roundId, asks.stakeMsat).filter((x) => !same(x.entryId, me)).length;
         if (seated >= m.players && !accepted) throw new Error(`that round already seats game "${m.gameName}"'s ${m.players} players`);
+        // AND A PAYING ROUND HOLDS ONLY A FEW ENTRIES NOBODY LOCKED A STAKE FOR (kanban #1745, audit #1489 r5 h2h-1): the door takes an entry before its
+        // lock and the seats above count only locked ones, so a stranger with fresh keys and no sats filled a paid RPS round with 24 lockless entries -
+        // each stored, relayed to every seat and signed VOID at the close. At most LOCKLESS_PER_SEAT x players of them joined in the last
+        // LOCKLESS_HOLD_MS are taken; an older lockless entry no longer counts, so an honest player who is slow to lock never keeps the next one out.
+        // The same entry posted again and an entry the round accepted (entry-relay) are still taken.
+        if (asks.stakeMsat > 0n && !accepted && !this.db.prepare('SELECT 1 FROM entries WHERE entry_id = ?').get(Buffer.from(me))) {
+          const since = this.now() - LOCKLESS_HOLD_MS;
+          const lockless = this.db.prepare('SELECT entry_id FROM entries WHERE round_id = ? AND joined_ms > ?').all(contract.roundId, since)
+            .filter((r) => !this.stakeSeen(new Uint8Array(r.entry_id)) && !this.stakeLock(new Uint8Array(r.entry_id))).length;
+          if (lockless >= LOCKLESS_PER_SEAT * m.players)
+            throw new Error(`that round already holds ${lockless} entries with no stake lock: try again in a minute`);
+        }
       } else if (hidden) throw new Error('that entry hides a move, and its round is not a head-to-head game\'s');
     }
 
@@ -4136,13 +4151,30 @@ export class Round {
   }
 
   /** An objection being checked (kanban #1173): kept at its arrival, before its replay runs. */
+  // ONE ROW, COUNTED PER CHECK (kanban #1845, state audit 2026-11-12): two objections for one entry that reach this seat in the same millisecond share
+  // one row (primary key round, entry, arrived_ms). The first check to answer - a cheap junk one, say - dropped that row while the other check was still
+  // queued, and finalityStep then read no pending objection and kept FINAL past final_after: the in-time objection was re-dated late. Each check now
+  // holds a count on its row and the row goes only when the last check holding it answered. The count lives with the process, as the checks do: a
+  // restart clears every row (clearPendingObjections) and the count with them.
+  _pendingObjectionKey(roundIdBytes, entryIdBytes, arrivedMs) {
+    return `${Buffer.from(roundIdBytes).toString('hex')}:${Buffer.from(entryIdBytes).toString('hex')}:${Number(arrivedMs)}`;
+  }
+
   putPendingObjection(roundIdBytes, entryIdBytes, arrivedMs) {
+    if (!this._pendingObjectionRefs) this._pendingObjectionRefs = new Map();
+    const k = this._pendingObjectionKey(roundIdBytes, entryIdBytes, arrivedMs);
+    this._pendingObjectionRefs.set(k, (this._pendingObjectionRefs.get(k) || 0) + 1);
     this.db.prepare('INSERT OR IGNORE INTO pending_objections (round_id, entry_id, arrived_ms) VALUES (?, ?, ?)')
       .run(Buffer.from(roundIdBytes), Buffer.from(entryIdBytes), Number(arrivedMs));
   }
 
-  /** Its check answered (taken or refused): the pending row goes. */
+  /** Its check answered (taken or refused): the pending row goes once no other check of the same arrival still holds it (kanban #1845). */
   dropPendingObjection(roundIdBytes, entryIdBytes, arrivedMs) {
+    const refs = this._pendingObjectionRefs;
+    const k = this._pendingObjectionKey(roundIdBytes, entryIdBytes, arrivedMs);
+    const n = refs ? (refs.get(k) || 0) - 1 : 0;
+    if (n > 0) { refs.set(k, n); return; }
+    if (refs) refs.delete(k);
     this.db.prepare('DELETE FROM pending_objections WHERE round_id = ? AND entry_id = ? AND arrived_ms = ?')
       .run(Buffer.from(roundIdBytes), Buffer.from(entryIdBytes), Number(arrivedMs));
   }
@@ -4155,7 +4187,7 @@ export class Round {
   }
 
   /** A restarted seat's checks are gone with its process: their pending rows go too (kanban #1173). Answers how many. */
-  clearPendingObjections() { return this.db.prepare('DELETE FROM pending_objections').run().changes; }
+  clearPendingObjections() { if (this._pendingObjectionRefs) this._pendingObjectionRefs.clear(); return this.db.prepare('DELETE FROM pending_objections').run().changes; }
 
   /** The entry FINAL at this seat (kanban #1173): kept once, the first that stood; true when this call kept it. */
   putEntryFinal({ roundId, entryId, runId, finalAfterMs, onRerun = false, atMs }) {
