@@ -358,6 +358,15 @@ export function openStore(path = ':memory:') {
       accepted_ms INTEGER NOT NULL
     );
 
+    -- A HANDOUT SHOWN WITH ITS STAKE LOCK (kanban #2415, #2481): the door checked the lock with the federation (image A0, the player's
+    -- refund key, the round's claim key), so no other handout pushes this one out of a full round (round.js looseHandouts). A table of its
+    -- own so a store written before it existed gains it.
+    CREATE TABLE IF NOT EXISTS handout_locks (
+      handout_id  BLOB PRIMARY KEY,
+      round_id    BLOB NOT NULL,
+      pinned_ms   INTEGER NOT NULL
+    );
+
     -- (NO HOLDS TABLE IN A NEW STORE: it was the hold invoice's record of a stake in flight - the withdrawn Lightning
     -- custody's, §23.6; cut 2b RULED 2026-09-25. A store from before keeps its own, untouched and unread: a store is
     -- not rewritten.)
