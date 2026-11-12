@@ -18,14 +18,15 @@ import { pathToFileURL } from 'node:url';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeManifest, encodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
 import { gameInfoJson } from '../../arena-protocol/src/game-info.js';
-import { checkPackage } from './plugin-check.js';
+import { checkPackage, packageWindow } from './plugin-check.js';
 import { trialRun, TRIAL_MS } from './plugin-trial.js';
 
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 const b64 = (b) => Buffer.from(b).toString('base64');
 
 /** A hosted game as a package (JSON-able), from its registration's files. Null when it names no source to give. */
-export function packageOf(game, { ancestors = [] } = {}) {
+// `ancestors` are manifests this seat checked, oldest first; `cut` is the hex marker kept below them (packageWindow), sent first
+export function packageOf(game, { ancestors = [], cut = null } = {}) {
   const cores = [];
   for (const [hash, core] of game.cores || []) {
     if (!core || !core.url || !String(core.url).startsWith('file:')) return null;
@@ -34,7 +35,7 @@ export function packageOf(game, { ancestors = [] } = {}) {
   const clients = (game.clientUrls || []).map((u) => { const body = readFileSync(new URL(u)); return { hash: sha(body), body: b64(body) }; });
   // ITS ANCESTORS' SIGNED MANIFESTS, oldest first (an update stands only on its parent, §0A.3): the package stands on its own
   return { format: 'arena-plugin/v1', name: game.name, title: game.title || game.name, manifest: toHex(encodeManifest(game.manifest)),
-    ancestors: ancestors.map((m) => toHex(encodeManifest(m))),
+    ancestors: [...(typeof cut === 'string' ? [cut] : []), ...ancestors.map((m) => toHex(encodeManifest(m)))],
     donationSet: (game.donationSet || []).map((r) => ({ recipientPk: toHex(r.recipientPk), shareBps: Number(r.shareBps), label: r.label || '' })),
     cores, clients, ...(game.info ? { info: gameInfoJson(game.info) } : {}) };
 }
@@ -84,8 +85,13 @@ export async function registrationFromPackage(at, pkg, { title = null } = {}) {
     if (!sandboxFor(core, { loadMs: TRIAL_MS }).meta.decide) throw new Error(`core ${c.hash.slice(0, 16)} exports no DECIDE`);
     cores.set(c.hash, core);
   }
+  // ONLY THE EARLIER VERSIONS THE CHECK READ (kanban #2332, #2346): the newest MAX_PACKAGE_ANCESTORS, which checkPackage decoded
+  // and checked before this; the entry below them is kept as the opaque cut marker, never decoded (a forged version there must
+  // not reach chainOf's sort or the chain this seat serves), and everything further below is dropped - also from a package.json
+  // an older build kept with every entry it was handed.
+  const w = packageWindow(pkg.ancestors);
   return { name: manifest.gameName, title: typeof title === 'string' && title ? title.slice(0, 80) : manifest.gameName, manifest, gameId: gameIdOf(manifest), cores, info: pkg.info || null,
-    ancestors: (pkg.ancestors || []).map((h) => decodeManifest(fromHex(h))),
+    ancestors: w.window.map((h) => decodeManifest(fromHex(h))), ancestorCut: typeof w.cut === 'string' ? w.cut : null,
     donationSet: pkg.donationSet.map((r) => ({ recipientPk: fromHex(r.recipientPk), shareBps: r.shareBps, label: r.label })),
     clientUrls: (pkg.clients || []).map((k) => pathToFileURL(join(at, `client-${k.hash}.html`)).href) };
 }

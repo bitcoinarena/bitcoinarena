@@ -129,7 +129,7 @@ import { leaveStatus, takesRound } from './owner-leave.js';
 import { packageOf, verifyPackage, installPackage, registrationFromPackage } from './plugin-package.js';
 import { createAppDevKeys } from './app-dev-keys.js';
 import { splitAsSet, nextVersionWithSplit } from './app-version.js';
-import { checkUpdate } from './plugin-check.js';
+import { checkUpdate, boundedAncestors, MAX_PACKAGE_ANCESTORS } from './plugin-check.js';
 import { machineOf } from './machine.js';
 import { createMarketEarnings } from './market-earnings.js';
 import { stepLog } from './step-log.js';
@@ -1122,14 +1122,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // replaces stays hosted for the rounds it already holds, and new rounds use the new one.
   const superseded = new Map();     // old game id -> the id that replaced it
   // A GAME'S EARLIER VERSIONS, oldest first: from its own chain (an installed update's) and from the versions hosted here
+  // THE CHECKED WINDOW IS KEPT AS IT WAS CHECKED (kanban #2366, #1854, #2332): checkPackage accepts a window that repeats a
+  // version, and deduplicating it here shrank a full window of 64 to fewer, so chainHex dropped the cut marker and served a
+  // chain whose oldest entry stands on nothing a peer holds - every honest peer refused the game from this seat (422), and
+  // its own hostSplit and update chain were cut the same way. g.ancestors is served entry for entry, in its checked order;
+  // only versions hosted here that it does not carry are merged in (by version, as before).
   const chainOf = (g) => {
-    const byId = new Map((g.ancestors || []).map((m) => [toHex(gameIdOf(m)), m]));
+    const own = [...(g.ancestors || [])];
+    const ids = new Set(own.map((m) => toHex(gameIdOf(m))));
+    const more = [];
     for (let parent = toHex(g.manifest.parentManifestId); !/^0+$/.test(parent) && hosted.has(parent);) {
       const m = hosted.get(parent).manifest;
-      if (!byId.has(parent)) byId.set(parent, m);
+      if (!ids.has(parent)) { ids.add(parent); more.push(m); }
       parent = toHex(m.parentManifestId);
     }
-    return [...byId.values()].sort((x, y) => x.version - y.version);
+    return more.length ? [...own, ...more].sort((x, y) => x.version - y.version) : own;
+  };
+  // THE CHAIN THIS SEAT HANDS ON, as hex, held to the bound it checks (kanban #2332, #2346): every manifest in g.ancestors was
+  // checked when the game was taken (registrationFromPackage keeps only the checked window), so the sort above sees no forged
+  // version; at most MAX_PACKAGE_ANCESTORS of them, with the one below as the cut marker (a checked one when the chain is longer
+  // here, else the marker the game was taken with). `extra` are newer manifests appended (hostSplit, an update's old version).
+  const chainHex = (g, extra = []) => {
+    const hex = [...chainOf(g), ...extra].map((m) => toHex(encodeManifest(m)));
+    // the marker only on a full window: on a shorter one a peer would decode it as a checked version
+    return boundedAncestors(typeof g.ancestorCut === 'string' && hex.length >= MAX_PACKAGE_ANCESTORS ? [g.ancestorCut, ...hex] : hex);
   };
   const hostedParent = (id) => { const g = hosted.get(toHex(id)); return g ? g.manifest : null; };
   const installedInfo = (id) => { const g = hosted.get(id); return g ? { gameId: id, devKey: toHex(g.manifest.gameDevPubkey), version: g.manifest.version, parent: toHex(g.manifest.parentManifestId) } : null; };
@@ -1180,7 +1196,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     try { v = verifyPackage(pkg, { verify: verifyEd25519, want: game, parentOf: hostedParent }); } catch (e) { v = { ok: false, why: `that package does not read: ${e.message}` }; }
     if (!v.ok) { console.log(`[plugins] refused ${game.slice(0, 16)} from ${from}: ${v.why}`); return { ...v, status: 422 }; }
     // the package kept with its whole chain, so it stands at the next start even once its old version is removed
-    if (replaces !== null) { const chain = [...chainOf(hosted.get(replaces)), hosted.get(replaces).manifest]; pkg = { ...pkg, ancestors: chain.map((m) => toHex(encodeManifest(m))) }; }
+    // and only the earlier versions the check read, at most MAX_PACKAGE_ANCESTORS and the cut marker (kanban #2332, #2346): never the
+    // raw array a peer sent - entries below the cut were not decoded, and kept they would be re-served (chainOf) and re-read at every start
+    if (replaces !== null) { const old = hosted.get(replaces); pkg = { ...pkg, ancestors: chainHex(old, [old.manifest]) }; }
+    else pkg = { ...pkg, ancestors: boundedAncestors(pkg.ancestors) };
     if (replaces !== null) {
       const u = checkUpdate(installedInfo(replaces), v);
       if (!u.ok) { console.log(`[plugins] refused update ${game.slice(0, 16)} of ${replaces.slice(0, 16)}: ${u.why}`); return { ...v, ok: false, status: 422, why: u.why }; }
@@ -1230,7 +1249,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     try { next = decodeManifest(fromHex(String(manifest || ''))); } catch (e) { return { ok: false, status: 400, why: `that is no manifest: ${e.message}` }; }
     if (toHex(next.parentManifestId) !== game) return { ok: false, status: 400, why: 'that version does not replace this app\'s version' };
     let pkg;
-    try { pkg = packageOf(g, { ancestors: [...chainOf(g), g.manifest] }); } catch (e) { return { ok: false, status: 500, why: e.message }; }
+    try { pkg = packageOf(g); if (pkg) pkg = { ...pkg, ancestors: chainHex(g, [g.manifest]) }; } catch (e) { return { ok: false, status: 500, why: e.message }; }
     if (!pkg) return { ok: false, status: 409, why: 'this node cannot package that app (its cores are not files it can hand out)' };
     const { info: _old, ...rest } = pkg;
     pkg = { ...rest, manifest: toHex(encodeManifest(next)), donationSet: Array.isArray(donationSet) ? donationSet : [], ...(info ? { info } : {}) };
@@ -8393,7 +8412,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/plugin') {
         const g = hosted.get(String(url.searchParams.get('game') || '').toLowerCase());
         if (!g) return text(res, 404, 'this seat hosts no such game');
-        let pkg; try { pkg = packageOf(g, { ancestors: chainOf(g) }); } catch (e) { return text(res, 500, `that game's files could not be read: ${e.message}`); }
+        let pkg; try { pkg = packageOf(g); if (pkg) pkg = { ...pkg, ancestors: chainHex(g) }; } catch (e) { return text(res, 500, `that game's files could not be read: ${e.message}`); }
         if (!pkg) return text(res, 409, 'this seat cannot package that game: its cores are not files it can hand out (a replayed game\'s engine)');
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60', ...CORS });
         return res.end(JSON.stringify(pkg));
