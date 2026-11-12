@@ -99,6 +99,10 @@ const LOCKDOWN = `'use strict';
   const taLength = uncurry(gd(TAP, 'length').get), taBytes = uncurry(gd(TAP, 'byteLength').get), taBuffer = uncurry(gd(TAP, 'buffer').get);
   const abBytes = uncurry(gd(ArrayBuffer.prototype, 'byteLength').get);
   const lengthOf = (x) => { try { return taLength(x); } catch { return null; } };
+  // (kanban #2475, #2508) what the wrapper copies an iterable or array-like source with, all taken before any core code
+  const dp = Object.defineProperty, iterSym = Symbol.iterator, trunc = Math.trunc, TypeErr = TypeError, MAX_LEN = 9007199254740991;
+  const toLength = (v) => { const n = +v; return n > 0 ? (n === Infinity ? MAX_LEN : trunc(n) < MAX_LEN ? trunc(n) : MAX_LEN) : 0; };
+  const isObj = (v) => (v !== null && typeof v === 'object') || typeof v === 'function';
   const isBuffer = (x) => { try { abBytes(x); return true; } catch { return false; } };
   const said = 'the core asked for more than ' + Math.round(budget / 1048576) + ' MB of arrays';
   // what the bookkeeping calls is taken now, before the core can replace a prototype's method or getter: a subclass's own
@@ -139,6 +143,21 @@ const LOCKDOWN = `'use strict';
     }
     base = live; since = 0;
     return live;
+  // (kanban #2475) the budget checked without reserving: IteratorToList below reads the elements before anything is allocated
+  const fits = (n) => { if (over !== null || !(n >= 0) || used + n > budget) { over = said; throw new RangeErr(said); } };
+  // IteratorToList, as %TypedArray% runs it, into a list of our own - each element's bytes checked as it comes, so an endless
+  // or oversized iterable stops at the budget, never at the heap
+  const listOf = (x, m, size) => {
+    const it = apply(m, x, []);
+    if (!isObj(it)) throw new TypeErr('Result of the Symbol.iterator method is not an object');
+    const next = it.next, list = [];
+    for (let n = 0; ; n++) {
+      const r = apply(next, it, []);
+      if (!isObj(r)) throw new TypeErr('Iterator result ' + String(r) + ' is not an object');
+      if (r.done) return { list, len: n };
+      fits((n + 1) * size);
+      dp(list, n, { value: r.value, writable: true, enumerable: true, configurable: true });
+    }
   };
   // (kanban #1622) the kinds are read from the realm itself, never from a list: every own global whose prototype chain
   // reaches %TypedArray% (Float16Array on node 24 was missing from the old list and allocated outside the budget and the
@@ -162,8 +181,27 @@ const LOCKDOWN = `'use strict';
       // read through the captured getter as V8 reads it; an array-like's \`length\` is only a first guess, counted again below)
       const x = a[0];
       const n = typeof x === 'number' ? x : lengthOf(x);
-      const asked = typeof n === 'number' ? n * size
-        : (x && typeof x === 'object' && !isBuffer(x) && typeof x.length === 'number') ? x.length * size : 0;
+      // (kanban #2475, #2508; #1489 a44 refute of #1695) AN ITERABLE OR ARRAY-LIKE SOURCE IS COPIED HERE, NEVER BY V8: V8 read
+      // its length again after the wrapper (a core's getter answered 0 to the wrapper and N to V8), allocated N, and then ran the
+      // core's element getters and valueOf - after the allocation - so one that threw skipped the count below: 8 x 32 MB past a
+      // 4 MB budget answered, and a 512 MB one was stopped only by the RSS backstop. The spec's steps, in its order, on one length
+      // read (or the list the iterator gave): the bytes taken and the empty array counted before the first element is read.
+      if (k !== 'ArrayBuffer' && n === null && isObj(x) && !isBuffer(x)) {
+        const m = x[iterSym];
+        let src, len;
+        if (m !== undefined && m !== null) {
+          if (typeof m !== 'function') throw new TypeErr('Symbol.iterator is not a function');
+          ({ list: src, len } = listOf(x, m, size));
+        } else { src = x; len = toLength(x.length); }
+        take(len * size);
+        const o = construct(t, [len], nt === W ? t : nt);
+        const real = bytesOf(o);
+        settle(len * size, real);
+        keep(o, real);
+        for (let i = 0; i < len; i++) o[i] = src[i];
+        return o;
+      }
+      const asked = typeof n === 'number' ? n * size : 0;
       take(asked);
       const o = construct(t, a, nt === W ? t : nt);
       if (k !== 'ArrayBuffer' && isBuffer(x) && taBuffer(o) === x) return o;   // a view on a buffer already counted
