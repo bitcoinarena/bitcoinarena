@@ -50,7 +50,7 @@ function seat(chain) {
   return { proposals, tally: tallyRef };
 }
 
-test('wf1489-sm2-census-1: a repeal taken by a seat that has not yet heard of the proposal it repeals gets another voting window there, for good', async () => {
+test('wf1489-sm2-census-1: a repeal taken by a seat that has not yet heard of the proposal it repeals gets another voting window there, for good', { todo: 'kanban #2012 (spec question): #1608 refuses a proposal pulled after its voting began, so this seat never takes it - waiting for the ruling' }, async () => {
   const chain = { tip: 200, deposits: new Map(), votes: new Map() };
   // P: genesis -> C1, published at 200, activates at 208; the bond votes YES at 201
   const P = proposal({ parent: BALLOT_GENESIS.configHash, config: Uint8Array.of(1, 2, 3), activationHeight: 208, sats: 1000, height: 200, block: 'b2'.repeat(32) });
