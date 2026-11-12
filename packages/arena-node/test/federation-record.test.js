@@ -756,7 +756,9 @@ test('#1157 recordStep: older refused, CLOSED final, a mirror never worse at one
   assert.equal(recordStep({ height: 5, status: 'CLOSED' }, { height: 5, status: 'OPEN' }).take, false);
   assert.equal(recordStep({ height: 5, status: 'OPEN' }, { height: 5, status: 'CLOSED' }, 'mirror').take, true);
   assert.equal(recordStep({ height: 5, status: 'OPEN' }, { height: 5, status: 'HALTED' }, 'mirror').take, false);
-  assert.equal(recordStep({ height: 5, status: 'HALTED' }, { height: 5, status: 'OPEN' }, 'mirror').take, true);
+  // kanban #1664: nor a better one - an older record of that height a peer still serves does not undo a worse one signed later
+  assert.equal(recordStep({ height: 5, status: 'HALTED' }, { height: 5, status: 'OPEN' }, 'mirror').take, false);
+  assert.equal(recordStep({ height: 5, status: 'HALTED' }, { height: 5, status: 'OPEN' }, 'gather').take, true);
   assert.equal(recordStep({ height: 5, status: 'OPEN' }, { height: 5, status: 'DRAINING' }, 'gather').take, true);
   assert.equal(recordStep({ height: 5, status: 'OPEN' }, { height: 6, status: 'HALTED' }, 'mirror').take, true);
 });
