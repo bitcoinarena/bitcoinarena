@@ -218,7 +218,7 @@ import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
 import { outageOutcome } from '../../arena-protocol/src/entry-void.js';
 import { ENTRY_VOID, netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/objection.js';
-import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
+import { transcriptBytesHash, SIGNED_POSTING_BYTES, decodeTranscriptPosting, splitSignedPosting } from '../../arena-protocol/src/posting.js';
 import { decodeTranscript } from '../../arena-protocol/src/transcript.js';   // the relay door's check (kanban #1532)
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedAppsCheck } from './plugins.js';
@@ -287,6 +287,24 @@ const SEATING_CERT_MOST = 36 + 2 + 128 * 32 + 2 + 128 * 96;
 // least as large, so keeping the player's lock out costs a stranger this many times its amount, all of it refunding to the handout's
 // player. 4, so a player's stake and fee handouts (rank by rank in GET /stake-lock) fit the 8 a page reads of one seat
 const REFUSED_LOCKS_PER_HANDOUT = 4;
+// AND NO ONE PARTY FILLS IT FOR THE OTHERS (kanban #1725, #1795, refute of #1532: the cap was one pool, and one held entry filled it with
+// many different decodable transcripts - random marks the door does not check - so every honest transcript and slash proof got 507).
+// A transcript no held result or posting of its entry names (UNNAMED) may take at most RELAY_ENTRY_MOST bytes per entry (RELAY_MOST/32:
+// 8 MiB live, one body), RELAY_ROUND_MOST per round (RELAY_MOST/8) and RELAY_UNNAMED_MOST over all (RELAY_MOST/2). Transcripts together
+// stop RELAY_SLASH_RESERVE (RELAY_MOST/8) short of the pool: that part is left for slash proofs. A transcript a held result names is
+// the one the run is settled on: it passes the unnamed caps (there are at most a committee's worth of such hashes per entry).
+const relayPart = (env, div) => (Number(process.env[env]) > 0 ? Number(process.env[env]) : Math.floor(RELAY_MOST / div));
+const RELAY_ENTRY_MOST = relayPart('ARENA_RELAY_ENTRY_MOST', 32);
+const RELAY_ROUND_MOST = relayPart('ARENA_RELAY_ROUND_MOST', 8);
+const RELAY_UNNAMED_MOST = relayPart('ARENA_RELAY_UNNAMED_MOST', 2);
+const RELAY_SLASH_RESERVE = relayPart('ARENA_RELAY_SLASH_RESERVE', 8);
+// THE SLASH PROOFS' SHARE IS THEIRS AND BOUNDED (kanban #1917, refute 2 of #1532: the slash door checked no signature and no held round,
+// so a stranger filled the whole pool with unsigned junk proofs, and the prune never removed them). RELAY_SLASH_RESERVE is now both:
+// transcripts count only among themselves against RELAY_MOST - RELAY_SLASH_RESERVE, and slash proofs only among themselves against
+// RELAY_SLASH_RESERVE. A proof is kept only when the round it names is held here, the accused is on that round's committee, and the
+// signed result (or re-run) beside it carries the accused's own signature - so only a committee member's own signatures can fill
+// it, and one accused node in one round takes at most RELAY_SLASH_ACCUSED_MOST (RELAY_SLASH_RESERVE/16: 2 MiB live, ~4,800 proofs).
+const RELAY_SLASH_ACCUSED_MOST = Number(process.env.ARENA_RELAY_SLASH_ACCUSED_MOST) > 0 ? Number(process.env.ARENA_RELAY_SLASH_ACCUSED_MOST) : Math.floor(RELAY_SLASH_RESERVE / 16);
 
 // A BROWSER IS THE CLIENT, and a browser will never be on this origin.
 //
@@ -11127,19 +11145,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // the signed result it names beside it - so it serves no proof under
       // another's name and no proof without its evidence.
       const slashed = /^\/slash\/([0-9a-f]{64})$/.exec(url.pathname);
-      // ONLY A PROOF ABOUT A ROUND THIS SEAT HOLDS (kanban #1816, audit #1489 round 6 gossip: a bypass of #1532 - the door checked only
-      // that the proof hashed to its id and named the result beside it, so a stranger PUT made-up proofs with zero signatures about
-      // random rounds until the relay cap #1532 shares with PUT /transcript was full, and every held entry's transcript was refused 507).
-      // Kept now only when the round is in this seat's store, the accused node is on its committee (the signer nodes the census
-      // assigned), the evidence names that round, node and player, and the evidence's signature is the accused node's.
-      // Returns why not, or null.
-      const slashOursWhy = (proof, body, sigOk) => {
-        if (!round.get(proof.roundId)) return 'this relay keeps only a slash proof about a round it holds';
-        if (!round.signerNodes(proof.roundId).some((k) => toHex(k) === toHex(proof.nodePubkey))) return 'the accused node is not on that round\'s committee';
-        if (toHex(body.roundId) !== toHex(proof.roundId) || toHex(body.nodePubkey) !== toHex(proof.nodePubkey) || toHex(body.playerPubkey) !== toHex(proof.playerPubkey))
-          return 'the evidence is not the accused node\'s result for that round and player';
-        let ok = false; try { ok = sigOk() === true; } catch { ok = false; }
+      // WHAT A RELAY CHECKS BEFORE IT KEEPS A PROOF (kanban #1917, refute 2 of #1532): the evidence is about the proof's round, player
+      // and accused; that round is held here and the accused is on its committee (slashHolds refuses any other proof anyway); and the
+      // signature beside the evidence is the accused's own over what it signed (resultId / rerunResultId). Null when it may be kept.
+      const slashRelayRefusal = (proof, result, signature, signedId) => {
+        if (toHex(result.roundId) !== toHex(proof.roundId)) return 'the evidence is for a different round than the proof';
+        if (toHex(result.playerPubkey) !== toHex(proof.playerPubkey)) return 'the evidence is for a different player than the proof';
+        if (toHex(result.nodePubkey) !== toHex(proof.nodePubkey)) return 'the evidence was signed by a different node than the proof accuses';
+        if (!round.db.prepare('SELECT 1 FROM rounds WHERE round_id = ?').get(proof.roundId)) return 'this relay keeps only slash proofs of a round it holds';
+        if (!round.signerNodes(proof.roundId).some((k) => toHex(k) === toHex(proof.nodePubkey))) return 'the accused is not on that round\'s committee here';
+        let ok = false; try { ok = schnorr.verify(signature, signedId, proof.nodePubkey); } catch { ok = false; }
         return ok ? null : 'the signature on the evidence is not the accused node\'s';
+      };
+      const keepSlash = (res, idHex, bytes, proof) => {
+        const id = Buffer.from(idHex, 'hex');
+        if (round.relayHas(id)) return text(res, 201, 'kept');   // the same proof again: kept already, nothing more is counted
+        if (round.relayedSlashBytes({ roundId: proof.roundId, accused: proof.nodePubkey }) + bytes.length > RELAY_SLASH_ACCUSED_MOST)
+          return text(res, 507, 'this relay keeps no more slash proofs against that node in that round: its share is full');
+        if (round.relayedSlashBytes() + bytes.length > RELAY_SLASH_RESERVE) return text(res, 507, 'this relay keeps no more slash proofs: their share of its store is full');
+        round.relayPut(id, bytes, { roundId: proof.roundId, accused: proof.nodePubkey });
+        return text(res, 201, 'kept');
       };
       if (slashed && req.method === 'PUT') {
         const bytes = await read(req);
@@ -11152,13 +11177,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try { rerunNamed = toHex(rerunResultId(decodeRerunResult(splitSignedRerun(rr.signedRerun).body))); }
           catch (e) { return text(res, 409, `the evidence is not a signed re-run result: ${e.message}`); }
           if (rerunNamed !== toHex(rr.proof.signedResultId)) return text(res, 409, 'the evidence is not the re-run the proof names');
-          let rx, rsig;
-          try { const sp = splitSignedRerun(rr.signedRerun); rsig = sp.signature; rx = decodeRerunResult(sp.body); } catch { rx = null; }
-          const rwhy = rx ? slashOursWhy(rr.proof, rx.result, () => schnorr.verify(rsig, rerunResultId(rx), rx.result.nodePubkey)) : 'the evidence is not a signed re-run result';
-          if (rwhy) return text(res, 422, rwhy);   // kanban #1816
-          if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');   // kanban #1532
-          round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
-          return text(res, 201, 'kept');
+          let x, sig;
+          try { const sp = splitSignedRerun(rr.signedRerun); sig = sp.signature; x = decodeRerunResult(sp.body); } catch (e) { return text(res, 409, `the evidence is not a signed re-run result: ${e.message}`); }
+          const why = slashRelayRefusal(rr.proof, x.result, sig, rerunResultId(x));
+          if (why) return text(res, 422, why);
+          return keepSlash(res, slashed[1], bytes, rr.proof);
         }
         let got;
         try { got = splitSlashEvidence(new Uint8Array(bytes)); } catch (e) { return text(res, 400, e.message); }
@@ -11167,14 +11190,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { named = toHex(resultId(decodePlayerResult(splitSignedResult(got.signedResult).body))); }
         catch (e) { return text(res, 409, `the evidence is not a signed result: ${e.message}`); }
         if (named !== toHex(got.proof.signedResultId)) return text(res, 409, 'the evidence is not the result the proof names');
-        {
-          const sp = splitSignedResult(got.signedResult), body = decodePlayerResult(sp.body);
-          const why = slashOursWhy(got.proof, body, () => schnorr.verify(sp.signature, resultId(body), body.nodePubkey));
-          if (why) return text(res, 422, why);   // kanban #1816
-        }
-        if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');   // kanban #1532
-        round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
-        return text(res, 201, 'kept');
+        const sr = splitSignedResult(got.signedResult), body = decodePlayerResult(sr.body);
+        const why = slashRelayRefusal(got.proof, body, sr.signature, resultId(body));
+        if (why) return text(res, 422, why);
+        return keepSlash(res, slashed[1], bytes, got.proof);
       }
       if (slashed && req.method === 'GET') {
         const kept = round.relayGet(Buffer.from(slashed[1], 'hex'));
@@ -11218,8 +11237,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { const t = decodeTranscript(u8); ours = roundOfEntry(t.entryId) === toHex(t.roundId); }
         catch { ours = (u8.length === 65 || (u8.length === 33 && u8[32] === 0xff)) && roundOfEntry(u8.subarray(0, 32)) !== null && revealRecordOpens(u8); }
         if (!ours) return text(res, 422, 'this relay keeps only the transcript of an entry it holds');
-        if (round.relayedBytes() + bytes.length > RELAY_MOST) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');
-        round.relayPut(Buffer.from(relayed[1], 'hex'), bytes);
+        // WHOSE BYTES THESE ARE, AND WHETHER A HELD RESULT NAMES THEM (kanban #1725, #1795): the caps above count per entry and round
+        const hashBytes = Buffer.from(relayed[1], 'hex');
+        let eid, rid;
+        try { const t = decodeTranscript(u8); eid = t.entryId; rid = t.roundId; }
+        catch { eid = u8.slice(0, 32); rid = new Uint8Array(round.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(eid).round_id); }
+        let named = false;
+        for (const x of round.results(rid, eid)) {
+          try { if (toHex(decodePlayerResult(splitSignedResult(x.bytes).body).transcriptHash) === relayed[1]) { named = true; break; } } catch { /* not readable: names nothing */ }
+        }
+        if (!named) for (const x of round.postings(rid, eid)) {
+          try { if (toHex(decodeTranscriptPosting(splitSignedPosting(x.bytes).body).transcriptHash) === relayed[1]) { named = true; break; } } catch { /* names nothing */ }
+        }
+        // the same bytes again are kept already (and become named once a held result names them): nothing more is counted
+        if (round.relayHas(hashBytes)) { round.relayPut(hashBytes, bytes, { entryId: eid, roundId: rid, named }); return text(res, 201, 'kept'); }
+        if (!named) {
+          if (round.relayedUnnamedBytes({ entryId: eid }) + bytes.length > RELAY_ENTRY_MOST) return text(res, 507, 'this relay keeps no more for that entry: no held result names this transcript, and its share for the entry is full');
+          if (round.relayedUnnamedBytes({ roundId: rid }) + bytes.length > RELAY_ROUND_MOST) return text(res, 507, 'this relay keeps no more for that round: no held result names this transcript, and its share for the round is full');
+          if (round.relayedUnnamedBytes() + bytes.length > RELAY_UNNAMED_MOST) return text(res, 507, 'this relay keeps no more transcripts no held result names: that share is full');
+        }
+        // kanban #1917: transcripts count among themselves; slash proofs have RELAY_SLASH_RESERVE of their own
+        if (round.relayedTranscriptBytes() + bytes.length > RELAY_MOST - RELAY_SLASH_RESERVE) return text(res, 507, 'this relay keeps no more: its store for relayed bytes is full');
+        round.relayPut(hashBytes, bytes, { entryId: eid, roundId: rid, named });
         return text(res, 201, 'kept');
       }
       if (relayed && req.method === 'GET') {
