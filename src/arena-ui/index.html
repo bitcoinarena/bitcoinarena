@@ -7975,10 +7975,22 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               && (p.score === null || p.score === undefined || (typeof p.score === 'number' && Number.isFinite(p.score))))) asked[i] = null;
           }
           const verdictOf = (j) => JSON.stringify((j.players || []).map((p) => [p.entry, p.outcome ?? null, p.score ?? null]).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
-          const agreed = new Map();   // verdict -> how many seats name it
-          if (asked) for (const j of asked) if (j && (j.players || []).length === 2) agreed.set(verdictOf(j), (agreed.get(verdictOf(j)) || 0) + 1);
-          const counts = [...agreed.values()].sort((a, b) => b - a), top = [...agreed.entries()].find(([, c]) => c === counts[0]);
-          const quorum = Math.min(2, seats.length || 2), standing = top && top[1] >= quorum && !(counts.length > 1 && counts[1] === counts[0]) ? top[0] : null;
+          // ONE SERVER, ONE VOTE (kanban #2364, audit #1489 a45-refute-12-s3; holds #2329 and #1825): #2329 deduplicated spellings, not servers - one
+          // server answers every path and every spelling of its name, so 'http://evil' with 'http://evil/r', 'http://evil.' or 'https://evil' beside it
+          // was still two votes and outvoted the honest seat. A vote is now a host's (its name lower case, trailing dots gone; scheme, port and path
+          // ignored): each address is still asked, the addresses of one host settle among themselves (the verdict most of them name, none on a tie),
+          // and that host counts once. Seats under one host (paths of one server) are one operator's and one vote; the quorum is two hosts, one for a
+          // round whose seats all sit on one host
+          const hostKey = (n) => { try { const u = new URL(String(n).trim()); if (u.hostname) return u.hostname.toLowerCase().replace(/\.+$/, ''); } catch { /* not a URL */ } return seatKey(n); };
+          const hosts = new Set(seats.map(hostKey));
+          const quorum = Math.min(2, hosts.size || 2);
+          const hostVotes = (keyOf) => { const per = new Map();
+            for (const [i, j] of asked.entries()) { let k; try { k = keyOf(j); } catch { k = undefined; } if (k === undefined) continue; const hk = hostKey(seats[i]); const m = per.get(hk) || new Map(); m.set(k, (m.get(k) || 0) + 1); per.set(hk, m); }
+            const t = new Map(); for (const m of per.values()) { const c = [...m.entries()].sort((a, b) => b[1] - a[1]); if (c.length > 1 && c[1][1] === c[0][1]) continue; t.set(c[0][0], (t.get(c[0][0]) || 0) + 1); }
+            return t; };
+          const standsOf = (t) => { const c = [...t.values()].sort((a, b) => b - a), w = [...t.entries()].find(([, n]) => n === c[0]); return w && w[1] >= quorum && !(c.length > 1 && c[1] === c[0]) ? w[0] : null; };
+          const agreed = asked ? hostVotes((j) => (j && (j.players || []).length === 2 ? verdictOf(j) : undefined)) : new Map();   // verdict -> how many hosts name it
+          const standing = standsOf(agreed);
           // THE SCORE ACROSS ROUNDS IS WHAT THE SEATS AGREE ON TOO (kanban #2329, audit #1489 a45-refute-12-s2): the match record (scoreboard, whose
           // identity is whose, the opponent's name) was copied from the first agreeing answer, unchecked - one seat listed first showed a forged
           // scoreboard and name. Among the answers naming the standing verdict, the record's signed content (identities, score, played, the round before,
@@ -7986,8 +7998,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           const matchKey = (m) => JSON.stringify([m.identities, m.score, m.played, m.previousRound ?? null, Object.entries(m.players && typeof m.players === 'object' ? m.players : {}).sort()]);
           let matchStands = null, namesStand = null;
           if (asked && standing !== null) {
-            const tallyOf = (key) => { const t = new Map(); for (const j of asked) if (j && j.players.length === 2 && verdictOf(j) === standing && j.match && typeof j.match === 'object') { let k; try { k = key(j.match); } catch { continue; } t.set(k, (t.get(k) || 0) + 1); }
-              const c = [...t.values()].sort((a, b) => b - a), w = [...t.entries()].find(([, n]) => n === c[0]); return w && w[1] >= quorum && !(c.length > 1 && c[1] === c[0]) ? w[0] : null; };
+            const tallyOf = (key) => standsOf(hostVotes((j) => (j && j.players.length === 2 && verdictOf(j) === standing && j.match && typeof j.match === 'object' ? key(j.match) : undefined)));
             matchStands = tallyOf(matchKey);
             namesStand = matchStands === null ? null : tallyOf((m) => JSON.stringify(Array.isArray(m.names) ? m.names : []));
           }
