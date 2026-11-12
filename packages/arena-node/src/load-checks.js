@@ -94,14 +94,36 @@ export function loadValueRefusal([tick, fee, btc, room]) {
   return null;
 }
 
+// A BED OF DRAWN PARCELS (spec ruling of kanban #2571, #2574 - the full fix this file waited for): on a Tick Tock core that
+// draws its parcels from the round's beacon block (a registration's core with `parcelsDrawn`), a load names each parcel by
+// its pickup slot and txid, and arena-protocol's drawnParcelsRefusal holds it to the snapshot - the txid drawn for that entry
+// and slot, the load's fee and room the parcels' own sums, no BTC. The value floors above (fewest parcels, fewest sats) were
+// the stand-in for exactly this and are not asked of such a load: a drawn parcel's fee is the block's, whatever it is.
+/** The shape every load keeps, drawn or declared: a room, a whole fee, BTC and room in range. */
+export function loadShapeRefusal([tick, fee, btc, room]) {
+  if (room === undefined || room === null) return `the load at tick ${tick} carries no room`;
+  if (!Number.isInteger(fee) || fee < 0) return `the load at tick ${tick} pays ${fee} sats: a fee is not negative`;
+  if (!Number.isInteger(btc) || btc < 0 || btc > BTC_MOST_HUND)
+    return `the load at tick ${tick} carries ${btc} hundredths of a BTC: a truck carries 0 .. ${BTC_MOST_HUND} (20 BTC)`;
+  if (!Number.isInteger(room) || room < 0 || room > BED_ROOM_UNITS)
+    return `the load at tick ${tick} fills ${room} room units: a bed is 0 .. ${BED_ROOM_UNITS}`;
+  return null;
+}
+
 /**
  * Why the loads of this batch are refused, or null. `b` the decoded batch, `at` its ticks (batchTicks), `drivenBefore()`
  * true when a tick of this entry the seat already holds carries a non-zero control word (only asked when a load comes),
- * `next` the tick this entry's next batch has to start at (Round.nextTick).
+ * `next` the tick this entry's next batch has to start at (Round.nextTick). `drawn` (kanban #2574): null for a round whose core
+ * does not draw its parcels - a load naming parcels is then refused, as every such batch was before; for one that does,
+ * `{ check(load) }` (the snapshot's drawnParcelsRefusal for this entry) or `{ why }` when the seat holds no snapshot yet.
  */
-export function loadsRefusal(b, at, drivenBefore, next) {
+export function loadsRefusal(b, at, drivenBefore, next, drawn = null) {
   const loads = b.loads || [];
   if (!loads.length) return null;
+  if (!drawn) {
+    const named = loads.find((l) => l.length > 4 && Array.isArray(l[4]) && l[4].length);
+    if (named) return `the load at tick ${named[0]} names parcels, and this round's core does not draw them: its loads are declared as before`;
+  } else if (drawn.why) return drawn.why;
   // NOT DECLARED AHEAD (kanban #1740, #1800 - a refute of #1488): Round.batch holds a batch's first tick to the next one
   // only when it carries ticks, so a batch of no ticks at firstTick 398, sent before the truck moved, put a full bed at
   // the gate that the replay applied after a whole run driven empty. A batch of no ticks reaches the next tick, no other.
@@ -117,7 +139,7 @@ export function loadsRefusal(b, at, drivenBefore, next) {
       return `the load at tick ${tick} is not at a tick this batch carries (${first} .. ${last}): a load goes out with the batch that reaches its tick`;
     if (ticks.has(tick)) return `two loads at tick ${tick}: a page declares at most one a tick`;
     ticks.add(tick);
-    const why = loadValueRefusal(l);
+    const why = drawn ? (loadShapeRefusal(l) || drawn.check(l)) : loadValueRefusal(l);
     if (why) return why;
     // AFTER ROLL OUT NOTHING GOES ON THE BED: the truck is held (every control word 0) until the load is declared
     if (stored === null) stored = !!drivenBefore();

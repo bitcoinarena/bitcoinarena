@@ -25,7 +25,10 @@ const lobbyCount = (n, what) => {
   return n;
 };
 
-export function encodeLobbyListing({ roundId, nodePubkey, nowMs, phase, assignedHere, joined, playing } = {}) {
+// A TICK TOCK ROUND THAT DRAWS ITS PARCELS (kanban #2571 ruling, #2574; ticktock-snapshot.js) carries the snapshot_id this seat
+// derived from its own bitcoind: written after the counts only when given, so every other listing is byte for byte what it was
+// and keeps its signature. A client holds a snapshot when five of seven seats sign its id here.
+export function encodeLobbyListing({ roundId, nodePubkey, nowMs, phase, assignedHere, joined, playing, snapshotId = null } = {}) {
   if (!lobbyIs32(roundId)) throw new Error('a listing names a 32-byte round id');
   if (!lobbyIs32(nodePubkey)) throw new Error('a listing is signed by a 32-byte node key');
   const at = BigInt(nowMs);
@@ -40,6 +43,10 @@ export function encodeLobbyListing({ roundId, nodePubkey, nowMs, phase, assigned
   w.u8(assignedHere ? 1 : 0);
   w.u32(lobbyCount(joined, 'joined'));
   w.u32(lobbyCount(playing, 'playing'));
+  if (snapshotId !== null && snapshotId !== undefined) {
+    if (!lobbyIs32(snapshotId)) throw new Error('a listing names a 32-byte snapshot id');
+    w.bytes32(snapshotId);
+  }
   return w.finish();
 }
 

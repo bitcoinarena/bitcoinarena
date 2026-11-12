@@ -44,7 +44,7 @@
 // visible, because the numbers themselves say what is missing. That is the
 // property `M2.1` step 2 needs and it costs nothing to have from the start.
 import { Writer, Reader } from './encode.js';
-import { taggedHash } from './hash.js';
+import { taggedHash, fromHex } from './hash.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_INPUT_BATCH, TYPE_SIGNED_INPUT_BATCH, TAG } from './constants.js';
 
 /** The prices a live tape carries: the core's SAMPLES. */
@@ -63,6 +63,8 @@ export const TAPE_PRICES = 64;
  * bytes; one sample a tick and one tape a batch count both kinds.
  */
 export const MAX_ATTEST_SIGS = 9;
+/** The most parcels one batch's loads name (kanban #2574): an entry is offered 40 slots, a load is at most one a tick. */
+export const MAX_BATCH_PARCELS = 1024;
 export const MAX_ATTESTED_SAMPLES = 256;
 /** How many words of input a tick carries. The core's `step` arity. */
 export const INPUT_WORDS = 5;
@@ -114,13 +116,37 @@ export function encodeInputBatch(b) {
   if (new Set(sampleTicks).size !== sampleTicks.length || sampleTicks.length > MAX_ATTESTED_SAMPLES || attests.filter((a) => a[1] === 1 || a[1] === 3).length > 1
     || attests.some((a) => a[1] !== 0 && a[1] !== 1 && a[1] !== 2 && a[1] !== 3))
     throw new Error(`a batch carries one attested sample a tick (at most ${MAX_ATTESTED_SAMPLES}) and at most one attested tape`);
-  if (samples.length || tapes.length || rooms.length || attests.length) w.vec(samples, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
-  if (tapes.length || rooms.length || attests.length) w.vec(tapes, (l, ww) => {
+  // THE PARCELS A LOAD NAMES (kanban #2571 ruling, #2574; ticktock-snapshot.js): `[tick, slot, txid]` for each parcel of a load
+  // whose fifth element lists them ([[slot, txid], ...]), sorted by tick then slot - the drawn offer the seat checks. A fifth
+  // optional tail, written only when a load names a parcel, so every batch before it keeps its bytes and its id; the four tails
+  // before it are written (empty) when it is.
+  const parcels = [];
+  for (const l of loads) {
+    if (l.length <= 4 || l[4] === undefined || l[4] === null) continue;
+    if (!Array.isArray(l[4])) throw new Error('a load names its parcels as a list');
+    if (l[3] === undefined || l[3] === null) throw new Error('a load that names parcels carries its room');
+    for (const p of l[4]) {
+      const [slot, txid] = Array.isArray(p) ? p : [];
+      if (!Number.isInteger(slot) || slot < 0 || slot > 65535) throw new Error('a parcel names its pickup slot (u16)');
+      const t = typeof txid === 'string' && /^[0-9a-f]{64}$/i.test(txid) ? fromHex(txid.toLowerCase()) : txid;
+      if (!(t instanceof Uint8Array) || t.length !== 32) throw new Error('a parcel names its 32-byte txid');
+      parcels.push([l[0], slot, t]);
+    }
+  }
+  parcels.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  if (parcels.length > MAX_BATCH_PARCELS) throw new Error(`a batch's loads name at most ${MAX_BATCH_PARCELS} parcels`);
+  for (let i = 1; i < parcels.length; i++)
+    if (parcels[i][0] === parcels[i - 1][0] && parcels[i][1] === parcels[i - 1][1]) throw new Error('a load names each pickup slot once');
+  if (parcels.length && new Set(loads.filter((l) => l.length > 4 && Array.isArray(l[4]) && l[4].length).map((l) => l[0])).size
+    !== loads.filter((l) => l.length > 4 && Array.isArray(l[4]) && l[4].length).length) throw new Error('a batch carries one load a tick that names parcels');
+  const anyParcels = parcels.length > 0;
+  if (samples.length || tapes.length || rooms.length || attests.length || anyParcels) w.vec(samples, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
+  if (tapes.length || rooms.length || attests.length || anyParcels) w.vec(tapes, (l, ww) => {
     if (l.length !== 1 + TAPE_PRICES) throw new Error(`a tape carries ${TAPE_PRICES} prices`);
     ww.u32(l[0]); for (let i = 1; i <= TAPE_PRICES; i++) ww.i32(l[i]);
   });
-  if (rooms.length || attests.length) w.vec(rooms, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
-  if (attests.length) w.vec(attests, (a, ww) => {
+  if (rooms.length || attests.length || anyParcels) w.vec(rooms, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
+  if (attests.length || anyParcels) w.vec(attests, (a, ww) => {
     const [tick, kind, cents, sigs] = a;
     const tapeOf = (ps) => { if (!Array.isArray(ps) || ps.length !== TAPE_PRICES) throw new Error(`an attested tape carries ${TAPE_PRICES} prices`); return ps; };
     ww.u32(tick); ww.u8(kind);
@@ -131,6 +157,7 @@ export function encodeInputBatch(b) {
     // protocol 5: each reading its key, its own price(s) and its signature
     else ww.vec(sigs, (sg, w3) => { w3.bytes32(sg[0]); if (kind === 2) w3.i32(sg[1]); else for (const c of tapeOf(sg[1])) w3.i32(c); w3.bytes(sg[2], 64); });
   });
+  if (anyParcels) w.vec(parcels, (p, ww) => { ww.u32(p[0]); ww.u16(p[1]); ww.bytes32(p[2]); });
   return w.finish();
 }
 
@@ -168,13 +195,23 @@ export function decodeInputBatch(bytes) {
       if (sigs.length > MAX_ATTEST_SIGS) throw new Error('sigs');
       return [tick, kind, cents, sigs];
     }) : [];
+    var parcels = r.at < bytes.length ? r.vec((rr) => [rr.u32(), rr.u16(), rr.bytes32()]) : [];
   } catch { throw new Error('trailing bytes after the batch'); }
+  if (parcels.length > MAX_BATCH_PARCELS) throw new Error(`a batch's loads name at most ${MAX_BATCH_PARCELS} parcels`);
   if (!b.attests.length) delete b.attests;
   // each room joins the load at its tick; a room with no load there is not a batch this encoder writes
   for (const [at, room] of rooms) {
     const l = b.loads.filter((x) => x[0] === at);
     if (l.length !== 1 || l[0].length > 3) throw new Error('a room names no single load at its tick');
     l[0].push(room);
+  }
+  // each parcel joins the load at its tick, in (tick, slot) order and each slot once: one encoding (kanban #2574)
+  for (let i = 0; i < parcels.length; i++) {
+    const [at, slot, txid] = parcels[i];
+    if (i && (parcels[i - 1][0] > at || (parcels[i - 1][0] === at && parcels[i - 1][1] >= slot))) throw new Error('a batch\'s parcels are in tick and slot order, each slot once');
+    const l = b.loads.filter((x) => x[0] === at);
+    if (l.length !== 1 || l[0].length !== 4) throw new Error('a parcel names no single load with a room at its tick');
+    if (!parcels.slice(i + 1).some((p) => p[0] === at)) l[0].push(parcels.filter((p) => p[0] === at).map((p) => [p[1], p[2]]));
   }
   if (b.tapes.length > 1) throw new Error('a batch carries at most one tape');
   // one encoding per batch: empty optional tails are written as none
@@ -216,7 +253,9 @@ export const MAX_INPUT_BATCH_BYTES =
   // the attested sample and tape (§11): tick, kind, price(s), and up to MAX_ATTEST_SIGS (key, signature) each - at their
   // largest the protocol-5 kinds 2 and 3, whose readings also carry each seat's own price(s): 100 bytes a sample
   // reading (key, cents, signature), 352 a tape reading (key, 64 prices, signature)
-  + 2 + MAX_ATTESTED_SAMPLES * (4 + 1 + 4 + 2 + MAX_ATTEST_SIGS * 100) + (4 + 1 + 4 * TAPE_PRICES + 2 + MAX_ATTEST_SIGS * (32 + 4 * TAPE_PRICES + 64));
+  + 2 + MAX_ATTESTED_SAMPLES * (4 + 1 + 4 + 2 + MAX_ATTEST_SIGS * 100) + (4 + 1 + 4 * TAPE_PRICES + 2 + MAX_ATTEST_SIGS * (32 + 4 * TAPE_PRICES + 64))
+  // the parcels loads name (kanban #2574): tick, slot, txid - at most MAX_BATCH_PARCELS a batch
+  + 2 + MAX_BATCH_PARCELS * (4 + 2 + 32);
 
 /** The absolute tick numbers a batch covers, in order. */
 export const batchTicks = (b) =>

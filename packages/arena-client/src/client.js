@@ -2220,12 +2220,15 @@ export class Client {
    *
    * Refused once the run has ended, like every other outbound thing here.
    */
-  submitLoad(feeSats, btcHundredths, roomUsed) {
+  submitLoad(feeSats, btcHundredths, roomUsed, parcels) {
     if (this.ended || !this.where) return false;
     // AND THE ROOM THE BED TAKES when the page has one (2026-10-04 08:54: the cargo factor C is the bed fill), so
     // the signer nodes' replay sets the same C; a load without one crosses as before
     const room = roomUsed === undefined || roomUsed === null ? [] : [roomUsed | 0];
-    this.loads.push([this.offered, feeSats | 0, btcHundredths | 0, ...room]);
+    // AND, ON A CORE THAT DRAWS ITS PARCELS (kanban #2571 ruling, #2574), THE PARCELS BY [slot, txid]: the ones drawn for this entry's
+    // slots from the round's snapshot (ticktock-hold.js) - each seat takes the load only if they are
+    const named = Array.isArray(parcels) && room.length ? [parcels.map(([slot, txid]) => [slot | 0, txid])] : [];
+    this.loads.push([this.offered, feeSats | 0, btcHundredths | 0, ...room, ...named]);
     return true;
   }
 

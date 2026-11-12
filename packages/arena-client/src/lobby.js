@@ -138,10 +138,12 @@ function lobbySigned(verify, args) {
   try { return !!a && !!verify(a.sig, a.msg, a.key); } catch { return false; }
 }
 /** What a listing's signature is checked with - { sig, msg, key } - or null for one that does not parse. */
-function lobbySignedArgs({ id, nodeKey, nowMs, x }) {
+export function lobbySignedArgs({ id, nodeKey, nowMs, x }) {
   try {
     return { sig: fromHex(String(x.sig)), msg: lobbyListingId({ roundId: fromHex(id), nodePubkey: fromHex(nodeKey), nowMs: BigInt(nowMs),
-      phase: x.phase, assignedHere: !!x.assignedHere, joined: Number(x.joined), playing: Number(x.playing) }), key: fromHex(nodeKey) };
+      phase: x.phase, assignedHere: !!x.assignedHere, joined: Number(x.joined), playing: Number(x.playing),
+      // a round whose core draws its parcels: the snapshot id the seat signed with the rest (kanban #2574)
+      snapshotId: typeof x.snapshot === 'string' && /^[0-9a-f]{64}$/.test(x.snapshot) ? fromHex(x.snapshot) : null }), key: fromHex(nodeKey) };
   } catch { return null; }
 }
 

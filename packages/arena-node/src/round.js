@@ -42,6 +42,7 @@ import { itemOf } from '../../arena-protocol/src/items.js';
 import { itemPurchaseKept } from './item-purchase-seat.js';
 import { readTranscript } from './transcript-read.js';
 import { loadsRefusal } from './load-checks.js';
+import { drawnParcelsRefusal } from '../../arena-protocol/src/ticktock-snapshot.js';
 // 27A.7's node fee. The rate lives in one place and `genesis.js` writes it into
 // the genesis parameters, so a round naming a config has committed to it.
 import { feeMatchesEntry, feeBpsOf, entryFeeBpsOf, donationInFee, donationBpsOf, NODE_FEE_BPS } from '../../arena-protocol/src/fee.js';
@@ -1165,9 +1166,11 @@ export class Round {
     // A repeat of the head was checked when it first came.
     if (!seen && b.loads && b.loads.length) {
       // the next tick too (kanban #1740, #1800): a batch of no ticks carries its loads only at the next one
+      // AND ON A CORE THAT DRAWS ITS PARCELS, EACH ONE THE PARCEL DRAWN FOR ITS SLOT (kanban #2571 ruling, #2574): the round's
+      // snapshot, derived by this seat from its own bitcoind (ticktock-snapshots.js), and arena-protocol's drawnParcelsRefusal
       const why = loadsRefusal(b, at, () => !!this.db.prepare(
         'SELECT 1 FROM ticks WHERE round_id = ? AND entry_id = ? AND substr(words, 1, 16) != zeroblob(16) LIMIT 1')
-        .get(b.roundId, b.entryId), this.nextTick(b.roundId, b.entryId));
+        .get(b.roundId, b.entryId), this.nextTick(b.roundId, b.entryId), this.drawnFor(round.contract, b.roundId, b.entryId));
       if (why) throw new Error(why);
     }
 
@@ -3392,6 +3395,39 @@ export class Round {
     return this.db.prepare('SELECT * FROM close_holds').all().map((r) => ({ roundId: new Uint8Array(r.round_id),
       entryId: new Uint8Array(r.entry_id), state: r.state, attempts: r.attempts, sinceMs: r.since_ms,
       lastWhy: r.last_why, signedMs: r.signed_ms }));
+  }
+
+  /**
+   * DOES THIS ROUND'S CORE DRAW ITS PARCELS (kanban #2574)? The registration says so on the core (`parcelsDrawn`, a Tick Tock
+   * game version since #2571's ruling), as `worldShared` says it on a config. Kept per round: a contract never changes core.
+   */
+  parcelsDrawn(contract) {
+    let c = contract;
+    try { if (c instanceof Uint8Array || Buffer.isBuffer(c)) c = decodeRoundContract(new Uint8Array(c)); } catch { return false; }
+    if (!c || !(c.gameId instanceof Uint8Array) || !(c.simCoreHash instanceof Uint8Array)) return false;
+    // the answer is the game's and the core's: kept by those two
+    const key = `${toHex(c.gameId)}:${toHex(c.simCoreHash)}:${c.configHash instanceof Uint8Array ? toHex(c.configHash) : ''}`;
+    this.drawnKept = this.drawnKept || new Map();
+    if (this.drawnKept.has(key)) return this.drawnKept.get(key);
+    let on = false;
+    try { const g = pluginForRound(c, this.plugins); on = !!(g.ok && g.core && g.core.parcelsDrawn); } catch { on = false; }
+    if (this.drawnKept.size > 1024) this.drawnKept.clear();
+    this.drawnKept.set(key, on);
+    return on;
+  }
+
+  /**
+   * THE DRAWN-PARCEL CHECK FOR ONE ENTRY'S LOADS (load-checks.js loadsRefusal's `drawn`): null on a core that does not draw;
+   * else the check against the snapshot `snapshotOf(contractBytes, roundId)` hands (the server's, from this seat's bitcoind),
+   * or why there is none yet - a seat that has not derived the round's snapshot takes no parcel it cannot check.
+   */
+  drawnFor(contractBytes, roundId, entryId) {
+    if (!this.parcelsDrawn(contractBytes)) return null;
+    let held;
+    try { held = typeof this.snapshotOf === 'function' ? this.snapshotOf(contractBytes, roundId) : undefined; } catch { held = undefined; }
+    if (!held || !held.snapshot)
+      return { why: `this seat has not derived the snapshot of this round's beacon block yet${held && held.why ? ` (${held.why})` : ''}: its loads are checked against it - send the batch again` };
+    return { check: (load) => drawnParcelsRefusal(load, { snapshot: held.snapshot, roundId, entryId }) };
   }
 
   /** Keep the beacon this signer node's chain named for a round: the block, its height, its time. */

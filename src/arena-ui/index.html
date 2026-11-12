@@ -2761,7 +2761,11 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       { file: 'core-0847c99f.js', sha256: '41535dc6159d18464c7911e66984f2dc04ac5f5a593d1f759711f6ea07b1124d' },
       // AND MANIFEST VERSION 7'S (kanban #828): 0847c99f with a door per player in a shared world
       '8cbc74b27bee78727fa395fcc5e5181beb4072f837adbee0e9ea278ff427d387':
-      { file: 'core-8cbc74b2.js', sha256: '35889f637daf8f829118d751f65e626bfe58464d8a3903e6780e62833b8d9aec' } };
+      { file: 'core-8cbc74b2.js', sha256: '35889f637daf8f829118d751f65e626bfe58464d8a3903e6780e62833b8d9aec' },
+      // AND MANIFEST VERSION 8'S (kanban #2571 ruling, #2574): 8cbc74b2 with its parcels drawn from the round's beacon block - its
+      // bundle also hands the page offerIndex, the draw every seat checks a load by
+      '383aa4697f4c962a10327e34ab1c0e5c8df515af316eb857810741844b0606e2':
+      { file: 'core-383aa469.js', sha256: '4fc4f74c021d83055c4848fdb5063e7788392cd229c9f3d77f7d74cc71569c39' } };
     window.ARENA_LOAD_CORE = function (hash) {
       var hex = String(hash || '').toLowerCase();
       if (window.ARENA_CORES[hex]) return Promise.resolve({ ok: true, hex: hex });
