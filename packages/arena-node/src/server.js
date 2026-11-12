@@ -11107,6 +11107,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         } catch (e) { return text(res, 400, `that is not ${valued ? 'a value' : 'an outcome'} attestation: ${e.message}`); }
         const got = holdOutcome(new Uint8Array(target), raw, a, valued);
         if (!got.held) return text(res, got.status, got.why);
+        // A FRESH ONE IS HANDED ON AT ONCE (kanban #1787): an attestor daemon posts the seats one after another (8 s timeout each), so one
+        // seat took it a second before the market's deadline and the next one a second after it - FINAL at one, VOID at the other, both
+        // terminal, and neither the settlement nor the return door reached its threshold. A seat that takes one fresh and timely now posts
+        // it to the round's other settlement seats before it answers (as a drawn seat's own combined one, kanban #630), so their arrival
+        // times differ by milliseconds, not by the daemon's timeouts. `handed=1` marks such a post: it is not handed on again.
+        if (got.fresh && !(got.now && got.now.evidenceOnly) && url.searchParams.get('handed') !== '1') {
+          const to = winningsPeers(new Uint8Array(target));   // the settlement committee, as the return and book doors read it
+          await Promise.all(to.map((base) => fetch(`${String(base).replace(/\/+$/, '')}/outcome?round=${toHex(new Uint8Array(target))}&handed=1`,
+            { method: 'POST', body: raw, signal: AbortSignal.timeout(3000) }).catch(() => null)));
+        }
         res.writeHead(got.fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ held: true, fresh: got.fresh, why: got.why, ...got.now }));
       }
