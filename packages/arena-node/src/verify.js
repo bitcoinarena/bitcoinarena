@@ -214,6 +214,23 @@ async function peerBody(answer, cap = PEER_BODY_MAX_BYTES) {
   for (const c of parts) { out.set(c, at); at += c.length; }
   return out;
 }
+/**
+ * The first `cap` bytes of a peer's answer at most, read under the fetch's own deadline; the rest is not read (kanban #2060:
+ * GET /equivocation was read whole with no bound). Unlike peerBody it does not throw past the cap - a long honest answer
+ * still yields its first pairs.
+ */
+async function peerBodyPrefix(answer, cap) {
+  if (!answer.body) return new Uint8Array(0);
+  const out = new Uint8Array(cap); let n = 0;
+  for await (const chunk of answer.body) {
+    const take = Math.min(chunk.length, cap - n);
+    out.set(chunk.subarray(0, take), n); n += take;
+    if (n >= cap) { try { await answer.body.cancel(); } catch { /* gone */ } break; }
+  }
+  return out.slice(0, n);
+}
+/** Pairs read from one peer's GET /equivocation answer at most (kanban #2060); an honest seat's measured answers held 13 and 63. */
+const EQUIVOCATION_PAIRS_READ = 512;
 async function peerJson(answer) { return JSON.parse(Buffer.from(await peerBody(answer)).toString('utf8')); }
 /** GET /checkpoints of every peer AT ONCE (#1550: in parallel, not one after another), each its bytes or null when down. */
 async function peersCheckpoints(peers, roundIdBytes, entryId, cap) {
@@ -1094,11 +1111,13 @@ export class Verifier {
     if (window) await this.#pullEvidenceBlocks(roundIdBytes, entryId);
     const counts = (m) => !window || this.round.markCounts(entryId, m, window.chain, window.end);
     const verify = (sig, msg, pub) => { try { return sessionCurve.verify(sig, msg, pub); } catch { return false; } };
-    const pairs = this.round.equivocation(roundIdBytes, entryId).map((f) => [f.stored, f.offered]);
+    // Each pair carries where it came from: null for this seat's own records, the peer's address for a pulled one - kept
+    // within that peer's bound, its marks' records as pulled (kanban #2060, round.js putForkPair).
+    const pairs = this.round.equivocation(roundIdBytes, entryId).map((f) => [f.stored, f.offered, null]);
     // The on-time first mark this signer node voided and the late one it kept: one parent, two chains.
     const voided = this.round.entryVoid(entryId);
     const late = this.round.startForfeit(entryId);
-    if (voided && late) pairs.push([voided.firstMark, late.mark]);
+    if (voided && late) pairs.push([voided.firstMark, late.mark, null]);
     // THE PLAYER'S OTHER FIRST MARK, PULLED (M3.3-34, path 2): a peer's late first
     // mark, or the first mark a peer voided - paired with this signer node's own first
     // mark, so a lost forward still leaves the pair to be pulled at the close.
@@ -1107,13 +1126,14 @@ export class Verifier {
       for (const peer of this.peersOf(roundIdBytes)) {
         try {
           const r = await fetch(`${peer}/late-first-mark?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
-          if (r.status === 200) { const theirs = new Uint8Array(await r.arrayBuffer()); for (const m of mine) pairs.push([m, theirs]); }
+          if (r.status === 200) { const theirs = await peerBodyPrefix(r, SIGNED_MARK_BYTES); for (const m of mine) pairs.push([m, theirs, peer]); }
+          else { try { await r.body?.cancel(); } catch { /* gone */ } }
         } catch { /* a signer node that cannot answer proves nothing */ }
         try {
           const r = await fetch(`${peer}/entry-void?entry=${hex(entryId)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
           if (r.status === 200) {
-            const got = await r.json();
-            if (got.firstMark) { const theirs = Uint8Array.from(Buffer.from(String(got.firstMark), 'hex')); for (const m of mine) pairs.push([m, theirs]); }
+            const got = JSON.parse(Buffer.from(await peerBody(r, 64 * 1024)).toString('utf8'));
+            if (got.firstMark) { const theirs = Uint8Array.from(Buffer.from(String(got.firstMark), 'hex')); for (const m of mine) pairs.push([m, theirs, peer]); }
           }
         } catch { /* a signer node that cannot answer proves nothing */ }
       }
@@ -1123,10 +1143,11 @@ export class Verifier {
       try {
         const r = await fetch(`${peer}/equivocation?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
         if (report) report.reached++;
-        if (r.status !== 200) continue;
-        const body = new Uint8Array(await r.arrayBuffer());
+        if (r.status !== 200) { try { await r.body?.cancel(); } catch { /* gone */ } continue; }
+        // AT MOST EQUIVOCATION_PAIRS_READ PAIRS A PEER (kanban #2060): the answer was read whole, with no bound
+        const body = await peerBodyPrefix(r, EQUIVOCATION_PAIRS_READ * 2 * SIGNED_MARK_BYTES);
         for (let at = 0; at + 2 * SIGNED_MARK_BYTES <= body.length; at += 2 * SIGNED_MARK_BYTES)
-          pairs.push([body.slice(at, at + SIGNED_MARK_BYTES), body.slice(at + SIGNED_MARK_BYTES, at + 2 * SIGNED_MARK_BYTES)]);
+          pairs.push([body.slice(at, at + SIGNED_MARK_BYTES), body.slice(at + SIGNED_MARK_BYTES, at + 2 * SIGNED_MARK_BYTES), peer]);
       } catch { /* a signer node that cannot answer proves nothing */ }
     }
     // EACH PAIR ONCE, AND A KEPT PAIR NOT CHECKED AGAIN (measured live 2026-10-06 on 0.0.2815, entry 0b68a08f): a
@@ -1136,7 +1157,7 @@ export class Verifier {
     // stored) is not verified again, and the later-parent limb's provenFork is asked once, after the pairs are kept.
     const seen = new Set();
     let laterParent = false;
-    for (const [a, b] of pairs) {
+    for (const [a, b, from] of pairs) {
       try {
         const key = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? hex(a) + hex(b) : hex(b) + hex(a);
         if (seen.has(key)) continue;
@@ -1147,7 +1168,8 @@ export class Verifier {
           // record (its forfeit door, its close) says two first marks from now on.
           // AND A FORK AT ANY LATER TICK, kept as a pair (§13B): this node's close and its /equivocation
           // say it from now on, as the seat that held it does
-          if (!kept && !this.round.putFirstMarkPair({ a, b })) this.round.putForkPair({ a, b });
+          // A PULLED PAIR (`from`, its peer) IS KEPT WITHIN THAT PEER'S BOUND, its marks' records as pulled (kanban #2060)
+          if (!kept && !this.round.putFirstMarkPair({ a, b, peer: from })) this.round.putForkPair({ a, b, peer: from });
           // WHAT A PAIR PROVES (RULED 2026-10-05 (b)): two first marks, or two marks at one tick - as ever; two chains
           // from one later parent only when both marks were receipted by a seat (the store's own ruled check, provenFork) -
           // a page stuck on an old head sends refused marks naming that head, and those forfeit nothing
