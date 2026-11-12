@@ -10,7 +10,7 @@ test('the floor is read per app, and only a version this build reads counts', ()
   assert.deepEqual(dutyProtocolFloor({ ARENA_DUTY_PROTOCOL_RPS: '27' }, 'rps'), { version: 27, why: null });
   assert.deepEqual(dutyProtocolFloor({ ARENA_DUTY_PROTOCOL_RPS: '27' }, 'nextblock'), { version: null, why: null });
   assert.deepEqual(dutyProtocolFloor({}, 'rps'), { version: null, why: null });
-  for (const bad of ['21', '26', '99', 'x', '27.5']) {
+  for (const bad of ['21', '29', '99', 'x', '27.5']) {   // 2.0 reads protocol 26, 1.9 did not: 29 is the unread one here
     const f = dutyProtocolFloor({ ARENA_DUTY_PROTOCOL_UPDOWN: bad }, 'updown');
     assert.equal(f.version, null, bad);
     assert.match(f.why, /not a protocol version this build reads/);
