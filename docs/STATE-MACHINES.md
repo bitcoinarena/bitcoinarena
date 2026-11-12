@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-21 (change) Feedback report: accepted -> paid keeps the approval time (kanban #1786)
+- Invariant: `reports.changed_ms` of an accepted or paid report is the time it was approved; accepted -> paid (`paidNow`, on claim or settle) changes only `state`. The payment time is the reward's `paid_ms`. The per-key limit (`perKeyPerWeek`) and the week's budget (`weeklyBudgetSats`, GET budget `weekApprovedSats`) count approvals by `changed_ms`, so a reward approved last week and claimed today is not counted again this week.
+- Recovery: on open, a paid report whose `changed_ms` differs from its last move to `accepted` (`report_moves`) takes that move's time back (files written before the fix).
