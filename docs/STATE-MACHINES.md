@@ -1542,3 +1542,11 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-L4 (change) Liquidation claim on the page and the claims book (liquidation-claim.js `claimStep`, liquidation-claims.js) - kanban #1849
+- Invariant: notes a player handed to a liquidation are either paid from the escrow or back in the player's wallet.
+- New edge: kept | posted --(the signed door answers 409 "not being liquidated" naming no refused note, the set lists no acceptance for this payout key, and the wallet's own `receiveEcash` of the kept notes answers Success / AlreadyReceived)--> none. Any other receive answer (an error, Rejected, a federation still halted) keeps the record as it was.
+- The return is noted under `arena-liquidation-returned-<federation>` with the signed halt height; while the same halt's event stands, the page hands no notes over again for that federation (one return per halt, not a send and a reissue on every pass).
+- The book keeps nonces, amounts and payout keys only, not the e-cash: a federation that comes back before the payout (no seat lists it HALTED: `liquidationOf` null, `plan` 404) pays nothing from it. The notes reissued into the wallet are spent, so a later halt's spent set refuses the book's stale rows of them.
