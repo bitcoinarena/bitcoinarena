@@ -42,20 +42,35 @@ async function ask(url, ms = ASK_MS) {
   } catch (e) { return { status: 0, body: null, why: String(e && e.message ? e.message : e).slice(0, 120) }; }
 }
 
+// NO ONE SEAT SAYS WHAT A TRANSACTION IS (kanban #1510): its entry, locks, settlement and result are the value at least AGREE seats send
+// byte for byte (and more of them than any other value), never the first seat's - one seat of fourteen could list a made-up order that
+// /api/played and Umami counted as a real player's round, turn an order the others hold as lost into won, swap an entry's player key past
+// the bot and owner marks, or backdate it to another day. An id fewer than AGREE seats hold the same entry of is not found and not stored.
+const AGREE = 2;
+function agreed(values) {
+  const n = new Map();
+  for (const v of values) { if (v === null || v === undefined) continue; const k = JSON.stringify(v); n.set(k, (n.get(k) || 0) + 1); }
+  const top = [...n].sort((a, b) => b[1] - a[1]);
+  if (!top.length || top[0][1] < AGREE || (top[1] && top[1][1] === top[0][1])) return null;
+  return JSON.parse(top[0][0]);
+}
+
 /** One transaction from every seat's answer ([{ seat, status, body, why }]), merged. */
 function merge(id, answers, readMs = null) {
-  const known = answers.filter((a) => a.body && a.body.known);
-  const first = known[0] ? known[0].body : null;
+  const held = answers.filter((a) => a.body && a.body.known);
+  const entry = agreed(held.map((a) => a.body.entry));
+  // the seats that hold that entry (kanban #1510): only they speak for the rest of it
+  const known = entry ? held.filter((a) => JSON.stringify(a.body.entry) === JSON.stringify(entry)) : [];
   const seats = answers.map((a) => ({ seat: seatName(a.seat), key: a.body && a.body.seat ? a.body.seat : null,
     status: a.status, known: !!(a.body && a.body.known), storedAt: a.body && a.body.storedAt ? a.body.storedAt : null,
     steps: a.body && Array.isArray(a.body.steps) ? a.body.steps : [], book: a.body ? a.body.book || null : null, why: a.why || null,
     did: a.body && a.body.processed && Array.isArray(a.body.processed.mine) ? a.body.processed.mine : [],
     locks: a.body && a.body.locks ? a.body.locks : null }));
-  const settlement = known.map((a) => a.body.settlement).find((x) => x && x.txid) || null;
+  const settlement = agreed(known.map((a) => a.body.settlement).filter((x) => x && x.txid));
   const client = known.map((a) => a.body.client).find(Boolean) || null;
-  // its result (won, lost, refunded, pending): a seat that holds the settlement says it; any seat says pending
+  // its result (won, lost, refunded, pending): what the seats that hold the settlement agree on; else what they agree it is (pending)
   const results = known.map((a) => a.body.result).filter(Boolean);
-  const result = results.find((r) => r.state !== 'pending') || results[0] || null;
+  const result = agreed(results.filter((r) => r.state !== 'pending')) || agreed(results);
   // WHO PROCESSED ITS ROUND (2026-10-24: "Also show who processed the round, e.g for settlement and verify"): the committees, the
   // asker and the outcome's attestors as the seats name them (the first that names each), each seat key named by the seat that has it
   const proc = known.map((a) => a.body.processed).filter(Boolean);
@@ -63,9 +78,11 @@ function merge(id, answers, readMs = null) {
   const names = Object.fromEntries(seats.filter((x) => x.key).map((x) => [x.key, x.seat]));
   const processed = proc.length ? { game: pick('game'), settlement: pick('settlement'), asker: pick('asker'), outcomes: pick('outcomes') || [],
     settledAt: pick('settledAt'), settlementWhy: pick('settlementWhy'), names } : null;
+  // stored first: the AGREE-th earliest time of the seats that hold the entry - no one seat moves it to another day (kanban #1510)
+  const stored = known.map((a) => a.body.storedAt).filter(Boolean).sort();
   return { id, found: known.length > 0, readAt: new Date().toISOString(), readMs,
-    entry: first ? first.entry : null, locks: first ? first.locks : null, settlement, client, processed, result,
-    storedFirst: seats.map((s) => s.storedAt).filter(Boolean).sort()[0] || null, seats };
+    entry, locks: agreed(known.map((a) => a.body.locks)), settlement, client, processed, result,
+    storedFirst: stored[Math.min(AGREE, stored.length) - 1] || null, seats };
 }
 
 /** Every seat's view of one transaction, asked now - only for one the minute's read has not stored yet. */
@@ -544,7 +561,9 @@ async function readWindow(env, since, limit, before) {
     const per = byId.get(id);
     const answers = SEATS.map((seat) => (per.has(seat) ? { seat, ...per.get(seat) }
       : answered.get(seat) ? { seat, status: 404, body: { known: false } } : { seat, status: 0, body: null, why: 'did not answer the read' }));
-    const w = await keep(env, merge(id, answers, null), hashes.get(id));
+    const tx = merge(id, answers, null);
+    if (!tx.found) continue;   // fewer than AGREE seats hold its entry: not stored, so not counted (kanban #1510)
+    const w = await keep(env, tx, hashes.get(id));
     if (w) writes.push(w);
   }
   for (let i = 0; i < writes.length; i += 50) await env.DB.batch(writes.slice(i, i + 50));
