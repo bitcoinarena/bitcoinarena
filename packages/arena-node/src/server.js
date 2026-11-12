@@ -11497,7 +11497,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           gatherOnProof(firstMark.c.roundId, firstMark.c.entryId);
           return sock.send('error FORFEIT: ' + TWO_FIRST_MARKS);
         }
-        if (firstMark && !round.holdsMark(checkpointId(firstMark.c))) {
+        // THE MARK'S SIGNATURE BEFORE ANY PEER IS ASKED (kanban #1862): firstMarkOf only decodes, so a stranger's
+        // first mark with a garbage signature for a public entry id made this seat fetch /entry-void from every peer
+        // (each awaited in this socket's queue) before handle() refused it - one free frame, one request per peer. A
+        // first mark that does not verify under its entry's session key goes straight on to handle(), which refuses it.
+        let markVerifies = false;
+        if (firstMark) { try { round.playerSigned(firstMark.bytes); markVerifies = true; } catch { markVerifies = false; } }
+        if (firstMark && markVerifies && !round.holdsMark(checkpointId(firstMark.c))) {
           const own = lateEvidenceHere(firstMark.c, null);
           const found = own ? { late: own, receipts: [] } : await lateByPeers(firstMark.c, firstMark.bytes);
           if (found && found.twoFirst) {
