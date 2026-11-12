@@ -251,17 +251,28 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // EVERY RECORD BY ITS HEIGHT TOO (kanban #559/#543, §23A.3a: the pressure weights read "the federation record in force at" the round's
   // census height, which may be older than the newest): each verified record kept per federation and height, in memory and the store
   const history = new Map();                 // fid -> Map(height -> record)
-  const remember = (fid, rec) => { if (!history.has(fid)) history.set(fid, new Map()); history.get(fid).set(Number(rec.height), rec);
-    if (store && store.saveAt) { try { store.saveAt(fid, Number(rec.height), rec.__hex); } catch { /* in memory */ } } };
+  // ONE BODY PER HEIGHT, THE FIRST, IN MEMORY AS IN THE STORE (kanban #2397, #2466, audit44 refute 67): the store's history is
+  // INSERT OR IGNORE - the first body saved at a height stays. Memory overwrote that height when a later body came (a mirror's
+  // better body taken at the kept height, a late older record refused as a take), so a running seat read one run and a restarted
+  // seat another: two halt starts, two liquidation clocks for one halt (the #1763 effect), and one peer's late HALTED body could
+  // move a running seat's halt start down. A held height is never replaced; the store's rows are read in first, so a fresh
+  // process does not hold a height the store already has under another body
+  const remember = (fid, rec) => {
+    historyOf(fid);
+    if (!history.has(fid)) history.set(fid, new Map());
+    const m = history.get(fid), h = Number(rec.height);
+    if (m.has(h)) return;
+    m.set(h, rec);
+    if (store && store.saveAt) { try { store.saveAt(fid, h, rec.__hex); } catch { /* in memory */ } } };
   // the history of `fid` with the store's rows read in once (they were each verified when saved), those in memory kept as they are
   const historyRead = new Set();
-  const historyOf = (fid) => {
+  function historyOf(fid) {
     if (!historyRead.has(fid) && store && store.loadAt) {
       historyRead.add(fid);
       try { for (const r of store.loadAt(fid) || []) { try { if (history.has(fid) && history.get(fid).has(Number(r.height))) continue; const rec = decodeFederationRecord(splitSignedRecord(fromHex(r.record)).body); remember(fid, Object.assign(Object.create(null), rec, { __hex: r.record })); } catch { /* skip */ } } } catch { /* none */ }
     }
     return history.get(fid) || null;
-  };
+  }
   // THE HALT START OUTLIVES A RESTART (kanban #1578, state audit 2026-11-12): the store keeps only the newest record per federation, and
   // restore() keep()s that one, so a restarted seat counted the halt - and every liquidation clock (liquidatesAt, claim window, late-claim
   // tail, remainder split) - from the NEWEST HALTED record, while a seat that did not restart counted from the first: two seats, two clocks
