@@ -522,6 +522,11 @@ export async function readTextCapped(r, maxBytes) {
   return Buffer.concat(parts, total).toString('utf8');
 }
 export const readJsonCapped = async (r, maxBytes) => JSON.parse(await readTextCapped(r, maxBytes));
+// A PEER'S RESERVE LIST, FUNDING ITEMS AND EMERGENCY DEPARTURES ARE READ ONLY UP TO A BOUND (kanban #2523): GET /reserves(?all=1) is
+// ~200 kB with every federation in it, /funding-items and /emergency-departures far less; r.json() took any length inside the 8-10 s
+// timeout, so one guardian or network seat streaming hundreds of MB was buffered and parsed on this seat's event loop every reserve
+// pass (2 min) and at each funding decision - the #1685/#1744/#2368 class. Past the bound the answer is refused (that seat names nothing).
+export const PEER_STATE_ANSWER_MAX_BYTES = 16 * 1024 * 1024;
 // THE STAKE LOCK A LOCK-FIRST CLIENT SHOWS WITH ITS HANDOUT (kanban #1596, after #1485): JSON { outpoint: "txid:index", fields, federation? }.
 // Inside a head-to-head round's handout lead a handout is taken only with one the federation holds (takeHandout, stakeLockMadeFor)
 export const STAKE_LOCK_HEADER = 'x-arena-stake-lock';
@@ -2173,7 +2178,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (own.ok) return reserveKeys.setFor(fedHex, epoch, own.pool.groupPublicKey);
     const said = new Map();
     await Promise.all(g.peers.map(async (u) => { try {
-      const r = await (await fetch(`${u}/reserves`, { signal: AbortSignal.timeout(8000) })).json();
+      const r = await readJsonCapped(await fetch(`${u}/reserves`, { signal: AbortSignal.timeout(8000) }), PEER_STATE_ANSWER_MAX_BYTES);
       const f = (r.federations || []).find((x) => x.federationId === fedHex && x.key);
       if (f) said.set(f.key, (said.get(f.key) || 0) + 1);
     } catch { /* a seat that does not answer names nothing */ } }));
@@ -2234,7 +2239,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // /reserves?all=1 a minute to the 22 seats of one host, ~200 kB each - the same answer, every federation in it, read again for each
     // federation the node holds a key of; with a new TLS handshake each, its doors went unanswered for 5-15 s)
     const listsOf = new Map();   // seat -> its /reserves?all=1 answer (a promise; null when it did not answer)
-    const listOf = (u) => { if (!listsOf.has(u)) listsOf.set(u, fetch(`${u}/reserves?all=1`, { signal: AbortSignal.timeout(8000) }).then((r) => r.json()).catch(() => null)); return listsOf.get(u); };
+    const listOf = (u) => { if (!listsOf.has(u)) listsOf.set(u, fetch(`${u}/reserves?all=1`, { signal: AbortSignal.timeout(8000) }).then((r) => readJsonCapped(r, PEER_STATE_ANSWER_MAX_BYTES)).catch(() => null)); return listsOf.get(u); };
     let checks = 0, kept = 0, later = 0;
     // EACH SEAT ITS OWN SHARE OF THE CHECKS (kanban #2521): the RESERVE_PEER_CHECKS budget was one for all seats, so one seat listed
     // first with 200 fresh made-up outpoints each pass took every check and the rows the honest seats list were never asked. Now each
@@ -2315,7 +2320,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const FUNDING_PULL_PER_SEAT = 4096;
       const got = await Promise.all(seats.map(async (base) => { try {
         const r = await fetch(`${base}/funding-items?proposal=${pid}`, { signal: AbortSignal.timeout(8000) }); if (!r.ok) { missing.push(String(base)); return []; }
-        const items = (await r.json()).items; if (!Array.isArray(items)) return [];
+        const items = (await readJsonCapped(r, PEER_STATE_ANSWER_MAX_BYTES)).items; if (!Array.isArray(items)) return [];   // kanban #2523: read to a bound
         const seen = new Set(); const out = [];
         for (const x of items) {
           if (out.length >= FUNDING_PULL_PER_SEAT) break;
@@ -3303,7 +3308,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   const pullEmergencies = async () => {
     for (const u of networkSeats()) {
-      let got; try { const r = await fetch(`${u}/emergency-departures`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await r.json() : null; } catch { got = null; }
+      let got; try { const r = await fetch(`${u}/emergency-departures`, { signal: AbortSignal.timeout(10000) }); got = r.ok ? await readJsonCapped(r, PEER_STATE_ANSWER_MAX_BYTES) : null; } catch { got = null; }
       for (const h of (got && Array.isArray(got.requests) ? got.requests : []).slice(0, 256)) { try { await takeEmergency(readEmergencyHex(h), { pass: false }); } catch { /* not one */ } }
     }
   };
