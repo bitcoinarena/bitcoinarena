@@ -16,6 +16,7 @@
 // is rolled back from.
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, renameSync, rmSync, statSync, statfsSync } from 'node:fs';
 import { join } from 'node:path';
+import { readDurableJson, writeDurableJson } from '../../arena-node/src/durable-json.js';
 import { homedir, uptime } from 'node:os';
 import { execFile } from 'node:child_process';
 import { checkAsset } from './release-verify.js';
@@ -47,7 +48,11 @@ import { newerVersion } from '../../arena-node/src/release-latest.js';
 
 /** Files that are the node: kept across an update, backed up before it. */
 export const NODE_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db-shm', 'arena.conf', 'node.env', 'state.json', 'seed.hex', 'node.db.owner.json',
-  'node.db.operator-tokens.json', 'bitcoind.auth', 'cloudflared.yml']);
+  'node.db.owner.json.bak', 'node.db.operator-tokens.json', 'node.db.operator-tokens.json.bak', 'bitcoind.auth', 'cloudflared.yml']);
+// THE DURABLE PAIRS (kanban #2227, #1489 a44 refute of #1630): the node writes these with writeDurableJson (<file>.bak, then <file>) and
+// reads a torn <file> from its .bak. A restore puts each back as ONE value into both - read from the backup's pair as the node reads it,
+// written .bak first, each atomic - never the file alone by a plain copy beside a .bak that holds another owner.
+export const DURABLE_FILES = Object.freeze(['node.db.owner.json', 'node.db.operator-tokens.json']);
 
 /** Is it inside a market seating window now (minutes 11-14 of a quarter hour)? The update waits it out. */
 export const inSeatingWindow = (nowMs = Date.now()) => { const q = Math.floor(nowMs / 1000) % 900; return q >= 660 && q < 840; };
@@ -253,9 +258,16 @@ export function roomForUpdate(home, { extra = 0, freeBytes = freeBytesAt } = {})
  *  closed yet) is tried again each second for a while; one that never frees is named, and the others still go back. { ok, failed } */
 export async function restoreNode(home, backup, { tries = 30, pause = (ms) => new Promise((ok) => setTimeout(ok, ms)), copy = copyFileSync } = {}) {
   const failed = [];
+  const durableBak = new Set(DURABLE_FILES.map((f) => `${f}.bak`));
   for (const f of backup.files) {
+    if (durableBak.has(f)) continue; // put back with its file (kanban #2227)
+    const durable = DURABLE_FILES.includes(f);
     for (let i = 0; ; i++) {
-      try { copy(join(backup.dir, f), join(home, f)); break; } catch (e) {
+      try {
+        if (durable) writeDurableJson(join(home, f), readDurableJson(join(backup.dir, f)));
+        else copy(join(backup.dir, f), join(home, f));
+        break;
+      } catch (e) {
         if (i + 1 >= tries || !['EBUSY', 'EPERM', 'EACCES'].includes(e.code)) { failed.push(`${f}: ${e.code || e.message}`); break; }
         await pause(1000);
       }
@@ -308,7 +320,8 @@ export function beginJournal(home, j, { nowMs = Date.now() } = {}) {
   return next;
 }
 /** The files of the backup that hold what a running seat writes (its signing state): not put back once the new release answered. */
-export const SEAT_DATA_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db-shm', 'node.db.owner.json', 'node.db.operator-tokens.json']);
+export const SEAT_DATA_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db-shm', 'node.db.owner.json', 'node.db.owner.json.bak', 'node.db.operator-tokens.json',
+  'node.db.operator-tokens.json.bak']);
 /** Never put back by a rollback: the update does not change them, and the state may hold what another process recorded meanwhile (kanban #1165). */
 const NEVER_RESTORED = new Set(['state.json', 'seed.hex']);
 
