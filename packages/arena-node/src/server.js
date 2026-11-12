@@ -685,6 +685,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // counted as missing; SEASON_PEER_LANES of them at once, so one board never opens a request to every seat in one burst
   const SEASON_PEER_TIMEOUT_MS = 8000;
   const SEASON_PEER_LANES = 4;
+  // A SEASON'S ROUNDS IN PAGES (kanban #2273, refutes #1856's honest path): GET /season-rounds is read up to PEER_LISTING_BYTES (4 MB)
+  // a request, but a busy honest seat's window is larger (~1.2-1.7 kB a round: 3,000 rounds of a week passed 4 MB, and every peer
+  // dropped it as not answered). So a paged ask (?page=1&after=<round id hex>) is answered with at most SEASON_ROUNDS_PAGE_BYTES of
+  // rounds in round-id order and `next`, the last id handed on, while more remain - every page fits the read bound. The reader
+  // follows `next` (strictly rising) up to SEASON_PEER_ROUNDS_MAX rounds and SEASON_PEER_ANSWER_BYTES in all - far above a seat's
+  // honest week - and keeps what it read: one seat still costs this one a bounded read, never its whole stream.
+  const SEASON_ROUNDS_PAGE_BYTES = 2 * 1024 * 1024;
+  const SEASON_PEER_ROUNDS_MAX = 25000;
+  const SEASON_PEER_ANSWER_BYTES = 48 * 1024 * 1024;
+  const SEASON_PEER_READ_MS = 4 * SEASON_PEER_TIMEOUT_MS;
   // THE NODE'S OPEN MUSIG2 SESSIONS: session id -> its message, tweak and secret nonce, each signed once
   const musigNodeSessions = new Map();
   let fedRecords = null;                       // federation-records.js, set once the roster and the invites are known
@@ -1455,15 +1465,56 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       while (next < seats.length) {
         const i = next++;
         try {
-          const r = await seasonFetch(`${seats[i]}/season-rounds?game=${ids.join(',')}&days=${days}`, { signal: AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS) });
-          if (!r.ok) continue;
           // READ UP TO A BOUND (kanban #1856): a bare `await r.json()` held a peer's whole answer - one seat answering with
           // hundreds of MB exhausted this seat's memory, and on the badge path each padded round was then schnorr-verified in
-          // this thread. Read like every other peer listing (#1540): past PEER_LISTING_BYTES the seat counts as not answered.
-          const j = await jsonUpTo(r, PEER_LISTING_BYTES);
-          if (!j || !Array.isArray(j.rounds) || (keyed && j.roundKeys !== true)) continue;
-          const node = typeof j.node === 'string' && /^[0-9a-f]{64}$/i.test(j.node) ? j.node.toLowerCase() : null;
-          answers[i] = { seat: seats[i], node, rounds: seasonRoundsFromJson(j.rounds) };
+          // this thread. Each page is read like every other peer listing (#1540): past PEER_LISTING_BYTES the seat counts as not
+          // answered. IN PAGES (kanban #2273): an honest busy seat's window is more than one bound, so its pages are followed
+          // up to SEASON_PEER_ROUNDS_MAX rounds / SEASON_PEER_ANSWER_BYTES; a seat on an older build answers whole, without `next`.
+          // THE HONEST SHAPE ONLY (kanban #2355, #1489 a45-refute-22-s2, refute of #1856 after #2273): one seat cut #1856's padded answer
+          // into rising pages just under the bound and was read whole again - 20,241 rounds of one seat, each carrying a signature
+          // "of" every seat of its draw, each schnorr-verified in this thread on the badge / payout path (~250 s a collect). The work
+          // is bounded, not only the bytes: an honest seat's GET /season-rounds (season-read.js signedSeasonRoundsJson) hands on each
+          // round once, in round-id order after the cursor, with no signature or its OWN one (the node its answer names). A page with
+          // a round twice, a round at or before the cursor, a second signature or one of another node is not a seat's own account:
+          // the seat counts as not answered, before anything is verified - so one seat costs at most one verify per round it was
+          // drawn for (a draw is the contract's, and only a real round's draw names it). The totals are checked before a page is
+          // taken. A seat whose later page does not come in time (its own timeout, or the whole-seat limit) keeps what it read.
+          const list = []; const seen = new Set(); let after = '', bytes = 0, node = null, first = true;
+          const whole = AbortSignal.timeout(SEASON_PEER_READ_MS);   // every page of one seat within this, each within its own timeout
+          for (;;) {
+            let t;
+            try {
+              const r = await seasonFetch(`${seats[i]}/season-rounds?game=${ids.join(',')}&days=${days}&page=1&after=${after}`, { signal: AbortSignal.any([whole, AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS)]) });
+              if (!r.ok) throw new Error(`${r.status}`);
+              t = await textUpTo(r, PEER_LISTING_BYTES);
+            } catch (e) {
+              // a later page that does not come in (time, network, a refusal): the pages read stand; the first one is the answer
+              if (!first && !/passed|more than/.test(String(e && e.message))) break;
+              throw e;
+            }
+            const j = JSON.parse(t);
+            if (!j || !Array.isArray(j.rounds) || (keyed && j.roundKeys !== true)) throw new Error('not a season\'s rounds');
+            const n = typeof j.node === 'string' && /^[0-9a-f]{64}$/i.test(j.node) ? j.node.toLowerCase() : null;
+            if (first) node = n; else if (n !== node) throw new Error('its pages name two nodes');
+            first = false;
+            for (const x of j.rounds) {
+              const rid = x && typeof x === 'object' ? String(x.roundId || '').toLowerCase() : '';
+              if (!/^[0-9a-f]{64}$/.test(rid)) continue;                   // left for the merge to refuse by name, never verified
+              if (seen.has(rid) || (after && rid <= after)) throw new Error('a round handed on twice');
+              seen.add(rid);
+              const sigs = x.sigs;
+              if (sigs !== undefined && (!Array.isArray(sigs) || sigs.length > 1
+                || (sigs.length === 1 && (!node || !sigs[0] || String(sigs[0].node || '').toLowerCase() !== node)))) throw new Error('a signature that is not the seat\'s own');
+            }
+            if (bytes + t.length > SEASON_PEER_ANSWER_BYTES) break;
+            bytes += t.length;
+            list.push(...j.rounds.slice(0, SEASON_PEER_ROUNDS_MAX - list.length));
+            const nx = typeof j.next === 'string' ? j.next.toLowerCase() : null;
+            // a page that is the last, or a cursor that does not rise (a loop), or the totals reached: what was read is the answer
+            if (!nx || !/^[0-9a-f]{64}$/.test(nx) || nx <= after || list.length >= SEASON_PEER_ROUNDS_MAX || bytes >= SEASON_PEER_ANSWER_BYTES) break;
+            after = nx;
+          }
+          answers[i] = { seat: seats[i], node, rounds: seasonRoundsFromJson(list) };
         } catch { /* missing: no answer in time, or none that reads */ }
       }
     };
@@ -2005,13 +2056,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const payoutPeer = (base) => ({
     // kanban #1159: every ask carries the asking guardian seat's node key and its signature
     commit: async (b) => { const r = await fetch(`${base}/reserve-payout/commit`, { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ plan: b.plan, kind: b.kind, txid: b.txid || null, from: b.from, sig: b.sig }), signal: AbortSignal.timeout(60000) }); const j = await r.json();
+      body: JSON.stringify({ plan: b.plan, kind: b.kind, txid: b.txid || null, from: b.from, sig: b.sig }), signal: AbortSignal.timeout(60000) }); const j = await jsonUpTo(r, PEER_LISTING_BYTES);
       return j.ok ? { ok: true, commitment: { id: Number(j.commitment.id), hiding: fromHex(j.commitment.hiding), binding: fromHex(j.commitment.binding) } } : j; },
     share: async (b) => { const r = await fetch(`${base}/reserve-payout/share`, { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ planId: b.planId, kind: b.kind, commitments: b.commitments.map((c) => ({ id: c.id, hiding: toHex(c.hiding), binding: toHex(c.binding) })), from: b.from, sig: b.sig }), signal: AbortSignal.timeout(60000) });
-      const j = await r.json(); return j.ok ? { ok: true, share: BigInt('0x' + j.share) } : j; },
-    // ITS WINNERS OF A LEADERBOARD PAYOUT (kanban #1153): the list it planned for, else its frozen read, each with its signed evidence
-    winners: async (id) => { const r = await fetch(`${base}/leaderboard-winners?proposal=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(30000) }); return r.ok ? r.json() : null; },
+      const j = await jsonUpTo(r, PEER_LISTING_BYTES); return j.ok ? { ok: true, share: BigInt('0x' + j.share) } : j; },
+    // ITS WINNERS OF A LEADERBOARD PAYOUT (kanban #1153): the list it planned for, else its frozen read, each with its signed evidence.
+    // READ UP TO A BOUND (kanban #2382, #2383, #1489 a45-refute-22-s3: #1856's second copy): a bare `r.json()` held a guardian peer's
+    // whole answer, hundreds of MB of padded evidence. The evidence is a season's signed rounds, so it is read up to what one seat's
+    // season is read up to (SEASON_PEER_ANSWER_BYTES); past it the peer has not answered. Its copies of one account cost no second
+    // verify (leaderboard-freeze.js peerEvidence, season.js mergeSignedSeasonAccounts).
+    // commit / share: small answers, read up to PEER_LISTING_BYTES like every other peer answer.
+    winners: async (id) => { const r = await fetch(`${base}/leaderboard-winners?proposal=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(30000) });
+      if (!r.ok) { try { await r.body?.cancel(); } catch { /* dropped */ } return null; } return jsonUpTo(r, SEASON_PEER_ANSWER_BYTES); },
   });
   const reserveSpent = () => (reservePayouts ? reservePayouts.spent() : new Set());
   // the reserves this seat holds unspent, over every federation, in sat (rule 4's base); the chain tip the funding loop saw last
@@ -8643,16 +8700,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!asked.ok) return text(res, asked.status, asked.why);
         const { ids, w } = asked;
         const q = `rounds|${ids.join(',')}|${w.days}`;
+        const paged = url.searchParams.get('page') === '1';
+        const after = String(url.searchParams.get('after') || '').toLowerCase();
+        if (paged && after !== '' && !/^[0-9a-f]{64}$/.test(after)) return text(res, 400, 'a page of a season\'s rounds starts after a round id in hex');
         let kept = seasonKept.get(q);
         if (!kept || Date.now() - kept.at > SEASON_KEEP_MS) {
           const read = seasonRounds(round, { games: new Set(ids), fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) });
-          kept = { at: Date.now(), json: JSON.stringify({ node: toHex(round.pubkey), game: { ids }, days: w.days, fromMs: w.fromMs, toMs: w.toMs,
-            // SIGNED (kanban #1153): each round's contract and this seat's signature over its settled account - what a payout and a badge count on
-            roundKeys: true, signed: true, rounds: signedSeasonRoundsJson(round, read, signSeason) }) };
+          // SIGNED (kanban #1153): each round's contract and this seat's signature over its settled account - what a payout and a badge count on
+          const rounds = signedSeasonRoundsJson(round, read, signSeason);
+          const head = { node: toHex(round.pubkey), game: { ids }, days: w.days, fromMs: w.fromMs, toMs: w.toMs, roundKeys: true, signed: true };
+          // PAGES (kanban #2273): the same rounds in round-id order, each one's JSON once, so a page is a slice by bytes
+          const byId = rounds.map((x) => ({ id: String(x.roundId), json: JSON.stringify(x) })).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+          kept = { at: Date.now(), json: JSON.stringify({ ...head, rounds }), head, byId };
           keepSeason(q, kept);
         }
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=30', ...CORS });
-        return res.end(kept.json);
+        if (!paged) return res.end(kept.json);
+        const byId = kept.byId;
+        let lo = 0, hi = byId.length;
+        while (lo < hi) { const m = (lo + hi) >> 1; if (byId[m].id <= after) lo = m + 1; else hi = m; }
+        const part = []; let size = 0, k = lo;
+        while (k < byId.length && (part.length === 0 || size + byId[k].json.length + 1 <= SEASON_ROUNDS_PAGE_BYTES)) { size += byId[k].json.length + 1; part.push(byId[k].json); k++; }
+        const next = k < byId.length && part.length ? byId[k - 1].id : null;
+        const headJson = JSON.stringify({ ...kept.head, next });
+        return res.end(`${headJson.slice(0, -1)},"rounds":[${part.join(',')}]}`);
       }
 
       // A ROUND'S RESULT AS A SIGNED NOSTR EVENT (feature 2): the exact event this node published - or would publish,

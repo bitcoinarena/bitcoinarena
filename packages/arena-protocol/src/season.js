@@ -437,6 +437,11 @@ export function mergeSignedSeasonAccounts(answers, { seatsOf, verify } = {}) {
   const pending = new Set();
   const draws = new Map();                       // roundId|contract body -> seatsOf's answer
   const accounts = new Map();                    // accountId -> { roundId, a, contract, needed, sigs: Map node -> sig }
+  // EVERY SIGNATURE TRIED ONCE (kanban #2382, #1489 a45-refute-22-s3): a good one is kept in its account's sigs, but a failed one was
+  // forgotten - a peer repeating one real account with failing signatures "of" every seat of its draw cost one schnorr verify per
+  // copy (3,000 copies: 12,005 verifies). The verify is a function of (account, node, signature) alone, so a triple tried and refused
+  // is refused again without a second verify: the answer is unchanged, only its cost.
+  const refused = new Set();                     // accountId|node|sig hex that did not verify
   for (const list of lists) {
     for (const raw of Array.isArray(list) ? list : []) {
       const rid = String((raw && raw.roundId) || '').toLowerCase();
@@ -457,7 +462,9 @@ export function mergeSignedSeasonAccounts(answers, { seatsOf, verify } = {}) {
         if (!HEX64.test(node) || acc.sigs.has(node)) continue;
         if (!seats.has(node)) { excluded.push({ round: rid, seat: node, why: 'signed by a seat that is not of that round\'s draw' }); continue; }
         const sig = bytesOf(s.sig);
-        let good = false; try { good = !!sig && sig.length === 64 && verify(sig, a.id, fromHex(node)) === true; } catch { good = false; }
+        const tk = sig && sig.length === 64 ? `${aid}|${node}|${toHex(sig)}` : null;
+        let good = false;
+        if (tk && !refused.has(tk)) { try { good = verify(sig, a.id, fromHex(node)) === true; } catch { good = false; } if (!good) refused.add(tk); }
         if (!good) { excluded.push({ round: rid, seat: node, why: 'a signature over that account does not verify' }); continue; }
         acc.sigs.set(node, toHex(sig));
       }
