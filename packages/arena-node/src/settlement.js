@@ -1436,6 +1436,32 @@ export class LockSettlement {
     if (this.round.putLockSettlementShares) this.round.putLockSettlementShares(roundIdBytes, got.plan.stakeShares || []);
   }
 
+  /**
+   * THE ROUND'S MOVES AT A SEAT THAT DID NOT COMBINE (kanban #1661, audit #1489 sm1-settle-4): keepFederationMoves ran only at the combining seat, so
+   * a seat handed the federation signatures (take -> keepScopedMoves) that then read every federation's transaction in held the round ACCEPTED and
+   * no moves for good - lockAfterSettlement answered "not settled", forfeit.js refused the attested round's returns ("keeps no record of what its
+   * settlement moved") at 6 of 7 seats, and lateMessage no longer saw a claimed lock. Once a federation's row is ACCEPTED here and no moves are
+   * kept, they are written from this seat's own plan - only when, for every ACCEPTED federation, the plan claims exactly the locks and pays as
+   * many payouts as the transaction this seat kept for that row's txid. Never rewrites kept moves.
+   */
+  async #federationMovesFromPlan(roundIdBytes) {
+    if (this.round.lockSettlementMoves(roundIdBytes) || !this.round.scopedSettlementTxidsOf) return false;
+    const rows = (this.round.fedLockSettlementsOf ? this.round.fedLockSettlementsOf(roundIdBytes) : []).filter((r) => r.state === ACCEPTED);
+    if (!rows.length) return false;
+    let got; try { got = await this.planOf(roundIdBytes); } catch { return false; }
+    if (!got || !got.ok || !got.split || !Array.isArray(got.split.settlements)) return false;
+    const key = (xs) => [...xs].map(String).sort().join(',');
+    for (const r of rows) {
+      const s = got.split.settlements.find((x) => x.federation === String(r.federation).toLowerCase());
+      const kept = this.round.scopedSettlementTxidsOf(roundIdBytes, this.#rowScope(roundIdBytes, { federation: r.federation }).key).find((x) => x.txid === r.txid);
+      if (!s || !kept) return false;
+      if (key(s.claims.map((c) => `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`)) !== key(kept.claims) || s.payouts.length !== kept.payouts) return false;
+    }
+    if (this.round.lockSettlementMoves(roundIdBytes)) return false;
+    this.keepFederationMoves(roundIdBytes, got);
+    return true;
+  }
+
   /** What the signed settlement moves, kept with its intent (W6). */
   keepMoves(roundIdBytes, m) {
     const claims = m.claims.map((c) => `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`);
@@ -1636,6 +1662,8 @@ export class LockSettlement {
   async checkScoped(roundIdBytes, where) {
     const sc = this.#rowScope(roundIdBytes, where);
     const held = sc.get();
+    // AN ACCEPTED ROW OF A ROUND WITH NO MOVES KEPT (kanban #1661: a seat that did not combine, on the code before) gets them here
+    if (held && held.state === ACCEPTED && where.federation) await this.#federationMovesFromPlan(roundIdBytes).catch(() => false);
     if (!held || held.state === ACCEPTED) return { state: held ? held.state : null, verdict: held ? 'in' : 'unknown', txid: held ? held.txid : null, why: held ? held.why : 'no row' };
     // A ROW KEPT BEFORE ITS TXID HISTORY (written by the code before this one): what it moves is read from a rebuild of the same txid, as the late
     // row's check did before
@@ -1649,6 +1677,8 @@ export class LockSettlement {
     if (h.verdict === 'in') {
       const why = `found in the federation (${held.state} here before): ${h.why}`;
       this.#putScoped(roundIdBytes, where, { txid: h.txid, message: h.message, signature: h.signature.length ? h.signature : held.signature, state: ACCEPTED, verified: true, why });
+      // AND THE ROUND'S MOVES, if this seat did not combine it (kanban #1661)
+      if (where.federation) await this.#federationMovesFromPlan(roundIdBytes).catch(() => false);
       return { state: ACCEPTED, verdict: 'in', txid: h.txid, why };
     }
     return { state: held.state, verdict: h.verdict, txid: held.txid, why: h.why };
@@ -1663,6 +1693,7 @@ export class LockSettlement {
     const gone = Array.isArray(sent.locksAfter) && sent.locksAfter.length > 0 && sent.locksAfter.every((x) => !x);
     if (sent.accepted && stored && gone) {
       this.#putScoped(roundIdBytes, where, { txid: m.txid, message: m.message, signature, state: ACCEPTED, why: whyAccepted, verified: true });
+      if (where.federation) await this.#federationMovesFromPlan(roundIdBytes).catch(() => false);
       return ACCEPTED;
     }
     if (sent.accepted) {
@@ -1675,6 +1706,7 @@ export class LockSettlement {
     if (h.verdict === 'in') {
       this.#putScoped(roundIdBytes, where, { txid: h.txid, message: h.message, signature: h.signature.length ? h.signature : signature, state: ACCEPTED, verified: true,
         why: `this submit was refused (${sent.error}), and ${h.txid.slice(0, 12)} of the same scope is in: ${h.why}` });
+      if (where.federation) await this.#federationMovesFromPlan(roundIdBytes).catch(() => false);
       return ACCEPTED;
     }
     if (h.verdict === 'mixed') {
@@ -1710,6 +1742,15 @@ export class LockSettlement {
       for (const { roundId: rid, entryId } of (this.round.lateLockSettlementsIn ? this.round.lateLockSettlementsIn(state) : [])) {
         const c = await this.checkScoped(rid, { entry: entryId }).catch((e) => ({ state, verdict: 'unknown', why: e.message }));
         if (c.state === ACCEPTED || state === SUBMITTING) out.push({ round: toHex(rid), entry: toHex(entryId), ok: c.state === ACCEPTED, state: c.state, why: c.why });
+      }
+    }
+    // A ROUND WHOSE FEDERATION ROWS ARE ACCEPTED HERE WITH NO MOVES KEPT (kanban #1661, a seat that did not combine it on the code before): written
+    // from this seat's plan, once
+    if (this.round.fedLockSettlementsIn) {
+      const seen = new Set();
+      for (const { roundId: rid } of this.round.fedLockSettlementsIn(ACCEPTED)) {
+        const k = toHex(rid); if (seen.has(k)) continue; seen.add(k);
+        if (!this.round.lockSettlementMoves(rid)) await this.#federationMovesFromPlan(rid).catch(() => false);
       }
     }
     for (const rid of this.round.lockSettlementsIn(SUBMITTING)) {
