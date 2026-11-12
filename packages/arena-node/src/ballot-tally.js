@@ -141,6 +141,8 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
   // `live` (GET /config) are read from the PASSED records in the store at once - not only at the end of the first pass that got
   // through the reorg check, which a bitcoind still loading its block index (-28) holds off for minutes. Until then the seat
   // served rounds naming the config its own outcome replaced, which every other seat refuses
+  // (kanban #1751, 1.9's fix of the same: and `live` needs the tip, so until a pass names one it answers null for a network that keeps a
+  // proposal - server.js GET /config answers 503 then, never genesis)
   refreshLive();
 
   /**
@@ -366,6 +368,8 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     }),
     /** GET /config for a network: the config live at the tip (27A.7.5), since when and by which proposal, and its history. */
     live(net) {
+      // kanban #1751: no tip yet, and a kept proposal could have moved the config - nothing is said rather than genesis
+      if (tip === null && networks().has(net)) return null;
       const l = lives.get(net) || liveConfig({ genesis: genesisFor(net), passed: [], height: tip === null ? 0 : tip });
       const now = l.history[l.history.length - 1];
       return { network: net, tip, configHash: toHex(l.configHash), since: now.since, by: now.by ? toHex(now.by) : null,

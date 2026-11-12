@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { posix } from 'node:path';
 import { workerData } from 'node:worker_threads';
 
-const { files: fileList, entry, name, port, ctrl: ctrlBuffer, arrayBudget, liveCap } = workerData;
+const { files: fileList, entry, name, port, ctrl: ctrlBuffer, arrayBudget, liveCap, answerMax } = workerData;
 const files = new Map(fileList);
 const ctrl = new Int32Array(ctrlBuffer);
 const DRIVER = readFileSync(new URL('./core-driver.js', import.meta.url), 'utf8');
@@ -34,15 +34,33 @@ const BUDGET = Number.isInteger(arrayBudget) && arrayBudget > 0 ? arrayBudget : 
 // (kanban #1489 merge of #1538 + #1539) a caller may set a tighter cap: the plugin trial uses the budget itself, so a decide
 // adapter that keeps its arrays across calls is refused at the array budget, as #1538 promises; 0 or absent keeps 4x the budget
 const LIVE_CAP = Number.isInteger(liveCap) && liveCap > 0 ? liveCap : 4 * BUDGET;
+// THE ANSWER'S SIZE (kanban #1691): the node copies each answer into its own thread and parses it there, outside every limit
+// this thread has - the driver calls JSON.stringify as the core left it, so a core could answer a 32 MB '[0,0,...]' for one
+// String.prototype.repeat (measured: the node's thread held 7.3 s, its heap +800 MB). An answer longer than ANSWER_MAX is
+// never posted: the core is ended, as at LIVE_CAP. `out` is a primitive string checked in this thread's realm, its length no
+// property the core can change.
+const ANSWER_MAX = Number.isInteger(answerMax) && answerMax > 0 ? answerMax : 4 * 1024 * 1024;
 const LOCKDOWN = `'use strict';
 (() => {
   const budget = ${BUDGET};
-  const FR = FinalizationRegistry, P = Proxy, R = Reflect, RangeErr = RangeError;
+  const FR = FinalizationRegistry, P = Proxy, RangeErr = RangeError;
+  // kanban #1695: every intrinsic the count reads is taken here, before any core code runs, and never looked up again - a core
+  // that redefines %TypedArray%.prototype.byteLength, gives a source its own \`length\` or replaces Reflect.construct changes
+  // nothing the wrapper reads, and never receives the raw constructor. Lengths are read through the captured getters, and an
+  // allocation is counted by the real byte length of what was made, never by the figure asked for.
+  const construct = Reflect.construct, apply = Reflect.apply, gd = Object.getOwnPropertyDescriptor;
+  const uncurry = (f) => (o) => apply(f, o, []);
+  const TAP = Object.getPrototypeOf(Int8Array.prototype);
+  const taLength = uncurry(gd(TAP, 'length').get), taBytes = uncurry(gd(TAP, 'byteLength').get), taBuffer = uncurry(gd(TAP, 'buffer').get);
+  const abBytes = uncurry(gd(ArrayBuffer.prototype, 'byteLength').get);
+  const register = FR.prototype.register;
+  const lengthOf = (x) => { try { return taLength(x); } catch { return null; } };
+  const isBuffer = (x) => { try { abBytes(x); return true; } catch { return false; } };
   const said = 'the core asked for more than ' + Math.round(budget / 1048576) + ' MB of arrays';
   let used = 0, live = 0, over = null;
   const back = new FR((n) => { live -= n; });
   const take = (n) => { if (over !== null || !(n >= 0) || used + n > budget) { over = said; throw new RangeErr(said); } };
-  const keep = (o) => { const n = o.byteLength; used += n; live += n; back.register(o, n); return o; };
+  const keep = (o, n) => { used += n; live += n; apply(register, back, [o, n]); return o; };
   // (kanban #1622) the kinds are read from the realm itself, never from a list: every own global whose prototype chain
   // reaches %TypedArray% (Float16Array on node 24 was missing from the old list and allocated outside the budget and the
   // live cap), plus ArrayBuffer - so a typed-array kind a later V8 adds is wrapped too. Its size is its BYTES_PER_ELEMENT.
@@ -59,25 +77,28 @@ const LOCKDOWN = `'use strict';
     KINDS.push(k); sizeOf[k] = b;
   }
   for (const k of KINDS) {
-    const K = globalThis[k];
+    const K = globalThis[k], size = sizeOf[k], bytesOf = k === 'ArrayBuffer' ? abBytes : taBytes;
     const W = new P(K, { construct(t, a, nt) {
-      // the bytes asked for, before they are allocated: a length, or the length of what is copied in
+      // the bytes asked for, before they are allocated: a length, or the length of what is copied in (a typed array's own,
+      // read through the captured getter as V8 reads it; an array-like's \`length\` is only a first guess, counted again below)
       const x = a[0];
-      const asked = typeof x === 'number' ? x * sizeOf[k] : (x && typeof x === 'object' && !(x instanceof ArrayBuffer) && typeof x.length === 'number') ? x.length * sizeOf[k] : 0;
+      const n = typeof x === 'number' ? x : lengthOf(x);
+      const asked = typeof n === 'number' ? n * size
+        : (x && typeof x === 'object' && !isBuffer(x) && typeof x.length === 'number') ? x.length * size : 0;
       take(asked);
-      const o = R.construct(t, a, nt === W ? t : nt);
-      if (o.buffer === x) return o;                    // a view on a buffer already counted
-      take(o.byteLength - asked > 0 ? o.byteLength - asked : 0);
-      return keep(o);
+      const o = construct(t, a, nt === W ? t : nt);
+      if (k !== 'ArrayBuffer' && isBuffer(x) && taBuffer(o) === x) return o;   // a view on a buffer already counted
+      const real = bytesOf(o);
+      take(real - asked > 0 ? real - asked : 0);
+      return keep(o, real);
     } });
     Object.defineProperty(K.prototype, 'constructor', { value: W, writable: false, configurable: false });
     globalThis[k] = W;
   }
   for (const m of ['transfer', 'transferToFixedLength', 'resize']) delete ArrayBuffer.prototype[m];
-  const TA = Object.getPrototypeOf(Int8Array.prototype);
   for (const m of ['toReversed', 'toSorted', 'with']) {
-    const f = TA[m];
-    Object.defineProperty(TA, m, { value: function (...a) { take(this.byteLength); return keep(R.apply(f, this, a)); }, writable: false, configurable: false });
+    const f = TAP[m];
+    Object.defineProperty(TAP, m, { value: function (...a) { take(taBytes(this)); const o = apply(f, this, a); return keep(o, taBytes(o)); }, writable: false, configurable: false });
   }
   for (const k of ${JSON.stringify(REMOVED)}) delete globalThis[k];
   delete Math.random;
@@ -179,5 +200,9 @@ port.on('message', ({ op, json }) => {
     return answer({ ok: false, why: `the core failed in ${op}: it kept more than ${Math.round(LIVE_CAP / 1048576)} MB of arrays alive` });
   }
   if (typeof out !== 'string') return answer({ ok: false, why: `the core answered ${op} with something other than JSON` });
+  if (out.length > ANSWER_MAX) {
+    call = null; liveOf = () => 0;
+    return answer({ ok: false, why: `the core failed in ${op}: its answer was longer than ${Math.round(ANSWER_MAX / 1048576)} MB` });
+  }
   answer({ ok: true, json: out });
 });

@@ -41,7 +41,7 @@ import { resultFinality, settledResult, agreedRerunOf } from './finality.js';
 import { stateOf } from './settlement-state.js';
 import { pluginForRound } from './plugins.js';
 import { giftsInFeeLock } from '../../arena-protocol/src/reserves.js';
-import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
+import { encodeCommitments, decodeCommitments, encodeShare, decodeShare, commitmentListRefusal } from './pool-wire.js';
 import { askPeers, PEER_ASK_MS, PEER_GRACE_MS } from './peer-ask.js';
 import { namedClaims, namedClaimKeys, arenaLockContractId } from '../../arena-protocol/src/arena-lock.js';
 import { forfeitLostOn } from './test-named-offence.js';
@@ -539,6 +539,8 @@ export class Forfeit {
     if (!m.ok) return m;
     const held = this.pairs.get(toHex(m.message));
     if (!(held instanceof Map) || !held.size) return refuse('this signer node committed to no forfeit of that lock');
+    // NO LIST LONGER THAN A COMMITTEE (kanban #1672, as at /settle-share): refused before any curve work
+    { const why = commitmentListRefusal(commitments, { needed: m.needed, nodes: m.nodes }); if (why) return refuse(why); }
     // THE PAIR THE LIST CARRIES (kanban #1521): of those this seat handed out, the one whose commitment is this seat's on the list
     const myId = m.named ? m.me + 1 : m.signerNode.id;
     const own = commitments.find((c) => String(c.id) === String(myId));
