@@ -281,28 +281,47 @@ async function backfill(env) {
 // Each amount is now checked (heldMsatOf: 1-20 digits, else that seat's row is skipped) and each figure is the median of the seats that report it.
 const heldMsatOf = (v) => ((typeof v === 'string' || (typeof v === 'number' && Number.isSafeInteger(v))) && /^\d{1,20}$/.test(String(v)) ? BigInt(v) : null);
 const median = (list) => { const s = [...list].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)); return s[Math.floor((s.length - 1) / 2)]; };
+// ONE VALUE PER SEAT, AND THE MEDIAN OVER EVERY SEAT THAT ANSWERED (kanban #1709, #1773, #1821, #1855; #1534 did not hold): the median was taken over
+// every ROW of the seats that report a key, so one seat repeating its row 14 times outvoted 13 honest seats, and a federation or site one seat
+// made up had that seat's own value as its "median" and was summed into the total. byQuorum takes each seat's rows (an array per seat that
+// answered), keeps the first row per key of each seat, and gives a key a value only when a strict majority of the answering seats list it;
+// its value is the lower median over all answering seats, a seat that does not list the key counting 0 (with a strict majority listing it,
+// that median is always one of the listed values). pick(row) -> bigint or null (null: the row is skipped).
+function byQuorum(perSeat, keyOf, pick) {
+  const rows = new Map();   // key -> [{ v, row }] one per seat
+  for (const list of perSeat) {
+    const seen = new Set();
+    for (const row of list) {
+      const k = keyOf(row); if (typeof k !== 'string' || seen.has(k)) continue;
+      const v = pick(row); if (v === null) continue;
+      seen.add(k);
+      if (!rows.has(k)) rows.set(k, []); rows.get(k).push({ v, row });
+    }
+  }
+  const n = perSeat.length, out = new Map();
+  for (const [k, list] of rows) {
+    if (2 * list.length <= n) continue;
+    const mid = median([...list.map((r) => r.v), ...Array(n - list.length).fill(0n)]);
+    out.set(k, list.find((r) => r.v === mid) || { v: mid, row: null });
+  }
+  return out;
+}
 async function readMetrics(env) {
   const [res, ref] = await Promise.all([
     Promise.all(SEATS.map((seat) => ask(`${seat}/reserves`, READ_MS))),
     Promise.all(SEATS.map((seat) => ask(`${seat}/referral-fees`, READ_MS)))]);
   const feds = new Map(), sites = new Map();
-  const heldBy = new Map();
-  for (const a of res) for (const f of (a.body && Array.isArray(a.body.federations) ? a.body.federations : [])) {
-    const m = f && typeof f.federationId === 'string' ? heldMsatOf(f.heldMsat) : null; if (m === null) continue;
-    if (!heldBy.has(f.federationId)) heldBy.set(f.federationId, []); heldBy.get(f.federationId).push(m);
-  }
-  for (const [id, list] of heldBy) feds.set(id, median(list));
+  const resSeats = res.filter((a) => a.body && Array.isArray(a.body.federations)).map((a) => a.body.federations);
+  for (const [id, x] of byQuorum(resSeats, (f) => (f ? f.federationId : null), (f) => heldMsatOf(f.heldMsat))) feds.set(id, x.v);
   // and each program's name, as its key said it (kanban #675): the newest any seat holds
   const names = new Map();
   for (const a of ref) for (const p of (a.body && Array.isArray(a.body.programs) ? a.body.programs : [])) {
     if (!names.has(p.site) || Number(p.atMs) > names.get(p.site).atMs) names.set(p.site, { name: p.name, atMs: Number(p.atMs) });
   }
-  const feesBy = new Map();
-  for (const a of ref) for (const x of (a.body && Array.isArray(a.body.sites) ? a.body.sites : [])) {
-    const m = x && typeof x.site === 'string' ? heldMsatOf(x.msat) : null; if (m === null) continue;
-    if (!feesBy.has(x.site)) feesBy.set(x.site, []); feesBy.get(x.site).push({ msat: m, payouts: Number.isSafeInteger(x.payouts) ? x.payouts : 0 });
+  const refSeats = ref.filter((a) => a.body && Array.isArray(a.body.sites)).map((a) => a.body.sites);
+  for (const [site, x] of byQuorum(refSeats, (r) => (r ? r.site : null), (r) => heldMsatOf(r.msat))) {
+    sites.set(site, { msat: x.v, payouts: x.row && Number.isSafeInteger(x.row.payouts) ? x.row.payouts : 0 });
   }
-  for (const [site, list] of feesBy) { const mid = median(list.map((r) => r.msat)); sites.set(site, list.find((r) => r.msat === mid)); }
   for (const [site] of names) if (!sites.has(site)) sites.set(site, { msat: 0n, payouts: 0 });
   const sum = (it) => [...it].reduce((t, m) => t + m, 0n);
   const m = { readAt: new Date().toISOString(), seats: { reserves: res.filter((a) => a.body).length, referral: ref.filter((a) => a.body).length, of: SEATS.length },
@@ -344,10 +363,13 @@ const DAY_MS = 86400000, VOLUME_DAYS = 30;
 const HISTORY_SEATS = [0, 1, 7];
 async function readReserveHistory(env) {
   const answers = await Promise.all(HISTORY_SEATS.map((i) => ask(`${SEATS[i]}/reserves?all=1`, 45000)));
+  // (kanban #1709, #1773, #1821, #1855): a federation counts only when a strict majority of the history seats that answered list it, and each
+  // day's median is over all of them - a seat that does not list the federation (or has nothing that day) counts 0
+  const answered = answers.filter((a) => a.body && Array.isArray(a.body.federations));
   const best = new Map();   // federation -> one per-day map per seat that reports it
-  for (const a of answers) {
+  for (const a of answered) {
     const seen = new Set();
-    for (const f of (a.body && Array.isArray(a.body.federations) ? a.body.federations : [])) {
+    for (const f of a.body.federations) {
       if (!f || typeof f.federationId !== 'string' || seen.has(f.federationId)) continue; seen.add(f.federationId);
       const day = new Map();
       for (const x of (Array.isArray(f.paidIn) ? f.paidIn : [])) {
@@ -358,10 +380,12 @@ async function readReserveHistory(env) {
       if (!best.has(f.federationId)) best.set(f.federationId, []); best.get(f.federationId).push(day);
     }
   }
-  if (!best.size) return null;
+  const kept = [...best.values()].filter((views) => 2 * views.length > answered.length);
+  if (!kept.length) return null;
   const perDay = new Map();
-  for (const views of best.values()) {
-    for (const d of new Set(views.flatMap((v) => [...v.keys()]))) perDay.set(d, (perDay.get(d) || 0n) + median(views.map((v) => v.get(d) || 0n)));
+  for (const views of kept) {
+    const all = [...views, ...Array(answered.length - views.length).fill(new Map())];
+    for (const d of new Set(views.flatMap((v) => [...v.keys()]))) perDay.set(d, (perDay.get(d) || 0n) + median(all.map((v) => v.get(d) || 0n)));
   }
   const days = [...perDay.keys()].sort();
   const out = []; let held = 0n;
@@ -370,7 +394,7 @@ async function readReserveHistory(env) {
     const came = perDay.get(d) || 0n; held += came;
     out.push({ day: d, inMsat: String(came), heldMsat: String(held) });
   }
-  const h = { readAt: new Date().toISOString(), federations: best.size, days: out };
+  const h = { readAt: new Date().toISOString(), federations: kept.length, days: out };
   await statePut(env, 'reserve-history', JSON.stringify(h));
   return h;
 }
