@@ -131,6 +131,8 @@ export function sourcePoolLeft({ poolSats, sourceStakesSats = 0n, othersFilledSa
   const pool = BigInt(poolSats);
   return pool > used ? pool - used : 0n;
 }
+/** How many certificates a leader hands a seat that refused its set over a cancel or sell of a batch it missed (kanban #2000). */
+export const MAX_HANDED_CERTS = 64;
 class Conflict extends Error {}
 
 // kanban #1547: the sells one entry keeps waiting for a batch at a seat, and the verified sells a seat remembers
@@ -1071,6 +1073,30 @@ export class OrderBook {
     const own = await this.acceptSynced(roundIdBytes, record);
     if (!own.ok) return own;
     const answers = await Promise.all(peers.map((b) => this.#post(b, `/batch?round=${rid}`, record)));
+    // A SEAT THAT MISSED THE BATCH OF A CANCEL'S OR SELL'S ORDER (kanban #2000, skeptic 4 of #1489 fix:attest:2): an honest seat that was
+    // unreachable while that batch was certified (n - needed may be) holds nothing of it, so its ledger refuses the cancel or sell and
+    // it refuses the whole set - the book lost its fault margin over one cancel, and a k1 leader could cause it on purpose by handing
+    // k1 out to only `needed` seats. This leader put the cancel or sell in because its own certified book holds the order, so it hands
+    // that seat the certificates from the order's batch on (each checked there by certify, signatures and all) and asks it once more.
+    // A seat that still refuses (the attacker's case: a cancel before its order is in any certified batch) stays refused.
+    const behind = (a) => !a.ok && /^a (cancel|sell) of that batch does not stand/.test(String(a.why));
+    // A cancel needs its order's batch; a sell also every later one (its fills and earlier sells count against what it may sell). At most
+    // MAX_HANDED_CERTS, posted at once: a seat behind further than that reads the rest at the close (sync), as before.
+    if (answers.some(behind)) {
+      const q = this.db.prepare('SELECT batch FROM market_orders WHERE order_id = ? AND round_id = ? AND batch IS NOT NULL');
+      const batchOf = (e) => { const r = isHex(e, 32) ? q.get(e, Buffer.from(roundIdBytes)) : null; return r ? Number(r.batch) : null; };
+      const want = new Set(record.cancels.map((c) => batchOf(c.entry)).filter((x) => x !== null));
+      const sellFrom = record.sells.map((s) => batchOf(s.entry)).filter((x) => x !== null);
+      const certs = this.certificates(roundIdBytes, sellFrom.length ? Math.min(...sellFrom) - 1 : (want.size ? Math.min(...want) - 1 : null))
+        .filter((c) => want.has(Number(c.k)) || (sellFrom.length && Number(c.k) >= Math.min(...sellFrom))).slice(0, MAX_HANDED_CERTS);
+      if (certs.length) {
+        await Promise.all(peers.map(async (b, i) => {
+          if (!behind(answers[i])) return;
+          await Promise.all(certs.map((cert) => this.#post(b, `/batch-certificate?round=${rid}`, cert)));
+          answers[i] = await this.#post(b, `/batch?round=${rid}`, record);
+        }));
+      }
+    }
     const tSigned = this.now();
     const sigs = this.#counted(m, idc.id, [{ seat: own.seat, signature: own.signature }, ...answers.filter((a) => a.ok).map((a) => ({ seat: a.seat, signature: a.signature }))]);
     let certified = false;
