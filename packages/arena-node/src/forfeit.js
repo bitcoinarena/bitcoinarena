@@ -57,6 +57,32 @@ const commitmentKey = (c) => `${toHex(c.hiding)}:${toHex(c.binding)}`;
 const PAIRS_PER_FORFEIT = 256;
 
 /**
+ * A COMMITMENT UNDER ANOTHER SEAT'S ID (kanban #1807): a peer's answer at the commit door names its own FROST id, and nothing else checked it. One seat
+ * that answered under another's id (or this seat's) put two commitments for one participant on the list, signShare340 threw at the asker, the throw left
+ * the forfeit (or settlement) before any seat was left out, and every ask failed the same way until the lock's expiry. The doors of a list's peers that
+ * name this seat's id, an id another peer on the list also names, or an id outside the committee (1..its size): all of them are left out while the
+ * threshold remains - of two claiming one id the honest one cannot be told from the forger here, and the forger, once out, names no id on the next list.
+ */
+export function misnamedSigners(signers, nodes) {
+  const own = signers.find((s) => s.base === null);
+  const ownId = own ? String(own.commitment.id) : null;
+  const size = Array.isArray(nodes) ? nodes.length : 0;
+  const byId = new Map();
+  for (const s of signers) {
+    if (s.base === null) continue;
+    const id = String(s.commitment.id);
+    if (!byId.has(id)) byId.set(id, []);
+    byId.get(id).push(s.base);
+  }
+  const out = [];
+  for (const [id, bases] of byId) {
+    const n = Number(id);
+    if (id === ownId || bases.length > 1 || (size > 0 && !(Number.isInteger(n) && n >= 1 && n <= size))) out.push(...bases);
+  }
+  return out;
+}
+
+/**
  * WHAT THIS SEAT COMMITTED A LOCK TO, ONE ENUM AND ONE TRANSITION FUNCTION (kanban #1184, the 2026-11-06 state-machine audit). A lock has two ways
  * out a seat can sign: the settlement's Claim (into the winners' payouts) and the forfeit's Cancel (back to its player). A seat that acked, shared,
  * was handed or kept a settlement claiming a lock and later learned ENTRY_VOID (or a qualifier rule) signed a forfeit of the same lock too: two
@@ -483,6 +509,14 @@ export class Forfeit {
    * refusal with `withheld` the seats at fault: those that gave none, or by their public shares those whose share does not stand.
    */
   async #gatherShares(roundIdBytes, entryIdBytes, kind, m, q, signers) {
+    // EACH PEER UNDER ITS OWN ID (kanban #1807), checked before any share is asked; and a list that still throws is a refusal, never an abort
+    const misnamed = misnamedSigners(signers, m.nodes);
+    if (misnamed.length) return { ...refuse(`${misnamed[0]} committed under an id that is not its own on this list`), withheld: misnamed };
+    try { return await this.#gatherChecked(roundIdBytes, entryIdBytes, kind, m, q, signers); }
+    catch (e) { return { ...refuse(`the forfeit list could not be signed: ${e.message}`, 500), withheld: [] }; }
+  }
+
+  async #gatherChecked(roundIdBytes, entryIdBytes, kind, m, q, signers) {
     const commitments = signers.map((s) => s.commitment).sort((a, b) => a.id - b.id);
     const mine = await this.share(roundIdBytes, entryIdBytes, commitments, kind);
     if (!mine.ok) return mine;
