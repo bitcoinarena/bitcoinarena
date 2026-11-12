@@ -1542,3 +1542,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### Bond outputs of one node x stepping out (serving) x the seat's own advertisement writers (kanban #1836)
+- Every writer of a node's advertisement starts from the advertisement IN FORCE as the census reads it (census.js `newestPerNode`): the newest over all the node's bond outputs (an update's height, else the output's own; an update before an own body at one height, then the larger txid) - `add-bond-wallet.js inForceOf`, never `bondsOf()[0]` (the newest output by height). This holds for the seat's own check (`guardianOfFromWallet`, advert-self.js), the owner's roles change and Add to bond, and the tools `testnet4-add-bond.mjs`, `testnet4-step-out.mjs`, `testnet4-advert-update.mjs`.
+- Invariant: a node stepped out (its advertisement in force says serving = false) stays out after any post the seat or its owner makes for another reason; only a post that asks for serving = true returns it. Roles, games and guardians the newest update carried are never replaced by an older output's body.
