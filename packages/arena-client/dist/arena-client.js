@@ -20036,16 +20036,25 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
   // answered cost OWED_NEXT_MS for every owed round (12 rounds: 24.3 s before anything was kept; a reload paid it all again).
   // Now a seat that has not answered a read within OWED_NEXT_MS goes to the back of this scan's order for every later read, and the
   // rounds' contracts are read OWED_ROUND_READS at a time. Still one read per round from seats that answer at once.
+  // A SEAT THAT ANSWERS USELESSLY IS DEMOTED TOO, AND THE SEAT THAT SERVED GOES FIRST (kanban #1907, #1489 refute 14 skeptic 3): only
+  // silence sent a seat back, so one that answered every /round?id= with a 404 - or with a contract that is not the round - at
+  // 1.9 s, just inside OWED_NEXT_MS, kept its front place and cost every owed round again (3 such seats of 7: 12 rounds 17.3 s;
+  // one seat: 48 rounds 23.2 s, all before the page saved anything). Now any read that did not yield the round - silence, an error,
+  // a refusal, a wrong or unlockable contract - sends the seat to the back of this scan's order, a seat that returned a valid
+  // contract moves to the front, and each read picks its next seat from the scan's order as it stands then (not a copy taken at
+  // its start), so reads already under way profit at once. A useless seat costs a scan its delay for the first reads only.
   const order = nodes.slice();
   const slow = (node) => { const k = order.indexOf(node); if (k >= 0 && k < order.length - 1) { order.splice(k, 1); order.push(node); } };
+  const good = (node) => { const k = order.indexOf(node); if (k > 0) { order.splice(k, 1); order.unshift(node); } };
   const readContract = (id) => new Promise((resolve) => {
-    const seats = order.slice();
-    let open = 0, next = 0, done = false, t = null;
+    const asked = new Set();
+    let open = 0, done = false, t = null;
     const ask = () => {
       clearTimeout(t);
       if (done) return;
-      if (next >= seats.length) { if (!open) { done = true; resolve(null); } return; }
-      const node = seats[next++]; open += 1;
+      const node = order.find((n) => !asked.has(n));
+      if (node === undefined) { if (!open) { done = true; resolve(null); } return; }
+      asked.add(node); open += 1;
       let answered = false;
       t = setTimeout(() => { if (!answered) slow(node); ask(); }, OWED_NEXT_MS);
       owedRead(async (signal) => {
@@ -20055,6 +20064,7 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
         return toHex(roundIdOf(c)) === id && roundLocks(c) ? c : null;
       }).then((c) => {
         answered = true; open -= 1;
+        if (c) good(node); else slow(node);
         if (done) return;
         if (c) { done = true; clearTimeout(t); resolve(c); } else ask();
       });
