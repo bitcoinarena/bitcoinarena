@@ -81,7 +81,22 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
 
   // a code is kept from any drawn node or alternate that is not a no-show: an alternate's code can arrive before this seat has
   // seen its window close and replaced the no-show itself (measured in the test: refused, and the DKG never started here)
-  const mayPost = (hex) => !noShows.has(hex) && (draw.ok ? [...draw.drawn, ...draw.alternates] : []).some((e) => toHex(e.pubkey) === hex);
+  const mayPost = (hex) => (!noShows.has(hex) || !!backIn(hex)) && (draw.ok ? [...draw.drawn, ...draw.alternates] : []).some((e) => toHex(e.pubkey) === hex);
+  // ONE SEATING AT EVERY SEAT (kanban #2317, state audit 2026-11-12): the no-show rule is read by each seat alone at its own advance, so a
+  // code that goes out at the block ending its node's fifth reached the seats that advanced after it and missed those before: the first
+  // replaced the node by the alternate and refused its code for good, the others (and the node itself) kept it - two seatings of one
+  // founding, two DKGs, and the founding void. Both sides now follow the one thing every seat sees, the replacing alternate's code: an
+  // alternate posts only once it is seated in its own seat's view. (a) A no-show whose code arrives while no alternate that took its place
+  // holds a code, and before this seat's DKG started, is seated again (backIn) - the alternate's own seat kept it too and never posted.
+  // (b) A seated node past its fifth that has no code out yet and holds the code of the alternate that would take its position steps
+  // aside (stepAside in advance): a seat replaced it and its alternate is in, so it never posts and never starts a DKG of its own.
+  function backIn(hex) {
+    if (started || phase !== PHASE.COLLECTING || !noShows.has(hex)) return null;
+    const r = replaceNoShows({ drawn: draw.drawn, alternates: draw.alternates, noShows: [...noShows].filter((k) => k !== hex) });
+    if (!r.ok) return null;
+    const out = seated.filter((e) => !r.seated.some((x) => toHex(x.pubkey) === toHex(e.pubkey))).map((e) => toHex(e.pubkey));
+    return out.some((k) => codes.has(k)) ? null : r;
+  }
   /** POST /founding: a node's signed setup code { id, node, code, signature } (hex fields); kept from a drawn node or alternate. */
   function take(m) {
     if (!m || String(m.id).toLowerCase() !== toHex(id)) return { ok: false, status: 404, why: 'not this founding' };
@@ -89,6 +104,12 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
     if (!mayPost(node)) return { ok: false, status: 409, why: 'that node is not drawn in this founding, or is a no-show' };
     let sig; try { sig = fromHex(String(m.signature)); } catch { return { ok: false, status: 400, why: 'a signature in hex' }; }
     if (!tagsAccepted('foundingSetup', { height: triggerHeight }).some((t) => verify(sig, setupDigest(id, fromHex(node), m.code, t), fromHex(node)))) return { ok: false, status: 409, why: 'the code is not signed by its node' };
+    if (noShows.has(node)) {
+      const r = backIn(node);
+      if (!r) return { ok: false, status: 409, why: 'that node is not drawn in this founding, or is a no-show' };
+      noShows.delete(node); seated = r.seated;
+      say({ founding: toHex(id).slice(0, 16), seatedAgain: node.slice(0, 8), seated: seated.map((e) => toHex(e.pubkey).slice(0, 8)) });
+    }
     if (codes.has(node)) return { ok: true, status: 200, kept: false };
     codes.set(node, { code: String(m.code), signature: String(m.signature) });
     return { ok: true, status: 201, kept: true };
@@ -163,6 +184,18 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
     // (kanban #495, measured 2026-10-21 10:22Z: seated nodes restarted after the beacon held no code of their own at their first
     // advance past the fifth, so each counted itself a no-show and the founding e8741283 went void at 4 seats); a seat that cannot
     // reach its guardian's setup yet counts as before
+    // STEP ASIDE (kanban #2317, (b) above): no code of its own out a fifth after it was seated, and the alternate that would take its
+    // position holds one - a seat replaced it; it adopts that seating rather than post a code no seat before it takes
+    if (!started && !posted && setup && isSeated(own) && !codes.has(own) && tip >= seatedSince.get(own) + fifth) {
+      const saved = typeof setup.savedCode === 'function' ? setup.savedCode() : null;
+      const r = saved && saved.id === toHex(id) ? null : replaceNoShows({ drawn: draw.drawn, alternates: draw.alternates, noShows: [...noShows, own] });
+      const takes = r && r.ok ? r.seated[position(own)] : null;
+      if (takes && codes.has(toHex(takes.pubkey))) {
+        noShows.add(own); seated = r.seated;
+        for (const e of seated) if (!seatedSince.has(toHex(e.pubkey))) seatedSince.set(toHex(e.pubkey), tip);
+        say({ founding: toHex(id).slice(0, 16), stepAside: own.slice(0, 8), at: tip, seated: seated.map((e) => toHex(e.pubkey).slice(0, 8)) });
+      }
+    }
     await postOwn();
     // NO-SHOWS: a seated node with no code a fifth of the window after it was seated - only while the DKG has not started
     if (!started) {
