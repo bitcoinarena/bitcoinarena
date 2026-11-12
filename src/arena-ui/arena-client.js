@@ -35247,6 +35247,20 @@ const CENSUS_KEY_SEATS_ASKED = 3;
 const COMPARE_GRACE_MS = 400;
 const SEATING_ASK_MS = 6000;
 /** Resolves once every promise settled, or `graceMs` after more than half did - whichever is first (kanban #625: no wait for the slowest seat). */
+/**
+ * DOES SEATING `a` REPLACE SEATING `b` (kanban #2564; the seats' rule, seating-agent.js `replaces`, #1681 / #1741): `a` leaves out at least one member of `b`, and
+ * each node it seats that `b` did not ranks after every member of `b` in the round's draw (`drawn`, score order) - `b` less a withholding member, the next
+ * reserves in. Never both ways round. Keys as bytes or hex.
+ */
+function seatingReplaces(a, b, drawn) {
+  const hx = (k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k));
+  const A = (a || []).map(hx), B = (b || []).map(hx), rank = new Map((drawn || []).map((k, i) => [hx(k), i]));
+  const inA = new Set(A), inB = new Set(B);
+  if (!B.some((k) => !inA.has(k)) || !A.every((k) => rank.has(k)) || !B.every((k) => rank.has(k))) return false;
+  const last = Math.max(...B.map((k) => rank.get(k)));
+  return A.filter((k) => !inB.has(k)).every((k) => rank.get(k) > last);
+}
+
 function majorityThenGrace(promises, graceMs) {
   return new Promise((resolve) => {
     let done = 0, timer = null;
@@ -35572,8 +35586,12 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
         if (anchor && index > contract.roundIndex) { refused.push(`${u}: a seating of a later round of the table`); continue; }
         const v = seatingChecked(cert, { roundId: anchor && index > 0 ? seriesRoundIdOf(contract.seriesId, index) : seatId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
         if (v.ok) {
-          if (!found || index > found.index) found = { seated: v.seating.seated, from: u, index };
-          if (!anchor) break;
+          // OF TWO CERTIFICATES THAT CHECK, THE REPLACEMENT (kanban #2564, feedback #019, measured 2026-11-12 on RPS round 12594418 of federation 337ae01a: the
+          // drawn fed2 seats held the seating without fed2-2 - it withheld, and they moved to the next one (#1509) - while the seven guardian seats, not drawn,
+          // kept the first certificate they saw, with fed2-2; this client took guardian-1's, derived 6 where the committee's seats name 5, and refused the
+          // round): the seats' own rule (seating-agent #1681) - of a seating and the one that replaces it, the replacement stands - is applied here too
+          if (!found || index > found.index || (index === found.index && seatingReplaces(v.seating.seated, found.seated, got.drawn[role])))
+            found = { seated: v.seating.seated, from: u, index };
           continue;
         }
         if (/names another round/.test(String(v.why))) other.push(`${u}: ${v.why}`); else refused.push(`${u}: ${v.why}`);
