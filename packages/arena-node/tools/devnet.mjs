@@ -222,6 +222,7 @@ async function up() {
     startPart(`node-${k + 1}`, process.execPath, ['src/main.js', String(port), stores[k]], { env: fedEnv({
       ARENA_STAKE_LOCK_BIN: LOCK, ARENA_FEDERATION_CLIENT_DIR: client, ARENA_FEDERATION_CLIENTS_DIR: path('clients', `node-${k + 1}-others`),
       ARENA_FEDERATION_INVITE: invite, ARENA_CLOSE_AT_END: '1', ARENA_FUND_FREE_ROUNDS: '1', ARENA_DONATION_NETWORK: 'regtest',
+      ARENA_LNURL_LOCAL_HOSTS: `127.0.0.1:${PLAN.lnurl}`,   // the devnet's own payee: a funding payout asks it past the #1809 guard (kanban #2323)
       ARENA_ATTACH_PROOF_DIR: path('runner', 'proof'), ARENA_FUNDED_ROUNDS_FILE: path('runner', 'funded.txt'),
       ARENA_APPS: apps.join(','), [`ARENA_WSS_${port}`]: `ws://127.0.0.1:${port}` }) });
   }
