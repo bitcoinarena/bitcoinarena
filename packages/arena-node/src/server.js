@@ -155,7 +155,7 @@ import { createEcashExchange } from './ecash-exchange.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
 import { holdsNothing, guardedFederationOf, auditGuardian, createRetireBook } from './federation-retire.js';
-import { federationRecords, seatedOf as seatedOfRecord } from './federation-records.js';
+import { federationRecords, seatedOf as seatedOfRecord, GATHER_FRESH_MS } from './federation-records.js';
 import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departureHex, readEmergencyHex, emergencyHex } from './absences.js';
 import { emergencyDepartureStands } from '../../arena-protocol/src/emergency.js';
 import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture, owedDepartures } from './absence-producer.js';
@@ -13352,7 +13352,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/reserve-alarms') return json(res, 200, { node: toHex(round.pubkey),
         alarms: reserveAlarms ? (typeof reserveAlarms.signed === 'function' ? reserveAlarms.signed((d) => schnorr.sign(d, round.identity.secret)) : reserveAlarms.list()) : [] });
       if (req.method === 'GET' && url.pathname === '/federations') {
-        if (url.searchParams.get('fresh') === '1') { try { await fedRecords.gatherAll((inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; }); } catch { /* the kept ones */ } }
+        // ?fresh=1 is public: it joins a pass that runs, and starts one only when the last finished GATHER_FRESH_MS ago - each pass
+        // is a fresh chain census budget, so a stranger's asks were 2 derivations each (kanban #2370, #2373, as /network-games #1540)
+        if (url.searchParams.get('fresh') === '1') { try { await fedRecords.gatherAll(inviteFedId, { minAgeMs: GATHER_FRESH_MS }); } catch { /* the kept ones */ } }
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         // AND WHO THE DRAIN PAYS (§23A.6 step 5): per successor a kept record names, the predecessor's seated
         // guardians its guardian pool takes (roster.guardiansFor), by node key - none once the predecessor is CLOSED
