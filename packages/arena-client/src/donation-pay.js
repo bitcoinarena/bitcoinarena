@@ -269,42 +269,10 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
     // A READ THAT NEVER GOT AN ANSWER (kanban #803: "Load failed" on a phone) is a node that did not answer, as one past ANSWER_MS is
     } catch (e) { return { node: base, why: e.message, late: true }; }
   }), nodes.map((node) => String(node).replace(/\/+$/, '')))).filter((a) => a.bytes || !a.late);
-  const missing = answers.filter((a) => !a.bytes);
-  if (missing.length)
-    return { ok: false, why: `not every signer node of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
-  if (!kept && answers.length * 2 < nodes.length)
-    return { ok: false, why: `only ${answers.length} of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
-  const served = toHex(answers[0].bytes);
-  if (answers.some((a) => toHex(a.bytes) !== served)) return { ok: false, why: 'the signer nodes of this round serve different donation sets' };
-  // A SET ITS DEVELOPERS APPROVED (§27A.4.1): the nodes serve, as JSON, the admin key's set it replaces (signed,
-  // checked below as any set), the proposals and approvals since, and the admin key's signature over the approved set (`admin`, kanban
-  // #1337); this page tallies them itself
-  let approval = null;
-  let bytes = answers[0].bytes;
-  if (bytes.length && bytes[0] === 0x7b) {
-    try { approval = JSON.parse(new TextDecoder().decode(bytes)); } catch { approval = null; }
-    if (!approval || approval.approved !== true || typeof approval.root !== 'string' || !Array.isArray(approval.chain))
-      return { ok: false, why: 'the nodes serve a set its developers approved, and not the proof of it' };
-    try { bytes = fromHex(approval.root); } catch { return { ok: false, why: 'the admin key\'s set behind the approved set is not hex' }; }
-  }
-  if (bytes.length <= DONATION_SIGNATURE_BYTES) return { ok: false, why: 'that is no signed donation set' };
-  let set;
-  try { set = { ...decodeDonationSetBody(bytes.slice(0, -DONATION_SIGNATURE_BYTES)), signature: bytes.slice(-DONATION_SIGNATURE_BYTES) }; }
-  catch (e) { return { ok: false, why: `that is no donation set: ${e.message}` }; }
-  if (toHex(set.networkId) !== toHex(round.networkId)) return { ok: false, why: 'that donation set is for another network' };
-  if (!approval) {
-    const named = donationSetMatchesRound(round, set.recipients);
-    if (!named.ok) return { ok: false, why: named.why };
-    // BOTH KEYS ON THE PLAIN PATH TOO (kanban #1447): a set served without approvals stands only if the authority could make it alone
-    const alone = plainDonationSetStands(set, plainPins || undefined);
-    if (!alone.ok) return { ok: false, why: alone.why };
-  }
-  if (!(set.validFrom <= round.censusHeight)) return { ok: false, why: 'that donation set is not in force at the round\'s height' };
-
   // EVERY SIGNER NODE'S ROTATIONS, EACH CHECKED HERE against the network's recovery
   // key: a signer node that hides a rotation cannot hide it from the other signer nodes.
   const offered = new Map();
-  for (const a of answers) for (const r of a.rotations) {
+  for (const a of answers) for (const r of a.rotations || []) {
     try { offered.set(`${r.body}:${r.signature}`, { ...decodeAuthorityRotation(fromHex(String(r.body))), signature: fromHex(String(r.signature)) }); }
     catch { /* not a rotation: nothing to apply */ }
   }
@@ -314,41 +282,99 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
     if (await verifyEd25519(rot.signature, authorityRotationId(rot), networkKeys.recovery) === true) signedRotations.add(toHex(rot.signature));
   const inForce = authorityAt({ networkId: round.networkId, authority: networkKeys.authority, recovery: networkKeys.recovery,
     rotations, height: round.censusHeight, verify: (sig) => signedRotations.has(toHex(sig)) });
-  if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
-    return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
-  if (approval) {
-    // the ballots oldest first, each checked against the set it replaces; the set in force at the round's height must be the one it names
-    let ballots;
-    try {
-      ballots = approval.chain.slice().reverse().map((c) => {
-        const pb = fromHex(String(c.proposal));
-        return { proposal: { ...decodeDonationProposal(pb.slice(0, -64)), signature: pb.slice(-64) },
-          approvals: (c.approvals || []).map((h) => { const ab = fromHex(String(h)); return { ...decodeDonationApproval(ab.slice(0, -64)), signature: ab.slice(-64) }; }) };
-      });
-    } catch (e) { return { ok: false, why: `the developers' ballots served do not decode: ${e.message}` }; }
-    const got = await approvedDonationSets({ networkId: round.networkId, known: [set], ballots, verifySecp256k1 });
-    // A CHANGE NEEDS BOTH KEYS (§27A.4.1 RULED 2026-11-07, kanban #1337, 8a94d6cbf: "the authority key alone moves nothing" - and the
-    // recipients alone neither): the approved serial is in force only beside the authority's signature over the same serial and recipients.
-    // The nodes hand it as `admin` (body + signature, like `root`), checked here against the authority in force; without it the approvals
-    // alone make no set in force, and this page used to refuse every approved split for that reason (kanban #1415).
-    const signedSets = [set];
-    if (typeof approval.admin === 'string') {
-      try {
-        const ab = fromHex(approval.admin);
-        if (ab.length > DONATION_SIGNATURE_BYTES) {
-          const admin = { ...decodeDonationSetBody(ab.slice(0, -DONATION_SIGNATURE_BYTES)), signature: ab.slice(-DONATION_SIGNATURE_BYTES) };
-          if (await verifyEd25519(admin.signature, donationSetBodyId(admin), inForce.authority) === true) signedSets.push(admin);
-        }
-      } catch { /* not a signed set: the approvals alone, refused below */ }
+
+  // ONE SEAT CANNOT TAKE THE ROUND'S SET AWAY (kanban #1524): every answering seat had to serve the set byte for byte, so one seat
+  // answering a 4xx or another validly signed set refused every paid join of every round it sat on while six of seven served the
+  // set. The set proves itself (signed by the authority in force, named by round.donationSetId): the answers are grouped by their
+  // bytes, and when the seats disagree a group served by more than half of ALL the round's nodes is taken if it passes every check
+  // below; the seats that said otherwise are reported (`dissent`), not obeyed. With no such group the refusal is said as before.
+  const checkServed = async (served) => {
+    // A SET ITS DEVELOPERS APPROVED (§27A.4.1): the nodes serve, as JSON, the admin key's set it replaces (signed,
+    // checked below as any set), the proposals and approvals since, and the admin key's signature over the approved set (`admin`, kanban
+    // #1337); this page tallies them itself
+    let approval = null;
+    let bytes = served;
+    if (bytes.length && bytes[0] === 0x7b) {
+      try { approval = JSON.parse(new TextDecoder().decode(bytes)); } catch { approval = null; }
+      if (!approval || approval.approved !== true || typeof approval.root !== 'string' || !Array.isArray(approval.chain))
+        return { ok: false, why: 'the nodes serve a set its developers approved, and not the proof of it' };
+      try { bytes = fromHex(approval.root); } catch { return { ok: false, why: 'the admin key\'s set behind the approved set is not hex' }; }
     }
-    const signedSigs = new Set(signedSets.map((x) => toHex(x.signature)));
-    const now = donationSetInForce({ networkId: round.networkId, authority: inForce.authority, recovery: networkKeys.recovery, sets: signedSets, rotations: [],
-      height: round.censusHeight, verify: (sig) => signedSigs.has(toHex(sig)), approved: got.sets });
-    const said = [...got.refused, ...now.refused];
-    if (!now.ok || !now.approvedBy) return { ok: false, why: `the developers' approvals served do not make a set in force at the round's height${said.length ? ': ' + said[0] : ''}` };
-    const named = donationSetMatchesRound(round, now.recipients);
-    if (!named.ok) return { ok: false, why: named.why };
-    set = { networkId: set.networkId, serial: now.serial, validFrom: now.validFrom, recipients: now.recipients, approvedBy: now.approvedBy };
+    if (bytes.length <= DONATION_SIGNATURE_BYTES) return { ok: false, why: 'that is no signed donation set' };
+    let set;
+    try { set = { ...decodeDonationSetBody(bytes.slice(0, -DONATION_SIGNATURE_BYTES)), signature: bytes.slice(-DONATION_SIGNATURE_BYTES) }; }
+    catch (e) { return { ok: false, why: `that is no donation set: ${e.message}` }; }
+    if (toHex(set.networkId) !== toHex(round.networkId)) return { ok: false, why: 'that donation set is for another network' };
+    if (!approval) {
+      const named = donationSetMatchesRound(round, set.recipients);
+      if (!named.ok) return { ok: false, why: named.why };
+      // BOTH KEYS ON THE PLAIN PATH TOO (kanban #1447): a set served without approvals stands only if the authority could make it alone
+      const alone = plainDonationSetStands(set, plainPins || undefined);
+      if (!alone.ok) return { ok: false, why: alone.why };
+    }
+    if (!(set.validFrom <= round.censusHeight)) return { ok: false, why: 'that donation set is not in force at the round\'s height' };
+    if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
+      return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
+    if (approval) {
+      // the ballots oldest first, each checked against the set it replaces; the set in force at the round's height must be the one it names
+      let ballots;
+      try {
+        ballots = approval.chain.slice().reverse().map((c) => {
+          const pb = fromHex(String(c.proposal));
+          return { proposal: { ...decodeDonationProposal(pb.slice(0, -64)), signature: pb.slice(-64) },
+            approvals: (c.approvals || []).map((h) => { const ab = fromHex(String(h)); return { ...decodeDonationApproval(ab.slice(0, -64)), signature: ab.slice(-64) }; }) };
+        });
+      } catch (e) { return { ok: false, why: `the developers' ballots served do not decode: ${e.message}` }; }
+      const got = await approvedDonationSets({ networkId: round.networkId, known: [set], ballots, verifySecp256k1 });
+      // A CHANGE NEEDS BOTH KEYS (§27A.4.1 RULED 2026-11-07, kanban #1337, 8a94d6cbf: "the authority key alone moves nothing" - and the
+      // recipients alone neither): the approved serial is in force only beside the authority's signature over the same serial and recipients.
+      // The nodes hand it as `admin` (body + signature, like `root`), checked here against the authority in force; without it the approvals
+      // alone make no set in force, and this page used to refuse every approved split for that reason (kanban #1415).
+      const signedSets = [set];
+      if (typeof approval.admin === 'string') {
+        try {
+          const ab = fromHex(approval.admin);
+          if (ab.length > DONATION_SIGNATURE_BYTES) {
+            const admin = { ...decodeDonationSetBody(ab.slice(0, -DONATION_SIGNATURE_BYTES)), signature: ab.slice(-DONATION_SIGNATURE_BYTES) };
+            if (await verifyEd25519(admin.signature, donationSetBodyId(admin), inForce.authority) === true) signedSets.push(admin);
+          }
+        } catch { /* not a signed set: the approvals alone, refused below */ }
+      }
+      const signedSigs = new Set(signedSets.map((x) => toHex(x.signature)));
+      const now = donationSetInForce({ networkId: round.networkId, authority: inForce.authority, recovery: networkKeys.recovery, sets: signedSets, rotations: [],
+        height: round.censusHeight, verify: (sig) => signedSigs.has(toHex(sig)), approved: got.sets });
+      const said = [...got.refused, ...now.refused];
+      if (!now.ok || !now.approvedBy) return { ok: false, why: `the developers' approvals served do not make a set in force at the round's height${said.length ? ': ' + said[0] : ''}` };
+      const named = donationSetMatchesRound(round, now.recipients);
+      if (!named.ok) return { ok: false, why: named.why };
+      set = { networkId: set.networkId, serial: now.serial, validFrom: now.validFrom, recipients: now.recipients, approvedBy: now.approvedBy };
+    }
+    return { ok: true, set };
+  };
+  const missing = answers.filter((a) => !a.bytes);
+  const groups = new Map();
+  for (const a of answers) if (a.bytes) { const k = toHex(a.bytes); groups.set(k, [...(groups.get(k) || []), a]); }
+  let chosen = null, set = null, dissent = [];
+  if (!missing.length && groups.size === 1) {
+    if (!kept && answers.length * 2 < nodes.length)
+      return { ok: false, why: `only ${answers.length} of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
+    const got = await checkServed(answers[0].bytes);
+    if (!got.ok) return got;
+    chosen = answers; set = got.set;
+  } else if (!missing.length && !groups.size) {
+    return { ok: false, why: `only 0 of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
+  } else {
+    for (const g of [...groups.values()].sort((x, y) => y.length - x.length)) {
+      if (g.length * 2 <= nodes.length) break;
+      const got = await checkServed(g[0].bytes);
+      if (got.ok) { chosen = g; set = got.set; break; }
+    }
+    if (!chosen) {
+      if (missing.length)
+        return { ok: false, why: `not every signer node of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
+      return { ok: false, why: 'the signer nodes of this round serve different donation sets' };
+    }
+    dissent = answers.filter((a) => !chosen.includes(a)).map((a) => ({ node: a.node, why: a.bytes ? 'serves another donation set' : a.why }));
   }
 
   // AND THE GAME DEV'S SET (§0A.8): every signer node serves the one its round's game's manifest names, and it
@@ -379,7 +405,7 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
     if (!gameSet) return { ok: false, why: `no signer node of this round serves its game's donation set: ${tried.join('; ')}` };
     GAME_SETS_FETCHED.set(wantGame, gameSet);
   }
-  if (keepBySet && !kept) DONATION_SETS_FETCHED.set(setKey, answers);
+  if (keepBySet && !kept) DONATION_SETS_FETCHED.set(setKey, chosen);
   // A SET WITH CONTRIBUTION AGREEMENTS (§27A.4.2, kanban #1346): each pays the share the round's seats read from the counted rounds at its
   // census height - a page cannot read those rounds, so it takes each share only where more than half of the round's nodes name the same one
   let shareOf;
@@ -389,8 +415,8 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
     shareOf = (r) => agreed.shares.get(toHex(r.recipientPk)) ?? 0;
   }
   // A SET THAT VESTS (§27A.4.1) pays its shares at the round's census height, as the seats split it
-  return { ok: true, set, gameSet, target: { network: vestedShares(set.recipients, round.censusHeight, shareOf), game: gameSet }, signerNodes: answers.length, rotated: inForce.rotated,
-    why: `${answers.length} signer node(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
+  return { ok: true, set, gameSet, target: { network: vestedShares(set.recipients, round.censusHeight, shareOf), game: gameSet }, signerNodes: chosen.length, dissent, rotated: inForce.rotated,
+    why: `${chosen.length} signer node(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
 }
 
 /**
