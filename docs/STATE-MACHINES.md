@@ -1542,3 +1542,10 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-6 (change) Drawn attestor: readings and words survive a restart (kanban #1844)
+- State: `samples` (the seat's readings, the last `KEEP_MS` = 40 min) and `words` (round -> its signed word) now live in the seat's store as well as memory: `drawn_samples (at_ms, price)` written on each `read()`, `drawn_words (round_hex, word)` written (INSERT OR IGNORE) before a word is served. A new `DrawnAttestor` (a restart) reads back the readings of the last `KEEP_MS`, and a round's kept word before signing anything.
+- Invariant: a drawn seat that read a round's window [start - 60 s, end] can sign its word for that round after any restart, as the fixed daemon can (arena-attestor.mjs `SAMPLES_FILE`); and it signs at most one body per round: a word kept before a restart is the one served after it.
+- Measured (test/wf1489-sm3-market-1.test.js): three of seven drawn seats restarted just after the window's end - all seven sign, the attestation held at 7 seats (was: 4 signed, none held, the market VOID at its deadline); a seat restarted after it signed serves the same word.
