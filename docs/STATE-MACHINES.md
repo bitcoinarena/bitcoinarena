@@ -1900,3 +1900,7 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 - Invariant: every send of a round whose settlement row is ACCEPTED on txid T is asked against an output of T, and is carried to PAID (or re-sent from T's contract) - after any restart of any seat.
 - keepMoves keeps, with every settlement txid it records, where each payout output sends (`lock_settlement_payout_keys`: kind, payment hash, donation send id per output, in order). Once the row is ACCEPTED, `sendsBuilt` drives the sends (the winnings sweep, settle() on an ACCEPTED row, and the peers' `/send-commit`, `/send-share`, `/resend-sends`) from the row's txid and those keys, never from `message()` - a rebuild that a restart may make on other bytes (the guardians' fee rule read again) or refuse. A round with no kept keys (rows from before the fix) still takes the rebuild.
 - Late settlements (`sendLate`, `lateMessage`) still take their rebuild.
+#### B1/B1b (add) Ballot tally: the vote cache follows the chain (kanban #2019)
+- Invariant: every vote a count holds was read from a block that is this seat's block at that height when the count reads it; a decided outcome's votes come from the chain its anchor commits to.
+- A cached height (`votesByHeight` / `hashByHeight`) is used only after `blockHashAt(h)` still names the hash it was read from; a changed block is read afresh, a height above the tip ends the pass's reading.
+- The reorg check's `above` for an open count (the tip seen below its last read block) drops the count and every cached height above the tip.
