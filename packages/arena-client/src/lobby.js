@@ -182,7 +182,8 @@ function namesToCheck(counts, signerNodes) {
     const have = bySeat.get(c.key) || [];
     if (have.length >= NAMES_PER_SEAT || !c.signed) continue;
     bySeat.set(c.key, have);
-    for (const n of c.names) { if (have.length >= NAMES_PER_SEAT) break; have.push(n); }
+    // each name carries the seat that supplied it: the read's checks are charged to that seat (kanban #2342, checkedNames `budget.perSeat`)
+    for (const n of c.names) { if (have.length >= NAMES_PER_SEAT) break; have.push({ record: n && n.record, sig: n && n.sig, by: c.key }); }
   }
   const lists = [...bySeat.values()], out = [];
   for (let i = 0; i < NAMES_PER_SEAT; i++) { let any = false; for (const l of lists) if (i < l.length) { out.push(l[i]); any = true; } if (!any) break; }
@@ -272,9 +273,15 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
       const body = await r.json();
       const nodeKey = String(body && body.node).toLowerCase();
       const at = Number(body && body.nowMs);
+      // ONE ENTRY PER ROUND FROM ONE SEAT (kanban #2349; refute of #1864 / #2259): each repeat of a round in one seat's answer was its own
+      // listing with its own signature check - one seat repeating its round 5,000 times cost 5,000 BIP-340 checks (and 5,000 items in the
+      // page's verifyMany batch) on every read. The first entry for a round is kept; a later one from the same answer is dropped unread.
+      const listedHere = new Set();
       for (const x of (body && Array.isArray(body.rounds)) ? body.rounds : []) {
         const id = String(x && x.id).toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(id)) { refused.push(`${node}: listed something that is not a round id`); continue; }
+        if (listedHere.has(id)) continue;
+        listedHere.add(id);
         if (!said.has(id)) said.set(id, []);
         if (Number(x.entryCloseMs) > 0) soonest.set(id, Number(x.entryCloseMs));
         if (x && x.game && x.game.id) gameOf.set(id, String(x.game.id).toLowerCase());
@@ -420,7 +427,13 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
   rows.sort((x, y) => (x.phase === y.phase ? x.entryCloseMs - y.entryCloseMs : (x.phase === 'open' ? -1 : 1)));
   // THE NAMES, CHECKED WITHIN ONE BUDGET FOR THE WHOLE READ (kanban #2259, #2276): a joinable row first (its signer nodes agree), then the
   // opened game's, then in the rows' order; a row the budget does not reach shows no names this read
-  const nameBudget = { left: LOBBY_NAME_CHECKS_PER_READ };
+  // AND FAIR ACROSS THE SEATS THAT SUPPLY THEM (kanban #2342; refute of #2259): the read's budget was one pool, so two colluding seats' made-up
+  // joinable rounds that close sooner (8 x 128 forged names) spent all of it before an honest round was reached - its real names [] on every
+  // read. Each check is now charged to the seat that supplied the name, and each seat gets an equal share of the read's budget: a seat
+  // is one of the nodes the page asks (one key per answer), so no seat's forgeries can take another seat's share
+  const supplying = new Set();
+  for (const from of namesFrom.values()) for (const n of from) supplying.add(n.by);
+  const nameBudget = { left: LOBBY_NAME_CHECKS_PER_READ, perSeat: new Map(), share: Math.floor(LOBBY_NAME_CHECKS_PER_READ / Math.max(1, supplying.size)) };
   const preferRow = Array.isArray(preferGames) && preferGames.length ? new Set(preferGames.map((g) => String(g).toLowerCase())) : null;
   const rank = (r) => (r.joinable ? 0 : 2) + (preferRow && preferRow.has(r.game) ? 0 : 1);
   for (const r of rows.map((r, i) => [r, i]).sort(([a, i], [b, j]) => rank(a) - rank(b) || i - j).map(([r]) => r)) {
