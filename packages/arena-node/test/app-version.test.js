@@ -22,11 +22,12 @@ import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { gameIdOf, manifestStands, manifestBodyId, encodeManifest } from '../../arena-protocol/src/manifest.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { gameInfoStands } from '../../arena-protocol/src/game-info.js';
+import { pointKey } from '../../arena-protocol/test/point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
 const PKCS8_ED25519 = Buffer.from('302e020100300506032b657004220420', 'hex');
 const seedOf = (word) => createHash('sha256').update(`test game developer: ${word}`).digest();
 const keysDir = (...words) => { const d = mkdtempSync(join(tmpdir(), 'app-keys-')); for (const w of words) writeFileSync(join(d, `${w.replace(/\W/g, '-')}.pkcs8`), Buffer.concat([PKCS8_ED25519, seedOf(w)]), { mode: 0o600 }); writeFileSync(join(d, 'notes.txt'), 'not a key'); return d; };
-const K = (n) => '02' + String(n).repeat(64).slice(0, 64);
+const K = (n) => toHex(pointKey(2, n * 0x11));
 const SPLIT = [{ key: K(1), label: 'dev a', shareBps: 5000 }, { key: K(2), label: 'dev b', shareBps: 3000 }, { key: K(3), label: 'dev c', shareBps: 2000 }];
 
 test('the developer\'s key as the developer has it: PKCS#8 PEM, its DER in base64 or hex, or the seed in hex - anything else refused', () => {

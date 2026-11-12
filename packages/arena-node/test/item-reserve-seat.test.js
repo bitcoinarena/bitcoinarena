@@ -16,9 +16,10 @@ import { SERVED_WINDOW_MS } from '../../arena-protocol/src/served-nodes.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { MANIFEST_V3 } from '../../nextblock/plugin/nextblock-v3.js';
 import { joinedWithLock, CLAIM } from './lock-fixture.js';
+import { pointKey } from '../../arena-protocol/test/point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const pk33 = (n) => Uint8Array.from([0x02, ...b32(n)]);
+const pk33 = (n) => pointKey(0x02, n);
 const SECRET = b32(0x77), BUYER = schnorr.getPublicKey(SECRET);
 const verify = (s, m, k) => schnorr.verify(s, m, k);
 const V4 = { ...MANIFEST_V3, version: 4, requiredProtocolVersion: RESERVES_VERSION, signature: new Uint8Array(64) };
