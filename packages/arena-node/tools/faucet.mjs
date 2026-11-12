@@ -76,7 +76,16 @@ const rpc = async (method, params = []) => {
   const auth = Buffer.from(readFileSync(env.FAUCET_COOKIE, 'utf8').trim()).toString('base64');
   const r = await fetch(env.FAUCET_RPC_URL, { method: 'POST', headers: { authorization: `Basic ${auth}`, 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '1.0', id: 'faucet', method, params }), signal: AbortSignal.timeout(30000) });
-  const j = await r.json();
+  // AN HTTP ANSWER THAT IS NO JSON-RPC ANSWER WAS NOT RUN (state audit 2026-11-12, kanban #2533): bitcoind answers a full work queue with HTTP 503
+  // "Work queue depth exceeded" (plain text) and a bad cookie with 401 (no body) before it runs the call. r.json() threw a plain error, pay() read it
+  // as "unsure" and kept the installer's row pending for good. A non-2xx answer without a JSON-RPC body is `rpcRefused` too: the call never ran
+  const text = await r.text();
+  let j = null; try { j = JSON.parse(text); } catch { j = null; }
+  if (!j || typeof j !== 'object' || !('result' in j || 'error' in j)) {
+    const e = new Error(`bitcoind answered HTTP ${r.status}: ${String(text).trim().slice(0, 80) || 'no body'}`);
+    if (!r.ok) e.rpcRefused = true;
+    throw e;
+  }
   if (j.error) throw Object.assign(new Error(j.error.message), { rpcRefused: true });   // bitcoind answered and refused (kanban #1572)
   return j.result;
 };
@@ -126,16 +135,54 @@ const WELCOME_REISSUE_MS = 15 * 60 * 1000;
 // address with no row, and the installer's retry of the same address was paid again. The row is now written first (`pending`, no txid), as the
 // players' grant does. It is taken out again only when bitcoind refused the send, or the wallet shows no send to that address; any other failure
 // keeps it (the address is never paid twice; a row without its txid is the worst case).
-async function walletSentTo(address) {
+async function walletSentTo(address, sinceMs = null) {
   // the wallet's own record: a txid when it sent to the address, 'none' when it holds no such send, null when it cannot say
   try {
     const txs = await rpc('listtransactions', ['*', 1000, 0, true]);
     if (!Array.isArray(txs)) return null;
     const t = txs.find((x) => x && x.category === 'send' && x.address === address);
-    return t ? String(t.txid) : 'none';
+    if (t) return String(t.txid);
+    // a full page that starts after the row was booked may have pushed its send out of view (kanban #2533): no word then
+    if (sinceMs != null && txs.length >= 1000 && !txs.some((x) => x && Number(x.time) * 1000 <= sinceMs)) return null;
+    return 'none';
   } catch { return null; }
 }
+// A PENDING INSTALLER ROW IS READ AGAIN (state audit 2026-11-12, kanban #2533): a row pay() left `pending` (the send timed out, the wallet could not
+// say, the faucet died inside sendtoaddress) was never looked at again - the address refused for good ("got coins already") and counted toward its
+// IP's and the day's caps though nothing may have been sent. At start and on a timer, outside the queue, every pending row older than
+// PAY_CHECK_GRACE_MS (past the 30 s RPC timeout, so bitcoind has run or dropped the call) whose pay() is not running is asked of the wallet: a send
+// found sets its txid (and FAUCET_PENDING), 'none' removes the row so the address can ask again; no word keeps it for the next pass. The decisions
+// are applied to a freshly read book in one synchronous step, by address and atMs.
+const PAYING = new Set();   // addresses whose pay() is running
+const PAY_CHECK_GRACE_MS = Number(env.FAUCET_PAY_CHECK_GRACE_MS || 120000);
+async function checkPendingSends(nowMs = Date.now()) {
+  const rows = (readBook().paid || []).filter((p) => p.pending && !p.txid && !PAYING.has(p.address) && nowMs - Number(p.atMs || 0) > PAY_CHECK_GRACE_MS);
+  const found = new Map(), gone = new Set();
+  for (const r of rows) {
+    const sent = await walletSentTo(r.address, Number(r.atMs || 0));
+    if (sent === 'none') gone.add(`${r.address}|${r.atMs}`);
+    else if (sent) found.set(`${r.address}|${r.atMs}`, sent);
+  }
+  if (!found.size && !gone.size) return false;
+  const b = readBook(); b.paid = b.paid || [];
+  const key = (p) => `${p.address}|${p.atMs}`;
+  for (const p of b.paid) if (p.pending && !PAYING.has(p.address) && found.has(key(p))) {
+    p.txid = found.get(key(p)); delete p.pending; appendFileSync(env.FAUCET_PENDING, `${p.txid}\n`);
+    console.log(`${new Date().toISOString()} pending send to ${p.address} found in the wallet: ${p.txid}`);
+  }
+  b.paid = b.paid.filter((p) => { const drop = p.pending && !p.txid && !PAYING.has(p.address) && gone.has(key(p));
+    if (drop) console.log(`${new Date().toISOString()} pending send to ${p.address}: the wallet holds none - the row removed (the address can ask again)`); return !drop; });
+  saveBook(b);
+  return true;
+}
+let checkingSends = false;
+const checkSendsOnce = () => { if (checkingSends) return; checkingSends = true; checkPendingSends().catch(() => {}).finally(() => { checkingSends = false; }); };
+if (env.FAUCET_RPC_URL) { setTimeout(checkSendsOnce, 0).unref(); setInterval(checkSendsOnce, Number(env.FAUCET_PAY_CHECK_MS || 60000)).unref(); }
 async function pay(ask) {
+  PAYING.add(ask.address);
+  try { return await payNow(ask); } finally { PAYING.delete(ask.address); }
+}
+async function payNow(ask) {
   const book = readBook();
   const d = faucetDecide(ask, book, { balanceSats: await balanceSats() });
   if (!d.ok) return d;
