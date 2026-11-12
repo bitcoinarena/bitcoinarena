@@ -7,13 +7,11 @@
 // list is never read by its pubkey alone.
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes } from 'node:crypto';
-import { lookup as dnsLookup } from 'node:dns';
-import { BlockList, isIP } from 'node:net';
-import { request as httpsRequest } from 'node:https';
 import { lnurlFor, urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { eventId, eventRefusal } from './nostr-relay.js';
 import { BIP39_ENGLISH } from '../../arena-client/src/bip39-wordlist.js';
 import { readJsonBounded } from './lnurl-read.js';
+import { hostReach, walletFetch } from './public-fetch.js';
 
 /** The report's kind: ephemeral (20000-29999), so no relay keeps it - it goes to the faucet only. */
 export const FEEDBACK_KIND = 27842;
@@ -567,60 +565,8 @@ export function publicHttpsUrl(u) {
   return !(!host || /^\[|^\d+(\.\d+){3}$|^\d+$|^0x/i.test(host) || !host.includes('.') || /(^|\.)(localhost|local|internal|lan|home|arpa|localdomain|intranet)$/.test(host));
 }
 
-// NEVER AN INTERNAL HOST BY WHERE THE NAME LEADS (kanban #1809, #1489 r6): #1511 judged the host by its spelling, so a public name that resolves to
-// 127.0.0.1 (127.0.0.1.nip.io, localtest.me) or a tailnet MagicDNS name (*.ts.net) was fetched. Now the name is resolved and every address it gives must
-// be global (no loopback, private, link-local, CGNAT 100.64/10 - Tailscale -, ULA, documentation, multicast or reserved), *.ts.net is refused by name,
-// and only the default HTTPS port is asked. The default fetcher connects only to an address that passed this check (its lookup is the guard, so DNS
-// rebinding between the check and the connect cannot swap it) and follows no redirect.
-const NOT_GLOBAL = new BlockList();
-for (const [net, bits] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24],
-  ['192.88.99.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4]]) NOT_GLOBAL.addSubnet(net, bits, 'ipv4');
-for (const [net, bits] of [['::', 127], ['100::', 64], ['2001::', 23], ['2001:db8::', 32], ['2002::', 16], ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8]]) NOT_GLOBAL.addSubnet(net, bits, 'ipv6');
-export function addressIsGlobal(address) {
-  const a = String(address || '').toLowerCase().replace(/^\[|\]$/g, '');
-  const v = isIP(a);
-  if (v === 4) return !NOT_GLOBAL.check(a, 'ipv4');
-  if (v !== 6) return false;
-  // an IPv4 address carried in IPv6 (mapped ::ffff:a.b.c.d, NAT64 64:ff9b::/96, the old compatible ::a.b.c.d) is judged as that IPv4 address
-  const tail = /^(?:::ffff:|64:ff9b::|::)(\d+\.\d+\.\d+\.\d+)$/.exec(a);
-  if (tail) return addressIsGlobal(tail[1]);
-  const hex = /^(?:::ffff:|64:ff9b::)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(a);
-  if (hex) { const x = parseInt(hex[1], 16), y = parseInt(hex[2], 16); return addressIsGlobal(`${x >> 8}.${x & 255}.${y >> 8}.${y & 255}`); }
-  if (/^64:ff9b:/.test(a) || /^::ffff:/.test(a)) return false;
-  return !NOT_GLOBAL.check(a, 'ipv6');
-}
-// dns.lookup that answers only global addresses (an error naming the host otherwise) - the default fetcher's connect lookup and the check before any fetch
-function globalLookup(hostname, options, cb) {
-  if (typeof options === 'function') { cb = options; options = {}; }
-  dnsLookup(hostname, { all: true, verbatim: true }, (err, list) => {
-    if (err) return cb(err);
-    if (!list || !list.length || list.some((x) => !addressIsGlobal(x.address))) { const e = new Error(`${hostname} leads to an internal address`); e.code = 'EINTERNALHOST'; return cb(e); }
-    if (options && options.all) return cb(null, list);
-    return cb(null, list[0].address, list[0].family);
-  });
-}
-// 'internal' (refuse), 'ok', or 'unresolved' (the name does not resolve now: the fetch will fail on its own, and the default fetcher re-checks at connect)
-export function hostReach(url) {
-  let u; try { u = new URL(url); } catch { return Promise.resolve('internal'); }
-  const host = u.hostname.toLowerCase().replace(/\.$/, '');
-  if (u.protocol !== 'https:' || (u.port && u.port !== '443') || u.username || u.password) return Promise.resolve('internal');
-  if (!host || /^\[|^\d+(\.\d+){3}$|^\d+$|^0x/i.test(host) || !host.includes('.') || /(^|\.)(localhost|local|internal|lan|home|arpa|localdomain|intranet|ts\.net|beta\.tailscale\.net)$/.test(host)) return Promise.resolve('internal');
-  return new Promise((resolve) => globalLookup(host, {}, (err) => resolve(!err ? 'ok' : err.code === 'EINTERNALHOST' ? 'internal' : 'unresolved')));
-}
-// the default fetcher: an HTTPS GET pinned to the checked address, no redirect followed, at most 64 KB read
-const WALLET_ANSWER_MOST = 64 * 1024;
-export function walletFetch(url, { signal, headers } = {}) {
-  return new Promise((resolve, reject) => {
-    const req = httpsRequest(url, { method: 'GET', headers, lookup: globalLookup, signal }, (res) => {
-      const parts = []; let n = 0;
-      res.on('data', (c) => { n += c.length; if (n > WALLET_ANSWER_MOST) { req.destroy(new Error('its answer is too large')); return; } parts.push(c); });
-      res.on('end', () => resolve(new Response(Buffer.concat(parts), { status: res.statusCode >= 200 && res.statusCode <= 599 ? res.statusCode : 502 })));
-      res.on('error', reject);
-    });
-    req.on('error', reject);
-    req.end();
-  });
-}
+// THE GUARD ITSELF (kanban #1809) lives in public-fetch.js since #2236, shared with the winnings send; re-exported for the faucet's importers.
+export { addressIsGlobal, hostReach, walletFetch } from './public-fetch.js';
 
 export async function lnAddressWorks(address, { fetchFn = walletFetch, timeoutMs = 8000 } = {}) {
   const a = String(address || '').trim();
