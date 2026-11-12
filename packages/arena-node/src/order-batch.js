@@ -227,7 +227,9 @@ export class OrderBook {
     const fresh = this.db.prepare('SELECT entry_id, contract FROM entries WHERE round_id = ? AND entry_id NOT IN (SELECT entry_id FROM market_cancels) '
       + 'AND lower(hex(entry_id)) NOT IN (SELECT order_id FROM market_orders WHERE round_id = ?) ORDER BY entry_id').all(roundIdBytes, Buffer.from(roundIdBytes));
     for (const r of fresh) {
-      const entryId = new Uint8Array(r.entry_id), entry = decodeEntryContract(new Uint8Array(r.contract));
+      const entryId = new Uint8Array(r.entry_id);
+      // a stored row that no longer decodes is not in its round (kanban #1889, round.js decodedEntryRows): one such row must not stop every batch
+      let entry; try { entry = decodeEntryContract(new Uint8Array(r.contract)); } catch { continue; }
       if (!isOrder(entry)) continue;
       const stake = this.round.stakeLock(entryId);
       const fee = this.round.feeLock ? this.round.feeLock(entryId) : null;

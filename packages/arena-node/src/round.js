@@ -118,6 +118,26 @@ export const TRANSCRIPT_BATCH_MAX_BYTES = 65535;
 export const FOREIGN_RECEIPTS_KEPT = 4096;
 export const FOREIGN_RECEIPTS_MAX_AGE_MS = 24 * 3600000;
 
+/**
+ * THE STORED ENTRY ROWS OF A ROUND THAT STILL DECODE (kanban #1889, #1489 v1-refute-3): [{ entryId, entry }] in the rows' order.
+ * A row the current decoder refuses (taken by an older, looser build: an off-curve website key) is left out, never thrown, so one
+ * such row cannot stop every read of its round. Each one left out is said once per process.
+ */
+const undecodableSaid = new Set();
+export function decodedEntryRows(rows) {
+  const out = [];
+  for (const r of rows) {
+    let entry;
+    try { entry = decodeEntryContract(new Uint8Array(r.contract)); } catch (e) {
+      const id = Buffer.from(r.entry_id).toString('hex');
+      if (!undecodableSaid.has(id)) { undecodableSaid.add(id); console.warn(`[round] stored entry ${id.slice(0, 16)} no longer decodes, left out of its round: ${e.message}`); }
+      continue;
+    }
+    out.push({ entryId: new Uint8Array(r.entry_id), entry });
+  }
+  return out;
+}
+
 export class Round {
   /** How long openHeld trusts its last count of the open rows when this store wrote none (kanban #786). */
   static OPEN_HELD_MS = 250;
@@ -1922,14 +1942,17 @@ export class Round {
   }
 
   // A CANCELLED MARKET ENTRY IS NOT IN ITS ROUND: no table, no settlement, no count
+  //
+  // A STORED ENTRY THAT NO LONGER DECODES IS NOT IN ITS ROUND EITHER (kanban #1889, #1489 v1-refute-3): the decoder got stricter
+  // (#1489 settle-2: a website key frontendPk must be a curve point), and a seat that took such an entry on the build before still
+  // holds its bytes. Decoded unguarded, that one row threw for every read of its round - the settlement (entriesOnRecord, the
+  // attested plan), the seating and the one-session-key check every new honest entry passes - so the round never settled and took
+  // no new entry. Left out, as playersOf already does: it is played against nobody and claimed by no settlement, so its locks
+  // expire back to its player by their own timelock, and the round settles for everyone else.
   entriesOf(roundIdBytes) {
-    return this.db.prepare(
+    return decodedEntryRows(this.db.prepare(
       'SELECT entry_id, contract FROM entries WHERE round_id = ? AND entry_id NOT IN (SELECT entry_id FROM market_cancels) ORDER BY entry_id')
-      .all(roundIdBytes)
-      .map((r) => ({
-        entryId: new Uint8Array(r.entry_id),
-        entry: decodeEntryContract(new Uint8Array(r.contract)),
-      }));
+      .all(roundIdBytes));
   }
 
   /**
@@ -3612,9 +3635,10 @@ export class Round {
     const rows = this.db.prepare(
       'SELECT entry_id, contract FROM entries WHERE round_id = ? AND entry_id NOT IN (SELECT entry_id FROM market_cancels) ORDER BY joined_ms, rowid')
       .all(roundIdBytes);
-    for (const r of rows) {
-      const o = decodeEntryContract(new Uint8Array(r.contract))[field];
-      if (o && same(o.txid, outpoint.txid) && o.outIdx === outpoint.outIdx) return new Uint8Array(r.entry_id);
+    // a stored row that no longer decodes names no lock (kanban #1889): it is not in its round (entriesOf)
+    for (const { entryId, entry } of decodedEntryRows(rows)) {
+      const o = entry[field];
+      if (o && same(o.txid, outpoint.txid) && o.outIdx === outpoint.outIdx) return entryId;
     }
     return null;
   }

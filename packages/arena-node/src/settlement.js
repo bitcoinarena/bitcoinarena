@@ -571,7 +571,8 @@ export class LockSettlement {
         if (this.round.cancelled(entryId)) continue;
         const raw = this.round.entry(entryId);
         if (!raw) continue;
-        const entry = decodeEntryContract(raw);
+        // a stored entry that no longer decodes (kanban #1889) is not in its round: skip it, do not stop the other cancels
+        let entry; try { entry = decodeEntryContract(raw); } catch { continue; }
         if (toHex(entry.roundId) !== toHex(roundIdBytes)) continue;
         let good = false;
         try { good = ed25519.verify(fromHex(c.signature), cancelId({ roundId: roundIdBytes, entryId }), entry.sessionPubkey); } catch { good = false; }
