@@ -147,7 +147,11 @@ function deathOf(sup, id) {
  */
 export function loadCore({ files, entry }, options = {}) {
   const { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry,
-    arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, oneReplay = false, answerMax = ANSWER_MAX } = options;
+    arrayBudget = ARRAY_BUDGET, liveCap = 0, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, oneReplay = false, answerMax = ANSWER_MAX, until = null } = options;
+  // `until` (kanban #1719, #1538): ONE ABSOLUTE DEADLINE (a Date.now() time) for the load AND the meta ask loadCore makes
+  // itself - the plugin trial gives load, meta and every decide call one TRIAL_MS in total; meta reads DECIDE's fields, which
+  // may be getters, so without it load + meta held the seat's thread up to loadMs + askMs
+  const leftOf = (ms) => (Number.isFinite(until) ? Math.max(1, Math.min(ms, until - Date.now())) : ms);
   const sup = supervisorOf();
   const id = sup.next++;
   const ctrl = new Int32Array(new SharedArrayBuffer(8 * 4));
@@ -205,7 +209,7 @@ export function loadCore({ files, entry }, options = {}) {
     end(`the core did not stop within ${ms} ms (${what}): its thread was ended, and it is not run again`);
     throw new Error(ended);
   };
-  const loaded = wait(loadMs, 'loading');
+  const loaded = wait(leftOf(loadMs), 'loading');
   if (!loaded.ok) { end(loaded.why); throw new Error(loaded.why); }
 
   // `within`: a shorter deadline for this one call (kanban #1538: the plugin trial run gives all its calls one deadline in total)
@@ -245,7 +249,7 @@ export function loadCore({ files, entry }, options = {}) {
     } finally { if (!one.endedWhy()) one.end(); }
   };
   const call = (op, input = {}, within = null) => (String(op) === 'replay' && !oneReplay ? replayFresh(input, within) : callHere(op, input, within));
-  const meta = callHere('meta');
+  const meta = callHere('meta', {}, Number.isFinite(until) ? leftOf(askMs) : null);   // kanban #1719
   return Object.freeze({ call, meta, end: () => end('ended by the node'), lastEnd: () => lastEnd, endedWhy: () => ended,
     highWaterMb: () => (lastOne ? lastOne.highWaterMb() : Atomics.load(ctrl, C.HIGH_MB)) });
 }
