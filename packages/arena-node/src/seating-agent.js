@@ -607,6 +607,11 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     }
     if (pass.drawn || pass.noDraw || pass.checked) log(`[seating] check-in pass (kanban #2564): ${pass.tables} table role(s), ${pass.drawn} drawn, ${pass.noDraw} not drawable${pass.why ? ` (${pass.why})` : ''}, ${pass.checked} seating(s) checked, ${pass.stale} stale, ${staleReseats.size} stale held`);
   };
+  // A PEER'S ANSWER IS UNTRUSTED (kanban #2512: one drawn node answering its GET /seating-batch with `cert: { game: 'abc' }` - odd-length
+  // hex - or `presents: [null]` threw out of the tick before certify(), at every honest seat, every tick: no round it was drawn for was
+  // ever seated). Hex is taken only as even-length hex, PRESENTs only from an array of objects, and each peer's answer spoils only itself.
+  const hexOf = (s) => (typeof s === 'string' && s.length % 2 === 0 && /^[0-9a-fA-F]*$/.test(s) ? fromHex(s) : null);
+  const presentsIn = (a, role) => (a && Array.isArray(a.presents) ? a.presents : []).filter((x) => x && typeof x === 'object' && x.role === role).map((x) => hexOf(x.present)).filter(Boolean);
   async function tick() {
     if (busy) return;
     busy = true;
@@ -726,22 +731,27 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         for (const b of w.others) {
           const batch = answers.get(b);
           const a = batch ? batch[w.ridHex] : single.get(`${b}|${w.ridHex}|${w.role}`);
-          if (!a) continue;
+          if (!a || typeof a !== 'object') continue;
           said.push(a);
-          // a round already started is read for its certificate only: its PRESENTs are not taken (b5e8b412's late read)
-          if (!w.late) { const once = new Set(); for (const x of a.presents || []) if (x.role === w.role) takePresent(fromHex(x.present), { once }); }
-          const cert = a.cert && a.cert[w.role];
-          if (cert) keepCert(w.t.rid, w.role, fromHex(cert));
-          const sig = a.sig && a.sig[w.role];
-          if (sig && w.closed && !w.late) keepSig(w, sig);
-          if (sig && (w.joins || (w.closed && !w.late && !mySignature(w.t.rid, w.role)))) sigs.push(sig);
+          // one peer's answer, contained (kanban #2512): whatever it holds, the next peer and certify() below still run
+          try {
+            // a round already started is read for its certificate only: its PRESENTs are not taken (b5e8b412's late read)
+            if (!w.late) { const once = new Set(); for (const p of presentsIn(a, w.role)) takePresent(p, { once }); }
+            const cert = hexOf(a.cert && a.cert[w.role]);
+            if (cert) keepCert(w.t.rid, w.role, cert);
+            const sig = a.sig && a.sig[w.role];
+            if (sig && typeof sig === 'object') {
+              if (w.closed && !w.late) keepSig(w, sig);
+              if (w.joins || (w.closed && !w.late && !mySignature(w.t.rid, w.role))) sigs.push(sig);
+            }
+          } catch (e) { log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: an answer of ${b} refused: ${e.message}`); }
         }
         if (w.joins && w.closed) { joinLate(w, sigs); for (const s of sigs) keepSig(w, s); await certify(w); }
         // A RESERVE TAKEN IN FOR A WITHHOLDING MEMBER (kanban #1509): not seated by its own seating, it signs the one every other member of it signed already
         if (w.closed && !w.late && !w.joins && !mySignature(w.t.rid, w.role)) { joinLate(w, sigs, { everyOther: true }); for (const s of sigs) keepSig(w, s); }
         if (w.closed && !w.late) {
           // A SEATING THAT CAN NEVER STAND (kanban #738): the PRESENTs the others held at the close are taken late, here only
-          if (canNeverStand(w)) for (const a of said) { const once = new Set(); for (const x of a.presents || []) if (x.role === w.role) takePresent(fromHex(x.present), { afterClose: true, once }); }
+          if (canNeverStand(w)) for (const a of said) { const once = new Set(); for (const p of presentsIn(a, w.role)) takePresent(p, { afterClose: true, once }); }
           signMine(w); resign(w); await certify(w);
         }
         // THE SAME READ CONFIRMS WHAT IT LEFT HELD (kanban #2321, wf1489 a45 refute 5 s2): the drawn seats' certificates are in these answers already, so
@@ -872,7 +882,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         if (!c.ok) return;
         await Promise.all(endpointsOf(c.drawn, round.pubkey, endpointOf).filter((b) => !rests(b)).map(async (b) => {
           const j = await getJson(b, `/seating?round=${a}&role=${role}`);
-          if (j && j.cert && !db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(u.rid, role)) keepCert(u.rid, role, fromHex(j.cert));
+          const cert = hexOf(j && j.cert);   // kanban #2512: even-length hex only
+          if (cert && !db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(u.rid, role)) { try { keepCert(u.rid, role, cert); } catch { /* says nothing */ } }
         }));
       }));
     }
@@ -880,7 +891,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
 
   async function askOne(b, w) {
     const rid = w.ridHex;
-    if (!w.closed) { const got = await getJson(b, `/present?round=${rid}`); return got ? { presents: got.presents || [] } : null; }
+    if (!w.closed) { const got = await getJson(b, `/present?round=${rid}`); return got ? { presents: Array.isArray(got.presents) ? got.presents : [] } : null; }   // kanban #2512
     const c = await getJson(b, `/seating?round=${rid}&role=${w.role}`);
     const s = await getJson(b, `/seating-sig?round=${rid}&role=${w.role}`);
     return { cert: { [w.role]: c && c.cert ? c.cert : null }, sig: { [w.role]: s && s.signature ? s : null } };
