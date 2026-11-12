@@ -322,13 +322,19 @@ export class Forfeit {
       const standing = resultFinality(this.round, roundIdBytes, entryIdBytes);
       // VOID (§13C, §23.2 "do nothing"): nothing is forfeited - nobody acts, and
       // the lock returns to the player at its expiry. Not ENTRY_VOID's forfeit.
-      if (standing.state === 'VOID')
-        return refuse('that entry is VOID (§13C): nothing is forfeited - nobody acts, and the lock returns to the player at its expiry');
-      if (standing.state !== FINAL)
+      // A LOCK OUTSIDE THE SEATS COMES BACK AT SETTLEMENT (kanban #1582 with #1588): /lock keeps every valid lock of a paying head-to-head
+      // round, and the seats are the game's players in the order their entries came (round.js seatedEntriesOf) - a player whose lock is
+      // held but who got no seat is signed VOID and never claimed. Before, that stake waited for the lock's expiry (144 blocks live);
+      // now it comes back as soon as THIS signer node's settlement of the round is ACCEPTED without claiming it, as nobodyWonReturn does
+      const out = this.#outsideTheSeats(roundIdBytes, entryIdBytes, contract, lock);
+      const outside = out.ok;
+      if (!outside && standing.state === 'VOID')
+        return refuse(`that entry is VOID (§13C): nothing is forfeited - nobody acts, and the lock returns to the player at its expiry${out.why ? ` (${out.why})` : ''}`);
+      if (!outside && standing.state !== FINAL)
         return refuse(`no forfeit before the result is final with its objection window closed: ${standing.why || standing.state}`);
-      const result = settledResult(this.round, roundIdBytes, entryIdBytes, standing);
-      if (!result) return refuse('this signer node signed no result for that run, so it forfeits nothing');
-      if (!isQualifier(result, contract.minScore)) {
+      const result = outside ? null : settledResult(this.round, roundIdBytes, entryIdBytes, standing);
+      if (!outside && !result) return refuse('this signer node signed no result for that run, so it forfeits nothing');
+      if (!outside && !isQualifier(result, contract.minScore)) {
         const back = this.nobodyWonReturn(roundIdBytes, entryIdBytes, lock, result);
         if (!back.ok)
           return refuse(`that run is ${result.outcome} with score ${result.score} and this round's minimum is `
@@ -388,6 +394,19 @@ export class Forfeit {
     const id = String(await port.contractId(fields));
     if (id !== String(lock.contractId)) return refuse('the contract rebuilt from this signer node\'s record is not the one it verified');
     return { ok: true, message: fromHex(id), claimPk, signerNode: held.signerNode, needed: receiptsNeeded(contract.gameVerifySlots), nodes: contract.nodes };
+  }
+
+  /** A held stake lock of a paying head-to-head round's entry that got no seat here, its settlement ACCEPTED without claiming it (kanban #1582, #1588). */
+  #outsideTheSeats(roundIdBytes, entryIdBytes, contract, lock) {
+    if (contract.stakeMsat === 0n || typeof this.round.seatedEntriesOf !== 'function' || !this.round.plugins) return { ok: false };
+    const g = pluginForRound(contract, this.round.plugins);
+    if (!g.ok || !g.headToHead) return { ok: false };
+    if (this.round.seatedEntriesOf(roundIdBytes, contract.stakeMsat).some((e) => toHex(e.entryId) === toHex(entryIdBytes))) return { ok: false };
+    if (this.#settled(roundIdBytes) !== 'ACCEPTED') return { ok: false, why: 'it got no seat; it comes back once the round\'s settlement is ACCEPTED here' };
+    const moves = this.round.lockSettlementMoves ? this.round.lockSettlementMoves(roundIdBytes) : null;
+    if (!moves) return { ok: false, why: 'this signer node keeps no record of what its settlement moved' };
+    if ((moves.claims || []).includes(String(lock.outpoint))) return { ok: false, why: 'its lock was claimed in the settlement' };
+    return { ok: true };
   }
 
   /**
