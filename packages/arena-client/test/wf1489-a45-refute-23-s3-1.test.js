@@ -11,6 +11,7 @@
 // bundle-fresh.test.js keep a protocol-only change to vestedShares from shipping without the page getting it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { vestedShares as protoVested, donationSetStands, VESTING_DAY_BLOCKS } from '../../arena-protocol/src/donation.js';
@@ -25,7 +26,8 @@ const loadPage = (file) => {
   return ctx.ARENACLIENT;
 };
 const shares = (out) => Array.from(out, (r) => r.shareBps);
-const key = (n) => Uint8Array.from([0x02, (n >> 8) & 0xff, n & 0xff, ...new Uint8Array(30).fill(7)]);
+// a real compressed point per n (the 1.9.17 merge: a recipient key must be a secp256k1 point, kanban #1489 v1-refute-3)
+const key = (n) => secp256k1.getPublicKey(Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? (n + 1) & 0xff : i === 30 ? ((n + 1) >> 8) & 0xff : 0)), true);
 
 const BIG = [];
 let n = 1;
