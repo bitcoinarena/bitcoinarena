@@ -19,7 +19,7 @@
 // min_score). A loser's, a run inside its window, a Delivered run below the
 // score: refused, by name.
 //
-// THE NONCES LIVE IN MEMORY, ONE PAIR PER MESSAGE, and a pair signs ONE
+// THE NONCES LIVE IN MEMORY, ONE PAIR PER ASK (kanban #1521), and a pair signs ONE
 // commitment list: the same nonce over two lists is two signatures over two
 // messages, which publishes the share. A second asker with the same list gets
 // the same share back; with another list, nothing. A PAIR THAT SIGNED A LIST IS
@@ -130,6 +130,9 @@ const keptUnder = (entryIdBytes, kind) => (kind === 'fee' ? feeReturnKey(entryId
 const verifies = (sig, msg, x) => { try { return schnorr.verify(sig, msg, x); } catch { return false; } };
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).sort().join('|');
 const refuse = (why, status = 409) => ({ ok: false, status, why });
+// A PAIR PER ASK (kanban #1521): a commitment names the pair it was drawn with; at most this many are kept per forfeit
+const commitmentKey = (c) => `${toHex(c.hiding)}:${toHex(c.binding)}`;
+const PAIRS_PER_FORFEIT = 256;
 
 /**
  * WHAT THIS SEAT COMMITTED A LOCK TO, ONE ENUM AND ONE TRANSITION FUNCTION (kanban #1184, the 2026-11-06 state-machine audit). A lock has two ways
@@ -199,7 +202,7 @@ export class Forfeit {
     // ENTRY_VOID's evidence, handed to the other signer nodes before a Void lock is
     // forfeited: a signer node that was down records the Void only when shown it.
     this.onVoid = onVoid;
-    this.pairs = new Map();          // contract id hex -> { hiding, binding, commitment, list, share }
+    this.pairs = new Map();          // contract id hex -> Map(commitment key -> { hiding, binding, commitment, list, share }), a pair per ask (kanban #1521)
     this.withheld = new Map();       // a forfeit's query -> the peers that gave this asker no share for it (kanban #1074)
   }
 
@@ -445,41 +448,48 @@ export class Forfeit {
     return { ok: false };
   }
 
-  /** ROUND ONE: this signer node's nonce commitment for the forfeit it would sign. */
+  /**
+   * ROUND ONE: this signer node's nonce commitment for the forfeit it would sign. A FRESH PAIR FOR EVERY ASK (kanban #1521): the doors answer
+   * anyone, and one pair handed to every asker let a stranger ask for it and at once spend it on a list of made-up commitments, so the honest
+   * asker's list was refused ("keeps no second pair") at every seat he reached first and the forfeit never formed. Now each ask draws its own pair,
+   * kept by its commitment, and a share request spends only the pair its own list carries: a stranger spends the pair he was given and no other.
+   * At most PAIRS_PER_FORFEIT are kept per forfeit, the oldest dropped first (a dropped pair signs nothing; its asker asks again).
+   */
   async commit(roundIdBytes, entryIdBytes, kind = 'stake') {
     const m = await this.message(roundIdBytes, entryIdBytes, kind);
     if (!m.ok) return m;
     const key = toHex(m.message);
-    let pair = this.pairs.get(key);
+    // A FRESH PAIR FOR EVERY ASK (kanban #1521), a FROST pair or (protocol 27) a MuSig2 one alike, kept by its commitment
+    let held = this.pairs.get(key);
+    if (!(held instanceof Map)) { held = new Map(); this.pairs.set(key, held); }
+    let pair;
     if (m.named) {
-      if (!pair || pair.list || !pair.named) {
-        const sk = signingSecret(this.round.identity.secret);
-        const n = nonceGen({ sk, pk: evenYKey(m.claimKeys[m.me]), rand: this.random(32) });
-        pair = { named: true, secnonce: n.secnonce, list: null, share: null,
-          commitment: { id: m.me + 1, hiding: n.pubnonce.slice(0, 33), binding: n.pubnonce.slice(33) } };
-        this.pairs.set(key, pair);
-      }
-      return { ok: true, commitment: pair.commitment };
-    }
-    if (!pair || pair.list || pair.named) {
+      const sk = signingSecret(this.round.identity.secret);
+      const n = nonceGen({ sk, pk: evenYKey(m.claimKeys[m.me]), rand: this.random(32) });
+      pair = { named: true, secnonce: n.secnonce, list: null, share: null,
+        commitment: { id: m.me + 1, hiding: n.pubnonce.slice(0, 33), binding: n.pubnonce.slice(33) } };
+    } else {
       const hiding = nonceGenerate340(this.random(32), m.signerNode.share);
       const binding = nonceGenerate340(this.random(32), m.signerNode.share);
       pair = { hiding, binding, list: null, share: null,
         commitment: { id: m.signerNode.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) } };
-      this.pairs.set(key, pair);
     }
+    held.set(commitmentKey(pair.commitment), pair);
+    while (held.size > PAIRS_PER_FORFEIT) held.delete(held.keys().next().value);
     return { ok: true, commitment: pair.commitment };
   }
 
-  /** ROUND TWO: this signer node's signature share, over the forfeit it rebuilt, for ONE commitment list. */
+  /** ROUND TWO: this signer node's signature share, over the forfeit it rebuilt, for ONE commitment list - by the pair that list carries (kanban #1521). */
   async share(roundIdBytes, entryIdBytes, commitments, kind = 'stake') {
     const m = await this.message(roundIdBytes, entryIdBytes, kind);
     if (!m.ok) return m;
-    const pair = this.pairs.get(toHex(m.message));
-    if (!pair) return refuse('this signer node committed to no forfeit of that lock');
-    const own = commitments.find((c) => String(c.id) === String(pair.commitment.id));
-    if (!own || toHex(own.hiding) !== toHex(pair.commitment.hiding) || toHex(own.binding) !== toHex(pair.commitment.binding))
-      return refuse('that list does not carry this signer node\'s own commitment');
+    const held = this.pairs.get(toHex(m.message));
+    if (!(held instanceof Map) || !held.size) return refuse('this signer node committed to no forfeit of that lock');
+    // THE PAIR THE LIST CARRIES (kanban #1521): of those this seat handed out, the one whose commitment is this seat's on the list
+    const myId = m.named ? m.me + 1 : m.signerNode.id;
+    const own = commitments.find((c) => String(c.id) === String(myId));
+    const pair = own ? held.get(commitmentKey(own)) : null;
+    if (!pair || !!pair.named !== !!m.named) return refuse('that list does not carry this signer node\'s own commitment');
     { const r = this.#returning(roundIdBytes, m, 'a forfeit share given'); if (!r.ok) return refuse(r.why); }
     if (m.named) return this.#shareNamed(m, pair, commitments);
     if (commitments.length < m.needed) return refuse(`${commitments.length} commitments, and this round's key signs at ${m.needed}`);
