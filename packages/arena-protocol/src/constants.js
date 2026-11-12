@@ -25,7 +25,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28]);
 /**
  * THE VERSION THAT RUNS THE CENSUS KEY'S DAEMON (5A.3B, RULED 2026-11-02, kanban #1048 answer 2). A node that does not speak it cannot deal or sign, so a share given to it counts against
  * the threshold and nobody can use it: a node whose advertisement does not list this version is out of the key's census, in T and the shares alike. It is above BOND_SUM_VERSION, so
@@ -139,6 +139,15 @@ export const HEARTBEAT_THRESHOLD = 5;
  * On 2.0 the same 27 also makes a round's locks Arena locks (arena-lock.js NAMED_CLAIM_VERSION): a 27 round of a game does both.
  */
 export const GIFTS_IN_FEE_LOCK_VERSION = 27;
+/**
+ * 2026.0.28 - THE CERTIFIED LOCK SET (kanban #2561, spec ruling #2116 (b), 2026-11-12; multiplayer_p2p.md §17A). A paying head-to-head round of
+ * this version plays only the entries its committee certified at the entry close: a threshold of the round's seats (5 of 7, 2 of 2) sign
+ * LockSet { round_id, entries[] } (lock-set.js), the entries whose stake lock each signer verified before the close. No seat takes or serves a
+ * reveal before it holds that certificate; no certificate by the close + LOCK_SET_WINDOW_MS and the round is VOID, every stake back. It
+ * replaces the per-seat timing rules of #1598 for these rounds; every round below 28, and every free round, keeps them byte for byte.
+ * 22-26 are the 2.0 branches' and 27 the gifts', so this is 28.
+ */
+export const LOCK_SET_VERSION = 28;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -587,6 +596,10 @@ export const TYPE_CENSUS_COMPLAINT = 0x3d;
  * TYPE_AUDIT).
  */
 export const TYPE_SIGNED_INPUT_BATCH = 0x4e;
+/** THE CERTIFIED LOCK SET OF A HEAD-TO-HEAD ROUND (protocol 28, kanban #2561, lock-set.js): the set, and the set with its seats' signatures.
+ * 0x50 and 0x51 are used on neither line (1.9 ends at 0x36, 2.0 at 0x4e). */
+export const TYPE_LOCK_SET = 0x50;
+export const TYPE_LOCK_SET_CERTIFICATE = 0x51;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 export const TYPE_SPENT_SET = 0x26;
@@ -814,6 +827,11 @@ export const TAG = {
   // a round seat's ask that the others answer whether they signed a batch past its signing window, or decline it (kanban #1167)
   marketBatchVoidAsk: 'ARENA/v1/MarketBatchVoidAsk',
   // a player's identity key naming its head-to-head entry, and a seat's signed running score of two identities
+  // THE CERTIFIED LOCK SET (protocol 28, kanban #2561): the set's id, a seat's signature over (set id, its time), and a seat's signed view
+  // (what it verified) - each its own tag, so a view is never a certificate's signature
+  lockSet: 'ARENA/v1/LockSet',
+  lockSetSignature: 'ARENA/v1/LockSetSignature',
+  lockSetView: 'ARENA/v1/LockSetView',
   matchProof: 'ARENA/v1/MatchProof',
   matchRecord: 'ARENA/v1/MatchRecord',
   presence: 'ARENA/v1/Presence',

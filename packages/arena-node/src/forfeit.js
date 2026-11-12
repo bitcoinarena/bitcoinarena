@@ -180,7 +180,7 @@ export class Forfeit {
    * federation (it hashes a contract the way the guardians do); `peersFor(rid)`
    * names the other settlement signer nodes' bases.
    */
-  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null, refusedNow = null, bookStanding = null, isBook = null,
+  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null, refusedNow = null, bookStanding = null, isBook = null, lockSetOut = null,
     peerAskMs = PEER_ASK_MS, peerGraceMs = PEER_GRACE_MS } = {}) {
     this.round = round;
     // HOW LONG A SEAT IS WAITED FOR (peer-ask.js, kanban #1074 as #1061)
@@ -192,6 +192,9 @@ export class Forfeit {
     this.isBook = isBook;
     // §23.2 REFUSED: rid -> why this node refuses the round, or null while it offers it
     this.refusedNow = refusedNow;
+    // THE CERTIFIED LOCK SET (protocol 28, kanban #2561, §17A): rid, eid -> why this entry's lock is not in its round (a lock outside the
+    // certificate, or every lock of a round VOID for want of one), or null - such a lock goes back by forfeit at once
+    this.lockSetOut = lockSetOut;
     // THE OTHER SIGNER NODES' PROOF OF TWO FIRST MARKS, pulled and checked here before a
     // Void lock is refunded (M3.3-34): `pullProof(rid, eid)` keeps a pair that
     // verifies in this signer node's own store.
@@ -251,6 +254,10 @@ export class Forfeit {
       }
     }
     if (!lock) return refuse('this signer node verified no stake lock for that entry, so it forfeits nothing');
+    // OUTSIDE THE CERTIFIED LOCK SET (kanban #2561, ruling on #2116: "a lock that arrives after the certificate is not in the round and goes back
+    // by forfeit at once"), or the round VOID with no certificate by close + the window: returned at once, as a refused round's lock (§23.2),
+    // on this signer node's own certificate (or its want of one) - never claimed, so no result and no settlement to wait for
+    if (!refused && this.lockSetOut) { let out = null; try { out = await this.lockSetOut(roundIdBytes, entryIdBytes); } catch { out = null; } if (out) refused = out; }
     // A PLAIN PICK IN A ROUND THAT BECAME AN ORDER BOOK (§0A.7b RULED 2026-11-10, kanban #1411/#1417): not an entry of that round - its lock is
     // returned at once, as a refused round's stake is (§23.2), with no result and no window to wait for
     if (!refused && kind === 'stake') { const b = this.bookStanding ? this.bookStanding(roundIdBytes, entryIdBytes) : null; if (b && !b.book && b.wrongType) refused = b.wrongType; }
@@ -356,7 +363,9 @@ export class Forfeit {
   async #feeBackWithStake(roundIdBytes, entryIdBytes, contract) {
     if (!giftsInFeeLock(contract)) return { ok: false };
     if (this.round.plugins) { const f = pluginForRound(contract, this.round.plugins); if (f.ok && f.attested) return { ok: false }; }
-    if (!(this.round.entryVoid && this.round.entryVoid(entryIdBytes))) return { ok: false, why: 'that entry is not ENTRY_VOID at this signer node' };
+    let out = null;   // or its stake outside the certified lock set (kanban #2561): back at once, its fee lock with it
+    if (this.lockSetOut) { try { out = await this.lockSetOut(roundIdBytes, entryIdBytes); } catch { out = null; } }
+    if (!out && !(this.round.entryVoid && this.round.entryVoid(entryIdBytes))) return { ok: false, why: 'that entry is not ENTRY_VOID at this signer node (nor outside a certified lock set)' };
     const stake = await this.message(roundIdBytes, entryIdBytes, 'stake');
     return stake.ok ? { ok: true } : { ok: false, why: `its stake is not returned either: ${stake.why}` };
   }
