@@ -318,6 +318,13 @@ function returnedHere(round, outpoint) {
   return null;
 }
 
+// THE CONTRACT ID'S FAILURE IS MARKED AS ONE OF THE HANDED FIELDS (kanban #2335, a45 refute of #2255): the stock client hashes the fields the
+// player - or a peer seat relaying them - handed over, and exits non-zero on a key that is no public key. The status read asks the federation
+// about the entry's own outpoint, which the hander does not choose. A caller that must tell its own trouble from the hander's reads `ofFields`.
+const contractIdOfFields = (port, fields) => Promise.resolve().then(() => port.contractId(fields)).catch((e) => {
+  throw Object.assign(new Error(e && e.message ? e.message : String(e)), { ofFields: true });
+});
+
 // `timing` (kanban #605): an object the caller reads afterwards - ms spent asking the federation, checking gifts and reading the fee gate
 export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined, timing = {}, namedGate = null }) {
   const stored = round.entry(entryIdBytes);
@@ -359,7 +366,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   } else {
   // THE FEDERATION'S WORD AND THE CONTRACT'S ID ASKED TOGETHER (2026-10-02: "stake/fee verification of 5 of 7
   // confirmations must also be much faster"): two stock-client runs, one after the other before.
-  [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
+  [st, id] = await Promise.all([port.status(outpoint), contractIdOfFields(port, fields)]);
   timing.statusMs = Date.now() - t;
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s stake_lock_outpoint' };
   if (String(id) !== String(st.stored.contractId))
@@ -443,7 +450,7 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
     id = arena.contractId; st = { blockCount: arena.height };
     keepLockSessionFloor({ round, port, roundId: entry.roundId, federationId: fed.federationId, outpoint });
   } else {
-  [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
+  [st, id] = await Promise.all([port.status(outpoint), contractIdOfFields(port, fields)]);
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s fee_lock_outpoint' };
 
   if (String(id) !== String(st.stored.contractId))
