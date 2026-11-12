@@ -28,6 +28,7 @@ import { blockRandom, blockRandomReady } from '../../arena-protocol/src/block-ra
 import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS, SERVED_HELD_MAX } from '../../arena-protocol/src/served-nodes.js';
 import { decodePurchase } from '../../arena-protocol/src/purchase.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
+import { textUpTo, jsonUpTo, listedGames, PEER_LISTING_BYTES, PEER_PACKAGE_BYTES } from './peer-read.js';   // kanban #1540, #1723
 import { keepItemPurchase, itemsOwned, purchasesSince } from './item-purchase-seat.js';
 import { keepDonationGift, giftsOf, giftsSince } from './donation-gift-seat.js';
 import { decodeDonationGift, GIFT_TO_GAME, GIFT_TO_PLAYER, GIFT_TO_BOTH, playerGiftRecipients } from '../../arena-protocol/src/donation-gift.js';
@@ -1185,30 +1186,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // hosted here, it is not, and the same developer signed a newer version - a stranger naming a hosted game as parent is not one
   const updateOfHosted = (g) => (g && !hosted.has(g.id) && hosted.has(g.parent)
     && checkUpdate(installedInfo(g.parent), { devKey: String(g.devKey), parent: g.parent, version: g.version }).ok ? g.parent : null);
-  // ANOTHER SEAT'S ANSWER, READ UP TO A BOUND (kanban #1540): a seat in the census or the peers list could answer GET /games,
-  // /plugin or /network with hundreds of MB, and `await r.json()` held all of it and its parsed objects at once (measured: one
-  // 120 MB /games listing grew the reading seat's heap 218 MB and held its event loop 3.6 s). The body is read chunk by chunk
-  // and refused, the connection dropped, as soon as it passes `maxBytes`.
-  // a package is bounded at the tighter of the two audit bounds: 16 MB (kanban #1553), not 32 MB (kanban #1540)
-  const PEER_LISTING_BYTES = LISTING_ANSWER_MAX_BYTES, PEER_LISTING_GAMES = 64, PEER_PACKAGE_BYTES = PACKAGE_ANSWER_MAX_BYTES;
-  const textUpTo = async (r, maxBytes) => {
-    const said = Number(r.headers.get('content-length'));
-    if (said > maxBytes) { try { await r.body?.cancel(); } catch { /* dropped */ } throw new Error(`its answer is ${said} bytes, more than ${maxBytes}`); }
-    if (!r.body) return '';
-    const reader = r.body.getReader();
-    const chunks = []; let n = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      n += value.length;
-      if (n > maxBytes) { reader.cancel().catch(() => {}); throw new Error(`its answer passed ${maxBytes} bytes`); }
-      chunks.push(value);
-    }
-    return Buffer.concat(chunks.map((x) => Buffer.from(x.buffer, x.byteOffset, x.byteLength))).toString('utf8');
-  };
-  const jsonUpTo = async (r, maxBytes) => JSON.parse(await textUpTo(r, maxBytes));
-  // a seat's games, at most PEER_LISTING_GAMES of them: the rest of a longer list is not read (kanban #1540)
-  const listedGames = (got) => (got && Array.isArray(got.games) ? got.games.slice(0, PEER_LISTING_GAMES) : []);
+  // ANOTHER SEAT'S ANSWER, READ UP TO A BOUND (kanban #1540): textUpTo / jsonUpTo / listedGames live in peer-read.js since #1723,
+  // shared with the duty poster's own read of the census seats' GET /games
   async function takeGame({ game, from, replaces = null }) {
     if (!pluginsDir) return { ok: false, status: 409, why: 'this seat keeps no installed games (no plugins directory)' };
     from = String(from || '').replace(/\/+$/, '');
@@ -1383,6 +1362,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const NETWORK_APPS_MS = Number(process.env.ARENA_NETWORK_APPS_MS || 300000);
   const networkApps = { atMs: 0, seats: [], games: [], reading: null };
   const baseOf = (u) => String(u).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
+  // AT MOST NETWORK_SEATS_MAX SEATS, AND THE ADDRESS BOOK ONLY FOR NODES OF A CENSUS READ (kanban #1874, refute of #1540, #1489): before a
+  // census is read POST /address-announcement takes any self-signed key (up to ADDRESS_BOOK_MAX), so a stranger could fill the book with
+  // keys pointing at its own server and one public GET /network-games?fresh=1 read every one of them at 4 MB each (measured: 64 entries,
+  // the reading seat grew 120 MB). Peers, the owner's sources and the census come first; a book entry is a seat only when a census names its key.
+  const NETWORK_SEATS_MAX = 64;
   const networkSeats = () => {
     const found = new Set((peers || []).map(baseOf));
     let rows = [];
@@ -1397,9 +1381,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // seat at all - the chain's newest census and the address announcements it holds name them
     if (!found.size) {
       try { for (const e of peerEndpointsOf(fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : [], round.pubkey)) found.add(baseOf(e)); } catch { /* none read yet */ }
-      try { const me = toHex(round.pubkey); for (const a of (addressBook && addressBook.list ? addressBook.list() : [])) if (a && a.endpoint && a.node !== me) found.add(baseOf(a.endpoint)); } catch { /* none held */ }
+      try {
+        const me = toHex(round.pubkey);
+        const named = new Set(addressCensus || []);
+        try { for (const e of (fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : [])) named.add(Buffer.from(e.pubkey).toString('hex')); } catch { /* none read yet */ }
+        for (const a of (addressBook && addressBook.list ? addressBook.list() : [])) if (a && a.endpoint && a.node !== me && named.has(String(a.node).toLowerCase())) found.add(baseOf(a.endpoint));
+      } catch { /* none held */ }
     }
-    return [...found].filter((u) => /^https?:\/\//.test(u));
+    return [...found].filter((u) => /^https?:\/\//.test(u)).slice(0, NETWORK_SEATS_MAX);
   };
   // EVERY SEAT THIS ONE CAN NAME: networkSeats() and every endpoint of the chain's newest census - the census observers and spent
   // sets are judged by (kanban #326, rehearsal 17, measured 2026-10-23 00:5xZ: a T-tree seat holds no round, so networkSeats() was
@@ -1409,13 +1398,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     try { for (const e of peerEndpointsOf(fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : [], round.pubkey)) to.add(baseOf(e)); } catch { /* the seats known */ }
     return [...to].filter((u) => /^https?:\/\//.test(u));
   };
+  // kanban #1874: the seats are read NETWORK_APPS_LANES at a time, not all at once - at most that many 4 MB listings held together (each about four copies while it is read and parsed) - and
+  // one pass reads at most NETWORK_APPS_BYTES in all (measured: 64 seats of 4 MB read 4 at a time still grew the seat 83 MB, 24 MB in all read 4 at a time 69 MB); a seat
+  // past the budget is listed as not answered. A seat's listing is a few KB a game, so the network's seats fit many times over.
+  const NETWORK_APPS_LANES = 2, NETWORK_APPS_BYTES = 12 * 1048576;
   const readNetworkApps = async () => {
     const seats = networkSeats();
     const byId = new Map();
     const asked = [];
-    await Promise.all(seats.map(async (from) => {
+    let nextSeat = 0, budget = NETWORK_APPS_BYTES;
+    const readOne = async (from) => {
       let got = null;
-      try { const r = await fetch(`${from}/games`, { signal: AbortSignal.timeout(8000) }); got = r.ok ? await jsonUpTo(r, PEER_LISTING_BYTES) : null; } catch { got = null; }
+      const take = Math.min(PEER_LISTING_BYTES, budget);
+      budget -= take;
+      let used = 0;
+      if (take > 0) {
+        try {
+          const r = await fetch(`${from}/games`, { signal: AbortSignal.timeout(8000) });
+          if (r.ok) { const text = await textUpTo(r, take); used = Buffer.byteLength(text); got = JSON.parse(text); } else await r.body?.cancel();
+        } catch (e) { got = null; used = /passed|more than/.test(String(e && e.message)) ? take : 0; }   // a read cut off at its bound spent all of it
+      }
+      budget += take - used;
       const listed = listedGames(got);
       asked.push({ seat: from, answered: !!got, games: listed.length });
       for (const g of listed) {
@@ -1431,7 +1434,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         row.seats.push(from);
         byId.set(id, row);
       }
-    }));
+    };
+    const lane = async () => { while (nextSeat < seats.length) await readOne(seats[nextSeat++]); };
+    await Promise.all(Array.from({ length: Math.min(NETWORK_APPS_LANES, seats.length) }, lane));
     // titled as hosted here (this version, else the version it updates), else by its manifest's signed gameName
     // ONLY A REAL UPDATE TAKES ITS PARENT'S TITLE (kanban #1902, after #1716/#1541): any developer can sign a manifest naming a game
     // this seat hosts as parent, so the parent's title (and updateOf) go to a row only when checkUpdate - the rule an update is
