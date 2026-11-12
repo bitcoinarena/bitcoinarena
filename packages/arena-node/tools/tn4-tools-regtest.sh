@@ -303,7 +303,7 @@ say "federation block count $(cut -d' ' -f2 $H/fedcount) at tip $(cut -d' ' -f1 
 # fewer than five attest it, so only that stop is tried again.
 for try in 1 2 3 4 5 6 7 8 9 10; do
   ( cd "$HERE/.." && ROUND=$ROUND PORTS=$NODE_PORTS INVITE_FILE=$H/invite-code WASM_PKG=$WASM LNCLI=$LNCLI PAYER_DIR=$H/alice \
-    PAYER_RPC=127.0.0.1:${LRPC[alice]} timeout 900 "$NODE" tools/testnet4-lock.mjs ) > $H/lock.out 2>&1; LOCK_RC=$?
+    MARK_BOT=off PAYER_RPC=127.0.0.1:${LRPC[alice]} timeout 900 "$NODE" tools/testnet4-lock.mjs ) > $H/lock.out 2>&1; LOCK_RC=$?
   cat $H/lock.out >> "$LOG"
   grep -q '"why":"Error: claim key:' $H/lock.out || break
   say "lock try $try: the claim key is not attested by five yet; again in 15 s"; sleep 15
