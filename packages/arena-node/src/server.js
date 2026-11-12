@@ -258,6 +258,7 @@ import { LB_SCOPE } from '../../arena-protocol/src/leaderboard-payout.js';
 import { leaderboardWindow, leaderboardWinners } from '../../arena-protocol/src/leaderboard-winners.js';
 import { FEES, FEES_TODAY, roundSplitBps, ROUND_TOTAL_MAX_BPS, MARKET_TOTAL_MAX_BPS, ITEM_TOTAL_PCT, encodeFeeApproval, feeApprovalId } from '../../arena-protocol/src/fee-proposal.js';
 import { createReservePayouts, lnurlClient, heldBeforeOwnPayment, reserveRowsOfNetwork } from './reserve-payout.js';
+import { lnurlPublicFetch } from './public-fetch.js';
 import { askerOrder } from './payout.js';
 import { paymentIdsOf } from './funding-book.js';
 import { moveTargets } from './reserve-move.js';
@@ -620,7 +621,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   lobbyNameGraceMs = 60000,
   censusExplorers = String(process.env.ARENA_CENSUS_EXPLORERS || '').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean),
   // HOW A WINNER'S LIGHTNING ADDRESS IS FETCHED (winnings-send.js), and the round network its invoices are for.
-  lnurlFetch = (u, o) => fetch(u, o),
+  // The PUBLIC internet only (kanban #1919, public-fetch.js): a player's LNURL or name@host naming 127.0.0.1, a LAN host or 169.254.169.254 is never
+  // fetched, redirects are checked hop by hop. A regtest seat (its own LNURL servers on 127.0.0.1) or ARENA_LNURL_LOCAL=1 asks with the plain fetch.
+  lnurlFetch = (chain === 'bitcoin-regtest' || process.env.ARENA_LNURL_LOCAL === '1') ? (u, o) => fetch(u, o) : lnurlPublicFetch,
   // HOW A NETWORK SEASON ASKS THE OTHER SEATS FOR THEIR ROUNDS (GET /season?scope=network): the process's fetch -
   // routed and capped per seat by fetch-routes.js - unless a test hands in its own seats.
   seasonFetch = (u, o) => fetch(u, o),
@@ -2017,7 +2020,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE PAYOUT OF A PASSED PROPOSAL (§27A.9.3reserve-payout.js): the 5-of-7 of the federation that holds the
   // reserves - its guardian seats, by the reserve key's DKG shares - pay the proposal's LNURL once; every seat records it
   const payoutNet = String(chain || '').replace(/^bitcoin-/, '') || 'testnet4';
-  const lnurlAsk = lnurlClient({ network: payoutNet });
+  const lnurlAsk = lnurlClient({ network: payoutNet, fetch: lnurlFetch });   // kanban #1919: the seat's guarded LNURL fetch
   const payoutPeer = (base) => ({
     // kanban #1159: every ask carries the asking guardian seat's node key and its signature
     commit: async (b) => { const r = await fetch(`${base}/reserve-payout/commit`, { method: 'POST', headers: { 'content-type': 'application/json' },
