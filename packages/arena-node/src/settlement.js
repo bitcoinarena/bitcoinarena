@@ -1095,6 +1095,61 @@ export class LockSettlement {
     return contested ? refuse('that round\'s lock set is contested - two certificates over different sets: it is VOID, no settlement is signed and every lock goes back (ruling #2587)', 409, null, { state: 'VOID', outcome: 'VOID' }) : null;
   }
 
+  /**
+   * THE ROUND'S SIGNED SETTLEMENT AS ITS BYTES' PARTS (kanban #2176, a44 refute of #1757): what the stock client built `txid` from - every
+   * claim (outpoint, P, msat), every payout, the nonce - so a seat that holds its close (its own result not signed, so it builds nothing)
+   * can rebuild that transaction's message itself and tie it to the round by the locks it spends. Only for a built settlement of `txid`;
+   * null otherwise. The server hands it out only once the round's row is ACCEPTED: the claims are spent then, every P in them public.
+   */
+  signedTx(roundIdBytes, txid) {
+    const m = this.built.get(toHex(roundIdBytes));
+    if (!m || !m.ok || !m.plan || !Array.isArray(m.claims) || String(m.txid) !== String(txid)) return null;
+    return {
+      claims: m.claims.map((c) => ({ outpoint: `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`, preimage: toHex(c.preimage), amountMsat: String(c.amountMsat) })),
+      payouts: m.plan.payouts.map((p) => ({ payoutPk: toHex(p.payoutPk), msat: String(p.msat),
+        ...(p.sent ? { sent: { paymentHash: String(p.sent.paymentHash), gatewayPk: String(p.sent.gatewayPk), expiration: String(p.sent.expiration) } } : {}) })),
+      nonce: toHex(m.plan.nonce),
+    };
+  }
+
+  /**
+   * IS A PEER'S SETTLEMENT TRANSACTION THIS ROUND'S (kanban #2176): it spends at least one stake or fee lock this seat verified for an entry
+   * of THIS round - an outpoint is spent once, and only this round's settlement claims this round's locks - and the stock client, asked
+   * here without a signature (it only rebuilds), answers exactly `messageHex` for its parts. The caller has checked the threshold's
+   * signature over that message under the round's claim key. Needs no result of this seat's own, no pair and no txid history.
+   */
+  async isRoundsTx(roundIdBytes, tx, messageHex) {
+    try {
+      if (!tx || typeof tx !== 'object' || !Array.isArray(tx.claims) || !Array.isArray(tx.payouts) || !tx.claims.length) return false;
+      if (tx.claims.length > 4096 || tx.payouts.length > 4096 || !/^[0-9a-f]{64}$/i.test(String(messageHex))) return false;
+      const row = this.round.get(roundIdBytes);
+      if (!row) return false;
+      const contract = decodeRoundContract(new Uint8Array(row.contract));
+      const held = this.dkg.signerNodeFor(contract.nodes);
+      if (!held.ok) return false;
+      const ours = new Set();
+      for (const { entryId } of this.round.entriesOf(roundIdBytes)) {
+        const s = this.round.stakeLock(entryId);
+        if (s) ours.add(String(s.outpoint).toLowerCase());
+        const f = this.round.feeLock ? this.round.feeLock(entryId) : null;
+        if (f) ours.add(String(f.outpoint).toLowerCase());
+      }
+      const hex = (s, n) => { const v = String(s); if (!/^[0-9a-f]*$/i.test(v) || (n && v.length !== n)) throw new Error('bad hex'); return fromHex(v); };
+      const claims = tx.claims.map((c) => {
+        const [t, i] = String(c.outpoint).split(':');
+        if (!/^[0-9]+$/.test(String(i))) throw new Error('bad outpoint');
+        return { outpoint: { txid: hex(t, 64), outIdx: BigInt(i) }, preimage: hex(c.preimage, 64), amountMsat: BigInt(String(c.amountMsat)) };
+      });
+      if (!claims.some((c) => ours.has(`${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`))) return false;
+      const payouts = tx.payouts.map((p) => ({ payoutPk: hex(p.payoutPk), msat: BigInt(String(p.msat)),
+        ...(p.sent ? { sent: { paymentHash: String(p.sent.paymentHash), gatewayPk: String(p.sent.gatewayPk), expiration: String(p.sent.expiration) } } : {}) }));
+      const port = await this.portFor(roundIdBytes);
+      if (!port || typeof port.settle !== 'function') return false;
+      const built = await port.settle({ claimPk: held.pool.groupPublicKey, claims, payouts, nonce: hex(tx.nonce, 16) });
+      return !!built && String(built.message).toLowerCase() === String(messageHex).toLowerCase();
+    } catch { return false; }
+  }
+
   /** WHAT THIS SIGNER NODE WILL SIGN, rebuilt from its own store and the stock client - or the refusal. */
   async message(roundIdBytes) {
     { const held = this.#contestedHold(roundIdBytes); if (held) return held; }
