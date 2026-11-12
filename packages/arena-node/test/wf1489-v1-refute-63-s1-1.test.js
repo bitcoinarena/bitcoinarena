@@ -40,7 +40,7 @@ test('#1479 variant: three lockless entries under three keys, the winner locked 
       const who = mk(10 + move), s = salt();
       att[move] = { who, s, p: await lockAndPlay(w, who, { hidden: { move, salt: s }, noMarks: true, only: [] }) };
     }
-    skipTo(Number(w.c.entryCloseMs) + 500);
+    skipTo(Number(w.c.entryCloseMs) + 1800);   // GET /reveals serves from the close + H2H_REVEAL_HOLD_MS, 1750 ms (kanban #1822)
     // the honest player reveals at once
     for (const d of w.nodes) await fetch(`http://127.0.0.1:${d.port}/reveal?entry=${toHex(honest.eid)}`, { method: 'POST', body: JSON.stringify({ move: ROCK, salt: toHex(hs) }) });
     // the attacker reads it
@@ -48,7 +48,7 @@ test('#1479 variant: three lockless entries under three keys, the winner locked 
     const theirs = (seen.reveals || []).find((r) => (r.entry || r.entryId) === toHex(honest.eid));
     const hm = theirs ? Number(theirs.move) : ROCK;
     const win = att[BEATS[hm]];
-    skipTo(Number(w.c.entryCloseMs) + 2000);
+    skipTo(Number(w.c.entryCloseMs) + 2500);
     const feeFields = { paymentImage: { kind: 'hash', bytes: sha256(win.p.entry.feePreimage) }, amountMsat: win.p.entry.feeMsat, claimPk: w.claimPk,
       refundPk: refundKeyOf(win.who.key), expiration: win.p.fields.expiration };
     const locks = [];
