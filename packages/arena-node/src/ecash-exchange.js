@@ -130,7 +130,8 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
     // answered again (above); refused, they stayed with the seat for good and the player was never paid
     if (!r || r.state === EXCHANGE.RECEIVING) {
       for (const fid of [from, to]) {
-        let h = null; try { h = halted(String(fid || '').toLowerCase()); } catch { h = null; }
+        // a halt check that cannot answer refuses (kanban #1577): read as "not halted", a liquidated federation's notes were paid twice
+        let h = null; try { h = halted(String(fid || '').toLowerCase()); } catch (e) { return refuse(503, `cannot tell whether federation ${String(fid).slice(0, 16)} is being liquidated: ${e && e.message ? e.message : e}`); }
         if (h) return refuse(409, `federation ${String(fid).slice(0, 16)} is being liquidated${Number.isInteger(h.height) ? ` (halted at ${h.height})` : ''}: its notes are claimed at the arbitration set, not exchanged here`);
       }
     }
