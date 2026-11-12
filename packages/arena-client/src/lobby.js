@@ -333,9 +333,31 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     // then the closed ones, soonest first
     .sort((a, b) => (((soonest.get(a) ?? Infinity) <= nowMs) - ((soonest.get(b) ?? Infinity) <= nowMs)) || ((soonest.get(a) ?? Infinity) - (soonest.get(b) ?? Infinity)));
   const prefer = Array.isArray(preferGames) && preferGames.length ? new Set(preferGames.map((g) => String(g).toLowerCase())) : null;
-  const wanted = prefer
-    ? [...open.filter((id) => prefer.has(gameOf.get(id))), ...open.filter((id) => !prefer.has(gameOf.get(id))).slice(0, LOBBY_OTHER_CONTRACTS_PER_READ)].slice(0, LOBBY_CONTRACTS_PER_READ)
-    : open.slice(0, LOBBY_CONTRACTS_PER_READ);
+  const tiers = prefer
+    ? [open.filter((id) => prefer.has(gameOf.get(id))), open.filter((id) => !prefer.has(gameOf.get(id))).slice(0, LOBBY_OTHER_CONTRACTS_PER_READ)]
+    : [open];
+  // EACH SEAT ITS TURN AT THE READ'S CONTRACT BUDGET (kanban #2556, audit #1489 r13): the order above is any seat's word (its close, its game), so
+  // one seat listing hundreds of made-up ids closing soonest took all LOBBY_CONTRACTS_PER_READ every read - each 404s, is held unreadable, the next
+  // made-up ones take their place - and the honest seats' new round was never fetched and got no row. Now the seats take turns, each its own
+  // listed ids in the order above (the opened game's first, as before): one seat's listing costs at most its share while others list rounds too,
+  // and a read whose ids all fit takes every one of them, as before
+  const wanted = [];
+  const picked = new Set();
+  for (const tier of tiers) {
+    const bySeat = new Map();
+    for (const id of tier) for (const c of said.get(id) || []) {
+      const k = String(c.node);
+      if (!bySeat.has(k)) bySeat.set(k, []);
+      const l = bySeat.get(k);
+      if (l[l.length - 1] !== id) l.push(id);
+    }
+    const queues = [...bySeat.values()].map((ids) => ({ ids, at: 0 }));
+    while (wanted.length < LOBBY_CONTRACTS_PER_READ && queues.some((q) => q.at < q.ids.length))
+      for (const q of queues) {
+        while (q.at < q.ids.length && picked.has(q.ids[q.at])) q.at++;
+        if (q.at < q.ids.length && wanted.length < LOBBY_CONTRACTS_PER_READ) { picked.add(q.ids[q.at]); wanted.push(q.ids[q.at]); q.at++; }
+      }
+  }
   for (let i = 0; i < wanted.length; i += 16)
     await Promise.all(wanted.slice(i, i + 16).map((id) => fetchRound(id, answeredFirst, { fetcher: ask })
       .then(({ contract }) => { CONTRACTS.set(id, contract); UNREADABLE.delete(id); }, (e) => { UNREADABLE.set(id, nowMs); refused.push(`${id.slice(0, 16)}: ${e.message}`); })));
