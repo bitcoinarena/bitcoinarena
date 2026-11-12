@@ -26,6 +26,7 @@ import { takesAnyFederation, FRONTEND_FEE_VERSION, ITEMS_VERSION } from '../../a
 import { OBJECTION_WINDOW_MS } from '../../arena-protocol/src/window.js';
 import { objectionWindowAllowed } from '../../arena-protocol/src/constants.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { isCompressedPoint } from '../../arena-protocol/src/point.js';
 import { advertInTransaction } from '../../arena-protocol/src/census.js';
 import { httpProvider, headerSources, HEADER_SOURCES_ASKED } from './headers.js';
 export { headerSources, HEADER_SOURCES_ASKED };
@@ -1181,8 +1182,9 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     ...(operatorId instanceof Uint8Array && operatorId.length === 32 && operatorId.some((b) => b !== 0) ? { operatorId } : {}),
     // THE WEBSITE THAT BROUGHT THIS ENTRY (2026.0.9): the page's own payout key, paid 20% of the nodes' fee on this
     // stake out of the nodes' 5% - never more for the player. Only on a round of version 9 or later (a seat refuses it below), and
-    // only a 33-byte compressed key
-    ...(frontendPk instanceof Uint8Array && frontendPk.length === 33 && (frontendPk[0] === 2 || frontendPk[0] === 3)
+    // only a 33-byte compressed key that is a curve point (kanban #1489, #1675: a ?ref= key that is no point is dropped, as the protocol
+    // refuses it at encode - an honest player's join must not fail for a stranger's link)
+    ...(isCompressedPoint(frontendPk)
       && Number(round.protocolVersion) >= FRONTEND_FEE_VERSION ? { frontendPk } : {}),
     // THE ITEMS IT PLAYS WITH (protocol 10): each with its owner's proof for this entry (item-buy.js entryItemsFor) -
     // only on a round of version 10 or later, and only when there are any, so every other entry keeps its bytes
