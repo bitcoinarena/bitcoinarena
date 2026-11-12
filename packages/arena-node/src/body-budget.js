@@ -74,3 +74,58 @@ export function bodyBudget({ total, perAddress = Math.floor(total / 2), reserve 
     held: () => ({ main, reserve: spare }),
   };
 }
+
+/**
+ * THE UNFINISHED WEBSOCKET MESSAGES SHARE A BUDGET TOO (kanban #2075, refute of #1469 / #1724 / #1794 / #1911 / #1953).
+ *
+ * The budget above covers HTTP bodies only. A websocket keeps every fragment of a message until its last one came, up to the
+ * server's maxPayload, with no time limit (the seat's own keepalive pings hold the socket open): measured 2026-11-12 on the
+ * MacBook, six /guardian-p2p connections each sending 56 MiB of one message and never its final fragment pinned 383 MiB in the
+ * seat. So every accepted websocket is watched on its raw socket: the bytes received since its last whole message (control
+ * frames taken off again) count against one shared budget with the same rules as the bodies - one address at most `perAddress`,
+ * a small unfinished message (at most `smallMost`) may use a separate `reserve` (one address at most half of it), and a message
+ * still unfinished `messageMs` after its first byte is not waited for. A connection past any of them is ended at once and its
+ * share freed. A connection that sends whole messages holds nothing between them.
+ *
+ * `watch(ws, socket, address)` right after handleUpgrade's callback got `ws`: setSocket has run, so the counter is put in front
+ * of ws's own data listener (the upgrade's `head` was unshifted onto the socket there and comes as a data event, counted too).
+ */
+export function messageBudget({ total, perAddress = Math.floor(total / 2), reserve = 4 * 1024 * 1024, smallMost = 256 * 1024, messageMs = 15000 } = {}) {
+  let main = 0; let spare = 0;
+  const mainBy = new Map(); const spareBy = new Map();
+  const add = (m, k, n) => { const v = (m.get(k) || 0) + n; if (v > 0) m.set(k, v); else m.delete(k); };
+  const plain = (a) => { const s = String(a || ''); return s.startsWith('::ffff:') ? s.slice(7) : s; };
+
+  const watch = (ws, socket, address) => {
+    const who = plain(address !== undefined ? address : socket && socket.remoteAddress);
+    let pending = 0; let inMain = 0; let inSpare = 0; let timer = null; let ended = false;
+    const release = () => {
+      main -= inMain; add(mainBy, who, -inMain); spare -= inSpare; add(spareBy, who, -inSpare); inMain = 0; inSpare = 0; pending = 0;
+      if (timer) { clearTimeout(timer); timer = null; }
+    };
+    const end = () => { if (ended) return; ended = true; release(); try { ws.terminate(); } catch { /* gone */ } try { socket.destroy(); } catch { /* gone */ } };
+    const take = (n) => {
+      if (ended || n <= 0) return;
+      if (pending === 0 && !timer) { timer = setTimeout(end, messageMs); if (timer.unref) timer.unref(); }
+      pending += n;
+      if (main + n <= total && (mainBy.get(who) || 0) + n <= perAddress) { main += n; inMain += n; add(mainBy, who, n); return; }
+      if (pending <= smallMost && spare + n <= reserve && (spareBy.get(who) || 0) + n <= Math.floor(reserve / 2)) { spare += n; inSpare += n; add(spareBy, who, n); return; }
+      end();
+    };
+    // a control frame (at most 125 bytes, masked from a client: 2 + 4 header bytes) is no part of a message
+    const giveBack = (data) => {
+      if (ended) return;
+      let n = 6 + (data ? data.length : 0);
+      const fromSpare = Math.min(n, inSpare); inSpare -= fromSpare; spare -= fromSpare; add(spareBy, who, -fromSpare); n -= fromSpare;
+      const fromMain = Math.min(n, inMain); inMain -= fromMain; main -= fromMain; add(mainBy, who, -fromMain);
+      pending = Math.max(0, pending - 6 - (data ? data.length : 0));
+      if (pending === 0) release();
+    };
+    socket.prependListener('data', (c) => take(c.length));
+    ws.on('message', () => { if (!ended) release(); });
+    ws.on('ping', giveBack); ws.on('pong', giveBack);
+    ws.on('close', () => { ended = true; release(); });
+    socket.on('close', () => { ended = true; release(); });
+  };
+  return { watch, held: () => ({ main, reserve: spare }) };
+}
