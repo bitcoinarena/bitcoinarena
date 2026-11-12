@@ -120,7 +120,8 @@ export function openFeedbackStore(path = ':memory:') {
   for (const [col, ddl] of [['source', 'TEXT'], ['node', 'TEXT'], ['screenshot', 'TEXT'], ['number', 'INTEGER']])
     if (!db.prepare('PRAGMA table_info(reports)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE reports ADD COLUMN ${col} ${ddl}`);
   // THE ADMIN'S WORDS WITH A REWARD AND WHERE IT WENT (kanban #1474): the comment sent with the payment, the Lightning address it was paid to
-  for (const col of ['comment', 'address'])
+  // THE WALLET THAT PAID (kanban #2177, #1489 a44-refute-76): the bounty payer's identity, written with the paying compare-and-set; null for older rows
+  for (const col of ['comment', 'address', 'payer'])
     if (!db.prepare('PRAGMA table_info(rewards)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE rewards ADD COLUMN ${col} TEXT`);
   // EVERY REPORT ITS NUMBER (kanban #1413, Daniel 2026-11-10: "Gib jedem feedback eine unique number also Feedback #001 etc wie eine Ticket Number die überall
   // angezeigt wird"): 1, 2, 3 ... in the order the reports came, never reused; the reports of a file from before are numbered once, oldest first
@@ -284,7 +285,7 @@ export function openFeedbackStore(path = ':memory:') {
 
   // ---- THE REWARD (kanban #1342 section 3): one LNURL-withdraw per approved report, for exactly its amount, single use, never expiring ----
   const rewardRow = (w) => (w ? { k1: w.k1, report: w.report, pubkey: w.pubkey, amountSats: w.amount_sats, network: w.network, createdMs: w.created_ms, state: w.state,
-    paymentHash: w.payment_hash || null, paidMs: w.paid_ms ?? null, why: w.why || null, comment: w.comment || null, address: w.address || null } : null);
+    paymentHash: w.payment_hash || null, paidMs: w.paid_ms ?? null, why: w.why || null, comment: w.comment || null, address: w.address || null, payer: w.payer || null } : null);
   const rewardOf = db.prepare('SELECT * FROM rewards WHERE k1 = ?');
 
   /** THE LINK FOR AN ACCEPTED REPORT: made once (asked again, the same k1). `network` the payout network ('testnet4' in phase 1). */
@@ -335,7 +336,9 @@ export function openFeedbackStore(path = ':memory:') {
   // named an address that got nothing. Now the address goes into the same UPDATE that takes the row to paying, for that invoice only: a claim through the
   // withdraw link (the LNURL callback) writes NULL, and a payment that surely failed clears it as it opens the link again.
   const claim = (k1, invoice, opts = {}) => claimFor(k1, invoice, opts, null);
-  async function claimFor(k1, invoice, { decode, pay, network = null, nowMs = Date.now() } = {}, address = null) {
+  // THE PAYER IS WRITTEN WITH THE PAYMENT (kanban #2177, #1489 a44-refute-76): `payer` names the wallet that pays (the faucet: network, node key, lnddir,
+  // rpcserver); settle() then asks only that wallet about it - another wallet on the same network never saw the payment and answers "not initiated"
+  async function claimFor(k1, invoice, { decode, pay, network = null, payer = null, nowMs = Date.now() } = {}, address = null) {
     const w = rewardOf.get(String(k1));
     if (!w) return { status: 'ERROR', reason: 'no such reward' };
     if (!onNetwork(w, network)) return { status: 'ERROR', reason: otherNetwork(w) };   // kanban #1784
@@ -346,7 +349,7 @@ export function openFeedbackStore(path = ':memory:') {
     if (d && d.paused) return { status: 'ERROR', reason: PAYOUTS_PAUSED };   // kanban #2412: the wallet's state, not the invoice's
     if (!d || !d.ok) return { status: 'ERROR', reason: 'that invoice could not be read' };
     if (Number(d.amountSats) !== w.amount_sats) return { status: 'ERROR', reason: `the invoice must be for exactly ${w.amount_sats} sat` };
-    const took = db.prepare("UPDATE rewards SET state = 'paying', invoice = ?, payment_hash = ?, tried_ms = ?, address = ? WHERE k1 = ? AND state = 'open'").run(String(invoice), d.paymentHash || null, nowMs, address, w.k1);
+    const took = db.prepare("UPDATE rewards SET state = 'paying', invoice = ?, payment_hash = ?, tried_ms = ?, address = ?, payer = ? WHERE k1 = ? AND state = 'open'").run(String(invoice), d.paymentHash || null, nowMs, address, payer == null ? null : String(payer), w.k1);
     if (took.changes !== 1) return { status: 'ERROR', reason: 'this reward is being paid' };
     let p;
     try { p = await pay(String(invoice), d.amountSats); } catch (e) { p = { ok: false, why: e.message }; }   // the amount bounds the routing fee (kanban #1450)
@@ -377,7 +380,10 @@ export function openFeedbackStore(path = ':memory:') {
   // claim()'s payinvoice still ran (75 s) - with a hold invoice the holder claimed again and was paid twice. Read only after `freshMs`.
   // ONLY THE PAYER THAT MADE A PAYMENT IS ASKED ABOUT IT (kanban #1784): `status` is the payer of `network`; a paying row of another network was paid by
   // another wallet, which this one never saw ("not listed" read as failed reopened it and the holder was paid twice, once per network) - it stays paying.
-  async function settle({ status, network = null, nowMs = Date.now(), freshMs = 180000 } = {}) {
+  // ONLY THE WALLET THAT MADE IT, NOT ONLY ITS NETWORK (kanban #2177, #1489 a44-refute-76): the bounty wallet replaced on the same network (a new lnd,
+  // FAUCET_BOUNTY_PAYER pointed at another dir) answered "not initiated" for the old wallet's payment still in flight - read as failed, the link opened and the
+  // holder was paid by both wallets. `payer` is this faucet's payer now: a row another payer is paying stays paying for the admin (null: not checked).
+  async function settle({ status, network = null, payer = null, nowMs = Date.now(), freshMs = 180000 } = {}) {
     const out = [];
     // A DECISION HOLDS ONLY FOR THE PAYMENT IT READ (kanban #1571): status() may wait 20 s a row and two passes may overlap, so a row read at the
     // start of a pass can be opened, claimed again and paying under a NEW hash by the time it is decided. Each row is read again before its
@@ -386,6 +392,7 @@ export function openFeedbackStore(path = ':memory:') {
       const w = rewardOf.get(k1);
       if (!w || w.state !== 'paying') continue;
       if (!onNetwork(w, network)) { out.push({ k1: w.k1, status: 'unknown', otherNetwork: w.network }); continue; }   // kanban #1784
+      if (payer != null && w.payer != null && String(w.payer) !== String(payer)) { out.push({ k1: w.k1, status: 'unknown', otherPayer: w.payer }); continue; }   // kanban #2177
       if (Number(w.tried_ms || 0) > nowMs - freshMs) { out.push({ k1: w.k1, status: 'unknown', fresh: true }); continue; }
       let st = 'unknown';
       try { st = w.payment_hash ? await status(w.payment_hash) : 'unknown'; } catch { st = 'unknown'; }
@@ -413,7 +420,7 @@ export function openFeedbackStore(path = ':memory:') {
    * takes), and that invoice goes through claim() - the same compare-and-set, the same payer, the same "an unknown outcome stays paying". `invoiceFor(address,
    * sats, comment)` -> { ok, invoice } | { ok: false, why }. Answers { ok, status } or { ok: false, why }.
    */
-  async function payToAddress(k1, { invoiceFor, decode, pay, network = null, nowMs = Date.now() } = {}) {
+  async function payToAddress(k1, { invoiceFor, decode, pay, network = null, payer = null, nowMs = Date.now() } = {}) {
     const w = rewardOf.get(String(k1));
     if (!w) return { ok: false, why: 'no such reward' };
     if (!onNetwork(w, network)) return { ok: false, why: otherNetwork(w) };   // kanban #1784
@@ -422,7 +429,7 @@ export function openFeedbackStore(path = ':memory:') {
     if (!address) return { ok: false, why: 'the report names no Lightning address: send its withdraw link instead' };
     let inv; try { inv = await invoiceFor(address, w.amount_sats, w.comment || ''); } catch (e) { inv = { ok: false, why: e.message }; }
     if (!inv || !inv.ok) return { ok: false, why: `the address gave no invoice: ${(inv && inv.why) || 'no answer'}` };
-    const r = await claimFor(w.k1, inv.invoice, { decode, pay, network, nowMs }, address);   // the address is written with its invoice's paying CAS (kanban #1575)
+    const r = await claimFor(w.k1, inv.invoice, { decode, pay, network, payer, nowMs }, address);   // the address is written with its invoice's paying CAS (kanban #1575)
     return r.status === 'OK' ? { ok: true, status: 'paid', address, reward: rewardRow(rewardOf.get(w.k1)) } : { ok: false, why: r.reason, address, reward: rewardRow(rewardOf.get(w.k1)) };
   }
   const rewards = ({ pubkey = null } = {}) => (pubkey ? db.prepare('SELECT * FROM rewards WHERE pubkey = ? ORDER BY created_ms DESC').all(String(pubkey))
