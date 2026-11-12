@@ -8,25 +8,42 @@ import { headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
 
 const h2hHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
-// EVERY SEAT ASK HAS A DEADLINE (kanban #1644): revealsOfRound and revealMove waited on each seat with no signal and read its body
-// with no limit, all in one Promise.all - one seat that never answered, or never ended its body, held the call forever, and the
-// RPS client's refresh() (behind its `refreshing` flag) never ran again on that tab. Each ask now carries an abort signal and the
-// whole ask (headers and body) races a timer; a seat past it counts as down, as one that refused. The body is capped in size.
-export const H2H_SEAT_ASK_MS = 4000;
-const H2H_BODY_MAX = 1 << 20;   // 1 MiB: far above any round's reveals
-function h2hAsk(work, ms) {
-  const ctl = typeof AbortController === 'function' ? new AbortController() : null;
-  let t;
-  const late = new Promise((_, rej) => { t = setTimeout(() => { try { ctl?.abort(); } catch { /* */ } rej(new Error('seat timed out')); }, ms); });
-  return Promise.race([work(ctl?.signal), late]).finally(() => clearTimeout(t));
+// EVERY SEAT ANSWER HERE IS READ UNDER A DEADLINE AND A SIZE CAP (kanban #2053, #1489 v1-refute-18-s3; the page copy of #1507 carryReveals,
+// #1685/#1870 peer-body.js): a bare fetch + r.json() under Promise.all waited for every seat, and a browser fetch has no timeout - one
+// seat answering 200 and trickling its body held revealsOfRound (and so index.html `reveals` and the RPS client's refresh) forever, and
+// one streaming a huge body was buffered whole into the tab. A seat past the deadline or the cap now counts as silent.
+export const H2H_SEAT_MS = 5000;
+export const H2H_REVEALS_CAP = 65536 + 64 * 1024;   // 64 KiB + 1 KiB per entry for 64 entries; a head-to-head round holds two
+const H2H_TEXT_CAP = 4096;                          // a POST /reveal refusal is one line
+
+// The body of `r` as text, at most `cap` bytes (more throws), read chunk by chunk; a response without a stream (a test fetcher) is read
+// whole by its own text()/json(), still under the caller's deadline.
+async function cappedText(r, cap) {
+  const reader = r && r.body && typeof r.body.getReader === 'function' ? r.body.getReader() : null;
+  if (!reader) {
+    if (typeof r.text === 'function') { const t = await r.text(); if (t.length > cap) throw new Error('answer too large'); return t; }
+    return JSON.stringify(await r.json());
+  }
+  const parts = []; let n = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      n += value.byteLength;
+      if (n > cap) throw new Error('answer too large');
+      parts.push(value);
+    }
+  } catch (e) { try { await reader.cancel(); } catch { /* gone */ } throw e; }
+  const all = new Uint8Array(n); let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return new TextDecoder().decode(all);
 }
-async function h2hJson(r) {
-  if (typeof r.text !== 'function') return r.json();
-  const len = Number(r.headers?.get?.('content-length'));
-  if (len > H2H_BODY_MAX) throw new Error('reveals body too large');
-  const txt = await r.text();
-  if (txt.length > H2H_BODY_MAX) throw new Error('reveals body too large');
-  return JSON.parse(txt);
+
+// `work(signal)` under `ms`: aborts the fetch it started and rejects at the deadline even if the fetcher ignores the signal.
+function withDeadline(ms, work) {
+  const ctl = new AbortController(); let timer;
+  const late = new Promise((_, no) => { timer = setTimeout(() => { ctl.abort(new Error('seat too slow')); no(new Error('seat too slow')); }, ms); });
+  return Promise.race([work(ctl.signal), late]).finally(() => clearTimeout(timer));
 }
 
 /** A move and a fresh 32-byte salt to hide it with; `random(n)` is the page's CSPRNG. */
@@ -42,14 +59,17 @@ export function moveCommitment({ roundId, sessionPubkey, move, salt }) {
 
 /** The reveal to every seat: POST /reveal?entry= { move, salt }. Answers each seat's status. */
 // `identity`: { key, sig } (identity.js identityProofFor) - the tab's identity on this entry, for a score across rounds
-export async function revealMove({ entryIdHex, move, salt, nodes, identity = null, fetcher = fetch, timeoutMs = H2H_SEAT_ASK_MS }) {
+export async function revealMove({ entryIdHex, move, salt, nodes, identity = null, fetcher = fetch, timeoutMs = H2H_SEAT_MS }) {
   const body = JSON.stringify({ move, salt: salt instanceof Uint8Array ? h2hHex(salt) : String(salt), ...(identity ? { identity } : {}) });
   return Promise.all(nodes.map(async (node) => {
     try {
-      return await h2hAsk(async (signal) => {
+      return await withDeadline(timeoutMs, async (signal) => {
         const r = await fetcher(`${String(node).replace(/\/+$/, '')}/reveal?entry=${entryIdHex}`, { method: 'POST', body, signal });
-        return { node, status: r.status, why: r.status === 200 || r.status === 201 ? null : String(await r.text()).trim().slice(0, 500) };
-      }, timeoutMs);
+        if (r.status === 200 || r.status === 201) { try { r.body && r.body.cancel && await r.body.cancel(); } catch { /* gone */ } return { node, status: r.status, why: null }; }
+        let why = '';
+        try { why = (await cappedText(r, H2H_TEXT_CAP)).trim(); } catch (e) { why = e.message; }
+        return { node, status: r.status, why };
+      });
     } catch (e) { return { node, status: 0, why: e.message }; }
   }));
 }
@@ -59,15 +79,15 @@ export async function revealMove({ entryIdHex, move, salt, nodes, identity = nul
 // an opponent's move changed flipped the provisional verdict the page shows before any seat signs. Each seat now gives one
 // vote per entry; an entry's move is the one at least two seats (or every seat, on a one-seat list) name, and more seats than
 // name any other move. A tie, or a move only one seat of several names, leaves the entry undecided here.
-export async function revealsOfRound({ roundIdHex, nodes, fetcher = fetch, timeoutMs = H2H_SEAT_ASK_MS }) {
+export async function revealsOfRound({ roundIdHex, nodes, fetcher = fetch, timeoutMs = H2H_SEAT_MS }) {
   const votes = new Map();   // entry -> Map(move -> seats naming it)
   await Promise.all(nodes.map(async (node) => {
     try {
-      const j = await h2hAsk(async (signal) => {
+      const j = await withDeadline(timeoutMs, async (signal) => {
         const r = await fetcher(`${String(node).replace(/\/+$/, '')}/reveals?round=${roundIdHex}`, { signal });
-        return r.ok ? h2hJson(r) : null;
-      }, timeoutMs);
-      if (j == null) return;
+        if (!r.ok) { try { r.body && r.body.cancel && await r.body.cancel(); } catch { /* gone */ } return null; }
+        return JSON.parse(await cappedText(r, H2H_REVEALS_CAP));
+      });
       const mine = new Map();   // this seat's one move per entry: the first it lists
       for (const x of (j && Array.isArray(j.reveals) ? j.reveals : [])) {
         if (Number.isInteger(x.move) && typeof x.entry === 'string' && !mine.has(x.entry)) mine.set(x.entry, x.move);
@@ -86,3 +106,6 @@ export async function revealsOfRound({ roundIdHex, nodes, fetcher = fetch, timeo
   }
   return out;
 }
+
+// kanban #1644 named the deadline H2H_SEAT_ASK_MS; #2053 is the same ask with a size cap read chunk by chunk
+export const H2H_SEAT_ASK_MS = H2H_SEAT_MS;
