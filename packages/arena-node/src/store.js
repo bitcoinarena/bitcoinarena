@@ -18,6 +18,11 @@ import { DatabaseSync } from 'node:sqlite';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 export const OPEN = 0, CLOSED = 1;
+// WHAT ONE ROW OF `relayed` COSTS BEYOND ITS BYTES (kanban #2055, #2073, refute 3 of #1532): its hash, entry_id, round_id, seen_ms,
+// named/accused and its index entries - measured about 265 bytes for a 65-byte reveal record, so 320 bounds it with room. Every
+// relay cap counts relayRowCost(bytes) per row, so RELAY_MOST bounds what the table takes on disk, not only its payload.
+export const RELAY_ROW_COST = 320;
+export const relayRowCost = (length) => Number(length) + RELAY_ROW_COST;
 
 /**
  * A STORE MADE WHILE A SIGNING MACHINE WAS CALLED A SEAT keeps its rows under the new names
@@ -1331,6 +1336,35 @@ export function openStore(path = ':memory:') {
   }
   db.exec('CREATE INDEX IF NOT EXISTS relayed_entry ON relayed (entry_id)');
   db.exec('CREATE INDEX IF NOT EXISTS relayed_round ON relayed (round_id)');
+  // WHAT A RELAYED ROW COSTS, AND THE POOL'S TOTALS KEPT AS IT GOES (kanban #2055, #2073, refute 3 of #1532). The relay caps counted
+  // LENGTH(bytes) only, but a row also stores its 32-byte hash, entry_id, round_id, seen_ms and the index entries (primary key,
+  // relayed_entry, relayed_round): a 65-byte reveal record took about 330 bytes on disk, so RELAY_MOST counted was about 5x that on
+  // disk. Every cap now counts LENGTH(bytes) + RELAY_ROW_COST per row (relayRowCost). And the whole-pool sums the doors asked on every
+  // PUT were SUM scans over every row on the seat's one thread: they are kept in relayed_tally by triggers on `relayed` (every writer,
+  // the prune's deletes included) and recounted once here at open. Per entry, round and accused node the sums stay queries over an
+  // index, each bounded by its own cap; relayed_accused (slash rows only) serves the per-accused-node cap over all rounds.
+  db.exec('CREATE INDEX IF NOT EXISTS relayed_accused ON relayed (accused) WHERE accused IS NOT NULL');
+  db.exec('CREATE TABLE IF NOT EXISTS relayed_tally (k TEXT PRIMARY KEY, n INTEGER NOT NULL)');
+  const rowCost = (t) => `(LENGTH(${t}.bytes) + ${RELAY_ROW_COST})`;
+  const tallyOf = (t) => ({
+    all: rowCost(t),
+    transcript: `CASE WHEN ${t}.accused IS NULL THEN ${rowCost(t)} ELSE 0 END`,
+    unnamed: `CASE WHEN ${t}.entry_id IS NOT NULL AND ${t}.named = 0 THEN ${rowCost(t)} ELSE 0 END`,
+    slash: `CASE WHEN ${t}.accused IS NOT NULL THEN ${rowCost(t)} ELSE 0 END`,
+  });
+  const tallyKeys = Object.keys(tallyOf('x'));
+  for (const k of tallyKeys) db.exec(`INSERT OR REPLACE INTO relayed_tally (k, n) SELECT '${k}', COALESCE(SUM(${tallyOf('relayed')[k]}), 0) FROM relayed`);
+  const tallyBy = (sign, t) => tallyKeys.map((k) => `UPDATE relayed_tally SET n = n ${sign} (${tallyOf(t)[k]}) WHERE k = '${k}';`).join('\n      ');
+  db.exec(`CREATE TRIGGER IF NOT EXISTS relayed_tally_in AFTER INSERT ON relayed BEGIN
+      ${tallyBy('+', 'NEW')}
+    END;
+    CREATE TRIGGER IF NOT EXISTS relayed_tally_out AFTER DELETE ON relayed BEGIN
+      ${tallyBy('-', 'OLD')}
+    END;
+    CREATE TRIGGER IF NOT EXISTS relayed_tally_change AFTER UPDATE ON relayed BEGIN
+      ${tallyBy('-', 'OLD')}
+      ${tallyBy('+', 'NEW')}
+    END;`);
   // A STORE MADE BEFORE A NONCE ROW CARRIED ITS SIGNING ATTEMPT gets the column:
   // every row it already holds was attempt 0.
   // EVERY LOCK FOR ONE HANDOUT, EACH UNDER ITS OWN ID (kanban #1669, #1735): a refused round's lock row names the handout it
