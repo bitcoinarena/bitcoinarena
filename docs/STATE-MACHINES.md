@@ -1621,3 +1621,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-M (change) Stake-share release in a market order book (kanban #1593)
 - `mayRelease` reads the book standing (`bookStanding`) before any other rule of an attested round, a scalar market's too: an order still in an undecided batch is refused, an unfilled order is refused (its lock comes back whole), a filled order is released (`FILLED_ORDER`). The scalar pari-mutuel table decides only a pool. The share door releases exactly the locks the book settlement (`#bookPlan`, `bookSettlement`) claims.
+
+#### SM-H2H (change) Head-to-head seating per seat (round.js `seatedEntriesOf`, kanban #1588)
+- Invariant: every seat of one paying head-to-head round seats the same players once it holds the same locks and took the entries in the same order (a client posts its entry to every seat before it hands a lock). The seated set is the game's `players` lock-backed entries (stake seen or stake lock held) in the order their entries were first taken at this seat (rowid) - not the order their locks arrived. A player who entered first is never unseated by a later entry's lock.
+- /lock no longer refuses a valid stake lock because the round already seats its players ("this lock seats no one" is gone): a seat that saw B's lock first and one that saw C's first both keep both, and the close (`membersKnown` -> `takeEntryParts`) fetches any lock still missing, so no seat waits for a lock its own door refuses.
+- A locked entry outside the seats is played against nobody and signed VOID; its stake and fee locks are never claimed and expire back to the player (EXPIRE).
+- The /entry door still refuses a new entry once `players` lock-backed entries stand (#1437); an entry relayed as accepted is taken as before.

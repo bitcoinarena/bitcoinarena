@@ -713,7 +713,7 @@ export class Round {
         if (!hidden) throw new Error(`an entry into a round of head-to-head game "${m.gameName}" hides its move: it carries no commitment`);
         if (!accepted && typeof asks.entryCloseMs === 'bigint' && BigInt(this.now()) >= asks.entryCloseMs)
           throw new Error(`that round's entries closed at ${new Date(Number(asks.entryCloseMs)).toISOString()}: a head-to-head round takes no entry after it - the moves are being revealed`);
-        // ONLY ENTRIES BACKED BY A LOCK TAKE A SEAT OF A PAYING ROUND (kanban #1437, audit 8 R3); a third lock is refused at /lock (stake-lock-signer-node.js)
+        // ONLY ENTRIES BACKED BY A LOCK TAKE A SEAT OF A PAYING ROUND (kanban #1437, audit 8 R3); which ones, the same at every seat: seatedEntriesOf (kanban #1588)
         const me = entryId(contract);   // seats counted by entry id (kanban #1479)
         const seated = this.seatedEntriesOf(contract.roundId, asks.stakeMsat).filter((x) => !same(x.entryId, me)).length;
         if (seated >= m.players && !accepted) throw new Error(`that round already seats game "${m.gameName}"'s ${m.players} players`);
@@ -1985,11 +1985,36 @@ export class Round {
    * `played` (kanban #1544): the entries the close plays and decides - its stake SEEN only, the set the settlement counts (settlement.js
    * entriesOnRecord). A stake lock still waiting for its fee lock holds its seat at the door but is played against nobody and signed VOID:
    * played, it lost into no settlement - its stake came back by refund and the honest winner was paid nothing (a free option).
+   * THE SAME SEATS AT EVERY SEAT (kanban #1588, state audit 2026-11-12 sm1-h2h-1): the seats were the first LOCKS to reach this seat, and locks
+   * reach the seats in network order - seat 0 seated {A, B}, seat 1 {A, C}, each refused the other's lock as full, and at the close each waited
+   * for a lock its own door refused: no seat signed anything, the winner A included. Now /lock keeps every valid lock (no "full" refusal; the
+   * close fetches what is missing, server.js takeEntryParts), and a paying head-to-head round seats the game's `players` lock-backed entries in
+   * the order their ENTRIES were first taken here (rowid): a client posts its entry to every seat before it hands any lock, so the seats hold the
+   * entries in one order while their locks still cross - and a player who entered first is never unseated by a later entry's lock. A locked
+   * entry outside the seats is played against nobody and signed VOID: its lock is never claimed and expires back to its player.
    */
   seatedEntriesOf(roundIdBytes, stakeMsat, { played = false } = {}) {
     const all = this.entriesOf(roundIdBytes);
     if (stakeMsat === 0n) return all;
-    return all.filter(({ entryId }) => !!this.stakeSeen(entryId) || (!played && !!this.stakeLock(entryId)));
+    const locked = all.filter(({ entryId }) => !!this.stakeSeen(entryId) || !!this.stakeLock(entryId));
+    // `played` (kanban #1544) keeps of the seats only the entries whose stake is SEEN - the seats themselves are the same as the door's (#1588)
+    const playedOnly = (list) => played ? list.filter(({ entryId }) => !!this.stakeSeen(entryId)) : list;
+    const players = this.#headToHeadPlayers(roundIdBytes);
+    if (!players) return playedOnly(locked);
+    const order = new Map(this.db.prepare('SELECT entry_id FROM entries WHERE round_id = ? ORDER BY rowid').all(roundIdBytes)
+      .map((r, i) => [Buffer.from(r.entry_id).toString('hex'), i]));
+    const at = ({ entryId }) => order.get(Buffer.from(entryId).toString('hex'));
+    const seated = new Set([...locked].sort((x, y) => at(x) - at(y)).slice(0, players).map(({ entryId }) => Buffer.from(entryId).toString('hex')));
+    return playedOnly(locked.filter(({ entryId }) => seated.has(Buffer.from(entryId).toString('hex'))));   // answered in entry id order, as before
+  }
+
+  /** The game's players when the round is a hosted head-to-head game's, else null (kanban #1588). */
+  #headToHeadPlayers(roundIdBytes) {
+    const row = this.get(roundIdBytes);
+    if (!row) return null;
+    let g;
+    try { g = pluginForRound(decodeRoundContract(new Uint8Array(row.contract)), this.plugins); } catch { return null; }
+    return g.ok && g.headToHead ? g.plugin.manifest.players : null;
   }
 
   /**
