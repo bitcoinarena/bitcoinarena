@@ -4428,7 +4428,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         entry = decodeEntryContract(new Uint8Array(await r.arrayBuffer()));
       } catch { continue; }
       if (toHex(idOfEntry(entry)) !== entryHex || toHex(entry.roundId) !== toHex(rid)) continue;   // the bytes hash to the id, of this round
-      const signers = await verifier.signersNaming(rid, eid, entry.playerPubkey);
+      // kanban #2063: only results about THIS entry (its reveal record, verify.js) - a VOID still counts here: taking the entry gives it no seat,
+      // and a late lock it lacks comes only through takeEntryParts below, which counts seated results alone
+      const signers = await verifier.signersNaming(rid, eid, entry.playerPubkey, { entry });
       if (signers.size < needed) return { ok: false, why: `${signers.size} of ${needed} seats signed a result naming it` };
       const ref = entry.vssSharesRef;
       if (ref && !ref.every((b) => b === 0) && !round.handout(ref)) {
@@ -4471,7 +4473,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (lateKinds.length && answers.length) {
         const needed = roundThreshold(decodeRoundContract(new Uint8Array(round.get(rid).contract)).settlementSlots);
         let accepted = false;
-        try { accepted = (await verifier.signersNaming(rid, eid, entry.playerPubkey)).size >= needed; } catch { accepted = false; }
+        // ACCEPTED MEANS A THRESHOLD PLAYED IT AS SEATED (kanban #2063, refute of #1916): an honest seat's VOID for this lockless entry and one
+        // colluding seat's DELIVERED were two "signers naming it", and this seat took the colluder's late locks. Only non-VOID results whose
+        // transcript hash is this entry's reveal record count (verify.js signersNaming { seated, entry }); this seat's own VOID never does.
+        try { accepted = (await verifier.signersNaming(rid, eid, entry.playerPubkey, { seated: true, entry })).size >= needed; } catch { accepted = false; }
         if (!accepted) {
           const kept = {};
           for (const k of lateKinds) {
