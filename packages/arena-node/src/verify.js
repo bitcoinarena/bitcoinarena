@@ -764,6 +764,12 @@ export class Verifier {
    */
   async signersNaming(roundIdBytes, entryIdBytes, playerPubkey) {
     const committee = new Set(this.round.signerNodes(roundIdBytes).map(hex)), signers = new Set();
+    // EACH SIGNER COUNTED ONLY FOR A RESULT TIED TO THIS ENTRY (kanban #1489, #1918, #1961 - the #1802 rule of #gather, one helper):
+    // a PlayerResult names its player, never its entry, so the committee's real results for the same player's other entry,
+    // served under /results?entry=<this one>, made an entry no seat signed look signed by the threshold and taken past the door.
+    const row = this.round.get(roundIdBytes);
+    if (!row) return signers;
+    const tie = this.#entryTie(roundIdBytes, entryIdBytes, decodeRoundContract(new Uint8Array(row.contract)));
     await Promise.all(this.peersOf(roundIdBytes).map(async (peer) => {
       let body;
       try {
@@ -778,7 +784,8 @@ export class Verifier {
           const { signature, body: signedBody } = splitSignedResult(record);
           const result = decodePlayerResult(signedBody);
           if (hex(result.roundId) !== hex(roundIdBytes) || hex(result.playerPubkey) !== hex(playerPubkey) || !committee.has(hex(result.nodePubkey))) continue;
-          if (schnorr.verify(signature, resultId(result), result.nodePubkey)) signers.add(hex(result.nodePubkey));
+          if (!schnorr.verify(signature, resultId(result), result.nodePubkey)) continue;
+          if (await tie.ties(hex(result.transcriptHash))) signers.add(hex(result.nodePubkey));
         } catch { /* a record that does not read proves nothing */ }
       }
     }));
@@ -1351,16 +1358,17 @@ export class Verifier {
     // contract's nodes where this node holds no signer list
     const signers = this.round.signerNodes(roundIdBytes);
     const committee = signers.length ? signers : contract.nodes || [];
-    // A PLAYER WITH MORE THAN ONE ENTRY IN THE ROUND (kanban #1489, #1802; a reload's second entry, #1479): a PlayerResult
+    // EVERY PEER RESULT TIED TO THIS ENTRY (kanban #1489, #1802, #1918, #1961; a reload's second entry, #1479): a PlayerResult
     // names its round and its player, never its entry, so a committee member's real signed result for the player's
     // other entry passes every check above. A peer filing it under this entry would have it stored here, outvote this
     // node's own result in every plurality read of the store (the Nostr result signed and published once, /results,
-    // a slash proof against the honest signers) and push the committee's true rows out as duplicates. For such a
-    // player a peer result is kept only when the transcript it names is this entry's: one this node holds or builds for
-    // it, or bytes a peer serves that hash to that name and name this entry inside them (#transcriptTiedTo).
-    const ambiguous = this.round.entriesOf(roundIdBytes)
-      .some((e) => hex(e.entryId) !== hex(entryIdBytes) && hex(e.entry.playerPubkey) === hex(playerPubkey));
-    const tied = ambiguous ? this.#transcriptsOfEntry(roundIdBytes, entryIdBytes, contract) : null;
+    // a slash proof against the honest signers) and push the committee's true rows out as duplicates. A peer result is
+    // kept only when the transcript it names is this entry's: one this node holds or builds for it, or bytes a peer
+    // serves that hash to that name and name this entry inside them (#entryTie). NOT GATED ON THIS SEAT'S VIEW OF THE
+    // PLAYER'S ENTRIES (#1918): a seat short of E1 (its post lost, its door refused it - entry-relay.js measured 18 of
+    // 114 two-entry rounds) sees a one-entry player and would keep E1's results under E2 unchecked. For a player with
+    // one entry this only adds a /canonical ask for a dissent's transcript.
+    const tie = this.#entryTie(roundIdBytes, entryIdBytes, contract);
     const pending = new Map();      // transcript hash (hex) -> the records naming it, until it is tied to this entry or not
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
@@ -1384,14 +1392,12 @@ export class Verifier {
         // record by record, each its type's size
         for (const record of cutSignedResults(body)) {
           fetched++;
-          if (tied) {
-            const named = namedTranscript(record);
-            if (!named) { refused++; continue; }
-            if (!tied.has(named)) {
-              if (!pending.has(named)) pending.set(named, []);
-              pending.get(named).push(record);
-              continue;
-            }
+          const named = namedTranscript(record);
+          if (!named) { refused++; continue; }
+          if (!tie.known.has(named)) {
+            if (!pending.has(named)) pending.set(named, []);
+            pending.get(named).push(record);
+            continue;
           }
           if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey, committee)) kept++;
         }
@@ -1400,7 +1406,7 @@ export class Verifier {
     // THE TRANSCRIPTS NOT TIED HERE YET, each asked of the peers once (#1802): a dissent about this entry still counts
     // (and can be slashed) when its transcript is this entry's; one about the player's other entry is refused.
     for (const [named, records] of pending) {
-      if (await this.#transcriptTiedTo(roundIdBytes, entryIdBytes, named, contract)) {
+      if (await tie.ties(named)) {
         for (const record of records) if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey, committee)) kept++;
       } else refused += records.length;
     }
@@ -1934,6 +1940,22 @@ export class Verifier {
     return out;
   }
 
+  /**
+   * ONE TIE OF PEER RESULTS TO AN ENTRY, shared by #gather and signersNaming (kanban #1802, #1918, #1961): `known` the hashes this
+   * node itself ties to it (#transcriptsOfEntry), `ties(named)` true for one of them or when a peer serves bytes for the entry
+   * that hash to `named` and name the entry inside them - each distinct hash asked of the peers once.
+   */
+  #entryTie(roundIdBytes, entryIdBytes, contract) {
+    const known = this.#transcriptsOfEntry(roundIdBytes, entryIdBytes, contract), asked = new Map();
+    const ties = (named) => {
+      if (!named) return Promise.resolve(false);
+      if (known.has(named)) return Promise.resolve(true);
+      if (!asked.has(named)) asked.set(named, this.#transcriptTiedTo(roundIdBytes, entryIdBytes, named, contract).catch(() => false));
+      return asked.get(named);
+    };
+    return { known, ties };
+  }
+
   /** Does a peer serve, for this entry, bytes that hash to `named` AND name this entry inside them (kanban #1802)? */
   async #transcriptTiedTo(roundIdBytes, entryIdBytes, named, contract) {
     const h2h = !!this.#headToHead(contract);
@@ -1947,6 +1969,25 @@ export class Verifier {
         const t = decodeTranscript(bytes);
         if (hex(t.roundId) === hex(roundIdBytes) && hex(t.entryId) === hex(entryIdBytes)) return true;
       } catch { /* the next peer may have it */ }
+    }
+    // A HEAD-TO-HEAD ENTRY'S REVEAL RECORD (kanban #1918, #1961): /canonical serves no reveal record, and a seat short of the entry (its door
+    // refused it, entry-relay.js) holds no reveal for it, so the committee's results for it named a record nothing above could tie. A peer's
+    // GET /reveals carries its move and salt: the record built from them starts with this entry's id, so one that hashes to `named` is this
+    // entry's. No commitment is needed for that - bytes prefixed with this id cannot hash to another entry's record.
+    if (h2h) {
+      for (const peer of this.peersOf(roundIdBytes)) {
+        try {
+          const answer = await peerFetch(`${peer}/reveals?round=${hex(roundIdBytes)}`);
+          if (!answer.ok) continue;
+          const body = JSON.parse((await capped(answer, 65536 + (this.round.entriesOf(roundIdBytes).length + 64) * 1024)).toString('utf8'));
+          for (const r of (body && Array.isArray(body.reveals) ? body.reveals : [])) {
+            if (String(r.entry).toLowerCase() !== hex(entryIdBytes) || !Number.isInteger(r.move) || r.move < 0 || r.move > 254) continue;
+            if (!/^[0-9a-f]{64}$/i.test(String(r.salt))) continue;
+            const rv = { move: r.move, salt: new Uint8Array(Buffer.from(r.salt, 'hex')) };
+            if (hex(transcriptBytesHash(this.#revealRecord(entryIdBytes, rv))) === named) return true;
+          }
+        } catch { /* the next peer may have it */ }
+      }
     }
     return false;
   }
