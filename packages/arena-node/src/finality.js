@@ -355,6 +355,11 @@ function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now(),
     if (d.outcome) {
       const why = `${d.why} - the re-run window closed at ${utc(win.rerunCloseMs)} with ${rerun.agreed || 0} of `
         + `${rerun.needed || seen.needed} re-runs on one outcome (§13A, §13C)`;
+      // WRITTEN ONCE, like every other §13C door (kanban #2326): unwritten, the seat read the entry as undecided for good
+      // (decidedHere, resumingCloses) and a proof pulled after the deadline turned its VOID into a FORFEIT. Written only
+      // when asked at this seat's own clock: a look ahead (a caller's `now` past it) decides nothing.
+      if (typeof round.putNoQuorum === 'function' && nowMs <= BigInt(round.now()))
+        round.putNoQuorum({ entryId: entryIdBytes, roundId: roundIdBytes, outcome: d.outcome, why });
       return { ...common, state: d.outcome, noQuorum: true, rerun: said, rerunWindowClosedAtMs: Number(win.rerunCloseMs), why };
     }
     return { ...suspended, why: `the re-run window closed: ${d.why}` };
