@@ -1542,3 +1542,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 
 #### SM-T5 (change) Welcome on the page
 - The welcome ask is sent once more when the first gets no answer (#1426). The faucet answers the same e-cash note to the same caller within 15 min (SM-19); an invoice ask whose first request is still being paid is answered "already has its welcome".
+
+## 15. State audit 2026-11-12
+
+#### SM-C15 (add) Chain census cache (main.js chainCensusKept, census_kept): a reorg during the read
+- A census_kept row's key and body come from one chain (kanban #1841): after the derivation the census height's hash is read again and the view's own block there must be the key's block; a census read across a reorg is never kept and answers `ok: false` "read again", so a census kept on a branch the chain left is never served again (#786).
