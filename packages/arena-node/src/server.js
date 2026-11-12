@@ -65,7 +65,7 @@ import { stakeWithinCeiling, isTestNetwork } from '../../arena-protocol/src/cens
 import { pruneTranscripts, pruneRelayed, pruneUnusedRounds, PRUNE_EVERY_MS } from './transcript-prune.js';
 import { maxPlayersPerRound } from '../../arena-protocol/src/replay-budget.js';
 import { bondWeightedMedian } from '../../arena-protocol/src/census-median.js';
-import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
+import { publicationFee, publisherPayoutMsat } from '../../arena-protocol/src/publisher-payout.js';
 import { seriesRoundIdOf, stakePointIsTheHandouts, entryId as idOfEntry } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
@@ -2984,19 +2984,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // made may still carry an operator; it decodes and is ignored.
   const conflictsFor = () => ({ conflicted: new Map(), self: null, serving: { voids: false } });
   // THE SERIES PUBLISHER'S FEE BACK (§5A.5): a series round naming its creator whose series' publication fee
-  // this seat holds proven (POST /series-publication) pays min(fee, 10,000 sat) to the creator's key - in round 0, or the first
-  // round of the series with entries (publisher-payout.js publisherRoundIndex); every other round pays nothing of it
+  // this seat holds proven (POST /series-publication) pays min(fee, 10,000 sat) to the creator's key - in round 0 only.
+  // ONE PAYING ROUND EVERY SEAT NAMES ALIKE (kanban #2514): "the first round of the series with entries" was read from the entries
+  // THIS seat holds of rounds 0..k-1 - and a seat holds only the rounds whose committee it sat on, so a seat of round k that missed
+  // the earlier round that paid named the publisher again while one that sat on it did not: two settlements for one round (no
+  // threshold), or the publisher paid out of the nodes' fee once more in every round whose seats missed the earlier ones. The round
+  // index is in the contract every seat of the round holds, so round 0 is the one paying round they all agree on; a round 0 without
+  // entries has no fee lock to pay it from, and the fee back is then not paid (publisher-payout.js publisherRoundIndex is unchanged)
   const publisherFor = (rid, contract) => {
     if (!(contract.seriesId instanceof Uint8Array) || !(contract.creatorPubkey instanceof Uint8Array)) return null;
+    if (Number(contract.roundIndex) !== 0) return null;
     const kept = round.seriesPublication(contract.seriesId);
     if (!kept) return null;
-    const counts = new Map();
-    for (let j = 0; j <= contract.roundIndex; j++) {
-      const n = j === contract.roundIndex ? Math.max(1, round.entriesOf(rid).length) : round.entriesOf(seriesRoundIdOf(contract.seriesId, j)).length;
-      counts.set(j, n);
-      if (n > 0) break;                                     // the first with entries is found: later ones never pay it
-    }
-    if (publisherRoundIndex(counts) !== contract.roundIndex) return null;
     return { payoutPk: refundKeyOf(contract.creatorPubkey), msat: publisherPayoutMsat(kept.feeSats) };
   };
   const settlements = new LockSettlement(round, {
