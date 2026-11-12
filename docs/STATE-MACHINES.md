@@ -1550,3 +1550,8 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 - "Can pay": the seat's balance in `to` less what it owes there already (`pay_msat` of every SENDING row, the taken amount up to `want_msat` of every TAKEN row) is at least the row's `want_msat`.
 - A check that fails on a row that never asked (`receive_asked` 0) answers 409/429 and leaves the row in RECEIVING, nothing taken. On a row whose earlier ask may have reached the federation (`receive_asked` 1, or NULL from before #1204) it answers 503 and holds the row in RECEIVING (`why` names the reason); the same notes asked again later go on once the seat can pay.
 - The hour counts a payout by `pay_ms`, the time TAKEN -> SENDING named it (a row from before: `made_ms`), so a late retry counts in the hour it pays.
+
+#### SM3 Federation record halt start (federation-records.js `halted`, liquidations.js haltOf/list; kanban #1763)
+- Invariant: the halt a liquidation counts from is the lowest-height signed HALTED record of the current run of HALTED records, the same at every seat, before and after a restart.
+- `halted` lives in memory; restore() keeps the newest stored record and, when it is HALTED, reads the run back from `federation_record_history` (store.loadAt): from the newest down while a record is HALTED and its own guardians' signatures meet its threshold. The lowest of that run, with its bytes, is the halt; a record that is not HALTED ends the run.
+- So a restart during a halt never moves haltHeight, liquidatesAt or the claim window forward.
