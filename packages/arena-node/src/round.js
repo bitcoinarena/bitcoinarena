@@ -15,7 +15,7 @@ import { createInterner } from './intern.js';
 import {
   encodeRoundContract, roundId, encodeEntryContract, entryId, decodeEntryContract,
   decodeRoundContract, roundWindowsAreValid, lastTickOfRun, sittingSeatsFitTheSlots } from '../../arena-protocol/src/contracts.js';
-import { decodeInputBatch, batchTicks, batchId } from '../../arena-protocol/src/batch.js';
+import { decodeInputBatch, batchTicks, batchId, splitSignedBatch } from '../../arena-protocol/src/batch.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { checkBatchPrices } from '../../arena-protocol/src/price-sample.js';
 import { LATE_JOIN_LAST_ENTRY_MS, entryItemDigest } from '../../arena-protocol/src/contracts.js';
@@ -843,6 +843,61 @@ export class Round {
       .get(Buffer.from(id));
     if (!row) return null;
     return { roundId: new Uint8Array(row.round_id), bytes: new Uint8Array(row.bytes) };
+  }
+
+  /**
+   * A PLAYER'S BATCH, SIGNED (kanban #1503, feedback #012 by Hexbox Tools): the only door a batch from outside comes in
+   * by. The signature is over the batch's id under the SESSION key of the entry it names - read off the Entry Contract
+   * this node stores, never off the frame - and it is checked before anything else, so a batch for somebody else's entry
+   * never reaches the chain rule (measured before: an anonymous socket stored 120 ticks and a load as the victim, the
+   * victim's own next batch no longer followed the chain head and its mark was refused - FORFEIT). Then `batch` as ever,
+   * on the bare batch's bytes: what is stored, chained and served is unchanged.
+   */
+  signedBatch(bytes) {
+    const { body, batch: b, id, signature } = splitSignedBatch(bytes);
+    if (!this.get(b.roundId)) throw new Error('no such round');
+    const contract = this.entry(b.entryId);
+    if (!contract) throw new Error('no such entry');
+    const sessionPubkey = decodeEntryContract(contract).sessionPubkey;
+    let ok = false;
+    try { ok = ed25519.verify(signature, id, sessionPubkey); } catch { ok = false; }
+    if (!ok) throw new Error('the batch\'s signature does not verify under the entry\'s session key');
+    return this.batch(body);
+  }
+
+  /**
+   * THE BATCHES A SIGNED MARK ENDORSES (kanban #1503): a first mark handed on by another seat (/first-mark) carries the
+   * batches it commits to, bare - a seat stores no player signatures over them. They are taken only when the mark's
+   * own signature verifies under its entry's session key and the batches are exactly that entry's chain from genesis
+   * to the mark's inputChainHash: then the player signed them, through the mark. Anything else stores nothing.
+   * Answers { ok, why } and stores the batches through `batch` when ok.
+   */
+  batchesEndorsedBy(markBytes, batchBytes) {
+    let c; let signature;
+    try { const s = splitSigned(markBytes); signature = s.signature; c = decodeCheckpoint(s.body); }
+    catch (e) { return { ok: false, why: `that is not a signed mark: ${e.message}` }; }
+    const contract = this.entry(c.entryId);
+    if (!contract) return { ok: false, why: 'no such entry' };
+    const e = decodeEntryContract(contract);
+    if (!same(e.roundId, c.roundId)) return { ok: false, why: 'entry is not in this round' };
+    let ok = false;
+    try { ok = ed25519.verify(signature, checkpointId(c), e.sessionPubkey); } catch { ok = false; }
+    if (!ok) return { ok: false, why: 'the mark\'s signature does not verify under the entry\'s session key' };
+    if (!batchBytes.length) return { ok: true, taken: 0 };
+    let prev = GENESIS;
+    const bodies = [];
+    for (const raw of batchBytes) {
+      let b;
+      try { b = decodeInputBatch(raw); } catch (x) { return { ok: false, why: `a batch will not decode: ${x.message}` }; }
+      if (!same(b.entryId, c.entryId) || !same(b.roundId, c.roundId)) return { ok: false, why: 'a batch handed on with the mark is not the mark\'s entry\'s' };
+      if (!same(b.previousHash, prev)) return { ok: false, why: 'the batches handed on with the mark are not one chain from its start' };
+      prev = batchId(b);
+      bodies.push(raw);
+    }
+    if (!same(prev, c.inputChainHash)) return { ok: false, why: 'the batches handed on with the mark do not end at its input chain hash' };
+    let taken = 0;
+    for (const raw of bodies) { try { this.batch(raw); taken++; } catch { /* held already, or refused: the mark says which */ } }
+    return { ok: true, taken };
   }
 
   /**
@@ -2412,9 +2467,11 @@ export class Round {
       .map((r) => ({ id: new Uint8Array(r.handout_id), bytes: new Uint8Array(r.bytes) }));
   }
 
-  /** §23.2 REFUSED: a lock for a round this signer node refuses, never entered, kept under its handout's id. */
+  /** §23.2 REFUSED: a lock for a round this signer node refuses, never entered, kept under its handout's id.
+   *  THE FIRST KEPT LOCK STANDS (kanban #1489): the handout's A0, the player's refund key and the round's claim key are public,
+   *  so anyone can lock 1 sat with them; INSERT OR REPLACE let that lock take the player's row, and the forfeit returned it. */
   putRefusedLock({ handoutId, roundId, outpoint, fields, contractId }) {
-    this.db.prepare('INSERT OR REPLACE INTO refused_locks (handout_id, round_id, outpoint, fields, contract_id, kept_ms) VALUES (?, ?, ?, ?, ?, ?)')
+    this.db.prepare('INSERT OR IGNORE INTO refused_locks (handout_id, round_id, outpoint, fields, contract_id, kept_ms) VALUES (?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(handoutId), Buffer.from(roundId), `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`,
         JSON.stringify(fields), contractId, this.now());
   }
@@ -3743,6 +3800,22 @@ export class Round {
     const r = this.db.prepare('SELECT entry_id FROM fee_locks WHERE outpoint = ?')
       .get(`${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`);
     return r ? { entryId: new Uint8Array(r.entry_id) } : null;
+  }
+
+  /**
+   * THE ENTRY THAT FIRST NAMED THIS LOCK OUTPOINT HERE (kanban #1489): the id of the earliest entry of the round (by the time this seat took it)
+   * whose `kind` ('stake' | 'fee') lock outpoint is `outpoint`, or null. A lock is handed only for the entry that named it first.
+   */
+  firstEntryNamingLock(roundIdBytes, kind, outpoint) {
+    const field = kind === 'fee' ? 'feeLockOutpoint' : 'stakeLockOutpoint';
+    const rows = this.db.prepare(
+      'SELECT entry_id, contract FROM entries WHERE round_id = ? AND entry_id NOT IN (SELECT entry_id FROM market_cancels) ORDER BY joined_ms, rowid')
+      .all(roundIdBytes);
+    for (const r of rows) {
+      const o = decodeEntryContract(new Uint8Array(r.contract))[field];
+      if (o && same(o.txid, outpoint.txid) && o.outIdx === outpoint.outIdx) return new Uint8Array(r.entry_id);
+    }
+    return null;
   }
 
   /** The entry a verified lock at this outpoint already stakes, or null: one lock is one entry. */

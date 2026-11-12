@@ -293,6 +293,17 @@ function otherStakedUnderKey(round, entry, entryIdBytes, kind) {
   return round.entriesOf(entry.roundId).some((x) => !Buffer.from(x.entryId).equals(me) && Buffer.from(x.entry.playerPubkey).equals(key) && !!lockOf.call(round, x.entryId));
 }
 
+// THE LOCK BELONGS TO THE ENTRY THAT NAMED IT FIRST (kanban #1489, attack audit): an entry carries no player signature and a lock is not bound to its
+// entry id, so anyone who saw a player's entry posted a copy under a session key of his own and handed the player's own lock fields (all public or
+// derivable) for the copy before the player's /lock landed: the player's stake and fee backed an entry the copier plays and names the payout address
+// of, and the player's own lock was refused. A lock is now verified only for the entry of the round that named its outpoint first at this seat; a
+// later entry naming the same outpoint (a copy, or a reload's second entry) is refused, as a second hand-over of one lock was before.
+function namedFirstByAnother(round, entry, entryIdBytes, kind, outpoint) {
+  if (typeof round.firstEntryNamingLock !== 'function') return false;
+  const first = round.firstEntryNamingLock(entry.roundId, kind, outpoint);
+  return !!first && !Buffer.from(first).equals(Buffer.from(entryIdBytes));
+}
+
 // `timing` (kanban #605): an object the caller reads afterwards - ms spent asking the federation, checking gifts and reading the fee gate
 export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined, timing = {}, namedGate = null }) {
   const stored = round.entry(entryIdBytes);
@@ -313,6 +324,8 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   const taken = round.stakeLockAt ? round.stakeLockAt(outpoint) : null;
   if (taken && !Buffer.from(taken.entryId).equals(Buffer.from(entryIdBytes)))
     return { ok: false, why: 'that stake lock already stakes another entry in this round: one lock is one entry' };
+  if (namedFirstByAnother(round, entry, entryIdBytes, 'stake', outpoint))
+    return { ok: false, why: 'that stake lock outpoint was named first by another entry in this round: a lock stakes the entry that named it first (kanban #1489)' };
   // ONE STAKED ENTRY PER PLAYER KEY IN A ROUND (kanban #1215, audit 3 #1210 MONEY-1): the settlement keys every lock by its entry's player
   // key, so a second staked entry under one key took the first one's place in the plan - a loser could make his own lock unclaimable,
   // void the round's settlement and take a lost stake back, or have one lock claimed twice
@@ -399,6 +412,8 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   // ONE FEE LOCK IS ONE ENTRY TOO (kanban #1214): no fee lock was checked against another entry at all
   const feeTaken = () => { const t = round.feeLockAt ? round.feeLockAt(outpoint) : null; return t && !Buffer.from(t.entryId).equals(Buffer.from(entryIdBytes)); };
   if (feeTaken()) return { ok: false, why: 'that fee lock already pays the fee of another entry in this round: one lock is one entry' };
+  if (namedFirstByAnother(round, entry, entryIdBytes, 'fee', outpoint))
+    return { ok: false, why: 'that fee lock outpoint was named first by another entry in this round: a lock pays for the entry that named it first (kanban #1489)' };
   if (otherStakedUnderKey(round, entry, entryIdBytes, 'fee'))
     return { ok: false, why: 'another entry of that player key already has a fee lock in this round: one player key, one fee lock (kanban #1215)' };
   const arena = await arenaLockStands({ contract, entry, kind: 'fee', fields, outpoint, port, gate: namedGate, federationId: fed.federationId });

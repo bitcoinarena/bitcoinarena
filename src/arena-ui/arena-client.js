@@ -1158,6 +1158,15 @@ const TYPE_HEARTBEAT_HEARD = 0x3a;
 // MAKING THE CENSUS KEY (5A.3B, census-dkg.js): never read as the claim key's messages, or the other way round.
 const TYPE_CENSUS_DEAL = 0x3b;
 const TYPE_CENSUS_COMPLAINT = 0x3d;
+/**
+ * AN INPUT BATCH SIGNED BY ITS ENTRY'S SESSION KEY (kanban #1503, feedback #012): the batch's own bytes, then 64 bytes of
+ * ed25519 over its id under the session key the Entry Contract names. The only form a player's batch is taken in on
+ * /play - an unsigned batch let anybody who knew a public entry id write ticks and loads into that entry. What a seat
+ * stores, hands to another seat and serves in a transcript stays the bare batch (TYPE_INPUT_BATCH): there the signed
+ * mark's input chain hash endorses it. 0x4e on 2.0, the first free byte past 0x4d (1.9 put it at 0x36, which is 2.0's
+ * TYPE_AUDIT).
+ */
+const TYPE_SIGNED_INPUT_BATCH = 0x4e;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 const TYPE_SPENT_SET = 0x26;
@@ -1979,6 +1988,37 @@ function stakeExpiryFits(contract, { manifest = null } = {}) {
   return { ok: true, blocks: contract.stakeExpiryBlocks, need: need.blocks };
 }
 
+// ---- arena-protocol/src/guardian-payout.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A GUARDIAN IS PAID TO THE PAYOUT KEY OF ITS CENSUS ADVERTISEMENT (§22A v4.6.4: "paid as one payout contract per guardian in the
+// round's settlement transaction to the payout_pubkey of his census advertisement"; gap 2). From SEATED_GUARDIAN_VERSION.
+// Measured 2026-10-17 on the 13 census adverts of round 32cfad1c: every one names 32 bytes of 0x03 - a placeholder, not a key a
+// guardian holds. Such a key, or any x that is not on the curve, is no payout key: that guardian is paid at its node key, as before,
+// so no share is ever sent to a key nobody can spend.
+
+const P = 0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2fn;
+const modpow = (b, e, m) => { let r = 1n; b %= m; while (e > 0n) { if (e & 1n) r = (r * b) % m; b = (b * b) % m; e >>= 1n; } return r; };
+
+/** Is `x` (32 bytes) the x coordinate of a secp256k1 point (BIP340 lift_x)? */
+function onCurveX(x) {
+  if (!(x instanceof Uint8Array) || x.length !== 32) return false;
+  const v = BigInt('0x' + Buffer.from(x).toString('hex'));
+  if (v >= P) return false;
+  const c = (modpow(v, 3n, P) + 7n) % P;
+  const y = modpow(c, (P + 1n) / 4n, P);
+  return (y * y) % P === c;
+}
+
+/** The placeholder every advert carried until real keys: 32 bytes of 0x03. */
+const isPlaceholderKey = (x) => x instanceof Uint8Array && x.length === 32 && x.every((b) => b === 0x03);
+
+/** The 33-byte payout key of an advert's x-only payout_pubkey (BIP340: the even point), or null when it is none. */
+function guardianPayoutKeyOf(payoutPubkey) {
+  if (!(payoutPubkey instanceof Uint8Array) || payoutPubkey.length !== 32 || isPlaceholderKey(payoutPubkey) || !onCurveX(payoutPubkey)) return null;
+  return Uint8Array.from([0x02, ...payoutPubkey]);
+}
+
 // ---- arena-protocol/src/contracts.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -1991,6 +2031,7 @@ function stakeExpiryFits(contract, { manifest = null } = {}) {
 // Field order is protocol. Adding a field means a new version, not an append -
 // an old implementation reading a new contract must fail rather than silently
 // mis-parse, which is why the version comes second, right after the type.
+
 
 
 
@@ -2574,6 +2615,12 @@ function contractIsForThisBuild(contract, { anchor, config } = {}) {
 
 const is32 = (v) => v instanceof Uint8Array && v.length === 32;
 
+// A WEBSITE PAYOUT KEY IS A POINT, NOT JUST A PREFIX (kanban #1489). The settlement pays it as an output of the round's ONE
+// settlement transaction (fee.js frontendShares), and the settlement tool parses every payout key as a secp256k1 point: an x
+// above the field prime, or one with no y, made that whole transaction unbuildable - every winner's payout and every fee claim
+// with it. Such an entry is refused at encode and at decode; no honest client can name such a key.
+const isCompressedPoint = (k) => (k[0] === 2 || k[0] === 3) && onCurveX(k.subarray(1));
+
 function encodeEntryContract(e) {
   const w = new Writer();
   w.u8(TYPE_ENTRY_CONTRACT);
@@ -2677,7 +2724,7 @@ function encodeEntryContract(e) {
   // stake at settlement (fee.js frontendShares). In the signed bytes, so no seat can swap it. WRITTEN ONLY WHEN IT NAMES ONE, last
   // of all, after its own marker: every other entry keeps exactly its bytes and its id.
   if (e.frontendPk !== undefined && e.frontendPk !== null) {
-    if (!(e.frontendPk instanceof Uint8Array) || e.frontendPk.length !== 33 || (e.frontendPk[0] !== 2 && e.frontendPk[0] !== 3))
+    if (!(e.frontendPk instanceof Uint8Array) || e.frontendPk.length !== 33 || !isCompressedPoint(e.frontendPk))
       throw new Error('an entry names the website that brought it by a 33-byte compressed payout key');
     w.u8(FRONTEND_MARKER);
     w.bytes(e.frontendPk, 33);
@@ -2814,7 +2861,7 @@ function decodeEntryContract(bytes) {
   if (r.at < bytes.length && bytes[r.at] === FRONTEND_MARKER) {
     r.u8();
     e.frontendPk = r.bytes(33);
-    if (e.frontendPk[0] !== 2 && e.frontendPk[0] !== 3) throw new Error('an entry names the website that brought it by a 33-byte compressed payout key');
+    if (!isCompressedPoint(e.frontendPk)) throw new Error('an entry names the website that brought it by a 33-byte compressed payout key');
   }
   if (r.at < bytes.length && bytes[r.at] === ITEMS_ENTRY_MARKER) {
     r.u8();
@@ -3378,6 +3425,57 @@ const MAX_INPUT_BATCH_BYTES =
 const batchTicks = (b) =>
   Array.from({ length: b.ticks.length }, (_, i) => b.firstTick + i);
 
+/**
+ * A BATCH THE PLAYER SIGNED (kanban #1503, feedback #012 by Hexbox Tools). An unsigned batch was taken on /play for any
+ * entry whose id the sender knew - and entry ids are public - so anybody could write ticks and a load into another
+ * player's run: the victim's own next batch no longer followed the chain head, its marks were refused, and the run was
+ * FORFEIT on inputs it never sent.
+ *
+ * The frame is its own type byte, then the batch's bytes unchanged, then 64 bytes: ed25519 under the entry's SESSION
+ * key over the batch's tagged id (batchId) - the key and the message a mark is signed with, under the batch's own tag,
+ * so a mark's signature can never stand as a batch's or the other way round. Beside the batch, not inside it, for the
+ * reason checkpoint.js gives: the batch's id, its chain and every stored transcript stay byte for byte what they were.
+ * The curve is the node's and the client's business; this package only frames.
+ */
+const SIGNED_BATCH_SIGNATURE_BYTES = 64;
+
+/** The largest signed batch a transport can be handed: the type byte, the largest batch, the signature. */
+const MAX_SIGNED_INPUT_BATCH_BYTES = 1 + MAX_INPUT_BATCH_BYTES + SIGNED_BATCH_SIGNATURE_BYTES;
+
+/** The wire frame: the type byte, the encoded batch, the 64 bytes that sign its id. */
+function joinSignedBatch(batchBytes, signature) {
+  if (!signature || signature.length !== SIGNED_BATCH_SIGNATURE_BYTES)
+    throw new Error(`a signature is ${SIGNED_BATCH_SIGNATURE_BYTES} bytes, got ${signature ? signature.length : 0}`);
+  if (!batchBytes || batchBytes[0] !== TYPE_INPUT_BATCH) throw new Error('only an input batch is signed as one');
+  const out = new Uint8Array(1 + batchBytes.length + SIGNED_BATCH_SIGNATURE_BYTES);
+  out[0] = TYPE_SIGNED_INPUT_BATCH;
+  out.set(batchBytes, 1);
+  out.set(signature, 1 + batchBytes.length);
+  return out;
+}
+
+/**
+ * The frame cut apart: `body` the batch's own bytes, `batch` decoded, `id` what the signature must sign, `signature`.
+ * Nothing is verified here - that needs the session key, which lives in the entry the node stores.
+ */
+function splitSignedBatch(bytes) {
+  if (!bytes || bytes[0] !== TYPE_SIGNED_INPUT_BATCH) throw new Error('not a signed input batch');
+  if (bytes.length < 1 + BATCH_HEADER_BYTES + SIGNED_BATCH_SIGNATURE_BYTES) throw new Error('a signed input batch too short to hold a batch and its signature');
+  const body = bytes.subarray(1, bytes.length - SIGNED_BATCH_SIGNATURE_BYTES);
+  const signature = bytes.subarray(bytes.length - SIGNED_BATCH_SIGNATURE_BYTES);
+  const batch = decodeInputBatch(body);
+  return { body, batch, id: batchId(batch), signature };
+}
+
+/** A batch signed by `sign(id)` (sync or async, as markHashed takes it): the frame /play takes. */
+async function signBatch(b, sign) {
+  const bytes = encodeInputBatch(b);
+  return joinSignedBatch(bytes, await sign(batchId(b)));
+}
+
+/** The same with a synchronous `sign(id)` that answers the 64 bytes (a harness's ed25519.sign under the session key). */
+const signedBatchOf = (b, sign) => joinSignedBatch(encodeInputBatch(b), sign(batchId(b)));
+
 // ---- arena-protocol/src/transcript.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -3883,12 +3981,16 @@ function priceAttestationStands({ id, sigs, committee, threshold, verify }) {
   const members = new Set((committee || []).map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))));
   const signed = new Set();
   for (const s of sigs || []) {
-    const key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key);
+    // kanban #1489: a signature that is not 64 bytes (as 128 hex or bytes) counts nothing - it never throws. `"".match(/../g)`
+    // is null, and one seat answering GET /round-result with signature "" threw here, so no market on its game ever resolved.
+    let key, sig;
+    try { key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key); } catch { continue; }
     if (!members.has(key) || signed.has(key)) continue;
-    const sig = typeof s.signature === 'string' ? Uint8Array.from(s.signature.match(/../g).map((x) => parseInt(x, 16))) : s.signature;
-    const pk = Uint8Array.from(key.match(/../g).map((x) => parseInt(x, 16)));
+    if (typeof s.signature === 'string') { if (!/^[0-9a-f]{128}$/i.test(s.signature)) continue; sig = fromHex(s.signature.toLowerCase()); }
+    else if (s.signature instanceof Uint8Array && s.signature.length === 64) sig = s.signature;
+    else continue;
     let good = false;
-    try { good = !!verify(sig, id, pk); } catch { good = false; }
+    try { good = !!verify(sig, id, fromHex(key)); } catch { good = false; }
     if (good) signed.add(key);
   }
   return signed.size >= threshold ? { ok: true, signed: [...signed] }
@@ -17556,6 +17658,13 @@ function decodeVote(payload) {
  * `votes`: the vote outputs found on chain - [{ payload, height, txid }]. A vote counts for every bond whose key its signature
  * verifies under, only inside the voting phase; per bond outpoint the last by height wins (ties inside a block: lower txid).
  * ABSTAIN counts for turnout, not approval. Weight is the bond amount. Answers the weights, the percentages and `passed`.
+ *
+ * A REPLAYED VOTE COUNTS ONCE, AT ITS FIRST OCCURRENCE (kanban #1489): the signature covers H(proposal_id || choice) only, not
+ * the transaction or the height, so anyone could copy a bond's old 77 bytes into a later transaction of his own and make them
+ * that bond's "last vote" - undoing its change of mind for a tx fee. Byte-identical payloads are one vote: only the copy that
+ * ranks lowest under the rule above (lowest height; inside one block the higher txid) is kept, whatever order `votes` comes
+ * in, so a copy can never move a vote later. The vote bytes and their signature are unchanged; a bond that changes its mind
+ * signs anew (BIP-340 with fresh aux randomness gives new bytes).
  */
 function tally({ proposal, standing, census: all, votes, verify, ageBlocks = null }) {
   const id = standing.id;
@@ -17564,8 +17673,14 @@ function tally({ proposal, standing, census: all, votes, verify, ageBlocks = nul
   const aged = THRESHOLDS[proposal.class] && THRESHOLDS[proposal.class].minAge && Number.isInteger(ageBlocks) && Number.isInteger(standing.publishedAt);
   const census = aged ? (all || []).filter((b) => Number.isInteger(b.height) && b.height <= standing.publishedAt - ageBlocks) : all;
   const prefix = toHex(id.subarray(0, 8));
-  const latest = new Map();                          // outpoint -> { choice, height, txid, weight }
+  const first = new Map();                           // payload hex -> the occurrence of those bytes that ranks lowest
   for (const v of votes || []) {
+    if (!(v?.payload instanceof Uint8Array)) continue;
+    const k = toHex(v.payload), had = first.get(k);
+    if (!had || v.height < had.height || (v.height === had.height && String(v.txid) > String(had.txid))) first.set(k, v);
+  }
+  const latest = new Map();                          // outpoint -> { choice, height, txid, weight }
+  for (const v of first.values()) {
     const d = decodeVote(v.payload);
     if (!d || toHex(d.idPrefix) !== prefix) continue;
     if (v.height < standing.votingFrom || v.height >= standing.votingUntil) continue;
@@ -21487,6 +21602,9 @@ function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, co
   if (unspentMsat < 0n) return refuse('the payouts and their fees come to more than the claimed locks pay for');
   return { ok: true, nothing: false, claims: claims.sort(byOutpoint), payouts: payouts.sort(byPayoutPk), unpaid, forfeits: [],
     nonce: settlementNonce(roundId), stakeWhy: null, poolMsat, inputFeesMsat, spendableMsat, paidMsat, outputFeesMsat, unspentMsat,
+    // ONE POT (kanban #1438): every line above is paid out of the stake and fee locks together, so a round that takes any
+    // federation splits them as one part (federation-settlement.js splitByFederation), never by `signerNodePayouts`
+    onePot: true,
     book: { claimed: table.claimed.length, feesDueMsat: table.feesDueMsat, nodesMsat, giftMsat, reserveMsat, websitesMsat: sites.totalMsat },
     // WHAT IT PAID EACH WINNER (measured 2026-10-17: the Up/Down season read 0 wins and a whole loss for every order -
     // a book claims every filled lock, the winners' too, and kept no shares, so a season read 0 paid): each qualifier's out, by its
@@ -31072,7 +31190,10 @@ class Client {
       tapes,
       ...(attests.length ? { attests } : {}),
     };
-    const bytes = encodeInputBatch(b);
+    // SIGNED BY THE SESSION KEY, as every mark is (kanban #1503, feedback #012): a seat takes no unsigned batch, so
+    // nobody who only knows this entry's public id can write ticks or a load into it. The same signed frame goes to
+    // every peer below.
+    const bytes = await signBatch(b, this.sign);
     const answer = await this.send(bytes);
 
     // The node answers how many ticks were NEW. A refusal is a named string
@@ -31424,7 +31545,8 @@ class Client {
     // was lost, in the node's own order - a peer missing one refuses the rest.
     for (let i = this.published.length; i < t.batches.length; i++) {
       const b = t.batches[i];
-      this.published.push({ bytes: encodeInputBatch(b), through: batchTicks(b).at(-1) + 1 });
+      // signed here as at the first send (kanban #1503): a peer takes a batch only signed by the session key
+      this.published.push({ bytes: await signBatch(b, this.sign), through: batchTicks(b).at(-1) + 1 });
     }
 
     // AND THE COUNT OF WHAT THIS CLIENT HAS ACCEPTED IS RECONCILED WITH IT.
@@ -40497,7 +40619,12 @@ function outcomeFinality(held, { windowMs, nowMs }) {
  * MAY AN ATTESTATION COME IN YET (§0A.7a slice 2): only once the round's entries have closed on the seat's clock, and only
  * for an outcome seen after that close - an outcome known while a pick could still be made is a pick to be copied.
  */
-function attestationTimely(a, { entryCloseMs, nowMs, terms = null }) {
+function attestationTimely(a, { entryCloseMs, nowMs, terms = null, window = null }) {
+  // A MARKET ON A GRID IS OBSERVED AT ITS OWN WINDOW'S END (kanban #1489): its attestors sign observed_at = the window's end
+  // (marketWindowOf), so an outcome observed at any other moment is the outcome of another window - one a seat listing the
+  // round with a shifted close could pick after watching the price. `window` is marketWindowOf(contract, manifest).window.
+  if (window && BigInt(a.observedAtMs) !== BigInt(window.endMs))
+    return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, and this round's window ends at ${new Date(Number(window.endMs)).toISOString()}: it is the outcome of another window` };
   // A MARKET WITH TERMS DECIDES AT ITS RESOLUTION TIME, and not before it: an outcome observed earlier is not
   // the outcome the market asked for (the price at 18:00 is not the price at 17:59)
   if (terms) {

@@ -710,11 +710,12 @@ export class PriceFeed {
     return { round: rh, samples, tape: t && served(t.readings.length, start - EVERY) ? t : null };
   }
 
-  /** Every reading of samples `ks` the committee's seats hold, taken as each verifies - asked of every seat until all are in. */
-  async #fetchReadings(roundIdBytes, ks, c) {
+  /** Every reading of samples `ks` the committee's seats hold, taken as each verifies - asked of every seat until all are in (`every`: of every
+   *  seat, all of `ks`, even when a reading of each key is already held - kanban #1516). */
+  async #fetchReadings(roundIdBytes, ks, c, every = false) {
     const rh = toHex(roundIdBytes);
     for (const base of this.peersFor(roundIdBytes)) {
-      const short = ks.filter((k) => this.#heardAt(rh, k).size < c.committee.length);
+      const short = every ? ks.slice() : ks.filter((k) => this.#heardAt(rh, k).size < c.committee.length);
       if (!short.length) return;
       try {
         const r = await this.fetcher(`${String(base).replace(/\/+$/, '')}/price-samples?round=${rh}&ks=${short.join(',')}`, { signal: AbortSignal.timeout(10000) });
@@ -736,10 +737,15 @@ export class PriceFeed {
     if (kept) { try { const r = JSON.parse(kept, (k, v) => (v && typeof v === 'object' && typeof v.$big === 'string' ? BigInt(v.$big) : v)); return { ...r, ...this.#sign(fromHex(r.resultId)) }; } catch { /* not readable: signed anew below */ } }
     if (!this.firstResultAsk) this.firstResultAsk = new Map();
     if (!this.firstResultAsk.has(rh)) this.firstResultAsk.set(rh, this.now());
+    // THE ENDS ARE EXCHANGED BEFORE THE FIRST SIGNATURE (kanban #1516): a seat holding a reading of every key still asks every seat of the
+    // committee once. One seat that signs a second, different end reading and shows it to only some seats makes them count its key for
+    // none while the others count it - two closes, neither signed by 5 of 7, and no RoundResult of the round stands. Once every seat has
+    // asked all the others, a key that read twice is known at every seat that saw it at any of them, and they all drop it.
+    const exchanged = this.endsAsked.has(rh);
     const short = [0, kClose].some((k) => this.#heardAt(rh, k).size < c.committee.length);
-    if (short && !(this.now() - (this.endsAsked.get(rh) ?? -Infinity) < ASK_ENDS_EVERY_MS)) {
+    if ((short || !exchanged) && !(this.now() - (this.endsAsked.get(rh) ?? -Infinity) < ASK_ENDS_EVERY_MS)) {
       this.endsAsked.set(rh, this.now());
-      await this.#fetchReadings(rid, [0, kClose], c);
+      await this.#fetchReadings(rid, [0, kClose], c, !exchanged);
     }
     const open = this.#sample5(rh, rid, 0, c), close = this.#sample5(rh, rid, kClose, c);
     if (!open || !close) return refuse(`no ${!open ? 'opening sample (k 0)' : `closing sample (k ${kClose})`} of the round stands: fewer than ${c.needed} of the committee's readings are held here or by its committee`);

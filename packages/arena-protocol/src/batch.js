@@ -45,7 +45,7 @@
 // property `M2.1` step 2 needs and it costs nothing to have from the start.
 import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
-import { PROTOCOL_VERSION, speaksVersion, TYPE_INPUT_BATCH, TAG } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_INPUT_BATCH, TYPE_SIGNED_INPUT_BATCH, TAG } from './constants.js';
 
 /** The prices a live tape carries: the core's SAMPLES. */
 export const TAPE_PRICES = 64;
@@ -221,3 +221,54 @@ export const MAX_INPUT_BATCH_BYTES =
 /** The absolute tick numbers a batch covers, in order. */
 export const batchTicks = (b) =>
   Array.from({ length: b.ticks.length }, (_, i) => b.firstTick + i);
+
+/**
+ * A BATCH THE PLAYER SIGNED (kanban #1503, feedback #012 by Hexbox Tools). An unsigned batch was taken on /play for any
+ * entry whose id the sender knew - and entry ids are public - so anybody could write ticks and a load into another
+ * player's run: the victim's own next batch no longer followed the chain head, its marks were refused, and the run was
+ * FORFEIT on inputs it never sent.
+ *
+ * The frame is its own type byte, then the batch's bytes unchanged, then 64 bytes: ed25519 under the entry's SESSION
+ * key over the batch's tagged id (batchId) - the key and the message a mark is signed with, under the batch's own tag,
+ * so a mark's signature can never stand as a batch's or the other way round. Beside the batch, not inside it, for the
+ * reason checkpoint.js gives: the batch's id, its chain and every stored transcript stay byte for byte what they were.
+ * The curve is the node's and the client's business; this package only frames.
+ */
+export const SIGNED_BATCH_SIGNATURE_BYTES = 64;
+
+/** The largest signed batch a transport can be handed: the type byte, the largest batch, the signature. */
+export const MAX_SIGNED_INPUT_BATCH_BYTES = 1 + MAX_INPUT_BATCH_BYTES + SIGNED_BATCH_SIGNATURE_BYTES;
+
+/** The wire frame: the type byte, the encoded batch, the 64 bytes that sign its id. */
+export function joinSignedBatch(batchBytes, signature) {
+  if (!signature || signature.length !== SIGNED_BATCH_SIGNATURE_BYTES)
+    throw new Error(`a signature is ${SIGNED_BATCH_SIGNATURE_BYTES} bytes, got ${signature ? signature.length : 0}`);
+  if (!batchBytes || batchBytes[0] !== TYPE_INPUT_BATCH) throw new Error('only an input batch is signed as one');
+  const out = new Uint8Array(1 + batchBytes.length + SIGNED_BATCH_SIGNATURE_BYTES);
+  out[0] = TYPE_SIGNED_INPUT_BATCH;
+  out.set(batchBytes, 1);
+  out.set(signature, 1 + batchBytes.length);
+  return out;
+}
+
+/**
+ * The frame cut apart: `body` the batch's own bytes, `batch` decoded, `id` what the signature must sign, `signature`.
+ * Nothing is verified here - that needs the session key, which lives in the entry the node stores.
+ */
+export function splitSignedBatch(bytes) {
+  if (!bytes || bytes[0] !== TYPE_SIGNED_INPUT_BATCH) throw new Error('not a signed input batch');
+  if (bytes.length < 1 + BATCH_HEADER_BYTES + SIGNED_BATCH_SIGNATURE_BYTES) throw new Error('a signed input batch too short to hold a batch and its signature');
+  const body = bytes.subarray(1, bytes.length - SIGNED_BATCH_SIGNATURE_BYTES);
+  const signature = bytes.subarray(bytes.length - SIGNED_BATCH_SIGNATURE_BYTES);
+  const batch = decodeInputBatch(body);
+  return { body, batch, id: batchId(batch), signature };
+}
+
+/** A batch signed by `sign(id)` (sync or async, as markHashed takes it): the frame /play takes. */
+export async function signBatch(b, sign) {
+  const bytes = encodeInputBatch(b);
+  return joinSignedBatch(bytes, await sign(batchId(b)));
+}
+
+/** The same with a synchronous `sign(id)` that answers the 64 bytes (a harness's ed25519.sign under the session key). */
+export const signedBatchOf = (b, sign) => joinSignedBatch(encodeInputBatch(b), sign(batchId(b)));

@@ -30,7 +30,7 @@ import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { assumeAssigned } from './assignment.js';
 import { rand, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, opts, wait, RANDOMNESS } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { seedWordForEntry } from '../../arena-protocol/src/seed.js';
@@ -95,9 +95,9 @@ async function play(w, rid, adapter, config) {
   for (let t = 60; t < 120; t++) adapter.step(st, wordsAt(t));
   const b2 = { roundId: rid, entryId: eid, previousHash: batchId(b1), firstTick: 60, ticks: words(60), liquidations: [] };
   const m2 = { roundId: rid, entryId: eid, tick: 120, stateHash: hashNow(), inputChainHash: batchId(b2), previousHash: checkpointId(m1), sessionPubkey: entry.sessionPubkey };
-  for (const d of [w.a, w.b]) for (const m of [encodeInputBatch(b1), sign(m1)]) await say(d.port, m);
+  for (const d of [w.a, w.b]) for (const m of [signedBatchOf(b1, (id) => ed25519.sign(id, session)), sign(m1)]) await say(d.port, m);
   await wait(300);
-  for (const d of [w.a, w.b]) for (const m of [encodeInputBatch(b2), sign(m2)]) await say(d.port, m);
+  for (const d of [w.a, w.b]) for (const m of [signedBatchOf(b2, (id) => ed25519.sign(id, session)), sign(m2)]) await say(d.port, m);
   await wait(300);
   return { eid, played: adapter.result(st) };
 }

@@ -45,7 +45,7 @@ import { SHARES_NEEDED } from '../../arena-protocol/src/shares.js';
 import {
   encodeRoundContract, roundId, encodeEntryContract, entryId,
 } from '../../arena-protocol/src/contracts.js';
-import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import {
   encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS,
 } from '../../arena-protocol/src/checkpoint.js';
@@ -205,7 +205,7 @@ async function playedRound(node, c, stake, signerNodes) {
   const rows = [];
   for (let t = 0; t < TICKS; t++) rows.push(wordsAt(t));
   const input = { roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0, ticks: rows, liquidations: [] };
-  assert.equal(await say(encodeInputBatch(input)), String(TICKS));
+  assert.equal(await say(signedBatchOf(input, (id) => ed25519.sign(id, session))), String(TICKS));
 
   const st = init(seedWordForEntry(entry, committeeSlot.randomnessFor({ contract: c }).hash));
   for (let t = 0; t < TICKS; t++) step(st, ...wordsAt(t));
