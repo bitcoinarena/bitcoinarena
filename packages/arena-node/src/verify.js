@@ -37,7 +37,7 @@ import { resultFinality as finalityOf, chainIndex, resultWindow } from './finali
 
 let retryJobs = 0;                     // each re-tried close is its own pool job
 let objectionJobs = 0;                 // each objection's replay is its own pool job (§13A)
-import { encodeTranscript, transcriptHash as hashOfTranscript } from '../../arena-protocol/src/transcript.js';
+import { encodeTranscript, decodeTranscript, transcriptHash as hashOfTranscript } from '../../arena-protocol/src/transcript.js';
 import { TRANSCRIPT_BATCH_MAX_BYTES } from './round.js';
 import {
   encodeTranscriptPosting, transcriptPostingId, joinSignedPosting, splitSignedPosting, decodeTranscriptPosting,
@@ -200,6 +200,10 @@ async function capped(answer, maxBytes) {
 const PEER_BODY_MAX_BYTES = 16 * 1024 * 1024;
 /** Marks a peer may hold past this seat's own chain in one /checkpoints answer (#1550's cap). */
 const PEER_MARKS_AHEAD = 1024;
+/** The transcript hash (hex) a signed result names, or null for a record that does not decode (kanban #1802). */
+function namedTranscript(record) {
+  try { return hex(decodePlayerResult(splitSignedResult(record).body).transcriptHash); } catch { return null; }
+}
 async function peerFetch(url) {
   return fetch(url, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
 }
@@ -858,6 +862,12 @@ export class Verifier {
   async signersNaming(roundIdBytes, entryIdBytes, playerPubkey, { seated = false, entry = null } = {}) {
     const committee = new Set(this.round.signerNodes(roundIdBytes).map(hex)), signers = new Set();
     const aboutIt = entry ? await this.#recordHashesOf(roundIdBytes, entryIdBytes, entry) : null;
+    // EACH SIGNER COUNTED ONLY FOR A RESULT TIED TO THIS ENTRY (kanban #1489, #1918, #1961 - the #1802 rule of #gather, one helper):
+    // a PlayerResult names its player, never its entry, so the committee's real results for the same player's other entry,
+    // served under /results?entry=<this one>, made an entry no seat signed look signed by the threshold and taken past the door.
+    const row = this.round.get(roundIdBytes);
+    if (!row) return signers;
+    const tie = this.#entryTie(roundIdBytes, entryIdBytes, decodeRoundContract(new Uint8Array(row.contract)));
     await Promise.all(this.peersOf(roundIdBytes).map(async (peer) => {
       let body;
       try {
@@ -878,7 +888,8 @@ export class Verifier {
           if (aboutIt && !aboutIt.has(hex(result.transcriptHash))) continue;                 // kanban #2063: about another entry, or no reveal of this one
           if (signers.has(key) || tried.has(key)) continue;
           tried.add(key);
-          if (schnorr.verify(signature, resultId(result), result.nodePubkey)) signers.add(hex(result.nodePubkey));
+          if (!schnorr.verify(signature, resultId(result), result.nodePubkey)) continue;
+          if (await tie.ties(hex(result.transcriptHash))) signers.add(key);                 // kanban #1918, #1961: tied to this entry
         } catch { /* a record that does not read proves nothing */ }
       }
     }));
@@ -1543,6 +1554,18 @@ export class Verifier {
     // contract's nodes where this node holds no signer list
     const signers = this.round.signerNodes(roundIdBytes);
     const committee = signers.length ? signers : contract.nodes || [];
+    // EVERY PEER RESULT TIED TO THIS ENTRY (kanban #1489, #1802, #1918, #1961; a reload's second entry, #1479): a PlayerResult
+    // names its round and its player, never its entry, so a committee member's real signed result for the player's
+    // other entry passes every check above. A peer filing it under this entry would have it stored here, outvote this
+    // node's own result in every plurality read of the store (the Nostr result signed and published once, /results,
+    // a slash proof against the honest signers) and push the committee's true rows out as duplicates. A peer result is
+    // kept only when the transcript it names is this entry's: one this node holds or builds for it, or bytes a peer
+    // serves that hash to that name and name this entry inside them (#entryTie). NOT GATED ON THIS SEAT'S VIEW OF THE
+    // PLAYER'S ENTRIES (#1918): a seat short of E1 (its post lost, its door refused it - entry-relay.js measured 18 of
+    // 114 two-entry rounds) sees a one-entry player and would keep E1's results under E2 unchecked. For a player with
+    // one entry this only adds a /canonical ask for a dissent's transcript.
+    const tie = this.#entryTie(roundIdBytes, entryIdBytes, contract);
+    const pending = new Map();      // transcript hash (hex) -> the records naming it, until it is tied to this entry or not
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
@@ -1569,16 +1592,37 @@ export class Verifier {
         for (const record of cutSignedResults(body)) {
           fetched++;
           let r;
-          try { r = decodePlayerResult(splitSignedResult(record).body); } catch { continue; }
+          try { r = decodePlayerResult(splitSignedResult(record).body); } catch { refused++; continue; }
           // only a record that would be checked marks its key: one about another round or player costs no signature
           if (hex(r.roundId) !== hex(roundIdBytes) || hex(r.playerPubkey) !== hex(playerPubkey)) continue;
           const key = hex(r.nodePubkey);
           if (tried.has(key)) continue;
           tried.add(key);
           if (this.round.hasResult(roundIdBytes, entryIdBytes, r.nodePubkey)) continue;
-          if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey, committee)) kept++;
+          // THE CHEAP CHECKS FIRST, THEN THE TIE (kanban #2072, #1489 v1-refute-32-s4): round, player, committee key and
+          // signature are checked here before a record may cost a peer ask, as signersNaming does. #1802 filed every record
+          // that merely decoded into `pending` and asked the peers once per distinct hash it named, so one peer answering
+          // N unsigned records under throwaway keys held one entry's close gather N x PEER_WAIT_MS (6 records: 15 s).
+          const checked = this.#checkPeerResult(roundIdBytes, record, playerPubkey, committee);
+          if (!checked) { refused++; continue; }
+          const named = hex(checked.result.transcriptHash);
+          if (!tie.known.has(named)) {
+            if (!pending.has(named)) pending.set(named, []);
+            pending.get(named).push(checked);
+            continue;
+          }
+          if (this.#storePeerResult(roundIdBytes, entryIdBytes, checked)) kept++;
         }
       }, { over: 20 });
+    }
+    // THE TRANSCRIPTS NOT TIED HERE YET, all compared against one read of the peers (#1802, #2072): a dissent about this
+    // entry still counts (and can be slashed) when its transcript is this entry's; one about the player's other entry is
+    // refused. Only committee-signed results about this player get here, and the peers are asked once per gather, not
+    // once per hash.
+    for (const [named, records] of pending) {
+      if (await tie.ties(named)) {
+        for (const checked of records) if (this.#storePeerResult(roundIdBytes, entryIdBytes, checked)) kept++;
+      } else refused += records.length;
     }
 
     const { held, seen } = timed(`close gather counted ${hex(entryIdBytes).slice(0, 8)}`, () => {
@@ -2089,6 +2133,87 @@ export class Verifier {
     return null;
   }
 
+  /**
+   * THE TRANSCRIPT HASHES THIS NODE ITSELF TIES TO AN ENTRY (kanban #1802): its own result's, its canonical transcript's,
+   * the empty transcript of an entry that never started, and a head-to-head entry's reveal record - each names the
+   * entry inside its bytes, so none of them is another entry's.
+   */
+  #transcriptsOfEntry(roundIdBytes, entryIdBytes, contract) {
+    const out = new Set();
+    for (const r of this.round.results(roundIdBytes, entryIdBytes)) {
+      if (hex(r.nodePubkey) !== hex(this.round.pubkey)) continue;
+      const named = namedTranscript(r.bytes);
+      if (named) out.add(named);
+    }
+    try { out.add(hex(this.round.canonicalTranscript(roundIdBytes, entryIdBytes).hash)); } catch { /* none held */ }
+    out.add(hex(hashOfTranscript(this.#unstarted(roundIdBytes, entryIdBytes))));
+    if (this.#headToHead(contract)) {
+      const rv = this.round.revealsOf(roundIdBytes).find((r) => hex(r.entryId) === hex(entryIdBytes));
+      out.add(hex(transcriptBytesHash(this.#revealRecord(entryIdBytes, rv))));
+      // THE NO-REVEAL RECORD (entry id || 0xff) is this entry's whatever this node holds (kanban #2072): an honest dissent
+      // that saw no reveal is tied here, with no peer ask.
+      out.add(hex(transcriptBytesHash(this.#revealRecord(entryIdBytes, null))));
+    }
+    return out;
+  }
+
+  /**
+   * ONE TIE OF PEER RESULTS TO AN ENTRY, shared by #gather and signersNaming (kanban #1802, #1918, #1961): `known` the hashes this
+   * node itself ties to it (#transcriptsOfEntry), `ties(named)` true for one of them or when a peer serves bytes for the entry
+   * that hash to `named` and name the entry inside them. THE PEERS ARE READ ONCE PER TIE (kanban #2072, #1489 v1-refute-32-s4), all
+   * at once and only when a hash is not known here: every hash is compared against that one read, so the number of distinct
+   * hashes a peer names costs no further ask (before, each one was a sequential /canonical round of every peer, PEER_WAIT_MS each).
+   */
+  #entryTie(roundIdBytes, entryIdBytes, contract) {
+    const known = this.#transcriptsOfEntry(roundIdBytes, entryIdBytes, contract);
+    let proven = null;
+    const ties = (named) => {
+      if (!named) return Promise.resolve(false);
+      if (known.has(named)) return Promise.resolve(true);
+      if (!proven) proven = this.#transcriptsPeersTie(roundIdBytes, entryIdBytes, contract).catch(() => new Set());
+      return proven.then((set) => set.has(named));
+    };
+    return { known, ties };
+  }
+
+  /**
+   * THE TRANSCRIPT HASHES THE PEERS PROVE ARE THIS ENTRY'S (kanban #1802, #2072): each peer's /canonical bytes for it that name the
+   * entry inside them, and for head-to-head each reveal record built from a peer's GET /reveals for it. Every peer asked once, in parallel.
+   */
+  async #transcriptsPeersTie(roundIdBytes, entryIdBytes, contract) {
+    const h2h = !!this.#headToHead(contract), out = new Set(), peers = this.peersOf(roundIdBytes);
+    await Promise.all(peers.map(async (peer) => {
+      try {
+        const answer = await peerFetch(`${peer}/canonical?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
+        if (!answer.ok) { try { await answer.body?.cancel(); } catch { /* gone */ } return; }
+        const bytes = await peerBody(answer);
+        if (h2h) { if (bytes.length >= 33 && hex(bytes.slice(0, 32)) === hex(entryIdBytes)) out.add(hex(transcriptBytesHash(bytes))); return; }
+        const t = decodeTranscript(bytes);
+        if (hex(t.roundId) === hex(roundIdBytes) && hex(t.entryId) === hex(entryIdBytes)) out.add(hex(transcriptBytesHash(bytes)));
+      } catch { /* the next peer may have it */ }
+    }));
+    // A HEAD-TO-HEAD ENTRY'S REVEAL RECORD (kanban #1918, #1961): /canonical serves no reveal record, and a seat short of the entry (its door
+    // refused it, entry-relay.js) holds no reveal for it, so the committee's results for it named a record nothing above could tie. A peer's
+    // GET /reveals carries its move and salt: the record built from them starts with this entry's id, so one that hashes to `named` is this
+    // entry's. No commitment is needed for that - bytes prefixed with this id cannot hash to another entry's record.
+    if (h2h) {
+      await Promise.all(peers.map(async (peer) => {
+        try {
+          const answer = await peerFetch(`${peer}/reveals?round=${hex(roundIdBytes)}`);
+          if (!answer.ok) { try { await answer.body?.cancel(); } catch { /* gone */ } return; }
+          const body = JSON.parse((await capped(answer, 65536 + (this.round.entriesOf(roundIdBytes).length + 64) * 1024)).toString('utf8'));
+          for (const r of (body && Array.isArray(body.reveals) ? body.reveals : [])) {
+            if (String(r.entry).toLowerCase() !== hex(entryIdBytes) || !Number.isInteger(r.move) || r.move < 0 || r.move > 254) continue;
+            if (!/^[0-9a-f]{64}$/i.test(String(r.salt))) continue;
+            const rv = { move: r.move, salt: new Uint8Array(Buffer.from(r.salt, 'hex')) };
+            out.add(hex(transcriptBytesHash(this.#revealRecord(entryIdBytes, rv))));
+          }
+        } catch { /* the next peer may have it */ }
+      }));
+    }
+    return out;
+  }
+
   /** One posting from a peer: about this round and player, from a joined signer node, and signed by it. */
   #keepPeerPosting(roundIdBytes, entryIdBytes, record, playerPubkey, signerNodes) {
     let p, signature;
@@ -2105,14 +2230,22 @@ export class Verifier {
     return this.round.putPosting(roundIdBytes, entryIdBytes, p.signerNodePubkey, record) === 1;
   }
 
-  /** One record from a peer, believed only as far as it can be checked. */
-  #keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey, signerNodes) {
+  /** A checked peer result stored under this entry (#gather stores it only once it is tied to the entry, kanban #1802, #2072). */
+  #storePeerResult(roundIdBytes, entryIdBytes, { result, id, record }) {
+    return this.round.putResult(roundIdBytes, entryIdBytes, result.nodePubkey, id, record) === 1;
+  }
+
+  /**
+   * ONE RECORD FROM A PEER, BELIEVED ONLY AS FAR AS IT CAN BE CHECKED - the checks that cost no peer ask (kanban #1489, #2072): it decodes, is about this round and player, and is
+   * signed by one of the round's signer nodes. { result, id, record } when it passes, else null.
+   */
+  #checkPeerResult(roundIdBytes, record, playerPubkey, signerNodes) {
     let result, signature;
     try {
       const split = splitSignedResult(record);
       signature = split.signature;
       result = decodePlayerResult(split.body);
-    } catch { return false; }
+    } catch { return null; }
 
     // IT MUST BE ABOUT THIS RUN, and a PlayerResult names its round and its
     // PLAYER - never an entry - so both are checked and the entry is what the
@@ -2123,23 +2256,21 @@ export class Verifier {
     // would take that signer node's row - and the signer node's true record, arriving later,
     // would be ignored as a duplicate. One peer could then stop any signer node's
     // real answer from ever being stored, without forging a signature.
-    if (hex(result.roundId) !== hex(roundIdBytes)) return false;
+    if (hex(result.roundId) !== hex(roundIdBytes)) return null;
     if (!(playerPubkey instanceof Uint8Array)
-      || hex(result.playerPubkey) !== hex(playerPubkey)) return false;
+      || hex(result.playerPubkey) !== hex(playerPubkey)) return null;
 
     // AND IT MUST BE SIGNED BY ONE OF THE ROUND'S SIGNER NODES, as #keepPeerPosting asks (kanban #1489). A signature
     // that verifies under a key the record itself names proves nothing: one peer could mint throwaway keys, have every
     // forged result stored (one row per key) and outvote the committee in every plurality read off the store -
     // /api/round-result, the Nostr result, the head-to-head score.
-    if (!Array.isArray(signerNodes) || !signerNodes.some((s) => hex(s) === hex(result.nodePubkey))) return false;
+    if (!Array.isArray(signerNodes) || !signerNodes.some((s) => hex(s) === hex(result.nodePubkey))) return null;
 
     const id = resultId(result);
     let ok = false;
     try { ok = schnorr.verify(signature, id, result.nodePubkey); } catch { ok = false; }
-    if (!ok) return false;
-
-    return this.round.putResult(
-      roundIdBytes, entryIdBytes, result.nodePubkey, id, record) === 1;
+    if (!ok) return null;
+    return { result, id, record };
   }
 
   /**
