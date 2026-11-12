@@ -1110,7 +1110,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // NAMED BY ITS SIGNED MANIFEST, TITLED AS THE VERSION IT REPLACES (kanban #1541): never by what the serving seat wrote
     const named = decodeManifest(fromHex(String(pkg.manifest))).gameName;
     pkg = { ...pkg, name: named, title: replaces !== null ? (hosted.get(replaces).title || named) : named };
-    const at = installPackage(pluginsDir, pkg, game);
+    const at = installPackage(pluginsDir, pkg, game, { title: pkg.title });   // the title kept apart, as this seat's (kanban #1716, #1780)
     let reg;
     try { reg = await registrationFromPackage(at, pkg, { title: pkg.title }); } catch (e) { return { ok: false, status: 500, why: `kept, but it does not load: ${e.message}` }; }
     const entry = hostedPlugins([reg]).get(game);
@@ -1259,14 +1259,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const id = toHex(gameIdOf(m));
         if (id !== String(g.id).toLowerCase()) continue;              // a listing whose manifest is another game is not read
         const info = g.info ? gameInfoStands(g.info, { gameId: gameIdOf(m), manifest: m, verify: verifyEd25519 }) : null;
-        const row = byId.get(id) || { id, name: m.gameName, title: String(g.title || m.gameName).slice(0, 80), type: gameTypeOf(m), version: m.version,
+        // THE TITLE IS NOT THE LISTING SEAT'S (kanban #1716, #1780, as #1541 for hosted games): `title` is signed by nobody, so a
+        // seat could list a genuine signed game under a title of its choosing; the row is titled below from what this seat trusts
+        const row = byId.get(id) || { id, name: m.gameName, title: m.gameName, type: gameTypeOf(m), version: m.version,
           devKey: toHex(m.gameDevPubkey), parent: toHex(m.parentManifestId), description: null, website: null, lightning: null, infoSigned: false, seats: [] };
         if (info && info.ok && !row.infoSigned) Object.assign(row, { description: info.description, website: info.website, lightning: info.lightning || null, infoSigned: true });
         row.seats.push(from);
         byId.set(id, row);
       }
     }));
-    const games = [...byId.values()].map((g) => ({ ...g, hostedHere: hosted.has(g.id),
+    // titled as hosted here (this version, else the version it updates), else by its manifest's signed gameName
+    const trustedTitle = (g) => { const h = hosted.get(g.id) || hosted.get(g.parent); return String((h && h.title) || g.name).slice(0, 80); };
+    const games = [...byId.values()].map((g) => ({ ...g, title: trustedTitle(g), hostedHere: hosted.has(g.id),
       updateOf: hosted.has(g.parent) && !hosted.has(g.id) ? g.parent : null })).sort((a, b) => a.title.localeCompare(b.title) || a.version - b.version);
     Object.assign(networkApps, { atMs: Date.now(), seats: asked.sort((a, b) => a.seat.localeCompare(b.seat)), games });
     return networkApps;
