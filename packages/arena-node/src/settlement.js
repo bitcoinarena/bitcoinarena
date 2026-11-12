@@ -159,6 +159,8 @@ const NO_FEES = { ppm: 0n, baseMsat: 0n };
 // A BUILD THAT NAMES A LOCK THE GUARDIANS DO NOT HOLD (stake-lock arena.rs: "the guardians hold no Arena lock at ...")
 const NO_LOCK_HELD = /hold(s)? no (Arena )?lock/i;
 export const GONE_MARGIN_BLOCKS = 3;   // kanban #1183: a stake lock this close to its expiration is not claimed (the claim would land after it)
+// THE LATE SENDERS KEPT IN MEMORY AT MOST (kanban #1518); the oldest goes past it and is rebuilt from the store when asked again
+const LATE_SENDERS_MAX = 4096;
 /**
  * A ROUND THAT TAKES ANY FEDERATION, SETTLED (2026.0.3): its plan decided once - lockSettlement with no fee, since
  * every federation prices its own (splitByFederation) - and split into one balanced transaction per federation. `args`:
@@ -971,8 +973,25 @@ export class LockSettlement {
         peersFor: o.peersFor, fetcher: o.fetcher, lnurlFetch: o.lnurlFetch, network: o.network, scopeParam: `&late=${toHex(entryIdBytes)}`,
         dkg: o.dkg, peerAskMs: o.peerAskMs, peerGraceMs: o.peerGraceMs, lnurlMs: o.lnurlMs });
       this.lateSenders.set(key, w);
+      // BOUNDED (kanban #1518): a sender is rebuilt from the store whenever it is asked again, so past a few thousand the oldest goes
+      if (this.lateSenders.size > LATE_SENDERS_MAX) this.lateSenders.delete(this.lateSenders.keys().next().value);
     }
     return w;
+  }
+
+  /**
+   * THE LATE SENDER A PUBLIC DOOR MAY READ (kanban #1518): GET /settle-sends?late= and POST /settle-taken?late= built and kept a
+   * WinningsSend for any (round, late entry) a stranger named. Only one this seat already keeps, or one whose late settlement or
+   * late send rows the store holds, is answered; for anything else null, and nothing is made.
+   */
+  lateWinningsHeld(roundIdBytes, entryIdBytes) {
+    if (!this.winnings || !(entryIdBytes instanceof Uint8Array) || entryIdBytes.length !== 32) return null;
+    const kept = this.lateSenders && this.lateSenders.get(`${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`);
+    if (kept) return kept;
+    if (!this.round.get(roundIdBytes)) return null;
+    const held = (this.round.lateLockSettlement && this.round.lateLockSettlement(roundIdBytes, entryIdBytes))
+      || this.round.lateSendScope(entryIdBytes).sendAttemptsOf(roundIdBytes).length;
+    return held ? this.lateWinningsFor(roundIdBytes, entryIdBytes) : null;
   }
 
   /** THE ASKER'S LATE SEND PLANS: proposed from the late base plan and handed to every peer, which checks them itself. */
@@ -3227,8 +3246,9 @@ export class LockSettlement {
     const row = this.round.get(roundIdBytes);
     if (!row) return refuse('this seat holds no such round');
     const contract = decodeRoundContract(new Uint8Array(row.contract));
-    const sender = lateEntryId ? this.lateWinningsFor(roundIdBytes, lateEntryId) : this.winnings;
-    if (!sender) return refuse('this signer node sends no winnings');
+    // NOTHING MADE FOR A LATE SETTLEMENT THIS SEAT DOES NOT HOLD (kanban #1518)
+    const sender = lateEntryId ? this.lateWinningsHeld(roundIdBytes, lateEntryId) : this.winnings;
+    if (!sender) return refuse(this.winnings ? 'this seat keeps no send plan for that settlement' : 'this signer node sends no winnings');
     const kept = sender.keptPlan(roundIdBytes);
     if (!kept.length) return refuse('this seat keeps no send plan for that settlement');
     const planId = planTakenId({ roundId: roundIdBytes, lateEntryId, rows: kept });
