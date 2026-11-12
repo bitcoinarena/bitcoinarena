@@ -29,7 +29,10 @@ const r = spawnSync(bin, [
   '--preserve-symlinks',
   `--outfile=${out}`,
 ], { stdio: 'inherit', cwd: resolve(here, '..') });
-if (r.status) process.exit(r.status || 1);
+// A SPAWN THAT DID NOT RUN SAYS SO (kanban #1690): esbuild not found gives status null and r.error, which this let
+// through, so the stat below threw ENOENT on a file never written instead of naming the cause.
+if (r.error) { console.error(`bundle-curve: esbuild did not run (${bin}): ${r.error.message}`); process.exit(1); }
+if (r.status !== 0) process.exit(r.status || 1);
 
 const kb = (statSync(out).size / 1024).toFixed(1);
 console.log(`dist/arena-curve.js  ${kb} KB`);
