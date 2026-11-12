@@ -26,7 +26,7 @@
 //   NOT HERE      a re-try after a refund, a payout split over federations, giving up on an LNURL that stays silent.
 //
 // The transport is injected: `peers` are objects with commit / share (the seat's HTTP doors; direct calls in a test).
-import { schnorr } from '@noble/curves/secp256k1.js';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { signShare340, aggregate340, nonceGenerate340, verifyShare340 } from '../../arena-protocol/src/frost-bip340.js';
 import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpiration } from '../../arena-protocol/src/winnings-send.js';
 import { lnv2FeeMsat, largestPayoutMsat } from '../../arena-protocol/src/lock-settlement.js';
@@ -269,9 +269,11 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   const moveOf = (id) => { const m = (moves() || []).find((x) => x.id === id); if (m) knownMoves.set(id, m); return m || knownMoves.get(id) || null; };
   const fedOf = (kind, plan) => (kind === 'claim' ? plan.to : plan.federation);
   const keyOfKind = (kind, plan) => (kind === 'claim' ? plan.toKey : plan.reserveKey);
-  // `${planId}:${kind}` -> [{ message, hiding, binding, commitment, list, share }]: a nonce pair signs ONE list, once; a coordinator taking
+  // `${planId}:${kind}:${asker}` -> [{ message, hiding, binding, commitment, list, share }]: a nonce pair signs ONE list, once; a coordinator taking
   // over opens a new session, and gets a fresh pair - a used pair is never offered again (FROST: one nonce pair, one signature)
   const pairs = new Map();
+  // kanban #1893, #1932: the pairs of one plan and kind are kept per guardian seat that asked them (askStands' from; this seat's own: me)
+  const pairKey = (planId, kind, asker) => `${planId}:${kind}:${String(asker)}`;
   const rowOf = (pid) => db.prepare('SELECT * FROM reserve_payouts WHERE proposal = ?').get(pid) || null;
   const planOfRow = (r) => (r && r.plan ? JSON.parse(r.plan) : null);
   const spentBy = (outpoint) => { const r = db.prepare('SELECT proposal FROM reserve_payout_inputs WHERE outpoint = ?').get(outpoint); return r ? r.proposal : null; };
@@ -625,7 +627,7 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
   }
   // a commitment taken - and recorded as PLANNED - only once the plan stands here, and opened only by the turn's guardian (kanban #1159)
   async function commitHere({ plan, kind, txid = null }, asker) {
-    if (kind === 'claim') return commitClaim({ plan });
+    if (kind === 'claim') return commitClaim({ plan }, asker);
     const done = rowOf(plan.proposal);
     if (done && (done.state === PAYOUT.PAID || done.state === PAYOUT.REFUNDED || done.state === PAYOUT.SHORT || done.state === PAYOUT.CLAIMED)) return refuse(`that payout is ${done.state} here: nothing more is signed`, 409);
     const held = !!(done && done.plan_id === planIdOf(plan) && done.state !== PAYOUT.EXPIRED);
@@ -653,22 +655,26 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
         planned_at: tipNow(), attempt: attemptOf(plan), txid: null, preimage: null, refund_txid: null, submit_sig: null, refund_sig: null, why: null }, { plan, release: !!cur });
       if (!t.ok) return t;
     }
-    return pairFor(plan, kind, g, await messageFor(kind, plan, { txid }));
+    return pairFor(plan, kind, g, await messageFor(kind, plan, { txid }), asker);
   }
   // THE DESTINATION'S CLAIM OF A MOVE: only once the move is PAID here (its preimage checked) and only by a guardian of the destination,
   // over the claim its own port rebuilds into the destination's reserve key
-  async function commitClaim({ plan }) {
+  async function commitClaim({ plan }, asker) {
     const r = plan && rowOf(plan.proposal);
     if (!r || r.plan_id !== planIdOf(plan) || plan.kind !== 'move') return refuse('this seat keeps no such move');
     if (r.state === PAYOUT.CLAIMED) return refuse('that move is claimed already: it is signed once', 409);
     if (r.state !== PAYOUT.PAID) return refuse(`that move is ${r.state} here, not paid: nothing is claimed`, 409);
     const g = guardians().get(plan.to);
     if (!g || !g.signer || !g.key || toHex(g.key) !== String(plan.toKey).toLowerCase()) return refuse('this seat holds no share of the destination\'s reserve key');
-    return pairFor(plan, 'claim', g, await messageFor('claim', plan));
+    return pairFor(plan, 'claim', g, await messageFor('claim', plan), asker);
   }
-  function pairFor(plan, kind, g, message) {
+  // A NONCE PAIR PER ASKER (kanban #1893, #1932; refute of #1527/#1715): every guardian seat that asks a commitment gets a pair of its own,
+  // kept under planId:kind:asker, and only that asker's share ask signs with it. Before, any guardian seat could ask the coordinator's (or
+  // a peer's) pending pair and lock it to a list of its own making first, so the coordinator's own share - or an honest peer's - was refused
+  // ("signed that message over another list") and the payout never paid. Another seat's ask now never touches a pair handed to someone else.
+  function pairFor(plan, kind, g, message, asker) {
     if (!message) return refuse(`this seat cannot rebuild the ${kind} message`);
-    const key = `${planIdOf(plan)}:${kind}`;
+    const key = pairKey(planIdOf(plan), kind, asker);
     const kept = (pairs.get(key) || []).filter((p) => toHex(p.message) === toHex(message));
     let pair = kept.find((p) => p.share === null);
     if (!pair) {
@@ -686,10 +692,10 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     if (!r) return refuse('this seat keeps no such plan');
     const a = askStands({ ask: 'share', kind: String(kind), planId: String(planId), list: commitmentListOf(commitments), from: body.from, sig: body.sig }, kind === 'claim' ? JSON.parse(r.plan).to : r.federation);
     if (!a.ok) return a;
-    return shareHere({ planId, kind, commitments });
+    return shareHere({ planId, kind, commitments }, a.from);
   }
-  async function shareHere({ planId, kind, commitments }) {
-    const kept = pairs.get(`${planId}:${kind}`) || [];
+  async function shareHere({ planId, kind, commitments }, asker) {
+    const kept = pairs.get(pairKey(planId, kind, asker)) || [];
     if (!kept.length) return refuse(`this seat committed to no ${kind} of that plan`);
     const pair = kept.find((p) => commitments.some((c) => String(c.id) === String(p.commitment.id) && toHex(c.hiding) === toHex(p.commitment.hiding) && toHex(c.binding) === toHex(p.commitment.binding)));
     if (!pair) return refuse('that list does not carry this seat\'s commitment');
@@ -724,26 +730,43 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       for (const peer of peers) {
         if (signers.length >= g.needed) break;
         if (left.has(peer) || peer === tryOut) continue;
-        try { const r = await peer.commit({ plan, kind, ...extra, ...ask }); if (r && r.ok) signers.push({ peer, commitment: r.commitment }); } catch { /* a peer down: the threshold decides */ }
+        let r = null;
+        try { r = await peer.commit({ plan, kind, ...extra, ...ask }); } catch { /* a peer down: the threshold decides */ }
+        if (!r || !r.ok) continue;
+        // kanban #1715 (refute of #1527): a commitment is checked before it joins the list - a member id no other signer of this list holds,
+        // two valid points - or that peer is left off like a bad share; it can never make this seat's own share throw
+        const c = r.commitment, bad = commitmentFault(c, signers, g);
+        // an id a peer of this list holds already: one of the two is lying, and the share round names which - the newcomer only waits this
+        // turn (an honest peer asked second is not left off for good); this seat's own id, a non-member id or a bad point is left off
+        if (bad === 'taken') { why = `a guardian seat's ${kind} commitment names an id another peer of the list holds`; continue; }
+        if (bad) { left.add(peer); why = `a guardian seat's ${kind} commitment does not stand: ${bad}`; continue; }
+        signers.push({ peer, commitment: { id: c.id, hiding: c.hiding, binding: c.binding } });
       }
       if (signers.length < g.needed) return refuse(`${signers.length} of ${g.needed} guardian seats committed to the ${kind}${why ? ` (${why})` : ''}`, 503);
       const commitments = signers.map((x) => x.commitment).sort((a, b) => a.id - b.id);
       const shares = [];
       let spoilt = false;
       for (const x of signers) {
-        const r = x.peer === null ? await shareHere({ planId, kind, commitments })
-          : await Promise.resolve(x.peer.share({ planId, kind, commitments, ...askOf({ ask: 'share', kind, planId, list: commitmentListOf(commitments) }) })).catch((e) => refuse(e.message));
+        let r;
+        try {
+          r = x.peer === null ? await shareHere({ planId, kind, commitments }, me)
+            : await Promise.resolve(x.peer.share({ planId, kind, commitments, ...askOf({ ask: 'share', kind, planId, list: commitmentListOf(commitments) }) })).catch((e) => refuse(e.message));
+        } catch (e) { r = refuse(`the ${kind} share could not be made: ${e && e.message}`); }
         if (x.peer === null && (!r || !r.ok)) return refuse(`a ${kind} share was refused: ${r ? r.why : '?'}`);
         const P = x.peer !== null && pub ? (pub instanceof Map ? pub.get(String(x.commitment.id)) : pub[x.commitment.id]) : null;
-        const stands = r && r.ok && typeof r.share === 'bigint' && (x.peer === null || !pub || (P && verifyShare340({ id: x.commitment.id, share: r.share,
-          publicShare: typeof P === 'string' ? fromHex(P) : P, groupPublicKey: g.key, message: pairMessage(planId, kind, own.commitment), commitments, curve })));
+        let stands = false;
+        // kanban #1715: whatever a peer supplied only spoils this turn, it never throws out of sign()
+        try { stands = !!(r && r.ok && typeof r.share === 'bigint' && (x.peer === null || !pub || (P && verifyShare340({ id: x.commitment.id, share: r.share,
+          publicShare: typeof P === 'string' ? fromHex(P) : P, groupPublicKey: g.key, message: pairMessage(planId, kind, own.commitment), commitments, curve })))); } catch { stands = false; }
         if (!stands) { left.add(x.peer); spoilt = true; why = `a ${kind} share was refused or does not stand: ${r && !r.ok ? r.why : 'a bad share'}`; continue; }
         shares.push(r.share);
       }
       if (spoilt) continue;
       const message = pairMessage(planId, kind, own.commitment);
-      const { signature } = aggregate340({ commitments, message, groupPublicKey: g.key, shares, curve });
-      if (schnorr.verify(signature, message, g.key.subarray(1))) return { ok: true, signature };
+      let signature = null;
+      try { ({ signature } = aggregate340({ commitments, message, groupPublicKey: g.key, shares, curve })); } catch { signature = null; }
+      let good = false; try { good = !!signature && schnorr.verify(signature, message, g.key.subarray(1)); } catch { good = false; }
+      if (good) return { ok: true, signature };
       why = `the ${kind} signature does not verify under the reserve key`;
       if (pub) return refuse(why);   // every share stood: nothing to leave off
       if (!suspects) suspects = signers.filter((x) => x.peer !== null).map((x) => x.peer);
@@ -751,7 +774,23 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     }
     return refuse(why || `the ${kind} was not signed`);
   }
-  const pairMessage = (planId, kind, commitment) => (pairs.get(`${planId}:${kind}`) || []).find((p) => p.commitment === commitment).message;
+  // kanban #1715: why a peer's commitment cannot join this list (null when it can) - a positive integer id that is a member's
+  // (1..members), held by no signer already in the list (this seat's own, another peer's), and hiding/binding two valid 33-byte points
+  function commitmentFault(c, signers, g) {
+    if (!c || typeof c !== 'object') return 'no commitment';
+    const n = Array.isArray(g.members) && g.members.length ? g.members.length : null;
+    if (!Number.isSafeInteger(c.id) || c.id < 1 || (n !== null && c.id > n)) return `id ${String(c.id).slice(0, 20)} is no member's`;
+    const holder = signers.find((x) => x.commitment.id === c.id);
+    if (holder && holder.peer === null) return `id ${c.id} is this seat's own`;
+    if (holder) return 'taken';
+    for (const k of ['hiding', 'binding']) {
+      const b = c[k];
+      if (!(b instanceof Uint8Array) || b.length !== 33) return `its ${k} is not a 33-byte point`;
+      try { secp256k1.Point.fromBytes(b); } catch { return `its ${k} is not a point on the curve`; }
+    }
+    return null;
+  }
+  const pairMessage = (planId, kind, commitment) => (pairs.get(pairKey(planId, kind, me)) || []).find((p) => p.commitment === commitment).message;
 
   /**
    * WHO SAID A RECORD (kanban #1156): its `from` signed every field of it with its node key, and `from` is a guardian seat of the
