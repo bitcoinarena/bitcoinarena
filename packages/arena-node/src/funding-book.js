@@ -245,6 +245,9 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   // checks are the rows it counts. The outcome is also written only when the store still holds the row set the pass checked.
   let votePassSeq = 0;
   const SUPERSEDED = Symbol('superseded vote pass');
+  // the stored form of a census (kanban #1749); one function, so a legacy row is compared byte for byte with a fresh read (#2400)
+  const censusText = (c) => JSON.stringify(c.map((b) => ({ pubkey: toHex(b.pubkey), outpoint: b.outpoint, bondSats: String(b.bondSats),
+    height: Number.isInteger(b.height) ? b.height : null, maturity: Number.isInteger(b.maturity) ? b.maturity : null })));
   async function voteRound() {
     const gen = ++votePassSeq;
     try { return await votePass(gen); } catch (e) { if (e === SUPERSEDED) return []; throw e; }
@@ -270,11 +273,26 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       // NEVER ADOPTED WHEN READ BLIND (kanban #2169, a44-refute-63): a census stored while getblockhash did not answer (before === after
       // as null === null, fixed below) is not legacy - adopting the first hash found pinned an abandoned branch's census to the block
       // that replaced it. Such a row is dropped with its vote and read again, like a census whose block moved.
+      // A LEGACY CENSUS IS CHECKED, NOT ADOPTED (kanban #2400, a44-refute-63 s2): a census from a store before the hash column was
+      // never held to any block - taking the first hash found pinned an abandoned branch's census (a bond the reorg withdrew) to the
+      // block that replaced it across an upgrade or restart. censusAt reads history, so it is read again at period.from between two
+      // equal hash reads: byte-identical to the stored one, it takes that hash and the vote stands; different, it is dropped with its
+      // vote blocks and outcome and read again, like a census whose block moved. Unresolved (an RPC error, a reorg in between), the
+      // proposal waits for the next pass - never counted on a census no block vouches for.
       const held0 = voteCensus(row.id);
+      let legacyMoved = false;
+      if (held0 && !held0.hash && held0.legacy) {
+        const before = await hashAt(period.from);
+        let c = null; try { c = before ? await voteChain.censusAt(toHex(p.obj.networkId), period.from) : null; } catch { c = null; }
+        const after = c ? await hashAt(period.from) : null;
+        if (!before || !c || before !== after) continue;
+        const storedText = db.prepare('SELECT census FROM funding_vote_census WHERE proposal = ?').get(row.id).census;
+        if (censusText(c) === storedText) db.prepare('UPDATE funding_vote_census SET hash = ? WHERE proposal = ? AND hash IS NULL').run(after, row.id);
+        else legacyMoved = true;
+      }
       if (held0) {
         const fromHash = await hashAt(period.from);
-        if (fromHash && !held0.hash && held0.legacy) db.prepare('UPDATE funding_vote_census SET hash = ? WHERE proposal = ? AND hash IS NULL').run(fromHash, row.id);
-        else if ((!held0.hash && !held0.legacy) || (fromHash && fromHash !== held0.hash)) {
+        if (legacyMoved || (!held0.hash && !held0.legacy) || (fromHash && held0.hash && fromHash !== held0.hash)) {
           const own = !db.isTransaction;   // one step: the census never goes without its blocks and outcome
           if (own) db.exec('BEGIN IMMEDIATE');
           try {
@@ -315,9 +333,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         if (!c) continue;
         const after = await hashAt(period.from);
         if (!before || before !== after) continue;   // kanban #2169: never stored without a known hash
-        db.prepare('INSERT OR IGNORE INTO funding_vote_census (proposal, height, census, hash) VALUES (?, ?, ?, ?)').run(row.id, period.from,
-          JSON.stringify(c.map((b) => ({ pubkey: toHex(b.pubkey), outpoint: b.outpoint, bondSats: String(b.bondSats),
-            height: Number.isInteger(b.height) ? b.height : null, maturity: Number.isInteger(b.maturity) ? b.maturity : null }))), after);
+        db.prepare('INSERT OR IGNORE INTO funding_vote_census (proposal, height, census, hash) VALUES (?, ?, ?, ?)').run(row.id, period.from, censusText(c), after);
       }
       // blocks a reorg replaced are read again. THE WALK-BACK READS EVERY HELD ROW (kanban #2139, refute of #1633 audit44 item 14):
       // it stopped at the newest row whose hash still matched, so rows of an abandoned branch BELOW it (a reorg that landed between
