@@ -2572,12 +2572,14 @@ export async function returnStake({ round, roundId, invite, seed, curve, LockCli
   // found for given ContractId", asked again every 5 s.
   const spent = !ok && rs.length > 0 && rs.every((r) => r.accepted !== true && (r.stored_before === null || r.stored_before === undefined));
   const res = { ok, final: ok || spent, spent, amountMsat: BigInt(rs.reduce((t, r) => t + Number(r.amount_msat || 0), 0)),
+    // what each accepted redeem brought, by its own balance reads (kanban #2350)
+    broughtMsat: rs.filter((r) => r.accepted === true).reduce((t, r) => t + broughtOf(r.amount_msat, r.balance_before, r.balance_after), 0n),
     balance_before: rs.length ? rs[0].balance_before : undefined, balance_after: rs.length ? rs[rs.length - 1].balance_after : undefined,
     txid: rs.length ? rs[0].txid : undefined, forfeitFrom: rs.length ? rs[0].forfeitFrom : undefined,
     why: ok ? undefined : spent ? 'the stake lock is already spent - back to this seed\'s key, the only key that can after the signer nodes\' forfeit'
       : (rs.find((r) => r.error) || {}).error || 'the federation did not accept the redeem' };
   if (ok && storage) {
-    try { storage.setItem(noted, JSON.stringify({ ...res, amountMsat: String(res.amountMsat) })); } catch { /* unkept: a reload asks again */ }
+    try { storage.setItem(noted, JSON.stringify({ ...res, amountMsat: String(res.amountMsat), broughtMsat: String(res.broughtMsat) })); } catch { /* unkept: a reload asks again */ }
   }
   return { ...res, client: got.client };
 }
@@ -3347,13 +3349,38 @@ export async function collectOwed({ look, client, ...ask } = {}) {
  * no press. Into the player's own federation wallet (one per seed and federation) and NOTHING out of it: no Lightning,
  * no withdraw. What arrived is written in the history as a "winnings" row, by what the wallet's balance actually grew.
  */
+/**
+ * WHAT ONE ACCEPTED REDEEM BROUGHT INTO THE WALLET (kanban #2350, live 2026-11-12 05:39Z, round 4e1c1615 never entered: the seats forfeited
+ * its 94,000 msat, the federation accepted both redeems, and the history said "Refund +25 of 100 sat"). The row was what the wallet grew by
+ * over the whole collect - 24 s of asking seats - and the page's next join locked 100,000 msat out of the same wallet meanwhile, while
+ * 31,072 msat of an earlier lock's change finished issuing: 94,000 - 100,000 + 31,072 = 25,072. Each redeem's own two reads (the lock
+ * client's, right before its transaction and once it is accepted) are what it brought - the lock's amount less the federation's fee; a
+ * read another spend or issue cut (no growth, or more than the lock, or under 90 % of it) is counted at the lock's amount.
+ */
+export function broughtOf(amountMsat, before, after) {
+  const amount = BigInt(amountMsat || 0);
+  if (before === undefined || before === null || after === undefined || after === null) return amount;
+  const grew = BigInt(after) - BigInt(before);
+  return grew > 0n && grew <= amount && grew * 10n >= amount * 9n ? grew : amount;
+}
+/** What a collect brought (kanban #2350): the parts the federation accepted in this call, each by broughtOf; a part read off its kept note came before. */
+export function collectBrought(got) {
+  let t = 0n;
+  const p = got && got.payout;
+  if (p && p.ok && !p.kept) t += broughtOf(p.amountMsat, p.balance_before, p.balance_after);
+  const s = got && got.stake;
+  if (s && s.ok && !s.kept) t += s.fee ? broughtOf(s.amountMsat, s.balance_before, s.balance_after) : (s.broughtMsat !== undefined ? BigInt(s.broughtMsat) : BigInt(s.amountMsat || 0));
+  const r = got && got.refund;
+  if (r && Array.isArray(r.locks)) for (const e of r.locks) if (e.state === 'refunded') t += broughtOf(e.amountMsat, e.balance_before, e.balance_after);
+  return t;
+}
+
 export async function collectIntoPlayerWallet({ look, round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher, order = 0 } = {}) {
   if (!look || !(look.payoutMsat > 0n || look.stakeMsat > 0n || look.refundMsat > 0n)) return { collected: false, creditedMsat: 0n };
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
-  const before = BigInt(await client.balanceMsat());
   const got = await collectOwed({ look, client, round, roundId, invite, seed, curve, LockClient, storage, nodes, order, ...(fetcher ? { fetcher } : {}) });
-  const after = BigInt(await client.balanceMsat());
-  const creditedMsat = after > before ? after - before : 0n;
+  // WHAT THE REDEEMS BROUGHT, NOT WHAT THE WALLET GREW WHILE THEY RAN (kanban #2350): the page locks the next stake from this same wallet meanwhile
+  const creditedMsat = collectBrought(got);
   // A STAKE THAT ONLY CAME BACK IS A REFUND ROW, NOT WINNINGS (2026-10-03: "the money that comes back must be
   // visible in the TX history"): nobody won, or the round was refunded - no payout, the stake (or its expiry refund) back
   const kind = look.payoutMsat > 0n ? 'winnings' : 'refund';
