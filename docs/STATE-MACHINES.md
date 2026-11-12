@@ -1966,3 +1966,6 @@ Files: `owner-leave.js` leaveStatus.
 - A Success without `carried_msat` (a tool from before #1936) books nothing: the row stays RECEIVING (503, ask again); the retry's AlreadyReceived says the amount.
 - A row TAKEN with `in_msat` 0 (booked before the fix) is not refused for good: the tool is asked again, and an AlreadyReceived with earlier Success and `carried_msat` > 0 sets `in_msat` once (guarded on state taken and in_msat 0); anything else holds it (503).
 - Invariant: what the seat pays out for exchanges never exceeds what the notes handed in carried, and notes taken on a Success are paid.
+#### SM-F (change) Page federation status: the pick among seats' records (kanban #1937)
+- federations.js `pageRecord` (was arena-protocol `newestRecord`, height only, first answer wins a tie): of the verified records gathered from the seats, the newest height; at one height CLOSED (final), else the worse status (OPEN < DRAINING < CRITICAL < HALTED); last the lower record id.
+- Invariant: the status a page takes from verified records does not depend on the order the seats answered in; a CRITICAL (or HALTED) record its census' threshold signed at the newest height is not hidden by an OPEN one of that height. The seats' own pick (recordStep, a mirror never worsens, kanban #1157) is unchanged.
