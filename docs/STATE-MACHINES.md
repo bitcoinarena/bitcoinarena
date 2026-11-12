@@ -1933,3 +1933,9 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
 #### SM-H2H-M (change) Match record per round (match.js `matchOf`, `match_records`) - kanban #2280
 - "The last round of this game either identity played" is read from every round the identity is a side of: the rounds it revealed in (`h2h_identities`, `roundsOfIdentity`) and the rounds its consented name record names it in (`lobby_names` with `identity_sig`, record bytes 64..96, `roundsOfConsentedIdentity`) - the same two ways a side is named (#1401).
 - Invariant: a round either identity played with a third player, a forfeit (no reveal) included, ends the match; the next record between the two names no previous round and starts at 0:0.
+## 15. State audit 2026-11-12 (kanban #1489, base f64efd1bb)
+
+#### SM-N9 (add) Key move to the words' key: the seat restart is owed by the move (kanban #2297)
+- The key-switch action's DONE record (one locked write with the new bond, after node.db's identity swap) sets `keySwitch.restart: true`. Whichever door finished the action (the key panel, Add to bond, the roles, the games refresh, the custody agent), `switchToSeedKey` answers that move with its plan and bond while the mark stands, and POST /owner/key-from-words restarts the seat on that answer.
+- The answer that carries the bond clears the mark (compare-and-set on `keySwitch.bond`), so the restart is asked for once per move and a later ask answers `{ already }`. Invariant: node.db naming the words' key with no restart ever asked for is not a resting state.
+- The effect opens node.db with a 2 s busy timeout, so a write of the running seat in another process does not leave the move open at once.
