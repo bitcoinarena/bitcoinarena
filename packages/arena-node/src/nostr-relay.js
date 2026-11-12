@@ -29,7 +29,8 @@ const MAX_EVENT_BYTES = 64 * 1024, MAX_SUBS = 20, MAX_FILTERS = 10, MAX_LIMIT = 
 //     (nobody else's), so a node's newest round results and badges are always kept;
 //   - in total at most TOTAL_EVENTS events and TOTAL_BYTES bytes; bytes are bytes on disk (#1704); one that replaces or rolls out its
 //     author's own adds nothing and is kept (kanban #1769); one that grows a full store makes room by FAIR SHARE (kanban #1943, #1983, below)
-//     and is refused ('blocked: the relay is full') only when no one holds more than its author;
+//     and is refused ('blocked: the relay is full') only when no one holds more than its author; an author in `keep` (the seats' node
+//     keys, ARENA_RELAY_KEEP) never gives back for another author's write (kanban #2146, #2214);
 //   (no cap on sockets per address: behind the tunnel every player comes from the same local address; the quotas bound the disk);
 //   - a REQ reads only the rows its ids/authors/kinds/since/until/tags select (SQL on indexed columns), at most SCAN_MOST index rows a filter (#1720).
 const AUTHOR_EVENTS = 500, AUTHOR_BYTES = 4 * 1024 * 1024, TOTAL_EVENTS = 200000, TOTAL_BYTES = 512 * 1024 * 1024;
@@ -173,7 +174,7 @@ export function matchesCompiled(c, e, tagSets) {
  * THE RELAY: `{ port, host, dbPath }` ('' or ':memory:' keeps nothing on disk). Answers { port, close(), events() }.
  */
 export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memory:', kinds = RELAY_KINDS, name = 'Bitcoin Arena relay',
-  limits = {}, description = 'The game\'s own relay: profiles, relay lists, encrypted game seeds (NIP-78), remote signing (NIP-46), wallet connect (NIP-47), the nodes\' signed round results (kind 30762) and their badges (NIP-58: kinds 30009 and 8), and zap receipts (NIP-57: kind 9735). Nothing else is kept.' } = {}) {
+  limits = {}, keep = [], description = 'The game\'s own relay: profiles, relay lists, encrypted game seeds (NIP-78), remote signing (NIP-46), wallet connect (NIP-47), the nodes\' signed round results (kind 30762) and their badges (NIP-58: kinds 30009 and 8), and zap receipts (NIP-57: kind 9735). Nothing else is kept.' } = {}) {
   const db = new DatabaseSync(dbPath || ':memory:');
   db.exec(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, pubkey TEXT, kind INTEGER, created_at INTEGER, d TEXT, json TEXT);
     CREATE INDEX IF NOT EXISTS ev_author ON events (pubkey, kind, d);
@@ -256,8 +257,8 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const totalUse = db.prepare('SELECT COALESCE(SUM(n), 0) AS n, COALESCE(SUM(b), 0) AS b FROM pools');
   const poolUse = db.prepare('SELECT n, b FROM pools WHERE pool = ?');
   const holderUse = db.prepare('SELECT n, b FROM holders WHERE pubkey = ? AND pool = ?');
-  const largest = { n: db.prepare('SELECT pubkey, n, b FROM holders WHERE pool = ? AND pubkey != ? ORDER BY n DESC, first DESC LIMIT 1'),
-    b: db.prepare('SELECT pubkey, n, b FROM holders WHERE pool = ? AND pubkey != ? ORDER BY b DESC, first DESC LIMIT 1') };
+  const largest = { n: db.prepare('SELECT pubkey, n, b FROM holders WHERE pool = ? AND pubkey != ? AND pubkey NOT IN (SELECT value FROM json_each(?)) ORDER BY n DESC, first DESC LIMIT 1'),
+    b: db.prepare('SELECT pubkey, n, b FROM holders WHERE pool = ? AND pubkey != ? AND pubkey NOT IN (SELECT value FROM json_each(?)) ORDER BY b DESC, first DESC LIMIT 1') };
   const oldestIn = db.prepare(`SELECT id FROM events WHERE pubkey = ? AND ${POOL_SQL('kind')} = ? AND id != ? ORDER BY created_at ASC, id DESC LIMIT 1`);
   const put = db.prepare('INSERT OR IGNORE INTO events (id, pubkey, kind, created_at, d, json, size) VALUES (?, ?, ?, ?, ?, ?, ?)');
   const newest = db.prepare('SELECT id, created_at FROM events WHERE pubkey = ? AND kind = ? AND d = ? ORDER BY created_at DESC, id ASC LIMIT 1');
@@ -275,6 +276,12 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const dropId = db.prepare('DELETE FROM events WHERE id = ?');
   const has = db.prepare('SELECT 1 AS x FROM events WHERE id = ?');
   const lim = { authorEvents: AUTHOR_EVENTS, authorBytes: AUTHOR_BYTES, totalEvents: TOTAL_EVENTS, totalBytes: TOTAL_BYTES, logShare: LOG_SHARE, totalSlowBytes: TOTAL_SLOW_BYTES, ...limits };
+  // MAKING ROOM IS NOT A WAY TO DELETE A NODE'S RESULTS (kanban #2146, #2214; #1489 a44-refute-24): keys are free - strangers who fill the
+  // total with one event a key leave the NODE the largest holder, and then every stranger 30078 under a fresh key and `d` took one of the
+  // node's kept, signed round results. An author in `keep` (the seats' node keys: ARENA_RELAY_KEEP for tools/nostr-relay.mjs) is never the
+  // largest holder that gives back for another author's write; it still rolls out its own oldest (step 3, its quota).
+  const keepList = (Array.isArray(keep) ? keep : [...(keep || [])]).map((k) => String(k).toLowerCase()).filter((k) => HEX64.test(k));
+  const keepJson = JSON.stringify(keepList), keepSet = new Set(keepList);
   const clients = new Set();
   const info = { name, description, supported_nips: [1, 11, 42, 46, 47, 57, 58, 65, 78], software: 'arena-node/nostr-relay', version: '1',
     limitation: { max_message_length: MAX_EVENT_BYTES, max_subscriptions: MAX_SUBS, max_filters: MAX_FILTERS, max_limit: MAX_LIMIT }, kinds };
@@ -583,10 +590,10 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
                   const share = (pool) => (dim === 'n' ? lim.totalEvents : lim.totalBytes) * (pool === 1 ? lim.logShare : 1 - lim.logShare);
                   let victim = null;
                   const q = poolUse.get(Q);
-                  if (q && q[dim] > share(Q)) { const h = largest[dim].get(Q, ''); if (h) victim = oldestIn.get(h.pubkey, Q, e.id); }   // 1.
+                  if (q && q[dim] > share(Q)) { const h = largest[dim].get(Q, '', keepJson); if (h) victim = oldestIn.get(h.pubkey, Q, e.id); }   // 1.
                   if (!victim) {   // 2.
-                    const mine = holderUse.get(e.pubkey, P) || { n: 0, b: 0 }, h = largest[dim].get(P, e.pubkey);
-                    if (h && h[dim] > mine[dim]) victim = oldestIn.get(h.pubkey, P, e.id);
+                    const mine = holderUse.get(e.pubkey, P) || { n: 0, b: 0 }, h = largest[dim].get(P, e.pubkey, keepJson);
+                    if (h && (h[dim] > mine[dim] || keepSet.has(e.pubkey))) victim = oldestIn.get(h.pubkey, P, e.id);   // a kept author's write takes from the largest other (#2146)
                   }
                   if (!victim && P === 0) victim = oldestIn.get(e.pubkey, 0, e.id);   // 3.
                   if (!victim) { verdict = 'full'; break; }   // 4.
