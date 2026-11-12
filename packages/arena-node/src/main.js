@@ -387,6 +387,7 @@ if (url) {
       if (held && String(await call('getblockhash', [to])) === displayHash(held.hash)) {
         try {
           const view = arenaIndex.viewOf(from, to);
+          view.topHash = displayHash(held.hash);   // the block at `to` this view was read under (kanban #1841: chainCensusKept checks it)
           if (!indexServed) { indexServed = true; console.log(`[index] the census at ${censusHeight} read from the index: ${from}-${to}, ${view.blocks.reduce((n, b) => n + b.transactions.length, 0)} transaction(s) kept`); }
           return view;
         } catch (e) { console.error(`[index] census ${censusHeight} reads whole blocks: ${e.message}`); }
@@ -420,8 +421,24 @@ if (url) {
     if (hold && Date.now() - blocksFailedAtMs < 60000) return { ok: false, why: 'a block read failed less than a minute ago: read again after it' };
     const p = (async () => {
       // a kept hash from a branch the chain left is dropped and the view read once more (censusWithFreshHashes, kanban #495)
-      const read = async () => { try { return await censusBlocks(contract.networkId, height, height); } catch (e) { blocksFailedAtMs = Date.now(); throw e; } };
+      let viewRead = null;               // the view the census was derived from (the last read; kanban #1841 below)
+      const read = async () => { try { viewRead = await censusBlocks(contract.networkId, height, height); return viewRead; } catch (e) { blocksFailedAtMs = Date.now(); throw e; } };
       const census = await censusWithFreshHashes({ read, derive: (view) => censusOfView(view, contract, { standingKeys }), cache: blocksKept });
+      // A REORG DURING THE READ IS NOT KEPT UNDER THE KEY'S HASH (kanban #1841): the key's hash is read first, the walk takes minutes
+      // and reads the top heights last - a chain that moved to another branch meanwhile derived that branch's census, and kept under
+      // the old block's hash it was answered for three days once the chain went back to it. The census height is read again, and the
+      // view's own block there must be the key's block (the one the cache holds under that hash; a view the index served names its
+      // top hash, censusBlocks); otherwise nothing is kept: read again
+      if (census.ok) {
+        let same = false;
+        try {
+          const atHeight = viewRead && viewRead.blocks ? viewRead.blocks[height - viewRead.firstHeight] : undefined;
+          const keptBlock = blocksKept.get(hash);
+          const viewsBlock = viewRead && typeof viewRead.topHash === 'string' ? viewRead.topHash === hash : (keptBlock === undefined || keptBlock === atHeight);
+          same = String(await call('getblockhash', [height])) === hash && atHeight !== undefined && viewsBlock;
+        } catch { same = false; }
+        if (!same) return { ok: false, why: 'the chain reorganised during this census read: read again' };
+      }
       if (census.ok) {
         try {
           db.prepare('INSERT OR REPLACE INTO census_kept (key, body, kept_ms) VALUES (?, ?, ?)').run(key, JSON.stringify(census, censusReplacer), Date.now());
