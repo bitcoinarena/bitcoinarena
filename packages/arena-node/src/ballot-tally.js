@@ -219,7 +219,9 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         return { tip, skipped: 'rpc', why: e.message, read: 0, decided: 0, reorged: 0 };
       }
       if (reorged) refreshLive();
-      for (const p of proposals.list().slice().sort((a, b) => a.votingFrom - b.votingFrom)) {
+      for (const listed of proposals.list().slice().sort((a, b) => a.votingFrom - b.votingFrom)) {
+        // THE RECORD AS IT IS NOW (kanban #1842): a decision earlier in this pass may have rescheduled it (proposals.js)
+        const p = proposals.list().find((x) => x.id === listed.id) || listed;
         if (stateOf(p) !== S.COUNTING || !counted(p)) { open.delete(p.id); continue; }       // decided, orphaned, or void (#1840): not counted
         const rule = ruleOf(p);
         if (rule.invalid) {                                     // invalid on its face (kanban #1196): never counted
@@ -227,9 +229,14 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
           if (!invalidLogged.has(p.id)) { invalidLogged.add(p.id); log(`[ballot] proposal ${p.id.slice(0, 16)}: activation ${p.activationHeight} is fewer than ${rule.minDepth} blocks after its last voting block (${p.votingUntil - 1}): invalid on its face, not counted`); }
           continue;
         }
+        // ITS SCHEDULE NOT KNOWN YET (kanban #1842): a proposal activating by its publication is undecided here, so whether it is a
+        // repeal (its voting window) is not known either - not counted, and so never decided, on a window it may not have
+        if (!api.historyAt(p.networkId, p.publishedAt, bodyOf(p).class)) continue;
         if (tip < p.votingFrom) continue;                       // review: votes are not counted yet (27A.7.4)
         let o = open.get(p.id);
-        if (!o) { o = { readTo: p.votingFrom - 1, readHash: null, census: null, votes: [], checked: new Map(), result: null, dirty: true }; open.set(p.id, o); }
+        // a window that moved (rescheduled, kanban #1842) is counted afresh from its own first block
+        if (o && (o.from !== p.votingFrom || o.until !== p.votingUntil)) { open.delete(p.id); o = null; }
+        if (!o) { o = { from: p.votingFrom, until: p.votingUntil, readTo: p.votingFrom - 1, readHash: null, census: null, votes: [], checked: new Map(), result: null, dirty: true }; open.set(p.id, o); }
         // THE CENSUS AT ITS PUBLICATION (27A.7.3: "the census is snapshotted when the proposal is published"), read once
         if (!o.census) {
           let c = null;
@@ -309,7 +316,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
   };
   const historyJson = (h) => h.map((x) => ({ configHash: toHex(x.configHash), config: x.config ? toHex(x.config) : null, since: x.since, by: x.by ? toHex(x.by) : null }));
 
-  return {
+  const api = {
     pass,
     get tip() { return tip; },
     /** The last reorg checks that moved something (newest last), for GET /proposals. */
@@ -352,4 +359,5 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       return sources ? liveConfig({ genesis: SOURCES_GENESIS, passed: passedSources(net), height }).history : liveConfig({ genesis: genesisFor(net), passed: passedOf(net), height }).history;
     },
   };
+  return api;
 }

@@ -98,6 +98,28 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
   const sameDeposit = (depositHex, id) => [...held.values()].filter((r) => r.id !== id && depositTxidOf(r) === depositHex);
   /** COUNTED: the only kept proposal its deposit backs (kanban #1840). */
   const counts = (id) => { const r = held.get(id); if (!r) return false; const d = depositTxidOf(r); return !!d && sameDeposit(d, id).length === 0; };
+  // ONE PROPOSAL, ONE SCHEDULE AT EVERY SEAT (kanban #1842): repeal or not (27A.7.6) is read against the history at the
+  // publication height, and that history is only known here once every proposal activating by then is decided. A proposal kept
+  // while one such was not held yet (posted to this seat before the one it repeals reached it) read the genesis history and an
+  // ordinary schedule; when that earlier proposal is decided, each still-undecided proposal of the network published at or
+  // after its activation is read again from its own bytes, and its repeal flag and voting window are rewritten (written first,
+  // state unchanged) when they differ. A decided proposal is never rescheduled: its outcome stands until a reorg undoes it.
+  function rescheduleAfter(done) {
+    if (!done || !historyFor) return;
+    for (const r of [...held.values()]) {
+      if (r.networkId !== done.networkId || r.id === done.id || stateOf(r) !== S.COUNTING || !(r.publishedAt >= done.activationHeight)) continue;
+      const history = historyFor(r.networkId, r.publishedAt, r.class);   // each class against its own chain (kanban #921)
+      if (!history) continue;                                         // another one still undecided: read again at its decision
+      let p;
+      try { const b = fromHex(String(r.proposal)); p = { ...decodeConfigProposalBody(b.subarray(0, b.length - 64)), signature: b.slice(b.length - 64) }; } catch { continue; }
+      const stands = proposalStands(p, { publishedAt: r.publishedAt, depositSats: BigInt(r.depositSats), lowestBondMinSats: lowestBondMinSatsFor(r.networkId),
+        schedule: (scheduleFor && scheduleFor(r.networkId)) || schedule, repealSchedule: (repealScheduleFor && repealScheduleFor(r.networkId)) || repealSchedule, verify, history,
+        ...(depthHeightFor ? { depthHeight: depthHeightFor(r.networkId) } : {}), ...(minDecideDepthFor ? { minDecideDepth: minDecideDepthFor(r.networkId) } : {}) });
+      if (!stands.ok || (stands.repeal === r.repeal && stands.votingFrom === r.votingFrom && stands.votingUntil === r.votingUntil)) continue;
+      try { commit({ ...r, repeal: stands.repeal, votingFrom: stands.votingFrom, votingUntil: stands.votingUntil,
+        rescheduled: { by: done.id, was: { repeal: r.repeal, votingFrom: r.votingFrom, votingUntil: r.votingUntil } } }); } catch { /* kept as it was: read again at the next decision */ }
+    }
+  }
   const api = {
     async add({ proposal: hex, blockHash }) {
       if (!/^[0-9a-f]+$/i.test(String(hex || '')) || String(hex).length < 130) return { ok: false, status: 400, why: 'a proposal is the hex of its body and its 64-byte signature' };
@@ -173,8 +195,16 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
     list: () => [...held.values()].sort((a, b) => b.publishedAt - a.publishedAt),
     counts,
     transition,
-    /** THE OUTCOME, WRITTEN ONCE (ballot-tally.js): COUNTING -> PASSED | FAILED - not tallied again, across restarts too. */
-    decide: (id, outcome) => transition(id, S.COUNTING, outcome && outcome.passed ? S.PASSED : S.FAILED, { outcome }),
+    /**
+     * THE OUTCOME, WRITTEN ONCE (ballot-tally.js): COUNTING -> PASSED | FAILED - not tallied again, across restarts too. A
+     * decided proposal changes the history every later one is read against: each undecided proposal of the network published
+     * at or after its activation is read again (kanban #1842).
+     */
+    decide(id, outcome) {
+      const ok = transition(id, S.COUNTING, outcome && outcome.passed ? S.PASSED : S.FAILED, { outcome });
+      if (ok) rescheduleAfter(held.get(id));
+      return ok;
+    },
     /** A REORG BELOW ITS DECISION - a hash that differs (ballot-tally.js): PASSED | FAILED -> COUNTING, counted again on the chain now. */
     undecide(id, why = 'the chain under its outcome changed') {
       const from = stateOf(held.get(id));
@@ -194,7 +224,13 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
      */
     async pull(records) {
       let took = 0;
-      for (const r of (Array.isArray(records) ? records : []).slice(0, 256)) {
+      // OLDEST PUBLICATION FIRST (kanban #1842): a peer lists newest first, and a repeal taken before the proposal it repeals
+      // read a history without it (an ordinary schedule here, a repeal at every other seat); oldest first, the earlier one is
+      // held when the later one is checked (and 503s it until decided here). Bounded first, in the peer's order, as before.
+      const asked = (Array.isArray(records) ? records : []).slice(0, 256)
+        .map((r, i) => ({ r, i, at: r && Number.isFinite(Number(r.publishedAt)) ? Number(r.publishedAt) : Infinity }))
+        .sort((a, b) => a.at - b.at || a.i - b.i).map((x) => x.r);
+      for (const r of asked) {
         if (!r || typeof r.proposal !== 'string' || typeof r.blockHash !== 'string') continue;
         const mine = typeof r.id === 'string' ? held.get(r.id.toLowerCase()) : null;
         if (mine && stateOf(mine) !== S.ORPHANED) continue;             // kept and counted here: nothing to learn
