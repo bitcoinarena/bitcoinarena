@@ -445,10 +445,15 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         const joins = late && t.tableFirst;
         for (const role of SEATING_ROLES) {
           // a certificate stands here: a second one reaches this node by POST /seating, and is then the proof of equivocation - but until most of the
-          // drawn seats are seen holding the same seating, it is read again before the start every CONFIRM_ASK_MS (kanban #2245, keepCert `supersede`)
+          // drawn seats are seen holding the same seating, it is read again every CONFIRM_ASK_MS (kanban #2245, keepCert `supersede`)
+          // AFTER THE START TOO (kanban #2321, wf1489 a45 refute 5 s2): a seat that held no certificate at the start - restarted, newly joined, drawn and down
+          // across the close, or S posted in the last tick gap before the start - took the first one POST /seating handed it after the start (a stranger can
+          // relay M's superseded S), and with `late` in this skip it was never read again: it seated S for good while every honest seat seated T. A held
+          // certificate stays unconfirmed until a confirm read sees more than half of the drawn hold it, whenever it was taken (the `confirmed` set is lost
+          // at a restart, which is fine: the read runs again). It ends with the round's index, 10 min after the start (a long round once a minute, above).
           const key = `${ridHex}:${role}`;
           const certified = certs.has(key) && !!db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(t.rid, role);
-          if (certified && (late || certs.get(key) === null || confirmed.has(key) || nowMs() - (confirmAsked.has(key) ? confirmAsked.get(key) : -Infinity) < CONFIRM_ASK_MS)) continue;
+          if (certified && (certs.get(key) === null || confirmed.has(key) || nowMs() - (confirmAsked.has(key) ? confirmAsked.get(key) : -Infinity) < CONFIRM_ASK_MS)) continue;
           const c = roster.committeeFor(t.rid, role);
           if (!c.ok) continue;
           if (certified) {
@@ -536,6 +541,14 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
           // A SEATING THAT CAN NEVER STAND (kanban #738): the PRESENTs the others held at the close are taken late, here only
           if (canNeverStand(w)) for (const a of said) { const once = new Set(); for (const x of a.presents || []) if (x.role === w.role) takePresent(fromHex(x.present), { afterClose: true, once }); }
           signMine(w); resign(w); await certify(w);
+        }
+        // THE SAME READ CONFIRMS WHAT IT LEFT HELD (kanban #2321, wf1489 a45 refute 5 s2): the drawn seats' certificates are in these answers already, so
+        // the one more than half of them hold is kept now - confirmed, or put in place of the one taken first (keepCert `supersede`) - and the round is not
+        // read again for it; short of a majority, the confirm read above asks again in CONFIRM_ASK_MS
+        const key = `${w.ridHex}:${w.role}`;
+        if (certs.get(key) && !confirmed.has(key) && db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(w.t.rid, w.role)) {
+          confirmRead(w, answers);
+          if (!confirmed.has(key)) confirmAsked.set(key, nowMs());
         }
       }
       lap('take+certify');
