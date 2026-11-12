@@ -35,17 +35,20 @@ test('#1489-2 a 1 sat lock handed to /refused-lock after the player\'s does not 
       body: JSON.stringify({ outpoint: `${toHex(at.txid)}:${at.outIdx}`, fields: lockFieldsToJson(f) }) });
     refusing.why = 'test: this signer node refuses the round';
     const kept = [];
-    for (const d of w.nodes) { const r = await hand(d, fields, outpoint); kept.push([r.status, (await r.text()).slice(0, 90)]); }
+    for (const d of w.nodes) { const r = await hand(d, fields, outpoint); kept.push([r.status, (await r.text()).slice(0, 200)]); }
     // THE ATTACKER: the same public image, refund key and claim key, 1000 msat of its own
     const tiny = { txid: rand(32), outIdx: 0n };
     const tinyFields = { ...fields, amountMsat: 1000n };
     await w.port.put(tiny, tinyFields);
     const replaced = [];
-    for (const d of w.nodes) { const r = await hand(d, tinyFields, tiny); replaced.push([r.status, (await r.text()).slice(0, 90)]); }
+    for (const d of w.nodes) { const r = await hand(d, tinyFields, tiny); replaced.push([r.status, (await r.text()).slice(0, 200)]); }
     const rows = w.nodes.map((d) => d.round.refusedLock(fromHex(hid)));
     console.log('  FACTS #1489-2:', JSON.stringify({ kept, attacker: replaced, keptOutpoints: rows.map((r) => r && r.outpoint.slice(0, 16)), player: `${toHex(outpoint.txid).slice(0, 16)}` }));
     for (const [s, why] of kept) assert.equal(s, 201, why);
-    for (const [s, why] of replaced) assert.equal(s, 409, `the attacker's other lock for the same handout was kept: ${why}`);
+    // kanban #1881: the attacker's other lock may be kept BESIDE the player's, under an id of its own (H(handout || "lock:" || outpoint)) -
+    // never in the player's place: refused, or kept under another id than the player's
+    const entryOf = (why) => (String(why).match(/entry=([0-9a-f]{64})/) || [])[1];
+    for (const [s, why] of replaced) assert.ok(s === 409 || (s === 201 && entryOf(why) && entryOf(why) !== entryOf(kept[0][1])), `the attacker's other lock took the player's id: ${why}`);
     for (const r of rows) assert.equal(r && r.outpoint, `${toHex(outpoint.txid)}:0`, 'the player\'s kept stake lock was replaced by the attacker\'s 1 sat lock: the forfeit now returns that one');
   } finally { await w.close(); }
 });
