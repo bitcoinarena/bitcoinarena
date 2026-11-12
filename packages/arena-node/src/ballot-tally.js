@@ -233,8 +233,11 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       tip = now;
       // THE PROPOSER CHECK OF RECORDS KEPT BEFORE THIS START (kanban #1670, proposals.js recheck): one not checked yet reads as
       // ORPHANED and is not counted; one whose census was not readable at the start is asked again here, before anything is counted
-      if (typeof proposals.recheck === 'function' && typeof proposals.unchecked === 'function' && proposals.unchecked()) {
-        try { await proposals.recheck(); } catch (e) { log(`[ballot] the proposer check did not run: ${e.message}`); }
+      // - on the branch of each one's own publication block (kanban #2032): this tally's block reader goes with it, and an
+      // `unbonded` record not yet confirmed on its own block is read again too
+      if (typeof proposals.recheck === 'function' && typeof proposals.unchecked === 'function'
+        && (proposals.unchecked() || (typeof proposals.toReview === 'function' && typeof blockHashAt === 'function' && proposals.toReview()))) {
+        try { await proposals.recheck(typeof blockHashAt === 'function' ? { blockHashAt } : {}); } catch (e) { log(`[ballot] the proposer check did not run: ${e.message}`); }
       }
       // A CHAIN THAT DID NOT ANSWER IS NO REORG (kanban #1152): the pass stops here - nothing taken back, orphaned or written
       try { reorged = await followReorgs(); } catch (e) {

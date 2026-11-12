@@ -38,6 +38,8 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
  * null: the bonds active at that height (the tally's census, ballot-tally.js); given, a proposer outside it is refused (kanban #1489).
  * `tipHeight()` -> this seat's tip (or set later by the tally, `useTip`); given, a proposal first posted once its voting has begun is
  * refused (kanban #1608).
+ * `blockHashAt(height)` -> this seat's block hash at that height, null above the tip (throws: no answer): given (here, or to
+ * recheck by the tally), a kept record's proposer is judged only on the branch its publication block is on (kanban #2032).
  */
 export const PROPOSAL_STATE = Object.freeze({ COUNTING: 'COUNTING', PASSED: 'PASSED', FAILED: 'FAILED', ORPHANED: 'ORPHANED' });
 const S = PROPOSAL_STATE;
@@ -48,7 +50,7 @@ const MOVES = Object.freeze({ [S.COUNTING]: [S.PASSED, S.FAILED, S.ORPHANED], [S
 export const stateOf = (r) => (r && S[r.state] ? r.state : r && r.orphaned ? S.ORPHANED : r && r.decided ? (r.decided.passed ? S.PASSED : S.FAILED) : S.COUNTING);
 
 export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsFor, verify, store, schedule = SCHEDULES.mainnet, scheduleFor = null,
-  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, exampleCheck = null, depthHeightFor = null, minDecideDepthFor = null, censusAt = null, tipHeight = null }) {
+  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, exampleCheck = null, depthHeightFor = null, minDecideDepthFor = null, censusAt = null, tipHeight = null, blockHashAt = null }) {
   let tipOf = typeof tipHeight === 'function' ? tipHeight : null;
   const held = new Map((store && store.read ? store.read() || [] : []).map((x) => [x.id, { ...x, state: stateOf(x) }]));
   // EVERY KEPT RECORD IS HELD TO THE CENSUS AGAIN ON LOAD (kanban #1670, after #1489): a record a seat kept on a build without the
@@ -150,6 +152,29 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
   const counts = (id) => { const r = held.get(id); if (!r) return false; const d = depositTxidOf(r); return !!d && sameDeposit(d, id).length === 0; };
   // ONE PROPOSAL, ONE SCHEDULE AT EVERY SEAT (kanban #1842): kept in the merge (kanban #1489, as in 1.9) as #1631's reschedule below,
   // which the tally asks for every kept proposal at the start of each pass.
+  // THE CENSUS OF A KEPT RECORD'S OWN BRANCH (kanban #2032, after #1670 / #1865): a restart while a reorg has taken out its
+  // publication block (and a fresh bond with it) read the census of ANOTHER branch, which left the proposer out - and the
+  // record was written `unbonded` for good, never restored when its block came back. With a block reader the census is read
+  // only while the block at its publication height IS its block (read before and after the census); otherwise it waits (null).
+  // Without one, the census alone as before. Answers the census (`ownBranch` true when the branch was checked) or null.
+  const OTHER_BRANCH = Object.freeze({ other: true });
+  const confirmedUnbonded = new Set();      // ids of unbonded records whose census was read on their own block: settled for good
+  const withoutUnbonded = (r) => {
+    const { unbonded: _u, unchecked: _c, ...o } = r.orphaned || {};
+    return { ...r, state: S.ORPHANED, orphaned: { ...o, why: 'its proposer is bonded on the branch of its publication block (kanban #2032)' } };
+  };
+  async function ownCensus(r, reader) {
+    const own = reader && r.blockHash ? String(r.blockHash).toLowerCase() : null;
+    // 'same' | 'other' (a hash that differs: evidence) | 'none' (above the tip, or no answer: no evidence either way)
+    const onIt = async () => { try { const h = await reader(r.publishedAt); return !h ? 'none' : String(h).toLowerCase() === own ? 'same' : 'other'; } catch { return 'none'; } };
+    if (own) { const w = await onIt(); if (w !== 'same') return w === 'other' ? OTHER_BRANCH : null; }
+    let census = null;
+    try { census = await censusAt(r.networkId, r.publishedAt); } catch { census = null; }
+    if (!Array.isArray(census)) return null;
+    if (own && (await onIt()) !== 'same') return null;                      // the branch moved while the census was read
+    const out = census.slice(); out.ownBranch = !!own;
+    return out;
+  }
   const api = {
     async add({ proposal: hex, blockHash }) {
       if (!/^[0-9a-f]+$/i.test(String(hex || '')) || String(hex).length < 130) return { ok: false, status: 400, why: 'a proposal is the hex of its body and its 64-byte signature' };
@@ -252,13 +277,32 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
      * the one add() asks. Bonded: the record is back as stored. Not bonded: written ORPHANED with `unbonded`. Census not
      * readable yet: it waits for the next call (ballot-tally runs one before each pass). Answers { restored, unbonded, waiting }.
      */
-    async recheck() {
-      let restored = 0, unbonded = 0;
+    async recheck({ blockHashAt: hashGiven = null } = {}) {
+      const reader = typeof hashGiven === 'function' ? hashGiven : typeof blockHashAt === 'function' ? blockHashAt : null;
+      let restored = 0, unbonded = 0, cleared = 0;
       for (const [id, r] of [...unchecked]) {
-        let census = null;
-        try { census = await censusAt(r.networkId, r.publishedAt); } catch { census = null; }
-        if (!Array.isArray(census) || unchecked.get(id) !== r) continue;          // not readable yet, or add() took it meanwhile
-        if (census.some((e) => e && xOnly(e.pubkey) === xOnly(r.proposer))) { held.set(id, r); unchecked.delete(id); restored++; continue; }
+        const census = await ownCensus(r, reader);
+        if (!census || unchecked.get(id) !== r) continue;          // not readable yet, or add() took it meanwhile
+        if (census === OTHER_BRANCH) {
+          // its publication block is not on this chain: no verdict on its proposer. An open one is orphaned plainly (as
+          // followReorgs would have done in session) and waits, still unchecked, for its block - it holds no history up meanwhile
+          if (stateOf(r) === S.COUNTING) {
+            const next = asOrphan(r, 'its publication block left this chain');
+            try {
+              if (store && store.write) store.write([...held.values()].filter((x) => x.id !== id).map((x) => unchecked.get(x.id) || x).concat([next]));
+              unchecked.set(id, next); held.set(id, asOrphan(next, uncheckedWhy, { unchecked: true }));
+            } catch { /* the store did not take it: asked again */ }
+          }
+          continue;
+        }
+        if (census.some((e) => e && xOnly(e.pubkey) === xOnly(r.proposer))) {
+          // bonded ON ITS OWN BRANCH: a stored `unbonded` (read on another branch by an earlier build, kanban #2032) is cleared
+          if (census.ownBranch && r.orphaned && r.orphaned.unbonded) {
+            try { commit(withoutUnbonded(r)); cleared++; } catch { /* the store did not take it: still unchecked, asked again */ }
+            continue;
+          }
+          held.set(id, r); unchecked.delete(id); restored++; continue;
+        }
         const next = asOrphan(r, `the proposer holds no active bond in the census at height ${r.publishedAt} (27A.7.2, kanban #1670)`, { unbonded: true });
         try { commit(next); unbonded++; } catch { /* the store did not take it: still unchecked, asked again */ }
       }
@@ -266,16 +310,29 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       for (const id of [...decidedUnchecked]) {
         const r = held.get(id);
         if (!r) { decidedUnchecked.delete(id); continue; }
-        let census = null;
-        try { census = await censusAt(r.networkId, r.publishedAt); } catch { census = null; }
-        if (!Array.isArray(census) || !decidedUnchecked.has(id) || held.get(id) !== r) continue;   // not readable yet, or it moved meanwhile
+        const census = await ownCensus(r, reader);
+        // not readable yet, not on its own branch (followReorgs orphans it, and it waits hidden for its block), or it moved
+        if (!census || census === OTHER_BRANCH || !decidedUnchecked.has(id) || held.get(id) !== r) continue;
         if (census.some((e) => e && xOnly(e.pubkey) === xOnly(r.proposer))) { decidedUnchecked.delete(id); restored++; continue; }
         const next = asOrphan(r, `the proposer holds no active bond in the census at height ${r.publishedAt} (27A.7.2, kanban #1670)`, { unbonded: true });
         decidedUnchecked.delete(id);
         try { commit(next); unbonded++; } catch { decidedUnchecked.add(id); /* the store did not take it: still unchecked, asked again */ }
       }
-      return { restored, unbonded, waiting: unchecked.size + decidedUnchecked.size };
+      // AN `unbonded` READ ON ANOTHER BRANCH IS NO VERDICT (kanban #2032): each kept unbonded record is read once more on the
+      // branch of its own publication block - bonded there, it is a plain orphan again, and restore brings it back with its block
+      if (reader) for (const r of [...held.values()]) {
+        if (unchecked.has(r.id) || stateOf(r) !== S.ORPHANED || !r.orphaned || !r.orphaned.unbonded || !r.blockHash) continue;
+        if (confirmedUnbonded.has(r.id)) continue;
+        const census = await ownCensus(r, reader);
+        if (!census || census === OTHER_BRANCH || !census.ownBranch || held.get(r.id) !== r) continue;   // not on its own branch now: asked again later
+        if (!census.some((e) => e && xOnly(e.pubkey) === xOnly(r.proposer))) { confirmedUnbonded.add(r.id); continue; }
+        try { commit(withoutUnbonded(r)); cleared++; } catch { /* the store did not take it: asked again */ }
+      }
+      return { restored, unbonded, cleared, waiting: unchecked.size + decidedUnchecked.size };
     },
+    /** How many kept `unbonded` records are not yet confirmed on their own branch (kanban #2032): the tally runs recheck for them. */
+    toReview: () => [...held.values()].filter((r) => !unchecked.has(r.id) && stateOf(r) === S.ORPHANED && r.orphaned && r.orphaned.unbonded
+      && r.blockHash && !confirmedUnbonded.has(r.id)).length,
     transition,
     /**
      * ITS SCHEDULE READ AGAIN (kanban #1631): whether a proposal is a repeal, and so its voting window (27A.7.6), is a function of
