@@ -69,14 +69,17 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       if (!outcome || outcome.passed !== (to === S.PASSED)) return false;
       next = { ...had, state: to, decided: outcome };
     } else if (to === S.ORPHANED) {
-      const { decided, ...rest } = had;
-      next = { ...rest, state: S.ORPHANED, orphaned: { at, why, was: from, ...(decided ? { outcome: decided } : {}) } };
+      // kanban #1635: an outcome a recount held in force (undecided.outcome) is not carried on - an orphan is counted for nothing
+      const { decided, undecided, ...rest } = had;
+      const u = undecided ? (({ outcome: _o, ...x }) => x)(undecided) : null;
+      next = { ...rest, ...(u ? { undecided: u } : {}), state: S.ORPHANED, orphaned: { at, why, was: from, ...(decided ? { outcome: decided } : {}) } };
     } else if (from === S.ORPHANED) {
       const { orphaned, ...rest } = record ? { ...record, orphaned: had.orphaned } : had;
       next = { ...rest, state: S.COUNTING, restored: { at, why, was: orphaned ? orphaned.was : null } };
     } else {
       const { decided, ...rest } = had;
-      next = { ...rest, state: S.COUNTING, undecided: { at: decided ? decided.decidedAt : null, was: from, why } };
+      // kanban #1635: the replaced outcome is kept with the record, so ballot-tally.js holds it in force through a restart mid-recount
+      next = { ...rest, state: S.COUNTING, undecided: { at: decided ? decided.decidedAt : null, was: from, why, ...(decided ? { outcome: decided } : {}) } };
     }
     try { commit(next); } catch { return false; }
     return true;
