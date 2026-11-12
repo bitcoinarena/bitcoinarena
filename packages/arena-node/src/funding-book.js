@@ -16,7 +16,7 @@ import { createHash } from 'node:crypto';
 import { newerPlayerName, PLAYER_NAME_SKEW_MS } from '../../arena-protocol/src/player-name.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { VOTE_BOUND_BYTES } from '../../arena-protocol/src/ballot.js';
-import { feeProposalStands, feeProposalOutcome, feesAt as feesAtOf, FEES, FEES_TODAY, donationChanges, devMajority } from '../../arena-protocol/src/fee-proposal.js';
+import { feeProposalStands, feeProposalOutcome, FEES, FEES_TODAY, donationChanges, devMajority, applyFeeChanges, feeSetStands } from '../../arena-protocol/src/fee-proposal.js';
 import { leaderboardVotePeriod, leaderboardPasses } from '../../arena-protocol/src/leaderboard-payout.js';
 
 export const FUNDING_SQL = `CREATE TABLE IF NOT EXISTS funding_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL, proposal TEXT NOT NULL, hex TEXT NOT NULL, at_ms INTEGER NOT NULL);
@@ -514,10 +514,35 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   }
   // THE FEE DECISIONS: accepted sets in activation order; feesAt(height) the one in force
   const feeOutcomes = () => db.prepare('SELECT proposal, outcome, activation FROM fee_outcomes ORDER BY activation, proposal').all()
-    .map((r) => ({ proposal: r.proposal, ...JSON.parse(r.outcome) }));
+    .map((r) => ({ proposal: r.proposal, activation: r.activation, ...JSON.parse(r.outcome) }));
+  // THE FEES IN FORCE ARE FOLDED, NEVER FROZEN (kanban #2313, state audit 2026-11-12): a decision keeps only what does not depend
+  // on the other proposals - its signal and vote passed (`passed`), the protocol developers' majority (`devs`) - and the set is
+  // made here, over FEES_TODAY, from each such proposal's OWN changes in activation order (ties by proposal id), each one's limits
+  // and donation rule checked against the set folded before it. A whole set frozen at decide time made the order seats decided in
+  // matter: B (activation 400) decided before A (activation 140) existed kept a set without A, and undid A from 400 on the seat
+  // that watched live, not on one that caught up. A pure function of the outcomes held - a reorg that reopens one re-folds it.
+  function feeFold() {
+    const props = new Map(rows('fee').map((r) => [r.id, read('fee', r.hex)]).filter(([, x]) => x.ok).map(([id, x]) => [id, x.obj]));
+    let set = FEES_TODAY;
+    const out = [];
+    for (const o of feeOutcomes()) {
+      const p = props.get(o.proposal);
+      // a decision written before #2313 has no `passed`: it stands as it was decided
+      const passed = o.passed === undefined ? o.accepted === true : o.passed === true;
+      if (!p || !passed) { out.push({ proposal: o.proposal, activationHeight: o.activation, inForce: false, fees: set }); continue; }
+      const next = applyFeeChanges(set, p.changes);
+      const stands = feeSetStands(next).ok && (donationChanges(p, set).length === 0 || (o.devs === undefined ? o.accepted === true : o.devs === true));
+      if (stands) set = next;
+      out.push({ proposal: o.proposal, activationHeight: o.activation, inForce: stands, fees: set });
+    }
+    return out;
+  }
+  const decisionOf = (d, f, o) => (f && f.inForce ? { accepted: true, fees: f.fees, activationHeight: o.activationHeight, passed: d.passed, devs: d.devs }
+    : { ...d, accepted: false, fees: undefined, why: d.accepted === false && d.why ? d.why : 'its set does not stand on the fees in force before its activation' });
   function feesAt(height) {
-    const accepted = feeOutcomes().filter((o) => o.accepted).map((o) => ({ accepted: true, activationHeight: o.activationHeight, fees: o.fees }));
-    return feesAtOf({ height, accepted, base: FEES_TODAY });
+    let at = FEES_TODAY;
+    for (const f of feeFold()) if (f.activationHeight <= height) at = f.fees;
+    return at;
   }
   const approvalsOf = (pid) => db.prepare("SELECT hex FROM funding_items WHERE kind = 'fee-approval' AND proposal = ? ORDER BY at_ms, id").all(pid)
     .map((x) => read('fee-approval', x.hex)).filter((x) => x.ok).map((x) => ({ approval: x.obj, signature: x.signature }));
@@ -537,7 +562,10 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       if (signal.state === 'passed' && !vote) continue;                 // its vote is still open
       const o = row.p.obj;
       let devKeys = [];
-      if (donationChanges(o, feesAt(o.activationHeight - 1)).length) {
+      // a proposal that moves any donation fee asks the developers' keys (kanban #2313): whether its change moves a donation is
+      // known only when the set it lands on is folded, and that set can still change under it
+      const donationFee = o.changes.some((c) => FEES[c.fee].donation);
+      if (donationFee) {
         devKeys = typeof devKeysOf === 'function' ? await Promise.resolve(devKeysOf(toHex(o.networkId))).catch(() => null) : null;
         if (!Array.isArray(devKeys)) { log(`[fees] ${pid.slice(0, 16)}: the protocol developers' keys not read yet`); continue; }
       }
@@ -548,7 +576,10 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         let took = 0; for (const it of Array.isArray(got) ? got : []) { try { const r = await book.add(it.kind, it.hex, { heldAtMs: it.atMs === undefined ? null : Number(it.atMs), from: it.seat ?? null }); if (r && r.ok && r.fresh) took++; } catch { /* the next */ } }
         if (took) log(`[fees] ${pid.slice(0, 16)}: ${took} approval(s) or signal(s) pulled from the peers before deciding`);
       }
-      const out = feeProposalOutcome({ proposal: o, current: feesAt(o.activationHeight - 1), signal, tally: vote, approvals: approvalsOf(pid), devKeys, verify, schedule });
+      const decided = feeProposalOutcome({ proposal: o, current: feesAt(o.activationHeight - 1), signal, tally: vote, approvals: approvalsOf(pid), devKeys, verify, schedule });
+      // kept with it (kanban #2313): what feeFold re-reads - its signal and vote, and the developers' majority over everything it moves
+      const out = { ...decided, passed: !!(signal.state === 'passed' && vote && vote.passed === true),
+        devs: donationFee ? devMajority({ proposalId: fromHex(pid), approvals: approvalsOf(pid), devKeys, verify }).majority : false };
       db.prepare('INSERT OR IGNORE INTO fee_outcomes (proposal, outcome, activation, decided_ms) VALUES (?, ?, ?, ?)').run(pid, JSON.stringify(out), o.activationHeight, now());
       log(`[fees] ${pid.slice(0, 16)}: ${out.accepted ? `accepted - in force from ${o.activationHeight}` : `refused - ${out.why}`}`);
       done.push({ id: pid, ...out });
@@ -562,11 +593,13 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       const o = p.obj;
       const st = outcomeOf(row.id) || signalOutcome({ proposal: o, signals: signalsOf(row.id), active: null, tip: height, schedule });
       const decided = db.prepare('SELECT outcome FROM fee_outcomes WHERE proposal = ?').get(row.id);
+      // the decision as the fold holds it (kanban #2313): accepted = in force from its activation over the set folded before it
+      const folded = decided ? feeFold().find((f) => f.proposal === row.id) : null;
       const before = feesAt(o.activationHeight - 1);
       const devs = approvalsOf(row.id).map((a) => ({ dev: toHex(a.approval.dev), approve: a.approval.approve }));
       return { id: row.id, network: toHex(o.networkId), author: toHex(o.author), publishedHeight: o.publishedHeight, activationHeight: o.activationHeight,
         changes: o.changes.map((c) => ({ fee: c.fee, from: before[c.fee], to: c.value, donation: !!FEES[c.fee].donation })), purpose: o.purpose,
-        needsDevs: donationChanges(o, before).length > 0, devs, signal: st, vote: voteView(row.id, o, st), decision: decided ? JSON.parse(decided.outcome) : null, hex: row.hex };
+        needsDevs: donationChanges(o, before).length > 0, devs, signal: st, vote: voteView(row.id, o, st), decision: decided ? decisionOf(JSON.parse(decided.outcome), folded, o) : null, hex: row.hex };
     }).filter(Boolean).sort((a, b) => b.publishedHeight - a.publishedHeight);
   }
   /** THE LEADERBOARD PAYOUTS WHOSE VOTE PASSED HERE: [{ id, proposal (decoded), decidableAt }] - reserve-payout.js pays them. */
