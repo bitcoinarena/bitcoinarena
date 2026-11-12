@@ -107,7 +107,7 @@ test('an order book pays the website 10% of the nodes\' part of its fees; the no
       assert.equal(got.certified, true, got.why);
       skipTo(Number(r.c.entryCloseMs) + 2 * B + 10);
       await closeRound(r, { window: false });
-      const body = { roundId: r.rid, outcome: YES, observedAtMs: r.c.entryCloseMs + 1n };
+      const body = { roundId: r.rid, outcome: YES, observedAtMs: r.c.entryCloseMs };   // at the window's end, as the attestors sign (kanban #1515)
       const rid = toHex(r.rid);
       await Promise.all(r.nodes.map((d) => fetch(`http://127.0.0.1:${d.port}/outcome?round=${rid}`, { method: 'POST', body: encodeAttestation({ ...body, signatures: [A0, A1].map((a) => attestorSign(a, body)) }) })));
       const o = await (await fetch(`http://127.0.0.1:${r.nodes[0].port}/outcome?round=${rid}`)).json();
