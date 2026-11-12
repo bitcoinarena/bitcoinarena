@@ -416,7 +416,16 @@ async function grant(ask) {
   if ((book.unsure || []).length >= UNSURE_CAP) return { ok: false, why: 'the faucet is checking earlier payments: try again in a few minutes' };
   const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: Number(inv.num_satoshis) }, withUnsure(book));
   if (!d.ok) return d;
-  const row = { account: ask.account, kind: ask.kind, ip: ask.ip, sats: d.grant.invoiceSats, atMs: Date.now(), hash: inv.payment_hash };
+  // (after the account's own answers, so an honest repeat still hears "already has its welcome")
+  // A HASH ALREADY BOOKED IS NOT A NEW GRANT (kanban #2473, #2505, refute of #1834/#1835): the hash is the invoice's own payment_hash, which its maker
+  // chooses (addholdinvoice, a hand-signed invoice) - an e-cash row's hash is sha256 of its note, known to the note's holder. An unpayable invoice named
+  // by a booked hash had its failed-grant cleanup drop that row (an e-cash welcome: the start scan put the handed-out note back on the shelf, and the
+  // account was handed a second welcome). A hash on any row - players, unsure, refills - or one being paid now is refused before anything is booked
+  const hash = String(inv.payment_hash || '');
+  if (!/^[0-9a-f]{64}$/.test(hash) || GRANTING.has(hash) || [...book.players, ...(book.unsure || []), ...(book.refills || [])].some((x) => x && x.hash === hash)) {
+    return { ok: false, why: 'that invoice was already used: make a new one' };
+  }
+  const row = { account: ask.account, kind: ask.kind, ip: ask.ip, sats: d.grant.invoiceSats, atMs: Date.now(), hash };
   // BOOKED PENDING BEFORE ANY PAYINVOICE (kanban #1627, state audit 2026-11-12 SM-19): a plain row booked here was a welcome (or a refill) paid for
   // good when the faucet died inside payinvoice - the sweep reads only pending rows and `unsure`, so a payment never made, or one that FAILED after,
   // refused the account its welcome forever. The row is pending with every payer that may be asked; only SUCCEEDED clears it (here or in the sweep),
@@ -424,6 +433,8 @@ async function grant(ask) {
   GRANTING.add(row.hash);
   try { return await grantPay(ask, inv, d, book, row); } finally { GRANTING.delete(row.hash); }
 }
+// THIS GRANT'S OWN ROW (kanban #2473, #2505): never an e-cash row, and the account, kind and booking time the grant wrote - not every row of a hash
+const ownRow = (p, row) => !!p && !p.ecash && p.hash === row.hash && p.account === row.account && p.kind === row.kind && p.atMs === row.atMs;
 async function grantPay(ask, inv, d, book, row) {
   book.players.push({ ...row, pending: true, payers: PAYERS.map((_, i) => i) });
   saveBook(book);
@@ -439,7 +450,7 @@ async function grantPay(ask, inv, d, book, row) {
     askedPayers.push(PAYERS.indexOf(payer));
     // NOT FINAL YET (kanban #1421): booked as pending with the payers asked; the sweep reads their final word
     if (state === 'sent') {
-      const b2 = readBook(); const mine = (b2.players || []).find((x) => x.hash === row.hash);
+      const b2 = readBook(); const mine = (b2.players || []).find((x) => ownRow(x, row));
       if (mine && /Payment status: SUCCEEDED/.test(paid.out)) { delete mine.pending; delete mine.payers; saveBook(b2); }
       else if (mine) { mine.pending = true; mine.payers = [...askedPayers]; saveBook(b2); }
     }
@@ -450,7 +461,7 @@ async function grantPay(ask, inv, d, book, row) {
     tried.push((paid.err || paid.out).trim().slice(-160));
   }
   const after = readBook();
-  after.players = (after.players || []).filter((p) => p.hash !== row.hash);
+  after.players = (after.players || []).filter((p) => !ownRow(p, row));   // only the row this grant pushed (kanban #2473, #2505)
   // a payer that timed out may still pay it (kanban #1421): kept in `unsure` for the sweep, booked again if any payer says SUCCEEDED
   // NEVER CUT FOR ROOM (kanban #2132, re-check of #1628/#1834): `.slice(-500)` dropped the oldest unsure rows, so 500 more unsure grants of fresh
   // accounts pushed a welcome still in flight out, and its account was paid a second welcome. A row leaves `unsure` only through the sweep (rebooked or
