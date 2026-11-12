@@ -54,7 +54,8 @@ test('a round already running says so; loaded, refused and picked joins keep the
   const { sayJoining } = make(win);
   const late = win.ARENA_JOIN = sayJoining({ state: 'joining', stage: 'locking the stake', round: 'r' }, NOW - 5000);
   assert.equal(late.stage, 'the round is running · locking your stake');
-  const j = win.ARENA_JOIN = sayJoining({ state: 'joining', stage: '', round: 'r', next: true }, NOW + 61000);
+  // a lobby join of the next round, as join() builds it: its words come from nextSaid (next && !link), not next (kanban #2413, #2480)
+  const j = win.ARENA_JOIN = sayJoining({ state: 'joining', stage: '', round: 'r', nextSaid: true, next: true }, NOW + 61000);
   assert.equal(j.stage, 'next round starts in 1:01 · checking the round with the game servers');
   j.loaded = true; j.stage = 'next round starts in 1:01';
   assert.equal(j.stage, 'next round starts in 1:01', 'the loaded round\'s own countdown');

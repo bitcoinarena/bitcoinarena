@@ -10001,7 +10001,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             if (join.state !== 'joining' || join.loaded || join.held || join.cancelled || join.finding) return raw;
             const o = raw ? '' : openStep();
             if (o !== lastOpen) { lastOpen = o; if (!raw) at = Date.now(); }
-            return joinWaitLine({ raw, openStep: o, startMs, nowMs: Date.now(), stepSinceMs: at, next: !!join.next });
+            return joinWaitLine({ raw, openStep: o, startMs, nowMs: Date.now(), stepSinceMs: at, next: !!join.nextSaid });
           } });
         return join;
       }
@@ -10138,7 +10138,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           history.replaceState(null, '', location.pathname + withGame(r.join + '&play=1'));
           window.ARENA_JOIN_REFUSED = null;
           const join = window.ARENA_JOIN = { state: 'joining', why: '', stage: '', round: id, kindKnown: true, free: !!r.free, endMs: Date.parse(r.endTime) || 0, startedMs: Date.now(),
-            stakeSats: Number(r.stakeSats) || 0, next: !!next };
+            // nextSaid: the words of its line - a reloaded round link (heldRoundLink: next + link) is THIS round, "round starts in", from its
+            // first line on, as the loaded countdown and startsIn() say it (kanban #2413, #2480, #1483)
+            stakeSats: Number(r.stakeSats) || 0, nextSaid: !!(next && !link), next: !!next };
           sayJoining(join, holdUntilMs || Number((r.raw && r.raw.startTimeMs) || 0));
           const refuse = (why) => {
             // THE COUNTDOWN GOES WITH THE JOIN (V2, measured 0.0.2481: a lock refused after the round was shown loaded left
