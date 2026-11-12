@@ -188,6 +188,23 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (!check || check.refused) return { ok: false, why: `this node cannot draw that round yet${check ? `: ${check.refused}` : ''}` };
     const v = verifySeating(bytes, check);
     if (!v.ok) return v;
+    // KEPT ONLY IN ITS CANONICAL FORM (kanban #1711): verifySeating checks the seated members' signatures and nothing else, so a
+    // stranger who read them off GET /seating-batch could pad a standing certificate with 65,000 junk (nodePubkey, signature)
+    // pairs (6.2 MB), post it first, and every seat kept and served those bytes - the honest certificate after it then differed
+    // and was refused as "one seating twice". The seat keeps exactly the seated members' signatures, the bytes certify() makes;
+    // in 2.0 with the SEEN groups and justifications verifySeating held to the seated, and only the seated members' presigs.
+    { const by = new Map(v.seating.signatures.map((x) => [toHex(x.nodePubkey), x.signature]));
+      const seatedHex = new Set(v.seating.seated.map(toHex));
+      const presigs = v.seating.presigs ? v.seating.presigs.filter((x) => seatedHex.has(toHex(x.nodePubkey))) : null;
+      const canonical = encodeSeatingCertificate({ roundId: v.seating.roundId, role: v.seating.role, seated: v.seating.seated,
+        signatures: v.seating.seated.map((k) => ({ nodePubkey: k, signature: by.get(toHex(k)) })),
+        seen: v.seating.seen, justifications: v.seating.justifications, presigs });
+      if (Buffer.compare(Buffer.from(canonical), Buffer.from(bytes)) !== 0) {
+        bytes = canonical;
+        if (held && Buffer.compare(Buffer.from(held.cert), Buffer.from(bytes)) === 0) return { ok: true, kept: false };
+        v.seating.signatures = v.seating.seated.map((k) => ({ nodePubkey: k, signature: by.get(toHex(k)) }));
+        if (presigs) v.seating.presigs = presigs;
+      } }
     // A SEATING THIS NODE LEFT FOR A WITHHOLDER (kanban #1707, wf1489 r5 census-2): the honest members' signatures over the first seating were handed out
     // before they re-signed without the withholder (#1509), so the withholder can sign that seating late and complete it with them. A certificate that
     // seats a member this node named a withholder is never kept nor counted as equivocation: this node left that seating, and the one it moved to stands.
